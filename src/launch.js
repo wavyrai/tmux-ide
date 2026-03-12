@@ -68,6 +68,17 @@ export async function launch(targetDir) {
   const cols = process.stdout.columns ?? 200;
   const lines = process.stdout.rows ?? 50;
 
+  // Query tmux base indices to respect user's tmux.conf settings
+  let baseIndex = 0;
+  let paneBaseIndex = 0;
+  try {
+    baseIndex = parseInt(execSync("tmux show-option -gv base-index", { encoding: "utf8" }).trim(), 10) || 0;
+  } catch {}
+  try {
+    paneBaseIndex = parseInt(execSync("tmux show-option -gv pane-base-index", { encoding: "utf8" }).trim(), 10) || 0;
+  } catch {}
+  const win = baseIndex; // first window index
+
   // Create session with first pane
   tmux(`new-session -d -s "${session}" -c "${dir}" -x ${cols} -y ${lines}`);
 
@@ -82,13 +93,13 @@ export async function launch(targetDir) {
 
   // Phase 1: Create all rows (vertical splits) BEFORE any horizontal splits.
   // This ensures each row spans the full window width.
-  const rowPaneIndices = [0]; // rowPaneIndices[i] = tmux pane index for row i
-  let nextPaneIndex = 1;
+  const rowPaneIndices = [paneBaseIndex]; // rowPaneIndices[i] = tmux pane index for row i
+  let nextPaneIndex = paneBaseIndex + 1;
 
   for (let rowIdx = 1; rowIdx < rows.length; rowIdx++) {
     const splitFrom = rowPaneIndices[rowIdx - 1];
     tmux(
-      `split-window -t "${session}:0.${splitFrom}" -v -c "${dir}" -p ${rowSplitPercents[rowIdx - 1]}`
+      `split-window -t "${session}:${win}.${splitFrom}" -v -c "${dir}" -p ${rowSplitPercents[rowIdx - 1]}`
     );
     rowPaneIndices.push(nextPaneIndex);
     nextPaneIndex++;
@@ -118,7 +129,7 @@ export async function launch(targetDir) {
       const paneDir = pane.dir ? resolve(dir, pane.dir) : dir;
 
       tmux(
-        `split-window -t "${session}:0.${targetPane}" -h -c "${paneDir}" -p ${paneSplitPercents[paneIdx - 1]}`
+        `split-window -t "${session}:${win}.${targetPane}" -h -c "${paneDir}" -p ${paneSplitPercents[paneIdx - 1]}`
       );
       rowPanes.push(nextPaneIndex);
       nextPaneIndex++;
@@ -157,19 +168,19 @@ export async function launch(targetDir) {
       const tmuxPane = paneMap[rowIdx][paneIdx];
 
       if (p.title) {
-        tmux(`select-pane -t "${session}:0.${tmuxPane}" -T "${p.title}"`);
+        tmux(`select-pane -t "${session}:${win}.${tmuxPane}" -T "${p.title}"`);
       }
 
       // Per-pane directory for first panes of each row (created with project root)
       if (p.dir && firstPanesOfRows.has(tmuxPane)) {
         const paneDir = resolve(dir, p.dir);
-        tmux(`send-keys -t "${session}:0.${tmuxPane}" "cd ${paneDir}" C-m`);
+        tmux(`send-keys -t "${session}:${win}.${tmuxPane}" "cd ${paneDir}" C-m`);
       }
 
       // Environment variables
       if (p.env && typeof p.env === "object") {
         for (const [key, val] of Object.entries(p.env)) {
-          tmux(`send-keys -t "${session}:0.${tmuxPane}" "export ${key}=${val}" C-m`);
+          tmux(`send-keys -t "${session}:${win}.${tmuxPane}" "export ${key}=${val}" C-m`);
         }
       }
 
@@ -179,7 +190,7 @@ export async function launch(targetDir) {
           // Defer teammate launches to second pass
           teammateCommands.push({ pane: tmuxPane, cmd });
         } else {
-          tmux(`send-keys -t "${session}:0.${tmuxPane}" "${cmd}" C-m`);
+          tmux(`send-keys -t "${session}:${win}.${tmuxPane}" "${cmd}" C-m`);
         }
       }
 
@@ -193,7 +204,7 @@ export async function launch(targetDir) {
   if (teammateCommands.length > 0) {
     execSync("sleep 2");
     for (const { pane: p, cmd } of teammateCommands) {
-      tmux(`send-keys -t "${session}:0.${p}" "${cmd}" C-m`);
+      tmux(`send-keys -t "${session}:${win}.${p}" "${cmd}" C-m`);
     }
   }
 
@@ -227,7 +238,7 @@ export async function launch(targetDir) {
   );
 
   // Focus the correct pane
-  tmux(`select-pane -t "${session}:0.${focusPane}"`);
+  tmux(`select-pane -t "${session}:${win}.${focusPane}"`);
 
   // Launch summary
   const totalPanes = rows.reduce((sum, r) => sum + (r.panes?.length ?? 0), 0);
