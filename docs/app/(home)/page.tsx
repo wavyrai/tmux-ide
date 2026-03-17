@@ -93,10 +93,10 @@ export default function HomePage() {
             tmux-ide
           </span>
           <Link
-            href="/docs/release-1-1-0"
+            href="/docs/release-1-2-0"
             className="inline-flex items-center rounded-full border border-fd-border bg-fd-card px-3 py-1 text-[11px] font-mono font-medium uppercase tracking-[0.18em] text-fd-muted-foreground transition-colors hover:bg-fd-accent hover:text-fd-foreground"
           >
-            New 1.1.0
+            New 1.2.0
           </Link>
         </div>
         <h1 className="text-4xl sm:text-5xl font-bold tracking-tight text-fd-foreground">
