@@ -5,14 +5,15 @@ on:
     tags:
       - "v*"
 
+permissions:
+  id-token: write
+  contents: read
+
 jobs:
   publish:
     name: Publish to npm
     runs-on: ubuntu-latest
     environment: npm
-    permissions:
-      contents: read
-      id-token: write
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -23,7 +24,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
           registry-url: https://registry.npmjs.org
 
       - name: Install dependencies
@@ -33,4 +34,4 @@ jobs:
         run: pnpm run lint:workspace && pnpm run format:check && pnpm run test:unit && pnpm run docs:build && pnpm run pack:check
 
       - name: Publish
-        run: npm publish --access public --provenance
+        run: npm publish --access public
