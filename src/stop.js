@@ -1,11 +1,15 @@
 import { resolve } from "node:path";
 import { getSessionName } from "./lib/yaml-io.js";
 import { outputError } from "./lib/output.js";
-import { killSession } from "./lib/tmux.js";
+import { killSession, stopSessionMonitor } from "./lib/tmux.js";
 
 export async function stop(targetDir, { json } = {}) {
   const dir = resolve(targetDir ?? ".");
-  const session = getSessionName(dir);
+  const { name: session } = getSessionName(dir);
+
+  // Stop the session monitor before killing the session
+  stopSessionMonitor(session);
+
   const result = killSession(session);
 
   if (result.stopped) {
@@ -17,8 +21,5 @@ export async function stop(targetDir, { json } = {}) {
     return;
   }
 
-  outputError(`No active session "${session}" found`, "NOT_RUNNING", {
-    json,
-    exitCode: 1,
-  });
+  outputError(`No active session "${session}" found`, "NOT_RUNNING");
 }

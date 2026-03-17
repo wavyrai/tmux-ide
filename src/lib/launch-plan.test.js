@@ -1,18 +1,16 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { buildPaneCommand, buildThemeOptions, collectPaneStartupPlan } from "./launch-plan.js";
+import { buildPaneCommand, collectPaneStartupPlan } from "./launch-plan.js";
 
 describe("buildPaneCommand", () => {
   it("passes through normal pane commands", () => {
-    assert.strictEqual(buildPaneCommand({ command: "pnpm dev" }, null), "pnpm dev");
+    assert.strictEqual(buildPaneCommand({ command: "pnpm dev" }), "pnpm dev");
   });
 
-  it("does not add unsupported Claude team flags", () => {
-    const team = { name: "my-team" };
-
-    assert.strictEqual(buildPaneCommand({ command: "claude", role: "lead" }, team), "claude");
+  it("returns the command unchanged for Claude panes", () => {
+    assert.strictEqual(buildPaneCommand({ command: "claude", role: "lead" }), "claude");
     assert.strictEqual(
-      buildPaneCommand({ command: "claude", role: "teammate", task: 'Fix "lint"' }, team),
+      buildPaneCommand({ command: "claude", role: "teammate", task: 'Fix "lint"' }),
       "claude",
     );
   });
@@ -37,12 +35,9 @@ describe("collectPaneStartupPlan", () => {
       [["%1", "%2"], ["%3"]],
       new Set(["%1", "%3"]),
       "/workspace",
-      { name: "my-team" },
     );
 
     assert.strictEqual(result.focusPane, "%1");
-    assert.strictEqual(result.leadPane, null);
-    assert.deepStrictEqual(result.teammateCommands, []);
     assert.deepStrictEqual(result.paneActions, [
       {
         targetPane: "%1",
@@ -65,34 +60,6 @@ describe("collectPaneStartupPlan", () => {
         exports: [],
         command: null,
       },
-    ]);
-  });
-});
-
-describe("buildThemeOptions", () => {
-  it("builds tmux option commands from the theme", () => {
-    const options = buildThemeOptions("my-session", { accent: "red", border: "blue" });
-
-    assert.deepStrictEqual(options[0], [
-      "set-option",
-      "-t",
-      "my-session",
-      "pane-border-status",
-      "top",
-    ]);
-    assert.deepStrictEqual(options[2], [
-      "set-option",
-      "-t",
-      "my-session",
-      "pane-border-style",
-      "fg=blue",
-    ]);
-    assert.deepStrictEqual(options[3], [
-      "set-option",
-      "-t",
-      "my-session",
-      "pane-active-border-style",
-      "fg=red",
     ]);
   });
 });

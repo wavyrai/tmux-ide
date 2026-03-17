@@ -31,7 +31,7 @@ function dumpConfig(dir, { json }) {
   try {
     ({ config: cfg } = readConfig(dir));
   } catch (e) {
-    outputError(`Cannot read ide.yml: ${e.message}`, "READ_ERROR", { json });
+    outputError(`Cannot read ide.yml: ${e.message}`, "READ_ERROR");
     return;
   }
 
@@ -46,7 +46,7 @@ function dumpConfig(dir, { json }) {
 function setConfig(dir, args, { json }) {
   const [dotpath, ...rest] = args;
   if (!dotpath || rest.length === 0) {
-    outputError("Usage: tmux-ide config set <dotpath> <value>", "USAGE", { json });
+    outputError("Usage: tmux-ide config set <dotpath> <value>", "USAGE");
     return;
   }
 
@@ -54,12 +54,12 @@ function setConfig(dir, args, { json }) {
   try {
     ({ config: cfg } = readConfig(dir));
   } catch (e) {
-    outputError(`Cannot read ide.yml: ${e.message}`, "READ_ERROR", { json });
+    outputError(`Cannot read ide.yml: ${e.message}`, "READ_ERROR");
     return;
   }
 
   if (!isConfigObject(cfg)) {
-    outputError("Invalid ide.yml: config root must be an object", "INVALID_CONFIG", { json });
+    outputError("Invalid ide.yml: config root must be an object", "INVALID_CONFIG");
     return;
   }
 
@@ -85,7 +85,6 @@ function addPane(dir, args, { json }) {
     outputError(
       "Usage: tmux-ide config add-pane --row <N> --title <T> [--command <C>] [--size <S>]",
       "USAGE",
-      { json },
     );
     return;
   }
@@ -94,30 +93,28 @@ function addPane(dir, args, { json }) {
   try {
     ({ config: cfg } = readConfig(dir));
   } catch (e) {
-    outputError(`Cannot read ide.yml: ${e.message}`, "READ_ERROR", { json });
+    outputError(`Cannot read ide.yml: ${e.message}`, "READ_ERROR");
     return;
   }
 
   if (!Array.isArray(cfg?.rows)) {
-    outputError("Invalid ide.yml: 'rows' must be an array", "INVALID_CONFIG", { json });
+    outputError("Invalid ide.yml: 'rows' must be an array", "INVALID_CONFIG");
     return;
   }
 
   const rowIdx = parseIndex(row);
   if (rowIdx == null) {
-    outputError(`Invalid row index "${row}"`, "USAGE", { json });
+    outputError(`Invalid row index "${row}"`, "USAGE");
     return;
   }
 
   if (!cfg.rows[rowIdx]) {
-    outputError(`Row ${rowIdx} does not exist`, "INVALID_ROW", { json });
+    outputError(`Row ${rowIdx} does not exist`, "INVALID_ROW");
     return;
   }
 
   if (!Array.isArray(cfg.rows[rowIdx].panes)) {
-    outputError(`Invalid ide.yml: row ${rowIdx} panes must be an array`, "INVALID_CONFIG", {
-      json,
-    });
+    outputError(`Invalid ide.yml: row ${rowIdx} panes must be an array`, "INVALID_CONFIG");
     return;
   }
 
@@ -139,7 +136,7 @@ function addPane(dir, args, { json }) {
 function removePane(dir, args, { json }) {
   const { row, pane } = parseNamedArgs(args);
   if (row === undefined || pane === undefined) {
-    outputError("Usage: tmux-ide config remove-pane --row <N> --pane <M>", "USAGE", { json });
+    outputError("Usage: tmux-ide config remove-pane --row <N> --pane <M>", "USAGE");
     return;
   }
 
@@ -147,31 +144,29 @@ function removePane(dir, args, { json }) {
   try {
     ({ config: cfg } = readConfig(dir));
   } catch (e) {
-    outputError(`Cannot read ide.yml: ${e.message}`, "READ_ERROR", { json });
+    outputError(`Cannot read ide.yml: ${e.message}`, "READ_ERROR");
     return;
   }
 
   if (!Array.isArray(cfg?.rows)) {
-    outputError("Invalid ide.yml: 'rows' must be an array", "INVALID_CONFIG", { json });
+    outputError("Invalid ide.yml: 'rows' must be an array", "INVALID_CONFIG");
     return;
   }
 
   const rowIdx = parseIndex(row);
   const paneIdx = parseIndex(pane);
   if (rowIdx == null || paneIdx == null) {
-    outputError("Usage: tmux-ide config remove-pane --row <N> --pane <M>", "USAGE", { json });
+    outputError("Usage: tmux-ide config remove-pane --row <N> --pane <M>", "USAGE");
     return;
   }
 
   if (!Array.isArray(cfg.rows[rowIdx]?.panes)) {
-    outputError(`Invalid ide.yml: row ${rowIdx} panes must be an array`, "INVALID_CONFIG", {
-      json,
-    });
+    outputError(`Invalid ide.yml: row ${rowIdx} panes must be an array`, "INVALID_CONFIG");
     return;
   }
 
   if (!cfg.rows[rowIdx].panes[paneIdx]) {
-    outputError(`Pane ${paneIdx} in row ${rowIdx} does not exist`, "INVALID_PANE", { json });
+    outputError(`Pane ${paneIdx} in row ${rowIdx} does not exist`, "INVALID_PANE");
     return;
   }
 
@@ -192,17 +187,17 @@ function addRow(dir, args, { json }) {
   try {
     ({ config: cfg } = readConfig(dir));
   } catch (e) {
-    outputError(`Cannot read ide.yml: ${e.message}`, "READ_ERROR", { json });
+    outputError(`Cannot read ide.yml: ${e.message}`, "READ_ERROR");
     return;
   }
 
   if (!isConfigObject(cfg)) {
-    outputError("Invalid ide.yml: config root must be an object", "INVALID_CONFIG", { json });
+    outputError("Invalid ide.yml: config root must be an object", "INVALID_CONFIG");
     return;
   }
 
   if (cfg.rows !== undefined && !Array.isArray(cfg.rows)) {
-    outputError("Invalid ide.yml: 'rows' must be an array", "INVALID_CONFIG", { json });
+    outputError("Invalid ide.yml: 'rows' must be an array", "INVALID_CONFIG");
     return;
   }
 
@@ -228,17 +223,17 @@ function enableTeam(dir, args, { json }) {
   try {
     ({ config: cfg } = readConfig(dir));
   } catch (e) {
-    outputError(`Cannot read ide.yml: ${e.message}`, "READ_ERROR", { json });
+    outputError(`Cannot read ide.yml: ${e.message}`, "READ_ERROR");
     return;
   }
 
   if (!isConfigObject(cfg)) {
-    outputError("Invalid ide.yml: config root must be an object", "INVALID_CONFIG", { json });
+    outputError("Invalid ide.yml: config root must be an object", "INVALID_CONFIG");
     return;
   }
 
   if (cfg.rows !== undefined && !Array.isArray(cfg.rows)) {
-    outputError("Invalid ide.yml: 'rows' must be an array", "INVALID_CONFIG", { json });
+    outputError("Invalid ide.yml: 'rows' must be an array", "INVALID_CONFIG");
     return;
   }
 
@@ -261,7 +256,7 @@ function enableTeam(dir, args, { json }) {
   }
   if (!leadAssigned) {
     delete cfg.team;
-    outputError("Cannot enable agent team: no Claude panes found", "INVALID_CONFIG", { json });
+    outputError("Cannot enable agent team: no Claude panes found", "INVALID_CONFIG");
     return;
   }
 
@@ -279,17 +274,17 @@ function disableTeam(dir, { json }) {
   try {
     ({ config: cfg } = readConfig(dir));
   } catch (e) {
-    outputError(`Cannot read ide.yml: ${e.message}`, "READ_ERROR", { json });
+    outputError(`Cannot read ide.yml: ${e.message}`, "READ_ERROR");
     return;
   }
 
   if (!isConfigObject(cfg)) {
-    outputError("Invalid ide.yml: config root must be an object", "INVALID_CONFIG", { json });
+    outputError("Invalid ide.yml: config root must be an object", "INVALID_CONFIG");
     return;
   }
 
   if (cfg.rows !== undefined && !Array.isArray(cfg.rows)) {
-    outputError("Invalid ide.yml: 'rows' must be an array", "INVALID_CONFIG", { json });
+    outputError("Invalid ide.yml: 'rows' must be an array", "INVALID_CONFIG");
     return;
   }
 

@@ -1,25 +1,35 @@
-import { resolve } from "node:path";
+import { resolve, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import { execSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { readConfig, getSessionName } from "./lib/yaml-io.js";
 import { computeSizes, toSplitPercents } from "./lib/sizes.js";
 import { outputError } from "./lib/output.js";
-import { buildThemeOptions, collectPaneStartupPlan } from "./lib/launch-plan.js";
+import { collectPaneStartupPlan } from "./lib/launch-plan.js";
+import { buildSessionOptions } from "./lib/session-options.js";
 import {
   attachSession,
   createDetachedSession,
   getPaneCurrentCommand,
+  getSessionVariable,
   hasSession,
   runSessionCommand,
   selectPane,
   sendLiteral,
   setPaneTitle,
   setSessionEnvironment,
+  setSessionVariable,
   splitPane,
+  startSessionMonitor,
 } from "./lib/tmux.js";
 import { validateConfig } from "./validate.js";
 
 function sleepMs(ms) {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+function configHash(config) {
+  return createHash("sha256").update(JSON.stringify(config)).digest("hex").slice(0, 12);
 }
 
 export function waitForPaneCommand(
@@ -93,7 +103,7 @@ export function buildPaneMap(rows, dir, rootPaneId, splitPane) {
   return { paneMap, firstPanesOfRows };
 }
 
-function loadLaunchConfig(dir, { json } = {}) {
+function loadLaunchConfig(dir) {
   let config;
 
   try {
@@ -103,11 +113,10 @@ function loadLaunchConfig(dir, { json } = {}) {
       outputError(
         `No ide.yml found in ${dir}. Run "tmux-ide init" or "tmux-ide detect --write" to create one.`,
         "CONFIG_NOT_FOUND",
-        { json },
       );
     }
 
-    outputError(`Cannot read ide.yml: ${error.message}`, "READ_ERROR", { json });
+    outputError(`Cannot read ide.yml: ${error.message}`, "READ_ERROR");
   }
 
   const errors = validateConfig(config);
@@ -115,14 +124,13 @@ function loadLaunchConfig(dir, { json } = {}) {
     outputError(
       `Invalid ide.yml in ${dir}. Run "tmux-ide validate" for details.`,
       "INVALID_CONFIG",
-      { json },
     );
   }
 
   return config;
 }
 
-function runBeforeHook(command, dir, { json } = {}) {
+function runBeforeHook(command, dir) {
   if (!command) return;
 
   console.log(`Running: ${command}`);
@@ -130,27 +138,37 @@ function runBeforeHook(command, dir, { json } = {}) {
   try {
     execSync(command, { cwd: dir, stdio: "inherit" });
   } catch {
-    const message = json
-      ? `The "before" hook failed: ${command}`
-      : `The before hook failed: ${command}`;
-    outputError(message, "BEFORE_HOOK_FAILED", { json });
+    outputError(`The before hook failed: ${command}`, "BEFORE_HOOK_FAILED");
   }
 }
 
-export async function launch(targetDir, { json, attach = true } = {}) {
+export async function launch(targetDir, { json = false, attach = true } = {}) {
   const dir = resolve(targetDir ?? ".");
-  const config = loadLaunchConfig(dir, { json });
+  const config = loadLaunchConfig(dir);
 
-  const session = config.name ?? getSessionName(dir);
+  const { name: fallbackName } = getSessionName(dir);
+  const session = config.name ?? fallbackName;
   const rows = config.rows;
   const theme = config.theme ?? {};
   const team = config.team ?? null;
 
-  runBeforeHook(config.before, dir, { json });
+  runBeforeHook(config.before, dir);
 
-  // If session already exists, just attach to it
+  // If session already exists, check for config drift and attach
   if (hasSession(session)) {
-    console.log(`Session "${session}" is already running. Attaching...`);
+    const currentHash = configHash(config);
+    const storedHash = getSessionVariable(session, "@config_hash");
+    const configChanged = Boolean(storedHash && currentHash !== storedHash);
+
+    if (json) {
+      console.log(JSON.stringify({ session, running: true, configChanged }));
+    } else if (configChanged) {
+      console.log(`Session "${session}" is running but ide.yml has changed.`);
+      console.log(`Run "tmux-ide restart" to apply changes.`);
+    } else {
+      console.log(`Session "${session}" is already running. Attaching...`);
+    }
+
     if (attach) {
       attachSession(session);
     }
@@ -176,13 +194,7 @@ export async function launch(targetDir, { json, attach = true } = {}) {
     ({ targetPane, direction, cwd, percent }) => splitPane(targetPane, direction, cwd, percent),
   );
 
-  const { focusPane, leadPane, paneActions, teammateCommands } = collectPaneStartupPlan(
-    rows,
-    paneMap,
-    firstPanesOfRows,
-    dir,
-    team,
-  );
+  const { focusPane, paneActions } = collectPaneStartupPlan(rows, paneMap, firstPanesOfRows, dir);
 
   for (const action of paneActions) {
     if (action.title) {
@@ -202,19 +214,20 @@ export async function launch(targetDir, { json, attach = true } = {}) {
     }
   }
 
-  // Keep a second pass hook available for future staged startup behavior.
-  if (teammateCommands.length > 0) {
-    if (leadPane) {
-      waitForPaneCommand(leadPane, ["claude"]);
-    }
-    for (const { pane: p, cmd } of teammateCommands) {
-      sendLiteral(p, cmd);
-    }
-  }
-
-  for (const command of buildThemeOptions(session, theme)) {
+  for (const command of buildSessionOptions(session, { theme })) {
     runSessionCommand(command);
   }
+
+  // Store config hash for drift detection on re-launch
+  setSessionVariable(session, "@config_hash", configHash(config));
+
+  // Start background session monitor (port detection + agent status)
+  const monitorScript = resolve(
+    dirname(fileURLToPath(import.meta.url)),
+    "lib",
+    "session-monitor.js",
+  );
+  startSessionMonitor(session, monitorScript);
 
   // Focus the correct pane
   selectPane(focusPane);

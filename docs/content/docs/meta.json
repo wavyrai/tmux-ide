@@ -2,6 +2,7 @@
   "title": "Docs",
   "pages": [
     "index",
+    "release-1-2-0",
     "release-1-1-0",
     "getting-started",
     "configuration",

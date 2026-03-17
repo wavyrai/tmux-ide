@@ -5,7 +5,7 @@ import { killSession } from "./lib/tmux.js";
 
 export async function restart(targetDir, { json, attach } = {}) {
   const dir = resolve(targetDir ?? ".");
-  const session = getSessionName(dir);
+  const { name: session } = getSessionName(dir);
   const result = killSession(session);
 
   if (result.stopped) {

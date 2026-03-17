@@ -1,0 +1,101 @@
+---
+title: Version 1.2.0
+description: Release notes for tmux-ide 1.2.0 — real IDE terminal experience
+---
+
+# tmux-ide 1.2.0
+
+Version `1.2.0` transforms tmux-ide sessions from basic pane layouts into a real terminal IDE experience — with mouse support, live process indicators, a two-line clickable status bar, and a cleaner internal architecture.
+
+## Highlights
+
+### Mouse support
+
+Sessions now enable `mouse on` by default. Click to focus panes, scroll with your trackpad, and drag pane borders to resize — no keyboard gymnastics required.
+
+### Two-line status bar with pane tabs
+
+The status bar gains a second line showing all pane titles as clickable tabs. Click a tab to switch to that pane. The active pane is highlighted in your accent color.
+
+```
+Line 0:  MY-PROJECT IDE            ●            14:30 │ Mar 17
+Line 1:  Claude 1 │ Claude 2 │ Dev Server │ Shell
+         ^^^^^^^^ highlighted = active pane
+```
+
+### Live dev server detection
+
+A background monitor detects when a process in any pane starts listening on a TCP port (1024–20000). A green `⏺` dot appears next to that pane's tab — you can tell at a glance whether your dev server is up.
+
+### Agent busy indicator
+
+When Claude or Codex is actively working (spinner visible in the pane title), a pulsing `⏺` dot appears next to the pane tab. When the agent is idle, a dim `●` shows instead. No more switching panes just to check if Claude is still thinking.
+
+### Enhanced pane borders
+
+Pane borders now show the current working directory alongside the title. Active panes use your accent color with a bold `▸` indicator; inactive panes are dimmed with `·`. The `escape-time` is set to `0` for snappy ESC key response.
+
+### Config drift detection
+
+If you edit `ide.yml` while a session is running, `tmux-ide` now detects the change and warns you:
+
+```
+Session "my-project" is running but ide.yml has changed.
+Run "tmux-ide restart" to apply changes.
+```
+
+### `--verbose` debugging
+
+Pass `--verbose` (or set `TMUX_IDE_DEBUG=1`) to log every tmux command to stderr. Makes debugging layout issues transparent instead of blind.
+
+```bash
+$ tmux-ide --verbose
+  [tmux] has-session -t my-project
+  [tmux] new-session -d -P -F #{pane_id} -s my-project ...
+  [tmux] set-option -t my-project mouse on
+  ...
+```
+
+## Architecture improvements
+
+### Unified session monitor (pure JS)
+
+The port watcher and agent status detection — previously two separate shell scripts — are now a single Node.js daemon (`session-monitor.js`). One language, one poll loop, testable with `node --test`. The tmux status format string is now purely declarative — it reads variables, no more `#()` shell calls.
+
+### Composable session options
+
+`buildThemeOptions()` (a growing kitchen-sink function) was split into five composable builders in `session-options.js`: `themeOptions`, `borderOptions`, `behaviorOptions`, `statusBarOptions`, and `keyBindings`. Each is independently testable and returns an array of tmux commands.
+
+### Unified error hierarchy
+
+Three inconsistent error patterns were consolidated into a single hierarchy: `IdeError` → `ConfigError` / `TmuxError` / `SessionError`. No more silent fallbacks. `getSessionName()` now returns `{ name, source }` so callers know whether the name came from config or a fallback.
+
+### Dead code cleanup
+
+Removed unused exports (`output()`), always-null returns (`leadPane`), empty arrays (`teammateCommands`), and unused parameters (`_team`). Cleaner foundation for future features.
+
+## What Changed
+
+- Mouse support enabled by default
+- Two-line status bar with clickable pane tabs
+- Live port detection via background JS monitor
+- Agent busy/idle indicators in status bar
+- Enhanced pane borders showing working directory
+- Config drift detection with user warning
+- `--verbose` flag for tmux command tracing
+- Shell scripts replaced with unified JS daemon
+- Session options split into composable builders
+- Unified `IdeError` hierarchy across all modules
+- Dead code and unused stubs removed
+- 134 tests (up from 112)
+
+## Recommended Upgrade Check
+
+```bash
+npm install -g tmux-ide@latest
+tmux-ide doctor --json
+tmux-ide validate --json
+tmux-ide restart          # to pick up the new status bar and indicators
+```
+
+For contributors: `pnpm check` remains the main pre-release gate.

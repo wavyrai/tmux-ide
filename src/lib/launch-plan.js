@@ -1,13 +1,12 @@
 import { resolve } from "node:path";
 
-export function buildPaneCommand(pane, _team) {
+export function buildPaneCommand(pane) {
   if (!pane.command) return null;
   return pane.command;
 }
 
-export function collectPaneStartupPlan(rows, paneMap, firstPanesOfRows, dir, team) {
+export function collectPaneStartupPlan(rows, paneMap, firstPanesOfRows, dir) {
   let focusPane = paneMap[0][0];
-  const teammateCommands = [];
   const paneActions = [];
 
   for (let rowIdx = 0; rowIdx < rows.length; rowIdx++) {
@@ -33,7 +32,7 @@ export function collectPaneStartupPlan(rows, paneMap, firstPanesOfRows, dir, tea
         action.exports = Object.entries(pane.env).map(([key, value]) => `export ${key}=${value}`);
       }
 
-      const command = buildPaneCommand(pane, team);
+      const command = buildPaneCommand(pane);
       if (command) {
         action.command = command;
       }
@@ -46,38 +45,5 @@ export function collectPaneStartupPlan(rows, paneMap, firstPanesOfRows, dir, tea
     }
   }
 
-  return { focusPane, leadPane: null, paneActions, teammateCommands };
-}
-
-export function buildThemeOptions(session, theme = {}) {
-  const accent = theme.accent ?? "colour75";
-  const border = theme.border ?? "colour238";
-  const bg = theme.bg ?? "colour235";
-  const fg = theme.fg ?? "colour248";
-
-  return [
-    ["set-option", "-t", session, "pane-border-status", "top"],
-    ["set-option", "-t", session, "pane-border-format", " #{?pane_active,#[bold]▸,·} #T "],
-    ["set-option", "-t", session, "pane-border-style", `fg=${border}`],
-    ["set-option", "-t", session, "pane-active-border-style", `fg=${accent}`],
-    ["set-option", "-t", session, "status-style", `bg=${bg},fg=${fg}`],
-    [
-      "set-option",
-      "-t",
-      session,
-      "status-left",
-      `#[fg=colour0,bg=${accent},bold]  ${session.toUpperCase()} IDE #[default] `,
-    ],
-    ["set-option", "-t", session, "status-left-length", "30"],
-    [
-      "set-option",
-      "-t",
-      session,
-      "status-right",
-      `#[fg=colour243]%H:%M #[fg=${accent}]│ #[fg=${fg}]%b %d `,
-    ],
-    ["set-option", "-t", session, "status-justify", "centre"],
-    ["set-option", "-t", session, "window-status-current-format", `#[fg=${accent},bold]●`],
-    ["set-option", "-t", session, "window-status-format", `#[fg=${border}]○`],
-  ];
+  return { focusPane, paneActions };
 }

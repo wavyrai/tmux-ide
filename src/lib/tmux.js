@@ -1,4 +1,7 @@
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
+import { TmuxError } from "./errors.js";
+
+const DEBUG = process.env.TMUX_IDE_DEBUG === "1";
 
 const SESSION_NOT_FOUND_PATTERNS = ["can't find session", "can't find window", "unknown target"];
 
@@ -9,14 +12,7 @@ const TMUX_UNAVAILABLE_PATTERNS = [
   "connection refused",
 ];
 
-export class TmuxError extends Error {
-  constructor(message, code, cause) {
-    super(message);
-    this.name = "TmuxError";
-    this.code = code;
-    this.cause = cause;
-  }
-}
+export { TmuxError };
 
 export function getSessionState(session) {
   try {
@@ -161,7 +157,47 @@ export function runSessionCommand(args) {
   runTmux(args, { stdio: "inherit" });
 }
 
+export function startSessionMonitor(session, monitorScript) {
+  const child = spawn("node", [monitorScript, session], {
+    detached: true,
+    stdio: "ignore",
+  });
+  child.unref();
+  // Store PID as tmux session variable for later cleanup
+  runTmux(["set-option", "-t", session, "@monitor_pid", String(child.pid)]);
+}
+
+export function stopSessionMonitor(session) {
+  try {
+    const pid = runTmux(["show-option", "-gqvt", session, "@monitor_pid"], {
+      encoding: "utf-8",
+    }).trim();
+    if (pid) process.kill(parseInt(pid, 10));
+  } catch {
+    /* session or process already gone */
+  }
+}
+
+export function getSessionVariable(session, name) {
+  try {
+    const raw = runTmux(["show-option", "-gqvt", session, name], {
+      encoding: "utf-8",
+    });
+    return raw.trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+export function setSessionVariable(session, name, value) {
+  runTmux(["set-option", "-t", session, name, value]);
+}
+
 function runTmux(args, options = {}) {
+  if (DEBUG || globalThis.__tmuxIdeVerbose) {
+    console.error(`  [tmux] ${args.join(" ")}`);
+  }
+
   const execOptions = {
     stdio: ["ignore", "pipe", "pipe"],
     ...options,
@@ -178,18 +214,16 @@ function classifyTmuxError(error) {
   const detail = getErrorDetail(error).toLowerCase();
 
   if (SESSION_NOT_FOUND_PATTERNS.some((pattern) => detail.includes(pattern))) {
-    return new TmuxError("tmux session was not found", "SESSION_NOT_FOUND", error);
+    return new TmuxError("tmux session was not found", "SESSION_NOT_FOUND", { cause: error });
   }
 
   if (TMUX_UNAVAILABLE_PATTERNS.some((pattern) => detail.includes(pattern))) {
-    return new TmuxError(
-      "tmux is unavailable or its socket is inaccessible",
-      "TMUX_UNAVAILABLE",
-      error,
-    );
+    return new TmuxError("tmux is unavailable or its socket is inaccessible", "TMUX_UNAVAILABLE", {
+      cause: error,
+    });
   }
 
-  return new TmuxError("tmux command failed", "TMUX_ERROR", error);
+  return new TmuxError("tmux command failed", "TMUX_ERROR", { cause: error });
 }
 
 function getErrorDetail(error) {

@@ -13,7 +13,8 @@ import { validate } from "../src/validate.js";
 import { detect } from "../src/detect.js";
 import { config } from "../src/config.js";
 import { restart } from "../src/restart.js";
-import { CommandError, printCommandError } from "../src/lib/output.js";
+import { IdeError } from "../src/lib/errors.js";
+import { printCommandError } from "../src/lib/output.js";
 
 const { positionals, values } = parseArgs({
   allowPositionals: true,
@@ -28,6 +29,7 @@ const { positionals, values } = parseArgs({
     write: { type: "boolean" },
     template: { type: "string" },
     name: { type: "string" },
+    verbose: { type: "boolean", default: false },
     help: { type: "boolean", short: "h" },
     version: { type: "boolean", short: "v" },
   },
@@ -55,6 +57,10 @@ if (values.version) {
   const pkg = require("../package.json");
   console.log(`tmux-ide v${pkg.version}`);
   process.exit(0);
+}
+
+if (values.verbose) {
+  globalThis.__tmuxIdeVerbose = true;
 }
 
 const firstPositional = positionals[0];
@@ -102,6 +108,7 @@ ${bold("Flags:")}
   ${cyan("--json")}                      ${dim("Output as JSON (all commands)")}
   ${cyan("--template <name>")}           ${dim("Use specific template for init")}
   ${cyan("--write")}                     ${dim("Write detected config to ide.yml")}
+  ${cyan("--verbose")}                   ${dim("Log all tmux commands (or set TMUX_IDE_DEBUG=1)")}
   ${cyan("-h, --help")}                  ${dim("Show usage")}
   ${cyan("-v, --version")}               ${dim("Show version number")}`);
 }
@@ -195,14 +202,13 @@ try {
       break;
 
     default:
-      throw new CommandError(`Unknown command: ${command}\nRun "tmux-ide help" for usage.`, {
+      throw new IdeError(`Unknown command: ${command}\nRun "tmux-ide help" for usage.`, {
         code: "USAGE",
         exitCode: 1,
-        json,
       });
   }
 } catch (error) {
-  if (error instanceof CommandError) {
+  if (error instanceof IdeError) {
     printCommandError(error, { json });
   } else {
     throw error;

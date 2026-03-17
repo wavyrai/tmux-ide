@@ -19,8 +19,8 @@ export function writeConfig(dir, config) {
 export function getSessionName(dir) {
   try {
     const { config } = readConfig(dir);
-    return config.name ?? basename(dir);
+    return { name: config.name ?? basename(dir), source: config.name ? "config" : "fallback" };
   } catch {
-    return basename(dir);
+    return { name: basename(dir), source: "fallback" };
   }
 }

@@ -5,7 +5,7 @@ import { getSessionState, listPanes } from "./lib/tmux.js";
 
 export async function status(targetDir, { json } = {}) {
   const dir = resolve(targetDir ?? ".");
-  const session = getSessionName(dir);
+  const { name: session } = getSessionName(dir);
   const configExists = existsSync(resolve(dir, "ide.yml"));
 
   const state = getSessionState(session);

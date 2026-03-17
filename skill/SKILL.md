@@ -164,6 +164,38 @@ tmux-ide config disable-team
 
 Removes the `team` config and all `role`/`task` fields from panes.
 
+## Session features (v1.2.0)
+
+tmux-ide sessions include these built-in features:
+
+### Mouse support
+
+Mouse is enabled by default. Users can click to focus panes, scroll with trackpad, and drag pane borders to resize.
+
+### Two-line status bar
+
+```
+Line 0:  MY-PROJECT IDE            ●            14:30 │ Mar 17
+Line 1:  ⏺ Claude 1 │ ● Claude 2 │ ⏺ Dev Server │ Shell
+```
+
+- Line 0: session name, window indicators, time/date
+- Line 1: clickable pane tabs (click to switch panes)
+- Green `⏺` next to panes with a running dev server (listening TCP port)
+- Pulsing `⏺` next to panes where Claude/Codex is actively working
+- Dim `●` next to panes where Claude/Codex is idle
+
+### Config drift detection
+
+If `ide.yml` is edited while a session is running, `tmux-ide` warns the user and suggests `tmux-ide restart` to apply changes.
+
+### Debugging
+
+```bash
+tmux-ide --verbose          # Log all tmux commands to stderr
+TMUX_IDE_DEBUG=1 tmux-ide   # Same via env var
+```
+
 ## Programmatic CLI
 
 All commands support `--json` for structured output.
@@ -200,6 +232,7 @@ tmux-ide stop         # Kill session
 tmux-ide restart      # Stop and relaunch
 tmux-ide attach       # Reattach
 tmux-ide init         # Scaffold config
+tmux-ide --verbose    # Launch with tmux command tracing
 ```
 
 ## Modification workflow
@@ -207,6 +240,7 @@ tmux-ide init         # Scaffold config
 1. Read: `tmux-ide config --json`
 2. Modify: `tmux-ide config set <path> <value>` or `add-pane`/`remove-pane`
 3. Validate: `tmux-ide validate --json`
+4. Apply: `tmux-ide restart` (needed if session is already running)
 
 ## Best practices
 
@@ -218,6 +252,7 @@ tmux-ide init         # Scaffold config
 - Use `detect --json` first to understand the project stack
 - For agent teams: assign specific tasks to teammate panes so your prompts stay focused
 - The team lead should have `focus: true` for easy access
+- Use `tmux-ide --verbose` or `TMUX_IDE_DEBUG=1` when debugging layout issues
 
 ## ide.yml format
 

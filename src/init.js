@@ -11,20 +11,14 @@ export async function init({ template, json } = {}) {
   const configPath = resolve(dir, "ide.yml");
 
   if (existsSync(configPath)) {
-    outputError("ide.yml already exists in this directory", "EXISTS", { json });
+    outputError("ide.yml already exists in this directory", "EXISTS");
   }
 
   // If a specific template is requested, use it
   if (template) {
     const templatePath = resolve(__dirname, "..", "templates", `${template}.yml`);
     if (!existsSync(templatePath)) {
-      outputError(
-        json
-          ? `Template "${template}" not found`
-          : `Template "${template}" not found. Available: default, nextjs, convex, vite, python, go, agent-team, agent-team-nextjs, agent-team-monorepo`,
-        "NOT_FOUND",
-        { json },
-      );
+      outputError(`Template "${template}" not found`, "NOT_FOUND");
     }
 
     let content = readFileSync(templatePath, "utf-8");

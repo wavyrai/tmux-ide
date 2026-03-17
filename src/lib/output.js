@@ -1,23 +1,4 @@
-export function output(data, { json } = {}) {
-  if (json) {
-    console.log(JSON.stringify(data, null, 2));
-  } else if (typeof data === "string") {
-    console.log(data);
-  } else {
-    console.log(data);
-  }
-}
-
-export class CommandError extends Error {
-  constructor(message, { code, exitCode = 1, details, json = false } = {}) {
-    super(message);
-    this.name = "CommandError";
-    this.code = code;
-    this.exitCode = exitCode;
-    this.details = details;
-    this.json = json;
-  }
-}
+import { IdeError } from "./errors.js";
 
 export function printLayout(config) {
   const INNER = 40;
@@ -37,51 +18,49 @@ export function printLayout(config) {
 
     // Top border or mid divider
     if (r === 0) {
-      let top = "  ┌";
+      let top = "  \u250c";
       for (let i = 0; i < count; i++) {
-        top += "─".repeat(widths[i]);
-        top += i < count - 1 ? "┬" : "┐";
+        top += "\u2500".repeat(widths[i]);
+        top += i < count - 1 ? "\u252c" : "\u2510";
       }
       console.log(top);
     } else {
-      console.log("  ├" + "─".repeat(INNER + count - 1) + "┤");
+      console.log("  \u251c" + "\u2500".repeat(INNER + count - 1) + "\u2524");
     }
 
     // Content line
     const sizeLabel = rows[r].size ?? "";
-    let line = "  │";
+    let line = "  \u2502";
     for (let i = 0; i < count; i++) {
       const title = panes[i]?.title ?? "";
       const w = widths[i];
       const pad = Math.max(0, w - title.length);
       const left = Math.floor(pad / 2);
       const right = pad - left;
-      line += " ".repeat(left) + title + " ".repeat(right) + "│";
+      line += " ".repeat(left) + title + " ".repeat(right) + "\u2502";
     }
     if (sizeLabel) line += "  " + sizeLabel;
     console.log(line);
 
     // Bottom border (last row only)
     if (r === rows.length - 1) {
-      let bot = "  └";
+      let bot = "  \u2514";
       for (let i = 0; i < count; i++) {
-        bot += "─".repeat(widths[i]);
-        bot += i < count - 1 ? "┴" : "┘";
+        bot += "\u2500".repeat(widths[i]);
+        bot += i < count - 1 ? "\u2534" : "\u2518";
       }
       console.log(bot);
     }
   }
 }
 
-export function outputError(message, code, { json, exitCode = 1, details } = {}) {
-  throw new CommandError(message, { code, exitCode, details, json });
+export function outputError(message, code, { exitCode = 1 } = {}) {
+  throw new IdeError(message, { code, exitCode });
 }
 
-export function printCommandError(error, { json = error?.json ?? false } = {}) {
+export function printCommandError(error, { json = false } = {}) {
   if (json) {
-    const payload = { error: error.message, code: error.code };
-    if (error.details !== undefined) payload.details = error.details;
-    console.error(JSON.stringify(payload, null, 2));
+    console.error(JSON.stringify(error.toJSON(), null, 2));
   } else {
     console.error(error.message);
   }

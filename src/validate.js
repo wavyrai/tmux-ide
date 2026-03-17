@@ -130,7 +130,7 @@ export async function validate(targetDir, { json } = {}) {
   try {
     ({ config } = readConfig(dir));
   } catch (e) {
-    outputError(`Cannot read ide.yml: ${e.message}`, "READ_ERROR", { json });
+    outputError(`Cannot read ide.yml: ${e.message}`, "READ_ERROR");
     return;
   }
 

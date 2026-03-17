@@ -67,7 +67,7 @@ export async function inspect(targetDir, { json } = {}) {
   try {
     ({ config, configPath } = readConfig(dir));
   } catch (error) {
-    outputError(`Cannot read ide.yml: ${error.message}`, "READ_ERROR", { json });
+    outputError(`Cannot read ide.yml: ${error.message}`, "READ_ERROR");
     return;
   }
 
