@@ -1,6 +1,6 @@
 {
   "name": "tmux-ide",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "Turn any project into a tmux-powered terminal IDE with a simple ide.yml",
   "type": "module",
   "bin": {

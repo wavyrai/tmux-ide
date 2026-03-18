@@ -40,7 +40,10 @@ export function hasSession(session) {
     runTmux(["has-session", "-t", session]);
     return true;
   } catch (error) {
-    if (error instanceof TmuxError && error.code === "SESSION_NOT_FOUND") {
+    if (
+      error instanceof TmuxError &&
+      (error.code === "SESSION_NOT_FOUND" || error.code === "TMUX_UNAVAILABLE")
+    ) {
       return false;
     }
     throw error;
