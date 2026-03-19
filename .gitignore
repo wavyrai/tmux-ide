@@ -24,5 +24,8 @@ context/
 # local planning artifacts
 plans/
 
+# local task board
+.tasks/
+
 # TypeScript build output
 dist/

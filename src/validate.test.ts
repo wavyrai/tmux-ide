@@ -241,11 +241,20 @@ describe("validateConfig", () => {
     assert.deepStrictEqual(errors, []);
   });
 
+  it("accepts type: tasks pane", () => {
+    const errors = validateConfig({
+      rows: [{ panes: [{ type: "tasks", title: "Tasks" }] }],
+    });
+    assert.deepStrictEqual(errors, []);
+  });
+
   it("rejects invalid type value", () => {
     const errors = validateConfig({
       rows: [{ panes: [{ type: "invalid" }] }],
     });
-    assert.ok(errors.includes('rows[0].panes[0].type must be "explorer", "changes", or "preview"'));
+    assert.ok(
+      errors.includes('rows[0].panes[0].type must be "explorer", "changes", "preview", or "tasks"'),
+    );
   });
 
   it("rejects type and command together", () => {
