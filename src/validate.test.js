@@ -118,7 +118,7 @@ describe("validateConfig", () => {
 
   it("rejects 0% size", () => {
     const errors = validateConfig({ rows: [{ size: "0%", panes: [{}] }] });
-    assert.ok(errors.some((e) => e.includes("must not be 0%")));
+    assert.ok(errors.some((e) => e.includes("must be a percentage")));
   });
 
   it("rejects >100% size", () => {
@@ -162,6 +162,65 @@ describe("validateConfig", () => {
   it("rejects non-object theme", () => {
     const errors = validateConfig({ rows: [{ panes: [{}] }], theme: "blue" });
     assert.ok(errors.includes("'theme' must be an object"));
+  });
+
+  it("rejects leading zeros in size (00%, 007%)", () => {
+    const errors = validateConfig({ rows: [{ size: "007%", panes: [{ size: "00%" }] }] });
+    assert.ok(errors.some((e) => e.includes('rows[0].size "007%"') && e.includes("percentage")));
+    assert.ok(
+      errors.some((e) => e.includes('rows[0].panes[0].size "00%"') && e.includes("percentage")),
+    );
+  });
+
+  it("rejects row sizes summing over 100%", () => {
+    const errors = validateConfig({
+      rows: [
+        { size: "70%", panes: [{}] },
+        { size: "40%", panes: [{}] },
+      ],
+    });
+    assert.ok(errors.some((e) => e.includes("Row sizes sum to 110%")));
+  });
+
+  it("accepts row sizes summing to exactly 100%", () => {
+    const errors = validateConfig({
+      rows: [
+        { size: "70%", panes: [{}] },
+        { size: "30%", panes: [{}] },
+      ],
+    });
+    assert.deepStrictEqual(errors, []);
+  });
+
+  it("rejects multiple focus: true in one row", () => {
+    const errors = validateConfig({
+      rows: [{ panes: [{ focus: true }, { focus: true }] }],
+    });
+    assert.ok(errors.some((e) => e.includes("Row 0 has 2 panes with focus: true")));
+  });
+
+  it("accepts single focus: true per row", () => {
+    const errors = validateConfig({
+      rows: [
+        { panes: [{ focus: true }, {}] },
+        { panes: [{}, { focus: true }] },
+      ],
+    });
+    assert.deepStrictEqual(errors, []);
+  });
+
+  it("rejects pane sizes summing over 100% in a row", () => {
+    const errors = validateConfig({
+      rows: [{ panes: [{ size: "60%" }, { size: "50%" }] }],
+    });
+    assert.ok(errors.some((e) => e.includes("Row 0 pane sizes sum to 110%")));
+  });
+
+  it("accepts pane sizes summing to exactly 100%", () => {
+    const errors = validateConfig({
+      rows: [{ panes: [{ size: "60%" }, { size: "40%" }] }],
+    });
+    assert.deepStrictEqual(errors, []);
   });
 
   it("collects multiple errors at once", () => {
