@@ -1,9 +1,13 @@
+import "@opentui/solid/runtime-plugin-support";
+import { readFileSync } from "node:fs";
+import { extname } from "node:path";
 import { parseArgs } from "node:util";
 import { render, useKeyboard, useTerminalDimensions } from "@opentui/solid";
 import { RGBA } from "@opentui/core";
-import { createSignal, createMemo, onMount, onCleanup, batch } from "solid-js";
+import { createSignal, createMemo, createEffect, onMount, onCleanup, batch } from "solid-js";
 import { Header } from "./header.tsx";
 import { FileTree } from "./tree.tsx";
+import { FilePreview } from "./preview.tsx";
 import { Footer } from "./footer.tsx";
 import {
   buildRootNodes,
@@ -38,8 +42,66 @@ const dir = values.dir ?? process.cwd();
 const targetTitle = values.target ?? null;
 const themeConfig = values.theme ? JSON.parse(values.theme) : undefined;
 
+const MAX_PREVIEW_LINES = 200;
+const BINARY_EXTENSIONS = new Set([
+  ".png",
+  ".jpg",
+  ".jpeg",
+  ".gif",
+  ".bmp",
+  ".ico",
+  ".webp",
+  ".svg",
+  ".woff",
+  ".woff2",
+  ".ttf",
+  ".otf",
+  ".eot",
+  ".mp3",
+  ".mp4",
+  ".wav",
+  ".ogg",
+  ".webm",
+  ".zip",
+  ".tar",
+  ".gz",
+  ".bz2",
+  ".7z",
+  ".rar",
+  ".pdf",
+  ".doc",
+  ".docx",
+  ".xls",
+  ".xlsx",
+  ".exe",
+  ".dll",
+  ".so",
+  ".dylib",
+  ".o",
+  ".a",
+  ".bin",
+  ".dat",
+  ".db",
+  ".sqlite",
+  ".wasm",
+  ".tgz",
+]);
+
 function toRGBA(c: { r: number; g: number; b: number; a: number }): RGBA {
   return RGBA.fromInts(c.r, c.g, c.b, c.a);
+}
+
+function loadFilePreview(absolutePath: string, relativePath: string): string | null {
+  const ext = extname(relativePath).toLowerCase();
+  if (BINARY_EXTENSIONS.has(ext)) return null;
+  try {
+    const content = readFileSync(absolutePath, "utf-8");
+    // Check for binary content (null bytes)
+    if (content.includes("\0")) return null;
+    return content.split("\n").slice(0, MAX_PREVIEW_LINES).join("\n");
+  } catch {
+    return null;
+  }
 }
 
 render(
@@ -57,8 +119,38 @@ render(
     const [selected, setSelected] = createSignal(0);
     const [showHidden, setShowHidden] = createSignal(false);
     const [inputMode, setInputMode] = createSignal<"keyboard" | "mouse">("keyboard");
+    const [previewContent, setPreviewContent] = createSignal<string | null>(null);
+    const [previewPath, setPreviewPath] = createSignal<string | null>(null);
+    const [focusArea, setFocusArea] = createSignal<"tree" | "preview">("tree");
 
     const flatNodes = createMemo(() => flattenVisibleNodes(rootNodes()));
+
+    // Load file preview when selection changes
+    createEffect(() => {
+      const nodes = flatNodes();
+      const current = nodes[selected()];
+      if (current && !current.entry.isDir) {
+        const content = loadFilePreview(current.entry.absolutePath, current.entry.path);
+        if (content !== null) {
+          setPreviewContent(content);
+          setPreviewPath(current.entry.path);
+        } else {
+          setPreviewContent("(binary file)");
+          setPreviewPath(current.entry.path);
+        }
+      } else {
+        setPreviewContent(null);
+        setPreviewPath(null);
+      }
+    });
+
+    const treeHeight = createMemo(() => {
+      const total = dimensions().height;
+      // Header: 2, Footer: 2, Separator: 1
+      const chrome = 5;
+      const available = total - chrome;
+      return previewContent() !== null ? Math.floor(available * 0.5) : available;
+    });
 
     // File watcher
     let stopFileWatch: (() => Promise<void>) | null = null;
@@ -98,20 +190,13 @@ render(
       return findPaneByPattern(session, "claude");
     }
 
-    function activateNode(node: TreeNode): void {
-      if (node.entry.isDir) {
-        if (node.expanded) {
-          collapseNode(node);
-        } else {
-          expandNode(node, dir, ig, gitMap(), showHidden());
-        }
-        setRootNodes([...rootNodes()]);
+    function toggleDir(node: TreeNode): void {
+      if (node.expanded) {
+        collapseNode(node);
       } else {
-        const targetId = resolveTargetPane();
-        if (targetId) {
-          openFileInEditor(session, targetId, node.entry.path);
-        }
+        expandNode(node, dir, ig, gitMap(), showHidden());
       }
+      setRootNodes([...rootNodes()]);
     }
 
     // Keyboard navigation
@@ -121,19 +206,32 @@ render(
       const current = nodes[selected()];
 
       if (evt.name === "up" || evt.name === "k") {
-        setSelected((i) => Math.max(0, i - 1));
+        if (focusArea() === "tree") {
+          setSelected((i) => Math.max(0, i - 1));
+        }
         evt.preventDefault();
       } else if (evt.name === "down" || evt.name === "j") {
-        setSelected((i) => Math.min(nodes.length - 1, i + 1));
+        if (focusArea() === "tree") {
+          setSelected((i) => Math.min(nodes.length - 1, i + 1));
+        }
         evt.preventDefault();
       } else if (evt.name === "return" || evt.name === "l" || evt.name === "right") {
-        if (current) activateNode(current);
+        if (current?.entry.isDir) {
+          toggleDir(current);
+        } else if (current) {
+          setFocusArea("preview");
+        }
         evt.preventDefault();
       } else if (evt.name === "h" || evt.name === "left") {
-        if (current?.expanded) {
+        if (focusArea() === "preview") {
+          setFocusArea("tree");
+        } else if (current?.expanded) {
           collapseNode(current);
           setRootNodes([...rootNodes()]);
         }
+        evt.preventDefault();
+      } else if (evt.name === "tab") {
+        setFocusArea((f) => (f === "tree" ? "preview" : "tree"));
         evt.preventDefault();
       } else if (evt.name === "c" && current && !current.entry.isDir) {
         const targetId = resolveTargetPane();
@@ -179,14 +277,22 @@ render(
         backgroundColor={toRGBA(theme.bg)}
       >
         <Header branch={branch()} fileCount={flatNodes().length} theme={theme} />
-        <FileTree
-          nodes={flatNodes()}
-          selected={selected()}
+        <box maxHeight={treeHeight()}>
+          <FileTree
+            nodes={flatNodes()}
+            selected={selected()}
+            theme={theme}
+            inputMode={inputMode()}
+            onSelect={setSelected}
+            onToggleDir={toggleDir}
+            onInputModeChange={setInputMode}
+          />
+        </box>
+        <FilePreview
+          content={previewContent()}
+          filePath={previewPath()}
           theme={theme}
-          inputMode={inputMode()}
-          onSelect={setSelected}
-          onActivate={activateNode}
-          onInputModeChange={setInputMode}
+          focused={focusArea() === "preview"}
         />
         <Footer theme={theme} />
       </box>

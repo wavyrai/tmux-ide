@@ -33,7 +33,7 @@ interface FileTreeProps {
   theme: WidgetTheme;
   inputMode: "keyboard" | "mouse";
   onSelect: (index: number) => void;
-  onActivate: (node: TreeNode) => void;
+  onToggleDir: (node: TreeNode) => void;
   onInputModeChange: (mode: "keyboard" | "mouse") => void;
 }
 
@@ -82,7 +82,9 @@ export function FileTree(props: FileTreeProps) {
                 props.onSelect(index());
               }}
               onMouseUp={() => {
-                props.onActivate(node);
+                if (node.entry.isDir) {
+                  props.onToggleDir(node);
+                }
               }}
               onMouseOver={() => {
                 if (props.inputMode !== "mouse") return;

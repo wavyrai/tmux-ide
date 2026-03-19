@@ -12,7 +12,9 @@ interface FooterProps {
 export function Footer(props: FooterProps) {
   return (
     <box flexShrink={0} paddingTop={1} paddingLeft={1}>
-      <text fg={toRGBA(props.theme.fgMuted)}>Enter:open c:claude o:edit H:hidden q:quit</text>
+      <text fg={toRGBA(props.theme.fgMuted)}>
+        ↑↓:nav ⏎:expand Tab:focus c:claude o:edit H:hidden q:quit
+      </text>
     </box>
   );
 }
