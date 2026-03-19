@@ -16,7 +16,7 @@
   "scripts": {
     "clean": "rm -rf dist",
     "build": "pnpm run clean && tsc && pnpm run build:widgets",
-    "build:widgets": "node --experimental-strip-types script/build-widgets.ts",
+    "build:widgets": "bun script/build-widgets.ts",
     "typecheck": "tsc --noEmit",
     "dev": "node --experimental-strip-types bin/cli.js",
     "test": "node --experimental-strip-types --test src/*.test.ts src/lib/*.test.ts src/widgets/lib/*.test.ts",
@@ -68,8 +68,6 @@
     "@types/node": "^25.5.0",
     "@typescript-eslint/eslint-plugin": "^8.57.1",
     "@typescript-eslint/parser": "^8.57.1",
-    "esbuild": "^0.27.4",
-    "esbuild-plugin-solid": "^0.6.0",
     "eslint": "^10.0.3",
     "globals": "^17.4.0",
     "prettier": "^3.8.1",

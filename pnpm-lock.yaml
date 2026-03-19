@@ -39,12 +39,6 @@ importers:
       '@typescript-eslint/parser':
         specifier: ^8.57.1
         version: 8.57.1(eslint@10.0.3(jiti@2.6.1))(typescript@5.9.3)
-      esbuild:
-        specifier: ^0.27.4
-        version: 0.27.4
-      esbuild-plugin-solid:
-        specifier: ^0.6.0
-        version: 0.6.0(esbuild@0.27.4)(solid-js@1.9.11)
       eslint:
         specifier: ^10.0.3
         version: 10.0.3(jiti@2.6.1)
@@ -1861,12 +1855,6 @@ packages:
 
   esast-util-from-js@2.0.1:
     resolution: {integrity: sha512-8Ja+rNJ0Lt56Pcf3TAmpBZjmx8ZcK5Ts4cAzIOjsjevg9oSXJnl6SUQ2EevU8tv3h6ZLWmoKL5H4fgWvdvfETw==}
-
-  esbuild-plugin-solid@0.6.0:
-    resolution: {integrity: sha512-V1FvDALwLDX6K0XNYM9CMRAnMzA0+Ecu55qBUT9q/eAJh1KIDsTMFoOzMSgyHqbOfvrVfO3Mws3z7TW2GVnIZA==}
-    peerDependencies:
-      esbuild: '>=0.20'
-      solid-js: '>= 1.0'
 
   esbuild@0.27.4:
     resolution: {integrity: sha512-Rq4vbHnYkK5fws5NF7MYTU68FPRE1ajX7heQ/8QXXWqNgqqJ/GkmmyxIzUnf2Sr/bakf8l54716CcMGHYhMrrQ==}
@@ -4941,16 +4929,6 @@ snapshots:
       acorn: 8.16.0
       esast-util-from-estree: 2.0.0
       vfile-message: 4.0.3
-
-  esbuild-plugin-solid@0.6.0(esbuild@0.27.4)(solid-js@1.9.11):
-    dependencies:
-      '@babel/core': 7.28.0
-      '@babel/preset-typescript': 7.27.1(@babel/core@7.28.0)
-      babel-preset-solid: 1.9.10(@babel/core@7.28.0)(solid-js@1.9.11)
-      esbuild: 0.27.4
-      solid-js: 1.9.11
-    transitivePeerDependencies:
-      - supports-color
 
   esbuild@0.27.4:
     optionalDependencies:
