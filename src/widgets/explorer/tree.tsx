@@ -31,6 +31,10 @@ interface FileTreeProps {
   nodes: TreeNode[];
   selected: number;
   theme: WidgetTheme;
+  inputMode: "keyboard" | "mouse";
+  onSelect: (index: number) => void;
+  onActivate: (node: TreeNode) => void;
+  onInputModeChange: (mode: "keyboard" | "mouse") => void;
 }
 
 export function FileTree(props: FileTreeProps) {
@@ -71,6 +75,19 @@ export function FileTree(props: FileTreeProps) {
               backgroundColor={isSelected() ? toRGBA(props.theme.selected) : TRANSPARENT}
               flexDirection="row"
               justifyContent="space-between"
+              onMouseMove={() => {
+                props.onInputModeChange("mouse");
+              }}
+              onMouseDown={() => {
+                props.onSelect(index());
+              }}
+              onMouseUp={() => {
+                props.onActivate(node);
+              }}
+              onMouseOver={() => {
+                if (props.inputMode !== "mouse") return;
+                props.onSelect(index());
+              }}
             >
               <text
                 fg={isSelected() ? toRGBA(props.theme.selectedText) : toRGBA(props.theme.fg)}
