@@ -11,11 +11,16 @@ const TRANSPARENT = RGBA.fromInts(0, 0, 0, 0);
 
 function getStatusLabel(status: string): string {
   switch (status) {
-    case "M": return " M";
-    case "A": return " A";
-    case "D": return " D";
-    case "?": return " ?";
-    default:  return "";
+    case "M":
+      return " M";
+    case "A":
+      return " A";
+    case "D":
+      return " D";
+    case "?":
+      return " ?";
+    default:
+      return "";
   }
 }
 
@@ -24,11 +29,16 @@ function getStatusColor(
   theme: WidgetTheme,
 ): { r: number; g: number; b: number; a: number } {
   switch (status) {
-    case "M": return theme.gitModified;
-    case "A": return theme.gitAdded;
-    case "D": return theme.gitDeleted;
-    case "?": return theme.gitUntracked;
-    default:  return theme.fgMuted;
+    case "M":
+      return theme.gitModified;
+    case "A":
+      return theme.gitAdded;
+    case "D":
+      return theme.gitDeleted;
+    case "?":
+      return theme.gitUntracked;
+    default:
+      return theme.fgMuted;
   }
 }
 
@@ -88,7 +98,13 @@ export function FileTree(props: FileTreeProps) {
           const isSelected = createMemo(() => index() === props.selected);
           const icon = node.entry.isDir ? "> " : "  ";
           const nameColor = () =>
-            getNameColor(node.entry.name, node.entry.isDir, isSelected(), node.entry.ignored, props.theme);
+            getNameColor(
+              node.entry.name,
+              node.entry.isDir,
+              isSelected(),
+              node.entry.ignored,
+              props.theme,
+            );
           const rowBg = () =>
             isSelected()
               ? toRGBA(props.theme.selected)
@@ -113,7 +129,9 @@ export function FileTree(props: FileTreeProps) {
               }}
             >
               <text fg={toRGBA(nameColor())} wrapMode="none" flexGrow={1}>
-                {icon}{node.entry.name}{node.entry.isDir ? "/" : ""}
+                {icon}
+                {node.entry.name}
+                {node.entry.isDir ? "/" : ""}
               </text>
               <Show when={node.gitStatus}>
                 <text
@@ -125,11 +143,7 @@ export function FileTree(props: FileTreeProps) {
                 </text>
               </Show>
               <Show when={isSelected() && !node.entry.isDir}>
-                <text
-                  fg={toRGBA(props.theme.fgMuted)}
-                  flexShrink={0}
-                  wrapMode="none"
-                >
+                <text fg={toRGBA(props.theme.fgMuted)} flexShrink={0} wrapMode="none">
                   {" c: send to claude code"}
                 </text>
               </Show>

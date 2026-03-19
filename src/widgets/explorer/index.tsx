@@ -46,10 +46,12 @@ function toRGBA(c: { r: number; g: number; b: number; a: number }): RGBA {
 function getTmuxOption(key: string): string | null {
   if (!session) return null;
   try {
-    return execFileSync("tmux", ["show-option", "-t", session, "-v", key], {
-      encoding: "utf-8",
-      stdio: ["ignore", "pipe", "ignore"],
-    }).trim() || null;
+    return (
+      execFileSync("tmux", ["show-option", "-t", session, "-v", key], {
+        encoding: "utf-8",
+        stdio: ["ignore", "pipe", "ignore"],
+      }).trim() || null
+    );
   } catch {
     return null;
   }
@@ -92,9 +94,15 @@ render(
     const [branch, setBranch] = createSignal(hasGit ? getGitBranch(dir) : null);
     const [currentDir, setCurrentDir] = createSignal(dir);
     const [history, setHistory] = createSignal<string[]>([]);
-    const [showHidden, setShowHidden] = createSignal(getTmuxOption("@explorer_show_hidden") === "1");
-    const [showIgnored, setShowIgnored] = createSignal(getTmuxOption("@explorer_show_ignored") === "1");
-    const [rootNodes, setRootNodes] = createSignal(buildRootNodes(dir, dir, ig, gitMap(), showHidden(), showIgnored()));
+    const [showHidden, setShowHidden] = createSignal(
+      getTmuxOption("@explorer_show_hidden") === "1",
+    );
+    const [showIgnored, setShowIgnored] = createSignal(
+      getTmuxOption("@explorer_show_ignored") === "1",
+    );
+    const [rootNodes, setRootNodes] = createSignal(
+      buildRootNodes(dir, dir, ig, gitMap(), showHidden(), showIgnored()),
+    );
     const [selected, setSelected] = createSignal(0);
     const [inputMode, setInputMode] = createSignal<"keyboard" | "mouse">("keyboard");
     const [searchMode, setSearchMode] = createSignal(false);
@@ -145,7 +153,9 @@ render(
       setHistory((h) => [...h, currentDir()]);
       setCurrentDir(dirPath);
       setSelected(0);
-      setRootNodes(buildRootNodes(dirPath, dir, ig, gitMap(), showHidden(), effectiveShowIgnored(dirPath)));
+      setRootNodes(
+        buildRootNodes(dirPath, dir, ig, gitMap(), showHidden(), effectiveShowIgnored(dirPath)),
+      );
     }
 
     function navigateUp(): void {
@@ -155,7 +165,9 @@ render(
         setHistory(h.slice(0, -1));
         setCurrentDir(prev);
         setSelected(0);
-        setRootNodes(buildRootNodes(prev, dir, ig, gitMap(), showHidden(), effectiveShowIgnored(prev)));
+        setRootNodes(
+          buildRootNodes(prev, dir, ig, gitMap(), showHidden(), effectiveShowIgnored(prev)),
+        );
       }
     }
 
@@ -163,7 +175,16 @@ render(
       setHistory((h) => [...h, currentDir()]);
       setCurrentDir(absolutePath);
       setSelected(0);
-      setRootNodes(buildRootNodes(absolutePath, dir, ig, gitMap(), showHidden(), effectiveShowIgnored(absolutePath)));
+      setRootNodes(
+        buildRootNodes(
+          absolutePath,
+          dir,
+          ig,
+          gitMap(),
+          showHidden(),
+          effectiveShowIgnored(absolutePath),
+        ),
+      );
     }
 
     // File watcher
@@ -253,7 +274,12 @@ render(
       } else if (evt.name === "return" || evt.name === "l" || evt.name === "right") {
         if (current) activateNode(current);
         evt.preventDefault();
-      } else if (evt.name === "h" || evt.name === "left" || evt.name === "backspace" || evt.name === "-") {
+      } else if (
+        evt.name === "h" ||
+        evt.name === "left" ||
+        evt.name === "backspace" ||
+        evt.name === "-"
+      ) {
         navigateUp();
         evt.preventDefault();
       } else if (evt.name === "/") {
@@ -300,14 +326,25 @@ render(
         const next = !showHidden();
         setShowHidden(next);
         setTmuxOption("@explorer_show_hidden", next ? "1" : "0");
-        setRootNodes(buildRootNodes(currentDir(), dir, ig, gitMap(), next, effectiveShowIgnored(currentDir())));
+        setRootNodes(
+          buildRootNodes(currentDir(), dir, ig, gitMap(), next, effectiveShowIgnored(currentDir())),
+        );
         setSelected(0);
         evt.preventDefault();
       } else if (evt.shift && evt.name === "i") {
         const next = !showIgnored();
         setShowIgnored(next);
         setTmuxOption("@explorer_show_ignored", next ? "1" : "0");
-        setRootNodes(buildRootNodes(currentDir(), dir, ig, gitMap(), showHidden(), next || isInsideIgnored(currentDir())));
+        setRootNodes(
+          buildRootNodes(
+            currentDir(),
+            dir,
+            ig,
+            gitMap(),
+            showHidden(),
+            next || isInsideIgnored(currentDir()),
+          ),
+        );
         setSelected(0);
         evt.preventDefault();
       } else if (evt.name === "r") {

@@ -94,6 +94,33 @@ export function updateTaskAssignee(
   }
 }
 
+export function updateTaskField(
+  projectDir: string,
+  taskId: string,
+  fields: Partial<Pick<Task, "title" | "description" | "branch" | "tags">>,
+): void {
+  const dir = getTasksDir(projectDir);
+  if (!existsSync(dir)) return;
+  const files = readdirSync(dir).filter((f) => f.endsWith(".json"));
+
+  for (const file of files) {
+    const filePath = join(dir, file);
+    try {
+      const raw = readFileSync(filePath, "utf-8");
+      const task = JSON.parse(raw) as Task;
+      if (task.id === taskId) {
+        if (fields.title !== undefined) task.title = fields.title;
+        if (fields.description !== undefined) task.description = fields.description;
+        if (fields.branch !== undefined) task.branch = fields.branch;
+        if (fields.tags !== undefined) task.tags = fields.tags;
+        task.updated = new Date().toISOString();
+        writeFileSync(filePath, JSON.stringify(task, null, 2) + "\n");
+        return;
+      }
+    } catch {}
+  }
+}
+
 export function createTask(projectDir: string, tasks: Task[]): Task {
   ensureTasksDir(projectDir);
   const dir = getTasksDir(projectDir);
@@ -153,14 +180,21 @@ export function nextStatus(current: TaskStatus): TaskStatus {
   return cycle[(idx + 1) % cycle.length]!;
 }
 
-// Build a flat list of selectable items (tasks only, not section headers)
+export type FlatItem =
+  | { kind: "header"; status: TaskStatus; count: number }
+  | { kind: "task"; task: Task; taskIndex: number };
+
+// Build a flat list with headers interleaved — indices match DOM order
 export function flattenTaskList(
   groups: { status: TaskStatus; tasks: Task[] }[],
-): { task: Task; sectionIdx: number }[] {
-  const result: { task: Task; sectionIdx: number }[] = [];
-  for (let s = 0; s < groups.length; s++) {
-    for (const task of groups[s]!.tasks) {
-      result.push({ task, sectionIdx: s });
+): FlatItem[] {
+  const result: FlatItem[] = [];
+  let taskIdx = 0;
+  for (const group of groups) {
+    if (group.tasks.length === 0) continue;
+    result.push({ kind: "header", status: group.status, count: group.tasks.length });
+    for (const task of group.tasks) {
+      result.push({ kind: "task", task, taskIndex: taskIdx++ });
     }
   }
   return result;
