@@ -1,13 +1,11 @@
 import "@opentui/solid/runtime-plugin-support";
-import { readFileSync } from "node:fs";
-import { extname } from "node:path";
+import { execFileSync } from "node:child_process";
 import { parseArgs } from "node:util";
 import { render, useKeyboard, useTerminalDimensions } from "@opentui/solid";
 import { RGBA } from "@opentui/core";
 import { createSignal, createMemo, createEffect, onMount, onCleanup, batch } from "solid-js";
 import { Breadcrumbs } from "./breadcrumbs.tsx";
 import { FileTree } from "./tree.tsx";
-import { FilePreview } from "./preview.tsx";
 import { Footer } from "./footer.tsx";
 import {
   buildRootNodes,
@@ -42,64 +40,24 @@ const dir = values.dir ?? process.cwd();
 const targetTitle = values.target ?? null;
 const themeConfig = values.theme ? JSON.parse(values.theme) : undefined;
 
-const MAX_PREVIEW_LINES = 200;
-const BINARY_EXTENSIONS = new Set([
-  ".png",
-  ".jpg",
-  ".jpeg",
-  ".gif",
-  ".bmp",
-  ".ico",
-  ".webp",
-  ".svg",
-  ".woff",
-  ".woff2",
-  ".ttf",
-  ".otf",
-  ".eot",
-  ".mp3",
-  ".mp4",
-  ".wav",
-  ".ogg",
-  ".webm",
-  ".zip",
-  ".tar",
-  ".gz",
-  ".bz2",
-  ".7z",
-  ".rar",
-  ".pdf",
-  ".doc",
-  ".docx",
-  ".xls",
-  ".xlsx",
-  ".exe",
-  ".dll",
-  ".so",
-  ".dylib",
-  ".o",
-  ".a",
-  ".bin",
-  ".dat",
-  ".db",
-  ".sqlite",
-  ".wasm",
-  ".tgz",
-]);
-
 function toRGBA(c: { r: number; g: number; b: number; a: number }): RGBA {
   return RGBA.fromInts(c.r, c.g, c.b, c.a);
 }
 
-function loadFilePreview(absolutePath: string, relativePath: string): string | null {
-  const ext = extname(relativePath).toLowerCase();
-  if (BINARY_EXTENSIONS.has(ext)) return null;
+function setPreviewFile(filePath: string | null): void {
+  if (!session) return;
   try {
-    const content = readFileSync(absolutePath, "utf-8");
-    if (content.includes("\0")) return null;
-    return content.split("\n").slice(0, MAX_PREVIEW_LINES).join("\n");
+    if (filePath) {
+      execFileSync("tmux", ["set-option", "-t", session, "@preview_file", filePath], {
+        stdio: "ignore",
+      });
+    } else {
+      execFileSync("tmux", ["set-option", "-t", session, "-u", "@preview_file"], {
+        stdio: "ignore",
+      });
+    }
   } catch {
-    return null;
+    // tmux not available or session doesn't exist
   }
 }
 
@@ -120,36 +78,18 @@ render(
     const [selected, setSelected] = createSignal(0);
     const [showHidden, setShowHidden] = createSignal(false);
     const [inputMode, setInputMode] = createSignal<"keyboard" | "mouse">("keyboard");
-    const [previewContent, setPreviewContent] = createSignal<string | null>(null);
-    const [previewPath, setPreviewPath] = createSignal<string | null>(null);
-    const [focusArea, setFocusArea] = createSignal<"tree" | "preview">("tree");
 
     const flatNodes = createMemo(() => flattenVisibleNodes(rootNodes()));
 
-    // Load file preview when selection changes
+    // Set tmux session variable when selection changes
     createEffect(() => {
       const nodes = flatNodes();
       const current = nodes[selected()];
       if (current && !current.entry.isDir) {
-        const content = loadFilePreview(current.entry.absolutePath, current.entry.path);
-        if (content !== null) {
-          setPreviewContent(content);
-          setPreviewPath(current.entry.path);
-        } else {
-          setPreviewContent("(binary file)");
-          setPreviewPath(current.entry.path);
-        }
+        setPreviewFile(current.entry.path);
       } else {
-        setPreviewContent(null);
-        setPreviewPath(null);
+        setPreviewFile(null);
       }
-    });
-
-    const treeHeight = createMemo(() => {
-      const total = dimensions().height;
-      const chrome = 5;
-      const available = total - chrome;
-      return previewContent() !== null ? Math.floor(available * 0.5) : available;
     });
 
     // Navigation functions
@@ -157,7 +97,6 @@ render(
       setHistory((h) => [...h, currentDir()]);
       setCurrentDir(dirPath);
       setSelected(0);
-      setFocusArea("tree");
       setRootNodes(buildRootNodes(dirPath, dir, ig, gitMap(), showHidden()));
     }
 
@@ -168,7 +107,6 @@ render(
         setHistory(h.slice(0, -1));
         setCurrentDir(prev);
         setSelected(0);
-        setFocusArea("tree");
         setRootNodes(buildRootNodes(prev, dir, ig, gitMap(), showHidden()));
       }
     }
@@ -177,7 +115,6 @@ render(
       setHistory((h) => [...h, currentDir()]);
       setCurrentDir(absolutePath);
       setSelected(0);
-      setFocusArea("tree");
       setRootNodes(buildRootNodes(absolutePath, dir, ig, gitMap(), showHidden()));
     }
 
@@ -235,26 +172,18 @@ render(
       const current = nodes[selected()];
 
       if (evt.name === "up" || evt.name === "k") {
-        if (focusArea() === "tree") {
-          setSelected((i) => Math.max(0, i - 1));
-        }
+        setSelected((i) => Math.max(0, i - 1));
         evt.preventDefault();
       } else if (evt.name === "down" || evt.name === "j") {
-        if (focusArea() === "tree") {
-          setSelected((i) => Math.min(nodes.length - 1, i + 1));
-        }
+        setSelected((i) => Math.min(nodes.length - 1, i + 1));
         evt.preventDefault();
       } else if (evt.name === "return" || evt.name === "l" || evt.name === "right") {
         if (current?.entry.isDir) {
           navigateInto(current.entry.absolutePath);
-        } else if (current) {
-          setFocusArea("preview");
         }
         evt.preventDefault();
       } else if (evt.name === "h" || evt.name === "left") {
-        if (focusArea() === "preview") {
-          setFocusArea("tree");
-        } else if (current?.expanded) {
+        if (current?.expanded) {
           collapseNode(current);
           setRootNodes([...rootNodes()]);
         } else {
@@ -263,9 +192,6 @@ render(
         evt.preventDefault();
       } else if (evt.name === "backspace" || evt.name === "-") {
         navigateUp();
-        evt.preventDefault();
-      } else if (evt.name === "tab") {
-        setFocusArea((f) => (f === "tree" ? "preview" : "tree"));
         evt.preventDefault();
       } else if (evt.name === "c" && current && !current.entry.isDir) {
         const targetId = resolveTargetPane();
@@ -317,22 +243,14 @@ render(
           theme={theme}
           onNavigate={navigateTo}
         />
-        <box maxHeight={treeHeight()}>
-          <FileTree
-            nodes={flatNodes()}
-            selected={selected()}
-            theme={theme}
-            inputMode={inputMode()}
-            onSelect={setSelected}
-            onToggleDir={toggleDir}
-            onInputModeChange={setInputMode}
-          />
-        </box>
-        <FilePreview
-          content={previewContent()}
-          filePath={previewPath()}
+        <FileTree
+          nodes={flatNodes()}
+          selected={selected()}
           theme={theme}
-          focused={focusArea() === "preview"}
+          inputMode={inputMode()}
+          onSelect={setSelected}
+          onToggleDir={toggleDir}
+          onInputModeChange={setInputMode}
         />
         <Footer theme={theme} />
       </box>
