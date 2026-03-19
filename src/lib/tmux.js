@@ -161,7 +161,7 @@ export function runSessionCommand(args) {
 }
 
 export function startSessionMonitor(session, monitorScript) {
-  const child = spawn("node", [monitorScript, session], {
+  const child = _spawner("node", [monitorScript, session], {
     detached: true,
     stdio: "ignore",
   });
@@ -196,6 +196,27 @@ export function setSessionVariable(session, name, value) {
   runTmux(["set-option", "-t", session, name, value]);
 }
 
+let _executor = execFileSync;
+let _spawner = spawn;
+
+/** @internal Replace the executor for testing. Returns a restore function. */
+export function _setExecutor(fn) {
+  const prev = _executor;
+  _executor = fn;
+  return () => {
+    _executor = prev;
+  };
+}
+
+/** @internal Replace the spawner for testing. Returns a restore function. */
+export function _setSpawner(fn) {
+  const prev = _spawner;
+  _spawner = fn;
+  return () => {
+    _spawner = prev;
+  };
+}
+
 function runTmux(args, options = {}) {
   if (DEBUG || globalThis.__tmuxIdeVerbose) {
     console.error(`  [tmux] ${args.join(" ")}`);
@@ -207,7 +228,7 @@ function runTmux(args, options = {}) {
   };
 
   try {
-    return execFileSync("tmux", args, execOptions);
+    return _executor("tmux", args, execOptions);
   } catch (error) {
     throw classifyTmuxError(error);
   }
