@@ -5,10 +5,10 @@ import { attachSession, getSessionState } from "./lib/tmux.ts";
 
 export async function attach(
   targetDir: string | undefined,
-  { json: _json }: { json?: boolean } = {},
+  { json: _json, session: targetSession }: { json?: boolean; session?: string } = {},
 ): Promise<void> {
   const dir = resolve(targetDir ?? ".");
-  const { name: session } = getSessionName(dir);
+  const session = targetSession ?? getSessionName(dir).name;
   const state = getSessionState(session);
 
   if (!state.running) {

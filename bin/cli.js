@@ -29,6 +29,10 @@ const { positionals, values } = parseArgs({
     write: { type: "boolean" },
     template: { type: "string" },
     name: { type: "string" },
+    new: { type: "boolean" },
+    session: { type: "string" },
+    all: { type: "boolean" },
+    filter: { type: "boolean" },
     verbose: { type: "boolean", default: false },
     help: { type: "boolean", short: "h" },
     version: { type: "boolean", short: "v" },
@@ -106,6 +110,10 @@ ${bold("Usage:")}
 
 ${bold("Flags:")}
   ${cyan("--json")}                      ${dim("Output as JSON (all commands)")}
+  ${cyan("--new")}                       ${dim("Launch a new parallel session instance")}
+  ${cyan("--session <name>")}            ${dim("Target a specific session (stop/attach/status/restart/inspect)")}
+  ${cyan("--all")}                       ${dim("Stop all instances of this project's session")}
+  ${cyan("--filter")}                    ${dim("Filter ls output to this project's sessions")}
   ${cyan("--template <name>")}           ${dim("Use specific template for init")}
   ${cyan("--write")}                     ${dim("Write detected config to ide.yml")}
   ${cyan("--verbose")}                   ${dim("Log all tmux commands (or set TMUX_IDE_DEBUG=1)")}
@@ -116,7 +124,7 @@ ${bold("Flags:")}
 try {
   switch (command) {
     case "start":
-      await launch(startTargetDir, { json });
+      await launch(startTargetDir, { json, newInstance: values.new });
       break;
 
     case "init":
@@ -124,19 +132,19 @@ try {
       break;
 
     case "stop":
-      await stop(positionals[1], { json });
+      await stop(positionals[1], { json, session: values.session, all: values.all });
       break;
 
     case "attach":
-      await attach(positionals[1], { json });
+      await attach(positionals[1], { json, session: values.session });
       break;
 
     case "restart":
-      await restart(positionals[1], { json });
+      await restart(positionals[1], { json, session: values.session });
       break;
 
     case "ls":
-      await ls({ json });
+      await ls({ json, filter: values.filter });
       break;
 
     case "doctor":
@@ -144,11 +152,11 @@ try {
       break;
 
     case "status":
-      await status(positionals[1], { json });
+      await status(positionals[1], { json, session: values.session });
       break;
 
     case "inspect":
-      await inspect(positionals[1], { json });
+      await inspect(positionals[1], { json, session: values.session });
       break;
 
     case "validate":
