@@ -1,9 +1,4 @@
-import {
-  execFileSync,
-  spawn,
-  type SpawnOptions,
-  type ExecFileSyncOptions,
-} from "node:child_process";
+import { execFileSync, spawn, type ExecFileSyncOptions } from "node:child_process";
 import { TmuxError } from "./errors.ts";
 import type { SessionState } from "../types.ts";
 
@@ -246,7 +241,6 @@ export function _setSpawner(fn: Spawner): () => void {
 }
 
 declare global {
-  // eslint-disable-next-line no-var
   var __tmuxIdeVerbose: boolean | undefined;
 }
 

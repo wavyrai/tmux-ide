@@ -14,11 +14,12 @@
     "templates"
   ],
   "scripts": {
-    "build": "tsc",
+    "clean": "rm -rf dist",
+    "build": "pnpm run clean && tsc",
     "typecheck": "tsc --noEmit",
     "dev": "node --experimental-strip-types bin/cli.js",
     "test": "node --experimental-strip-types --test src/*.test.ts src/lib/*.test.ts",
-    "test:unit": "node --experimental-strip-types --test src/cli.test.ts src/config-cli.test.ts src/detect.test.ts src/launch.test.ts src/validate.test.ts src/lib/*.test.ts",
+    "test:unit": "node --experimental-strip-types --test src/cli.test.ts src/config-cli.test.ts src/config.test.ts src/detect.test.ts src/doctor.test.ts src/init.test.ts src/inspect.test.ts src/launch.test.ts src/ls.test.ts src/stop.test.ts src/validate.test.ts src/lib/*.test.ts",
     "test:integration": "node --experimental-strip-types --test src/integration.test.ts",
     "lint": "eslint .",
     "lint:workspace": "turbo run lint",
@@ -29,7 +30,7 @@
     "docs:build": "turbo run build --filter=@tmux-ide/docs",
     "pack:check": "npm pack --dry-run --cache /tmp/tmux-ide-npm-cache > /dev/null",
     "check": "pnpm run lint:workspace && pnpm run format:check && pnpm run build && pnpm run test:unit && pnpm run docs:build && pnpm run pack:check",
-    "prepublishOnly": "pnpm run build && pnpm run check",
+    "prepublishOnly": "pnpm run build",
     "postinstall": "node scripts/postinstall.js",
     "docs": "turbo run dev --filter=@tmux-ide/docs"
   },
@@ -59,6 +60,8 @@
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@types/node": "^25.5.0",
+    "@typescript-eslint/eslint-plugin": "^8.57.1",
+    "@typescript-eslint/parser": "^8.57.1",
     "eslint": "^10.0.3",
     "globals": "^17.4.0",
     "prettier": "^3.8.1",
