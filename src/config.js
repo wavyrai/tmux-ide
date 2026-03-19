@@ -3,6 +3,38 @@ import { readConfig, writeConfig } from "./lib/yaml-io.js";
 import { setByPath } from "./lib/dot-path.js";
 import { outputError } from "./lib/output.js";
 
+/**
+ * Read config safely (read-only, no write). Returns config or undefined on error.
+ */
+function readConfigSafe(dir) {
+  let cfg;
+  try {
+    ({ config: cfg } = readConfig(dir));
+  } catch (e) {
+    outputError(`Cannot read ide.yml: ${e.message}`, "READ_ERROR");
+    return;
+  }
+  return cfg;
+}
+
+/**
+ * Read config, validate it's an object, run mutator, then write back.
+ * Returns the mutator's return value, or undefined on error.
+ */
+function withConfig(dir, mutator) {
+  const cfg = readConfigSafe(dir);
+  if (cfg === undefined) return;
+
+  if (!isConfigObject(cfg)) {
+    outputError("Invalid ide.yml: config root must be an object", "INVALID_CONFIG");
+    return;
+  }
+
+  const result = mutator(cfg);
+  writeConfig(dir, cfg);
+  return result;
+}
+
 export async function config(targetDir, { json, action, args } = {}) {
   const dir = resolve(targetDir ?? ".");
 
@@ -27,18 +59,12 @@ export async function config(targetDir, { json, action, args } = {}) {
 }
 
 function dumpConfig(dir, { json }) {
-  let cfg;
-  try {
-    ({ config: cfg } = readConfig(dir));
-  } catch (e) {
-    outputError(`Cannot read ide.yml: ${e.message}`, "READ_ERROR");
-    return;
-  }
+  const cfg = readConfigSafe(dir);
+  if (cfg === undefined) return;
 
   if (json) {
     console.log(JSON.stringify(cfg, null, 2));
   } else {
-    // Pretty print for humans
     console.log(JSON.stringify(cfg, null, 2));
   }
 }
@@ -50,27 +76,14 @@ function setConfig(dir, args, { json }) {
     return;
   }
 
-  let cfg;
-  try {
-    ({ config: cfg } = readConfig(dir));
-  } catch (e) {
-    outputError(`Cannot read ide.yml: ${e.message}`, "READ_ERROR");
-    return;
-  }
-
-  if (!isConfigObject(cfg)) {
-    outputError("Invalid ide.yml: config root must be an object", "INVALID_CONFIG");
-    return;
-  }
-
   let value = rest.join(" ");
-  // Try to parse as number or boolean
   if (value === "true") value = true;
   else if (value === "false") value = false;
   else if (/^\d+$/.test(value)) value = parseInt(value);
 
-  setByPath(cfg, dotpath, value);
-  writeConfig(dir, cfg);
+  withConfig(dir, (cfg) => {
+    setByPath(cfg, dotpath, value);
+  });
 
   if (json) {
     console.log(JSON.stringify({ ok: true, path: dotpath, value }, null, 2));
@@ -89,32 +102,9 @@ function addPane(dir, args, { json }) {
     return;
   }
 
-  let cfg;
-  try {
-    ({ config: cfg } = readConfig(dir));
-  } catch (e) {
-    outputError(`Cannot read ide.yml: ${e.message}`, "READ_ERROR");
-    return;
-  }
-
-  if (!Array.isArray(cfg?.rows)) {
-    outputError("Invalid ide.yml: 'rows' must be an array", "INVALID_CONFIG");
-    return;
-  }
-
   const rowIdx = parseIndex(row);
   if (rowIdx == null) {
     outputError(`Invalid row index "${row}"`, "USAGE");
-    return;
-  }
-
-  if (!cfg.rows[rowIdx]) {
-    outputError(`Row ${rowIdx} does not exist`, "INVALID_ROW");
-    return;
-  }
-
-  if (!Array.isArray(cfg.rows[rowIdx].panes)) {
-    outputError(`Invalid ide.yml: row ${rowIdx} panes must be an array`, "INVALID_CONFIG");
     return;
   }
 
@@ -123,8 +113,21 @@ function addPane(dir, args, { json }) {
   if (command) pane.command = command;
   if (size) pane.size = size;
 
-  cfg.rows[rowIdx].panes.push(pane);
-  writeConfig(dir, cfg);
+  withConfig(dir, (cfg) => {
+    if (!Array.isArray(cfg.rows)) {
+      outputError("Invalid ide.yml: 'rows' must be an array", "INVALID_CONFIG");
+    }
+
+    if (!cfg.rows[rowIdx]) {
+      outputError(`Row ${rowIdx} does not exist`, "INVALID_ROW");
+    }
+
+    if (!Array.isArray(cfg.rows[rowIdx].panes)) {
+      outputError(`Invalid ide.yml: row ${rowIdx} panes must be an array`, "INVALID_CONFIG");
+    }
+
+    cfg.rows[rowIdx].panes.push(pane);
+  });
 
   if (json) {
     console.log(JSON.stringify({ ok: true, row: rowIdx, pane }, null, 2));
@@ -140,19 +143,6 @@ function removePane(dir, args, { json }) {
     return;
   }
 
-  let cfg;
-  try {
-    ({ config: cfg } = readConfig(dir));
-  } catch (e) {
-    outputError(`Cannot read ide.yml: ${e.message}`, "READ_ERROR");
-    return;
-  }
-
-  if (!Array.isArray(cfg?.rows)) {
-    outputError("Invalid ide.yml: 'rows' must be an array", "INVALID_CONFIG");
-    return;
-  }
-
   const rowIdx = parseIndex(row);
   const paneIdx = parseIndex(pane);
   if (rowIdx == null || paneIdx == null) {
@@ -160,18 +150,22 @@ function removePane(dir, args, { json }) {
     return;
   }
 
-  if (!Array.isArray(cfg.rows[rowIdx]?.panes)) {
-    outputError(`Invalid ide.yml: row ${rowIdx} panes must be an array`, "INVALID_CONFIG");
-    return;
-  }
+  let removed;
+  withConfig(dir, (cfg) => {
+    if (!Array.isArray(cfg.rows)) {
+      outputError("Invalid ide.yml: 'rows' must be an array", "INVALID_CONFIG");
+    }
 
-  if (!cfg.rows[rowIdx].panes[paneIdx]) {
-    outputError(`Pane ${paneIdx} in row ${rowIdx} does not exist`, "INVALID_PANE");
-    return;
-  }
+    if (!Array.isArray(cfg.rows[rowIdx]?.panes)) {
+      outputError(`Invalid ide.yml: row ${rowIdx} panes must be an array`, "INVALID_CONFIG");
+    }
 
-  const removed = cfg.rows[rowIdx].panes.splice(paneIdx, 1)[0];
-  writeConfig(dir, cfg);
+    if (!cfg.rows[rowIdx].panes[paneIdx]) {
+      outputError(`Pane ${paneIdx} in row ${rowIdx} does not exist`, "INVALID_PANE");
+    }
+
+    removed = cfg.rows[rowIdx].panes.splice(paneIdx, 1)[0];
+  });
 
   if (json) {
     console.log(JSON.stringify({ ok: true, row: rowIdx, pane: paneIdx, removed }, null, 2));
@@ -183,32 +177,19 @@ function removePane(dir, args, { json }) {
 function addRow(dir, args, { json }) {
   const { size } = parseNamedArgs(args);
 
-  let cfg;
-  try {
-    ({ config: cfg } = readConfig(dir));
-  } catch (e) {
-    outputError(`Cannot read ide.yml: ${e.message}`, "READ_ERROR");
-    return;
-  }
+  let rowIdx;
+  withConfig(dir, (cfg) => {
+    if (cfg.rows !== undefined && !Array.isArray(cfg.rows)) {
+      outputError("Invalid ide.yml: 'rows' must be an array", "INVALID_CONFIG");
+    }
 
-  if (!isConfigObject(cfg)) {
-    outputError("Invalid ide.yml: config root must be an object", "INVALID_CONFIG");
-    return;
-  }
+    const row = { panes: [{ title: "Shell" }] };
+    if (size) row.size = size;
+    cfg.rows = cfg.rows ?? [];
+    cfg.rows.push(row);
+    rowIdx = cfg.rows.length - 1;
+  });
 
-  if (cfg.rows !== undefined && !Array.isArray(cfg.rows)) {
-    outputError("Invalid ide.yml: 'rows' must be an array", "INVALID_CONFIG");
-    return;
-  }
-
-  const row = { panes: [{ title: "Shell" }] };
-  if (size) row.size = size;
-
-  cfg.rows = cfg.rows ?? [];
-  cfg.rows.push(row);
-  writeConfig(dir, cfg);
-
-  const rowIdx = cfg.rows.length - 1;
   if (json) {
     console.log(JSON.stringify({ ok: true, row: rowIdx, size: size ?? null }, null, 2));
   } else {
@@ -219,85 +200,59 @@ function addRow(dir, args, { json }) {
 function enableTeam(dir, args, { json }) {
   const { name } = parseNamedArgs(args);
 
-  let cfg;
-  try {
-    ({ config: cfg } = readConfig(dir));
-  } catch (e) {
-    outputError(`Cannot read ide.yml: ${e.message}`, "READ_ERROR");
-    return;
-  }
+  let teamName;
+  let result;
+  withConfig(dir, (cfg) => {
+    if (cfg.rows !== undefined && !Array.isArray(cfg.rows)) {
+      outputError("Invalid ide.yml: 'rows' must be an array", "INVALID_CONFIG");
+    }
 
-  if (!isConfigObject(cfg)) {
-    outputError("Invalid ide.yml: config root must be an object", "INVALID_CONFIG");
-    return;
-  }
+    teamName = name ?? cfg.name ?? "my-team";
+    cfg.team = { name: teamName };
 
-  if (cfg.rows !== undefined && !Array.isArray(cfg.rows)) {
-    outputError("Invalid ide.yml: 'rows' must be an array", "INVALID_CONFIG");
-    return;
-  }
-
-  const teamName = name ?? cfg.name ?? "my-team";
-  cfg.team = { name: teamName };
-
-  // Find claude panes and assign roles: first as lead, rest as teammates
-  let leadAssigned = false;
-  for (const row of cfg.rows ?? []) {
-    for (const pane of row.panes ?? []) {
-      if (pane.command === "claude" || pane.role === "lead" || pane.role === "teammate") {
-        if (!leadAssigned) {
-          pane.role = "lead";
-          leadAssigned = true;
-        } else {
-          pane.role = "teammate";
+    let leadAssigned = false;
+    for (const row of cfg.rows ?? []) {
+      for (const pane of row.panes ?? []) {
+        if (pane.command === "claude" || pane.role === "lead" || pane.role === "teammate") {
+          if (!leadAssigned) {
+            pane.role = "lead";
+            leadAssigned = true;
+          } else {
+            pane.role = "teammate";
+          }
         }
       }
     }
-  }
-  if (!leadAssigned) {
-    delete cfg.team;
-    outputError("Cannot enable agent team: no Claude panes found", "INVALID_CONFIG");
-    return;
-  }
+    if (!leadAssigned) {
+      delete cfg.team;
+      outputError("Cannot enable agent team: no Claude panes found", "INVALID_CONFIG");
+    }
 
-  writeConfig(dir, cfg);
+    result = { team: cfg.team, roles: summarizeRoles(cfg) };
+  });
 
   if (json) {
-    console.log(JSON.stringify({ ok: true, team: cfg.team, roles: summarizeRoles(cfg) }, null, 2));
+    console.log(JSON.stringify({ ok: true, ...result }, null, 2));
   } else {
     console.log(`Enabled agent team "${teamName}"`);
   }
 }
 
 function disableTeam(dir, { json }) {
-  let cfg;
-  try {
-    ({ config: cfg } = readConfig(dir));
-  } catch (e) {
-    outputError(`Cannot read ide.yml: ${e.message}`, "READ_ERROR");
-    return;
-  }
-
-  if (!isConfigObject(cfg)) {
-    outputError("Invalid ide.yml: config root must be an object", "INVALID_CONFIG");
-    return;
-  }
-
-  if (cfg.rows !== undefined && !Array.isArray(cfg.rows)) {
-    outputError("Invalid ide.yml: 'rows' must be an array", "INVALID_CONFIG");
-    return;
-  }
-
-  delete cfg.team;
-  for (const row of cfg.rows ?? []) {
-    if (!Array.isArray(row?.panes)) continue;
-    for (const pane of row.panes ?? []) {
-      delete pane.role;
-      delete pane.task;
+  withConfig(dir, (cfg) => {
+    if (cfg.rows !== undefined && !Array.isArray(cfg.rows)) {
+      outputError("Invalid ide.yml: 'rows' must be an array", "INVALID_CONFIG");
     }
-  }
 
-  writeConfig(dir, cfg);
+    delete cfg.team;
+    for (const row of cfg.rows ?? []) {
+      if (!Array.isArray(row?.panes)) continue;
+      for (const pane of row.panes) {
+        delete pane.role;
+        delete pane.task;
+      }
+    }
+  });
 
   if (json) {
     console.log(JSON.stringify({ ok: true, disabled: true }, null, 2));
