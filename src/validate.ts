@@ -73,6 +73,18 @@ export function validateConfig(config: unknown): string[] {
         if (pane.task !== undefined && typeof pane.task !== "string") {
           errors.push(`rows[${i}].panes[${j}].task must be a string`);
         }
+        if (pane.type !== undefined) {
+          const validTypes = ["explorer", "changes"];
+          if (typeof pane.type !== "string" || !validTypes.includes(pane.type)) {
+            errors.push(`rows[${i}].panes[${j}].type must be "explorer" or "changes"`);
+          }
+          if (pane.command !== undefined) {
+            errors.push(`rows[${i}].panes[${j}] cannot have both 'type' and 'command'`);
+          }
+        }
+        if (pane.target !== undefined && typeof pane.target !== "string") {
+          errors.push(`rows[${i}].panes[${j}].target must be a string`);
+        }
       }
 
       // Check multiple focus panes in this row

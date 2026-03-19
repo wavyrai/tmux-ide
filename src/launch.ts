@@ -23,6 +23,7 @@ import {
   startSessionMonitor,
 } from "./lib/tmux.ts";
 import { validateConfig } from "./validate.ts";
+import { resolveWidgetCommand } from "./widgets/resolve.ts";
 import type { IdeConfig, Row } from "./types.ts";
 
 interface SplitPaneArgs {
@@ -235,7 +236,15 @@ export async function launch(
       sendLiteral(action.targetPane, exportCommand);
     }
 
-    if (action.command) {
+    if (action.widgetType) {
+      const widgetCmd = resolveWidgetCommand(action.widgetType, {
+        session,
+        dir,
+        target: action.widgetTarget ?? null,
+        theme: config.theme ?? null,
+      });
+      sendLiteral(action.targetPane, widgetCmd);
+    } else if (action.command) {
       sendLiteral(action.targetPane, action.command);
     }
   }

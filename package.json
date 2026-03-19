@@ -15,7 +15,8 @@
   ],
   "scripts": {
     "clean": "rm -rf dist",
-    "build": "pnpm run clean && tsc",
+    "build": "pnpm run clean && tsc && pnpm run build:widgets",
+    "build:widgets": "node --experimental-strip-types script/build-widgets.ts",
     "typecheck": "tsc --noEmit",
     "dev": "node --experimental-strip-types bin/cli.js",
     "test": "node --experimental-strip-types --test src/*.test.ts src/lib/*.test.ts",
@@ -55,13 +56,20 @@
   "license": "MIT",
   "packageManager": "pnpm@10.21.0",
   "dependencies": {
-    "js-yaml": "^4.1.1"
+    "@opentui/core": "^0.1.88",
+    "@opentui/solid": "^0.1.88",
+    "@parcel/watcher": "^2.5.6",
+    "ignore": "^7.0.5",
+    "js-yaml": "^4.1.1",
+    "solid-js": "^1.9.11"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@types/node": "^25.5.0",
     "@typescript-eslint/eslint-plugin": "^8.57.1",
     "@typescript-eslint/parser": "^8.57.1",
+    "esbuild": "^0.27.4",
+    "esbuild-plugin-solid": "^0.6.0",
     "eslint": "^10.0.3",
     "globals": "^17.4.0",
     "prettier": "^3.8.1",

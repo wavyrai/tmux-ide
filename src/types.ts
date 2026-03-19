@@ -14,6 +14,8 @@ export interface Row {
 export interface Pane {
   title?: string;
   command?: string;
+  type?: "explorer" | "changes";
+  target?: string;
   dir?: string;
   size?: string;
   focus?: boolean;
@@ -37,6 +39,8 @@ export interface PaneAction {
   chdir: string | null;
   exports: string[];
   command: string | null;
+  widgetType: string | null;
+  widgetTarget: string | null;
 }
 
 export interface SessionState {
