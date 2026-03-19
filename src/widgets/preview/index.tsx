@@ -302,8 +302,10 @@ render(
             <Show when={fileDiff()}>
               {(() => {
                 const lines = fileDiff()!.split("\n");
-                const added = lines.filter(l => l.startsWith("+") && !l.startsWith("+++")).length;
-                const removed = lines.filter(l => l.startsWith("-") && !l.startsWith("---")).length;
+                const added = lines.filter((l) => l.startsWith("+") && !l.startsWith("+++")).length;
+                const removed = lines.filter(
+                  (l) => l.startsWith("-") && !l.startsWith("---"),
+                ).length;
                 return (
                   <box flexDirection="row" gap={1}>
                     <Show when={added > 0}>
@@ -365,11 +367,12 @@ render(
                   const color = isBinary() ? theme.fgMuted : getLineColor(line, theme);
                   const lineNumber = lineNum() + 1;
                   const changeType = diffLineMap().get(lineNumber);
-                  const gutterColor = changeType === "added"
-                    ? theme.gitAdded
-                    : changeType === "modified"
-                      ? theme.gitModified
-                      : null;
+                  const gutterColor =
+                    changeType === "added"
+                      ? theme.gitAdded
+                      : changeType === "modified"
+                        ? theme.gitModified
+                        : null;
                   const gutterChar = gutterColor ? "│" : " ";
                   return (
                     <box flexDirection="row">
@@ -380,8 +383,7 @@ render(
                           wrapMode="none"
                         >
                           {gutterChar}
-                          {String(lineNumber).padStart(lineNumWidth())}
-                          {" "}
+                          {String(lineNumber).padStart(lineNumWidth())}{" "}
                         </text>
                       </Show>
                       <text fg={toRGBA(color)} wrapMode="none">
@@ -397,7 +399,7 @@ render(
           {/* Footer */}
           <box flexShrink={0} paddingLeft={1}>
             <text fg={toRGBA(theme.fgMuted)} wrapMode="none">
-              d:diff view  r:refresh  q:quit
+              d:diff view r:refresh q:quit
             </text>
           </box>
         </Show>
