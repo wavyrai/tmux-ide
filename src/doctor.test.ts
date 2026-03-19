@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { doctor } from "./doctor.js";
+import { doctor } from "./doctor.ts";
 
 let tmpDir;
 let origCwd;

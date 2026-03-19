@@ -3,7 +3,10 @@ import { getSessionName } from "./lib/yaml-io.ts";
 import { outputError } from "./lib/output.ts";
 import { attachSession, getSessionState } from "./lib/tmux.ts";
 
-export async function attach(targetDir, { json: _json } = {}) {
+export async function attach(
+  targetDir: string | undefined,
+  { json: _json }: { json?: boolean } = {},
+): Promise<void> {
   const dir = resolve(targetDir ?? ".");
   const { name: session } = getSessionName(dir);
   const state = getSessionState(session);

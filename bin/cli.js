@@ -1,20 +1,20 @@
 #!/usr/bin/env node
 import { parseArgs } from "node:util";
 import { createRequire } from "node:module";
-import { launch } from "../src/launch.js";
-import { init } from "../src/init.js";
-import { stop } from "../src/stop.js";
-import { attach } from "../src/attach.js";
-import { ls } from "../src/ls.js";
-import { doctor } from "../src/doctor.js";
-import { status } from "../src/status.js";
-import { inspect } from "../src/inspect.js";
-import { validate } from "../src/validate.js";
-import { detect } from "../src/detect.js";
-import { config } from "../src/config.js";
-import { restart } from "../src/restart.js";
-import { IdeError } from "../src/lib/errors.ts";
-import { printCommandError } from "../src/lib/output.ts";
+import { launch } from "../dist/launch.js";
+import { init } from "../dist/init.js";
+import { stop } from "../dist/stop.js";
+import { attach } from "../dist/attach.js";
+import { ls } from "../dist/ls.js";
+import { doctor } from "../dist/doctor.js";
+import { status } from "../dist/status.js";
+import { inspect } from "../dist/inspect.js";
+import { validate } from "../dist/validate.js";
+import { detect } from "../dist/detect.js";
+import { config } from "../dist/config.js";
+import { restart } from "../dist/restart.js";
+import { IdeError } from "../dist/lib/errors.js";
+import { printCommandError } from "../dist/lib/output.js";
 
 const { positionals, values } = parseArgs({
   allowPositionals: true,

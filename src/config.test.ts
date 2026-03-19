@@ -4,7 +4,7 @@ import { mkdtempSync, writeFileSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import yaml from "js-yaml";
-import { config } from "./config.js";
+import { config } from "./config.ts";
 
 let tmpDir;
 let origLog;

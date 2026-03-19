@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { buildPaneMap, waitForPaneCommand } from "./launch.js";
+import { buildPaneMap, waitForPaneCommand } from "./launch.ts";
 
 describe("buildPaneMap", () => {
   it("uses returned pane ids instead of assuming sequential numbering", () => {
