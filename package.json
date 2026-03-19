@@ -8,16 +8,17 @@
   },
   "files": [
     "bin",
-    "src/**/*.js",
-    "!src/**/*.test.js",
+    "dist",
     "scripts",
     "skill",
     "templates"
   ],
   "scripts": {
-    "dev": "node bin/cli.js",
-    "test": "node --test src/*.test.js src/lib/*.test.js",
-    "test:unit": "node --test src/cli.test.js src/config-cli.test.js src/detect.test.js src/launch.test.js src/validate.test.js src/lib/*.test.js",
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "dev": "node --experimental-strip-types bin/cli.js",
+    "test": "node --experimental-strip-types --test src/*.test.ts src/lib/*.test.ts src/*.test.js src/lib/*.test.js",
+    "test:unit": "node --experimental-strip-types --test src/cli.test.js src/config-cli.test.js src/detect.test.js src/launch.test.js src/validate.test.js src/lib/*.test.ts src/lib/*.test.js",
     "test:integration": "node --test src/integration.test.js",
     "lint": "eslint .",
     "lint:workspace": "turbo run lint",
@@ -28,7 +29,7 @@
     "docs:build": "turbo run build --filter=@tmux-ide/docs",
     "pack:check": "npm pack --dry-run --cache /tmp/tmux-ide-npm-cache > /dev/null",
     "check": "pnpm run lint:workspace && pnpm run format:check && pnpm run test:unit && pnpm run docs:build && pnpm run pack:check",
-    "prepublishOnly": "pnpm run check",
+    "prepublishOnly": "pnpm run build && pnpm run check",
     "postinstall": "node scripts/postinstall.js",
     "docs": "turbo run dev --filter=@tmux-ide/docs"
   },
@@ -57,9 +58,11 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@types/node": "^25.5.0",
     "eslint": "^10.0.3",
     "globals": "^17.4.0",
     "prettier": "^3.8.1",
-    "turbo": "^2.3.3"
+    "turbo": "^2.3.3",
+    "typescript": "^5.9.3"
   }
 }
