@@ -1,9 +1,19 @@
+export interface OrchestratorConfig {
+  enabled?: boolean;
+  auto_dispatch?: boolean;
+  stall_timeout?: number; // ms, default 300000 (5 min)
+  poll_interval?: number; // ms, default 5000
+  worktree_root?: string; // default ".worktrees/"
+  master_pane?: string; // pane title of the master agent
+}
+
 export interface IdeConfig {
   name?: string;
   before?: string;
   team?: { name: string };
   rows: Row[];
   theme?: ThemeConfig;
+  orchestrator?: OrchestratorConfig;
 }
 
 export interface Row {

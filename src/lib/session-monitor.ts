@@ -186,4 +186,37 @@ if (isMainModule) {
 
   setInterval(tick, INTERVAL);
   tick(); // run immediately
+
+  // Start orchestrator if enabled in config
+  (async () => {
+    try {
+      const { readConfig } = await import("./yaml-io.js");
+      const { config } = readConfig(process.cwd());
+
+      if (config.orchestrator?.enabled) {
+        try {
+          const { createOrchestrator } = await import("./orchestrator.js");
+
+          const stopOrchestrator = createOrchestrator({
+            session,
+            dir: process.cwd(),
+            autoDispatch: config.orchestrator.auto_dispatch ?? true,
+            stallTimeout: config.orchestrator.stall_timeout ?? 300000,
+            pollInterval: config.orchestrator.poll_interval ?? 5000,
+            worktreeRoot: config.orchestrator.worktree_root ?? ".worktrees/",
+            masterPane: config.orchestrator.master_pane ?? null,
+          });
+
+          process.on("SIGTERM", () => {
+            stopOrchestrator();
+            process.exit(0);
+          });
+        } catch {
+          // Orchestrator module not available yet
+        }
+      }
+    } catch {
+      // Config not readable — skip orchestrator
+    }
+  })();
 }
