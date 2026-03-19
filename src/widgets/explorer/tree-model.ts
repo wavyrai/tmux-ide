@@ -9,12 +9,13 @@ export interface TreeNode {
 }
 
 export function buildRootNodes(
-  dir: string,
+  scanDir: string,
+  projectRoot: string,
   ig: Ignore,
   gitMap: Map<string, string>,
   showHidden: boolean,
 ): TreeNode[] {
-  return readDirectory(dir, dir, ig, showHidden).map((entry) => ({
+  return readDirectory(scanDir, projectRoot, ig, showHidden).map((entry) => ({
     entry,
     expanded: false,
     children: [],
@@ -25,20 +26,22 @@ export function buildRootNodes(
 
 export function expandNode(
   node: TreeNode,
-  rootDir: string,
+  projectRoot: string,
   ig: Ignore,
   gitMap: Map<string, string>,
   showHidden: boolean,
 ): void {
   if (!node.entry.isDir || node.expanded) return;
   node.expanded = true;
-  node.children = readDirectory(node.entry.absolutePath, rootDir, ig, showHidden).map((entry) => ({
-    entry,
-    expanded: false,
-    children: [],
-    depth: node.depth + 1,
-    gitStatus: gitMap.get(entry.path) ?? null,
-  }));
+  node.children = readDirectory(node.entry.absolutePath, projectRoot, ig, showHidden).map(
+    (entry) => ({
+      entry,
+      expanded: false,
+      children: [],
+      depth: node.depth + 1,
+      gitStatus: gitMap.get(entry.path) ?? null,
+    }),
+  );
 }
 
 export function collapseNode(node: TreeNode): void {
@@ -60,7 +63,7 @@ export function flattenVisibleNodes(nodes: TreeNode[]): TreeNode[] {
 
 export function refreshExpandedNodes(
   nodes: TreeNode[],
-  rootDir: string,
+  projectRoot: string,
   ig: Ignore,
   gitMap: Map<string, string>,
   showHidden: boolean,
@@ -71,7 +74,7 @@ export function refreshExpandedNodes(
       gitStatus: gitMap.get(node.entry.path) ?? null,
     };
     if (node.expanded && node.entry.isDir) {
-      const freshChildren = readDirectory(node.entry.absolutePath, rootDir, ig, showHidden).map(
+      const freshChildren = readDirectory(node.entry.absolutePath, projectRoot, ig, showHidden).map(
         (entry) => ({
           entry,
           expanded: false,
@@ -88,7 +91,7 @@ export function refreshExpandedNodes(
           return {
             ...fresh,
             expanded: true,
-            children: refreshExpandedNodes([old], rootDir, ig, gitMap, showHidden)[0]!.children,
+            children: refreshExpandedNodes([old], projectRoot, ig, gitMap, showHidden)[0]!.children,
           };
         }
         return fresh;
