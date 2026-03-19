@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import { parseArgs } from "node:util";
 import { render, useKeyboard, useTerminalDimensions } from "@opentui/solid";
 import { RGBA } from "@opentui/core";
-import { createSignal, createMemo, createEffect, onMount, onCleanup, batch } from "solid-js";
+import { createSignal, createMemo, createEffect, onMount, onCleanup, batch, Show } from "solid-js";
 import { Breadcrumbs } from "./breadcrumbs.tsx";
 import { FileTree } from "./tree.tsx";
 import { Footer } from "./footer.tsx";
@@ -78,12 +78,21 @@ render(
     const [selected, setSelected] = createSignal(0);
     const [showHidden, setShowHidden] = createSignal(false);
     const [inputMode, setInputMode] = createSignal<"keyboard" | "mouse">("keyboard");
+    const [searchMode, setSearchMode] = createSignal(false);
+    const [searchQuery, setSearchQuery] = createSignal("");
 
     const flatNodes = createMemo(() => flattenVisibleNodes(rootNodes()));
 
+    const visibleNodes = createMemo(() => {
+      const nodes = flatNodes();
+      if (!searchMode() || !searchQuery()) return nodes;
+      const q = searchQuery().toLowerCase();
+      return nodes.filter((n) => n.entry.name.toLowerCase().includes(q));
+    });
+
     // Set tmux session variable when selection changes
     createEffect(() => {
-      const nodes = flatNodes();
+      const nodes = visibleNodes();
       const current = nodes[selected()];
       if (current && !current.entry.isDir) {
         setPreviewFile(current.entry.path);
@@ -168,7 +177,34 @@ render(
     // Keyboard navigation
     useKeyboard((evt) => {
       setInputMode("keyboard");
-      const nodes = flatNodes();
+
+      // Search mode handling
+      if (searchMode()) {
+        if (evt.name === "escape") {
+          setSearchMode(false);
+          setSearchQuery("");
+          evt.preventDefault();
+          return;
+        } else if (evt.name === "backspace") {
+          setSearchQuery((q) => q.slice(0, -1));
+          evt.preventDefault();
+          return;
+        } else if (evt.name === "return") {
+          setSearchMode(false);
+          evt.preventDefault();
+          return;
+        } else if (evt.name.length === 1 && !evt.ctrl && !evt.alt && !evt.meta) {
+          const newQuery = searchQuery() + evt.name;
+          setSearchQuery(newQuery);
+          const q = newQuery.toLowerCase();
+          const matchIdx = flatNodes().findIndex((n) => n.entry.name.toLowerCase().includes(q));
+          if (matchIdx !== -1) setSelected(matchIdx);
+          evt.preventDefault();
+          return;
+        }
+      }
+
+      const nodes = visibleNodes();
       const current = nodes[selected()];
 
       if (evt.name === "up" || evt.name === "k") {
@@ -192,6 +228,49 @@ render(
         evt.preventDefault();
       } else if (evt.name === "backspace" || evt.name === "-") {
         navigateUp();
+        evt.preventDefault();
+      } else if (evt.name === "/") {
+        setSearchMode(true);
+        setSearchQuery("");
+        evt.preventDefault();
+      } else if (evt.name === "w") {
+        // Collapse all
+        setRootNodes(buildRootNodes(currentDir(), dir, ig, gitMap(), showHidden()));
+        setSelected(0);
+        evt.preventDefault();
+      } else if (evt.name === "e") {
+        // Expand all one level
+        const nodes = rootNodes();
+        for (const node of flattenVisibleNodes(nodes)) {
+          if (node.entry.isDir && !node.expanded) {
+            expandNode(node, dir, ig, gitMap(), showHidden());
+          }
+        }
+        setRootNodes([...nodes]);
+        evt.preventDefault();
+      } else if (evt.name === "]") {
+        // Jump to next changed file
+        const allNodes = flatNodes();
+        const start = selected() + 1;
+        for (let i = 0; i < allNodes.length; i++) {
+          const idx = (start + i) % allNodes.length;
+          if (allNodes[idx]!.gitStatus && !allNodes[idx]!.entry.isDir) {
+            setSelected(idx);
+            break;
+          }
+        }
+        evt.preventDefault();
+      } else if (evt.name === "[") {
+        // Jump to prev changed file
+        const allNodes = flatNodes();
+        const start = selected() - 1 + allNodes.length;
+        for (let i = 0; i < allNodes.length; i++) {
+          const idx = (start - i + allNodes.length) % allNodes.length;
+          if (allNodes[idx]!.gitStatus && !allNodes[idx]!.entry.isDir) {
+            setSelected(idx);
+            break;
+          }
+        }
         evt.preventDefault();
       } else if (evt.name === "c" && current && !current.entry.isDir) {
         const targetId = resolveTargetPane();
@@ -243,8 +322,15 @@ render(
           theme={theme}
           onNavigate={navigateTo}
         />
+        <Show when={searchMode()}>
+          <box flexShrink={0} paddingLeft={1} flexDirection="row" gap={1}>
+            <text fg={toRGBA(theme.accent)}>/</text>
+            <text fg={toRGBA(theme.fg)}>{searchQuery()}</text>
+            <text fg={toRGBA(theme.fgMuted)}>_</text>
+          </box>
+        </Show>
         <FileTree
-          nodes={flatNodes()}
+          nodes={visibleNodes()}
           selected={selected()}
           theme={theme}
           inputMode={inputMode()}
