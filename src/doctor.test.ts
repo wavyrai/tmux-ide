@@ -5,22 +5,25 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { doctor } from "./doctor.ts";
 
-let tmpDir;
-let origCwd;
-let origLog;
-let logged;
+let tmpDir: string;
+let origCwd: string;
+let origLog: typeof console.log;
+let logged: string[];
+let origExitCode: number | undefined;
 
 beforeEach(() => {
   tmpDir = mkdtempSync(join(tmpdir(), "tmux-ide-doctor-test-"));
   origCwd = process.cwd();
   logged = [];
   origLog = console.log;
-  console.log = (...a) => logged.push(a.join(" "));
+  origExitCode = process.exitCode;
+  console.log = (...a: string[]) => logged.push(a.join(" "));
 });
 
 afterEach(() => {
   process.chdir(origCwd);
   console.log = origLog;
+  process.exitCode = origExitCode;
   rmSync(tmpDir, { recursive: true, force: true });
 });
 
