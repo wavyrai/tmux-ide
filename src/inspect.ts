@@ -109,7 +109,7 @@ export function buildInspection(
 
 export async function inspect(
   targetDir: string | undefined,
-  { json }: { json?: boolean } = {},
+  { json, session: targetSession }: { json?: boolean; session?: string } = {},
 ): Promise<void> {
   const dir = resolve(targetDir ?? ".");
 
@@ -122,7 +122,7 @@ export async function inspect(
     return;
   }
 
-  const session = config?.name ?? basename(dir);
+  const session = targetSession ?? config?.name ?? basename(dir);
   const state = getSessionState(session);
   const panes = state.running ? listPanes(session) : [];
   const data = buildInspection(dir, { config, configPath, running: state.running, panes });

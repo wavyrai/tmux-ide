@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 import { execSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { readConfig, getSessionName } from "./lib/yaml-io.ts";
+import { nextInstanceName } from "./lib/session-instances.ts";
 import { computeSizes, toSplitPercents } from "./lib/sizes.ts";
 import { outputError } from "./lib/output.ts";
 import { collectPaneStartupPlan } from "./lib/launch-plan.ts";
@@ -167,13 +168,19 @@ function runBeforeHook(command: string | undefined, dir: string): void {
 
 export async function launch(
   targetDir: string | undefined,
-  { json = false, attach = true }: { json?: boolean; attach?: boolean } = {},
+  {
+    json = false,
+    attach = true,
+    newInstance = false,
+    sessionOverride,
+  }: { json?: boolean; attach?: boolean; newInstance?: boolean; sessionOverride?: string } = {},
 ): Promise<void> {
   const dir = resolve(targetDir ?? ".");
   const config = loadLaunchConfig(dir);
 
   const { name: fallbackName } = getSessionName(dir);
-  const session = config.name ?? fallbackName;
+  const baseName = config.name ?? fallbackName;
+  const session = sessionOverride ?? (newInstance ? nextInstanceName(baseName) : baseName);
   const rows = config.rows;
   const theme = config.theme ?? {};
   const team = config.team ?? null;

@@ -1,6 +1,11 @@
 import { execSync } from "node:child_process";
+import { resolve } from "node:path";
+import { getSessionName } from "./lib/yaml-io.ts";
 
-export async function ls({ json }: { json?: boolean } = {}): Promise<void> {
+export async function ls({
+  json,
+  filter,
+}: { json?: boolean; filter?: boolean } = {}): Promise<void> {
   let raw: string;
   try {
     raw = execSync(
@@ -16,7 +21,7 @@ export async function ls({ json }: { json?: boolean } = {}): Promise<void> {
     return;
   }
 
-  const sessions = raw.split("\n").map((line) => {
+  let sessions = raw.split("\n").map((line) => {
     const [name, created, attached] = line.split("|");
     return {
       name,
@@ -24,6 +29,12 @@ export async function ls({ json }: { json?: boolean } = {}): Promise<void> {
       attached: attached !== "0",
     };
   });
+
+  if (filter) {
+    const { name: baseName } = getSessionName(resolve("."));
+    const pattern = new RegExp(`^${baseName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(-\\d+)?$`);
+    sessions = sessions.filter((s) => pattern.test(s.name!));
+  }
 
   if (json) {
     console.log(JSON.stringify({ sessions }, null, 2));

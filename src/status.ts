@@ -5,10 +5,10 @@ import { getSessionState, listPanes } from "./lib/tmux.ts";
 
 export async function status(
   targetDir: string | undefined,
-  { json }: { json?: boolean } = {},
+  { json, session: targetSession }: { json?: boolean; session?: string } = {},
 ): Promise<void> {
   const dir = resolve(targetDir ?? ".");
-  const { name: session } = getSessionName(dir);
+  const session = targetSession ?? getSessionName(dir).name;
   const configExists = existsSync(resolve(dir, "ide.yml"));
 
   const state = getSessionState(session);
