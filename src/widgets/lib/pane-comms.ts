@@ -132,8 +132,17 @@ export function sendText(session: string, paneId: string, text: string): void {
   tmux("send-keys", "-t", paneId, "-l", "--", text);
 }
 
+function sleepMs(ms: number): void {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
 export function sendCommand(session: string, paneId: string, command: string): void {
+  const status = getPaneBusyStatus(session, paneId);
   tmux("send-keys", "-t", paneId, "-l", "--", command);
+  if (status === "agent") {
+    // Claude Code's TUI needs a short delay to process pasted text before Enter
+    sleepMs(150);
+  }
   tmux("send-keys", "-t", paneId, "Enter");
 }
 

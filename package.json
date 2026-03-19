@@ -57,6 +57,7 @@
   "packageManager": "pnpm@10.21.0",
   "dependencies": {
     "@opentui/core": "^0.1.88",
+    "@opentui/core-darwin-arm64": "^0.1.88",
     "@opentui/solid": "^0.1.88",
     "@parcel/watcher": "^2.5.6",
     "ignore": "^7.0.5",
@@ -65,6 +66,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@tsconfig/bun": "^1.0.10",
     "@types/node": "^25.5.0",
     "@typescript-eslint/eslint-plugin": "^8.57.1",
     "@typescript-eslint/parser": "^8.57.1",

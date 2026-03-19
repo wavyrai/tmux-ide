@@ -28,6 +28,7 @@ export interface FileEntry {
   path: string; // relative to root
   absolutePath: string;
   isDir: boolean;
+  ignored: boolean; // gitignored
 }
 
 export function createIgnoreFilter(rootDir: string): Ignore {
@@ -44,6 +45,7 @@ export function readDirectory(
   rootDir: string,
   ig: Ignore,
   showHidden: boolean,
+  showIgnored: boolean = false,
 ): FileEntry[] {
   let entries;
   try {
@@ -55,6 +57,7 @@ export function readDirectory(
     .filter((e) => {
       if (ALWAYS_IGNORE.has(e.name)) return false;
       if (!showHidden && e.name.startsWith(".")) return false;
+      if (showIgnored) return true;
       const rel = relative(rootDir, join(dir, e.name));
       try {
         return !ig.ignores(e.isDirectory() ? rel + "/" : rel);
@@ -62,12 +65,20 @@ export function readDirectory(
         return true;
       }
     })
-    .map((e) => ({
-      name: e.name,
-      path: relative(rootDir, join(dir, e.name)),
-      absolutePath: join(dir, e.name),
-      isDir: e.isDirectory(),
-    }))
+    .map((e) => {
+      const rel = relative(rootDir, join(dir, e.name));
+      let isIgnored = false;
+      try {
+        isIgnored = ig.ignores(e.isDirectory() ? rel + "/" : rel);
+      } catch {}
+      return {
+        name: e.name,
+        path: rel,
+        absolutePath: join(dir, e.name),
+        isDir: e.isDirectory(),
+        ignored: isIgnored,
+      };
+    })
     .sort((a, b) => {
       if (a.isDir !== b.isDir) return a.isDir ? -1 : 1;
       return a.name.localeCompare(b.name);

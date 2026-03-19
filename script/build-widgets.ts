@@ -7,7 +7,7 @@ await Bun.build({
   format: "esm",
   conditions: ["browser"],
   plugins: [createSolidTransformPlugin()],
-  external: ["@opentui/core", "@opentui/solid", "solid-js"],
+  external: ["@opentui/core", "@opentui/solid", "@parcel/watcher", "ignore"],
 });
 
 console.log("Widgets built successfully");

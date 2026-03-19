@@ -120,6 +120,38 @@ interface FileData {
   size: string;
 }
 
+// Parse diff to get line-level change info for gutter markers
+function parseDiffLineMap(diff: string): Map<number, "added" | "modified"> {
+  const map = new Map<number, "added" | "modified">();
+  if (!diff) return map;
+  const lines = diff.split("\n");
+  for (const line of lines) {
+    // Parse hunk headers: @@ -oldStart,oldCount +newStart,newCount @@
+    const hunkMatch = line.match(/^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/);
+    if (hunkMatch) continue;
+  }
+  // Simpler approach: track added lines from the diff
+  let newLineNum = 0;
+  for (const line of lines) {
+    const hunkMatch = line.match(/^@@ -\d+(?:,\d+)? \+(\d+)/);
+    if (hunkMatch) {
+      newLineNum = parseInt(hunkMatch[1]!, 10);
+      continue;
+    }
+    if (line.startsWith("+++") || line.startsWith("---") || line.startsWith("diff")) continue;
+    if (line.startsWith("+")) {
+      map.set(newLineNum, "added");
+      newLineNum++;
+    } else if (line.startsWith("-")) {
+      // Deleted line — mark the current position as modified
+      if (!map.has(newLineNum)) map.set(newLineNum, "modified");
+    } else {
+      newLineNum++;
+    }
+  }
+  return map;
+}
+
 function loadFile(filePath: string): FileData | null {
   const fullPath = filePath.startsWith("/") ? filePath : resolve(dir, filePath);
   if (!existsSync(fullPath)) return null;
@@ -214,6 +246,8 @@ render(
 
     const lineNumWidth = createMemo(() => Math.max(3, String(totalLines()).length));
 
+    const diffLineMap = createMemo(() => parseDiffLineMap(fileDiff() ?? ""));
+
     useKeyboard((evt) => {
       if (evt.name === "d") {
         if (fileDiff()) setViewMode((m) => (m === "content" ? "diff" : "content"));
@@ -266,9 +300,24 @@ render(
             </Show>
             <text fg={toRGBA(theme.fgMuted)}>{fileSize()}</text>
             <Show when={fileDiff()}>
-              <text fg={toRGBA(viewMode() === "diff" ? theme.gitModified : theme.fgMuted)}>
-                {viewMode() === "diff" ? "[diff]" : "[d:diff]"}
-              </text>
+              {(() => {
+                const lines = fileDiff()!.split("\n");
+                const added = lines.filter(l => l.startsWith("+") && !l.startsWith("+++")).length;
+                const removed = lines.filter(l => l.startsWith("-") && !l.startsWith("---")).length;
+                return (
+                  <box flexDirection="row" gap={1}>
+                    <Show when={added > 0}>
+                      <text fg={toRGBA(theme.gitAdded)}>+{added}</text>
+                    </Show>
+                    <Show when={removed > 0}>
+                      <text fg={toRGBA(theme.gitDeleted)}>-{removed}</text>
+                    </Show>
+                    <text fg={toRGBA(viewMode() === "diff" ? theme.gitModified : theme.fgMuted)}>
+                      {viewMode() === "diff" ? "[diff]" : "[d:diff]"}
+                    </text>
+                  </box>
+                );
+              })()}
             </Show>
           </box>
 
@@ -314,12 +363,25 @@ render(
               <For each={lines()}>
                 {(line, lineNum) => {
                   const color = isBinary() ? theme.fgMuted : getLineColor(line, theme);
+                  const lineNumber = lineNum() + 1;
+                  const changeType = diffLineMap().get(lineNumber);
+                  const gutterColor = changeType === "added"
+                    ? theme.gitAdded
+                    : changeType === "modified"
+                      ? theme.gitModified
+                      : null;
+                  const gutterChar = gutterColor ? "│" : " ";
                   return (
                     <box flexDirection="row">
                       <Show when={!isBinary()}>
-                        <text fg={toRGBA(theme.diffLineNumber)} flexShrink={0} wrapMode="none">
-                          {String(lineNum() + 1).padStart(lineNumWidth())}
-                          {" │ "}
+                        <text
+                          fg={toRGBA(gutterColor ?? theme.diffLineNumber)}
+                          flexShrink={0}
+                          wrapMode="none"
+                        >
+                          {gutterChar}
+                          {String(lineNumber).padStart(lineNumWidth())}
+                          {" "}
                         </text>
                       </Show>
                       <text fg={toRGBA(color)} wrapMode="none">
@@ -335,7 +397,7 @@ render(
           {/* Footer */}
           <box flexShrink={0} paddingLeft={1}>
             <text fg={toRGBA(theme.fgMuted)} wrapMode="none">
-              d:toggle diff q:quit
+              d:diff view  r:refresh  q:quit
             </text>
           </box>
         </Show>

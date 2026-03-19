@@ -14,8 +14,9 @@ export function buildRootNodes(
   ig: Ignore,
   gitMap: Map<string, string>,
   showHidden: boolean,
+  showIgnored: boolean = false,
 ): TreeNode[] {
-  return readDirectory(scanDir, projectRoot, ig, showHidden).map((entry) => ({
+  return readDirectory(scanDir, projectRoot, ig, showHidden, showIgnored).map((entry) => ({
     entry,
     expanded: false,
     children: [],

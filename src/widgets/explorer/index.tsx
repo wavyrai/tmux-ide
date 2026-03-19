@@ -1,6 +1,7 @@
 import "@opentui/solid/runtime-plugin-support";
 import { execFileSync } from "node:child_process";
 import { parseArgs } from "node:util";
+import { relative } from "node:path";
 import { render, useKeyboard, useTerminalDimensions } from "@opentui/solid";
 import { RGBA } from "@opentui/core";
 import { createSignal, createMemo, createEffect, onMount, onCleanup, batch, Show } from "solid-js";
@@ -9,8 +10,6 @@ import { FileTree } from "./tree.tsx";
 import { Footer } from "./footer.tsx";
 import {
   buildRootNodes,
-  expandNode,
-  collapseNode,
   flattenVisibleNodes,
   refreshExpandedNodes,
   type TreeNode,
@@ -44,6 +43,25 @@ function toRGBA(c: { r: number; g: number; b: number; a: number }): RGBA {
   return RGBA.fromInts(c.r, c.g, c.b, c.a);
 }
 
+function getTmuxOption(key: string): string | null {
+  if (!session) return null;
+  try {
+    return execFileSync("tmux", ["show-option", "-t", session, "-v", key], {
+      encoding: "utf-8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+function setTmuxOption(key: string, value: string): void {
+  if (!session) return;
+  try {
+    execFileSync("tmux", ["set-option", "-t", session, key, value], { stdio: "ignore" });
+  } catch {}
+}
+
 function setPreviewFile(filePath: string | null): void {
   if (!session) return;
   try {
@@ -74,9 +92,10 @@ render(
     const [branch, setBranch] = createSignal(hasGit ? getGitBranch(dir) : null);
     const [currentDir, setCurrentDir] = createSignal(dir);
     const [history, setHistory] = createSignal<string[]>([]);
-    const [rootNodes, setRootNodes] = createSignal(buildRootNodes(dir, dir, ig, gitMap(), false));
+    const [showHidden, setShowHidden] = createSignal(getTmuxOption("@explorer_show_hidden") === "1");
+    const [showIgnored, setShowIgnored] = createSignal(getTmuxOption("@explorer_show_ignored") === "1");
+    const [rootNodes, setRootNodes] = createSignal(buildRootNodes(dir, dir, ig, gitMap(), showHidden(), showIgnored()));
     const [selected, setSelected] = createSignal(0);
-    const [showHidden, setShowHidden] = createSignal(false);
     const [inputMode, setInputMode] = createSignal<"keyboard" | "mouse">("keyboard");
     const [searchMode, setSearchMode] = createSignal(false);
     const [searchQuery, setSearchQuery] = createSignal("");
@@ -102,11 +121,31 @@ render(
     });
 
     // Navigation functions
+    // Check if a directory is inside a gitignored path
+    function isInsideIgnored(dirPath: string): boolean {
+      const rel = relative(dir, dirPath);
+      if (!rel || rel === ".") return false;
+      // Check each parent segment
+      const parts = rel.split("/");
+      let current = "";
+      for (const part of parts) {
+        current = current ? current + "/" + part : part;
+        try {
+          if (ig.ignores(current + "/")) return true;
+        } catch {}
+      }
+      return false;
+    }
+
+    function effectiveShowIgnored(dirPath: string): boolean {
+      return showIgnored() || isInsideIgnored(dirPath);
+    }
+
     function navigateInto(dirPath: string): void {
       setHistory((h) => [...h, currentDir()]);
       setCurrentDir(dirPath);
       setSelected(0);
-      setRootNodes(buildRootNodes(dirPath, dir, ig, gitMap(), showHidden()));
+      setRootNodes(buildRootNodes(dirPath, dir, ig, gitMap(), showHidden(), effectiveShowIgnored(dirPath)));
     }
 
     function navigateUp(): void {
@@ -116,7 +155,7 @@ render(
         setHistory(h.slice(0, -1));
         setCurrentDir(prev);
         setSelected(0);
-        setRootNodes(buildRootNodes(prev, dir, ig, gitMap(), showHidden()));
+        setRootNodes(buildRootNodes(prev, dir, ig, gitMap(), showHidden(), effectiveShowIgnored(prev)));
       }
     }
 
@@ -124,7 +163,7 @@ render(
       setHistory((h) => [...h, currentDir()]);
       setCurrentDir(absolutePath);
       setSelected(0);
-      setRootNodes(buildRootNodes(absolutePath, dir, ig, gitMap(), showHidden()));
+      setRootNodes(buildRootNodes(absolutePath, dir, ig, gitMap(), showHidden(), effectiveShowIgnored(absolutePath)));
     }
 
     // File watcher
@@ -165,13 +204,11 @@ render(
       return findPaneByPattern(session, "claude");
     }
 
-    function toggleDir(node: TreeNode): void {
-      if (node.expanded) {
-        collapseNode(node);
-      } else {
-        expandNode(node, dir, ig, gitMap(), showHidden());
+    function activateNode(node: TreeNode): void {
+      if (node.entry.isDir) {
+        navigateInto(node.entry.absolutePath);
       }
-      setRootNodes([...rootNodes()]);
+      // Files: do nothing on click/enter — preview updates via selection effect
     }
 
     // Keyboard navigation
@@ -214,39 +251,14 @@ render(
         setSelected((i) => Math.min(nodes.length - 1, i + 1));
         evt.preventDefault();
       } else if (evt.name === "return" || evt.name === "l" || evt.name === "right") {
-        if (current?.entry.isDir) {
-          navigateInto(current.entry.absolutePath);
-        }
+        if (current) activateNode(current);
         evt.preventDefault();
-      } else if (evt.name === "h" || evt.name === "left") {
-        if (current?.expanded) {
-          collapseNode(current);
-          setRootNodes([...rootNodes()]);
-        } else {
-          navigateUp();
-        }
-        evt.preventDefault();
-      } else if (evt.name === "backspace" || evt.name === "-") {
+      } else if (evt.name === "h" || evt.name === "left" || evt.name === "backspace" || evt.name === "-") {
         navigateUp();
         evt.preventDefault();
       } else if (evt.name === "/") {
         setSearchMode(true);
         setSearchQuery("");
-        evt.preventDefault();
-      } else if (evt.name === "w") {
-        // Collapse all
-        setRootNodes(buildRootNodes(currentDir(), dir, ig, gitMap(), showHidden()));
-        setSelected(0);
-        evt.preventDefault();
-      } else if (evt.name === "e") {
-        // Expand all one level
-        const nodes = rootNodes();
-        for (const node of flattenVisibleNodes(nodes)) {
-          if (node.entry.isDir && !node.expanded) {
-            expandNode(node, dir, ig, gitMap(), showHidden());
-          }
-        }
-        setRootNodes([...nodes]);
         evt.preventDefault();
       } else if (evt.name === "]") {
         // Jump to next changed file
@@ -285,8 +297,17 @@ render(
         }
         evt.preventDefault();
       } else if (evt.shift && evt.name === "h") {
-        setShowHidden((h) => !h);
-        setRootNodes(buildRootNodes(currentDir(), dir, ig, gitMap(), !showHidden()));
+        const next = !showHidden();
+        setShowHidden(next);
+        setTmuxOption("@explorer_show_hidden", next ? "1" : "0");
+        setRootNodes(buildRootNodes(currentDir(), dir, ig, gitMap(), next, effectiveShowIgnored(currentDir())));
+        setSelected(0);
+        evt.preventDefault();
+      } else if (evt.shift && evt.name === "i") {
+        const next = !showIgnored();
+        setShowIgnored(next);
+        setTmuxOption("@explorer_show_ignored", next ? "1" : "0");
+        setRootNodes(buildRootNodes(currentDir(), dir, ig, gitMap(), showHidden(), next || isInsideIgnored(currentDir())));
         setSelected(0);
         evt.preventDefault();
       } else if (evt.name === "r") {
@@ -335,7 +356,7 @@ render(
           theme={theme}
           inputMode={inputMode()}
           onSelect={setSelected}
-          onToggleDir={toggleDir}
+          onActivate={activateNode}
           onInputModeChange={setInputMode}
         />
         <Footer theme={theme} />
