@@ -13,6 +13,7 @@ import { validate } from "../dist/validate.js";
 import { detect } from "../dist/detect.js";
 import { config } from "../dist/config.js";
 import { restart } from "../dist/restart.js";
+import { taskCommand } from "../dist/task.js";
 import { IdeError } from "../dist/lib/errors.js";
 import { printCommandError } from "../dist/lib/output.js";
 
@@ -32,6 +33,16 @@ const { positionals, values } = parseArgs({
     verbose: { type: "boolean", default: false },
     help: { type: "boolean", short: "h" },
     version: { type: "boolean", short: "v" },
+    // task command flags
+    description: { type: "string" },
+    acceptance: { type: "string" },
+    priority: { type: "string" },
+    status: { type: "string" },
+    assign: { type: "string" },
+    goal: { type: "string" },
+    tags: { type: "string" },
+    branch: { type: "string" },
+    proof: { type: "string" },
   },
 });
 
@@ -48,6 +59,9 @@ const knownCommands = new Set([
   "validate",
   "detect",
   "config",
+  "mission",
+  "goal",
+  "task",
   "help",
 ]);
 
@@ -103,6 +117,18 @@ ${bold("Usage:")}
   ${cyan("tmux-ide config add-row")} [--size <percent>]
   ${cyan("tmux-ide config enable-team")} [--name <N>]   ${dim("Enable agent teams")}
   ${cyan("tmux-ide config disable-team")}               ${dim("Disable agent teams")}
+
+${bold("Task Management:")}
+  ${cyan("tmux-ide mission set")} "title"              ${dim("Set the project mission")}
+  ${cyan("tmux-ide mission show")}                     ${dim("Show current mission")}
+  ${cyan("tmux-ide goal list")}                        ${dim("List goals")}
+  ${cyan("tmux-ide goal create")} "title"              ${dim("Create a goal")}
+  ${cyan("tmux-ide goal show")} <id>                   ${dim("Show goal with tasks")}
+  ${cyan("tmux-ide task list")} [--status X --goal Y]  ${dim("List tasks")}
+  ${cyan("tmux-ide task create")} "title" [--goal id]  ${dim("Create a task")}
+  ${cyan("tmux-ide task claim")} <id> [--assign name]  ${dim("Claim a task")}
+  ${cyan("tmux-ide task done")} <id> [--proof "..."]   ${dim("Complete a task")}
+  ${cyan("tmux-ide task show")} <id>                   ${dim("Show task with full context")}
 
 ${bold("Flags:")}
   ${cyan("--json")}                      ${dim("Output as JSON (all commands)")}
@@ -194,6 +220,56 @@ try {
       }
 
       await config(null, { json, action, args: configArgs });
+      break;
+    }
+
+    case "mission": {
+      const sub = positionals[1];
+      await taskCommand(null, {
+        json,
+        action: "mission",
+        sub,
+        args: positionals.slice(2),
+        values: { description: values.description },
+      });
+      break;
+    }
+
+    case "goal": {
+      const sub = positionals[1];
+      await taskCommand(null, {
+        json,
+        action: "goal",
+        sub,
+        args: positionals.slice(2),
+        values: {
+          description: values.description,
+          acceptance: values.acceptance,
+          priority: values.priority,
+          status: values.status,
+        },
+      });
+      break;
+    }
+
+    case "task": {
+      const sub = positionals[1];
+      await taskCommand(null, {
+        json,
+        action: "task",
+        sub,
+        args: positionals.slice(2),
+        values: {
+          description: values.description,
+          priority: values.priority,
+          status: values.status,
+          assign: values.assign,
+          goal: values.goal,
+          tags: values.tags,
+          branch: values.branch,
+          proof: values.proof,
+        },
+      });
       break;
     }
 
