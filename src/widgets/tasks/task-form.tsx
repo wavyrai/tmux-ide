@@ -90,7 +90,9 @@ export function TaskForm(props: TaskFormProps) {
         <text fg={toRGBA(theme.fg)} attributes={TextAttributes.BOLD}>
           {props.mode === "create" ? "New Task" : "Edit Task"}
         </text>
-        <text fg={toRGBA(theme.fgMuted)}>Esc:cancel</text>
+        <text fg={toRGBA(theme.fgMuted)} onMouseUp={() => props.onCancel()}>
+          Esc:cancel
+        </text>
       </box>
 
       {/* Title field */}
@@ -171,7 +173,9 @@ export function TaskForm(props: TaskFormProps) {
         <box flexDirection="row" gap={2}>
           <text fg={toRGBA(theme.fgMuted)}>Tab:next field</text>
           <text fg={toRGBA(theme.fgMuted)}>Ctrl+S:save</text>
-          <text fg={toRGBA(theme.fgMuted)}>Esc:cancel</text>
+          <text fg={toRGBA(theme.fgMuted)} onMouseUp={() => props.onCancel()}>
+            Esc:cancel
+          </text>
         </box>
       </box>
     </box>
