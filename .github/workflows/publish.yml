@@ -24,14 +24,14 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 24
+          node-version: 22
           registry-url: https://registry.npmjs.org
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
       - name: Run checks
-        run: pnpm run lint:workspace && pnpm run format:check && pnpm run test:unit && pnpm run docs:build && pnpm run pack:check
+        run: pnpm run check
 
       - name: Publish
         run: npm publish --access public
