@@ -13,7 +13,7 @@ export function Footer(props: FooterProps) {
   return (
     <box flexShrink={0} paddingTop={1} paddingLeft={1}>
       <text fg={toRGBA(props.theme.fgMuted)}>
-        ↑↓:nav ⏎:enter dir ⌫:back Tab:preview c:claude o:edit q:quit
+        ↑↓:nav ⏎:enter ⌫:back c:claude o:edit H:hidden q:quit
       </text>
     </box>
   );
