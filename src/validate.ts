@@ -137,6 +137,36 @@ export function validateConfig(config: unknown): string[] {
     }
   }
 
+  if (cfg.orchestrator !== undefined) {
+    if (
+      cfg.orchestrator == null ||
+      typeof cfg.orchestrator !== "object" ||
+      Array.isArray(cfg.orchestrator)
+    ) {
+      errors.push("'orchestrator' must be an object");
+    } else {
+      const orch = cfg.orchestrator as Record<string, unknown>;
+      if (orch.enabled !== undefined && typeof orch.enabled !== "boolean") {
+        errors.push("orchestrator.enabled must be a boolean");
+      }
+      if (orch.auto_dispatch !== undefined && typeof orch.auto_dispatch !== "boolean") {
+        errors.push("orchestrator.auto_dispatch must be a boolean");
+      }
+      if (orch.stall_timeout !== undefined && typeof orch.stall_timeout !== "number") {
+        errors.push("orchestrator.stall_timeout must be a number (ms)");
+      }
+      if (orch.poll_interval !== undefined && typeof orch.poll_interval !== "number") {
+        errors.push("orchestrator.poll_interval must be a number (ms)");
+      }
+      if (orch.worktree_root !== undefined && typeof orch.worktree_root !== "string") {
+        errors.push("orchestrator.worktree_root must be a string");
+      }
+      if (orch.master_pane !== undefined && typeof orch.master_pane !== "string") {
+        errors.push("orchestrator.master_pane must be a string");
+      }
+    }
+  }
+
   if (cfg.theme !== undefined) {
     if (cfg.theme == null || typeof cfg.theme !== "object" || Array.isArray(cfg.theme)) {
       errors.push("'theme' must be an object");

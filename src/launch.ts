@@ -24,7 +24,7 @@ import {
 } from "./lib/tmux.ts";
 import { validateConfig } from "./validate.ts";
 import { resolveWidgetCommand } from "./widgets/resolve.ts";
-import type { IdeConfig, Row } from "./types.ts";
+import type { IdeConfig, Row, Pane } from "./types.ts";
 
 interface SplitPaneArgs {
   targetPane: string;
@@ -264,6 +264,20 @@ export async function launch(
   );
   startSessionMonitor(session, monitorScript);
 
+  // Inject master agent prompt if orchestrator is enabled
+  if (config.orchestrator?.enabled) {
+    const masterPaneTitle = config.orchestrator.master_pane;
+    if (masterPaneTitle) {
+      const masterAction = paneActions.find((a) => a.title === masterPaneTitle);
+      if (masterAction) {
+        const masterPrompt = buildMasterAgentPrompt(config);
+        setTimeout(() => {
+          sendLiteral(masterAction.targetPane, masterPrompt);
+        }, 5000);
+      }
+    }
+  }
+
   // Focus the correct pane
   selectPane(focusPane);
 
@@ -277,4 +291,45 @@ export async function launch(
   if (attach) {
     attachSession(session);
   }
+}
+
+export function buildMasterAgentPrompt(config: IdeConfig): string {
+  const teammatePanes = config.rows
+    .flatMap((r) => r.panes ?? [])
+    .filter((p: Pane) => p.role === "teammate" && p.command === "claude")
+    .map((p: Pane) => p.title)
+    .filter(Boolean);
+
+  return `You are the Master Agent for this tmux-ide session.
+
+## Your role
+You coordinate a team of coding agents. The human gives you high-level goals, and you break them into structured tasks that your teammates execute.
+
+## Your teammates
+${teammatePanes.map((t) => `- ${t}`).join("\n")}
+
+## Task management commands
+- tmux-ide mission set "title" --description "..."
+- tmux-ide goal create "title" --priority N --acceptance "criteria"
+- tmux-ide goal list --json
+- tmux-ide task create "title" --goal NN --priority N
+- tmux-ide task list --json
+- tmux-ide task show NNN --json (shows full mission→goal→task context)
+- tmux-ide task done NNN --proof "what was accomplished"
+- tmux-ide goal done NN
+
+## How it works
+1. You create tasks with tmux-ide task create
+2. The orchestrator automatically assigns unassigned tasks to idle teammates
+3. Teammates work in isolated git worktrees
+4. When teammates finish, they run tmux-ide task done
+5. You get notified and review their work
+6. You report progress to the human
+
+## Important
+- Focus on PLANNING and REVIEWING, not implementing
+- Break work into small, clear tasks (one per teammate)
+- Each task should be completable independently
+- Set clear acceptance criteria in goals
+- Check progress: tmux-ide task list --json`;
 }

@@ -27,5 +27,8 @@ plans/
 # local task board
 .tasks/
 
+# Orchestrator worktrees
+.worktrees/
+
 # TypeScript build output
 dist/
