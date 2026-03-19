@@ -5,7 +5,7 @@ import { parseArgs } from "node:util";
 import { render, useKeyboard, useTerminalDimensions } from "@opentui/solid";
 import { RGBA } from "@opentui/core";
 import { createSignal, createMemo, createEffect, onMount, onCleanup, batch } from "solid-js";
-import { Header } from "./header.tsx";
+import { Breadcrumbs } from "./breadcrumbs.tsx";
 import { FileTree } from "./tree.tsx";
 import { FilePreview } from "./preview.tsx";
 import { Footer } from "./footer.tsx";
@@ -96,7 +96,6 @@ function loadFilePreview(absolutePath: string, relativePath: string): string | n
   if (BINARY_EXTENSIONS.has(ext)) return null;
   try {
     const content = readFileSync(absolutePath, "utf-8");
-    // Check for binary content (null bytes)
     if (content.includes("\0")) return null;
     return content.split("\n").slice(0, MAX_PREVIEW_LINES).join("\n");
   } catch {
@@ -115,7 +114,9 @@ render(
       hasGit ? getGitStatusMap(dir) : new Map<string, string>(),
     );
     const [branch, setBranch] = createSignal(hasGit ? getGitBranch(dir) : null);
-    const [rootNodes, setRootNodes] = createSignal(buildRootNodes(dir, ig, gitMap(), false));
+    const [currentDir, setCurrentDir] = createSignal(dir);
+    const [history, setHistory] = createSignal<string[]>([]);
+    const [rootNodes, setRootNodes] = createSignal(buildRootNodes(dir, dir, ig, gitMap(), false));
     const [selected, setSelected] = createSignal(0);
     const [showHidden, setShowHidden] = createSignal(false);
     const [inputMode, setInputMode] = createSignal<"keyboard" | "mouse">("keyboard");
@@ -146,11 +147,39 @@ render(
 
     const treeHeight = createMemo(() => {
       const total = dimensions().height;
-      // Header: 2, Footer: 2, Separator: 1
       const chrome = 5;
       const available = total - chrome;
       return previewContent() !== null ? Math.floor(available * 0.5) : available;
     });
+
+    // Navigation functions
+    function navigateInto(dirPath: string): void {
+      setHistory((h) => [...h, currentDir()]);
+      setCurrentDir(dirPath);
+      setSelected(0);
+      setFocusArea("tree");
+      setRootNodes(buildRootNodes(dirPath, dir, ig, gitMap(), showHidden()));
+    }
+
+    function navigateUp(): void {
+      const h = history();
+      if (h.length > 0) {
+        const prev = h[h.length - 1]!;
+        setHistory(h.slice(0, -1));
+        setCurrentDir(prev);
+        setSelected(0);
+        setFocusArea("tree");
+        setRootNodes(buildRootNodes(prev, dir, ig, gitMap(), showHidden()));
+      }
+    }
+
+    function navigateTo(absolutePath: string): void {
+      setHistory((h) => [...h, currentDir()]);
+      setCurrentDir(absolutePath);
+      setSelected(0);
+      setFocusArea("tree");
+      setRootNodes(buildRootNodes(absolutePath, dir, ig, gitMap(), showHidden()));
+    }
 
     // File watcher
     let stopFileWatch: (() => Promise<void>) | null = null;
@@ -217,7 +246,7 @@ render(
         evt.preventDefault();
       } else if (evt.name === "return" || evt.name === "l" || evt.name === "right") {
         if (current?.entry.isDir) {
-          toggleDir(current);
+          navigateInto(current.entry.absolutePath);
         } else if (current) {
           setFocusArea("preview");
         }
@@ -228,7 +257,12 @@ render(
         } else if (current?.expanded) {
           collapseNode(current);
           setRootNodes([...rootNodes()]);
+        } else {
+          navigateUp();
         }
+        evt.preventDefault();
+      } else if (evt.name === "backspace" || evt.name === "-") {
+        navigateUp();
         evt.preventDefault();
       } else if (evt.name === "tab") {
         setFocusArea((f) => (f === "tree" ? "preview" : "tree"));
@@ -247,7 +281,7 @@ render(
         evt.preventDefault();
       } else if (evt.shift && evt.name === "h") {
         setShowHidden((h) => !h);
-        setRootNodes(buildRootNodes(dir, ig, gitMap(), !showHidden()));
+        setRootNodes(buildRootNodes(currentDir(), dir, ig, gitMap(), !showHidden()));
         setSelected(0);
         evt.preventDefault();
       } else if (evt.name === "r") {
@@ -276,7 +310,13 @@ render(
         height={dimensions().height}
         backgroundColor={toRGBA(theme.bg)}
       >
-        <Header branch={branch()} fileCount={flatNodes().length} theme={theme} />
+        <Breadcrumbs
+          projectRoot={dir}
+          currentDir={currentDir()}
+          branch={branch()}
+          theme={theme}
+          onNavigate={navigateTo}
+        />
         <box maxHeight={treeHeight()}>
           <FileTree
             nodes={flatNodes()}
