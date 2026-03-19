@@ -225,7 +225,7 @@ describe("nextStatus", () => {
 });
 
 describe("flattenTaskList", () => {
-  it("produces flat list with section indices", () => {
+  it("produces flat list with headers and tasks interleaved", () => {
     const groups = [
       { status: "in-progress" as const, tasks: [{ id: "1", title: "A" } as Task] },
       {
@@ -236,11 +236,16 @@ describe("flattenTaskList", () => {
       { status: "done" as const, tasks: [] },
     ];
     const flat = flattenTaskList(groups);
-    assert.strictEqual(flat.length, 3);
-    assert.strictEqual(flat[0]!.task.id, "1");
-    assert.strictEqual(flat[0]!.sectionIdx, 0);
-    assert.strictEqual(flat[1]!.task.id, "2");
-    assert.strictEqual(flat[1]!.sectionIdx, 1);
+    // 2 headers + 3 tasks = 5 items (empty groups skipped)
+    assert.strictEqual(flat.length, 5);
+    assert.strictEqual(flat[0]!.kind, "header");
+    assert.strictEqual(flat[1]!.kind, "task");
+    if (flat[1]!.kind === "task") assert.strictEqual(flat[1]!.task.id, "1");
+    assert.strictEqual(flat[2]!.kind, "header");
+    assert.strictEqual(flat[3]!.kind, "task");
+    if (flat[3]!.kind === "task") assert.strictEqual(flat[3]!.task.id, "2");
+    assert.strictEqual(flat[4]!.kind, "task");
+    if (flat[4]!.kind === "task") assert.strictEqual(flat[4]!.task.id, "3");
   });
 });
 
