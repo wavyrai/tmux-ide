@@ -28,7 +28,7 @@
     "typecheck:workspace": "turbo run typecheck",
     "docs:build": "turbo run build --filter=@tmux-ide/docs",
     "pack:check": "npm pack --dry-run --cache /tmp/tmux-ide-npm-cache > /dev/null",
-    "check": "pnpm run lint:workspace && pnpm run format:check && pnpm run test:unit && pnpm run docs:build && pnpm run pack:check",
+    "check": "pnpm run lint:workspace && pnpm run format:check && pnpm run build && pnpm run test:unit && pnpm run docs:build && pnpm run pack:check",
     "prepublishOnly": "pnpm run build && pnpm run check",
     "postinstall": "node scripts/postinstall.js",
     "docs": "turbo run dev --filter=@tmux-ide/docs"

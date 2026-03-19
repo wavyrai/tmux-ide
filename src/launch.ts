@@ -251,7 +251,7 @@ export async function launch(
   const monitorScript = resolve(
     dirname(fileURLToPath(import.meta.url)),
     "lib",
-    "session-monitor.ts",
+    "session-monitor.js",
   );
   startSessionMonitor(session, monitorScript);
 
