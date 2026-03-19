@@ -14,6 +14,7 @@ interface WidgetOptions {
 const WIDGET_ENTRY_POINTS: Record<string, string> = {
   explorer: "explorer/index.js",
   changes: "changes/index.js",
+  preview: "preview/index.js",
 };
 
 export function resolveWidgetCommand(type: string, opts: WidgetOptions): string {
