@@ -9,18 +9,13 @@ function toRGBA(c: { r: number; g: number; b: number; a: number }): RGBA {
 
 const TRANSPARENT = RGBA.fromInts(0, 0, 0, 0);
 
-function getStatusDot(status: string): string {
+function getStatusLabel(status: string): string {
   switch (status) {
-    case "M":
-      return "●";
-    case "A":
-      return "●";
-    case "D":
-      return "●";
-    case "?":
-      return "◌";
-    default:
-      return " ";
+    case "M": return " M";
+    case "A": return " A";
+    case "D": return " D";
+    case "?": return " ?";
+    default:  return "";
   }
 }
 
@@ -29,65 +24,11 @@ function getStatusColor(
   theme: WidgetTheme,
 ): { r: number; g: number; b: number; a: number } {
   switch (status) {
-    case "M":
-      return theme.gitModified;
-    case "A":
-      return theme.gitAdded;
-    case "D":
-      return theme.gitDeleted;
-    case "?":
-      return theme.gitUntracked;
-    default:
-      return theme.fgMuted;
-  }
-}
-
-function getFileIcon(name: string, isDir: boolean, expanded: boolean): string {
-  if (isDir) return expanded ? "▾ " : "▸ ";
-
-  const ext = name.includes(".") ? name.split(".").pop()?.toLowerCase() : "";
-  switch (ext) {
-    case "ts":
-    case "tsx":
-      return " ";
-    case "js":
-    case "jsx":
-      return " ";
-    case "json":
-      return " ";
-    case "md":
-    case "mdx":
-      return " ";
-    case "yml":
-    case "yaml":
-      return " ";
-    case "css":
-    case "scss":
-      return " ";
-    case "html":
-      return " ";
-    case "sh":
-    case "bash":
-    case "zsh":
-      return " ";
-    case "toml":
-      return " ";
-    case "lock":
-      return " ";
-    case "gitignore":
-    case "git":
-      return " ";
-    case "env":
-      return " ";
-    case "png":
-    case "jpg":
-    case "jpeg":
-    case "gif":
-    case "svg":
-    case "ico":
-      return " ";
-    default:
-      return " ";
+    case "M": return theme.gitModified;
+    case "A": return theme.gitAdded;
+    case "D": return theme.gitDeleted;
+    case "?": return theme.gitUntracked;
+    default:  return theme.fgMuted;
   }
 }
 
@@ -95,9 +36,11 @@ function getNameColor(
   name: string,
   isDir: boolean,
   isSelected: boolean,
+  isIgnored: boolean,
   theme: WidgetTheme,
 ): { r: number; g: number; b: number; a: number } {
   if (isSelected) return theme.selectedText;
+  if (isIgnored) return theme.ignored;
   if (isDir) return theme.dirName;
   if (name.endsWith(".lock") || name.startsWith(".") || name === "LICENSE") {
     return theme.fgMuted;
@@ -111,14 +54,13 @@ interface FileTreeProps {
   theme: WidgetTheme;
   inputMode: "keyboard" | "mouse";
   onSelect: (index: number) => void;
-  onToggleDir: (node: TreeNode) => void;
+  onActivate: (node: TreeNode) => void;
   onInputModeChange: (mode: "keyboard" | "mouse") => void;
 }
 
 export function FileTree(props: FileTreeProps) {
   let scroll: ScrollBoxRenderable | undefined;
 
-  // Auto-scroll to keep selection visible
   createEffect(() => {
     const idx = props.selected;
     if (!scroll) return;
@@ -144,10 +86,9 @@ export function FileTree(props: FileTreeProps) {
       <For each={props.nodes}>
         {(node, index) => {
           const isSelected = createMemo(() => index() === props.selected);
-          const indent = node.depth > 0 ? "│ ".repeat(node.depth) : "";
-          const icon = getFileIcon(node.entry.name, node.entry.isDir, node.expanded);
+          const icon = node.entry.isDir ? "> " : "  ";
           const nameColor = () =>
-            getNameColor(node.entry.name, node.entry.isDir, isSelected(), props.theme);
+            getNameColor(node.entry.name, node.entry.isDir, isSelected(), node.entry.ignored, props.theme);
           const rowBg = () =>
             isSelected()
               ? toRGBA(props.theme.selected)
@@ -160,31 +101,19 @@ export function FileTree(props: FileTreeProps) {
               id={String(index())}
               backgroundColor={rowBg()}
               flexDirection="row"
+              paddingLeft={1}
+              paddingRight={1}
               onMouseMove={() => {
                 props.onInputModeChange("mouse");
-              }}
-              onMouseDown={() => {
                 props.onSelect(index());
               }}
+              onMouseDown={() => props.onSelect(index())}
               onMouseUp={() => {
-                if (node.entry.isDir) {
-                  props.onToggleDir(node);
-                }
-              }}
-              onMouseOver={() => {
-                if (props.inputMode !== "mouse") return;
-                props.onSelect(index());
+                props.onActivate(node);
               }}
             >
-              <Show when={node.depth > 0}>
-                <text fg={toRGBA(props.theme.indentGuide)} wrapMode="none">
-                  {indent}
-                </text>
-              </Show>
               <text fg={toRGBA(nameColor())} wrapMode="none" flexGrow={1}>
-                {icon}
-                {node.entry.name}
-                {node.entry.isDir ? "/" : ""}
+                {icon}{node.entry.name}{node.entry.isDir ? "/" : ""}
               </text>
               <Show when={node.gitStatus}>
                 <text
@@ -192,7 +121,16 @@ export function FileTree(props: FileTreeProps) {
                   flexShrink={0}
                   wrapMode="none"
                 >
-                  {getStatusDot(node.gitStatus!)}
+                  {getStatusLabel(node.gitStatus!)}
+                </text>
+              </Show>
+              <Show when={isSelected() && !node.entry.isDir}>
+                <text
+                  fg={toRGBA(props.theme.fgMuted)}
+                  flexShrink={0}
+                  wrapMode="none"
+                >
+                  {" c: send to claude code"}
                 </text>
               </Show>
             </box>

@@ -11,6 +11,7 @@ export interface WidgetTheme {
   dirName: RGBA;
   rowAlt: RGBA;
   indentGuide: RGBA;
+  ignored: RGBA;
   gitModified: RGBA;
   gitAdded: RGBA;
   gitDeleted: RGBA;
@@ -40,6 +41,7 @@ const DEFAULTS: WidgetTheme = {
   dirName: rgba(100, 160, 255),
   rowAlt: rgba(255, 255, 255, 5),
   indentGuide: rgba(60, 60, 80),
+  ignored: rgba(80, 80, 100),
   gitModified: rgba(230, 180, 80),
   gitAdded: rgba(80, 200, 120),
   gitDeleted: rgba(230, 80, 80),

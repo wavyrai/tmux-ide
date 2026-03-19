@@ -11,6 +11,9 @@ importers:
       '@opentui/core':
         specifier: ^0.1.88
         version: 0.1.88(stage-js@1.0.1)(typescript@5.9.3)(web-tree-sitter@0.25.10)
+      '@opentui/core-darwin-arm64':
+        specifier: ^0.1.88
+        version: 0.1.88
       '@opentui/solid':
         specifier: ^0.1.88
         version: 0.1.88(solid-js@1.9.11)(stage-js@1.0.1)(typescript@5.9.3)(web-tree-sitter@0.25.10)
@@ -30,6 +33,9 @@ importers:
       '@eslint/js':
         specifier: ^10.0.1
         version: 10.0.1(eslint@10.0.3(jiti@2.6.1))
+      '@tsconfig/bun':
+        specifier: ^1.0.10
+        version: 1.0.10
       '@types/node':
         specifier: ^25.5.0
         version: 25.5.0
@@ -1514,6 +1520,9 @@ packages:
 
   '@tokenizer/token@0.3.0':
     resolution: {integrity: sha512-OvjF+z51L3ov0OyAU0duzsYuvO01PH7x4t6DJx+guahgTnBHkhJdG7soQeTSFLWN3efnHyibZ4Z8l2EuWwJN3A==}
+
+  '@tsconfig/bun@1.0.10':
+    resolution: {integrity: sha512-5AV5YknQjNyoYzZ/8NG0dawqew/wH+x7ANiCfCIn29qo0cdbd1EryvFD1k5NSZWLBMOI/fGqMIaxi58GPIP9Cg==}
 
   '@types/debug@4.1.12':
     resolution: {integrity: sha512-vIChWdVG3LG1SMxEvI/AK+FWJthlrqlTu7fbrlywTkkaONwk/UAGaULXRlf8vkzFBLVm0zkMdCquhL5aOjhXPQ==}
@@ -3936,8 +3945,7 @@ snapshots:
   '@next/swc-win32-x64-msvc@16.1.6':
     optional: true
 
-  '@opentui/core-darwin-arm64@0.1.88':
-    optional: true
+  '@opentui/core-darwin-arm64@0.1.88': {}
 
   '@opentui/core-darwin-x64@0.1.88':
     optional: true
@@ -4586,6 +4594,8 @@ snapshots:
   '@takumi-rs/wasm@0.70.4': {}
 
   '@tokenizer/token@0.3.0': {}
+
+  '@tsconfig/bun@1.0.10': {}
 
   '@types/debug@4.1.12':
     dependencies:
