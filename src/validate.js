@@ -72,6 +72,32 @@ export function validateConfig(config) {
           errors.push(`rows[${i}].panes[${j}].task must be a string`);
         }
       }
+
+      // Check multiple focus panes in this row
+      const focusCount = row.panes.filter((p) => p.focus === true).length;
+      if (focusCount > 1) {
+        errors.push(`Row ${i} has ${focusCount} panes with focus: true (max 1)`);
+      }
+
+      // Check pane sizes sum within this row
+      const paneSizes = row.panes
+        .map((p) => p.size)
+        .filter((s) => typeof s === "string" && /^[1-9]\d*%$/.test(s))
+        .map((s) => parseInt(s, 10));
+      const paneSum = paneSizes.reduce((a, b) => a + b, 0);
+      if (paneSum > 100) {
+        errors.push(`Row ${i} pane sizes sum to ${paneSum}%, which exceeds 100%`);
+      }
+    }
+
+    // Check row sizes sum
+    const rowSizes = config.rows
+      .map((r) => r.size)
+      .filter((s) => typeof s === "string" && /^[1-9]\d*%$/.test(s))
+      .map((s) => parseInt(s, 10));
+    const rowSum = rowSizes.reduce((a, b) => a + b, 0);
+    if (rowSum > 100) {
+      errors.push(`Row sizes sum to ${rowSum}%, which exceeds 100%`);
     }
   }
 
@@ -111,14 +137,12 @@ export function validateConfig(config) {
 
 function validateSize(value, path, errors) {
   const s = String(value);
-  if (!/^\d+%$/.test(s)) {
+  if (!/^[1-9]\d*%$/.test(s)) {
     errors.push(`${path} "${value}" must be a percentage (e.g. "50%")`);
     return;
   }
   const num = parseInt(s, 10);
-  if (num === 0) {
-    errors.push(`${path} must not be 0%`);
-  } else if (num > 100) {
+  if (num > 100) {
     errors.push(`${path} must not exceed 100%`);
   }
 }
