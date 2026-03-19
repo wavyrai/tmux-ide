@@ -23,5 +23,5 @@ export function resolveWidgetCommand(type: string, opts: WidgetOptions): string 
   const args = [`--session=${opts.session}`, `--dir=${opts.dir}`];
   if (opts.target) args.push(`--target=${opts.target}`);
   if (opts.theme) args.push(`--theme='${JSON.stringify(opts.theme)}'`);
-  return `node ${scriptPath} ${args.join(" ")}`;
+  return `bun ${scriptPath} ${args.join(" ")}`;
 }

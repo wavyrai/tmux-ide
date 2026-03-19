@@ -1,14 +1,12 @@
-import { build } from "esbuild";
-import { solidPlugin } from "esbuild-plugin-solid";
+import { createSolidTransformPlugin } from "@opentui/solid/bun-plugin";
 
-await build({
-  entryPoints: ["src/widgets/explorer/index.tsx"],
+await Bun.build({
+  entrypoints: ["src/widgets/explorer/index.tsx"],
   outdir: "dist/widgets/explorer",
-  bundle: true,
-  platform: "node",
+  target: "bun",
   format: "esm",
-  target: "node18",
-  plugins: [solidPlugin()],
+  conditions: ["browser"],
+  plugins: [createSolidTransformPlugin()],
   external: ["@opentui/core", "@opentui/solid", "solid-js"],
 });
 
