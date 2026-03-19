@@ -23,3 +23,6 @@ context/
 
 # local planning artifacts
 plans/
+
+# TypeScript build output
+dist/
