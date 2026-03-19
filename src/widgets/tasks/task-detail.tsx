@@ -144,7 +144,9 @@ export function TaskDetail(props: TaskDetailProps) {
     <box paddingLeft={1} paddingRight={1}>
       {/* Back bar */}
       <box flexShrink={0} flexDirection="row" justifyContent="space-between">
-        <text fg={toRGBA(theme.fgMuted)}>{"< Esc:back"}</text>
+        <text fg={toRGBA(theme.fgMuted)} onMouseUp={() => props.onBack()}>
+          {"< Esc:back"}
+        </text>
         <text fg={toRGBA(theme.fgMuted)}>Task {t().id}</text>
       </box>
 
