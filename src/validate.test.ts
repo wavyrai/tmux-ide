@@ -248,13 +248,18 @@ describe("validateConfig", () => {
     assert.deepStrictEqual(errors, []);
   });
 
+  it("accepts type: warroom pane", () => {
+    const errors = validateConfig({
+      rows: [{ panes: [{ type: "warroom", title: "War Room" }] }],
+    });
+    assert.deepStrictEqual(errors, []);
+  });
+
   it("rejects invalid type value", () => {
     const errors = validateConfig({
       rows: [{ panes: [{ type: "invalid" }] }],
     });
-    assert.ok(
-      errors.includes('rows[0].panes[0].type must be "explorer", "changes", "preview", or "tasks"'),
-    );
+    assert.ok(errors.some((e) => e.includes("rows[0].panes[0].type must be one of:")));
   });
 
   it("rejects type and command together", () => {
