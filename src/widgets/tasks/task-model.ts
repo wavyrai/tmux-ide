@@ -97,7 +97,7 @@ export function updateTaskAssignee(
 export function updateTaskField(
   projectDir: string,
   taskId: string,
-  fields: Partial<Pick<Task, "title" | "description" | "branch" | "tags">>,
+  fields: Partial<Pick<Task, "title" | "description" | "branch" | "tags" | "priority">>,
 ): void {
   const dir = getTasksDir(projectDir);
   if (!existsSync(dir)) return;
@@ -113,6 +113,7 @@ export function updateTaskField(
         if (fields.description !== undefined) task.description = fields.description;
         if (fields.branch !== undefined) task.branch = fields.branch;
         if (fields.tags !== undefined) task.tags = fields.tags;
+        if (fields.priority !== undefined) task.priority = fields.priority;
         task.updated = new Date().toISOString();
         writeFileSync(filePath, JSON.stringify(task, null, 2) + "\n");
         return;
@@ -185,9 +186,7 @@ export type FlatItem =
   | { kind: "task"; task: Task; taskIndex: number };
 
 // Build a flat list with headers interleaved — indices match DOM order
-export function flattenTaskList(
-  groups: { status: TaskStatus; tasks: Task[] }[],
-): FlatItem[] {
+export function flattenTaskList(groups: { status: TaskStatus; tasks: Task[] }[]): FlatItem[] {
   const result: FlatItem[] = [];
   let taskIdx = 0;
   for (const group of groups) {
