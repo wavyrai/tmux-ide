@@ -14,7 +14,7 @@ export interface Row {
 export interface Pane {
   title?: string;
   command?: string;
-  type?: "explorer" | "changes";
+  type?: "explorer" | "changes" | "preview";
   target?: string;
   dir?: string;
   size?: string;

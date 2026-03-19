@@ -74,9 +74,9 @@ export function validateConfig(config: unknown): string[] {
           errors.push(`rows[${i}].panes[${j}].task must be a string`);
         }
         if (pane.type !== undefined) {
-          const validTypes = ["explorer", "changes"];
+          const validTypes = ["explorer", "changes", "preview"];
           if (typeof pane.type !== "string" || !validTypes.includes(pane.type)) {
-            errors.push(`rows[${i}].panes[${j}].type must be "explorer" or "changes"`);
+            errors.push(`rows[${i}].panes[${j}].type must be "explorer", "changes", or "preview"`);
           }
           if (pane.command !== undefined) {
             errors.push(`rows[${i}].panes[${j}] cannot have both 'type' and 'command'`);
