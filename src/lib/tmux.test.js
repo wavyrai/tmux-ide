@@ -321,7 +321,6 @@ describe("startSessionMonitor", () => {
     startSessionMonitor("proj", "/path/to/monitor.js");
 
     // Check spawn was called correctly
-    const spawner = fakeChild; // spawner is the mock
     assert.strictEqual(fakeChild.unref.mock.callCount(), 1);
 
     // Check PID was stored via set-option
