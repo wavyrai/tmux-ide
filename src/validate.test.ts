@@ -220,6 +220,48 @@ describe("validateConfig", () => {
     assert.deepStrictEqual(errors, []);
   });
 
+  it("accepts type: explorer pane", () => {
+    const errors = validateConfig({
+      rows: [{ panes: [{ type: "explorer", title: "Files" }] }],
+    });
+    assert.deepStrictEqual(errors, []);
+  });
+
+  it("accepts type: changes pane", () => {
+    const errors = validateConfig({
+      rows: [{ panes: [{ type: "changes", title: "Changes" }] }],
+    });
+    assert.deepStrictEqual(errors, []);
+  });
+
+  it("rejects invalid type value", () => {
+    const errors = validateConfig({
+      rows: [{ panes: [{ type: "invalid" }] }],
+    });
+    assert.ok(errors.includes('rows[0].panes[0].type must be "explorer" or "changes"'));
+  });
+
+  it("rejects type and command together", () => {
+    const errors = validateConfig({
+      rows: [{ panes: [{ type: "explorer", command: "vim" }] }],
+    });
+    assert.ok(errors.includes("rows[0].panes[0] cannot have both 'type' and 'command'"));
+  });
+
+  it("rejects non-string target", () => {
+    const errors = validateConfig({
+      rows: [{ panes: [{ target: 42 }] }],
+    });
+    assert.ok(errors.includes("rows[0].panes[0].target must be a string"));
+  });
+
+  it("accepts string target", () => {
+    const errors = validateConfig({
+      rows: [{ panes: [{ type: "explorer", target: "Claude" }] }],
+    });
+    assert.deepStrictEqual(errors, []);
+  });
+
   it("collects multiple errors at once", () => {
     const errors = validateConfig({
       name: 123,
