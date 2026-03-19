@@ -1,11 +1,12 @@
 import { parseArgs } from "node:util";
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync, existsSync, statSync } from "node:fs";
 import { extname, basename, resolve } from "node:path";
 import { execFileSync } from "node:child_process";
 import { render, useKeyboard, useTerminalDimensions } from "@opentui/solid";
 import { RGBA, TextAttributes } from "@opentui/core";
 import { createSignal, createMemo, onCleanup, Show, For } from "solid-js";
-import { createTheme } from "../lib/theme.ts";
+import { createTheme, type WidgetTheme } from "../lib/theme.ts";
+import { getFileDiff } from "../lib/git.ts";
 
 const { values } = parseArgs({
   options: {
@@ -72,22 +73,78 @@ function getPreviewFile(): string | null {
   }
 }
 
-function loadFile(
-  filePath: string,
-): { content: string; totalLines: number; binary: boolean } | null {
+function formatSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes}B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)}MB`;
+}
+
+const KEYWORD_RE =
+  /^(import|export|from|const|let|var|function|return|if|else|for|while|class|interface|type|async|await|try|catch|throw|new|switch|case|default|break|continue|enum|extends|implements|public|private|protected|static|readonly|abstract|override|declare|module|namespace|def|fn|pub|mut|use|mod|struct|impl|trait|match|loop|where|yield)\b/;
+
+function getLineColor(
+  line: string,
+  theme: WidgetTheme,
+): { r: number; g: number; b: number; a: number } {
+  const trimmed = line.trim();
+  if (!trimmed) return theme.fg;
+
+  // Comments
+  if (
+    trimmed.startsWith("//") ||
+    trimmed.startsWith("#") ||
+    trimmed.startsWith("--") ||
+    trimmed.startsWith("/*") ||
+    trimmed.startsWith("*")
+  ) {
+    return theme.fgMuted;
+  }
+
+  // Strings
+  if (trimmed.startsWith('"') || trimmed.startsWith("'") || trimmed.startsWith("`")) {
+    return theme.gitAdded;
+  }
+
+  // Keywords
+  if (KEYWORD_RE.test(trimmed)) {
+    return theme.accent;
+  }
+
+  return theme.fg;
+}
+
+interface FileData {
+  content: string;
+  totalLines: number;
+  binary: boolean;
+  size: string;
+}
+
+function loadFile(filePath: string): FileData | null {
   const fullPath = filePath.startsWith("/") ? filePath : resolve(dir, filePath);
   if (!existsSync(fullPath)) return null;
+
+  let size: string;
+  try {
+    size = formatSize(statSync(fullPath).size);
+  } catch {
+    size = "";
+  }
+
   if (BINARY_EXTENSIONS.has(extname(fullPath).toLowerCase())) {
-    return { content: "(binary file)", totalLines: 1, binary: true };
+    return { content: "(binary file)", totalLines: 1, binary: true, size };
   }
   try {
     const raw = readFileSync(fullPath, "utf-8");
-    if (raw.includes("\0")) return { content: "(binary file)", totalLines: 1, binary: true };
+    if (raw.includes("\0")) {
+      return { content: "(binary file)", totalLines: 1, binary: true, size };
+    }
     const allLines = raw.split("\n");
     return {
       content: allLines.slice(0, MAX_PREVIEW_LINES).join("\n"),
       totalLines: allLines.length,
       binary: false,
+      size,
     };
   } catch {
     return null;
@@ -101,24 +158,43 @@ render(
     const [filePath, setFilePath] = createSignal<string | null>(null);
     const [fileContent, setFileContent] = createSignal<string | null>(null);
     const [totalLines, setTotalLines] = createSignal(0);
+    const [fileSize, setFileSize] = createSignal("");
+    const [isBinary, setIsBinary] = createSignal(false);
+    const [fileDiff, setFileDiff] = createSignal<string | null>(null);
+    const [viewMode, setViewMode] = createSignal<"content" | "diff">("content");
 
     // Poll tmux session variable for file path changes
     const interval = setInterval(() => {
       const newPath = getPreviewFile();
       if (newPath !== filePath()) {
         setFilePath(newPath);
+        setViewMode("content");
         if (newPath) {
           const result = loadFile(newPath);
           if (result) {
             setFileContent(result.content);
             setTotalLines(result.totalLines);
+            setFileSize(result.size);
+            setIsBinary(result.binary);
           } else {
             setFileContent(null);
             setTotalLines(0);
+            setFileSize("");
+            setIsBinary(false);
+          }
+          // Check for git diff
+          try {
+            const diff = getFileDiff(dir, newPath, false);
+            setFileDiff(diff || null);
+          } catch {
+            setFileDiff(null);
           }
         } else {
           setFileContent(null);
           setTotalLines(0);
+          setFileSize("");
+          setIsBinary(false);
+          setFileDiff(null);
         }
       }
     }, 200);
@@ -131,18 +207,34 @@ render(
       return content.split("\n");
     });
 
+    const fileExt = createMemo(() => {
+      const fp = filePath();
+      return fp ? extname(fp).toLowerCase() : "";
+    });
+
     const lineNumWidth = createMemo(() => Math.max(3, String(totalLines()).length));
 
     useKeyboard((evt) => {
-      if (evt.name === "q") process.exit(0);
-      // r: reload current file
-      if (evt.name === "r" && filePath()) {
+      if (evt.name === "d") {
+        if (fileDiff()) setViewMode((m) => (m === "content" ? "diff" : "content"));
+        evt.preventDefault();
+      } else if (evt.name === "r" && filePath()) {
         const result = loadFile(filePath()!);
         if (result) {
           setFileContent(result.content);
           setTotalLines(result.totalLines);
+          setFileSize(result.size);
+          setIsBinary(result.binary);
+        }
+        try {
+          const diff = getFileDiff(dir, filePath()!, false);
+          setFileDiff(diff || null);
+        } catch {
+          setFileDiff(null);
         }
         evt.preventDefault();
+      } else if (evt.name === "q") {
+        process.exit(0);
       }
     });
 
@@ -153,56 +245,99 @@ render(
         backgroundColor={toRGBA(theme.bg)}
       >
         {/* Header */}
-        <box flexShrink={0} paddingLeft={1} paddingBottom={0} flexDirection="row" gap={1}>
-          <Show
-            when={filePath()}
-            fallback={<text fg={toRGBA(theme.fgMuted)}>No file selected</text>}
-          >
-            <text fg={toRGBA(theme.accent)} attributes={TextAttributes.BOLD}>
-              {basename(filePath()!)}
-            </text>
-            <text fg={toRGBA(theme.fgMuted)}>{filePath()}</text>
-            <Show when={totalLines() > MAX_PREVIEW_LINES}>
-              <text fg={toRGBA(theme.fgMuted)}>
-                ({totalLines()} lines, showing first {MAX_PREVIEW_LINES})
-              </text>
-            </Show>
-          </Show>
-        </box>
-
-        {/* Separator */}
-        <box flexShrink={0} height={1}>
-          <text fg={toRGBA(theme.border)} wrapMode="none">
-            {"─".repeat(dimensions().width)}
-          </text>
-        </box>
-
-        {/* File content */}
         <Show
-          when={fileContent()}
+          when={filePath()}
           fallback={
             <box flexGrow={1} paddingLeft={2} paddingTop={2}>
-              <text fg={toRGBA(theme.fgMuted)}>
-                Select a file in the explorer to preview it here
+              <text fg={toRGBA(theme.fgMuted)}>Select a file in the explorer</text>
+              <text fg={toRGBA(theme.border)} paddingTop={1}>
+                Navigate with ↑↓ keys
               </text>
+              <text fg={toRGBA(theme.border)}>Preview updates automatically</text>
             </box>
           }
         >
-          <scrollbox flexGrow={1}>
-            <For each={lines()}>
-              {(line, lineNum) => (
-                <box flexDirection="row">
-                  <text fg={toRGBA(theme.diffLineNumber)} flexShrink={0} wrapMode="none">
-                    {String(lineNum() + 1).padStart(lineNumWidth())}
-                    {" │ "}
-                  </text>
-                  <text fg={toRGBA(theme.fg)} wrapMode="none">
-                    {line || " "}
-                  </text>
-                </box>
-              )}
-            </For>
-          </scrollbox>
+          <box flexShrink={0} paddingLeft={1} flexDirection="row" gap={2}>
+            <text fg={toRGBA(theme.accent)} attributes={TextAttributes.BOLD}>
+              {basename(filePath()!)}
+            </text>
+            <Show when={!isBinary()}>
+              <text fg={toRGBA(theme.fgMuted)}>{totalLines()} lines</text>
+            </Show>
+            <text fg={toRGBA(theme.fgMuted)}>{fileSize()}</text>
+            <Show when={fileDiff()}>
+              <text fg={toRGBA(viewMode() === "diff" ? theme.gitModified : theme.fgMuted)}>
+                {viewMode() === "diff" ? "[diff]" : "[d:diff]"}
+              </text>
+            </Show>
+          </box>
+
+          {/* Separator */}
+          <box flexShrink={0} height={1}>
+            <text fg={toRGBA(theme.border)} wrapMode="none">
+              {"─".repeat(dimensions().width)}
+            </text>
+          </box>
+
+          {/* Diff view */}
+          <Show when={viewMode() === "diff" && fileDiff()}>
+            <scrollbox flexGrow={1}>
+              <For each={fileDiff()!.split("\n")}>
+                {(line) => {
+                  const color = line.startsWith("+")
+                    ? theme.diffAdded
+                    : line.startsWith("-")
+                      ? theme.diffRemoved
+                      : line.startsWith("@@")
+                        ? theme.diffHunk
+                        : theme.diffContext;
+                  const bg = line.startsWith("+")
+                    ? theme.diffAddedBg
+                    : line.startsWith("-")
+                      ? theme.diffRemovedBg
+                      : theme.diffContextBg;
+                  return (
+                    <box backgroundColor={toRGBA(bg)}>
+                      <text fg={toRGBA(color)} wrapMode="none">
+                        {line || " "}
+                      </text>
+                    </box>
+                  );
+                }}
+              </For>
+            </scrollbox>
+          </Show>
+
+          {/* Content view */}
+          <Show when={viewMode() === "content" && fileContent()}>
+            <scrollbox flexGrow={1}>
+              <For each={lines()}>
+                {(line, lineNum) => {
+                  const color = isBinary() ? theme.fgMuted : getLineColor(line, theme);
+                  return (
+                    <box flexDirection="row">
+                      <Show when={!isBinary()}>
+                        <text fg={toRGBA(theme.diffLineNumber)} flexShrink={0} wrapMode="none">
+                          {String(lineNum() + 1).padStart(lineNumWidth())}
+                          {" │ "}
+                        </text>
+                      </Show>
+                      <text fg={toRGBA(color)} wrapMode="none">
+                        {line || " "}
+                      </text>
+                    </box>
+                  );
+                }}
+              </For>
+            </scrollbox>
+          </Show>
+
+          {/* Footer */}
+          <box flexShrink={0} paddingLeft={1}>
+            <text fg={toRGBA(theme.fgMuted)} wrapMode="none">
+              d:toggle diff q:quit
+            </text>
+          </box>
         </Show>
       </box>
     );
