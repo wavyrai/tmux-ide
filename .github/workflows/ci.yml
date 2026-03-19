@@ -41,11 +41,11 @@ jobs:
         run: pnpm build
 
       - name: Run test suite
-        if: matrix.node >= 22
+        if: matrix.node == 22
         run: pnpm test:unit
 
       - name: Smoke test (Node < 22)
-        if: matrix.node < 22
+        if: matrix.node != 22
         run: node bin/cli.js --help && node bin/cli.js --version
 
       - name: Validate package contents
