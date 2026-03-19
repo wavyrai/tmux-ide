@@ -3,14 +3,17 @@ import { existsSync } from "node:fs";
 import { getSessionName } from "./lib/yaml-io.ts";
 import { getSessionState, listPanes } from "./lib/tmux.ts";
 
-export async function status(targetDir, { json } = {}) {
+export async function status(
+  targetDir: string | undefined,
+  { json }: { json?: boolean } = {},
+): Promise<void> {
   const dir = resolve(targetDir ?? ".");
   const { name: session } = getSessionName(dir);
   const configExists = existsSync(resolve(dir, "ide.yml"));
 
   const state = getSessionState(session);
   const running = state.running;
-  let panes = [];
+  let panes: ReturnType<typeof listPanes> = [];
 
   if (running) panes = listPanes(session);
 

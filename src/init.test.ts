@@ -4,7 +4,7 @@ import { mkdtempSync, writeFileSync, readFileSync, existsSync, rmSync } from "no
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { IdeError } from "./lib/errors.ts";
-import { init } from "./init.js";
+import { init } from "./init.ts";
 
 let tmpDir;
 let origCwd;

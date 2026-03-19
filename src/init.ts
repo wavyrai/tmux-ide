@@ -3,10 +3,14 @@ import { resolve, basename, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-import { detectStack, suggestConfig } from "./detect.js";
+import { detectStack, suggestConfig } from "./detect.ts";
 import { outputError, printLayout } from "./lib/output.ts";
+import type { IdeConfig } from "./types.ts";
 
-export async function init({ template, json } = {}) {
+export async function init({
+  template,
+  json,
+}: { template?: string; json?: boolean } = {}): Promise<void> {
   const dir = process.cwd();
   const configPath = resolve(dir, "ide.yml");
 
@@ -31,7 +35,7 @@ export async function init({ template, json } = {}) {
     } else {
       console.log(`Created ide.yml from "${template}" template for "${name}"`);
       const yaml = (await import("js-yaml")).default;
-      printLayout(yaml.load(content));
+      printLayout(yaml.load(content) as IdeConfig);
     }
     return;
   }
@@ -66,7 +70,7 @@ export async function init({ template, json } = {}) {
     } else {
       console.log(`Created ide.yml for "${name}"`);
       const yaml = (await import("js-yaml")).default;
-      printLayout(yaml.load(content));
+      printLayout(yaml.load(content) as IdeConfig);
       console.log("Edit it to configure your workspace, then run: tmux-ide");
     }
   }

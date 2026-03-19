@@ -5,8 +5,8 @@ import { existsSync, mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
-import { launch } from "./launch.js";
-import { restart } from "./restart.js";
+import { launch } from "./launch.ts";
+import { restart } from "./restart.ts";
 
 // Skip entire suite unless tmux is installed and we can create sessions.
 let tmuxAvailable = false;

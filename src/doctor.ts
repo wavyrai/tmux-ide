@@ -2,17 +2,28 @@ import { execSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 
-function check(label, fn, { optional = false } = {}) {
+interface CheckResult {
+  label: string;
+  pass: boolean;
+  detail: string;
+  optional: boolean;
+}
+
+function check(
+  label: string,
+  fn: () => string,
+  { optional = false }: { optional?: boolean } = {},
+): CheckResult {
   try {
     const result = fn();
     return { label, pass: true, detail: result, optional };
   } catch (e) {
-    return { label, pass: false, detail: e.message, optional };
+    return { label, pass: false, detail: (e as Error).message, optional };
   }
 }
 
-export async function doctor({ json } = {}) {
-  const checks = [];
+export async function doctor({ json }: { json?: boolean } = {}): Promise<void> {
+  const checks: CheckResult[] = [];
 
   checks.push(
     check("tmux installed", () => {
@@ -32,7 +43,7 @@ export async function doctor({ json } = {}) {
 
   checks.push(
     check("Node.js ≥ 18", () => {
-      const major = parseInt(process.versions.node.split(".")[0]);
+      const major = parseInt(process.versions.node.split(".")[0]!);
       if (major < 18) throw new Error(`Node ${process.versions.node} (need ≥ 18)`);
       return `v${process.versions.node}`;
     }),

@@ -1,13 +1,61 @@
 import { resolve, basename } from "node:path";
 import { readConfig } from "./lib/yaml-io.ts";
-import { validateConfig } from "./validate.js";
+import { validateConfig } from "./validate.ts";
 import { outputError } from "./lib/output.ts";
 import { getSessionState, listPanes } from "./lib/tmux.ts";
+import type { IdeConfig } from "./types.ts";
 
-export function buildInspection(dir, { config, configPath, running, panes }) {
+interface ResolvedPane {
+  index: number;
+  title: string | null;
+  command: string | null;
+  dir: string;
+  size: string | null;
+  focus: boolean;
+  role: string | null;
+  task: string | null;
+  env: Record<string, unknown>;
+}
+
+interface ResolvedRow {
+  index: number;
+  size: string | null;
+  panes: ResolvedPane[];
+}
+
+interface Inspection {
+  dir: string;
+  configPath: string;
+  valid: boolean;
+  errors: string[];
+  session: string;
+  before: string | null;
+  summary: { rows: number; panes: number; focus: string | null };
+  team: IdeConfig["team"] | null;
+  theme: IdeConfig["theme"] | null;
+  focus: { row: number; pane: number; title: string | null } | null;
+  rows: ResolvedRow[];
+  rawConfig: IdeConfig;
+  tmux: { running: boolean; panes: ReturnType<typeof listPanes> };
+}
+
+export function buildInspection(
+  dir: string,
+  {
+    config,
+    configPath,
+    running,
+    panes,
+  }: {
+    config: IdeConfig;
+    configPath: string;
+    running: boolean;
+    panes: ReturnType<typeof listPanes>;
+  },
+): Inspection {
   const errors = validateConfig(config);
   const rows = Array.isArray(config?.rows) ? config.rows : [];
-  const resolvedRows = rows.map((row, rowIndex) => ({
+  const resolvedRows: ResolvedRow[] = rows.map((row, rowIndex) => ({
     index: rowIndex,
     size: row.size ?? null,
     panes: (Array.isArray(row?.panes) ? row.panes : []).map((pane, paneIndex) => ({
@@ -59,15 +107,18 @@ export function buildInspection(dir, { config, configPath, running, panes }) {
   };
 }
 
-export async function inspect(targetDir, { json } = {}) {
+export async function inspect(
+  targetDir: string | undefined,
+  { json }: { json?: boolean } = {},
+): Promise<void> {
   const dir = resolve(targetDir ?? ".");
 
   let config;
-  let configPath;
+  let configPath: string;
   try {
     ({ config, configPath } = readConfig(dir));
   } catch (error) {
-    outputError(`Cannot read ide.yml: ${error.message}`, "READ_ERROR");
+    outputError(`Cannot read ide.yml: ${(error as Error).message}`, "READ_ERROR");
     return;
   }
 
@@ -107,7 +158,7 @@ export async function inspect(targetDir, { json } = {}) {
   for (const row of data.rows) {
     console.log(`  Row ${row.index}${row.size ? ` (${row.size})` : ""}`);
     for (const pane of row.panes) {
-      const parts = [];
+      const parts: string[] = [];
       if (pane.title) parts.push(pane.title);
       if (pane.command) parts.push(`cmd=${pane.command}`);
       if (pane.dir && pane.dir !== ".") parts.push(`dir=${pane.dir}`);

@@ -1,21 +1,30 @@
 import { resolve, basename } from "node:path";
 import { readFileSync, existsSync } from "node:fs";
 import { writeConfig } from "./lib/yaml-io.ts";
+import type { IdeConfig } from "./types.ts";
 
-function fileExists(dir, name) {
+interface DetectedStack {
+  packageManager: string | null;
+  frameworks: string[];
+  devCommand: string | null;
+  language: string | null;
+  reasons: string[];
+}
+
+function fileExists(dir: string, name: string): boolean {
   return existsSync(resolve(dir, name));
 }
 
-function readJson(dir, name) {
+function readJson(dir: string, name: string): Record<string, unknown> | null {
   try {
-    return JSON.parse(readFileSync(resolve(dir, name), "utf-8"));
+    return JSON.parse(readFileSync(resolve(dir, name), "utf-8")) as Record<string, unknown>;
   } catch {
     return null;
   }
 }
 
-export function detectStack(dir) {
-  const detected = {
+export function detectStack(dir: string): DetectedStack {
+  const detected: DetectedStack = {
     packageManager: null,
     frameworks: [],
     devCommand: null,
@@ -42,7 +51,10 @@ export function detectStack(dir) {
   if (pkg) {
     detected.language = "javascript";
     detected.reasons.push('Detected JavaScript from "package.json".');
-    const deps = { ...pkg.dependencies, ...pkg.devDependencies };
+    const deps = {
+      ...(pkg.dependencies as Record<string, unknown> | undefined),
+      ...(pkg.devDependencies as Record<string, unknown> | undefined),
+    };
 
     if (deps["next"]) pushFramework(detected, "next", 'Found dependency "next".');
     if (deps["convex"]) pushFramework(detected, "convex", 'Found dependency "convex".');
@@ -57,12 +69,13 @@ export function detectStack(dir) {
     // Detect dev command
     const pm = detected.packageManager ?? "npm";
     const run = pm === "npm" ? "npm run" : pm;
-    if (pkg.scripts?.dev) {
+    const scripts = pkg.scripts as Record<string, unknown> | undefined;
+    if (scripts?.dev) {
       detected.devCommand = `${run} dev`;
       detected.reasons.push(
         `Using dev command "${detected.devCommand}" from package.json scripts.`,
       );
-    } else if (pkg.scripts?.start) {
+    } else if (scripts?.start) {
       detected.devCommand = `${run} start`;
       detected.reasons.push(
         `Using start command "${detected.devCommand}" from package.json scripts.`,
@@ -117,13 +130,13 @@ export function detectStack(dir) {
   return detected;
 }
 
-export function suggestConfig(dir, detected) {
+export function suggestConfig(dir: string, detected: DetectedStack): IdeConfig {
   const name = basename(dir);
   const pm = detected.packageManager ?? "npm";
   const run = pm === "npm" ? "npm run" : pm;
 
   // Default: 2 claude panes + shell
-  const config = {
+  const config: IdeConfig = {
     name,
     rows: [
       {
@@ -139,12 +152,12 @@ export function suggestConfig(dir, detected) {
     ],
   };
 
-  const bottom = config.rows[1].panes;
+  const bottom = config.rows[1]!.panes;
   const frameworks = detected.frameworks;
 
   // Add 3rd claude pane for complex stacks
   if (frameworks.length >= 2) {
-    config.rows[0].panes.push({ title: "Claude 3", command: "claude" });
+    config.rows[0]!.panes.push({ title: "Claude 3", command: "claude" });
   }
 
   // Add dev servers
@@ -184,7 +197,10 @@ export function suggestConfig(dir, detected) {
   return config;
 }
 
-export async function detect(targetDir, { json, write } = {}) {
+export async function detect(
+  targetDir: string | undefined,
+  { json, write }: { json?: boolean; write?: boolean } = {},
+): Promise<void> {
   const dir = resolve(targetDir ?? ".");
   const detected = detectStack(dir);
   const suggested = suggestConfig(dir, detected);
@@ -224,7 +240,7 @@ export async function detect(targetDir, { json, write } = {}) {
   console.log("\nRun with --write to create ide.yml, or --json to see the suggested config.");
 }
 
-function pushFramework(detected, framework, reason) {
+function pushFramework(detected: DetectedStack, framework: string, reason: string): void {
   if (!detected.frameworks.includes(framework)) {
     detected.frameworks.push(framework);
   }

@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { validateConfig } from "./validate.js";
+import { validateConfig } from "./validate.ts";
 
 describe("validateConfig", () => {
   it("accepts a valid minimal config", () => {

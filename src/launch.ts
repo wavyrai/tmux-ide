@@ -22,27 +22,45 @@ import {
   splitPane,
   startSessionMonitor,
 } from "./lib/tmux.ts";
-import { validateConfig } from "./validate.js";
+import { validateConfig } from "./validate.ts";
+import type { IdeConfig, Row } from "./types.ts";
 
-function sleepMs(ms) {
+interface SplitPaneArgs {
+  targetPane: string;
+  direction: "vertical" | "horizontal";
+  cwd: string;
+  percent: number;
+}
+
+function sleepMs(ms: number): void {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 
-function configHash(config) {
+function configHash(config: IdeConfig): string {
   return createHash("sha256").update(JSON.stringify(config)).digest("hex").slice(0, 12);
 }
 
 export function waitForPaneCommand(
-  targetPane,
-  expectedCommands,
-  { attempts = 20, delayMs = 100, getCurrentCommand = getPaneCurrentCommand, sleep = sleepMs } = {},
-) {
+  targetPane: string,
+  expectedCommands: string[],
+  {
+    attempts = 20,
+    delayMs = 100,
+    getCurrentCommand = getPaneCurrentCommand,
+    sleep = sleepMs,
+  }: {
+    attempts?: number;
+    delayMs?: number;
+    getCurrentCommand?: (pane: string) => string;
+    sleep?: (ms: number) => void;
+  } = {},
+): boolean {
   const allowed = new Set(expectedCommands.map((command) => command.toLowerCase()));
 
   for (let attempt = 0; attempt < attempts; attempt++) {
     try {
       const current = getCurrentCommand(targetPane)?.trim().toLowerCase();
-      if (allowed.has(current)) return true;
+      if (current && allowed.has(current)) return true;
     } catch {
       // Fall through to retry; tmux can briefly report transitional state.
     }
@@ -55,44 +73,49 @@ export function waitForPaneCommand(
   return false;
 }
 
-export function buildPaneMap(rows, dir, rootPaneId, splitPane) {
+export function buildPaneMap(
+  rows: Row[],
+  dir: string,
+  rootPaneId: string,
+  splitPaneFn: (args: SplitPaneArgs) => string,
+): { paneMap: string[][]; firstPanesOfRows: Set<string> } {
   const rowSizes = computeSizes(rows);
   const rowSplitPercents = toSplitPercents(rowSizes);
 
   // Create all rows vertically first so each row spans the full width.
   const rowPaneIds = [rootPaneId];
   for (let rowIdx = 1; rowIdx < rows.length; rowIdx++) {
-    const splitFrom = rowPaneIds[rowIdx - 1];
-    const newPaneId = splitPane({
+    const splitFrom = rowPaneIds[rowIdx - 1]!;
+    const newPaneId = splitPaneFn({
       targetPane: splitFrom,
       direction: "vertical",
       cwd: dir,
-      percent: rowSplitPercents[rowIdx - 1],
+      percent: rowSplitPercents[rowIdx - 1]!,
     });
     rowPaneIds.push(newPaneId);
   }
 
-  const paneMap = [];
+  const paneMap: string[][] = [];
   const firstPanesOfRows = new Set(rowPaneIds);
 
   for (let rowIdx = 0; rowIdx < rows.length; rowIdx++) {
-    const row = rows[rowIdx];
+    const row = rows[rowIdx]!;
     const panes = row.panes ?? [];
-    const rowPaneId = rowPaneIds[rowIdx];
+    const rowPaneId = rowPaneIds[rowIdx]!;
     const rowPanes = [rowPaneId];
 
     const paneSizes = computeSizes(panes);
     const paneSplitPercents = toSplitPercents(paneSizes);
 
     for (let paneIdx = 1; paneIdx < panes.length; paneIdx++) {
-      const pane = panes[paneIdx];
-      const targetPane = rowPanes[paneIdx - 1];
+      const pane = panes[paneIdx]!;
+      const targetPane = rowPanes[paneIdx - 1]!;
       const paneDir = pane.dir ? resolve(dir, pane.dir) : dir;
-      const newPaneId = splitPane({
+      const newPaneId = splitPaneFn({
         targetPane,
         direction: "horizontal",
         cwd: paneDir,
-        percent: paneSplitPercents[paneIdx - 1],
+        percent: paneSplitPercents[paneIdx - 1]!,
       });
       rowPanes.push(newPaneId);
     }
@@ -103,20 +126,20 @@ export function buildPaneMap(rows, dir, rootPaneId, splitPane) {
   return { paneMap, firstPanesOfRows };
 }
 
-function loadLaunchConfig(dir) {
+function loadLaunchConfig(dir: string): IdeConfig {
   let config;
 
   try {
     ({ config } = readConfig(dir));
   } catch (error) {
-    if (error?.code === "ENOENT") {
+    if ((error as NodeJS.ErrnoException)?.code === "ENOENT") {
       outputError(
         `No ide.yml found in ${dir}. Run "tmux-ide init" or "tmux-ide detect --write" to create one.`,
         "CONFIG_NOT_FOUND",
       );
     }
 
-    outputError(`Cannot read ide.yml: ${error.message}`, "READ_ERROR");
+    outputError(`Cannot read ide.yml: ${(error as Error).message}`, "READ_ERROR");
   }
 
   const errors = validateConfig(config);
@@ -130,7 +153,7 @@ function loadLaunchConfig(dir) {
   return config;
 }
 
-function runBeforeHook(command, dir) {
+function runBeforeHook(command: string | undefined, dir: string): void {
   if (!command) return;
 
   console.log(`Running: ${command}`);
@@ -142,7 +165,10 @@ function runBeforeHook(command, dir) {
   }
 }
 
-export async function launch(targetDir, { json = false, attach = true } = {}) {
+export async function launch(
+  targetDir: string | undefined,
+  { json = false, attach = true }: { json?: boolean; attach?: boolean } = {},
+): Promise<void> {
   const dir = resolve(targetDir ?? ".");
   const config = loadLaunchConfig(dir);
 
