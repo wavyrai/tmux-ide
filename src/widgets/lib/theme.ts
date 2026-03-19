@@ -1,23 +1,28 @@
+export type RGBA = { r: number; g: number; b: number; a: number };
+
 export interface WidgetTheme {
-  bg: { r: number; g: number; b: number; a: number };
-  fg: { r: number; g: number; b: number; a: number };
-  fgMuted: { r: number; g: number; b: number; a: number };
-  accent: { r: number; g: number; b: number; a: number };
-  border: { r: number; g: number; b: number; a: number };
-  selected: { r: number; g: number; b: number; a: number };
-  selectedText: { r: number; g: number; b: number; a: number };
-  gitModified: { r: number; g: number; b: number; a: number };
-  gitAdded: { r: number; g: number; b: number; a: number };
-  gitDeleted: { r: number; g: number; b: number; a: number };
-  gitUntracked: { r: number; g: number; b: number; a: number };
-  diffAdded: { r: number; g: number; b: number; a: number };
-  diffAddedBg: { r: number; g: number; b: number; a: number };
-  diffRemoved: { r: number; g: number; b: number; a: number };
-  diffRemovedBg: { r: number; g: number; b: number; a: number };
-  diffContext: { r: number; g: number; b: number; a: number };
-  diffContextBg: { r: number; g: number; b: number; a: number };
-  diffHunk: { r: number; g: number; b: number; a: number };
-  diffLineNumber: { r: number; g: number; b: number; a: number };
+  bg: RGBA;
+  fg: RGBA;
+  fgMuted: RGBA;
+  accent: RGBA;
+  border: RGBA;
+  selected: RGBA;
+  selectedText: RGBA;
+  dirName: RGBA;
+  rowAlt: RGBA;
+  indentGuide: RGBA;
+  gitModified: RGBA;
+  gitAdded: RGBA;
+  gitDeleted: RGBA;
+  gitUntracked: RGBA;
+  diffAdded: RGBA;
+  diffAddedBg: RGBA;
+  diffRemoved: RGBA;
+  diffRemovedBg: RGBA;
+  diffContext: RGBA;
+  diffContextBg: RGBA;
+  diffHunk: RGBA;
+  diffLineNumber: RGBA;
 }
 
 function rgba(r: number, g: number, b: number, a = 255) {
@@ -32,6 +37,9 @@ const DEFAULTS: WidgetTheme = {
   border: rgba(60, 60, 80),
   selected: rgba(50, 50, 70),
   selectedText: rgba(255, 255, 255),
+  dirName: rgba(100, 160, 255),
+  rowAlt: rgba(255, 255, 255, 5),
+  indentGuide: rgba(60, 60, 80),
   gitModified: rgba(230, 180, 80),
   gitAdded: rgba(80, 200, 120),
   gitDeleted: rgba(230, 80, 80),

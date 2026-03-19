@@ -9,6 +9,21 @@ function toRGBA(c: { r: number; g: number; b: number; a: number }): RGBA {
 
 const TRANSPARENT = RGBA.fromInts(0, 0, 0, 0);
 
+function getStatusDot(status: string): string {
+  switch (status) {
+    case "M":
+      return "●";
+    case "A":
+      return "●";
+    case "D":
+      return "●";
+    case "?":
+      return "◌";
+    default:
+      return " ";
+  }
+}
+
 function getStatusColor(
   status: string,
   theme: WidgetTheme,
@@ -25,6 +40,69 @@ function getStatusColor(
     default:
       return theme.fgMuted;
   }
+}
+
+function getFileIcon(name: string, isDir: boolean, expanded: boolean): string {
+  if (isDir) return expanded ? "▾ " : "▸ ";
+
+  const ext = name.includes(".") ? name.split(".").pop()?.toLowerCase() : "";
+  switch (ext) {
+    case "ts":
+    case "tsx":
+      return " ";
+    case "js":
+    case "jsx":
+      return " ";
+    case "json":
+      return " ";
+    case "md":
+    case "mdx":
+      return " ";
+    case "yml":
+    case "yaml":
+      return " ";
+    case "css":
+    case "scss":
+      return " ";
+    case "html":
+      return " ";
+    case "sh":
+    case "bash":
+    case "zsh":
+      return " ";
+    case "toml":
+      return " ";
+    case "lock":
+      return " ";
+    case "gitignore":
+    case "git":
+      return " ";
+    case "env":
+      return " ";
+    case "png":
+    case "jpg":
+    case "jpeg":
+    case "gif":
+    case "svg":
+    case "ico":
+      return " ";
+    default:
+      return " ";
+  }
+}
+
+function getNameColor(
+  name: string,
+  isDir: boolean,
+  isSelected: boolean,
+  theme: WidgetTheme,
+): { r: number; g: number; b: number; a: number } {
+  if (isSelected) return theme.selectedText;
+  if (isDir) return theme.dirName;
+  if (name.endsWith(".lock") || name.startsWith(".") || name === "LICENSE") {
+    return theme.fgMuted;
+  }
+  return theme.fg;
 }
 
 interface FileTreeProps {
@@ -66,15 +144,22 @@ export function FileTree(props: FileTreeProps) {
       <For each={props.nodes}>
         {(node, index) => {
           const isSelected = createMemo(() => index() === props.selected);
-          const indent = "  ".repeat(node.depth);
-          const icon = node.entry.isDir ? (node.expanded ? "▾ " : "▸ ") : "  ";
+          const indent = node.depth > 0 ? "│ ".repeat(node.depth) : "";
+          const icon = getFileIcon(node.entry.name, node.entry.isDir, node.expanded);
+          const nameColor = () =>
+            getNameColor(node.entry.name, node.entry.isDir, isSelected(), props.theme);
+          const rowBg = () =>
+            isSelected()
+              ? toRGBA(props.theme.selected)
+              : index() % 2 === 1
+                ? toRGBA(props.theme.rowAlt)
+                : TRANSPARENT;
 
           return (
             <box
               id={String(index())}
-              backgroundColor={isSelected() ? toRGBA(props.theme.selected) : TRANSPARENT}
+              backgroundColor={rowBg()}
               flexDirection="row"
-              justifyContent="space-between"
               onMouseMove={() => {
                 props.onInputModeChange("mouse");
               }}
@@ -91,20 +176,23 @@ export function FileTree(props: FileTreeProps) {
                 props.onSelect(index());
               }}
             >
-              <text
-                fg={isSelected() ? toRGBA(props.theme.selectedText) : toRGBA(props.theme.fg)}
-                wrapMode="none"
-                flexGrow={1}
-              >
-                {indent}
+              <Show when={node.depth > 0}>
+                <text fg={toRGBA(props.theme.indentGuide)} wrapMode="none">
+                  {indent}
+                </text>
+              </Show>
+              <text fg={toRGBA(nameColor())} wrapMode="none" flexGrow={1}>
                 {icon}
                 {node.entry.name}
                 {node.entry.isDir ? "/" : ""}
               </text>
               <Show when={node.gitStatus}>
-                <text fg={toRGBA(getStatusColor(node.gitStatus!, props.theme))} flexShrink={0}>
-                  {" "}
-                  {node.gitStatus}
+                <text
+                  fg={toRGBA(getStatusColor(node.gitStatus!, props.theme))}
+                  flexShrink={0}
+                  wrapMode="none"
+                >
+                  {getStatusDot(node.gitStatus!)}
                 </text>
               </Show>
             </box>
