@@ -19,3 +19,19 @@ export async function fetchProject(
   if (!res.ok) return null;
   return (await res.json()) as ProjectDetail;
 }
+
+export async function updateTask(
+  sessionName: string,
+  taskId: string,
+  fields: { status?: string; assignee?: string },
+): Promise<boolean> {
+  const res = await fetch(
+    `${API_BASE}/api/project/${encodeURIComponent(sessionName)}/task/${encodeURIComponent(taskId)}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(fields),
+    },
+  );
+  return res.ok;
+}
