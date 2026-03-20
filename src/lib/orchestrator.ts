@@ -1,5 +1,5 @@
 import { execSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, mkdirSync, watch, type FSWatcher } from "node:fs";
 import { join } from "node:path";
 import { loadMission, loadGoal, loadTasks, saveTask, loadTask, type Task } from "./task-store.ts";
 import { recordTaskTime } from "./token-tracker.ts";
@@ -8,7 +8,8 @@ import {
   sendCommand,
   type PaneInfo,
 } from "../widgets/lib/pane-comms.ts";
-import { createWorktree, removeWorktree } from "./worktree.ts";
+import { createWorktree, removeWorktree, validateWorktreePath } from "./worktree.ts";
+import { appendEvent } from "./event-log.ts";
 
 export interface OrchestratorConfig {
   session: string;
@@ -191,6 +192,13 @@ export function dispatch(
       slug,
     );
 
+    // Validate worktree path hasn't escaped root (symlink attacks, etc.)
+    const pathCheck = validateWorktreePath(config.dir, config.worktreeRoot, worktreePath);
+    if (!pathCheck.valid) {
+      state.claimedTasks.delete(task.id);
+      continue;
+    }
+
     // Run before_run hook in worktree — abort dispatch for this task on failure
     if (config.beforeRun) {
       const result = runHook(config.beforeRun, worktreePath);
@@ -213,6 +221,15 @@ export function dispatch(
     // Build and send prompt
     const prompt = buildTaskPrompt(config.dir, task, worktreePath, branch);
     sendCommand(config.session, agent.id, prompt);
+
+    // Log dispatch event
+    appendEvent(config.dir, {
+      timestamp: new Date().toISOString(),
+      type: "dispatch",
+      taskId: task.id,
+      agent: agent.title,
+      message: `Dispatched "${task.title}" to ${agent.title}`,
+    });
 
     // Track activity
     state.lastActivity.set(agent.id, Date.now());
@@ -241,6 +258,13 @@ export function detectStalls(
           `If done, run: tmux-ide task done ${task.id} --proof "describe what you did". ` +
           `If stuck, run: tmux-ide task update ${task.id} --status review`,
       );
+      appendEvent(config.dir, {
+        timestamp: new Date().toISOString(),
+        type: "stall",
+        taskId: task.id,
+        agent: task.assignee!,
+        message: `Stall detected: "${task.title}" (${Math.floor(elapsed / 60000)}m)`,
+      });
       state.lastActivity.set(agentPane.id, now);
     }
   }
@@ -264,6 +288,14 @@ export function detectCompletions(
 
       // Clear claim lock
       state.claimedTasks.delete(task.id);
+
+      appendEvent(config.dir, {
+        timestamp: new Date().toISOString(),
+        type: "completion",
+        taskId: task.id,
+        agent: task.assignee ?? undefined,
+        message: `Completed "${task.title}" by ${task.assignee ?? "unknown"}`,
+      });
 
       const wt = worktreePathForTask(config, task);
 
@@ -305,23 +337,126 @@ export function reconcile(
   for (const task of tasks.filter((t) => t.status === "in-progress" && t.assignee)) {
     // Check if the assigned agent's pane still exists
     if (!paneNames.has(task.assignee!)) {
+      const agent = task.assignee!;
       // Agent crashed or pane was closed — release the task
       task.assignee = null;
       task.status = "todo";
       task.updated = new Date().toISOString();
       saveTask(config.dir, task);
       state.claimedTasks.delete(task.id);
+      appendEvent(config.dir, {
+        timestamp: new Date().toISOString(),
+        type: "reconcile",
+        taskId: task.id,
+        agent,
+        message: `Agent "${agent}" vanished, released "${task.title}"`,
+      });
     }
   }
 }
 
-export function createOrchestrator(config: OrchestratorConfig): () => void {
+// --- Orchestrator state persistence ---
+
+interface PersistedState {
+  claimedTasks: string[];
+  taskClaimTimes: Record<string, number>;
+}
+
+function stateFilePath(dir: string): string {
+  return join(dir, ".tasks", "orchestrator-state.json");
+}
+
+export function saveOrchestratorState(dir: string, state: OrchestratorState): void {
+  const tasksDir = join(dir, ".tasks");
+  if (!existsSync(tasksDir)) mkdirSync(tasksDir, { recursive: true });
+  const data: PersistedState = {
+    claimedTasks: [...state.claimedTasks],
+    taskClaimTimes: Object.fromEntries(state.taskClaimTimes),
+  };
+  writeFileSync(stateFilePath(dir), JSON.stringify(data, null, 2) + "\n");
+}
+
+export function loadOrchestratorState(dir: string, state: OrchestratorState): void {
+  const path = stateFilePath(dir);
+  if (!existsSync(path)) return;
+  try {
+    const data = JSON.parse(readFileSync(path, "utf-8")) as PersistedState;
+    if (Array.isArray(data.claimedTasks)) {
+      for (const id of data.claimedTasks) state.claimedTasks.add(id);
+    }
+    if (data.taskClaimTimes && typeof data.taskClaimTimes === "object") {
+      for (const [id, time] of Object.entries(data.taskClaimTimes)) {
+        state.taskClaimTimes.set(id, time);
+      }
+    }
+  } catch {
+    // Corrupted state file — start fresh
+  }
+}
+
+export function gracefulShutdown(
+  config: OrchestratorConfig,
+  state: OrchestratorState,
+): void {
+  // Release all in-progress tasks back to todo
+  const tasks = loadTasks(config.dir);
+  for (const task of tasks) {
+    if (task.status === "in-progress" && task.assignee) {
+      task.assignee = null;
+      task.status = "todo";
+      task.updated = new Date().toISOString();
+      saveTask(config.dir, task);
+
+      // Optionally clean worktrees
+      if (config.cleanupOnDone) {
+        const wt = worktreePathForTask(config, task);
+        if (wt) removeWorktree(config.dir, wt);
+      }
+    }
+  }
+
+  // Persist state for resume
+  saveOrchestratorState(config.dir, state);
+}
+
+/** Apply hot-reloadable fields from a partial config onto a live config. */
+export function reloadConfig(
+  target: OrchestratorConfig,
+  patch: Partial<
+    Pick<
+      OrchestratorConfig,
+      | "pollInterval"
+      | "stallTimeout"
+      | "maxConcurrentAgents"
+      | "autoDispatch"
+      | "cleanupOnDone"
+      | "beforeRun"
+      | "afterRun"
+    >
+  >,
+): void {
+  if (patch.pollInterval !== undefined) target.pollInterval = patch.pollInterval;
+  if (patch.stallTimeout !== undefined) target.stallTimeout = patch.stallTimeout;
+  if (patch.maxConcurrentAgents !== undefined) target.maxConcurrentAgents = patch.maxConcurrentAgents;
+  if (patch.autoDispatch !== undefined) target.autoDispatch = patch.autoDispatch;
+  if (patch.cleanupOnDone !== undefined) target.cleanupOnDone = patch.cleanupOnDone;
+  if (patch.beforeRun !== undefined) target.beforeRun = patch.beforeRun;
+  if (patch.afterRun !== undefined) target.afterRun = patch.afterRun;
+}
+
+export function createOrchestrator(initialConfig: OrchestratorConfig): () => void {
+  // Mutable config — reloadConfig updates fields between ticks
+  const config: OrchestratorConfig = { ...initialConfig };
+
   const state: OrchestratorState = {
     lastActivity: new Map(),
     previousTasks: new Map(),
     claimedTasks: new Set(),
     taskClaimTimes: new Map(),
   };
+
+  // Load persisted state from previous run
+  loadOrchestratorState(config.dir, state);
 
   // Initialize previous state
   for (const task of loadTasks(config.dir)) {
@@ -352,6 +487,61 @@ export function createOrchestrator(config: OrchestratorConfig): () => void {
     }
   }
 
-  const interval = setInterval(tick, config.pollInterval);
-  return () => clearInterval(interval);
+  let interval = setInterval(tick, config.pollInterval);
+
+  // Watch ide.yml for config changes — apply new settings without restart
+  let watcher: FSWatcher | null = null;
+  const configPath = join(config.dir, "ide.yml");
+  if (existsSync(configPath)) {
+    let debounce: ReturnType<typeof setTimeout> | null = null;
+    watcher = watch(configPath, () => {
+      if (debounce) clearTimeout(debounce);
+      debounce = setTimeout(() => {
+        try {
+          const yaml = require("js-yaml") as { load: (s: string) => unknown };
+          const raw = readFileSync(configPath, "utf-8");
+          const parsed = yaml.load(raw) as Record<string, unknown>;
+          const orch = (parsed.orchestrator ?? {}) as Record<string, unknown>;
+
+          const oldPollInterval = config.pollInterval;
+
+          reloadConfig(config, {
+            pollInterval: (orch.poll_interval as number | undefined) ?? config.pollInterval,
+            stallTimeout: (orch.stall_timeout as number | undefined) ?? config.stallTimeout,
+            maxConcurrentAgents: (orch.max_concurrent_agents as number | undefined) ?? config.maxConcurrentAgents,
+            autoDispatch: (orch.auto_dispatch as boolean | undefined) ?? config.autoDispatch,
+            cleanupOnDone: (orch.cleanup_on_done as boolean | undefined) ?? config.cleanupOnDone,
+            beforeRun: (orch.before_run as string | undefined) ?? config.beforeRun,
+            afterRun: (orch.after_run as string | undefined) ?? config.afterRun,
+          });
+
+          // Restart interval if pollInterval changed
+          if (config.pollInterval !== oldPollInterval) {
+            clearInterval(interval);
+            interval = setInterval(tick, config.pollInterval);
+          }
+        } catch {
+          // Config file might be mid-write or invalid — ignore
+        }
+      }, 300);
+    });
+  }
+
+  // Graceful shutdown on SIGTERM/SIGINT
+  function onSignal() {
+    clearInterval(interval);
+    if (watcher) watcher.close();
+    gracefulShutdown(config, state);
+    process.exit(0);
+  }
+
+  process.on("SIGTERM", onSignal);
+  process.on("SIGINT", onSignal);
+
+  return () => {
+    clearInterval(interval);
+    if (watcher) watcher.close();
+    process.removeListener("SIGTERM", onSignal);
+    process.removeListener("SIGINT", onSignal);
+  };
 }

@@ -13,15 +13,22 @@ import {
   isAgentPane,
   isAgentBusy,
   isIdleForDispatch,
+  saveOrchestratorState,
+  loadOrchestratorState,
+  gracefulShutdown,
+  reloadConfig,
+  reconcile,
   type OrchestratorConfig,
   type OrchestratorState,
 } from "./orchestrator.ts";
+import { readEvents } from "./event-log.ts";
 import {
   ensureTasksDir,
   saveMission,
   saveGoal,
   saveTask,
   loadTask,
+  loadTasks,
   type Task,
 } from "./task-store.ts";
 import { _setExecutor, type PaneInfo } from "../widgets/lib/pane-comms.ts";
@@ -46,6 +53,7 @@ function makeConfig(overrides: Partial<OrchestratorConfig> = {}): OrchestratorCo
     beforeRun: null,
     afterRun: null,
     cleanupOnDone: false,
+    maxConcurrentAgents: 10,
     ...overrides,
   };
 }
@@ -94,6 +102,8 @@ function makePane(overrides: Partial<PaneInfo> = {}): PaneInfo {
 beforeEach(() => {
   tmpDir = mkdtempSync(join(tmpdir(), "tmux-ide-orch-test-"));
   ensureTasksDir(tmpDir);
+  // Create worktree root so validateWorktreePath succeeds in dispatch tests
+  mkdirSync(join(tmpDir, ".worktrees"), { recursive: true });
   tmuxCalls = [];
   gitCalls = [];
   mockPanes = [];
@@ -681,6 +691,7 @@ describe("dispatch with version-string agent", () => {
   it("assigns task to agent reporting version string as command", () => {
     const task = makeTask();
     saveTask(tmpDir, task);
+    mkdirSync(join(tmpDir, ".worktrees", "001-test-task"), { recursive: true });
 
     // Simulate Claude Code showing version as command
     const panes: PaneInfo[] = [
@@ -715,5 +726,263 @@ describe("dispatch with version-string agent", () => {
     const loaded = loadTask(tmpDir, "001");
     assert.strictEqual(loaded?.assignee, null);
     assert.strictEqual(loaded?.status, "todo");
+  });
+});
+
+describe("reloadConfig", () => {
+  it("updates pollInterval", () => {
+    const config = makeConfig({ pollInterval: 5000 });
+    reloadConfig(config, { pollInterval: 1000 });
+    assert.strictEqual(config.pollInterval, 1000);
+  });
+
+  it("updates stallTimeout", () => {
+    const config = makeConfig({ stallTimeout: 300000 });
+    reloadConfig(config, { stallTimeout: 60000 });
+    assert.strictEqual(config.stallTimeout, 60000);
+  });
+
+  it("updates maxConcurrentAgents", () => {
+    const config = makeConfig();
+    reloadConfig(config, { maxConcurrentAgents: 3 });
+    assert.strictEqual(config.maxConcurrentAgents, 3);
+  });
+
+  it("updates multiple fields at once", () => {
+    const config = makeConfig();
+    reloadConfig(config, {
+      pollInterval: 2000,
+      stallTimeout: 120000,
+      autoDispatch: false,
+      cleanupOnDone: true,
+    });
+    assert.strictEqual(config.pollInterval, 2000);
+    assert.strictEqual(config.stallTimeout, 120000);
+    assert.strictEqual(config.autoDispatch, false);
+    assert.strictEqual(config.cleanupOnDone, true);
+  });
+
+  it("preserves fields not in the patch", () => {
+    const config = makeConfig({ pollInterval: 5000, stallTimeout: 300000 });
+    reloadConfig(config, { pollInterval: 1000 });
+    assert.strictEqual(config.stallTimeout, 300000); // unchanged
+    assert.strictEqual(config.session, "test"); // unchanged
+  });
+});
+
+describe("event logging integration", () => {
+  it("logs dispatch events", () => {
+    const task = makeTask();
+    saveTask(tmpDir, task);
+    mkdirSync(join(tmpDir, ".worktrees", "001-test-task"), { recursive: true });
+
+    const panes: PaneInfo[] = [makePane({ id: "%1", title: "Agent 1", currentCommand: "zsh" })];
+    mockPanes = panes;
+
+    const config = makeConfig({ masterPane: null });
+    const state = makeState();
+
+    dispatch(config, state, [task], panes);
+
+    const events = readEvents(tmpDir);
+    const dispatchEvent = events.find((e) => e.type === "dispatch");
+    assert.ok(dispatchEvent);
+    assert.strictEqual(dispatchEvent!.taskId, "001");
+    assert.strictEqual(dispatchEvent!.agent, "Agent 1");
+    assert.ok(dispatchEvent!.message.includes("Test task"));
+  });
+
+  it("logs stall events", () => {
+    const task = makeTask({ status: "in-progress", assignee: "Agent 1" });
+    const panes: PaneInfo[] = [makePane({ id: "%1", title: "Agent 1" })];
+
+    const config = makeConfig({ stallTimeout: 1000 });
+    const state = makeState({
+      lastActivity: new Map([["%1", Date.now() - 2000]]),
+    });
+
+    detectStalls(config, state, [task], panes);
+
+    const events = readEvents(tmpDir);
+    const stallEvent = events.find((e) => e.type === "stall");
+    assert.ok(stallEvent);
+    assert.strictEqual(stallEvent!.taskId, "001");
+    assert.strictEqual(stallEvent!.agent, "Agent 1");
+  });
+
+  it("logs completion events", () => {
+    const task = makeTask({
+      status: "done",
+      assignee: "Agent 1",
+      branch: "task/001-test-task",
+    });
+    const panes: PaneInfo[] = [makePane({ id: "%0", title: "Master" })];
+
+    const config = makeConfig();
+    const state = makeState({
+      previousTasks: new Map([["001", "in-progress"]]),
+    });
+
+    detectCompletions(config, state, [task], panes);
+
+    const events = readEvents(tmpDir);
+    const completionEvent = events.find((e) => e.type === "completion");
+    assert.ok(completionEvent);
+    assert.strictEqual(completionEvent!.taskId, "001");
+    assert.strictEqual(completionEvent!.agent, "Agent 1");
+  });
+
+  it("logs reconcile events when agent vanishes", () => {
+    const task = makeTask({ status: "in-progress", assignee: "Agent 1" });
+    saveTask(tmpDir, task);
+
+    // No panes — agent has vanished
+    const panes: PaneInfo[] = [];
+
+    const config = makeConfig();
+    const state = makeState();
+
+    reconcile(config, state, [task], panes);
+
+    const events = readEvents(tmpDir);
+    const reconcileEvent = events.find((e) => e.type === "reconcile");
+    assert.ok(reconcileEvent);
+    assert.strictEqual(reconcileEvent!.taskId, "001");
+    assert.strictEqual(reconcileEvent!.agent, "Agent 1");
+    assert.ok(reconcileEvent!.message.includes("vanished"));
+  });
+});
+
+describe("saveOrchestratorState / loadOrchestratorState", () => {
+  it("round-trips claimed tasks and claim times", () => {
+    const state = makeState({
+      claimedTasks: new Set(["001", "003"]),
+      taskClaimTimes: new Map([
+        ["001", 1700000000000],
+        ["003", 1700000060000],
+      ]),
+    });
+
+    saveOrchestratorState(tmpDir, state);
+
+    const restored = makeState();
+    loadOrchestratorState(tmpDir, restored);
+
+    assert.ok(restored.claimedTasks.has("001"));
+    assert.ok(restored.claimedTasks.has("003"));
+    assert.strictEqual(restored.taskClaimTimes.get("001"), 1700000000000);
+    assert.strictEqual(restored.taskClaimTimes.get("003"), 1700000060000);
+  });
+
+  it("handles missing state file gracefully", () => {
+    const state = makeState();
+    loadOrchestratorState(tmpDir, state);
+    assert.strictEqual(state.claimedTasks.size, 0);
+    assert.strictEqual(state.taskClaimTimes.size, 0);
+  });
+
+  it("handles corrupted state file gracefully", () => {
+    mkdirSync(join(tmpDir, ".tasks"), { recursive: true });
+    writeFileSync(join(tmpDir, ".tasks", "orchestrator-state.json"), "not json");
+
+    const state = makeState();
+    loadOrchestratorState(tmpDir, state);
+    assert.strictEqual(state.claimedTasks.size, 0);
+  });
+});
+
+describe("gracefulShutdown", () => {
+  it("releases in-progress tasks back to todo", () => {
+    const task = makeTask({
+      status: "in-progress",
+      assignee: "Agent 1",
+      branch: "task/001-test-task",
+    });
+    saveTask(tmpDir, task);
+
+    const config = makeConfig({ cleanupOnDone: false });
+    const state = makeState({
+      claimedTasks: new Set(["001"]),
+    });
+
+    gracefulShutdown(config, state);
+
+    const loaded = loadTask(tmpDir, "001")!;
+    assert.strictEqual(loaded.status, "todo");
+    assert.strictEqual(loaded.assignee, null);
+  });
+
+  it("saves orchestrator state to disk", () => {
+    saveTask(tmpDir, makeTask());
+
+    const config = makeConfig();
+    const state = makeState({
+      claimedTasks: new Set(["002"]),
+      taskClaimTimes: new Map([["002", Date.now()]]),
+    });
+
+    gracefulShutdown(config, state);
+
+    assert.ok(existsSync(join(tmpDir, ".tasks", "orchestrator-state.json")));
+
+    const restored = makeState();
+    loadOrchestratorState(tmpDir, restored);
+    assert.ok(restored.claimedTasks.has("002"));
+  });
+
+  it("cleans worktrees when cleanupOnDone is true", () => {
+    const wtDir = join(tmpDir, ".worktrees", "001-test-task");
+    mkdirSync(wtDir, { recursive: true });
+
+    const task = makeTask({
+      status: "in-progress",
+      assignee: "Agent 1",
+      branch: "task/001-test-task",
+    });
+    saveTask(tmpDir, task);
+
+    const config = makeConfig({ cleanupOnDone: true });
+    const state = makeState();
+
+    gracefulShutdown(config, state);
+
+    const removeCall = gitCalls.find(
+      (c) => c.args[0] === "worktree" && c.args[1] === "remove",
+    );
+    assert.ok(removeCall);
+  });
+
+  it("does not clean worktrees when cleanupOnDone is false", () => {
+    const task = makeTask({
+      status: "in-progress",
+      assignee: "Agent 1",
+      branch: "task/001-test-task",
+    });
+    saveTask(tmpDir, task);
+
+    const config = makeConfig({ cleanupOnDone: false });
+    const state = makeState();
+
+    gracefulShutdown(config, state);
+
+    const removeCall = gitCalls.find(
+      (c) => c.args[0] === "worktree" && c.args[1] === "remove",
+    );
+    assert.strictEqual(removeCall, undefined);
+  });
+
+  it("leaves done and todo tasks untouched", () => {
+    const done = makeTask({ id: "001", status: "done", assignee: "Agent 1" });
+    const todo = makeTask({ id: "002", status: "todo", assignee: null });
+    saveTask(tmpDir, done);
+    saveTask(tmpDir, todo);
+
+    const config = makeConfig();
+    const state = makeState();
+
+    gracefulShutdown(config, state);
+
+    assert.strictEqual(loadTask(tmpDir, "001")!.status, "done");
+    assert.strictEqual(loadTask(tmpDir, "002")!.status, "todo");
   });
 });
