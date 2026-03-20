@@ -34,6 +34,19 @@ export async function fetchDiff(name: string): Promise<DiffData | null> {
   return (await res.json()) as DiffData;
 }
 
+export async function fetchFileDiff(
+  name: string,
+  filePath: string,
+): Promise<string> {
+  const res = await fetch(
+    `${API_BASE}/api/project/${encodeURIComponent(name)}/diff/${encodeURIComponent(filePath)}`,
+    { cache: "no-store" },
+  );
+  if (!res.ok) return "";
+  const data = (await res.json()) as { file: string; diff: string };
+  return data.diff;
+}
+
 export async function updateTask(
   sessionName: string,
   taskId: string,

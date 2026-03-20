@@ -137,6 +137,35 @@ export function createApp(): Hono {
     return c.json({ diff, files });
   });
 
+  // Per-file diff endpoint
+  app.get("/api/project/:name/diff/:file{.+}", (c) => {
+    const name = c.req.param("name");
+    const file = c.req.param("file");
+    const sessions = discoverSessions();
+    const session = sessions.find((s) => s.name === name);
+    if (!session) return c.json({ error: "Session not found" }, 404);
+
+    let diff = "";
+    try {
+      diff = execFileSync("git", ["diff", "HEAD", "--", file], {
+        cwd: session.dir,
+        encoding: "utf-8",
+        stdio: ["ignore", "pipe", "ignore"],
+      });
+    } catch {}
+    if (!diff) {
+      try {
+        diff = execFileSync("git", ["diff", "--", file], {
+          cwd: session.dir,
+          encoding: "utf-8",
+          stdio: ["ignore", "pipe", "ignore"],
+        });
+      } catch {}
+    }
+
+    return c.json({ file, diff });
+  });
+
   // SSE endpoint — polls every 2s and emits changes
   app.get("/api/events", (c) => {
     return streamSSE(c, async (stream) => {

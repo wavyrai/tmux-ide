@@ -1,31 +1,13 @@
 "use client";
 
-import { useState, useCallback, useMemo } from "react";
-import { fetchDiff, type DiffData } from "@/lib/api";
+import { useState, useCallback, useEffect } from "react";
+import { fetchDiff, fetchFileDiff, type DiffData } from "@/lib/api";
 import { usePolling } from "@/lib/usePolling";
 import { DiffViewer } from "./DiffViewer";
 import { FileList } from "./FileList";
 
 interface DiffPanelProps {
   sessionName: string;
-}
-
-/**
- * Extract the patch for a single file from a full multi-file git diff.
- * Splits on 'diff --git' boundaries and returns the matching section.
- */
-function extractFilePatch(fullDiff: string, fileName: string): string {
-  const sections = fullDiff.split(/(?=^diff --git )/m);
-  for (const section of sections) {
-    // Match 'diff --git a/path b/path' — the file appears in the b/ side
-    if (
-      section.includes(`b/${fileName}`) ||
-      section.includes(`a/${fileName}`)
-    ) {
-      return section;
-    }
-  }
-  return "";
 }
 
 export function DiffPanel({ sessionName }: DiffPanelProps) {
@@ -36,13 +18,25 @@ export function DiffPanel({ sessionName }: DiffPanelProps) {
   const { data, loading } = usePolling<DiffData | null>(fetcher, 5000);
 
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
+  const [fileDiff, setFileDiff] = useState<string>("");
   const [diffStyle, setDiffStyle] = useState<"split" | "unified">("split");
+  const [loadingFile, setLoadingFile] = useState(false);
 
-  const visiblePatch = useMemo(() => {
-    if (!data?.diff) return "";
-    if (!selectedFile) return data.diff;
-    return extractFilePatch(data.diff, selectedFile);
-  }, [data, selectedFile]);
+  // Fetch per-file diff when selection changes
+  useEffect(() => {
+    if (!selectedFile) {
+      setFileDiff("");
+      return;
+    }
+    setLoadingFile(true);
+    fetchFileDiff(sessionName, selectedFile)
+      .then((diff) => setFileDiff(diff))
+      .catch(() => setFileDiff(""))
+      .finally(() => setLoadingFile(false));
+  }, [selectedFile, sessionName]);
+
+  // PatchDiff requires exactly 1 file diff — only show when a file is selected
+  const visiblePatch = selectedFile ? fileDiff : "";
 
   if (loading && !data) {
     return (
@@ -111,7 +105,17 @@ export function DiffPanel({ sessionName }: DiffPanelProps) {
         </div>
 
         {/* Diff viewer */}
-        <DiffViewer patch={visiblePatch} diffStyle={diffStyle} />
+        {selectedFile && visiblePatch ? (
+          <DiffViewer patch={visiblePatch} diffStyle={diffStyle} />
+        ) : loadingFile ? (
+          <div className="flex-1 flex items-center justify-center text-[var(--dim)]">
+            loading diff...
+          </div>
+        ) : (
+          <div className="flex-1 flex items-center justify-center text-[var(--dim)]">
+            select a file to view diff
+          </div>
+        )}
       </div>
     </div>
   );

@@ -1,3 +1,26 @@
+/**
+ * Autonomous task orchestration engine.
+ *
+ * Runs as a background polling loop that coordinates agent workloads across
+ * tmux panes. Core capabilities:
+ *
+ * - **Dispatch** — assigns unblocked todo tasks to idle agents, respecting
+ *   dependency ordering, concurrency limits, and claim locks.
+ * - **Stall detection** — nudges agents that exceed the configured timeout
+ *   without producing output.
+ * - **Completion handling** — records cost/time metrics, runs after-hooks,
+ *   notifies the master pane, and optionally cleans up worktrees.
+ * - **Retry with backoff** — re-dispatches failed tasks up to maxRetries,
+ *   using nextRetryAt to schedule exponential backoff.
+ * - **Reconciliation** — detects crashed or vanished agent panes and
+ *   releases their in-progress tasks back to the queue.
+ * - **Graceful shutdown** — on SIGTERM/SIGINT, releases all in-progress
+ *   tasks and persists orchestrator state for resume on next startup.
+ * - **Hot reload** — watches ide.yml for config changes and applies them
+ *   without restarting the loop.
+ *
+ * @module orchestrator
+ */
 import { execSync } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync, mkdirSync, watch, type FSWatcher } from "node:fs";
 import { join } from "node:path";
