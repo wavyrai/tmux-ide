@@ -24,6 +24,10 @@
   --diff-del-bg: #42120b;
   --diff-del-text: #fc533a;
   --scrollbar-thumb: rgba(255, 255, 255, 0.1);
+  --ai-color: #A5B4FC;
+  --ai-bg: rgba(165, 180, 252, 0.08);
+  --human-color: #6EE7B7;
+  --human-bg: rgba(110, 231, 183, 0.08);
 }
 
 /* Light theme — sharp blue accent */
@@ -50,6 +54,10 @@
   --diff-del-bg: #fef2f2;
   --diff-del-text: #dc2626;
   --scrollbar-thumb: rgba(0, 0, 0, 0.12);
+  --ai-color: #6366F1;
+  --ai-bg: rgba(99, 102, 241, 0.08);
+  --human-color: #059669;
+  --human-bg: rgba(5, 150, 105, 0.08);
 }
 
 * {

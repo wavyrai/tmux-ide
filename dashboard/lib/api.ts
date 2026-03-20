@@ -118,17 +118,37 @@ export async function fetchPlans(name: string): Promise<PlanSummary[]> {
   return data.plans;
 }
 
+export interface AuthorshipSection {
+  author: string;
+  at: string;
+  charCount: number;
+}
+
+export interface AuthorshipData {
+  sections: Record<string, AuthorshipSection>;
+  stats: { aiPercent: number; humanPercent: number; totalChars: number };
+}
+
+export interface PlanData {
+  content: string;
+  authorship: AuthorshipData | null;
+}
+
 export async function fetchPlan(
   name: string,
   filename: string,
-): Promise<string> {
+): Promise<PlanData> {
   const res = await fetch(
     `${API_BASE}/api/project/${encodeURIComponent(name)}/plans/${encodeURIComponent(filename)}`,
     { cache: "no-store" },
   );
-  if (!res.ok) return "";
-  const data = (await res.json()) as { name: string; content: string };
-  return data.content;
+  if (!res.ok) return { content: "", authorship: null };
+  const data = (await res.json()) as {
+    name: string;
+    content: string;
+    authorship?: AuthorshipData;
+  };
+  return { content: data.content, authorship: data.authorship ?? null };
 }
 
 export async function deleteTaskApi(
