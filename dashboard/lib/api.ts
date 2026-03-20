@@ -1,4 +1,4 @@
-import type { SessionOverview, ProjectDetail } from "./types";
+import type { SessionOverview, ProjectDetail, OrchestratorEvent } from "./types";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:5050";
 
@@ -45,6 +45,25 @@ export async function fetchFileDiff(
   if (!res.ok) return "";
   const data = (await res.json()) as { file: string; diff: string };
   return data.diff;
+}
+
+export interface EventData {
+  timestamp: string;
+  type: string;
+  taskId?: string;
+  agent?: string;
+  message: string;
+  relative?: string;
+}
+
+export async function fetchEvents(name: string): Promise<EventData[]> {
+  const res = await fetch(
+    `${API_BASE}/api/project/${encodeURIComponent(name)}/events`,
+    { cache: "no-store" },
+  );
+  if (!res.ok) return [];
+  const data = (await res.json()) as { events: EventData[] };
+  return data.events;
 }
 
 export async function updateTask(

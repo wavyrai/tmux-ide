@@ -48,3 +48,22 @@ export interface ProjectDetail {
   tasks: Task[];
   agents: AgentDetail[];
 }
+
+export type EventType =
+  | "dispatch"
+  | "completion"
+  | "stall"
+  | "retry"
+  | "reconcile"
+  | "error"
+  | "task_created"
+  | "status_change";
+
+export interface OrchestratorEvent {
+  timestamp: string;
+  type: EventType;
+  taskId?: string;
+  agent?: string;
+  message: string;
+  relative: string;
+}

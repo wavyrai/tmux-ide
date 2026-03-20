@@ -2,12 +2,13 @@
 
 import { useState, useCallback } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { fetchProject } from "@/lib/api";
+import { fetchProject, fetchEvents, type EventData } from "@/lib/api";
 import { usePolling } from "@/lib/usePolling";
 import { ProgressBar } from "@/components/ProgressBar";
 import { AgentCard } from "@/components/AgentCard";
 import { KanbanBoard } from "@/components/KanbanBoard";
 import { DiffPanel } from "@/components/DiffPanel";
+import { ActivityFeed } from "@/components/ActivityFeed";
 import { StatusBar } from "@/components/StatusBar";
 import type { ProjectDetail } from "@/lib/types";
 
@@ -36,6 +37,9 @@ export default function ProjectPage() {
     lastUpdate,
     refresh,
   } = usePolling<ProjectDetail | null>(fetcher, 2000);
+
+  const eventsFetcher = useCallback(() => fetchEvents(name), [name]);
+  const { data: events } = usePolling<EventData[]>(eventsFetcher, 3000);
 
   if (error) {
     return (
@@ -158,9 +162,7 @@ export default function ProjectPage() {
       )}
 
       {activeTab === "activity" && (
-        <div className="flex-1 flex items-center justify-center text-[var(--dim)]">
-          activity feed — coming soon
-        </div>
+        <ActivityFeed events={events ?? []} />
       )}
 
       <StatusBar project={project} lastUpdate={lastUpdate} stale={stale} />

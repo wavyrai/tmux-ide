@@ -1,88 +1,91 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
-import type { Task } from "@/lib/types";
+import { useRef, useEffect } from "react";
+import type { EventData } from "@/lib/api";
 
-interface ActivityEntry {
-  id: string;
-  time: number;
-  message: string;
-}
+const EVENT_ICONS: Record<string, { icon: string; color: string }> = {
+  dispatch: { icon: ">", color: "var(--accent)" },
+  completion: { icon: "✓", color: "var(--green)" },
+  stall: { icon: "!", color: "var(--yellow)" },
+  retry: { icon: "~", color: "var(--yellow)" },
+  reconcile: { icon: "×", color: "var(--red)" },
+  error: { icon: "✗", color: "var(--red)" },
+  task_created: { icon: "+", color: "var(--dim)" },
+  status_change: { icon: "—", color: "var(--dim)" },
+};
 
-function formatRelative(ts: number): string {
-  const secs = Math.floor((Date.now() - ts) / 1000);
-  if (secs < 5) return "now";
-  if (secs < 60) return `${secs}s`;
-  const mins = Math.floor(secs / 60);
-  if (mins < 60) return `${mins}m`;
-  return `${Math.floor(mins / 60)}h`;
-}
+const DEFAULT_ICON = { icon: "·", color: "var(--dim)" };
 
 interface ActivityFeedProps {
-  tasks: Task[];
-  maxEntries?: number;
+  events: EventData[];
+  maxEvents?: number;
 }
 
-export function ActivityFeed({ tasks, maxEntries = 20 }: ActivityFeedProps) {
-  const [entries, setEntries] = useState<ActivityEntry[]>([]);
-  const prevRef = useRef<Map<string, { status: string; assignee: string | null }>>(new Map());
-  const counterRef = useRef(0);
+export function ActivityFeed({ events, maxEvents = 50 }: ActivityFeedProps) {
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const prevLenRef = useRef(0);
 
+  // Auto-scroll to top when new events arrive
   useEffect(() => {
-    const prev = prevRef.current;
-    const now = Date.now();
-    const newEntries: ActivityEntry[] = [];
-
-    for (const t of tasks) {
-      const old = prev.get(t.id);
-      if (!old) continue; // Skip first load
-      if (old.status !== t.status) {
-        const label =
-          t.status === "done"
-            ? `✓ ${t.title}`
-            : t.status === "in-progress"
-              ? `→ ${t.title} started`
-              : `${t.title} → ${t.status}`;
-        newEntries.push({ id: `${++counterRef.current}`, time: now, message: label });
-      } else if (old.assignee !== t.assignee && t.assignee) {
-        newEntries.push({
-          id: `${++counterRef.current}`,
-          time: now,
-          message: `${t.assignee} claimed ${t.id}`,
-        });
-      }
+    if (events.length > prevLenRef.current && scrollRef.current) {
+      scrollRef.current.scrollTop = 0;
     }
+    prevLenRef.current = events.length;
+  }, [events.length]);
 
-    const next = new Map<string, { status: string; assignee: string | null }>();
-    for (const t of tasks) next.set(t.id, { status: t.status, assignee: t.assignee });
-    prevRef.current = next;
-
-    if (newEntries.length > 0) {
-      setEntries((prev) => [...newEntries, ...prev].slice(0, maxEntries));
-    }
-  }, [tasks, maxEntries]);
-
-  // Refresh relative times
-  const [, setTick] = useState(0);
-  useEffect(() => {
-    const id = setInterval(() => setTick((n) => n + 1), 10000);
-    return () => clearInterval(id);
-  }, []);
-
-  if (entries.length === 0) {
-    return <div className="text-[var(--dim)]">Watching for changes…</div>;
+  if (events.length === 0) {
+    return (
+      <div className="flex-1 flex items-center justify-center text-[var(--dim)]">
+        No activity yet
+      </div>
+    );
   }
 
+  const visible = events.slice(0, maxEvents);
+
   return (
-    <div className="space-y-0.5">
-      {entries.map((e) => (
-        <div key={e.id} className="flex gap-2">
-          <span className="text-[var(--dim)] w-[4ch] text-right shrink-0">
-            {formatRelative(e.time)}
-          </span>
-          <span className="text-[var(--fg)] truncate">{e.message}</span>
-        </div>
-      ))}
+    <div ref={scrollRef} className="flex-1 overflow-y-auto py-1">
+      {visible.map((e, i) => {
+        const { icon, color } = EVENT_ICONS[e.type] ?? DEFAULT_ICON;
+
+        return (
+          <div
+            key={`${e.timestamp}-${i}`}
+            className="flex items-start h-6 px-3 hover:bg-[rgba(255,255,255,0.02)]"
+          >
+            {/* Relative time */}
+            <span className="w-[8ch] shrink-0 text-right text-[var(--dim)] pr-2">
+              {e.relative ?? ""}
+            </span>
+
+            {/* Icon */}
+            <span className="w-3 shrink-0 text-center" style={{ color }}>
+              {icon}
+            </span>
+
+            {/* Message */}
+            <span className="flex-1 truncate pl-1 text-[var(--fg)]">
+              {formatMessage(e)}
+            </span>
+          </div>
+        );
+      })}
     </div>
   );
+}
+
+function formatMessage(e: EventData): string {
+  // If the server already provides a good message, use it
+  if (e.message) return e.message;
+
+  // Fallback construction from fields
+  const parts: string[] = [];
+  if (e.agent) parts.push(e.agent);
+  if (e.type === "dispatch") parts.push("dispatched");
+  if (e.type === "completion") parts.push("completed");
+  if (e.type === "stall") parts.push("stalled on");
+  if (e.type === "retry") parts.push("retrying");
+  if (e.type === "reconcile") parts.push("released");
+  if (e.taskId) parts.push(`task ${e.taskId}`);
+  return parts.join(" ");
 }
