@@ -153,6 +153,7 @@ export default function ProjectPage() {
           tasks={project.tasks}
           sessionName={project.session}
           agents={project.agents}
+          goals={project.goals}
           onRefresh={refresh}
         />
       )}

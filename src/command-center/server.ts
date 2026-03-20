@@ -10,6 +10,13 @@ import {
   type SessionOverview,
   type ProjectDetail,
 } from "./discovery.ts";
+import {
+  ensureTasksDir,
+  nextTaskId,
+  saveTask,
+  deleteTask,
+  type Task,
+} from "../lib/task-store.ts";
 import { readEvents, type OrchestratorEvent } from "../lib/event-log.ts";
 
 export function createApp(): Hono {
@@ -54,6 +61,69 @@ export function createApp(): Hono {
     }
 
     return c.json({ ok: true, task: updated });
+  });
+
+  // Create task
+  app.post("/api/project/:name/task", async (c) => {
+    const name = c.req.param("name");
+    const sessions = discoverSessions();
+    const session = sessions.find((s) => s.name === name);
+    if (!session) {
+      return c.json({ error: "Session not found" }, 404);
+    }
+
+    const body = await c.req.json<{
+      title: string;
+      description?: string;
+      priority?: number;
+      goal?: string;
+      tags?: string[];
+    }>();
+
+    if (!body.title?.trim()) {
+      return c.json({ error: "Title is required" }, 400);
+    }
+
+    ensureTasksDir(session.dir);
+    const id = nextTaskId(session.dir);
+    const now = new Date().toISOString();
+    const task: Task = {
+      id,
+      title: body.title.trim(),
+      description: body.description ?? "",
+      goal: body.goal ?? null,
+      status: "todo",
+      assignee: null,
+      priority: body.priority ?? 2,
+      created: now,
+      updated: now,
+      branch: null,
+      tags: body.tags ?? [],
+      proof: null,
+      depends_on: [],
+      retryCount: 0,
+      maxRetries: 5,
+      lastError: null,
+      nextRetryAt: null,
+    };
+    saveTask(session.dir, task);
+    return c.json({ ok: true, task }, 201);
+  });
+
+  // Delete task
+  app.delete("/api/project/:name/task/:id", (c) => {
+    const name = c.req.param("name");
+    const taskId = c.req.param("id");
+    const sessions = discoverSessions();
+    const session = sessions.find((s) => s.name === name);
+    if (!session) {
+      return c.json({ error: "Session not found" }, 404);
+    }
+
+    if (!deleteTask(session.dir, taskId)) {
+      return c.json({ error: "Task not found" }, 404);
+    }
+    return c.json({ ok: true, deleted: taskId });
   });
 
   app.get("/api/project/:name/diff", (c) => {
