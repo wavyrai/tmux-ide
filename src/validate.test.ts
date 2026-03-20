@@ -255,6 +255,13 @@ describe("validateConfig", () => {
     assert.deepStrictEqual(errors, []);
   });
 
+  it("accepts type: costs pane", () => {
+    const errors = validateConfig({
+      rows: [{ panes: [{ type: "costs", title: "Costs" }] }],
+    });
+    assert.deepStrictEqual(errors, []);
+  });
+
   it("rejects invalid type value", () => {
     const errors = validateConfig({
       rows: [{ panes: [{ type: "invalid" }] }],

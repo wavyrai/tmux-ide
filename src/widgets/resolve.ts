@@ -19,6 +19,7 @@ const WIDGET_ENTRY_POINTS: Record<string, string> = {
   preview: "preview/index.tsx",
   tasks: "tasks/index.tsx",
   warroom: "warroom/index.tsx",
+  costs: "costs/index.tsx",
 };
 
 export function resolveWidgetCommand(type: string, opts: WidgetOptions): string {

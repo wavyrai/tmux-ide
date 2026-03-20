@@ -74,7 +74,7 @@ export function validateConfig(config: unknown): string[] {
           errors.push(`rows[${i}].panes[${j}].task must be a string`);
         }
         if (pane.type !== undefined) {
-          const validTypes = ["explorer", "changes", "preview", "tasks", "warroom"];
+          const validTypes = ["explorer", "changes", "preview", "tasks", "warroom", "costs"];
           if (typeof pane.type !== "string" || !validTypes.includes(pane.type)) {
             errors.push(`rows[${i}].panes[${j}].type must be one of: ${validTypes.join(", ")}`);
           }

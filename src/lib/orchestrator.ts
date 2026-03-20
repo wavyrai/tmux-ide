@@ -2,6 +2,7 @@ import { execSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { loadMission, loadGoal, loadTasks, saveTask, loadTask, type Task } from "./task-store.ts";
+import { recordTaskTime } from "./token-tracker.ts";
 import {
   listSessionPanes,
   sendCommand,
@@ -26,6 +27,7 @@ export interface OrchestratorState {
   lastActivity: Map<string, number>;
   previousTasks: Map<string, string>;
   claimedTasks: Set<string>;
+  taskClaimTimes: Map<string, number>;
 }
 
 export function runHook(
@@ -173,6 +175,9 @@ export function dispatch(
     task.updated = new Date().toISOString();
     saveTask(config.dir, task);
 
+    // Record claim time for cost tracking
+    state.taskClaimTimes.set(task.id, Date.now());
+
     // Build and send prompt
     const prompt = buildTaskPrompt(config.dir, task, worktreePath, branch);
     sendCommand(config.session, agent.id, prompt);
@@ -218,6 +223,13 @@ export function detectCompletions(
   for (const task of tasks) {
     const prev = state.previousTasks.get(task.id);
     if (prev === "in-progress" && task.status === "done") {
+      // Record elapsed time for cost tracking
+      const claimTime = state.taskClaimTimes.get(task.id);
+      if (claimTime && task.assignee) {
+        recordTaskTime(config.dir, task.assignee, task.id, Date.now() - claimTime);
+      }
+      state.taskClaimTimes.delete(task.id);
+
       // Clear claim lock
       state.claimedTasks.delete(task.id);
 
@@ -255,6 +267,7 @@ export function createOrchestrator(config: OrchestratorConfig): () => void {
     lastActivity: new Map(),
     previousTasks: new Map(),
     claimedTasks: new Set(),
+    taskClaimTimes: new Map(),
   };
 
   // Initialize previous state
