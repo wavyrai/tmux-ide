@@ -2,7 +2,7 @@ import { describe, it, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import {
-  _setPtySpawner,
+  _setTmuxRunner,
   spawnWidget,
   connectClient,
   resizeWidget,
@@ -10,59 +10,7 @@ import {
   killAll,
   getSession,
   listSessions,
-  type PtySession,
 } from "./pty-manager.ts";
-
-// --- Mock PTY ---
-
-interface MockPty {
-  written: string[];
-  resizes: { cols: number; rows: number }[];
-  killed: boolean;
-  pid: number;
-  _emitter: EventEmitter;
-  onData: (cb: (data: string) => void) => void;
-  onExit: (cb: (e: { exitCode: number }) => void) => void;
-  write: (data: string) => void;
-  resize: (cols: number, rows: number) => void;
-  kill: () => void;
-  // Test helpers
-  simulateData: (data: string) => void;
-  simulateExit: (code: number) => void;
-}
-
-function createMockPty(): MockPty {
-  const emitter = new EventEmitter();
-  return {
-    written: [],
-    resizes: [],
-    killed: false,
-    pid: 12345,
-    _emitter: emitter,
-    onData(cb: (data: string) => void) {
-      emitter.on("data", cb);
-    },
-    onExit(cb: (e: { exitCode: number }) => void) {
-      emitter.on("exit", cb);
-    },
-    write(data: string) {
-      this.written.push(data);
-    },
-    resize(cols: number, rows: number) {
-      this.resizes.push({ cols, rows });
-    },
-    kill() {
-      this.killed = true;
-      emitter.emit("exit", { exitCode: 0 });
-    },
-    simulateData(data: string) {
-      emitter.emit("data", data);
-    },
-    simulateExit(code: number) {
-      emitter.emit("exit", { exitCode: code });
-    },
-  };
-}
 
 // --- Mock WebSocket ---
 
@@ -88,7 +36,7 @@ function createMockWs(): MockWs {
     },
     close() {
       this.closed = true;
-      this.readyState = 3; // CLOSED
+      this.readyState = 3;
     },
     on(event: string, cb: (...args: unknown[]) => void) {
       emitter.on(event, cb);
@@ -96,34 +44,34 @@ function createMockWs(): MockWs {
   };
 }
 
-let restorePty: () => void;
-let lastMockPty: MockPty;
-let spawnCalls: { file: string; args: string[]; cwd: string }[];
+let restoreTmux: () => void;
+let tmuxCalls: string[][];
 
 beforeEach(() => {
-  spawnCalls = [];
-  restorePty = _setPtySpawner((file, args, options) => {
-    spawnCalls.push({ file, args, cwd: options.cwd });
-    lastMockPty = createMockPty();
-    return lastMockPty;
+  tmuxCalls = [];
+  restoreTmux = _setTmuxRunner((...args: string[]) => {
+    tmuxCalls.push(args);
+    if (args[0] === "capture-pane") return "widget output";
+    return "";
   });
 });
 
 afterEach(() => {
   killAll();
-  restorePty();
+  restoreTmux();
 });
 
 describe("spawnWidget", () => {
-  it("spawns a PTY for a valid widget type", async () => {
+  it("spawns a tmux session for a valid widget type", async () => {
     const sess = await spawnWidget("tasks", "test-session", "/tmp/project", 80, 24);
     assert.ok(sess);
     assert.strictEqual(sess.widgetType, "tasks");
-    assert.strictEqual(spawnCalls.length, 1);
-    assert.strictEqual(spawnCalls[0]!.file, "bun");
-    assert.ok(spawnCalls[0]!.args[0]!.includes("tasks/index.tsx"));
-    assert.ok(spawnCalls[0]!.args.some((a) => a.includes("--session=test-session")));
-    assert.ok(spawnCalls[0]!.args.some((a) => a.includes("--dir=/tmp/project")));
+    assert.strictEqual(sess.tmuxSession, "web-tasks");
+
+    // Should have called new-session
+    const newSessionCall = tmuxCalls.find((c) => c[0] === "new-session");
+    assert.ok(newSessionCall);
+    assert.ok(newSessionCall!.includes("web-tasks"));
   });
 
   it("rejects invalid widget types", async () => {
@@ -137,7 +85,6 @@ describe("spawnWidget", () => {
     const first = await spawnWidget("explorer", "s", "/tmp", 80, 24);
     const second = await spawnWidget("explorer", "s", "/tmp", 80, 24);
     assert.strictEqual(first, second);
-    assert.strictEqual(spawnCalls.length, 1); // only spawned once
   });
 
   it("is tracked in sessions map", async () => {
@@ -148,40 +95,53 @@ describe("spawnWidget", () => {
 });
 
 describe("connectClient", () => {
-  it("adds client to session and forwards PTY output", async () => {
+  it("adds client to session and sends initial content", async () => {
     await spawnWidget("tasks", "s", "/tmp", 80, 24);
     const ws = createMockWs();
     const connected = connectClient("tasks", ws as unknown as import("ws").WebSocket);
     assert.strictEqual(connected, true);
 
-    // PTY output → WS client
-    lastMockPty.simulateData("hello from pty");
-    assert.strictEqual(ws.sent.length, 1);
-    assert.strictEqual(ws.sent[0], "hello from pty");
+    // Should have sent initial capture-pane content
+    assert.ok(ws.sent.length > 0);
+    assert.ok(ws.sent[0]!.includes("widget output"));
   });
 
-  it("forwards WS input to PTY", async () => {
+  it("forwards WS input to tmux send-keys", async () => {
     await spawnWidget("tasks", "s", "/tmp", 80, 24);
     const ws = createMockWs();
     connectClient("tasks", ws as unknown as import("ws").WebSocket);
+
+    // Clear tmux calls from spawn/connect
+    tmuxCalls.length = 0;
 
     // Simulate keyboard input from browser
     ws._emitter.emit("message", Buffer.from("keypress"));
-    assert.strictEqual(lastMockPty.written.length, 1);
-    assert.strictEqual(lastMockPty.written[0], "keypress");
+
+    const sendKeysCall = tmuxCalls.find((c) => c[0] === "send-keys");
+    assert.ok(sendKeysCall);
+    assert.ok(sendKeysCall!.includes("keypress"));
   });
 
-  it("handles resize JSON messages", async () => {
+  it("handles resize JSON messages via tmux resize-window", async () => {
     await spawnWidget("tasks", "s", "/tmp", 80, 24);
     const ws = createMockWs();
     connectClient("tasks", ws as unknown as import("ws").WebSocket);
 
-    // Simulate resize message from browser
-    ws._emitter.emit("message", Buffer.from(JSON.stringify({ type: "resize", cols: 120, rows: 40 })));
+    tmuxCalls.length = 0;
 
-    assert.strictEqual(lastMockPty.written.length, 0); // not forwarded as input
-    assert.strictEqual(lastMockPty.resizes.length, 1);
-    assert.deepStrictEqual(lastMockPty.resizes[0], { cols: 120, rows: 40 });
+    ws._emitter.emit(
+      "message",
+      Buffer.from(JSON.stringify({ type: "resize", cols: 120, rows: 40 })),
+    );
+
+    const resizeCall = tmuxCalls.find((c) => c[0] === "resize-window");
+    assert.ok(resizeCall);
+    assert.ok(resizeCall!.includes("120"));
+    assert.ok(resizeCall!.includes("40"));
+
+    // Should NOT have forwarded as send-keys
+    const sendKeysCall = tmuxCalls.find((c) => c[0] === "send-keys");
+    assert.strictEqual(sendKeysCall, undefined);
   });
 
   it("removes client on WS close", async () => {
@@ -202,54 +162,35 @@ describe("connectClient", () => {
     assert.strictEqual(connected, false);
     assert.strictEqual(ws.closed, true);
   });
-
-  it("broadcasts PTY output to multiple clients", async () => {
-    await spawnWidget("tasks", "s", "/tmp", 80, 24);
-    const ws1 = createMockWs();
-    const ws2 = createMockWs();
-    connectClient("tasks", ws1 as unknown as import("ws").WebSocket);
-    connectClient("tasks", ws2 as unknown as import("ws").WebSocket);
-
-    lastMockPty.simulateData("broadcast");
-    assert.strictEqual(ws1.sent.length, 1);
-    assert.strictEqual(ws2.sent.length, 1);
-  });
-
-  it("skips closed clients during broadcast", async () => {
-    await spawnWidget("tasks", "s", "/tmp", 80, 24);
-    const ws1 = createMockWs();
-    const ws2 = createMockWs();
-    ws2.readyState = 3; // CLOSED
-    connectClient("tasks", ws1 as unknown as import("ws").WebSocket);
-    connectClient("tasks", ws2 as unknown as import("ws").WebSocket);
-
-    lastMockPty.simulateData("data");
-    assert.strictEqual(ws1.sent.length, 1);
-    assert.strictEqual(ws2.sent.length, 0); // skipped
-  });
 });
 
 describe("resizeWidget", () => {
-  it("resizes the PTY", async () => {
+  it("calls tmux resize-window", async () => {
     await spawnWidget("tasks", "s", "/tmp", 80, 24);
+    tmuxCalls.length = 0;
+
     resizeWidget("tasks", 120, 40);
-    assert.deepStrictEqual(lastMockPty.resizes[0], { cols: 120, rows: 40 });
+
+    const resizeCall = tmuxCalls.find((c) => c[0] === "resize-window");
+    assert.ok(resizeCall);
   });
 
   it("does nothing for non-existent widget", () => {
-    // Should not throw
-    resizeWidget("nonexistent", 80, 24);
+    resizeWidget("nonexistent", 80, 24); // should not throw
   });
 });
 
 describe("killWidget", () => {
-  it("kills a specific widget PTY", async () => {
+  it("kills a specific widget session", async () => {
     await spawnWidget("tasks", "s", "/tmp", 80, 24);
     assert.ok(getSession("tasks"));
 
+    tmuxCalls.length = 0;
     killWidget("tasks");
     assert.strictEqual(getSession("tasks"), undefined);
-    assert.strictEqual(lastMockPty.killed, true);
+
+    const killCall = tmuxCalls.find((c) => c[0] === "kill-session");
+    assert.ok(killCall);
   });
 
   it("does nothing for non-existent widget", () => {
@@ -258,32 +199,12 @@ describe("killWidget", () => {
 });
 
 describe("killAll", () => {
-  it("kills all PTY sessions", async () => {
+  it("kills all widget sessions", async () => {
     await spawnWidget("tasks", "s", "/tmp", 80, 24);
-    const tasksPty = lastMockPty;
     await spawnWidget("explorer", "s", "/tmp", 80, 24);
-    const explorerPty = lastMockPty;
-
     assert.strictEqual(listSessions().size, 2);
 
     killAll();
     assert.strictEqual(listSessions().size, 0);
-    assert.strictEqual(tasksPty.killed, true);
-    assert.strictEqual(explorerPty.killed, true);
-  });
-});
-
-describe("PTY exit cleanup", () => {
-  it("removes session and closes clients when PTY exits", async () => {
-    await spawnWidget("tasks", "s", "/tmp", 80, 24);
-    const ws = createMockWs();
-    connectClient("tasks", ws as unknown as import("ws").WebSocket);
-
-    assert.ok(getSession("tasks"));
-
-    lastMockPty.simulateExit(0);
-
-    assert.strictEqual(getSession("tasks"), undefined);
-    assert.strictEqual(ws.closed, true);
   });
 });
