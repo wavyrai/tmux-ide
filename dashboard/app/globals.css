@@ -69,3 +69,78 @@
   background: var(--scrollbar-thumb);
   border-radius: 0;
 }
+
+/* Markdown rendering in plans panel */
+.plan-content h1,
+.plan-content h2,
+.plan-content h3,
+.plan-content h4 {
+  color: var(--accent);
+  margin-top: 1.5em;
+  margin-bottom: 0.5em;
+}
+.plan-content h1 { font-size: 1.2em; font-weight: 600; }
+.plan-content h2 { font-size: 1.1em; font-weight: 600; }
+.plan-content h3 { font-size: 1em; font-weight: 500; }
+.plan-content p {
+  color: var(--fg);
+  margin-bottom: 0.75em;
+  line-height: 1.6;
+}
+.plan-content ul,
+.plan-content ol {
+  color: var(--fg);
+  padding-left: 1.5em;
+  margin-bottom: 0.75em;
+}
+.plan-content li { margin-bottom: 0.25em; }
+.plan-content code {
+  background: var(--surface);
+  padding: 0.1em 0.3em;
+  border-radius: 2px;
+  font-size: 0.9em;
+}
+.plan-content pre {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  padding: 0.75em 1em;
+  margin-bottom: 0.75em;
+  overflow-x: auto;
+}
+.plan-content pre code {
+  background: none;
+  padding: 0;
+}
+.plan-content a {
+  color: var(--cyan);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.plan-content a:hover { opacity: 0.8; }
+.plan-content strong { color: var(--fg); font-weight: 600; }
+.plan-content em { color: var(--dim); }
+.plan-content blockquote {
+  border-left: 2px solid var(--border);
+  padding-left: 1em;
+  color: var(--dim);
+  margin-bottom: 0.75em;
+}
+.plan-content table {
+  border-collapse: collapse;
+  margin-bottom: 0.75em;
+  width: 100%;
+}
+.plan-content th,
+.plan-content td {
+  border: 1px solid var(--border);
+  padding: 0.3em 0.6em;
+  text-align: left;
+}
+.plan-content th {
+  color: var(--accent);
+  font-weight: 500;
+}
+.plan-content hr {
+  border-color: var(--border);
+  margin: 1.5em 0;
+}

@@ -9,14 +9,16 @@ import { AgentCard } from "@/components/AgentCard";
 import { KanbanBoard } from "@/components/KanbanBoard";
 import { DiffPanel } from "@/components/DiffPanel";
 import { ActivityFeed } from "@/components/ActivityFeed";
+import { PlansPanel } from "@/components/PlansPanel";
 import { StatusBar } from "@/components/StatusBar";
 import type { ProjectDetail } from "@/lib/types";
 
-type Tab = "kanban" | "diffs" | "activity";
+type Tab = "kanban" | "diffs" | "plans" | "activity";
 
 const TABS: { id: Tab; label: string }[] = [
   { id: "kanban", label: "kanban" },
   { id: "diffs", label: "diffs" },
+  { id: "plans", label: "plans" },
   { id: "activity", label: "activity" },
 ];
 
@@ -160,6 +162,10 @@ export default function ProjectPage() {
 
       {activeTab === "diffs" && (
         <DiffPanel sessionName={project.session} />
+      )}
+
+      {activeTab === "plans" && (
+        <PlansPanel sessionName={project.session} />
       )}
 
       {activeTab === "activity" && (
