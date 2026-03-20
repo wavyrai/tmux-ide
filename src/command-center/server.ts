@@ -10,6 +10,7 @@ import {
   type SessionOverview,
   type ProjectDetail,
 } from "./discovery.ts";
+import { readEvents, type OrchestratorEvent } from "../lib/event-log.ts";
 
 export function createApp(): Hono {
   const app = new Hono();
@@ -164,6 +165,34 @@ export function createApp(): Hono {
     }
 
     return c.json({ file, diff });
+  });
+
+  // Events endpoint — returns recent orchestrator events
+  app.get("/api/project/:name/events", (c) => {
+    const name = c.req.param("name");
+    const sessions = discoverSessions();
+    const session = sessions.find((s) => s.name === name);
+    if (!session) {
+      return c.json({ error: "Session not found" }, 404);
+    }
+
+    const allEvents = readEvents(session.dir);
+    // Return last 50 events, newest first
+    const recent = allEvents.slice(-50).reverse();
+
+    // Add relative timestamps
+    const now = Date.now();
+    const withRelative = recent.map((e) => {
+      const ms = now - new Date(e.timestamp).getTime();
+      let relative: string;
+      if (ms < 60000) relative = `${Math.floor(ms / 1000)}s ago`;
+      else if (ms < 3600000) relative = `${Math.floor(ms / 60000)}m ago`;
+      else if (ms < 86400000) relative = `${Math.floor(ms / 3600000)}h ago`;
+      else relative = `${Math.floor(ms / 86400000)}d ago`;
+      return { ...e, relative };
+    });
+
+    return c.json({ events: withRelative });
   });
 
   // SSE endpoint — polls every 2s and emits changes
