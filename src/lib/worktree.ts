@@ -1,3 +1,12 @@
+/**
+ * Git worktree management for per-task workspace isolation.
+ *
+ * Creates, validates, lists, and removes git worktrees so each orchestrated
+ * task runs in its own isolated checkout. Worktrees live under a configurable
+ * root directory (default `.worktrees/`) with branches named `task/{id}-{slug}`.
+ *
+ * @module worktree
+ */
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, realpathSync } from "node:fs";
 import { join, resolve } from "node:path";
