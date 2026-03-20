@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { ThemeToggle } from "./ThemeToggle";
 
 export function TopBar() {
   const [time, setTime] = useState("");
@@ -24,7 +25,8 @@ export function TopBar() {
     <div className="h-6 flex items-center px-3 bg-[var(--surface)] border-b text-[11px] sticky top-0 z-30">
       <span className="text-[var(--accent)] font-medium">tmux-ide</span>
       <span className="flex-1" />
-      <span className="text-[var(--dim)]">{time}</span>
+      <ThemeToggle />
+      <span className="text-[var(--dim)] ml-3">{time}</span>
     </div>
   );
 }

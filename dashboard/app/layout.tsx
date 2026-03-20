@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { IBM_Plex_Mono } from "next/font/google";
+import { Providers } from "@/components/Providers";
 import { TopBar } from "@/components/TopBar";
 import "./globals.css";
 
@@ -20,13 +21,15 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en" className={ibmPlexMono.variable}>
+    <html lang="en" className={ibmPlexMono.variable} suppressHydrationWarning>
       <body
         className="min-h-screen bg-[var(--bg)] text-[var(--fg)] antialiased text-[13px] leading-[1.5]"
         style={{ fontFamily: "var(--font-mono), ui-monospace, monospace" }}
       >
-        <TopBar />
-        {children}
+        <Providers>
+          <TopBar />
+          {children}
+        </Providers>
       </body>
     </html>
   );

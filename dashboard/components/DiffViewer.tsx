@@ -1,8 +1,9 @@
 "use client";
 
 import { PatchDiff } from "@pierre/diffs/react";
-import type { CSSProperties, ReactNode } from "react";
+import type { ReactNode } from "react";
 import { useState, Component, Suspense } from "react";
+import { useTheme } from "next-themes";
 
 // Error boundary — falls back to simple diff if PatchDiff crashes
 class DiffErrorBoundary extends Component<
@@ -25,13 +26,15 @@ class DiffErrorBoundary extends Component<
 interface DiffViewerProps {
   patch: string;
   diffStyle?: "split" | "unified";
-  preloaded?: any; // PreloadPatchDiffResult from SSR
+  preloaded?: unknown;
 }
 
 const MAX_DIFF_LINES = 2000;
 
 export function DiffViewer({ patch, diffStyle = "split", preloaded }: DiffViewerProps) {
   const [showFull, setShowFull] = useState(false);
+  const { theme } = useTheme();
+  const isDark = theme !== "light";
 
   if (!patch.trim()) {
     return (
@@ -64,18 +67,19 @@ export function DiffViewer({ patch, diffStyle = "split", preloaded }: DiffViewer
         <Suspense fallback={<SimpleDiff patch={displayDiff} />}>
           {preloaded ? (
             <PatchDiff
-              {...preloaded}
+              patch={displayDiff}
+              {...(preloaded as Record<string, unknown>)}
               className="diff-container"
             />
           ) : (
             <PatchDiff
               patch={displayDiff}
               options={{
-                theme: "pierre-dark",
+                theme: isDark ? "pierre-dark" : "pierre-light",
                 diffStyle,
                 diffIndicators: "bars",
                 overflow: "scroll",
-                themeType: "dark",
+                themeType: isDark ? "dark" : "light",
               }}
               className="diff-container"
             />
@@ -95,11 +99,11 @@ function SimpleDiff({ patch }: { patch: string }) {
         let color = "var(--fg)";
         let bg = "transparent";
         if (line.startsWith("+") && !line.startsWith("+++")) {
-          color = "var(--green)";
-          bg = "rgba(125,216,125,0.08)";
+          color = "var(--diff-add-text)";
+          bg = "var(--diff-add-bg)";
         } else if (line.startsWith("-") && !line.startsWith("---")) {
-          color = "var(--red)";
-          bg = "rgba(247,118,142,0.08)";
+          color = "var(--diff-del-text)";
+          bg = "var(--diff-del-bg)";
         } else if (line.startsWith("@@")) {
           color = "var(--cyan)";
         } else if (line.startsWith("diff ") || line.startsWith("index ")) {
