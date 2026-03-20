@@ -21,6 +21,7 @@ import {
   type Goal,
   type Task,
 } from "./lib/task-store.ts";
+import { isGhAvailable, createTaskPr } from "./lib/github-pr.ts";
 
 export function parseProof(raw: string, existing: ProofSchema | null): ProofSchema {
   // Try parsing as JSON first
@@ -71,6 +72,7 @@ interface TaskCommandValues {
   branch?: string;
   proof?: string;
   depends?: string;
+  pr?: boolean;
 }
 
 export async function taskCommand(
@@ -420,6 +422,27 @@ function handleTask(
       task.status = "done";
       if (values.proof) task.proof = parseProof(values.proof, task.proof);
       task.updated = new Date().toISOString();
+
+      // Auto-create GitHub PR if --pr flag is set and task has a branch
+      if (values.pr && task.branch) {
+        if (isGhAvailable()) {
+          const pr = createTaskPr(task, dir);
+          if (pr) {
+            if (!task.proof) task.proof = {};
+            (task.proof as ProofSchema).pr = {
+              number: pr.number,
+              url: pr.url,
+              status: "open",
+            };
+            if (!json) console.log(`PR created: ${pr.url}`);
+          } else {
+            if (!json) console.log(`Warning: PR creation failed (gh error)`);
+          }
+        } else {
+          if (!json) console.log(`Warning: gh CLI not found, skipping PR creation`);
+        }
+      }
+
       saveTask(dir, task);
       if (json) {
         console.log(JSON.stringify(task, null, 2));
