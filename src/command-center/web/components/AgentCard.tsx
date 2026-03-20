@@ -6,33 +6,54 @@ interface AgentCardProps {
 }
 
 export function AgentCard(props: AgentCardProps): JSX.Element {
+  const dotStyle = (): Record<string, string> => {
+    const base: Record<string, string> = {
+      width: "6px",
+      height: "6px",
+      "border-radius": "50%",
+      "flex-shrink": "0",
+    };
+    if (props.agent.isBusy) {
+      base.background = "var(--warning)";
+      base["box-shadow"] = "0 0 4px rgba(232,201,90,0.3)";
+    } else {
+      base.background = "var(--text-muted)";
+    }
+    return base;
+  };
+
   return (
-    <div class="flex items-center gap-3 px-3 py-2 rounded-lg bg-gray-800/50">
+    <div style={{
+      display: "flex",
+      "align-items": "center",
+      gap: "8px",
+      padding: "6px 8px",
+      "border-radius": "4px",
+      background: "var(--bg-surface)",
+    }}>
       {/* Status dot */}
-      <span
-        class="w-2 h-2 rounded-full shrink-0"
-        classList={{
-          "bg-green-400 shadow-[0_0_6px_rgba(74,222,128,0.4)]": props.agent.isBusy,
-          "bg-gray-600": !props.agent.isBusy,
-        }}
-      />
+      <span style={dotStyle()} />
 
       {/* Agent info */}
-      <div class="min-w-0 flex-1">
-        <div class="text-gray-200 text-sm font-medium truncate">
+      <div style={{ flex: "1", "min-width": "0" }}>
+        <div style={{ "font-size": "12px", color: "var(--text-primary)", "font-weight": "500" }}>
           {props.agent.paneTitle}
         </div>
         <Show
           when={props.agent.taskTitle}
-          fallback={<div class="text-gray-500 text-xs">idle</div>}
+          fallback={<div style={{ "font-size": "10px", color: "var(--text-muted)" }}>idle</div>}
         >
-          <div class="text-gray-400 text-xs truncate">{props.agent.taskTitle}</div>
+          <div style={{ "font-size": "10px", color: "var(--text-secondary)", overflow: "hidden", "text-overflow": "ellipsis", "white-space": "nowrap" }}>
+            {props.agent.taskTitle}
+          </div>
         </Show>
       </div>
 
       {/* Elapsed */}
       <Show when={props.agent.elapsed}>
-        <span class="text-gray-500 text-xs shrink-0">{props.agent.elapsed}</span>
+        <span style={{ "font-size": "10px", color: "var(--text-muted)", "flex-shrink": "0" }}>
+          {props.agent.elapsed}
+        </span>
       </Show>
     </div>
   );

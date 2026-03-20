@@ -1,4 +1,4 @@
-import { JSX, Show } from "solid-js";
+import { JSX, Show, For } from "solid-js";
 import { ProgressBar } from "./ProgressBar.tsx";
 import type { SessionOverview } from "../types.ts";
 
@@ -15,56 +15,85 @@ export function ProjectCard(props: ProjectCardProps): JSX.Element {
 
   return (
     <button
-      class="w-full text-left bg-gray-900 border border-gray-800 rounded-xl p-5 hover:bg-gray-800 hover:border-gray-700 transition-all duration-200 cursor-pointer group"
       onClick={() => props.onClick()}
+      style={{
+        "all": "unset",
+        "display": "block",
+        "width": "100%",
+        "text-align": "left",
+        "background": "var(--bg-raised)",
+        "border": "1px solid var(--border)",
+        "border-radius": "6px",
+        "padding": "14px 16px",
+        "cursor": "pointer",
+        "transition": "border-color 0.15s, background 0.15s",
+      }}
+      onMouseOver={(e) => {
+        e.currentTarget.style.borderColor = "var(--border-strong)";
+        e.currentTarget.style.background = "var(--bg-surface)";
+      }}
+      onMouseOut={(e) => {
+        e.currentTarget.style.borderColor = "var(--border)";
+        e.currentTarget.style.background = "var(--bg-raised)";
+      }}
     >
       {/* Header */}
-      <div class="flex items-start justify-between mb-3">
-        <div class="min-w-0 flex-1">
-          <h3 class="text-gray-100 font-semibold text-lg truncate group-hover:text-blue-400 transition-colors">
+      <div style={{ display: "flex", "align-items": "flex-start", "justify-content": "space-between", "margin-bottom": "10px" }}>
+        <div style={{ "min-width": "0", flex: "1" }}>
+          <div style={{ "font-size": "13px", "font-weight": "500", color: "var(--text-primary)" }}>
             {props.session.name}
-          </h3>
-          <Show when={props.session.mission}>
-            <p class="text-gray-400 text-sm truncate mt-0.5">
+          </div>
+          <Show
+            when={props.session.mission}
+            fallback={<div style={{ "font-size": "11px", color: "var(--text-muted)", "margin-top": "2px" }}>no mission</div>}
+          >
+            <div style={{ "font-size": "11px", color: "var(--text-secondary)", "margin-top": "2px", overflow: "hidden", "text-overflow": "ellipsis", "white-space": "nowrap" }}>
               {props.session.mission!.title}
-            </p>
+            </div>
           </Show>
         </div>
-        <Show when={props.session.stats.elapsed}>
-          <span class="text-gray-500 text-xs ml-3 shrink-0">
-            {props.session.stats.elapsed!}
-          </span>
-        </Show>
+        <div style={{ display: "flex", gap: "12px" }}>
+          <div style={{ "text-align": "right" }}>
+            <div style={{ "font-size": "16px", "font-weight": "500", color: "var(--text-primary)", "line-height": "1" }}>
+              {props.session.stats.doneTasks}
+              <span style={{ "font-size": "11px", "font-weight": "400", color: "var(--text-muted)" }}>/{props.session.stats.totalTasks}</span>
+            </div>
+            <div style={{ "font-size": "10px", color: "var(--text-muted)", "margin-top": "2px" }}>tasks</div>
+          </div>
+          <div style={{ "text-align": "right" }}>
+            <div style={{ "font-size": "16px", "font-weight": "500", color: "var(--text-primary)", "line-height": "1" }}>
+              {props.session.stats.agents}
+            </div>
+            <div style={{ "font-size": "10px", color: "var(--text-muted)", "margin-top": "2px" }}>agents</div>
+          </div>
+        </div>
       </div>
 
       {/* Progress */}
-      <div class="mb-3">
-        <div class="flex justify-between text-xs text-gray-400 mb-1">
-          <span>{pct()}% complete</span>
-          <span>
-            {props.session.stats.doneTasks}/{props.session.stats.totalTasks} tasks
-          </span>
-        </div>
+      <div style={{ "margin-bottom": "10px" }}>
         <ProgressBar percent={pct()} />
       </div>
 
-      {/* Footer stats */}
-      <div class="flex gap-4 text-xs text-gray-500">
-        <span>
-          <span
-            classList={{
-              "text-green-400": props.session.stats.activeAgents > 0,
-              "text-gray-500": props.session.stats.activeAgents === 0,
-            }}
-          >
-            {props.session.stats.activeAgents}
-          </span>
-          /{props.session.stats.agents} agents active
-        </span>
-        <Show when={props.session.goals.length > 0}>
-          <span>{props.session.goals.length} goals</span>
-        </Show>
-      </div>
+      {/* Goals */}
+      <Show when={props.session.goals.length > 0}>
+        <div style={{ "margin-top": "10px", "padding-top": "10px", "border-top": "1px solid var(--border)", display: "flex", "flex-direction": "column", gap: "6px" }}>
+          <For each={props.session.goals}>
+            {(goal) => (
+              <div style={{ display: "flex", "align-items": "center", gap: "8px" }}>
+                <span style={{ flex: "1", "font-size": "11px", color: "var(--text-secondary)", overflow: "hidden", "text-overflow": "ellipsis", "white-space": "nowrap" }}>
+                  {goal.title}
+                </span>
+                <div style={{ width: "80px" }}>
+                  <ProgressBar percent={goal.progress} />
+                </div>
+                <span style={{ width: "32px", "text-align": "right", "font-size": "10px", color: "var(--text-muted)" }}>
+                  {goal.progress}%
+                </span>
+              </div>
+            )}
+          </For>
+        </div>
+      </Show>
     </button>
   );
 }

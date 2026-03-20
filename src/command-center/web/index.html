@@ -4,13 +4,42 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>tmux-ide · Command Center</title>
-  <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
   <style>
-    /* Prevent flash of unstyled content */
-    body { background: #030712; color: #f3f4f6; }
+    :root {
+      --bg-base: #131010;
+      --bg-raised: #1a1717;
+      --bg-surface: #1f1c1c;
+      --bg-hover: #252222;
+      --bg-active: #2a2727;
+      --text-primary: #e8e4e4;
+      --text-secondary: #a09a9a;
+      --text-muted: #6b6363;
+      --border: rgba(255,255,255,0.06);
+      --border-strong: rgba(255,255,255,0.1);
+      --accent: #dcde8d;
+      --success: #7dd87d;
+      --warning: #e8c95a;
+      --error: #e87d7d;
+      --info: #7db4e8;
+      --font: 'IBM Plex Mono', ui-monospace, monospace;
+      --font-size: 13px;
+      --line-height: 1.5;
+    }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: var(--font);
+      font-size: var(--font-size);
+      line-height: var(--line-height);
+      background: var(--bg-base);
+      color: var(--text-primary);
+      -webkit-font-smoothing: antialiased;
+      min-height: 100vh;
+    }
   </style>
 </head>
-<body class="bg-gray-950 text-gray-100 antialiased">
+<body>
   <div id="root"></div>
   <script type="module" src="./app.js"></script>
 </body>

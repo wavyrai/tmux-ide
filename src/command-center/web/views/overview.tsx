@@ -34,54 +34,84 @@ export function Overview(props: OverviewProps): JSX.Element {
   );
 
   return (
-    <div class="min-h-screen bg-gray-950">
+    <div style={{ "min-height": "100vh" }}>
       {/* Header */}
-      <header class="border-b border-gray-800 bg-gray-950/80 backdrop-blur-sm sticky top-0 z-10">
-        <div class="max-w-7xl mx-auto px-6 py-4">
-          <div class="flex items-center justify-between">
+      <header style={{
+        "border-bottom": "1px solid var(--border)",
+        background: "var(--bg-raised)",
+        position: "sticky",
+        top: "0",
+        "z-index": "10",
+      }}>
+        <div style={{
+          "max-width": "680px",
+          margin: "0 auto",
+          padding: "10px 16px",
+        }}>
+          <div style={{ display: "flex", "align-items": "center", "justify-content": "space-between" }}>
             <div>
-              <h1 class="text-gray-100 text-xl font-bold">Command Center</h1>
-              <p class="text-gray-500 text-sm mt-0.5">
-                {props.sessions.length} project{props.sessions.length !== 1 ? "s" : ""}
-                {" · "}
-                <span class="text-green-400">{activeAgents()}</span>/{totalAgents()} agents
-                {" · "}
-                {doneTasks()}/{totalTasks()} tasks
-              </p>
+              <div style={{ display: "flex", "align-items": "center", gap: "8px" }}>
+                <span style={{ color: "var(--accent)", "font-weight": "500", "font-size": "13px" }}>
+                  tmux-ide
+                </span>
+                <span style={{ color: "var(--text-muted)", "font-size": "12px" }}>/</span>
+                <span style={{ color: "var(--text-muted)", "font-size": "12px" }}>command center</span>
+              </div>
+              <div style={{ "font-size": "11px", color: "var(--text-muted)", "margin-top": "4px", display: "flex", gap: "12px" }}>
+                <span>
+                  <span style={{ color: "var(--text-secondary)", "font-weight": "500" }}>{props.sessions.length}</span> projects
+                </span>
+                <span>
+                  <span style={{ color: "var(--success)", "font-weight": "500" }}>{activeAgents()}</span>/{totalAgents()} agents
+                </span>
+                <span>
+                  <span style={{ color: "var(--text-secondary)", "font-weight": "500" }}>{doneTasks()}</span>/{totalTasks()} tasks
+                </span>
+              </div>
             </div>
             <Show when={props.sessions.length > 3}>
               <input
                 type="text"
-                placeholder="Filter projects..."
+                placeholder="Filter..."
                 value={filter()}
                 onInput={(e) => setFilter(e.currentTarget.value)}
-                class="bg-gray-900 border border-gray-800 rounded-lg px-3 py-1.5 text-sm text-gray-200 placeholder-gray-600 focus:outline-none focus:border-gray-600 w-48"
+                style={{
+                  background: "var(--bg-surface)",
+                  border: "1px solid var(--border)",
+                  "border-radius": "4px",
+                  padding: "4px 8px",
+                  "font-size": "11px",
+                  "font-family": "var(--font)",
+                  color: "var(--text-primary)",
+                  width: "160px",
+                  outline: "none",
+                }}
               />
             </Show>
           </div>
         </div>
       </header>
 
-      {/* Grid */}
-      <main class="max-w-7xl mx-auto px-6 py-6">
+      {/* Card list */}
+      <main style={{ "max-width": "680px", margin: "0 auto", padding: "20px 16px" }}>
         <Show
           when={filtered().length > 0}
           fallback={
-            <div class="text-center py-20">
-              <p class="text-gray-500 text-lg">
+            <div style={{ "text-align": "center", padding: "64px 0" }}>
+              <div style={{ color: "var(--text-muted)", "font-size": "12px" }}>
                 {props.sessions.length === 0
-                  ? "No tmux-ide sessions found"
-                  : "No projects match your filter"}
-              </p>
-              <p class="text-gray-600 text-sm mt-1">
-                {props.sessions.length === 0
-                  ? "Start a project with tmux-ide to see it here."
-                  : "Try a different search term."}
-              </p>
+                  ? "No tmux-ide sessions running."
+                  : "No projects match your filter."}
+              </div>
+              <Show when={props.sessions.length === 0}>
+                <div style={{ color: "var(--text-muted)", "font-size": "11px", "margin-top": "4px" }}>
+                  Start a project with tmux-ide to see it here.
+                </div>
+              </Show>
             </div>
           }
         >
-          <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          <div style={{ display: "flex", "flex-direction": "column", gap: "8px" }}>
             <For each={filtered()}>
               {(session) => (
                 <ProjectCard
