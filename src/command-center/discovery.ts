@@ -194,7 +194,13 @@ export function buildProjectDetail(info: SessionInfo): ProjectDetail {
 export function updateTask(
   dir: string,
   taskId: string,
-  fields: { status?: string; assignee?: string },
+  fields: {
+    status?: string;
+    assignee?: string;
+    title?: string;
+    description?: string;
+    priority?: number;
+  },
 ): Task | null {
   const task = loadTask(dir, taskId);
   if (!task) return null;
@@ -204,6 +210,15 @@ export function updateTask(
   }
   if (fields.assignee !== undefined) {
     task.assignee = fields.assignee || null;
+  }
+  if (fields.title !== undefined) {
+    task.title = fields.title;
+  }
+  if (fields.description !== undefined) {
+    task.description = fields.description;
+  }
+  if (fields.priority !== undefined) {
+    task.priority = fields.priority;
   }
   task.updated = new Date().toISOString();
   saveTask(dir, task);

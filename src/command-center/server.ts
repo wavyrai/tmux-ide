@@ -54,7 +54,13 @@ export function createApp(): Hono {
       return c.json({ error: "Session not found" }, 404);
     }
 
-    const body = await c.req.json<{ status?: string; assignee?: string }>();
+    const body = await c.req.json<{
+      status?: string;
+      assignee?: string;
+      title?: string;
+      description?: string;
+      priority?: number;
+    }>();
     const updated = updateTask(session.dir, taskId, body);
     if (!updated) {
       return c.json({ error: "Task not found" }, 404);
