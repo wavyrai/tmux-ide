@@ -99,9 +99,11 @@ export function isAgentPane(pane: PaneInfo): boolean {
   const cmd = pane.currentCommand.toLowerCase();
   if (AGENT_COMMANDS.has(cmd)) return true;
   // Claude Code shows its version string as the command (e.g. "2.1.80")
-  if (VERSION_PATTERN.test(cmd) && /claude/i.test(pane.title)) return true;
-  // Title-based detection
+  if (VERSION_PATTERN.test(cmd)) return true;
+  // Title-based detection — check for Claude Code or French agent names
   if (/claude\s*code/i.test(pane.title)) return true;
+  const name = normalizePaneTitle(pane.title);
+  if (AGENT_NAMES.includes(name)) return true;
   return false;
 }
 
