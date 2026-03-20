@@ -1,73 +1,149 @@
-export interface SectionAuthorship {
-  author: string; // 'ai:François' or 'ai:Amélie' or 'human' or 'human:thijs'
-  at: string; // ISO timestamp
-  charCount: number; // characters in this section
+/**
+ * Character-range authorship tracking for plan files.
+ *
+ * Follows the @proof/core marks model: each mark tracks authorship at the
+ * character range level with quote-based re-anchoring when positions shift.
+ *
+ * @module authorship
+ */
+
+// ============================================================================
+// Types (following @proof/core marks model)
+// ============================================================================
+
+export type MarkKind = "authored" | "approved" | "flagged" | "comment" | "insert" | "delete" | "replace";
+
+export interface MarkRange {
+  from: number;
+  to: number;
 }
 
-export interface AuthorshipData {
-  sections: Record<string, SectionAuthorship>;
-  stats: { aiPercent: number; humanPercent: number; totalChars: number };
+export interface Mark {
+  id: string;
+  kind: MarkKind;
+  by: string;       // "ai:François" or "human:thijs"
+  at: string;       // ISO timestamp
+  range: MarkRange; // character positions in the clean content
+  quote: string;    // text content for re-anchoring
+  orphaned?: boolean;
 }
 
-const AUTHORSHIP_START = "<!-- TMUX-IDE:AUTHORSHIP";
-const AUTHORSHIP_END = "-->";
+export interface MarksDocument {
+  version: number;
+  marks: Record<string, Mark>;
+}
+
+export interface AuthorshipStats {
+  aiPercent: number;
+  humanPercent: number;
+  totalChars: number;
+}
+
+// ============================================================================
+// Comment block format
+// ============================================================================
+
+const MARKS_START = "<!-- TMUX-IDE:MARKS";
+const MARKS_END = "-->";
+
+// ============================================================================
+// ID generation
+// ============================================================================
+
+let markIdCounter = 0;
+
+export function generateMarkId(): string {
+  return `m${Date.now()}_${++markIdCounter}`;
+}
+
+// ============================================================================
+// Quote normalization (matches @proof/core)
+// ============================================================================
+
+export function normalizeQuote(text: string): string {
+  return text.replace(/\s+/g, " ").trim();
+}
+
+// ============================================================================
+// Extract / Embed
+// ============================================================================
 
 /**
- * Extract authorship data from a markdown file.
- * Returns clean content (without the comment block) and parsed authorship.
+ * Extract marks from a markdown file.
+ * Returns clean content (without the comment block) and parsed marks.
  */
-export function extractAuthorship(markdown: string): {
+export function extractMarks(markdown: string): {
   content: string;
-  authorship: AuthorshipData | null;
+  marks: MarksDocument | null;
 } {
-  const startIdx = markdown.lastIndexOf(AUTHORSHIP_START);
+  const startIdx = markdown.lastIndexOf(MARKS_START);
   if (startIdx === -1) {
-    return { content: markdown, authorship: null };
+    return { content: markdown, marks: null };
   }
 
-  const endIdx = markdown.indexOf(AUTHORSHIP_END, startIdx + AUTHORSHIP_START.length);
+  const endIdx = markdown.indexOf(MARKS_END, startIdx + MARKS_START.length);
   if (endIdx === -1) {
-    return { content: markdown, authorship: null };
+    return { content: markdown, marks: null };
   }
 
-  const jsonStr = markdown
-    .slice(startIdx + AUTHORSHIP_START.length, endIdx)
-    .trim();
-  const content = (markdown.slice(0, startIdx) + markdown.slice(endIdx + AUTHORSHIP_END.length)).trimEnd();
+  const jsonStr = markdown.slice(startIdx + MARKS_START.length, endIdx).trim();
+  const content = (
+    markdown.slice(0, startIdx) + markdown.slice(endIdx + MARKS_END.length)
+  ).trimEnd();
 
   try {
-    const data = JSON.parse(jsonStr) as AuthorshipData;
-    return { content, authorship: data };
+    const data = JSON.parse(jsonStr) as MarksDocument;
+    return { content, marks: data };
   } catch {
-    return { content, authorship: null };
+    return { content, marks: null };
   }
 }
 
 /**
- * Embed authorship data into a markdown file.
- * Strips any existing authorship comment and appends a new one at the end.
+ * Embed marks into a markdown file.
+ * Strips any existing marks comment and appends a new one at the end.
  */
-export function embedAuthorship(markdown: string, authorship: AuthorshipData): string {
-  // Strip existing authorship comment
-  const { content } = extractAuthorship(markdown);
-  const json = JSON.stringify(authorship);
-  return `${content}\n\n${AUTHORSHIP_START}\n${json}\n${AUTHORSHIP_END}\n`;
+export function embedMarks(markdown: string, doc: MarksDocument): string {
+  const { content } = extractMarks(markdown);
+  const json = JSON.stringify(doc, null, 2);
+  return `${content}\n\n${MARKS_START}\n${json}\n${MARKS_END}\n`;
 }
 
+// ============================================================================
+// Mark creation helpers
+// ============================================================================
+
+export function createAuthored(by: string, range: MarkRange, quote: string): Mark {
+  return {
+    id: generateMarkId(),
+    kind: "authored",
+    by,
+    at: new Date().toISOString(),
+    range,
+    quote: normalizeQuote(quote),
+  };
+}
+
+// ============================================================================
+// Stats calculation
+// ============================================================================
+
 /**
- * Calculate AI vs human percentages from section authorships.
+ * Calculate AI vs human authorship percentages from marks.
+ * Only counts 'authored' marks. Uses character range lengths.
  */
-export function calculateStats(
-  sections: Record<string, SectionAuthorship>,
-): { aiPercent: number; humanPercent: number; totalChars: number } {
+export function calculateStats(marks: Record<string, Mark>): AuthorshipStats {
   let aiChars = 0;
   let humanChars = 0;
 
-  for (const section of Object.values(sections)) {
-    if (section.author.startsWith("ai:") || section.author === "ai") {
-      aiChars += section.charCount;
+  for (const mark of Object.values(marks)) {
+    if (mark.kind !== "authored") continue;
+    if (mark.orphaned) continue;
+    const chars = mark.range.to - mark.range.from;
+    if (mark.by.startsWith("ai:") || mark.by === "ai") {
+      aiChars += chars;
     } else {
-      humanChars += section.charCount;
+      humanChars += chars;
     }
   }
 
@@ -83,84 +159,140 @@ export function calculateStats(
   };
 }
 
+// ============================================================================
+// Re-anchoring: recover positions when content shifts
+// ============================================================================
+
 /**
- * Parse markdown into sections by ## headings.
- * Returns an array of { heading, content, charCount }.
- * Content before the first heading is assigned heading "(intro)".
+ * Find the position of a quote in content text.
+ * Returns { from, to } or null if not found.
  */
-export function parseMarkdownSections(
-  markdown: string,
-): { heading: string; content: string; charCount: number }[] {
-  const lines = markdown.split("\n");
-  const sections: { heading: string; content: string; charCount: number }[] = [];
-  let currentHeading = "(intro)";
-  let currentLines: string[] = [];
+function findQuotePosition(content: string, quote: string): MarkRange | null {
+  if (!quote) return null;
+  const normalized = normalizeQuote(quote);
+  const normalizedContent = normalizeQuote(content);
+  const idx = normalizedContent.indexOf(normalized);
+  if (idx === -1) return null;
 
-  for (const line of lines) {
-    const headingMatch = line.match(/^#{1,3}\s+(.+)/);
-    if (headingMatch) {
-      // Flush previous section
-      if (currentLines.length > 0 || currentHeading !== "(intro)") {
-        const content = currentLines.join("\n").trim();
-        if (content.length > 0) {
-          sections.push({
-            heading: currentHeading,
-            content,
-            charCount: content.length,
-          });
-        }
-      }
-      currentHeading = headingMatch[1]!.trim();
-      currentLines = [];
-    } else {
-      currentLines.push(line);
+  // Map back to original content positions (approximate — whitespace may differ)
+  // Walk through original content counting normalized chars
+  let origFrom = -1;
+  let normalizedPos = 0;
+  for (let i = 0; i < content.length; i++) {
+    if (/\s/.test(content[i]!) && (i === 0 || /\s/.test(content[i - 1]!))) continue;
+    if (normalizedPos === idx && origFrom === -1) origFrom = i;
+    if (normalizedPos === idx + normalized.length) {
+      return { from: origFrom, to: i };
     }
+    normalizedPos++;
   }
 
-  // Flush last section
-  const content = currentLines.join("\n").trim();
-  if (content.length > 0) {
-    sections.push({
-      heading: currentHeading,
-      content,
-      charCount: content.length,
-    });
+  // Fallback: simple indexOf on original
+  const simpleIdx = content.indexOf(quote);
+  if (simpleIdx !== -1) {
+    return { from: simpleIdx, to: simpleIdx + quote.length };
   }
 
-  return sections;
+  return null;
 }
 
 /**
- * Tag untagged sections with the given author.
- * Preserves existing authorship for previously tagged sections.
- * Recalculates stats and embeds updated authorship.
+ * Re-anchor marks whose ranges may have shifted due to content edits.
+ * Uses quote text to find new positions. Marks orphaned if quote not found.
  */
-export function tagAuthorship(markdown: string, author: string): string {
-  const { content, authorship } = extractAuthorship(markdown);
-  const existingSections = authorship?.sections ?? {};
-  const parsed = parseMarkdownSections(content);
-  const now = new Date().toISOString();
+export function reanchorMarks(
+  content: string,
+  marks: Record<string, Mark>,
+): Record<string, Mark> {
+  const result: Record<string, Mark> = {};
 
-  const sections: Record<string, SectionAuthorship> = {};
+  for (const [id, mark] of Object.entries(marks)) {
+    // Check if current range still matches quote
+    const currentText = content.slice(mark.range.from, mark.range.to);
+    if (normalizeQuote(currentText) === normalizeQuote(mark.quote)) {
+      result[id] = mark;
+      continue;
+    }
 
-  for (const section of parsed) {
-    const existing = existingSections[section.heading];
-    if (existing) {
-      // Update charCount if content changed, keep author
-      sections[section.heading] = {
-        ...existing,
-        charCount: section.charCount,
-      };
+    // Try to re-anchor using quote
+    const newRange = findQuotePosition(content, mark.quote);
+    if (newRange) {
+      result[id] = { ...mark, range: newRange, orphaned: false };
     } else {
-      // New or untagged section
-      sections[section.heading] = {
-        author,
-        at: now,
-        charCount: section.charCount,
-      };
+      result[id] = { ...mark, orphaned: true };
     }
   }
 
-  const stats = calculateStats(sections);
-  return embedAuthorship(content, { sections, stats });
+  return result;
+}
+
+// ============================================================================
+// Tagging: tag entire content as authored by a given actor
+// ============================================================================
+
+/**
+ * Tag the full content as authored by the given actor.
+ * Preserves existing marks and only adds a mark for uncovered ranges.
+ */
+export function tagContent(markdown: string, by: string): string {
+  const { content, marks: existingDoc } = extractMarks(markdown);
+  const existingMarks = existingDoc?.marks ?? {};
+
+  // Re-anchor existing marks against current content
+  const anchored = Object.keys(existingMarks).length > 0
+    ? reanchorMarks(content, existingMarks)
+    : {};
+
+  // Find uncovered character ranges
+  const covered = new Set<number>();
+  for (const mark of Object.values(anchored)) {
+    if (mark.kind !== "authored" || mark.orphaned) continue;
+    for (let i = mark.range.from; i < mark.range.to && i < content.length; i++) {
+      covered.add(i);
+    }
+  }
+
+  // Build marks for uncovered ranges (coalesce adjacent)
+  const newMarks: Record<string, Mark> = { ...anchored };
+  let rangeStart = -1;
+
+  for (let i = 0; i <= content.length; i++) {
+    const isCovered = covered.has(i);
+    const atEnd = i === content.length;
+
+    if (!isCovered && !atEnd && rangeStart === -1) {
+      rangeStart = i;
+    } else if ((isCovered || atEnd) && rangeStart !== -1) {
+      const quote = content.slice(rangeStart, i);
+      if (quote.trim().length > 0) {
+        const mark = createAuthored(by, { from: rangeStart, to: i }, quote);
+        newMarks[mark.id] = mark;
+      }
+      rangeStart = -1;
+    }
+  }
+
+  const stats = calculateStats(newMarks);
+  const doc: MarksDocument = { version: 2, marks: newMarks };
+  return embedMarks(content, doc);
+}
+
+// ============================================================================
+// Backward compatibility — re-export old names
+// ============================================================================
+
+/** @deprecated Use extractMarks instead */
+export function extractAuthorship(markdown: string): {
+  content: string;
+  authorship: { marks: Record<string, Mark>; stats: AuthorshipStats } | null;
+} {
+  const { content, marks } = extractMarks(markdown);
+  if (!marks) return { content, authorship: null };
+  const stats = calculateStats(marks.marks);
+  return { content, authorship: { marks: marks.marks, stats } };
+}
+
+/** @deprecated Use tagContent instead */
+export function tagAuthorship(markdown: string, author: string): string {
+  return tagContent(markdown, author);
 }
