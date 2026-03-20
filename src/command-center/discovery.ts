@@ -12,7 +12,7 @@ import {
   type Task,
 } from "../lib/task-store.ts";
 import { listSessionPanes, type PaneInfo } from "../widgets/lib/pane-comms.ts";
-import { isAgentPane, isAgentBusy } from "../lib/orchestrator.ts";
+import { isAgentPane, isAgentBusy, agentIdentifier } from "../lib/orchestrator.ts";
 
 export interface SessionInfo {
   name: string;
@@ -169,11 +169,12 @@ export function buildProjectDetail(info: SessionInfo): ProjectDetail {
   const agents: AgentDetail[] = info.panes
     .filter((p) => isAgentPane(p))
     .map((pane) => {
+      const name = agentIdentifier(pane);
       const assignedTask = info.tasks.find(
-        (t) => t.assignee === pane.title && t.status === "in-progress",
+        (t) => t.assignee === name && t.status === "in-progress",
       );
       return {
-        paneTitle: pane.title,
+        paneTitle: name,
         isBusy: isAgentBusy(pane),
         taskTitle: assignedTask?.title ?? null,
         taskId: assignedTask?.id ?? null,
