@@ -73,6 +73,7 @@ interface TaskCommandValues {
   proof?: string;
   depends?: string;
   pr?: boolean;
+  specialty?: string;
 }
 
 export async function taskCommand(
@@ -207,6 +208,7 @@ function handleGoal(
         priority: parseInt(values.priority ?? "2", 10),
         created: now,
         updated: now,
+        specialty: values.specialty ?? undefined,
       };
       saveGoal(dir, goal);
       if (json) {

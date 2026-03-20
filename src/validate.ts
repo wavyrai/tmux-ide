@@ -66,12 +66,15 @@ export function validateConfig(config: unknown): string[] {
           validateSize(pane.size, `rows[${i}].panes[${j}].size`, errors);
         }
         if (pane.role !== undefined) {
-          if (pane.role !== "lead" && pane.role !== "teammate") {
-            errors.push(`rows[${i}].panes[${j}].role must be "lead" or "teammate"`);
+          if (pane.role !== "lead" && pane.role !== "teammate" && pane.role !== "planner") {
+            errors.push(`rows[${i}].panes[${j}].role must be "lead", "teammate", or "planner"`);
           }
         }
         if (pane.task !== undefined && typeof pane.task !== "string") {
           errors.push(`rows[${i}].panes[${j}].task must be a string`);
+        }
+        if (pane.specialty !== undefined && typeof pane.specialty !== "string") {
+          errors.push(`rows[${i}].panes[${j}].specialty must be a string`);
         }
         if (pane.type !== undefined) {
           const validTypes = ["explorer", "changes", "preview", "tasks", "warroom", "costs"];
@@ -163,6 +166,11 @@ export function validateConfig(config: unknown): string[] {
       }
       if (orch.master_pane !== undefined && typeof orch.master_pane !== "string") {
         errors.push("orchestrator.master_pane must be a string");
+      }
+      if (orch.dispatch_mode !== undefined) {
+        if (orch.dispatch_mode !== "tasks" && orch.dispatch_mode !== "goals") {
+          errors.push('orchestrator.dispatch_mode must be "tasks" or "goals"');
+        }
       }
     }
   }

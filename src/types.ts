@@ -15,6 +15,7 @@ export interface OrchestratorConfig {
   before_run?: string; // shell command to run in worktree before dispatching to agent
   after_run?: string; // shell command to run in worktree after task completes
   cleanup_on_done?: boolean; // remove worktree when task completes (default false)
+  dispatch_mode?: "tasks" | "goals"; // default: "tasks" (backward compat)
 }
 
 export interface IdeConfig {
@@ -40,8 +41,9 @@ export interface Pane {
   size?: string;
   focus?: boolean;
   env?: Record<string, string | number>;
-  role?: "lead" | "teammate";
+  role?: "lead" | "teammate" | "planner";
   task?: string;
+  specialty?: string; // comma-separated: "frontend, ui, css"
 }
 
 export interface ThemeConfig {

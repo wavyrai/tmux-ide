@@ -45,6 +45,7 @@ const { positionals, values } = parseArgs({
     proof: { type: "string" },
     depends: { type: "string" },
     pr: { type: "boolean" },
+    specialty: { type: "string" },
     port: { type: "string" },
   },
 });
@@ -253,6 +254,7 @@ try {
           acceptance: values.acceptance,
           priority: values.priority,
           status: values.status,
+          specialty: values.specialty,
         },
       });
       break;

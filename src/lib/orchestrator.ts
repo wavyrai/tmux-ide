@@ -24,7 +24,17 @@
 import { execSync, execFileSync } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync, mkdirSync, watch, type FSWatcher } from "node:fs";
 import { join } from "node:path";
-import { loadMission, loadGoal, loadTasks, saveTask, loadTask, type Task } from "./task-store.ts";
+import {
+  loadMission,
+  loadGoal,
+  loadGoals,
+  loadTasks,
+  saveTask,
+  saveGoal,
+  loadTask,
+  type Task,
+  type Goal,
+} from "./task-store.ts";
 import { recordTaskTime } from "./token-tracker.ts";
 import {
   listSessionPanes,
@@ -47,6 +57,8 @@ export interface OrchestratorConfig {
   afterRun: string | null;
   cleanupOnDone: boolean;
   maxConcurrentAgents: number;
+  dispatchMode: "tasks" | "goals";
+  paneSpecialties: Map<string, string[]>;
 }
 
 export interface OrchestratorState {
