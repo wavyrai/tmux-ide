@@ -161,3 +161,30 @@ export async function deleteTaskApi(
   );
   return res.ok;
 }
+
+export async function savePlan(
+  name: string,
+  filename: string,
+  content: string,
+): Promise<boolean> {
+  const res = await fetch(
+    `${API_BASE}/api/project/${encodeURIComponent(name)}/plans/${encodeURIComponent(filename)}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content }),
+    },
+  );
+  return res.ok;
+}
+
+export async function deletePlan(
+  name: string,
+  filename: string,
+): Promise<boolean> {
+  const res = await fetch(
+    `${API_BASE}/api/project/${encodeURIComponent(name)}/plans/${encodeURIComponent(filename)}`,
+    { method: "DELETE" },
+  );
+  return res.ok;
+}
