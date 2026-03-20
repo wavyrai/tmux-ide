@@ -12,7 +12,6 @@ function App() {
   const [project, setProject] = createSignal<ProjectDetail | null>(null);
   const [error, setError] = createSignal<string | null>(null);
 
-  // Poll sessions every 2 seconds
   async function fetchSessions() {
     try {
       const res = await fetch("/api/sessions");
@@ -40,15 +39,11 @@ function App() {
   // Poll based on current view
   createEffect(() => {
     const v = view();
-
-    // Fetch immediately
     if (v.kind === "overview") {
       fetchSessions();
     } else {
       fetchProject(v.name);
     }
-
-    // Set up polling
     const interval = setInterval(() => {
       if (v.kind === "overview") {
         fetchSessions();
@@ -56,7 +51,6 @@ function App() {
         fetchProject(v.name);
       }
     }, 2000);
-
     onCleanup(() => clearInterval(interval));
   });
 
@@ -91,10 +85,17 @@ function App() {
   }
 
   return (
-    <div class="min-h-screen bg-gray-950 text-gray-100">
+    <div style={{ "min-height": "100vh", background: "var(--bg-base)", color: "var(--text-primary)" }}>
       {/* Connection error banner */}
       <Show when={error()}>
-        <div class="bg-red-400/10 border-b border-red-400/20 px-6 py-2 text-red-400 text-sm text-center">
+        <div style={{
+          background: "rgba(232,125,125,0.08)",
+          "border-bottom": "1px solid rgba(232,125,125,0.15)",
+          padding: "4px 16px",
+          color: "var(--error)",
+          "font-size": "11px",
+          "text-align": "center",
+        }}>
           {error()}
         </div>
       </Show>
@@ -107,10 +108,14 @@ function App() {
         <ProjectView project={project()!} onBack={navigateToOverview} />
       </Show>
 
-      {/* Loading state for project view before data arrives */}
       <Show when={view().kind === "project" && !project() && !error()}>
-        <div class="flex items-center justify-center min-h-screen">
-          <div class="text-gray-500">Loading project...</div>
+        <div style={{
+          display: "flex",
+          "align-items": "center",
+          "justify-content": "center",
+          "min-height": "100vh",
+        }}>
+          <div style={{ color: "var(--text-muted)", "font-size": "12px" }}>Loading project...</div>
         </div>
       </Show>
     </div>

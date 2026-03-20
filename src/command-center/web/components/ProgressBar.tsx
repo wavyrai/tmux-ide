@@ -2,23 +2,27 @@ import { JSX } from "solid-js";
 
 interface ProgressBarProps {
   percent: number;
-  size?: "sm" | "md";
   class?: string;
 }
 
 export function ProgressBar(props: ProgressBarProps): JSX.Element {
-  const height = () => (props.size === "sm" ? "h-1.5" : "h-2");
+  const fillColor = () => props.percent >= 100 ? "var(--success)" : "var(--accent)";
 
   return (
-    <div class={`w-full bg-gray-800 rounded-full overflow-hidden ${height()} ${props.class ?? ""}`}>
+    <div style={{
+      height: "4px",
+      "border-radius": "2px",
+      background: "var(--border)",
+      overflow: "hidden",
+    }}>
       <div
-        class="h-full rounded-full transition-all duration-500 ease-out"
-        classList={{
-          "bg-green-400": props.percent >= 100,
-          "bg-blue-400": props.percent > 0 && props.percent < 100,
-          "bg-gray-700": props.percent === 0,
+        style={{
+          height: "100%",
+          "border-radius": "2px",
+          width: `${Math.min(100, Math.max(0, props.percent))}%`,
+          background: fillColor(),
+          transition: "width 0.3s ease",
         }}
-        style={{ width: `${Math.min(100, Math.max(0, props.percent))}%` }}
       />
     </div>
   );
