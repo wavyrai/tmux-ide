@@ -60,6 +60,7 @@ export function parseProof(raw: string, existing: ProofSchema | null): ProofSche
 }
 
 interface TaskCommandValues {
+  title?: string;
   description?: string;
   acceptance?: string;
   priority?: string;
@@ -151,8 +152,16 @@ function handleMission(
       }
       break;
     }
+    case "help":
+    case undefined:
+      console.log(`Usage: tmux-ide mission <set|show|clear>
+
+  set "title"  [-d "description"]   Set the project mission
+  show                              Show current mission
+  clear                             Clear the mission`);
+      break;
     default:
-      outputError("Usage: tmux-ide mission <set|show|clear>", "USAGE");
+      outputError("Usage: tmux-ide mission <set|show|clear>\nRun: tmux-ide mission help", "USAGE");
   }
 }
 
@@ -270,8 +279,19 @@ function handleGoal(
       }
       break;
     }
+    case "help":
+    case undefined:
+      console.log(`Usage: tmux-ide goal <list|create|update|done|show|delete>
+
+  list                                 List all goals
+  create "title" [-p N] [-d "desc"]    Create a goal
+  update <id> [-s status] [-p N]       Update a goal
+  done <id>                            Mark goal complete
+  show <id>                            Show goal with tasks
+  delete <id>                          Delete a goal`);
+      break;
     default:
-      outputError("Usage: tmux-ide goal <list|create|update|done|show|delete>", "USAGE");
+      outputError("Usage: tmux-ide goal <list|create|update|done|show|delete>\nRun: tmux-ide goal help", "USAGE");
   }
 }
 
@@ -296,25 +316,49 @@ function handleTask(
     }
     case "list": {
       let tasks = loadTasks(dir);
+      const allTasks = tasks; // keep full list for dependency checks
       if (values.status) tasks = tasks.filter((t) => t.status === values.status);
       if (values.goal) tasks = tasks.filter((t) => t.goal === values.goal);
       tasks.sort((a, b) => a.priority - b.priority);
       if (json) {
         console.log(JSON.stringify(tasks, null, 2));
       } else if (tasks.length === 0) {
-        console.log('No tasks. Run: tmux-ide task create "..."');
+        console.log('No tasks. Run: tmux-ide task create "title"');
       } else {
+        // Build goal name map for display
+        const goals = loadGoals(dir);
+        const goalNames = new Map(goals.map((g) => [g.id, g.title]));
+
         for (const t of tasks) {
+          // Check if blocked by unfinished dependencies
+          const blocked =
+            t.depends_on.length > 0 &&
+            t.depends_on.some((depId) => {
+              const dep = allTasks.find((d) => d.id === depId);
+              return !dep || dep.status !== "done";
+            });
+
+          const status = blocked ? "blocked" : t.status;
           const assignee = t.assignee ? ` @${t.assignee}` : "";
-          const goal = t.goal ? ` (goal ${t.goal})` : "";
-          console.log(`  ${t.id}  [${t.status}]  ${t.title}${assignee}${goal}`);
+          const goalLabel = t.goal
+            ? ` (${goalNames.get(t.goal) ?? `goal ${t.goal}`})`
+            : "";
+          const deps =
+            blocked ? ` (depends: ${t.depends_on.join(", ")})` : "";
+          console.log(
+            `  ${t.id}  [${status}]  ${t.title}${assignee}${goalLabel}${deps}`,
+          );
         }
       }
       break;
     }
     case "create": {
       const title = args[0];
-      if (!title) outputError('Usage: tmux-ide task create "title"', "USAGE");
+      if (!title)
+        outputError(
+          'Missing title. Usage:\n  tmux-ide task create "Fix the auth bug" -g 01 -p 1 -d "Token storage issue"',
+          "USAGE",
+        );
       ensureTasksDir(dir);
       const id = nextTaskId(dir);
       const now = new Date().toISOString();
@@ -416,7 +460,7 @@ function handleTask(
       const id = args[0];
       if (!id) outputError("Usage: tmux-ide task show <id>", "USAGE");
       const task = loadTask(dir, id);
-      if (!task) outputError(`Task ${id} not found`, "NOT_FOUND");
+      if (!task) outputError(`Task ${id} not found. Run: tmux-ide task list`, "NOT_FOUND");
       const mission = loadMission(dir);
       const goal = task.goal ? loadGoal(dir, task.goal) : null;
       if (json) {
@@ -440,10 +484,47 @@ function handleTask(
       }
       break;
     }
+    case "edit": {
+      const id = args[0];
+      if (!id) outputError("Usage: tmux-ide task edit <id> --title 'new title' -d 'new desc'", "USAGE");
+      const task = loadTask(dir, id);
+      if (!task) outputError(`Task ${id} not found. Run: tmux-ide task list`, "NOT_FOUND");
+      if (values.title) task.title = values.title;
+      if (values.description) task.description = values.description;
+      if (values.priority) task.priority = parseInt(values.priority, 10);
+      if (values.tags) task.tags = values.tags.split(",").map((t) => t.trim());
+      if (values.branch) task.branch = values.branch;
+      if (values.goal) task.goal = values.goal;
+      if (values.depends) task.depends_on = values.depends.split(",").map((d) => d.trim());
+      task.updated = new Date().toISOString();
+      saveTask(dir, task);
+      if (json) {
+        console.log(JSON.stringify(task, null, 2));
+      } else {
+        console.log(`Edited task ${id}: ${task.title}`);
+      }
+      break;
+    }
+    case "unassign": {
+      const id = args[0];
+      if (!id) outputError("Usage: tmux-ide task unassign <id>", "USAGE");
+      const task = loadTask(dir, id);
+      if (!task) outputError(`Task ${id} not found. Run: tmux-ide task list`, "NOT_FOUND");
+      task.assignee = null;
+      task.status = "todo";
+      task.updated = new Date().toISOString();
+      saveTask(dir, task);
+      if (json) {
+        console.log(JSON.stringify(task, null, 2));
+      } else {
+        console.log(`Task ${id} unassigned, status reset to todo: ${task.title}`);
+      }
+      break;
+    }
     case "delete": {
       const id = args[0];
       if (!id) outputError("Usage: tmux-ide task delete <id>", "USAGE");
-      if (!deleteTask(dir, id)) outputError(`Task ${id} not found`, "NOT_FOUND");
+      if (!deleteTask(dir, id)) outputError(`Task ${id} not found. Run: tmux-ide task list`, "NOT_FOUND");
       if (json) {
         console.log(JSON.stringify({ deleted: id }));
       } else {
@@ -451,7 +532,28 @@ function handleTask(
       }
       break;
     }
+    case "help":
+    case undefined:
+      console.log(`Usage: tmux-ide task <subcommand>
+
+  init                                     Initialize .tasks/ directory
+  list [-s status] [-g goalId] [--json]    List tasks
+  create "title" [-g id] [-p N] [-d ...]   Create a task
+  edit <id> [--title ...] [-d ...] [-p N]  Edit task fields
+  update <id> [-s status] [-a name]        Update task status/assignee
+  done <id> [--proof "..."]                Mark task complete
+  claim <id> [-a name]                     Claim and start a task
+  unassign <id>                            Unassign and reset to todo
+  show <id> [--json]                       Show task with full context
+  delete <id>                              Delete a task
+
+Short flags: -p priority, -g goal, -d description, -a assign,
+             -s status, -t tags, -b branch`);
+      break;
     default:
-      outputError("Usage: tmux-ide task <init|list|create|update|done|claim|show|delete>", "USAGE");
+      outputError(
+        `Unknown subcommand: ${sub}\nRun: tmux-ide task help`,
+        "USAGE",
+      );
   }
 }
