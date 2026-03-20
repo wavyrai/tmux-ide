@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
 import { cors } from "hono/cors";
@@ -52,6 +53,88 @@ export function createApp(): Hono {
     }
 
     return c.json({ ok: true, task: updated });
+  });
+
+  app.get("/api/project/:name/diff", (c) => {
+    const name = c.req.param("name");
+    const sessions = discoverSessions();
+    const session = sessions.find((s) => s.name === name);
+    if (!session) {
+      return c.json({ error: "Session not found" }, 404);
+    }
+
+    // Get git diff (staged + unstaged vs HEAD)
+    let diff = "";
+    try {
+      diff = execFileSync("git", ["diff", "HEAD"], {
+        cwd: session.dir,
+        encoding: "utf-8",
+        stdio: ["ignore", "pipe", "ignore"],
+      });
+    } catch {
+      // No HEAD yet or not a git repo — try unstaged only
+    }
+    if (!diff) {
+      try {
+        diff = execFileSync("git", ["diff"], {
+          cwd: session.dir,
+          encoding: "utf-8",
+          stdio: ["ignore", "pipe", "ignore"],
+        });
+      } catch {
+        // Not a git repo
+      }
+    }
+
+    // Get list of changed files with stats
+    interface DiffFile {
+      file: string;
+      additions: number;
+      deletions: number;
+    }
+    let files: DiffFile[] = [];
+    try {
+      const numstat = execFileSync("git", ["diff", "--numstat", "HEAD"], {
+        cwd: session.dir,
+        encoding: "utf-8",
+        stdio: ["ignore", "pipe", "ignore"],
+      });
+      files = numstat
+        .split("\n")
+        .filter(Boolean)
+        .map((line) => {
+          const [added, removed, file] = line.split("\t");
+          return {
+            file: file!,
+            additions: parseInt(added!, 10) || 0,
+            deletions: parseInt(removed!, 10) || 0,
+          };
+        });
+    } catch {
+      // Fall back to unstaged
+      try {
+        const numstat = execFileSync("git", ["diff", "--numstat"], {
+          cwd: session.dir,
+          encoding: "utf-8",
+          stdio: ["ignore", "pipe", "ignore"],
+        });
+        files = numstat
+          .split("\n")
+          .filter(Boolean)
+          .map((line) => {
+            const [added, removed, file] = line.split("\t");
+            return {
+              file: file!,
+              additions: parseInt(added!, 10) || 0,
+              deletions: parseInt(removed!, 10) || 0,
+            };
+          });
+      } catch {
+        // Not a git repo
+      }
+    }
+
+    return c.json({ diff, files });
   });
 
   // SSE endpoint — polls every 2s and emits changes

@@ -20,6 +20,20 @@ export async function fetchProject(
   return (await res.json()) as ProjectDetail;
 }
 
+export interface DiffData {
+  diff: string;
+  files: { file: string; additions: number; deletions: number }[];
+}
+
+export async function fetchDiff(name: string): Promise<DiffData | null> {
+  const res = await fetch(
+    `${API_BASE}/api/project/${encodeURIComponent(name)}/diff`,
+    { cache: "no-store" },
+  );
+  if (!res.ok) return null;
+  return (await res.json()) as DiffData;
+}
+
 export async function updateTask(
   sessionName: string,
   taskId: string,
