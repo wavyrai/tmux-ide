@@ -11,20 +11,32 @@ interface WidgetOptions {
   theme: ThemeConfig | null;
 }
 
+// Widgets run from source with Bun (not bundled dist/)
+// The .tsx extension is used at runtime; Bun handles JSX via preload plugin
 const WIDGET_ENTRY_POINTS: Record<string, string> = {
-  explorer: "explorer/index.js",
-  changes: "changes/index.js",
-  preview: "preview/index.js",
-  tasks: "tasks/index.js",
-  warroom: "warroom/index.js",
+  explorer: "explorer/index.tsx",
+  changes: "changes/index.tsx",
+  preview: "preview/index.tsx",
+  tasks: "tasks/index.tsx",
+  warroom: "warroom/index.tsx",
 };
 
 export function resolveWidgetCommand(type: string, opts: WidgetOptions): string {
   const entry = WIDGET_ENTRY_POINTS[type];
   if (!entry) throw new Error(`Unknown widget type: ${type}`);
-  const scriptPath = resolve(__dirname, entry);
+
+  // Resolve to src/widgets/ source directory (not dist/)
+  // When running from dist/, __dirname is dist/widgets/ — go up to find src/widgets/
+  let widgetsDir = __dirname;
+  if (widgetsDir.includes("/dist/")) {
+    widgetsDir = widgetsDir.replace("/dist/widgets", "/src/widgets");
+  }
+
+  const scriptPath = resolve(widgetsDir, entry);
   const args = [`--session=${opts.session}`, `--dir=${opts.dir}`];
   if (opts.target) args.push(`--target=${opts.target}`);
   if (opts.theme) args.push(`--theme='${JSON.stringify(opts.theme)}'`);
-  return `bun ${scriptPath} ${args.join(" ")}`;
+
+  // cd to project root first so bunfig.toml preload is found
+  return `cd ${opts.dir} && bun ${scriptPath} ${args.join(" ")}`;
 }

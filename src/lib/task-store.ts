@@ -7,6 +7,7 @@ import {
   existsSync,
   unlinkSync,
 } from "node:fs";
+import type { ProofSchema } from "../types.ts";
 
 const TASKS_DIR = ".tasks";
 
@@ -40,7 +41,31 @@ export interface Task {
   updated: string;
   branch: string | null;
   tags: string[];
-  proof: Record<string, string> | null;
+  proof: ProofSchema | null;
+  retryCount: number;
+  maxRetries: number;
+  lastError: string | null;
+  nextRetryAt: string | null;
+  depends_on: string[];
+}
+
+function normalizeTask(raw: Record<string, unknown>): Task {
+  const defaults = {
+    retryCount: 0,
+    maxRetries: 5,
+    lastError: null,
+    nextRetryAt: null,
+    depends_on: [] as string[],
+  };
+  return {
+    ...defaults,
+    ...(raw as Omit<Task, "retryCount" | "maxRetries" | "lastError" | "nextRetryAt" | "depends_on">),
+    retryCount: (raw.retryCount as number) ?? defaults.retryCount,
+    maxRetries: (raw.maxRetries as number) ?? defaults.maxRetries,
+    lastError: (raw.lastError as string | null) ?? defaults.lastError,
+    nextRetryAt: (raw.nextRetryAt as string | null) ?? defaults.nextRetryAt,
+    depends_on: Array.isArray(raw.depends_on) ? (raw.depends_on as string[]) : defaults.depends_on,
+  } as Task;
 }
 
 function slugify(text: string): string {
@@ -153,13 +178,13 @@ export function loadTasks(dir: string): Task[] {
   return readdirSync(tasksDir)
     .filter((f) => f.endsWith(".json"))
     .sort()
-    .map((f) => JSON.parse(readFileSync(join(tasksDir, f), "utf-8")) as Task);
+    .map((f) => normalizeTask(JSON.parse(readFileSync(join(tasksDir, f), "utf-8"))));
 }
 
 export function loadTask(dir: string, id: string): Task | null {
   const file = findFileById(join(getTasksRoot(dir), "tasks"), id);
   if (!file) return null;
-  return JSON.parse(readFileSync(file, "utf-8")) as Task;
+  return normalizeTask(JSON.parse(readFileSync(file, "utf-8")));
 }
 
 export function saveTask(dir: string, task: Task): void {

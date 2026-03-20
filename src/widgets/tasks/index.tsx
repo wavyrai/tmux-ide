@@ -86,6 +86,7 @@ render(
           <Match when={view().kind === "detail"}>
             <TaskDetail
               task={(view() as Extract<View, { kind: "detail" }>).task}
+              allTasks={tasks()}
               session={session}
               dir={dir}
               target={targetTitle}

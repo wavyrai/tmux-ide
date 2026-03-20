@@ -1,3 +1,10 @@
+export interface ProofSchema {
+  tests?: { passed: number; total: number };
+  pr?: { number: number; url?: string; status?: string };
+  ci?: { status: string; url?: string };
+  notes?: string;
+}
+
 export interface OrchestratorConfig {
   enabled?: boolean;
   auto_dispatch?: boolean;
@@ -5,6 +12,8 @@ export interface OrchestratorConfig {
   poll_interval?: number; // ms, default 5000
   worktree_root?: string; // default ".worktrees/"
   master_pane?: string; // pane title of the master agent
+  before_run?: string; // shell command to run in worktree before dispatching to agent
+  after_run?: string; // shell command to run in worktree after task completes
 }
 
 export interface IdeConfig {

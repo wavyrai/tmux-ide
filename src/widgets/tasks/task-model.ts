@@ -1,5 +1,6 @@
 import { readdirSync, readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { join } from "node:path";
+import type { ProofSchema } from "../../types.ts";
 
 export type TaskStatus = "todo" | "in-progress" | "review" | "done";
 
@@ -14,7 +15,28 @@ export interface Task {
   updated: string;
   branch: string | null;
   tags: string[];
-  proof: Record<string, string> | null;
+  proof: ProofSchema | null;
+  retryCount: number;
+  maxRetries: number;
+  lastError: string | null;
+  nextRetryAt: string | null;
+  depends_on: string[];
+}
+
+const TASK_DEFAULTS: Pick<Task, "retryCount" | "maxRetries" | "lastError" | "nextRetryAt" | "depends_on"> = {
+  retryCount: 0,
+  maxRetries: 5,
+  lastError: null,
+  nextRetryAt: null,
+  depends_on: [],
+};
+
+export function applyTaskDefaults(raw: Record<string, unknown>): Task {
+  return {
+    ...TASK_DEFAULTS,
+    ...raw,
+    depends_on: Array.isArray(raw.depends_on) ? (raw.depends_on as string[]) : [],
+  } as Task;
 }
 
 export function getTasksDir(projectDir: string): string {
@@ -27,7 +49,10 @@ export function ensureTasksDir(projectDir: string): void {
 }
 
 export function loadTasks(projectDir: string): Task[] {
-  const dir = getTasksDir(projectDir);
+  const rootDir = getTasksDir(projectDir);
+  // Check .tasks/tasks/ (CLI hierarchy) first, fall back to .tasks/ (legacy)
+  const subDir = join(rootDir, "tasks");
+  const dir = existsSync(subDir) ? subDir : rootDir;
   if (!existsSync(dir)) return [];
 
   const files = readdirSync(dir)
@@ -38,9 +63,9 @@ export function loadTasks(projectDir: string): Task[] {
   for (const file of files) {
     try {
       const raw = readFileSync(join(dir, file), "utf-8");
-      const task = JSON.parse(raw) as Task;
-      if (task.id && task.title && task.status) {
-        tasks.push(task);
+      const parsed = JSON.parse(raw) as Record<string, unknown>;
+      if (parsed.id && parsed.title && parsed.status) {
+        tasks.push(applyTaskDefaults(parsed));
       }
     } catch {
       // Skip invalid files
@@ -146,6 +171,11 @@ export function createTask(projectDir: string, tasks: Task[]): Task {
     branch: null,
     tags: [],
     proof: null,
+    retryCount: 0,
+    maxRetries: 5,
+    lastError: null,
+    nextRetryAt: null,
+    depends_on: [],
   };
 
   writeFileSync(join(dir, `${nextId}-new-task.json`), JSON.stringify(task, null, 2) + "\n");
@@ -179,6 +209,12 @@ export function nextStatus(current: TaskStatus): TaskStatus {
   const cycle: TaskStatus[] = ["todo", "in-progress", "review", "done"];
   const idx = cycle.indexOf(current);
   return cycle[(idx + 1) % cycle.length]!;
+}
+
+export function isBlocked(task: Task, allTasks: Task[]): boolean {
+  if (task.depends_on.length === 0) return false;
+  const statusMap = new Map(allTasks.map((t) => [t.id, t.status]));
+  return task.depends_on.some((depId) => statusMap.get(depId) !== "done");
 }
 
 export type FlatItem =

@@ -1,3 +1,6 @@
+import { execSync } from "node:child_process";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import { loadMission, loadGoal, loadTasks, saveTask, loadTask, type Task } from "./task-store.ts";
 import {
   listSessionPanes,
@@ -15,11 +18,34 @@ export interface OrchestratorConfig {
   pollInterval: number;
   worktreeRoot: string;
   masterPane: string | null;
+  beforeRun: string | null;
+  afterRun: string | null;
 }
 
 export interface OrchestratorState {
   lastActivity: Map<string, number>;
   previousTasks: Map<string, string>;
+}
+
+export function runHook(
+  command: string,
+  cwd: string,
+): { ok: true } | { ok: false; error: string } {
+  try {
+    execSync(command, { cwd, timeout: 60000, stdio: "pipe" });
+    return { ok: true };
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    return { ok: false, error: message };
+  }
+}
+
+function worktreePathForTask(config: OrchestratorConfig, task: Task): string | null {
+  if (!task.branch) return null;
+  // branch format: "task/001-slug" → worktree dir: "001-slug"
+  const suffix = task.branch.replace(/^task\//, "");
+  const wt = join(config.dir, config.worktreeRoot, suffix);
+  return existsSync(wt) ? wt : null;
 }
 
 function slugify(text: string): string {
@@ -97,6 +123,14 @@ export function dispatch(
       slug,
     );
 
+    // Run before_run hook in worktree — abort dispatch for this task on failure
+    if (config.beforeRun) {
+      const result = runHook(config.beforeRun, worktreePath);
+      if (!result.ok) {
+        continue;
+      }
+    }
+
     // Claim task
     task.assignee = agent.title;
     task.status = "in-progress";
@@ -149,6 +183,14 @@ export function detectCompletions(
   for (const task of tasks) {
     const prev = state.previousTasks.get(task.id);
     if (prev === "in-progress" && task.status === "done") {
+      // Run after_run hook (failure is logged but ignored)
+      if (config.afterRun) {
+        const wt = worktreePathForTask(config, task);
+        if (wt) {
+          runHook(config.afterRun, wt);
+        }
+      }
+
       if (config.masterPane) {
         const masterPaneInfo = panes.find((p) => p.title === config.masterPane);
         if (masterPaneInfo) {

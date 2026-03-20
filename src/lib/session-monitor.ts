@@ -205,6 +205,8 @@ if (isMainModule) {
             pollInterval: config.orchestrator.poll_interval ?? 5000,
             worktreeRoot: config.orchestrator.worktree_root ?? ".worktrees/",
             masterPane: config.orchestrator.master_pane ?? null,
+            beforeRun: (config.orchestrator as Record<string, unknown>).before_run as string ?? null,
+            afterRun: (config.orchestrator as Record<string, unknown>).after_run as string ?? null,
           });
 
           process.on("SIGTERM", () => {

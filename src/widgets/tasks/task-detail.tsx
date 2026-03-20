@@ -1,7 +1,7 @@
 import { Show, For } from "solid-js";
 import { RGBA, TextAttributes } from "@opentui/core";
 import { useKeyboard, useTerminalDimensions } from "@opentui/solid";
-import { updateTaskStatus, updateTaskAssignee, type Task, type TaskStatus } from "./task-model.ts";
+import { updateTaskStatus, updateTaskAssignee, isBlocked, type Task, type TaskStatus } from "./task-model.ts";
 import {
   sendCommand,
   findPaneByTitle,
@@ -55,6 +55,7 @@ function priorityDots(priority: number): string {
 
 interface TaskDetailProps {
   task: Task;
+  allTasks: Task[];
   session: string;
   dir: string;
   target: string | null;
@@ -139,6 +140,7 @@ export function TaskDetail(props: TaskDetailProps) {
   });
 
   const sColor = () => statusColor(t().status, theme);
+  const blocked = () => isBlocked(t(), props.allTasks);
 
   return (
     <box paddingLeft={1} paddingRight={1}>
@@ -160,13 +162,34 @@ export function TaskDetail(props: TaskDetailProps) {
         </text>
       </box>
 
-      {/* Status + assignee */}
+      {/* Status + assignee + blocked */}
       <box flexShrink={0} paddingTop={1} flexDirection="row" gap={2}>
         <text fg={toRGBA(sColor())}>{statusLabel(t().status)}</text>
+        <Show when={blocked()}>
+          <text fg={toRGBA(theme.gitRemoved)}>BLOCKED</text>
+        </Show>
         <Show when={t().assignee}>
           <text fg={toRGBA(theme.fgMuted)}>@{t().assignee}</text>
         </Show>
       </box>
+
+      {/* Dependencies */}
+      <Show when={t().depends_on.length > 0}>
+        <box flexShrink={0} flexDirection="row" gap={1}>
+          <text fg={toRGBA(theme.fgMuted)}>depends:</text>
+          <For each={t().depends_on}>
+            {(depId) => {
+              const dep = props.allTasks.find((x) => x.id === depId);
+              const done = dep?.status === "done";
+              return (
+                <text fg={toRGBA(done ? theme.gitAdded : theme.gitRemoved)}>
+                  {depId}{done ? " ok" : ""}
+                </text>
+              );
+            }}
+          </For>
+        </box>
+      </Show>
 
       {/* Branch + tags */}
       <Show when={t().branch || t().tags.length > 0}>
@@ -194,7 +217,7 @@ export function TaskDetail(props: TaskDetailProps) {
           <For each={Object.entries(t().proof!)}>
             {([key, val]) => (
               <text fg={toRGBA(theme.gitAdded)} paddingLeft={1}>
-                {key}: {val}
+                {key}: {typeof val === "object" ? JSON.stringify(val) : String(val)}
               </text>
             )}
           </For>

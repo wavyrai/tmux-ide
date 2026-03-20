@@ -1,7 +1,8 @@
-import { resolve, dirname } from "node:path";
+import { resolve, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execSync } from "node:child_process";
 import { createHash } from "node:crypto";
+import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { readConfig, getSessionName } from "./lib/yaml-io.ts";
 import { computeSizes, toSplitPercents } from "./lib/sizes.ts";
 import { outputError } from "./lib/output.ts";
@@ -264,8 +265,10 @@ export async function launch(
   );
   startSessionMonitor(session, monitorScript);
 
-  // Inject master agent prompt if orchestrator is enabled
+  // Inject master agent prompt and task docs if orchestrator is enabled
   if (config.orchestrator?.enabled) {
+    ensureTaskDocs(dir);
+
     const masterPaneTitle = config.orchestrator.master_pane;
     if (masterPaneTitle) {
       const masterAction = paneActions.find((a) => a.title === masterPaneTitle);
@@ -332,4 +335,68 @@ ${teammatePanes.map((t) => `- ${t}`).join("\n")}
 - Each task should be completable independently
 - Set clear acceptance criteria in goals
 - Check progress: tmux-ide task list --json`;
+}
+
+const TASK_DOCS_MARKER = "## Task Management";
+
+const TASK_DOCS_SECTION = `
+## Task Management
+
+tmux-ide provides structured task management for coordinated multi-agent work.
+
+### Mission & Goals
+
+\`\`\`bash
+tmux-ide mission set "title" --description "..."   # Set the project mission
+tmux-ide mission show                               # Show current mission
+tmux-ide mission clear                              # Clear the mission
+
+tmux-ide goal create "title" --priority N --acceptance "criteria"
+tmux-ide goal list [--json]                         # List all goals
+tmux-ide goal show <id> [--json]                    # Show goal with tasks
+tmux-ide goal update <id> --status done
+tmux-ide goal done <id>                             # Mark goal complete
+tmux-ide goal delete <id>
+\`\`\`
+
+### Tasks
+
+\`\`\`bash
+tmux-ide task create "title" --goal NN --priority N --assign "Agent" --tags "a,b" --depends "001,002"
+tmux-ide task list [--status todo --goal NN] [--json]
+tmux-ide task show <id> [--json]                    # Full mission→goal→task context
+tmux-ide task update <id> --status review --proof '{"tests":{"passed":10,"total":10}}'
+tmux-ide task claim <id> --assign "Agent Name"      # Claim and start a task
+tmux-ide task done <id> --proof "description"       # Mark task complete with proof
+tmux-ide task delete <id>
+\`\`\`
+
+### Proof Format
+
+The \`--proof\` flag accepts either a plain string (stored as \`notes\`) or a JSON object:
+
+\`\`\`json
+{
+  "tests": { "passed": 10, "total": 10 },
+  "pr": { "number": 42, "url": "https://...", "status": "merged" },
+  "ci": { "status": "passing", "url": "https://..." },
+  "notes": "Additional context"
+}
+\`\`\`
+
+### Task Dependencies
+
+Use \`--depends "001,002"\` to declare that a task depends on other tasks. The orchestrator will not dispatch a task until all its dependencies are complete.
+`;
+
+export function ensureTaskDocs(dir: string): void {
+  const claudeMdPath = join(dir, "CLAUDE.md");
+
+  if (existsSync(claudeMdPath)) {
+    const content = readFileSync(claudeMdPath, "utf-8");
+    if (content.includes(TASK_DOCS_MARKER)) return;
+    writeFileSync(claudeMdPath, content + TASK_DOCS_SECTION);
+  } else {
+    writeFileSync(claudeMdPath, `# Project\n${TASK_DOCS_SECTION}`);
+  }
 }
