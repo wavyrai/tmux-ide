@@ -15,12 +15,25 @@ export interface PtySession {
 
 const sessions = new Map<string, PtySession>();
 
-function tmux(...args: string[]): string {
+type TmuxRunner = (...args: string[]) => string;
+
+let _runner: TmuxRunner = (...args) => {
   try {
     return execFileSync("tmux", args, { encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"] }).trim();
   } catch {
     return "";
   }
+};
+
+function tmux(...args: string[]): string {
+  return _runner(...args);
+}
+
+/** @internal Replace the tmux runner for testing. Returns a restore function. */
+export function _setTmuxRunner(fn: TmuxRunner): () => void {
+  const prev = _runner;
+  _runner = fn;
+  return () => { _runner = prev; };
 }
 
 export function getSession(widgetType: string): PtySession | undefined {
