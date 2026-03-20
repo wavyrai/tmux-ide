@@ -145,8 +145,8 @@ export function TaskDetail({
               className="bg-[var(--surface)] border border-[var(--border)] text-[var(--fg)] px-2 py-1 w-full outline-none focus:border-[var(--accent)]"
             >
               <option value="">unassigned</option>
-              {agents.map((a) => (
-                <option key={a.paneTitle} value={a.paneTitle}>
+              {agents.map((a, i) => (
+                <option key={`${a.paneTitle}-${i}`} value={a.paneTitle}>
                   {a.paneTitle}
                 </option>
               ))}
