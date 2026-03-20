@@ -17,14 +17,14 @@ export function AgentPanel({ agents, tasks }: AgentPanelProps) {
 
   return (
     <div>
-      {agents.map((a) => {
+      {agents.map((a, i) => {
         const expanded = expandedAgent === a.paneTitle;
         const task = a.taskId
           ? tasks.find((t) => t.id === a.taskId)
           : null;
 
         return (
-          <div key={a.paneTitle}>
+          <div key={`${a.paneTitle}-${i}`}>
             <div
               className={`flex items-center h-6 px-2 cursor-pointer ${
                 expanded
