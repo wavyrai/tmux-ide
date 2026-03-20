@@ -55,6 +55,7 @@ function makeState(overrides: Partial<OrchestratorState> = {}): OrchestratorStat
     lastActivity: new Map(),
     previousTasks: new Map(),
     claimedTasks: new Set(),
+    taskClaimTimes: new Map(),
     ...overrides,
   };
 }
