@@ -14,6 +14,7 @@ export interface OrchestratorConfig {
   master_pane?: string; // pane title of the master agent
   before_run?: string; // shell command to run in worktree before dispatching to agent
   after_run?: string; // shell command to run in worktree after task completes
+  cleanup_on_done?: boolean; // remove worktree when task completes (default false)
 }
 
 export interface IdeConfig {
@@ -33,7 +34,7 @@ export interface Row {
 export interface Pane {
   title?: string;
   command?: string;
-  type?: "explorer" | "changes" | "preview" | "tasks" | "warroom";
+  type?: "explorer" | "changes" | "preview" | "tasks" | "warroom" | "costs";
   target?: string;
   dir?: string;
   size?: string;
