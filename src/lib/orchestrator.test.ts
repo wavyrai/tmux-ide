@@ -54,6 +54,8 @@ function makeConfig(overrides: Partial<OrchestratorConfig> = {}): OrchestratorCo
     afterRun: null,
     cleanupOnDone: false,
     maxConcurrentAgents: 10,
+    dispatchMode: "tasks",
+    paneSpecialties: new Map(),
     ...overrides,
   };
 }

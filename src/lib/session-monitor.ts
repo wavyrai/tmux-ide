@@ -198,6 +198,20 @@ if (isMainModule) {
           const { createOrchestrator } = await import("./orchestrator.js");
 
           const orch = config.orchestrator as Record<string, unknown>;
+
+          // Build pane specialty map from ide.yml config
+          const paneSpecialties = new Map<string, string[]>();
+          for (const row of config.rows) {
+            for (const pane of row.panes) {
+              if (pane.specialty && pane.title) {
+                paneSpecialties.set(
+                  pane.title,
+                  pane.specialty.split(",").map((s: string) => s.trim().toLowerCase()),
+                );
+              }
+            }
+          }
+
           const stopOrchestrator = createOrchestrator({
             session,
             dir: process.cwd(),
@@ -210,6 +224,8 @@ if (isMainModule) {
             afterRun: (orch.after_run as string) ?? null,
             cleanupOnDone: (orch.cleanup_on_done as boolean) ?? false,
             maxConcurrentAgents: (orch.max_concurrent_agents as number) ?? 10,
+            dispatchMode: (orch.dispatch_mode as "tasks" | "goals") ?? "tasks",
+            paneSpecialties,
           });
 
           process.on("SIGTERM", () => {
