@@ -6,7 +6,7 @@ interface AgentCardProps {
 
 export function AgentCard({ agent: a }: AgentCardProps) {
   return (
-    <div className="flex items-center h-6 px-2 hover:bg-[rgba(255,255,255,0.02)]">
+    <div className="flex items-center h-6 px-2 hover:bg-[var(--surface-hover)]">
       <span
         className="w-3 shrink-0"
         style={{ color: a.isBusy ? "var(--yellow)" : "var(--dim)" }}

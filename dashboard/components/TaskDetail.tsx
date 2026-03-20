@@ -89,7 +89,7 @@ export function TaskDetail({
 
   return (
     <div className="fixed inset-0 z-50 flex justify-end">
-      <div className="absolute inset-0 bg-black/50" onClick={onClose} />
+      <div className="absolute inset-0 bg-[var(--modal-overlay)]" onClick={onClose} />
       <div className="relative w-full max-w-md bg-[var(--bg)] border-l border-[var(--border)] overflow-auto">
         {/* Header */}
         <div className="flex items-center justify-between px-4 h-8 bg-[var(--surface)] border-b border-[var(--border)]">
@@ -196,8 +196,8 @@ export function TaskDetail({
                     onClick={() => changeStatus(s)}
                     className={`px-2 py-0.5 border transition-colors ${
                       t.status === s
-                        ? "border-[var(--accent)] bg-[rgba(255,255,255,0.04)]"
-                        : "border-[var(--border)] hover:border-[rgba(255,255,255,0.15)]"
+                        ? "border-[var(--accent)] bg-[var(--surface-active)]"
+                        : "border-[var(--border)] hover:border-[var(--dim)]"
                     }`}
                     style={t.status === s ? { color: STATUS_COLORS[s] } : { color: "var(--dim)" }}
                   >
@@ -244,7 +244,7 @@ export function TaskDetail({
                 {t.tags.map((tag) => (
                   <span
                     key={tag}
-                    className="px-1.5 py-0.5 bg-[rgba(255,255,255,0.04)] border border-[var(--border)] text-[var(--dim)] text-[11px]"
+                    className="px-1.5 py-0.5 bg-[var(--surface-active)] border border-[var(--border)] text-[var(--dim)] text-[11px]"
                   >
                     {tag}
                   </span>

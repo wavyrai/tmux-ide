@@ -22,8 +22,8 @@ const STATUS_LABELS: Record<Task["status"], string> = {
 
 export function TaskRow({ task: t, selected = false, onSelect }: TaskRowProps) {
   const bg = selected
-    ? "bg-[rgba(255,255,255,0.04)]"
-    : "hover:bg-[rgba(255,255,255,0.02)]";
+    ? "bg-[var(--surface-active)]"
+    : "hover:bg-[var(--surface-hover)]";
 
   return (
     <div>

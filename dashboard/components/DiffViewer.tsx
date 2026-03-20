@@ -97,7 +97,7 @@ function SimpleDiff({ patch }: { patch: string }) {
     <div className="flex-1 overflow-auto p-4 font-mono text-xs leading-relaxed">
       {lines.map((line, i) => {
         let color = "var(--fg)";
-        let bg = "transparent";
+        let bg = "var(--bg)";
         if (line.startsWith("+") && !line.startsWith("+++")) {
           color = "var(--diff-add-text)";
           bg = "var(--diff-add-bg)";

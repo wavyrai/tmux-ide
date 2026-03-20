@@ -24,10 +24,15 @@
   --diff-del-bg: #42120b;
   --diff-del-text: #fc533a;
   --scrollbar-thumb: rgba(255, 255, 255, 0.1);
+  --surface-hover: rgba(255, 255, 255, 0.04);
+  --surface-active: rgba(255, 255, 255, 0.06);
+  --modal-overlay: rgba(0, 0, 0, 0.6);
   --ai-color: #A5B4FC;
   --ai-bg: rgba(165, 180, 252, 0.08);
+  --ai-badge: rgba(165, 180, 252, 0.15);
   --human-color: #6EE7B7;
   --human-bg: rgba(110, 231, 183, 0.08);
+  --human-badge: rgba(110, 231, 183, 0.15);
 }
 
 /* Light theme — sharp blue accent */
@@ -54,10 +59,15 @@
   --diff-del-bg: #fef2f2;
   --diff-del-text: #dc2626;
   --scrollbar-thumb: rgba(0, 0, 0, 0.12);
+  --surface-hover: rgba(0, 0, 0, 0.03);
+  --surface-active: rgba(0, 0, 0, 0.06);
+  --modal-overlay: rgba(0, 0, 0, 0.4);
   --ai-color: #6366F1;
   --ai-bg: rgba(99, 102, 241, 0.08);
+  --ai-badge: rgba(99, 102, 241, 0.15);
   --human-color: #059669;
   --human-bg: rgba(5, 150, 105, 0.08);
+  --human-badge: rgba(5, 150, 105, 0.15);
 }
 
 * {

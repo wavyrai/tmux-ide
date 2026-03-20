@@ -28,8 +28,8 @@ export function AgentPanel({ agents, tasks }: AgentPanelProps) {
             <div
               className={`flex items-center h-6 px-2 cursor-pointer ${
                 expanded
-                  ? "bg-[rgba(255,255,255,0.04)]"
-                  : "hover:bg-[rgba(255,255,255,0.02)]"
+                  ? "bg-[var(--surface-active)]"
+                  : "hover:bg-[var(--surface-hover)]"
               }`}
               onClick={() =>
                 setExpandedAgent(expanded ? null : a.paneTitle)
@@ -67,7 +67,7 @@ export function AgentPanel({ agents, tasks }: AgentPanelProps) {
 
             {/* Expanded detail */}
             {expanded && task && (
-              <div className="pl-[19ch] py-1.5 space-y-1 text-[var(--dim)] border-l border-[rgba(255,255,255,0.04)] ml-[1ch]">
+              <div className="pl-[19ch] py-1.5 space-y-1 text-[var(--dim)] border-l border-[var(--surface-active)] ml-[1ch]">
                 <div className="text-[var(--fg)]">{task.title}</div>
                 {task.description && <div>{task.description}</div>}
                 <div className="flex gap-3">
@@ -90,7 +90,7 @@ export function AgentPanel({ agents, tasks }: AgentPanelProps) {
             )}
 
             {expanded && !task && a.taskTitle && (
-              <div className="pl-[19ch] py-1 text-[var(--dim)] border-l border-[rgba(255,255,255,0.04)] ml-[1ch]">
+              <div className="pl-[19ch] py-1 text-[var(--dim)] border-l border-[var(--surface-active)] ml-[1ch]">
                 {a.taskTitle}
               </div>
             )}

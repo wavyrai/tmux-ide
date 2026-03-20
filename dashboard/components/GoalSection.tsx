@@ -22,7 +22,7 @@ export function GoalSection({ goal, tasks, selectedTaskId, onSelectTask }: GoalS
     <div>
       <button
         onClick={() => setCollapsed(!collapsed)}
-        className="w-full flex items-center gap-2 h-6 px-2 text-left group hover:bg-[rgba(255,255,255,0.02)]"
+        className="w-full flex items-center gap-2 h-6 px-2 text-left group hover:bg-[var(--surface-hover)]"
       >
         <span className="text-[var(--dim)] w-3 shrink-0 text-center">
           {collapsed ? "▸" : "▾"}

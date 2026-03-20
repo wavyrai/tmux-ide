@@ -74,7 +74,7 @@ export function DiffPanel({ sessionName }: DiffPanelProps) {
             onClick={() => setDiffStyle("split")}
             className={`px-2 h-5 text-[11px] transition-colors ${
               diffStyle === "split"
-                ? "bg-[rgba(255,255,255,0.06)] text-[var(--fg)]"
+                ? "bg-[var(--surface-active)] text-[var(--fg)]"
                 : "text-[var(--dim)] hover:text-[var(--fg)]"
             }`}
           >
@@ -84,7 +84,7 @@ export function DiffPanel({ sessionName }: DiffPanelProps) {
             onClick={() => setDiffStyle("unified")}
             className={`px-2 h-5 text-[11px] transition-colors ${
               diffStyle === "unified"
-                ? "bg-[rgba(255,255,255,0.06)] text-[var(--fg)]"
+                ? "bg-[var(--surface-active)] text-[var(--fg)]"
                 : "text-[var(--dim)] hover:text-[var(--fg)]"
             }`}
           >
