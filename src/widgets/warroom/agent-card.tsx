@@ -11,6 +11,9 @@ export interface AgentInfo {
   isBusy: boolean;
   taskTitle: string | null;
   elapsed: string;
+  retryCount: number;
+  maxRetries: number;
+  nextRetryAt: string | null;
 }
 
 interface AgentCardProps {
@@ -19,9 +22,24 @@ interface AgentCardProps {
   selected: boolean;
 }
 
+function retryCountdown(nextRetryAt: string | null): string | null {
+  if (!nextRetryAt) return null;
+  const ms = new Date(nextRetryAt).getTime() - Date.now();
+  if (ms <= 0) return "now";
+  const secs = Math.ceil(ms / 1000);
+  if (secs < 60) return `${secs}s`;
+  return `${Math.floor(secs / 60)}m${secs % 60}s`;
+}
+
 export function AgentCard(props: AgentCardProps) {
-  const dot = () => (props.agent.isBusy ? "*" : "o");
-  const dotColor = () => (props.agent.isBusy ? props.theme.gitModified : props.theme.fgMuted);
+  const isRetrying = () => props.agent.retryCount > 0;
+  const dot = () => (isRetrying() ? "!" : props.agent.isBusy ? "*" : "o");
+  const dotColor = () =>
+    isRetrying()
+      ? props.theme.gitRemoved
+      : props.agent.isBusy
+        ? props.theme.gitModified
+        : props.theme.fgMuted;
   const bg = () =>
     props.selected
       ? RGBA.fromInts(
@@ -32,6 +50,8 @@ export function AgentCard(props: AgentCardProps) {
         )
       : RGBA.fromInts(0, 0, 0, 0);
 
+  const countdown = () => retryCountdown(props.agent.nextRetryAt);
+
   return (
     <box paddingLeft={1} backgroundColor={bg()}>
       <box flexDirection="row" gap={1}>
@@ -39,7 +59,12 @@ export function AgentCard(props: AgentCardProps) {
         <text fg={toRGBA(props.selected ? props.theme.selectedText : props.theme.fg)}>
           {props.agent.paneTitle}
         </text>
-        <Show when={props.agent.elapsed}>
+        <Show when={isRetrying()}>
+          <text fg={toRGBA(props.theme.gitRemoved)}>
+            RETRYING {props.agent.retryCount}/{props.agent.maxRetries}
+          </text>
+        </Show>
+        <Show when={props.agent.elapsed && !isRetrying()}>
           <text fg={toRGBA(props.theme.fgMuted)}>{props.agent.elapsed}</text>
         </Show>
       </box>
@@ -53,6 +78,11 @@ export function AgentCard(props: AgentCardProps) {
       >
         <text fg={toRGBA(props.theme.fgMuted)} paddingLeft={3}>
           {props.agent.taskTitle}
+        </text>
+      </Show>
+      <Show when={isRetrying() && countdown()}>
+        <text fg={toRGBA(props.theme.fgMuted)} paddingLeft={3}>
+          next retry: {countdown()}
         </text>
       </Show>
     </box>

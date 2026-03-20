@@ -1,6 +1,6 @@
 import { describe, it, beforeEach, afterEach, mock } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -8,6 +8,7 @@ import {
   detectStalls,
   detectCompletions,
   buildTaskPrompt,
+  runHook,
   type OrchestratorConfig,
   type OrchestratorState,
 } from "./orchestrator.ts";
@@ -38,6 +39,8 @@ function makeConfig(overrides: Partial<OrchestratorConfig> = {}): OrchestratorCo
     pollInterval: 5000,
     worktreeRoot: ".worktrees",
     masterPane: "Master",
+    beforeRun: null,
+    afterRun: null,
     ...overrides,
   };
 }
@@ -229,7 +232,7 @@ describe("detectStalls", () => {
 
 describe("detectCompletions", () => {
   it("notifies master when task goes from in-progress to done", () => {
-    const task = makeTask({ status: "done", assignee: "Agent 1", proof: { note: "tests pass" } });
+    const task = makeTask({ status: "done", assignee: "Agent 1", proof: { notes: "tests pass" } });
 
     const panes: PaneInfo[] = [makePane({ id: "%0", title: "Master" })];
 
@@ -309,5 +312,129 @@ describe("buildTaskPrompt", () => {
     assert.ok(prompt.includes("Your Task: Standalone task"));
     assert.ok(!prompt.includes("Mission:"));
     assert.ok(!prompt.includes("Goal:"));
+  });
+});
+
+describe("runHook", () => {
+  it("returns ok:true for successful command", () => {
+    const result = runHook("true", tmpDir);
+    assert.deepStrictEqual(result, { ok: true });
+  });
+
+  it("returns ok:false with error for failing command", () => {
+    const result = runHook("false", tmpDir);
+    assert.strictEqual(result.ok, false);
+    assert.ok("error" in result && result.error.length > 0);
+  });
+
+  it("runs command in the specified cwd", () => {
+    // Create a marker file, then check it exists via the hook
+    writeFileSync(join(tmpDir, "marker.txt"), "hello");
+    const result = runHook("test -f marker.txt", tmpDir);
+    assert.deepStrictEqual(result, { ok: true });
+  });
+
+  it("fails when cwd does not contain expected file", () => {
+    const result = runHook("test -f nonexistent.txt", tmpDir);
+    assert.strictEqual(result.ok, false);
+  });
+});
+
+describe("dispatch with hooks", () => {
+  it("skips task when before_run fails", () => {
+    const task = makeTask();
+    saveTask(tmpDir, task);
+
+    // Create the worktree directory so the hook can attempt to run
+    mkdirSync(join(tmpDir, ".worktrees", "001-test-task"), { recursive: true });
+
+    const panes: PaneInfo[] = [makePane({ id: "%1", title: "Agent 1", currentCommand: "zsh" })];
+    mockPanes = panes;
+
+    // before_run that always fails
+    const config = makeConfig({ beforeRun: "false" });
+    const state = makeState();
+
+    dispatch(config, state, [task], panes);
+
+    // Task should NOT be assigned
+    const loaded = loadTask(tmpDir, "001");
+    assert.strictEqual(loaded?.assignee, null);
+    assert.strictEqual(loaded?.status, "todo");
+  });
+
+  it("dispatches task when before_run succeeds", () => {
+    const task = makeTask();
+    saveTask(tmpDir, task);
+
+    // Create the worktree directory so the hook can run in it
+    mkdirSync(join(tmpDir, ".worktrees", "001-test-task"), { recursive: true });
+
+    const panes: PaneInfo[] = [makePane({ id: "%1", title: "Agent 1", currentCommand: "zsh" })];
+    mockPanes = panes;
+
+    // before_run that always succeeds
+    const config = makeConfig({ beforeRun: "true" });
+    const state = makeState();
+
+    dispatch(config, state, [task], panes);
+
+    const loaded = loadTask(tmpDir, "001");
+    assert.strictEqual(loaded?.assignee, "Agent 1");
+    assert.strictEqual(loaded?.status, "in-progress");
+  });
+});
+
+describe("detectCompletions with after_run", () => {
+  it("runs after_run hook when task completes", () => {
+    // Create worktree directory so after_run can find it
+    const wtDir = join(tmpDir, ".worktrees", "001-test-task");
+    mkdirSync(wtDir, { recursive: true });
+
+    const task = makeTask({
+      status: "done",
+      assignee: "Agent 1",
+      branch: "task/001-test-task",
+    });
+
+    const panes: PaneInfo[] = [makePane({ id: "%0", title: "Master" })];
+
+    // after_run creates a marker file — proves it ran in the worktree
+    const config = makeConfig({ afterRun: "touch after_run_marker" });
+    const state = makeState({
+      previousTasks: new Map([["001", "in-progress"]]),
+    });
+
+    detectCompletions(config, state, [task], panes);
+
+    assert.ok(existsSync(join(wtDir, "after_run_marker")));
+  });
+
+  it("does not crash when after_run fails", () => {
+    const wtDir = join(tmpDir, ".worktrees", "001-test-task");
+    mkdirSync(wtDir, { recursive: true });
+
+    const task = makeTask({
+      status: "done",
+      assignee: "Agent 1",
+      branch: "task/001-test-task",
+    });
+
+    const panes: PaneInfo[] = [makePane({ id: "%0", title: "Master" })];
+
+    // after_run that fails — should not throw
+    const config = makeConfig({ afterRun: "false" });
+    const state = makeState({
+      previousTasks: new Map([["001", "in-progress"]]),
+    });
+
+    // Should not throw
+    detectCompletions(config, state, [task], panes);
+
+    // Master should still get notified despite hook failure
+    const sendCalls = tmuxCalls.filter(
+      (c) => c.args.includes("send-keys") && c.args.includes("%0"),
+    );
+    assert.ok(sendCalls.length > 0);
   });
 });

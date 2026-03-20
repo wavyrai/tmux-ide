@@ -11,6 +11,7 @@ import {
   groupTasks,
   nextStatus,
   flattenTaskList,
+  isBlocked,
   ensureTasksDir,
   getTasksDir,
   type Task,
@@ -30,9 +31,34 @@ function writeTask(task: Partial<Task> & { id: string; title: string; status: st
     branch: null,
     tags: [],
     proof: null,
+    retryCount: 0,
+    maxRetries: 5,
+    lastError: null,
+    nextRetryAt: null,
+    depends_on: [],
     ...task,
   } as Task;
   writeFileSync(join(dir, `${task.id}-test.json`), JSON.stringify(full, null, 2) + "\n");
+}
+
+// Write raw JSON without retry fields to simulate legacy task files
+function writeLegacyTask(task: { id: string; title: string; status: string }) {
+  const dir = join(tmpDir, ".tasks");
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+  const legacy = {
+    id: task.id,
+    title: task.title,
+    description: "",
+    status: task.status,
+    assignee: null,
+    priority: 2,
+    created: "2026-01-01T00:00:00Z",
+    updated: "2026-01-01T00:00:00Z",
+    branch: null,
+    tags: [],
+    proof: null,
+  };
+  writeFileSync(join(dir, `${task.id}-test.json`), JSON.stringify(legacy, null, 2) + "\n");
 }
 
 beforeEach(() => {
@@ -128,47 +154,25 @@ describe("createTask", () => {
 });
 
 describe("groupTasks", () => {
+  const taskBase = {
+    description: "",
+    assignee: null,
+    created: "",
+    updated: "",
+    branch: null,
+    tags: [],
+    proof: null,
+    retryCount: 0,
+    maxRetries: 5,
+    lastError: null,
+    nextRetryAt: null,
+  } as const;
+
   it("groups tasks by status in display order", () => {
     const tasks: Task[] = [
-      {
-        id: "1",
-        title: "A",
-        description: "",
-        status: "done",
-        assignee: null,
-        priority: 1,
-        created: "",
-        updated: "",
-        branch: null,
-        tags: [],
-        proof: null,
-      },
-      {
-        id: "2",
-        title: "B",
-        description: "",
-        status: "todo",
-        assignee: null,
-        priority: 2,
-        created: "",
-        updated: "",
-        branch: null,
-        tags: [],
-        proof: null,
-      },
-      {
-        id: "3",
-        title: "C",
-        description: "",
-        status: "in-progress",
-        assignee: null,
-        priority: 1,
-        created: "",
-        updated: "",
-        branch: null,
-        tags: [],
-        proof: null,
-      },
+      { ...taskBase, id: "1", title: "A", status: "done", priority: 1 },
+      { ...taskBase, id: "2", title: "B", status: "todo", priority: 2 },
+      { ...taskBase, id: "3", title: "C", status: "in-progress", priority: 1 },
     ];
     const groups = groupTasks(tasks);
     assert.strictEqual(groups[0]!.status, "in-progress");
@@ -181,32 +185,8 @@ describe("groupTasks", () => {
 
   it("sorts by priority within each group", () => {
     const tasks: Task[] = [
-      {
-        id: "1",
-        title: "Low",
-        description: "",
-        status: "todo",
-        assignee: null,
-        priority: 3,
-        created: "",
-        updated: "",
-        branch: null,
-        tags: [],
-        proof: null,
-      },
-      {
-        id: "2",
-        title: "High",
-        description: "",
-        status: "todo",
-        assignee: null,
-        priority: 1,
-        created: "",
-        updated: "",
-        branch: null,
-        tags: [],
-        proof: null,
-      },
+      { ...taskBase, id: "1", title: "Low", status: "todo", priority: 3 },
+      { ...taskBase, id: "2", title: "High", status: "todo", priority: 1 },
     ];
     const groups = groupTasks(tasks);
     const todo = groups.find((g) => g.status === "todo")!;
@@ -259,5 +239,119 @@ describe("ensureTasksDir", () => {
     ensureTasksDir(tmpDir);
     ensureTasksDir(tmpDir);
     assert.ok(existsSync(getTasksDir(tmpDir)));
+  });
+});
+
+describe("retry field defaults", () => {
+  it("loadTasks applies retry defaults to legacy JSON without retry fields", () => {
+    writeLegacyTask({ id: "001", title: "Legacy", status: "todo" });
+    const tasks = loadTasks(tmpDir);
+    assert.strictEqual(tasks.length, 1);
+    const t = tasks[0]!;
+    assert.strictEqual(t.retryCount, 0);
+    assert.strictEqual(t.maxRetries, 5);
+    assert.strictEqual(t.lastError, null);
+    assert.strictEqual(t.nextRetryAt, null);
+  });
+
+  it("preserves explicit retry values from JSON", () => {
+    writeTask({
+      id: "001",
+      title: "Retried",
+      status: "in-progress",
+      retryCount: 3,
+      maxRetries: 10,
+      lastError: "timeout",
+      nextRetryAt: "2026-01-01T01:00:00Z",
+    });
+    const tasks = loadTasks(tmpDir);
+    const t = tasks[0]!;
+    assert.strictEqual(t.retryCount, 3);
+    assert.strictEqual(t.maxRetries, 10);
+    assert.strictEqual(t.lastError, "timeout");
+    assert.strictEqual(t.nextRetryAt, "2026-01-01T01:00:00Z");
+  });
+
+  it("createTask includes retry defaults", () => {
+    const task = createTask(tmpDir, []);
+    assert.strictEqual(task.retryCount, 0);
+    assert.strictEqual(task.maxRetries, 5);
+    assert.strictEqual(task.lastError, null);
+    assert.strictEqual(task.nextRetryAt, null);
+  });
+});
+
+describe("depends_on", () => {
+  it("defaults depends_on to empty array for legacy tasks", () => {
+    writeLegacyTask({ id: "001", title: "Legacy", status: "todo" });
+    const tasks = loadTasks(tmpDir);
+    assert.deepStrictEqual(tasks[0]!.depends_on, []);
+  });
+
+  it("preserves depends_on when present in JSON", () => {
+    const dir = join(tmpDir, ".tasks");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      join(dir, "001-with-deps.json"),
+      JSON.stringify({
+        id: "001",
+        title: "Has deps",
+        status: "todo",
+        description: "",
+        assignee: null,
+        priority: 1,
+        created: "2026-01-01T00:00:00Z",
+        updated: "2026-01-01T00:00:00Z",
+        branch: null,
+        tags: [],
+        proof: null,
+        depends_on: ["002", "003"],
+      }) + "\n",
+    );
+    const tasks = loadTasks(tmpDir);
+    assert.deepStrictEqual(tasks[0]!.depends_on, ["002", "003"]);
+  });
+
+  it("createTask sets depends_on to empty array", () => {
+    const task = createTask(tmpDir, []);
+    assert.deepStrictEqual(task.depends_on, []);
+  });
+});
+
+describe("isBlocked", () => {
+  const base = {
+    description: "",
+    assignee: null,
+    created: "",
+    updated: "",
+    branch: null,
+    tags: [],
+    proof: null,
+    retryCount: 0,
+    maxRetries: 5,
+    lastError: null,
+    nextRetryAt: null,
+  } as const;
+
+  it("returns false when depends_on is empty", () => {
+    const task: Task = { ...base, id: "001", title: "A", status: "todo", priority: 1, depends_on: [] };
+    assert.strictEqual(isBlocked(task, []), false);
+  });
+
+  it("returns true when a dependency is not done", () => {
+    const dep: Task = { ...base, id: "002", title: "Dep", status: "in-progress", priority: 1, depends_on: [] };
+    const task: Task = { ...base, id: "001", title: "A", status: "todo", priority: 1, depends_on: ["002"] };
+    assert.strictEqual(isBlocked(task, [task, dep]), true);
+  });
+
+  it("returns false when all dependencies are done", () => {
+    const dep: Task = { ...base, id: "002", title: "Dep", status: "done", priority: 1, depends_on: [] };
+    const task: Task = { ...base, id: "001", title: "A", status: "todo", priority: 1, depends_on: ["002"] };
+    assert.strictEqual(isBlocked(task, [task, dep]), false);
+  });
+
+  it("returns true when dependency ID is missing from task list", () => {
+    const task: Task = { ...base, id: "001", title: "A", status: "todo", priority: 1, depends_on: ["999"] };
+    assert.strictEqual(isBlocked(task, [task]), true);
   });
 });

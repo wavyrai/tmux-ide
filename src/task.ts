@@ -1,5 +1,6 @@
 import { resolve } from "node:path";
 import { outputError } from "./lib/output.ts";
+import type { ProofSchema } from "./types.ts";
 import {
   ensureTasksDir,
   loadMission,
@@ -21,6 +22,43 @@ import {
   type Task,
 } from "./lib/task-store.ts";
 
+export function parseProof(raw: string, existing: ProofSchema | null): ProofSchema {
+  // Try parsing as JSON first
+  if (raw.startsWith("{")) {
+    try {
+      const parsed = JSON.parse(raw) as Record<string, unknown>;
+      const proof: ProofSchema = { ...existing };
+      if (parsed.tests && typeof parsed.tests === "object") {
+        const t = parsed.tests as Record<string, unknown>;
+        if (typeof t.passed === "number" && typeof t.total === "number") {
+          proof.tests = { passed: t.passed, total: t.total };
+        }
+      }
+      if (parsed.pr && typeof parsed.pr === "object") {
+        const p = parsed.pr as Record<string, unknown>;
+        if (typeof p.number === "number") {
+          proof.pr = { number: p.number };
+          if (typeof p.url === "string") proof.pr.url = p.url;
+          if (typeof p.status === "string") proof.pr.status = p.status;
+        }
+      }
+      if (parsed.ci && typeof parsed.ci === "object") {
+        const c = parsed.ci as Record<string, unknown>;
+        if (typeof c.status === "string") {
+          proof.ci = { status: c.status };
+          if (typeof c.url === "string") proof.ci.url = c.url;
+        }
+      }
+      if (typeof parsed.notes === "string") proof.notes = parsed.notes;
+      return proof;
+    } catch {
+      // Not valid JSON, fall through to treat as plain string
+    }
+  }
+  // Plain string → proof.notes (backward compat)
+  return { ...existing, notes: raw };
+}
+
 interface TaskCommandValues {
   description?: string;
   acceptance?: string;
@@ -31,6 +69,7 @@ interface TaskCommandValues {
   tags?: string;
   branch?: string;
   proof?: string;
+  depends?: string;
 }
 
 export async function taskCommand(
@@ -292,6 +331,11 @@ function handleTask(
         branch: values.branch ?? null,
         tags: values.tags ? values.tags.split(",").map((t) => t.trim()) : [],
         proof: null,
+        depends_on: values.depends ? values.depends.split(",").map((d) => d.trim()) : [],
+        retryCount: 0,
+        maxRetries: 5,
+        lastError: null,
+        nextRetryAt: null,
       };
       saveTask(dir, task);
       if (json) {
@@ -313,7 +357,8 @@ function handleTask(
       if (values.priority) task.priority = parseInt(values.priority, 10);
       if (values.tags) task.tags = values.tags.split(",").map((t) => t.trim());
       if (values.goal) task.goal = values.goal;
-      if (values.proof) task.proof = { ...(task.proof ?? {}), note: values.proof };
+      if (values.depends) task.depends_on = values.depends.split(",").map((d) => d.trim());
+      if (values.proof) task.proof = parseProof(values.proof, task.proof);
       task.updated = new Date().toISOString();
       saveTask(dir, task);
       if (json) {
@@ -329,7 +374,7 @@ function handleTask(
       const task = loadTask(dir, id);
       if (!task) outputError(`Task ${id} not found`, "NOT_FOUND");
       task.status = "done";
-      if (values.proof) task.proof = { ...(task.proof ?? {}), note: values.proof };
+      if (values.proof) task.proof = parseProof(values.proof, task.proof);
       task.updated = new Date().toISOString();
       saveTask(dir, task);
       if (json) {
@@ -390,6 +435,7 @@ function handleTask(
         if (task.assignee) console.log(`  Assignee: ${task.assignee}`);
         if (task.tags.length > 0) console.log(`  Tags: ${task.tags.join(", ")}`);
         if (task.branch) console.log(`  Branch: ${task.branch}`);
+        if (task.depends_on.length > 0) console.log(`  Depends on: ${task.depends_on.join(", ")}`);
         if (task.proof) console.log(`  Proof: ${JSON.stringify(task.proof)}`);
       }
       break;

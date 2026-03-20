@@ -4,6 +4,7 @@ import { useKeyboard } from "@opentui/solid";
 import {
   groupTasks,
   flattenTaskList,
+  isBlocked,
   type Task,
   type TaskStatus,
   type FlatItem,
@@ -145,7 +146,14 @@ export function TaskList(props: TaskListProps) {
 
               const task = item.task;
               const isSelected = createMemo(() => index() === selected());
-              const sColor = statusColor(task.status, props.theme);
+              const blocked = isBlocked(task, props.tasks);
+              const sColor = blocked ? props.theme.fgMuted : statusColor(task.status, props.theme);
+              const titleColor = () =>
+                isSelected()
+                  ? props.theme.selectedText
+                  : blocked
+                    ? props.theme.fgMuted
+                    : props.theme.fg;
               return (
                 <box
                   backgroundColor={
@@ -164,11 +172,16 @@ export function TaskList(props: TaskListProps) {
                     if (t) props.onSelect(t);
                   }}
                 >
+                  <Show when={blocked}>
+                    <text fg={toRGBA(props.theme.fgMuted)} flexShrink={0} wrapMode="none">
+                      {"# "}
+                    </text>
+                  </Show>
                   <text fg={toRGBA(sColor)} flexShrink={0} wrapMode="none">
                     {priorityDots(task.priority)}{" "}
                   </text>
                   <text
-                    fg={toRGBA(isSelected() ? props.theme.selectedText : props.theme.fg)}
+                    fg={toRGBA(titleColor())}
                     wrapMode="none"
                     flexGrow={1}
                   >

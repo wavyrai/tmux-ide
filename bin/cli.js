@@ -43,6 +43,7 @@ const { positionals, values } = parseArgs({
     tags: { type: "string" },
     branch: { type: "string" },
     proof: { type: "string" },
+    depends: { type: "string" },
   },
 });
 
@@ -268,6 +269,7 @@ try {
           tags: values.tags,
           branch: values.branch,
           proof: values.proof,
+          depends: values.depends,
         },
       });
       break;

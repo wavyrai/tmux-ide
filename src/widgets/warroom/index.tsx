@@ -11,6 +11,7 @@ import { MissionHeader } from "./mission-header.tsx";
 import { GoalSection } from "./goal-section.tsx";
 import { type AgentInfo } from "./agent-card.tsx";
 import { ActivityFeed, formatElapsedShort, type ActivityEntry } from "./activity-feed.tsx";
+import type { ProofSchema } from "../../types.ts";
 
 const { values } = parseArgs({
   options: {
@@ -46,6 +47,11 @@ interface Task {
   goal: string | null;
   priority: number;
   updated: string;
+  retryCount?: number;
+  maxRetries?: number;
+  lastError?: string | null;
+  nextRetryAt?: string | null;
+  proof?: ProofSchema | null;
 }
 
 function loadMission(): Mission | null {
@@ -105,22 +111,41 @@ function formatElapsed(isoDate: string): string {
   return `${Math.floor(mins / 60)}h ${mins % 60}m`;
 }
 
-function buildAgentInfos(panes: PaneInfo[], tasks: Task[]): AgentInfo[] {
-  const agentPanes = panes.filter(
-    (p) =>
-      p.currentCommand === "claude" ||
-      p.currentCommand === "codex" ||
-      p.title.toLowerCase().includes("claude") ||
-      p.title.toLowerCase().includes("agent"),
+// Braille spinners indicate Claude is actively working
+const BUSY_SPINNERS = new Set(["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏", "⠂", "⠐"]);
+const IDLE_MARKER = "✳";
+
+function isClaudePane(pane: PaneInfo): boolean {
+  return (
+    pane.title.includes("Claude Code") ||
+    pane.title.toLowerCase().includes("agent") ||
+    pane.currentCommand === "claude" ||
+    pane.currentCommand === "codex"
   );
+}
+
+function isClaudeBusy(title: string): boolean {
+  // Check first character for spinner
+  const firstChar = title.charAt(0);
+  if (BUSY_SPINNERS.has(firstChar)) return true;
+  if (firstChar === IDLE_MARKER) return false;
+  // Fallback: if title contains "Claude Code" assume it's running
+  return title.includes("Claude Code");
+}
+
+function buildAgentInfos(panes: PaneInfo[], tasks: Task[]): AgentInfo[] {
+  const agentPanes = panes.filter(isClaudePane);
 
   return agentPanes.map((pane) => {
     const assignedTask = tasks.find((t) => t.assignee === pane.title && t.status === "in-progress");
     return {
       paneTitle: pane.title,
-      isBusy: pane.currentCommand === "claude" || pane.currentCommand === "codex",
+      isBusy: isClaudeBusy(pane.title),
       taskTitle: assignedTask?.title ?? null,
       elapsed: assignedTask ? formatElapsed(assignedTask.updated) : "",
+      retryCount: assignedTask?.retryCount ?? 0,
+      maxRetries: assignedTask?.maxRetries ?? 5,
+      nextRetryAt: assignedTask?.nextRetryAt ?? null,
     };
   });
 }
@@ -305,6 +330,7 @@ render(
                   priority={section.goal.priority}
                   totalTasks={section.tasks.length}
                   doneTasks={section.tasks.filter((t) => t.status === "done").length}
+                  completedTasks={section.tasks.filter((t) => t.status === "done")}
                   agents={section.agents}
                   theme={theme}
                   selectedAgent={selectedAgent()}
