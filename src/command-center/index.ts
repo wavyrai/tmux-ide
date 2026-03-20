@@ -46,12 +46,17 @@ export async function startCommandCenter(options: CommandCenterOptions = {}): Pr
   const server = createServer(listener);
 
   // Auto-discover active tmux-ide session for widget spawning
+  // Prefer the session matching CWD, then fall back to first with .tasks/
   const sessions = discoverSessions();
-  const activeSession = sessions[0];
+  const cwd = process.cwd();
+  const activeSession =
+    sessions.find((s) => s.dir === cwd) ??
+    sessions.find((s) => s.mission !== null) ??
+    sessions[0];
 
   if (activeSession) {
     attachWebSockets(server, activeSession.name, activeSession.dir);
-    console.log(`Widgets connected to session: ${activeSession.name}`);
+    console.log(`Widgets connected to session: ${activeSession.name} (${activeSession.dir})`);
   }
 
   // Cleanup PTYs on shutdown
