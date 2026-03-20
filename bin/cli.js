@@ -44,6 +44,7 @@ const { positionals, values } = parseArgs({
     branch: { type: "string" },
     proof: { type: "string" },
     depends: { type: "string" },
+    port: { type: "string" },
   },
 });
 
@@ -63,6 +64,7 @@ const knownCommands = new Set([
   "mission",
   "goal",
   "task",
+  "command-center",
   "help",
 ]);
 
@@ -272,6 +274,12 @@ try {
           depends: values.depends,
         },
       });
+      break;
+    }
+
+    case "command-center": {
+      const { startCommandCenter } = await import("../dist/command-center/index.js");
+      await startCommandCenter({ port: parseInt(values.port ?? "4000") });
       break;
     }
 
