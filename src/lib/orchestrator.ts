@@ -21,7 +21,7 @@
  *
  * @module orchestrator
  */
-import { execSync } from "node:child_process";
+import { execSync, execFileSync } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync, mkdirSync, watch, type FSWatcher } from "node:fs";
 import { join } from "node:path";
 import { loadMission, loadGoal, loadTasks, saveTask, loadTask, type Task } from "./task-store.ts";
@@ -525,6 +525,28 @@ export function createOrchestrator(initialConfig: OrchestratorConfig): () => voi
   for (const task of loadTasks(config.dir)) {
     state.previousTasks.set(task.id, task.status);
   }
+
+  // Set French agent names as tmux pane titles
+  function labelAgentPanes(): void {
+    const panes = listSessionPanes(config.session);
+    for (const pane of panes) {
+      if (isAgentPane(pane)) {
+        const name = agentIdentifier(pane);
+        // Only set if not already named (don't override every tick)
+        const currentNorm = normalizePaneTitle(pane.title);
+        if (currentNorm !== name && !currentNorm.startsWith(name)) {
+          try {
+            execFileSync("tmux", [
+              "select-pane", "-t", pane.id, "-T", name,
+            ], { stdio: "ignore" });
+          } catch {}
+        }
+      }
+    }
+  }
+
+  // Label panes on startup
+  labelAgentPanes();
 
   function tick(): void {
     const tasks = loadTasks(config.dir);
