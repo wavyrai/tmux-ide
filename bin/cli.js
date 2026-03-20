@@ -34,14 +34,14 @@ const { positionals, values } = parseArgs({
     help: { type: "boolean", short: "h" },
     version: { type: "boolean", short: "v" },
     // task command flags
-    description: { type: "string" },
+    description: { type: "string", short: "d" },
     acceptance: { type: "string" },
-    priority: { type: "string" },
-    status: { type: "string" },
-    assign: { type: "string" },
-    goal: { type: "string" },
-    tags: { type: "string" },
-    branch: { type: "string" },
+    priority: { type: "string", short: "p" },
+    status: { type: "string", short: "s" },
+    assign: { type: "string", short: "a" },
+    goal: { type: "string", short: "g" },
+    tags: { type: "string", short: "t" },
+    branch: { type: "string", short: "b" },
     proof: { type: "string" },
     depends: { type: "string" },
     port: { type: "string" },
@@ -80,9 +80,11 @@ if (values.verbose) {
   globalThis.__tmuxIdeVerbose = true;
 }
 
+const ALIASES = { t: "task", g: "goal", m: "mission" };
 const firstPositional = positionals[0];
-const hasKnownCommand = firstPositional ? knownCommands.has(firstPositional) : false;
-const command = hasKnownCommand ? firstPositional : "start";
+const resolved = ALIASES[firstPositional] ?? firstPositional;
+const hasKnownCommand = resolved ? knownCommands.has(resolved) : false;
+const command = hasKnownCommand ? resolved : "start";
 const startTargetDir = hasKnownCommand ? positionals[1] : firstPositional;
 const json = values.json ?? false;
 
@@ -263,6 +265,7 @@ try {
         sub,
         args: positionals.slice(2),
         values: {
+          title: values.title,
           description: values.description,
           priority: values.priority,
           status: values.status,
