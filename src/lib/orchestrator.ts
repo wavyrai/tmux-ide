@@ -33,6 +33,7 @@ import {
 } from "../widgets/lib/pane-comms.ts";
 import { createWorktree, removeWorktree, validateWorktreePath } from "./worktree.ts";
 import { appendEvent } from "./event-log.ts";
+import { isGhAvailable, createTaskPr } from "./github-pr.ts";
 
 export interface OrchestratorConfig {
   session: string;
@@ -319,6 +320,26 @@ export function detectCompletions(
         agent: task.assignee ?? undefined,
         message: `Completed "${task.title}" by ${task.assignee ?? "unknown"}`,
       });
+
+      // Auto-create GitHub PR if task has a branch
+      if (task.branch && isGhAvailable()) {
+        const pr = createTaskPr(task, config.dir);
+        if (pr) {
+          if (!task.proof) task.proof = {};
+          (task.proof as import("../types.ts").ProofSchema).pr = {
+            number: pr.number,
+            url: pr.url,
+            status: "open",
+          };
+          saveTask(config.dir, task);
+          appendEvent(config.dir, {
+            timestamp: new Date().toISOString(),
+            type: "completion",
+            taskId: task.id,
+            message: `PR created: ${pr.url}`,
+          });
+        }
+      }
 
       const wt = worktreePathForTask(config, task);
 
