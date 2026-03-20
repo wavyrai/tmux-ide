@@ -62,7 +62,7 @@ function DroppableColumn({
     <div
       ref={setNodeRef}
       className={`bg-[var(--bg)] flex flex-col min-h-0 transition-colors duration-150 ${
-        isOver ? "bg-[rgba(255,255,255,0.02)]" : ""
+        isOver ? "bg-[var(--surface-hover)]" : ""
       }`}
     >
       <div className="flex items-center justify-between px-2 h-6 bg-[var(--surface)] border-b border-[var(--border)] shrink-0">

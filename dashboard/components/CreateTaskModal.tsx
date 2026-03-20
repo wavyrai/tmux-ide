@@ -66,7 +66,7 @@ export function CreateTaskModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
-      <div className="absolute inset-0 bg-black/60" onClick={onClose} />
+      <div className="absolute inset-0 bg-[var(--modal-overlay)]" onClick={onClose} />
       <form
         onSubmit={handleSubmit}
         className="relative bg-[var(--bg)] border border-[var(--border)] w-full max-w-md"
@@ -152,7 +152,7 @@ export function CreateTaskModal({
             <button
               type="button"
               onClick={onClose}
-              className="px-3 py-1 text-[var(--dim)] border border-[var(--border)] hover:border-[rgba(255,255,255,0.15)] transition-colors"
+              className="px-3 py-1 text-[var(--dim)] border border-[var(--border)] hover:border-[var(--dim)] transition-colors"
             >
               cancel
             </button>

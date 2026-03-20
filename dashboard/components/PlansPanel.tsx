@@ -148,8 +148,8 @@ export function PlansPanel({ sessionName }: PlansPanelProps) {
               onClick={() => setSelectedFile(p.path)}
               className={`w-full text-left h-6 px-3 flex items-center transition-colors truncate ${
                 isSelected
-                  ? "bg-[rgba(255,255,255,0.04)] text-[var(--accent)]"
-                  : "text-[var(--fg)] hover:bg-[rgba(255,255,255,0.02)]"
+                  ? "bg-[var(--surface-active)] text-[var(--accent)]"
+                  : "text-[var(--fg)] hover:bg-[var(--surface-hover)]"
               }`}
             >
               {p.name}

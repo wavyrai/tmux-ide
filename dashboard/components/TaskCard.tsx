@@ -33,8 +33,8 @@ export function TaskCard({ task: t, onClick, selected = false }: TaskCardProps) 
       onClick={onClick}
       className={`cursor-pointer px-2 py-1.5 mb-px transition-colors ${
         selected
-          ? "bg-[rgba(255,255,255,0.06)]"
-          : "bg-[var(--surface)] hover:bg-[rgba(255,255,255,0.03)]"
+          ? "bg-[var(--surface-active)]"
+          : "bg-[var(--surface)] hover:bg-[var(--surface-hover)]"
       }`}
       style={{ borderLeft: `2px solid ${selected ? "var(--accent)" : borderColor}` }}
     >

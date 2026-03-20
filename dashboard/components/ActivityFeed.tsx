@@ -51,7 +51,7 @@ export function ActivityFeed({ events, maxEvents = 50 }: ActivityFeedProps) {
         return (
           <div
             key={`${e.timestamp}-${i}`}
-            className="flex items-start h-6 px-3 hover:bg-[rgba(255,255,255,0.02)]"
+            className="flex items-start h-6 px-3 hover:bg-[var(--surface-hover)]"
           >
             {/* Relative time */}
             <span className="w-[8ch] shrink-0 text-right text-[var(--dim)] pr-2">

@@ -22,7 +22,7 @@ export function TopBar() {
   }, []);
 
   return (
-    <div className="h-6 flex items-center px-3 bg-[var(--surface)] border-b text-[11px] sticky top-0 z-30">
+    <div className="h-6 flex items-center px-3 bg-[var(--bg-weak)] border-b text-[11px] sticky top-0 z-30">
       <span className="text-[var(--accent)] font-medium">tmux-ide</span>
       <span className="flex-1" />
       <ThemeToggle />

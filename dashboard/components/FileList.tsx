@@ -26,8 +26,8 @@ export function FileList({ files, selectedFile, onSelectFile }: FileListProps) {
         onClick={() => onSelectFile(null)}
         className={`w-full flex items-center h-6 px-2 text-left transition-colors ${
           selectedFile === null
-            ? "bg-[rgba(255,255,255,0.04)] text-[var(--accent)]"
-            : "text-[var(--dim)] hover:bg-[rgba(255,255,255,0.02)] hover:text-[var(--fg)]"
+            ? "bg-[var(--surface-active)] text-[var(--accent)]"
+            : "text-[var(--dim)] hover:bg-[var(--surface-hover)] hover:text-[var(--fg)]"
         }`}
       >
         <span className="flex-1 truncate">All files</span>
@@ -48,8 +48,8 @@ export function FileList({ files, selectedFile, onSelectFile }: FileListProps) {
             onClick={() => onSelectFile(f.file)}
             className={`w-full flex items-center h-6 px-2 text-left transition-colors ${
               isSelected
-                ? "bg-[rgba(255,255,255,0.04)]"
-                : "hover:bg-[rgba(255,255,255,0.02)]"
+                ? "bg-[var(--surface-active)]"
+                : "hover:bg-[var(--surface-hover)]"
             }`}
           >
             <span className="flex-1 min-w-0 truncate">
