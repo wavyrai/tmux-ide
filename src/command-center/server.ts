@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, writeFileSync, mkdirSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
@@ -20,7 +20,7 @@ import {
   type Task,
 } from "../lib/task-store.ts";
 import { readEvents, type OrchestratorEvent } from "../lib/event-log.ts";
-import { extractAuthorship } from "../lib/authorship.ts";
+import { extractMarks, calculateStats, tagContent } from "../lib/authorship.ts";
 
 export function createApp(): Hono {
   const app = new Hono();
@@ -176,8 +176,62 @@ export function createApp(): Hono {
     }
 
     const raw = readFileSync(filePath, "utf-8");
-    const { content, authorship } = extractAuthorship(raw);
-    return c.json({ name: safeName.replace(/\.md$/, ""), content, authorship });
+    const { content, marks } = extractMarks(raw);
+    const stats = marks ? calculateStats(marks.marks) : null;
+    return c.json({
+      name: safeName.replace(/\.md$/, ""),
+      content,
+      marks: marks?.marks ?? null,
+      stats,
+    });
+  });
+
+  // Save a plan file (with authorship tagging)
+  app.post("/api/project/:name/plans/:filename", async (c) => {
+    const name = c.req.param("name");
+    const filename = c.req.param("filename");
+    const sessions = discoverSessions();
+    const session = sessions.find((s) => s.name === name);
+    if (!session) {
+      return c.json({ error: "Session not found" }, 404);
+    }
+
+    const body = await c.req.json<{ content: string }>();
+    if (!body.content && body.content !== "") {
+      return c.json({ error: "content is required" }, 400);
+    }
+
+    const safeName = filename.replace(/[^a-zA-Z0-9_\-. ]/g, "");
+    const filePath = join(session.dir, "plans", safeName.endsWith(".md") ? safeName : `${safeName}.md`);
+    const plansDir = join(session.dir, "plans");
+    if (!existsSync(plansDir)) mkdirSync(plansDir, { recursive: true });
+
+    // Auto-tag uncovered character ranges as human-authored
+    const tagged = tagContent(body.content, "human");
+    writeFileSync(filePath, tagged);
+
+    return c.json({ ok: true });
+  });
+
+  // Delete a plan file
+  app.delete("/api/project/:name/plans/:filename", (c) => {
+    const name = c.req.param("name");
+    const filename = c.req.param("filename");
+    const sessions = discoverSessions();
+    const session = sessions.find((s) => s.name === name);
+    if (!session) {
+      return c.json({ error: "Session not found" }, 404);
+    }
+
+    const safeName = filename.replace(/[^a-zA-Z0-9_\-. ]/g, "");
+    const filePath = join(session.dir, "plans", safeName.endsWith(".md") ? safeName : `${safeName}.md`);
+
+    if (!existsSync(filePath)) {
+      return c.json({ error: "Plan not found" }, 404);
+    }
+
+    unlinkSync(filePath);
+    return c.json({ ok: true, deleted: safeName });
   });
 
   app.get("/api/project/:name/diff", (c) => {
