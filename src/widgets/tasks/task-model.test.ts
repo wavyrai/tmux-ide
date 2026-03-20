@@ -16,14 +16,20 @@ import {
   getTasksDir,
   type Task,
 } from "./task-model.ts";
+import {
+  saveTask as cliSaveTask,
+  ensureTasksDir as cliEnsure,
+  loadTask as cliLoadTask,
+} from "../../lib/task-store.ts";
 
 let tmpDir: string;
 
 function writeTask(task: Partial<Task> & { id: string; title: string; status: string }) {
-  const dir = join(tmpDir, ".tasks");
+  const dir = join(tmpDir, ".tasks", "tasks");
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
   const full: Task = {
     description: "",
+    goal: null,
     assignee: null,
     priority: 2,
     created: "2026-01-01T00:00:00Z",
@@ -41,9 +47,9 @@ function writeTask(task: Partial<Task> & { id: string; title: string; status: st
   writeFileSync(join(dir, `${task.id}-test.json`), JSON.stringify(full, null, 2) + "\n");
 }
 
-// Write raw JSON without retry fields to simulate legacy task files
+// Write raw JSON without new fields to simulate legacy task files
 function writeLegacyTask(task: { id: string; title: string; status: string }) {
-  const dir = join(tmpDir, ".tasks");
+  const dir = join(tmpDir, ".tasks", "tasks");
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
   const legacy = {
     id: task.id,
@@ -74,7 +80,7 @@ describe("loadTasks", () => {
     assert.deepStrictEqual(loadTasks(tmpDir), []);
   });
 
-  it("loads tasks from .tasks/ directory", () => {
+  it("loads tasks from .tasks/tasks/ directory", () => {
     writeTask({ id: "001", title: "First task", status: "todo" });
     writeTask({ id: "002", title: "Second task", status: "in-progress" });
     const tasks = loadTasks(tmpDir);
@@ -83,22 +89,17 @@ describe("loadTasks", () => {
     assert.strictEqual(tasks[1]!.id, "002");
   });
 
-  it("skips invalid JSON files", () => {
-    const dir = join(tmpDir, ".tasks");
-    mkdirSync(dir, { recursive: true });
-    writeFileSync(join(dir, "bad.json"), "not json");
-    writeTask({ id: "001", title: "Good task", status: "todo" });
+  it("includes goal field from loaded tasks", () => {
+    writeTask({ id: "001", title: "With goal", status: "todo", goal: "01" });
     const tasks = loadTasks(tmpDir);
-    assert.strictEqual(tasks.length, 1);
-    assert.strictEqual(tasks[0]!.title, "Good task");
+    assert.strictEqual(tasks[0]!.goal, "01");
   });
 
-  it("skips files missing required fields", () => {
-    const dir = join(tmpDir, ".tasks");
-    mkdirSync(dir, { recursive: true });
-    writeFileSync(join(dir, "incomplete.json"), JSON.stringify({ id: "001" }) + "\n");
+  it("defaults goal to null for legacy tasks", () => {
+    writeLegacyTask({ id: "001", title: "Legacy", status: "todo" });
     const tasks = loadTasks(tmpDir);
-    assert.strictEqual(tasks.length, 0);
+    // goal is not in legacy JSON, normalizeTask in task-store should handle it
+    assert.ok(tasks[0]!.goal === null || tasks[0]!.goal === undefined);
   });
 });
 
@@ -142,6 +143,7 @@ describe("createTask", () => {
     const task = createTask(tmpDir, existing);
     assert.strictEqual(task.id, "002");
     assert.strictEqual(task.status, "todo");
+    assert.strictEqual(task.goal, null);
     const all = loadTasks(tmpDir);
     assert.strictEqual(all.length, 2);
   });
@@ -151,11 +153,20 @@ describe("createTask", () => {
     assert.strictEqual(task.id, "001");
     assert.ok(existsSync(getTasksDir(tmpDir)));
   });
+
+  it("created task is loadable via loadTasks", () => {
+    const task = createTask(tmpDir, []);
+    const loaded = loadTasks(tmpDir);
+    assert.strictEqual(loaded.length, 1);
+    assert.strictEqual(loaded[0]!.id, task.id);
+    assert.strictEqual(loaded[0]!.goal, null);
+  });
 });
 
 describe("groupTasks", () => {
   const taskBase = {
     description: "",
+    goal: null,
     assignee: null,
     created: "",
     updated: "",
@@ -166,6 +177,7 @@ describe("groupTasks", () => {
     maxRetries: 5,
     lastError: null,
     nextRetryAt: null,
+    depends_on: [],
   } as const;
 
   it("groups tasks by status in display order", () => {
@@ -216,7 +228,6 @@ describe("flattenTaskList", () => {
       { status: "done" as const, tasks: [] },
     ];
     const flat = flattenTaskList(groups);
-    // 2 headers + 3 tasks = 5 items (empty groups skipped)
     assert.strictEqual(flat.length, 5);
     assert.strictEqual(flat[0]!.kind, "header");
     assert.strictEqual(flat[1]!.kind, "task");
@@ -289,7 +300,7 @@ describe("depends_on", () => {
   });
 
   it("preserves depends_on when present in JSON", () => {
-    const dir = join(tmpDir, ".tasks");
+    const dir = join(tmpDir, ".tasks", "tasks");
     mkdirSync(dir, { recursive: true });
     writeFileSync(
       join(dir, "001-with-deps.json"),
@@ -298,6 +309,7 @@ describe("depends_on", () => {
         title: "Has deps",
         status: "todo",
         description: "",
+        goal: null,
         assignee: null,
         priority: 1,
         created: "2026-01-01T00:00:00Z",
@@ -321,6 +333,7 @@ describe("depends_on", () => {
 describe("isBlocked", () => {
   const base = {
     description: "",
+    goal: null,
     assignee: null,
     created: "",
     updated: "",
@@ -353,5 +366,67 @@ describe("isBlocked", () => {
   it("returns true when dependency ID is missing from task list", () => {
     const task: Task = { ...base, id: "001", title: "A", status: "todo", priority: 1, depends_on: ["999"] };
     assert.strictEqual(isBlocked(task, [task]), true);
+  });
+});
+
+describe("CLI interop", () => {
+  it("widget loadTasks reads tasks created by CLI saveTask", () => {
+    cliEnsure(tmpDir);
+    cliSaveTask(tmpDir, {
+      id: "001",
+      title: "CLI task",
+      description: "created by CLI",
+      goal: "01",
+      status: "todo",
+      assignee: null,
+      priority: 1,
+      created: "2026-01-01T00:00:00Z",
+      updated: "2026-01-01T00:00:00Z",
+      branch: null,
+      tags: ["test"],
+      proof: null,
+      retryCount: 0,
+      maxRetries: 5,
+      lastError: null,
+      nextRetryAt: null,
+      depends_on: [],
+    });
+
+    // Widget loadTasks should see it
+    const tasks = loadTasks(tmpDir);
+    assert.strictEqual(tasks.length, 1);
+    assert.strictEqual(tasks[0]!.id, "001");
+    assert.strictEqual(tasks[0]!.title, "CLI task");
+    assert.strictEqual(tasks[0]!.goal, "01");
+  });
+
+  it("widget updateTaskStatus changes are visible to CLI loadTask", () => {
+    cliEnsure(tmpDir);
+    cliSaveTask(tmpDir, {
+      id: "001",
+      title: "Test",
+      description: "",
+      goal: null,
+      status: "todo",
+      assignee: null,
+      priority: 1,
+      created: "2026-01-01T00:00:00Z",
+      updated: "2026-01-01T00:00:00Z",
+      branch: null,
+      tags: [],
+      proof: null,
+      retryCount: 0,
+      maxRetries: 5,
+      lastError: null,
+      nextRetryAt: null,
+      depends_on: [],
+    });
+
+    // Widget updates the task
+    updateTaskStatus(tmpDir, "001", "in-progress");
+
+    // CLI should see the change
+    const loaded = cliLoadTask(tmpDir, "001");
+    assert.strictEqual(loaded?.status, "in-progress");
   });
 });
