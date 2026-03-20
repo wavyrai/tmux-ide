@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { fetchSessions } from "@/lib/api";
-import { ProjectCard } from "@/components/ProjectCard";
+import { ProjectRow } from "@/components/ProjectRow";
 import type { SessionOverview } from "@/lib/types";
 
 export default function OverviewPage() {
@@ -33,26 +33,54 @@ export default function OverviewPage() {
   }, []);
 
   return (
-    <main className="max-w-4xl mx-auto px-6 py-8">
-      {error && (
-        <div className="text-center text-[#e87d7d] py-4 mb-4 bg-[#1a1717] rounded-lg border border-[rgba(255,255,255,0.06)]">
-          Cannot reach command center API. Is{" "}
-          <code className="text-[#dcde8d]">tmux-ide command-center</code>{" "}
-          running?
+    <div className="h-screen flex flex-col">
+      {/* Header bar */}
+      <div className="flex items-center justify-between px-4 h-7 bg-[var(--surface)] border-b border-[var(--border)] shrink-0">
+        <span className="text-[var(--accent)]">tmux-ide command center</span>
+        <div className="flex items-center gap-2">
+          <span
+            className={`inline-block w-[6px] h-[6px] ${error ? "bg-[var(--red)]" : "bg-[var(--green)]"}`}
+          />
+          <span className="text-[var(--dim)]">
+            {error ? "offline" : `${sessions.length} session${sessions.length !== 1 ? "s" : ""}`}
+          </span>
         </div>
-      )}
-
-      {sessions.length === 0 && !error && (
-        <div className="text-center text-[#6b6363] py-20">
-          No tmux-ide sessions running
-        </div>
-      )}
-
-      <div className="space-y-4">
-        {sessions.map((s) => (
-          <ProjectCard key={s.name} session={s} />
-        ))}
       </div>
-    </main>
+
+      {/* Content */}
+      <div className="flex-1 overflow-auto">
+        {error && (
+          <div className="px-4 py-3 text-[var(--red)] bg-[var(--surface)] border-b border-[var(--border)]">
+            cannot reach api — is{" "}
+            <span className="text-[var(--accent)]">tmux-ide command-center</span>{" "}
+            running?
+          </div>
+        )}
+
+        {sessions.length === 0 && !error && (
+          <div className="px-4 py-8 text-[var(--dim)]">
+            no tmux-ide sessions running
+          </div>
+        )}
+
+        {sessions.length > 0 && (
+          <div>
+            {/* Column headers */}
+            <div className="flex items-center px-4 h-6 text-[var(--dim)] bg-[var(--surface)] border-b border-[var(--border)]">
+              <span className="w-3" />
+              <span className="w-[20ch] shrink-0">session</span>
+              <span className="flex-1">mission</span>
+              <span className="w-[14ch] text-right">progress</span>
+              <span className="w-[8ch] text-right">agents</span>
+              <span className="w-[10ch] text-right">tasks</span>
+            </div>
+
+            {sessions.map((s) => (
+              <ProjectRow key={s.name} session={s} />
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
   );
 }

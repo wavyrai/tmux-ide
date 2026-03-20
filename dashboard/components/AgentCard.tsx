@@ -6,22 +6,21 @@ interface AgentCardProps {
 
 export function AgentCard({ agent: a }: AgentCardProps) {
   return (
-    <div className="flex items-center gap-3 py-1.5">
+    <div className="flex items-center h-6 px-2 hover:bg-[rgba(255,255,255,0.02)]">
       <span
-        className={`w-2 h-2 rounded-full flex-shrink-0 ${
-          a.isBusy ? "bg-[#e8c95a]" : "bg-[#6b6363]"
-        }`}
-      />
-      <span className="text-sm text-[#e8e4e4] flex-1">{a.paneTitle}</span>
-      {a.taskTitle ? (
-        <span className="text-sm text-[#a09a9a] truncate max-w-48">
-          {a.taskTitle}
-        </span>
-      ) : (
-        <span className="text-xs text-[#6b6363]">idle</span>
-      )}
+        className="w-3 shrink-0"
+        style={{ color: a.isBusy ? "var(--yellow)" : "var(--dim)" }}
+      >
+        {a.isBusy ? "●" : "○"}
+      </span>
+      <span className="w-[16ch] shrink-0 text-[var(--fg)] truncate">
+        {a.paneTitle}
+      </span>
+      <span className="flex-1 truncate text-[var(--dim)]">
+        {a.taskTitle ?? "idle"}
+      </span>
       {a.elapsed && (
-        <span className="text-xs text-[#6b6363]">{a.elapsed}</span>
+        <span className="text-[var(--dim)] shrink-0 pl-2">{a.elapsed}</span>
       )}
     </div>
   );

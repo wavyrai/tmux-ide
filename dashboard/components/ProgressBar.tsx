@@ -1,18 +1,22 @@
 interface ProgressBarProps {
   percent: number;
-  className?: string;
+  width?: number;
 }
 
-export function ProgressBar({ percent, className = "" }: ProgressBarProps) {
-  const color = percent === 100 ? "#7dd87d" : "#dcde8d";
+export function ProgressBar({ percent, width = 10 }: ProgressBarProps) {
+  const filled = Math.round((percent / 100) * width);
+  const empty = width - filled;
+  const color = percent === 100 ? "var(--green)" : "var(--accent)";
+
   return (
-    <div
-      className={`h-1 rounded-full bg-[rgba(255,255,255,0.06)] overflow-hidden ${className}`}
-    >
-      <div
-        className="h-full rounded-full transition-all duration-300"
-        style={{ width: `${percent}%`, backgroundColor: color }}
-      />
-    </div>
+    <span className="inline-flex items-center gap-1">
+      <span>
+        <span style={{ color }}>{"█".repeat(filled)}</span>
+        <span className="text-[var(--dim)]">{"░".repeat(empty)}</span>
+      </span>
+      <span className="text-[var(--dim)] text-right" style={{ width: "3ch" }}>
+        {percent}%
+      </span>
+    </span>
   );
 }
