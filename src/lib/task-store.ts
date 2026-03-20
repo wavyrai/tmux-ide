@@ -27,6 +27,8 @@ export interface Goal {
   priority: number;
   created: string;
   updated: string;
+  assignee?: string;
+  specialty?: string;
 }
 
 export interface Task {
