@@ -1,62 +1,27 @@
 import { resolve } from "node:path";
+import { execFileSync, spawn as nodeSpawn } from "node:child_process";
 import type { WebSocket } from "ws";
 
-// node-pty is a native module — use dynamic import so tests can mock it
-type IPty = {
-  onData: (cb: (data: string) => void) => void;
-  onExit: (cb: (e: { exitCode: number }) => void) => void;
-  write: (data: string) => void;
-  resize: (cols: number, rows: number) => void;
-  kill: () => void;
-  pid: number;
-};
-
-type PtySpawner = (
-  file: string,
-  args: string[],
-  options: {
-    name: string;
-    cols: number;
-    rows: number;
-    cwd: string;
-    env: Record<string, string | undefined>;
-  },
-) => IPty;
-
-let _spawner: PtySpawner | null = null;
-
-async function getSpawner(): Promise<PtySpawner> {
-  if (_spawner) return _spawner;
-  const pty = await import("node-pty");
-  _spawner = pty.spawn as unknown as PtySpawner;
-  return _spawner;
-}
-
-/** @internal Replace the PTY spawner for testing. Returns a restore function. */
-export function _setPtySpawner(fn: PtySpawner): () => void {
-  const prev = _spawner;
-  _spawner = fn;
-  return () => {
-    _spawner = prev;
-  };
-}
-
 const VALID_WIDGETS = new Set([
-  "changes",
-  "costs",
-  "explorer",
-  "preview",
-  "tasks",
-  "warroom",
+  "changes", "costs", "explorer", "preview", "tasks", "warroom",
 ]);
 
 export interface PtySession {
-  process: IPty;
+  tmuxSession: string;
   clients: Set<WebSocket>;
   widgetType: string;
+  pollInterval: ReturnType<typeof setInterval> | null;
 }
 
 const sessions = new Map<string, PtySession>();
+
+function tmux(...args: string[]): string {
+  try {
+    return execFileSync("tmux", args, { encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"] }).trim();
+  } catch {
+    return "";
+  }
+}
 
 export function getSession(widgetType: string): PtySession | undefined {
   return sessions.get(widgetType);
@@ -80,44 +45,51 @@ export async function spawnWidget(
   const existing = sessions.get(widgetType);
   if (existing) return existing;
 
-  const spawner = await getSpawner();
+  const tmuxSessionName = `web-${widgetType}`;
 
-  // Widget source — bun runs the tsx directly
+  // Kill existing session if any
+  try { tmux("kill-session", "-t", tmuxSessionName); } catch {}
+
+  // Find bun
+  let bunPath = "bun";
+  try {
+    bunPath = execFileSync("which", ["bun"], { encoding: "utf-8" }).trim() || "bun";
+  } catch {}
+
   const widgetPath = resolve(dir, `src/widgets/${widgetType}/index.tsx`);
+  const cmd = `cd ${dir} && ${bunPath} ${widgetPath} --session=${session} --dir=${dir}`;
 
-  const args = [widgetPath, `--session=${session}`, `--dir=${dir}`];
-  // For theme, pass it as JSON arg if needed
-  const themeArg = `--theme={}`;
-  args.push(themeArg);
-
-  const proc = spawner("bun", args, {
-    name: "xterm-256color",
-    cols,
-    rows,
-    cwd: dir,
-    env: { ...process.env, TERM: "xterm-256color" },
-  });
+  // Create a detached tmux session running the widget
+  tmux("new-session", "-d", "-s", tmuxSessionName, "-x", String(cols), "-y", String(rows), cmd);
 
   const ptySess: PtySession = {
-    process: proc,
+    tmuxSession: tmuxSessionName,
     clients: new Set(),
     widgetType,
+    pollInterval: null,
   };
 
-  proc.onData((data: string) => {
-    for (const client of ptySess.clients) {
-      if (client.readyState === 1 /* WebSocket.OPEN */) {
-        client.send(data);
+  // Poll tmux pane content and send to clients
+  // Use tmux pipe-pane or capture-pane at high frequency
+  let lastContent = "";
+  ptySess.pollInterval = setInterval(() => {
+    try {
+      // Capture current pane content with escape sequences
+      const content = tmux("capture-pane", "-t", tmuxSessionName, "-p", "-e");
+      if (content !== lastContent) {
+        lastContent = content;
+        // Send full screen content with cursor positioning
+        const data = "\x1b[H\x1b[2J" + content; // clear + home + content
+        for (const client of ptySess.clients) {
+          if (client.readyState === 1) {
+            client.send(data);
+          }
+        }
       }
+    } catch {
+      // Session might have died
     }
-  });
-
-  proc.onExit(() => {
-    sessions.delete(widgetType);
-    for (const client of ptySess.clients) {
-      client.close();
-    }
-  });
+  }, 100); // 10 FPS
 
   sessions.set(widgetType, ptySess);
   return ptySess;
@@ -132,19 +104,24 @@ export function connectClient(widgetType: string, ws: WebSocket): boolean {
 
   sess.clients.add(ws);
 
+  // Send initial content
+  try {
+    const content = tmux("capture-pane", "-t", sess.tmuxSession, "-p", "-e");
+    ws.send("\x1b[H\x1b[2J" + content);
+  } catch {}
+
   ws.on("message", (data: Buffer | string) => {
     const str = data.toString();
-    // Handle resize JSON messages
+    // Handle resize
     try {
       const msg = JSON.parse(str) as { type?: string; cols?: number; rows?: number };
       if (msg.type === "resize" && typeof msg.cols === "number" && typeof msg.rows === "number") {
         resizeWidget(widgetType, msg.cols, msg.rows);
         return;
       }
-    } catch {
-      // Not JSON — forward as keyboard input
-    }
-    sess.process.write(str);
+    } catch {}
+    // Forward keyboard input to the tmux pane
+    tmux("send-keys", "-t", sess.tmuxSession, "-l", str);
   });
 
   ws.on("close", () => {
@@ -157,21 +134,22 @@ export function connectClient(widgetType: string, ws: WebSocket): boolean {
 export function resizeWidget(widgetType: string, cols: number, rows: number): void {
   const sess = sessions.get(widgetType);
   if (sess) {
-    sess.process.resize(cols, rows);
+    tmux("resize-window", "-t", sess.tmuxSession, "-x", String(cols), "-y", String(rows));
   }
 }
 
 export function killWidget(widgetType: string): void {
   const sess = sessions.get(widgetType);
   if (sess) {
-    sess.process.kill();
+    if (sess.pollInterval) clearInterval(sess.pollInterval);
+    try { tmux("kill-session", "-t", sess.tmuxSession); } catch {}
     sessions.delete(widgetType);
   }
 }
 
 export function killAll(): void {
-  for (const [, sess] of sessions) {
-    sess.process.kill();
+  for (const [type] of sessions) {
+    killWidget(type);
   }
   sessions.clear();
 }

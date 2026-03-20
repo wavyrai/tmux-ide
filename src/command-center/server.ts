@@ -287,20 +287,7 @@ function getDashboardHTML(): string {
     async function loadTerminalLib() {
       if (TerminalLib) return;
 
-      // Try ghostty-web first
-      try {
-        const mod = await import('https://esm.sh/ghostty-web');
-        if (mod && mod.Terminal) {
-          TerminalLib = mod.Terminal;
-          FitAddonLib = mod.FitAddon || null;
-          console.log('[cmd-center] Using ghostty-web');
-          return;
-        }
-      } catch (e) {
-        console.log('[cmd-center] ghostty-web not available, falling back to xterm.js');
-      }
-
-      // Fall back to xterm.js
+      // Use xterm.js — reliable, well-tested, handles all ANSI/OSC sequences
       await new Promise((resolve, reject) => {
         if (document.querySelector('link[href*="xterm.css"]')) { resolve(); return; }
         const link = document.createElement('link');
@@ -349,7 +336,7 @@ function getDashboardHTML(): string {
       if (!container) return null;
       container.innerHTML = '';
 
-      const term = new TerminalLib({
+      const termOpts = {
         fontSize: 13,
         fontFamily: "'IBM Plex Mono', ui-monospace, monospace",
         cursorBlink: true,
@@ -357,7 +344,8 @@ function getDashboardHTML(): string {
         scrollback: 5000,
         theme: TERM_THEME,
         allowProposedApi: true,
-      });
+      };
+      const term = new TerminalLib(termOpts);
 
       let fitAddon = null;
       if (FitAddonLib) {
