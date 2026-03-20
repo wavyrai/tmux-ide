@@ -9,6 +9,10 @@ import {
   detectCompletions,
   buildTaskPrompt,
   runHook,
+  createOrchestrator,
+  isAgentPane,
+  isAgentBusy,
+  isIdleForDispatch,
   type OrchestratorConfig,
   type OrchestratorState,
 } from "./orchestrator.ts";
@@ -41,6 +45,7 @@ function makeConfig(overrides: Partial<OrchestratorConfig> = {}): OrchestratorCo
     masterPane: "Master",
     beforeRun: null,
     afterRun: null,
+    cleanupOnDone: false,
     ...overrides,
   };
 }
@@ -49,6 +54,7 @@ function makeState(overrides: Partial<OrchestratorState> = {}): OrchestratorStat
   return {
     lastActivity: new Map(),
     previousTasks: new Map(),
+    claimedTasks: new Set(),
     ...overrides,
   };
 }
@@ -162,8 +168,10 @@ describe("dispatch", () => {
     const task = makeTask();
     saveTask(tmpDir, task);
 
-    // All panes are busy (not running shell)
-    const panes: PaneInfo[] = [makePane({ id: "%1", title: "Agent 1", currentCommand: "claude" })];
+    // Agent pane is busy (spinner in title indicates active work)
+    const panes: PaneInfo[] = [
+      makePane({ id: "%1", title: "⠙ Agent 1", currentCommand: "claude" }),
+    ];
     mockPanes = panes;
 
     const config = makeConfig();
@@ -436,5 +444,275 @@ describe("detectCompletions with after_run", () => {
       (c) => c.args.includes("send-keys") && c.args.includes("%0"),
     );
     assert.ok(sendCalls.length > 0);
+  });
+});
+
+describe("isAgentPane", () => {
+  it("detects claude command", () => {
+    assert.ok(isAgentPane(makePane({ currentCommand: "claude" })));
+  });
+
+  it("detects codex command", () => {
+    assert.ok(isAgentPane(makePane({ currentCommand: "codex" })));
+  });
+
+  it("detects Claude Code via version string + title", () => {
+    assert.ok(isAgentPane(makePane({ currentCommand: "2.1.80", title: "Claude Code" })));
+  });
+
+  it("detects Claude Code via title pattern", () => {
+    assert.ok(isAgentPane(makePane({ currentCommand: "node", title: "Claude Code" })));
+  });
+
+  it("does not match a plain shell", () => {
+    assert.ok(!isAgentPane(makePane({ currentCommand: "zsh", title: "Shell" })));
+  });
+
+  it("does not match version string without Claude in title", () => {
+    assert.ok(!isAgentPane(makePane({ currentCommand: "2.1.80", title: "Dev Server" })));
+  });
+});
+
+describe("isAgentBusy", () => {
+  it("returns true when spinner in title", () => {
+    assert.ok(isAgentBusy(makePane({ title: "⠙ Working..." })));
+  });
+
+  it("returns false for normal title", () => {
+    assert.ok(!isAgentBusy(makePane({ title: "Claude Code" })));
+  });
+});
+
+describe("isIdleForDispatch", () => {
+  it("returns true for shell command", () => {
+    assert.ok(isIdleForDispatch(makePane({ currentCommand: "zsh" })));
+    assert.ok(isIdleForDispatch(makePane({ currentCommand: "bash" })));
+    assert.ok(isIdleForDispatch(makePane({ currentCommand: "fish" })));
+  });
+
+  it("returns true for agent pane without spinner", () => {
+    assert.ok(isIdleForDispatch(makePane({ currentCommand: "claude", title: "Agent 1" })));
+  });
+
+  it("returns true for Claude with version command and no spinner", () => {
+    assert.ok(
+      isIdleForDispatch(makePane({ currentCommand: "2.1.80", title: "Claude Code" })),
+    );
+  });
+
+  it("returns false for agent pane with spinner", () => {
+    assert.ok(
+      !isIdleForDispatch(makePane({ currentCommand: "claude", title: "⠹ Thinking..." })),
+    );
+  });
+
+  it("returns false for non-agent non-shell command", () => {
+    assert.ok(!isIdleForDispatch(makePane({ currentCommand: "vim", title: "Editor" })));
+  });
+});
+
+describe("claim locking", () => {
+  it("prevents double-dispatch of same task across two calls", () => {
+    const task = makeTask();
+    saveTask(tmpDir, task);
+
+    const panes: PaneInfo[] = [
+      makePane({ id: "%1", title: "Agent 1", currentCommand: "zsh" }),
+      makePane({ id: "%2", title: "Agent 2", currentCommand: "zsh" }),
+    ];
+    mockPanes = panes;
+
+    const config = makeConfig();
+    const state = makeState();
+
+    // First dispatch claims the task
+    dispatch(config, state, [task], panes);
+    assert.ok(state.claimedTasks.has("001"));
+
+    // Reset task to todo to simulate a race (file not yet updated)
+    const raceTask = makeTask({ status: "todo", assignee: null });
+
+    // Second dispatch should skip claimed task
+    dispatch(config, state, [raceTask], panes);
+
+    // Only one send-keys call with the task prompt (not two)
+    const sendCalls = tmuxCalls.filter((c) => c.args.includes("send-keys"));
+    // First dispatch: send-keys text + send-keys Enter = 2 calls
+    assert.strictEqual(sendCalls.length, 2);
+  });
+
+  it("clears claim on task completion", () => {
+    const config = makeConfig();
+    const state = makeState({
+      previousTasks: new Map([["001", "in-progress"]]),
+      claimedTasks: new Set(["001"]),
+    });
+
+    const task = makeTask({
+      status: "done",
+      assignee: "Agent 1",
+      branch: "task/001-test-task",
+    });
+
+    const panes: PaneInfo[] = [makePane({ id: "%0", title: "Master" })];
+
+    detectCompletions(config, state, [task], panes);
+
+    assert.ok(!state.claimedTasks.has("001"));
+  });
+
+  it("releases claim when before_run hook fails", () => {
+    const task = makeTask();
+    saveTask(tmpDir, task);
+
+    mkdirSync(join(tmpDir, ".worktrees", "001-test-task"), { recursive: true });
+
+    const panes: PaneInfo[] = [makePane({ id: "%1", title: "Agent 1", currentCommand: "zsh" })];
+    mockPanes = panes;
+
+    const config = makeConfig({ beforeRun: "false" });
+    const state = makeState();
+
+    dispatch(config, state, [task], panes);
+
+    // Claim should be released so the task can be retried
+    assert.ok(!state.claimedTasks.has("001"));
+  });
+});
+
+describe("cleanupOnDone", () => {
+  it("calls removeWorktree when cleanupOnDone is true", () => {
+    const wtDir = join(tmpDir, ".worktrees", "001-test-task");
+    mkdirSync(wtDir, { recursive: true });
+
+    const task = makeTask({
+      status: "done",
+      assignee: "Agent 1",
+      branch: "task/001-test-task",
+    });
+
+    const panes: PaneInfo[] = [makePane({ id: "%0", title: "Master" })];
+
+    const config = makeConfig({ cleanupOnDone: true });
+    const state = makeState({
+      previousTasks: new Map([["001", "in-progress"]]),
+    });
+
+    detectCompletions(config, state, [task], panes);
+
+    // Should have called git worktree remove
+    const removeCall = gitCalls.find(
+      (c) => c.args[0] === "worktree" && c.args[1] === "remove",
+    );
+    assert.ok(removeCall, "expected git worktree remove call");
+    assert.ok(removeCall!.args.includes(wtDir));
+  });
+
+  it("does not call removeWorktree when cleanupOnDone is false", () => {
+    const wtDir = join(tmpDir, ".worktrees", "001-test-task");
+    mkdirSync(wtDir, { recursive: true });
+
+    const task = makeTask({
+      status: "done",
+      assignee: "Agent 1",
+      branch: "task/001-test-task",
+    });
+
+    const panes: PaneInfo[] = [makePane({ id: "%0", title: "Master" })];
+
+    const config = makeConfig({ cleanupOnDone: false });
+    const state = makeState({
+      previousTasks: new Map([["001", "in-progress"]]),
+    });
+
+    detectCompletions(config, state, [task], panes);
+
+    const removeCall = gitCalls.find(
+      (c) => c.args[0] === "worktree" && c.args[1] === "remove",
+    );
+    assert.strictEqual(removeCall, undefined);
+  });
+});
+
+describe("createOrchestrator timer", () => {
+  it("auto-assigns a task within poll interval", async () => {
+    const task = makeTask();
+    saveTask(tmpDir, task);
+
+    // Set up mock panes for listSessionPanes
+    mockPanes = [makePane({ id: "%1", title: "Agent 1", currentCommand: "zsh" })];
+
+    const config = makeConfig({ pollInterval: 50, masterPane: null });
+
+    const stop = createOrchestrator(config);
+
+    // Wait for a few ticks
+    await new Promise((resolve) => setTimeout(resolve, 200));
+
+    stop();
+
+    const loaded = loadTask(tmpDir, "001");
+    assert.strictEqual(loaded?.status, "in-progress");
+    assert.strictEqual(loaded?.assignee, "Agent 1");
+  });
+
+  it("stops polling when returned function is called", async () => {
+    mockPanes = [];
+
+    const config = makeConfig({ pollInterval: 50 });
+
+    const stop = createOrchestrator(config);
+    stop();
+
+    // Create a task after stopping — it should not be assigned
+    const task = makeTask();
+    saveTask(tmpDir, task);
+
+    await new Promise((resolve) => setTimeout(resolve, 200));
+
+    const loaded = loadTask(tmpDir, "001");
+    assert.strictEqual(loaded?.status, "todo");
+    assert.strictEqual(loaded?.assignee, null);
+  });
+});
+
+describe("dispatch with version-string agent", () => {
+  it("assigns task to agent reporting version string as command", () => {
+    const task = makeTask();
+    saveTask(tmpDir, task);
+
+    // Simulate Claude Code showing version as command
+    const panes: PaneInfo[] = [
+      makePane({ id: "%1", title: "Claude Code", currentCommand: "2.1.80" }),
+    ];
+    mockPanes = panes;
+
+    const config = makeConfig({ masterPane: null });
+    const state = makeState();
+
+    dispatch(config, state, [task], panes);
+
+    const loaded = loadTask(tmpDir, "001");
+    assert.strictEqual(loaded?.assignee, "Claude Code");
+    assert.strictEqual(loaded?.status, "in-progress");
+  });
+
+  it("does not assign to busy agent with spinner", () => {
+    const task = makeTask();
+    saveTask(tmpDir, task);
+
+    const panes: PaneInfo[] = [
+      makePane({ id: "%1", title: "⠙ Thinking...", currentCommand: "2.1.80" }),
+    ];
+    mockPanes = panes;
+
+    const config = makeConfig({ masterPane: null });
+    const state = makeState();
+
+    dispatch(config, state, [task], panes);
+
+    const loaded = loadTask(tmpDir, "001");
+    assert.strictEqual(loaded?.assignee, null);
+    assert.strictEqual(loaded?.status, "todo");
   });
 });

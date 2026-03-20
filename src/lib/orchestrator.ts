@@ -5,10 +5,9 @@ import { loadMission, loadGoal, loadTasks, saveTask, loadTask, type Task } from 
 import {
   listSessionPanes,
   sendCommand,
-  getPaneBusyStatus,
   type PaneInfo,
 } from "../widgets/lib/pane-comms.ts";
-import { createWorktree } from "./worktree.ts";
+import { createWorktree, removeWorktree } from "./worktree.ts";
 
 export interface OrchestratorConfig {
   session: string;
@@ -20,11 +19,13 @@ export interface OrchestratorConfig {
   masterPane: string | null;
   beforeRun: string | null;
   afterRun: string | null;
+  cleanupOnDone: boolean;
 }
 
 export interface OrchestratorState {
   lastActivity: Map<string, number>;
   previousTasks: Map<string, string>;
+  claimedTasks: Set<string>;
 }
 
 export function runHook(
@@ -38,6 +39,37 @@ export function runHook(
     const message = err instanceof Error ? err.message : String(err);
     return { ok: false, error: message };
   }
+}
+
+// Agent detection: Claude Code reports its version (e.g. "2.1.80") as currentCommand,
+// not "claude". Detect agents by checking both the command name and the pane title.
+const SHELL_COMMANDS = new Set(["zsh", "bash", "sh", "fish"]);
+const AGENT_COMMANDS = new Set(["claude", "codex"]);
+const SPINNERS = /^[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏⠂⠒⠢⠆⠐⠠⠄◐◓◑◒|/\\-] /;
+const VERSION_PATTERN = /^\d+\.\d+/;
+
+export function isAgentPane(pane: PaneInfo): boolean {
+  const cmd = pane.currentCommand.toLowerCase();
+  if (AGENT_COMMANDS.has(cmd)) return true;
+  // Claude Code shows its version string as the command (e.g. "2.1.80")
+  if (VERSION_PATTERN.test(cmd) && /claude/i.test(pane.title)) return true;
+  // Title-based detection
+  if (/claude\s*code/i.test(pane.title)) return true;
+  return false;
+}
+
+export function isAgentBusy(pane: PaneInfo): boolean {
+  // Spinner chars in pane title indicate the agent is actively working
+  return SPINNERS.test(pane.title);
+}
+
+export function isIdleForDispatch(pane: PaneInfo): boolean {
+  const cmd = pane.currentCommand.toLowerCase();
+  // Running a shell → idle
+  if (SHELL_COMMANDS.has(cmd)) return true;
+  // Agent pane that is NOT showing a spinner → idle (waiting for input)
+  if (isAgentPane(pane) && !isAgentBusy(pane)) return true;
+  return false;
 }
 
 function worktreePathForTask(config: OrchestratorConfig, task: Task): string | null {
@@ -98,21 +130,23 @@ export function dispatch(
   tasks: Task[],
   panes: PaneInfo[],
 ): void {
-  // Find idle agent panes (running shell, not the master pane)
+  // Find idle agent panes (not the master pane)
   const idleAgents = panes.filter((p) => {
     if (p.title === config.masterPane) return false;
-    const status = getPaneBusyStatus(config.session, p.id);
-    return status === "idle";
+    return isIdleForDispatch(p);
   });
 
-  // Find unassigned todo tasks, sorted by priority
+  // Find unassigned todo tasks that haven't been claimed, sorted by priority
   const todoTasks = tasks
-    .filter((t) => t.status === "todo" && !t.assignee)
+    .filter((t) => t.status === "todo" && !t.assignee && !state.claimedTasks.has(t.id))
     .sort((a, b) => a.priority - b.priority);
 
   for (const agent of idleAgents) {
     const task = todoTasks.shift();
     if (!task) break;
+
+    // Claim lock: prevent double-dispatch across poll ticks
+    state.claimedTasks.add(task.id);
 
     // Create git worktree
     const slug = slugify(task.title);
@@ -127,11 +161,12 @@ export function dispatch(
     if (config.beforeRun) {
       const result = runHook(config.beforeRun, worktreePath);
       if (!result.ok) {
+        state.claimedTasks.delete(task.id);
         continue;
       }
     }
 
-    // Claim task
+    // Assign task
     task.assignee = agent.title;
     task.status = "in-progress";
     task.branch = branch;
@@ -183,12 +218,19 @@ export function detectCompletions(
   for (const task of tasks) {
     const prev = state.previousTasks.get(task.id);
     if (prev === "in-progress" && task.status === "done") {
+      // Clear claim lock
+      state.claimedTasks.delete(task.id);
+
+      const wt = worktreePathForTask(config, task);
+
       // Run after_run hook (failure is logged but ignored)
-      if (config.afterRun) {
-        const wt = worktreePathForTask(config, task);
-        if (wt) {
-          runHook(config.afterRun, wt);
-        }
+      if (config.afterRun && wt) {
+        runHook(config.afterRun, wt);
+      }
+
+      // Cleanup worktree if configured
+      if (config.cleanupOnDone && wt) {
+        removeWorktree(config.dir, wt);
       }
 
       if (config.masterPane) {
@@ -212,6 +254,7 @@ export function createOrchestrator(config: OrchestratorConfig): () => void {
   const state: OrchestratorState = {
     lastActivity: new Map(),
     previousTasks: new Map(),
+    claimedTasks: new Set(),
   };
 
   // Initialize previous state
