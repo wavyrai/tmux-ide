@@ -177,8 +177,8 @@ export function dispatch(
     .filter((t) => {
       // Skip if already claimed
       if (state.claimedTasks.has(t.id)) return false;
-      // Regular todo tasks
-      if (t.status === "todo" && !t.assignee) {
+      // Regular todo tasks (skip if already has a branch — was dispatched before)
+      if (t.status === "todo" && !t.assignee && !t.branch) {
         // Check dependencies: all depends_on tasks must be done
         if (t.depends_on && t.depends_on.length > 0) {
           const allDepsDone = t.depends_on.every((depId) => {

@@ -81,3 +81,35 @@ export async function updateTask(
   );
   return res.ok;
 }
+
+export async function createTask(
+  sessionName: string,
+  fields: {
+    title: string;
+    description?: string;
+    priority?: number;
+    goal?: string;
+    tags?: string[];
+  },
+): Promise<boolean> {
+  const res = await fetch(
+    `${API_BASE}/api/project/${encodeURIComponent(sessionName)}/task`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(fields),
+    },
+  );
+  return res.ok;
+}
+
+export async function deleteTaskApi(
+  sessionName: string,
+  taskId: string,
+): Promise<boolean> {
+  const res = await fetch(
+    `${API_BASE}/api/project/${encodeURIComponent(sessionName)}/task/${encodeURIComponent(taskId)}`,
+    { method: "DELETE" },
+  );
+  return res.ok;
+}

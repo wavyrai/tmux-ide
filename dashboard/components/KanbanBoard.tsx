@@ -17,13 +17,15 @@ import { useDraggable } from "@dnd-kit/core";
 import { CSS } from "@dnd-kit/utilities";
 import { TaskCard } from "./TaskCard";
 import { TaskDetail } from "./TaskDetail";
+import { CreateTaskModal } from "./CreateTaskModal";
 import { updateTask } from "@/lib/api";
-import type { Task, AgentDetail } from "@/lib/types";
+import type { Task, AgentDetail, Goal } from "@/lib/types";
 
 interface KanbanBoardProps {
   tasks: Task[];
   sessionName: string;
   agents: AgentDetail[];
+  goals?: Goal[];
   onRefresh: () => void;
 }
 
@@ -44,6 +46,7 @@ function DroppableColumn({
   children,
   isOver,
   count,
+  onAction,
 }: {
   status: string;
   label: string;
@@ -51,6 +54,7 @@ function DroppableColumn({
   children: React.ReactNode;
   isOver: boolean;
   count: number;
+  onAction?: () => void;
 }) {
   const { setNodeRef } = useDroppable({ id: status });
 
@@ -63,7 +67,17 @@ function DroppableColumn({
     >
       <div className="flex items-center justify-between px-2 h-6 bg-[var(--surface)] border-b border-[var(--border)] shrink-0">
         <span style={{ color }}>{label}</span>
-        <span className="text-[var(--dim)]">{count}</span>
+        <div className="flex items-center gap-2">
+          {onAction && (
+            <button
+              onClick={onAction}
+              className="text-[var(--dim)] hover:text-[var(--accent)] transition-colors text-[13px] leading-none"
+            >
+              +
+            </button>
+          )}
+          <span className="text-[var(--dim)]">{count}</span>
+        </div>
       </div>
       <div className="flex-1 overflow-auto p-px">{children}</div>
     </div>
@@ -100,11 +114,13 @@ export function KanbanBoard({
   tasks,
   sessionName,
   agents,
+  goals = [],
   onRefresh,
 }: KanbanBoardProps) {
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [overColumn, setOverColumn] = useState<string | null>(null);
+  const [showCreate, setShowCreate] = useState(false);
 
   const selectedTask = selectedTaskId
     ? tasks.find((t) => t.id === selectedTaskId) ?? null
@@ -174,6 +190,7 @@ export function KanbanBoard({
                 color={col.color}
                 count={colTasks.length}
                 isOver={overColumn === col.status}
+                onAction={col.status === "todo" ? () => setShowCreate(true) : undefined}
               >
                 {colTasks.map((t) => (
                   <DraggableCard
@@ -214,6 +231,15 @@ export function KanbanBoard({
           agents={agents}
           onClose={() => setSelectedTaskId(null)}
           onUpdated={onRefresh}
+        />
+      )}
+
+      {showCreate && (
+        <CreateTaskModal
+          sessionName={sessionName}
+          goals={goals}
+          onClose={() => setShowCreate(false)}
+          onCreated={onRefresh}
         />
       )}
     </>
