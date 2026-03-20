@@ -1,12 +1,12 @@
 "use client";
 
-import { useRef, useEffect, useCallback } from "react";
-import { EditorView, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter } from "@codemirror/view";
-import { EditorState } from "@codemirror/state";
-import { markdown } from "@codemirror/lang-markdown";
-import { oneDark } from "@codemirror/theme-one-dark";
-import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
-import { syntaxHighlighting, defaultHighlightStyle } from "@codemirror/language";
+import { useEffect, useRef, useCallback } from "react";
+import { Editor, defaultValueCtx, rootCtx } from "@milkdown/core";
+import { commonmark } from "@milkdown/preset-commonmark";
+import { nord } from "@milkdown/theme-nord";
+import { Milkdown, MilkdownProvider, useEditor, useInstance } from "@milkdown/react";
+import { getMarkdown } from "@milkdown/utils";
+import "@milkdown/theme-nord/style.css";
 
 interface MarkdownEditorProps {
   value: string;
@@ -14,106 +14,90 @@ interface MarkdownEditorProps {
   onSave: (value: string) => void;
 }
 
-// Custom theme overrides to match dashboard CSS variables
-const dashboardTheme = EditorView.theme({
-  "&": {
-    backgroundColor: "var(--bg)",
-    color: "var(--fg)",
-    fontSize: "13px",
-    fontFamily: "'IBM Plex Mono', ui-monospace, monospace",
-  },
-  ".cm-content": {
-    caretColor: "var(--accent)",
-    lineHeight: "1.5",
-    padding: "8px 0",
-  },
-  "&.cm-focused .cm-cursor": {
-    borderLeftColor: "var(--accent)",
-  },
-  "&.cm-focused .cm-selectionBackground, .cm-selectionBackground": {
-    backgroundColor: "var(--surface-active) !important",
-  },
-  ".cm-gutters": {
-    backgroundColor: "var(--surface)",
-    color: "var(--dimmer)",
-    border: "none",
-    borderRight: "1px solid var(--border)",
-  },
-  ".cm-activeLineGutter": {
-    backgroundColor: "var(--surface-active)",
-  },
-  ".cm-activeLine": {
-    backgroundColor: "var(--surface-hover)",
-  },
-  ".cm-line": {
-    padding: "0 8px",
-  },
-});
-
-export function MarkdownEditor({ value, onChange, onSave }: MarkdownEditorProps) {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const viewRef = useRef<EditorView | null>(null);
-  const onSaveRef = useRef(onSave);
+function MilkdownEditor({ value, onChange, onSave }: MarkdownEditorProps) {
   const onChangeRef = useRef(onChange);
-  onSaveRef.current = onSave;
+  const onSaveRef = useRef(onSave);
   onChangeRef.current = onChange;
+  onSaveRef.current = onSave;
 
-  useEffect(() => {
-    if (!containerRef.current) return;
-
-    const saveKeymap = keymap.of([
-      {
-        key: "Mod-s",
-        run: (view) => {
-          onSaveRef.current(view.state.doc.toString());
-          return true;
-        },
-      },
-    ]);
-
-    const updateListener = EditorView.updateListener.of((update) => {
-      if (update.docChanged) {
-        onChangeRef.current(update.state.doc.toString());
-      }
-    });
-
-    const state = EditorState.create({
-      doc: value,
-      extensions: [
-        saveKeymap,
-        history(),
-        keymap.of([...defaultKeymap, ...historyKeymap]),
-        lineNumbers(),
-        highlightActiveLine(),
-        highlightActiveLineGutter(),
-        markdown(),
-        oneDark,
-        dashboardTheme,
-        syntaxHighlighting(defaultHighlightStyle),
-        updateListener,
-        EditorView.lineWrapping,
-      ],
-    });
-
-    const view = new EditorView({
-      state,
-      parent: containerRef.current,
-    });
-
-    viewRef.current = view;
-
-    return () => {
-      view.destroy();
-      viewRef.current = null;
-    };
-    // Only create once — value changes handled by parent remounting
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEditor((root) => {
+    return Editor.make()
+      .config((ctx) => {
+        ctx.set(rootCtx, root);
+        ctx.set(defaultValueCtx, value);
+      })
+      .config(nord)
+      .use(commonmark);
   }, []);
 
+  const [loading, getInstance] = useInstance();
+
+  // Extract markdown on changes via MutationObserver on ProseMirror
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const observerRef = useRef<MutationObserver | null>(null);
+
+  const extractMarkdown = useCallback(() => {
+    if (loading) return;
+    const editor = getInstance();
+    if (!editor) return;
+    try {
+      const md = editor.action(getMarkdown());
+      onChangeRef.current(md);
+    } catch {
+      // Editor may not be ready
+    }
+  }, [loading, getInstance]);
+
+  useEffect(() => {
+    const el = containerRef.current?.querySelector(".ProseMirror");
+    if (!el) return;
+
+    observerRef.current = new MutationObserver(() => {
+      extractMarkdown();
+    });
+
+    observerRef.current.observe(el, {
+      childList: true,
+      subtree: true,
+      characterData: true,
+    });
+
+    return () => {
+      observerRef.current?.disconnect();
+    };
+  }, [loading, extractMarkdown]);
+
+  // Ctrl+S / Cmd+S
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if ((e.metaKey || e.ctrlKey) && e.key === "s") {
+        e.preventDefault();
+        if (loading) return;
+        const editor = getInstance();
+        if (!editor) return;
+        try {
+          const md = editor.action(getMarkdown());
+          onSaveRef.current(md);
+        } catch {
+          // ignore
+        }
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [loading, getInstance]);
+
   return (
-    <div
-      ref={containerRef}
-      className="flex-1 min-h-0 overflow-hidden [&_.cm-editor]:h-full [&_.cm-scroller]:overflow-auto"
-    />
+    <div ref={containerRef} className="milkdown-wrap flex-1 min-h-0 overflow-auto">
+      <Milkdown />
+    </div>
+  );
+}
+
+export function MarkdownEditor(props: MarkdownEditorProps) {
+  return (
+    <MilkdownProvider>
+      <MilkdownEditor {...props} />
+    </MilkdownProvider>
   );
 }
