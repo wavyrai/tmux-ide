@@ -7,6 +7,7 @@ import { usePolling } from "@/lib/usePolling";
 import { ProgressBar } from "@/components/ProgressBar";
 import { AgentCard } from "@/components/AgentCard";
 import { KanbanBoard } from "@/components/KanbanBoard";
+import { DiffPanel } from "@/components/DiffPanel";
 import { StatusBar } from "@/components/StatusBar";
 import type { ProjectDetail } from "@/lib/types";
 
@@ -153,9 +154,7 @@ export default function ProjectPage() {
       )}
 
       {activeTab === "diffs" && (
-        <div className="flex-1 flex items-center justify-center text-[var(--dim)]">
-          diff viewer — loading...
-        </div>
+        <DiffPanel sessionName={project.session} />
       )}
 
       {activeTab === "activity" && (
