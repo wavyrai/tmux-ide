@@ -73,8 +73,27 @@ export function runHook(
 // not "claude". Detect agents by checking both the command name and the pane title.
 const SHELL_COMMANDS = new Set(["zsh", "bash", "sh", "fish"]);
 const AGENT_COMMANDS = new Set(["claude", "codex"]);
-const SPINNERS = /^[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏⠂⠒⠢⠆⠐⠠⠄◐◓◑◒|/\\-] /;
+const SPINNERS = /^[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏⠂⠒⠢⠆⠐⠠⠄◐◓◑◒✳|/\\-] /;
 const VERSION_PATTERN = /^\d+\.\d+/;
+
+// Strip spinner/status prefix from pane title to get stable name
+export function normalizePaneTitle(title: string): string {
+  return title.replace(SPINNERS, "").trim();
+}
+
+// French names for agents — fun, memorable, and stable across spinner changes
+const AGENT_NAMES = [
+  "François", "Amélie", "Louis", "Camille", "Marcel",
+  "Colette", "Henri", "Margaux", "René", "Léonie",
+  "Étienne", "Fleur", "Gaston", "Isabelle", "Jacques",
+  "Lucienne", "Nicolas", "Odette", "Pierre", "Rosalie",
+];
+
+// Get a stable, memorable identifier for an agent pane
+export function agentIdentifier(pane: PaneInfo): string {
+  // Use pane index to assign a consistent French name
+  return AGENT_NAMES[pane.index % AGENT_NAMES.length] ?? `Agent ${pane.index}`;
+}
 
 export function isAgentPane(pane: PaneInfo): boolean {
   const cmd = pane.currentCommand.toLowerCase();
@@ -232,8 +251,8 @@ export function dispatch(
       }
     }
 
-    // Assign task
-    task.assignee = agent.title;
+    // Assign task — use stable identifier, not raw title (which has spinners)
+    task.assignee = agentIdentifier(agent);
     task.status = "in-progress";
     task.branch = branch;
     task.updated = new Date().toISOString();
@@ -268,7 +287,7 @@ export function detectStalls(
 ): void {
   const now = Date.now();
   for (const task of tasks.filter((t) => t.status === "in-progress" && t.assignee)) {
-    const agentPane = panes.find((p) => p.title === task.assignee);
+    const agentPane = panes.find((p) => agentIdentifier(p) === task.assignee);
     if (!agentPane) continue;
 
     const lastSeen = state.lastActivity.get(agentPane.id) ?? now;
@@ -376,11 +395,11 @@ export function reconcile(
   tasks: Task[],
   panes: PaneInfo[],
 ): void {
-  const paneNames = new Set(panes.map((p) => p.title));
+  const agentIds = new Set(panes.map((p) => agentIdentifier(p)));
 
   for (const task of tasks.filter((t) => t.status === "in-progress" && t.assignee)) {
     // Check if the assigned agent's pane still exists
-    if (!paneNames.has(task.assignee!)) {
+    if (!agentIds.has(task.assignee!)) {
       const agent = task.assignee!;
       // Agent crashed or pane was closed — release the task
       task.assignee = null;
