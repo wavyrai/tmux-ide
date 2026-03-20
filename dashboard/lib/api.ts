@@ -103,6 +103,34 @@ export async function createTask(
   return res.ok;
 }
 
+export interface PlanSummary {
+  name: string;
+  path: string;
+}
+
+export async function fetchPlans(name: string): Promise<PlanSummary[]> {
+  const res = await fetch(
+    `${API_BASE}/api/project/${encodeURIComponent(name)}/plans`,
+    { cache: "no-store" },
+  );
+  if (!res.ok) return [];
+  const data = (await res.json()) as { plans: PlanSummary[] };
+  return data.plans;
+}
+
+export async function fetchPlan(
+  name: string,
+  filename: string,
+): Promise<string> {
+  const res = await fetch(
+    `${API_BASE}/api/project/${encodeURIComponent(name)}/plans/${encodeURIComponent(filename)}`,
+    { cache: "no-store" },
+  );
+  if (!res.ok) return "";
+  const data = (await res.json()) as { name: string; content: string };
+  return data.content;
+}
+
 export async function deleteTaskApi(
   sessionName: string,
   taskId: string,

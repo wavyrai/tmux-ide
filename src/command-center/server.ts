@@ -1,4 +1,6 @@
 import { execFileSync } from "node:child_process";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
 import { cors } from "hono/cors";
@@ -130,6 +132,50 @@ export function createApp(): Hono {
       return c.json({ error: "Task not found" }, 404);
     }
     return c.json({ ok: true, deleted: taskId });
+  });
+
+  // List plan files
+  app.get("/api/project/:name/plans", (c) => {
+    const name = c.req.param("name");
+    const sessions = discoverSessions();
+    const session = sessions.find((s) => s.name === name);
+    if (!session) {
+      return c.json({ error: "Session not found" }, 404);
+    }
+
+    const plansDir = join(session.dir, "plans");
+    if (!existsSync(plansDir)) {
+      return c.json({ plans: [] });
+    }
+
+    const plans = readdirSync(plansDir)
+      .filter((f) => f.endsWith(".md"))
+      .sort()
+      .map((f) => ({ name: f.replace(/\.md$/, ""), path: f }));
+
+    return c.json({ plans });
+  });
+
+  // Read a single plan file
+  app.get("/api/project/:name/plans/:filename", (c) => {
+    const name = c.req.param("name");
+    const filename = c.req.param("filename");
+    const sessions = discoverSessions();
+    const session = sessions.find((s) => s.name === name);
+    if (!session) {
+      return c.json({ error: "Session not found" }, 404);
+    }
+
+    // Sanitize filename — no path traversal
+    const safeName = filename.replace(/[^a-zA-Z0-9_\-. ]/g, "");
+    const filePath = join(session.dir, "plans", safeName.endsWith(".md") ? safeName : `${safeName}.md`);
+
+    if (!existsSync(filePath)) {
+      return c.json({ error: "Plan not found" }, 404);
+    }
+
+    const content = readFileSync(filePath, "utf-8");
+    return c.json({ name: safeName.replace(/\.md$/, ""), content });
   });
 
   app.get("/api/project/:name/diff", (c) => {
