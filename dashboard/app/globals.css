@@ -162,3 +162,43 @@
   border-color: var(--border);
   margin: 1.5em 0;
 }
+
+/* Milkdown editor overrides */
+.milkdown-wrap .milkdown {
+  background: var(--bg) !important;
+  color: var(--fg) !important;
+  font-family: 'IBM Plex Mono', ui-monospace, monospace !important;
+  font-size: 13px !important;
+  line-height: 1.5 !important;
+}
+.milkdown-wrap .milkdown .editor {
+  padding: 16px !important;
+}
+.milkdown-wrap .ProseMirror {
+  outline: none !important;
+  min-height: 100%;
+}
+.milkdown-wrap .ProseMirror h1,
+.milkdown-wrap .ProseMirror h2,
+.milkdown-wrap .ProseMirror h3,
+.milkdown-wrap .ProseMirror h4 {
+  color: var(--accent) !important;
+}
+.milkdown-wrap .ProseMirror code {
+  background: var(--surface) !important;
+  color: var(--fg) !important;
+}
+.milkdown-wrap .ProseMirror pre {
+  background: var(--surface) !important;
+  border: 1px solid var(--border) !important;
+}
+.milkdown-wrap .ProseMirror a {
+  color: var(--cyan) !important;
+}
+.milkdown-wrap .ProseMirror blockquote {
+  border-left-color: var(--border) !important;
+  color: var(--dim) !important;
+}
+.milkdown-wrap .ProseMirror ::selection {
+  background: var(--surface-active) !important;
+}
