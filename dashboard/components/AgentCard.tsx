@@ -16,8 +16,8 @@ export function AgentCard({ agent: a }: AgentCardProps) {
       <span className="w-[16ch] shrink-0 text-[var(--fg)] truncate">
         {a.paneTitle}
       </span>
-      <span className="flex-1 truncate text-[var(--dim)]">
-        {a.taskTitle ?? "idle"}
+      <span className={`flex-1 truncate ${a.taskTitle ? "text-[var(--fg-secondary)]" : "text-[var(--dim)]"}`}>
+        {a.taskTitle ?? (a.isBusy ? "working..." : "idle")}
       </span>
       {a.elapsed && (
         <span className="text-[var(--dim)] shrink-0 pl-2">{a.elapsed}</span>
