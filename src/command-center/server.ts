@@ -20,6 +20,7 @@ import {
   type Task,
 } from "../lib/task-store.ts";
 import { readEvents, type OrchestratorEvent } from "../lib/event-log.ts";
+import { extractAuthorship } from "../lib/authorship.ts";
 
 export function createApp(): Hono {
   const app = new Hono();
@@ -174,8 +175,9 @@ export function createApp(): Hono {
       return c.json({ error: "Plan not found" }, 404);
     }
 
-    const content = readFileSync(filePath, "utf-8");
-    return c.json({ name: safeName.replace(/\.md$/, ""), content });
+    const raw = readFileSync(filePath, "utf-8");
+    const { content, authorship } = extractAuthorship(raw);
+    return c.json({ name: safeName.replace(/\.md$/, ""), content, authorship });
   });
 
   app.get("/api/project/:name/diff", (c) => {
