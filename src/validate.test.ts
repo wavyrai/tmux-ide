@@ -155,7 +155,7 @@ describe("validateConfig", () => {
         },
       ],
     });
-    assert.ok(errors.includes('rows[0].panes[0].role must be "lead" or "teammate"'));
+    assert.ok(errors.includes('rows[0].panes[0].role must be "lead", "teammate", or "planner"'));
     assert.ok(errors.includes("rows[0].panes[0].task must be a string"));
   });
 

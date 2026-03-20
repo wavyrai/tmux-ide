@@ -293,6 +293,129 @@ export function dispatch(
   }
 }
 
+// --- Goal-level dispatch (planner agents) ---
+
+function matchesSpecialty(goalSpecialty: string | undefined, plannerSpecialties: string[]): boolean {
+  if (!goalSpecialty) return true; // no specialty = any planner
+  if (plannerSpecialties.length === 0) return true; // no planner specialty = takes anything
+  const goalTags = goalSpecialty.split(",").map((s) => s.trim().toLowerCase());
+  return goalTags.some((tag) => plannerSpecialties.includes(tag));
+}
+
+export function getPaneSpecialties(
+  config: OrchestratorConfig,
+  pane: PaneInfo,
+): string[] {
+  // Check the pre-parsed paneSpecialties map (built from ide.yml config)
+  const specs = config.paneSpecialties.get(pane.title);
+  if (specs) return specs;
+  return [];
+}
+
+function isPlannerPane(config: OrchestratorConfig, pane: PaneInfo): boolean {
+  // A pane is a planner if it has specialty configured, or the paneSpecialties map has it
+  if (config.paneSpecialties.has(pane.title)) return true;
+  // Also detect by agent command (claude/codex) that isn't the master pane
+  if (pane.title === config.masterPane) return false;
+  return isAgentPane(pane);
+}
+
+function slugifyGoal(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, 30);
+}
+
+export function buildGoalPrompt(
+  dir: string,
+  goal: Goal,
+  planner: PaneInfo,
+): string {
+  const mission = loadMission(dir);
+  const name = agentIdentifier(planner);
+  const specialtyLabel = goal.specialty ?? "general";
+
+  let prompt = `You are ${name}, a ${specialtyLabel} planner.\n\n`;
+
+  if (mission) {
+    prompt += `Mission: ${mission.title}\n`;
+    if (mission.description) prompt += `${mission.description}\n`;
+    prompt += "\n";
+  }
+
+  prompt += `Your Goal: ${goal.title}\n`;
+  if (goal.acceptance) prompt += `Acceptance Criteria: ${goal.acceptance}\n`;
+  prompt += `Priority: P${goal.priority}\n\n`;
+
+  prompt += `Instructions:\n`;
+  prompt += `1. Read plans/MISSION.md for architectural context (if it exists)\n`;
+  prompt += `2. Create your plan file: plans/goal-${goal.id}-${slugifyGoal(goal.title)}.md\n`;
+  prompt += `   Include: analysis, approach, task breakdown, risks\n`;
+  prompt += `3. Create tasks for your goal:\n`;
+  prompt += `   tmux-ide task create "task title" --goal ${goal.id} --priority N\n`;
+  prompt += `4. Execute tasks using Claude Code subagents for parallel work\n`;
+  prompt += `5. Update your plan file as tasks complete\n`;
+  prompt += `6. Review all completed work for quality\n`;
+  prompt += `7. When done: tmux-ide goal done ${goal.id} --proof "summary of what was accomplished"\n\n`;
+  prompt += `You own this goal end-to-end. Plan it, execute it, deliver it.\n`;
+
+  return prompt;
+}
+
+export function dispatchGoals(
+  config: OrchestratorConfig,
+  state: OrchestratorState,
+  goals: Goal[],
+  tasks: Task[],
+  panes: PaneInfo[],
+): void {
+  // Find idle planner panes (not the master pane)
+  const idlePlanners = panes.filter((p) => {
+    if (p.title === config.masterPane) return false;
+    if (!isPlannerPane(config, p)) return false;
+    return isIdleForDispatch(p);
+  });
+
+  // Find unassigned goals sorted by priority
+  const todoGoals = goals
+    .filter((g) => g.status === "todo" && !g.assignee)
+    .sort((a, b) => a.priority - b.priority);
+
+  for (const planner of idlePlanners) {
+    const plannerSpecs = getPaneSpecialties(config, planner);
+
+    // Find best matching goal
+    const goal = todoGoals.find((g) => matchesSpecialty(g.specialty, plannerSpecs));
+    if (!goal) continue;
+
+    // Remove from candidates
+    todoGoals.splice(todoGoals.indexOf(goal), 1);
+
+    // Assign goal to planner
+    goal.assignee = agentIdentifier(planner);
+    goal.status = "in-progress";
+    goal.updated = new Date().toISOString();
+    saveGoal(config.dir, goal);
+
+    // Send goal prompt
+    const prompt = buildGoalPrompt(config.dir, goal, planner);
+    sendCommand(config.session, planner.id, prompt);
+
+    // Log event
+    appendEvent(config.dir, {
+      timestamp: new Date().toISOString(),
+      type: "dispatch",
+      taskId: goal.id,
+      agent: planner.title,
+      message: `Dispatched goal "${goal.title}" to ${planner.title}`,
+    });
+
+    state.lastActivity.set(planner.id, Date.now());
+  }
+}
+
 export function detectStalls(
   config: OrchestratorConfig,
   state: OrchestratorState,
@@ -569,9 +692,14 @@ export function createOrchestrator(initialConfig: OrchestratorConfig): () => voi
     // 1. Reconcile: detect crashed agents, unassign their tasks
     reconcile(config, state, tasks, panes);
 
-    // 2. Auto-dispatch: assign todo/retry tasks to idle agents
+    // 2. Auto-dispatch: assign tasks or goals to idle agents
     if (config.autoDispatch) {
-      dispatch(config, state, tasks, panes);
+      if (config.dispatchMode === "goals") {
+        const goals = loadGoals(config.dir);
+        dispatchGoals(config, state, goals, tasks, panes);
+      } else {
+        dispatch(config, state, tasks, panes);
+      }
     }
 
     // 3. Detect stalls: nudge agents that haven't produced output
