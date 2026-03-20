@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, mkdirSync, realpathSync } from "node:fs";
+import { join, resolve } from "node:path";
 
 type GitExecutor = (args: string[], cwd: string) => string;
 
@@ -61,4 +61,52 @@ export function listWorktrees(projectDir: string): string[] {
   } catch {
     return [];
   }
+}
+
+function resolveReal(p: string): string {
+  // If the path exists, resolve symlinks fully
+  if (existsSync(p)) return realpathSync(p);
+
+  // For non-existent paths, resolve the nearest existing ancestor then append the rest
+  const resolved = resolve(p);
+  const parts = resolved.split("/");
+  for (let i = parts.length - 1; i >= 1; i--) {
+    const ancestor = parts.slice(0, i).join("/") || "/";
+    if (existsSync(ancestor)) {
+      const realAncestor = realpathSync(ancestor);
+      return realAncestor + "/" + parts.slice(i).join("/");
+    }
+  }
+  return resolved;
+}
+
+export function validateWorktreePath(
+  projectDir: string,
+  worktreeRoot: string,
+  worktreePath: string,
+): { valid: boolean; reason?: string } {
+  let realRoot: string;
+  try {
+    realRoot = resolveReal(resolve(projectDir, worktreeRoot));
+  } catch {
+    return { valid: false, reason: `Cannot resolve worktree root: ${resolve(projectDir, worktreeRoot)}` };
+  }
+
+  let realPath: string;
+  try {
+    realPath = resolveReal(worktreePath);
+  } catch {
+    return { valid: false, reason: `Cannot resolve worktree path: ${worktreePath}` };
+  }
+
+  // Ensure the worktree path is within the root (with trailing separator to prevent prefix attacks)
+  const rootPrefix = realRoot.endsWith("/") ? realRoot : realRoot + "/";
+  if (realPath !== realRoot && !realPath.startsWith(rootPrefix)) {
+    return {
+      valid: false,
+      reason: `Worktree path "${realPath}" escapes root "${realRoot}"`,
+    };
+  }
+
+  return { valid: true };
 }

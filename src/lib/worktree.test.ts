@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync, existsSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
-import { createWorktree, removeWorktree, listWorktrees } from "./worktree.ts";
+import { createWorktree, removeWorktree, listWorktrees, validateWorktreePath } from "./worktree.ts";
 
 let tmpDir: string;
 
@@ -78,5 +78,54 @@ describe("listWorktrees", () => {
     const trees = listWorktrees(tmpDir);
     assert.ok(trees.length >= 2);
     assert.ok(trees.some((t) => t.includes("001-listed")));
+  });
+});
+
+describe("validateWorktreePath", () => {
+  it("accepts a path within the worktree root", () => {
+    const root = join(tmpDir, ".worktrees");
+    mkdirSync(root, { recursive: true });
+    const wtPath = join(root, "001-test");
+    mkdirSync(wtPath, { recursive: true });
+
+    const result = validateWorktreePath(tmpDir, ".worktrees", wtPath);
+    assert.strictEqual(result.valid, true);
+    assert.strictEqual(result.reason, undefined);
+  });
+
+  it("rejects a path that escapes the worktree root", () => {
+    const result = validateWorktreePath(tmpDir, ".worktrees", "/etc/passwd");
+    assert.strictEqual(result.valid, false);
+    assert.ok(result.reason!.includes("escapes root"));
+  });
+
+  it("rejects a path using ../ to escape", () => {
+    const root = join(tmpDir, ".worktrees");
+    mkdirSync(root, { recursive: true });
+    // This resolves to tmpDir (parent of .worktrees) — outside root
+    const escapedPath = join(root, "..", "escape-attempt");
+
+    const result = validateWorktreePath(tmpDir, ".worktrees", escapedPath);
+    assert.strictEqual(result.valid, false);
+    assert.ok(result.reason!.includes("escapes root"));
+  });
+
+  it("works with non-existent but valid paths", () => {
+    const root = join(tmpDir, ".worktrees");
+    mkdirSync(root, { recursive: true });
+    const wtPath = join(root, "future-worktree");
+
+    const result = validateWorktreePath(tmpDir, ".worktrees", wtPath);
+    assert.strictEqual(result.valid, true);
+  });
+
+  it("handles symlink resolution", () => {
+    const root = join(tmpDir, ".worktrees");
+    mkdirSync(root, { recursive: true });
+    const realDir = join(root, "real-001");
+    mkdirSync(realDir);
+
+    const result = validateWorktreePath(tmpDir, ".worktrees", realDir);
+    assert.strictEqual(result.valid, true);
   });
 });
