@@ -209,6 +209,7 @@ if (isMainModule) {
             beforeRun: (orch.before_run as string) ?? null,
             afterRun: (orch.after_run as string) ?? null,
             cleanupOnDone: (orch.cleanup_on_done as boolean) ?? false,
+            maxConcurrentAgents: (orch.max_concurrent_agents as number) ?? 10,
           });
 
           process.on("SIGTERM", () => {

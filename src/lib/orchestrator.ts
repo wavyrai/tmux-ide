@@ -21,6 +21,7 @@ export interface OrchestratorConfig {
   beforeRun: string | null;
   afterRun: string | null;
   cleanupOnDone: boolean;
+  maxConcurrentAgents: number;
 }
 
 export interface OrchestratorState {
@@ -138,14 +139,45 @@ export function dispatch(
     return isIdleForDispatch(p);
   });
 
+  // Concurrency control: don't exceed max concurrent agents
+  const maxConcurrent = config.maxConcurrentAgents ?? 10;
+  const inProgressCount = tasks.filter((t) => t.status === "in-progress").length;
+  const availableSlots = Math.max(0, maxConcurrent - inProgressCount);
+  if (availableSlots === 0) return;
+
   // Find unassigned todo tasks that haven't been claimed, sorted by priority
+  // Also include retry-eligible tasks (nextRetryAt in the past)
+  const now = Date.now();
   const todoTasks = tasks
-    .filter((t) => t.status === "todo" && !t.assignee && !state.claimedTasks.has(t.id))
+    .filter((t) => {
+      // Skip if already claimed
+      if (state.claimedTasks.has(t.id)) return false;
+      // Regular todo tasks
+      if (t.status === "todo" && !t.assignee) {
+        // Check dependencies: all depends_on tasks must be done
+        if (t.depends_on && t.depends_on.length > 0) {
+          const allDepsDone = t.depends_on.every((depId) => {
+            const dep = tasks.find((d) => d.id === depId);
+            return dep?.status === "done";
+          });
+          if (!allDepsDone) return false;
+        }
+        return true;
+      }
+      // Retry-eligible tasks (failed with nextRetryAt in the past)
+      if (t.nextRetryAt && t.retryCount < (t.maxRetries ?? 5)) {
+        const retryTime = new Date(t.nextRetryAt).getTime();
+        if (retryTime <= now) return true;
+      }
+      return false;
+    })
     .sort((a, b) => a.priority - b.priority);
 
-  for (const agent of idleAgents) {
+  const dispatchLimit = Math.min(availableSlots, idleAgents.length);
+  for (let i = 0; i < dispatchLimit; i++) {
     const task = todoTasks.shift();
     if (!task) break;
+    const agent = idleAgents[i]!;
 
     // Claim lock: prevent double-dispatch across poll ticks
     state.claimedTasks.add(task.id);
@@ -262,6 +294,27 @@ export function detectCompletions(
   }
 }
 
+export function reconcile(
+  config: OrchestratorConfig,
+  state: OrchestratorState,
+  tasks: Task[],
+  panes: PaneInfo[],
+): void {
+  const paneNames = new Set(panes.map((p) => p.title));
+
+  for (const task of tasks.filter((t) => t.status === "in-progress" && t.assignee)) {
+    // Check if the assigned agent's pane still exists
+    if (!paneNames.has(task.assignee!)) {
+      // Agent crashed or pane was closed — release the task
+      task.assignee = null;
+      task.status = "todo";
+      task.updated = new Date().toISOString();
+      saveTask(config.dir, task);
+      state.claimedTasks.delete(task.id);
+    }
+  }
+}
+
 export function createOrchestrator(config: OrchestratorConfig): () => void {
   const state: OrchestratorState = {
     lastActivity: new Map(),
@@ -279,11 +332,18 @@ export function createOrchestrator(config: OrchestratorConfig): () => void {
     const tasks = loadTasks(config.dir);
     const panes = listSessionPanes(config.session);
 
+    // 1. Reconcile: detect crashed agents, unassign their tasks
+    reconcile(config, state, tasks, panes);
+
+    // 2. Auto-dispatch: assign todo/retry tasks to idle agents
     if (config.autoDispatch) {
       dispatch(config, state, tasks, panes);
     }
 
+    // 3. Detect stalls: nudge agents that haven't produced output
     detectStalls(config, state, tasks, panes);
+
+    // 4. Detect completions: notify master, run hooks, cleanup
     detectCompletions(config, state, tasks, panes);
 
     // Update previous state
