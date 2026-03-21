@@ -18,6 +18,7 @@ import {
   gracefulShutdown,
   reloadConfig,
   reconcile,
+  agentIdentifier,
   type OrchestratorConfig,
   type OrchestratorState,
 } from "./orchestrator.ts";
@@ -144,7 +145,9 @@ describe("dispatch", () => {
     saveTask(tmpDir, task1);
     saveTask(tmpDir, task2);
 
-    const panes: PaneInfo[] = [makePane({ id: "%1", title: "Agent 1", currentCommand: "zsh" })];
+    const pane = makePane({ id: "%1", index: 0, title: "Agent 1", currentCommand: "zsh" });
+    const expectedName = agentIdentifier(pane);
+    const panes: PaneInfo[] = [pane];
     mockPanes = panes;
 
     const config = makeConfig();
@@ -154,7 +157,7 @@ describe("dispatch", () => {
 
     // Task 002 (higher priority) should be assigned first
     const assigned = loadTask(tmpDir, "002");
-    assert.strictEqual(assigned?.assignee, "Agent 1");
+    assert.strictEqual(assigned?.assignee, expectedName);
     assert.strictEqual(assigned?.status, "in-progress");
   });
 
@@ -162,9 +165,11 @@ describe("dispatch", () => {
     const task = makeTask();
     saveTask(tmpDir, task);
 
+    const agentPane = makePane({ id: "%1", index: 1, title: "Agent 1", currentCommand: "zsh" });
+    const expectedName = agentIdentifier(agentPane);
     const panes: PaneInfo[] = [
-      makePane({ id: "%0", title: "Master", currentCommand: "zsh" }),
-      makePane({ id: "%1", title: "Agent 1", currentCommand: "zsh" }),
+      makePane({ id: "%0", index: 0, title: "Master", currentCommand: "zsh" }),
+      agentPane,
     ];
     mockPanes = panes;
 
@@ -174,7 +179,7 @@ describe("dispatch", () => {
     dispatch(config, state, [task], panes);
 
     const assigned = loadTask(tmpDir, "001");
-    assert.strictEqual(assigned?.assignee, "Agent 1");
+    assert.strictEqual(assigned?.assignee, expectedName);
   });
 
   it("does not assign when no idle agents", () => {
@@ -218,9 +223,11 @@ describe("dispatch", () => {
 
 describe("detectStalls", () => {
   it("sends nudge after timeout", () => {
-    const task = makeTask({ status: "in-progress", assignee: "Agent 1" });
+    const pane = makePane({ id: "%1", index: 0, title: "Agent 1" });
+    const name = agentIdentifier(pane);
+    const task = makeTask({ status: "in-progress", assignee: name });
 
-    const panes: PaneInfo[] = [makePane({ id: "%1", title: "Agent 1" })];
+    const panes: PaneInfo[] = [pane];
 
     const config = makeConfig({ stallTimeout: 1000 });
     const state = makeState({
@@ -235,9 +242,11 @@ describe("detectStalls", () => {
   });
 
   it("does not nudge before timeout", () => {
-    const task = makeTask({ status: "in-progress", assignee: "Agent 1" });
+    const pane = makePane({ id: "%1", index: 0, title: "Agent 1" });
+    const name = agentIdentifier(pane);
+    const task = makeTask({ status: "in-progress", assignee: name });
 
-    const panes: PaneInfo[] = [makePane({ id: "%1", title: "Agent 1" })];
+    const panes: PaneInfo[] = [pane];
 
     const config = makeConfig({ stallTimeout: 300000 });
     const state = makeState({
@@ -391,7 +400,9 @@ describe("dispatch with hooks", () => {
     // Create the worktree directory so the hook can run in it
     mkdirSync(join(tmpDir, ".worktrees", "001-test-task"), { recursive: true });
 
-    const panes: PaneInfo[] = [makePane({ id: "%1", title: "Agent 1", currentCommand: "zsh" })];
+    const pane = makePane({ id: "%1", index: 0, title: "Agent 1", currentCommand: "zsh" });
+    const expectedName = agentIdentifier(pane);
+    const panes: PaneInfo[] = [pane];
     mockPanes = panes;
 
     // before_run that always succeeds
@@ -401,7 +412,7 @@ describe("dispatch with hooks", () => {
     dispatch(config, state, [task], panes);
 
     const loaded = loadTask(tmpDir, "001");
-    assert.strictEqual(loaded?.assignee, "Agent 1");
+    assert.strictEqual(loaded?.assignee, expectedName);
     assert.strictEqual(loaded?.status, "in-progress");
   });
 });
@@ -481,8 +492,8 @@ describe("isAgentPane", () => {
     assert.ok(!isAgentPane(makePane({ currentCommand: "zsh", title: "Shell" })));
   });
 
-  it("does not match version string without Claude in title", () => {
-    assert.ok(!isAgentPane(makePane({ currentCommand: "2.1.80", title: "Dev Server" })));
+  it("matches version string regardless of title (Claude Code reports version as command)", () => {
+    assert.ok(isAgentPane(makePane({ currentCommand: "2.1.80", title: "Dev Server" })));
   });
 });
 
@@ -652,8 +663,9 @@ describe("createOrchestrator timer", () => {
     const task = makeTask();
     saveTask(tmpDir, task);
 
-    // Set up mock panes for listSessionPanes
-    mockPanes = [makePane({ id: "%1", title: "Agent 1", currentCommand: "zsh" })];
+    const pane = makePane({ id: "%1", index: 0, title: "Agent 1", currentCommand: "zsh" });
+    const expectedName = agentIdentifier(pane);
+    mockPanes = [pane];
 
     const config = makeConfig({ pollInterval: 50, masterPane: null });
 
@@ -666,7 +678,7 @@ describe("createOrchestrator timer", () => {
 
     const loaded = loadTask(tmpDir, "001");
     assert.strictEqual(loaded?.status, "in-progress");
-    assert.strictEqual(loaded?.assignee, "Agent 1");
+    assert.strictEqual(loaded?.assignee, expectedName);
   });
 
   it("stops polling when returned function is called", async () => {
@@ -696,9 +708,9 @@ describe("dispatch with version-string agent", () => {
     mkdirSync(join(tmpDir, ".worktrees", "001-test-task"), { recursive: true });
 
     // Simulate Claude Code showing version as command
-    const panes: PaneInfo[] = [
-      makePane({ id: "%1", title: "Claude Code", currentCommand: "2.1.80" }),
-    ];
+    const pane = makePane({ id: "%1", index: 0, title: "Claude Code", currentCommand: "2.1.80" });
+    const expectedName = agentIdentifier(pane);
+    const panes: PaneInfo[] = [pane];
     mockPanes = panes;
 
     const config = makeConfig({ masterPane: null });
@@ -707,7 +719,7 @@ describe("dispatch with version-string agent", () => {
     dispatch(config, state, [task], panes);
 
     const loaded = loadTask(tmpDir, "001");
-    assert.strictEqual(loaded?.assignee, "Claude Code");
+    assert.strictEqual(loaded?.assignee, expectedName);
     assert.strictEqual(loaded?.status, "in-progress");
   });
 
@@ -778,7 +790,9 @@ describe("event logging integration", () => {
     saveTask(tmpDir, task);
     mkdirSync(join(tmpDir, ".worktrees", "001-test-task"), { recursive: true });
 
-    const panes: PaneInfo[] = [makePane({ id: "%1", title: "Agent 1", currentCommand: "zsh" })];
+    const pane = makePane({ id: "%1", index: 0, title: "Agent 1", currentCommand: "zsh" });
+    const expectedName = agentIdentifier(pane);
+    const panes: PaneInfo[] = [pane];
     mockPanes = panes;
 
     const config = makeConfig({ masterPane: null });
@@ -790,13 +804,15 @@ describe("event logging integration", () => {
     const dispatchEvent = events.find((e) => e.type === "dispatch");
     assert.ok(dispatchEvent);
     assert.strictEqual(dispatchEvent!.taskId, "001");
-    assert.strictEqual(dispatchEvent!.agent, "Agent 1");
+    assert.strictEqual(dispatchEvent!.agent, pane.title);
     assert.ok(dispatchEvent!.message.includes("Test task"));
   });
 
   it("logs stall events", () => {
-    const task = makeTask({ status: "in-progress", assignee: "Agent 1" });
-    const panes: PaneInfo[] = [makePane({ id: "%1", title: "Agent 1" })];
+    const pane = makePane({ id: "%1", index: 0, title: "Agent 1" });
+    const name = agentIdentifier(pane);
+    const task = makeTask({ status: "in-progress", assignee: name });
+    const panes: PaneInfo[] = [pane];
 
     const config = makeConfig({ stallTimeout: 1000 });
     const state = makeState({
@@ -809,7 +825,7 @@ describe("event logging integration", () => {
     const stallEvent = events.find((e) => e.type === "stall");
     assert.ok(stallEvent);
     assert.strictEqual(stallEvent!.taskId, "001");
-    assert.strictEqual(stallEvent!.agent, "Agent 1");
+    assert.strictEqual(stallEvent!.agent, name);
   });
 
   it("logs completion events", () => {
