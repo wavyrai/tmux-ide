@@ -8,6 +8,7 @@ import {
   detectStalls,
   detectCompletions,
   buildTaskPrompt,
+  buildGoalPrompt,
   runHook,
   createOrchestrator,
   isAgentPane,
@@ -19,6 +20,9 @@ import {
   reloadConfig,
   reconcile,
   agentIdentifier,
+  normalizePaneTitle,
+  getPaneSpecialties,
+  dispatchGoals,
   type OrchestratorConfig,
   type OrchestratorState,
 } from "./orchestrator.ts";
@@ -30,7 +34,9 @@ import {
   saveTask,
   loadTask,
   loadTasks,
+  loadGoal,
   type Task,
+  type Goal,
 } from "./task-store.ts";
 import { _setExecutor, type PaneInfo } from "../widgets/lib/pane-comms.ts";
 import { _setGitExecutor } from "./worktree.ts";
@@ -1004,5 +1010,198 @@ describe("gracefulShutdown", () => {
 
     assert.strictEqual(loadTask(tmpDir, "001")!.status, "done");
     assert.strictEqual(loadTask(tmpDir, "002")!.status, "todo");
+  });
+});
+
+describe("normalizePaneTitle", () => {
+  it("strips spinner prefix from pane title", () => {
+    assert.strictEqual(normalizePaneTitle("⠂ Claude Code"), "Claude Code");
+    assert.strictEqual(normalizePaneTitle("⠋ Working..."), "Working...");
+    assert.strictEqual(normalizePaneTitle("✳ Claude Code"), "Claude Code");
+    assert.strictEqual(normalizePaneTitle("◐ Thinking"), "Thinking");
+  });
+
+  it("returns title unchanged when no spinner prefix", () => {
+    assert.strictEqual(normalizePaneTitle("Agent 1"), "Agent 1");
+    assert.strictEqual(normalizePaneTitle("Claude Code"), "Claude Code");
+  });
+
+  it("handles empty string", () => {
+    assert.strictEqual(normalizePaneTitle(""), "");
+  });
+});
+
+describe("getPaneSpecialties", () => {
+  it("returns specialties from config map", () => {
+    const config = makeConfig({
+      paneSpecialties: new Map([["Frontend Agent", ["frontend", "css", "react"]]]),
+    });
+    const pane = makePane({ title: "Frontend Agent" });
+    const specs = getPaneSpecialties(config, pane);
+    assert.deepStrictEqual(specs, ["frontend", "css", "react"]);
+  });
+
+  it("returns empty array for pane with no specialties", () => {
+    const config = makeConfig({ paneSpecialties: new Map() });
+    const pane = makePane({ title: "Generic Agent" });
+    const specs = getPaneSpecialties(config, pane);
+    assert.deepStrictEqual(specs, []);
+  });
+
+  it("matches by pane title", () => {
+    const config = makeConfig({
+      paneSpecialties: new Map([
+        ["Backend", ["api", "database"]],
+        ["Frontend", ["ui", "css"]],
+      ]),
+    });
+    assert.deepStrictEqual(getPaneSpecialties(config, makePane({ title: "Backend" })), ["api", "database"]);
+    assert.deepStrictEqual(getPaneSpecialties(config, makePane({ title: "Frontend" })), ["ui", "css"]);
+    assert.deepStrictEqual(getPaneSpecialties(config, makePane({ title: "Other" })), []);
+  });
+});
+
+describe("buildGoalPrompt", () => {
+  it("includes goal title, acceptance criteria, and planner name", () => {
+    saveMission(tmpDir, {
+      title: "Ship v2",
+      description: "Major release",
+      created: "2026-01-01T00:00:00Z",
+      updated: "2026-01-01T00:00:00Z",
+    });
+
+    const goal: Goal = {
+      id: "01",
+      title: "Build REST API",
+      description: "Create CRUD endpoints",
+      status: "todo",
+      acceptance: "All endpoints return 200 with correct data",
+      priority: 1,
+      created: "2026-01-01T00:00:00Z",
+      updated: "2026-01-01T00:00:00Z",
+      assignee: null,
+      specialty: "backend",
+    };
+
+    const planner = makePane({ id: "%2", index: 1, title: "Backend Planner" });
+    const prompt = buildGoalPrompt(tmpDir, goal, planner);
+
+    assert.ok(prompt.includes("Build REST API"), "should include goal title");
+    assert.ok(prompt.includes("All endpoints return 200 with correct data"), "should include acceptance");
+    assert.ok(prompt.includes("backend planner"), "should include specialty label");
+    assert.ok(prompt.includes("Ship v2"), "should include mission title");
+    assert.ok(prompt.includes(agentIdentifier(planner)), "should include planner name");
+  });
+
+  it("works without mission", () => {
+    const goal: Goal = {
+      id: "01",
+      title: "Setup CI",
+      description: "",
+      status: "todo",
+      acceptance: "CI passes",
+      priority: 1,
+      created: "2026-01-01T00:00:00Z",
+      updated: "2026-01-01T00:00:00Z",
+      assignee: null,
+      specialty: null,
+    };
+
+    const planner = makePane({ id: "%1", index: 0 });
+    const prompt = buildGoalPrompt(tmpDir, goal, planner);
+
+    assert.ok(prompt.includes("Setup CI"), "should include goal title");
+    assert.ok(prompt.includes("general planner"), "should use 'general' for null specialty");
+    assert.ok(!prompt.includes("Mission:"), "should not include mission section");
+  });
+});
+
+describe("dispatchGoals", () => {
+  it("assigns goal to idle planner pane", () => {
+    const goal: Goal = {
+      id: "01",
+      title: "Build Frontend",
+      description: "React components",
+      status: "todo",
+      acceptance: "UI renders",
+      priority: 1,
+      created: "2026-01-01T00:00:00Z",
+      updated: "2026-01-01T00:00:00Z",
+      assignee: null,
+      specialty: null,
+    };
+    saveGoal(tmpDir, goal);
+
+    const planner = makePane({ id: "%2", index: 1, title: "Planner", currentCommand: "claude" });
+    const config = makeConfig({
+      paneSpecialties: new Map([["Planner", ["frontend"]]]),
+    });
+    const state = makeState();
+
+    dispatchGoals(config, state, [goal], [], [planner]);
+
+    const updated = loadGoal(tmpDir, "01")!;
+    assert.strictEqual(updated.status, "in-progress");
+    assert.strictEqual(updated.assignee, agentIdentifier(planner));
+
+    const events = readEvents(tmpDir);
+    assert.strictEqual(events.length, 1);
+    assert.strictEqual(events[0]!.type, "dispatch");
+    assert.ok(events[0]!.message.includes("Build Frontend"));
+  });
+
+  it("skips master pane", () => {
+    const goal: Goal = {
+      id: "01",
+      title: "Test Goal",
+      description: "",
+      status: "todo",
+      acceptance: "",
+      priority: 1,
+      created: "2026-01-01T00:00:00Z",
+      updated: "2026-01-01T00:00:00Z",
+      assignee: null,
+      specialty: null,
+    };
+    saveGoal(tmpDir, goal);
+
+    // Only pane is the master — should not be used as planner
+    const masterPane = makePane({ id: "%1", index: 0, title: "Master", currentCommand: "claude" });
+    const config = makeConfig({ masterPane: "Master" });
+    const state = makeState();
+
+    dispatchGoals(config, state, [goal], [], [masterPane]);
+
+    const unchanged = loadGoal(tmpDir, "01")!;
+    assert.strictEqual(unchanged.status, "todo");
+    assert.strictEqual(unchanged.assignee, null);
+  });
+
+  it("does not assign already-assigned goals", () => {
+    const goal: Goal = {
+      id: "01",
+      title: "Already assigned",
+      description: "",
+      status: "todo",
+      acceptance: "",
+      priority: 1,
+      created: "2026-01-01T00:00:00Z",
+      updated: "2026-01-01T00:00:00Z",
+      assignee: "Someone",
+      specialty: null,
+    };
+    saveGoal(tmpDir, goal);
+
+    const planner = makePane({ id: "%2", index: 1, title: "Planner", currentCommand: "claude" });
+    const config = makeConfig({
+      paneSpecialties: new Map([["Planner", []]]),
+    });
+    const state = makeState();
+
+    dispatchGoals(config, state, [goal], [], [planner]);
+
+    // Goal should remain unchanged — assignee filter excludes it
+    const events = readEvents(tmpDir);
+    assert.strictEqual(events.length, 0);
   });
 });
