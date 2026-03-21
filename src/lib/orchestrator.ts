@@ -295,7 +295,7 @@ export function dispatch(
 
 // --- Goal-level dispatch (planner agents) ---
 
-function matchesSpecialty(goalSpecialty: string | undefined, plannerSpecialties: string[]): boolean {
+function matchesSpecialty(goalSpecialty: string | null, plannerSpecialties: string[]): boolean {
   if (!goalSpecialty) return true; // no specialty = any planner
   if (plannerSpecialties.length === 0) return true; // no planner specialty = takes anything
   const goalTags = goalSpecialty.split(",").map((s) => s.trim().toLowerCase());

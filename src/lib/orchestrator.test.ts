@@ -314,6 +314,8 @@ describe("buildTaskPrompt", () => {
       priority: 1,
       created: "2026-01-01T00:00:00Z",
       updated: "2026-01-01T00:00:00Z",
+      assignee: null,
+      specialty: null,
     });
 
     const task = makeTask({
