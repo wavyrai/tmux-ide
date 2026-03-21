@@ -24,5 +24,11 @@ context/
 # local planning artifacts
 plans/
 
+# local task board
+.tasks/
+
+# Orchestrator worktrees
+.worktrees/
+
 # TypeScript build output
 dist/
