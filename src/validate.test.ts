@@ -155,7 +155,7 @@ describe("validateConfig", () => {
         },
       ],
     });
-    assert.ok(errors.includes('rows[0].panes[0].role must be "lead" or "teammate"'));
+    assert.ok(errors.includes('rows[0].panes[0].role must be "lead", "teammate", or "planner"'));
     assert.ok(errors.includes("rows[0].panes[0].task must be a string"));
   });
 
@@ -216,6 +216,132 @@ describe("validateConfig", () => {
   it("accepts pane sizes summing to exactly 100%", () => {
     const errors = validateConfig({
       rows: [{ panes: [{ size: "60%" }, { size: "40%" }] }],
+    });
+    assert.deepStrictEqual(errors, []);
+  });
+
+  it("accepts type: explorer pane", () => {
+    const errors = validateConfig({
+      rows: [{ panes: [{ type: "explorer", title: "Files" }] }],
+    });
+    assert.deepStrictEqual(errors, []);
+  });
+
+  it("accepts type: changes pane", () => {
+    const errors = validateConfig({
+      rows: [{ panes: [{ type: "changes", title: "Changes" }] }],
+    });
+    assert.deepStrictEqual(errors, []);
+  });
+
+  it("accepts type: preview pane", () => {
+    const errors = validateConfig({
+      rows: [{ panes: [{ type: "preview", title: "Preview" }] }],
+    });
+    assert.deepStrictEqual(errors, []);
+  });
+
+  it("accepts type: tasks pane", () => {
+    const errors = validateConfig({
+      rows: [{ panes: [{ type: "tasks", title: "Tasks" }] }],
+    });
+    assert.deepStrictEqual(errors, []);
+  });
+
+  it("accepts type: warroom pane", () => {
+    const errors = validateConfig({
+      rows: [{ panes: [{ type: "warroom", title: "War Room" }] }],
+    });
+    assert.deepStrictEqual(errors, []);
+  });
+
+  it("accepts type: costs pane", () => {
+    const errors = validateConfig({
+      rows: [{ panes: [{ type: "costs", title: "Costs" }] }],
+    });
+    assert.deepStrictEqual(errors, []);
+  });
+
+  it("rejects invalid type value", () => {
+    const errors = validateConfig({
+      rows: [{ panes: [{ type: "invalid" }] }],
+    });
+    assert.ok(errors.some((e) => e.includes("rows[0].panes[0].type must be one of:")));
+  });
+
+  it("rejects type and command together", () => {
+    const errors = validateConfig({
+      rows: [{ panes: [{ type: "explorer", command: "vim" }] }],
+    });
+    assert.ok(errors.includes("rows[0].panes[0] cannot have both 'type' and 'command'"));
+  });
+
+  it("rejects non-string target", () => {
+    const errors = validateConfig({
+      rows: [{ panes: [{ target: 42 }] }],
+    });
+    assert.ok(errors.includes("rows[0].panes[0].target must be a string"));
+  });
+
+  it("accepts string target", () => {
+    const errors = validateConfig({
+      rows: [{ panes: [{ type: "explorer", target: "Claude" }] }],
+    });
+    assert.deepStrictEqual(errors, []);
+  });
+
+  it("accepts valid orchestrator config", () => {
+    const errors = validateConfig({
+      rows: [{ panes: [{}] }],
+      orchestrator: {
+        enabled: true,
+        auto_dispatch: true,
+        stall_timeout: 300000,
+        poll_interval: 5000,
+        worktree_root: ".worktrees/",
+        master_pane: "Master",
+      },
+    });
+    assert.deepStrictEqual(errors, []);
+  });
+
+  it("accepts config without orchestrator", () => {
+    const errors = validateConfig({ rows: [{ panes: [{}] }] });
+    assert.deepStrictEqual(errors, []);
+  });
+
+  it("rejects non-object orchestrator", () => {
+    const errors = validateConfig({
+      rows: [{ panes: [{}] }],
+      orchestrator: "enabled",
+    });
+    assert.ok(errors.includes("'orchestrator' must be an object"));
+  });
+
+  it("rejects orchestrator with wrong field types", () => {
+    const errors = validateConfig({
+      rows: [{ panes: [{}] }],
+      orchestrator: {
+        enabled: "yes",
+        auto_dispatch: 1,
+        stall_timeout: "5000",
+        poll_interval: true,
+        worktree_root: 42,
+        master_pane: false,
+      },
+    });
+    assert.ok(errors.includes("orchestrator.enabled must be a boolean"));
+    assert.ok(errors.includes("orchestrator.auto_dispatch must be a boolean"));
+    assert.ok(errors.includes("orchestrator.stall_timeout must be a number (ms)"));
+    assert.ok(errors.includes("orchestrator.poll_interval must be a number (ms)"));
+    assert.ok(errors.includes("orchestrator.worktree_root must be a string"));
+    assert.ok(errors.includes("orchestrator.master_pane must be a string"));
+  });
+
+  it("accepts orchestrator with only some fields", () => {
+    const errors = validateConfig({
+      rows: [{ panes: [{}] }],
+      orchestrator: { enabled: true },
     });
     assert.deepStrictEqual(errors, []);
   });
