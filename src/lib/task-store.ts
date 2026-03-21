@@ -125,7 +125,12 @@ export function ensureTasksDir(dir: string): void {
 export function loadMission(dir: string): Mission | null {
   const path = join(getTasksRoot(dir), "mission.json");
   if (!existsSync(path)) return null;
-  return normalizeMission(JSON.parse(readFileSync(path, "utf-8")));
+  try {
+    return normalizeMission(JSON.parse(readFileSync(path, "utf-8")));
+  } catch (err) {
+    console.error("[task-store] Failed to parse mission.json: %s", (err as Error).message);
+    return null;
+  }
 }
 
 export function saveMission(dir: string, mission: Mission): void {
@@ -166,13 +171,26 @@ export function loadGoals(dir: string): Goal[] {
   return readdirSync(goalsDir)
     .filter((f) => f.endsWith(".json"))
     .sort()
-    .map((f) => normalizeGoal(JSON.parse(readFileSync(join(goalsDir, f), "utf-8"))));
+    .map((f) => {
+      try {
+        return normalizeGoal(JSON.parse(readFileSync(join(goalsDir, f), "utf-8")));
+      } catch (err) {
+        console.error("[task-store] Failed to parse %s: %s", f, (err as Error).message);
+        return null;
+      }
+    })
+    .filter((g): g is Goal => g !== null);
 }
 
 export function loadGoal(dir: string, id: string): Goal | null {
   const file = findFileById(join(getTasksRoot(dir), "goals"), id);
   if (!file) return null;
-  return normalizeGoal(JSON.parse(readFileSync(file, "utf-8")));
+  try {
+    return normalizeGoal(JSON.parse(readFileSync(file, "utf-8")));
+  } catch (err) {
+    console.error("[task-store] Failed to parse goal %s: %s", id, (err as Error).message);
+    return null;
+  }
 }
 
 export function saveGoal(dir: string, goal: Goal): void {
@@ -209,13 +227,26 @@ export function loadTasks(dir: string): Task[] {
   return readdirSync(tasksDir)
     .filter((f) => f.endsWith(".json"))
     .sort()
-    .map((f) => normalizeTask(JSON.parse(readFileSync(join(tasksDir, f), "utf-8"))));
+    .map((f) => {
+      try {
+        return normalizeTask(JSON.parse(readFileSync(join(tasksDir, f), "utf-8")));
+      } catch (err) {
+        console.error("[task-store] Failed to parse %s: %s", f, (err as Error).message);
+        return null;
+      }
+    })
+    .filter((t): t is Task => t !== null);
 }
 
 export function loadTask(dir: string, id: string): Task | null {
   const file = findFileById(join(getTasksRoot(dir), "tasks"), id);
   if (!file) return null;
-  return normalizeTask(JSON.parse(readFileSync(file, "utf-8")));
+  try {
+    return normalizeTask(JSON.parse(readFileSync(file, "utf-8")));
+  } catch (err) {
+    console.error("[task-store] Failed to parse task %s: %s", id, (err as Error).message);
+    return null;
+  }
 }
 
 export function saveTask(dir: string, task: Task): void {
