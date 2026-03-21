@@ -1,26 +1,44 @@
 name: tmux-ide
 
+orchestrator:
+  enabled: true
+  master_pane: Master
+  auto_dispatch: true
+  stall_timeout: 300000
+  poll_interval: 5000
+  worktree_root: .worktrees/
+
 team:
   name: tmux-ide
 
 rows:
   - size: 70%
     panes:
-      - title: Lead
+      - title: Master
         command: claude
         role: lead
         focus: true
-      - title: Docs Agent
-        command: claude
+        size: 40%
+      - title: Agent 1
+        command: claude --dangerously-skip-permissions
         role: teammate
-        task: "Work on the docs site at docs/ — Next.js + Fumadocs, landing page, MDX content"
-        dir: docs
-      - title: CLI Agent
-        command: claude
+        size: 30%
+      - title: Agent 2
+        command: claude --dangerously-skip-permissions
         role: teammate
-        task: "Work on the CLI source code at src/ and bin/ — commands, validation, templates"
-
-  - panes:
-      - title: Docs Dev
-        command: pnpm docs
-      - title: Shell
+        size: 30%
+  - size: 30%
+    panes:
+      - title: War Room
+        type: warroom
+        size: 25%
+      - title: Tasks
+        type: tasks
+        size: 25%
+      - title: Explorer
+        type: explorer
+        size: 25%
+        target: Preview
+      - title: Preview
+        type: preview
+        size: 25%

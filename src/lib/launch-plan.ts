@@ -28,6 +28,8 @@ export function collectPaneStartupPlan(
         chdir: null,
         exports: [],
         command: null,
+        widgetType: pane.type ?? null,
+        widgetTarget: pane.target ?? null,
       };
 
       if (pane.dir && firstPanesOfRows.has(tmuxPane)) {
