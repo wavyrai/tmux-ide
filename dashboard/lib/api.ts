@@ -1,4 +1,4 @@
-import type { SessionOverview, ProjectDetail, Task } from "./types";
+import type { SessionOverview, ProjectDetail, Task, Mark, AuthorshipStats } from "./types";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:5050";
 
@@ -144,6 +144,78 @@ export interface PlanData {
   authorship: AuthorshipData | null;
 }
 
+/**
+ * Convert character-range marks into section-level authorship summaries.
+ * Each section heading in the markdown gets attributed to the author
+ * who wrote the most characters in that section.
+ */
+function marksToSections(
+  marks: Record<string, Mark>,
+  content: string,
+): Record<string, AuthorshipSection> {
+  // Find section boundaries from heading lines
+  const lines = content.split("\n");
+  const sections: { heading: string; from: number; to: number }[] = [];
+  let offset = 0;
+  let currentHeading = "";
+  let sectionStart = 0;
+
+  for (const line of lines) {
+    const headingMatch = line.match(/^#{1,4}\s+(.+)/);
+    if (headingMatch) {
+      if (currentHeading || offset > 0) {
+        sections.push({ heading: currentHeading, from: sectionStart, to: offset });
+      }
+      currentHeading = headingMatch[1]!.trim();
+      sectionStart = offset;
+    }
+    offset += line.length + 1; // +1 for newline
+  }
+  sections.push({ heading: currentHeading, from: sectionStart, to: offset });
+
+  // For each section, find the dominant author from overlapping marks
+  const result: Record<string, AuthorshipSection> = {};
+  const markList = Object.values(marks).filter((m) => !m.orphaned);
+
+  for (const section of sections) {
+    if (!section.heading) continue;
+    const authorChars: Record<string, { chars: number; latestAt: string }> = {};
+
+    for (const mark of markList) {
+      const overlapFrom = Math.max(mark.range.from, section.from);
+      const overlapTo = Math.min(mark.range.to, section.to);
+      if (overlapFrom >= overlapTo) continue;
+
+      const chars = overlapTo - overlapFrom;
+      const existing = authorChars[mark.by];
+      if (existing) {
+        existing.chars += chars;
+        if (mark.at > existing.latestAt) existing.latestAt = mark.at;
+      } else {
+        authorChars[mark.by] = { chars, latestAt: mark.at };
+      }
+    }
+
+    // Pick the author with the most characters in this section
+    let dominant: { author: string; chars: number; at: string } | null = null;
+    for (const [author, data] of Object.entries(authorChars)) {
+      if (!dominant || data.chars > dominant.chars) {
+        dominant = { author, chars: data.chars, at: data.latestAt };
+      }
+    }
+
+    if (dominant) {
+      result[section.heading] = {
+        author: dominant.author,
+        at: dominant.at,
+        charCount: dominant.chars,
+      };
+    }
+  }
+
+  return result;
+}
+
 export async function fetchPlan(
   name: string,
   filename: string,
@@ -156,9 +228,19 @@ export async function fetchPlan(
   const data = (await res.json()) as {
     name: string;
     content: string;
-    authorship?: AuthorshipData;
+    marks: Record<string, Mark> | null;
+    stats: AuthorshipStats | null;
   };
-  return { content: data.content, authorship: data.authorship ?? null };
+
+  let authorship: AuthorshipData | null = null;
+  if (data.marks && data.stats) {
+    authorship = {
+      sections: marksToSections(data.marks, data.content),
+      stats: data.stats,
+    };
+  }
+
+  return { content: data.content, authorship };
 }
 
 export async function deleteTaskApi(

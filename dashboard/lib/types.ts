@@ -75,6 +75,27 @@ export interface ProjectDetail {
   agents: AgentDetail[];
 }
 
+export interface MarkRange {
+  from: number;
+  to: number;
+}
+
+export interface Mark {
+  id: string;
+  kind: string;
+  by: string;
+  at: string;
+  range: MarkRange;
+  quote: string;
+  orphaned?: boolean;
+}
+
+export interface AuthorshipStats {
+  aiPercent: number;
+  humanPercent: number;
+  totalChars: number;
+}
+
 export type EventType =
   | "dispatch"
   | "completion"
