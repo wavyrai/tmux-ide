@@ -5,7 +5,7 @@ export interface ProofSchema {
   notes?: string;
 }
 
-export interface OrchestratorConfig {
+export interface OrchestratorYamlConfig {
   enabled?: boolean;
   auto_dispatch?: boolean;
   stall_timeout?: number; // ms, default 300000 (5 min)
@@ -16,6 +16,7 @@ export interface OrchestratorConfig {
   after_run?: string; // shell command to run in worktree after task completes
   cleanup_on_done?: boolean; // remove worktree when task completes (default false)
   dispatch_mode?: "tasks" | "goals"; // default: "tasks" (backward compat)
+  max_concurrent_agents?: number; // default 10
 }
 
 export interface IdeConfig {
@@ -24,7 +25,7 @@ export interface IdeConfig {
   team?: { name: string };
   rows: Row[];
   theme?: ThemeConfig;
-  orchestrator?: OrchestratorConfig;
+  orchestrator?: OrchestratorYamlConfig;
 }
 
 export interface Row {
