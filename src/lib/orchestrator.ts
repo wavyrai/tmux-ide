@@ -182,7 +182,10 @@ export function buildTaskPrompt(
   prompt += `\nWhen done, run:\n`;
   prompt += `  tmux-ide task done ${task.id} --proof "describe what you accomplished"\n`;
 
-  return prompt;
+  // Collapse to single line — multiline paste triggers a slow preview
+  // in Claude Code's TUI that requires a separate Enter to confirm.
+  // A single long line is accepted instantly by any agent TUI.
+  return prompt.replace(/\n+/g, " ").trim();
 }
 
 export function dispatch(
@@ -191,10 +194,17 @@ export function dispatch(
   tasks: Task[],
   panes: PaneInfo[],
 ): void {
-  // Find idle agent panes (not the master pane)
+  // Find idle agent panes (not the master pane, not already assigned a task)
   const idleAgents = panes.filter((p) => {
     if (p.title === config.masterPane) return false;
-    return isIdleForDispatch(p);
+    if (!isIdleForDispatch(p)) return false;
+    // Don't dispatch to a pane that already has an in-progress task assigned
+    const name = agentIdentifier(p);
+    const hasActiveTask = tasks.some(
+      (t) => t.assignee === name && (t.status === "in-progress" || t.status === "review"),
+    );
+    if (hasActiveTask) return false;
+    return true;
   });
 
   // Concurrency control: don't exceed max concurrent agents
@@ -361,7 +371,7 @@ export function buildGoalPrompt(
   prompt += `7. When done: tmux-ide goal done ${goal.id} --proof "summary of what was accomplished"\n\n`;
   prompt += `You own this goal end-to-end. Plan it, execute it, deliver it.\n`;
 
-  return prompt;
+  return prompt.replace(/\n+/g, " ").trim();
 }
 
 export function dispatchGoals(
@@ -371,11 +381,17 @@ export function dispatchGoals(
   tasks: Task[],
   panes: PaneInfo[],
 ): void {
-  // Find idle planner panes (not the master pane)
+  // Find idle planner panes (not the master pane, not already assigned)
   const idlePlanners = panes.filter((p) => {
     if (p.title === config.masterPane) return false;
     if (!isPlannerPane(config, p)) return false;
-    return isIdleForDispatch(p);
+    if (!isIdleForDispatch(p)) return false;
+    const name = agentIdentifier(p);
+    const hasActiveGoal = goals.some(
+      (g) => g.assignee === name && g.status === "in-progress",
+    );
+    if (hasActiveGoal) return false;
+    return true;
   });
 
   // Find unassigned goals sorted by priority
@@ -541,6 +557,7 @@ export function reconcile(
       // Agent crashed or pane was closed — release the task
       task.assignee = null;
       task.status = "todo";
+      task.branch = null;
       task.updated = new Date().toISOString();
       saveTask(config.dir, task);
       state.claimedTasks.delete(task.id);
@@ -602,16 +619,17 @@ export function gracefulShutdown(
   const tasks = loadTasks(config.dir);
   for (const task of tasks) {
     if (task.status === "in-progress" && task.assignee) {
-      task.assignee = null;
-      task.status = "todo";
-      task.updated = new Date().toISOString();
-      saveTask(config.dir, task);
-
-      // Optionally clean worktrees
+      // Clean worktree before clearing branch (needs branch to find path)
       if (config.cleanupOnDone) {
         const wt = worktreePathForTask(config, task);
         if (wt) removeWorktree(config.dir, wt);
       }
+
+      task.assignee = null;
+      task.status = "todo";
+      task.branch = null;
+      task.updated = new Date().toISOString();
+      saveTask(config.dir, task);
     }
   }
 
