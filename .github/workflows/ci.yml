@@ -40,16 +40,40 @@ jobs:
       - name: Build
         run: pnpm build
 
+      # Tests require --experimental-strip-types (Node >= 22.6)
       - name: Run test suite
-        if: matrix.node == 22
+        if: matrix.node >= 22
         run: pnpm test:unit
 
-      - name: Smoke test (Node < 22)
-        if: matrix.node != 22
+      - name: Smoke test (Node < 22 — no --experimental-strip-types)
+        if: matrix.node < 22
         run: node bin/cli.js --help && node bin/cli.js --version
 
       - name: Validate package contents
         run: pnpm pack:check
+
+  dashboard:
+    name: Dashboard build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build dashboard
+        working-directory: dashboard
+        run: npx next build
 
   docs:
     name: Docs build
