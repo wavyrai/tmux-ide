@@ -66,6 +66,7 @@ const knownCommands = new Set([
   "mission",
   "goal",
   "task",
+  "plan",
   "command-center",
   "help",
 ]);
@@ -280,6 +281,17 @@ try {
           depends: values.depends,
           pr: values.pr,
         },
+      });
+      break;
+    }
+
+    case "plan": {
+      const { planCommand } = await import("../dist/plan.js");
+      await planCommand(null, {
+        json,
+        sub: positionals[1],
+        args: positionals.slice(2),
+        values: { status: values.status },
       });
       break;
     }
