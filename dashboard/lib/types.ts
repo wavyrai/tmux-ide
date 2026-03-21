@@ -1,7 +1,14 @@
+export interface Mission {
+  title: string;
+  description: string;
+  created: string;
+  updated: string;
+}
+
 export interface SessionOverview {
   name: string;
   dir: string;
-  mission: { title: string; description: string } | null;
+  mission: Mission | null;
   stats: {
     totalTasks: number;
     doneTasks: number;
@@ -16,7 +23,6 @@ export interface ProofSchema {
   pr?: { number: number; url?: string; status?: string };
   ci?: { status: string; url?: string };
   notes?: string;
-  note?: string;
 }
 
 export interface Task {
@@ -27,6 +33,8 @@ export interface Task {
   status: "todo" | "in-progress" | "review" | "done";
   assignee: string | null;
   priority: number;
+  created: string;
+  updated: string;
   branch: string | null;
   tags: string[];
   proof: ProofSchema | null;
@@ -49,15 +57,19 @@ export interface Goal {
   id: string;
   title: string;
   description: string;
-  status: string;
+  status: "todo" | "in-progress" | "done";
   acceptance: string;
   priority: number;
+  created: string;
+  updated: string;
+  assignee: string | null;
+  specialty: string | null;
 }
 
 export interface ProjectDetail {
   session: string;
   dir: string;
-  mission: { title: string; description: string } | null;
+  mission: Mission | null;
   goals: Goal[];
   tasks: Task[];
   agents: AgentDetail[];
@@ -72,12 +84,3 @@ export type EventType =
   | "error"
   | "task_created"
   | "status_change";
-
-export interface OrchestratorEvent {
-  timestamp: string;
-  type: EventType;
-  taskId?: string;
-  agent?: string;
-  message: string;
-  relative: string;
-}

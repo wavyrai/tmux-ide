@@ -1,4 +1,4 @@
-import type { SessionOverview, ProjectDetail, OrchestratorEvent } from "./types";
+import type { SessionOverview, ProjectDetail, Task } from "./types";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:5050";
 
@@ -53,7 +53,7 @@ export interface EventData {
   taskId?: string;
   agent?: string;
   message: string;
-  relative?: string;
+  relative: string;
 }
 
 export async function fetchEvents(name: string): Promise<EventData[]> {
@@ -69,8 +69,14 @@ export async function fetchEvents(name: string): Promise<EventData[]> {
 export async function updateTask(
   sessionName: string,
   taskId: string,
-  fields: { status?: string; assignee?: string },
-): Promise<boolean> {
+  fields: {
+    status?: string;
+    assignee?: string;
+    title?: string;
+    description?: string;
+    priority?: number;
+  },
+): Promise<Task | null> {
   const res = await fetch(
     `${API_BASE}/api/project/${encodeURIComponent(sessionName)}/task/${encodeURIComponent(taskId)}`,
     {
@@ -79,7 +85,9 @@ export async function updateTask(
       body: JSON.stringify(fields),
     },
   );
-  return res.ok;
+  if (!res.ok) return null;
+  const data = (await res.json()) as { ok: boolean; task: Task };
+  return data.task;
 }
 
 export async function createTask(
@@ -91,7 +99,7 @@ export async function createTask(
     goal?: string;
     tags?: string[];
   },
-): Promise<boolean> {
+): Promise<Task | null> {
   const res = await fetch(
     `${API_BASE}/api/project/${encodeURIComponent(sessionName)}/task`,
     {
@@ -100,7 +108,9 @@ export async function createTask(
       body: JSON.stringify(fields),
     },
   );
-  return res.ok;
+  if (!res.ok) return null;
+  const data = (await res.json()) as { ok: boolean; task: Task };
+  return data.task;
 }
 
 export interface PlanSummary {

@@ -7,7 +7,9 @@ export type EventType =
   | "completion"
   | "retry"
   | "reconcile"
-  | "error";
+  | "error"
+  | "task_created"
+  | "status_change";
 
 export interface OrchestratorEvent {
   timestamp: string;

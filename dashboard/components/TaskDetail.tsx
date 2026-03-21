@@ -60,18 +60,11 @@ export function TaskDetail({
 
   async function handleSaveEdit() {
     setSaving(true);
-    await fetch(
-      `${process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:5050"}/api/project/${encodeURIComponent(sessionName)}/task/${encodeURIComponent(t.id)}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          title: editTitle.trim(),
-          description: editDesc.trim(),
-          priority: editPriority,
-        }),
-      },
-    );
+    await updateTask(sessionName, t.id, {
+      title: editTitle.trim(),
+      description: editDesc.trim(),
+      priority: editPriority,
+    });
     onUpdated();
     setSaving(false);
     setEditing(false);
@@ -88,7 +81,7 @@ export function TaskDetail({
   const inputClass =
     "w-full bg-[var(--surface)] border border-[var(--border)] text-[var(--fg)] px-2 py-1 outline-none focus:border-[var(--accent)]";
 
-  const proofNote = t.proof?.notes ?? t.proof?.note;
+  const proofNote = t.proof?.notes;
 
   return (
     <div className="fixed inset-0 z-50 flex justify-end">
