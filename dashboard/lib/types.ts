@@ -11,6 +11,14 @@ export interface SessionOverview {
   goals: { id: string; title: string; progress: number }[];
 }
 
+export interface ProofSchema {
+  tests?: { passed: number; total: number };
+  pr?: { number: number; url?: string; status?: string };
+  ci?: { status: string; url?: string };
+  notes?: string;
+  note?: string;
+}
+
 export interface Task {
   id: string;
   title: string;
@@ -21,6 +29,12 @@ export interface Task {
   priority: number;
   branch: string | null;
   tags: string[];
+  proof: ProofSchema | null;
+  depends_on: string[];
+  retryCount: number;
+  maxRetries: number;
+  lastError: string | null;
+  nextRetryAt: string | null;
 }
 
 export interface AgentDetail {
