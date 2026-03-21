@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { agentIdentifier } from "../lib/orchestrator.ts";
 import {
   ensureTasksDir,
   saveMission,
@@ -111,8 +112,10 @@ describe("GET /api/sessions", () => {
 
 describe("GET /api/project/:name", () => {
   it("returns project detail", async () => {
-    saveTask(tmpDir, makeTask({ id: "001", status: "in-progress", assignee: "Agent 1" }));
-    mockPanes = [makePane({ id: "%1", title: "Agent 1", currentCommand: "claude" })];
+    const pane = makePane({ id: "%1", index: 0, title: "Agent 1", currentCommand: "claude" });
+    const name = agentIdentifier(pane);
+    saveTask(tmpDir, makeTask({ id: "001", status: "in-progress", assignee: name }));
+    mockPanes = [pane];
 
     const app = createApp();
     const res = await app.request("/api/project/test-project");
@@ -122,7 +125,7 @@ describe("GET /api/project/:name", () => {
     assert.strictEqual(body.session, "test-project");
     assert.strictEqual(body.tasks.length, 1);
     assert.strictEqual(body.agents.length, 1);
-    assert.strictEqual(body.agents[0]!.paneTitle, "Agent 1");
+    assert.strictEqual(body.agents[0]!.paneTitle, name);
   });
 
   it("returns 404 for unknown session", async () => {

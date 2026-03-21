@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { agentIdentifier } from "../lib/orchestrator.ts";
 import {
   ensureTasksDir,
   saveMission,
@@ -244,23 +245,23 @@ describe("buildOverviews", () => {
 
 describe("buildProjectDetail", () => {
   it("builds detail with agents matched to tasks", () => {
+    const pane = makePane({ id: "%1", index: 0, title: "Agent 1", currentCommand: "claude" });
+    const name = agentIdentifier(pane);
     const info = makeSessionInfo({
       tasks: [
         makeTask({
           id: "001",
           status: "in-progress",
-          assignee: "Agent 1",
+          assignee: name,
           updated: new Date().toISOString(),
         }),
       ],
-      panes: [
-        makePane({ id: "%1", title: "Agent 1", currentCommand: "claude" }),
-      ],
+      panes: [pane],
     });
 
     const detail = buildProjectDetail(info);
     assert.strictEqual(detail.agents.length, 1);
-    assert.strictEqual(detail.agents[0]!.paneTitle, "Agent 1");
+    assert.strictEqual(detail.agents[0]!.paneTitle, name);
     assert.strictEqual(detail.agents[0]!.taskTitle, "Test task");
     assert.strictEqual(detail.agents[0]!.taskId, "001");
   });
