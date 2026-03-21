@@ -71,6 +71,9 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Build CLI (dashboard may depend on dist/)
+        run: pnpm build
+
       - name: Build dashboard
         working-directory: dashboard
         run: npx next build
