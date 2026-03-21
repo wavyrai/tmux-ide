@@ -45,6 +45,8 @@ describe("collectPaneStartupPlan", () => {
         chdir: null,
         exports: ["export PORT=3000"],
         command: "claude",
+        widgetType: null,
+        widgetTarget: null,
       },
       {
         targetPane: "%2",
@@ -52,6 +54,8 @@ describe("collectPaneStartupPlan", () => {
         chdir: null,
         exports: [],
         command: "claude",
+        widgetType: null,
+        widgetTarget: null,
       },
       {
         targetPane: "%3",
@@ -59,6 +63,8 @@ describe("collectPaneStartupPlan", () => {
         chdir: "/workspace/apps/web",
         exports: [],
         command: null,
+        widgetType: null,
+        widgetTarget: null,
       },
     ]);
   });
