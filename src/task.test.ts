@@ -102,6 +102,8 @@ describe("goals", () => {
       priority: 1,
       created: "2026-01-01T00:00:00Z",
       updated: "2026-01-01T00:00:00Z",
+      assignee: null,
+      specialty: null,
     });
     assert.strictEqual(nextGoalId(tmpDir), "02");
   });
@@ -117,6 +119,8 @@ describe("goals", () => {
       priority: 1,
       created: "2026-01-01T00:00:00Z",
       updated: "2026-01-01T00:00:00Z",
+      assignee: null,
+      specialty: null,
     });
     const files = readdirSync(join(tmpDir, ".tasks", "goals"));
     assert.strictEqual(files.length, 1);
@@ -135,6 +139,8 @@ describe("goals", () => {
       priority: 1,
       created: "2026-01-01T00:00:00Z",
       updated: "2026-01-01T00:00:00Z",
+      assignee: null,
+      specialty: null,
     };
     saveGoal(tmpDir, goal);
     assert.deepStrictEqual(loadGoal(tmpDir, "01"), goal);
@@ -156,6 +162,8 @@ describe("goals", () => {
       priority: 1,
       created: "2026-01-01T00:00:00Z",
       updated: "2026-01-01T00:00:00Z",
+      assignee: null,
+      specialty: null,
     });
     const goal = loadGoal(tmpDir, "01")!;
     goal.status = "done";
@@ -177,6 +185,8 @@ describe("goals", () => {
       priority: 1,
       created: "2026-01-01T00:00:00Z",
       updated: "2026-01-01T00:00:00Z",
+      assignee: null,
+      specialty: null,
     });
     assert.strictEqual(deleteGoal(tmpDir, "01"), true);
     assert.strictEqual(loadGoal(tmpDir, "01"), null);
@@ -199,6 +209,8 @@ describe("goals", () => {
       priority: 2,
       created: now,
       updated: now,
+      assignee: null,
+      specialty: null,
     });
     saveGoal(tmpDir, {
       id: "01",
@@ -209,6 +221,8 @@ describe("goals", () => {
       priority: 1,
       created: now,
       updated: now,
+      assignee: null,
+      specialty: null,
     });
     const goals = loadGoals(tmpDir);
     assert.strictEqual(goals.length, 2);
@@ -639,6 +653,6 @@ describe("parseProof", () => {
     );
     const loaded = loadTask(tmpDir, "001")!;
     assert.ok(loaded.proof !== null);
-    assert.strictEqual((loaded.proof as Record<string, unknown>).note, "old format proof");
+    assert.strictEqual(loaded.proof!.notes, "old format proof");
   });
 });

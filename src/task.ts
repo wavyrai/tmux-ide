@@ -208,7 +208,8 @@ function handleGoal(
         priority: parseInt(values.priority ?? "2", 10),
         created: now,
         updated: now,
-        specialty: values.specialty ?? undefined,
+        assignee: null,
+        specialty: values.specialty ?? null,
       };
       saveGoal(dir, goal);
       if (json) {
