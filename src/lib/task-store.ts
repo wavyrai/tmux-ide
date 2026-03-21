@@ -51,7 +51,7 @@ export interface Task {
   depends_on: string[];
 }
 
-function normalizeMission(raw: Record<string, unknown>): Mission {
+export function normalizeMission(raw: Record<string, unknown>): Mission {
   const epoch = "1970-01-01T00:00:00.000Z";
   return {
     title: (raw.title as string) ?? "",
@@ -61,7 +61,7 @@ function normalizeMission(raw: Record<string, unknown>): Mission {
   };
 }
 
-function normalizeGoal(raw: Record<string, unknown>): Goal {
+export function normalizeGoal(raw: Record<string, unknown>): Goal {
   const epoch = "1970-01-01T00:00:00.000Z";
   return {
     ...(raw as Omit<Goal, "assignee" | "specialty" | "created" | "updated">),
