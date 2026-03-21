@@ -140,8 +140,10 @@ export function sendCommand(session: string, paneId: string, command: string): v
   const status = getPaneBusyStatus(session, paneId);
   tmux("send-keys", "-t", paneId, "-l", "--", command);
   if (status === "agent") {
-    // Claude Code's TUI needs a short delay to process pasted text before Enter
-    sleepMs(150);
+    // Short delay for the TUI to register the input before Enter.
+    // Prompts should be single-line (newlines collapsed in buildTaskPrompt)
+    // so no paste preview is triggered — just a brief buffer.
+    sleepMs(300);
   }
   tmux("send-keys", "-t", paneId, "Enter");
 }
