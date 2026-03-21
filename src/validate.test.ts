@@ -346,6 +346,36 @@ describe("validateConfig", () => {
     assert.deepStrictEqual(errors, []);
   });
 
+  it("accepts valid orchestrator hook and concurrency fields", () => {
+    const errors = validateConfig({
+      rows: [{ panes: [{}] }],
+      orchestrator: {
+        before_run: "pnpm install",
+        after_run: "pnpm test",
+        cleanup_on_done: true,
+        max_concurrent_agents: 3,
+        dispatch_mode: "goals",
+      },
+    });
+    assert.deepStrictEqual(errors, []);
+  });
+
+  it("rejects orchestrator hook and concurrency fields with wrong types", () => {
+    const errors = validateConfig({
+      rows: [{ panes: [{}] }],
+      orchestrator: {
+        before_run: 123,
+        after_run: false,
+        cleanup_on_done: "yes",
+        max_concurrent_agents: "ten",
+      },
+    });
+    assert.ok(errors.includes("orchestrator.before_run must be a string"));
+    assert.ok(errors.includes("orchestrator.after_run must be a string"));
+    assert.ok(errors.includes("orchestrator.cleanup_on_done must be a boolean"));
+    assert.ok(errors.includes("orchestrator.max_concurrent_agents must be a number"));
+  });
+
   it("collects multiple errors at once", () => {
     const errors = validateConfig({
       name: 123,

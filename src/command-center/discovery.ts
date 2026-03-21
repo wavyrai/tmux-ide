@@ -207,6 +207,8 @@ export function updateTask(
   if (!task) return null;
 
   if (fields.status) {
+    const validStatuses = ["todo", "in-progress", "review", "done"];
+    if (!validStatuses.includes(fields.status)) return null;
     task.status = fields.status as Task["status"];
   }
   if (fields.assignee !== undefined) {

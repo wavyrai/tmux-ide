@@ -167,6 +167,18 @@ export function validateConfig(config: unknown): string[] {
       if (orch.master_pane !== undefined && typeof orch.master_pane !== "string") {
         errors.push("orchestrator.master_pane must be a string");
       }
+      if (orch.before_run !== undefined && typeof orch.before_run !== "string") {
+        errors.push("orchestrator.before_run must be a string");
+      }
+      if (orch.after_run !== undefined && typeof orch.after_run !== "string") {
+        errors.push("orchestrator.after_run must be a string");
+      }
+      if (orch.cleanup_on_done !== undefined && typeof orch.cleanup_on_done !== "boolean") {
+        errors.push("orchestrator.cleanup_on_done must be a boolean");
+      }
+      if (orch.max_concurrent_agents !== undefined && typeof orch.max_concurrent_agents !== "number") {
+        errors.push("orchestrator.max_concurrent_agents must be a number");
+      }
       if (orch.dispatch_mode !== undefined) {
         if (orch.dispatch_mode !== "tasks" && orch.dispatch_mode !== "goals") {
           errors.push('orchestrator.dispatch_mode must be "tasks" or "goals"');

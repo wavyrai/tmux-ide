@@ -22,7 +22,7 @@ export interface OrchestratorYamlConfig {
 export interface IdeConfig {
   name?: string;
   before?: string;
-  team?: { name: string };
+  team?: { name: string; model?: string; permissions?: string[] };
   rows: Row[];
   theme?: ThemeConfig;
   orchestrator?: OrchestratorYamlConfig;
