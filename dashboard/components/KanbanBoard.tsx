@@ -229,6 +229,7 @@ export function KanbanBoard({
           task={selectedTask}
           sessionName={sessionName}
           agents={agents}
+          allTasks={tasks}
           onClose={() => setSelectedTaskId(null)}
           onUpdated={onRefresh}
         />
