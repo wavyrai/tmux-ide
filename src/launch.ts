@@ -1,7 +1,8 @@
-import { resolve, dirname } from "node:path";
+import { resolve, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execSync } from "node:child_process";
 import { createHash } from "node:crypto";
+import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { readConfig, getSessionName } from "./lib/yaml-io.ts";
 import { computeSizes, toSplitPercents } from "./lib/sizes.ts";
 import { outputError } from "./lib/output.ts";
@@ -23,7 +24,8 @@ import {
   startSessionMonitor,
 } from "./lib/tmux.ts";
 import { validateConfig } from "./validate.ts";
-import type { IdeConfig, Row } from "./types.ts";
+import { resolveWidgetCommand } from "./widgets/resolve.ts";
+import type { IdeConfig, Row, Pane } from "./types.ts";
 
 interface SplitPaneArgs {
   targetPane: string;
@@ -235,7 +237,15 @@ export async function launch(
       sendLiteral(action.targetPane, exportCommand);
     }
 
-    if (action.command) {
+    if (action.widgetType) {
+      const widgetCmd = resolveWidgetCommand(action.widgetType, {
+        session,
+        dir,
+        target: action.widgetTarget ?? null,
+        theme: config.theme ?? null,
+      });
+      sendLiteral(action.targetPane, widgetCmd);
+    } else if (action.command) {
       sendLiteral(action.targetPane, action.command);
     }
   }
@@ -255,6 +265,22 @@ export async function launch(
   );
   startSessionMonitor(session, monitorScript);
 
+  // Inject master agent prompt and task docs if orchestrator is enabled
+  if (config.orchestrator?.enabled) {
+    ensureTaskDocs(dir);
+
+    const masterPaneTitle = config.orchestrator.master_pane;
+    if (masterPaneTitle) {
+      const masterAction = paneActions.find((a) => a.title === masterPaneTitle);
+      if (masterAction) {
+        const masterPrompt = buildMasterAgentPrompt(config);
+        setTimeout(() => {
+          sendLiteral(masterAction.targetPane, masterPrompt);
+        }, 5000);
+      }
+    }
+  }
+
   // Focus the correct pane
   selectPane(focusPane);
 
@@ -267,5 +293,110 @@ export async function launch(
   // Attach
   if (attach) {
     attachSession(session);
+  }
+}
+
+export function buildMasterAgentPrompt(config: IdeConfig): string {
+  const teammatePanes = config.rows
+    .flatMap((r) => r.panes ?? [])
+    .filter((p: Pane) => p.role === "teammate" && p.command === "claude")
+    .map((p: Pane) => p.title)
+    .filter(Boolean);
+
+  return `You are the Master Agent for this tmux-ide session.
+
+## Your role
+You coordinate a team of coding agents. The human gives you high-level goals, and you break them into structured tasks that your teammates execute.
+
+## Your teammates
+${teammatePanes.map((t) => `- ${t}`).join("\n")}
+
+## Task management commands
+- tmux-ide mission set "title" --description "..."
+- tmux-ide goal create "title" --priority N --acceptance "criteria"
+- tmux-ide goal list --json
+- tmux-ide task create "title" --goal NN --priority N
+- tmux-ide task list --json
+- tmux-ide task show NNN --json (shows full mission→goal→task context)
+- tmux-ide task done NNN --proof "what was accomplished"
+- tmux-ide goal done NN
+
+## How it works
+1. You create tasks with tmux-ide task create
+2. The orchestrator automatically assigns unassigned tasks to idle teammates
+3. Teammates work in isolated git worktrees
+4. When teammates finish, they run tmux-ide task done
+5. You get notified and review their work
+6. You report progress to the human
+
+## Important
+- Focus on PLANNING and REVIEWING, not implementing
+- Break work into small, clear tasks (one per teammate)
+- Each task should be completable independently
+- Set clear acceptance criteria in goals
+- Check progress: tmux-ide task list --json`;
+}
+
+const TASK_DOCS_MARKER = "## Task Management";
+
+const TASK_DOCS_SECTION = `
+## Task Management
+
+tmux-ide provides structured task management for coordinated multi-agent work.
+
+### Mission & Goals
+
+\`\`\`bash
+tmux-ide mission set "title" --description "..."   # Set the project mission
+tmux-ide mission show                               # Show current mission
+tmux-ide mission clear                              # Clear the mission
+
+tmux-ide goal create "title" --priority N --acceptance "criteria"
+tmux-ide goal list [--json]                         # List all goals
+tmux-ide goal show <id> [--json]                    # Show goal with tasks
+tmux-ide goal update <id> --status done
+tmux-ide goal done <id>                             # Mark goal complete
+tmux-ide goal delete <id>
+\`\`\`
+
+### Tasks
+
+\`\`\`bash
+tmux-ide task create "title" --goal NN --priority N --assign "Agent" --tags "a,b" --depends "001,002"
+tmux-ide task list [--status todo --goal NN] [--json]
+tmux-ide task show <id> [--json]                    # Full mission→goal→task context
+tmux-ide task update <id> --status review --proof '{"tests":{"passed":10,"total":10}}'
+tmux-ide task claim <id> --assign "Agent Name"      # Claim and start a task
+tmux-ide task done <id> --proof "description"       # Mark task complete with proof
+tmux-ide task delete <id>
+\`\`\`
+
+### Proof Format
+
+The \`--proof\` flag accepts either a plain string (stored as \`notes\`) or a JSON object:
+
+\`\`\`json
+{
+  "tests": { "passed": 10, "total": 10 },
+  "pr": { "number": 42, "url": "https://...", "status": "merged" },
+  "ci": { "status": "passing", "url": "https://..." },
+  "notes": "Additional context"
+}
+\`\`\`
+
+### Task Dependencies
+
+Use \`--depends "001,002"\` to declare that a task depends on other tasks. The orchestrator will not dispatch a task until all its dependencies are complete.
+`;
+
+export function ensureTaskDocs(dir: string): void {
+  const claudeMdPath = join(dir, "CLAUDE.md");
+
+  if (existsSync(claudeMdPath)) {
+    const content = readFileSync(claudeMdPath, "utf-8");
+    if (content.includes(TASK_DOCS_MARKER)) return;
+    writeFileSync(claudeMdPath, content + TASK_DOCS_SECTION);
+  } else {
+    writeFileSync(claudeMdPath, `# Project\n${TASK_DOCS_SECTION}`);
   }
 }
