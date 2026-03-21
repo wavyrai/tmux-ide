@@ -33,5 +33,14 @@ export function readEvents(dir: string): OrchestratorEvent[] {
   if (!existsSync(logPath)) return [];
   const raw = readFileSync(logPath, "utf-8").trim();
   if (!raw) return [];
-  return raw.split("\n").map((line) => JSON.parse(line) as OrchestratorEvent);
+  return raw
+    .split("\n")
+    .map((line) => {
+      try {
+        return JSON.parse(line) as OrchestratorEvent;
+      } catch {
+        return null;
+      }
+    })
+    .filter((e): e is OrchestratorEvent => e !== null);
 }
