@@ -22,6 +22,8 @@ import {
 import { readEvents, type OrchestratorEvent } from "../lib/event-log.ts";
 import { extractMarks, calculateStats, tagContent } from "../lib/authorship.ts";
 import { loadPlans, markPlanDone } from "../lib/plan-store.ts";
+import { zValidator } from "@hono/zod-validator";
+import { updateTaskSchema, createTaskSchema, savePlanSchema } from "./schemas.ts";
 
 export function createApp(): Hono {
   const app = new Hono();
@@ -54,7 +56,7 @@ export function createApp(): Hono {
     return c.json(detail);
   });
 
-  app.post("/api/project/:name/task/:id", async (c) => {
+  app.post("/api/project/:name/task/:id", zValidator("json", updateTaskSchema), async (c) => {
     const name = c.req.param("name");
     const taskId = c.req.param("id");
 
@@ -64,12 +66,7 @@ export function createApp(): Hono {
       return c.json({ error: "Session not found" }, 404);
     }
 
-    let body: { status?: string; assignee?: string; title?: string; description?: string; priority?: number };
-    try {
-      body = await c.req.json();
-    } catch {
-      return c.json({ error: "Invalid JSON" }, 400);
-    }
+    const body = c.req.valid("json");
     const updated = updateTask(session.dir, taskId, body);
     if (!updated) {
       return c.json({ error: "Task not found" }, 404);
@@ -79,7 +76,7 @@ export function createApp(): Hono {
   });
 
   // Create task
-  app.post("/api/project/:name/task", async (c) => {
+  app.post("/api/project/:name/task", zValidator("json", createTaskSchema), async (c) => {
     const name = c.req.param("name");
     const sessions = discoverSessions();
     const session = sessions.find((s) => s.name === name);
@@ -87,16 +84,7 @@ export function createApp(): Hono {
       return c.json({ error: "Session not found" }, 404);
     }
 
-    let body: { title: string; description?: string; priority?: number; goal?: string; tags?: string[] };
-    try {
-      body = await c.req.json();
-    } catch {
-      return c.json({ error: "Invalid JSON" }, 400);
-    }
-
-    if (!body.title?.trim()) {
-      return c.json({ error: "Title is required" }, 400);
-    }
+    const body = c.req.valid("json");
 
     ensureTasksDir(session.dir);
     const id = nextTaskId(session.dir);
@@ -191,7 +179,7 @@ export function createApp(): Hono {
   });
 
   // Save a plan file (with authorship tagging)
-  app.post("/api/project/:name/plans/:filename", async (c) => {
+  app.post("/api/project/:name/plans/:filename", zValidator("json", savePlanSchema), async (c) => {
     const name = c.req.param("name");
     const filename = c.req.param("filename");
     const sessions = discoverSessions();
@@ -200,15 +188,7 @@ export function createApp(): Hono {
       return c.json({ error: "Session not found" }, 404);
     }
 
-    let body: { content: string };
-    try {
-      body = await c.req.json();
-    } catch {
-      return c.json({ error: "Invalid JSON" }, 400);
-    }
-    if (!body.content && body.content !== "") {
-      return c.json({ error: "content is required" }, 400);
-    }
+    const body = c.req.valid("json");
 
     const safeName = filename.replace(/[^a-zA-Z0-9_\-. ]/g, "");
     const filePath = join(session.dir, "plans", safeName.endsWith(".md") ? safeName : `${safeName}.md`);

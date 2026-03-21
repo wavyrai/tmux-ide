@@ -176,13 +176,13 @@ describe("POST /api/project/:name/task/:id", () => {
     assert.strictEqual(res.status, 404);
   });
 
-  it("returns 400 on malformed JSON", async () => {
+  it("rejects invalid status via zod validation", async () => {
     saveTask(tmpDir, makeTask({ id: "001" }));
     const app = createApp();
     const res = await app.request("/api/project/test-project/task/001", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: "not json",
+      body: JSON.stringify({ status: "invalid-status" }),
     });
     assert.strictEqual(res.status, 400);
   });
