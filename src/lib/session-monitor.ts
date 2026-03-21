@@ -197,7 +197,7 @@ if (isMainModule) {
         try {
           const { createOrchestrator } = await import("./orchestrator.js");
 
-          const orch = config.orchestrator as Record<string, unknown>;
+          const orch = config.orchestrator;
 
           // Build pane specialty map from ide.yml config
           const paneSpecialties = new Map<string, string[]>();
@@ -215,16 +215,16 @@ if (isMainModule) {
           const stopOrchestrator = createOrchestrator({
             session,
             dir: process.cwd(),
-            autoDispatch: config.orchestrator.auto_dispatch ?? true,
-            stallTimeout: config.orchestrator.stall_timeout ?? 300000,
-            pollInterval: config.orchestrator.poll_interval ?? 5000,
-            worktreeRoot: config.orchestrator.worktree_root ?? ".worktrees/",
-            masterPane: config.orchestrator.master_pane ?? null,
-            beforeRun: (orch.before_run as string) ?? null,
-            afterRun: (orch.after_run as string) ?? null,
-            cleanupOnDone: (orch.cleanup_on_done as boolean) ?? false,
-            maxConcurrentAgents: (orch.max_concurrent_agents as number) ?? 10,
-            dispatchMode: (orch.dispatch_mode as "tasks" | "goals") ?? "tasks",
+            autoDispatch: orch.auto_dispatch ?? true,
+            stallTimeout: orch.stall_timeout ?? 300000,
+            pollInterval: orch.poll_interval ?? 5000,
+            worktreeRoot: orch.worktree_root ?? ".worktrees/",
+            masterPane: orch.master_pane ?? null,
+            beforeRun: orch.before_run ?? null,
+            afterRun: orch.after_run ?? null,
+            cleanupOnDone: orch.cleanup_on_done ?? false,
+            maxConcurrentAgents: orch.max_concurrent_agents ?? 10,
+            dispatchMode: orch.dispatch_mode ?? "tasks",
             paneSpecialties,
           });
 
