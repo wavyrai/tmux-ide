@@ -1,6 +1,4 @@
 import { parseArgs } from "node:util";
-import { readFileSync, readdirSync, existsSync } from "node:fs";
-import { join } from "node:path";
 import { execFileSync } from "node:child_process";
 import { render, useKeyboard, useTerminalDimensions } from "@opentui/solid";
 import { RGBA, TextAttributes } from "@opentui/core";
@@ -11,7 +9,14 @@ import { MissionHeader } from "./mission-header.tsx";
 import { GoalSection } from "./goal-section.tsx";
 import { type AgentInfo } from "./agent-card.tsx";
 import { ActivityFeed, formatElapsedShort, type ActivityEntry } from "./activity-feed.tsx";
-import type { ProofSchema } from "../../types.ts";
+import {
+  loadMission,
+  loadGoals,
+  loadTasks,
+  type Mission,
+  type Goal,
+  type Task,
+} from "../../lib/task-store.ts";
 
 const { values } = parseArgs({
   options: {
@@ -24,82 +29,6 @@ const { values } = parseArgs({
 const session = values.session ?? "";
 const dir = values.dir ?? process.cwd();
 const themeConfig = values.theme ? JSON.parse(values.theme) : undefined;
-
-// --- Data loaders ---
-
-interface Mission {
-  title: string;
-  description: string;
-}
-
-interface Goal {
-  id: string;
-  title: string;
-  status: string;
-  priority: number;
-}
-
-interface Task {
-  id: string;
-  title: string;
-  status: string;
-  assignee: string | null;
-  goal: string | null;
-  priority: number;
-  updated: string;
-  retryCount?: number;
-  maxRetries?: number;
-  lastError?: string | null;
-  nextRetryAt?: string | null;
-  proof?: ProofSchema | null;
-}
-
-function loadMission(): Mission | null {
-  const path = join(dir, ".tasks", "mission.json");
-  if (!existsSync(path)) return null;
-  try {
-    return JSON.parse(readFileSync(path, "utf-8"));
-  } catch {
-    return null;
-  }
-}
-
-function loadGoals(): Goal[] {
-  const goalsDir = join(dir, ".tasks", "goals");
-  if (!existsSync(goalsDir)) return [];
-  return readdirSync(goalsDir)
-    .filter((f) => f.endsWith(".json"))
-    .sort()
-    .map((f) => {
-      try {
-        return JSON.parse(readFileSync(join(goalsDir, f), "utf-8"));
-      } catch {
-        return null;
-      }
-    })
-    .filter(Boolean) as Goal[];
-}
-
-function loadTasks(): Task[] {
-  // Try nested .tasks/tasks/ first (CLI format), fall back to flat .tasks/ (widget format)
-  const nestedDir = join(dir, ".tasks", "tasks");
-  const flatDir = join(dir, ".tasks");
-  const tasksDir = existsSync(nestedDir) ? nestedDir : flatDir;
-  if (!existsSync(tasksDir)) return [];
-  return readdirSync(tasksDir)
-    .filter((f) => f.endsWith(".json") && f !== "mission.json")
-    .sort()
-    .map((f) => {
-      try {
-        const data = JSON.parse(readFileSync(join(tasksDir, f), "utf-8"));
-        if (data.id && data.title && data.status) return data;
-        return null;
-      } catch {
-        return null;
-      }
-    })
-    .filter(Boolean) as Task[];
-}
 
 // --- Agent matching ---
 
@@ -197,9 +126,9 @@ render(
     const theme = createTheme(themeConfig);
     const dimensions = useTerminalDimensions();
 
-    const [mission, setMission] = createSignal(loadMission());
-    const [goals, setGoals] = createSignal(loadGoals());
-    const [tasks, setTasks] = createSignal(loadTasks());
+    const [mission, setMission] = createSignal(loadMission(dir));
+    const [goals, setGoals] = createSignal(loadGoals(dir));
+    const [tasks, setTasks] = createSignal(loadTasks(dir));
     const [panes, setPanes] = createSignal<PaneInfo[]>(session ? listSessionPanes(session) : []);
     const [activity, setActivity] = createSignal<ActivityEntry[]>([]);
     const [selectedAgent, setSelectedAgent] = createSignal(0);
@@ -207,9 +136,9 @@ render(
     // Poll every 2 seconds
     const interval = setInterval(() => {
       const prevTasks = tasks();
-      setMission(loadMission());
-      setGoals(loadGoals());
-      const newTasks = loadTasks();
+      setMission(loadMission(dir));
+      setGoals(loadGoals(dir));
+      const newTasks = loadTasks(dir);
       setTasks(newTasks);
       if (session) setPanes(listSessionPanes(session));
 
@@ -284,9 +213,9 @@ render(
         }
         evt.preventDefault();
       } else if (evt.name === "r") {
-        setMission(loadMission());
-        setGoals(loadGoals());
-        setTasks(loadTasks());
+        setMission(loadMission(dir));
+        setGoals(loadGoals(dir));
+        setTasks(loadTasks(dir));
         if (session) setPanes(listSessionPanes(session));
         evt.preventDefault();
       } else if (evt.name === "q") {

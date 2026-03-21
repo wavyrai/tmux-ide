@@ -27,8 +27,8 @@ export interface Goal {
   priority: number;
   created: string;
   updated: string;
-  assignee?: string;
-  specialty?: string;
+  assignee: string | null;
+  specialty: string | null;
 }
 
 export interface Task {
@@ -51,7 +51,28 @@ export interface Task {
   depends_on: string[];
 }
 
-function normalizeTask(raw: Record<string, unknown>): Task {
+function normalizeMission(raw: Record<string, unknown>): Mission {
+  const epoch = "1970-01-01T00:00:00.000Z";
+  return {
+    title: (raw.title as string) ?? "",
+    description: (raw.description as string) ?? "",
+    created: (raw.created as string) ?? epoch,
+    updated: (raw.updated as string) ?? epoch,
+  };
+}
+
+function normalizeGoal(raw: Record<string, unknown>): Goal {
+  const epoch = "1970-01-01T00:00:00.000Z";
+  return {
+    ...(raw as Omit<Goal, "assignee" | "specialty" | "created" | "updated">),
+    created: (raw.created as string) ?? epoch,
+    updated: (raw.updated as string) ?? epoch,
+    assignee: (raw.assignee as string) ?? null,
+    specialty: (raw.specialty as string) ?? null,
+  } as Goal;
+}
+
+export function normalizeTask(raw: Record<string, unknown>): Task {
   const defaults = {
     retryCount: 0,
     maxRetries: 5,
@@ -59,6 +80,14 @@ function normalizeTask(raw: Record<string, unknown>): Task {
     nextRetryAt: null,
     depends_on: [] as string[],
   };
+
+  // Migrate proof.note → proof.notes
+  const proof = raw.proof as Record<string, unknown> | null | undefined;
+  if (proof && "note" in proof && !("notes" in proof)) {
+    proof.notes = proof.note;
+    delete proof.note;
+  }
+
   return {
     ...defaults,
     ...(raw as Omit<Task, "retryCount" | "maxRetries" | "lastError" | "nextRetryAt" | "depends_on">),
@@ -96,7 +125,7 @@ export function ensureTasksDir(dir: string): void {
 export function loadMission(dir: string): Mission | null {
   const path = join(getTasksRoot(dir), "mission.json");
   if (!existsSync(path)) return null;
-  return JSON.parse(readFileSync(path, "utf-8")) as Mission;
+  return normalizeMission(JSON.parse(readFileSync(path, "utf-8")));
 }
 
 export function saveMission(dir: string, mission: Mission): void {
@@ -137,13 +166,13 @@ export function loadGoals(dir: string): Goal[] {
   return readdirSync(goalsDir)
     .filter((f) => f.endsWith(".json"))
     .sort()
-    .map((f) => JSON.parse(readFileSync(join(goalsDir, f), "utf-8")) as Goal);
+    .map((f) => normalizeGoal(JSON.parse(readFileSync(join(goalsDir, f), "utf-8"))));
 }
 
 export function loadGoal(dir: string, id: string): Goal | null {
   const file = findFileById(join(getTasksRoot(dir), "goals"), id);
   if (!file) return null;
-  return JSON.parse(readFileSync(file, "utf-8")) as Goal;
+  return normalizeGoal(JSON.parse(readFileSync(file, "utf-8")));
 }
 
 export function saveGoal(dir: string, goal: Goal): void {
