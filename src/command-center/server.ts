@@ -21,6 +21,7 @@ import {
 } from "../lib/task-store.ts";
 import { readEvents, type OrchestratorEvent } from "../lib/event-log.ts";
 import { extractMarks, calculateStats, tagContent } from "../lib/authorship.ts";
+import { loadPlans, markPlanDone } from "../lib/plan-store.ts";
 
 export function createApp(): Hono {
   const app = new Hono();
@@ -135,7 +136,7 @@ export function createApp(): Hono {
     return c.json({ ok: true, deleted: taskId });
   });
 
-  // List plan files
+  // List plan files with status metadata
   app.get("/api/project/:name/plans", (c) => {
     const name = c.req.param("name");
     const sessions = discoverSessions();
@@ -144,15 +145,14 @@ export function createApp(): Hono {
       return c.json({ error: "Session not found" }, 404);
     }
 
-    const plansDir = join(session.dir, "plans");
-    if (!existsSync(plansDir)) {
-      return c.json({ plans: [] });
-    }
-
-    const plans = readdirSync(plansDir)
-      .filter((f) => f.endsWith(".md"))
-      .sort()
-      .map((f) => ({ name: f.replace(/\.md$/, ""), path: f }));
+    const plans = loadPlans(session.dir).map((p) => ({
+      name: p.name,
+      path: `${p.name}.md`,
+      title: p.title,
+      status: p.status,
+      effort: p.effort ?? null,
+      completed: p.completed ?? null,
+    }));
 
     return c.json({ plans });
   });
@@ -232,6 +232,25 @@ export function createApp(): Hono {
 
     unlinkSync(filePath);
     return c.json({ ok: true, deleted: safeName });
+  });
+
+  // Mark a plan as done
+  app.post("/api/project/:name/plans/:filename/done", (c) => {
+    const name = c.req.param("name");
+    const filename = c.req.param("filename");
+    const sessions = discoverSessions();
+    const session = sessions.find((s) => s.name === name);
+    if (!session) {
+      return c.json({ error: "Session not found" }, 404);
+    }
+
+    const safeName = filename.replace(/[^a-zA-Z0-9_\-. ]/g, "").replace(/\.md$/, "");
+    const result = markPlanDone(session.dir, safeName);
+    if (!result) {
+      return c.json({ error: "Plan not found" }, 404);
+    }
+
+    return c.json({ ok: true, plan: result });
   });
 
   app.get("/api/project/:name/diff", (c) => {
