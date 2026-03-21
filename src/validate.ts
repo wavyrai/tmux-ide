@@ -66,12 +66,27 @@ export function validateConfig(config: unknown): string[] {
           validateSize(pane.size, `rows[${i}].panes[${j}].size`, errors);
         }
         if (pane.role !== undefined) {
-          if (pane.role !== "lead" && pane.role !== "teammate") {
-            errors.push(`rows[${i}].panes[${j}].role must be "lead" or "teammate"`);
+          if (pane.role !== "lead" && pane.role !== "teammate" && pane.role !== "planner") {
+            errors.push(`rows[${i}].panes[${j}].role must be "lead", "teammate", or "planner"`);
           }
         }
         if (pane.task !== undefined && typeof pane.task !== "string") {
           errors.push(`rows[${i}].panes[${j}].task must be a string`);
+        }
+        if (pane.specialty !== undefined && typeof pane.specialty !== "string") {
+          errors.push(`rows[${i}].panes[${j}].specialty must be a string`);
+        }
+        if (pane.type !== undefined) {
+          const validTypes = ["explorer", "changes", "preview", "tasks", "warroom", "costs"];
+          if (typeof pane.type !== "string" || !validTypes.includes(pane.type)) {
+            errors.push(`rows[${i}].panes[${j}].type must be one of: ${validTypes.join(", ")}`);
+          }
+          if (pane.command !== undefined) {
+            errors.push(`rows[${i}].panes[${j}] cannot have both 'type' and 'command'`);
+          }
+        }
+        if (pane.target !== undefined && typeof pane.target !== "string") {
+          errors.push(`rows[${i}].panes[${j}].target must be a string`);
         }
       }
 
@@ -121,6 +136,53 @@ export function validateConfig(config: unknown): string[] {
       }
       if (team.permissions !== undefined && !Array.isArray(team.permissions)) {
         errors.push("'team.permissions' must be an array");
+      }
+    }
+  }
+
+  if (cfg.orchestrator !== undefined) {
+    if (
+      cfg.orchestrator == null ||
+      typeof cfg.orchestrator !== "object" ||
+      Array.isArray(cfg.orchestrator)
+    ) {
+      errors.push("'orchestrator' must be an object");
+    } else {
+      const orch = cfg.orchestrator as Record<string, unknown>;
+      if (orch.enabled !== undefined && typeof orch.enabled !== "boolean") {
+        errors.push("orchestrator.enabled must be a boolean");
+      }
+      if (orch.auto_dispatch !== undefined && typeof orch.auto_dispatch !== "boolean") {
+        errors.push("orchestrator.auto_dispatch must be a boolean");
+      }
+      if (orch.stall_timeout !== undefined && typeof orch.stall_timeout !== "number") {
+        errors.push("orchestrator.stall_timeout must be a number (ms)");
+      }
+      if (orch.poll_interval !== undefined && typeof orch.poll_interval !== "number") {
+        errors.push("orchestrator.poll_interval must be a number (ms)");
+      }
+      if (orch.worktree_root !== undefined && typeof orch.worktree_root !== "string") {
+        errors.push("orchestrator.worktree_root must be a string");
+      }
+      if (orch.master_pane !== undefined && typeof orch.master_pane !== "string") {
+        errors.push("orchestrator.master_pane must be a string");
+      }
+      if (orch.before_run !== undefined && typeof orch.before_run !== "string") {
+        errors.push("orchestrator.before_run must be a string");
+      }
+      if (orch.after_run !== undefined && typeof orch.after_run !== "string") {
+        errors.push("orchestrator.after_run must be a string");
+      }
+      if (orch.cleanup_on_done !== undefined && typeof orch.cleanup_on_done !== "boolean") {
+        errors.push("orchestrator.cleanup_on_done must be a boolean");
+      }
+      if (orch.max_concurrent_agents !== undefined && typeof orch.max_concurrent_agents !== "number") {
+        errors.push("orchestrator.max_concurrent_agents must be a number");
+      }
+      if (orch.dispatch_mode !== undefined) {
+        if (orch.dispatch_mode !== "tasks" && orch.dispatch_mode !== "goals") {
+          errors.push('orchestrator.dispatch_mode must be "tasks" or "goals"');
+        }
       }
     }
   }
