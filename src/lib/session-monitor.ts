@@ -186,4 +186,58 @@ if (isMainModule) {
 
   setInterval(tick, INTERVAL);
   tick(); // run immediately
+
+  // Start orchestrator if enabled in config
+  (async () => {
+    try {
+      const { readConfig } = await import("./yaml-io.js");
+      const { config } = readConfig(process.cwd());
+
+      if (config.orchestrator?.enabled) {
+        try {
+          const { createOrchestrator } = await import("./orchestrator.js");
+
+          const orch = config.orchestrator;
+
+          // Build pane specialty map from ide.yml config
+          const paneSpecialties = new Map<string, string[]>();
+          for (const row of config.rows) {
+            for (const pane of row.panes) {
+              if (pane.specialty && pane.title) {
+                paneSpecialties.set(
+                  pane.title,
+                  pane.specialty.split(",").map((s: string) => s.trim().toLowerCase()),
+                );
+              }
+            }
+          }
+
+          const stopOrchestrator = createOrchestrator({
+            session,
+            dir: process.cwd(),
+            autoDispatch: orch.auto_dispatch ?? true,
+            stallTimeout: orch.stall_timeout ?? 300000,
+            pollInterval: orch.poll_interval ?? 5000,
+            worktreeRoot: orch.worktree_root ?? ".worktrees/",
+            masterPane: orch.master_pane ?? null,
+            beforeRun: orch.before_run ?? null,
+            afterRun: orch.after_run ?? null,
+            cleanupOnDone: orch.cleanup_on_done ?? false,
+            maxConcurrentAgents: orch.max_concurrent_agents ?? 10,
+            dispatchMode: orch.dispatch_mode ?? "tasks",
+            paneSpecialties,
+          });
+
+          process.on("SIGTERM", () => {
+            stopOrchestrator();
+            process.exit(0);
+          });
+        } catch {
+          // Orchestrator module not available yet
+        }
+      }
+    } catch {
+      // Config not readable — skip orchestrator
+    }
+  })();
 }
