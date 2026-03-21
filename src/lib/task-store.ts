@@ -1,0 +1,239 @@
+import { resolve, join } from "node:path";
+import {
+  readdirSync,
+  readFileSync,
+  writeFileSync,
+  mkdirSync,
+  existsSync,
+  unlinkSync,
+} from "node:fs";
+import type { ProofSchema } from "../types.ts";
+
+const TASKS_DIR = ".tasks";
+
+export interface Mission {
+  title: string;
+  description: string;
+  created: string;
+  updated: string;
+}
+
+export interface Goal {
+  id: string;
+  title: string;
+  description: string;
+  status: "todo" | "in-progress" | "done";
+  acceptance: string;
+  priority: number;
+  created: string;
+  updated: string;
+  assignee: string | null;
+  specialty: string | null;
+}
+
+export interface Task {
+  id: string;
+  title: string;
+  description: string;
+  goal: string | null;
+  status: "todo" | "in-progress" | "review" | "done";
+  assignee: string | null;
+  priority: number;
+  created: string;
+  updated: string;
+  branch: string | null;
+  tags: string[];
+  proof: ProofSchema | null;
+  retryCount: number;
+  maxRetries: number;
+  lastError: string | null;
+  nextRetryAt: string | null;
+  depends_on: string[];
+}
+
+export function normalizeMission(raw: Record<string, unknown>): Mission {
+  const epoch = "1970-01-01T00:00:00.000Z";
+  return {
+    title: (raw.title as string) ?? "",
+    description: (raw.description as string) ?? "",
+    created: (raw.created as string) ?? epoch,
+    updated: (raw.updated as string) ?? epoch,
+  };
+}
+
+export function normalizeGoal(raw: Record<string, unknown>): Goal {
+  const epoch = "1970-01-01T00:00:00.000Z";
+  return {
+    ...(raw as Omit<Goal, "assignee" | "specialty" | "created" | "updated">),
+    created: (raw.created as string) ?? epoch,
+    updated: (raw.updated as string) ?? epoch,
+    assignee: (raw.assignee as string) ?? null,
+    specialty: (raw.specialty as string) ?? null,
+  } as Goal;
+}
+
+export function normalizeTask(raw: Record<string, unknown>): Task {
+  const defaults = {
+    retryCount: 0,
+    maxRetries: 5,
+    lastError: null,
+    nextRetryAt: null,
+    depends_on: [] as string[],
+  };
+
+  // Migrate proof.note → proof.notes
+  const proof = raw.proof as Record<string, unknown> | null | undefined;
+  if (proof && "note" in proof && !("notes" in proof)) {
+    proof.notes = proof.note;
+    delete proof.note;
+  }
+
+  return {
+    ...defaults,
+    ...(raw as Omit<Task, "retryCount" | "maxRetries" | "lastError" | "nextRetryAt" | "depends_on">),
+    retryCount: (raw.retryCount as number) ?? defaults.retryCount,
+    maxRetries: (raw.maxRetries as number) ?? defaults.maxRetries,
+    lastError: (raw.lastError as string | null) ?? defaults.lastError,
+    nextRetryAt: (raw.nextRetryAt as string | null) ?? defaults.nextRetryAt,
+    depends_on: Array.isArray(raw.depends_on) ? (raw.depends_on as string[]) : defaults.depends_on,
+  } as Task;
+}
+
+function slugify(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, 50);
+}
+
+export function getTasksRoot(dir: string): string {
+  return resolve(dir, TASKS_DIR);
+}
+
+export function ensureTasksDir(dir: string): void {
+  const root = getTasksRoot(dir);
+  if (!existsSync(root)) mkdirSync(root, { recursive: true });
+  const goalsDir = join(root, "goals");
+  if (!existsSync(goalsDir)) mkdirSync(goalsDir);
+  const tasksDir = join(root, "tasks");
+  if (!existsSync(tasksDir)) mkdirSync(tasksDir);
+}
+
+// --- Mission ---
+
+export function loadMission(dir: string): Mission | null {
+  const path = join(getTasksRoot(dir), "mission.json");
+  if (!existsSync(path)) return null;
+  return normalizeMission(JSON.parse(readFileSync(path, "utf-8")));
+}
+
+export function saveMission(dir: string, mission: Mission): void {
+  ensureTasksDir(dir);
+  writeFileSync(join(getTasksRoot(dir), "mission.json"), JSON.stringify(mission, null, 2) + "\n");
+}
+
+export function clearMission(dir: string): void {
+  const path = join(getTasksRoot(dir), "mission.json");
+  if (existsSync(path)) unlinkSync(path);
+}
+
+// --- Goals ---
+
+function findFileById(directory: string, id: string): string | null {
+  if (!existsSync(directory)) return null;
+  const files = readdirSync(directory).filter((f) => f.endsWith(".json"));
+  for (const file of files) {
+    if (file.startsWith(id + "-") || file === id + ".json") {
+      return join(directory, file);
+    }
+  }
+  return null;
+}
+
+export function nextGoalId(dir: string): string {
+  const goalsDir = join(getTasksRoot(dir), "goals");
+  if (!existsSync(goalsDir)) return "01";
+  const files = readdirSync(goalsDir).filter((f) => f.endsWith(".json"));
+  if (files.length === 0) return "01";
+  const maxId = Math.max(...files.map((f) => parseInt(f.split("-")[0]!, 10) || 0));
+  return String(maxId + 1).padStart(2, "0");
+}
+
+export function loadGoals(dir: string): Goal[] {
+  const goalsDir = join(getTasksRoot(dir), "goals");
+  if (!existsSync(goalsDir)) return [];
+  return readdirSync(goalsDir)
+    .filter((f) => f.endsWith(".json"))
+    .sort()
+    .map((f) => normalizeGoal(JSON.parse(readFileSync(join(goalsDir, f), "utf-8"))));
+}
+
+export function loadGoal(dir: string, id: string): Goal | null {
+  const file = findFileById(join(getTasksRoot(dir), "goals"), id);
+  if (!file) return null;
+  return normalizeGoal(JSON.parse(readFileSync(file, "utf-8")));
+}
+
+export function saveGoal(dir: string, goal: Goal): void {
+  ensureTasksDir(dir);
+  const goalsDir = join(getTasksRoot(dir), "goals");
+  // Remove old file if ID exists under different name
+  const existing = findFileById(goalsDir, goal.id);
+  if (existing) unlinkSync(existing);
+  const filename = `${goal.id}-${slugify(goal.title)}.json`;
+  writeFileSync(join(goalsDir, filename), JSON.stringify(goal, null, 2) + "\n");
+}
+
+export function deleteGoal(dir: string, id: string): boolean {
+  const file = findFileById(join(getTasksRoot(dir), "goals"), id);
+  if (!file) return false;
+  unlinkSync(file);
+  return true;
+}
+
+// --- Tasks ---
+
+export function nextTaskId(dir: string): string {
+  const tasksDir = join(getTasksRoot(dir), "tasks");
+  if (!existsSync(tasksDir)) return "001";
+  const files = readdirSync(tasksDir).filter((f) => f.endsWith(".json"));
+  if (files.length === 0) return "001";
+  const maxId = Math.max(...files.map((f) => parseInt(f.split("-")[0]!, 10) || 0));
+  return String(maxId + 1).padStart(3, "0");
+}
+
+export function loadTasks(dir: string): Task[] {
+  const tasksDir = join(getTasksRoot(dir), "tasks");
+  if (!existsSync(tasksDir)) return [];
+  return readdirSync(tasksDir)
+    .filter((f) => f.endsWith(".json"))
+    .sort()
+    .map((f) => normalizeTask(JSON.parse(readFileSync(join(tasksDir, f), "utf-8"))));
+}
+
+export function loadTask(dir: string, id: string): Task | null {
+  const file = findFileById(join(getTasksRoot(dir), "tasks"), id);
+  if (!file) return null;
+  return normalizeTask(JSON.parse(readFileSync(file, "utf-8")));
+}
+
+export function saveTask(dir: string, task: Task): void {
+  ensureTasksDir(dir);
+  const tasksDir = join(getTasksRoot(dir), "tasks");
+  const existing = findFileById(tasksDir, task.id);
+  if (existing) unlinkSync(existing);
+  const filename = `${task.id}-${slugify(task.title)}.json`;
+  writeFileSync(join(tasksDir, filename), JSON.stringify(task, null, 2) + "\n");
+}
+
+export function deleteTask(dir: string, id: string): boolean {
+  const file = findFileById(join(getTasksRoot(dir), "tasks"), id);
+  if (!file) return false;
+  unlinkSync(file);
+  return true;
+}
+
+export function loadTasksForGoal(dir: string, goalId: string): Task[] {
+  return loadTasks(dir).filter((t) => t.goal === goalId);
+}
