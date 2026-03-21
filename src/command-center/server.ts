@@ -29,6 +29,12 @@ export function createApp(): Hono {
   // Allow cross-origin (Next.js dashboard, Tailscale, etc.)
   app.use("/*", cors());
 
+  // Global error handler
+  app.onError((err, c) => {
+    console.error("[command-center]", err.message);
+    return c.json({ error: err.message }, 500);
+  });
+
   // --- API routes ---
 
   app.get("/api/sessions", (c) => {
@@ -58,13 +64,12 @@ export function createApp(): Hono {
       return c.json({ error: "Session not found" }, 404);
     }
 
-    const body = await c.req.json<{
-      status?: string;
-      assignee?: string;
-      title?: string;
-      description?: string;
-      priority?: number;
-    }>();
+    let body: { status?: string; assignee?: string; title?: string; description?: string; priority?: number };
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: "Invalid JSON" }, 400);
+    }
     const updated = updateTask(session.dir, taskId, body);
     if (!updated) {
       return c.json({ error: "Task not found" }, 404);
@@ -82,13 +87,12 @@ export function createApp(): Hono {
       return c.json({ error: "Session not found" }, 404);
     }
 
-    const body = await c.req.json<{
-      title: string;
-      description?: string;
-      priority?: number;
-      goal?: string;
-      tags?: string[];
-    }>();
+    let body: { title: string; description?: string; priority?: number; goal?: string; tags?: string[] };
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: "Invalid JSON" }, 400);
+    }
 
     if (!body.title?.trim()) {
       return c.json({ error: "Title is required" }, 400);
@@ -196,7 +200,12 @@ export function createApp(): Hono {
       return c.json({ error: "Session not found" }, 404);
     }
 
-    const body = await c.req.json<{ content: string }>();
+    let body: { content: string };
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: "Invalid JSON" }, 400);
+    }
     if (!body.content && body.content !== "") {
       return c.json({ error: "content is required" }, 400);
     }
