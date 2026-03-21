@@ -166,7 +166,7 @@ export interface PlanData {
  * Each section heading in the markdown gets attributed to the author
  * who wrote the most characters in that section.
  */
-function marksToSections(
+export function marksToSections(
   marks: Record<string, Mark>,
   content: string,
 ): Record<string, AuthorshipSection> {
