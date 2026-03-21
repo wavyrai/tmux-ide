@@ -6,8 +6,10 @@ import {
   fetchPlans,
   fetchPlan,
   savePlan,
+  markPlanDone,
   type PlanSummary,
   type PlanData,
+  type PlanStatus,
   type AuthorshipData,
 } from "@/lib/api";
 import { usePolling } from "@/lib/usePolling";
@@ -17,6 +19,20 @@ import { MarkdownEditor } from "./MarkdownEditor";
 interface PlansPanelProps {
   sessionName: string;
 }
+
+const STATUS_ICONS: Record<PlanStatus, string> = {
+  "in-progress": "●",
+  pending: "○",
+  done: "✓",
+  archived: "▪",
+};
+
+const STATUS_COLORS: Record<PlanStatus, string> = {
+  "in-progress": "var(--yellow)",
+  pending: "var(--dim)",
+  done: "var(--green)",
+  archived: "var(--dimmer)",
+};
 
 interface MarkdownSection {
   heading: string;
@@ -68,7 +84,7 @@ function splitIntoSections(
 
 function isAiAuthor(author: string | null): boolean {
   if (!author) return false;
-  return author.startsWith("ai") || author.toLowerCase().includes("claude") || author.toLowerCase().includes("agent");
+  return author.startsWith("ai");
 }
 
 function formatAuthorTime(at: string | null): string {
@@ -86,14 +102,26 @@ function formatAuthorTime(at: string | null): string {
 
 export function PlansPanel({ sessionName }: PlansPanelProps) {
   const fetcher = useCallback(() => fetchPlans(sessionName), [sessionName]);
-  const { data: plans, loading } = usePolling<PlanSummary[]>(fetcher, 10000);
+  const { data: plans, loading, refresh: refreshPlans } = usePolling<PlanSummary[]>(fetcher, 10000);
 
+  const [statusFilter, setStatusFilter] = useState<PlanStatus | "all">("all");
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const [planData, setPlanData] = useState<PlanData>({ content: "", authorship: null });
   const [loadingContent, setLoadingContent] = useState(false);
   const [editing, setEditing] = useState(false);
   const [editContent, setEditContent] = useState("");
   const [saving, setSaving] = useState(false);
+
+  const filteredPlans = useMemo(() => {
+    if (!plans) return [];
+    if (statusFilter === "all") return plans;
+    return plans.filter((p) => p.status === statusFilter);
+  }, [plans, statusFilter]);
+
+  const selectedPlan = useMemo(
+    () => plans?.find((p) => p.path === selectedFile) ?? null,
+    [plans, selectedFile],
+  );
 
   useEffect(() => {
     if (!selectedFile) {
@@ -113,10 +141,10 @@ export function PlansPanel({ sessionName }: PlansPanelProps) {
   }, [selectedFile, sessionName]);
 
   useEffect(() => {
-    if (!selectedFile && plans && plans.length > 0) {
-      setSelectedFile(plans[0]!.path);
+    if (!selectedFile && filteredPlans.length > 0) {
+      setSelectedFile(filteredPlans[0]!.path);
     }
-  }, [plans, selectedFile]);
+  }, [filteredPlans, selectedFile]);
 
   const sections = useMemo(
     () => splitIntoSections(planData.content, planData.authorship),
@@ -128,7 +156,6 @@ export function PlansPanel({ sessionName }: PlansPanelProps) {
     setSaving(true);
     const ok = await savePlan(sessionName, selectedFile, content);
     if (ok) {
-      // Refresh content from server
       const d = await fetchPlan(sessionName, selectedFile);
       setPlanData(d);
       setEditContent(d.content);
@@ -137,15 +164,16 @@ export function PlansPanel({ sessionName }: PlansPanelProps) {
     setSaving(false);
   }
 
-  function handleStartEdit() {
-    setEditContent(planData.content);
-    setEditing(true);
+  async function handleMarkDone() {
+    if (!selectedPlan) return;
+    const ok = await markPlanDone(sessionName, selectedPlan.name);
+    if (ok) refreshPlans();
   }
 
   if (loading && !plans) {
     return (
       <div className="flex-1 flex items-center justify-center text-[var(--dim)]">
-        Loading plans…
+        Loading plans...
       </div>
     );
   }
@@ -158,45 +186,95 @@ export function PlansPanel({ sessionName }: PlansPanelProps) {
     );
   }
 
+  // Count by status
+  const counts: Record<string, number> = {};
+  for (const p of plans) counts[p.status] = (counts[p.status] ?? 0) + 1;
+
   return (
     <div className="flex-1 flex min-h-0">
-      {/* File sidebar */}
-      <div className="w-[240px] shrink-0 border-r border-[var(--border)] overflow-y-auto">
-        <div className="h-6 flex items-center px-3 bg-[var(--surface)] border-b border-[var(--border)] text-[10px] text-[var(--dim)] uppercase tracking-wider">
-          Plans ({plans.length})
-        </div>
-        {plans.map((p) => {
-          const isSelected = selectedFile === p.path;
-          return (
+      {/* Sidebar */}
+      <div className="w-[260px] shrink-0 border-r border-[var(--border)] flex flex-col min-h-0">
+        {/* Filter tabs */}
+        <div className="flex items-center h-6 bg-[var(--surface)] border-b border-[var(--border)] text-[10px] shrink-0 px-1 gap-px">
+          {(["all", "in-progress", "pending", "done"] as const).map((s) => (
             <button
-              key={p.path}
-              onClick={() => setSelectedFile(p.path)}
-              className={`w-full text-left h-6 px-3 flex items-center transition-colors truncate ${
-                isSelected
-                  ? "bg-[var(--surface-active)] text-[var(--accent)]"
-                  : "text-[var(--fg)] hover:bg-[var(--surface-hover)]"
+              key={s}
+              onClick={() => setStatusFilter(s)}
+              className={`px-1.5 py-0.5 transition-colors ${
+                statusFilter === s
+                  ? "text-[var(--accent)]"
+                  : "text-[var(--dim)] hover:text-[var(--fg)]"
               }`}
             >
-              {p.name}
+              {s === "all" ? `all (${plans.length})` : `${s} (${counts[s] ?? 0})`}
             </button>
-          );
-        })}
+          ))}
+        </div>
+
+        {/* Plan list */}
+        <div className="flex-1 overflow-y-auto">
+          {filteredPlans.map((p) => {
+            const isSelected = selectedFile === p.path;
+            return (
+              <button
+                key={p.path}
+                onClick={() => setSelectedFile(p.path)}
+                className={`w-full text-left px-2 py-1 flex items-start gap-1.5 transition-colors ${
+                  isSelected
+                    ? "bg-[rgba(255,255,255,0.04)] text-[var(--accent)]"
+                    : "text-[var(--fg)] hover:bg-[rgba(255,255,255,0.02)]"
+                }`}
+              >
+                <span
+                  className="shrink-0 mt-0.5 text-[11px]"
+                  style={{ color: STATUS_COLORS[p.status] }}
+                >
+                  {STATUS_ICONS[p.status]}
+                </span>
+                <span className="min-w-0">
+                  <span className="block truncate text-[12px]">{p.name}</span>
+                  {p.completed && (
+                    <span className="block text-[10px] text-[var(--dimmer)]">
+                      {p.completed}
+                    </span>
+                  )}
+                </span>
+              </button>
+            );
+          })}
+        </div>
       </div>
 
       {/* Content area */}
       <div className="flex-1 flex flex-col min-h-0">
         {loadingContent ? (
           <div className="flex-1 flex items-center justify-center text-[var(--dim)]">
-            loading…
+            loading...
           </div>
         ) : planData.content || editing ? (
           <>
-            {/* Header: authorship bar + edit/view toggle */}
-            <div className="shrink-0 border-b border-[var(--border)] px-3 flex items-center">
-              <div className="flex-1">
+            {/* Header */}
+            <div className="shrink-0 border-b border-[var(--border)] px-3 flex items-center h-7">
+              <div className="flex-1 flex items-center gap-2">
+                {selectedPlan && (
+                  <span
+                    className="text-[11px]"
+                    style={{ color: STATUS_COLORS[selectedPlan.status] }}
+                  >
+                    {STATUS_ICONS[selectedPlan.status]} {selectedPlan.status}
+                  </span>
+                )}
                 <AuthorshipBar authorship={planData.authorship} />
               </div>
               <div className="flex items-center gap-2 shrink-0">
+                {selectedPlan && selectedPlan.status !== "done" && !editing && (
+                  <button
+                    onClick={handleMarkDone}
+                    className="text-[11px] px-2 py-0.5 text-[var(--green)] border border-[var(--border)] hover:border-[var(--green)] transition-colors"
+                  >
+                    mark done
+                  </button>
+                )}
                 {editing && (
                   <>
                     <button
@@ -204,13 +282,15 @@ export function PlansPanel({ sessionName }: PlansPanelProps) {
                       disabled={saving}
                       className="text-[11px] px-2 py-0.5 text-[var(--bg)] bg-[var(--accent)] hover:opacity-90 disabled:opacity-50 transition-opacity"
                     >
-                      {saving ? "saving…" : "save"}
+                      {saving ? "saving..." : "save"}
                     </button>
-                    <span className="text-[9px] text-[var(--dimmer)]">⌘S</span>
+                    <span className="text-[9px] text-[var(--dimmer)]">cmd+S</span>
                   </>
                 )}
                 <button
-                  onClick={() => editing ? setEditing(false) : handleStartEdit()}
+                  onClick={() =>
+                    editing ? setEditing(false) : (() => { setEditContent(planData.content); setEditing(true); })()
+                  }
                   className={`text-[11px] px-2 py-0.5 border border-[var(--border)] transition-colors ${
                     editing
                       ? "text-[var(--accent)] border-[var(--accent)]"
@@ -222,7 +302,7 @@ export function PlansPanel({ sessionName }: PlansPanelProps) {
               </div>
             </div>
 
-            {/* Edit or view mode */}
+            {/* Content */}
             {editing ? (
               <MarkdownEditor
                 key={selectedFile}

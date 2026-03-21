@@ -113,9 +113,15 @@ export async function createTask(
   return data.task;
 }
 
+export type PlanStatus = "pending" | "in-progress" | "done" | "archived";
+
 export interface PlanSummary {
   name: string;
   path: string;
+  title: string;
+  status: PlanStatus;
+  effort: string | null;
+  completed: string | null;
 }
 
 export async function fetchPlans(name: string): Promise<PlanSummary[]> {
@@ -126,6 +132,17 @@ export async function fetchPlans(name: string): Promise<PlanSummary[]> {
   if (!res.ok) return [];
   const data = (await res.json()) as { plans: PlanSummary[] };
   return data.plans;
+}
+
+export async function markPlanDone(
+  name: string,
+  filename: string,
+): Promise<boolean> {
+  const res = await fetch(
+    `${API_BASE}/api/project/${encodeURIComponent(name)}/plans/${encodeURIComponent(filename)}/done`,
+    { method: "POST" },
+  );
+  return res.ok;
 }
 
 export interface AuthorshipSection {
