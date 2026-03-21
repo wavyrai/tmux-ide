@@ -19,6 +19,9 @@ import {
   deleteTask,
   nextTaskId,
   loadTasksForGoal,
+  normalizeTask,
+  normalizeGoal,
+  normalizeMission,
   type Task,
 } from "./lib/task-store.ts";
 import { parseProof } from "./task.ts";
@@ -654,5 +657,73 @@ describe("parseProof", () => {
     const loaded = loadTask(tmpDir, "001")!;
     assert.ok(loaded.proof !== null);
     assert.strictEqual(loaded.proof!.notes, "old format proof");
+  });
+});
+
+describe("normalizer snapshots", () => {
+  it("normalizeTask produces exact default shape", () => {
+    const raw = {
+      id: "001", title: "Test", description: "desc", goal: null,
+      status: "todo", assignee: null, priority: 1,
+      created: "2026-01-01T00:00:00Z", updated: "2026-01-01T00:00:00Z",
+      branch: null, tags: [], proof: null,
+    };
+    const result = normalizeTask(raw as any);
+    assert.deepStrictEqual(result, {
+      id: "001", title: "Test", description: "desc", goal: null,
+      status: "todo", assignee: null, priority: 1,
+      created: "2026-01-01T00:00:00Z", updated: "2026-01-01T00:00:00Z",
+      branch: null, tags: [], proof: null,
+      retryCount: 0, maxRetries: 5, lastError: null, nextRetryAt: null,
+      depends_on: [],
+    });
+  });
+
+  it("normalizeTask migrates proof.note to proof.notes", () => {
+    const raw = {
+      id: "001", title: "Test", description: "", goal: null,
+      status: "todo", assignee: null, priority: 1,
+      created: "2026-01-01T00:00:00Z", updated: "2026-01-01T00:00:00Z",
+      branch: null, tags: [], proof: { note: "legacy note" },
+    };
+    const result = normalizeTask(raw as any);
+    assert.strictEqual(result.proof?.notes, "legacy note");
+    assert.strictEqual((result.proof as any).note, undefined);
+  });
+
+  it("normalizeGoal defaults missing fields", () => {
+    const raw = { id: "01", title: "G", description: "", status: "todo", acceptance: "", priority: 1 };
+    const result = normalizeGoal(raw as any);
+    assert.strictEqual(result.assignee, null);
+    assert.strictEqual(result.specialty, null);
+    assert.strictEqual(result.created, "1970-01-01T00:00:00.000Z");
+    assert.strictEqual(result.updated, "1970-01-01T00:00:00.000Z");
+  });
+
+  it("normalizeMission defaults missing timestamps", () => {
+    const raw = { title: "M", description: "desc" };
+    const result = normalizeMission(raw as any);
+    assert.deepStrictEqual(result, {
+      title: "M", description: "desc",
+      created: "1970-01-01T00:00:00.000Z",
+      updated: "1970-01-01T00:00:00.000Z",
+    });
+  });
+
+  it("normalizeTask preserves explicit retry values", () => {
+    const raw = {
+      id: "001", title: "Test", description: "", goal: null,
+      status: "todo", assignee: null, priority: 1,
+      created: "2026-01-01T00:00:00Z", updated: "2026-01-01T00:00:00Z",
+      branch: null, tags: [], proof: null,
+      retryCount: 3, maxRetries: 10, lastError: "timeout",
+      nextRetryAt: "2026-01-02T00:00:00Z", depends_on: ["002"],
+    };
+    const result = normalizeTask(raw as any);
+    assert.strictEqual(result.retryCount, 3);
+    assert.strictEqual(result.maxRetries, 10);
+    assert.strictEqual(result.lastError, "timeout");
+    assert.strictEqual(result.nextRetryAt, "2026-01-02T00:00:00Z");
+    assert.deepStrictEqual(result.depends_on, ["002"]);
   });
 });
