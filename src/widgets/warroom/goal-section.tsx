@@ -49,6 +49,8 @@ interface GoalSectionProps {
   theme: WidgetTheme;
   selectedAgent: number;
   agentStartIndex: number;
+  onSelectAgent?: (globalIndex: number) => void;
+  onToggleExpand?: () => void;
 }
 
 export function GoalSection(props: GoalSectionProps) {
@@ -57,7 +59,7 @@ export function GoalSection(props: GoalSectionProps) {
 
   return (
     <box paddingLeft={1} paddingTop={1}>
-      <box flexDirection="row" gap={2}>
+      <box flexDirection="row" gap={2} onMouseDown={props.onToggleExpand}>
         <text fg={toRGBA(props.theme.fg)} attributes={TextAttributes.BOLD}>
           {props.title}
         </text>
@@ -67,13 +69,17 @@ export function GoalSection(props: GoalSectionProps) {
       </box>
       <text fg={toRGBA(props.theme.gitAdded)}>{progressBar(pct(), 15)}</text>
       <For each={props.agents}>
-        {(agent, i) => (
-          <AgentCard
-            agent={agent}
-            theme={props.theme}
-            selected={props.agentStartIndex + i() === props.selectedAgent}
-          />
-        )}
+        {(agent, i) => {
+          const globalIdx = () => props.agentStartIndex + i();
+          return (
+            <AgentCard
+              agent={agent}
+              theme={props.theme}
+              selected={globalIdx() === props.selectedAgent}
+              onMouseDown={() => props.onSelectAgent?.(globalIdx())}
+            />
+          );
+        }}
       </For>
       <Show when={props.completedTasks.length > 0}>
         <For each={props.completedTasks}>

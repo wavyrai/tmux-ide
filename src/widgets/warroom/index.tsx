@@ -132,6 +132,8 @@ render(
     const [panes, setPanes] = createSignal<PaneInfo[]>(session ? listSessionPanes(session) : []);
     const [activity, setActivity] = createSignal<ActivityEntry[]>([]);
     const [selectedAgent, setSelectedAgent] = createSignal(0);
+    const [inputMode, setInputMode] = createSignal<"keyboard" | "mouse">("keyboard");
+    const [collapsedGoals, setCollapsedGoals] = createSignal<Set<string>>(new Set());
 
     // Poll every 2 seconds
     const interval = setInterval(() => {
@@ -190,6 +192,7 @@ render(
 
     // Keyboard
     useKeyboard((evt) => {
+      setInputMode("keyboard");
       const totalAgents = allAgents().length;
 
       if (evt.name === "j" || evt.name === "down") {
@@ -222,6 +225,30 @@ render(
         process.exit(0);
       }
     });
+
+    function selectAgentByMouse(globalIdx: number) {
+      setInputMode("mouse");
+      setSelectedAgent(globalIdx);
+      // Also focus the tmux pane on click
+      const agent = allAgents()[globalIdx];
+      if (agent && session) {
+        const pane = panes().find((p) => p.title === agent.paneTitle);
+        if (pane) {
+          try {
+            execFileSync("tmux", ["select-pane", "-t", pane.id], { stdio: "ignore" });
+          } catch { /* ignore */ }
+        }
+      }
+    }
+
+    function toggleGoalCollapse(goalId: string) {
+      setCollapsedGoals((prev) => {
+        const next = new Set(prev);
+        if (next.has(goalId)) next.delete(goalId);
+        else next.add(goalId);
+        return next;
+      });
+    }
 
     // Track agent index across goal sections
     let agentGlobalIndex = 0;
@@ -259,11 +286,13 @@ render(
                   priority={section.goal.priority}
                   totalTasks={section.tasks.length}
                   doneTasks={section.tasks.filter((t) => t.status === "done").length}
-                  completedTasks={section.tasks.filter((t) => t.status === "done")}
-                  agents={section.agents}
+                  completedTasks={collapsedGoals().has(section.goal.id) ? [] : section.tasks.filter((t) => t.status === "done")}
+                  agents={collapsedGoals().has(section.goal.id) ? [] : section.agents}
                   theme={theme}
                   selectedAgent={selectedAgent()}
                   agentStartIndex={startIdx}
+                  onSelectAgent={selectAgentByMouse}
+                  onToggleExpand={() => toggleGoalCollapse(section.goal.id)}
                 />
               );
             }}
@@ -281,6 +310,7 @@ render(
                     backgroundColor={
                       idx === selectedAgent() ? toRGBA(theme.selected) : RGBA.fromInts(0, 0, 0, 0)
                     }
+                    onMouseDown={() => selectAgentByMouse(idx)}
                   >
                     <text fg={toRGBA(agent.isBusy ? theme.gitModified : theme.fgMuted)}>
                       {agent.isBusy ? "*" : "o"}

@@ -25,7 +25,7 @@ import { LayoutPicker } from "./layout-picker.tsx";
 import { AgentNaming } from "./agent-naming.tsx";
 import { ConfigTree } from "./config-tree.tsx";
 import { FieldEditor, type FieldType } from "./field-editor.tsx";
-import { Footer, type ViewKind } from "./footer.tsx";
+import { Footer, type ViewKind, type FooterActions } from "./footer.tsx";
 
 const { values } = parseArgs({
   options: {
@@ -114,6 +114,53 @@ render(
 
     function viewKind(): ViewKind {
       return view().kind;
+    }
+
+    function footerActions(): FooterActions {
+      const quit = () => process.exit(0);
+      const kind = view().kind;
+
+      switch (kind) {
+        case "detect":
+          return {
+            onConfirm: () => setView({ kind: "layout-picker" }),
+            onQuit: quit,
+          };
+        case "layout-picker":
+          return { onQuit: quit };
+        case "agent-naming":
+          return {
+            onBack: () => setView({ kind: "layout-picker" }),
+            onQuit: quit,
+          };
+        case "orchestrator":
+          return {
+            onBack: () => setView({ kind: "agent-naming", config: config() }),
+            onQuit: quit,
+          };
+        case "review":
+          return {
+            onBack: () => setView({ kind: "agent-naming", config: config() }),
+            onQuit: quit,
+          };
+        case "editor-tree":
+          return {
+            onSave: () => handleSaveOnly(config()),
+            onQuit: quit,
+          };
+        case "editor-field":
+          return {
+            onBack: () => {
+              if (hasConfig && !forceWizard) {
+                setView({ kind: "editor-tree" });
+              } else {
+                setView({ kind: "review", config: config() });
+              }
+            },
+          };
+        default:
+          return { onQuit: quit };
+      }
     }
 
     function handleSaveAndLaunch(cfg: IdeConfig) {
@@ -273,7 +320,7 @@ render(
           </Switch>
         </box>
 
-        <Footer viewKind={viewKind()} theme={theme} />
+        <Footer viewKind={viewKind()} theme={theme} actions={footerActions()} />
       </box>
     );
   },

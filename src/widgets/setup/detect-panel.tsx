@@ -67,13 +67,13 @@ export function DetectPanel(props: DetectPanelProps) {
       <box flexGrow={1} />
 
       {/* Footer */}
-      <box flexShrink={0}>
+      <box flexShrink={0} onMouseDown={() => props.onContinue()}>
         <box flexShrink={0} height={1}>
           <text fg={toRGBA(theme.border)} wrapMode="none">
             {"─".repeat(40)}
           </text>
         </box>
-        <text fg={toRGBA(theme.fgMuted)}>Enter:continue</text>
+        <text fg={toRGBA(theme.accent)}>Enter:continue</text>
       </box>
     </box>
   );

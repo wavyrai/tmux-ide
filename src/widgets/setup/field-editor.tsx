@@ -70,6 +70,7 @@ function StringEditor(props: {
         focusedBackgroundColor={toRGBA(props.theme.selected)}
         cursorColor={toRGBA(props.theme.accent)}
         focusedTextColor={toRGBA(props.theme.fg)}
+        onMouseDown={() => inputRef?.focus()}
         ref={(r: InputRenderable) => {
           inputRef = r;
         }}
@@ -94,8 +95,10 @@ function EnumEditor(props: {
 }) {
   const initial = Math.max(0, props.values.indexOf(props.value));
   const [selectedIndex, setSelectedIndex] = createSignal(initial);
+  const [inputMode, setInputMode] = createSignal<"keyboard" | "mouse">("keyboard");
 
   useKeyboard((evt) => {
+    setInputMode("keyboard");
     if (evt.name === "escape") {
       props.onCancel();
       evt.preventDefault();
@@ -120,7 +123,11 @@ function EnumEditor(props: {
           <box
             flexShrink={0}
             backgroundColor={isSelected() ? toRGBA(props.theme.selected) : undefined}
-            onMouseMove={() => setSelectedIndex(index)}
+            onMouseMove={() => {
+              setInputMode("mouse");
+              setSelectedIndex(index);
+            }}
+            onMouseDown={() => setSelectedIndex(index)}
             onMouseUp={() => props.onSave(val)}
           >
             <text
@@ -163,13 +170,17 @@ function BooleanEditor(props: {
 
   return (
     <box flexDirection="row" gap={1}>
-      <text fg={toRGBA(props.theme.accent)} attributes={TextAttributes.BOLD}>
+      <text
+        fg={toRGBA(props.theme.accent)}
+        attributes={TextAttributes.BOLD}
+        onMouseUp={() => setVal((v) => !v)}
+      >
         {val() ? "[x]" : "[ ]"}
       </text>
-      <text fg={toRGBA(props.theme.fg)}>
+      <text fg={toRGBA(props.theme.fg)} onMouseUp={() => setVal((v) => !v)}>
         {val() ? "true" : "false"}
       </text>
-      <text fg={toRGBA(props.theme.fgMuted)}>(Space to toggle)</text>
+      <text fg={toRGBA(props.theme.fgMuted)}>(Space to toggle, click to flip)</text>
     </box>
   );
 }
@@ -247,7 +258,7 @@ export function FieldEditor(props: FieldEditorProps) {
           ) : (
             <text fg={toRGBA(theme.fgMuted)}>Enter:save</text>
           )}
-          <text fg={toRGBA(theme.fgMuted)}>Esc:cancel</text>
+          <text fg={toRGBA(theme.fgMuted)} onMouseUp={() => props.onCancel()}>Esc:cancel</text>
         </box>
       </box>
     </box>

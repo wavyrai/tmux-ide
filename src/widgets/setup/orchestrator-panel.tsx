@@ -91,7 +91,16 @@ export function OrchestratorPanel(props: OrchestratorPanelProps) {
       </box>
 
       {/* Enabled toggle */}
-      <box flexShrink={0} flexDirection="row" gap={1} paddingBottom={1}>
+      <box
+        flexShrink={0}
+        flexDirection="row"
+        gap={1}
+        paddingBottom={1}
+        onMouseDown={() => {
+          setActiveField("enabled");
+          setEnabled(!enabled());
+        }}
+      >
         <text
           fg={toRGBA(isActive("enabled") ? theme.accent : theme.fg)}
           attributes={isActive("enabled") ? TextAttributes.BOLD : undefined}
@@ -115,6 +124,10 @@ export function OrchestratorPanel(props: OrchestratorPanelProps) {
                 fg={toRGBA(
                   i() === masterIdx() ? theme.accent : theme.fgMuted
                 )}
+                onMouseDown={() => {
+                  setActiveField("master_pane");
+                  setMasterIdx(i());
+                }}
               >
                 {i() === masterIdx() ? "● " : "○ "}{name}
               </text>
@@ -127,7 +140,16 @@ export function OrchestratorPanel(props: OrchestratorPanelProps) {
       </box>
 
       {/* Auto dispatch toggle */}
-      <box flexShrink={0} flexDirection="row" gap={1} paddingBottom={1}>
+      <box
+        flexShrink={0}
+        flexDirection="row"
+        gap={1}
+        paddingBottom={1}
+        onMouseDown={() => {
+          setActiveField("auto_dispatch");
+          setAutoDispatch(!autoDispatch());
+        }}
+      >
         <text
           fg={toRGBA(isActive("auto_dispatch") ? theme.accent : theme.fg)}
           attributes={isActive("auto_dispatch") ? TextAttributes.BOLD : undefined}
@@ -140,7 +162,18 @@ export function OrchestratorPanel(props: OrchestratorPanelProps) {
       <box flexGrow={1} />
 
       {/* Continue button */}
-      <box flexShrink={0} paddingBottom={1}>
+      <box
+        flexShrink={0}
+        paddingBottom={1}
+        onMouseDown={() => {
+          setActiveField("confirm");
+          props.onContinue({
+            enabled: enabled(),
+            auto_dispatch: autoDispatch(),
+            master_pane: props.claudePaneNames[masterIdx()] ?? null,
+          });
+        }}
+      >
         <text
           fg={toRGBA(isActive("confirm") ? theme.accent : theme.fgMuted)}
           attributes={isActive("confirm") ? TextAttributes.BOLD : undefined}

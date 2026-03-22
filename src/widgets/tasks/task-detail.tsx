@@ -235,18 +235,30 @@ export function TaskDetail(props: TaskDetailProps) {
       </box>
 
       {/* Actions footer */}
-      <box flexShrink={0}>
-        <text fg={toRGBA(theme.fgMuted)} wrapMode="none">
-          {[
-            "e:edit",
-            canStart() ? "s:start" : null,
-            canReview() ? "v:review" : null,
-            canDone() ? "d:done" : null,
-            "a:assign",
-            "c:claude",
-          ]
-            .filter(Boolean)
-            .join("  ")}
+      <box flexShrink={0} flexDirection="row" gap={2}>
+        <text fg={toRGBA(theme.fgMuted)} onMouseUp={() => props.onEdit(t())} wrapMode="none">
+          e:edit
+        </text>
+        <Show when={canStart()}>
+          <text fg={toRGBA(theme.fgMuted)} onMouseUp={() => { updateTaskStatus(props.dir, t().id, "in-progress"); props.onTaskUpdate(); }} wrapMode="none">
+            s:start
+          </text>
+        </Show>
+        <Show when={canReview()}>
+          <text fg={toRGBA(theme.fgMuted)} onMouseUp={() => { updateTaskStatus(props.dir, t().id, "review"); props.onTaskUpdate(); }} wrapMode="none">
+            v:review
+          </text>
+        </Show>
+        <Show when={canDone()}>
+          <text fg={toRGBA(theme.fgMuted)} onMouseUp={() => { updateTaskStatus(props.dir, t().id, "done"); props.onTaskUpdate(); }} wrapMode="none">
+            d:done
+          </text>
+        </Show>
+        <text fg={toRGBA(theme.fgMuted)} onMouseUp={() => {
+          const claude = findClaudePane();
+          if (claude) { updateTaskAssignee(props.dir, t().id, claude.title); props.onTaskUpdate(); }
+        }} wrapMode="none">
+          a:assign
         </text>
       </box>
     </box>

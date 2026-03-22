@@ -20,6 +20,7 @@ interface AgentCardProps {
   agent: AgentInfo;
   theme: WidgetTheme;
   selected: boolean;
+  onMouseDown?: () => void;
 }
 
 function retryCountdown(nextRetryAt: string | null): string | null {
@@ -53,7 +54,7 @@ export function AgentCard(props: AgentCardProps) {
   const countdown = () => retryCountdown(props.agent.nextRetryAt);
 
   return (
-    <box paddingLeft={1} backgroundColor={bg()}>
+    <box paddingLeft={1} backgroundColor={bg()} onMouseDown={props.onMouseDown}>
       <box flexDirection="row" gap={1}>
         <text fg={toRGBA(dotColor())}>{dot()}</text>
         <text fg={toRGBA(props.selected ? props.theme.selectedText : props.theme.fg)}>

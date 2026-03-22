@@ -70,7 +70,14 @@ export function AgentNaming(props: AgentNamingProps) {
       {nameSignals.map(([getter, setter], index) => {
         const isActive = () => activeField() === index;
         return (
-          <box flexShrink={0} paddingBottom={1}>
+          <box
+            flexShrink={0}
+            paddingBottom={1}
+            onMouseDown={() => {
+              setActiveField(index);
+              setTimeout(() => inputRefs[index]?.focus(), 10);
+            }}
+          >
             <text fg={toRGBA(isActive() ? theme.accent : theme.fgMuted)}>
               Pane {index + 1}
             </text>

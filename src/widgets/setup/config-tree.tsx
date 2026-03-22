@@ -41,6 +41,7 @@ export function ConfigTree(props: ConfigTreeProps) {
   const [selectedIndex, setSelectedIndex] = createSignal(0);
   const [collapsed, setCollapsed] = createSignal<Set<string>>(new Set());
   const [confirmDelete, setConfirmDelete] = createSignal<string | null>(null);
+  const [inputMode, setInputMode] = createSignal<"keyboard" | "mouse">("keyboard");
 
   const theme = props.theme;
 
@@ -86,6 +87,8 @@ export function ConfigTree(props: ConfigTreeProps) {
   }
 
   useKeyboard((evt) => {
+    setInputMode("keyboard");
+
     // Delete confirmation mode
     if (confirmDelete() !== null) {
       if (evt.name === "y") {
@@ -152,7 +155,7 @@ export function ConfigTree(props: ConfigTreeProps) {
         <text fg={toRGBA(theme.accent)} attributes={TextAttributes.BOLD}>
           Config Editor
         </text>
-        <text fg={toRGBA(theme.fgMuted)}>Ctrl+S:save</text>
+        <text fg={toRGBA(theme.fgMuted)} onMouseUp={() => props.onSave(props.config)}>Ctrl+S:save</text>
       </box>
 
       {/* Tree */}
@@ -164,7 +167,11 @@ export function ConfigTree(props: ConfigTreeProps) {
             <box
               flexShrink={0}
               backgroundColor={isSelected() ? toRGBA(theme.selected) : undefined}
-              onMouseMove={() => setSelectedIndex(index)}
+              onMouseMove={() => {
+                setInputMode("mouse");
+                setSelectedIndex(index);
+              }}
+              onMouseDown={() => setSelectedIndex(index)}
               onMouseUp={() => {
                 if (node.expandable) toggleCollapse(node);
                 else props.onEditField(node.path);
