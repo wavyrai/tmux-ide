@@ -99,12 +99,24 @@ export function ReviewPanel(props: ReviewPanelProps) {
         <text
           fg={toRGBA(selectedAction() === 0 ? theme.accent : theme.fgMuted)}
           attributes={selectedAction() === 0 ? TextAttributes.BOLD : undefined}
+          onMouseDown={() => setSelectedAction(0)}
+          onMouseUp={() => {
+            if (!isValid()) return;
+            writeConfig(props.dir, props.config);
+            props.onDone("write");
+          }}
         >
           {selectedAction() === 0 ? ">" : " "} [ Write ide.yml ]
         </text>
         <text
           fg={toRGBA(selectedAction() === 1 ? theme.accent : theme.fgMuted)}
           attributes={selectedAction() === 1 ? TextAttributes.BOLD : undefined}
+          onMouseDown={() => setSelectedAction(1)}
+          onMouseUp={() => {
+            if (!isValid()) return;
+            writeConfig(props.dir, props.config);
+            props.onDone("launch");
+          }}
         >
           {selectedAction() === 1 ? ">" : " "} [ Write & Launch ]
         </text>

@@ -49,6 +49,7 @@ export function LayoutPicker(props: LayoutPickerProps) {
             flexShrink={0}
             paddingBottom={1}
             backgroundColor={isSelected() ? toRGBA(theme.selected) : undefined}
+            onMouseDown={() => setSelectedIndex(index)}
             onMouseMove={() => setSelectedIndex(index)}
             onMouseUp={() => props.onSelect(preset)}
           >

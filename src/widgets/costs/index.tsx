@@ -36,6 +36,8 @@ render(
     const dimensions = useTerminalDimensions();
 
     const [accounting, setAccounting] = createSignal(loadAccounting(dir));
+    const [selectedRow, setSelectedRow] = createSignal(-1);
+    const [inputMode, setInputMode] = createSignal<"keyboard" | "mouse">("keyboard");
 
     // Poll every 5 seconds
     const interval = setInterval(() => {
@@ -69,7 +71,14 @@ render(
     });
 
     useKeyboard((evt) => {
-      if (evt.name === "r") {
+      setInputMode("keyboard");
+      if (evt.name === "up" || evt.name === "k") {
+        setSelectedRow((i) => Math.max(0, i - 1));
+        evt.preventDefault();
+      } else if (evt.name === "down" || evt.name === "j") {
+        setSelectedRow((i) => Math.min(agentRows().length - 1, i + 1));
+        evt.preventDefault();
+      } else if (evt.name === "r") {
         setAccounting(loadAccounting(dir));
         evt.preventDefault();
       } else if (evt.name === "q") {
@@ -158,31 +167,44 @@ render(
 
             {/* Agent rows */}
             <For each={agentRows()}>
-              {(row) => (
-                <box flexDirection="row" gap={2} paddingLeft={1}>
-                  <text fg={toRGBA(theme.fg)} width={20} wrapMode="none">
-                    {row.name}
-                  </text>
-                  <text fg={toRGBA(theme.fgMuted)} width={10} wrapMode="none">
-                    {String(row.data.taskCount)}
-                  </text>
-                  <text fg={toRGBA(theme.gitAdded)} width={12} wrapMode="none">
-                    {formatDuration(row.data.totalTimeMs)}
-                  </text>
-                  <text fg={toRGBA(theme.fgMuted)} width={12} wrapMode="none">
-                    {row.data.taskCount > 0 ? formatDuration(row.avgMs) : "-"}
-                  </text>
-                </box>
-              )}
+              {(row, index) => {
+                const isSelected = createMemo(() => index() === selectedRow());
+                return (
+                  <box
+                    flexDirection="row"
+                    gap={2}
+                    paddingLeft={1}
+                    backgroundColor={isSelected() ? toRGBA(theme.selected) : undefined}
+                    onMouseMove={() => {
+                      setInputMode("mouse");
+                      setSelectedRow(index());
+                    }}
+                    onMouseDown={() => setSelectedRow(index())}
+                  >
+                    <text fg={toRGBA(isSelected() ? theme.selectedText : theme.fg)} width={20} wrapMode="none">
+                      {row.name}
+                    </text>
+                    <text fg={toRGBA(theme.fgMuted)} width={10} wrapMode="none">
+                      {String(row.data.taskCount)}
+                    </text>
+                    <text fg={toRGBA(theme.gitAdded)} width={12} wrapMode="none">
+                      {formatDuration(row.data.totalTimeMs)}
+                    </text>
+                    <text fg={toRGBA(theme.fgMuted)} width={12} wrapMode="none">
+                      {row.data.taskCount > 0 ? formatDuration(row.avgMs) : "-"}
+                    </text>
+                  </box>
+                );
+              }}
             </For>
           </Show>
         </scrollbox>
 
         {/* Footer */}
-        <box flexShrink={0} paddingLeft={1} paddingTop={1}>
-          <text fg={toRGBA(theme.fgMuted)} wrapMode="none">
-            r:refresh q:quit
-          </text>
+        <box flexShrink={0} paddingLeft={1} paddingTop={1} flexDirection="row" gap={1}>
+          <text fg={toRGBA(theme.fgMuted)} wrapMode="none">↑↓:nav</text>
+          <text fg={toRGBA(theme.fgMuted)} wrapMode="none" onMouseUp={() => setAccounting(loadAccounting(dir))}>r:refresh</text>
+          <text fg={toRGBA(theme.fgMuted)} wrapMode="none">q:quit</text>
         </box>
       </box>
     );

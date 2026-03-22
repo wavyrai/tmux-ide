@@ -105,6 +105,10 @@ export function TaskForm(props: TaskFormProps) {
           focusedBackgroundColor={toRGBA(theme.selected)}
           cursorColor={toRGBA(theme.accent)}
           focusedTextColor={toRGBA(theme.fg)}
+          onMouseDown={() => {
+            setActiveField("title");
+            setTimeout(() => titleRef?.focus(), 10);
+          }}
           ref={(r: InputRenderable) => {
             titleRef = r;
           }}
@@ -123,6 +127,10 @@ export function TaskForm(props: TaskFormProps) {
           focusedBackgroundColor={toRGBA(theme.selected)}
           cursorColor={toRGBA(theme.accent)}
           focusedTextColor={toRGBA(theme.fg)}
+          onMouseDown={() => {
+            setActiveField("description");
+            setTimeout(() => descRef?.focus(), 10);
+          }}
           ref={(r: InputRenderable) => {
             descRef = r;
           }}
@@ -172,7 +180,7 @@ export function TaskForm(props: TaskFormProps) {
         </box>
         <box flexDirection="row" gap={2}>
           <text fg={toRGBA(theme.fgMuted)}>Tab:next field</text>
-          <text fg={toRGBA(theme.fgMuted)}>Ctrl+S:save</text>
+          <text fg={toRGBA(theme.fgMuted)} onMouseUp={() => save()}>Ctrl+S:save</text>
           <text fg={toRGBA(theme.fgMuted)} onMouseUp={() => props.onCancel()}>
             Esc:cancel
           </text>
