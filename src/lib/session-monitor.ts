@@ -12,6 +12,7 @@ interface MonitorPane {
   title?: string;
   role?: string;
   type?: string;
+  name?: string;
 }
 
 // --- Port detection (pure helpers) ---
@@ -149,12 +150,12 @@ if (isMainModule) {
       "-t",
       session,
       "-F",
-      "#{pane_id}\t#{pane_pid}\t#{pane_current_command}\t#{pane_title}\t#{@ide_role}\t#{@ide_type}",
+      "#{pane_id}\t#{pane_pid}\t#{pane_current_command}\t#{pane_title}\t#{@ide_role}\t#{@ide_type}\t#{@ide_name}",
     );
     if (!raw) return [];
     return raw.split("\n").map((line) => {
-      const [id, pid, cmd, title, role, type] = line.split("\t");
-      return { id: id!, pid: pid!, cmd, title, role: role || undefined, type: type || undefined };
+      const [id, pid, cmd, title, role, type, name] = line.split("\t");
+      return { id: id!, pid: pid!, cmd, title, role: role || undefined, type: type || undefined, name: name || undefined };
     });
   }
 
@@ -170,12 +171,13 @@ if (isMainModule) {
     const portPanes = computePortPanes(panes);
     const agentStates = computeAgentStates(panes);
 
-    // Build state fingerprint for change detection
+    // Build state fingerprint for change detection (includes title drift)
     const stateKey = panes
       .map((p) => {
         const port = portPanes.has(p.id) ? "1" : "0";
         const agent = agentStates.get(p.id) ?? "-";
-        return `${p.id}:${port}:${agent}`;
+        const titleDrift = p.name && p.title !== p.name ? "d" : "ok";
+        return `${p.id}:${port}:${agent}:${titleDrift}`;
       })
       .join("|");
 
@@ -189,6 +191,11 @@ if (isMainModule) {
       tmuxSilent("set-option", "-pqt", pane.id, "@has_port", hasPort);
       tmuxSilent("set-option", "-pqt", pane.id, "@agent_busy", agent === "busy" ? "1" : "0");
       tmuxSilent("set-option", "-pqt", pane.id, "@agent_idle", agent === "idle" ? "1" : "0");
+
+      // Restore configured pane title if Claude Code changed it
+      if (pane.name && pane.title !== pane.name) {
+        tmuxSilent("select-pane", "-t", pane.id, "-T", pane.name);
+      }
     }
 
     tmuxSilent("refresh-client", "-S");
