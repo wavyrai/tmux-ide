@@ -64,7 +64,13 @@ export function collectPaneStartupPlan(
         action.exports = Object.entries(pane.env).map(([key, value]) => `export ${key}=${value}`);
       }
 
-      const command = buildPaneCommand(pane);
+      let command = buildPaneCommand(pane);
+      // Inject --name flag into Claude/Codex commands so the agent
+      // sets its own pane title to match the configured name.
+      // This is agent-agnostic: any CLI that respects --name will work.
+      if (command && pane.title && /claude|codex/i.test(command) && !command.includes("--name")) {
+        command = `${command} --name "${pane.title}"`;
+      }
       if (command) {
         action.command = command;
       }
