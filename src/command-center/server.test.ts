@@ -16,47 +16,12 @@ import { appendEvent } from "../lib/event-log.ts";
 import { _setExecutor, type PaneInfo } from "../widgets/lib/pane-comms.ts";
 import { _setTmuxRunner } from "./discovery.ts";
 import { createApp } from "./server.ts";
+import { makeTask, makePane } from "../__tests__/support.ts";
 
 let tmpDir: string;
 let restoreTmux: () => void;
 let restoreDiscoveryTmux: () => void;
 let mockPanes: PaneInfo[];
-
-function makeTask(overrides: Partial<Task> = {}): Task {
-  return {
-    id: "001",
-    title: "Test task",
-    description: "Task desc",
-    goal: null,
-    status: "todo",
-    assignee: null,
-    priority: 1,
-    created: "2026-01-01T00:00:00Z",
-    updated: "2026-01-01T00:00:00Z",
-    branch: null,
-    tags: [],
-    proof: null,
-    retryCount: 0,
-    maxRetries: 5,
-    lastError: null,
-    nextRetryAt: null,
-    depends_on: [],
-    ...overrides,
-  };
-}
-
-function makePane(overrides: Partial<PaneInfo> = {}): PaneInfo {
-  return {
-    id: "%1",
-    index: 0,
-    title: "Agent 1",
-    currentCommand: "claude",
-    width: 80,
-    height: 24,
-    active: false,
-    ...overrides,
-  };
-}
 
 beforeEach(() => {
   tmpDir = mkdtempSync(join(tmpdir(), "tmux-ide-cc-srv-test-"));
