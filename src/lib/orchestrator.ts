@@ -216,7 +216,8 @@ export function dispatch(
 ): void {
   // Find idle agent panes (not the master pane, not already assigned a task)
   const idleAgents = panes.filter((p) => {
-    if (p.title === config.masterPane) return false;
+    // Master pane check: normalize title to strip spinner prefix before comparing
+    if (config.masterPane && normalizePaneTitle(p.title) === config.masterPane) return false;
     if (!isIdleForDispatch(p)) return false;
     // Don't dispatch to a pane that already has an in-progress task assigned
     const name = agentIdentifier(p);
@@ -403,7 +404,8 @@ export function dispatchGoals(
 ): void {
   // Find idle planner panes (not the master pane, not already assigned)
   const idlePlanners = panes.filter((p) => {
-    if (p.title === config.masterPane) return false;
+    if (p.index === 0) return false;
+    if (config.masterPane && normalizePaneTitle(p.title) === config.masterPane) return false;
     if (!isPlannerPane(config, p)) return false;
     if (!isIdleForDispatch(p)) return false;
     const name = agentIdentifier(p);
