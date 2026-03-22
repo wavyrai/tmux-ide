@@ -1,6 +1,11 @@
 #!/usr/bin/env node
 import { parseArgs } from "node:util";
 import { createRequire } from "node:module";
+import { resolve, dirname } from "node:path";
+import { execFileSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
 import { launch } from "../dist/launch.js";
 import { init } from "../dist/init.js";
 import { stop } from "../dist/stop.js";
@@ -47,6 +52,9 @@ const { positionals, values } = parseArgs({
     pr: { type: "boolean" },
     specialty: { type: "string" },
     port: { type: "string" },
+    // setup command flags
+    edit: { type: "boolean" },
+    wizard: { type: "boolean" },
   },
 });
 
@@ -67,6 +75,7 @@ const knownCommands = new Set([
   "goal",
   "task",
   "plan",
+  "setup",
   "command-center",
   "help",
 ]);
@@ -107,6 +116,8 @@ function printHelp() {
 ${bold("Usage:")}
   ${cyan("tmux-ide")}                    ${dim("Launch IDE from ide.yml")}
   ${cyan("tmux-ide <path>")}             ${dim("Launch from a specific directory")}
+  ${cyan("tmux-ide setup")}              ${dim("Interactive TUI setup wizard")}
+  ${cyan("tmux-ide setup --edit")}       ${dim("Open config tree editor")}
   ${cyan("tmux-ide init")} [--template]  ${dim("Scaffold a new ide.yml (auto-detects stack)")}
   ${cyan("tmux-ide stop")}               ${dim("Kill the current IDE session")}
   ${cyan("tmux-ide restart")}            ${dim("Stop and relaunch the IDE session")}
@@ -225,6 +236,11 @@ try {
       } else if (sub === "disable-team") {
         action = "disable-team";
         configArgs = [];
+      } else if (sub === "edit") {
+        // Launch setup TUI in edit mode
+        const scriptPath = resolve(__dirname, "../src/widgets/setup/index.tsx");
+        execFileSync("bun", [scriptPath, "--dir=" + resolve(startTargetDir || "."), "--edit"], { stdio: "inherit" });
+        break;
       }
 
       await config(null, { json, action, args: configArgs });
@@ -293,6 +309,15 @@ try {
         args: positionals.slice(2),
         values: { status: values.status },
       });
+      break;
+    }
+
+    case "setup": {
+      const scriptPath = resolve(__dirname, "../src/widgets/setup/index.tsx");
+      const setupArgs = [scriptPath, "--dir=" + resolve(startTargetDir || ".")];
+      if (positionals[1] === "--edit" || values.edit) setupArgs.push("--edit");
+      if (positionals[1] === "--wizard" || values.wizard) setupArgs.push("--wizard");
+      execFileSync("bun", setupArgs, { stdio: "inherit" });
       break;
     }
 

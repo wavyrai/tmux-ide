@@ -274,3 +274,51 @@ pnpm pack:check
 - Dev servers + shell in the bottom row
 - Use `detect --json` first to understand the project stack
 - For agent teams: assign specific tasks to teammate panes for focused parallel work
+
+## Task Management
+
+tmux-ide provides structured task management for coordinated multi-agent work.
+
+### Mission & Goals
+
+```bash
+tmux-ide mission set "title" --description "..."   # Set the project mission
+tmux-ide mission show                               # Show current mission
+tmux-ide mission clear                              # Clear the mission
+
+tmux-ide goal create "title" --priority N --acceptance "criteria"
+tmux-ide goal list [--json]                         # List all goals
+tmux-ide goal show <id> [--json]                    # Show goal with tasks
+tmux-ide goal update <id> --status done
+tmux-ide goal done <id>                             # Mark goal complete
+tmux-ide goal delete <id>
+```
+
+### Tasks
+
+```bash
+tmux-ide task create "title" --goal NN --priority N --assign "Agent" --tags "a,b" --depends "001,002"
+tmux-ide task list [--status todo --goal NN] [--json]
+tmux-ide task show <id> [--json]                    # Full mission→goal→task context
+tmux-ide task update <id> --status review --proof '{"tests":{"passed":10,"total":10}}'
+tmux-ide task claim <id> --assign "Agent Name"      # Claim and start a task
+tmux-ide task done <id> --proof "description"       # Mark task complete with proof
+tmux-ide task delete <id>
+```
+
+### Proof Format
+
+The `--proof` flag accepts either a plain string (stored as `notes`) or a JSON object:
+
+```json
+{
+  "tests": { "passed": 10, "total": 10 },
+  "pr": { "number": 42, "url": "https://...", "status": "merged" },
+  "ci": { "status": "passing", "url": "https://..." },
+  "notes": "Additional context"
+}
+```
+
+### Task Dependencies
+
+Use `--depends "001,002"` to declare that a task depends on other tasks. The orchestrator will not dispatch a task until all its dependencies are complete.
