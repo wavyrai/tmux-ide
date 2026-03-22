@@ -40,6 +40,7 @@ export interface SessionOverview {
 
 export interface AgentDetail {
   paneTitle: string;
+  paneId: string;
   isBusy: boolean;
   taskTitle: string | null;
   taskId: string | null;
@@ -175,6 +176,7 @@ export function buildProjectDetail(info: SessionInfo): ProjectDetail {
       );
       return {
         paneTitle: name,
+        paneId: pane.id,
         isBusy: isAgentBusy(pane),
         taskTitle: assignedTask?.title ?? null,
         taskId: assignedTask?.id ?? null,

@@ -11,6 +11,13 @@ import {
   killAll,
   getSession,
 } from "./pty-manager.ts";
+import {
+  startMirror,
+  handleInput as mirrorHandleInput,
+  handleResize as mirrorHandleResize,
+  stopAll as stopAllMirrors,
+} from "./pane-mirror.ts";
+import { listSessionPanes } from "../widgets/lib/pane-comms.ts";
 
 export interface CommandCenterOptions {
   port?: number;
@@ -30,6 +37,53 @@ export function attachWebSockets(
 
   server.on("upgrade", (req: IncomingMessage, socket, head) => {
     const pathname = parseUrl(req.url ?? "/").pathname ?? "/";
+
+    // Match mirror WebSocket: /ws/mirror/{sessionName}/{paneId}
+    const mirrorMatch = pathname.match(/^\/ws\/mirror\/([^/]+)\/(.+)$/);
+    if (mirrorMatch) {
+      const mirrorSession = decodeURIComponent(mirrorMatch[1]!);
+      const paneId = decodeURIComponent(mirrorMatch[2]!);
+
+      // Validate session and pane exist
+      try {
+        const panes = listSessionPanes(mirrorSession);
+        const paneExists = panes.some((p) => p.id === paneId);
+        if (!paneExists) {
+          socket.destroy();
+          return;
+        }
+      } catch {
+        socket.destroy();
+        return;
+      }
+
+      wss.handleUpgrade(req, socket, head, (ws: WebSocket) => {
+        startMirror(mirrorSession, paneId, ws);
+
+        ws.on("message", (data: Buffer | string) => {
+          const str = typeof data === "string" ? data : data.toString("utf-8");
+
+          if (str.startsWith("{")) {
+            try {
+              const msg = JSON.parse(str) as { type?: string; cols?: number; rows?: number };
+              if (msg.type === "resize" && msg.cols && msg.rows) {
+                mirrorHandleResize(paneId, msg.cols, msg.rows);
+                return;
+              }
+            } catch {
+              // Not JSON — fall through to input
+            }
+          }
+
+          mirrorHandleInput(paneId, str);
+        });
+
+        wss.emit("connection", ws, req);
+      });
+      return;
+    }
+
+    // Match widget WebSocket: /ws/{widgetType}
     const match = pathname.match(/^\/ws\/([a-z-]+)$/);
 
     if (!match) {
@@ -113,8 +167,11 @@ export async function startCommandCenter(options: CommandCenterOptions = {}): Pr
   // Attach WebSocket upgrade handler for PTY terminals
   attachWebSockets(server, session, dir);
 
-  // Cleanup PTYs on server close
-  server.on("close", () => killAll());
+  // Cleanup PTYs and mirrors on server close
+  server.on("close", () => {
+    killAll();
+    stopAllMirrors();
+  });
 
   return new Promise((resolve) => {
     server.listen(port, hostname, () => {

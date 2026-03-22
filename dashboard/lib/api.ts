@@ -9,6 +9,29 @@ export async function fetchSessions(): Promise<SessionOverview[]> {
   return data.sessions;
 }
 
+export interface PaneData {
+  id: string;
+  index: number;
+  title: string;
+  currentCommand: string;
+  width: number;
+  height: number;
+  active: boolean;
+  role: string | null;
+  name: string | null;
+  type: string | null;
+}
+
+export async function fetchPanes(name: string): Promise<PaneData[]> {
+  const res = await fetch(
+    `${API_BASE}/api/project/${encodeURIComponent(name)}/panes`,
+    { cache: "no-store" },
+  );
+  if (!res.ok) return [];
+  const data = (await res.json()) as { panes: PaneData[] };
+  return data.panes;
+}
+
 export async function fetchProject(
   name: string,
 ): Promise<ProjectDetail | null> {
