@@ -36,13 +36,15 @@ export function attachWebSockets(
   const wss = new WebSocketServer({ noServer: true });
 
   server.on("upgrade", (req: IncomingMessage, socket, head) => {
-    const pathname = parseUrl(req.url ?? "/").pathname ?? "/";
+    // Use raw URL to preserve %N pane IDs (url.parse decodes %36 → '6')
+    const rawPath = (req.url ?? "/").split("?")[0]!;
 
     // Match mirror WebSocket: /ws/mirror/{sessionName}/{paneId}
-    const mirrorMatch = pathname.match(/^\/ws\/mirror\/([^/]+)\/(.+)$/);
+    const mirrorMatch = rawPath.match(/^\/ws\/mirror\/([^/]+)\/(.+)$/);
     if (mirrorMatch) {
       const mirrorSession = decodeURIComponent(mirrorMatch[1]!);
-      const paneId = decodeURIComponent(mirrorMatch[2]!);
+      // Don't decode paneId — tmux uses %N format (literal percent + number)
+      const paneId = mirrorMatch[2]!;
 
       // Validate session and pane exist
       try {
@@ -84,7 +86,7 @@ export function attachWebSockets(
     }
 
     // Match widget WebSocket: /ws/{widgetType}
-    const match = pathname.match(/^\/ws\/([a-z-]+)$/);
+    const match = rawPath.match(/^\/ws\/([a-z-]+)$/);
 
     if (!match) {
       socket.destroy();
