@@ -1,4 +1,4 @@
-import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync, renameSync } from "node:fs";
 import { join } from "node:path";
 import { StructuredEventSchemaZ } from "../schemas/domain.ts";
 import type { z } from "zod";
@@ -56,12 +56,26 @@ export function formatEventMessage(event: StructuredEvent): string {
   }
 }
 
+const MAX_LOG_SIZE = 1048576; // 1MB
+
 export function appendEvent(dir: string, event: OrchestratorEvent | StructuredEvent): void {
   const tasksDir = join(dir, ".tasks");
   if (!existsSync(tasksDir)) {
     mkdirSync(tasksDir, { recursive: true });
   }
   const logPath = join(tasksDir, "events.log");
+
+  // Rotate if file exceeds 1MB
+  if (existsSync(logPath)) {
+    try {
+      const size = statSync(logPath).size;
+      if (size > MAX_LOG_SIZE) {
+        renameSync(logPath, logPath + ".1");
+      }
+    } catch {
+      // stat/rename failure — continue writing to current file
+    }
+  }
 
   // If it's a structured event (no message field, or error type with typed payload),
   // validate with schema before writing
@@ -76,11 +90,21 @@ export function appendEvent(dir: string, event: OrchestratorEvent | StructuredEv
 
 export function readEvents(dir: string): OrchestratorEvent[] {
   const logPath = join(dir, ".tasks", "events.log");
-  if (!existsSync(logPath)) return [];
-  const raw = readFileSync(logPath, "utf-8").trim();
-  if (!raw) return [];
-  return raw
-    .split("\n")
+  const rotatedPath = logPath + ".1";
+
+  // Collect lines from rotated file first (older events), then current
+  let lines: string[] = [];
+  if (existsSync(rotatedPath)) {
+    const raw = readFileSync(rotatedPath, "utf-8").trim();
+    if (raw) lines = raw.split("\n");
+  }
+  if (existsSync(logPath)) {
+    const raw = readFileSync(logPath, "utf-8").trim();
+    if (raw) lines = lines.concat(raw.split("\n"));
+  }
+  if (lines.length === 0) return [];
+
+  return lines
     .map((line) => {
       try {
         const parsed = JSON.parse(line);

@@ -16,6 +16,7 @@ import {
   isIdleForDispatch,
   saveOrchestratorState,
   loadOrchestratorState,
+  syncClaims,
   gracefulShutdown,
   reloadConfig,
   reconcile,
@@ -851,6 +852,70 @@ describe("saveOrchestratorState / loadOrchestratorState", () => {
 
     const state = makeOrchestratorState();
     loadOrchestratorState(tmpDir, state);
+    assert.strictEqual(state.claimedTasks.size, 0);
+  });
+});
+
+describe("syncClaims", () => {
+  it("removes stale claims for tasks no longer in-progress", () => {
+    saveTask(tmpDir, makeTask({ id: "001", status: "done", assignee: "Agent 1" }));
+    saveTask(tmpDir, makeTask({ id: "002", status: "todo" }));
+    saveTask(tmpDir, makeTask({ id: "003", status: "in-progress", assignee: "Agent 2" }));
+
+    const state = makeOrchestratorState({
+      claimedTasks: new Set(["001", "002", "003"]),
+    });
+
+    syncClaims(tmpDir, state);
+
+    assert.ok(!state.claimedTasks.has("001"), "done task should be removed");
+    assert.ok(!state.claimedTasks.has("002"), "todo task should be removed");
+    assert.ok(state.claimedTasks.has("003"), "in-progress task should remain");
+  });
+
+  it("adds missing claims for in-progress tasks", () => {
+    saveTask(tmpDir, makeTask({ id: "001", status: "in-progress", assignee: "Agent 1" }));
+    saveTask(tmpDir, makeTask({ id: "002", status: "in-progress", assignee: "Agent 2" }));
+
+    const state = makeOrchestratorState({
+      claimedTasks: new Set(),
+    });
+
+    syncClaims(tmpDir, state);
+
+    assert.ok(state.claimedTasks.has("001"), "in-progress task should be claimed");
+    assert.ok(state.claimedTasks.has("002"), "in-progress task should be claimed");
+  });
+
+  it("rebuilds claims from mixed task statuses", () => {
+    saveTask(tmpDir, makeTask({ id: "001", status: "done", assignee: "Agent 1" }));
+    saveTask(tmpDir, makeTask({ id: "002", status: "in-progress", assignee: "Agent 2" }));
+    saveTask(tmpDir, makeTask({ id: "003", status: "todo" }));
+    saveTask(tmpDir, makeTask({ id: "004", status: "in-progress", assignee: "Agent 3" }));
+    saveTask(tmpDir, makeTask({ id: "005", status: "review", assignee: "Agent 1" }));
+
+    // Stale state: claims 001 (done) and 003 (todo), missing 004 (in-progress)
+    const state = makeOrchestratorState({
+      claimedTasks: new Set(["001", "003"]),
+    });
+
+    syncClaims(tmpDir, state);
+
+    assert.strictEqual(state.claimedTasks.size, 2);
+    assert.ok(state.claimedTasks.has("002"), "in-progress task 002 should be claimed");
+    assert.ok(state.claimedTasks.has("004"), "in-progress task 004 should be claimed");
+    assert.ok(!state.claimedTasks.has("001"), "done task should not be claimed");
+    assert.ok(!state.claimedTasks.has("003"), "todo task should not be claimed");
+    assert.ok(!state.claimedTasks.has("005"), "review task should not be claimed");
+  });
+
+  it("handles empty task store", () => {
+    const state = makeOrchestratorState({
+      claimedTasks: new Set(["001", "002"]),
+    });
+
+    syncClaims(tmpDir, state);
+
     assert.strictEqual(state.claimedTasks.size, 0);
   });
 });

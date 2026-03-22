@@ -640,6 +640,29 @@ export function loadOrchestratorState(dir: string, state: OrchestratorState): vo
   }
 }
 
+/**
+ * Sync claimedTasks with the actual task store on startup.
+ * Removes stale claims (task no longer in-progress) and adds missing claims
+ * (task is in-progress but not in claimedTasks). Prevents stale claims from
+ * blocking dispatch after a crash or manual state reset.
+ */
+export function syncClaims(dir: string, state: OrchestratorState): void {
+  const tasks = loadTasks(dir);
+  const inProgressIds = new Set(
+    tasks.filter((t) => t.status === "in-progress").map((t) => t.id),
+  );
+  // Remove stale claims
+  for (const id of state.claimedTasks) {
+    if (!inProgressIds.has(id)) {
+      state.claimedTasks.delete(id);
+    }
+  }
+  // Add missing claims
+  for (const id of inProgressIds) {
+    state.claimedTasks.add(id);
+  }
+}
+
 export function gracefulShutdown(
   config: OrchestratorConfig,
   state: OrchestratorState,
@@ -704,6 +727,9 @@ export function createOrchestrator(initialConfig: OrchestratorConfig): () => voi
 
   // Load persisted state from previous run
   loadOrchestratorState(config.dir, state);
+
+  // Sync claims with actual task store to clear stale claims after crash
+  syncClaims(config.dir, state);
 
   // Initialize previous state
   for (const task of loadTasks(config.dir)) {

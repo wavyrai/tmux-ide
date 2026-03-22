@@ -321,6 +321,25 @@ describe("startSessionMonitor", () => {
 
     restoreSpawn();
   });
+
+  it("wraps command in a restart loop for auto-respawn", () => {
+    const fakeChild = { pid: 99, unref: mock.fn() };
+    const mockSpawn = mock.fn(() => fakeChild);
+    const restoreSpawn = _setSpawner(mockSpawn);
+
+    mockExec.mock.mockImplementation(() => "");
+    startSessionMonitor("proj", "/path/to/monitor.js");
+
+    const spawnCall = mockSpawn.mock.calls[0];
+    assert.strictEqual(spawnCall.arguments[0], "/bin/sh");
+    const args = spawnCall.arguments[1];
+    assert.strictEqual(args[0], "-c");
+    assert.ok(args[1].includes("while true; do"));
+    assert.ok(args[1].includes("node /path/to/monitor.js proj"));
+    assert.ok(args[1].includes("sleep 2"));
+
+    restoreSpawn();
+  });
 });
 
 describe("stopSessionMonitor", () => {

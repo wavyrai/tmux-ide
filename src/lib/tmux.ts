@@ -183,10 +183,16 @@ export function runSessionCommand(args: string[]): void {
 }
 
 export function startSessionMonitor(session: string, monitorScript: string): void {
-  const child = _spawner("node", [monitorScript, session], {
-    detached: true,
-    stdio: "ignore",
-  });
+  // Wrap in a restart loop so the monitor auto-respawns on crash.
+  // The monitor exits cleanly on SIGTERM (session kill), so the loop only triggers on unexpected crashes.
+  const child = _spawner(
+    "/bin/sh",
+    ["-c", `while true; do node ${monitorScript} ${session}; sleep 2; done`],
+    {
+      detached: true,
+      stdio: "ignore",
+    },
+  );
   child.unref();
   // Store PID as tmux session variable for later cleanup
   runTmux(["set-option", "-t", session, "@monitor_pid", String(child.pid)]);
