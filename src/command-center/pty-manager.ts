@@ -35,6 +35,15 @@ function resolveWidgetsDir(): string {
   return dir;
 }
 
+/** Resolve the tmux-ide project root (where bunfig.toml lives) */
+function resolveProjectRoot(): string {
+  let dir = __dirname;
+  if (dir.includes("/dist/")) {
+    return dir.replace("/dist/command-center", "");
+  }
+  return resolve(dir, "../..");
+}
+
 export function spawnWidget(
   widgetType: string,
   session: string,
@@ -67,11 +76,15 @@ export function spawnWidget(
     ? resolve(process.env.BUN_INSTALL, "bin/bun")
     : "bun";
 
+  // Use tmux-ide project root as cwd so Bun picks up bunfig.toml
+  // (which configures the @opentui/solid preload for JSX)
+  const projectRoot = resolveProjectRoot();
+
   const proc = pty.spawn(bunPath, args, {
     name: "xterm-256color",
     cols,
     rows,
-    cwd: dir,
+    cwd: projectRoot,
     env: { ...process.env, TERM: "xterm-256color" },
   });
 
