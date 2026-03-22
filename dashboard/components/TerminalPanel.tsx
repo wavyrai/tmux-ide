@@ -82,12 +82,20 @@ export function TerminalPanel({ widgetType, className }: TerminalPanelProps) {
       term.write(typeof event.data === "string" ? event.data : "");
     };
 
-    ws.onclose = () => {
-      term.writeln("\x1b[2m disconnected\x1b[0m");
+    ws.onclose = (event) => {
+      if (event.code === 1011) {
+        // PTY spawn failed (e.g., node-pty not compatible with Node version)
+        term.writeln("");
+        term.writeln("\x1b[33m  Terminal not available\x1b[0m");
+        term.writeln("\x1b[2m  PTY spawn failed — node-pty may need Node 22\x1b[0m");
+        term.writeln("\x1b[2m  The widget data is still available via the dashboard tabs above.\x1b[0m");
+      } else {
+        term.writeln("\x1b[2m disconnected\x1b[0m");
+      }
     };
 
     ws.onerror = () => {
-      term.writeln("\x1b[31m connection error\x1b[0m");
+      // Suppress — onclose handles the error display
     };
 
     // Forward keyboard input to WebSocket
