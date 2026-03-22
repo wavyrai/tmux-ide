@@ -29,6 +29,7 @@ export function isGhAvailable(): boolean {
 export function createTaskPr(
   task: Task,
   cwd: string,
+  baseBranch?: string,
 ): PrResult | null {
   if (!task.branch) return null;
 
@@ -75,6 +76,7 @@ export function createTaskPr(
         body,
         "--head",
         task.branch,
+        ...(baseBranch ? ["--base", baseBranch] : []),
       ],
       {
         cwd,
