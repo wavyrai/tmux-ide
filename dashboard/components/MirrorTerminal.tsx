@@ -10,7 +10,8 @@ const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:5050";
 
 function getMirrorWsUrl(sessionName: string, paneId: string): string {
   const base = API_BASE.replace(/^http/, "ws");
-  return `${base}/ws/mirror/${encodeURIComponent(sessionName)}/${encodeURIComponent(paneId)}`;
+  // Don't encode paneId — tmux IDs like %3644 should be sent as-is
+  return `${base}/ws/mirror/${encodeURIComponent(sessionName)}/${paneId}`;
 }
 
 type ConnectionState = "connecting" | "connected" | "error";
