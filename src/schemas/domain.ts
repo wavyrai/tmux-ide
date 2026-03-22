@@ -236,6 +236,9 @@ export const PaneInfoSchemaZ = z.object({
   width: z.number(),
   height: z.number(),
   active: z.boolean(),
+  role: z.enum(["lead", "teammate", "widget", "shell"]).nullable(),
+  name: z.string().nullable(),
+  type: z.string().nullable(),
 });
 
 // ---------------------------------------------------------------------------

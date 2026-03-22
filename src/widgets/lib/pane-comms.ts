@@ -8,6 +8,9 @@ export interface PaneInfo {
   width: number;
   height: number;
   active: boolean;
+  role: "lead" | "teammate" | "widget" | "shell" | null;
+  name: string | null;
+  type: string | null;
 }
 
 type TmuxExecutor = (cmd: string, args: string[], options?: object) => string;
@@ -46,6 +49,9 @@ export function listSessionPanes(session: string): PaneInfo[] {
     "#{pane_width}",
     "#{pane_height}",
     "#{pane_active}",
+    "#{@ide_role}",
+    "#{@ide_name}",
+    "#{@ide_type}",
   ].join("\t");
 
   const output = tmux("list-panes", "-t", session, "-F", format);
@@ -55,7 +61,7 @@ export function listSessionPanes(session: string): PaneInfo[] {
     .split("\n")
     .filter(Boolean)
     .map((line) => {
-      const [id, index, title, cmd, width, height, active] = line.split("\t");
+      const [id, index, title, cmd, width, height, active, role, name, type] = line.split("\t");
       return {
         id: id!,
         index: parseInt(index!, 10),
@@ -64,6 +70,9 @@ export function listSessionPanes(session: string): PaneInfo[] {
         width: parseInt(width!, 10),
         height: parseInt(height!, 10),
         active: active === "1",
+        role: (role || null) as PaneInfo["role"],
+        name: name || null,
+        type: type || null,
       };
     });
 }

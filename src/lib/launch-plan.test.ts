@@ -47,6 +47,8 @@ describe("collectPaneStartupPlan", () => {
         command: "claude",
         widgetType: null,
         widgetTarget: null,
+        paneRole: "lead",
+        paneType: "agent",
       },
       {
         targetPane: "%2",
@@ -56,6 +58,8 @@ describe("collectPaneStartupPlan", () => {
         command: "claude",
         widgetType: null,
         widgetTarget: null,
+        paneRole: "teammate",
+        paneType: "agent",
       },
       {
         targetPane: "%3",
@@ -65,6 +69,8 @@ describe("collectPaneStartupPlan", () => {
         command: null,
         widgetType: null,
         widgetTarget: null,
+        paneRole: "shell",
+        paneType: "shell",
       },
     ]);
   });
