@@ -124,12 +124,32 @@ export function isAgentBusy(pane: PaneInfo): boolean {
   return SPINNERS.test(pane.title);
 }
 
+/**
+ * Check if a pane is at the agent prompt (❯) by capturing the last line.
+ * This is more reliable than title-based spinner detection since pane titles
+ * can show stale spinners after the agent finishes.
+ */
+function isAtAgentPrompt(paneId: string): boolean {
+  try {
+    const lastLine = execFileSync("tmux", [
+      "capture-pane", "-t", paneId, "-p", "-S", "-1",
+    ], { encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+    return lastLine.includes("❯");
+  } catch {
+    return false;
+  }
+}
+
 export function isIdleForDispatch(pane: PaneInfo): boolean {
   const cmd = pane.currentCommand.toLowerCase();
   // Running a shell → idle
   if (SHELL_COMMANDS.has(cmd)) return true;
-  // Agent pane that is NOT showing a spinner → idle (waiting for input)
-  if (isAgentPane(pane) && !isAgentBusy(pane)) return true;
+  // Agent pane: check spinner first (fast), then fall back to prompt detection (reliable)
+  if (isAgentPane(pane)) {
+    if (!isAgentBusy(pane)) return true;
+    // Spinner may be stale — check if agent is actually at the prompt
+    return isAtAgentPrompt(pane.id);
+  }
   return false;
 }
 
