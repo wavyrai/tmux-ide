@@ -245,6 +245,11 @@ export async function launch(
     setPaneOption(action.targetPane, "@ide_name", action.title ?? "");
     setPaneOption(action.targetPane, "@ide_type", action.paneType ?? "shell");
 
+    // Lock agent pane titles so Claude Code can't overwrite them
+    if (action.paneRole === "lead" || action.paneRole === "teammate") {
+      setPaneOption(action.targetPane, "allow-rename", "off");
+    }
+
     if (action.chdir) {
       sendLiteral(action.targetPane, `cd ${action.chdir}`);
     }
