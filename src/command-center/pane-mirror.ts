@@ -22,8 +22,9 @@ function tmux(args: string[]): string {
   }).trim();
 }
 
-function capturePaneContent(session: string, paneId: string): string {
-  return tmux(["capture-pane", "-t", `${session}:${paneId}`, "-p", "-e"]);
+function capturePaneContent(_session: string, paneId: string): string {
+  // Use pane ID directly — tmux %N IDs are globally unique, no session prefix needed
+  return tmux(["capture-pane", "-t", paneId, "-p", "-e"]);
 }
 
 export function startMirror(session: string, paneId: string, ws: WebSocket): MirrorSession {
@@ -51,7 +52,7 @@ export function startMirror(session: string, paneId: string, ws: WebSocket): Mir
   // Send initial scrollback as raw terminal output
   try {
     const scrollback = tmux([
-      "capture-pane", "-t", `${session}:${paneId}`, "-p", "-e", "-S", "-2000",
+      "capture-pane", "-t", paneId, "-p", "-e", "-S", "-2000",
     ]);
     ws.send(scrollback);
   } catch {
