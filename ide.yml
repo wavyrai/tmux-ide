@@ -15,7 +15,7 @@ rows:
   - size: 70%
     panes:
       - title: Master
-        command: claude
+        command: claude --dangerously-skip-permissions
         role: lead
         focus: true
         size: 40%
