@@ -5,15 +5,8 @@ export interface RGBA {
   a: number;
 }
 
-export namespace RGBA {
-  export function fromInts(
-    r: number,
-    g: number,
-    b: number,
-    a?: number,
-  ): RGBA {
-    return { r, g, b, a: a ?? 255 };
-  }
+export function rgbaFromInts(r: number, g: number, b: number, a?: number): RGBA {
+  return { r, g, b, a: a ?? 255 };
 }
 
 export const TextAttributes = {
@@ -22,6 +15,9 @@ export const TextAttributes = {
   DIM: 2,
   ITALIC: 4,
   UNDERLINE: 8,
+  BLINK: 16,
+  INVERSE: 32,
+  HIDDEN: 64,
   STRIKETHROUGH: 128,
 } as const;
 
@@ -66,10 +62,13 @@ export interface TextProps {
   bg?: RGBA;
   attributes?: number;
   wrapMode?: "none" | "word" | "char";
+  width?: number | string;
+  height?: number | string;
   flexGrow?: number;
   flexShrink?: number;
   // Mouse events
   onMouseUp?: (e: any) => void;
+  onMouseDown?: (e: any) => void;
   children?: any;
 }
 
@@ -86,5 +85,7 @@ export interface InputProps {
   focusedBackgroundColor?: RGBA;
   cursorColor?: RGBA;
   focusedTextColor?: RGBA;
+  onMouseDown?: (e: any) => void;
   ref?: (el: any) => void;
+  children?: any;
 }

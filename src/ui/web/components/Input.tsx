@@ -29,6 +29,7 @@ export function Input(props: InputProps) {
       placeholder={props.placeholder}
       style={style()}
       onInput={(e) => props.onInput?.(e.currentTarget.value)}
+      onMouseDown={props.onMouseDown}
       ref={props.ref}
     />
   );
