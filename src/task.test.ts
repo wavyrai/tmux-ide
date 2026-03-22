@@ -727,3 +727,79 @@ describe("normalizer snapshots", () => {
     assert.deepStrictEqual(result.depends_on, ["002"]);
   });
 });
+
+describe("corrupted JSON resilience", () => {
+  it("loadTasks skips corrupted files and returns valid tasks", () => {
+    ensureTasksDir(tmpDir);
+    const tasksDir = join(tmpDir, ".tasks", "tasks");
+    // Write a valid task
+    writeFileSync(
+      join(tasksDir, "001-valid.json"),
+      JSON.stringify({
+        id: "001", title: "Valid", description: "", goal: null,
+        status: "todo", assignee: null, priority: 1,
+        created: "2026-01-01T00:00:00Z", updated: "2026-01-01T00:00:00Z",
+        branch: null, tags: [], proof: null,
+      }) + "\n",
+    );
+    // Write corrupted JSON
+    writeFileSync(join(tasksDir, "002-corrupt.json"), "{not valid json\n");
+    // Write another valid task
+    writeFileSync(
+      join(tasksDir, "003-also-valid.json"),
+      JSON.stringify({
+        id: "003", title: "Also Valid", description: "", goal: null,
+        status: "done", assignee: null, priority: 2,
+        created: "2026-01-01T00:00:00Z", updated: "2026-01-01T00:00:00Z",
+        branch: null, tags: [], proof: null,
+      }) + "\n",
+    );
+
+    const tasks = loadTasks(tmpDir);
+    assert.strictEqual(tasks.length, 2);
+    assert.strictEqual(tasks[0]!.id, "001");
+    assert.strictEqual(tasks[1]!.id, "003");
+  });
+
+  it("loadTask returns null for corrupted file", () => {
+    ensureTasksDir(tmpDir);
+    const tasksDir = join(tmpDir, ".tasks", "tasks");
+    writeFileSync(join(tasksDir, "001-corrupt.json"), "%%%broken%%%\n");
+
+    assert.strictEqual(loadTask(tmpDir, "001"), null);
+  });
+
+  it("loadGoals skips corrupted files and returns valid goals", () => {
+    ensureTasksDir(tmpDir);
+    const goalsDir = join(tmpDir, ".tasks", "goals");
+    writeFileSync(
+      join(goalsDir, "01-valid.json"),
+      JSON.stringify({
+        id: "01", title: "Valid Goal", description: "", status: "todo",
+        acceptance: "", priority: 1,
+        created: "2026-01-01T00:00:00Z", updated: "2026-01-01T00:00:00Z",
+        assignee: null, specialty: null,
+      }) + "\n",
+    );
+    writeFileSync(join(goalsDir, "02-corrupt.json"), "not json at all\n");
+
+    const goals = loadGoals(tmpDir);
+    assert.strictEqual(goals.length, 1);
+    assert.strictEqual(goals[0]!.id, "01");
+  });
+
+  it("loadGoal returns null for corrupted file", () => {
+    ensureTasksDir(tmpDir);
+    const goalsDir = join(tmpDir, ".tasks", "goals");
+    writeFileSync(join(goalsDir, "01-corrupt.json"), "{{{bad\n");
+
+    assert.strictEqual(loadGoal(tmpDir, "01"), null);
+  });
+
+  it("loadMission returns null for corrupted file", () => {
+    ensureTasksDir(tmpDir);
+    writeFileSync(join(tmpDir, ".tasks", "mission.json"), "totally broken\n");
+
+    assert.strictEqual(loadMission(tmpDir), null);
+  });
+});
