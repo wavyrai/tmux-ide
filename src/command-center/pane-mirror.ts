@@ -49,6 +49,18 @@ export function startMirror(session: string, paneId: string, ws: WebSocket): Mir
 
   const clients = new Set<WebSocket>([ws]);
 
+  // Send pane dimensions so browser terminal matches tmux pane size
+  let paneCols = 80;
+  let paneRows = 24;
+  try {
+    const dims = tmux(["display-message", "-t", paneId, "-p", "#{pane_width} #{pane_height}"]);
+    const [c, r] = dims.split(" ");
+    paneCols = parseInt(c!, 10) || 80;
+    paneRows = parseInt(r!, 10) || 24;
+  } catch { /* use defaults */ }
+  // Send dimensions as JSON (the only JSON message — client detects by leading {)
+  ws.send(JSON.stringify({ type: "dimensions", cols: paneCols, rows: paneRows }));
+
   // Send initial scrollback as raw terminal output
   try {
     const scrollback = tmux([
