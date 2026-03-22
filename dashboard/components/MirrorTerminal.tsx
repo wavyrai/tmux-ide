@@ -1,16 +1,15 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Terminal } from "@xterm/xterm";
-import { FitAddon } from "@xterm/addon-fit";
-import { WebglAddon } from "@xterm/addon-webgl";
-import "@xterm/xterm/css/xterm.css";
+import { init, Terminal, FitAddon } from "ghostty-web";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:5050";
 
+// Initialize WASM once at module level
+const wasmReady = init();
+
 function getMirrorWsUrl(sessionName: string, paneId: string): string {
   const base = API_BASE.replace(/^http/, "ws");
-  // Don't encode paneId — tmux IDs like %3644 should be sent as-is
   return `${base}/ws/mirror/${encodeURIComponent(sessionName)}/${paneId}`;
 }
 
@@ -25,9 +24,6 @@ interface MirrorTerminalProps {
 
 export function MirrorTerminal({ sessionName, paneId, paneName, className }: MirrorTerminalProps) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const termRef = useRef<Terminal | null>(null);
-  const wsRef = useRef<WebSocket | null>(null);
-  const fitRef = useRef<FitAddon | null>(null);
   const [connState, setConnState] = useState<ConnectionState>("connecting");
 
   useEffect(() => {
@@ -35,119 +31,88 @@ export function MirrorTerminal({ sessionName, paneId, paneName, className }: Mir
     if (!container) return;
 
     let cancelled = false;
+    let term: Terminal | null = null;
+    let ws: WebSocket | null = null;
+    let fitAddon: FitAddon | null = null;
 
-    const term = new Terminal({
-      cursorBlink: true,
-      fontSize: 13,
-      fontFamily: "'IBM Plex Mono', monospace",
-      theme: {
-        background: "#101010",
-        foreground: "rgba(255, 255, 255, 0.936)",
-        cursor: "#fab283",
-        selectionBackground: "rgba(255, 255, 255, 0.15)",
-        black: "#101010",
-        red: "#fc533a",
-        green: "#9bcd97",
-        yellow: "#fcd53a",
-        blue: "#56b6c2",
-        magenta: "#edb2f1",
-        cyan: "#56b6c2",
-        white: "rgba(255, 255, 255, 0.936)",
-      },
-      allowProposedApi: true,
-    });
-
-    const fitAddon = new FitAddon();
-    term.loadAddon(fitAddon);
-
-    term.open(container);
-
-    // Skip WebGL — too many contexts when showing 7+ panes simultaneously
-
-    fitAddon.fit();
-
-    termRef.current = term;
-    fitRef.current = fitAddon;
-
-    // Connect WebSocket to mirror endpoint
-    const ws = new WebSocket(getMirrorWsUrl(sessionName, paneId));
-    wsRef.current = ws;
-
-    ws.onopen = () => {
-      if (cancelled) { ws.close(); return; }
-      setConnState("connected");
-    };
-
-    ws.onmessage = (event) => {
-      if (typeof event.data !== "string") return;
-
-      try {
-        const msg = JSON.parse(event.data) as {
-          type: string;
-          data?: string;
-          cols?: number;
-          rows?: number;
-        };
-
-        switch (msg.type) {
-          case "scrollback":
-          case "content":
-            if (msg.data != null) {
-              // For content updates, clear and rewrite the visible area
-              if (msg.type === "content") {
-                term.reset();
-              }
-              term.write(msg.data);
-            }
-            break;
-          case "dimensions":
-            // Server reported pane dimensions — resize to match
-            if (msg.cols && msg.rows) {
-              term.resize(msg.cols, msg.rows);
-            }
-            break;
-        }
-      } catch {
-        // Not JSON — write raw data
-        term.write(event.data);
-      }
-    };
-
-    ws.onclose = () => {
-      if (cancelled) return; // Ignore close from Strict Mode cleanup
-      setConnState("error");
-      term.writeln("\x1b[2m disconnected\x1b[0m");
-    };
-
-    ws.onerror = () => {
+    async function setup() {
+      await wasmReady;
       if (cancelled) return;
-      setConnState("error");
-    };
 
-    // Forward keyboard input to WebSocket
-    term.onData((data) => {
-      if (ws.readyState === WebSocket.OPEN) {
-        ws.send(data);
-      }
-    });
+      term = new Terminal({
+        cursorBlink: true,
+        fontSize: 13,
+        fontFamily: "'IBM Plex Mono', monospace",
+        theme: {
+          background: "#101010",
+          foreground: "rgba(255, 255, 255, 0.936)",
+          cursor: "#fab283",
+          selectionBackground: "rgba(255, 255, 255, 0.15)",
+          black: "#101010",
+          red: "#fc533a",
+          green: "#9bcd97",
+          yellow: "#fcd53a",
+          blue: "#56b6c2",
+          magenta: "#edb2f1",
+          cyan: "#56b6c2",
+          white: "rgba(255, 255, 255, 0.936)",
+        },
+        scrollback: 10000,
+      });
 
-    // Handle resize
-    const resizeObserver = new ResizeObserver(() => {
+      fitAddon = new FitAddon();
+      term.loadAddon(fitAddon);
+
+      term.open(container!);
+      if (cancelled) { term.dispose(); return; }
+
       fitAddon.fit();
-      if (ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: "resize", cols: term.cols, rows: term.rows }));
-      }
-    });
-    resizeObserver.observe(container);
+      fitAddon.observeResize();
+
+      // Handle terminal resize
+      term.onResize((size: { cols: number; rows: number }) => {
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: "resize", cols: size.cols, rows: size.rows }));
+        }
+      });
+
+      // Forward keyboard input to WebSocket
+      term.onData((data: string) => {
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(data);
+        }
+      });
+
+      // Connect WebSocket to mirror endpoint
+      ws = new WebSocket(getMirrorWsUrl(sessionName, paneId));
+
+      ws.onopen = () => {
+        if (cancelled) { ws!.close(); return; }
+        setConnState("connected");
+      };
+
+      ws.onmessage = (event) => {
+        // Raw bytes from server — write directly
+        term!.write(event.data);
+      };
+
+      ws.onclose = () => {
+        if (cancelled) return;
+        setConnState("error");
+      };
+
+      ws.onerror = () => {
+        if (cancelled) return;
+        setConnState("error");
+      };
+    }
+
+    setup();
 
     return () => {
       cancelled = true;
-      resizeObserver.disconnect();
-      ws.close();
-      term.dispose();
-      termRef.current = null;
-      wsRef.current = null;
-      fitRef.current = null;
+      ws?.close();
+      term?.dispose();
     };
   }, [sessionName, paneId]);
 

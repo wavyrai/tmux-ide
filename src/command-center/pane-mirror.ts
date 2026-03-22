@@ -39,38 +39,21 @@ export function startMirror(session: string, paneId: string, ws: WebSocket): Mir
       }
     });
 
-    // Send current content to the new client
+    // Send current content to the new client as raw terminal output
     if (mirror.lastContent) {
-      ws.send(JSON.stringify({ type: "content", data: mirror.lastContent }));
+      ws.send("\x1b[2J\x1b[H" + mirror.lastContent);
     }
     return mirror;
   }
 
-  // Get pane dimensions
-  let cols = 80;
-  let rows = 24;
-  try {
-    const dims = tmux(["display-message", "-t", paneId, "-p", "#{pane_width} #{pane_height}"]);
-    const parts = dims.split(" ");
-    if (parts.length === 2) {
-      cols = parseInt(parts[0]!, 10) || 80;
-      rows = parseInt(parts[1]!, 10) || 24;
-    }
-  } catch {
-    // Use defaults
-  }
-
   const clients = new Set<WebSocket>([ws]);
 
-  // Send initial dimensions
-  ws.send(JSON.stringify({ type: "dimensions", cols, rows }));
-
-  // Send initial scrollback
+  // Send initial scrollback as raw terminal output
   try {
     const scrollback = tmux([
       "capture-pane", "-t", `${session}:${paneId}`, "-p", "-e", "-S", "-2000",
     ]);
-    ws.send(JSON.stringify({ type: "scrollback", data: scrollback }));
+    ws.send(scrollback);
   } catch {
     // Pane may not exist yet
   }
@@ -84,7 +67,8 @@ export function startMirror(session: string, paneId: string, ws: WebSocket): Mir
       if (content !== lastContent) {
         lastContent = content;
         mirror!.lastContent = content;
-        const msg = JSON.stringify({ type: "content", data: content });
+        // Send clear screen + new content as raw terminal output
+        const msg = "\x1b[2J\x1b[H" + content;
         for (const client of clients) {
           if (client.readyState === 1 /* WebSocket.OPEN */) {
             client.send(msg);

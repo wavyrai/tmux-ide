@@ -14,7 +14,7 @@ import { PlansPanel } from "@/components/PlansPanel";
 import { StatusBar } from "@/components/StatusBar";
 import type { ProjectDetail } from "@/lib/types";
 
-// Lazy-load terminal components to avoid SSR issues with xterm.js
+// Lazy-load terminal component to avoid SSR issues with ghostty-web WASM
 const MirrorTerminal = dynamic(
   () => import("@/components/MirrorTerminal").then((m) => ({ default: m.MirrorTerminal })),
   { ssr: false },
