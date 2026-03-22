@@ -34,6 +34,8 @@ export function MirrorTerminal({ sessionName, paneId, paneName, className }: Mir
     const container = containerRef.current;
     if (!container) return;
 
+    let cancelled = false;
+
     const term = new Terminal({
       cursorBlink: true,
       fontSize: 13,
@@ -60,14 +62,7 @@ export function MirrorTerminal({ sessionName, paneId, paneName, className }: Mir
 
     term.open(container);
 
-    // Try WebGL renderer for performance, fall back to canvas
-    try {
-      const webglAddon = new WebglAddon();
-      webglAddon.onContextLoss(() => webglAddon.dispose());
-      term.loadAddon(webglAddon);
-    } catch {
-      // WebGL not available — canvas renderer is fine
-    }
+    // Skip WebGL — too many contexts when showing 7+ panes simultaneously
 
     fitAddon.fit();
 
@@ -79,6 +74,7 @@ export function MirrorTerminal({ sessionName, paneId, paneName, className }: Mir
     wsRef.current = ws;
 
     ws.onopen = () => {
+      if (cancelled) { ws.close(); return; }
       setConnState("connected");
     };
 
@@ -118,11 +114,13 @@ export function MirrorTerminal({ sessionName, paneId, paneName, className }: Mir
     };
 
     ws.onclose = () => {
+      if (cancelled) return; // Ignore close from Strict Mode cleanup
       setConnState("error");
       term.writeln("\x1b[2m disconnected\x1b[0m");
     };
 
     ws.onerror = () => {
+      if (cancelled) return;
       setConnState("error");
     };
 
@@ -143,6 +141,7 @@ export function MirrorTerminal({ sessionName, paneId, paneName, className }: Mir
     resizeObserver.observe(container);
 
     return () => {
+      cancelled = true;
       resizeObserver.disconnect();
       ws.close();
       term.dispose();
