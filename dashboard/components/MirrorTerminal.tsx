@@ -67,14 +67,9 @@ export function MirrorTerminal({ sessionName, paneId, paneName, className }: Mir
       if (cancelled) { term.dispose(); return; }
 
       fitAddon.fit();
-      fitAddon.observeResize();
-
-      // Handle terminal resize
-      term.onResize((size: { cols: number; rows: number }) => {
-        if (ws && ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({ type: "resize", cols: size.cols, rows: size.rows }));
-        }
-      });
+      // Don't call fitAddon.observeResize() — we match the tmux pane size,
+      // not the browser container size. Resizing from the browser would shrink
+      // the tmux pane for all clients (tmux uses smallest client size).
 
       // Forward keyboard input to WebSocket
       term.onData((data: string) => {
@@ -92,8 +87,19 @@ export function MirrorTerminal({ sessionName, paneId, paneName, className }: Mir
       };
 
       ws.onmessage = (event) => {
+        const data = event.data;
+        if (typeof data === "string" && data.startsWith("{")) {
+          try {
+            const msg = JSON.parse(data) as { type?: string; cols?: number; rows?: number };
+            if (msg.type === "dimensions" && msg.cols && msg.rows) {
+              // Resize terminal to match tmux pane (don't resize tmux!)
+              term!.resize(msg.cols, msg.rows);
+              return;
+            }
+          } catch { /* not JSON, fall through */ }
+        }
         // Raw bytes from server — write directly
-        term!.write(event.data);
+        term!.write(data);
       };
 
       ws.onclose = () => {

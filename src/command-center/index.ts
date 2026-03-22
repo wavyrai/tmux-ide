@@ -6,7 +6,6 @@ import { discoverSessions } from "./discovery.ts";
 import {
   startMirror,
   handleInput as mirrorHandleInput,
-  handleResize as mirrorHandleResize,
   stopAll as stopAllMirrors,
 } from "./pane-mirror.ts";
 import { listSessionPanes } from "../widgets/lib/pane-comms.ts";
@@ -61,17 +60,8 @@ export function attachWebSockets(
       ws.on("message", (data: Buffer | string) => {
         const str = typeof data === "string" ? data : data.toString("utf-8");
 
-        if (str.startsWith("{")) {
-          try {
-            const msg = JSON.parse(str) as { type?: string; cols?: number; rows?: number };
-            if (msg.type === "resize" && msg.cols && msg.rows) {
-              mirrorHandleResize(paneId, msg.cols, msg.rows);
-              return;
-            }
-          } catch {
-            // Not JSON — fall through to input
-          }
-        }
+        // Ignore JSON control messages (resize not supported — would shrink tmux for all clients)
+        if (str.startsWith("{")) return;
 
         mirrorHandleInput(paneId, str);
       });
