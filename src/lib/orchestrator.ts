@@ -495,7 +495,14 @@ export function detectCompletions(
 
       // Auto-create GitHub PR if task has a branch
       if (task.branch && isGhAvailable()) {
-        const pr = createTaskPr(task, config.dir);
+        // Target PRs at the current branch (not repo default)
+        let baseBranch: string | undefined;
+        try {
+          baseBranch = execFileSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], {
+            cwd: config.dir, encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"],
+          }).trim();
+        } catch { /* fall back to repo default */ }
+        const pr = createTaskPr(task, config.dir, baseBranch);
         if (pr) {
           if (!task.proof) task.proof = {};
           (task.proof as import("../types.ts").ProofSchema).pr = {
