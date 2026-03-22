@@ -22,17 +22,28 @@ export function useKeyboard(
 }
 
 function mapKeyName(e: KeyboardEvent): string {
-  if (e.key === "ArrowUp") return "up";
-  if (e.key === "ArrowDown") return "down";
-  if (e.key === "ArrowLeft") return "left";
-  if (e.key === "ArrowRight") return "right";
-  if (e.key === "Enter") return "return";
-  if (e.key === "Escape") return "escape";
-  if (e.key === "Backspace") return "backspace";
-  if (e.key === "Tab") return "tab";
-  if (e.key === "Delete") return "delete";
-  if (e.key === " ") return "space";
-  return e.key;
+  switch (e.key) {
+    case "ArrowUp": return "up";
+    case "ArrowDown": return "down";
+    case "ArrowLeft": return "left";
+    case "ArrowRight": return "right";
+    case "Enter": return "return";
+    case "Escape": return "escape";
+    case "Backspace": return "backspace";
+    case "Tab": return "tab";
+    case "Delete": return "delete";
+    case " ": return "space";
+    case "Home": return "home";
+    case "End": return "end";
+    case "PageUp": return "pageup";
+    case "PageDown": return "pagedown";
+    case "Insert": return "insert";
+    default:
+      // @opentui convention: single-char keys are always lowercase, with shift as a modifier.
+      // Browser gives uppercase e.key for Shift+letter (e.g. "G"), so normalize to lowercase.
+      if (e.key.length === 1) return e.key.toLowerCase();
+      return e.key;
+  }
 }
 
 export function useTerminalDimensions() {

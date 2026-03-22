@@ -26,6 +26,9 @@ importers:
       '@parcel/watcher':
         specifier: ^2.5.6
         version: 2.5.6
+      '@types/ws':
+        specifier: ^8.18.1
+        version: 8.18.1
       hono:
         specifier: ^4.12.8
         version: 4.12.8
@@ -35,9 +38,15 @@ importers:
       js-yaml:
         specifier: ^4.1.1
         version: 4.1.1
+      node-pty:
+        specifier: ^1.1.0
+        version: 1.1.0
       solid-js:
         specifier: ^1.9.11
         version: 1.9.11
+      ws:
+        specifier: ^8.20.0
+        version: 8.20.0
       zod:
         specifier: ^4.3.6
         version: 4.3.6
@@ -117,9 +126,21 @@ importers:
       '@milkdown/theme-nord':
         specifier: ^7.19.0
         version: 7.19.0
+      '@milkdown/utils':
+        specifier: ^7.19.1
+        version: 7.19.1
       '@pierre/diffs':
         specifier: ^1.1.2
         version: 1.1.2(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
+      '@xterm/addon-fit':
+        specifier: ^0.11.0
+        version: 0.11.0
+      '@xterm/addon-webgl':
+        specifier: ^0.19.0
+        version: 0.19.0
+      '@xterm/xterm':
+        specifier: ^6.0.0
+        version: 6.0.0
       next:
         specifier: 16.1.6
         version: 16.1.6(@babel/core@7.28.0)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
@@ -489,12 +510,9 @@ packages:
     peerDependencies:
       react: '>=16.8.0'
 
-<<<<<<< HEAD
-=======
   '@emnapi/core@1.9.1':
     resolution: {integrity: sha512-mukuNALVsoix/w1BJwFzwXBN/dHeejQtuVzcDsfOEsdpCumXb/E9j8w11h5S54tT1xhifGfbbSm/ICrObRb3KA==}
 
->>>>>>> f6654ec (Set up Vitest in dashboard with initial API tests)
   '@emnapi/runtime@1.9.0':
     resolution: {integrity: sha512-QN75eB0IH2ywSpRpNddCRfQIhmJYBCJ1x5Lb3IscKAL8bMnVAKnRg8dCoXbHzVLLH7P38N2Z3mtulB7W0J0FKw==}
 
@@ -1085,14 +1103,23 @@ packages:
   '@milkdown/core@7.19.0':
     resolution: {integrity: sha512-x5vxnVCxxKSGCa1+J7I4RzEDl4KkvsXJF6xm1zCtvj0BCsbCFGiUVx2AtLcFkkvWZ5530CuOouDJ9FC27yoCoA==}
 
+  '@milkdown/core@7.19.1':
+    resolution: {integrity: sha512-ejUgmqpxjpxSTOw/dmVbMx09Qxo8/FBouIc8o9S/S3EKPvfC7nO4gXh7wA49MG0zJfwHWw7l0NGU3ljWQR2JSw==}
+
   '@milkdown/crepe@7.19.0':
     resolution: {integrity: sha512-3vY/5l8xc3LS1bh/bzzfuVhiFPP1gBYCSTp6iu6TXUgMHJvu8Tp2yhyBrjIWhiogA281cuA50i9gG47wOjWAIQ==}
 
   '@milkdown/ctx@7.19.0':
     resolution: {integrity: sha512-tdG9jm6yk6PRSvFZW5rRSqOGrKdcNdbXJwfGiEGr538pgKYhJ/yKPF3HmfupkhGyxabRP/PydQa4q/N/OOs03g==}
 
+  '@milkdown/ctx@7.19.1':
+    resolution: {integrity: sha512-TMee4Rwfw3snjOPSpceMNLg5KN0XLPPFsneFT6IbH4RDjkpdtCvg7h4LNbBDer2YLlqxHyG+VlcbktKhdxRLlA==}
+
   '@milkdown/exception@7.19.0':
     resolution: {integrity: sha512-ykgjxqrOueTCjmDGr0aidulZa1mC6bg4f8eDyMiT0wd4vB+3iYmQxY8NxdKwUqlz4UM5KBnbyFlGlgQsQDL+ew==}
+
+  '@milkdown/exception@7.19.1':
+    resolution: {integrity: sha512-rJIDJeVER2gj6AdlpvLupv/fv6pgSB3mzpUZW+jbmkAi8T2Sx68vKWq09Uzxy8v0BOenuG6QSMVdrtsYftGYvg==}
 
   '@milkdown/kit@7.19.0':
     resolution: {integrity: sha512-q+FF2dLMpw056mwowg1de+vcDl2gLyNfBmOCJ1WjJSqw4evlcYcKjYgKZWViE/WLOjryQDQhDlg0g58/uUFiyQ==}
@@ -1136,6 +1163,9 @@ packages:
   '@milkdown/prose@7.19.0':
     resolution: {integrity: sha512-T/uYqSr4YT4uZtu4nBxTWyvZhVs2Lzh9qpcYH81PVwtZUT3b57+e+39s1D7UKAwFGi0qB7qZu/53l6pcw8radg==}
 
+  '@milkdown/prose@7.19.1':
+    resolution: {integrity: sha512-Yc76/T+cy2nzjpaQjDRbrcUq69DARouT7MjCP9rQjr55PoQQduZ7GF1QZpAprB5SQya0EM3HFL1PEgjpWl98LQ==}
+
   '@milkdown/react@7.19.0':
     resolution: {integrity: sha512-rtvnM2tC8A0IAzkG2u7XYPNtN08Yek+z9AHUbf4SRyVbXsOCTRSZxA7FEGul1iLl6TUz4oU8tQnMHPH4iWXBtA==}
     peerDependencies:
@@ -1148,15 +1178,18 @@ packages:
   '@milkdown/transformer@7.19.0':
     resolution: {integrity: sha512-Ui1vwbyTd1nAaieTylI8ibNbXSAxygkiFjkwOPGO5w0Eu7leH+0hVrbeGUCSzYdJfjGsN537CYu/8kvLIR+lQg==}
 
+  '@milkdown/transformer@7.19.1':
+    resolution: {integrity: sha512-Gezu8Ds7/3HPw6Wi7VWcYuTJCzceFx+9l2TgDNiacWe0WNqVuVc/PWoBfZu1j9x4fVrGYSKBlHBErJMGqPceJQ==}
+
   '@milkdown/utils@7.19.0':
     resolution: {integrity: sha512-aIu8j7TypVn+4ZWgrIUjpljIulAVwNERWNZgkfYLQLOv+BbF1gIbpoB7t3w0RD2EeENrEu0P3J0Sl5LDMbyDRQ==}
 
-<<<<<<< HEAD
-=======
+  '@milkdown/utils@7.19.1':
+    resolution: {integrity: sha512-OXstf0rIUfPStze9SdBK+4fJPhXL2EZnv6R5H10vxbdqWRAdtKB/uqIZnHePNww49Lz5+ClCdVybtoZ1vvZWaA==}
+
   '@napi-rs/wasm-runtime@1.1.1':
     resolution: {integrity: sha512-p64ah1M1ld8xjWv3qbvFwHiFVWrq1yFvV4f7w+mzaqiR4IlSgkqhcRdHwsGgomwzBH51sRY4NEowLxnaBjcW/A==}
 
->>>>>>> f6654ec (Set up Vitest in dashboard with initial API tests)
   '@next/env@16.1.6':
     resolution: {integrity: sha512-N1ySLuZjnAtN3kFnwhAwPvZah8RJxKasD7x1f8shFqhncnWZn4JMfg37diLNuoHsLAlrDfM3g4mawVdtAG8XLQ==}
 
@@ -2170,8 +2203,6 @@ packages:
   '@ungap/structured-clone@1.3.0':
     resolution: {integrity: sha512-WmoN8qaIAo7WTYWbAZuG8PYEhn5fkz7dZrqTBZ7dtt//lL2Gwms1IcnQ5yHqjDfX8Ft5j4YzDM23f87zBfDe9g==}
 
-<<<<<<< HEAD
-=======
   '@vitejs/plugin-react@6.0.1':
     resolution: {integrity: sha512-l9X/E3cDb+xY3SWzlG1MOGt2usfEHGMNIaegaUGFsLkb3RCn/k8/TOXBcab+OndDI4TBtktT8/9BwwW8Vi9KUQ==}
     engines: {node: ^20.19.0 || >=22.12.0}
@@ -2214,7 +2245,6 @@ packages:
   '@vitest/utils@4.1.0':
     resolution: {integrity: sha512-XfPXT6a8TZY3dcGY8EdwsBulFCIw+BeeX0RZn2x/BtiY/75YGh8FeWGG8QISN/WhaqSrE2OrlDgtF8q5uhOTmw==}
 
->>>>>>> f6654ec (Set up Vitest in dashboard with initial API tests)
   '@vue/compiler-core@3.5.30':
     resolution: {integrity: sha512-s3DfdZkcu/qExZ+td75015ljzHc6vE+30cFMGRPROYjqkroYI5NV2X1yAMX9UeyBNWB9MxCfPcsjpLS11nzkkw==}
 
@@ -2246,6 +2276,15 @@ packages:
 
   '@webgpu/types@0.1.69':
     resolution: {integrity: sha512-RPmm6kgRbI8e98zSD3RVACvnuktIja5+yLgDAkTmxLr90BEwdTXRQWNLF3ETTTyH/8mKhznZuN5AveXYFEsMGQ==}
+
+  '@xterm/addon-fit@0.11.0':
+    resolution: {integrity: sha512-jYcgT6xtVYhnhgxh3QgYDnnNMYTcf8ElbxxFzX0IZo+vabQqSPAjC3c1wJrKB5E19VwQei89QCiZZP86DCPF7g==}
+
+  '@xterm/addon-webgl@0.19.0':
+    resolution: {integrity: sha512-b3fMOsyLVuCeNJWxolACEUED0vm7qC0cy4wRvf3oURSzDTYVQiGPhTnhWZwIHdvC48Y+oLhvYXnY4XDXPoJo6A==}
+
+  '@xterm/xterm@6.0.0':
+    resolution: {integrity: sha512-TQwDdQGtwwDt+2cgKDLn0IRaSxYu1tSUjgKarSDkUM0ZNiSRXFpjxEsvc/Zgc5kq5omJ+V0a8/kIM2WD3sMOYg==}
 
   abort-controller@3.0.0:
     resolution: {integrity: sha512-h8lQ8tacZYnR3vNQTgibj+tODHI5/+l06Au2Pcriv/Gmet0eaj4TwWH41sO9wnHDiQsEj19q0drzdWdeAHtweg==}
@@ -3408,6 +3447,9 @@ packages:
   node-addon-api@7.1.1:
     resolution: {integrity: sha512-5m3bsyrjFWE1xf7nz7YXdN4udnVtXK6/Yfgn5qnahL6bCkf2yKt4k3nuTKAtT4r3IG8JNR2ncsIMdZuAzJjHQQ==}
 
+  node-pty@1.1.0:
+    resolution: {integrity: sha512-20JqtutY6JPXTUnL0ij1uad7Qe1baT46lyolh2sSENDd4sTzKZ4nmAFkeAARDKwmlLjPx6XKRlwRUxwjOy+lUg==}
+
   node-releases@2.0.36:
     resolution: {integrity: sha512-TdC8FSgHz8Mwtw9g5L4gR/Sh9XhSP/0DEkQxfEFXOpiul5IiHgHan2VhYYb6agDSfp4KuvltmGApc8HMgUrIkA==}
 
@@ -3745,14 +3787,11 @@ packages:
     engines: {node: '>= 0.4'}
     hasBin: true
 
-<<<<<<< HEAD
-=======
   rolldown@1.0.0-rc.10:
     resolution: {integrity: sha512-q7j6vvarRFmKpgJUT8HCAUljkgzEp4LAhPlJUvQhA5LA1SUL36s5QCysMutErzL3EbNOZOkoziSx9iZC4FddKA==}
     engines: {node: ^20.19.0 || >=22.12.0}
     hasBin: true
 
->>>>>>> f6654ec (Set up Vitest in dashboard with initial API tests)
   rope-sequence@1.3.4:
     resolution: {integrity: sha512-UT5EDe2cu2E/6O4igUr5PSFs23nvvukicWHx6GnOPlHAiiYbzNuCRQCuiUdHJQcqKalLKlrYJnjY0ySGsXNQXQ==}
 
@@ -4041,8 +4080,6 @@ packages:
   vfile@6.0.3:
     resolution: {integrity: sha512-KzIbH/9tXat2u30jf+smMwFCsno4wHVdNmzFyL+T/L3UGqqk6JKfVqOFOZEpZSHADH1k40ab6NUIXZq422ov3Q==}
 
-<<<<<<< HEAD
-=======
   vite@8.0.1:
     resolution: {integrity: sha512-wt+Z2qIhfFt85uiyRt5LPU4oVEJBXj8hZNWKeqFG4gRG/0RaRGJ7njQCwzFVjO+v4+Ipmf5CY7VdmZRAYYBPHw==}
     engines: {node: ^20.19.0 || >=22.12.0}
@@ -4121,7 +4158,6 @@ packages:
       jsdom:
         optional: true
 
->>>>>>> f6654ec (Set up Vitest in dashboard with initial API tests)
   vue@3.5.30:
     resolution: {integrity: sha512-hTHLc6VNZyzzEH/l7PFGjpcTvUgiaPK5mdLkbjrTeWSRcEfxFrv56g/XckIYlE9ckuobsdwqd5mk2g1sBkMewg==}
     peerDependencies:
@@ -4686,15 +4722,12 @@ snapshots:
       react: 19.2.4
       tslib: 2.8.1
 
-<<<<<<< HEAD
-=======
   '@emnapi/core@1.9.1':
     dependencies:
       '@emnapi/wasi-threads': 1.2.0
       tslib: 2.8.1
     optional: true
 
->>>>>>> f6654ec (Set up Vitest in dashboard with initial API tests)
   '@emnapi/runtime@1.9.0':
     dependencies:
       tslib: 2.8.1
@@ -5334,6 +5367,18 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
+  '@milkdown/core@7.19.1':
+    dependencies:
+      '@milkdown/ctx': 7.19.1
+      '@milkdown/exception': 7.19.1
+      '@milkdown/prose': 7.19.1
+      '@milkdown/transformer': 7.19.1
+      remark-parse: 11.0.0
+      remark-stringify: 11.0.0
+      unified: 11.0.5
+    transitivePeerDependencies:
+      - supports-color
+
   '@milkdown/crepe@7.19.0(prosemirror-model@1.25.4)(prosemirror-state@1.4.4)(prosemirror-view@1.41.7)(typescript@5.9.3)':
     dependencies:
       '@codemirror/commands': 6.10.3
@@ -5363,7 +5408,13 @@ snapshots:
     dependencies:
       '@milkdown/exception': 7.19.0
 
+  '@milkdown/ctx@7.19.1':
+    dependencies:
+      '@milkdown/exception': 7.19.1
+
   '@milkdown/exception@7.19.0': {}
+
+  '@milkdown/exception@7.19.1': {}
 
   '@milkdown/kit@7.19.0(@codemirror/language@6.12.2)(@codemirror/state@6.6.0)(@codemirror/view@6.40.0)(typescript@5.9.3)':
     dependencies:
@@ -5534,6 +5585,23 @@ snapshots:
       prosemirror-transform: 1.11.0
       prosemirror-view: 1.41.7
 
+  '@milkdown/prose@7.19.1':
+    dependencies:
+      '@milkdown/exception': 7.19.1
+      prosemirror-changeset: 2.4.0
+      prosemirror-commands: 1.7.1
+      prosemirror-dropcursor: 1.8.2
+      prosemirror-gapcursor: 1.4.1
+      prosemirror-history: 1.5.0
+      prosemirror-inputrules: 1.5.1
+      prosemirror-keymap: 1.2.3
+      prosemirror-model: 1.25.4
+      prosemirror-schema-list: 1.5.1
+      prosemirror-state: 1.4.4
+      prosemirror-tables: 1.8.5
+      prosemirror-transform: 1.11.0
+      prosemirror-view: 1.41.7
+
   '@milkdown/react@7.19.0(@codemirror/language@6.12.2)(@codemirror/state@6.6.0)(@codemirror/view@6.40.0)(prosemirror-model@1.25.4)(prosemirror-state@1.4.4)(prosemirror-view@1.41.7)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(typescript@5.9.3)':
     dependencies:
       '@milkdown/crepe': 7.19.0(prosemirror-model@1.25.4)(prosemirror-state@1.4.4)(prosemirror-view@1.41.7)(typescript@5.9.3)
@@ -5568,6 +5636,15 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
+  '@milkdown/transformer@7.19.1':
+    dependencies:
+      '@milkdown/exception': 7.19.1
+      '@milkdown/prose': 7.19.1
+      remark: 15.0.1
+      unified: 11.0.5
+    transitivePeerDependencies:
+      - supports-color
+
   '@milkdown/utils@7.19.0':
     dependencies:
       '@milkdown/core': 7.19.0
@@ -5579,8 +5656,17 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-<<<<<<< HEAD
-=======
+  '@milkdown/utils@7.19.1':
+    dependencies:
+      '@milkdown/core': 7.19.1
+      '@milkdown/ctx': 7.19.1
+      '@milkdown/exception': 7.19.1
+      '@milkdown/prose': 7.19.1
+      '@milkdown/transformer': 7.19.1
+      nanoid: 5.1.7
+    transitivePeerDependencies:
+      - supports-color
+
   '@napi-rs/wasm-runtime@1.1.1':
     dependencies:
       '@emnapi/core': 1.9.1
@@ -5588,7 +5674,6 @@ snapshots:
       '@tybys/wasm-util': 0.10.1
     optional: true
 
->>>>>>> f6654ec (Set up Vitest in dashboard with initial API tests)
   '@next/env@16.1.6': {}
 
   '@next/swc-darwin-arm64@16.1.6':
@@ -6539,8 +6624,6 @@ snapshots:
 
   '@ungap/structured-clone@1.3.0': {}
 
-<<<<<<< HEAD
-=======
   '@vitejs/plugin-react@6.0.1(vite@8.0.1(@types/node@25.5.0)(esbuild@0.27.4)(jiti@2.6.1))':
     dependencies:
       '@rolldown/pluginutils': 1.0.0-rc.7
@@ -6587,7 +6670,6 @@ snapshots:
       convert-source-map: 2.0.0
       tinyrainbow: 3.1.0
 
->>>>>>> f6654ec (Set up Vitest in dashboard with initial API tests)
   '@vue/compiler-core@3.5.30':
     dependencies:
       '@babel/parser': 7.29.2
@@ -6644,6 +6726,12 @@ snapshots:
 
   '@webgpu/types@0.1.69':
     optional: true
+
+  '@xterm/addon-fit@0.11.0': {}
+
+  '@xterm/addon-webgl@0.19.0': {}
+
+  '@xterm/xterm@6.0.0': {}
 
   abort-controller@3.0.0:
     dependencies:
@@ -8108,6 +8196,10 @@ snapshots:
 
   node-addon-api@7.1.1: {}
 
+  node-pty@1.1.0:
+    dependencies:
+      node-addon-api: 7.1.1
+
   node-releases@2.0.36: {}
 
   npm-to-yarn@3.0.1: {}
@@ -8534,8 +8626,6 @@ snapshots:
       path-parse: 1.0.7
       supports-preserve-symlinks-flag: 1.0.0
 
-<<<<<<< HEAD
-=======
   rolldown@1.0.0-rc.10:
     dependencies:
       '@oxc-project/types': 0.120.0
@@ -8557,7 +8647,6 @@ snapshots:
       '@rolldown/binding-win32-arm64-msvc': 1.0.0-rc.10
       '@rolldown/binding-win32-x64-msvc': 1.0.0-rc.10
 
->>>>>>> f6654ec (Set up Vitest in dashboard with initial API tests)
   rope-sequence@1.3.4: {}
 
   s-js@0.4.9: {}
@@ -8858,8 +8947,6 @@ snapshots:
       '@types/unist': 3.0.3
       vfile-message: 4.0.3
 
-<<<<<<< HEAD
-=======
   vite@8.0.1(@types/node@25.5.0)(esbuild@0.27.4)(jiti@2.6.1):
     dependencies:
       lightningcss: 1.32.0
@@ -8901,7 +8988,6 @@ snapshots:
     transitivePeerDependencies:
       - msw
 
->>>>>>> f6654ec (Set up Vitest in dashboard with initial API tests)
   vue@3.5.30(typescript@5.9.3):
     dependencies:
       '@vue/compiler-dom': 3.5.30

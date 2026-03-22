@@ -15,13 +15,19 @@ export function Text(props: ParentProps<TextProps>) {
     overflow: props.wrapMode === "none" ? "hidden" : undefined,
     "word-break":
       props.wrapMode === "word" ? "break-word" : undefined,
+    width:
+      typeof props.width === "number" ? `${props.width}ch` : props.width,
+    height:
+      typeof props.height === "number"
+        ? `calc(${props.height} * var(--line-height))`
+        : props.height,
     "flex-grow": props.flexGrow,
     "flex-shrink": props.flexShrink,
     ...attributesToStyle(props.attributes ?? 0),
   });
 
   return (
-    <span style={style()} onMouseUp={props.onMouseUp}>
+    <span style={style()} onMouseUp={props.onMouseUp} onMouseDown={props.onMouseDown}>
       {props.children}
     </span>
   );
