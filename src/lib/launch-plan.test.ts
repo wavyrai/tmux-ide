@@ -1,6 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { buildPaneCommand, collectPaneStartupPlan } from "./launch-plan.ts";
+import type { Row } from "../types.ts";
 
 describe("buildPaneCommand", () => {
   it("passes through normal pane commands", () => {
@@ -73,5 +74,48 @@ describe("collectPaneStartupPlan", () => {
         paneType: "shell",
       },
     ]);
+  });
+
+  it("widgets:false config produces fewer pane actions when widget panes are stripped", () => {
+    const fullRows: Row[] = [
+      {
+        panes: [
+          { title: "Claude", command: "claude", role: "lead" },
+          { title: "Tasks", type: "tasks" },
+          { title: "Explorer", type: "explorer" },
+        ],
+      },
+      {
+        panes: [
+          { title: "Shell" },
+          { title: "War Room", type: "warroom" },
+        ],
+      },
+    ];
+
+    // Simulate headless mode: strip widget panes (panes with type set)
+    const headlessRows = fullRows
+      .map((row) => ({ ...row, panes: row.panes.filter((p) => !p.type) }))
+      .filter((row) => row.panes.length > 0);
+
+    const fullResult = collectPaneStartupPlan(
+      fullRows,
+      [["%1", "%2", "%3"], ["%4", "%5"]],
+      new Set(["%1", "%4"]),
+      "/workspace",
+    );
+
+    const headlessResult = collectPaneStartupPlan(
+      headlessRows,
+      [["%1"], ["%4"]],
+      new Set(["%1", "%4"]),
+      "/workspace",
+    );
+
+    // Full has 5 pane actions (3 widgets + agent + shell)
+    assert.strictEqual(fullResult.paneActions.length, 5);
+    // Headless has only 2 (agent + shell), 3 widget panes stripped
+    assert.strictEqual(headlessResult.paneActions.length, 2);
+    assert.ok(headlessResult.paneActions.every((a) => a.widgetType === null));
   });
 });

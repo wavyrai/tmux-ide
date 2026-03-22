@@ -45,6 +45,7 @@ export const OrchestratorYamlConfigSchema = z.object({
   cleanup_on_done: z.boolean().optional(),
   dispatch_mode: z.enum(["tasks", "goals"]).optional(),
   max_concurrent_agents: z.number().optional(),
+  widgets: z.boolean().optional(),
 });
 
 export const IdeConfigSchema = z.object({
