@@ -15,16 +15,12 @@ import { StatusBar } from "@/components/StatusBar";
 import type { ProjectDetail } from "@/lib/types";
 
 // Lazy-load terminal components to avoid SSR issues with xterm.js
-const TerminalPanel = dynamic(
-  () => import("@/components/TerminalPanel").then((m) => ({ default: m.TerminalPanel })),
-  { ssr: false },
-);
 const MirrorTerminal = dynamic(
   () => import("@/components/MirrorTerminal").then((m) => ({ default: m.MirrorTerminal })),
   { ssr: false },
 );
 
-type Tab = "kanban" | "diffs" | "plans" | "activity" | "terminals" | "agents" | "all-panes";
+type Tab = "kanban" | "agents" | "all-panes" | "diffs" | "plans" | "activity";
 
 const TABS: { id: Tab; label: string }[] = [
   { id: "kanban", label: "kanban" },
@@ -33,7 +29,6 @@ const TABS: { id: Tab; label: string }[] = [
   { id: "diffs", label: "diffs" },
   { id: "plans", label: "plans" },
   { id: "activity", label: "activity" },
-  { id: "terminals", label: "terminals" },
 ];
 
 export default function ProjectPage() {
@@ -242,18 +237,6 @@ export default function ProjectPage() {
               no panes found
             </div>
           )}
-        </div>
-      )}
-
-      {activeTab === "terminals" && (
-        <div className="flex-1 min-h-0 grid grid-cols-2 grid-rows-2">
-          {(["warroom", "tasks", "explorer", "preview"] as const).map((type) => (
-            <TerminalPanel
-              key={type}
-              widgetType={type}
-              className="flex flex-col border border-[var(--border)] overflow-hidden"
-            />
-          ))}
         </div>
       )}
 
