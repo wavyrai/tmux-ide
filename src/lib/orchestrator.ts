@@ -216,7 +216,7 @@ export function dispatch(
 ): void {
   // Find idle agent panes (not the master pane, not already assigned a task)
   const idleAgents = panes.filter((p) => {
-    // Master pane check: normalize title to strip spinner prefix before comparing
+    // Master pane check: compare normalized title against configured master pane name
     if (config.masterPane && normalizePaneTitle(p.title) === config.masterPane) return false;
     if (!isIdleForDispatch(p)) return false;
     // Don't dispatch to a pane that already has an in-progress task assigned

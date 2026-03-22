@@ -23,8 +23,6 @@ import {
   normalizePaneTitle,
   getPaneSpecialties,
   dispatchGoals,
-  type OrchestratorConfig,
-  type OrchestratorState,
 } from "./orchestrator.ts";
 import { readEvents } from "./event-log.ts";
 import {
@@ -35,11 +33,11 @@ import {
   loadTask,
   loadTasks,
   loadGoal,
-  type Task,
   type Goal,
 } from "./task-store.ts";
 import { _setExecutor, type PaneInfo } from "../widgets/lib/pane-comms.ts";
 import { _setGitExecutor } from "./worktree.ts";
+import { makeTask, makePane, makeOrchestratorConfig, makeOrchestratorState } from "../__tests__/support.ts";
 
 let tmpDir: string;
 let restoreTmux: () => void;
@@ -47,66 +45,6 @@ let restoreGit: () => void;
 let tmuxCalls: { args: string[] }[];
 let gitCalls: { args: string[]; cwd: string }[];
 let mockPanes: PaneInfo[];
-
-function makeConfig(overrides: Partial<OrchestratorConfig> = {}): OrchestratorConfig {
-  return {
-    session: "test",
-    dir: tmpDir,
-    autoDispatch: true,
-    stallTimeout: 300000,
-    pollInterval: 5000,
-    worktreeRoot: ".worktrees",
-    masterPane: "Master",
-    beforeRun: null,
-    afterRun: null,
-    cleanupOnDone: false,
-    maxConcurrentAgents: 10,
-    dispatchMode: "tasks",
-    paneSpecialties: new Map(),
-    ...overrides,
-  };
-}
-
-function makeState(overrides: Partial<OrchestratorState> = {}): OrchestratorState {
-  return {
-    lastActivity: new Map(),
-    previousTasks: new Map(),
-    claimedTasks: new Set(),
-    taskClaimTimes: new Map(),
-    ...overrides,
-  };
-}
-
-function makeTask(overrides: Partial<Task> = {}): Task {
-  return {
-    id: "001",
-    title: "Test task",
-    description: "",
-    goal: null,
-    status: "todo",
-    assignee: null,
-    priority: 1,
-    created: "2026-01-01T00:00:00Z",
-    updated: "2026-01-01T00:00:00Z",
-    branch: null,
-    tags: [],
-    proof: null,
-    ...overrides,
-  };
-}
-
-function makePane(overrides: Partial<PaneInfo> = {}): PaneInfo {
-  return {
-    id: "%1",
-    index: 0,
-    title: "Agent 1",
-    currentCommand: "zsh",
-    width: 80,
-    height: 24,
-    active: false,
-    ...overrides,
-  };
-}
 
 beforeEach(() => {
   tmpDir = mkdtempSync(join(tmpdir(), "tmux-ide-orch-test-"));
@@ -156,8 +94,8 @@ describe("dispatch", () => {
     const panes: PaneInfo[] = [pane];
     mockPanes = panes;
 
-    const config = makeConfig();
-    const state = makeState();
+    const config = makeOrchestratorConfig(tmpDir,);
+    const state = makeOrchestratorState();
 
     dispatch(config, state, [task1, task2], panes);
 
@@ -179,8 +117,8 @@ describe("dispatch", () => {
     ];
     mockPanes = panes;
 
-    const config = makeConfig();
-    const state = makeState();
+    const config = makeOrchestratorConfig(tmpDir,);
+    const state = makeOrchestratorState();
 
     dispatch(config, state, [task], panes);
 
@@ -198,8 +136,8 @@ describe("dispatch", () => {
     ];
     mockPanes = panes;
 
-    const config = makeConfig();
-    const state = makeState();
+    const config = makeOrchestratorConfig(tmpDir,);
+    const state = makeOrchestratorState();
 
     dispatch(config, state, [task], panes);
 
@@ -214,8 +152,8 @@ describe("dispatch", () => {
     const panes: PaneInfo[] = [makePane({ id: "%2", title: "Agent 2", currentCommand: "zsh" })];
     mockPanes = panes;
 
-    const config = makeConfig();
-    const state = makeState();
+    const config = makeOrchestratorConfig(tmpDir,);
+    const state = makeOrchestratorState();
 
     dispatch(config, state, [task], panes);
 
@@ -235,8 +173,8 @@ describe("detectStalls", () => {
 
     const panes: PaneInfo[] = [pane];
 
-    const config = makeConfig({ stallTimeout: 1000 });
-    const state = makeState({
+    const config = makeOrchestratorConfig(tmpDir,{ stallTimeout: 1000 });
+    const state = makeOrchestratorState({
       lastActivity: new Map([["%1", Date.now() - 2000]]),
     });
 
@@ -254,8 +192,8 @@ describe("detectStalls", () => {
 
     const panes: PaneInfo[] = [pane];
 
-    const config = makeConfig({ stallTimeout: 300000 });
-    const state = makeState({
+    const config = makeOrchestratorConfig(tmpDir,{ stallTimeout: 300000 });
+    const state = makeOrchestratorState({
       lastActivity: new Map([["%1", Date.now()]]),
     });
 
@@ -272,8 +210,8 @@ describe("detectCompletions", () => {
 
     const panes: PaneInfo[] = [makePane({ id: "%0", title: "Master" })];
 
-    const config = makeConfig();
-    const state = makeState({
+    const config = makeOrchestratorConfig(tmpDir,);
+    const state = makeOrchestratorState({
       previousTasks: new Map([["001", "in-progress"]]),
     });
 
@@ -291,8 +229,8 @@ describe("detectCompletions", () => {
 
     const panes: PaneInfo[] = [makePane({ id: "%0", title: "Master" })];
 
-    const config = makeConfig();
-    const state = makeState({
+    const config = makeOrchestratorConfig(tmpDir,);
+    const state = makeOrchestratorState({
       previousTasks: new Map([["001", "done"]]),
     });
 
@@ -390,8 +328,8 @@ describe("dispatch with hooks", () => {
     mockPanes = panes;
 
     // before_run that always fails
-    const config = makeConfig({ beforeRun: "false" });
-    const state = makeState();
+    const config = makeOrchestratorConfig(tmpDir,{ beforeRun: "false" });
+    const state = makeOrchestratorState();
 
     dispatch(config, state, [task], panes);
 
@@ -414,8 +352,8 @@ describe("dispatch with hooks", () => {
     mockPanes = panes;
 
     // before_run that always succeeds
-    const config = makeConfig({ beforeRun: "true" });
-    const state = makeState();
+    const config = makeOrchestratorConfig(tmpDir,{ beforeRun: "true" });
+    const state = makeOrchestratorState();
 
     dispatch(config, state, [task], panes);
 
@@ -440,8 +378,8 @@ describe("detectCompletions with after_run", () => {
     const panes: PaneInfo[] = [makePane({ id: "%0", title: "Master" })];
 
     // after_run creates a marker file — proves it ran in the worktree
-    const config = makeConfig({ afterRun: "touch after_run_marker" });
-    const state = makeState({
+    const config = makeOrchestratorConfig(tmpDir,{ afterRun: "touch after_run_marker" });
+    const state = makeOrchestratorState({
       previousTasks: new Map([["001", "in-progress"]]),
     });
 
@@ -463,8 +401,8 @@ describe("detectCompletions with after_run", () => {
     const panes: PaneInfo[] = [makePane({ id: "%0", title: "Master" })];
 
     // after_run that fails — should not throw
-    const config = makeConfig({ afterRun: "false" });
-    const state = makeState({
+    const config = makeOrchestratorConfig(tmpDir,{ afterRun: "false" });
+    const state = makeOrchestratorState({
       previousTasks: new Map([["001", "in-progress"]]),
     });
 
@@ -554,8 +492,8 @@ describe("claim locking", () => {
     ];
     mockPanes = panes;
 
-    const config = makeConfig();
-    const state = makeState();
+    const config = makeOrchestratorConfig(tmpDir,);
+    const state = makeOrchestratorState();
 
     // First dispatch claims the task
     dispatch(config, state, [task], panes);
@@ -574,8 +512,8 @@ describe("claim locking", () => {
   });
 
   it("clears claim on task completion", () => {
-    const config = makeConfig();
-    const state = makeState({
+    const config = makeOrchestratorConfig(tmpDir,);
+    const state = makeOrchestratorState({
       previousTasks: new Map([["001", "in-progress"]]),
       claimedTasks: new Set(["001"]),
     });
@@ -602,8 +540,8 @@ describe("claim locking", () => {
     const panes: PaneInfo[] = [makePane({ id: "%1", title: "Agent 1", currentCommand: "zsh" })];
     mockPanes = panes;
 
-    const config = makeConfig({ beforeRun: "false" });
-    const state = makeState();
+    const config = makeOrchestratorConfig(tmpDir,{ beforeRun: "false" });
+    const state = makeOrchestratorState();
 
     dispatch(config, state, [task], panes);
 
@@ -625,8 +563,8 @@ describe("cleanupOnDone", () => {
 
     const panes: PaneInfo[] = [makePane({ id: "%0", title: "Master" })];
 
-    const config = makeConfig({ cleanupOnDone: true });
-    const state = makeState({
+    const config = makeOrchestratorConfig(tmpDir,{ cleanupOnDone: true });
+    const state = makeOrchestratorState({
       previousTasks: new Map([["001", "in-progress"]]),
     });
 
@@ -652,8 +590,8 @@ describe("cleanupOnDone", () => {
 
     const panes: PaneInfo[] = [makePane({ id: "%0", title: "Master" })];
 
-    const config = makeConfig({ cleanupOnDone: false });
-    const state = makeState({
+    const config = makeOrchestratorConfig(tmpDir,{ cleanupOnDone: false });
+    const state = makeOrchestratorState({
       previousTasks: new Map([["001", "in-progress"]]),
     });
 
@@ -675,7 +613,7 @@ describe("createOrchestrator timer", () => {
     const expectedName = agentIdentifier(pane);
     mockPanes = [pane];
 
-    const config = makeConfig({ pollInterval: 50, masterPane: null });
+    const config = makeOrchestratorConfig(tmpDir,{ pollInterval: 50, masterPane: null });
 
     const stop = createOrchestrator(config);
 
@@ -692,7 +630,7 @@ describe("createOrchestrator timer", () => {
   it("stops polling when returned function is called", async () => {
     mockPanes = [];
 
-    const config = makeConfig({ pollInterval: 50 });
+    const config = makeOrchestratorConfig(tmpDir,{ pollInterval: 50 });
 
     const stop = createOrchestrator(config);
     stop();
@@ -721,8 +659,8 @@ describe("dispatch with version-string agent", () => {
     const panes: PaneInfo[] = [pane];
     mockPanes = panes;
 
-    const config = makeConfig({ masterPane: null });
-    const state = makeState();
+    const config = makeOrchestratorConfig(tmpDir,{ masterPane: null });
+    const state = makeOrchestratorState();
 
     dispatch(config, state, [task], panes);
 
@@ -740,8 +678,8 @@ describe("dispatch with version-string agent", () => {
     ];
     mockPanes = panes;
 
-    const config = makeConfig({ masterPane: null });
-    const state = makeState();
+    const config = makeOrchestratorConfig(tmpDir,{ masterPane: null });
+    const state = makeOrchestratorState();
 
     dispatch(config, state, [task], panes);
 
@@ -753,25 +691,25 @@ describe("dispatch with version-string agent", () => {
 
 describe("reloadConfig", () => {
   it("updates pollInterval", () => {
-    const config = makeConfig({ pollInterval: 5000 });
+    const config = makeOrchestratorConfig(tmpDir,{ pollInterval: 5000 });
     reloadConfig(config, { pollInterval: 1000 });
     assert.strictEqual(config.pollInterval, 1000);
   });
 
   it("updates stallTimeout", () => {
-    const config = makeConfig({ stallTimeout: 300000 });
+    const config = makeOrchestratorConfig(tmpDir,{ stallTimeout: 300000 });
     reloadConfig(config, { stallTimeout: 60000 });
     assert.strictEqual(config.stallTimeout, 60000);
   });
 
   it("updates maxConcurrentAgents", () => {
-    const config = makeConfig();
+    const config = makeOrchestratorConfig(tmpDir,);
     reloadConfig(config, { maxConcurrentAgents: 3 });
     assert.strictEqual(config.maxConcurrentAgents, 3);
   });
 
   it("updates multiple fields at once", () => {
-    const config = makeConfig();
+    const config = makeOrchestratorConfig(tmpDir,);
     reloadConfig(config, {
       pollInterval: 2000,
       stallTimeout: 120000,
@@ -785,7 +723,7 @@ describe("reloadConfig", () => {
   });
 
   it("preserves fields not in the patch", () => {
-    const config = makeConfig({ pollInterval: 5000, stallTimeout: 300000 });
+    const config = makeOrchestratorConfig(tmpDir,{ pollInterval: 5000, stallTimeout: 300000 });
     reloadConfig(config, { pollInterval: 1000 });
     assert.strictEqual(config.stallTimeout, 300000); // unchanged
     assert.strictEqual(config.session, "test"); // unchanged
@@ -803,8 +741,8 @@ describe("event logging integration", () => {
     const panes: PaneInfo[] = [pane];
     mockPanes = panes;
 
-    const config = makeConfig({ masterPane: null });
-    const state = makeState();
+    const config = makeOrchestratorConfig(tmpDir,{ masterPane: null });
+    const state = makeOrchestratorState();
 
     dispatch(config, state, [task], panes);
 
@@ -822,8 +760,8 @@ describe("event logging integration", () => {
     const task = makeTask({ status: "in-progress", assignee: name });
     const panes: PaneInfo[] = [pane];
 
-    const config = makeConfig({ stallTimeout: 1000 });
-    const state = makeState({
+    const config = makeOrchestratorConfig(tmpDir,{ stallTimeout: 1000 });
+    const state = makeOrchestratorState({
       lastActivity: new Map([["%1", Date.now() - 2000]]),
     });
 
@@ -844,8 +782,8 @@ describe("event logging integration", () => {
     });
     const panes: PaneInfo[] = [makePane({ id: "%0", title: "Master" })];
 
-    const config = makeConfig();
-    const state = makeState({
+    const config = makeOrchestratorConfig(tmpDir,);
+    const state = makeOrchestratorState({
       previousTasks: new Map([["001", "in-progress"]]),
     });
 
@@ -865,8 +803,8 @@ describe("event logging integration", () => {
     // No panes — agent has vanished
     const panes: PaneInfo[] = [];
 
-    const config = makeConfig();
-    const state = makeState();
+    const config = makeOrchestratorConfig(tmpDir,);
+    const state = makeOrchestratorState();
 
     reconcile(config, state, [task], panes);
 
@@ -881,7 +819,7 @@ describe("event logging integration", () => {
 
 describe("saveOrchestratorState / loadOrchestratorState", () => {
   it("round-trips claimed tasks and claim times", () => {
-    const state = makeState({
+    const state = makeOrchestratorState({
       claimedTasks: new Set(["001", "003"]),
       taskClaimTimes: new Map([
         ["001", 1700000000000],
@@ -891,7 +829,7 @@ describe("saveOrchestratorState / loadOrchestratorState", () => {
 
     saveOrchestratorState(tmpDir, state);
 
-    const restored = makeState();
+    const restored = makeOrchestratorState();
     loadOrchestratorState(tmpDir, restored);
 
     assert.ok(restored.claimedTasks.has("001"));
@@ -901,7 +839,7 @@ describe("saveOrchestratorState / loadOrchestratorState", () => {
   });
 
   it("handles missing state file gracefully", () => {
-    const state = makeState();
+    const state = makeOrchestratorState();
     loadOrchestratorState(tmpDir, state);
     assert.strictEqual(state.claimedTasks.size, 0);
     assert.strictEqual(state.taskClaimTimes.size, 0);
@@ -911,7 +849,7 @@ describe("saveOrchestratorState / loadOrchestratorState", () => {
     mkdirSync(join(tmpDir, ".tasks"), { recursive: true });
     writeFileSync(join(tmpDir, ".tasks", "orchestrator-state.json"), "not json");
 
-    const state = makeState();
+    const state = makeOrchestratorState();
     loadOrchestratorState(tmpDir, state);
     assert.strictEqual(state.claimedTasks.size, 0);
   });
@@ -926,8 +864,8 @@ describe("gracefulShutdown", () => {
     });
     saveTask(tmpDir, task);
 
-    const config = makeConfig({ cleanupOnDone: false });
-    const state = makeState({
+    const config = makeOrchestratorConfig(tmpDir,{ cleanupOnDone: false });
+    const state = makeOrchestratorState({
       claimedTasks: new Set(["001"]),
     });
 
@@ -941,8 +879,8 @@ describe("gracefulShutdown", () => {
   it("saves orchestrator state to disk", () => {
     saveTask(tmpDir, makeTask());
 
-    const config = makeConfig();
-    const state = makeState({
+    const config = makeOrchestratorConfig(tmpDir,);
+    const state = makeOrchestratorState({
       claimedTasks: new Set(["002"]),
       taskClaimTimes: new Map([["002", Date.now()]]),
     });
@@ -951,7 +889,7 @@ describe("gracefulShutdown", () => {
 
     assert.ok(existsSync(join(tmpDir, ".tasks", "orchestrator-state.json")));
 
-    const restored = makeState();
+    const restored = makeOrchestratorState();
     loadOrchestratorState(tmpDir, restored);
     assert.ok(restored.claimedTasks.has("002"));
   });
@@ -967,8 +905,8 @@ describe("gracefulShutdown", () => {
     });
     saveTask(tmpDir, task);
 
-    const config = makeConfig({ cleanupOnDone: true });
-    const state = makeState();
+    const config = makeOrchestratorConfig(tmpDir,{ cleanupOnDone: true });
+    const state = makeOrchestratorState();
 
     gracefulShutdown(config, state);
 
@@ -986,8 +924,8 @@ describe("gracefulShutdown", () => {
     });
     saveTask(tmpDir, task);
 
-    const config = makeConfig({ cleanupOnDone: false });
-    const state = makeState();
+    const config = makeOrchestratorConfig(tmpDir,{ cleanupOnDone: false });
+    const state = makeOrchestratorState();
 
     gracefulShutdown(config, state);
 
@@ -1003,8 +941,8 @@ describe("gracefulShutdown", () => {
     saveTask(tmpDir, done);
     saveTask(tmpDir, todo);
 
-    const config = makeConfig();
-    const state = makeState();
+    const config = makeOrchestratorConfig(tmpDir,);
+    const state = makeOrchestratorState();
 
     gracefulShutdown(config, state);
 
@@ -1033,7 +971,7 @@ describe("normalizePaneTitle", () => {
 
 describe("getPaneSpecialties", () => {
   it("returns specialties from config map", () => {
-    const config = makeConfig({
+    const config = makeOrchestratorConfig(tmpDir,{
       paneSpecialties: new Map([["Frontend Agent", ["frontend", "css", "react"]]]),
     });
     const pane = makePane({ title: "Frontend Agent" });
@@ -1042,14 +980,14 @@ describe("getPaneSpecialties", () => {
   });
 
   it("returns empty array for pane with no specialties", () => {
-    const config = makeConfig({ paneSpecialties: new Map() });
+    const config = makeOrchestratorConfig(tmpDir,{ paneSpecialties: new Map() });
     const pane = makePane({ title: "Generic Agent" });
     const specs = getPaneSpecialties(config, pane);
     assert.deepStrictEqual(specs, []);
   });
 
   it("matches by pane title", () => {
-    const config = makeConfig({
+    const config = makeOrchestratorConfig(tmpDir,{
       paneSpecialties: new Map([
         ["Backend", ["api", "database"]],
         ["Frontend", ["ui", "css"]],
@@ -1133,10 +1071,10 @@ describe("dispatchGoals", () => {
     saveGoal(tmpDir, goal);
 
     const planner = makePane({ id: "%2", index: 1, title: "Planner", currentCommand: "claude" });
-    const config = makeConfig({
+    const config = makeOrchestratorConfig(tmpDir,{
       paneSpecialties: new Map([["Planner", ["frontend"]]]),
     });
-    const state = makeState();
+    const state = makeOrchestratorState();
 
     dispatchGoals(config, state, [goal], [], [planner]);
 
@@ -1167,8 +1105,8 @@ describe("dispatchGoals", () => {
 
     // Only pane is the master — should not be used as planner
     const masterPane = makePane({ id: "%1", index: 0, title: "Master", currentCommand: "claude" });
-    const config = makeConfig({ masterPane: "Master" });
-    const state = makeState();
+    const config = makeOrchestratorConfig(tmpDir,{ masterPane: "Master" });
+    const state = makeOrchestratorState();
 
     dispatchGoals(config, state, [goal], [], [masterPane]);
 
@@ -1193,10 +1131,10 @@ describe("dispatchGoals", () => {
     saveGoal(tmpDir, goal);
 
     const planner = makePane({ id: "%2", index: 1, title: "Planner", currentCommand: "claude" });
-    const config = makeConfig({
+    const config = makeOrchestratorConfig(tmpDir,{
       paneSpecialties: new Map([["Planner", []]]),
     });
-    const state = makeState();
+    const state = makeOrchestratorState();
 
     dispatchGoals(config, state, [goal], [], [planner]);
 
