@@ -33,6 +33,7 @@
     "check": "pnpm run lint:workspace && pnpm run format:check && pnpm run build && pnpm run test:unit && pnpm run docs:build && pnpm run pack:check",
     "prepublishOnly": "pnpm run build",
     "postinstall": "node scripts/postinstall.js",
+    "test:dashboard": "cd dashboard && pnpm test",
     "docs": "turbo run dev --filter=@tmux-ide/docs"
   },
   "keywords": [

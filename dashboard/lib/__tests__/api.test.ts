@@ -1,17 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { marksToSections } from "../api";
-import type { Mark } from "../types";
-
-function makeMark(overrides: Partial<Mark> & { range: Mark["range"] }): Mark {
-  return {
-    id: "m1",
-    kind: "authored",
-    by: "ai:Claude",
-    at: "2026-03-21T10:00:00Z",
-    quote: "text",
-    ...overrides,
-  };
-}
+import { makeMark } from "./support";
 
 describe("marksToSections", () => {
   it("returns empty object for empty marks", () => {
@@ -36,7 +25,8 @@ describe("marksToSections", () => {
   });
 
   it("picks dominant author when multiple authors contribute", () => {
-    const content = "# Design\nShort bit by human. And then a much longer section written entirely by AI that has many more characters.";
+    const content =
+      "# Design\nShort bit by human. And then a much longer section written entirely by AI that has many more characters.";
     const marks: Record<string, Mark> = {
       m1: makeMark({
         id: "m1",
@@ -183,10 +173,7 @@ describe("updateTask", () => {
   });
 
   it("returns null on failure", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockResolvedValue({ ok: false }),
-    );
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: false }));
 
     const { updateTask } = await import("../api");
     const result = await updateTask("session", "001", { status: "done" });

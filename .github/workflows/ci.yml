@@ -75,6 +75,9 @@ jobs:
         working-directory: dashboard
         run: npx next build
 
+      - name: Run dashboard tests
+        run: cd dashboard && pnpm test
+
   docs:
     name: Docs build
     runs-on: ubuntu-latest
