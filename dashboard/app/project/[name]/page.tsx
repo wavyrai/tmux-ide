@@ -20,6 +20,57 @@ const MirrorTerminal = dynamic(
   { ssr: false },
 );
 
+// Responsive pane mirror view — grid on desktop, single pane + selector on mobile
+function PaneMirrorView({ items, sessionName, emptyMessage }: {
+  items: { id: string; name: string }[];
+  sessionName: string;
+  emptyMessage: string;
+}) {
+  const [selectedIdx, setSelectedIdx] = useState(0);
+
+  if (items.length === 0) {
+    return (
+      <div className="flex-1 flex items-center justify-center text-[var(--dim)]">
+        {emptyMessage}
+      </div>
+    );
+  }
+
+  const selected = items[selectedIdx] ?? items[0]!;
+
+  return (
+    <div className="flex-1 min-h-0 flex flex-col">
+      {/* Pane selector — always visible, essential for mobile */}
+      <div className="shrink-0 flex items-center gap-1 px-2 py-1 border-b border-[var(--border)] bg-[var(--surface)] overflow-x-auto">
+        {items.map((item, i) => (
+          <button
+            key={item.id}
+            onClick={() => setSelectedIdx(i)}
+            className={`px-2 py-0.5 text-xs whitespace-nowrap transition-colors rounded ${
+              i === selectedIdx
+                ? "bg-[var(--accent)] text-[var(--bg)]"
+                : "text-[var(--dim)] hover:text-[var(--fg)]"
+            }`}
+          >
+            {item.name}
+          </button>
+        ))}
+      </div>
+
+      {/* Single terminal — full height */}
+      <div className="flex-1 min-h-0">
+        <MirrorTerminal
+          key={selected.id}
+          sessionName={sessionName}
+          paneId={selected.id}
+          paneName={selected.name}
+          className="flex flex-col h-full"
+        />
+      </div>
+    </div>
+  );
+}
+
 type Tab = "kanban" | "agents" | "all-panes" | "diffs" | "plans" | "activity";
 
 const TABS: { id: Tab; label: string }[] = [
@@ -185,59 +236,19 @@ export default function ProjectPage() {
       )}
 
       {activeTab === "agents" && (
-        <div
-          className={`flex-1 min-h-0 grid ${
-            project.agents.length === 1 ? "grid-cols-1" : "grid-cols-2"
-          }`}
-          style={{
-            gridTemplateRows: project.agents.length <= 2
-              ? "1fr"
-              : `repeat(${Math.ceil(project.agents.length / 2)}, 1fr)`,
-          }}
-        >
-          {project.agents.map((a) => (
-            <MirrorTerminal
-              key={a.paneId}
-              sessionName={project.session}
-              paneId={a.paneId}
-              paneName={a.paneTitle}
-              className="flex flex-col border border-[var(--border)] overflow-hidden"
-            />
-          ))}
-          {project.agents.length === 0 && (
-            <div className="flex items-center justify-center text-[var(--dim)] col-span-full">
-              no agents in this session
-            </div>
-          )}
-        </div>
+        <PaneMirrorView
+          items={project.agents.map((a) => ({ id: a.paneId, name: a.paneTitle }))}
+          sessionName={project.session}
+          emptyMessage="no agents in this session"
+        />
       )}
 
       {activeTab === "all-panes" && (
-        <div
-          className={`flex-1 min-h-0 grid ${
-            (panes ?? []).length === 1 ? "grid-cols-1" : "grid-cols-2"
-          }`}
-          style={{
-            gridTemplateRows: (panes ?? []).length <= 2
-              ? "1fr"
-              : `repeat(${Math.ceil((panes ?? []).length / 2)}, 1fr)`,
-          }}
-        >
-          {(panes ?? []).map((p) => (
-            <MirrorTerminal
-              key={p.id}
-              sessionName={project.session}
-              paneId={p.id}
-              paneName={p.title || `pane ${p.index}`}
-              className="flex flex-col border border-[var(--border)] overflow-hidden"
-            />
-          ))}
-          {(panes ?? []).length === 0 && (
-            <div className="flex items-center justify-center text-[var(--dim)] col-span-full">
-              no panes found
-            </div>
-          )}
-        </div>
+        <PaneMirrorView
+          items={(panes ?? []).map((p) => ({ id: p.id, name: p.name || p.title || `pane ${p.index}` }))}
+          sessionName={project.session}
+          emptyMessage="no panes found"
+        />
       )}
 
       <StatusBar project={project} lastUpdate={lastUpdate} stale={stale} />

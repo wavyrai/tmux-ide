@@ -41,8 +41,8 @@ export function MirrorTerminal({ sessionName, paneId, paneName, className }: Mir
 
       term = new Terminal({
         cursorBlink: true,
-        fontSize: 13,
-        fontFamily: "'IBM Plex Mono', monospace",
+        fontSize: 14,
+        fontFamily: "Monaco, Menlo, 'Courier New', monospace",
         theme: {
           background: "#101010",
           foreground: "rgba(255, 255, 255, 0.936)",
