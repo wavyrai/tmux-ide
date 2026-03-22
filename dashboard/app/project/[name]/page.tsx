@@ -3,7 +3,7 @@
 import { useState, useCallback } from "react";
 import { useParams, useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
-import { fetchProject, fetchEvents, type EventData } from "@/lib/api";
+import { fetchProject, fetchEvents, fetchPanes, type EventData, type PaneData } from "@/lib/api";
 import { usePolling } from "@/lib/usePolling";
 import { ProgressBar } from "@/components/ProgressBar";
 import { AgentCard } from "@/components/AgentCard";
@@ -14,16 +14,22 @@ import { PlansPanel } from "@/components/PlansPanel";
 import { StatusBar } from "@/components/StatusBar";
 import type { ProjectDetail } from "@/lib/types";
 
-// Lazy-load TerminalPanel to avoid SSR issues with xterm.js
+// Lazy-load terminal components to avoid SSR issues with xterm.js
 const TerminalPanel = dynamic(
   () => import("@/components/TerminalPanel").then((m) => ({ default: m.TerminalPanel })),
   { ssr: false },
 );
+const MirrorTerminal = dynamic(
+  () => import("@/components/MirrorTerminal").then((m) => ({ default: m.MirrorTerminal })),
+  { ssr: false },
+);
 
-type Tab = "kanban" | "diffs" | "plans" | "activity" | "terminals";
+type Tab = "kanban" | "diffs" | "plans" | "activity" | "terminals" | "agents" | "all-panes";
 
 const TABS: { id: Tab; label: string }[] = [
   { id: "kanban", label: "kanban" },
+  { id: "agents", label: "agents" },
+  { id: "all-panes", label: "all panes" },
   { id: "diffs", label: "diffs" },
   { id: "plans", label: "plans" },
   { id: "activity", label: "activity" },
@@ -50,6 +56,9 @@ export default function ProjectPage() {
 
   const eventsFetcher = useCallback(() => fetchEvents(name), [name]);
   const { data: events } = usePolling<EventData[]>(eventsFetcher, 3000);
+
+  const panesFetcher = useCallback(() => fetchPanes(name), [name]);
+  const { data: panes } = usePolling<PaneData[]>(panesFetcher, 3000);
 
   if (error) {
     return (
@@ -178,6 +187,62 @@ export default function ProjectPage() {
 
       {activeTab === "activity" && (
         <ActivityFeed events={events ?? []} />
+      )}
+
+      {activeTab === "agents" && (
+        <div
+          className={`flex-1 min-h-0 grid ${
+            project.agents.length === 1 ? "grid-cols-1" : "grid-cols-2"
+          }`}
+          style={{
+            gridTemplateRows: project.agents.length <= 2
+              ? "1fr"
+              : `repeat(${Math.ceil(project.agents.length / 2)}, 1fr)`,
+          }}
+        >
+          {project.agents.map((a) => (
+            <MirrorTerminal
+              key={a.paneId}
+              sessionName={project.session}
+              paneId={a.paneId}
+              paneName={a.paneTitle}
+              className="flex flex-col border border-[var(--border)] overflow-hidden"
+            />
+          ))}
+          {project.agents.length === 0 && (
+            <div className="flex items-center justify-center text-[var(--dim)] col-span-full">
+              no agents in this session
+            </div>
+          )}
+        </div>
+      )}
+
+      {activeTab === "all-panes" && (
+        <div
+          className={`flex-1 min-h-0 grid ${
+            (panes ?? []).length === 1 ? "grid-cols-1" : "grid-cols-2"
+          }`}
+          style={{
+            gridTemplateRows: (panes ?? []).length <= 2
+              ? "1fr"
+              : `repeat(${Math.ceil((panes ?? []).length / 2)}, 1fr)`,
+          }}
+        >
+          {(panes ?? []).map((p) => (
+            <MirrorTerminal
+              key={p.id}
+              sessionName={project.session}
+              paneId={p.id}
+              paneName={p.title || `pane ${p.index}`}
+              className="flex flex-col border border-[var(--border)] overflow-hidden"
+            />
+          ))}
+          {(panes ?? []).length === 0 && (
+            <div className="flex items-center justify-center text-[var(--dim)] col-span-full">
+              no panes found
+            </div>
+          )}
+        </div>
       )}
 
       {activeTab === "terminals" && (

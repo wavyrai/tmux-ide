@@ -248,6 +248,7 @@ export const PaneInfoSchemaZ = z.object({
 
 export const AgentDetailSchemaZ = z.object({
   paneTitle: z.string(),
+  paneId: z.string(),
   isBusy: z.boolean(),
   taskTitle: z.string().nullable(),
   taskId: z.string().nullable(),

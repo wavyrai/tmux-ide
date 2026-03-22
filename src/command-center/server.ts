@@ -12,6 +12,7 @@ import {
   type SessionOverview,
   type ProjectDetail,
 } from "./discovery.ts";
+import { listSessionPanes } from "../widgets/lib/pane-comms.ts";
 import {
   ensureTasksDir,
   nextTaskId,
@@ -54,6 +55,37 @@ export function createApp(): Hono {
     }
     const detail = buildProjectDetail(session);
     return c.json(detail);
+  });
+
+  app.get("/api/project/:name/panes", (c) => {
+    const name = c.req.param("name");
+    let panes: ReturnType<typeof listSessionPanes> = [];
+    try {
+      panes = listSessionPanes(name);
+    } catch {
+      return c.json({ error: "Session not found" }, 404);
+    }
+    if (panes.length === 0) {
+      // Verify the session actually exists before returning empty
+      const sessions = discoverSessions();
+      if (!sessions.find((s) => s.name === name)) {
+        return c.json({ error: "Session not found" }, 404);
+      }
+    }
+    return c.json({
+      panes: panes.map((p) => ({
+        id: p.id,
+        index: p.index,
+        title: p.title,
+        currentCommand: p.currentCommand,
+        width: p.width,
+        height: p.height,
+        active: p.active,
+        role: p.role,
+        name: p.name,
+        type: p.type,
+      })),
+    });
   });
 
   app.post("/api/project/:name/task/:id", zValidator("json", updateTaskSchema), async (c) => {
