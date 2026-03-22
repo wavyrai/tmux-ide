@@ -28,6 +28,15 @@ import { validateConfig } from "./validate.ts";
 import { resolveWidgetCommand } from "./widgets/resolve.ts";
 import type { IdeConfig, Row, Pane } from "./types.ts";
 
+function stripWidgetPanes(rows: Row[]): Row[] {
+  return rows
+    .map((row) => ({
+      ...row,
+      panes: row.panes.filter((p) => !p.type),
+    }))
+    .filter((row) => row.panes.length > 0);
+}
+
 interface SplitPaneArgs {
   targetPane: string;
   direction: "vertical" | "horizontal";
@@ -177,7 +186,8 @@ export async function launch(
 
   const { name: fallbackName } = getSessionName(dir);
   const session = config.name ?? fallbackName;
-  const rows = config.rows;
+  const headless = config.orchestrator?.widgets === false;
+  const rows = headless ? stripWidgetPanes(config.rows) : config.rows;
   const theme = config.theme ?? {};
   const team = config.team ?? null;
 

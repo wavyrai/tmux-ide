@@ -10,6 +10,8 @@ interface MonitorPane {
   pid: string;
   cmd?: string;
   title?: string;
+  role?: string;
+  type?: string;
 }
 
 // --- Port detection (pure helpers) ---
@@ -89,6 +91,15 @@ export function computeAgentStates(panes: MonitorPane[]): Map<string, "busy" | "
   // Returns Map<paneId, "busy" | "idle" | null>
   const states = new Map<string, "busy" | "idle" | null>();
   for (const pane of panes) {
+    const role = pane.role ?? "";
+
+    // Primary: use @ide_role pane option if available
+    if (role === "lead" || role === "teammate") {
+      states.set(pane.id, SPINNERS.test(pane.title ?? "") ? "busy" : "idle");
+      continue;
+    }
+
+    // Fallback: command-based detection for pre-upgrade sessions
     const cmd = (pane.cmd ?? "").toLowerCase();
     if (!cmd.includes("claude") && !cmd.includes("codex")) {
       states.set(pane.id, null);
@@ -138,12 +149,12 @@ if (isMainModule) {
       "-t",
       session,
       "-F",
-      "#{pane_id}\t#{pane_pid}\t#{pane_current_command}\t#{pane_title}",
+      "#{pane_id}\t#{pane_pid}\t#{pane_current_command}\t#{pane_title}\t#{@ide_role}\t#{@ide_type}",
     );
     if (!raw) return [];
     return raw.split("\n").map((line) => {
-      const [id, pid, cmd, title] = line.split("\t");
-      return { id: id!, pid: pid!, cmd, title };
+      const [id, pid, cmd, title, role, type] = line.split("\t");
+      return { id: id!, pid: pid!, cmd, title, role: role || undefined, type: type || undefined };
     });
   }
 

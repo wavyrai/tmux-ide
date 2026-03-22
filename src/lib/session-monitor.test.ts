@@ -54,6 +54,30 @@ describe("computeAgentStates", () => {
     assert.strictEqual(states.get("%1"), null);
     assert.strictEqual(states.get("%2"), "idle");
   });
+
+  it("detects agent via @ide_role lead regardless of command", () => {
+    const panes = [{ id: "%0", pid: "100", cmd: "2.1.80", title: "Claude Code", role: "lead" }];
+    const states = computeAgentStates(panes);
+    assert.strictEqual(states.get("%0"), "idle");
+  });
+
+  it("detects busy teammate via @ide_role with spinner", () => {
+    const panes = [{ id: "%0", pid: "100", cmd: "node", title: "\u2839 Working", role: "teammate" }];
+    const states = computeAgentStates(panes);
+    assert.strictEqual(states.get("%0"), "busy");
+  });
+
+  it("ignores widget panes even with @ide_role", () => {
+    const panes = [{ id: "%0", pid: "100", cmd: "bun", title: "Explorer", role: "widget" }];
+    const states = computeAgentStates(panes);
+    assert.strictEqual(states.get("%0"), null);
+  });
+
+  it("falls back to command detection when no @ide_role is set", () => {
+    const panes = [{ id: "%0", pid: "100", cmd: "claude", title: "Agent 1" }];
+    const states = computeAgentStates(panes);
+    assert.strictEqual(states.get("%0"), "idle");
+  });
 });
 
 describe("computePortPanes", () => {
