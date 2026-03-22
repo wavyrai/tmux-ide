@@ -728,6 +728,93 @@ describe("normalizer snapshots", () => {
   });
 });
 
+describe("atomic file writes", () => {
+  it("saveTask writes atomically and cleans up old file on title change", () => {
+    ensureTasksDir(tmpDir);
+    const base = {
+      description: "",
+      goal: null,
+      status: "todo" as const,
+      assignee: null,
+      priority: 1,
+      created: "2026-01-01T00:00:00Z",
+      updated: "2026-01-01T00:00:00Z",
+      branch: null,
+      tags: [],
+      proof: null,
+      retryCount: 0,
+      maxRetries: 5,
+      lastError: null,
+      nextRetryAt: null,
+      depends_on: [],
+    };
+    saveTask(tmpDir, { ...base, id: "001", title: "Original Title" });
+
+    const tasksDir = join(tmpDir, ".tasks", "tasks");
+    let files = readdirSync(tasksDir);
+    assert.strictEqual(files.length, 1);
+    assert.ok(files[0]!.includes("original-title"));
+
+    const loaded = loadTask(tmpDir, "001")!;
+    assert.strictEqual(loaded.title, "Original Title");
+
+    // Update with new title — old file should be removed
+    saveTask(tmpDir, { ...base, id: "001", title: "Updated Title" });
+    files = readdirSync(tasksDir);
+    assert.strictEqual(files.length, 1);
+    assert.ok(files[0]!.includes("updated-title"));
+    assert.strictEqual(loadTask(tmpDir, "001")!.title, "Updated Title");
+
+    // No .tmp files left behind
+    const tmpFiles = files.filter((f) => f.endsWith(".tmp"));
+    assert.strictEqual(tmpFiles.length, 0);
+  });
+
+  it("saveGoal writes atomically and cleans up old file on title change", () => {
+    ensureTasksDir(tmpDir);
+    const base = {
+      description: "",
+      status: "todo" as const,
+      acceptance: "",
+      priority: 1,
+      created: "2026-01-01T00:00:00Z",
+      updated: "2026-01-01T00:00:00Z",
+      assignee: null,
+      specialty: null,
+    };
+    saveGoal(tmpDir, { ...base, id: "01", title: "Original Goal" });
+
+    const goalsDir = join(tmpDir, ".tasks", "goals");
+    let files = readdirSync(goalsDir);
+    assert.strictEqual(files.length, 1);
+    assert.ok(files[0]!.includes("original-goal"));
+
+    saveGoal(tmpDir, { ...base, id: "01", title: "Renamed Goal" });
+    files = readdirSync(goalsDir);
+    assert.strictEqual(files.length, 1);
+    assert.ok(files[0]!.includes("renamed-goal"));
+    assert.strictEqual(loadGoal(tmpDir, "01")!.title, "Renamed Goal");
+
+    const tmpFiles = files.filter((f) => f.endsWith(".tmp"));
+    assert.strictEqual(tmpFiles.length, 0);
+  });
+
+  it("saveMission writes atomically with no .tmp leftovers", () => {
+    const mission = {
+      title: "Test mission",
+      description: "desc",
+      created: "2026-01-01T00:00:00Z",
+      updated: "2026-01-01T00:00:00Z",
+    };
+    saveMission(tmpDir, mission);
+    assert.deepStrictEqual(loadMission(tmpDir), mission);
+
+    const rootFiles = readdirSync(join(tmpDir, ".tasks"));
+    const tmpFiles = rootFiles.filter((f) => f.endsWith(".tmp"));
+    assert.strictEqual(tmpFiles.length, 0);
+  });
+});
+
 describe("corrupted file resilience", () => {
   it("loadTasks skips corrupted files and returns valid tasks", () => {
     ensureTasksDir(tmpDir);

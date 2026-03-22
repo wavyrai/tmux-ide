@@ -6,6 +6,7 @@ import {
   mkdirSync,
   existsSync,
   unlinkSync,
+  renameSync,
 } from "node:fs";
 import type { ProofSchema } from "../types.ts";
 
@@ -135,7 +136,10 @@ export function loadMission(dir: string): Mission | null {
 
 export function saveMission(dir: string, mission: Mission): void {
   ensureTasksDir(dir);
-  writeFileSync(join(getTasksRoot(dir), "mission.json"), JSON.stringify(mission, null, 2) + "\n");
+  const filePath = join(getTasksRoot(dir), "mission.json");
+  const tmpPath = filePath + ".tmp";
+  writeFileSync(tmpPath, JSON.stringify(mission, null, 2) + "\n");
+  renameSync(tmpPath, filePath);
 }
 
 export function clearMission(dir: string): void {
@@ -196,11 +200,13 @@ export function loadGoal(dir: string, id: string): Goal | null {
 export function saveGoal(dir: string, goal: Goal): void {
   ensureTasksDir(dir);
   const goalsDir = join(getTasksRoot(dir), "goals");
-  // Remove old file if ID exists under different name
   const existing = findFileById(goalsDir, goal.id);
-  if (existing) unlinkSync(existing);
-  const filename = `${goal.id}-${slugify(goal.title)}.json`;
-  writeFileSync(join(goalsDir, filename), JSON.stringify(goal, null, 2) + "\n");
+  const filename = join(goalsDir, `${goal.id}-${slugify(goal.title)}.json`);
+  const tmpPath = filename + ".tmp";
+  writeFileSync(tmpPath, JSON.stringify(goal, null, 2) + "\n");
+  renameSync(tmpPath, filename);
+  // Remove old file if ID exists under a different name
+  if (existing && existing !== filename) unlinkSync(existing);
 }
 
 export function deleteGoal(dir: string, id: string): boolean {
@@ -253,9 +259,12 @@ export function saveTask(dir: string, task: Task): void {
   ensureTasksDir(dir);
   const tasksDir = join(getTasksRoot(dir), "tasks");
   const existing = findFileById(tasksDir, task.id);
-  if (existing) unlinkSync(existing);
-  const filename = `${task.id}-${slugify(task.title)}.json`;
-  writeFileSync(join(tasksDir, filename), JSON.stringify(task, null, 2) + "\n");
+  const filename = join(tasksDir, `${task.id}-${slugify(task.title)}.json`);
+  const tmpPath = filename + ".tmp";
+  writeFileSync(tmpPath, JSON.stringify(task, null, 2) + "\n");
+  renameSync(tmpPath, filename);
+  // Remove old file if ID exists under a different name
+  if (existing && existing !== filename) unlinkSync(existing);
 }
 
 export function deleteTask(dir: string, id: string): boolean {
