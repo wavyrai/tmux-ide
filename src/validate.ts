@@ -1,201 +1,55 @@
 import { resolve } from "node:path";
 import { readConfig } from "./lib/yaml-io.ts";
 import { outputError } from "./lib/output.ts";
+import { IdeConfigSchema } from "./schemas/ide-config.ts";
 
 export function validateConfig(config: unknown): string[] {
-  const errors: string[] = [];
-
   if (config == null || typeof config !== "object" || Array.isArray(config)) {
-    errors.push("config must be an object");
-    return errors;
+    return ["config must be an object"];
   }
 
-  const cfg = config as Record<string, unknown>;
+  const result = IdeConfigSchema.safeParse(config);
 
-  if (cfg.name !== undefined && typeof cfg.name !== "string") {
-    errors.push("'name' must be a string");
+  if (!result.success) {
+    return result.error.issues.map((issue: any) => mapZodIssue(issue, config));
   }
 
-  if (cfg.before !== undefined && typeof cfg.before !== "string") {
-    errors.push("'before' must be a string");
+  // Phase 2: semantic checks (only when schema parse succeeds)
+  const errors: string[] = [];
+  const cfg = result.data;
+
+  // 1. Row sizes sum ≤ 100%
+  const rowSizes = cfg.rows
+    .filter((r) => r.size !== undefined)
+    .map((r) => parseInt(r.size!, 10));
+  const rowSum = rowSizes.reduce((a, b) => a + b, 0);
+  if (rowSum > 100) {
+    errors.push(`Row sizes sum to ${rowSum}%, which exceeds 100%`);
   }
 
-  if (!Array.isArray(cfg.rows)) {
-    errors.push("'rows' must be an array");
-  } else if (cfg.rows.length === 0) {
-    errors.push("'rows' must not be empty");
-  } else {
-    for (let i = 0; i < cfg.rows.length; i++) {
-      const row = cfg.rows[i] as Record<string, unknown>;
-      if (!row.panes || !Array.isArray(row.panes)) {
-        errors.push(`rows[${i}].panes must be an array`);
-        continue;
-      }
-      if (row.panes.length === 0) {
-        errors.push(`rows[${i}].panes must not be empty`);
-      }
-      if (row.size !== undefined) {
-        validateSize(row.size, `rows[${i}].size`, errors);
-      }
-      for (let j = 0; j < row.panes.length; j++) {
-        const pane = row.panes[j] as Record<string, unknown>;
-        if (pane.title !== undefined && typeof pane.title !== "string") {
-          errors.push(`rows[${i}].panes[${j}].title must be a string`);
-        }
-        if (pane.command !== undefined && typeof pane.command !== "string") {
-          errors.push(`rows[${i}].panes[${j}].command must be a string`);
-        }
-        if (pane.dir !== undefined && typeof pane.dir !== "string") {
-          errors.push(`rows[${i}].panes[${j}].dir must be a string`);
-        }
-        if (pane.focus !== undefined && typeof pane.focus !== "boolean") {
-          errors.push(`rows[${i}].panes[${j}].focus must be a boolean`);
-        }
-        if (pane.env !== undefined) {
-          if (pane.env == null || typeof pane.env !== "object" || Array.isArray(pane.env)) {
-            errors.push(`rows[${i}].panes[${j}].env must be an object`);
-          } else {
-            for (const [key, val] of Object.entries(pane.env as Record<string, unknown>)) {
-              if (typeof val !== "string" && typeof val !== "number") {
-                errors.push(`rows[${i}].panes[${j}].env.${key} must be a string or number`);
-              }
-            }
-          }
-        }
-        if (pane.size !== undefined) {
-          validateSize(pane.size, `rows[${i}].panes[${j}].size`, errors);
-        }
-        if (pane.role !== undefined) {
-          if (pane.role !== "lead" && pane.role !== "teammate" && pane.role !== "planner") {
-            errors.push(`rows[${i}].panes[${j}].role must be "lead", "teammate", or "planner"`);
-          }
-        }
-        if (pane.task !== undefined && typeof pane.task !== "string") {
-          errors.push(`rows[${i}].panes[${j}].task must be a string`);
-        }
-        if (pane.specialty !== undefined && typeof pane.specialty !== "string") {
-          errors.push(`rows[${i}].panes[${j}].specialty must be a string`);
-        }
-        if (pane.type !== undefined) {
-          const validTypes = ["explorer", "changes", "preview", "tasks", "warroom", "costs"];
-          if (typeof pane.type !== "string" || !validTypes.includes(pane.type)) {
-            errors.push(`rows[${i}].panes[${j}].type must be one of: ${validTypes.join(", ")}`);
-          }
-          if (pane.command !== undefined) {
-            errors.push(`rows[${i}].panes[${j}] cannot have both 'type' and 'command'`);
-          }
-        }
-        if (pane.target !== undefined && typeof pane.target !== "string") {
-          errors.push(`rows[${i}].panes[${j}].target must be a string`);
-        }
-      }
+  for (let i = 0; i < cfg.rows.length; i++) {
+    const row = cfg.rows[i]!;
 
-      // Check multiple focus panes in this row
-      const focusCount = (row.panes as Record<string, unknown>[]).filter(
-        (p) => p.focus === true,
-      ).length;
-      if (focusCount > 1) {
-        errors.push(`Row ${i} has ${focusCount} panes with focus: true (max 1)`);
-      }
-
-      // Check pane sizes sum within this row
-      const paneSizes = (row.panes as Record<string, unknown>[])
-        .map((p) => p.size)
-        .filter((s): s is string => typeof s === "string" && /^[1-9]\d*%$/.test(s))
-        .map((s) => parseInt(s, 10));
-      const paneSum = paneSizes.reduce((a, b) => a + b, 0);
-      if (paneSum > 100) {
-        errors.push(`Row ${i} pane sizes sum to ${paneSum}%, which exceeds 100%`);
-      }
+    // 2. Per-row pane sizes sum ≤ 100%
+    const paneSizes = row.panes
+      .filter((p) => p.size !== undefined)
+      .map((p) => parseInt(p.size!, 10));
+    const paneSum = paneSizes.reduce((a, b) => a + b, 0);
+    if (paneSum > 100) {
+      errors.push(`Row ${i} pane sizes sum to ${paneSum}%, which exceeds 100%`);
     }
 
-    // Check row sizes sum
-    const rowSizes = (cfg.rows as Record<string, unknown>[])
-      .map((r) => r.size)
-      .filter((s): s is string => typeof s === "string" && /^[1-9]\d*%$/.test(s))
-      .map((s) => parseInt(s, 10));
-    const rowSum = rowSizes.reduce((a, b) => a + b, 0);
-    if (rowSum > 100) {
-      errors.push(`Row sizes sum to ${rowSum}%, which exceeds 100%`);
+    // 3. Max 1 focus:true per row
+    const focusCount = row.panes.filter((p) => p.focus === true).length;
+    if (focusCount > 1) {
+      errors.push(`Row ${i} has ${focusCount} panes with focus: true (max 1)`);
     }
-  }
 
-  // Validate team config
-  if (cfg.team !== undefined) {
-    if (cfg.team == null || typeof cfg.team !== "object" || Array.isArray(cfg.team)) {
-      errors.push("'team' must be an object");
-    } else {
-      const team = cfg.team as Record<string, unknown>;
-      if (team.name === undefined) {
-        errors.push("'team.name' is required when team is specified");
-      } else if (typeof team.name !== "string") {
-        errors.push("'team.name' must be a string");
-      }
-      if (team.model !== undefined && typeof team.model !== "string") {
-        errors.push("'team.model' must be a string");
-      }
-      if (team.permissions !== undefined && !Array.isArray(team.permissions)) {
-        errors.push("'team.permissions' must be an array");
-      }
-    }
-  }
-
-  if (cfg.orchestrator !== undefined) {
-    if (
-      cfg.orchestrator == null ||
-      typeof cfg.orchestrator !== "object" ||
-      Array.isArray(cfg.orchestrator)
-    ) {
-      errors.push("'orchestrator' must be an object");
-    } else {
-      const orch = cfg.orchestrator as Record<string, unknown>;
-      if (orch.enabled !== undefined && typeof orch.enabled !== "boolean") {
-        errors.push("orchestrator.enabled must be a boolean");
-      }
-      if (orch.auto_dispatch !== undefined && typeof orch.auto_dispatch !== "boolean") {
-        errors.push("orchestrator.auto_dispatch must be a boolean");
-      }
-      if (orch.stall_timeout !== undefined && typeof orch.stall_timeout !== "number") {
-        errors.push("orchestrator.stall_timeout must be a number (ms)");
-      }
-      if (orch.poll_interval !== undefined && typeof orch.poll_interval !== "number") {
-        errors.push("orchestrator.poll_interval must be a number (ms)");
-      }
-      if (orch.worktree_root !== undefined && typeof orch.worktree_root !== "string") {
-        errors.push("orchestrator.worktree_root must be a string");
-      }
-      if (orch.master_pane !== undefined && typeof orch.master_pane !== "string") {
-        errors.push("orchestrator.master_pane must be a string");
-      }
-      if (orch.before_run !== undefined && typeof orch.before_run !== "string") {
-        errors.push("orchestrator.before_run must be a string");
-      }
-      if (orch.after_run !== undefined && typeof orch.after_run !== "string") {
-        errors.push("orchestrator.after_run must be a string");
-      }
-      if (orch.cleanup_on_done !== undefined && typeof orch.cleanup_on_done !== "boolean") {
-        errors.push("orchestrator.cleanup_on_done must be a boolean");
-      }
-      if (orch.max_concurrent_agents !== undefined && typeof orch.max_concurrent_agents !== "number") {
-        errors.push("orchestrator.max_concurrent_agents must be a number");
-      }
-      if (orch.dispatch_mode !== undefined) {
-        if (orch.dispatch_mode !== "tasks" && orch.dispatch_mode !== "goals") {
-          errors.push('orchestrator.dispatch_mode must be "tasks" or "goals"');
-        }
-      }
-    }
-  }
-
-  if (cfg.theme !== undefined) {
-    if (cfg.theme == null || typeof cfg.theme !== "object" || Array.isArray(cfg.theme)) {
-      errors.push("'theme' must be an object");
-    } else {
-      const theme = cfg.theme as Record<string, unknown>;
-      for (const key of ["accent", "border", "bg", "fg"]) {
-        if (theme[key] !== undefined && typeof theme[key] !== "string") {
-          errors.push(`theme.${key} must be a string`);
-        }
+    // 4. type and command cannot coexist
+    for (let j = 0; j < row.panes.length; j++) {
+      const pane = row.panes[j]!;
+      if (pane.type !== undefined && pane.command !== undefined) {
+        errors.push(`rows[${i}].panes[${j}] cannot have both 'type' and 'command'`);
       }
     }
   }
@@ -203,16 +57,123 @@ export function validateConfig(config: unknown): string[] {
   return errors;
 }
 
-function validateSize(value: unknown, path: string, errors: string[]): void {
-  const s = String(value);
-  if (!/^[1-9]\d*%$/.test(s)) {
-    errors.push(`${path} "${value}" must be a percentage (e.g. "50%")`);
-    return;
+// ---------------------------------------------------------------------------
+// Zod issue → legacy error string mapping
+// ---------------------------------------------------------------------------
+
+function formatPath(path: (string | number)[]): string {
+  let result = "";
+  for (let i = 0; i < path.length; i++) {
+    const seg = path[i]!;
+    if (typeof seg === "number") {
+      result += `[${seg}]`;
+    } else if (i === 0) {
+      result += seg;
+    } else {
+      result += `.${seg}`;
+    }
   }
-  const num = parseInt(s, 10);
-  if (num > 100) {
-    errors.push(`${path} must not exceed 100%`);
+  return result;
+}
+
+function shouldQuote(path: (string | number)[]): boolean {
+  if (path.length === 1 && typeof path[0] === "string") return true;
+  if (path[0] === "team") return true;
+  return false;
+}
+
+function isSizePath(path: (string | number)[]): boolean {
+  return path[path.length - 1] === "size";
+}
+
+function isEnvValuePath(path: (string | number)[]): boolean {
+  const envIdx = path.indexOf("env");
+  return envIdx >= 0 && envIdx < path.length - 1;
+}
+
+function getValueAtPath(obj: unknown, path: (string | number)[]): unknown {
+  let current: unknown = obj;
+  for (const seg of path) {
+    if (current == null || typeof current !== "object") return undefined;
+    current = (current as Record<string, unknown>)[String(seg)];
   }
+  return current;
+}
+
+const MS_FIELDS = new Set(["stall_timeout", "poll_interval"]);
+
+function typeDesc(path: (string | number)[], expected: string): string {
+  const base = expected.replace(/\s*\|\s*undefined/g, "").trim();
+  let desc: string;
+  if (base === "string") desc = "a string";
+  else if (base === "boolean") desc = "a boolean";
+  else if (base === "number") desc = "a number";
+  else if (base === "array") desc = "an array";
+  else if (base === "object" || base === "record") desc = "an object";
+  else desc = base;
+
+  const field = path[path.length - 1];
+  if (path[0] === "orchestrator" && typeof field === "string" && MS_FIELDS.has(field)) {
+    return `${desc} (ms)`;
+  }
+  return desc;
+}
+
+function mapZodIssue(issue: any, config: unknown): string {
+  const path: (string | number)[] = issue.path ?? [];
+  const code: string = issue.code ?? "";
+  const rawPath = formatPath(path);
+  const display = shouldQuote(path) ? `'${rawPath}'` : rawPath;
+  const lastSeg = path[path.length - 1];
+
+  // Env value: rows[i].panes[j].env.KEY
+  if (isEnvValuePath(path)) {
+    return `${formatPath(path)} must be a string or number`;
+  }
+
+  // Size field: regex or refine failure (but not a type error like size: 42)
+  if (isSizePath(path) && code !== "invalid_type") {
+    if (code === "custom") {
+      return `${rawPath} must not exceed 100%`;
+    }
+    const val = getValueAtPath(config, path);
+    return `${rawPath} "${val}" must be a percentage (e.g. "50%")`;
+  }
+
+  // Empty array (too_small from .min(1))
+  if (code === "too_small") {
+    return `${display} must not be empty`;
+  }
+
+  // Enum: pane type
+  if (code === "invalid_value" && lastSeg === "type" && path.includes("panes")) {
+    return `${rawPath} must be one of: explorer, changes, preview, tasks, warroom, costs`;
+  }
+
+  // Enum: pane role
+  if (code === "invalid_value" && lastSeg === "role") {
+    return `${rawPath} must be "lead", "teammate", or "planner"`;
+  }
+
+  // Enum: dispatch_mode
+  if (code === "invalid_value" && lastSeg === "dispatch_mode") {
+    return `${rawPath} must be "tasks" or "goals"`;
+  }
+
+  // Team.name missing vs wrong type
+  if (path.length === 2 && path[0] === "team" && path[1] === "name") {
+    if (issue.received === "undefined") {
+      return "'team.name' is required when team is specified";
+    }
+  }
+
+  // Type mismatch
+  if (code === "invalid_type") {
+    return `${display} must be ${typeDesc(path, issue.expected)}`;
+  }
+
+  // Fallback
+  return `${display}: ${issue.message}`;
 }
 
 export async function validate(
