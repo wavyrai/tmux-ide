@@ -103,7 +103,7 @@ const AGENT_NAMES = [
 
 // Get a stable, memorable identifier for an agent pane
 export function agentIdentifier(pane: PaneInfo): string {
-  // Use pane index to assign a consistent French name
+  if (pane.name) return pane.name;
   return AGENT_NAMES[pane.index % AGENT_NAMES.length] ?? `Agent ${pane.index}`;
 }
 
@@ -216,8 +216,9 @@ export function dispatch(
 ): void {
   // Find idle agent panes (not the master pane, not already assigned a task)
   const idleAgents = panes.filter((p) => {
-    // Master pane check: compare normalized title against configured master pane name
-    if (config.masterPane && normalizePaneTitle(p.title) === config.masterPane) return false;
+    // Master pane check: use role when available, fall back to title
+    if (p.role === "lead") return false;
+    if (!p.role && config.masterPane && normalizePaneTitle(p.title) === config.masterPane) return false;
     if (!isIdleForDispatch(p)) return false;
     // Don't dispatch to a pane that already has an in-progress task assigned
     const name = agentIdentifier(p);
@@ -337,17 +338,14 @@ export function getPaneSpecialties(
   config: OrchestratorConfig,
   pane: PaneInfo,
 ): string[] {
-  // Check the pre-parsed paneSpecialties map (built from ide.yml config)
-  const specs = config.paneSpecialties.get(pane.title);
-  if (specs) return specs;
-  return [];
+  const key = pane.name ?? pane.title;
+  return config.paneSpecialties.get(key) ?? [];
 }
 
 function isPlannerPane(config: OrchestratorConfig, pane: PaneInfo): boolean {
-  // A pane is a planner if it has specialty configured, or the paneSpecialties map has it
-  if (config.paneSpecialties.has(pane.title)) return true;
-  // Also detect by agent command (claude/codex) that isn't the master pane
-  if (pane.title === config.masterPane) return false;
+  const key = pane.name ?? pane.title;
+  if (config.paneSpecialties.has(key)) return true;
+  if (pane.role === "lead") return false;
   return isAgentPane(pane);
 }
 
@@ -405,7 +403,8 @@ export function dispatchGoals(
   // Find idle planner panes (not the master pane, not already assigned)
   const idlePlanners = panes.filter((p) => {
     if (p.index === 0) return false;
-    if (config.masterPane && normalizePaneTitle(p.title) === config.masterPane) return false;
+    if (p.role === "lead") return false;
+    if (!p.role && config.masterPane && normalizePaneTitle(p.title) === config.masterPane) return false;
     if (!isPlannerPane(config, p)) return false;
     if (!isIdleForDispatch(p)) return false;
     const name = agentIdentifier(p);
@@ -555,7 +554,8 @@ export function detectCompletions(
       }
 
       if (config.masterPane) {
-        const masterPaneInfo = panes.find((p) => p.title === config.masterPane);
+        const masterPaneInfo = panes.find((p) => p.role === "lead") ??
+          panes.find((p) => p.title === config.masterPane);
         if (masterPaneInfo) {
           const proofStr = task.proof ? JSON.stringify(task.proof) : "no proof provided";
           sendCommand(
@@ -709,28 +709,6 @@ export function createOrchestrator(initialConfig: OrchestratorConfig): () => voi
   for (const task of loadTasks(config.dir)) {
     state.previousTasks.set(task.id, task.status);
   }
-
-  // Set French agent names as tmux pane titles
-  function labelAgentPanes(): void {
-    const panes = listSessionPanes(config.session);
-    for (const pane of panes) {
-      if (isAgentPane(pane)) {
-        const name = agentIdentifier(pane);
-        // Only set if not already named (don't override every tick)
-        const currentNorm = normalizePaneTitle(pane.title);
-        if (currentNorm !== name && !currentNorm.startsWith(name)) {
-          try {
-            execFileSync("tmux", [
-              "select-pane", "-t", pane.id, "-T", name,
-            ], { stdio: "ignore" });
-          } catch {}
-        }
-      }
-    }
-  }
-
-  // Label panes on startup
-  labelAgentPanes();
 
   function tick(): void {
     const tasks = loadTasks(config.dir);

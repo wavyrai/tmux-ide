@@ -22,6 +22,28 @@ export function collectPaneStartupPlan(
     for (let paneIdx = 0; paneIdx < panes.length; paneIdx++) {
       const pane = panes[paneIdx]!;
       const tmuxPane = paneMap[rowIdx]![paneIdx]!;
+      // Derive @ide_role from pane config
+      let paneRole: string;
+      if (pane.role === "lead") {
+        paneRole = "lead";
+      } else if (pane.role === "teammate" || pane.role === "planner") {
+        paneRole = "teammate";
+      } else if (pane.type) {
+        paneRole = "widget";
+      } else {
+        paneRole = "shell";
+      }
+
+      // Derive @ide_type from pane config
+      let paneType: string;
+      if (pane.type) {
+        paneType = pane.type;
+      } else if (pane.command && /claude|codex/i.test(pane.command)) {
+        paneType = "agent";
+      } else {
+        paneType = "shell";
+      }
+
       const action: PaneAction = {
         targetPane: tmuxPane,
         title: pane.title ?? null,
@@ -30,6 +52,8 @@ export function collectPaneStartupPlan(
         command: null,
         widgetType: pane.type ?? null,
         widgetTarget: pane.target ?? null,
+        paneRole,
+        paneType,
       };
 
       if (pane.dir && firstPanesOfRows.has(tmuxPane)) {

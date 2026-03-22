@@ -17,6 +17,7 @@ import {
   runSessionCommand,
   selectPane,
   sendLiteral,
+  setPaneOption,
   setPaneTitle,
   setSessionEnvironment,
   setSessionVariable,
@@ -228,6 +229,11 @@ export async function launch(
     if (action.title) {
       setPaneTitle(action.targetPane, action.title);
     }
+
+    // Set pane identity options for discovery by orchestrator/widgets
+    setPaneOption(action.targetPane, "@ide_role", action.paneRole ?? "shell");
+    setPaneOption(action.targetPane, "@ide_name", action.title ?? "");
+    setPaneOption(action.targetPane, "@ide_type", action.paneType ?? "shell");
 
     if (action.chdir) {
       sendLiteral(action.targetPane, `cd ${action.chdir}`);

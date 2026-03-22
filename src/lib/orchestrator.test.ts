@@ -62,7 +62,7 @@ beforeEach(() => {
       return mockPanes
         .map(
           (p) =>
-            `${p.id}\t${p.index}\t${p.title}\t${p.currentCommand}\t${p.width}\t${p.height}\t${p.active ? "1" : "0"}`,
+            `${p.id}\t${p.index}\t${p.title}\t${p.currentCommand}\t${p.width}\t${p.height}\t${p.active ? "1" : "0"}\t${p.role ?? ""}\t${p.name ?? ""}\t${p.type ?? ""}`,
         )
         .join("\n");
     }
@@ -112,7 +112,7 @@ describe("dispatch", () => {
     const agentPane = makePane({ id: "%1", index: 1, title: "Agent 1", currentCommand: "zsh" });
     const expectedName = agentIdentifier(agentPane);
     const panes: PaneInfo[] = [
-      makePane({ id: "%0", index: 0, title: "Master", currentCommand: "zsh" }),
+      makePane({ id: "%0", index: 0, title: "Master", currentCommand: "zsh", role: "lead" }),
       agentPane,
     ];
     mockPanes = panes;
@@ -1104,7 +1104,7 @@ describe("dispatchGoals", () => {
     saveGoal(tmpDir, goal);
 
     // Only pane is the master — should not be used as planner
-    const masterPane = makePane({ id: "%1", index: 0, title: "Master", currentCommand: "claude" });
+    const masterPane = makePane({ id: "%1", index: 0, title: "Master", currentCommand: "claude", role: "lead" });
     const config = makeOrchestratorConfig(tmpDir,{ masterPane: "Master" });
     const state = makeOrchestratorState();
 

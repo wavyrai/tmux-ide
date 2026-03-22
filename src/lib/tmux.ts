@@ -174,6 +174,10 @@ export function setPaneTitle(targetPane: string, title: string): void {
   runTmux(["select-pane", "-t", targetPane, "-T", title], { stdio: "inherit" });
 }
 
+export function setPaneOption(targetPane: string, option: string, value: string): void {
+  runTmux(["set-option", "-pqt", targetPane, option, value]);
+}
+
 export function runSessionCommand(args: string[]): void {
   runTmux(args, { stdio: "inherit" });
 }

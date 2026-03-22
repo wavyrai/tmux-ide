@@ -81,6 +81,9 @@ export function makePane(overrides: Partial<PaneInfo> = {}): PaneInfo {
     width: 80,
     height: 24,
     active: false,
+    role: null,
+    name: null,
+    type: null,
     ...overrides,
   };
 }

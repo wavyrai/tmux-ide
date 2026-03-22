@@ -70,6 +70,8 @@ export const PaneActionSchema = z.object({
   command: z.string().nullable(),
   widgetType: z.string().nullable(),
   widgetTarget: z.string().nullable(),
+  paneRole: z.string().nullable(),
+  paneType: z.string().nullable(),
 });
 
 export const SessionStateSchema = z.object({

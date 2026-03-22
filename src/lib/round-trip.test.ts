@@ -190,6 +190,9 @@ describe("discovery round-trip", () => {
       width: 80,
       height: 24,
       active: false,
+      role: null,
+      name: null,
+      type: null,
     };
 
     const info: SessionInfo = {
