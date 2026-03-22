@@ -47,7 +47,13 @@ export function attachWebSockets(
 
       // Spawn PTY if not already running for this widget type
       if (!getSession(widgetType)) {
-        spawnWidget(widgetType, session, dir, cols, rows);
+        try {
+          spawnWidget(widgetType, session, dir, cols, rows);
+        } catch (err) {
+          console.error(`[pty] Failed to spawn ${widgetType}:`, (err as Error).message);
+          ws.close(1011, "PTY spawn failed");
+          return;
+        }
       }
 
       // Connect this WebSocket client to the PTY session
