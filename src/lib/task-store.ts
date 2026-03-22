@@ -6,11 +6,11 @@ import {
   mkdirSync,
   existsSync,
   unlinkSync,
-  renameSync,
 } from "node:fs";
 import type { ProofSchema } from "../types.ts";
 
 const TASKS_DIR = ".tasks";
+const SCHEMA_VERSION = 1;
 
 export interface Mission {
   title: string;
@@ -64,8 +64,9 @@ export function normalizeMission(raw: Record<string, unknown>): Mission {
 
 export function normalizeGoal(raw: Record<string, unknown>): Goal {
   const epoch = "1970-01-01T00:00:00.000Z";
+  const { _version: _, ...rest } = raw;
   return {
-    ...(raw as Omit<Goal, "assignee" | "specialty" | "created" | "updated">),
+    ...(rest as Omit<Goal, "assignee" | "specialty" | "created" | "updated">),
     created: (raw.created as string) ?? epoch,
     updated: (raw.updated as string) ?? epoch,
     assignee: (raw.assignee as string) ?? null,
@@ -89,9 +90,10 @@ export function normalizeTask(raw: Record<string, unknown>): Task {
     delete proof.note;
   }
 
+  const { _version: _, ...rest } = raw;
   return {
     ...defaults,
-    ...(raw as Omit<Task, "retryCount" | "maxRetries" | "lastError" | "nextRetryAt" | "depends_on">),
+    ...(rest as Omit<Task, "retryCount" | "maxRetries" | "lastError" | "nextRetryAt" | "depends_on">),
     retryCount: (raw.retryCount as number) ?? defaults.retryCount,
     maxRetries: (raw.maxRetries as number) ?? defaults.maxRetries,
     lastError: (raw.lastError as string | null) ?? defaults.lastError,
@@ -136,10 +138,10 @@ export function loadMission(dir: string): Mission | null {
 
 export function saveMission(dir: string, mission: Mission): void {
   ensureTasksDir(dir);
-  const filePath = join(getTasksRoot(dir), "mission.json");
-  const tmpPath = filePath + ".tmp";
-  writeFileSync(tmpPath, JSON.stringify(mission, null, 2) + "\n");
-  renameSync(tmpPath, filePath);
+  writeFileSync(
+    join(getTasksRoot(dir), "mission.json"),
+    JSON.stringify({ _version: SCHEMA_VERSION, ...mission }, null, 2) + "\n",
+  );
 }
 
 export function clearMission(dir: string): void {
@@ -200,13 +202,14 @@ export function loadGoal(dir: string, id: string): Goal | null {
 export function saveGoal(dir: string, goal: Goal): void {
   ensureTasksDir(dir);
   const goalsDir = join(getTasksRoot(dir), "goals");
+  // Remove old file if ID exists under different name
   const existing = findFileById(goalsDir, goal.id);
-  const filename = join(goalsDir, `${goal.id}-${slugify(goal.title)}.json`);
-  const tmpPath = filename + ".tmp";
-  writeFileSync(tmpPath, JSON.stringify(goal, null, 2) + "\n");
-  renameSync(tmpPath, filename);
-  // Remove old file if ID exists under a different name
-  if (existing && existing !== filename) unlinkSync(existing);
+  if (existing) unlinkSync(existing);
+  const filename = `${goal.id}-${slugify(goal.title)}.json`;
+  writeFileSync(
+    join(goalsDir, filename),
+    JSON.stringify({ _version: SCHEMA_VERSION, ...goal }, null, 2) + "\n",
+  );
 }
 
 export function deleteGoal(dir: string, id: string): boolean {
@@ -259,12 +262,12 @@ export function saveTask(dir: string, task: Task): void {
   ensureTasksDir(dir);
   const tasksDir = join(getTasksRoot(dir), "tasks");
   const existing = findFileById(tasksDir, task.id);
-  const filename = join(tasksDir, `${task.id}-${slugify(task.title)}.json`);
-  const tmpPath = filename + ".tmp";
-  writeFileSync(tmpPath, JSON.stringify(task, null, 2) + "\n");
-  renameSync(tmpPath, filename);
-  // Remove old file if ID exists under a different name
-  if (existing && existing !== filename) unlinkSync(existing);
+  if (existing) unlinkSync(existing);
+  const filename = `${task.id}-${slugify(task.title)}.json`;
+  writeFileSync(
+    join(tasksDir, filename),
+    JSON.stringify({ _version: SCHEMA_VERSION, ...task }, null, 2) + "\n",
+  );
 }
 
 export function deleteTask(dir: string, id: string): boolean {

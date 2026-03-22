@@ -728,10 +728,12 @@ describe("normalizer snapshots", () => {
   });
 });
 
-describe("atomic file writes", () => {
-  it("saveTask writes atomically and cleans up old file on title change", () => {
+describe("schema version", () => {
+  it("saveTask writes _version: 1 to JSON but loadTask strips it", () => {
     ensureTasksDir(tmpDir);
-    const base = {
+    const task = {
+      id: "001",
+      title: "Versioned task",
       description: "",
       goal: null,
       status: "todo" as const,
@@ -748,31 +750,24 @@ describe("atomic file writes", () => {
       nextRetryAt: null,
       depends_on: [],
     };
-    saveTask(tmpDir, { ...base, id: "001", title: "Original Title" });
+    saveTask(tmpDir, task);
 
-    const tasksDir = join(tmpDir, ".tasks", "tasks");
-    let files = readdirSync(tasksDir);
-    assert.strictEqual(files.length, 1);
-    assert.ok(files[0]!.includes("original-title"));
+    // Raw JSON should contain _version
+    const files = readdirSync(join(tmpDir, ".tasks", "tasks"));
+    const raw = JSON.parse(readFileSync(join(tmpDir, ".tasks", "tasks", files[0]!), "utf-8"));
+    assert.strictEqual(raw._version, 1);
 
+    // Loaded domain object should NOT contain _version
     const loaded = loadTask(tmpDir, "001")!;
-    assert.strictEqual(loaded.title, "Original Title");
-
-    // Update with new title — old file should be removed
-    saveTask(tmpDir, { ...base, id: "001", title: "Updated Title" });
-    files = readdirSync(tasksDir);
-    assert.strictEqual(files.length, 1);
-    assert.ok(files[0]!.includes("updated-title"));
-    assert.strictEqual(loadTask(tmpDir, "001")!.title, "Updated Title");
-
-    // No .tmp files left behind
-    const tmpFiles = files.filter((f) => f.endsWith(".tmp"));
-    assert.strictEqual(tmpFiles.length, 0);
+    assert.strictEqual("_version" in loaded, false);
+    assert.deepStrictEqual(loaded, task);
   });
 
-  it("saveGoal writes atomically and cleans up old file on title change", () => {
+  it("saveGoal writes _version: 1 to JSON but loadGoal strips it", () => {
     ensureTasksDir(tmpDir);
-    const base = {
+    const goal = {
+      id: "01",
+      title: "Versioned goal",
       description: "",
       status: "todo" as const,
       acceptance: "",
@@ -782,36 +777,57 @@ describe("atomic file writes", () => {
       assignee: null,
       specialty: null,
     };
-    saveGoal(tmpDir, { ...base, id: "01", title: "Original Goal" });
+    saveGoal(tmpDir, goal);
 
-    const goalsDir = join(tmpDir, ".tasks", "goals");
-    let files = readdirSync(goalsDir);
-    assert.strictEqual(files.length, 1);
-    assert.ok(files[0]!.includes("original-goal"));
+    const files = readdirSync(join(tmpDir, ".tasks", "goals"));
+    const raw = JSON.parse(readFileSync(join(tmpDir, ".tasks", "goals", files[0]!), "utf-8"));
+    assert.strictEqual(raw._version, 1);
 
-    saveGoal(tmpDir, { ...base, id: "01", title: "Renamed Goal" });
-    files = readdirSync(goalsDir);
-    assert.strictEqual(files.length, 1);
-    assert.ok(files[0]!.includes("renamed-goal"));
-    assert.strictEqual(loadGoal(tmpDir, "01")!.title, "Renamed Goal");
-
-    const tmpFiles = files.filter((f) => f.endsWith(".tmp"));
-    assert.strictEqual(tmpFiles.length, 0);
+    const loaded = loadGoal(tmpDir, "01")!;
+    assert.strictEqual("_version" in loaded, false);
+    assert.deepStrictEqual(loaded, goal);
   });
 
-  it("saveMission writes atomically with no .tmp leftovers", () => {
+  it("saveMission writes _version: 1 to JSON but loadMission strips it", () => {
     const mission = {
-      title: "Test mission",
+      title: "Versioned mission",
       description: "desc",
       created: "2026-01-01T00:00:00Z",
       updated: "2026-01-01T00:00:00Z",
     };
     saveMission(tmpDir, mission);
-    assert.deepStrictEqual(loadMission(tmpDir), mission);
 
-    const rootFiles = readdirSync(join(tmpDir, ".tasks"));
-    const tmpFiles = rootFiles.filter((f) => f.endsWith(".tmp"));
-    assert.strictEqual(tmpFiles.length, 0);
+    const raw = JSON.parse(readFileSync(join(tmpDir, ".tasks", "mission.json"), "utf-8"));
+    assert.strictEqual(raw._version, 1);
+
+    const loaded = loadMission(tmpDir)!;
+    assert.strictEqual("_version" in loaded, false);
+    assert.deepStrictEqual(loaded, mission);
+  });
+
+  it("loads legacy files without _version field (version 0)", () => {
+    ensureTasksDir(tmpDir);
+    // Write a task with no _version (pre-versioning format)
+    writeFileSync(
+      join(tmpDir, ".tasks", "tasks", "001-legacy.json"),
+      JSON.stringify({
+        id: "001",
+        title: "Legacy",
+        description: "",
+        goal: null,
+        status: "todo",
+        assignee: null,
+        priority: 1,
+        created: "2026-01-01T00:00:00Z",
+        updated: "2026-01-01T00:00:00Z",
+        branch: null,
+        tags: [],
+        proof: null,
+      }) + "\n",
+    );
+    const loaded = loadTask(tmpDir, "001")!;
+    assert.strictEqual(loaded.id, "001");
+    assert.strictEqual("_version" in loaded, false);
   });
 });
 
