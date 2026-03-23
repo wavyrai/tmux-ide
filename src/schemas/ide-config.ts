@@ -16,7 +16,7 @@ export const PaneSchema = z.object({
   title: z.string().optional(),
   command: z.string().optional(),
   type: z
-    .enum(["explorer", "changes", "preview", "tasks", "warroom", "costs"])
+    .enum(["explorer", "changes", "preview", "tasks", "warroom", "costs", "config"])
     .optional(),
   target: z.string().optional(),
   dir: z.string().optional(),
@@ -33,6 +33,12 @@ export const RowSchema = z.object({
   panes: z.array(PaneSchema).min(1),
 });
 
+export const WebhookConfigSchema = z.object({
+  url: z.string(),
+  events: z.array(z.string()).optional(),
+  secret: z.string().optional(),
+});
+
 export const OrchestratorYamlConfigSchema = z.object({
   enabled: z.boolean().optional(),
   auto_dispatch: z.boolean().optional(),
@@ -46,6 +52,7 @@ export const OrchestratorYamlConfigSchema = z.object({
   dispatch_mode: z.enum(["tasks", "goals"]).optional(),
   max_concurrent_agents: z.number().optional(),
   widgets: z.boolean().optional(),
+  webhooks: z.array(WebhookConfigSchema).optional(),
 });
 
 export const IdeConfigSchema = z.object({
@@ -83,9 +90,7 @@ export const SessionStateSchema = z.object({
 export type ThemeConfig = z.infer<typeof ThemeConfigSchema>;
 export type Pane = z.infer<typeof PaneSchema>;
 export type Row = z.infer<typeof RowSchema>;
-export type OrchestratorYamlConfig = z.infer<
-  typeof OrchestratorYamlConfigSchema
->;
+export type OrchestratorYamlConfig = z.infer<typeof OrchestratorYamlConfigSchema>;
 export type IdeConfig = z.infer<typeof IdeConfigSchema>;
 export type PaneAction = z.infer<typeof PaneActionSchema>;
 export type SessionState = z.infer<typeof SessionStateSchema>;

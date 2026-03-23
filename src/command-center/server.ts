@@ -1,5 +1,12 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, readdirSync, readFileSync, writeFileSync, mkdirSync, unlinkSync } from "node:fs";
+import {
+  existsSync,
+  readdirSync,
+  readFileSync,
+  writeFileSync,
+  mkdirSync,
+  unlinkSync,
+} from "node:fs";
 import { join } from "node:path";
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
@@ -8,19 +15,14 @@ import {
   discoverSessions,
   buildOverviews,
   buildProjectDetail,
+  buildOrchestratorSnapshot,
   updateTask,
   type SessionOverview,
   type ProjectDetail,
 } from "./discovery.ts";
 import { listSessionPanes } from "../widgets/lib/pane-comms.ts";
-import {
-  ensureTasksDir,
-  nextTaskId,
-  saveTask,
-  deleteTask,
-  type Task,
-} from "../lib/task-store.ts";
-import { readEvents, type OrchestratorEvent } from "../lib/event-log.ts";
+import { ensureTasksDir, nextTaskId, saveTask, deleteTask, type Task } from "../lib/task-store.ts";
+import { readEvents } from "../lib/event-log.ts";
 import { extractMarks, calculateStats, tagContent } from "../lib/authorship.ts";
 import { loadPlans, markPlanDone } from "../lib/plan-store.ts";
 import { zValidator } from "@hono/zod-validator";
@@ -193,7 +195,11 @@ export function createApp(): Hono {
 
     // Sanitize filename — no path traversal
     const safeName = filename.replace(/[^a-zA-Z0-9_\-. ]/g, "");
-    const filePath = join(session.dir, "plans", safeName.endsWith(".md") ? safeName : `${safeName}.md`);
+    const filePath = join(
+      session.dir,
+      "plans",
+      safeName.endsWith(".md") ? safeName : `${safeName}.md`,
+    );
 
     if (!existsSync(filePath)) {
       return c.json({ error: "Plan not found" }, 404);
@@ -223,7 +229,11 @@ export function createApp(): Hono {
     const body = c.req.valid("json");
 
     const safeName = filename.replace(/[^a-zA-Z0-9_\-. ]/g, "");
-    const filePath = join(session.dir, "plans", safeName.endsWith(".md") ? safeName : `${safeName}.md`);
+    const filePath = join(
+      session.dir,
+      "plans",
+      safeName.endsWith(".md") ? safeName : `${safeName}.md`,
+    );
     const plansDir = join(session.dir, "plans");
     if (!existsSync(plansDir)) mkdirSync(plansDir, { recursive: true });
 
@@ -245,7 +255,11 @@ export function createApp(): Hono {
     }
 
     const safeName = filename.replace(/[^a-zA-Z0-9_\-. ]/g, "");
-    const filePath = join(session.dir, "plans", safeName.endsWith(".md") ? safeName : `${safeName}.md`);
+    const filePath = join(
+      session.dir,
+      "plans",
+      safeName.endsWith(".md") ? safeName : `${safeName}.md`,
+    );
 
     if (!existsSync(filePath)) {
       return c.json({ error: "Plan not found" }, 404);
@@ -413,11 +427,13 @@ export function createApp(): Hono {
     return c.json({ events: withRelative });
   });
 
-  // SSE endpoint — polls every 2s and emits changes
+  // SSE endpoint — cursor-based event streaming with orchestrator state
   app.get("/api/events", (c) => {
     return streamSSE(c, async (stream) => {
       let prevOverviews: SessionOverview[] = [];
       let prevDetails = new Map<string, ProjectDetail>();
+      const eventCursors = new Map<string, number>(); // session → last-seen event count
+      let prevOrchHashes = new Map<string, string>(); // session → orchestrator snapshot hash
 
       const poll = () => {
         const sessions = discoverSessions();
@@ -459,8 +475,39 @@ export function createApp(): Hono {
           }
         }
 
-        // Detect task-level changes per session
+        // Per-session: event log cursor + orchestrator state + task/agent diffs
         for (const session of sessions) {
+          // Cursor-based event streaming from event log
+          const events = readEvents(session.dir);
+          const cursor = eventCursors.get(session.name) ?? 0;
+
+          // Handle log rotation: if events.length < cursor, log was rotated
+          const effectiveCursor = events.length < cursor ? 0 : cursor;
+          const newEvents = events.slice(effectiveCursor);
+
+          for (const evt of newEvents) {
+            const eventId = `${evt.timestamp}:${evt.type}:${evt.taskId ?? ""}`;
+            stream.writeSSE({
+              id: eventId,
+              event: "orchestrator_event",
+              data: JSON.stringify({ session: session.name, ...evt }),
+            });
+          }
+          eventCursors.set(session.name, events.length);
+
+          // Orchestrator state snapshot (emit only on change)
+          const orchSnapshot = buildOrchestratorSnapshot(session);
+          const orchHash = JSON.stringify(orchSnapshot);
+          const prevHash = prevOrchHashes.get(session.name);
+          if (orchHash !== prevHash) {
+            stream.writeSSE({
+              event: "orchestrator_state",
+              data: JSON.stringify({ session: session.name, ...orchSnapshot }),
+            });
+            prevOrchHashes.set(session.name, orchHash);
+          }
+
+          // Task-level and agent-level diffs (existing logic)
           const detail = buildProjectDetail(session);
           const prevDetail = prevDetails.get(session.name);
 

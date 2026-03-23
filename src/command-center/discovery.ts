@@ -87,13 +87,7 @@ export function listTmuxSessions(): string[] {
 }
 
 export function getSessionCwd(session: string): string {
-  return tmuxSilent([
-    "display-message",
-    "-t",
-    session,
-    "-p",
-    "#{pane_current_path}",
-  ]);
+  return tmuxSilent(["display-message", "-t", session, "-p", "#{pane_current_path}"]);
 }
 
 function formatElapsed(isoDate: string): string {
@@ -191,6 +185,41 @@ export function buildProjectDetail(info: SessionInfo): ProjectDetail {
     goals: info.goals,
     tasks: info.tasks,
     agents,
+  };
+}
+
+export interface OrchestratorSnapshot {
+  running: boolean;
+  claimedCount: number;
+  agents: AgentDetail[];
+  inProgressCount: number;
+  pendingCount: number;
+}
+
+export function buildOrchestratorSnapshot(info: SessionInfo): OrchestratorSnapshot {
+  const agents: AgentDetail[] = info.panes
+    .filter((p) => isAgentPane(p))
+    .map((pane) => {
+      const name = agentIdentifier(pane);
+      const assignedTask = info.tasks.find(
+        (t) => t.assignee === name && t.status === "in-progress",
+      );
+      return {
+        paneTitle: name,
+        paneId: pane.id,
+        isBusy: isAgentBusy(pane),
+        taskTitle: assignedTask?.title ?? null,
+        taskId: assignedTask?.id ?? null,
+        elapsed: assignedTask ? formatElapsed(assignedTask.updated) : "",
+      };
+    });
+
+  return {
+    running: agents.length > 0,
+    claimedCount: info.tasks.filter((t) => t.status === "in-progress").length,
+    agents,
+    inProgressCount: info.tasks.filter((t) => t.status === "in-progress").length,
+    pendingCount: info.tasks.filter((t) => t.status === "todo").length,
   };
 }
 

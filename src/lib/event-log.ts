@@ -2,6 +2,7 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync, renameSy
 import { join } from "node:path";
 import { StructuredEventSchemaZ } from "../schemas/domain.ts";
 import type { z } from "zod";
+import { fireWebhooks, type WebhookConfig } from "./webhook.ts";
 
 export type EventType =
   | "dispatch"
@@ -11,7 +12,8 @@ export type EventType =
   | "reconcile"
   | "error"
   | "task_created"
-  | "status_change";
+  | "status_change"
+  | "send";
 
 export interface OrchestratorEvent {
   timestamp: string;
@@ -23,6 +25,13 @@ export interface OrchestratorEvent {
 
 export type StructuredEvent = z.infer<typeof StructuredEventSchemaZ>;
 
+let _webhooks: WebhookConfig[] = [];
+
+/** Configure webhook URLs for event delivery. Call once at startup. */
+export function setWebhookConfig(webhooks: WebhookConfig[]): void {
+  _webhooks = webhooks;
+}
+
 /**
  * Generate a human-readable message from a structured event's typed fields.
  */
@@ -33,7 +42,8 @@ export function formatEventMessage(event: StructuredEvent): string {
       return `Dispatched task ${event.taskId} to ${event.agent}${branch}`;
     }
     case "completion": {
-      const duration = event.durationMs != null ? ` in ${Math.round(event.durationMs / 1000)}s` : "";
+      const duration =
+        event.durationMs != null ? ` in ${Math.round(event.durationMs / 1000)}s` : "";
       return `Task ${event.taskId} completed by ${event.agent}${duration}`;
     }
     case "stall":
@@ -53,6 +63,11 @@ export function formatEventMessage(event: StructuredEvent): string {
       return `Task ${event.taskId} created: "${event.title}"`;
     case "status_change":
       return `Task ${event.taskId} status: ${event.from} → ${event.to}`;
+    case "send": {
+      const preview =
+        event.message.length > 50 ? event.message.slice(0, 50) + "..." : event.message;
+      return `Sent to ${event.target}: "${preview}"`;
+    }
   }
 }
 
@@ -81,11 +96,13 @@ export function appendEvent(dir: string, event: OrchestratorEvent | StructuredEv
   // validate with schema before writing
   if (!("message" in event) || StructuredEventSchemaZ.safeParse(event).success) {
     appendFileSync(logPath, JSON.stringify(event) + "\n");
+    if (_webhooks.length > 0) fireWebhooks(_webhooks, event);
     return;
   }
 
   // Old-format event with free-form message — write as-is
   appendFileSync(logPath, JSON.stringify(event) + "\n");
+  if (_webhooks.length > 0) fireWebhooks(_webhooks, event);
 }
 
 export function readEvents(dir: string): OrchestratorEvent[] {
