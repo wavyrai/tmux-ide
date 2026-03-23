@@ -36,11 +36,7 @@ import {
   type Goal,
 } from "./task-store.ts";
 import { recordTaskTime } from "./token-tracker.ts";
-import {
-  listSessionPanes,
-  sendCommand,
-  type PaneInfo,
-} from "../widgets/lib/pane-comms.ts";
+import { listSessionPanes, sendCommand, type PaneInfo } from "../widgets/lib/pane-comms.ts";
 import { createWorktree, removeWorktree, validateWorktreePath } from "./worktree.ts";
 import { appendEvent } from "./event-log.ts";
 import { isGhAvailable, createTaskPr } from "./github-pr.ts";
@@ -68,10 +64,7 @@ export interface OrchestratorState {
   taskClaimTimes: Map<string, number>;
 }
 
-export function runHook(
-  command: string,
-  cwd: string,
-): { ok: true } | { ok: false; error: string } {
+export function runHook(command: string, cwd: string): { ok: true } | { ok: false; error: string } {
   try {
     execSync(command, { cwd, timeout: 60000, stdio: "pipe" });
     return { ok: true };
@@ -95,10 +88,26 @@ export function normalizePaneTitle(title: string): string {
 
 // French names for agents — fun, memorable, and stable across spinner changes
 const AGENT_NAMES = [
-  "François", "Amélie", "Louis", "Camille", "Marcel",
-  "Colette", "Henri", "Margaux", "René", "Léonie",
-  "Étienne", "Fleur", "Gaston", "Isabelle", "Jacques",
-  "Lucienne", "Nicolas", "Odette", "Pierre", "Rosalie",
+  "François",
+  "Amélie",
+  "Louis",
+  "Camille",
+  "Marcel",
+  "Colette",
+  "Henri",
+  "Margaux",
+  "René",
+  "Léonie",
+  "Étienne",
+  "Fleur",
+  "Gaston",
+  "Isabelle",
+  "Jacques",
+  "Lucienne",
+  "Nicolas",
+  "Odette",
+  "Pierre",
+  "Rosalie",
 ];
 
 // Get a stable, memorable identifier for an agent pane
@@ -131,9 +140,10 @@ export function isAgentBusy(pane: PaneInfo): boolean {
  */
 function isAtAgentPrompt(paneId: string): boolean {
   try {
-    const lastLine = execFileSync("tmux", [
-      "capture-pane", "-t", paneId, "-p", "-S", "-1",
-    ], { encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+    const lastLine = execFileSync("tmux", ["capture-pane", "-t", paneId, "-p", "-S", "-1"], {
+      encoding: "utf-8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
     return lastLine.includes("❯");
   } catch {
     return false;
@@ -218,7 +228,8 @@ export function dispatch(
   const idleAgents = panes.filter((p) => {
     // Master pane check: use role when available, fall back to title
     if (p.role === "lead") return false;
-    if (!p.role && config.masterPane && normalizePaneTitle(p.title) === config.masterPane) return false;
+    if (!p.role && config.masterPane && normalizePaneTitle(p.title) === config.masterPane)
+      return false;
     if (!isIdleForDispatch(p)) return false;
     // Don't dispatch to a pane that already has an in-progress task assigned
     const name = agentIdentifier(p);
@@ -334,10 +345,7 @@ function matchesSpecialty(goalSpecialty: string | null, plannerSpecialties: stri
   return goalTags.some((tag) => plannerSpecialties.includes(tag));
 }
 
-export function getPaneSpecialties(
-  config: OrchestratorConfig,
-  pane: PaneInfo,
-): string[] {
+export function getPaneSpecialties(config: OrchestratorConfig, pane: PaneInfo): string[] {
   const key = pane.name ?? pane.title;
   return config.paneSpecialties.get(key) ?? [];
 }
@@ -357,11 +365,7 @@ function slugifyGoal(text: string): string {
     .slice(0, 30);
 }
 
-export function buildGoalPrompt(
-  dir: string,
-  goal: Goal,
-  planner: PaneInfo,
-): string {
+export function buildGoalPrompt(dir: string, goal: Goal, planner: PaneInfo): string {
   const mission = loadMission(dir);
   const name = agentIdentifier(planner);
   const specialtyLabel = goal.specialty ?? "general";
@@ -404,13 +408,12 @@ export function dispatchGoals(
   const idlePlanners = panes.filter((p) => {
     if (p.index === 0) return false;
     if (p.role === "lead") return false;
-    if (!p.role && config.masterPane && normalizePaneTitle(p.title) === config.masterPane) return false;
+    if (!p.role && config.masterPane && normalizePaneTitle(p.title) === config.masterPane)
+      return false;
     if (!isPlannerPane(config, p)) return false;
     if (!isIdleForDispatch(p)) return false;
     const name = agentIdentifier(p);
-    const hasActiveGoal = goals.some(
-      (g) => g.assignee === name && g.status === "in-progress",
-    );
+    const hasActiveGoal = goals.some((g) => g.assignee === name && g.status === "in-progress");
     if (hasActiveGoal) return false;
     return true;
   });
@@ -520,9 +523,13 @@ export function detectCompletions(
         let baseBranch: string | undefined;
         try {
           baseBranch = execFileSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], {
-            cwd: config.dir, encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"],
+            cwd: config.dir,
+            encoding: "utf-8",
+            stdio: ["ignore", "pipe", "ignore"],
           }).trim();
-        } catch { /* fall back to repo default */ }
+        } catch {
+          /* fall back to repo default */
+        }
         const pr = createTaskPr(task, config.dir, baseBranch);
         if (pr) {
           if (!task.proof) task.proof = {};
@@ -554,8 +561,8 @@ export function detectCompletions(
       }
 
       if (config.masterPane) {
-        const masterPaneInfo = panes.find((p) => p.role === "lead") ??
-          panes.find((p) => p.title === config.masterPane);
+        const masterPaneInfo =
+          panes.find((p) => p.role === "lead") ?? panes.find((p) => p.title === config.masterPane);
         if (masterPaneInfo) {
           const proofStr = task.proof ? JSON.stringify(task.proof) : "no proof provided";
           sendCommand(
@@ -606,6 +613,7 @@ export function reconcile(
 interface PersistedState {
   claimedTasks: string[];
   taskClaimTimes: Record<string, number>;
+  lastActivity?: Record<string, number>;
 }
 
 function stateFilePath(dir: string): string {
@@ -618,6 +626,7 @@ export function saveOrchestratorState(dir: string, state: OrchestratorState): vo
   const data: PersistedState = {
     claimedTasks: [...state.claimedTasks],
     taskClaimTimes: Object.fromEntries(state.taskClaimTimes),
+    lastActivity: Object.fromEntries(state.lastActivity),
   };
   writeFileSync(stateFilePath(dir), JSON.stringify(data, null, 2) + "\n");
 }
@@ -635,6 +644,11 @@ export function loadOrchestratorState(dir: string, state: OrchestratorState): vo
         state.taskClaimTimes.set(id, time);
       }
     }
+    if (data.lastActivity && typeof data.lastActivity === "object") {
+      for (const [id, time] of Object.entries(data.lastActivity)) {
+        state.lastActivity.set(id, time);
+      }
+    }
   } catch {
     // Corrupted state file — start fresh
   }
@@ -648,9 +662,7 @@ export function loadOrchestratorState(dir: string, state: OrchestratorState): vo
  */
 export function syncClaims(dir: string, state: OrchestratorState): void {
   const tasks = loadTasks(dir);
-  const inProgressIds = new Set(
-    tasks.filter((t) => t.status === "in-progress").map((t) => t.id),
-  );
+  const inProgressIds = new Set(tasks.filter((t) => t.status === "in-progress").map((t) => t.id));
   // Remove stale claims
   for (const id of state.claimedTasks) {
     if (!inProgressIds.has(id)) {
@@ -663,10 +675,7 @@ export function syncClaims(dir: string, state: OrchestratorState): void {
   }
 }
 
-export function gracefulShutdown(
-  config: OrchestratorConfig,
-  state: OrchestratorState,
-): void {
+export function gracefulShutdown(config: OrchestratorConfig, state: OrchestratorState): void {
   // Release all in-progress tasks back to todo
   const tasks = loadTasks(config.dir);
   for (const task of tasks) {
@@ -707,7 +716,8 @@ export function reloadConfig(
 ): void {
   if (patch.pollInterval !== undefined) target.pollInterval = patch.pollInterval;
   if (patch.stallTimeout !== undefined) target.stallTimeout = patch.stallTimeout;
-  if (patch.maxConcurrentAgents !== undefined) target.maxConcurrentAgents = patch.maxConcurrentAgents;
+  if (patch.maxConcurrentAgents !== undefined)
+    target.maxConcurrentAgents = patch.maxConcurrentAgents;
   if (patch.autoDispatch !== undefined) target.autoDispatch = patch.autoDispatch;
   if (patch.cleanupOnDone !== undefined) target.cleanupOnDone = patch.cleanupOnDone;
   if (patch.beforeRun !== undefined) target.beforeRun = patch.beforeRun;
@@ -786,7 +796,8 @@ export function createOrchestrator(initialConfig: OrchestratorConfig): () => voi
           reloadConfig(config, {
             pollInterval: (orch.poll_interval as number | undefined) ?? config.pollInterval,
             stallTimeout: (orch.stall_timeout as number | undefined) ?? config.stallTimeout,
-            maxConcurrentAgents: (orch.max_concurrent_agents as number | undefined) ?? config.maxConcurrentAgents,
+            maxConcurrentAgents:
+              (orch.max_concurrent_agents as number | undefined) ?? config.maxConcurrentAgents,
             autoDispatch: (orch.auto_dispatch as boolean | undefined) ?? config.autoDispatch,
             cleanupOnDone: (orch.cleanup_on_done as boolean | undefined) ?? config.cleanupOnDone,
             beforeRun: (orch.before_run as string | undefined) ?? config.beforeRun,

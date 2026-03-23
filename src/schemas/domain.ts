@@ -5,9 +5,7 @@ import { z } from "zod";
 // ---------------------------------------------------------------------------
 
 export const ProofSchemaZ = z.object({
-  tests: z
-    .object({ passed: z.number(), total: z.number() })
-    .optional(),
+  tests: z.object({ passed: z.number(), total: z.number() }).optional(),
   pr: z
     .object({
       number: z.number(),
@@ -15,9 +13,7 @@ export const ProofSchemaZ = z.object({
       status: z.string().optional(),
     })
     .optional(),
-  ci: z
-    .object({ status: z.string(), url: z.string().optional() })
-    .optional(),
+  ci: z.object({ status: z.string(), url: z.string().optional() }).optional(),
   notes: z.string().optional(),
 });
 
@@ -80,6 +76,7 @@ export const EventTypeSchemaZ = z.enum([
   "error",
   "task_created",
   "status_change",
+  "send",
 ]);
 
 export const OrchestratorEventSchemaZ = z.object({
@@ -159,6 +156,14 @@ const StatusChangeEventZ = z.object({
   to: z.string(),
 });
 
+const SendEventZ = z.object({
+  timestamp: z.string(),
+  type: z.literal("send"),
+  target: z.string(),
+  paneId: z.string(),
+  message: z.string(),
+});
+
 export const StructuredEventSchemaZ = z.union([
   DispatchEventZ,
   CompletionEventZ,
@@ -168,6 +173,7 @@ export const StructuredEventSchemaZ = z.union([
   ErrorEventZ,
   TaskCreatedEventZ,
   StatusChangeEventZ,
+  SendEventZ,
 ]);
 
 // ---------------------------------------------------------------------------
@@ -181,15 +187,7 @@ export const MarkRangeSchemaZ = z.object({
 
 export const MarkSchemaZ = z.object({
   id: z.string(),
-  kind: z.enum([
-    "authored",
-    "approved",
-    "flagged",
-    "comment",
-    "insert",
-    "delete",
-    "replace",
-  ]),
+  kind: z.enum(["authored", "approved", "flagged", "comment", "insert", "delete", "replace"]),
   by: z.string(),
   at: z.string(),
   range: MarkRangeSchemaZ,
@@ -207,12 +205,7 @@ export const AuthorshipStatsSchemaZ = z.object({
 // PlanStatus / PlanMeta (from src/lib/plan-store.ts)
 // ---------------------------------------------------------------------------
 
-export const PlanStatusSchemaZ = z.enum([
-  "pending",
-  "in-progress",
-  "done",
-  "archived",
-]);
+export const PlanStatusSchemaZ = z.enum(["pending", "in-progress", "done", "archived"]);
 
 export const PlanMetaSchemaZ = z.object({
   name: z.string(),

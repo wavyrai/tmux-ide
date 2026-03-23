@@ -155,7 +155,15 @@ if (isMainModule) {
     if (!raw) return [];
     return raw.split("\n").map((line) => {
       const [id, pid, cmd, title, role, type, name] = line.split("\t");
-      return { id: id!, pid: pid!, cmd, title, role: role || undefined, type: type || undefined, name: name || undefined };
+      return {
+        id: id!,
+        pid: pid!,
+        cmd,
+        title,
+        role: role || undefined,
+        type: type || undefined,
+        name: name || undefined,
+      };
     });
   }
 
@@ -214,6 +222,12 @@ if (isMainModule) {
       if (config.orchestrator?.enabled) {
         try {
           const { createOrchestrator } = await import("./orchestrator.js");
+
+          // Configure webhooks for event delivery
+          if (config.orchestrator.webhooks?.length) {
+            const { setWebhookConfig } = await import("./event-log.js");
+            setWebhookConfig(config.orchestrator.webhooks);
+          }
 
           const orch = config.orchestrator;
 

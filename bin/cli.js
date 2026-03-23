@@ -19,6 +19,7 @@ import { detect } from "../dist/detect.js";
 import { config } from "../dist/config.js";
 import { restart } from "../dist/restart.js";
 import { taskCommand } from "../dist/task.js";
+import { send } from "../dist/send.js";
 import { IdeError } from "../dist/lib/errors.js";
 import { printCommandError } from "../dist/lib/output.js";
 
@@ -55,6 +56,9 @@ const { positionals, values } = parseArgs({
     // setup command flags
     edit: { type: "boolean" },
     wizard: { type: "boolean" },
+    // send command flags
+    to: { type: "string" },
+    "no-enter": { type: "boolean" },
   },
 });
 
@@ -76,6 +80,9 @@ const knownCommands = new Set([
   "task",
   "plan",
   "setup",
+  "send",
+  "orchestrator",
+  "settings",
   "command-center",
   "help",
 ]);
@@ -92,7 +99,7 @@ if (values.verbose) {
   globalThis.__tmuxIdeVerbose = true;
 }
 
-const ALIASES = { t: "task", g: "goal", m: "mission" };
+const ALIASES = { t: "task", g: "goal", m: "mission", orch: "orchestrator", o: "orchestrator" };
 const firstPositional = positionals[0];
 const resolved = ALIASES[firstPositional] ?? firstPositional;
 const hasKnownCommand = resolved ? knownCommands.has(resolved) : false;
@@ -118,6 +125,7 @@ ${bold("Usage:")}
   ${cyan("tmux-ide <path>")}             ${dim("Launch from a specific directory")}
   ${cyan("tmux-ide setup")}              ${dim("Interactive TUI setup wizard")}
   ${cyan("tmux-ide setup --edit")}       ${dim("Open config tree editor")}
+  ${cyan("tmux-ide settings")}           ${dim("Interactive TUI config manager")}
   ${cyan("tmux-ide init")} [--template]  ${dim("Scaffold a new ide.yml (auto-detects stack)")}
   ${cyan("tmux-ide stop")}               ${dim("Kill the current IDE session")}
   ${cyan("tmux-ide restart")}            ${dim("Stop and relaunch the IDE session")}
@@ -136,6 +144,15 @@ ${bold("Usage:")}
   ${cyan("tmux-ide config add-row")} [--size <percent>]
   ${cyan("tmux-ide config enable-team")} [--name <N>]   ${dim("Enable agent teams")}
   ${cyan("tmux-ide config disable-team")}               ${dim("Disable agent teams")}
+
+${bold("Pane Messaging:")}
+  ${cyan("tmux-ide send")} <target> <message>     ${dim("Send message to a pane")}
+  ${cyan("tmux-ide send")} --to <name> <message>   ${dim("Target by name, title, role, or ID")}
+  ${cyan("tmux-ide send")} <target> --no-enter msg  ${dim("Send text without pressing Enter")}
+
+${bold("Orchestrator:")}
+  ${cyan("tmux-ide orchestrator")} [--json]         ${dim("Show orchestrator status")}
+  ${cyan("tmux-ide orch")}                          ${dim("Alias for orchestrator")}
 
 ${bold("Task Management:")}
   ${cyan("tmux-ide mission set")} "title"              ${dim("Set the project mission")}
@@ -239,7 +256,9 @@ try {
       } else if (sub === "edit") {
         // Launch setup TUI in edit mode
         const scriptPath = resolve(__dirname, "../src/widgets/setup/index.tsx");
-        execFileSync("bun", [scriptPath, "--dir=" + resolve(startTargetDir || "."), "--edit"], { stdio: "inherit" });
+        execFileSync("bun", [scriptPath, "--dir=" + resolve(startTargetDir || "."), "--edit"], {
+          stdio: "inherit",
+        });
         break;
       }
 
@@ -318,6 +337,32 @@ try {
       if (positionals[1] === "--edit" || values.edit) setupArgs.push("--edit");
       if (positionals[1] === "--wizard" || values.wizard) setupArgs.push("--wizard");
       execFileSync("bun", setupArgs, { stdio: "inherit" });
+      break;
+    }
+
+    case "send": {
+      const target = values.to ?? positionals[1];
+      const messageStart = values.to ? 1 : 2;
+      let message = positionals.slice(messageStart).join(" ");
+      if (!message && !process.stdin.isTTY) {
+        const { readFileSync } = await import("node:fs");
+        message = readFileSync(0, "utf-8").trim();
+      }
+      await send(null, { json, to: target, message, noEnter: values["no-enter"] });
+      break;
+    }
+
+    case "orchestrator": {
+      const { orchestratorStatus } = await import("../dist/orchestrator-status.js");
+      await orchestratorStatus(positionals[1], { json });
+      break;
+    }
+
+    case "settings": {
+      const scriptPath = resolve(__dirname, "../src/widgets/config/index.tsx");
+      execFileSync("bun", [scriptPath, "--dir=" + resolve(startTargetDir || ".")], {
+        stdio: "inherit",
+      });
       break;
     }
 
