@@ -456,6 +456,22 @@ struct CanvasContainerView: View {
             withAnimation(.spring(duration: 0.3)) {
                 gestureManager.scale = 1.0
             }
+        case "pan-left":
+            withAnimation(.spring(duration: 0.3)) {
+                camera.panOffset.x += 400
+            }
+        case "pan-right":
+            withAnimation(.spring(duration: 0.3)) {
+                camera.panOffset.x -= 400
+            }
+        case "pan-up":
+            withAnimation(.spring(duration: 0.3)) {
+                camera.panOffset.y += 300
+            }
+        case "pan-down":
+            withAnimation(.spring(duration: 0.3)) {
+                camera.panOffset.y -= 300
+            }
         default:
             break
         }

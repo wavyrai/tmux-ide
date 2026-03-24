@@ -110,6 +110,32 @@ struct TmuxIdeApp: App {
                 }
                 .keyboardShortcut("0", modifiers: .command)
                 .disabled(!hasSession)
+
+                Divider()
+
+                Button("Pan Left") {
+                    coordinator.performAction("pan-left")
+                }
+                .keyboardShortcut(.leftArrow, modifiers: [.command, .shift])
+                .disabled(!hasSession)
+
+                Button("Pan Right") {
+                    coordinator.performAction("pan-right")
+                }
+                .keyboardShortcut(.rightArrow, modifiers: [.command, .shift])
+                .disabled(!hasSession)
+
+                Button("Pan Up") {
+                    coordinator.performAction("pan-up")
+                }
+                .keyboardShortcut(.upArrow, modifiers: [.command, .shift])
+                .disabled(!hasSession)
+
+                Button("Pan Down") {
+                    coordinator.performAction("pan-down")
+                }
+                .keyboardShortcut(.downArrow, modifiers: [.command, .shift])
+                .disabled(!hasSession)
             }
 
             // MARK: Tile menu

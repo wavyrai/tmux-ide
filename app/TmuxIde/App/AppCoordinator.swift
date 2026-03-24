@@ -91,7 +91,8 @@ final class AppCoordinator: ObservableObject {
         // Canvas-level actions — forward to the active CanvasContainerView
         case "focus-next", "focus-prev", "focus-up", "focus-down",
              "toggle-overview", "add-terminal", "add-browser", "add-dashboard",
-             "zoom-in", "zoom-out", "zoom-reset":
+             "zoom-in", "zoom-out", "zoom-reset",
+             "pan-left", "pan-right", "pan-up", "pan-down":
             pendingCanvasAction = actionId
 
         default:

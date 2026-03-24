@@ -31,7 +31,7 @@ struct TerminalTileView: View {
             }
         }
         .onAppear {
-            controller.attach(session: sessionName)
+            controller.attach(session: sessionName, host: baseURL.host)
         }
         .onDisappear {
             controller.detach()
@@ -48,16 +48,12 @@ struct TerminalTileView: View {
 final class TmuxSessionController: ObservableObject {
     @Published private(set) var surface: GhosttyTerminalSurface?
 
-    func attach(session: String) {
+    func attach(session: String, host: String? = nil) {
         guard surface == nil else { return }
 
-        // Find the project directory from tmux
-        let cwd = projectDir(for: session)
+        let isRemote = host != nil && host != "localhost" && host != "127.0.0.1"
+        let cwd = isRemote ? NSHomeDirectory() : projectDir(for: session)
 
-        // Create a shell surface, then send the tmux attach command.
-        // We can't pass complex commands via shellPath (Ghostty escapes it
-        // as a single executable path). Instead, start zsh and immediately
-        // send the attach command as text input.
         let wrapper = GhosttyAppHost.shared.makeSurface(
             sessionID: UUID(),
             workingDirectory: cwd,
@@ -66,10 +62,16 @@ final class TmuxSessionController: ObservableObject {
 
         surface = wrapper
 
-        // Send tmux attach after a brief delay to let the shell start
+        // Send the appropriate attach command after the shell starts
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak wrapper] in
             guard let wrapper else { return }
-            wrapper.send(text: "tmux attach-session -t \(session)\n")
+            if isRemote, let host {
+                // Remote: SSH into the host and attach to tmux there
+                wrapper.send(text: "ssh \(host) -t 'tmux attach-session -t \(session)'\n")
+            } else {
+                // Local: attach directly
+                wrapper.send(text: "tmux attach-session -t \(session)\n")
+            }
         }
     }
 

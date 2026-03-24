@@ -49,11 +49,7 @@ struct CanvasColumnView: View {
                 tileView(for: item)
             }
         }
-        .frame(
-            minWidth: 300,
-            idealWidth: column.preferredWidth.map { CGFloat($0) } ?? 420,
-            maxWidth: .infinity
-        )
+        .frame(width: column.preferredWidth.map { CGFloat($0) } ?? 420)
     }
 
     @ViewBuilder

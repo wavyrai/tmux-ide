@@ -23,6 +23,7 @@ private struct GeneralSettingsTab: View {
     @AppStorage("autoConnectOnLaunch") private var autoConnect: Bool = true
     @AppStorage("showSessionMission") private var showMission: Bool = true
     @AppStorage("commandCenterPort") private var port: Int = 4000
+    @AppStorage("tmuxTileWidth") private var tmuxTileWidth: Double = 5120
 
     var body: some View {
         Form {
@@ -52,6 +53,18 @@ private struct GeneralSettingsTab: View {
             Section("Display") {
                 Toggle("Show mission in sidebar", isOn: $showMission)
                     .help("Display the mission title under each session in the sidebar")
+            }
+
+            Section("Canvas") {
+                HStack {
+                    Text("Terminal tile width")
+                    Spacer()
+                    Text("\(tmuxTileWidth, specifier: "%.0f") pt")
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
+                }
+                Slider(value: $tmuxTileWidth, in: 1000...8000, step: 100)
+                    .help("Width of the tmux terminal tile on the canvas. 5120 = Apple 5K display width.")
             }
         }
         .formStyle(.grouped)

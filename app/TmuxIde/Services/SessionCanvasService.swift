@@ -1,3 +1,4 @@
+import AppKit
 import Combine
 import Foundation
 
@@ -141,44 +142,53 @@ final class SessionCanvasService: ObservableObject {
     private func buildWorkspace(sessionName: String, panes: [TmuxIdePane]) -> CanvasWorkspace {
         // Architecture: tmux is the runtime, the app is the IDE frame.
         //
-        // Left (large): tmux session — all agents, full pane layout
-        // Right (sidebar): native widgets — mission control, browser, workflow
+        // Left (large): tmux session terminal
+        // Right (sidebar): widgets (local) or browser (remote)
 
+        let isRemote = !client.target.isLocal
         var columns: [CanvasColumn] = []
 
-        // Column 1: Big tmux terminal — takes 70%+ of the space
+        // Column 1: Big tmux terminal
         let tmuxTile = CanvasItem(
             ref: .terminal(paneId: sessionName),
             preferredHeight: 900,
             paneTitle: sessionName
         )
-        columns.append(CanvasColumn(items: [tmuxTile], preferredWidth: 3000))
+        let tmuxWidth = UserDefaults.standard.double(forKey: "tmuxTileWidth")
+        columns.append(CanvasColumn(items: [tmuxTile], preferredWidth: tmuxWidth > 0 ? tmuxWidth : 5120))
 
-        // Column 2: Stacked widget tiles running OpenTUI widgets in Ghostty
-        // Each command cd's to the project root first so bunfig.toml resolves
+        // Column 2: Widgets (local) or browser-only (remote)
         var widgetItems: [CanvasItem] = []
 
-        // Mission Control — the unified TUI dashboard
-        // Must cd to project root first so bunfig.toml preload resolves @opentui/solid
-        let mcCmd = "cd $(tmux display-message -t \(sessionName) -p '#{pane_current_path}') && bun src/widgets/mission-control/index.tsx --session=\(sessionName) --dir=$(pwd)"
-        widgetItems.append(CanvasItem(
-            ref: .widget(command: mcCmd),
-            preferredHeight: 350,
-            paneTitle: "Mission Control"
-        ))
+        if isRemote {
+            // Remote: can't run local widgets, show command-center dashboard in browser
+            let apiURL = client.target.baseURL.absoluteString
+            widgetItems.append(CanvasItem(
+                ref: .browser(url: apiURL),
+                preferredHeight: 500,
+                paneTitle: "Remote Dashboard"
+            ))
+        } else {
+            // Local: run OpenTUI widgets in Ghostty surfaces
+            let mcCmd = "cd $(tmux display-message -t \(sessionName) -p '#{pane_current_path}') && bun src/widgets/mission-control/index.tsx --session=\(sessionName) --dir=$(pwd)"
+            widgetItems.append(CanvasItem(
+                ref: .widget(command: mcCmd),
+                preferredHeight: 350,
+                paneTitle: "Mission Control"
+            ))
 
-        // Explorer — file tree navigator
-        let explorerCmd = "cd $(tmux display-message -t \(sessionName) -p '#{pane_current_path}') && bun src/widgets/explorer/index.tsx --session=\(sessionName) --dir=$(pwd)"
-        widgetItems.append(CanvasItem(
-            ref: .widget(command: explorerCmd),
-            preferredHeight: 300,
-            paneTitle: "Explorer"
-        ))
+            let explorerCmd = "cd $(tmux display-message -t \(sessionName) -p '#{pane_current_path}') && bun src/widgets/explorer/index.tsx --session=\(sessionName) --dir=$(pwd)"
+            widgetItems.append(CanvasItem(
+                ref: .widget(command: explorerCmd),
+                preferredHeight: 300,
+                paneTitle: "Explorer"
+            ))
+        }
 
-        // Browser — command-center dashboard
-        let port = 4000
+        // Browser — command-center dashboard (works for both local and remote via tunnel)
+        let browserURL = client.target.baseURL.absoluteString
         widgetItems.append(CanvasItem(
-            ref: .browser(url: "http://localhost:\(port)"),
+            ref: .browser(url: browserURL),
             preferredHeight: 250,
             paneTitle: "Browser"
         ))
