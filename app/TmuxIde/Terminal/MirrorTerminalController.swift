@@ -113,15 +113,12 @@ final class MirrorTerminalController: NSObject, ObservableObject {
 
     private func performConnect(baseURL: URL, session: String, paneId: String) {
         // Build WebSocket URL: ws://host:port/ws/mirror/{session}/{paneId}
-        guard var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false) else {
-            connectionError = "Invalid base URL"
-            return
-        }
-
-        components.scheme = baseURL.scheme == "https" ? "wss" : "ws"
-        components.path = "/ws/mirror/\(session)/\(paneId)"
-
-        guard let wsURL = components.url else {
+        // Use string construction instead of URLComponents to avoid double-encoding
+        // the % in tmux pane IDs (e.g. %5092 would become %255092 with URLComponents.path)
+        let scheme = baseURL.scheme == "https" ? "wss" : "ws"
+        let host = baseURL.host ?? "localhost"
+        let port = baseURL.port ?? 4000
+        guard let wsURL = URL(string: "\(scheme)://\(host):\(port)/ws/mirror/\(session)/\(paneId)") else {
             connectionError = "Failed to construct WebSocket URL"
             return
         }
