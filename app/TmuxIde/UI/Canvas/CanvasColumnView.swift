@@ -52,7 +52,7 @@ struct CanvasColumnView: View {
         .frame(
             minWidth: 300,
             idealWidth: column.preferredWidth.map { CGFloat($0) } ?? 420,
-            maxWidth: 760
+            maxWidth: .infinity
         )
     }
 

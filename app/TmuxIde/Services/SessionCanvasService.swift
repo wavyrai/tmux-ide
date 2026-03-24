@@ -139,19 +139,21 @@ final class SessionCanvasService: ObservableObject {
 
         var columns: [CanvasColumn] = []
 
-        // Column 1: Big tmux terminal — takes most of the space
+        // Column 1: Big tmux terminal — takes 70%+ of the space
         let tmuxTile = CanvasItem(
             ref: .terminal(paneId: sessionName),
             preferredHeight: 900,
             paneTitle: sessionName
         )
-        columns.append(CanvasColumn(items: [tmuxTile], preferredWidth: 1000))
+        columns.append(CanvasColumn(items: [tmuxTile], preferredWidth: 3000))
 
         // Column 2: Stacked widget tiles running OpenTUI widgets in Ghostty
+        // Each command cd's to the project root first so bunfig.toml resolves
         var widgetItems: [CanvasItem] = []
 
         // Mission Control — the unified TUI dashboard
-        let mcCmd = "bun src/widgets/mission-control/index.tsx --session=\(sessionName) --dir=."
+        // Must cd to project root first so bunfig.toml preload resolves @opentui/solid
+        let mcCmd = "cd $(tmux display-message -t \(sessionName) -p '#{pane_current_path}') && bun src/widgets/mission-control/index.tsx --session=\(sessionName) --dir=$(pwd)"
         widgetItems.append(CanvasItem(
             ref: .widget(command: mcCmd),
             preferredHeight: 350,
@@ -159,7 +161,7 @@ final class SessionCanvasService: ObservableObject {
         ))
 
         // Explorer — file tree navigator
-        let explorerCmd = "bun src/widgets/explorer/index.tsx --session=\(sessionName) --dir=."
+        let explorerCmd = "cd $(tmux display-message -t \(sessionName) -p '#{pane_current_path}') && bun src/widgets/explorer/index.tsx --session=\(sessionName) --dir=$(pwd)"
         widgetItems.append(CanvasItem(
             ref: .widget(command: explorerCmd),
             preferredHeight: 300,
