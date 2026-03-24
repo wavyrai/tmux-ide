@@ -160,9 +160,9 @@ export function sendCommand(session: string, paneId: string, command: string): b
     if (command.length < 200) {
       sleepMs(150);
     } else {
-      sleepMs(1500);
+      sleepMs(5000);
       tmux("send-keys", "-t", paneId, "Enter");
-      sleepMs(800);
+      sleepMs(2000);
     }
     tmux("send-keys", "-t", paneId, "Enter");
     return true;

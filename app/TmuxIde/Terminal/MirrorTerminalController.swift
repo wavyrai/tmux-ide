@@ -23,6 +23,10 @@ final class MirrorTerminalController: NSObject, ObservableObject {
     /// Created lazily via `GhosttyAppHost.shared.makeSurface()`.
     private(set) var surface: GhosttyTerminalSurface?
 
+    /// Pane dimensions received from the server (cols x rows).
+    @Published private(set) var paneCols: Int = 80
+    @Published private(set) var paneRows: Int = 24
+
     private var webSocketTask: URLSessionWebSocketTask?
     private var urlSession: URLSession?
     private var receivedDimensions = false
@@ -46,9 +50,23 @@ final class MirrorTerminalController: NSObject, ObservableObject {
 
     /// Create the Ghostty surface for rendering terminal output.
     /// Must be called before connect().
+    ///
+    /// The surface runs a passthrough command (`stty raw -echo; exec cat`) instead
+    /// of a local shell. This puts the PTY in raw mode with echo disabled, so ANSI
+    /// data from the WebSocket flows cleanly through cat → PTY → terminal renderer
+    /// without the PTY's line discipline interfering.
     func prepareSurface() {
         guard surface == nil else { return }
-        surface = GhosttyAppHost.shared.makeSurface()
+        surface = GhosttyAppHost.shared.makeSurface(
+            sessionID: UUID(),
+            workingDirectory: NSHomeDirectory(),
+            shellPath: ""
+        )
+
+        // Use a passthrough command so the surface acts as a pure display.
+        // stty raw -echo: disables PTY echo and line buffering
+        // exec cat: reads stdin and writes to stdout (ANSI data round-trips through PTY)
+        surface?.rawCommand = "stty raw -echo 2>/dev/null; exec cat"
 
         // Wire up the key input handler so keyboard events are routed
         // over the WebSocket instead of to a local PTY.
@@ -190,12 +208,8 @@ final class MirrorTerminalController: NSObject, ObservableObject {
         isConnected = true
         connectionError = nil
         reconnectAttempts = 0
-
-        // Configure the surface size to match the tmux pane dimensions.
-        // The surface will render at the pane's column/row count.
-        // Note: actual pixel sizing happens via resizeToCurrentViewBounds()
-        // when the view is laid out. The dimensions message is informational
-        // for the initial connection handshake.
+        paneCols = dims.cols
+        paneRows = dims.rows
     }
 
     /// Send user input text to the tmux pane via WebSocket.

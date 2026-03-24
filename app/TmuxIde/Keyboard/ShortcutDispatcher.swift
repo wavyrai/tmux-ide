@@ -8,7 +8,7 @@ import AppKit
 @MainActor
 final class ShortcutDispatcher {
     let registry: ShortcutRegistry
-    private var monitor: Any?
+    nonisolated(unsafe) private var monitor: Any?
     private var actionHandler: ((String) -> Void)?
 
     init(registry: ShortcutRegistry, handler: @escaping (String) -> Void) {
@@ -42,8 +42,9 @@ final class ShortcutDispatcher {
     }
 
     deinit {
-        if let monitor {
-            NSEvent.removeMonitor(monitor)
+        let mon = monitor
+        if let mon {
+            NSEvent.removeMonitor(mon)
         }
     }
 }
