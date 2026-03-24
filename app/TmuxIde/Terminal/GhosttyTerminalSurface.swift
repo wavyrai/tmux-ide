@@ -1,8 +1,5 @@
 import AppKit
 import Foundation
-import os
-
-private let logger = Logger(subsystem: "com.tmux-ide.app", category: "GhosttyTerminalSurface")
 
 @MainActor
 final class GhosttyTerminalSurface: ObservableObject {
@@ -13,8 +10,7 @@ final class GhosttyTerminalSurface: ObservableObject {
     let view: GhosttyNativeView
 
     /// When set, this command string is passed directly to Ghostty as config.command
-    /// without shell escaping. Used by MirrorTerminalController for passthrough mode
-    /// (e.g. "stty raw -echo 2>/dev/null; exec cat").
+    /// without shell escaping. Used by MirrorTerminalController for passthrough mode.
     var rawCommand: String?
 
     private(set) var callbackContext: Unmanaged<GhosttySurfaceCallbackContext>?
@@ -24,8 +20,6 @@ final class GhosttyTerminalSurface: ObservableObject {
         case text(String)
         case returnKey
     }
-
-    // MARK: - Initialization
 
     init(
         sessionID: UUID,
@@ -40,7 +34,6 @@ final class GhosttyTerminalSurface: ObservableObject {
         self.view = view
         self.callbackContext = callbackContext
 
-        // Wire the callback context back to this surface so C callbacks can find us
         callbackContext.takeUnretainedValue().surface = self
     }
 
@@ -48,11 +41,9 @@ final class GhosttyTerminalSurface: ObservableObject {
         callbackContext?.release()
     }
 
-    // MARK: - Surface Lifecycle
-
-    /// Create the Ghostty surface if it hasn't been created yet. Must be called
-    /// BEFORE the view is added to any layer-backed hierarchy, because Ghostty
-    /// sets up a layer-hosting view by setting layer before wantsLayer.
+    /// Create the ghostty surface. Must be called BEFORE the view is added
+    /// to any layer-backed hierarchy, because ghostty sets up a layer-hosting
+    /// view by setting layer before wantsLayer.
     func createSurfaceIfNeeded() {
         guard surface == nil else {
             flushPendingTextIfReady()
@@ -62,10 +53,6 @@ final class GhosttyTerminalSurface: ObservableObject {
         flushPendingTextIfReady()
     }
 
-    /// Tear down this surface, releasing all Ghostty resources.
-    /// - Parameter freeSynchronously: If true, the Ghostty surface is freed immediately
-    ///   on this call stack. If false (default), freeing is deferred to the next main
-    ///   queue cycle to avoid tearing down while AppKit/CALayer is mid-transaction.
     func destroy(freeSynchronously: Bool = false) {
         let context = callbackContext
         callbackContext = nil
@@ -98,16 +85,12 @@ final class GhosttyTerminalSurface: ObservableObject {
         }
     }
 
-    // MARK: - Resize
-
     func resizeToCurrentViewBounds() {
         guard surface != nil else { return }
         let pointSize = view.bounds.size
         let backingSize = view.convertToBacking(NSRect(origin: .zero, size: pointSize)).size
         GhosttyAppHost.shared.resizeSurface(self, pointSize: pointSize, backingSize: backingSize)
     }
-
-    // MARK: - Focus
 
     func focus() {
         guard surface != nil else { return }
@@ -119,10 +102,6 @@ final class GhosttyTerminalSurface: ObservableObject {
         GhosttyAppHost.shared.blurSurface(self)
     }
 
-    // MARK: - Input
-
-    /// Send text to the terminal surface. If the surface hasn't been created yet,
-    /// the text is queued and flushed once the surface is ready.
     func send(text: String) {
         guard !text.isEmpty else { return }
         guard surface != nil else {
@@ -132,8 +111,6 @@ final class GhosttyTerminalSurface: ObservableObject {
         GhosttyAppHost.shared.sendText(text, to: self)
     }
 
-    /// Send a Return key press/release to the terminal surface. If the surface
-    /// hasn't been created yet, the key event is queued.
     func sendReturnKey() {
         guard surface != nil else {
             pendingInputQueue.append(.returnKey)
@@ -142,13 +119,10 @@ final class GhosttyTerminalSurface: ObservableObject {
         sendReturnKeyToSurface()
     }
 
-    /// Request a surface redraw.
     func refresh() {
         guard surface != nil else { return }
         GhosttyAppHost.shared.refreshSurface(self)
     }
-
-    // MARK: - Private Helpers
 
     private func flushPendingTextIfReady() {
         guard surface != nil, !pendingInputQueue.isEmpty else { return }
@@ -166,11 +140,7 @@ final class GhosttyTerminalSurface: ObservableObject {
 
     private func sendReturnKeyToSurface() {
         guard let surface else { return }
-
-        // Ensure focus before sending the key event
         tmuxide_ghostty_surface_set_focus(surface, true)
-
-        // Press
         var press = ghostty_input_key_s()
         press.action = GHOSTTY_ACTION_PRESS
         press.keycode = 36 // Return key virtual key code on macOS
@@ -183,7 +153,6 @@ final class GhosttyTerminalSurface: ObservableObject {
             _ = tmuxide_ghostty_surface_key(surface, press)
         }
 
-        // Release
         var release = ghostty_input_key_s()
         release.action = GHOSTTY_ACTION_RELEASE
         release.keycode = 36
@@ -193,7 +162,6 @@ final class GhosttyTerminalSurface: ObservableObject {
         release.composing = false
         release.unshifted_codepoint = 0
         _ = tmuxide_ghostty_surface_key(surface, release)
-
         GhosttyAppHost.shared.scheduleTick()
     }
 }

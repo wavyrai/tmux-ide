@@ -372,7 +372,7 @@ export function dispatch(
     const dispatchFile = join(dispatchDir, `${task.id}.md`);
     writeFileSync(dispatchFile, prompt);
 
-    const shortCmd = `Read and execute the task in .tasks/dispatch/${task.id}.md — when done run: tmux-ide task done ${task.id} --proof "what you did"`;
+    const shortCmd = `tmux-ide dispatch ${task.id}`;
     const sent = sendCommand(config.session, agent.id, shortCmd);
 
     if (!sent) {
@@ -592,7 +592,8 @@ export function detectCompletions(
           const msgFile = join(retryDispDir, `retry-exhausted-${task.id}.md`);
           const msg = `# Task Failed: ${task.title}\n\nFailed after ${task.maxRetries ?? 5} retries.\nLast error: ${task.lastError}\n\nManual intervention required.`;
           writeFileSync(msgFile, msg);
-          sendCommand(config.session, masterPaneInfo.id, `Read .tasks/dispatch/retry-exhausted-${task.id}.md — task needs manual intervention`);
+          // Keep under 200 chars to avoid paste preview in Claude Code TUI
+          sendCommand(config.session, masterPaneInfo.id, `Task ${task.id} failed after retries. Run: tmux-ide dispatch retry-exhausted-${task.id}`);
         }
       }
     }
@@ -669,7 +670,9 @@ export function detectCompletions(
           const msgFile = join(dispDir, `completed-${task.id}.md`);
           const msg = `# Task Completed: ${task.title}\n\nBy: ${task.assignee}\nProof:\n${proofStr}\n\nReview and approve, or request changes.`;
           writeFileSync(msgFile, msg);
-          sendCommand(config.session, masterPaneInfo.id, `Task completed: "${task.title}" by ${task.assignee}. Details in .tasks/dispatch/completed-${task.id}.md`);
+          // Keep under 200 chars to avoid paste preview in Claude Code TUI
+          const shortTitle = task.title.length > 60 ? task.title.slice(0, 57) + "..." : task.title;
+          sendCommand(config.session, masterPaneInfo.id, `Task done: "${shortTitle}" by ${task.assignee}. Run: tmux-ide dispatch completed-${task.id}`);
         }
       }
     }

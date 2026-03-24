@@ -1,8 +1,5 @@
 import AppKit
 import Foundation
-import os
-
-private let logger = Logger(subsystem: "com.tmux-ide.app", category: "GhosttyAppHost")
 
 @MainActor
 final class GhosttyAppHost {
@@ -24,20 +21,11 @@ final class GhosttyAppHost {
     private(set) var app: ghostty_app_t?
     private(set) var config: ghostty_config_t?
 
-    // MARK: - Surface Event Callbacks
-
-    /// Called when a surface's title changes (e.g. shell sets window title).
     var onSurfaceTitle: ((UUID, String) -> Void)?
-    /// Called when a surface's working directory changes.
     var onSurfaceCwd: ((UUID, String) -> Void)?
-    /// Called when a surface requests attention (notification, command finished, etc.).
     var onSurfaceAttention: ((UUID) -> Void)?
-    /// Called when a surface closes (shell exits, etc.).
     var onSurfaceClose: ((UUID) -> Void)?
-    /// Called when a surface wants to open a URL.
     var onOpenURL: ((UUID, URL) -> Void)?
-
-    // MARK: - Private State
 
     private var surfaceByKey: [UInt: GhosttyTerminalSurface] = [:]
     private var needsTick = false
@@ -48,8 +36,6 @@ final class GhosttyAppHost {
         charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_@%+=:,./-"
     )
 
-    // MARK: - Initialization
-
     private init() {
         initialize()
     }
@@ -57,12 +43,11 @@ final class GhosttyAppHost {
     func initialize() {
         guard app == nil else { return }
 
-        // Load the dynamic Ghostty library
         var maybeError: UnsafePointer<CChar>?
         guard tmuxide_ghostty_load(&maybeError) else {
             let message = maybeError.map { String(cString: $0) } ?? "Unable to load libghostty"
             availability = .unavailable(message)
-            logger.warning("Ghostty unavailable: \(message)")
+            Logger.warning("Ghostty unavailable: \(message)")
             return
         }
 
@@ -70,24 +55,24 @@ final class GhosttyAppHost {
         let initResult = tmuxide_ghostty_init(UInt(CommandLine.argc), CommandLine.unsafeArgv)
         guard initResult == GHOSTTY_SUCCESS else {
             availability = .unavailable("ghostty_init failed: \(initResult)")
-            logger.error("ghostty_init failed with code \(initResult)")
+            Logger.error("ghostty_init failed with code \(initResult)")
             return
         }
 
-        // Create default Ghostty config
         guard let config = tmuxide_ghostty_config_new() else {
             availability = .unavailable("ghostty_config_new failed")
             return
         }
 
         tmuxide_ghostty_config_load_default_files(config)
+        // Ensure the theme file is up-to-date before loading it.
+        // Settings are loaded before GhosttyAppHost.initialize() runs.
+        loadThemeConfig(into: config)
         tmuxide_ghostty_config_finalize(config)
 
-        // Set up runtime callbacks that Ghostty uses to communicate with us
         var runtimeConfig = ghostty_runtime_config_s()
         runtimeConfig.userdata = Unmanaged.passUnretained(self).toOpaque()
         runtimeConfig.supports_selection_clipboard = true
-
         runtimeConfig.wakeup_cb = { userdata in
             guard let userdata else { return }
             let host = Unmanaged<GhosttyAppHost>.fromOpaque(userdata).takeUnretainedValue()
@@ -95,12 +80,10 @@ final class GhosttyAppHost {
                 host.scheduleTick()
             }
         }
-
         runtimeConfig.action_cb = { app, target, action in
             _ = app
             return GhosttyAppHost.handleRuntimeAction(target: target, action: action)
         }
-
         runtimeConfig.read_clipboard_cb = { userdata, _, state in
             guard let userdata else { return }
             let context = Unmanaged<GhosttySurfaceCallbackContext>.fromOpaque(userdata).takeUnretainedValue()
@@ -110,14 +93,12 @@ final class GhosttyAppHost {
                 tmuxide_ghostty_surface_complete_clipboard_request(surface, cString, state, false)
             }
         }
-
         runtimeConfig.confirm_read_clipboard_cb = { userdata, content, state, _ in
             guard let userdata else { return }
             let context = Unmanaged<GhosttySurfaceCallbackContext>.fromOpaque(userdata).takeUnretainedValue()
             guard let surface = context.surface?.surface else { return }
             tmuxide_ghostty_surface_complete_clipboard_request(surface, content, state, true)
         }
-
         runtimeConfig.write_clipboard_cb = { _, _, content, len, _ in
             guard let content, len > 0 else { return }
             let first = content[0]
@@ -126,7 +107,6 @@ final class GhosttyAppHost {
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(text, forType: .string)
         }
-
         runtimeConfig.close_surface_cb = { userdata, _ in
             guard let userdata else { return }
             let context = Unmanaged<GhosttySurfaceCallbackContext>.fromOpaque(userdata).takeUnretainedValue()
@@ -135,7 +115,6 @@ final class GhosttyAppHost {
             }
         }
 
-        // Create the Ghostty app instance
         guard let app = tmuxide_ghostty_app_new(&runtimeConfig, config) else {
             availability = .unavailable("ghostty_app_new failed")
             tmuxide_ghostty_config_free(config)
@@ -146,10 +125,8 @@ final class GhosttyAppHost {
         self.app = app
         self.availability = .available(loadPath)
         synchronizeAppFocusObservers()
-        logger.info("Ghostty loaded from: \(loadPath)")
+        Logger.info("Ghostty loaded from: \(loadPath)")
     }
-
-    // MARK: - Shutdown
 
     func shutdown(freeSurfacesSynchronously: Bool = false) {
         let surfaces = Array(surfaceByKey.values)
@@ -172,19 +149,6 @@ final class GhosttyAppHost {
         }
     }
 
-    /// Tear down and reinitialize Ghostty.
-    /// Returns true if reinitialization succeeded.
-    @discardableResult
-    func reinitialize() -> Bool {
-        shutdown()
-        initialize()
-        return app != nil
-    }
-
-    // MARK: - Surface Lifecycle
-
-    /// Create a new terminal surface wrapper. The actual Ghostty surface is created
-    /// lazily when the view is added to a window (see `createSurface(for:)`).
     func makeSurface(sessionID: UUID, workingDirectory: String, shellPath: String) -> GhosttyTerminalSurface? {
         guard app != nil else { return nil }
 
@@ -207,8 +171,8 @@ final class GhosttyAppHost {
         return wrapper
     }
 
-    /// Create the actual Ghostty surface. Must be called BEFORE the view enters
-    /// any layer-backed hierarchy so Ghostty can set up layer-hosting mode.
+    /// Create the actual ghostty surface. Must be called BEFORE the view enters
+    /// any layer-backed hierarchy so ghostty can set up layer-hosting mode.
     func createSurface(for wrapper: GhosttyTerminalSurface) {
         guard let app else { return }
         guard wrapper.surface == nil else { return }
@@ -225,13 +189,7 @@ final class GhosttyAppHost {
         let scaleFactor = view.window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2
         config.scale_factor = max(1, Double(scaleFactor))
 
-        // Prefer rawCommand (used by mirror/passthrough surfaces) over shell-escaped shellPath
-        let command: String?
-        if let raw = wrapper.rawCommand {
-            command = raw
-        } else {
-            command = wrapper.shellPath.isEmpty ? nil : Self.shellEscapedCommand(wrapper.shellPath)
-        }
+        let command = wrapper.shellPath.isEmpty ? nil : Self.shellEscapedCommand(wrapper.shellPath)
         let surface: ghostty_surface_t? = wrapper.workingDirectory.withCString { cwdCString in
             if let command {
                 return command.withCString { shellCString in
@@ -247,7 +205,6 @@ final class GhosttyAppHost {
         }
 
         guard let surface else {
-            logger.error("Failed to create Ghostty surface for session \(wrapper.sessionID)")
             return
         }
 
@@ -262,7 +219,7 @@ final class GhosttyAppHost {
             tmuxide_ghostty_surface_set_display_id(surface, displayID.uint32Value)
         }
 
-        // Set scale and size using pixel (backing) dimensions.
+        // Set scale and size using pixel (backing) dimensions
         // If the view isn't in a window yet, convertToBacking won't have the right
         // scale, so use the screen's backing scale factor directly.
         let backingSize: CGSize
@@ -279,12 +236,13 @@ final class GhosttyAppHost {
         let hpx = UInt32(max(1, Int(floor(backingSize.height))))
         tmuxide_ghostty_surface_set_size(surface, wpx, hpx)
 
-        // Tell Ghostty the surface is visible so the renderer starts drawing
+        // Tell ghostty the surface is visible so the renderer starts drawing
         tmuxide_ghostty_surface_set_occlusion(surface, true)
 
         // Kick initial draw
         tmuxide_ghostty_surface_refresh(surface)
         scheduleTick()
+
     }
 
     static func shellEscapedCommand(_ command: String) -> String {
@@ -301,8 +259,6 @@ final class GhosttyAppHost {
         surfaceByKey.removeValue(forKey: key)
     }
 
-    // MARK: - Surface Focus
-
     func focusSurface(_ wrapper: GhosttyTerminalSurface) {
         guard let surface = wrapper.surface else { return }
         setAppFocus(true)
@@ -318,8 +274,6 @@ final class GhosttyAppHost {
         tmuxide_ghostty_surface_set_focus(surface, false)
         scheduleTick()
     }
-
-    // MARK: - Surface Resize
 
     func resizeSurface(_ wrapper: GhosttyTerminalSurface, pointSize: CGSize, backingSize: CGSize) {
         guard let surface = wrapper.surface else { return }
@@ -340,7 +294,23 @@ final class GhosttyAppHost {
         scheduleTick()
     }
 
-    // MARK: - Surface Input
+    /// Read the full scrollback + screen content from a surface as plain text.
+    func dumpScrollback(_ wrapper: GhosttyTerminalSurface) -> String? {
+        guard let surface = wrapper.surface else { return nil }
+
+        // Select from top of scrollback to bottom-right of screen.
+        var sel = ghostty_selection_s()
+        sel.top_left = ghostty_point_s(tag: GHOSTTY_POINT_SCREEN, coord: GHOSTTY_POINT_COORD_TOP_LEFT, x: 0, y: 0)
+        sel.bottom_right = ghostty_point_s(tag: GHOSTTY_POINT_SCREEN, coord: GHOSTTY_POINT_COORD_BOTTOM_RIGHT, x: UInt32.max, y: UInt32.max)
+        sel.rectangle = false
+
+        var textResult = ghostty_text_s()
+        guard tmuxide_ghostty_surface_read_text(surface, sel, &textResult) else { return nil }
+        defer { tmuxide_ghostty_surface_free_text(surface, &textResult) }
+
+        guard let ptr = textResult.text, textResult.text_len > 0 else { return nil }
+        return String(cString: ptr)
+    }
 
     func sendText(_ text: String, to wrapper: GhosttyTerminalSurface) {
         guard let surface = wrapper.surface else { return }
@@ -351,8 +321,6 @@ final class GhosttyAppHost {
         }
         scheduleTick()
     }
-
-    // MARK: - Tick Loop
 
     func scheduleTick() {
         needsTick = true
@@ -375,8 +343,6 @@ final class GhosttyAppHost {
             scheduleTick()
         }
     }
-
-    // MARK: - App Focus Observers
 
     private func synchronizeAppFocusObservers() {
         guard appObservers.isEmpty else {
@@ -417,8 +383,6 @@ final class GhosttyAppHost {
         tmuxide_ghostty_app_set_focus(app, focused)
         scheduleTick()
     }
-
-    // MARK: - Runtime Action Handling
 
     private static func handleRuntimeAction(target: ghostty_target_s, action: ghostty_action_s) -> Bool {
         guard let host = GhosttyAppHost.sharedOrNil else { return false }
@@ -466,15 +430,50 @@ final class GhosttyAppHost {
         }
     }
 
+    // MARK: - Theme Support
+
+    private static var themeConfigPath: String {
+        let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        let dir = support.appendingPathComponent("tmux-ide", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir.appendingPathComponent("theme.conf").path
+    }
+
+    private func loadThemeConfig(into config: ghostty_config_t) {
+        let path = Self.themeConfigPath
+        guard FileManager.default.fileExists(atPath: path) else { return }
+        path.withCString { cPath in
+            tmuxide_ghostty_config_load_file(config, cPath)
+        }
+        Logger.info("Loaded theme config from \(path)")
+    }
+
+    /// Write the selected theme to disk. Call before reinitialize to apply.
+    static func writeThemeConfig(themeID: String?) {
+        let path = themeConfigPath
+        guard let themeID else {
+            // No theme selected — remove the file so Ghostty uses defaults
+            try? FileManager.default.removeItem(atPath: path)
+            return
+        }
+        // TODO: implement terminal theme catalog
+        try? FileManager.default.removeItem(atPath: path)
+    }
+
+    /// Tear down and reinitialize Ghostty with the current theme.
+    /// Returns true if reinitialization succeeded.
+    @discardableResult
+    func reinitialize() -> Bool {
+        shutdown()
+        initialize()
+        return app != nil
+    }
+
     private static var sharedOrNil: GhosttyAppHost? {
         GhosttyAppHost.shared
     }
 }
 
-// MARK: - Surface Callback Context
-
-/// Bridging context that routes C callbacks from Ghostty back to the correct
-/// `GhosttyAppHost` and `GhosttyTerminalSurface` instances.
 @MainActor
 final class GhosttySurfaceCallbackContext {
     weak var host: GhosttyAppHost?

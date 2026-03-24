@@ -80,6 +80,8 @@ const knownCommands = new Set([
   "plan",
   "setup",
   "send",
+  "dispatch",
+  "notify",
   "orchestrator",
   "settings",
   "command-center",
@@ -153,6 +155,10 @@ ${bold("Pane Messaging:")}
   ${cyan("tmux-ide send")} <target> <message>     ${dim("Send message to a pane")}
   ${cyan("tmux-ide send")} --to <name> <message>   ${dim("Target by name, title, role, or ID")}
   ${cyan("tmux-ide send")} <target> --no-enter msg  ${dim("Send text without pressing Enter")}
+
+${bold("Dispatch:")}
+  ${cyan("tmux-ide dispatch")} <id> [--json]        ${dim("Print task context to stdout")}
+  ${cyan("tmux-ide notify")} <message> [--json]     ${dim("Send notification to lead pane")}
 
 ${bold("Orchestrator:")}
   ${cyan("tmux-ide orchestrator")} [--json]         ${dim("Show orchestrator status")}
@@ -351,6 +357,20 @@ try {
         message = readFileSync(0, "utf-8").trim();
       }
       await send(null, { json, to: target, message, noEnter: values["no-enter"] });
+      break;
+    }
+
+    case "dispatch": {
+      const { dispatch: dispatchCmd } = await import("../src/dispatch.ts");
+      const taskId = positionals[1];
+      await dispatchCmd(null, { taskId, json });
+      break;
+    }
+
+    case "notify": {
+      const { notify: notifyCmd } = await import("../src/notify.ts");
+      const notifyMessage = positionals.slice(1).join(" ");
+      await notifyCmd(null, { message: notifyMessage || undefined, json });
       break;
     }
 
