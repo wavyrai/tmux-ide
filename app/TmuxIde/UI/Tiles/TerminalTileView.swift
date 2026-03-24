@@ -1,38 +1,37 @@
 import SwiftUI
 
-/// A SwiftUI view that renders a live tmux pane using a native Ghostty terminal.
+/// A terminal tile that attaches to a tmux session.
 ///
-/// Each tile creates a real Ghostty surface running a tmux client that attaches
-/// directly to the target pane. This is the same approach as Terminal.app or
-/// iTerm2 — the terminal IS the tmux client, with full PTY, input, and rendering.
-///
-/// For local sessions: `tmux select-pane -t {paneId} && tmux attach-session -t {session}`
-/// For remote sessions: `ssh host -t 'tmux attach-session -t {session}'`
+/// Runs `tmux attach-session -t {session}` inside a Ghostty surface.
+/// The user sees the full tmux layout with all panes and can switch
+/// between them using tmux keybindings. When the app closes, tmux
+/// detaches — all processes keep running.
 struct TerminalTileView: View {
     let paneId: String
     let baseURL: URL
     let sessionName: String
 
-    @StateObject private var controller = TmuxPaneController()
+    @StateObject private var controller = TmuxSessionController()
 
     var body: some View {
         ZStack {
             if let surface = controller.surface {
                 InlineTerminalView(surface: surface)
             } else {
-                Color.black
-                VStack(spacing: 8) {
-                    ProgressView()
-                        .controlSize(.small)
-                        .tint(.white)
-                    Text("Attaching to \(paneId)...")
-                        .font(.caption)
-                        .foregroundStyle(.white.opacity(0.7))
-                }
+                Color(nsColor: .textBackgroundColor)
+                    .overlay {
+                        VStack(spacing: 8) {
+                            ProgressView()
+                                .controlSize(.small)
+                            Text("Attaching to \(sessionName)...")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
             }
         }
         .onAppear {
-            controller.attach(session: sessionName, paneId: paneId)
+            controller.attach(session: sessionName)
         }
         .onDisappear {
             controller.detach()
@@ -40,57 +39,60 @@ struct TerminalTileView: View {
     }
 }
 
-// MARK: - Tmux Pane Controller
+// MARK: - Tmux Session Controller
 
-/// Creates a Ghostty terminal surface that runs a tmux client attached to a specific pane.
-/// The terminal is a real PTY process — Ghostty handles all rendering and input natively.
+/// Creates a Ghostty surface that runs `tmux attach-session`.
+/// The terminal shows the full tmux session — all panes, status bar, everything.
+/// Processes are persistent in tmux; closing the app just detaches.
 @MainActor
-final class TmuxPaneController: ObservableObject {
+final class TmuxSessionController: ObservableObject {
     @Published private(set) var surface: GhosttyTerminalSurface?
-    @Published private(set) var isAttached = false
 
-    /// Attach to a tmux pane by creating a Ghostty surface running a tmux client.
-    func attach(session: String, paneId: String) {
+    func attach(session: String) {
         guard surface == nil else { return }
 
-        // Create a Ghostty surface with a shell that attaches to the tmux pane.
-        // We use `tmux select-pane` to focus the target pane, then `respawn-pane`
-        // isn't needed — we just attach to the session and the pane is visible.
-        //
-        // Actually simpler: run `tmux attach-session -t {session}` in the shell.
-        // The user can then navigate panes with tmux keybindings.
-        // But for per-pane tiles, we want each tile to show ONE pane.
-        //
-        // The cleanest approach: use `tmux capture-pane -p -e -t {paneId}`
-        // in a watch loop for display, and `tmux send-keys -t {paneId}` for input.
-        // But that's essentially the WebSocket mirror approach again.
-        //
-        // The REAL right approach: create a Ghostty surface running the user's shell,
-        // and just show it. For a tmux-ide pane tile, the shell command is whatever
-        // the ide.yml says (claude, pnpm dev, zsh, etc.)
-        //
-        // For now: create a surface running zsh in the project directory.
-        // The native app shows independent terminal sessions, not tmux pane mirrors.
+        // Find the project directory from tmux
+        let cwd = projectDir(for: session)
 
         let wrapper = GhosttyAppHost.shared.makeSurface(
             sessionID: UUID(),
-            workingDirectory: findProjectDir(session: session),
+            workingDirectory: cwd,
             shellPath: "/bin/zsh"
         )
 
+        // After the surface creates its shell, send the tmux attach command.
+        // This way Ghostty runs zsh which then runs tmux attach.
+        // When the user detaches (Ctrl+B d), they're back at a shell.
+        wrapper?.rawCommand = "tmux attach-session -t \(shellEscape(session))"
+
         surface = wrapper
-        isAttached = true
     }
 
-    /// Detach and clean up the terminal surface.
     func detach() {
         surface = nil
-        isAttached = false
     }
 
-    private func findProjectDir(session: String) -> String {
-        // Try to get the session's working directory from the command-center
-        // For now, fall back to home directory
-        return NSHomeDirectory()
+    private func projectDir(for session: String) -> String {
+        // Ask tmux for the session's working directory
+        let result = try? shellOutput("/usr/bin/tmux", args: [
+            "display-message", "-t", session, "-p", "#{pane_current_path}"
+        ])
+        return result?.trimmingCharacters(in: .whitespacesAndNewlines) ?? NSHomeDirectory()
+    }
+
+    private func shellEscape(_ s: String) -> String {
+        "'" + s.replacingOccurrences(of: "'", with: "'\\''") + "'"
+    }
+
+    private func shellOutput(_ cmd: String, args: [String]) throws -> String {
+        let process = Process()
+        let pipe = Pipe()
+        process.executableURL = URL(fileURLWithPath: cmd)
+        process.arguments = args
+        process.standardOutput = pipe
+        process.standardError = FileHandle.nullDevice
+        try process.run()
+        process.waitUntilExit()
+        return String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
     }
 }

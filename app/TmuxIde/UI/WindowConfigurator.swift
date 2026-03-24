@@ -14,6 +14,8 @@ struct WindowConfigurator: NSViewRepresentable {
             window.titlebarAppearsTransparent = true
             window.backgroundColor = bgColor
             window.isMovableByWindowBackground = true
+            // Force dark appearance so toolbar icons (sidebar toggle, etc.) are light
+            window.appearance = NSAppearance(named: .darkAqua)
         }
         return view
     }

@@ -27,10 +27,6 @@ struct CanvasContainerView: View {
             }
         }
         .toolbar {
-            ToolbarItem(placement: .principal) {
-                Text(sessionName)
-                    .font(.headline)
-            }
             ToolbarItem(placement: .automatic) {
                 overviewToggleButton
             }

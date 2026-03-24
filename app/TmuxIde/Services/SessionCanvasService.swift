@@ -132,45 +132,47 @@ final class SessionCanvasService: ObservableObject {
     }
 
     private func buildWorkspace(sessionName: String, panes: [TmuxIdePane]) -> CanvasWorkspace {
-        // Group panes by their vertical position to approximate rows.
-        // tmux-ide arranges panes in rows; panes in the same row share
-        // similar Y coordinates. We use the pane index ordering + height
-        // heuristic to group them.
+        // Architecture: tmux is the runtime, the app is the view.
         //
-        // Simpler approach: just create one column per "group" of panes
-        // that are horizontally adjacent. For now, put all panes in a
-        // single column (vertical stack) — the canvas layout can be
-        // rearranged by the user.
+        // - ONE terminal tile showing the full tmux session (all agent panes)
+        //   Runs `tmux attach-session -t {session}` inside Ghostty
+        //   User navigates panes with tmux keybindings
+        //
+        // - Native widget tiles for non-terminal panes (mission control,
+        //   explorer, browser, etc.) — these are better as native SwiftUI
 
-        // Heuristic: group by row using pane heights
-        // Panes in the same row have the same height
-        var rowGroups: [[TmuxIdePane]] = []
-        var currentRow: [TmuxIdePane] = []
-        var currentHeight: Int?
+        var columns: [CanvasColumn] = []
 
-        let sorted = panes.sorted { $0.index < $1.index }
-        for pane in sorted {
-            if let h = currentHeight, pane.height == h {
-                currentRow.append(pane)
-            } else {
-                if !currentRow.isEmpty {
-                    rowGroups.append(currentRow)
+        // Column 1: One big tmux terminal tile
+        let tmuxTile = CanvasItem(
+            ref: .terminal(paneId: sessionName),
+            preferredHeight: 600,
+            paneTitle: sessionName
+        )
+        columns.append(CanvasColumn(items: [tmuxTile], preferredWidth: 700))
+
+        // Column 2: Native widget tiles for widget panes
+        let widgetPanes = panes.filter { $0.type != nil }
+        if !widgetPanes.isEmpty {
+            let widgetItems = widgetPanes.map { pane -> CanvasItem in
+                // Map pane types to tile refs
+                let ref: TileRef
+                switch pane.type {
+                case "explorer", "preview", "changes", "costs", "config", "tasks":
+                    ref = .dashboard // Use dashboard as generic widget for now
+                case "mission-control":
+                    ref = .dashboard
+                default:
+                    ref = .dashboard
                 }
-                currentRow = [pane]
-                currentHeight = pane.height
+                return CanvasItem(ref: ref, paneTitle: pane.title)
             }
-        }
-        if !currentRow.isEmpty {
-            rowGroups.append(currentRow)
+            columns.append(CanvasColumn(items: widgetItems, preferredWidth: 400))
         }
 
-        // Each row group becomes a column with its panes as items
-        let columns = rowGroups.map { group -> CanvasColumn in
-            let items = group.map { pane -> CanvasItem in
-                CanvasItem(ref: .terminal(paneId: pane.id), paneTitle: pane.title)
-            }
-            return CanvasColumn(items: items)
-        }
+        // Column 3: Browser tile (always available for dev server preview)
+        let browserTile = CanvasItem(ref: .browser(url: "http://localhost:3000"), paneTitle: "Preview")
+        columns.append(CanvasColumn(items: [browserTile], preferredWidth: 400))
 
         return CanvasWorkspace(sessionName: sessionName, columns: columns)
     }

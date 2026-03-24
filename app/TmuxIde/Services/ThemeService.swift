@@ -44,18 +44,20 @@ struct AppThemeColors {
     // NSColor for window configurator
     let nsWindowBackground: NSColor
 
+    // Neutral grayscale dark theme — matches Apple's dark mode aesthetic.
+    // No colored tints on surfaces, clean and professional.
     static let `default` = AppThemeColors(
-        primaryText: Color.white.opacity(0.87),
+        primaryText: Color.white.opacity(0.85),
         secondaryText: Color.white.opacity(0.55),
         tertiaryText: Color.white.opacity(0.35),
-        mutedText: Color.white.opacity(0.2),
-        surface0: Color(hex: "#1a1a2e"),
-        surface1: Color(hex: "#222244"),
-        surface2: Color(hex: "#2a2a50"),
-        sidebarBackground: Color(hex: "#16162a"),
-        divider: Color(hex: "#333366"),
-        accent: Color(hex: "#7c6cf0"),
-        nsWindowBackground: NSColor(hex: "#1a1a2e")
+        mutedText: Color.white.opacity(0.18),
+        surface0: Color(hex: "#1c1c1e"),       // Apple dark background
+        surface1: Color(hex: "#2c2c2e"),       // Raised surface
+        surface2: Color(hex: "#3a3a3c"),       // Highest surface
+        sidebarBackground: Color(hex: "#1c1c1e"),
+        divider: Color.white.opacity(0.08),
+        accent: Color.accentColor,              // Respect system accent
+        nsWindowBackground: NSColor(hex: "#1c1c1e")
     )
 }
 

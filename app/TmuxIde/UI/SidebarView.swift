@@ -52,17 +52,17 @@ struct SidebarView: View {
                 HStack(spacing: 6) {
                     Image(systemName: "checkmark.shield")
                         .font(.caption)
-                        .foregroundStyle(.orange)
+                        .foregroundStyle(tc.accent)
                     Text("\(pendingReviewCount) pending review\(pendingReviewCount == 1 ? "" : "s")")
                         .font(.caption)
-                        .foregroundStyle(tc.primaryText)
+                        .foregroundStyle(tc.secondaryText)
                     Spacer()
                     Text("\(pendingReviewCount)")
                         .font(.caption2.weight(.bold).monospaced())
-                        .foregroundStyle(.white)
+                        .foregroundStyle(tc.primaryText)
                         .padding(.horizontal, 5)
                         .padding(.vertical, 1)
-                        .background(Capsule().fill(.orange))
+                        .background(Capsule().fill(tc.accent))
                 }
                 .padding(.horizontal, 12)
                 .padding(.vertical, 6)
@@ -97,10 +97,9 @@ struct SidebarView: View {
     @ViewBuilder
     private var sessionsHeader: some View {
         HStack(spacing: 4) {
-            Text("SESSIONS")
-                .font(.caption2.weight(.bold))
-                .tracking(1)
-                .foregroundStyle(tc.mutedText)
+            Text("Sessions")
+                .font(.subheadline.weight(.medium))
+                .foregroundStyle(tc.secondaryText)
 
             Text("\(discovery.sessions.count)")
                 .font(.caption2.weight(.semibold).monospaced())
@@ -111,7 +110,7 @@ struct SidebarView: View {
             if discovery.isSSEConnected {
                 Image(systemName: "antenna.radiowaves.left.and.right")
                     .font(.caption2.weight(.medium))
-                    .foregroundStyle(tc.accent.opacity(0.7))
+                    .foregroundStyle(tc.tertiaryText)
                     .help("Real-time updates via SSE")
             }
         }

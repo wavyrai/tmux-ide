@@ -11,6 +11,7 @@ struct TmuxIdeApp: App {
             MainWindowView()
                 .background(WindowConfigurator())
                 .environment(\.themeColors, AppThemeColors.default)
+                .preferredColorScheme(.dark)
                 .environmentObject(coordinator)
                 .environmentObject(coordinator.discoveryService)
                 .environmentObject(coordinator.canvasService)
