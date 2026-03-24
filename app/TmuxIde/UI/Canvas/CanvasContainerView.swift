@@ -13,6 +13,7 @@ struct CanvasContainerView: View {
     @State private var containerSize: CGSize = .zero
     @State private var draggedItemID: UUID?
     @State private var dropTargetColumnID: UUID?
+    @State private var needsInitialFocus = true
 
     var workspace: CanvasWorkspace? {
         canvasService.layout.workspaces.first { $0.sessionName == sessionName }
@@ -40,6 +41,17 @@ struct CanvasContainerView: View {
         }
         .onChange(of: canvasService.layout.camera) { newCamera in
             camera.sync(from: newCamera)
+            if containerSize != .zero {
+                camera.restoreFocus(in: canvasService.layout, containerSize: containerSize)
+            } else {
+                needsInitialFocus = true
+            }
+        }
+        .onChange(of: containerSize) { newSize in
+            if needsInitialFocus && newSize != .zero && camera.focusedItemID != nil {
+                needsInitialFocus = false
+                camera.restoreFocus(in: canvasService.layout, containerSize: newSize)
+            }
         }
         .onChange(of: camera.isOverview) { isOverview in
             canvasFocused = isOverview

@@ -244,6 +244,30 @@ final class CameraStateManager: ObservableObject {
         }
     }
 
+    // MARK: - Restore focus (non-animated)
+
+    /// Recalculate panOffset from the current focus IDs without animation.
+    /// Used after restoring camera state from persistence where only IDs are
+    /// available but panOffset has not been set.
+    func restoreFocus(in layout: CanvasLayout, containerSize: CGSize) {
+        if let itemID = focusedItemID,
+           let (workspace, colIndex, itemIndex) = resolveItem(itemID, in: layout) {
+            let column = workspace.columns[colIndex]
+            let metrics = CanvasMetrics.compute(containerSize: containerSize, isOverview: isOverview)
+            panOffset = CGPoint(
+                x: metrics.leadingOffset(for: workspace, anchorColumnIndex: colIndex),
+                y: metrics.verticalOffset(for: column, focusedItemIndex: itemIndex)
+            )
+        } else if let columnID = activeColumnID,
+                  let (workspace, colIndex) = resolveColumn(columnID, in: layout) {
+            let metrics = CanvasMetrics.compute(containerSize: containerSize, isOverview: isOverview)
+            panOffset = CGPoint(
+                x: metrics.leadingOffset(for: workspace, anchorColumnIndex: colIndex),
+                y: 0
+            )
+        }
+    }
+
     // MARK: - Arrow key navigation
 
     func navigateLeft(in layout: CanvasLayout, containerSize: CGSize) {

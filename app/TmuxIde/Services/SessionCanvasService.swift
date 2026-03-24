@@ -62,7 +62,16 @@ final class SessionCanvasService: ObservableObject {
                     updated.workspaces[wsIdx].columns.append(newColumn)
                 }
 
-                layout = updated
+                // Merge restored workspace into existing layout (don't replace other sessions)
+                if let restoredWorkspace = updated.workspaces.first {
+                    if let existingIdx = layout.workspaces.firstIndex(where: { $0.sessionName == name }) {
+                        layout.workspaces[existingIdx] = restoredWorkspace
+                    } else {
+                        layout.workspaces.append(restoredWorkspace)
+                    }
+                    layout.camera = updated.camera
+                    layout.isOverviewOpen = updated.isOverviewOpen
+                }
                 return
             }
 
@@ -87,15 +96,12 @@ final class SessionCanvasService: ObservableObject {
 
     /// Flush pending saves for all active sessions (call on app termination).
     func flushPendingSaves() {
-        var layoutsBySession: [String: CanvasLayout] = [:]
-        for workspace in layout.workspaces {
-            var sessionLayout = CanvasLayout()
-            sessionLayout.workspaces = [workspace]
-            sessionLayout.camera = scopedCamera(for: workspace, from: layout.camera)
-            sessionLayout.isOverviewOpen = layout.isOverviewOpen
-            layoutsBySession[workspace.sessionName] = sessionLayout
-        }
-        persistence?.flushAll(layouts: layoutsBySession)
+        guard let activeWorkspace = layout.workspaces.first(where: { $0.id == layout.camera.activeWorkspaceID }) else { return }
+        var sessionLayout = CanvasLayout()
+        sessionLayout.workspaces = [activeWorkspace]
+        sessionLayout.camera = scopedCamera(for: activeWorkspace, from: layout.camera)
+        sessionLayout.isOverviewOpen = layout.isOverviewOpen
+        persistence?.flushAll(layouts: [activeWorkspace.sessionName: sessionLayout])
     }
 
     // MARK: - Private
@@ -103,6 +109,7 @@ final class SessionCanvasService: ObservableObject {
     private func persistCurrentLayout(_ newLayout: CanvasLayout) {
         guard let persistence else { return }
         for workspace in newLayout.workspaces {
+            guard newLayout.camera.activeWorkspaceID == workspace.id else { continue }
             var sessionLayout = CanvasLayout()
             sessionLayout.workspaces = [workspace]
             sessionLayout.camera = scopedCamera(for: workspace, from: newLayout.camera)

@@ -74,7 +74,7 @@ private enum FuzzyMatch {
     }
 
     /// Return an AttributedString with matching characters bolded.
-    static func highlight(query: String, in text: String) -> AttributedString {
+    static func highlight(query: String, in text: String, accent: Color = .accentColor) -> AttributedString {
         var result = AttributedString(text)
         let lower = text.lowercased()
         let q = query.lowercased()
@@ -87,7 +87,7 @@ private enum FuzzyMatch {
             let attrIndex = result.index(result.startIndex, offsetByCharacters: offset)
             let nextAttrIndex = result.index(attrIndex, offsetByCharacters: 1)
             result[attrIndex..<nextAttrIndex].font = .system(.callout, weight: .bold)
-            result[attrIndex..<nextAttrIndex].foregroundColor = .purple
+            result[attrIndex..<nextAttrIndex].foregroundColor = accent
             searchIndex = lower.index(after: found)
         }
         return result
@@ -103,18 +103,14 @@ struct CommandPaletteOverlay: View {
     @FocusState private var queryFocused: Bool
     @State private var query = ""
     @State private var selectedIndex = 0
-    @Environment(\.themeColors) private var themeColors
 
     var body: some View {
         ZStack {
-            // Backdrop
-            Rectangle()
-                .fill(.ultraThinMaterial)
+            Color.black.opacity(0.25)
                 .ignoresSafeArea()
                 .onTapGesture { dismiss() }
 
             VStack(spacing: 0) {
-                // Search field
                 HStack(spacing: 8) {
                     Image(systemName: "magnifyingglass")
                         .font(.callout)
@@ -122,34 +118,41 @@ struct CommandPaletteOverlay: View {
 
                     TextField("Search commands...", text: $query)
                         .textFieldStyle(.plain)
-                        .font(.body)
+                        .font(.title3)
                         .focused($queryFocused)
                         .onSubmit { executeSelected() }
                         .onChange(of: query) { _, _ in selectedIndex = 0 }
                 }
-                .padding(12)
-                .background(themeColors.surface1)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 12)
 
-                Divider()
+                Divider().opacity(0.5)
 
-                // Results
                 ScrollViewReader { proxy in
                     ScrollView {
-                        LazyVStack(spacing: 2) {
-                            ForEach(
-                                Array(filteredActions.prefix(12).enumerated()),
-                                id: \.element.id
-                            ) { index, action in
-                                paletteRow(action: action, isSelected: index == selectedIndex)
-                                    .id(action.id)
-                                    .onTapGesture {
-                                        guard action.isEnabled else { return }
-                                        selectedIndex = index
-                                        executeSelected()
-                                    }
+                        if filteredActions.isEmpty {
+                            Text("No matching commands")
+                                .font(.callout)
+                                .foregroundStyle(.tertiary)
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 24)
+                        } else {
+                            LazyVStack(spacing: 2) {
+                                ForEach(
+                                    Array(filteredActions.prefix(12).enumerated()),
+                                    id: \.element.id
+                                ) { index, action in
+                                    paletteRow(action: action, isSelected: index == selectedIndex)
+                                        .id(action.id)
+                                        .onTapGesture {
+                                            guard action.isEnabled else { return }
+                                            selectedIndex = index
+                                            executeSelected()
+                                        }
+                                }
                             }
+                            .padding(6)
                         }
-                        .padding(6)
                     }
                     .frame(maxHeight: 360)
                     .onChange(of: selectedIndex) { _, newValue in
@@ -159,16 +162,8 @@ struct CommandPaletteOverlay: View {
                     }
                 }
 
-                if filteredActions.isEmpty {
-                    Text("No matching commands")
-                        .font(.callout)
-                        .foregroundStyle(.tertiary)
-                        .padding(16)
-                }
+                Divider().opacity(0.5)
 
-                Divider()
-
-                // Footer with keyboard hints
                 HStack(spacing: 16) {
                     keyHint("↑↓", label: "navigate")
                     keyHint("↵", label: "run")
@@ -178,18 +173,14 @@ struct CommandPaletteOverlay: View {
                 .foregroundStyle(.tertiary)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
-                .background(themeColors.surface0)
             }
             .frame(width: 520)
-            .background(
-                themeColors.surface0,
-                in: RoundedRectangle(cornerRadius: 12)
-            )
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
             .overlay(
-                RoundedRectangle(cornerRadius: 12)
-                    .stroke(Color.gray.opacity(0.3), lineWidth: 1)
+                RoundedRectangle(cornerRadius: 10)
+                    .strokeBorder(Color(nsColor: .separatorColor), lineWidth: 0.5)
             )
-            .shadow(color: .black.opacity(0.5), radius: 30, y: 10)
+            .shadow(color: .black.opacity(0.2), radius: 20, y: 8)
             .padding(.top, 60)
             .frame(maxHeight: .infinity, alignment: .top)
         }
@@ -206,11 +197,11 @@ struct CommandPaletteOverlay: View {
         HStack(spacing: 10) {
             Image(systemName: action.icon)
                 .font(.callout)
-                .foregroundStyle(action.isEnabled ? .secondary : .quaternary)
+                .foregroundStyle(isSelected ? Color.accentColor : (action.isEnabled ? Color.secondary : Color.secondary.opacity(0.3)))
                 .frame(width: 20)
 
             VStack(alignment: .leading, spacing: 2) {
-                Text(FuzzyMatch.highlight(query: query, in: action.title))
+                Text(FuzzyMatch.highlight(query: query, in: action.title, accent: Color.accentColor))
                     .font(.callout)
                     .foregroundStyle(action.isEnabled ? .primary : .tertiary)
 
@@ -229,18 +220,15 @@ struct CommandPaletteOverlay: View {
                     .font(.caption).monospaced()
                     .foregroundStyle(.tertiary)
                     .padding(.horizontal, 6)
-                    .padding(.vertical, 3)
-                    .background(
-                        themeColors.surface2,
-                        in: RoundedRectangle(cornerRadius: 4)
-                    )
+                    .padding(.vertical, 2)
+                    .background(.quaternary, in: RoundedRectangle(cornerRadius: 4))
             }
         }
         .padding(.horizontal, 10)
-        .padding(.vertical, 7)
+        .padding(.vertical, 8)
         .background(
             isSelected
-                ? Color.accentColor.opacity(0.15)
+                ? Color.accentColor.opacity(0.12)
                 : Color.clear,
             in: RoundedRectangle(cornerRadius: 6)
         )
@@ -256,10 +244,7 @@ struct CommandPaletteOverlay: View {
                 .font(.caption).monospaced()
                 .padding(.horizontal, 4)
                 .padding(.vertical, 2)
-                .background(
-                    themeColors.surface2,
-                    in: RoundedRectangle(cornerRadius: 3)
-                )
+                .background(.quaternary, in: RoundedRectangle(cornerRadius: 3))
             Text(label)
                 .font(.caption2)
         }

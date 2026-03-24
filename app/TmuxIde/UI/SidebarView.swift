@@ -232,14 +232,21 @@ struct SessionRowView: View {
 
     @State private var isHovering = false
 
+    private var displayPath: String {
+        let dir = session.dir
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        if dir.hasPrefix(home) {
+            return "~" + dir.dropFirst(home.count)
+        }
+        return dir
+    }
+
     var body: some View {
         Button(action: onSelect) {
             HStack(spacing: 8) {
-                // Status icon with pulse
                 AgentStatusIcon(activeAgents: session.stats.activeAgents)
 
-                // Session info
-                VStack(alignment: .leading, spacing: 2) {
+                VStack(alignment: .leading, spacing: 3) {
                     Text(session.name)
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(tc.primaryText)
@@ -252,7 +259,12 @@ struct SessionRowView: View {
                             .lineLimit(1)
                     }
 
-                    // Stats bar
+                    Text(displayPath)
+                        .font(.caption)
+                        .foregroundStyle(tc.mutedText)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+
                     HStack(spacing: 10) {
                         if session.stats.totalTasks > 0 {
                             HStack(spacing: 3) {
@@ -283,7 +295,7 @@ struct SessionRowView: View {
                 Spacer(minLength: 4)
             }
             .padding(.horizontal, 12)
-            .padding(.vertical, 6)
+            .padding(.vertical, 12)
             .background(rowBackground)
             .contentShape(Rectangle())
         }
@@ -292,6 +304,11 @@ struct SessionRowView: View {
             withAnimation(.easeOut(duration: 0.1)) {
                 isHovering = hovering
             }
+        }
+        .overlay(alignment: .bottom) {
+            tc.divider.opacity(0.4)
+                .frame(height: 0.5)
+                .padding(.horizontal, 12)
         }
     }
 

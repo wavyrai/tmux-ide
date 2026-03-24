@@ -1,4 +1,3 @@
-import "@opentui/solid/runtime-plugin-support";
 import { execFileSync } from "node:child_process";
 import { parseArgs } from "node:util";
 import { relative } from "node:path";

@@ -35,13 +35,6 @@ struct ConnectionSheet: View {
             if connectionManager.tailscaleAvailable {
                 TailscaleBadge()
             }
-            Button {
-                dismiss()
-            } label: {
-                Image(systemName: "xmark.circle.fill")
-                    .foregroundStyle(.secondary)
-            }
-            .buttonStyle(.plain)
         }
         .padding()
     }
