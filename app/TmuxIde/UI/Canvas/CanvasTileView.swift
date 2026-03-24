@@ -119,14 +119,17 @@ struct CanvasTileView: View {
             return "Browser"
         case .dashboard:
             return "Dashboard"
+        case .widget:
+            return "Widget"
         }
     }
 
     private var tileSubtitle: String {
         switch item.ref {
-        case .terminal: return "shell"
+        case .terminal: return "tmux"
         case .browser: return "web"
         case .dashboard: return "overview"
+        case .widget: return "tui"
         }
     }
 
@@ -135,6 +138,7 @@ struct CanvasTileView: View {
         case .terminal: return .green
         case .browser: return .blue
         case .dashboard: return themeColors.accent
+        case .widget: return .purple
         }
     }
 
@@ -153,6 +157,8 @@ struct CanvasTileView: View {
             WebViewTileView(initialURL: url)
         case .dashboard:
             dashboardPlaceholder
+        case .widget(let command):
+            WidgetTileView(command: command, sessionName: sessionName)
         }
     }
 

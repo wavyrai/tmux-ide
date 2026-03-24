@@ -7,6 +7,7 @@ enum TileRef: Codable, Equatable {
     case terminal(paneId: String)
     case browser(url: String?)
     case dashboard
+    case widget(command: String)
 }
 
 struct CanvasItem: Identifiable, Codable, Equatable {

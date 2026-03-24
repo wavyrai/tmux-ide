@@ -152,7 +152,7 @@ final class LayoutPersistenceService {
                     switch item.ref {
                     case .terminal(let paneId):
                         return !livePaneIDs.contains(paneId)
-                    case .browser, .dashboard:
+                    case .browser, .dashboard, .widget:
                         return false
                     }
                 }

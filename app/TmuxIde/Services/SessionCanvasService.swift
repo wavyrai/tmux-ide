@@ -132,47 +132,49 @@ final class SessionCanvasService: ObservableObject {
     }
 
     private func buildWorkspace(sessionName: String, panes: [TmuxIdePane]) -> CanvasWorkspace {
-        // Architecture: tmux is the runtime, the app is the view.
+        // Architecture: tmux is the runtime, the app is the IDE frame.
         //
-        // - ONE terminal tile showing the full tmux session (all agent panes)
-        //   Runs `tmux attach-session -t {session}` inside Ghostty
-        //   User navigates panes with tmux keybindings
-        //
-        // - Native widget tiles for non-terminal panes (mission control,
-        //   explorer, browser, etc.) — these are better as native SwiftUI
+        // Left (large): tmux session — all agents, full pane layout
+        // Right (sidebar): native widgets — mission control, browser, workflow
 
         var columns: [CanvasColumn] = []
 
-        // Column 1: One big tmux terminal tile
+        // Column 1: Big tmux terminal — takes most of the space
         let tmuxTile = CanvasItem(
             ref: .terminal(paneId: sessionName),
-            preferredHeight: 600,
+            preferredHeight: 900,
             paneTitle: sessionName
         )
-        columns.append(CanvasColumn(items: [tmuxTile], preferredWidth: 700))
+        columns.append(CanvasColumn(items: [tmuxTile], preferredWidth: 1000))
 
-        // Column 2: Native widget tiles for widget panes
-        let widgetPanes = panes.filter { $0.type != nil }
-        if !widgetPanes.isEmpty {
-            let widgetItems = widgetPanes.map { pane -> CanvasItem in
-                // Map pane types to tile refs
-                let ref: TileRef
-                switch pane.type {
-                case "explorer", "preview", "changes", "costs", "config", "tasks":
-                    ref = .dashboard // Use dashboard as generic widget for now
-                case "mission-control":
-                    ref = .dashboard
-                default:
-                    ref = .dashboard
-                }
-                return CanvasItem(ref: ref, paneTitle: pane.title)
-            }
-            columns.append(CanvasColumn(items: widgetItems, preferredWidth: 400))
-        }
+        // Column 2: Stacked widget tiles running OpenTUI widgets in Ghostty
+        var widgetItems: [CanvasItem] = []
 
-        // Column 3: Browser tile (always available for dev server preview)
-        let browserTile = CanvasItem(ref: .browser(url: "http://localhost:3000"), paneTitle: "Preview")
-        columns.append(CanvasColumn(items: [browserTile], preferredWidth: 400))
+        // Mission Control — the unified TUI dashboard
+        let mcCmd = "bun src/widgets/mission-control/index.tsx --session=\(sessionName) --dir=."
+        widgetItems.append(CanvasItem(
+            ref: .widget(command: mcCmd),
+            preferredHeight: 350,
+            paneTitle: "Mission Control"
+        ))
+
+        // Explorer — file tree navigator
+        let explorerCmd = "bun src/widgets/explorer/index.tsx --session=\(sessionName) --dir=."
+        widgetItems.append(CanvasItem(
+            ref: .widget(command: explorerCmd),
+            preferredHeight: 300,
+            paneTitle: "Explorer"
+        ))
+
+        // Browser — command-center dashboard
+        let port = 4000
+        widgetItems.append(CanvasItem(
+            ref: .browser(url: "http://localhost:\(port)"),
+            preferredHeight: 250,
+            paneTitle: "Browser"
+        ))
+
+        columns.append(CanvasColumn(items: widgetItems, preferredWidth: 450))
 
         return CanvasWorkspace(sessionName: sessionName, columns: columns)
     }
