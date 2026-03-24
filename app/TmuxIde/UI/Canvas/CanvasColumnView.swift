@@ -43,7 +43,7 @@ struct CanvasColumnView: View {
                 }
 
                 if index > 0 && isOverview {
-                    Spacer().frame(height: 8)
+                    Spacer().frame(height: 12)
                 }
 
                 tileView(for: item)
@@ -51,8 +51,8 @@ struct CanvasColumnView: View {
         }
         .frame(
             minWidth: 300,
-            idealWidth: column.preferredWidth.map { CGFloat($0) } ?? 400,
-            maxWidth: 600
+            idealWidth: column.preferredWidth.map { CGFloat($0) } ?? 420,
+            maxWidth: 760
         )
     }
 

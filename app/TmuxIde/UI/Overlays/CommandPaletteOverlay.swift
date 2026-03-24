@@ -86,7 +86,8 @@ private enum FuzzyMatch {
             let offset = lower.distance(from: lower.startIndex, to: found)
             let attrIndex = result.index(result.startIndex, offsetByCharacters: offset)
             let nextAttrIndex = result.index(attrIndex, offsetByCharacters: 1)
-            result[attrIndex..<nextAttrIndex].font = .system(size: 12, weight: .bold)
+            result[attrIndex..<nextAttrIndex].font = .system(.callout, weight: .bold)
+            result[attrIndex..<nextAttrIndex].foregroundColor = .purple
             searchIndex = lower.index(after: found)
         }
         return result
@@ -102,11 +103,13 @@ struct CommandPaletteOverlay: View {
     @FocusState private var queryFocused: Bool
     @State private var query = ""
     @State private var selectedIndex = 0
+    @Environment(\.themeColors) private var themeColors
 
     var body: some View {
         ZStack {
             // Backdrop
-            Color.black.opacity(0.45)
+            Rectangle()
+                .fill(.ultraThinMaterial)
                 .ignoresSafeArea()
                 .onTapGesture { dismiss() }
 
@@ -114,18 +117,18 @@ struct CommandPaletteOverlay: View {
                 // Search field
                 HStack(spacing: 8) {
                     Image(systemName: "magnifyingglass")
-                        .font(.system(size: 12, weight: .medium))
+                        .font(.callout)
                         .foregroundStyle(.tertiary)
 
                     TextField("Search commands...", text: $query)
                         .textFieldStyle(.plain)
-                        .font(.system(size: 14))
+                        .font(.body)
                         .focused($queryFocused)
                         .onSubmit { executeSelected() }
                         .onChange(of: query) { _, _ in selectedIndex = 0 }
                 }
                 .padding(12)
-                .background(Color(nsColor: .controlBackgroundColor))
+                .background(themeColors.surface1)
 
                 Divider()
 
@@ -158,7 +161,7 @@ struct CommandPaletteOverlay: View {
 
                 if filteredActions.isEmpty {
                     Text("No matching commands")
-                        .font(.system(size: 12))
+                        .font(.callout)
                         .foregroundStyle(.tertiary)
                         .padding(16)
                 }
@@ -175,11 +178,11 @@ struct CommandPaletteOverlay: View {
                 .foregroundStyle(.tertiary)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
-                .background(Color(nsColor: .windowBackgroundColor))
+                .background(themeColors.surface0)
             }
             .frame(width: 520)
             .background(
-                Color(nsColor: .windowBackgroundColor),
+                themeColors.surface0,
                 in: RoundedRectangle(cornerRadius: 12)
             )
             .overlay(
@@ -202,18 +205,18 @@ struct CommandPaletteOverlay: View {
     private func paletteRow(action: CommandAction, isSelected: Bool) -> some View {
         HStack(spacing: 10) {
             Image(systemName: action.icon)
-                .font(.system(size: 11, weight: .medium))
+                .font(.callout)
                 .foregroundStyle(action.isEnabled ? .secondary : .quaternary)
                 .frame(width: 20)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(FuzzyMatch.highlight(query: query, in: action.title))
-                    .font(.system(size: 12, weight: .medium))
+                    .font(.callout)
                     .foregroundStyle(action.isEnabled ? .primary : .tertiary)
 
                 if !action.subtitle.isEmpty {
                     Text(action.subtitle)
-                        .font(.system(size: 10))
+                        .font(.caption)
                         .foregroundStyle(.tertiary)
                         .lineLimit(1)
                 }
@@ -223,12 +226,12 @@ struct CommandPaletteOverlay: View {
 
             if let shortcut = action.shortcut {
                 Text(shortcut)
-                    .font(.system(size: 9, weight: .medium, design: .monospaced))
+                    .font(.caption).monospaced()
                     .foregroundStyle(.tertiary)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 3)
                     .background(
-                        Color(nsColor: .controlBackgroundColor),
+                        themeColors.surface2,
                         in: RoundedRectangle(cornerRadius: 4)
                     )
             }
@@ -237,7 +240,7 @@ struct CommandPaletteOverlay: View {
         .padding(.vertical, 7)
         .background(
             isSelected
-                ? Color(nsColor: .controlBackgroundColor)
+                ? Color.accentColor.opacity(0.15)
                 : Color.clear,
             in: RoundedRectangle(cornerRadius: 6)
         )
@@ -250,15 +253,15 @@ struct CommandPaletteOverlay: View {
     private func keyHint(_ key: String, label: String) -> some View {
         HStack(spacing: 4) {
             Text(key)
-                .font(.system(size: 9, weight: .medium, design: .monospaced))
+                .font(.caption).monospaced()
                 .padding(.horizontal, 4)
                 .padding(.vertical, 2)
                 .background(
-                    Color(nsColor: .controlBackgroundColor),
+                    themeColors.surface2,
                     in: RoundedRectangle(cornerRadius: 3)
                 )
             Text(label)
-                .font(.system(size: 10))
+                .font(.caption2)
         }
     }
 

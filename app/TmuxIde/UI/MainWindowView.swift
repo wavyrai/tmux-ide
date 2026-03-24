@@ -14,7 +14,7 @@ struct MainWindowView: View {
                 } else {
                     VStack(spacing: 16) {
                         Image(systemName: "rectangle.split.3x3")
-                            .font(.system(size: 48))
+                            .font(.system(size: 48, weight: .light))
                             .foregroundStyle(.tertiary)
                         Text("Select a session")
                             .font(.title2)
@@ -24,7 +24,7 @@ struct MainWindowView: View {
                                 ProgressView()
                                     .scaleEffect(0.7)
                                 Text("Connecting to command-center...")
-                                    .font(.caption)
+                                    .font(.body)
                                     .foregroundStyle(.tertiary)
                             }
                         }
@@ -41,8 +41,10 @@ struct MainWindowView: View {
                     actions: commandActions
                 )
                 .transition(.opacity.combined(with: .scale(scale: 0.97)))
+                .zIndex(100)
             }
         }
+        .animation(.spring(duration: 0.28, bounce: 0.12), value: coordinator.showCommandPalette)
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Button {

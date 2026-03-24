@@ -8,6 +8,7 @@ struct CanvasTileView: View {
 
     @Environment(\.themeColors) private var themeColors
     @EnvironmentObject private var discovery: SessionDiscoveryService
+    @State private var isHovered = false
 
     init(item: CanvasItem, sessionName: String = "", baseURL: URL = ConnectionTarget.localhost.baseURL, isSelected: Bool = false) {
         self.item = item
@@ -18,89 +19,104 @@ struct CanvasTileView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // Title bar
-            HStack {
-                Circle()
-                    .fill(tileColor)
-                    .frame(width: 8, height: 8)
-                Text(tileTitle)
-                    .font(.caption)
-                    .fontWeight(.medium)
-                    .foregroundStyle(themeColors.primaryText)
-                    .lineLimit(1)
-                Spacer()
-                if let badge = agentBadge {
-                    AgentBadgeView(status: badge)
-                }
-                Text(tileSubtitle)
-                    .font(.caption2)
-                    .foregroundStyle(themeColors.tertiaryText)
-            }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            .background(themeColors.surface1)
-
-            // Content area
+            titleBar
+            Divider()
+                .overlay(themeColors.surface2.opacity(0.5))
             tileContent
                 .frame(minHeight: item.preferredHeight.map { CGFloat($0) } ?? 200)
         }
-        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 8)
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
                 .strokeBorder(borderColor, lineWidth: borderWidth)
         )
         .overlay {
-            // Focus ring when selected
             if isSelected {
-                RoundedRectangle(cornerRadius: 8)
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
                     .strokeBorder(themeColors.accent, lineWidth: 2)
             }
         }
-        .shadow(color: .black.opacity(0.15), radius: 6, y: 3)
-        .contextMenu {
-            Button("Close Tile") {
-                // Future: coordinator.closeTile(item.id)
-            }
-            Button("Focus in Full Screen") {
-                // Future: coordinator.fullScreenTile(item.id)
-            }
-            Divider()
-            Button("Move Left") {
-                // Future: coordinator.moveTile(item.id, direction: .left)
-            }
-            Button("Move Right") {
-                // Future: coordinator.moveTile(item.id, direction: .right)
-            }
+        .shadow(color: .black.opacity(isHovered ? 0.25 : 0.15), radius: isHovered ? 10 : 6, y: isHovered ? 5 : 3)
+        .scaleEffect(isHovered && !isSelected ? 1.005 : 1.0)
+        .animation(.easeOut(duration: 0.15), value: isHovered)
+        .onHover { hovering in
+            isHovered = hovering
         }
+        .contextMenu { tileContextMenu }
     }
+
+    // MARK: - Title Bar
+
+    private var titleBar: some View {
+        HStack(spacing: 8) {
+            Circle()
+                .fill(tileColor)
+                .frame(width: 8, height: 8)
+                .shadow(color: tileColor.opacity(0.4), radius: 3)
+
+            Text(tileTitle)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(themeColors.primaryText)
+                .lineLimit(1)
+
+            Spacer(minLength: 4)
+
+            if let badge = agentBadge {
+                AgentBadgeView(status: badge)
+                    .transition(.opacity.combined(with: .scale(scale: 0.8)))
+            }
+
+            Text(tileSubtitle)
+                .font(.system(size: 10, weight: .regular))
+                .foregroundStyle(themeColors.tertiaryText)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .background(
+                    Capsule()
+                        .fill(themeColors.surface2.opacity(0.5))
+                )
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 7)
+        .background(themeColors.surface1)
+    }
+
+    // MARK: - Agent Badge
 
     private var agentBadge: AgentBadgeStatus? {
         guard let title = item.paneTitle else { return nil }
         return discovery.badgeStatus(session: sessionName, paneTitle: title)
     }
 
+    // MARK: - Border
+
     private var borderColor: Color {
         switch agentBadge {
-        case .idle: return .green
-        case .busy: return .yellow
-        case .error: return .red
-        case nil: return themeColors.divider
+        case .idle: return .green.opacity(0.7)
+        case .busy: return .yellow.opacity(0.7)
+        case .error: return .red.opacity(0.7)
+        case nil: return themeColors.surface2.opacity(0.6)
         }
     }
 
     private var borderWidth: CGFloat {
-        agentBadge != nil ? 2 : 1
+        agentBadge != nil ? 1.5 : 0.5
     }
+
+    // MARK: - Labels
 
     private var tileTitle: String {
         if let title = item.paneTitle {
             return title
         }
         switch item.ref {
-        case .terminal(let paneId):
-            return "Terminal \(paneId)"
+        case .terminal:
+            return "Terminal"
         case .browser(let url):
-            return url ?? "Browser"
+            if let url, let host = URL(string: url)?.host {
+                return host
+            }
+            return "Browser"
         case .dashboard:
             return "Dashboard"
         }
@@ -108,7 +124,7 @@ struct CanvasTileView: View {
 
     private var tileSubtitle: String {
         switch item.ref {
-        case .terminal: return "pane"
+        case .terminal: return "shell"
         case .browser: return "web"
         case .dashboard: return "overview"
         }
@@ -118,9 +134,11 @@ struct CanvasTileView: View {
         switch item.ref {
         case .terminal: return .green
         case .browser: return .blue
-        case .dashboard: return .purple
+        case .dashboard: return themeColors.accent
         }
     }
+
+    // MARK: - Content
 
     @ViewBuilder
     private var tileContent: some View {
@@ -134,17 +152,40 @@ struct CanvasTileView: View {
         case .browser(let url):
             WebViewTileView(initialURL: url)
         case .dashboard:
-            ZStack {
-                themeColors.surface0
-                VStack {
-                    Image(systemName: "chart.bar")
-                        .font(.title)
-                        .foregroundStyle(themeColors.accent.opacity(0.5))
-                    Text("Command Center")
-                        .font(.caption)
-                        .foregroundStyle(themeColors.secondaryText)
-                }
+            dashboardPlaceholder
+        }
+    }
+
+    private var dashboardPlaceholder: some View {
+        ZStack {
+            themeColors.surface0
+            VStack(spacing: 8) {
+                Image(systemName: "square.grid.2x2")
+                    .font(.system(size: 28, weight: .light))
+                    .foregroundStyle(themeColors.accent.opacity(0.4))
+                Text("Command Center")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(themeColors.secondaryText)
             }
+        }
+    }
+
+    // MARK: - Context Menu
+
+    @ViewBuilder
+    private var tileContextMenu: some View {
+        Button("Close Tile") {
+            // Future: coordinator.closeTile(item.id)
+        }
+        Button("Focus in Full Screen") {
+            // Future: coordinator.fullScreenTile(item.id)
+        }
+        Divider()
+        Button("Move Left") {
+            // Future: coordinator.moveTile(item.id, direction: .left)
+        }
+        Button("Move Right") {
+            // Future: coordinator.moveTile(item.id, direction: .right)
         }
     }
 }

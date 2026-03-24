@@ -101,10 +101,12 @@ struct ConnectionSheet: View {
             } label: {
                 Label("Add Remote", systemImage: "plus")
             }
+            .buttonStyle(.bordered)
             Spacer()
             Button("Done") {
                 dismiss()
             }
+            .buttonStyle(.borderedProminent)
             .keyboardShortcut(.defaultAction)
         }
         .padding()
@@ -320,8 +322,11 @@ struct ConnectionFormSheet: View {
             // Form fields
             Form {
                 TextField("Label", text: $label, prompt: Text("e.g. Mac Mini"))
+                    .textFieldStyle(.roundedBorder)
                 TextField("Host", text: $host, prompt: Text(hostPlaceholder))
+                    .textFieldStyle(.roundedBorder)
                 TextField("Port", text: $port, prompt: Text("4000"))
+                    .textFieldStyle(.roundedBorder)
                     .frame(width: 100)
                 Picker("Method", selection: $method) {
                     ForEach(ConnectionMethod.allCases, id: \.self) { m in
@@ -366,6 +371,7 @@ struct ConnectionFormSheet: View {
                 Button("Cancel") {
                     dismiss()
                 }
+                .buttonStyle(.bordered)
                 .keyboardShortcut(.cancelAction)
                 Spacer()
                 Button("Add") {
@@ -377,6 +383,7 @@ struct ConnectionFormSheet: View {
                     )
                     onSave(target)
                 }
+                .buttonStyle(.borderedProminent)
                 .keyboardShortcut(.defaultAction)
                 .disabled(!isValid)
             }

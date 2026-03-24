@@ -51,14 +51,14 @@ struct SidebarView: View {
             if pendingReviewCount > 0 {
                 HStack(spacing: 6) {
                     Image(systemName: "checkmark.shield")
-                        .font(.system(size: 10, weight: .medium))
+                        .font(.caption)
                         .foregroundStyle(.orange)
                     Text("\(pendingReviewCount) pending review\(pendingReviewCount == 1 ? "" : "s")")
-                        .font(.system(size: 10, weight: .medium))
+                        .font(.caption)
                         .foregroundStyle(tc.primaryText)
                     Spacer()
                     Text("\(pendingReviewCount)")
-                        .font(.system(size: 9, weight: .bold, design: .monospaced))
+                        .font(.caption2.weight(.bold).monospaced())
                         .foregroundStyle(.white)
                         .padding(.horizontal, 5)
                         .padding(.vertical, 1)
@@ -98,19 +98,19 @@ struct SidebarView: View {
     private var sessionsHeader: some View {
         HStack(spacing: 4) {
             Text("SESSIONS")
-                .font(.system(size: 9, weight: .bold, design: .rounded))
+                .font(.caption2.weight(.bold))
                 .tracking(1)
                 .foregroundStyle(tc.mutedText)
 
             Text("\(discovery.sessions.count)")
-                .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                .font(.caption2.weight(.semibold).monospaced())
                 .foregroundStyle(tc.mutedText)
 
             Spacer()
 
             if discovery.isSSEConnected {
                 Image(systemName: "antenna.radiowaves.left.and.right")
-                    .font(.system(size: 9, weight: .medium))
+                    .font(.caption2.weight(.medium))
                     .foregroundStyle(tc.accent.opacity(0.7))
                     .help("Real-time updates via SSE")
             }
@@ -132,7 +132,7 @@ struct SidebarView: View {
                 Task { await discovery.refresh() }
             } label: {
                 Image(systemName: "arrow.clockwise")
-                    .font(.system(size: 10, weight: .medium))
+                    .font(.caption)
                     .foregroundStyle(tc.secondaryText)
                     .frame(width: 22, height: 22)
                     .background(tc.surface0.opacity(0.5), in: RoundedRectangle(cornerRadius: 5))
@@ -171,16 +171,16 @@ private struct EndpointSection: View {
         } label: {
             HStack(spacing: 6) {
                 Image(systemName: isCollapsed ? "chevron.right" : "chevron.down")
-                    .font(.system(size: 8, weight: .semibold))
+                    .font(.caption2.weight(.semibold))
                     .foregroundStyle(tc.tertiaryText)
                     .frame(width: 10)
 
                 Image(systemName: "network")
-                    .font(.system(size: 10, weight: .medium))
+                    .font(.caption)
                     .foregroundStyle(tc.accent)
 
                 Text(target.label)
-                    .font(.system(size: 11, weight: .medium))
+                    .font(.subheadline.weight(.medium))
                     .foregroundStyle(tc.primaryText)
                     .lineLimit(1)
 
@@ -191,7 +191,7 @@ private struct EndpointSection: View {
                     .frame(width: 6, height: 6)
 
                 Text("\(sessions.count)")
-                    .font(.system(size: 9, weight: .regular, design: .monospaced))
+                    .font(.caption2.monospaced())
                     .foregroundStyle(tc.tertiaryText)
             }
             .padding(.vertical, 5)
@@ -242,13 +242,13 @@ struct SessionRowView: View {
                 // Session info
                 VStack(alignment: .leading, spacing: 2) {
                     Text(session.name)
-                        .font(.system(size: 11, weight: .semibold))
+                        .font(.subheadline.weight(.semibold))
                         .foregroundStyle(tc.primaryText)
                         .lineLimit(1)
 
                     if let mission = session.mission {
                         Text(mission.title)
-                            .font(.system(size: 10, weight: .regular))
+                            .font(.caption)
                             .foregroundStyle(tc.tertiaryText)
                             .lineLimit(1)
                     }
@@ -258,9 +258,9 @@ struct SessionRowView: View {
                         if session.stats.totalTasks > 0 {
                             HStack(spacing: 3) {
                                 Image(systemName: "checkmark.circle")
-                                    .font(.system(size: 8, weight: .medium))
+                                    .font(.caption2)
                                 Text("\(session.stats.doneTasks)/\(session.stats.totalTasks)")
-                                    .font(.system(size: 9, weight: .regular, design: .monospaced))
+                                    .font(.caption2.monospaced())
                             }
                             .foregroundStyle(
                                 session.stats.doneTasks == session.stats.totalTasks && session.stats.totalTasks > 0
@@ -271,9 +271,9 @@ struct SessionRowView: View {
 
                         HStack(spacing: 3) {
                             Image(systemName: "person.2")
-                                .font(.system(size: 8, weight: .medium))
+                                .font(.caption2)
                             Text("\(session.stats.agents)")
-                                .font(.system(size: 9, weight: .regular, design: .monospaced))
+                                .font(.caption2.monospaced())
                         }
                         .foregroundStyle(tc.tertiaryText)
 
@@ -356,7 +356,7 @@ private struct ConnectionIndicator: View {
                 .frame(width: 6, height: 6)
 
             Text(statusLabel)
-                .font(.system(size: 9, weight: .medium))
+                .font(.caption2.weight(.medium))
                 .foregroundStyle(tc.tertiaryText)
         }
     }
