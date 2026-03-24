@@ -89,10 +89,9 @@ final class SessionCanvasService: ObservableObject {
     func flushPendingSaves() {
         var layoutsBySession: [String: CanvasLayout] = [:]
         for workspace in layout.workspaces {
-            // Create a per-session layout snapshot
             var sessionLayout = CanvasLayout()
             sessionLayout.workspaces = [workspace]
-            sessionLayout.camera = layout.camera
+            sessionLayout.camera = scopedCamera(for: workspace, from: layout.camera)
             sessionLayout.isOverviewOpen = layout.isOverviewOpen
             layoutsBySession[workspace.sessionName] = sessionLayout
         }
@@ -106,10 +105,30 @@ final class SessionCanvasService: ObservableObject {
         for workspace in newLayout.workspaces {
             var sessionLayout = CanvasLayout()
             sessionLayout.workspaces = [workspace]
-            sessionLayout.camera = newLayout.camera
+            sessionLayout.camera = scopedCamera(for: workspace, from: newLayout.camera)
             sessionLayout.isOverviewOpen = newLayout.isOverviewOpen
             persistence.save(session: workspace.sessionName, layout: sessionLayout)
         }
+    }
+
+    /// Returns camera state scoped to a specific workspace — clears IDs that
+    /// belong to a different workspace so they don't leak across sessions.
+    private func scopedCamera(for workspace: CanvasWorkspace, from camera: CameraState) -> CameraState {
+        guard camera.activeWorkspaceID == workspace.id else {
+            // Camera is pointing at a different workspace; save empty camera for this session
+            return CameraState()
+        }
+        let columnIDs = Set(workspace.columns.map(\.id))
+        let itemIDs = Set(workspace.columns.flatMap(\.items).map(\.id))
+        var scoped = CameraState()
+        scoped.activeWorkspaceID = workspace.id
+        if let colID = camera.activeColumnID, columnIDs.contains(colID) {
+            scoped.activeColumnID = colID
+        }
+        if let itemID = camera.focusedItemID, itemIDs.contains(itemID) {
+            scoped.focusedItemID = itemID
+        }
+        return scoped
     }
 
     private func buildWorkspace(sessionName: String, panes: [TmuxIdePane]) -> CanvasWorkspace {

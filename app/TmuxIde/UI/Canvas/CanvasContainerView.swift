@@ -430,9 +430,53 @@ struct CanvasContainerView: View {
             camera.navigateDown(in: layout, containerSize: containerSize)
         case "toggle-overview":
             camera.toggleOverview(layout: layout, containerSize: containerSize)
+        case "add-terminal":
+            addTile(.terminal(paneId: UUID().uuidString))
+        case "add-browser":
+            addTile(.browser(url: nil))
+        case "add-dashboard":
+            addTile(.dashboard)
+        case "zoom-in":
+            withAnimation(.spring(duration: 0.25)) {
+                gestureManager.scale = min(1.5, gestureManager.scale + 0.15)
+            }
+        case "zoom-out":
+            withAnimation(.spring(duration: 0.25)) {
+                gestureManager.scale = max(0.3, gestureManager.scale - 0.15)
+            }
+        case "zoom-reset":
+            withAnimation(.spring(duration: 0.3)) {
+                gestureManager.scale = 1.0
+            }
         default:
             break
         }
+    }
+
+    /// Insert a new tile as a new column to the right of the active column, then focus it.
+    private func addTile(_ ref: TileRef) {
+        guard let workspace,
+              let wsIdx = canvasService.layout.workspaces.firstIndex(where: { $0.id == workspace.id })
+        else { return }
+
+        let item = CanvasItem(ref: ref)
+        let newColumn = CanvasColumn(items: [item])
+
+        // Insert after the active column, or append if none active
+        let insertionIndex: Int
+        if let activeColID = camera.activeColumnID,
+           let colIdx = canvasService.layout.workspaces[wsIdx].columns.firstIndex(where: { $0.id == activeColID }) {
+            insertionIndex = colIdx + 1
+        } else {
+            insertionIndex = canvasService.layout.workspaces[wsIdx].columns.count
+        }
+
+        withAnimation(.spring(duration: 0.35, bounce: 0.15)) {
+            canvasService.layout.workspaces[wsIdx].columns.insert(newColumn, at: insertionIndex)
+        }
+
+        // Focus the new item
+        camera.focusItem(item.id, in: canvasService.layout, containerSize: containerSize)
     }
 
     // MARK: - Loading Placeholder

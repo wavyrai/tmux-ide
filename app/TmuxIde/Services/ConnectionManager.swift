@@ -156,6 +156,22 @@ final class ConnectionManager: ObservableObject {
         return client(for: local.id)
     }
 
+    // MARK: - Local Daemon Port Discovery
+
+    /// Query tmux for the actual daemon port and update the local target if it changed.
+    private func resolveLocalDaemonPort() async {
+        guard let localIndex = targets.firstIndex(where: { $0.isLocal }) else { return }
+
+        if let discoveredPort = await DaemonPortResolver.discoverAnyPort(),
+           targets[localIndex].port != discoveredPort {
+            targets[localIndex].port = discoveredPort
+            // Rebuild client with updated port
+            let updated = targets[localIndex]
+            clients[updated.id] = CommandCenterClient(target: updated)
+            saveTargets()
+        }
+    }
+
     // MARK: - Target Resolution
 
     /// Resolve and build client for a target. Handles Tailscale DNS and SSH tunnels.
@@ -216,8 +232,10 @@ final class ConnectionManager: ObservableObject {
     // MARK: - Health Monitoring
 
     func startMonitoring() {
-        // Resolve Tailscale targets and ensure all clients exist
         Task {
+            // Discover local daemon port before building clients
+            await resolveLocalDaemonPort()
+
             for target in targets {
                 await resolveAndBuildClient(for: target)
             }
@@ -239,6 +257,9 @@ final class ConnectionManager: ObservableObject {
     }
 
     func refreshAll() async {
+        // Re-resolve local daemon port (it may change on restart)
+        await resolveLocalDaemonPort()
+
         // Refresh Tailscale CLI availability
         tailscaleAvailable = await TailscaleService.isCLIAvailable()
 

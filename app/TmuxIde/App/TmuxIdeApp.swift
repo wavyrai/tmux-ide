@@ -35,12 +35,12 @@ struct TmuxIdeApp: App {
                 Button("New Session") {
                     // Future: coordinator.createNewSession()
                 }
-                .keyboardShortcut("n")
+                .keyboardShortcut("n", modifiers: .command)
 
                 Button("Close Session") {
                     coordinator.selectedSession = nil
                 }
-                .keyboardShortcut("w")
+                .keyboardShortcut("w", modifiers: .command)
                 .disabled(!hasSession)
 
                 Divider()
@@ -48,7 +48,7 @@ struct TmuxIdeApp: App {
                 Button("Refresh Sessions") {
                     Task { await coordinator.discoveryService.refresh() }
                 }
-                .keyboardShortcut("r")
+                .keyboardShortcut("r", modifiers: .command)
 
                 Button("Manage Connections...") {
                     coordinator.showConnectionSheet = true
@@ -69,25 +69,45 @@ struct TmuxIdeApp: App {
                 Button("Focus Next Column") {
                     coordinator.performAction("focus-next")
                 }
-                .keyboardShortcut("]")
+                .keyboardShortcut("]", modifiers: .command)
                 .disabled(!hasSession)
 
                 Button("Focus Previous Column") {
                     coordinator.performAction("focus-prev")
                 }
-                .keyboardShortcut("[")
+                .keyboardShortcut("[", modifiers: .command)
                 .disabled(!hasSession)
 
                 Button("Focus Up") {
                     coordinator.performAction("focus-up")
                 }
-                .keyboardShortcut(.upArrow)
+                .keyboardShortcut(.upArrow, modifiers: [.command, .option])
                 .disabled(!hasSession)
 
                 Button("Focus Down") {
                     coordinator.performAction("focus-down")
                 }
-                .keyboardShortcut(.downArrow)
+                .keyboardShortcut(.downArrow, modifiers: [.command, .option])
+                .disabled(!hasSession)
+
+                Divider()
+
+                Button("Zoom In") {
+                    coordinator.performAction("zoom-in")
+                }
+                .keyboardShortcut("=", modifiers: .command)
+                .disabled(!hasSession)
+
+                Button("Zoom Out") {
+                    coordinator.performAction("zoom-out")
+                }
+                .keyboardShortcut("-", modifiers: .command)
+                .disabled(!hasSession)
+
+                Button("Reset Zoom") {
+                    coordinator.performAction("zoom-reset")
+                }
+                .keyboardShortcut("0", modifiers: .command)
                 .disabled(!hasSession)
             }
 
@@ -97,7 +117,7 @@ struct TmuxIdeApp: App {
                 Button("Add Terminal") {
                     coordinator.performAction("add-terminal")
                 }
-                .keyboardShortcut("t")
+                .keyboardShortcut("t", modifiers: .command)
                 .disabled(!hasSession)
 
                 Button("Add Browser") {
@@ -120,7 +140,7 @@ struct TmuxIdeApp: App {
                 Button("Command Palette...") {
                     coordinator.performAction("command-palette")
                 }
-                .keyboardShortcut("k")
+                .keyboardShortcut("k", modifiers: .command)
             }
         }
     }

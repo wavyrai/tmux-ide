@@ -18,7 +18,7 @@ struct TerminalTileView: View {
     var body: some View {
         ZStack {
             if let surface = controller.surface {
-                GhosttyTerminalView(surface: surface)
+                InlineTerminalView(surface: surface)
             } else {
                 Color.black
                 VStack(spacing: 8) {

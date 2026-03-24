@@ -42,10 +42,12 @@ struct ConnectionTarget: Codable, Identifiable, Hashable {
         self.isLocal = isLocal
     }
 
+    /// Default local target. Port 0 signals that daemon port discovery
+    /// should resolve the actual port from tmux session options.
     static let localhost = ConnectionTarget(
         label: "Local",
         host: "localhost",
-        port: 4000,
+        port: 0,
         connectionMethod: .directHTTP,
         isLocal: true
     )

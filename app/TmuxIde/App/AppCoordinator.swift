@@ -10,6 +10,7 @@ final class AppCoordinator: ObservableObject {
     let layoutPersistence: LayoutPersistenceService
     let shortcutRegistry: ShortcutRegistry
     private(set) var shortcutDispatcher: ShortcutDispatcher?
+    private var ipcServer: IPCServer?
 
     @Published var selectedSession: String?
     @Published var showCommandPalette = false
@@ -47,6 +48,31 @@ final class AppCoordinator: ObservableObject {
         }
         shortcutDispatcher = dispatcher
         dispatcher.start()
+
+        // Start IPC server on Unix domain socket
+        startIPCServer()
+    }
+
+    private func startIPCServer() {
+        let router = IPCCommandRouter(coordinator: self)
+        let socketPath = paths.ipcSocketPath
+
+        let server = IPCServer(socketPath: socketPath) { request in
+            // Route from the IPC server's background queue back to the main actor.
+            // Use a semaphore to block the socket handler until the response is ready.
+            let semaphore = DispatchSemaphore(value: 0)
+            var result = IPCResponse(success: false, message: "Timeout", data: nil)
+            Task { @MainActor in
+                result = router.handle(request)
+                semaphore.signal()
+            }
+            semaphore.wait()
+            return result
+        }
+
+        self.ipcServer = server
+        server.start()
+        Logger.info("IPC server listening on \(socketPath)")
     }
 
     // MARK: - Action dispatch
@@ -64,7 +90,8 @@ final class AppCoordinator: ObservableObject {
 
         // Canvas-level actions — forward to the active CanvasContainerView
         case "focus-next", "focus-prev", "focus-up", "focus-down",
-             "toggle-overview", "add-terminal", "add-browser":
+             "toggle-overview", "add-terminal", "add-browser", "add-dashboard",
+             "zoom-in", "zoom-out", "zoom-reset":
             pendingCanvasAction = actionId
 
         default:
@@ -99,5 +126,7 @@ final class AppCoordinator: ObservableObject {
         canvasService.flushPendingSaves()
         shortcutDispatcher?.stop()
         discoveryService.stop()
+        ipcServer?.stop()
+        ipcServer = nil
     }
 }

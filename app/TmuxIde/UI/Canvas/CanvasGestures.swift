@@ -455,7 +455,7 @@ final class CanvasPanCaptureNSView: NSView {
         }
     }
 
-    // MARK: - Trackpad scroll (Ctrl+two-finger scroll)
+    // MARK: - Trackpad scroll (Ctrl+two-finger scroll pans canvas)
 
     override func scrollWheel(with event: NSEvent) {
         guard event.hasPreciseScrollingDeltas else { return }

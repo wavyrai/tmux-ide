@@ -6,6 +6,7 @@ struct FileSystemPaths {
     let connectionsFile: URL
     let runDirectory: URL
     let layoutsDirectory: URL
+    let ipcSocketPath: String
 
     init(fileManager: FileManager = .default) throws {
         let appSupport = try fileManager.url(
@@ -19,6 +20,7 @@ struct FileSystemPaths {
         connectionsFile = appSupportDirectory.appendingPathComponent("connections.json", isDirectory: false)
         runDirectory = appSupportDirectory.appendingPathComponent("run", isDirectory: true)
         layoutsDirectory = appSupportDirectory.appendingPathComponent("layouts", isDirectory: true)
+        ipcSocketPath = runDirectory.appendingPathComponent("tmux-ide.sock").path
     }
 
     init(appSupportDirectory: URL, settingsFile: URL, connectionsFile: URL, runDirectory: URL, layoutsDirectory: URL) {
@@ -27,6 +29,7 @@ struct FileSystemPaths {
         self.connectionsFile = connectionsFile
         self.runDirectory = runDirectory
         self.layoutsDirectory = layoutsDirectory
+        self.ipcSocketPath = runDirectory.appendingPathComponent("tmux-ide.sock").path
     }
 
     func ensureDirectories(fileManager: FileManager = .default) throws {

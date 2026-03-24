@@ -21,7 +21,9 @@ final class SessionDiscoveryService: ObservableObject {
     private var pollTimer: Timer?
     private var cancellables = Set<AnyCancellable>()
 
+    /// Fast polling (3s) — primary refresh when SSE is disconnected.
     private let normalPollInterval: TimeInterval = 3.0
+    /// Slow polling (30s) — safety-net refresh when SSE is connected and handling real-time updates.
     private let sseFallbackPollInterval: TimeInterval = 30.0
     private let maxActivityFeedSize = 100
 
