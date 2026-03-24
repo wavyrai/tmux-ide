@@ -57,15 +57,15 @@ export function startMirror(session: string, paneId: string, ws: WebSocket): Mir
     const [c, r] = dims.split(" ");
     paneCols = parseInt(c!, 10) || 80;
     paneRows = parseInt(r!, 10) || 24;
-  } catch { /* use defaults */ }
+  } catch {
+    /* use defaults */
+  }
   // Send dimensions as JSON (the only JSON message — client detects by leading {)
   ws.send(JSON.stringify({ type: "dimensions", cols: paneCols, rows: paneRows }));
 
   // Send initial scrollback as raw terminal output
   try {
-    const scrollback = tmux([
-      "capture-pane", "-t", paneId, "-p", "-e", "-S", "-2000",
-    ]);
+    const scrollback = tmux(["capture-pane", "-t", paneId, "-p", "-e", "-S", "-2000"]);
     ws.send(scrollback);
   } catch {
     // Pane may not exist yet
@@ -131,11 +131,9 @@ export function handleInput(paneId: string, data: string): void {
 }
 
 export function handleResize(paneId: string, cols: number, rows: number): void {
-  execFileSync(
-    "tmux",
-    ["resize-pane", "-t", paneId, "-x", String(cols), "-y", String(rows)],
-    { stdio: ["ignore", "ignore", "ignore"] },
-  );
+  execFileSync("tmux", ["resize-pane", "-t", paneId, "-x", String(cols), "-y", String(rows)], {
+    stdio: ["ignore", "ignore", "ignore"],
+  });
 }
 
 export function stopAll(): void {

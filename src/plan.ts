@@ -10,10 +10,10 @@ const STATUS_ICONS: Record<PlanStatus, string> = {
 };
 
 const STATUS_COLORS: Record<PlanStatus, string> = {
-  pending: "\x1b[2m",    // dim
+  pending: "\x1b[2m", // dim
   "in-progress": "\x1b[33m", // yellow
-  done: "\x1b[32m",      // green
-  archived: "\x1b[2m",   // dim
+  done: "\x1b[32m", // green
+  archived: "\x1b[2m", // dim
 };
 
 const RESET = "\x1b[0m";

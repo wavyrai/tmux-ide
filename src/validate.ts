@@ -19,9 +19,7 @@ export function validateConfig(config: unknown): string[] {
   const cfg = result.data;
 
   // 1. Row sizes sum ≤ 100%
-  const rowSizes = cfg.rows
-    .filter((r) => r.size !== undefined)
-    .map((r) => parseInt(r.size!, 10));
+  const rowSizes = cfg.rows.filter((r) => r.size !== undefined).map((r) => parseInt(r.size!, 10));
   const rowSum = rowSizes.reduce((a, b) => a + b, 0);
   if (rowSum > 100) {
     errors.push(`Row sizes sum to ${rowSum}%, which exceeds 100%`);

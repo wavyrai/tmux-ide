@@ -92,9 +92,7 @@ export function GoalSection(props: GoalSectionProps) {
                 <text fg={toRGBA(props.theme.gitAdded)}>✓</text>
                 <text fg={toRGBA(props.theme.fgMuted)}>{task.title}</text>
                 <Show when={badges()}>
-                  <text
-                    fg={toRGBA(allPass() ? props.theme.gitAdded : props.theme.fgMuted)}
-                  >
+                  <text fg={toRGBA(allPass() ? props.theme.gitAdded : props.theme.fgMuted)}>
                     {badges()}
                   </text>
                 </Show>

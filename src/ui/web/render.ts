@@ -69,10 +69,7 @@ function injectBaseStyles(): void {
   stylesInjected = true;
 }
 
-export function render(
-  component: () => any,
-  _options?: any,
-): void {
+export function render(component: () => any, _options?: any): void {
   injectBaseStyles();
   const root = document.getElementById("root") ?? document.body;
   solidRender(component, root);

@@ -3,11 +3,7 @@ import { render, useKeyboard, useTerminalDimensions } from "@opentui/solid";
 import { RGBA, TextAttributes } from "@opentui/core";
 import { createSignal, createMemo, onCleanup, For, Show } from "solid-js";
 import { createTheme } from "../lib/theme.ts";
-import {
-  loadAccounting,
-  formatDuration,
-  type AgentAccounting,
-} from "../../lib/token-tracker.ts";
+import { loadAccounting, formatDuration, type AgentAccounting } from "../../lib/token-tracker.ts";
 
 const { values } = parseArgs({
   options: {
@@ -57,13 +53,9 @@ render(
         .sort((a, b) => b.data.totalTimeMs - a.data.totalTimeMs);
     });
 
-    const totalTime = createMemo(() =>
-      agentRows().reduce((sum, r) => sum + r.data.totalTimeMs, 0),
-    );
+    const totalTime = createMemo(() => agentRows().reduce((sum, r) => sum + r.data.totalTimeMs, 0));
 
-    const totalTasks = createMemo(() =>
-      agentRows().reduce((sum, r) => sum + r.data.taskCount, 0),
-    );
+    const totalTasks = createMemo(() => agentRows().reduce((sum, r) => sum + r.data.taskCount, 0));
 
     const sessionElapsed = createMemo(() => {
       const start = new Date(accounting().sessionStart).getTime();
@@ -98,15 +90,9 @@ render(
             Session Costs
           </text>
           <box flexDirection="row" gap={2}>
-            <text fg={toRGBA(theme.fgMuted)}>
-              Elapsed: {formatDuration(sessionElapsed())}
-            </text>
-            <text fg={toRGBA(theme.fgMuted)}>
-              Agent time: {formatDuration(totalTime())}
-            </text>
-            <text fg={toRGBA(theme.fgMuted)}>
-              Tasks: {totalTasks()}
-            </text>
+            <text fg={toRGBA(theme.fgMuted)}>Elapsed: {formatDuration(sessionElapsed())}</text>
+            <text fg={toRGBA(theme.fgMuted)}>Agent time: {formatDuration(totalTime())}</text>
+            <text fg={toRGBA(theme.fgMuted)}>Tasks: {totalTasks()}</text>
           </box>
         </box>
 
@@ -123,9 +109,7 @@ render(
             when={agentRows().length > 0}
             fallback={
               <box paddingLeft={1} paddingTop={1}>
-                <text fg={toRGBA(theme.fgMuted)}>
-                  No task activity recorded yet.
-                </text>
+                <text fg={toRGBA(theme.fgMuted)}>No task activity recorded yet.</text>
               </box>
             }
           >
@@ -181,7 +165,11 @@ render(
                     }}
                     onMouseDown={() => setSelectedRow(index())}
                   >
-                    <text fg={toRGBA(isSelected() ? theme.selectedText : theme.fg)} width={20} wrapMode="none">
+                    <text
+                      fg={toRGBA(isSelected() ? theme.selectedText : theme.fg)}
+                      width={20}
+                      wrapMode="none"
+                    >
                       {row.name}
                     </text>
                     <text fg={toRGBA(theme.fgMuted)} width={10} wrapMode="none">
@@ -202,9 +190,19 @@ render(
 
         {/* Footer */}
         <box flexShrink={0} paddingLeft={1} paddingTop={1} flexDirection="row" gap={1}>
-          <text fg={toRGBA(theme.fgMuted)} wrapMode="none">↑↓:nav</text>
-          <text fg={toRGBA(theme.fgMuted)} wrapMode="none" onMouseUp={() => setAccounting(loadAccounting(dir))}>r:refresh</text>
-          <text fg={toRGBA(theme.fgMuted)} wrapMode="none">q:quit</text>
+          <text fg={toRGBA(theme.fgMuted)} wrapMode="none">
+            ↑↓:nav
+          </text>
+          <text
+            fg={toRGBA(theme.fgMuted)}
+            wrapMode="none"
+            onMouseUp={() => setAccounting(loadAccounting(dir))}
+          >
+            r:refresh
+          </text>
+          <text fg={toRGBA(theme.fgMuted)} wrapMode="none">
+            q:quit
+          </text>
         </box>
       </box>
     );

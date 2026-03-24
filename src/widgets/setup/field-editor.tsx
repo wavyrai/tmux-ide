@@ -75,9 +75,7 @@ function StringEditor(props: {
           inputRef = r;
         }}
       />
-      {error() ? (
-        <text fg={toRGBA(props.theme.gitDeleted)}>{error()}</text>
-      ) : null}
+      {error() ? <text fg={toRGBA(props.theme.gitDeleted)}>{error()}</text> : null}
     </box>
   );
 }
@@ -134,7 +132,8 @@ function EnumEditor(props: {
               fg={toRGBA(isSelected() ? props.theme.accent : props.theme.fg)}
               attributes={isSelected() ? TextAttributes.BOLD : 0}
             >
-              {isSelected() ? "▸ " : "  "}{val}
+              {isSelected() ? "▸ " : "  "}
+              {val}
             </text>
           </box>
         );
@@ -207,9 +206,7 @@ export function FieldEditor(props: FieldEditorProps) {
 
       {/* Current value */}
       <box flexShrink={0} paddingBottom={1}>
-        <text fg={toRGBA(theme.fgMuted)}>
-          Current: {props.value || "(empty)"}
-        </text>
+        <text fg={toRGBA(theme.fgMuted)}>Current: {props.value || "(empty)"}</text>
       </box>
 
       {/* Editor */}
@@ -258,7 +255,9 @@ export function FieldEditor(props: FieldEditorProps) {
           ) : (
             <text fg={toRGBA(theme.fgMuted)}>Enter:save</text>
           )}
-          <text fg={toRGBA(theme.fgMuted)} onMouseUp={() => props.onCancel()}>Esc:cancel</text>
+          <text fg={toRGBA(theme.fgMuted)} onMouseUp={() => props.onCancel()}>
+            Esc:cancel
+          </text>
         </box>
       </box>
     </box>

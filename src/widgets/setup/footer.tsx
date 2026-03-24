@@ -35,7 +35,7 @@ interface HintDef {
 }
 
 const VIEW_HINTS: Record<ViewKind, HintDef[]> = {
-  "detect": [
+  detect: [
     { label: "Enter:continue", actionKey: "onConfirm" },
     { label: "q:quit", actionKey: "onQuit" },
   ],
@@ -50,13 +50,13 @@ const VIEW_HINTS: Record<ViewKind, HintDef[]> = {
     { label: "Esc:back", actionKey: "onBack" },
     { label: "q:quit", actionKey: "onQuit" },
   ],
-  "orchestrator": [
+  orchestrator: [
     { label: "Space:toggle" },
     { label: "Enter:continue", actionKey: "onConfirm" },
     { label: "Esc:back", actionKey: "onBack" },
     { label: "q:quit", actionKey: "onQuit" },
   ],
-  "review": [
+  review: [
     { label: "Enter:confirm", actionKey: "onConfirm" },
     { label: "Esc:back", actionKey: "onBack" },
     { label: "q:quit", actionKey: "onQuit" },

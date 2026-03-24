@@ -1,4 +1,13 @@
-import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync, renameSync } from "node:fs";
+import {
+  appendFileSync,
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  statSync,
+  unlinkSync,
+} from "node:fs";
 import { join } from "node:path";
 import { StructuredEventSchemaZ } from "../schemas/domain.ts";
 import type { z } from "zod";
@@ -80,15 +89,19 @@ export function appendEvent(dir: string, event: OrchestratorEvent | StructuredEv
   }
   const logPath = join(tasksDir, "events.log");
 
-  // Rotate if file exceeds 1MB
+  // Rotate if file exceeds 1MB (atomic: copy to temp, rename temp to .1, remove old)
   if (existsSync(logPath)) {
     try {
       const size = statSync(logPath).size;
       if (size > MAX_LOG_SIZE) {
-        renameSync(logPath, logPath + ".1");
+        const rotatedPath = logPath + ".1";
+        const tmpRotated = rotatedPath + ".tmp";
+        copyFileSync(logPath, tmpRotated);
+        renameSync(tmpRotated, rotatedPath);
+        unlinkSync(logPath);
       }
     } catch {
-      // stat/rename failure — continue writing to current file
+      // stat/copy/rename failure — continue writing to current file
     }
   }
 

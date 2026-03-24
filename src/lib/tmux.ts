@@ -182,19 +182,55 @@ export function runSessionCommand(args: string[]): void {
   runTmux(args, { stdio: "inherit" });
 }
 
-export function startSessionMonitor(session: string, monitorScript: string): void {
-  // Wrap in a restart loop so the monitor auto-respawns on crash.
-  // The monitor exits cleanly on SIGTERM (session kill), so the loop only triggers on unexpected crashes.
-  const child = _spawner(
-    "/bin/sh",
-    ["-c", `while true; do node ${monitorScript} ${session}; sleep 2; done`],
-    {
-      detached: true,
-      stdio: "ignore",
-    },
-  );
+/**
+ * Check if a process is still alive.
+ */
+export function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0); // signal 0 = check existence
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function startSessionMonitor(session: string, monitorScript: string, port?: number): void {
+  // Check if an existing monitor is already alive for this session.
+  // This prevents duplicate monitors on rapid restart cycles.
+  try {
+    const existingPid = (
+      runTmux(["show-option", "-gqvt", session, "@monitor_pid"], {
+        encoding: "utf-8",
+      }) as string
+    ).trim();
+    if (existingPid) {
+      const pid = parseInt(existingPid, 10);
+      if (isProcessAlive(pid)) {
+        // Monitor is still running — kill it first for a clean handoff
+        stopSessionMonitor(session);
+        // Brief wait for graceful shutdown
+        let attempts = 0;
+        while (isProcessAlive(pid) && attempts < 10) {
+          const { Atomics, SharedArrayBuffer } = globalThis;
+          Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 100);
+          attempts++;
+        }
+      }
+    }
+  } catch {
+    // Session variable not readable — continue with fresh start
+  }
+
+  // Spawn the monitor as a direct node process (no shell wrapper).
+  // Use a process group so we can kill the entire tree on stop.
+  const child = _spawner("node", [monitorScript, session, String(port ?? 0)], {
+    detached: true,
+    stdio: "ignore",
+    cwd: process.cwd(),
+  });
   child.unref();
-  // Store PID as tmux session variable for later cleanup
+  // Store PID as tmux session variable for later cleanup.
+  // This is the actual node process PID (not a shell wrapper).
   runTmux(["set-option", "-t", session, "@monitor_pid", String(child.pid)]);
 }
 
@@ -205,9 +241,48 @@ export function stopSessionMonitor(session: string): void {
         encoding: "utf-8",
       }) as string
     ).trim();
-    if (pid) process.kill(parseInt(pid, 10));
+    if (pid) {
+      const numPid = parseInt(pid, 10);
+      // Kill the process group (negative PID) to catch any children
+      try {
+        process.kill(-numPid, "SIGTERM");
+      } catch {
+        // Process group kill failed — try direct kill
+        try {
+          process.kill(numPid, "SIGTERM");
+        } catch {
+          /* already gone */
+        }
+      }
+    }
   } catch {
     /* session or process already gone */
+  }
+}
+
+export function getDaemonPort(session: string): number | null {
+  try {
+    const raw = runTmux(["show-option", "-gqvt", session, "@command_center_port"], {
+      encoding: "utf-8",
+    }) as string;
+    const port = parseInt(raw.trim(), 10);
+    return isNaN(port) ? null : port;
+  } catch {
+    return null;
+  }
+}
+
+export async function isDaemonHealthy(session: string): Promise<boolean> {
+  const port = getDaemonPort(session);
+  if (!port) return false;
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 2000);
+    const res = await fetch(`http://localhost:${port}/health`, { signal: controller.signal });
+    clearTimeout(timeout);
+    return res.ok;
+  } catch {
+    return false;
   }
 }
 

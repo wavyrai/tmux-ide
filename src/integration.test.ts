@@ -42,6 +42,27 @@ describe(
     }
 
     function killSession() {
+      // Stop the session monitor before killing the tmux session
+      // to prevent orphaned monitor processes from accumulating.
+      try {
+        const pid = execSync(`tmux show-option -gqvt "${session}" @monitor_pid`, {
+          encoding: "utf-8",
+          stdio: ["pipe", "pipe", "pipe"],
+        }).trim();
+        if (pid) {
+          try {
+            process.kill(-parseInt(pid, 10), "SIGTERM");
+          } catch {
+            try {
+              process.kill(parseInt(pid, 10), "SIGTERM");
+            } catch {
+              /* already gone */
+            }
+          }
+        }
+      } catch {
+        // No monitor PID or session gone
+      }
       try {
         execSync(`tmux kill-session -t "${session}"`, { stdio: "ignore" });
       } catch {

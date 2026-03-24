@@ -64,10 +64,7 @@ export function loadPlans(dir: string): PlanMeta[] {
 /**
  * List plans filtered by status.
  */
-export function listPlans(
-  dir: string,
-  filter?: { status?: PlanStatus },
-): PlanMeta[] {
+export function listPlans(dir: string, filter?: { status?: PlanStatus }): PlanMeta[] {
   const plans = loadPlans(dir);
   if (filter?.status) {
     return plans.filter((p) => p.status === filter.status);
@@ -99,24 +96,15 @@ export function markPlanDone(dir: string, nameOrNumber: string): PlanMeta | null
 
   // Update status
   if (content.match(/\*\*Status:\*\*\s*`[^`]+`/)) {
-    content = content.replace(
-      /\*\*Status:\*\*\s*`[^`]+`/,
-      "**Status:** `done`",
-    );
+    content = content.replace(/\*\*Status:\*\*\s*`[^`]+`/, "**Status:** `done`");
   }
 
   // Add or update completed date
   if (content.match(/\*\*Completed:\*\*/)) {
-    content = content.replace(
-      /\*\*Completed:\*\*\s*.+/,
-      `**Completed:** ${today}`,
-    );
+    content = content.replace(/\*\*Completed:\*\*\s*.+/, `**Completed:** ${today}`);
   } else {
     // Insert after the Status line
-    content = content.replace(
-      /(\*\*Status:\*\*\s*`done`)/,
-      `$1\n**Completed:** ${today}`,
-    );
+    content = content.replace(/(\*\*Status:\*\*\s*`done`)/, `$1\n**Completed:** ${today}`);
   }
 
   writeFileSync(filePath, content);
@@ -138,10 +126,6 @@ export function markPlanDone(dir: string, nameOrNumber: string): PlanMeta | null
 export function getPlan(dir: string, nameOrNumber: string): PlanMeta | null {
   const plans = loadPlans(dir);
   return (
-    plans.find(
-      (p) =>
-        p.name === nameOrNumber ||
-        p.name.startsWith(`${nameOrNumber}-`),
-    ) ?? null
+    plans.find((p) => p.name === nameOrNumber || p.name.startsWith(`${nameOrNumber}-`)) ?? null
   );
 }

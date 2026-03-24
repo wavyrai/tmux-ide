@@ -10,16 +10,12 @@ export function Input(props: InputProps) {
     background: props.focusedBackgroundColor
       ? rgbaToCSS(props.focusedBackgroundColor)
       : "rgb(25,25,35)",
-    color: props.focusedTextColor
-      ? rgbaToCSS(props.focusedTextColor)
-      : "inherit",
+    color: props.focusedTextColor ? rgbaToCSS(props.focusedTextColor) : "inherit",
     border: "none",
     outline: "none",
     padding: "0 1ch",
     width: "100%",
-    "caret-color": props.cursorColor
-      ? rgbaToCSS(props.cursorColor)
-      : "inherit",
+    "caret-color": props.cursorColor ? rgbaToCSS(props.cursorColor) : "inherit",
   });
 
   return (

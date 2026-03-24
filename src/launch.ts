@@ -278,13 +278,14 @@ export async function launch(
   // Store config hash for drift detection on re-launch
   setSessionVariable(session, "@config_hash", configHash(config));
 
-  // Start background session monitor (port detection + agent status)
+  // Start background daemon watchdog (command center + session monitor)
   const monitorScript = resolve(
     dirname(fileURLToPath(import.meta.url)),
     "lib",
-    "session-monitor.js",
+    "daemon-watchdog.js",
   );
-  startSessionMonitor(session, monitorScript);
+  const commandCenterPort = config.command_center?.port ?? 0;
+  startSessionMonitor(session, monitorScript, commandCenterPort);
 
   // Inject master agent prompt and task docs if orchestrator is enabled
   if (config.orchestrator?.enabled) {

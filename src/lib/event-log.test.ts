@@ -1,6 +1,14 @@
 import { describe, it, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, mkdirSync, writeFileSync, existsSync, statSync, readFileSync } from "node:fs";
+import {
+  mkdtempSync,
+  rmSync,
+  mkdirSync,
+  writeFileSync,
+  existsSync,
+  statSync,
+  readFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { appendEvent, readEvents, type OrchestratorEvent } from "./event-log.ts";
@@ -69,7 +77,12 @@ describe("readEvents", () => {
 
   it("returns all event types", () => {
     const types: Array<OrchestratorEvent["type"]> = [
-      "dispatch", "stall", "completion", "retry", "reconcile", "error",
+      "dispatch",
+      "stall",
+      "completion",
+      "retry",
+      "reconcile",
+      "error",
     ];
     for (const type of types) {
       appendEvent(tmpDir, { timestamp: "2026-01-01T00:00:00Z", type, message: type });
@@ -77,7 +90,10 @@ describe("readEvents", () => {
 
     const events = readEvents(tmpDir);
     assert.strictEqual(events.length, 6);
-    assert.deepStrictEqual(events.map((e) => e.type), types);
+    assert.deepStrictEqual(
+      events.map((e) => e.type),
+      types,
+    );
   });
 
   it("skips corrupted lines and returns valid events", () => {

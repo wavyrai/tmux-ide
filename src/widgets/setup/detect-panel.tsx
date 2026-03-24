@@ -44,23 +44,15 @@ export function DetectPanel(props: DetectPanelProps) {
 
       {/* Detection results */}
       <box flexShrink={0} paddingBottom={1}>
-        <text fg={toRGBA(theme.fg)}>
-          {field("Package Manager", props.detected.packageManager)}
-        </text>
-        <text fg={toRGBA(theme.fg)}>
-          {field("Language", props.detected.language)}
-        </text>
+        <text fg={toRGBA(theme.fg)}>{field("Package Manager", props.detected.packageManager)}</text>
+        <text fg={toRGBA(theme.fg)}>{field("Language", props.detected.language)}</text>
         <text fg={toRGBA(theme.fg)}>
           {field(
             "Frameworks",
-            props.detected.frameworks.length > 0
-              ? props.detected.frameworks.join(", ")
-              : null,
+            props.detected.frameworks.length > 0 ? props.detected.frameworks.join(", ") : null,
           )}
         </text>
-        <text fg={toRGBA(theme.fg)}>
-          {field("Dev Command", props.detected.devCommand)}
-        </text>
+        <text fg={toRGBA(theme.fg)}>{field("Dev Command", props.detected.devCommand)}</text>
       </box>
 
       {/* Spacer */}

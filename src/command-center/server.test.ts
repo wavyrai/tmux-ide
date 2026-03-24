@@ -68,7 +68,9 @@ describe("GET /api/sessions", () => {
     const res = await app.request("/api/sessions");
     assert.strictEqual(res.status, 200);
 
-    const body = (await res.json()) as { sessions: Array<{ name: string; stats: { totalTasks: number; doneTasks: number } }> };
+    const body = (await res.json()) as {
+      sessions: Array<{ name: string; stats: { totalTasks: number; doneTasks: number } }>;
+    };
     assert.strictEqual(body.sessions.length, 1);
     assert.strictEqual(body.sessions[0]!.name, "test-project");
     assert.strictEqual(body.sessions[0]!.stats.totalTasks, 2);
@@ -87,7 +89,11 @@ describe("GET /api/project/:name", () => {
     const res = await app.request("/api/project/test-project");
     assert.strictEqual(res.status, 200);
 
-    const body = (await res.json()) as { session: string; tasks: Task[]; agents: Array<{ paneTitle: string }> };
+    const body = (await res.json()) as {
+      session: string;
+      tasks: Task[];
+      agents: Array<{ paneTitle: string }>;
+    };
     assert.strictEqual(body.session, "test-project");
     assert.strictEqual(body.tasks.length, 1);
     assert.strictEqual(body.agents.length, 1);
@@ -206,7 +212,10 @@ describe("GET /api/project/:name/plans", () => {
   it("returns plan list with metadata", async () => {
     const plansDir = join(tmpDir, "plans");
     mkdirSync(plansDir, { recursive: true });
-    writeFileSync(join(plansDir, "01-test.md"), "# Plan 01\n\n**Status:** `pending`\n**Effort:** Low\n");
+    writeFileSync(
+      join(plansDir, "01-test.md"),
+      "# Plan 01\n\n**Status:** `pending`\n**Effort:** Low\n",
+    );
 
     const app = createApp();
     const res = await app.request("/api/project/test-project/plans");
@@ -313,7 +322,9 @@ describe("GET /api/project/:name/events", () => {
     const app = createApp();
     const res = await app.request("/api/project/test-project/events");
     assert.strictEqual(res.status, 200);
-    const body = (await res.json()) as { events: Array<{ type: string; message: string; relative: string }> };
+    const body = (await res.json()) as {
+      events: Array<{ type: string; message: string; relative: string }>;
+    };
     assert.ok(body.events.length >= 1);
     assert.strictEqual(body.events[0]!.message, "Test event");
     assert.ok(body.events[0]!.relative);

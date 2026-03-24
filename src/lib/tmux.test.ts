@@ -315,14 +315,15 @@ describe("startSessionMonitor", () => {
     // Check spawn was called correctly
     assert.strictEqual(fakeChild.unref.mock.callCount(), 1);
 
-    // Check PID was stored via set-option
-    const setArgs = mockExec.mock.calls[0].arguments[1];
+    // First call checks for existing PID (show-option), then stores new PID (set-option)
+    const lastCall = mockExec.mock.calls[mockExec.mock.calls.length - 1];
+    const setArgs = lastCall.arguments[1];
     assert.deepStrictEqual(setArgs, ["set-option", "-t", "proj", "@monitor_pid", "12345"]);
 
     restoreSpawn();
   });
 
-  it("wraps command in a restart loop for auto-respawn", () => {
+  it("spawns node directly without shell wrapper", () => {
     const fakeChild = { pid: 99, unref: mock.fn() };
     const mockSpawn = mock.fn(() => fakeChild);
     const restoreSpawn = _setSpawner(mockSpawn);
@@ -331,26 +332,27 @@ describe("startSessionMonitor", () => {
     startSessionMonitor("proj", "/path/to/monitor.js");
 
     const spawnCall = mockSpawn.mock.calls[0];
-    assert.strictEqual(spawnCall.arguments[0], "/bin/sh");
+    assert.strictEqual(spawnCall.arguments[0], "node");
     const args = spawnCall.arguments[1];
-    assert.strictEqual(args[0], "-c");
-    assert.ok(args[1].includes("while true; do"));
-    assert.ok(args[1].includes("node /path/to/monitor.js proj"));
-    assert.ok(args[1].includes("sleep 2"));
+    assert.deepStrictEqual(args, ["/path/to/monitor.js", "proj", "0"]);
 
     restoreSpawn();
   });
 });
 
 describe("stopSessionMonitor", () => {
-  it("kills process by stored PID", () => {
+  it("kills process group by stored PID", () => {
     mockExec.mock.mockImplementation(() => "  42\n");
     const origKill = process.kill;
-    const killCalls = [];
-    process.kill = (pid) => killCalls.push(pid);
+    const killCalls: Array<{ pid: number; signal?: string }> = [];
+    process.kill = ((pid: number, signal?: string) => {
+      killCalls.push({ pid, signal });
+    }) as typeof process.kill;
     try {
       stopSessionMonitor("proj");
-      assert.deepStrictEqual(killCalls, [42]);
+      // First tries process group kill (negative PID)
+      assert.strictEqual(killCalls[0]?.pid, -42);
+      assert.strictEqual(killCalls[0]?.signal, "SIGTERM");
     } finally {
       process.kill = origKill;
     }

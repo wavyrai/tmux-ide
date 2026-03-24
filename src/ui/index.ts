@@ -29,9 +29,4 @@ if (IS_BROWSER) {
 export * from "./web/index.ts";
 
 // Also re-export shared types so they're available regardless of backend
-export type {
-  BoxProps,
-  TextProps,
-  ScrollBoxProps,
-  InputProps,
-} from "./types.ts";
+export type { BoxProps, TextProps, ScrollBoxProps, InputProps } from "./types.ts";

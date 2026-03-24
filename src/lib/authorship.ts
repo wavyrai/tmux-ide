@@ -11,7 +11,14 @@
 // Types (following @proof/core marks model)
 // ============================================================================
 
-export type MarkKind = "authored" | "approved" | "flagged" | "comment" | "insert" | "delete" | "replace";
+export type MarkKind =
+  | "authored"
+  | "approved"
+  | "flagged"
+  | "comment"
+  | "insert"
+  | "delete"
+  | "replace";
 
 export interface MarkRange {
   from: number;
@@ -21,10 +28,10 @@ export interface MarkRange {
 export interface Mark {
   id: string;
   kind: MarkKind;
-  by: string;       // "ai:François" or "human:thijs"
-  at: string;       // ISO timestamp
+  by: string; // "ai:François" or "human:thijs"
+  at: string; // ISO timestamp
   range: MarkRange; // character positions in the clean content
-  quote: string;    // text content for re-anchoring
+  quote: string; // text content for re-anchoring
   orphaned?: boolean;
 }
 
@@ -200,10 +207,7 @@ function findQuotePosition(content: string, quote: string): MarkRange | null {
  * Re-anchor marks whose ranges may have shifted due to content edits.
  * Uses quote text to find new positions. Marks orphaned if quote not found.
  */
-export function reanchorMarks(
-  content: string,
-  marks: Record<string, Mark>,
-): Record<string, Mark> {
+export function reanchorMarks(content: string, marks: Record<string, Mark>): Record<string, Mark> {
   const result: Record<string, Mark> = {};
 
   for (const [id, mark] of Object.entries(marks)) {
@@ -239,9 +243,8 @@ export function tagContent(markdown: string, by: string): string {
   const existingMarks = existingDoc?.marks ?? {};
 
   // Re-anchor existing marks against current content
-  const anchored = Object.keys(existingMarks).length > 0
-    ? reanchorMarks(content, existingMarks)
-    : {};
+  const anchored =
+    Object.keys(existingMarks).length > 0 ? reanchorMarks(content, existingMarks) : {};
 
   // Find uncovered character ranges
   const covered = new Set<number>();

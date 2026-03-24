@@ -1,0 +1,63 @@
+name: TmuxIde
+options:
+  bundleIdPrefix: dev.tmuxide
+  xcodeVersion: "26.3"
+settings:
+  base:
+    SWIFT_VERSION: 6.0
+    MACOSX_DEPLOYMENT_TARGET: 14.0
+
+targets:
+  TmuxIde:
+    type: application
+    platform: macOS
+    deploymentTarget: "14.0"
+    sources:
+      - path: TmuxIde
+      - path: Sources/IPCShared
+      - path: ghostty.h
+        buildPhase: headers
+      - path: TmuxIde-GhosttyBridge.h
+        buildPhase: headers
+      - path: TmuxIde-Bridging-Header.h
+        buildPhase: headers
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.tmuxide.app
+        PRODUCT_NAME: tmux-ide
+        MARKETING_VERSION: 2.0.0
+        CURRENT_PROJECT_VERSION: 1
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: tmux-ide
+        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.developer-tools
+        CODE_SIGN_STYLE: Automatic
+        SWIFT_OBJC_BRIDGING_HEADER: $(SRCROOT)/TmuxIde-Bridging-Header.h
+        HEADER_SEARCH_PATHS:
+          - $(inherited)
+          - $(SRCROOT)
+        OTHER_LDFLAGS:
+          - $(inherited)
+          - -framework Metal
+          - -framework QuartzCore
+          - -framework IOSurface
+          - -framework UniformTypeIdentifiers
+          - -framework Carbon
+          - -lc++
+        LD_RUNPATH_SEARCH_PATHS:
+          - $(inherited)
+          - "@executable_path/../Frameworks"
+    dependencies:
+      - framework: GhosttyKit.xcframework
+        embed: false
+
+  TmuxIdeTests:
+    type: bundle.unit-test
+    platform: macOS
+    deploymentTarget: "14.0"
+    sources:
+      - TmuxIdeTests
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+    dependencies:
+      - target: TmuxIde

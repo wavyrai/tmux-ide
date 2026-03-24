@@ -1,4 +1,5 @@
-import { execFileSync } from "node:child_process";
+import { execFileSync, execFile } from "node:child_process";
+import { promisify } from "node:util";
 import {
   existsSync,
   readdirSync,
@@ -20,13 +21,25 @@ import {
   type SessionOverview,
   type ProjectDetail,
 } from "./discovery.ts";
-import { listSessionPanes } from "../widgets/lib/pane-comms.ts";
+import {
+  listSessionPanes,
+  sendCommand,
+  sendText,
+  getPaneBusyStatus,
+} from "../widgets/lib/pane-comms.ts";
+import { resolvePane } from "../send.ts";
+import { getSessionState, killSession, stopSessionMonitor } from "../lib/tmux.ts";
 import { ensureTasksDir, nextTaskId, saveTask, deleteTask, type Task } from "../lib/task-store.ts";
-import { readEvents } from "../lib/event-log.ts";
+import { readEvents, appendEvent } from "../lib/event-log.ts";
 import { extractMarks, calculateStats, tagContent } from "../lib/authorship.ts";
 import { loadPlans, markPlanDone } from "../lib/plan-store.ts";
 import { zValidator } from "@hono/zod-validator";
-import { updateTaskSchema, createTaskSchema, savePlanSchema } from "./schemas.ts";
+import {
+  updateTaskSchema,
+  createTaskSchema,
+  savePlanSchema,
+  sendCommandSchema,
+} from "./schemas.ts";
 
 export function createApp(): Hono {
   const app = new Hono();
@@ -427,6 +440,115 @@ export function createApp(): Hono {
     return c.json({ events: withRelative });
   });
 
+  // --- Remote command execution endpoints ---
+
+  // Send message to a pane by name/title/role/ID
+  app.post("/api/project/:name/send", zValidator("json", sendCommandSchema), async (c) => {
+    const name = c.req.param("name");
+    const sessions = discoverSessions();
+    const session = sessions.find((s) => s.name === name);
+    if (!session) {
+      return c.json({ error: "Session not found" }, 404);
+    }
+
+    const { target, message, noEnter } = c.req.valid("json");
+
+    const panes = listSessionPanes(name);
+    const pane = resolvePane(panes, target);
+    if (!pane) {
+      const available = panes.map((p) => ({
+        id: p.id,
+        title: p.title,
+        name: p.name,
+        role: p.role,
+      }));
+      return c.json({ error: "Pane not found", target, available }, 404);
+    }
+
+    const busyStatus = getPaneBusyStatus(name, pane.id);
+
+    // Collapse multiline for agent panes
+    const prepared = busyStatus === "agent" ? message.replace(/\n+/g, " ").trim() : message;
+
+    if (noEnter) {
+      sendText(name, pane.id, prepared);
+    } else {
+      sendCommand(name, pane.id, prepared);
+    }
+
+    appendEvent(session.dir, {
+      timestamp: new Date().toISOString(),
+      type: "send",
+      target: pane.name ?? pane.title,
+      paneId: pane.id,
+      message: prepared.length > 100 ? prepared.slice(0, 100) + "..." : prepared,
+    });
+
+    return c.json({
+      ok: true,
+      session: name,
+      target: {
+        paneId: pane.id,
+        name: pane.name,
+        title: pane.title,
+        role: pane.role,
+      },
+      busyStatus,
+    });
+  });
+
+  // Launch a tmux-ide session (shells out to CLI since launch has complex side effects)
+  const execFileAsync = promisify(execFile);
+
+  app.post("/api/project/:name/launch", async (c) => {
+    const name = c.req.param("name");
+    const sessions = discoverSessions();
+    const session = sessions.find((s) => s.name === name);
+    if (!session) {
+      return c.json({ error: "Session not found" }, 404);
+    }
+
+    // Check if already running
+    const state = getSessionState(name);
+    if (state.running) {
+      return c.json({ ok: true, session: name, status: "already_running" });
+    }
+
+    try {
+      await execFileAsync("tmux-ide", ["--json"], {
+        cwd: session.dir,
+        timeout: 30000,
+        env: { ...process.env, TMUX: "" }, // Clear TMUX to avoid nesting
+      });
+      return c.json({ ok: true, session: name, status: "launched" });
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      return c.json({ error: "Launch failed", detail: message }, 500);
+    }
+  });
+
+  // Stop a tmux-ide session
+  app.post("/api/project/:name/stop", async (c) => {
+    const name = c.req.param("name");
+    const sessions = discoverSessions();
+    const session = sessions.find((s) => s.name === name);
+    if (!session) {
+      return c.json({ error: "Session not found" }, 404);
+    }
+
+    const state = getSessionState(name);
+    if (!state.running) {
+      return c.json({ ok: true, session: name, status: "not_running" });
+    }
+
+    stopSessionMonitor(name);
+    const result = killSession(name);
+    if (result.stopped) {
+      return c.json({ ok: true, session: name, status: "stopped" });
+    }
+    return c.json({ error: "Stop failed", reason: result.reason }, 500);
+  });
+
   // SSE endpoint — cursor-based event streaming with orchestrator state
   app.get("/api/events", (c) => {
     return streamSSE(c, async (stream) => {
@@ -570,6 +692,15 @@ export function createApp(): Hono {
         await stream.sleep(2000);
         poll();
       }
+    });
+  });
+
+  // Health check for daemon liveness probes
+  app.get("/health", (c) => {
+    return c.json({
+      ok: true,
+      uptime: Math.round(process.uptime()),
+      version: "2.0.0",
     });
   });
 

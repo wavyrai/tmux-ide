@@ -29,11 +29,11 @@ describe("loadPlans", () => {
   it("loads plans and parses status", () => {
     writePlan(
       "01-mouse-support",
-      '# Plan 01: Mouse Support\n\n**Status:** `done`\n**Effort:** Low\n',
+      "# Plan 01: Mouse Support\n\n**Status:** `done`\n**Effort:** Low\n",
     );
     writePlan(
       "70-hierarchical-agents",
-      '# Plan 70: Hierarchical Agents\n\n**Status:** `in-progress`\n**Effort:** High\n**Gate:** agents work\n',
+      "# Plan 70: Hierarchical Agents\n\n**Status:** `in-progress`\n**Effort:** High\n**Gate:** agents work\n",
     );
 
     const plans = loadPlans(tmpDir);
@@ -87,7 +87,10 @@ describe("listPlans", () => {
 
 describe("markPlanDone", () => {
   it("updates status to done and adds completed date", () => {
-    writePlan("50-task-cli", "# Plan 50: Task CLI\n\n**Status:** `in-progress`\n**Effort:** Medium\n");
+    writePlan(
+      "50-task-cli",
+      "# Plan 50: Task CLI\n\n**Status:** `in-progress`\n**Effort:** Medium\n",
+    );
 
     const result = markPlanDone(tmpDir, "50");
     assert.ok(result);

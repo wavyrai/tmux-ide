@@ -35,7 +35,10 @@ describe("PRESETS", () => {
     for (const preset of PRESETS) {
       const config = preset.buildConfig("test-project");
       const result = validateSetupConfig(config);
-      assert.ok(result.valid, `preset ${preset.id} produced invalid config: ${!result.valid ? result.errors.join(", ") : ""}`);
+      assert.ok(
+        result.valid,
+        `preset ${preset.id} produced invalid config: ${!result.valid ? result.errors.join(", ") : ""}`,
+      );
     }
   });
 
@@ -115,10 +118,7 @@ describe("flattenConfigTree", () => {
     rows: [
       {
         size: "70%",
-        panes: [
-          { title: "Claude 1", command: "claude" },
-          { title: "Shell" },
-        ],
+        panes: [{ title: "Claude 1", command: "claude" }, { title: "Shell" }],
       },
     ],
   };
@@ -130,9 +130,7 @@ describe("flattenConfigTree", () => {
 
   it("includes leaf nodes with string values", () => {
     const nodes = flattenConfigTree(simple);
-    const nameNode = nodes.find(
-      (n) => n.path.length === 1 && n.path[0] === "name",
-    );
+    const nameNode = nodes.find((n) => n.path.length === 1 && n.path[0] === "name");
     assert.ok(nameNode);
     assert.strictEqual(nameNode!.value, "test");
     assert.strictEqual(nameNode!.expandable, false);
@@ -140,9 +138,7 @@ describe("flattenConfigTree", () => {
 
   it("includes container nodes with null value", () => {
     const nodes = flattenConfigTree(simple);
-    const rowsNode = nodes.find(
-      (n) => n.path.length === 1 && n.path[0] === "rows",
-    );
+    const rowsNode = nodes.find((n) => n.path.length === 1 && n.path[0] === "rows");
     assert.ok(rowsNode);
     assert.strictEqual(rowsNode!.value, null);
     assert.strictEqual(rowsNode!.expandable, true);
@@ -166,9 +162,7 @@ describe("flattenConfigTree", () => {
     const nameNode = nodes.find((n) => n.label === "name" && n.path.length === 1);
     assert.strictEqual(nameNode!.depth, 0);
 
-    const paneTitle = nodes.find(
-      (n) => n.label === "title" && n.value === "Claude 1",
-    );
+    const paneTitle = nodes.find((n) => n.label === "title" && n.value === "Claude 1");
     assert.ok(paneTitle);
     assert.strictEqual(paneTitle!.depth, 4); // rows.0.panes.0.title
   });
@@ -203,11 +197,7 @@ describe("updateConfigAtPath", () => {
   });
 
   it("updates a nested value", () => {
-    const updated = updateConfigAtPath(
-      base,
-      ["rows", "0", "panes", "0", "title"],
-      "Renamed",
-    );
+    const updated = updateConfigAtPath(base, ["rows", "0", "panes", "0", "title"], "Renamed");
     assert.strictEqual(updated.rows[0]!.panes[0]!.title, "Renamed");
     assert.strictEqual(base.rows[0]!.panes[0]!.title, "Claude"); // original unchanged
   });

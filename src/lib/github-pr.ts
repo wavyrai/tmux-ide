@@ -26,11 +26,7 @@ export function isGhAvailable(): boolean {
  * Create a GitHub PR for a completed task.
  * Returns the PR URL and number, or null if creation failed.
  */
-export function createTaskPr(
-  task: Task,
-  cwd: string,
-  baseBranch?: string,
-): PrResult | null {
+export function createTaskPr(task: Task, cwd: string, baseBranch?: string): PrResult | null {
   if (!task.branch) return null;
 
   // Build PR body
@@ -42,7 +38,8 @@ export function createTaskPr(
     const proof = task.proof as ProofSchema;
     if (proof.notes) bodyParts.push(proof.notes);
     if (proof.tests) bodyParts.push(`Tests: ${proof.tests.passed}/${proof.tests.total} passed`);
-    if (proof.ci) bodyParts.push(`CI: ${proof.ci.status}${proof.ci.url ? ` (${proof.ci.url})` : ""}`);
+    if (proof.ci)
+      bodyParts.push(`CI: ${proof.ci.status}${proof.ci.url ? ` (${proof.ci.url})` : ""}`);
   }
   if (task.tags.length > 0) {
     bodyParts.push("");

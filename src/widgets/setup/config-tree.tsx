@@ -1,12 +1,7 @@
 import { createSignal, createMemo } from "solid-js";
 import { RGBA, TextAttributes } from "@opentui/core";
 import { useKeyboard } from "@opentui/solid";
-import {
-  flattenConfigTree,
-  validateSetupConfig,
-  addPane,
-  type TreeNode,
-} from "./setup-model.ts";
+import { flattenConfigTree, validateSetupConfig, addPane, type TreeNode } from "./setup-model.ts";
 import type { IdeConfig } from "../../schemas/ide-config.ts";
 import type { WidgetTheme, RGBA as RGBAType } from "../lib/theme.ts";
 
@@ -155,7 +150,9 @@ export function ConfigTree(props: ConfigTreeProps) {
         <text fg={toRGBA(theme.accent)} attributes={TextAttributes.BOLD}>
           Config Editor
         </text>
-        <text fg={toRGBA(theme.fgMuted)} onMouseUp={() => props.onSave(props.config)}>Ctrl+S:save</text>
+        <text fg={toRGBA(theme.fgMuted)} onMouseUp={() => props.onSave(props.config)}>
+          Ctrl+S:save
+        </text>
       </box>
 
       {/* Tree */}
@@ -180,11 +177,7 @@ export function ConfigTree(props: ConfigTreeProps) {
               <box flexDirection="row">
                 <text
                   fg={toRGBA(
-                    isSelected()
-                      ? theme.accent
-                      : node.expandable
-                        ? theme.fg
-                        : theme.fgMuted,
+                    isSelected() ? theme.accent : node.expandable ? theme.fg : theme.fgMuted,
                   )}
                   attributes={isSelected() ? TextAttributes.BOLD : 0}
                   wrapMode="none"

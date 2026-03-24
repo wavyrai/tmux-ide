@@ -7,16 +7,10 @@ export function Text(props: ParentProps<TextProps>) {
     color: props.fg ? rgbaToCSS(props.fg) : undefined,
     background: props.bg ? rgbaToCSS(props.bg) : undefined,
     "white-space":
-      props.wrapMode === "none"
-        ? "nowrap"
-        : props.wrapMode === "word"
-          ? "pre-wrap"
-          : undefined,
+      props.wrapMode === "none" ? "nowrap" : props.wrapMode === "word" ? "pre-wrap" : undefined,
     overflow: props.wrapMode === "none" ? "hidden" : undefined,
-    "word-break":
-      props.wrapMode === "word" ? "break-word" : undefined,
-    width:
-      typeof props.width === "number" ? `${props.width}ch` : props.width,
+    "word-break": props.wrapMode === "word" ? "break-word" : undefined,
+    width: typeof props.width === "number" ? `${props.width}ch` : props.width,
     height:
       typeof props.height === "number"
         ? `calc(${props.height} * var(--line-height))`
