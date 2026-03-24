@@ -81,11 +81,16 @@ struct GhosttyTerminalView: NSViewRepresentable {
             // we constrain relative to contentView's anchors.
             let frame = placeholder.convert(placeholder.bounds, to: contentView)
 
+            // Use window-relative coordinates to avoid coordinate system mismatches.
+            // SwiftUI uses top-left origin; AppKit uses bottom-left.
+            // Converting to window space (nil) gives us absolute positioning.
+            let windowFrame = placeholder.convert(placeholder.bounds, to: nil)
+
             layoutConstraints = [
-                container.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: frame.origin.x),
-                container.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: frame.origin.y),
-                container.widthAnchor.constraint(equalToConstant: frame.width),
-                container.heightAnchor.constraint(equalToConstant: frame.height),
+                container.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: windowFrame.origin.x - (contentView.window?.contentView?.frame.origin.x ?? 0)),
+                container.topAnchor.constraint(equalTo: contentView.topAnchor, constant: contentView.bounds.height - windowFrame.origin.y - windowFrame.height),
+                container.widthAnchor.constraint(equalToConstant: windowFrame.width),
+                container.heightAnchor.constraint(equalToConstant: windowFrame.height),
             ]
             NSLayoutConstraint.activate(layoutConstraints)
         }
