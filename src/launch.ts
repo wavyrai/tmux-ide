@@ -284,7 +284,7 @@ export async function launch(
     "lib",
     "daemon-watchdog.ts",
   );
-  const commandCenterPort = config.command_center?.port ?? 0;
+  const commandCenterPort = config.command_center?.port ?? 4000;
   startSessionMonitor(session, monitorScript, commandCenterPort);
 
   // Inject master agent prompt and task docs if orchestrator is enabled

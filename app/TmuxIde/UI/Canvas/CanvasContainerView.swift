@@ -1,14 +1,18 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct CanvasContainerView: View {
     let sessionName: String
 
+    @Environment(\.themeColors) private var themeColors
     @EnvironmentObject var coordinator: AppCoordinator
     @EnvironmentObject var canvasService: SessionCanvasService
     @StateObject private var gestureManager = CanvasGestureManager()
     @StateObject private var camera = CameraStateManager()
     @FocusState private var canvasFocused: Bool
     @State private var containerSize: CGSize = .zero
+    @State private var draggedItemID: UUID?
+    @State private var dropTargetColumnID: UUID?
 
     var workspace: CanvasWorkspace? {
         canvasService.layout.workspaces.first { $0.sessionName == sessionName }
@@ -81,14 +85,36 @@ struct CanvasContainerView: View {
                 gestureManager: gestureManager,
                 camera: camera
             ) {
-                HStack(alignment: .top, spacing: 16) {
-                    ForEach(workspace.columns) { column in
-                        overviewAwareColumn(column: column)
+                HStack(alignment: .top, spacing: 0) {
+                    if camera.isOverview {
+                        // Leading inter-column drop zone
+                        interColumnDropZone(insertionIndex: 0, in: workspace)
+                    }
+                    ForEach(Array(workspace.columns.enumerated()), id: \.element.id) { index, column in
+                        if index > 0 {
+                            if camera.isOverview {
+                                interColumnDropZone(insertionIndex: index, in: workspace)
+                            } else {
+                                // Horizontal resize handle between columns
+                                ColumnResizeHandle(height: 400) { delta in
+                                    resizeColumn(
+                                        workspace.columns[index - 1].id,
+                                        delta: delta,
+                                        in: workspace
+                                    )
+                                }
+                            }
+                        }
+                        overviewAwareColumn(column: column, workspace: workspace)
+                    }
+                    if camera.isOverview {
+                        // Trailing inter-column drop zone
+                        interColumnDropZone(insertionIndex: workspace.columns.count, in: workspace)
                     }
                 }
                 .padding(20)
             }
-            .background(Color(nsColor: .windowBackgroundColor))
+            .background(DotGridBackground(offsetX: camera.panOffset.x, offsetY: camera.panOffset.y))
             .preference(key: ContainerSizeKey.self, value: proxy.size)
         }
         .onPreferenceChange(ContainerSizeKey.self) { containerSize = $0 }
@@ -104,28 +130,60 @@ struct CanvasContainerView: View {
     // MARK: - Column with Overview Decorations
 
     @ViewBuilder
-    private func overviewAwareColumn(column: CanvasColumn) -> some View {
+    private func overviewAwareColumn(column: CanvasColumn, workspace: CanvasWorkspace) -> some View {
         CanvasColumnView(
             column: column,
             sessionName: sessionName,
-            baseURL: coordinator.connectionTarget.baseURL
+            baseURL: (coordinator.connectionManager.targets.first ?? .localhost).baseURL,
+            isOverview: camera.isOverview,
+            draggedItemID: draggedItemID,
+            onItemResize: { itemID, delta in
+                resizeItem(itemID, delta: delta, columnID: column.id, in: workspace)
+            },
+            onDragStarted: { itemID in
+                draggedItemID = itemID
+            },
+            onDragEnded: {
+                draggedItemID = nil
+                dropTargetColumnID = nil
+            }
         )
         .opacity(overviewColumnOpacity(for: column))
         .overlay {
-            if camera.isOverview && camera.activeColumnID == column.id {
+            if camera.isOverview && camera.activeColumnID == column.id && draggedItemID == nil {
                 RoundedRectangle(cornerRadius: 12)
-                    .strokeBorder(Color.accentColor.opacity(0.6), lineWidth: 3)
+                    .strokeBorder(themeColors.accent.opacity(0.6), lineWidth: 3)
                     .animation(CameraStateManager.cameraSpring, value: camera.activeColumnID)
             }
         }
         .overlay {
-            if camera.isOverview {
+            // Drop target highlight
+            if camera.isOverview && dropTargetColumnID == column.id && draggedItemID != nil {
+                RoundedRectangle(cornerRadius: 12)
+                    .strokeBorder(themeColors.accent, lineWidth: 2)
+                    .background(themeColors.accent.opacity(0.08).clipShape(RoundedRectangle(cornerRadius: 12)))
+            }
+        }
+        .overlay {
+            if camera.isOverview && draggedItemID == nil {
                 Color.clear
                     .contentShape(Rectangle())
                     .onTapGesture {
                         focusFromOverview(column: column)
                     }
             }
+        }
+        .onDrop(of: [.text], isTargeted: Binding(
+            get: { dropTargetColumnID == column.id },
+            set: { targeted in
+                if targeted {
+                    dropTargetColumnID = column.id
+                } else if dropTargetColumnID == column.id {
+                    dropTargetColumnID = nil
+                }
+            }
+        )) { providers in
+            handleDrop(providers: providers, toColumnID: column.id, in: workspace)
         }
     }
 
@@ -226,6 +284,136 @@ struct CanvasContainerView: View {
         return column.items.firstIndex { $0.id == itemID }
     }
 
+    // MARK: - Drag & Drop (Overview Mode)
+
+    @ViewBuilder
+    private func interColumnDropZone(insertionIndex: Int, in workspace: CanvasWorkspace) -> some View {
+        let isTargeted = draggedItemID != nil
+        Rectangle()
+            .fill(Color.clear)
+            .frame(width: isTargeted ? 40 : 16)
+            .frame(maxHeight: .infinity)
+            .overlay {
+                if draggedItemID != nil {
+                    RoundedRectangle(cornerRadius: 3)
+                        .fill(themeColors.accent.opacity(0.4))
+                        .frame(width: 3)
+                }
+            }
+            .contentShape(Rectangle())
+            .onDrop(of: [.text], isTargeted: .constant(false)) { providers in
+                handleDropAsNewColumn(providers: providers, atIndex: insertionIndex, in: workspace)
+            }
+            .animation(.easeOut(duration: 0.15), value: draggedItemID != nil)
+    }
+
+    private func handleDrop(providers: [NSItemProvider], toColumnID: UUID, in workspace: CanvasWorkspace) -> Bool {
+        guard camera.isOverview else { return false }
+        guard let provider = providers.first(where: { $0.canLoadObject(ofClass: NSString.self) }) else { return false }
+        provider.loadObject(ofClass: NSString.self) { object, _ in
+            guard let string = object as? NSString,
+                  let itemID = UUID(uuidString: String(string)) else { return }
+            DispatchQueue.main.async {
+                withAnimation(.spring(duration: 0.35, bounce: 0.15)) {
+                    moveItem(itemID, toColumnID: toColumnID, in: workspace)
+                }
+                draggedItemID = nil
+                dropTargetColumnID = nil
+            }
+        }
+        return true
+    }
+
+    private func handleDropAsNewColumn(providers: [NSItemProvider], atIndex: Int, in workspace: CanvasWorkspace) -> Bool {
+        guard camera.isOverview else { return false }
+        guard let provider = providers.first(where: { $0.canLoadObject(ofClass: NSString.self) }) else { return false }
+        provider.loadObject(ofClass: NSString.self) { object, _ in
+            guard let string = object as? NSString,
+                  let itemID = UUID(uuidString: String(string)) else { return }
+            DispatchQueue.main.async {
+                withAnimation(.spring(duration: 0.35, bounce: 0.15)) {
+                    moveItemToNewColumn(itemID, atIndex: atIndex, in: workspace)
+                }
+                draggedItemID = nil
+                dropTargetColumnID = nil
+            }
+        }
+        return true
+    }
+
+    /// Move an item from its current column to the target column.
+    private func moveItem(_ itemID: UUID, toColumnID: UUID, in workspace: CanvasWorkspace) {
+        guard let wsIdx = canvasService.layout.workspaces.firstIndex(where: { $0.id == workspace.id }) else { return }
+
+        // Find and remove from source column
+        var item: CanvasItem?
+        for colIdx in canvasService.layout.workspaces[wsIdx].columns.indices {
+            if let itemIdx = canvasService.layout.workspaces[wsIdx].columns[colIdx].items.firstIndex(where: { $0.id == itemID }) {
+                item = canvasService.layout.workspaces[wsIdx].columns[colIdx].items.remove(at: itemIdx)
+                // Clean up empty columns
+                if canvasService.layout.workspaces[wsIdx].columns[colIdx].items.isEmpty {
+                    canvasService.layout.workspaces[wsIdx].columns.remove(at: colIdx)
+                }
+                break
+            }
+        }
+
+        guard let item else { return }
+
+        // Append to target column
+        if let targetIdx = canvasService.layout.workspaces[wsIdx].columns.firstIndex(where: { $0.id == toColumnID }) {
+            canvasService.layout.workspaces[wsIdx].columns[targetIdx].items.append(item)
+        }
+    }
+
+    /// Move an item into a brand-new column at the given insertion index.
+    private func moveItemToNewColumn(_ itemID: UUID, atIndex: Int, in workspace: CanvasWorkspace) {
+        guard let wsIdx = canvasService.layout.workspaces.firstIndex(where: { $0.id == workspace.id }) else { return }
+
+        // Find and remove from source column
+        var item: CanvasItem?
+        for colIdx in canvasService.layout.workspaces[wsIdx].columns.indices {
+            if let itemIdx = canvasService.layout.workspaces[wsIdx].columns[colIdx].items.firstIndex(where: { $0.id == itemID }) {
+                item = canvasService.layout.workspaces[wsIdx].columns[colIdx].items.remove(at: itemIdx)
+                if canvasService.layout.workspaces[wsIdx].columns[colIdx].items.isEmpty {
+                    canvasService.layout.workspaces[wsIdx].columns.remove(at: colIdx)
+                }
+                break
+            }
+        }
+
+        guard let item else { return }
+
+        let newColumn = CanvasColumn(items: [item])
+        let clamped = min(atIndex, canvasService.layout.workspaces[wsIdx].columns.count)
+        canvasService.layout.workspaces[wsIdx].columns.insert(newColumn, at: clamped)
+    }
+
+    // MARK: - Resize Actions
+
+    private func resizeColumn(_ columnID: UUID, delta: CGFloat, in workspace: CanvasWorkspace) {
+        guard abs(delta) > 0.5 else { return }
+        guard let wsIdx = canvasService.layout.workspaces.firstIndex(where: { $0.id == workspace.id }),
+              let colIdx = canvasService.layout.workspaces[wsIdx].columns.firstIndex(where: { $0.id == columnID })
+        else { return }
+
+        let current = canvasService.layout.workspaces[wsIdx].columns[colIdx].preferredWidth ?? 400
+        let newWidth = max(250, min(800, current + Double(delta)))
+        canvasService.layout.workspaces[wsIdx].columns[colIdx].preferredWidth = newWidth
+    }
+
+    private func resizeItem(_ itemID: UUID, delta: CGFloat, columnID: UUID, in workspace: CanvasWorkspace) {
+        guard abs(delta) > 0.5 else { return }
+        guard let wsIdx = canvasService.layout.workspaces.firstIndex(where: { $0.id == workspace.id }),
+              let colIdx = canvasService.layout.workspaces[wsIdx].columns.firstIndex(where: { $0.id == columnID }),
+              let itemIdx = canvasService.layout.workspaces[wsIdx].columns[colIdx].items.firstIndex(where: { $0.id == itemID })
+        else { return }
+
+        let current = canvasService.layout.workspaces[wsIdx].columns[colIdx].items[itemIdx].preferredHeight ?? 200
+        let newHeight = max(100, min(800, current + Double(delta)))
+        canvasService.layout.workspaces[wsIdx].columns[colIdx].items[itemIdx].preferredHeight = newHeight
+    }
+
     // MARK: - Keyboard Shortcut Actions
 
     private func handleCanvasAction(_ actionId: String) {
@@ -263,7 +451,7 @@ struct CanvasContainerView: View {
 // MARK: - Container Size Preference Key
 
 private struct ContainerSizeKey: PreferenceKey {
-    static var defaultValue: CGSize = .zero
+    nonisolated(unsafe) static var defaultValue: CGSize = .zero
     static func reduce(value: inout CGSize, nextValue: () -> CGSize) {
         value = nextValue()
     }

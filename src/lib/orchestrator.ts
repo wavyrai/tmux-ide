@@ -222,12 +222,12 @@ export function buildTaskPrompt(
   if (task.tags?.length) prompt += `Tags: ${task.tags.join(", ")}\n`;
   prompt += `\nWorkspace: ${worktreePath}\n`;
   prompt += `Branch: ${branch}\n`;
-  prompt += `\nWhen done, run:\n`;
-  prompt += `  tmux-ide task done ${task.id} --proof "describe what you accomplished"\n`;
+  prompt += `\nWhen done:\n`;
+  prompt += `  tmux-ide task done ${task.id} --proof "short summary of what you accomplished"\n`;
 
-  // Collapse to single line — keeps the paste as compact as possible.
-  // sendCommand handles the double-Enter for paste preview confirmation.
-  return prompt.replace(/\n+/g, " ").trim();
+  // Prompt is written to a file (.tasks/dispatch/{id}.md), not pasted.
+  // Keep readable multiline format for the agent.
+  return prompt.trim();
 }
 
 export function dispatch(
@@ -267,6 +267,8 @@ export function dispatch(
       if (state.claimedTasks.has(t.id)) return false;
       // Regular todo tasks (skip if already has a branch — was dispatched before)
       if (t.status === "todo" && !t.assignee && !t.branch) {
+        // Skip if waiting for scheduled retry (nextRetryAt is in the future)
+        if (t.nextRetryAt && new Date(t.nextRetryAt).getTime() > now) return false;
         // Check dependencies: all depends_on tasks must be done
         if (t.depends_on && t.depends_on.length > 0) {
           const allDepsDone = t.depends_on.every((depId) => {
@@ -304,6 +306,7 @@ export function dispatch(
     // Persist task as in-progress FIRST — prevents double-dispatch on crash
     task.status = "in-progress";
     task.assignee = agentName;
+    task.nextRetryAt = null; // Clear retry schedule on dispatch
     task.updated = new Date().toISOString();
     saveTask(config.dir, task);
 
@@ -360,11 +363,17 @@ export function dispatch(
     // Record claim time for cost tracking
     state.taskClaimTimes.set(task.id, Date.now());
 
-    // Build and send prompt. The prompt is collapsed to a single line
-    // to minimize paste preview issues in Claude Code's TUI. sendCommand
-    // handles the double-Enter sequence needed for paste confirmation.
+    // Write the full prompt to a dispatch file and send a short command
+    // telling the agent to read it. This avoids the paste preview problem
+    // entirely — short commands (<200 chars) never trigger it.
     const prompt = buildTaskPrompt(config.dir, task, worktreePath, branch);
-    const sent = sendCommand(config.session, agent.id, prompt);
+    const dispatchDir = join(config.dir, ".tasks", "dispatch");
+    if (!existsSync(dispatchDir)) mkdirSync(dispatchDir, { recursive: true });
+    const dispatchFile = join(dispatchDir, `${task.id}.md`);
+    writeFileSync(dispatchFile, prompt);
+
+    const shortCmd = `Read and execute the task in .tasks/dispatch/${task.id}.md — when done run: tmux-ide task done ${task.id} --proof "what you did"`;
+    const sent = sendCommand(config.session, agent.id, shortCmd);
 
     if (!sent) {
       // Roll back: reset task to todo, remove claim, clean up worktree
@@ -504,9 +513,13 @@ export function dispatchGoals(
     goal.updated = new Date().toISOString();
     saveGoal(config.dir, goal);
 
-    // Send goal prompt
+    // Write goal prompt to file and send short command
     const prompt = buildGoalPrompt(config.dir, goal, planner);
-    sendCommand(config.session, planner.id, prompt);
+    const goalDispatchDir = join(config.dir, ".tasks", "dispatch");
+    if (!existsSync(goalDispatchDir)) mkdirSync(goalDispatchDir, { recursive: true });
+    const goalDispatchFile = join(goalDispatchDir, `goal-${goal.id}.md`);
+    writeFileSync(goalDispatchFile, prompt);
+    sendCommand(config.session, planner.id, `Read and execute the goal in .tasks/dispatch/goal-${goal.id}.md`);
 
     // Log event
     appendEvent(config.dir, {
@@ -563,6 +576,27 @@ export function detectCompletions(
 ): void {
   for (const task of tasks) {
     const prev = state.previousTasks.get(task.id);
+
+    // Task was explicitly marked as review while in-progress — treat as failure, schedule retry
+    if (prev === "in-progress" && task.status === "review" && task.lastError) {
+      state.taskClaimTimes.delete(task.id);
+      const retried = scheduleRetry(config.dir, state, task, task.lastError);
+
+      // Notify master if retries exhausted
+      if (!retried && config.masterPane) {
+        const masterPaneInfo =
+          panes.find((p) => p.role === "lead") ?? panes.find((p) => p.title === config.masterPane);
+        if (masterPaneInfo) {
+          const retryDispDir = join(config.dir, ".tasks", "dispatch");
+          if (!existsSync(retryDispDir)) mkdirSync(retryDispDir, { recursive: true });
+          const msgFile = join(retryDispDir, `retry-exhausted-${task.id}.md`);
+          const msg = `# Task Failed: ${task.title}\n\nFailed after ${task.maxRetries ?? 5} retries.\nLast error: ${task.lastError}\n\nManual intervention required.`;
+          writeFileSync(msgFile, msg);
+          sendCommand(config.session, masterPaneInfo.id, `Read .tasks/dispatch/retry-exhausted-${task.id}.md — task needs manual intervention`);
+        }
+      }
+    }
+
     if (prev === "in-progress" && task.status === "done") {
       // Record elapsed time for cost tracking
       const claimTime = state.taskClaimTimes.get(task.id);
@@ -629,18 +663,77 @@ export function detectCompletions(
         const masterPaneInfo =
           panes.find((p) => p.role === "lead") ?? panes.find((p) => p.title === config.masterPane);
         if (masterPaneInfo) {
-          const proofStr = task.proof ? JSON.stringify(task.proof) : "no proof provided";
-          sendCommand(
-            config.session,
-            masterPaneInfo.id,
-            `Task completed: "${task.title}" by ${task.assignee}. ` +
-              `Proof: ${proofStr}. ` +
-              `Review and approve, or request changes.`,
-          );
+          const proofStr = task.proof ? JSON.stringify(task.proof, null, 2) : "no proof provided";
+          const dispDir = join(config.dir, ".tasks", "dispatch");
+          if (!existsSync(dispDir)) mkdirSync(dispDir, { recursive: true });
+          const msgFile = join(dispDir, `completed-${task.id}.md`);
+          const msg = `# Task Completed: ${task.title}\n\nBy: ${task.assignee}\nProof:\n${proofStr}\n\nReview and approve, or request changes.`;
+          writeFileSync(msgFile, msg);
+          sendCommand(config.session, masterPaneInfo.id, `Task completed: "${task.title}" by ${task.assignee}. Details in .tasks/dispatch/completed-${task.id}.md`);
         }
       }
     }
   }
+}
+
+/**
+ * Schedule a failed task for retry with exponential backoff.
+ *
+ * Backoff formula: 10s * 2^attempt, capped at 300s (5 minutes).
+ * Max 5 retries by default (configurable per task via maxRetries).
+ *
+ * Returns true if retry was scheduled, false if max retries exceeded.
+ */
+export function scheduleRetry(
+  dir: string,
+  state: OrchestratorState,
+  task: Task,
+  reason: string,
+): boolean {
+  const maxRetries = task.maxRetries ?? 5;
+
+  if (task.retryCount >= maxRetries) {
+    // Max retries exceeded — mark for review
+    task.status = "review";
+    task.lastError = reason;
+    task.assignee = null;
+    task.branch = null;
+    task.updated = new Date().toISOString();
+    saveTask(dir, task);
+    state.claimedTasks.delete(task.id);
+
+    appendEvent(dir, {
+      timestamp: new Date().toISOString(),
+      type: "error",
+      taskId: task.id,
+      message: `Max retries (${maxRetries}) exceeded for "${task.title}": ${reason}`,
+    });
+
+    return false;
+  }
+
+  // Exponential backoff: 10s * 2^attempt, capped at 300s
+  const backoffMs = Math.min(10_000 * Math.pow(2, task.retryCount), 300_000);
+  const nextRetryAt = new Date(Date.now() + backoffMs).toISOString();
+
+  task.retryCount += 1;
+  task.lastError = reason;
+  task.nextRetryAt = nextRetryAt;
+  task.status = "todo";
+  task.assignee = null;
+  task.branch = null;
+  task.updated = new Date().toISOString();
+  saveTask(dir, task);
+  state.claimedTasks.delete(task.id);
+
+  appendEvent(dir, {
+    timestamp: new Date().toISOString(),
+    type: "retry",
+    taskId: task.id,
+    message: `Retry ${task.retryCount}/${maxRetries} scheduled for "${task.title}" in ${backoffMs / 1000}s: ${reason}`,
+  });
+
+  return true;
 }
 
 export function reconcile(
@@ -655,19 +748,17 @@ export function reconcile(
     // Check if the assigned agent's pane still exists
     if (!agentIds.has(task.assignee!)) {
       const agent = task.assignee!;
-      // Agent crashed or pane was closed — release the task
-      task.assignee = null;
-      task.status = "todo";
-      task.branch = null;
-      task.updated = new Date().toISOString();
-      saveTask(config.dir, task);
-      state.claimedTasks.delete(task.id);
+      const reason = `Agent "${agent}" vanished (pane closed or crashed)`;
+
+      // Schedule retry with backoff instead of immediate re-queue
+      scheduleRetry(config.dir, state, task, reason);
+
       appendEvent(config.dir, {
         timestamp: new Date().toISOString(),
         type: "reconcile",
         taskId: task.id,
         agent,
-        message: `Agent "${agent}" vanished, released "${task.title}"`,
+        message: `Agent "${agent}" vanished, scheduled retry for "${task.title}"`,
       });
     }
   }

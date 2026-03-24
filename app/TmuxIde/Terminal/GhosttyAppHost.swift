@@ -70,7 +70,7 @@ final class GhosttyAppHost {
         let initResult = tmuxide_ghostty_init(UInt(CommandLine.argc), CommandLine.unsafeArgv)
         guard initResult == GHOSTTY_SUCCESS else {
             availability = .unavailable("ghostty_init failed: \(initResult)")
-            logger.error("ghostty_init failed with code \(initResult.rawValue)")
+            logger.error("ghostty_init failed with code \(initResult)")
             return
         }
 
@@ -225,7 +225,13 @@ final class GhosttyAppHost {
         let scaleFactor = view.window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2
         config.scale_factor = max(1, Double(scaleFactor))
 
-        let command = wrapper.shellPath.isEmpty ? nil : Self.shellEscapedCommand(wrapper.shellPath)
+        // Prefer rawCommand (used by mirror/passthrough surfaces) over shell-escaped shellPath
+        let command: String?
+        if let raw = wrapper.rawCommand {
+            command = raw
+        } else {
+            command = wrapper.shellPath.isEmpty ? nil : Self.shellEscapedCommand(wrapper.shellPath)
+        }
         let surface: ghostty_surface_t? = wrapper.workingDirectory.withCString { cwdCString in
             if let command {
                 return command.withCString { shellCString in

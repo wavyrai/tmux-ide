@@ -12,6 +12,11 @@ final class GhosttyTerminalSurface: ObservableObject {
     internal var surface: ghostty_surface_t?
     let view: GhosttyNativeView
 
+    /// When set, this command string is passed directly to Ghostty as config.command
+    /// without shell escaping. Used by MirrorTerminalController for passthrough mode
+    /// (e.g. "stty raw -echo 2>/dev/null; exec cat").
+    var rawCommand: String?
+
     private(set) var callbackContext: Unmanaged<GhosttySurfaceCallbackContext>?
     private var pendingInputQueue: [PendingInputAction] = []
 

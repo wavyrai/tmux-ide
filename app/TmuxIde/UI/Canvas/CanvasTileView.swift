@@ -4,13 +4,16 @@ struct CanvasTileView: View {
     let item: CanvasItem
     let sessionName: String
     let baseURL: URL
+    var isSelected: Bool = false
 
+    @Environment(\.themeColors) private var themeColors
     @EnvironmentObject private var discovery: SessionDiscoveryService
 
-    init(item: CanvasItem, sessionName: String = "", baseURL: URL = ConnectionTarget.localhost.baseURL) {
+    init(item: CanvasItem, sessionName: String = "", baseURL: URL = ConnectionTarget.localhost.baseURL, isSelected: Bool = false) {
         self.item = item
         self.sessionName = sessionName
         self.baseURL = baseURL
+        self.isSelected = isSelected
     }
 
     var body: some View {
@@ -23,6 +26,7 @@ struct CanvasTileView: View {
                 Text(tileTitle)
                     .font(.caption)
                     .fontWeight(.medium)
+                    .foregroundStyle(themeColors.primaryText)
                     .lineLimit(1)
                 Spacer()
                 if let badge = agentBadge {
@@ -30,11 +34,11 @@ struct CanvasTileView: View {
                 }
                 Text(tileSubtitle)
                     .font(.caption2)
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(themeColors.tertiaryText)
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 6)
-            .background(Color(nsColor: .controlBackgroundColor))
+            .background(themeColors.surface1)
 
             // Content area
             tileContent
@@ -45,7 +49,29 @@ struct CanvasTileView: View {
             RoundedRectangle(cornerRadius: 8)
                 .strokeBorder(borderColor, lineWidth: borderWidth)
         )
-        .shadow(color: .black.opacity(0.1), radius: 4, y: 2)
+        .overlay {
+            // Focus ring when selected
+            if isSelected {
+                RoundedRectangle(cornerRadius: 8)
+                    .strokeBorder(themeColors.accent, lineWidth: 2)
+            }
+        }
+        .shadow(color: .black.opacity(0.15), radius: 6, y: 3)
+        .contextMenu {
+            Button("Close Tile") {
+                // Future: coordinator.closeTile(item.id)
+            }
+            Button("Focus in Full Screen") {
+                // Future: coordinator.fullScreenTile(item.id)
+            }
+            Divider()
+            Button("Move Left") {
+                // Future: coordinator.moveTile(item.id, direction: .left)
+            }
+            Button("Move Right") {
+                // Future: coordinator.moveTile(item.id, direction: .right)
+            }
+        }
     }
 
     private var agentBadge: AgentBadgeStatus? {
@@ -58,7 +84,7 @@ struct CanvasTileView: View {
         case .idle: return .green
         case .busy: return .yellow
         case .error: return .red
-        case nil: return Color(nsColor: .separatorColor)
+        case nil: return themeColors.divider
         }
     }
 
@@ -100,38 +126,23 @@ struct CanvasTileView: View {
     private var tileContent: some View {
         switch item.ref {
         case .terminal(let paneId):
-            // TerminalTileView wraps GhosttyTerminalView with WebSocket mirror.
-            // Requires the full Xcode build with Ghostty C bridge to render;
-            // falls back to a placeholder if the surface cannot be created.
             TerminalTileView(
                 paneId: paneId,
                 baseURL: baseURL,
                 sessionName: sessionName
             )
         case .browser(let url):
-            // Placeholder — Phase 4 will render WKWebView here
-            ZStack {
-                Color(nsColor: .textBackgroundColor)
-                VStack {
-                    Image(systemName: "globe")
-                        .font(.title)
-                        .foregroundStyle(.blue.opacity(0.5))
-                    Text(url ?? "about:blank")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            }
+            WebViewTileView(initialURL: url)
         case .dashboard:
-            // Placeholder — Phase 4 will render command-center dashboard
             ZStack {
-                Color(nsColor: .textBackgroundColor)
+                themeColors.surface0
                 VStack {
                     Image(systemName: "chart.bar")
                         .font(.title)
-                        .foregroundStyle(.purple.opacity(0.5))
+                        .foregroundStyle(themeColors.accent.opacity(0.5))
                     Text("Command Center")
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(themeColors.secondaryText)
                 }
             }
         }

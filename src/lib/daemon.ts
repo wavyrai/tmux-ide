@@ -230,24 +230,32 @@ async function startCommandCenter(): Promise<void> {
     // Attach WebSocket upgrade handler for pane mirrors
     attachWebSockets(server, session, process.cwd());
 
-    await new Promise<void>((res) => {
-      server.listen(requestedPort, "0.0.0.0", () => {
-        const addr = server.address();
-        const actualPort = typeof addr === "object" && addr ? addr.port : requestedPort;
-
-        // Store port in tmux session so other tools can discover it
-        tmuxSilent("set-option", "-t", session, "@command_center_port", String(actualPort));
-
-        console.log(
-          `[daemon] Command Center on http://0.0.0.0:${actualPort} (session: ${session})`,
-        );
-        res();
+    // Try requested port, fall back to auto-assign if taken
+    const tryPort = (port: number): Promise<void> =>
+      new Promise<void>((res, rej) => {
+        server.once("error", (err: NodeJS.ErrnoException) => {
+          if (err.code === "EADDRINUSE" && port !== 0) {
+            console.log(`[daemon] Port ${port} in use, falling back to auto-assign`);
+            server.removeAllListeners("error");
+            tryPort(0).then(res, rej);
+          } else {
+            rej(err);
+          }
+        });
+        server.listen(port, "0.0.0.0", () => {
+          const addr = server.address();
+          const actualPort = typeof addr === "object" && addr ? addr.port : port;
+          tmuxSilent("set-option", "-t", session, "@command_center_port", String(actualPort));
+          console.log(`[daemon] Command Center on http://0.0.0.0:${actualPort} (session: ${session})`);
+          res();
+        });
       });
-    });
 
+    await tryPort(requestedPort);
     httpServer = server;
   } catch (err) {
-    console.error("[daemon] Failed to start Command Center:", err);
+    // Command center failed but daemon continues (monitor + orchestrator still work)
+    console.error("[daemon] Command Center failed to start:", err);
   }
 }
 

@@ -102,6 +102,50 @@ actor CommandCenterClient {
         return try JSONDecoder().decode(SessionActionResult.self, from: data)
     }
 
+    // MARK: - Workflow (Checkpoints & Reviews)
+
+    func fetchCheckpoints(session sessionName: String, taskId: String? = nil) async throws -> [Checkpoint] {
+        var url = target.baseURL.appendingPathComponent("api/project/\(sessionName)/checkpoints")
+        if let taskId {
+            url = URL(string: url.absoluteString + "?task=\(taskId)")!
+        }
+        let (data, _) = try await session.data(from: url)
+        return try JSONDecoder().decode(CheckpointsResponse.self, from: data).checkpoints
+    }
+
+    func fetchReviews(session sessionName: String, taskId: String? = nil) async throws -> [ReviewRequest] {
+        var url = target.baseURL.appendingPathComponent("api/project/\(sessionName)/reviews")
+        if let taskId {
+            url = URL(string: url.absoluteString + "?task=\(taskId)")!
+        }
+        let (data, _) = try await session.data(from: url)
+        return try JSONDecoder().decode(ReviewsResponse.self, from: data).reviews
+    }
+
+    func updateCheckpoint(session sessionName: String, id: String, status: String, reviewedBy: String) async throws -> Checkpoint {
+        let url = target.baseURL.appendingPathComponent("api/project/\(sessionName)/checkpoints/\(id)")
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        let body: [String: String] = ["status": status, "reviewedBy": reviewedBy]
+        request.httpBody = try JSONEncoder().encode(body)
+        let (data, _) = try await session.data(for: request)
+        struct Wrapper: Codable { let checkpoint: Checkpoint }
+        return try JSONDecoder().decode(Wrapper.self, from: data).checkpoint
+    }
+
+    func updateReview(session sessionName: String, id: String, status: String) async throws -> ReviewRequest {
+        let url = target.baseURL.appendingPathComponent("api/project/\(sessionName)/reviews/\(id)")
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        let body: [String: String] = ["status": status]
+        request.httpBody = try JSONEncoder().encode(body)
+        let (data, _) = try await session.data(for: request)
+        struct Wrapper: Codable { let review: ReviewRequest }
+        return try JSONDecoder().decode(Wrapper.self, from: data).review
+    }
+
     // MARK: - Health Check
 
     func isReachable() async -> Bool {

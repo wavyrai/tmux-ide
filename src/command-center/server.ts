@@ -33,6 +33,23 @@ import { ensureTasksDir, nextTaskId, saveTask, deleteTask, type Task } from "../
 import { readEvents, appendEvent } from "../lib/event-log.ts";
 import { extractMarks, calculateStats, tagContent } from "../lib/authorship.ts";
 import { loadPlans, markPlanDone } from "../lib/plan-store.ts";
+import {
+  loadCheckpoints,
+  loadCheckpoint,
+  loadCheckpointsForTask,
+  saveCheckpoint,
+  deleteCheckpoint,
+  nextCheckpointId,
+  loadReviews,
+  loadReview,
+  loadReviewsForTask,
+  saveReview,
+  deleteReview,
+  nextReviewId,
+  type Checkpoint,
+  type ReviewRequest,
+  type ReviewComment,
+} from "../lib/workflow-store.ts";
 import { zValidator } from "@hono/zod-validator";
 import {
   updateTaskSchema,
@@ -299,6 +316,187 @@ export function createApp(): Hono {
     }
 
     return c.json({ ok: true, plan: result });
+  });
+
+  // --- Checkpoints ---
+
+  app.get("/api/project/:name/checkpoints", (c) => {
+    const name = c.req.param("name");
+    const sessions = discoverSessions();
+    const session = sessions.find((s) => s.name === name);
+    if (!session) return c.json({ error: "Session not found" }, 404);
+    const taskId = c.req.query("task");
+    const list = taskId
+      ? loadCheckpointsForTask(session.dir, taskId)
+      : loadCheckpoints(session.dir);
+    return c.json({ checkpoints: list });
+  });
+
+  app.get("/api/project/:name/checkpoints/:id", (c) => {
+    const name = c.req.param("name");
+    const id = c.req.param("id");
+    const sessions = discoverSessions();
+    const session = sessions.find((s) => s.name === name);
+    if (!session) return c.json({ error: "Session not found" }, 404);
+    const cp = loadCheckpoint(session.dir, id);
+    if (!cp) return c.json({ error: "Checkpoint not found" }, 404);
+    return c.json({ checkpoint: cp });
+  });
+
+  app.post("/api/project/:name/checkpoints", async (c) => {
+    const name = c.req.param("name");
+    const sessions = discoverSessions();
+    const session = sessions.find((s) => s.name === name);
+    if (!session) return c.json({ error: "Session not found" }, 404);
+    const body = await c.req.json();
+    const now = new Date().toISOString();
+    const id = nextCheckpointId(session.dir);
+    const checkpoint: Checkpoint = {
+      id,
+      taskId: body.taskId ?? "",
+      title: body.title ?? `Checkpoint ${id}`,
+      description: body.description ?? "",
+      status: "pending",
+      createdBy: body.createdBy ?? "",
+      reviewedBy: null,
+      created: now,
+      updated: now,
+      diff: body.diff ?? null,
+      files: body.files ?? [],
+      comments: [],
+    };
+    saveCheckpoint(session.dir, checkpoint);
+    return c.json({ ok: true, checkpoint }, 201);
+  });
+
+  app.post("/api/project/:name/checkpoints/:id", async (c) => {
+    const name = c.req.param("name");
+    const id = c.req.param("id");
+    const sessions = discoverSessions();
+    const session = sessions.find((s) => s.name === name);
+    if (!session) return c.json({ error: "Session not found" }, 404);
+    const existing = loadCheckpoint(session.dir, id);
+    if (!existing) return c.json({ error: "Checkpoint not found" }, 404);
+    const body = await c.req.json();
+    const updated: Checkpoint = {
+      ...existing,
+      ...body,
+      id: existing.id,
+      created: existing.created,
+      updated: new Date().toISOString(),
+    };
+    saveCheckpoint(session.dir, updated);
+    return c.json({ ok: true, checkpoint: updated });
+  });
+
+  app.delete("/api/project/:name/checkpoints/:id", (c) => {
+    const name = c.req.param("name");
+    const id = c.req.param("id");
+    const sessions = discoverSessions();
+    const session = sessions.find((s) => s.name === name);
+    if (!session) return c.json({ error: "Session not found" }, 404);
+    if (!deleteCheckpoint(session.dir, id)) return c.json({ error: "Checkpoint not found" }, 404);
+    return c.json({ ok: true, deleted: id });
+  });
+
+  // --- Reviews ---
+
+  app.get("/api/project/:name/reviews", (c) => {
+    const name = c.req.param("name");
+    const sessions = discoverSessions();
+    const session = sessions.find((s) => s.name === name);
+    if (!session) return c.json({ error: "Session not found" }, 404);
+    const taskId = c.req.query("task");
+    const list = taskId
+      ? loadReviewsForTask(session.dir, taskId)
+      : loadReviews(session.dir);
+    return c.json({ reviews: list });
+  });
+
+  app.get("/api/project/:name/reviews/:id", (c) => {
+    const name = c.req.param("name");
+    const id = c.req.param("id");
+    const sessions = discoverSessions();
+    const session = sessions.find((s) => s.name === name);
+    if (!session) return c.json({ error: "Session not found" }, 404);
+    const review = loadReview(session.dir, id);
+    if (!review) return c.json({ error: "Review not found" }, 404);
+    return c.json({ review });
+  });
+
+  app.post("/api/project/:name/reviews", async (c) => {
+    const name = c.req.param("name");
+    const sessions = discoverSessions();
+    const session = sessions.find((s) => s.name === name);
+    if (!session) return c.json({ error: "Session not found" }, 404);
+    const body = await c.req.json();
+    const now = new Date().toISOString();
+    const id = nextReviewId(session.dir);
+    const review: ReviewRequest = {
+      id,
+      taskId: body.taskId ?? "",
+      checkpointId: body.checkpointId ?? null,
+      title: body.title ?? `Review ${id}`,
+      description: body.description ?? "",
+      status: "open",
+      requestedBy: body.requestedBy ?? "",
+      reviewer: body.reviewer ?? null,
+      created: now,
+      updated: now,
+      comments: [],
+    };
+    saveReview(session.dir, review);
+    return c.json({ ok: true, review }, 201);
+  });
+
+  app.post("/api/project/:name/reviews/:id", async (c) => {
+    const name = c.req.param("name");
+    const id = c.req.param("id");
+    const sessions = discoverSessions();
+    const session = sessions.find((s) => s.name === name);
+    if (!session) return c.json({ error: "Session not found" }, 404);
+    const existing = loadReview(session.dir, id);
+    if (!existing) return c.json({ error: "Review not found" }, 404);
+    const body = await c.req.json();
+    const updated: ReviewRequest = {
+      ...existing,
+      ...body,
+      id: existing.id,
+      created: existing.created,
+      updated: new Date().toISOString(),
+    };
+    saveReview(session.dir, updated);
+    return c.json({ ok: true, review: updated });
+  });
+
+  app.post("/api/project/:name/reviews/:id/comment", async (c) => {
+    const name = c.req.param("name");
+    const id = c.req.param("id");
+    const sessions = discoverSessions();
+    const session = sessions.find((s) => s.name === name);
+    if (!session) return c.json({ error: "Session not found" }, 404);
+    const existing = loadReview(session.dir, id);
+    if (!existing) return c.json({ error: "Review not found" }, 404);
+    const body = await c.req.json();
+    const comment: ReviewComment = {
+      author: body.author ?? "",
+      body: body.body ?? "",
+      created: new Date().toISOString(),
+    };
+    existing.comments.push(comment);
+    existing.updated = comment.created;
+    saveReview(session.dir, existing);
+    return c.json({ ok: true, review: existing });
+  });
+
+  app.delete("/api/project/:name/reviews/:id", (c) => {
+    const name = c.req.param("name");
+    const id = c.req.param("id");
+    const sessions = discoverSessions();
+    const session = sessions.find((s) => s.name === name);
+    if (!session) return c.json({ error: "Session not found" }, 404);
+    if (!deleteReview(session.dir, id)) return c.json({ error: "Review not found" }, 404);
+    return c.json({ ok: true, deleted: id });
   });
 
   app.get("/api/project/:name/diff", (c) => {
