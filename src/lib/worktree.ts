@@ -8,8 +8,8 @@
  * @module worktree
  */
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, realpathSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { existsSync, mkdirSync, readdirSync, realpathSync } from "node:fs";
+import { basename, join, resolve } from "node:path";
 
 type GitExecutor = (args: string[], cwd: string) => string;
 
@@ -98,7 +98,10 @@ export function validateWorktreePath(
   try {
     realRoot = resolveReal(resolve(projectDir, worktreeRoot));
   } catch {
-    return { valid: false, reason: `Cannot resolve worktree root: ${resolve(projectDir, worktreeRoot)}` };
+    return {
+      valid: false,
+      reason: `Cannot resolve worktree root: ${resolve(projectDir, worktreeRoot)}`,
+    };
   }
 
   let realPath: string;
@@ -118,4 +121,43 @@ export function validateWorktreePath(
   }
 
   return { valid: true };
+}
+
+/**
+ * Remove worktrees that exist on disk but are not referenced by any task.
+ *
+ * This handles the case where a crash occurred between createWorktree() and
+ * saveTask() — the worktree exists on disk but no task knows about it.
+ * Each orphaned worktree is logged and removed.
+ */
+export function cleanupOrphanedWorktrees(
+  projectDir: string,
+  worktreeRoot: string,
+  tasks: { branch: string | null }[],
+): void {
+  const rootDir = join(projectDir, worktreeRoot);
+  if (!existsSync(rootDir)) return;
+
+  // Collect all branch names referenced by tasks (e.g. "task/001-slug")
+  const taskBranches = new Set<string>();
+  for (const task of tasks) {
+    if (task.branch) taskBranches.add(task.branch);
+  }
+
+  let entries: string[];
+  try {
+    entries = readdirSync(rootDir);
+  } catch {
+    return;
+  }
+
+  for (const entry of entries) {
+    // Worktree directories follow the pattern "{id}-{slug}"
+    // The corresponding branch is "task/{id}-{slug}"
+    const branch = `task/${entry}`;
+    if (!taskBranches.has(branch)) {
+      const worktreePath = join(rootDir, entry);
+      removeWorktree(projectDir, worktreePath);
+    }
+  }
 }

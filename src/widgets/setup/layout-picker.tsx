@@ -63,9 +63,7 @@ export function LayoutPicker(props: LayoutPickerProps) {
               >
                 {preset.label}
               </text>
-              <text fg={toRGBA(theme.fgMuted)}>
-                — {preset.description}
-              </text>
+              <text fg={toRGBA(theme.fgMuted)}>— {preset.description}</text>
             </box>
             {isSelected() ? (
               <box paddingLeft={3}>

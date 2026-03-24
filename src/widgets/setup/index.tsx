@@ -50,9 +50,18 @@ function inferFieldType(path: string[]): { type: FieldType; enumValues?: string[
   const last = path[path.length - 1];
   if (last === "role") return { type: "enum", enumValues: ["lead", "teammate", "planner"] };
   if (last === "type")
-    return { type: "enum", enumValues: ["explorer", "changes", "preview", "tasks", "warroom", "costs"] };
+    return {
+      type: "enum",
+      enumValues: ["explorer", "changes", "preview", "tasks", "warroom", "costs"],
+    };
   if (last === "dispatch_mode") return { type: "enum", enumValues: ["tasks", "goals"] };
-  if (last === "focus" || last === "enabled" || last === "auto_dispatch" || last === "cleanup_on_done" || last === "widgets")
+  if (
+    last === "focus" ||
+    last === "enabled" ||
+    last === "auto_dispatch" ||
+    last === "cleanup_on_done" ||
+    last === "widgets"
+  )
     return { type: "boolean" };
   if (last === "size") return { type: "size" };
   return { type: "string" };
@@ -230,7 +239,11 @@ render(
                   for (let ri = 0; ri < cfg.rows.length; ri++) {
                     for (let pi = 0; pi < cfg.rows[ri]!.panes.length; pi++) {
                       if (cfg.rows[ri]!.panes[pi]!.command === "claude" && nameIdx < names.length) {
-                        cfg = updateConfigAtPath(cfg, ["rows", String(ri), "panes", String(pi), "title"], names[nameIdx]);
+                        cfg = updateConfigAtPath(
+                          cfg,
+                          ["rows", String(ri), "panes", String(pi), "title"],
+                          names[nameIdx],
+                        );
                         nameIdx++;
                       }
                     }

@@ -347,24 +347,66 @@ describe("isBlocked", () => {
   } as const;
 
   it("returns false when depends_on is empty", () => {
-    const task: Task = { ...base, id: "001", title: "A", status: "todo", priority: 1, depends_on: [] };
+    const task: Task = {
+      ...base,
+      id: "001",
+      title: "A",
+      status: "todo",
+      priority: 1,
+      depends_on: [],
+    };
     assert.strictEqual(isBlocked(task, []), false);
   });
 
   it("returns true when a dependency is not done", () => {
-    const dep: Task = { ...base, id: "002", title: "Dep", status: "in-progress", priority: 1, depends_on: [] };
-    const task: Task = { ...base, id: "001", title: "A", status: "todo", priority: 1, depends_on: ["002"] };
+    const dep: Task = {
+      ...base,
+      id: "002",
+      title: "Dep",
+      status: "in-progress",
+      priority: 1,
+      depends_on: [],
+    };
+    const task: Task = {
+      ...base,
+      id: "001",
+      title: "A",
+      status: "todo",
+      priority: 1,
+      depends_on: ["002"],
+    };
     assert.strictEqual(isBlocked(task, [task, dep]), true);
   });
 
   it("returns false when all dependencies are done", () => {
-    const dep: Task = { ...base, id: "002", title: "Dep", status: "done", priority: 1, depends_on: [] };
-    const task: Task = { ...base, id: "001", title: "A", status: "todo", priority: 1, depends_on: ["002"] };
+    const dep: Task = {
+      ...base,
+      id: "002",
+      title: "Dep",
+      status: "done",
+      priority: 1,
+      depends_on: [],
+    };
+    const task: Task = {
+      ...base,
+      id: "001",
+      title: "A",
+      status: "todo",
+      priority: 1,
+      depends_on: ["002"],
+    };
     assert.strictEqual(isBlocked(task, [task, dep]), false);
   });
 
   it("returns true when dependency ID is missing from task list", () => {
-    const task: Task = { ...base, id: "001", title: "A", status: "todo", priority: 1, depends_on: ["999"] };
+    const task: Task = {
+      ...base,
+      id: "001",
+      title: "A",
+      status: "todo",
+      priority: 1,
+      depends_on: ["999"],
+    };
     assert.strictEqual(isBlocked(task, [task]), true);
   });
 });

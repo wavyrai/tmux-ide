@@ -236,7 +236,9 @@ render(
         if (pane) {
           try {
             execFileSync("tmux", ["select-pane", "-t", pane.id], { stdio: "ignore" });
-          } catch { /* ignore */ }
+          } catch {
+            /* ignore */
+          }
         }
       }
     }
@@ -286,7 +288,11 @@ render(
                   priority={section.goal.priority}
                   totalTasks={section.tasks.length}
                   doneTasks={section.tasks.filter((t) => t.status === "done").length}
-                  completedTasks={collapsedGoals().has(section.goal.id) ? [] : section.tasks.filter((t) => t.status === "done")}
+                  completedTasks={
+                    collapsedGoals().has(section.goal.id)
+                      ? []
+                      : section.tasks.filter((t) => t.status === "done")
+                  }
                   agents={collapsedGoals().has(section.goal.id) ? [] : section.agents}
                   theme={theme}
                   selectedAgent={selectedAgent()}

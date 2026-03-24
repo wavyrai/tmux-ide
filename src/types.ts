@@ -3,6 +3,7 @@ export type {
   Row,
   ThemeConfig,
   OrchestratorYamlConfig,
+  CommandCenterConfig,
   IdeConfig,
   PaneAction,
   SessionState,

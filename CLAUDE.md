@@ -59,38 +59,113 @@ panes:
     task: "Work on components" # suggested task text for your prompts
 ```
 
+### Orchestrator Config
+
+```yaml
+orchestrator:
+  enabled: true
+  auto_dispatch: true          # auto-assign tasks to idle agents
+  dispatch_mode: tasks         # "tasks" or "goals"
+  poll_interval: 5000          # ms between ticks
+  stall_timeout: 300000        # ms before nudging idle agent
+  max_concurrent_agents: 10
+  worktree_root: .worktrees/   # git worktree per task
+  master_pane: Master          # lead pane excluded from dispatch
+  before_run: pnpm install     # hook before task starts
+  after_run: pnpm lint         # hook after task completes
+  cleanup_on_done: false       # remove worktree after completion
+  webhooks:                    # fire-and-forget event notifications
+    - url: https://example.com/hook
+      events: [completion, dispatch]  # filter (omit = all events)
+      secret: my-signing-key          # HMAC-SHA256 via X-Signature-256
+```
+
+### Widget Pane Types
+
+```yaml
+panes:
+  - title: War Room
+    type: warroom    # explorer | changes | preview | tasks | warroom | costs | config
+  - title: Explorer
+    type: explorer
+    target: src/     # optional target path
+```
+
 ## Architecture
 
 The project is written in TypeScript. Source lives in `src/`, compiled output in `dist/`. Tests run via Node's `--experimental-strip-types`; the published package ships compiled JS from `tsc`.
 
+### Core CLI
+
 - `bin/cli.js` — CLI entry point and top-level error boundary (stays JS, imports from `dist/`)
-- `tsconfig.json` — TypeScript config (strict, NodeNext, rewriteRelativeImportExtensions)
-- `src/types.ts` — Shared interfaces (IdeConfig, Row, Pane, ThemeConfig, PaneAction, SessionState)
 - `src/launch.ts` — Launch orchestration for tmux sessions
 - `src/restart.ts` — Stop + relaunch flow
 - `src/init.ts` — Scaffolds ide.yml with smart detection
 - `src/stop.ts` — Kills the tmux session
 - `src/attach.ts` — Reattach to running session
-- `src/ls.ts` — List tmux sessions
-- `src/doctor.ts` — System health check
-- `src/status.ts` — Session status query
-- `src/inspect.ts` — Resolved config + live tmux inspection
-- `src/validate.ts` — Config validation
-- `src/detect.ts` — Project stack detection
+- `src/send.ts` — Send messages to panes by name/title/role/ID
+- `src/orchestrator-status.ts` — Orchestrator status display (agents, tasks, events)
 - `src/config.ts` — Programmatic config mutations
+- `src/task.ts` — Mission/goal/task CRUD commands
+- `src/status.ts`, `src/inspect.ts`, `src/validate.ts`, `src/detect.ts`, `src/ls.ts`, `src/doctor.ts`
+
+### Daemon & Process Lifecycle
+
+- `src/lib/daemon.ts` — Unified background process: pane monitor + orchestrator + command-center HTTP server. Entry: `node dist/lib/daemon.js <session> [port]`
+- `src/lib/daemon-watchdog.ts` — Crash recovery wrapper: respawns daemon on crash with exponential backoff (1s→30s cap, 5 crashes/60s limit). Zero business imports.
+- `src/lib/session-monitor.ts` — Pure helper functions (computePortPanes, computeAgentStates) used by daemon.ts
+
+### Orchestrator & Task System
+
+- `src/lib/orchestrator.ts` — Autonomous task dispatch engine (dispatch, stall detection, completion, retry, reconciliation, hot reload)
+- `src/lib/task-store.ts` — Mission/goal/task CRUD with JSON file persistence in `.tasks/` (atomic writes via temp+rename)
+- `src/lib/event-log.ts` — Append-only event log with structured events and webhook integration
+- `src/lib/webhook.ts` — Fire-and-forget webhook dispatcher with HMAC signing
+- `src/lib/token-tracker.ts` — Agent time/cost accounting
+- `src/lib/worktree.ts` — Git worktree creation per task (with orphan cleanup on startup)
+- `src/lib/github-pr.ts` — Auto-PR creation on task completion
+
+### Schemas
+
+- `src/schemas/ide-config.ts` — Zod schemas for ide.yml (IdeConfig, Row, Pane, OrchestratorYamlConfig, WebhookConfig)
+- `src/schemas/domain.ts` — Zod schemas for tasks, goals, events, panes, agent details
+
+### Command Center (REST API + SSE + WebSocket)
+
+- `src/command-center/server.ts` — Hono REST API with SSE event streaming
+- `src/command-center/discovery.ts` — Session discovery, project detail, orchestrator snapshots
+- `src/command-center/pane-mirror.ts` — WebSocket terminal mirroring (raw ANSI)
+- `src/command-center/schemas.ts` — Request validation schemas
+
+### Widgets (OpenTUI/Solid TUI)
+
+- `src/widgets/resolve.ts` — Widget type → entry point resolution
+- `src/widgets/lib/` — Shared: theme, pane-comms, watcher, git, files, config-model
+- `src/widgets/explorer/` — File tree navigator
+- `src/widgets/tasks/` — Task list/detail/form
+- `src/widgets/warroom/` — Agent coordination dashboard
+- `src/widgets/costs/` — Token/cost tracking
+- `src/widgets/changes/` — Git diff viewer
+- `src/widgets/preview/` — File preview
+- `src/widgets/config/` — Interactive TUI config editor
+- `src/widgets/setup/` — Setup wizard
+
+### Native macOS App (in development)
+
+- `app/` — Swift/SwiftUI native gateway app with Ghostty terminal embedding
+- `app/project.yml` — XcodeGen build config
+- `app/TmuxIde/` — App source (services, models, UI, terminal bridge)
+- Consumes command-center REST/SSE/WebSocket APIs
+- Infinite canvas UI (workspace > columns > tiles)
+
+### Other
+
 - `src/lib/tmux.ts` — Shared tmux process helpers
-- `src/lib/launch-plan.ts` — Pane startup planning + theme option generation
-- `src/lib/yaml-io.ts` — Shared config read/write
-- `src/lib/dot-path.ts` — Dot-notation get/set
-- `src/lib/output.ts` — Structured CLI error/output helpers
-- `src/lib/sizes.ts` — Row/pane sizing math
-- `src/lib/errors.ts` — Error class hierarchy (IdeError, ConfigError, TmuxError, SessionError)
-- `src/lib/session-options.ts` — Composable tmux session option builders
-- `src/lib/session-monitor.ts` — Agent/port status monitor (runs as detached process)
-- `src/*.test.ts`, `src/lib/*.test.ts` — CLI, unit, and integration coverage
-- `docs/content/docs/` — User-facing docs site content
-- `.github/workflows/ci.yml` — CI quality gates and release checks
-- `templates/` — Preset configs (default, nextjs, convex, vite, python, go, agent-team, agent-team-nextjs, agent-team-monorepo)
+- `src/lib/yaml-io.ts` — Config read/write
+- `src/lib/errors.ts` — Error class hierarchy
+- `templates/` — Preset configs
+- `docs/content/docs/` — User-facing docs site
+- `.github/workflows/ci.yml` — CI quality gates
 
 ## Programmatic CLI Reference
 
@@ -155,6 +230,28 @@ tmux-ide config enable-team --name "my-team"
 tmux-ide config disable-team
 ```
 
+### Pane Messaging
+
+```bash
+tmux-ide send <target> <message>        # Send message to pane by name/title/role/ID
+tmux-ide send --to "Agent 1" <message>  # Target by --to flag
+tmux-ide send <target> --no-enter msg   # Send text without pressing Enter
+echo "msg" | tmux-ide send <target>     # Pipe from stdin
+```
+
+### Orchestrator
+
+```bash
+tmux-ide orchestrator [--json]    # Show orchestrator status (agents, tasks, events)
+tmux-ide orch                     # Alias
+```
+
+### Settings TUI
+
+```bash
+tmux-ide settings                 # Interactive TUI config editor (tabs: Layout, Team, Orch, Theme)
+```
+
 ### Session Commands
 
 ```bash
@@ -163,6 +260,12 @@ tmux-ide stop         # Kill session
 tmux-ide attach       # Reattach
 tmux-ide init         # Scaffold config (auto-detects stack)
 tmux-ide init --template nextjs  # Use specific template
+```
+
+### Command Center
+
+```bash
+tmux-ide command-center [--port 4000]   # Start REST API + SSE + WebSocket server
 ```
 
 ## Claude Skill
@@ -322,3 +425,40 @@ The `--proof` flag accepts either a plain string (stored as `notes`) or a JSON o
 ### Task Dependencies
 
 Use `--depends "001,002"` to declare that a task depends on other tasks. The orchestrator will not dispatch a task until all its dependencies are complete.
+
+### Orchestrator Auto-Dispatch
+
+When `orchestrator.enabled: true` and `auto_dispatch: true` in ide.yml, the orchestrator automatically:
+
+1. Finds idle agent panes (not the master/lead pane)
+2. Picks the highest-priority unblocked todo task
+3. Creates a git worktree (`task/{id}-{slug}`)
+4. Builds a single-line prompt with mission/goal/task context
+5. Sends it to the idle agent via `tmux send-keys`
+6. On completion (`tmux-ide task done <id> --proof "..."`): records time, creates PR, notifies master
+
+**Usage flow:**
+```bash
+tmux-ide mission set "Ship v2" -d "description"
+tmux-ide goal create "Auth system" -p 1 --acceptance "JWT + refresh tokens"
+tmux-ide task create "Implement JWT" -g 01 -p 1 -d "detailed description"
+tmux-ide task create "Add tests" -g 01 -p 2 --depends "001"
+tmux-ide   # Launch — orchestrator auto-dispatches tasks to agents
+tmux-ide orch   # Monitor progress
+```
+
+### Command Center API
+
+```bash
+tmux-ide command-center   # Start on port 4000
+
+# REST endpoints:
+# GET  /api/sessions                    — List all sessions
+# GET  /api/project/:name               — Full project detail (tasks, agents, goals)
+# GET  /api/project/:name/panes         — Live pane listing
+# GET  /api/project/:name/events        — Recent orchestrator events
+# POST /api/project/:name/task          — Create task
+# POST /api/project/:name/task/:id      — Update task
+# GET  /api/events                      — SSE stream (real-time updates)
+# WS   /ws/mirror/:session/:paneId      — Terminal mirroring (raw ANSI)
+```

@@ -1,7 +1,13 @@
 import { Show, For } from "solid-js";
 import { RGBA, TextAttributes } from "@opentui/core";
 import { useKeyboard, useTerminalDimensions } from "@opentui/solid";
-import { updateTaskStatus, updateTaskAssignee, isBlocked, type Task, type TaskStatus } from "./task-model.ts";
+import {
+  updateTaskStatus,
+  updateTaskAssignee,
+  isBlocked,
+  type Task,
+  type TaskStatus,
+} from "./task-model.ts";
 import {
   sendCommand,
   findPaneByTitle,
@@ -183,7 +189,8 @@ export function TaskDetail(props: TaskDetailProps) {
               const done = dep?.status === "done";
               return (
                 <text fg={toRGBA(done ? theme.gitAdded : theme.gitRemoved)}>
-                  {depId}{done ? " ok" : ""}
+                  {depId}
+                  {done ? " ok" : ""}
                 </text>
               );
             }}
@@ -240,24 +247,52 @@ export function TaskDetail(props: TaskDetailProps) {
           e:edit
         </text>
         <Show when={canStart()}>
-          <text fg={toRGBA(theme.fgMuted)} onMouseUp={() => { updateTaskStatus(props.dir, t().id, "in-progress"); props.onTaskUpdate(); }} wrapMode="none">
+          <text
+            fg={toRGBA(theme.fgMuted)}
+            onMouseUp={() => {
+              updateTaskStatus(props.dir, t().id, "in-progress");
+              props.onTaskUpdate();
+            }}
+            wrapMode="none"
+          >
             s:start
           </text>
         </Show>
         <Show when={canReview()}>
-          <text fg={toRGBA(theme.fgMuted)} onMouseUp={() => { updateTaskStatus(props.dir, t().id, "review"); props.onTaskUpdate(); }} wrapMode="none">
+          <text
+            fg={toRGBA(theme.fgMuted)}
+            onMouseUp={() => {
+              updateTaskStatus(props.dir, t().id, "review");
+              props.onTaskUpdate();
+            }}
+            wrapMode="none"
+          >
             v:review
           </text>
         </Show>
         <Show when={canDone()}>
-          <text fg={toRGBA(theme.fgMuted)} onMouseUp={() => { updateTaskStatus(props.dir, t().id, "done"); props.onTaskUpdate(); }} wrapMode="none">
+          <text
+            fg={toRGBA(theme.fgMuted)}
+            onMouseUp={() => {
+              updateTaskStatus(props.dir, t().id, "done");
+              props.onTaskUpdate();
+            }}
+            wrapMode="none"
+          >
             d:done
           </text>
         </Show>
-        <text fg={toRGBA(theme.fgMuted)} onMouseUp={() => {
-          const claude = findClaudePane();
-          if (claude) { updateTaskAssignee(props.dir, t().id, claude.title); props.onTaskUpdate(); }
-        }} wrapMode="none">
+        <text
+          fg={toRGBA(theme.fgMuted)}
+          onMouseUp={() => {
+            const claude = findClaudePane();
+            if (claude) {
+              updateTaskAssignee(props.dir, t().id, claude.title);
+              props.onTaskUpdate();
+            }
+          }}
+          wrapMode="none"
+        >
           a:assign
         </text>
       </box>

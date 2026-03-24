@@ -499,25 +499,70 @@ render(
 
         {/* Footer */}
         <box flexShrink={0} paddingLeft={1} paddingTop={1} flexDirection="row" gap={1}>
-          <text fg={toRGBA(theme.fgMuted)} wrapMode="none">↑↓:nav</text>
-          <text fg={toRGBA(theme.fgMuted)} wrapMode="none" onMouseUp={() => {
-            const file = allFiles()[selected()];
-            if (file && !file.staged) { stageFile(file.path); setChanges(getChanges()); }
-          }}>s:stage</text>
-          <text fg={toRGBA(theme.fgMuted)} wrapMode="none" onMouseUp={() => {
-            const file = allFiles()[selected()];
-            if (file && file.staged) { unstageFile(file.path); setChanges(getChanges()); }
-          }}>u:unstage</text>
-          <text fg={toRGBA(theme.fgMuted)} wrapMode="none" onMouseUp={() => {
-            stageAll(); setChanges(getChanges());
-          }}>S:all</text>
-          <text fg={toRGBA(theme.fgMuted)} wrapMode="none" onMouseUp={() => {
-            unstageAll(); setChanges(getChanges());
-          }}>U:all</text>
-          <text fg={toRGBA(theme.fgMuted)} wrapMode="none" onMouseUp={() => {
-            batch(() => { setChanges(getChanges()); setBranch(getGitBranch(dir)); });
-          }}>r:refresh</text>
-          <text fg={toRGBA(theme.fgMuted)} wrapMode="none">q:quit</text>
+          <text fg={toRGBA(theme.fgMuted)} wrapMode="none">
+            ↑↓:nav
+          </text>
+          <text
+            fg={toRGBA(theme.fgMuted)}
+            wrapMode="none"
+            onMouseUp={() => {
+              const file = allFiles()[selected()];
+              if (file && !file.staged) {
+                stageFile(file.path);
+                setChanges(getChanges());
+              }
+            }}
+          >
+            s:stage
+          </text>
+          <text
+            fg={toRGBA(theme.fgMuted)}
+            wrapMode="none"
+            onMouseUp={() => {
+              const file = allFiles()[selected()];
+              if (file && file.staged) {
+                unstageFile(file.path);
+                setChanges(getChanges());
+              }
+            }}
+          >
+            u:unstage
+          </text>
+          <text
+            fg={toRGBA(theme.fgMuted)}
+            wrapMode="none"
+            onMouseUp={() => {
+              stageAll();
+              setChanges(getChanges());
+            }}
+          >
+            S:all
+          </text>
+          <text
+            fg={toRGBA(theme.fgMuted)}
+            wrapMode="none"
+            onMouseUp={() => {
+              unstageAll();
+              setChanges(getChanges());
+            }}
+          >
+            U:all
+          </text>
+          <text
+            fg={toRGBA(theme.fgMuted)}
+            wrapMode="none"
+            onMouseUp={() => {
+              batch(() => {
+                setChanges(getChanges());
+                setBranch(getGitBranch(dir));
+              });
+            }}
+          >
+            r:refresh
+          </text>
+          <text fg={toRGBA(theme.fgMuted)} wrapMode="none">
+            q:quit
+          </text>
         </box>
       </box>
     );

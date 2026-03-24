@@ -61,9 +61,7 @@ export function AgentNaming(props: AgentNamingProps) {
         <text fg={toRGBA(theme.accent)} attributes={TextAttributes.BOLD}>
           Name Your Agents
         </text>
-        <text fg={toRGBA(theme.fgMuted)}>
-          Customize the names for each Claude pane.
-        </text>
+        <text fg={toRGBA(theme.fgMuted)}>Customize the names for each Claude pane.</text>
       </box>
 
       {/* Input fields */}
@@ -78,9 +76,7 @@ export function AgentNaming(props: AgentNamingProps) {
               setTimeout(() => inputRefs[index]?.focus(), 10);
             }}
           >
-            <text fg={toRGBA(isActive() ? theme.accent : theme.fgMuted)}>
-              Pane {index + 1}
-            </text>
+            <text fg={toRGBA(isActive() ? theme.accent : theme.fgMuted)}>Pane {index + 1}</text>
             <input
               value={getter()}
               placeholder={defaults[index] ?? "Agent"}

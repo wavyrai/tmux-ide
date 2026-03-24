@@ -126,9 +126,7 @@ describe("computeStats", () => {
 
   it("detects active agents with spinner", () => {
     const info = makeSessionInfo({
-      panes: [
-        makePane({ id: "%1", title: "⠙ Working...", currentCommand: "claude" }),
-      ],
+      panes: [makePane({ id: "%1", title: "⠙ Working...", currentCommand: "claude" })],
     });
 
     const stats = computeStats(info);
@@ -197,10 +195,7 @@ describe("buildOverviews", () => {
           created: "2026-01-01T00:00:00Z",
           updated: "2026-01-01T00:00:00Z",
         },
-        tasks: [
-          makeTask({ id: "001", status: "done" }),
-          makeTask({ id: "002", status: "todo" }),
-        ],
+        tasks: [makeTask({ id: "001", status: "done" }), makeTask({ id: "002", status: "todo" })],
       }),
     ];
 
@@ -238,9 +233,7 @@ describe("buildProjectDetail", () => {
   it("shows idle agent with no task", () => {
     const info = makeSessionInfo({
       tasks: [],
-      panes: [
-        makePane({ id: "%1", title: "Agent 1", currentCommand: "claude" }),
-      ],
+      panes: [makePane({ id: "%1", title: "Agent 1", currentCommand: "claude" })],
     });
 
     const detail = buildProjectDetail(info);

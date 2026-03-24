@@ -22,7 +22,15 @@
  * @module orchestrator
  */
 import { execSync, execFileSync } from "node:child_process";
-import { existsSync, readFileSync, writeFileSync, mkdirSync, watch, type FSWatcher } from "node:fs";
+import {
+  existsSync,
+  readFileSync,
+  writeFileSync,
+  renameSync,
+  mkdirSync,
+  watch,
+  type FSWatcher,
+} from "node:fs";
 import { join } from "node:path";
 import {
   loadMission,
@@ -37,7 +45,12 @@ import {
 } from "./task-store.ts";
 import { recordTaskTime } from "./token-tracker.ts";
 import { listSessionPanes, sendCommand, type PaneInfo } from "../widgets/lib/pane-comms.ts";
-import { createWorktree, removeWorktree, validateWorktreePath } from "./worktree.ts";
+import {
+  createWorktree,
+  removeWorktree,
+  validateWorktreePath,
+  cleanupOrphanedWorktrees,
+} from "./worktree.ts";
 import { appendEvent } from "./event-log.ts";
 import { isGhAvailable, createTaskPr } from "./github-pr.ts";
 
@@ -212,9 +225,8 @@ export function buildTaskPrompt(
   prompt += `\nWhen done, run:\n`;
   prompt += `  tmux-ide task done ${task.id} --proof "describe what you accomplished"\n`;
 
-  // Collapse to single line — multiline paste triggers a slow preview
-  // in Claude Code's TUI that requires a separate Enter to confirm.
-  // A single long line is accepted instantly by any agent TUI.
+  // Collapse to single line — keeps the paste as compact as possible.
+  // sendCommand handles the double-Enter for paste preview confirmation.
   return prompt.replace(/\n+/g, " ").trim();
 }
 
@@ -280,21 +292,49 @@ export function dispatch(
     if (!task) break;
     const agent = idleAgents[i]!;
 
+    // Verify the target pane still exists before investing in worktree setup
+    const currentPanes = listSessionPanes(config.session);
+    if (!currentPanes.find((p) => p.id === agent.id)) {
+      // Agent pane vanished — skip
+      continue;
+    }
+
+    const agentName = agentIdentifier(agent);
+
+    // Persist task as in-progress FIRST — prevents double-dispatch on crash
+    task.status = "in-progress";
+    task.assignee = agentName;
+    task.updated = new Date().toISOString();
+    saveTask(config.dir, task);
+
     // Claim lock: prevent double-dispatch across poll ticks
     state.claimedTasks.add(task.id);
 
     // Create git worktree
     const slug = slugify(task.title);
-    const { path: worktreePath, branch } = createWorktree(
-      config.dir,
-      config.worktreeRoot,
-      task.id,
-      slug,
-    );
+    let worktreePath: string;
+    let branch: string;
+    try {
+      const wt = createWorktree(config.dir, config.worktreeRoot, task.id, slug);
+      worktreePath = wt.path;
+      branch = wt.branch;
+    } catch {
+      // Rollback: reset task to todo so it can be retried
+      task.status = "todo";
+      task.assignee = null;
+      task.updated = new Date().toISOString();
+      saveTask(config.dir, task);
+      state.claimedTasks.delete(task.id);
+      continue;
+    }
 
     // Validate worktree path hasn't escaped root (symlink attacks, etc.)
     const pathCheck = validateWorktreePath(config.dir, config.worktreeRoot, worktreePath);
     if (!pathCheck.valid) {
+      task.status = "todo";
+      task.assignee = null;
+      task.updated = new Date().toISOString();
+      saveTask(config.dir, task);
       state.claimedTasks.delete(task.id);
       continue;
     }
@@ -303,14 +343,16 @@ export function dispatch(
     if (config.beforeRun) {
       const result = runHook(config.beforeRun, worktreePath);
       if (!result.ok) {
+        task.status = "todo";
+        task.assignee = null;
+        task.updated = new Date().toISOString();
+        saveTask(config.dir, task);
         state.claimedTasks.delete(task.id);
         continue;
       }
     }
 
-    // Assign task — use stable identifier, not raw title (which has spinners)
-    task.assignee = agentIdentifier(agent);
-    task.status = "in-progress";
+    // Update task with branch info
     task.branch = branch;
     task.updated = new Date().toISOString();
     saveTask(config.dir, task);
@@ -318,9 +360,32 @@ export function dispatch(
     // Record claim time for cost tracking
     state.taskClaimTimes.set(task.id, Date.now());
 
-    // Build and send prompt
+    // Build and send prompt. The prompt is collapsed to a single line
+    // to minimize paste preview issues in Claude Code's TUI. sendCommand
+    // handles the double-Enter sequence needed for paste confirmation.
     const prompt = buildTaskPrompt(config.dir, task, worktreePath, branch);
-    sendCommand(config.session, agent.id, prompt);
+    const sent = sendCommand(config.session, agent.id, prompt);
+
+    if (!sent) {
+      // Roll back: reset task to todo, remove claim, clean up worktree
+      task.status = "todo";
+      task.assignee = null;
+      task.branch = null;
+      task.updated = new Date().toISOString();
+      saveTask(config.dir, task);
+      state.claimedTasks.delete(task.id);
+      state.taskClaimTimes.delete(task.id);
+      removeWorktree(config.dir, worktreePath);
+
+      appendEvent(config.dir, {
+        timestamp: new Date().toISOString(),
+        type: "error",
+        taskId: task.id,
+        agent: agent.title,
+        message: `Failed to send command to ${agent.title} for task "${task.title}" — rolled back`,
+      });
+      continue;
+    }
 
     // Log dispatch event
     appendEvent(config.dir, {
@@ -628,7 +693,11 @@ export function saveOrchestratorState(dir: string, state: OrchestratorState): vo
     taskClaimTimes: Object.fromEntries(state.taskClaimTimes),
     lastActivity: Object.fromEntries(state.lastActivity),
   };
-  writeFileSync(stateFilePath(dir), JSON.stringify(data, null, 2) + "\n");
+  // Atomic write: write to temp file, then rename
+  const filePath = stateFilePath(dir);
+  const tmpPath = filePath + ".tmp";
+  writeFileSync(tmpPath, JSON.stringify(data, null, 2) + "\n");
+  renameSync(tmpPath, filePath);
 }
 
 export function loadOrchestratorState(dir: string, state: OrchestratorState): void {
@@ -740,6 +809,9 @@ export function createOrchestrator(initialConfig: OrchestratorConfig): () => voi
 
   // Sync claims with actual task store to clear stale claims after crash
   syncClaims(config.dir, state);
+
+  // Clean up orphaned worktrees left behind by a mid-dispatch crash
+  cleanupOrphanedWorktrees(config.dir, config.worktreeRoot, loadTasks(config.dir));
 
   // Initialize previous state
   for (const task of loadTasks(config.dir)) {

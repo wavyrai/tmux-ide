@@ -121,15 +121,14 @@ export function OrchestratorPanel(props: OrchestratorPanelProps) {
           <For each={props.claudePaneNames}>
             {(name, i) => (
               <text
-                fg={toRGBA(
-                  i() === masterIdx() ? theme.accent : theme.fgMuted
-                )}
+                fg={toRGBA(i() === masterIdx() ? theme.accent : theme.fgMuted)}
                 onMouseDown={() => {
                   setActiveField("master_pane");
                   setMasterIdx(i());
                 }}
               >
-                {i() === masterIdx() ? "● " : "○ "}{name}
+                {i() === masterIdx() ? "● " : "○ "}
+                {name}
               </text>
             )}
           </For>

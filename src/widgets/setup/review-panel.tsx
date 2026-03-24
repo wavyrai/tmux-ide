@@ -83,7 +83,7 @@ export function ReviewPanel(props: ReviewPanelProps) {
                 Validation errors:
               </text>
               {errors().map((e) => (
-                <text fg={RGBA.fromInts(255, 80, 80, 255)}>  - {e}</text>
+                <text fg={RGBA.fromInts(255, 80, 80, 255)}> - {e}</text>
               ))}
             </box>
           }

@@ -180,11 +180,7 @@ export function TaskList(props: TaskListProps) {
                   <text fg={toRGBA(sColor)} flexShrink={0} wrapMode="none">
                     {priorityDots(task.priority)}{" "}
                   </text>
-                  <text
-                    fg={toRGBA(titleColor())}
-                    wrapMode="none"
-                    flexGrow={1}
-                  >
+                  <text fg={toRGBA(titleColor())} wrapMode="none" flexGrow={1}>
                     {task.title}
                   </text>
                   <Show when={task.status === "done"}>

@@ -19,3 +19,17 @@ export const createTaskSchema = z.object({
 export const savePlanSchema = z.object({
   content: z.string(),
 });
+
+export const sendCommandSchema = z.object({
+  target: z.string().min(1, "Target pane is required"),
+  message: z.string().min(1, "Message is required"),
+  noEnter: z.boolean().optional(),
+});
+
+export const launchSchema = z
+  .object({
+    attach: z.boolean().optional(),
+  })
+  .optional();
+
+export const stopSchema = z.object({}).optional();

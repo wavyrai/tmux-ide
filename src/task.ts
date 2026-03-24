@@ -296,7 +296,10 @@ function handleGoal(
   delete <id>                          Delete a goal`);
       break;
     default:
-      outputError("Usage: tmux-ide goal <list|create|update|done|show|delete>\nRun: tmux-ide goal help", "USAGE");
+      outputError(
+        "Usage: tmux-ide goal <list|create|update|done|show|delete>\nRun: tmux-ide goal help",
+        "USAGE",
+      );
   }
 }
 
@@ -345,14 +348,9 @@ function handleTask(
 
           const status = blocked ? "blocked" : t.status;
           const assignee = t.assignee ? ` @${t.assignee}` : "";
-          const goalLabel = t.goal
-            ? ` (${goalNames.get(t.goal) ?? `goal ${t.goal}`})`
-            : "";
-          const deps =
-            blocked ? ` (depends: ${t.depends_on.join(", ")})` : "";
-          console.log(
-            `  ${t.id}  [${status}]  ${t.title}${assignee}${goalLabel}${deps}`,
-          );
+          const goalLabel = t.goal ? ` (${goalNames.get(t.goal) ?? `goal ${t.goal}`})` : "";
+          const deps = blocked ? ` (depends: ${t.depends_on.join(", ")})` : "";
+          console.log(`  ${t.id}  [${status}]  ${t.title}${assignee}${goalLabel}${deps}`);
         }
       }
       break;
@@ -512,7 +510,8 @@ function handleTask(
     }
     case "edit": {
       const id = args[0];
-      if (!id) outputError("Usage: tmux-ide task edit <id> --title 'new title' -d 'new desc'", "USAGE");
+      if (!id)
+        outputError("Usage: tmux-ide task edit <id> --title 'new title' -d 'new desc'", "USAGE");
       const task = loadTask(dir, id);
       if (!task) outputError(`Task ${id} not found. Run: tmux-ide task list`, "NOT_FOUND");
       if (values.title) task.title = values.title;
@@ -550,7 +549,8 @@ function handleTask(
     case "delete": {
       const id = args[0];
       if (!id) outputError("Usage: tmux-ide task delete <id>", "USAGE");
-      if (!deleteTask(dir, id)) outputError(`Task ${id} not found. Run: tmux-ide task list`, "NOT_FOUND");
+      if (!deleteTask(dir, id))
+        outputError(`Task ${id} not found. Run: tmux-ide task list`, "NOT_FOUND");
       if (json) {
         console.log(JSON.stringify({ deleted: id }));
       } else {
@@ -577,9 +577,6 @@ Short flags: -p priority, -g goal, -d description, -a assign,
              -s status, -t tags, -b branch`);
       break;
     default:
-      outputError(
-        `Unknown subcommand: ${sub}\nRun: tmux-ide task help`,
-        "USAGE",
-      );
+      outputError(`Unknown subcommand: ${sub}\nRun: tmux-ide task help`, "USAGE");
   }
 }

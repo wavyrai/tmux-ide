@@ -210,8 +210,20 @@ if (isMainModule) {
     lastState = stateKey;
   }
 
-  setInterval(tick, INTERVAL);
+  const monitorInterval = setInterval(tick, INTERVAL);
   tick(); // run immediately
+
+  // Unified shutdown handler — cleans up everything on SIGTERM/SIGINT
+  let stopOrchestrator: (() => void) | null = null;
+
+  function shutdown() {
+    clearInterval(monitorInterval);
+    if (stopOrchestrator) stopOrchestrator();
+    process.exit(0);
+  }
+
+  process.on("SIGTERM", shutdown);
+  process.on("SIGINT", shutdown);
 
   // Start orchestrator if enabled in config
   (async () => {
@@ -244,7 +256,7 @@ if (isMainModule) {
             }
           }
 
-          const stopOrchestrator = createOrchestrator({
+          stopOrchestrator = createOrchestrator({
             session,
             dir: process.cwd(),
             autoDispatch: orch.auto_dispatch ?? true,
@@ -258,11 +270,6 @@ if (isMainModule) {
             maxConcurrentAgents: orch.max_concurrent_agents ?? 10,
             dispatchMode: orch.dispatch_mode ?? "tasks",
             paneSpecialties,
-          });
-
-          process.on("SIGTERM", () => {
-            stopOrchestrator();
-            process.exit(0);
           });
         } catch {
           // Orchestrator module not available yet

@@ -55,6 +55,11 @@ export const OrchestratorYamlConfigSchema = z.object({
   webhooks: z.array(WebhookConfigSchema).optional(),
 });
 
+export const CommandCenterConfigSchema = z.object({
+  port: z.number().optional(),
+  enabled: z.boolean().optional(),
+});
+
 export const IdeConfigSchema = z.object({
   name: z.string().optional(),
   before: z.string().optional(),
@@ -68,6 +73,7 @@ export const IdeConfigSchema = z.object({
   rows: z.array(RowSchema).min(1),
   theme: ThemeConfigSchema.optional(),
   orchestrator: OrchestratorYamlConfigSchema.optional(),
+  command_center: CommandCenterConfigSchema.optional(),
 });
 
 export const PaneActionSchema = z.object({
@@ -91,6 +97,7 @@ export type ThemeConfig = z.infer<typeof ThemeConfigSchema>;
 export type Pane = z.infer<typeof PaneSchema>;
 export type Row = z.infer<typeof RowSchema>;
 export type OrchestratorYamlConfig = z.infer<typeof OrchestratorYamlConfigSchema>;
+export type CommandCenterConfig = z.infer<typeof CommandCenterConfigSchema>;
 export type IdeConfig = z.infer<typeof IdeConfigSchema>;
 export type PaneAction = z.infer<typeof PaneActionSchema>;
 export type SessionState = z.infer<typeof SessionStateSchema>;

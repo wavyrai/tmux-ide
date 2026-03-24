@@ -1,0 +1,11 @@
+# Xcode
+TmuxIde.xcodeproj/
+build/
+DerivedData/
+*.xcuserdata
+
+# GhosttyKit (built by setup.sh)
+GhosttyKit.xcframework
+
+# OS
+.DS_Store

@@ -1,8 +1,6 @@
 import { createSignal, onMount, onCleanup } from "solid-js";
 
-export function useKeyboard(
-  handler: (evt: any) => void,
-): void {
+export function useKeyboard(handler: (evt: any) => void): void {
   onMount(() => {
     const listener = (e: KeyboardEvent) => {
       const evt = {
@@ -23,21 +21,36 @@ export function useKeyboard(
 
 function mapKeyName(e: KeyboardEvent): string {
   switch (e.key) {
-    case "ArrowUp": return "up";
-    case "ArrowDown": return "down";
-    case "ArrowLeft": return "left";
-    case "ArrowRight": return "right";
-    case "Enter": return "return";
-    case "Escape": return "escape";
-    case "Backspace": return "backspace";
-    case "Tab": return "tab";
-    case "Delete": return "delete";
-    case " ": return "space";
-    case "Home": return "home";
-    case "End": return "end";
-    case "PageUp": return "pageup";
-    case "PageDown": return "pagedown";
-    case "Insert": return "insert";
+    case "ArrowUp":
+      return "up";
+    case "ArrowDown":
+      return "down";
+    case "ArrowLeft":
+      return "left";
+    case "ArrowRight":
+      return "right";
+    case "Enter":
+      return "return";
+    case "Escape":
+      return "escape";
+    case "Backspace":
+      return "backspace";
+    case "Tab":
+      return "tab";
+    case "Delete":
+      return "delete";
+    case " ":
+      return "space";
+    case "Home":
+      return "home";
+    case "End":
+      return "end";
+    case "PageUp":
+      return "pageup";
+    case "PageDown":
+      return "pagedown";
+    case "Insert":
+      return "insert";
     default:
       // @opentui convention: single-char keys are always lowercase, with shift as a modifier.
       // Browser gives uppercase e.key for Shift+letter (e.g. "G"), so normalize to lowercase.
@@ -55,17 +68,14 @@ export function useTerminalDimensions() {
       const measure = document.createElement("span");
       measure.style.position = "absolute";
       measure.style.visibility = "hidden";
-      measure.style.fontFamily =
-        "var(--font-family, 'IBM Plex Mono', ui-monospace, monospace)";
+      measure.style.fontFamily = "var(--font-family, 'IBM Plex Mono', ui-monospace, monospace)";
       measure.style.fontSize = "var(--font-size, 13px)";
       measure.textContent = "0";
       document.body.appendChild(measure);
       const chWidth = measure.getBoundingClientRect().width;
       document.body.removeChild(measure);
 
-      const lh = parseFloat(
-        getComputedStyle(document.documentElement).lineHeight,
-      );
+      const lh = parseFloat(getComputedStyle(document.documentElement).lineHeight);
 
       const effectiveCh = chWidth > 0 ? chWidth : 7.8; // fallback
       const effectiveLh = lh > 0 ? lh : 18.2; // fallback

@@ -86,10 +86,7 @@ describe("collectPaneStartupPlan", () => {
         ],
       },
       {
-        panes: [
-          { title: "Shell" },
-          { title: "War Room", type: "warroom" },
-        ],
+        panes: [{ title: "Shell" }, { title: "War Room", type: "warroom" }],
       },
     ];
 
@@ -100,7 +97,10 @@ describe("collectPaneStartupPlan", () => {
 
     const fullResult = collectPaneStartupPlan(
       fullRows,
-      [["%1", "%2", "%3"], ["%4", "%5"]],
+      [
+        ["%1", "%2", "%3"],
+        ["%4", "%5"],
+      ],
       new Set(["%1", "%4"]),
       "/workspace",
     );

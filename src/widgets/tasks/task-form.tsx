@@ -180,7 +180,9 @@ export function TaskForm(props: TaskFormProps) {
         </box>
         <box flexDirection="row" gap={2}>
           <text fg={toRGBA(theme.fgMuted)}>Tab:next field</text>
-          <text fg={toRGBA(theme.fgMuted)} onMouseUp={() => save()}>Ctrl+S:save</text>
+          <text fg={toRGBA(theme.fgMuted)} onMouseUp={() => save()}>
+            Ctrl+S:save
+          </text>
           <text fg={toRGBA(theme.fgMuted)} onMouseUp={() => props.onCancel()}>
             Esc:cancel
           </text>

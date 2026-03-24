@@ -145,16 +145,30 @@ function sleepMs(ms: number): void {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 
-export function sendCommand(session: string, paneId: string, command: string): void {
+export function sendCommand(session: string, paneId: string, command: string): boolean {
   const status = getPaneBusyStatus(session, paneId);
-  tmux("send-keys", "-t", paneId, "-l", "--", command);
+  try {
+    tmux("send-keys", "-t", paneId, "-l", "--", command);
+  } catch {
+    return false;
+  }
   if (status === "agent") {
-    // Short delay for the TUI to register the input before Enter.
-    // Prompts should be single-line (newlines collapsed in buildTaskPrompt)
-    // so no paste preview is triggered — just a brief buffer.
-    sleepMs(300);
+    // Claude Code shows a [Pasted text] preview for long input (roughly >200 chars).
+    // Short commands land directly in the prompt — just need a brief delay for the
+    // TUI to register the input. Long commands trigger the paste preview which needs
+    // two Enters: one to confirm the preview, one to submit the prompt.
+    if (command.length < 200) {
+      sleepMs(100);
+    } else {
+      sleepMs(500);
+      tmux("send-keys", "-t", paneId, "Enter");
+      sleepMs(300);
+    }
+    tmux("send-keys", "-t", paneId, "Enter");
+    return true;
   }
   tmux("send-keys", "-t", paneId, "Enter");
+  return true;
 }
 
 export function openFileInEditor(session: string, paneId: string, filePath: string): void {

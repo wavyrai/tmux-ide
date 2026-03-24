@@ -62,7 +62,9 @@ describe("computeAgentStates", () => {
   });
 
   it("detects busy teammate via @ide_role with spinner", () => {
-    const panes = [{ id: "%0", pid: "100", cmd: "node", title: "\u2839 Working", role: "teammate" }];
+    const panes = [
+      { id: "%0", pid: "100", cmd: "node", title: "\u2839 Working", role: "teammate" },
+    ];
     const states = computeAgentStates(panes);
     assert.strictEqual(states.get("%0"), "busy");
   });

@@ -24,9 +24,4 @@ export {
 
 // Re-export shared types
 export { RGBA, TextAttributes } from "../types.ts";
-export type {
-  BoxProps,
-  TextProps,
-  ScrollBoxProps,
-  InputProps,
-} from "../types.ts";
+export type { BoxProps, TextProps, ScrollBoxProps, InputProps } from "../types.ts";

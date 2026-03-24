@@ -84,7 +84,9 @@ describe("attributesToStyle", () => {
   });
 
   it("composes multiple attributes", () => {
-    const style = attributesToStyle(TextAttributes.BOLD | TextAttributes.ITALIC | TextAttributes.UNDERLINE);
+    const style = attributesToStyle(
+      TextAttributes.BOLD | TextAttributes.ITALIC | TextAttributes.UNDERLINE,
+    );
     assert.strictEqual(style["font-weight"], "bold");
     assert.strictEqual(style["font-style"], "italic");
     assert.strictEqual(style["text-decoration"], "underline");

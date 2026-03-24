@@ -1,0 +1,158 @@
+import Combine
+import Foundation
+
+@MainActor
+final class SessionCanvasService: ObservableObject {
+    @Published var layout: CanvasLayout = CanvasLayout()
+
+    private let client: CommandCenterClient
+    private let persistence: LayoutPersistenceService?
+    private var layoutObserver: AnyCancellable?
+
+    init(client: CommandCenterClient, persistence: LayoutPersistenceService? = nil) {
+        self.client = client
+        self.persistence = persistence
+
+        // Auto-save layout on every change (debounced by persistence service)
+        layoutObserver = $layout
+            .dropFirst() // skip initial empty value
+            .removeDuplicates()
+            .sink { [weak self] newLayout in
+                self?.persistCurrentLayout(newLayout)
+            }
+    }
+
+    /// Build a canvas workspace from a tmux-ide session's pane layout.
+    /// Checks for persisted layout first; falls back to auto-generated from panes.
+    func loadSession(name: String) async {
+        do {
+            let panes = try await client.fetchPanes(session: name)
+            let livePaneIDs = Set(panes.map(\.id))
+
+            // Try to restore persisted layout
+            if let restored = persistence?.load(session: name, livePaneIDs: livePaneIDs),
+               !restored.workspaces.isEmpty {
+                // Update pane titles from live data (titles may have changed)
+                var updated = restored
+                let titleByPaneID = Dictionary(panes.map { ($0.id, $0.title) }, uniquingKeysWith: { _, b in b })
+                for wsIdx in updated.workspaces.indices {
+                    for colIdx in updated.workspaces[wsIdx].columns.indices {
+                        for itemIdx in updated.workspaces[wsIdx].columns[colIdx].items.indices {
+                            if case .terminal(let paneId) = updated.workspaces[wsIdx].columns[colIdx].items[itemIdx].ref {
+                                updated.workspaces[wsIdx].columns[colIdx].items[itemIdx].paneTitle = titleByPaneID[paneId]
+                            }
+                        }
+                    }
+                }
+
+                // Add any new panes not in the persisted layout
+                let persistedPaneIDs = Set(
+                    updated.workspaces
+                        .flatMap(\.columns)
+                        .flatMap(\.items)
+                        .compactMap { item -> String? in
+                            if case .terminal(let id) = item.ref { return id }
+                            return nil
+                        }
+                )
+                let newPanes = panes.filter { !persistedPaneIDs.contains($0.id) }
+                if !newPanes.isEmpty, let wsIdx = updated.workspaces.firstIndex(where: { $0.sessionName == name }) {
+                    let newItems = newPanes.map { CanvasItem(ref: .terminal(paneId: $0.id), paneTitle: $0.title) }
+                    let newColumn = CanvasColumn(items: newItems)
+                    updated.workspaces[wsIdx].columns.append(newColumn)
+                }
+
+                layout = updated
+                return
+            }
+
+            // Fall back to auto-generated layout
+            let workspace = buildWorkspace(sessionName: name, panes: panes)
+
+            if let idx = layout.workspaces.firstIndex(where: { $0.sessionName == name }) {
+                layout.workspaces[idx] = workspace
+            } else {
+                layout.workspaces.append(workspace)
+            }
+
+            layout.camera.activeWorkspaceID = workspace.id
+            if let firstItem = workspace.columns.first?.items.first {
+                layout.camera.focusedItemID = firstItem.id
+                layout.camera.activeColumnID = workspace.columns.first?.id
+            }
+        } catch {
+            // Session may have vanished
+        }
+    }
+
+    /// Flush pending saves for all active sessions (call on app termination).
+    func flushPendingSaves() {
+        var layoutsBySession: [String: CanvasLayout] = [:]
+        for workspace in layout.workspaces {
+            // Create a per-session layout snapshot
+            var sessionLayout = CanvasLayout()
+            sessionLayout.workspaces = [workspace]
+            sessionLayout.camera = layout.camera
+            sessionLayout.isOverviewOpen = layout.isOverviewOpen
+            layoutsBySession[workspace.sessionName] = sessionLayout
+        }
+        persistence?.flushAll(layouts: layoutsBySession)
+    }
+
+    // MARK: - Private
+
+    private func persistCurrentLayout(_ newLayout: CanvasLayout) {
+        guard let persistence else { return }
+        for workspace in newLayout.workspaces {
+            var sessionLayout = CanvasLayout()
+            sessionLayout.workspaces = [workspace]
+            sessionLayout.camera = newLayout.camera
+            sessionLayout.isOverviewOpen = newLayout.isOverviewOpen
+            persistence.save(session: workspace.sessionName, layout: sessionLayout)
+        }
+    }
+
+    private func buildWorkspace(sessionName: String, panes: [TmuxIdePane]) -> CanvasWorkspace {
+        // Group panes by their vertical position to approximate rows.
+        // tmux-ide arranges panes in rows; panes in the same row share
+        // similar Y coordinates. We use the pane index ordering + height
+        // heuristic to group them.
+        //
+        // Simpler approach: just create one column per "group" of panes
+        // that are horizontally adjacent. For now, put all panes in a
+        // single column (vertical stack) — the canvas layout can be
+        // rearranged by the user.
+
+        // Heuristic: group by row using pane heights
+        // Panes in the same row have the same height
+        var rowGroups: [[TmuxIdePane]] = []
+        var currentRow: [TmuxIdePane] = []
+        var currentHeight: Int?
+
+        let sorted = panes.sorted { $0.index < $1.index }
+        for pane in sorted {
+            if let h = currentHeight, pane.height == h {
+                currentRow.append(pane)
+            } else {
+                if !currentRow.isEmpty {
+                    rowGroups.append(currentRow)
+                }
+                currentRow = [pane]
+                currentHeight = pane.height
+            }
+        }
+        if !currentRow.isEmpty {
+            rowGroups.append(currentRow)
+        }
+
+        // Each row group becomes a column with its panes as items
+        let columns = rowGroups.map { group -> CanvasColumn in
+            let items = group.map { pane -> CanvasItem in
+                CanvasItem(ref: .terminal(paneId: pane.id), paneTitle: pane.title)
+            }
+            return CanvasColumn(items: items)
+        }
+
+        return CanvasWorkspace(sessionName: sessionName, columns: columns)
+    }
+}

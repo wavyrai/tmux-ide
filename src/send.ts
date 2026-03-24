@@ -27,7 +27,7 @@ interface SendOptions {
  * 4. Role match (lead, teammate, planner)
  * 5. Case-insensitive partial title match
  */
-function resolvePane(panes: PaneInfo[], target: string): PaneInfo | null {
+export function resolvePane(panes: PaneInfo[], target: string): PaneInfo | null {
   // 1. Exact pane ID
   if (target.startsWith("%")) {
     return panes.find((p) => p.id === target) ?? null;
