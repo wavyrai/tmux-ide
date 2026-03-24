@@ -1,5 +1,4 @@
-import { describe, it, beforeEach, afterEach } from "node:test";
-import assert from "node:assert/strict";
+import { describe, it, beforeEach, afterEach, expect } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -85,7 +84,7 @@ describe("task lifecycle round-trip", () => {
 
     // Simulate dispatch
     const loaded = loadTask(tmpDir, "001")!;
-    assert.ok(loaded);
+    expect(loaded).toBeTruthy();
     loaded.assignee = "François";
     loaded.status = "in-progress";
     loaded.updated = "2026-03-21T10:05:00Z";
@@ -101,8 +100,8 @@ describe("task lifecycle round-trip", () => {
 
     // Simulate completion
     const inProgress = loadTask(tmpDir, "001")!;
-    assert.strictEqual(inProgress.status, "in-progress");
-    assert.strictEqual(inProgress.assignee, "François");
+    expect(inProgress.status).toBe("in-progress");
+    expect(inProgress.assignee).toBe("François");
     inProgress.status = "done";
     inProgress.proof = { tests: { passed: 1, total: 1 } };
     inProgress.updated = "2026-03-21T10:30:00Z";
@@ -118,20 +117,20 @@ describe("task lifecycle round-trip", () => {
 
     // Verify final state
     const done = loadTask(tmpDir, "001")!;
-    assert.strictEqual(done.status, "done");
-    assert.deepStrictEqual(done.proof, { tests: { passed: 1, total: 1 } });
-    assert.strictEqual(done.assignee, "François");
+    expect(done.status).toBe("done");
+    expect(done.proof).toEqual({ tests: { passed: 1, total: 1 } });
+    expect(done.assignee).toBe("François");
 
     const events = readEvents(tmpDir);
-    assert.strictEqual(events.length, 2);
-    assert.strictEqual(events[0]!.type, "dispatch");
-    assert.strictEqual(events[1]!.type, "completion");
-    assert.strictEqual(events[0]!.taskId, "001");
-    assert.strictEqual(events[1]!.taskId, "001");
+    expect(events.length).toBe(2);
+    expect(events[0]!.type).toBe("dispatch");
+    expect(events[1]!.type).toBe("completion");
+    expect(events[0]!.taskId).toBe("001");
+    expect(events[1]!.taskId).toBe("001");
 
     const goalTasks = loadTasksForGoal(tmpDir, "01");
-    assert.strictEqual(goalTasks.length, 1);
-    assert.strictEqual(goalTasks[0]!.status, "done");
+    expect(goalTasks.length).toBe(1);
+    expect(goalTasks[0]!.status).toBe("done");
   });
 });
 
@@ -205,28 +204,28 @@ describe("discovery round-trip", () => {
     };
 
     const detail = buildProjectDetail(info);
-    assert.strictEqual(detail.session, "test-session");
-    assert.strictEqual(detail.dir, tmpDir);
-    assert.ok(detail.mission);
-    assert.strictEqual(detail.mission!.created, "2026-03-21T10:00:00Z");
-    assert.strictEqual(detail.mission!.updated, "2026-03-21T10:00:00Z");
-    assert.strictEqual(detail.tasks.length, 1);
-    assert.strictEqual(detail.tasks[0]!.created, "2026-03-21T10:00:00Z");
-    assert.strictEqual(detail.tasks[0]!.updated, "2026-03-21T10:05:00Z");
-    assert.strictEqual(detail.goals.length, 1);
-    assert.strictEqual(detail.goals[0]!.assignee, "François");
-    assert.strictEqual(detail.goals[0]!.specialty, "frontend");
-    assert.strictEqual(detail.agents.length, 1);
-    assert.strictEqual(detail.agents[0]!.isBusy, false);
+    expect(detail.session).toBe("test-session");
+    expect(detail.dir).toBe(tmpDir);
+    expect(detail.mission).toBeTruthy();
+    expect(detail.mission!.created).toBe("2026-03-21T10:00:00Z");
+    expect(detail.mission!.updated).toBe("2026-03-21T10:00:00Z");
+    expect(detail.tasks.length).toBe(1);
+    expect(detail.tasks[0]!.created).toBe("2026-03-21T10:00:00Z");
+    expect(detail.tasks[0]!.updated).toBe("2026-03-21T10:05:00Z");
+    expect(detail.goals.length).toBe(1);
+    expect(detail.goals[0]!.assignee).toBe("François");
+    expect(detail.goals[0]!.specialty).toBe("frontend");
+    expect(detail.agents.length).toBe(1);
+    expect(detail.agents[0]!.isBusy).toBe(false);
 
     const stats = computeStats(info);
-    assert.strictEqual(stats.totalTasks, 1);
-    assert.strictEqual(stats.doneTasks, 0);
-    assert.strictEqual(stats.agents, 1);
+    expect(stats.totalTasks).toBe(1);
+    expect(stats.doneTasks).toBe(0);
+    expect(stats.agents).toBe(1);
 
     const progress = computeGoalProgress([goal], [task]);
-    assert.strictEqual(progress.length, 1);
-    assert.strictEqual(progress[0]!.progress, 0);
+    expect(progress.length).toBe(1);
+    expect(progress[0]!.progress).toBe(0);
   });
 });
 
@@ -252,13 +251,13 @@ describe("normalizer backward compatibility", () => {
     );
 
     const task = loadTask(tmpDir, "001")!;
-    assert.ok(task);
-    assert.strictEqual(task.retryCount, 0);
-    assert.strictEqual(task.maxRetries, 5);
-    assert.strictEqual(task.lastError, null);
-    assert.strictEqual(task.nextRetryAt, null);
-    assert.deepStrictEqual(task.depends_on, []);
-    assert.strictEqual(task.proof!.notes, "old note format");
+    expect(task).toBeTruthy();
+    expect(task.retryCount).toBe(0);
+    expect(task.maxRetries).toBe(5);
+    expect(task.lastError).toBe(null);
+    expect(task.nextRetryAt).toBe(null);
+    expect(task.depends_on).toEqual([]);
+    expect(task.proof!.notes).toBe("old note format");
   });
 
   it("fills defaults for legacy goal missing assignee, specialty, timestamps", () => {
@@ -276,11 +275,11 @@ describe("normalizer backward compatibility", () => {
     );
 
     const goal = loadGoal(tmpDir, "01")!;
-    assert.ok(goal);
-    assert.strictEqual(goal.assignee, null);
-    assert.strictEqual(goal.specialty, null);
-    assert.strictEqual(goal.created, "1970-01-01T00:00:00.000Z");
-    assert.strictEqual(goal.updated, "1970-01-01T00:00:00.000Z");
+    expect(goal).toBeTruthy();
+    expect(goal.assignee).toBe(null);
+    expect(goal.specialty).toBe(null);
+    expect(goal.created).toBe("1970-01-01T00:00:00.000Z");
+    expect(goal.updated).toBe("1970-01-01T00:00:00.000Z");
   });
 
   it("fills defaults for legacy mission missing timestamps", () => {
@@ -294,10 +293,10 @@ describe("normalizer backward compatibility", () => {
     );
 
     const mission = loadMission(tmpDir)!;
-    assert.ok(mission);
-    assert.strictEqual(mission.title, "Legacy mission");
-    assert.strictEqual(mission.created, "1970-01-01T00:00:00.000Z");
-    assert.strictEqual(mission.updated, "1970-01-01T00:00:00.000Z");
+    expect(mission).toBeTruthy();
+    expect(mission.title).toBe("Legacy mission");
+    expect(mission.created).toBe("1970-01-01T00:00:00.000Z");
+    expect(mission.updated).toBe("1970-01-01T00:00:00.000Z");
   });
 });
 
@@ -308,18 +307,18 @@ describe("authorship round-trip", () => {
     const tagged = tagContent(original, "ai:Claude");
 
     const { content, marks } = extractMarks(tagged);
-    assert.strictEqual(content, original);
-    assert.ok(marks);
-    assert.ok(marks.marks);
+    expect(content).toBe(original);
+    expect(marks).toBeTruthy();
+    expect(marks.marks).toBeTruthy();
 
     const markList = Object.values(marks.marks);
-    assert.ok(markList.length > 0);
+    expect(markList.length > 0).toBeTruthy();
     const aiMark = markList.find((m) => m.by === "ai:Claude");
-    assert.ok(aiMark, "should have at least one mark by ai:Claude");
+    expect(aiMark).toBeTruthy();
 
     const stats = calculateStats(marks.marks);
-    assert.ok(stats.aiPercent > 0, `aiPercent should be > 0, got ${stats.aiPercent}`);
-    assert.ok(stats.totalChars > 0, `totalChars should be > 0, got ${stats.totalChars}`);
-    assert.strictEqual(stats.humanPercent, 0);
+    expect(stats.aiPercent > 0).toBeTruthy();
+    expect(stats.totalChars > 0).toBeTruthy();
+    expect(stats.humanPercent).toBe(0);
   });
 });

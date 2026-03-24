@@ -1,5 +1,4 @@
-import { describe, it, beforeEach, afterEach } from "node:test";
-import assert from "node:assert/strict";
+import { describe, it, beforeEach, afterEach, expect } from "bun:test";
 import { mkdtempSync, rmSync, readFileSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -29,17 +28,17 @@ describe("buildPaneMap", () => {
       },
     );
 
-    assert.deepStrictEqual(splitCalls, [
+    expect(splitCalls).toEqual([
       { targetPane: "%1", direction: "vertical", cwd: "/workspace", percent: 40 },
       { targetPane: "%1", direction: "horizontal", cwd: "/workspace", percent: 50 },
       { targetPane: "%42", direction: "horizontal", cwd: "/workspace/apps/api", percent: 50 },
     ]);
 
-    assert.deepStrictEqual(paneMap, [
+    expect(paneMap).toEqual([
       ["%1", "%99"],
       ["%42", "%7"],
     ]);
-    assert.deepStrictEqual([...firstPanesOfRows], ["%1", "%42"]);
+    expect([...firstPanesOfRows]).toEqual(["%1", "%42"]);
   });
 
   it("chains additional row splits from the returned row pane ids", () => {
@@ -61,12 +60,12 @@ describe("buildPaneMap", () => {
       },
     );
 
-    assert.deepStrictEqual(splitCalls, [
+    expect(splitCalls).toEqual([
       { targetPane: "%5", direction: "vertical", cwd: "/workspace", percent: 50 },
       { targetPane: "%21", direction: "vertical", cwd: "/workspace", percent: 40 },
     ]);
-    assert.deepStrictEqual(paneMap, [["%5"], ["%21"], ["%34"]]);
-    assert.deepStrictEqual([...firstPanesOfRows], ["%5", "%21", "%34"]);
+    expect(paneMap).toEqual([["%5"], ["%21"], ["%34"]]);
+    expect([...firstPanesOfRows]).toEqual(["%5", "%21", "%34"]);
   });
 });
 
@@ -82,8 +81,8 @@ describe("waitForPaneCommand", () => {
       sleep: (ms) => seenSleeps.push(ms),
     });
 
-    assert.strictEqual(result, true);
-    assert.deepStrictEqual(seenSleeps, [25, 25]);
+    expect(result).toBe(true);
+    expect(seenSleeps).toEqual([25, 25]);
   });
 
   it("returns false after exhausting retries", () => {
@@ -96,8 +95,8 @@ describe("waitForPaneCommand", () => {
       sleep: (ms) => seenSleeps.push(ms),
     });
 
-    assert.strictEqual(result, false);
-    assert.deepStrictEqual(seenSleeps, [10, 10]);
+    expect(result).toBe(false);
+    expect(seenSleeps).toEqual([10, 10]);
   });
 });
 
@@ -115,19 +114,19 @@ describe("ensureTaskDocs", () => {
   it("creates CLAUDE.md with task docs when file does not exist", () => {
     ensureTaskDocs(tmpDir);
     const content = readFileSync(join(tmpDir, "CLAUDE.md"), "utf-8");
-    assert.ok(content.includes("## Task Management"));
-    assert.ok(content.includes("tmux-ide mission set"));
-    assert.ok(content.includes("tmux-ide task create"));
-    assert.ok(content.includes("--proof"));
-    assert.ok(content.includes("--depends"));
+    expect(content.includes("## Task Management")).toBeTruthy();
+    expect(content.includes("tmux-ide mission set")).toBeTruthy();
+    expect(content.includes("tmux-ide task create")).toBeTruthy();
+    expect(content.includes("--proof")).toBeTruthy();
+    expect(content.includes("--depends")).toBeTruthy();
   });
 
   it("appends task docs to existing CLAUDE.md", () => {
     writeFileSync(join(tmpDir, "CLAUDE.md"), "# My Project\n\nExisting content.\n");
     ensureTaskDocs(tmpDir);
     const content = readFileSync(join(tmpDir, "CLAUDE.md"), "utf-8");
-    assert.ok(content.startsWith("# My Project\n\nExisting content.\n"));
-    assert.ok(content.includes("## Task Management"));
+    expect(content.startsWith("# My Project\n\nExisting content.\n")).toBeTruthy();
+    expect(content.includes("## Task Management")).toBeTruthy();
   });
 
   it("does not duplicate if section already exists", () => {
@@ -135,9 +134,9 @@ describe("ensureTaskDocs", () => {
     ensureTaskDocs(tmpDir);
     const content = readFileSync(join(tmpDir, "CLAUDE.md"), "utf-8");
     const count = content.split("## Task Management").length - 1;
-    assert.strictEqual(count, 1);
-    assert.ok(content.includes("Already here."));
-    assert.ok(!content.includes("tmux-ide mission set"));
+    expect(count).toBe(1);
+    expect(content.includes("Already here.")).toBeTruthy();
+    expect(!content.includes("tmux-ide mission set")).toBeTruthy();
   });
 
   it("is idempotent when called twice", () => {
@@ -145,6 +144,6 @@ describe("ensureTaskDocs", () => {
     const first = readFileSync(join(tmpDir, "CLAUDE.md"), "utf-8");
     ensureTaskDocs(tmpDir);
     const second = readFileSync(join(tmpDir, "CLAUDE.md"), "utf-8");
-    assert.strictEqual(first, second);
+    expect(first).toBe(second);
   });
 });

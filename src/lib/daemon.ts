@@ -4,7 +4,7 @@
  * 2. Orchestrator startup (task dispatch, stall detection)
  * 3. Command Center HTTP/WebSocket server
  *
- * Entry: node dist/lib/daemon.js <session> [port]
+ * Entry: bun src/lib/daemon.ts <session> [port]
  * Spawned as a detached child by launch.ts (via daemon-watchdog.ts).
  */
 
@@ -12,7 +12,7 @@ import { execFileSync } from "node:child_process";
 import { createServer, type Server } from "node:http";
 import { fileURLToPath } from "node:url";
 import { resolve } from "node:path";
-import { computePortPanes, computeAgentStates } from "./session-monitor.js";
+import { computePortPanes, computeAgentStates } from "./session-monitor.ts";
 
 const INTERVAL = 1000;
 
@@ -22,7 +22,7 @@ const INTERVAL = 1000;
 
 const sessionArg = process.argv[2];
 if (!sessionArg) {
-  console.error("Usage: daemon.js <session> [port]");
+  console.error("Usage: daemon.ts <session> [port]");
   process.exit(1);
 }
 const session: string = sessionArg;
@@ -151,17 +151,17 @@ let stopOrchestrator: (() => void) | null = null;
 
 async function startOrchestrator(): Promise<void> {
   try {
-    const { readConfig } = await import("./yaml-io.js");
+    const { readConfig } = await import("./yaml-io.ts");
     const { config } = readConfig(process.cwd());
 
     if (!config.orchestrator?.enabled) return;
 
     try {
-      const { createOrchestrator } = await import("./orchestrator.js");
+      const { createOrchestrator } = await import("./orchestrator.ts");
 
       // Configure webhooks for event delivery
       if (config.orchestrator.webhooks?.length) {
-        const { setWebhookConfig } = await import("./event-log.js");
+        const { setWebhookConfig } = await import("./event-log.ts");
         setWebhookConfig(config.orchestrator.webhooks);
       }
 
@@ -213,8 +213,8 @@ let httpServer: Server | null = null;
 
 async function startCommandCenter(): Promise<void> {
   try {
-    const { createApp } = await import("../command-center/server.js");
-    const { attachWebSockets } = await import("../command-center/index.js");
+    const { createApp } = await import("../command-center/server.ts");
+    const { attachWebSockets } = await import("../command-center/index.ts");
     const { getRequestListener } = await import("@hono/node-server");
 
     const app = createApp();

@@ -1,5 +1,4 @@
-import { describe, it, beforeEach, afterEach } from "node:test";
-import assert from "node:assert/strict";
+import { describe, it, beforeEach, afterEach, expect } from "bun:test";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
@@ -29,9 +28,9 @@ describe("ls", () => {
       encoding: "utf-8",
       timeout: 10000,
     });
-    assert.strictEqual(result.status, 0);
+    expect(result.status).toBe(0);
     const output = JSON.parse(result.stdout);
-    assert.ok(Array.isArray(output.sessions));
+    expect(Array.isArray(output.sessions)).toBeTruthy();
   });
 
   it("parses session list with expected fields", () => {
@@ -42,9 +41,9 @@ describe("ls", () => {
     const output = JSON.parse(result.stdout);
     // If there are sessions, each should have name, created, attached fields
     for (const session of output.sessions) {
-      assert.ok(typeof session.name === "string");
-      assert.ok(typeof session.created === "string");
-      assert.ok(typeof session.attached === "boolean");
+      expect(typeof session.name === "string").toBeTruthy();
+      expect(typeof session.created === "string").toBeTruthy();
+      expect(typeof session.attached === "boolean").toBeTruthy();
     }
   });
 
@@ -53,15 +52,15 @@ describe("ls", () => {
       encoding: "utf-8",
       timeout: 10000,
     });
-    assert.strictEqual(result.status, 0);
+    expect(result.status).toBe(0);
     const output = JSON.parse(result.stdout);
-    assert.ok(Object.hasOwn(output, "sessions"));
-    assert.ok(Array.isArray(output.sessions));
+    expect(Object.hasOwn(output, "sessions")).toBeTruthy();
+    expect(Array.isArray(output.sessions)).toBeTruthy();
     // Each session must have the expected shape
     for (const s of output.sessions) {
-      assert.ok(typeof s.name === "string" && s.name.length > 0);
-      assert.ok(typeof s.created === "string");
-      assert.ok(typeof s.attached === "boolean");
+      expect(typeof s.name === "string" && s.name.length > 0).toBeTruthy();
+      expect(typeof s.created === "string").toBeTruthy();
+      expect(typeof s.attached === "boolean").toBeTruthy();
     }
   });
 
@@ -71,7 +70,7 @@ describe("ls", () => {
       encoding: "utf-8",
       timeout: 10000,
     });
-    assert.strictEqual(result.status, 0);
-    assert.ok(result.stdout.length > 0);
+    expect(result.status).toBe(0);
+    expect(result.stdout.length > 0).toBeTruthy();
   });
 });

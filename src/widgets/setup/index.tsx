@@ -52,7 +52,7 @@ function inferFieldType(path: string[]): { type: FieldType; enumValues?: string[
   if (last === "type")
     return {
       type: "enum",
-      enumValues: ["explorer", "changes", "preview", "tasks", "warroom", "costs"],
+      enumValues: ["explorer", "changes", "preview", "tasks", "costs", "config", "mission-control"],
     };
   if (last === "dispatch_mode") return { type: "enum", enumValues: ["tasks", "goals"] };
   if (

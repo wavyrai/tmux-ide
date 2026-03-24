@@ -158,11 +158,11 @@ export function sendCommand(session: string, paneId: string, command: string): b
     // TUI to register the input. Long commands trigger the paste preview which needs
     // two Enters: one to confirm the preview, one to submit the prompt.
     if (command.length < 200) {
-      sleepMs(100);
+      sleepMs(150);
     } else {
-      sleepMs(500);
+      sleepMs(1500);
       tmux("send-keys", "-t", paneId, "Enter");
-      sleepMs(300);
+      sleepMs(800);
     }
     tmux("send-keys", "-t", paneId, "Enter");
     return true;

@@ -16,7 +16,7 @@ export const PaneSchema = z.object({
   title: z.string().optional(),
   command: z.string().optional(),
   type: z
-    .enum(["explorer", "changes", "preview", "tasks", "warroom", "costs", "config"])
+    .enum(["explorer", "changes", "preview", "tasks", "costs", "config", "mission-control"])
     .optional(),
   target: z.string().optional(),
   dir: z.string().optional(),

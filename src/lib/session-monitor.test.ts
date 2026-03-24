@@ -1,5 +1,4 @@
-import { describe, it } from "node:test";
-import assert from "node:assert/strict";
+import { describe, it, expect } from "bun:test";
 import { computeAgentStates, computePortPanes } from "./session-monitor.ts";
 
 describe("computeAgentStates", () => {
@@ -9,38 +8,38 @@ describe("computeAgentStates", () => {
       { id: "%1", pid: "101", cmd: "node", title: "Dev Server" },
     ];
     const states = computeAgentStates(panes);
-    assert.strictEqual(states.get("%0"), null);
-    assert.strictEqual(states.get("%1"), null);
+    expect(states.get("%0")).toBe(null);
+    expect(states.get("%1")).toBe(null);
   });
 
   it("detects idle claude pane", () => {
     const panes = [{ id: "%0", pid: "100", cmd: "claude", title: "Claude Code" }];
     const states = computeAgentStates(panes);
-    assert.strictEqual(states.get("%0"), "idle");
+    expect(states.get("%0")).toBe("idle");
   });
 
   it("detects busy claude pane with Braille spinner", () => {
     const panes = [{ id: "%0", pid: "100", cmd: "claude", title: "\u280B Working on something" }];
     const states = computeAgentStates(panes);
-    assert.strictEqual(states.get("%0"), "busy");
+    expect(states.get("%0")).toBe("busy");
   });
 
   it("detects busy codex pane with spinner", () => {
     const panes = [{ id: "%0", pid: "100", cmd: "codex", title: "\u2839 Thinking" }];
     const states = computeAgentStates(panes);
-    assert.strictEqual(states.get("%0"), "busy");
+    expect(states.get("%0")).toBe("busy");
   });
 
   it("handles case-insensitive command matching", () => {
     const panes = [{ id: "%0", pid: "100", cmd: "Claude", title: "idle title" }];
     const states = computeAgentStates(panes);
-    assert.strictEqual(states.get("%0"), "idle");
+    expect(states.get("%0")).toBe("idle");
   });
 
   it("handles missing cmd and title gracefully", () => {
     const panes = [{ id: "%0", pid: "100", cmd: undefined, title: undefined }];
     const states = computeAgentStates(panes);
-    assert.strictEqual(states.get("%0"), null);
+    expect(states.get("%0")).toBe(null);
   });
 
   it("handles mixed panes correctly", () => {
@@ -50,15 +49,15 @@ describe("computeAgentStates", () => {
       { id: "%2", pid: "102", cmd: "claude", title: "Idle Claude" },
     ];
     const states = computeAgentStates(panes);
-    assert.strictEqual(states.get("%0"), "busy");
-    assert.strictEqual(states.get("%1"), null);
-    assert.strictEqual(states.get("%2"), "idle");
+    expect(states.get("%0")).toBe("busy");
+    expect(states.get("%1")).toBe(null);
+    expect(states.get("%2")).toBe("idle");
   });
 
   it("detects agent via @ide_role lead regardless of command", () => {
     const panes = [{ id: "%0", pid: "100", cmd: "2.1.80", title: "Claude Code", role: "lead" }];
     const states = computeAgentStates(panes);
-    assert.strictEqual(states.get("%0"), "idle");
+    expect(states.get("%0")).toBe("idle");
   });
 
   it("detects busy teammate via @ide_role with spinner", () => {
@@ -66,19 +65,19 @@ describe("computeAgentStates", () => {
       { id: "%0", pid: "100", cmd: "node", title: "\u2839 Working", role: "teammate" },
     ];
     const states = computeAgentStates(panes);
-    assert.strictEqual(states.get("%0"), "busy");
+    expect(states.get("%0")).toBe("busy");
   });
 
   it("ignores widget panes even with @ide_role", () => {
     const panes = [{ id: "%0", pid: "100", cmd: "bun", title: "Explorer", role: "widget" }];
     const states = computeAgentStates(panes);
-    assert.strictEqual(states.get("%0"), null);
+    expect(states.get("%0")).toBe(null);
   });
 
   it("falls back to command detection when no @ide_role is set", () => {
     const panes = [{ id: "%0", pid: "100", cmd: "claude", title: "Agent 1" }];
     const states = computeAgentStates(panes);
-    assert.strictEqual(states.get("%0"), "idle");
+    expect(states.get("%0")).toBe("idle");
   });
 });
 
@@ -89,7 +88,7 @@ describe("computePortPanes", () => {
       listeners: new Set(),
       tree: new Map(),
     });
-    assert.strictEqual(result.size, 0);
+    expect(result.size).toBe(0);
   });
 
   it("maps a listener PID directly to its pane", () => {
@@ -98,7 +97,7 @@ describe("computePortPanes", () => {
       listeners: new Set(["100"]),
       tree: new Map([["100", "1"]]),
     });
-    assert.ok(result.has("%0"));
+    expect(result.has("%0")).toBeTruthy();
   });
 
   it("walks up the process tree to find pane owner", () => {
@@ -113,7 +112,7 @@ describe("computePortPanes", () => {
       listeners: new Set(["300"]),
       tree,
     });
-    assert.ok(result.has("%0"));
+    expect(result.has("%0")).toBeTruthy();
   });
 
   it("does not match listener to unrelated pane", () => {
@@ -128,7 +127,7 @@ describe("computePortPanes", () => {
       listeners: new Set(["300"]),
       tree,
     });
-    assert.strictEqual(result.size, 0);
+    expect(result.size).toBe(0);
   });
 
   it("handles multiple panes with different listeners", () => {
@@ -146,8 +145,8 @@ describe("computePortPanes", () => {
       listeners: new Set(["150", "250"]),
       tree,
     });
-    assert.ok(result.has("%0"));
-    assert.ok(result.has("%1"));
-    assert.strictEqual(result.size, 2);
+    expect(result.has("%0")).toBeTruthy();
+    expect(result.has("%1")).toBeTruthy();
+    expect(result.size).toBe(2);
   });
 });

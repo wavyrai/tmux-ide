@@ -1,5 +1,4 @@
-import { describe, it } from "node:test";
-import assert from "node:assert/strict";
+import { describe, it, expect } from "bun:test";
 import {
   buildSessionOptions,
   themeOptions,
@@ -13,11 +12,11 @@ describe("buildSessionOptions", () => {
   it("returns an array of command arrays", () => {
     const options = buildSessionOptions("my-session");
 
-    assert.ok(Array.isArray(options));
-    assert.ok(options.length > 0);
+    expect(Array.isArray(options)).toBeTruthy();
+    expect(options.length > 0).toBeTruthy();
     for (const cmd of options) {
-      assert.ok(Array.isArray(cmd), "each option should be an array");
-      assert.ok(cmd.length >= 2, "each command should have at least 2 elements");
+      expect(Array.isArray(cmd)).toBeTruthy();
+      expect(cmd.length >= 2).toBeTruthy();
     }
   });
 
@@ -33,7 +32,7 @@ describe("buildSessionOptions", () => {
       ...keyBindings(),
     ];
 
-    assert.deepStrictEqual(all, expected);
+    expect(all).toEqual(expected);
   });
 });
 
@@ -42,23 +41,23 @@ describe("themeOptions", () => {
     const opts = themeOptions("my-session", {});
 
     const optionNames = opts.map((o) => o[3]);
-    assert.ok(optionNames.includes("status-style"));
-    assert.ok(optionNames.includes("pane-border-style"));
-    assert.ok(optionNames.includes("pane-active-border-style"));
+    expect(optionNames.includes("status-style")).toBeTruthy();
+    expect(optionNames.includes("pane-border-style")).toBeTruthy();
+    expect(optionNames.includes("pane-active-border-style")).toBeTruthy();
   });
 
   it("uses default colors when no theme provided", () => {
     const opts = themeOptions("s", {});
 
-    assert.deepStrictEqual(opts[0], [
+    expect(opts[0]).toEqual([
       "set-option",
       "-t",
       "s",
       "status-style",
       "bg=colour235,fg=colour248",
     ]);
-    assert.deepStrictEqual(opts[1], ["set-option", "-t", "s", "pane-border-style", "fg=colour238"]);
-    assert.deepStrictEqual(opts[2], [
+    expect(opts[1]).toEqual(["set-option", "-t", "s", "pane-border-style", "fg=colour238"]);
+    expect(opts[2]).toEqual([
       "set-option",
       "-t",
       "s",
@@ -70,14 +69,14 @@ describe("themeOptions", () => {
   it("respects custom theme overrides", () => {
     const opts = themeOptions("my-session", { accent: "red", border: "blue" });
 
-    assert.deepStrictEqual(opts[1], [
+    expect(opts[1]).toEqual([
       "set-option",
       "-t",
       "my-session",
       "pane-border-style",
       "fg=blue",
     ]);
-    assert.deepStrictEqual(opts[2], [
+    expect(opts[2]).toEqual([
       "set-option",
       "-t",
       "my-session",
@@ -91,15 +90,15 @@ describe("borderOptions", () => {
   it("includes pane-border-status and pane-border-format", () => {
     const opts = borderOptions("my-session", {});
 
-    assert.deepStrictEqual(opts[0], [
+    expect(opts[0]).toEqual([
       "set-option",
       "-t",
       "my-session",
       "pane-border-status",
       "top",
     ]);
-    assert.strictEqual(opts[1][3], "pane-border-format");
-    assert.ok(opts[1][4].includes("pane_current_path"));
+    expect(opts[1][3]).toBe("pane-border-format");
+    expect(opts[1][4].includes("pane_current_path")).toBeTruthy();
   });
 });
 
@@ -108,13 +107,13 @@ describe("behaviorOptions", () => {
     const opts = behaviorOptions("test-session");
 
     const mouseOpt = opts.find((o) => o[3] === "mouse");
-    assert.deepStrictEqual(mouseOpt, ["set-option", "-t", "test-session", "mouse", "on"]);
+    expect(mouseOpt).toEqual(["set-option", "-t", "test-session", "mouse", "on"]);
 
     const escapeOpt = opts.find((o) => o[3] === "escape-time");
-    assert.deepStrictEqual(escapeOpt, ["set-option", "-t", "test-session", "escape-time", "0"]);
+    expect(escapeOpt).toEqual(["set-option", "-t", "test-session", "escape-time", "0"]);
 
     const intervalOpt = opts.find((o) => o[3] === "status-interval");
-    assert.deepStrictEqual(intervalOpt, [
+    expect(intervalOpt).toEqual([
       "set-option",
       "-t",
       "test-session",
@@ -128,35 +127,35 @@ describe("statusBarOptions", () => {
   it("includes two-line status mode", () => {
     const opts = statusBarOptions("my-session", {});
     const statusOpt = opts.find((o) => o[3] === "status");
-    assert.deepStrictEqual(statusOpt, ["set-option", "-t", "my-session", "status", "2"]);
+    expect(statusOpt).toEqual(["set-option", "-t", "my-session", "status", "2"]);
   });
 
   it("includes status-format[1] with pane tabs", () => {
     const opts = statusBarOptions("my-session", {});
     const formatOpt = opts.find((o) => o[3] === "status-format[1]");
-    assert.ok(formatOpt, "should include status-format[1]");
-    assert.ok(formatOpt[4].includes("#{P:"), "format should use pane loop");
-    assert.ok(formatOpt[4].includes("pane_id"), "format should reference pane_id");
+    expect(formatOpt).toBeTruthy();
+    expect(formatOpt[4].includes("#{P:")).toBeTruthy();
+    expect(formatOpt[4].includes("pane_id")).toBeTruthy();
   });
 
   it("includes status-left with session name", () => {
     const opts = statusBarOptions("my-session", {});
     const leftOpt = opts.find((o) => o[3] === "status-left");
-    assert.ok(leftOpt[4].includes("MY-SESSION IDE"));
+    expect(leftOpt[4].includes("MY-SESSION IDE")).toBeTruthy();
   });
 
   it("includes all expected status bar settings", () => {
     const opts = statusBarOptions("s", {});
     const names = opts.map((o) => o[3]);
 
-    assert.ok(names.includes("status-left"));
-    assert.ok(names.includes("status-left-length"));
-    assert.ok(names.includes("status-right"));
-    assert.ok(names.includes("status-justify"));
-    assert.ok(names.includes("window-status-current-format"));
-    assert.ok(names.includes("window-status-format"));
-    assert.ok(names.includes("status"));
-    assert.ok(names.includes("status-format[1]"));
+    expect(names.includes("status-left")).toBeTruthy();
+    expect(names.includes("status-left-length")).toBeTruthy();
+    expect(names.includes("status-right")).toBeTruthy();
+    expect(names.includes("status-justify")).toBeTruthy();
+    expect(names.includes("window-status-current-format")).toBeTruthy();
+    expect(names.includes("window-status-format")).toBeTruthy();
+    expect(names.includes("status")).toBeTruthy();
+    expect(names.includes("status-format[1]")).toBeTruthy();
   });
 });
 
@@ -164,8 +163,8 @@ describe("keyBindings", () => {
   it("includes the mouse click binding", () => {
     const bindings = keyBindings();
 
-    assert.strictEqual(bindings.length, 1);
-    assert.deepStrictEqual(bindings[0], [
+    expect(bindings.length).toBe(1);
+    expect(bindings[0]).toEqual([
       "bind-key",
       "-n",
       "MouseDown1StatusDefault",

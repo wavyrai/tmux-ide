@@ -1,5 +1,4 @@
-import { describe, it, beforeEach, afterEach, mock } from "node:test";
-import assert from "node:assert/strict";
+import { describe, it, beforeEach, afterEach, mock, expect } from "bun:test";
 import {
   _setExecutor,
   _setSpawner,
@@ -27,13 +26,12 @@ let mockExec;
 let restoreExec;
 
 beforeEach(() => {
-  mockExec = mock.fn();
+  mockExec = mock();
   restoreExec = _setExecutor(mockExec);
 });
 
 afterEach(() => {
   restoreExec();
-  mock.restoreAll();
 });
 
 // --- Helpers ---
@@ -48,10 +46,10 @@ function makeExecError(stderr) {
 
 describe("getSessionState", () => {
   it("returns running: true when has-session succeeds", () => {
-    mockExec.mock.mockImplementation(() => "");
+    mockExec.mockImplementation(() => "");
     const result = getSessionState("my-session");
-    assert.deepStrictEqual(result, { running: true, reason: null });
-    assert.deepStrictEqual(mockExec.mock.calls[0].arguments[1], [
+    expect(result).toEqual({ running: true, reason: null });
+    expect(mockExec.mock.calls[0][1]).toEqual([
       "has-session",
       "-t",
       "my-session",
@@ -59,103 +57,94 @@ describe("getSessionState", () => {
   });
 
   it('returns SESSION_NOT_FOUND for "can\'t find session"', () => {
-    mockExec.mock.mockImplementation(() => {
+    mockExec.mockImplementation(() => {
       throw makeExecError("can't find session: my-session");
     });
     const result = getSessionState("my-session");
-    assert.deepStrictEqual(result, { running: false, reason: "SESSION_NOT_FOUND" });
+    expect(result).toEqual({ running: false, reason: "SESSION_NOT_FOUND" });
   });
 
   it('returns TMUX_UNAVAILABLE for "connection refused"', () => {
-    mockExec.mock.mockImplementation(() => {
+    mockExec.mockImplementation(() => {
       throw makeExecError("error connecting to /tmp/tmux-1000/default (connection refused)");
     });
     const result = getSessionState("my-session");
-    assert.deepStrictEqual(result, { running: false, reason: "TMUX_UNAVAILABLE" });
+    expect(result).toEqual({ running: false, reason: "TMUX_UNAVAILABLE" });
   });
 
   it('returns TMUX_UNAVAILABLE for "no server running"', () => {
-    mockExec.mock.mockImplementation(() => {
+    mockExec.mockImplementation(() => {
       throw makeExecError("no server running on /tmp/tmux-1000/default");
     });
     const result = getSessionState("my-session");
-    assert.deepStrictEqual(result, { running: false, reason: "TMUX_UNAVAILABLE" });
+    expect(result).toEqual({ running: false, reason: "TMUX_UNAVAILABLE" });
   });
 
   it("throws for unknown errors", () => {
-    mockExec.mock.mockImplementation(() => {
+    mockExec.mockImplementation(() => {
       throw makeExecError("something totally unexpected");
     });
-    assert.throws(
-      () => getSessionState("my-session"),
-      (err) => err instanceof TmuxError && err.code === "TMUX_ERROR",
-    );
+    expect(() => getSessionState("my-session")).toThrow(TmuxError);
   });
 });
 
 describe("hasSession", () => {
   it("returns true when session exists", () => {
-    mockExec.mock.mockImplementation(() => "");
-    assert.strictEqual(hasSession("proj"), true);
+    mockExec.mockImplementation(() => "");
+    expect(hasSession("proj")).toBe(true);
   });
 
   it("returns false for SESSION_NOT_FOUND", () => {
-    mockExec.mock.mockImplementation(() => {
+    mockExec.mockImplementation(() => {
       throw makeExecError("can't find session: proj");
     });
-    assert.strictEqual(hasSession("proj"), false);
+    expect(hasSession("proj")).toBe(false);
   });
 
   it("returns false for TMUX_UNAVAILABLE", () => {
-    mockExec.mock.mockImplementation(() => {
+    mockExec.mockImplementation(() => {
       throw makeExecError("no server running on /tmp/tmux-1000/default");
     });
-    assert.strictEqual(hasSession("proj"), false);
+    expect(hasSession("proj")).toBe(false);
   });
 
   it("throws for unknown errors", () => {
-    mockExec.mock.mockImplementation(() => {
+    mockExec.mockImplementation(() => {
       throw makeExecError("unexpected failure");
     });
-    assert.throws(
-      () => hasSession("proj"),
-      (err) => err instanceof TmuxError && err.code === "TMUX_ERROR",
-    );
+    expect(() => hasSession("proj")).toThrow(TmuxError);
   });
 });
 
 describe("killSession", () => {
   it("returns stopped: true when kill succeeds", () => {
-    mockExec.mock.mockImplementation(() => "");
+    mockExec.mockImplementation(() => "");
     const result = killSession("proj");
-    assert.deepStrictEqual(result, { stopped: true, reason: null });
-    assert.deepStrictEqual(mockExec.mock.calls[0].arguments[1], ["kill-session", "-t", "proj"]);
+    expect(result).toEqual({ stopped: true, reason: null });
+    expect(mockExec.mock.calls[0][1]).toEqual(["kill-session", "-t", "proj"]);
   });
 
   it("returns stopped: false for missing session", () => {
-    mockExec.mock.mockImplementation(() => {
+    mockExec.mockImplementation(() => {
       throw makeExecError("can't find session: proj");
     });
     const result = killSession("proj");
-    assert.deepStrictEqual(result, { stopped: false, reason: "SESSION_NOT_FOUND" });
+    expect(result).toEqual({ stopped: false, reason: "SESSION_NOT_FOUND" });
   });
 
   it("returns stopped: false for unavailable tmux", () => {
-    mockExec.mock.mockImplementation(() => {
+    mockExec.mockImplementation(() => {
       throw makeExecError("failed to connect to server");
     });
     const result = killSession("proj");
-    assert.deepStrictEqual(result, { stopped: false, reason: "TMUX_UNAVAILABLE" });
+    expect(result).toEqual({ stopped: false, reason: "TMUX_UNAVAILABLE" });
   });
 
   it("throws for unknown errors", () => {
-    mockExec.mock.mockImplementation(() => {
+    mockExec.mockImplementation(() => {
       throw makeExecError("disk error");
     });
-    assert.throws(
-      () => killSession("proj"),
-      (err) => err instanceof TmuxError && err.code === "TMUX_ERROR",
-    );
+    expect(() => killSession("proj")).toThrow(TmuxError);
   });
 });
 
@@ -163,28 +152,28 @@ describe("killSession", () => {
 
 describe("listPanes", () => {
   it("parses multi-pane output correctly", () => {
-    mockExec.mock.mockImplementation(() => "0|Editor|120|40|1\n1|Shell|80|40|0\n");
+    mockExec.mockImplementation(() => "0|Editor|120|40|1\n1|Shell|80|40|0\n");
     const panes = listPanes("proj");
-    assert.deepStrictEqual(panes, [
+    expect(panes).toEqual([
       { index: 0, title: "Editor", width: 120, height: 40, active: true },
       { index: 1, title: "Shell", width: 80, height: 40, active: false },
     ]);
   });
 
   it("returns empty array for empty output", () => {
-    mockExec.mock.mockImplementation(() => "  \n");
+    mockExec.mockImplementation(() => "  \n");
     const panes = listPanes("proj");
-    assert.deepStrictEqual(panes, []);
+    expect(panes).toEqual([]);
   });
 
   it("handles pane titles containing pipe characters", () => {
     // The split("|") will split on the first pipe in the title, causing misparse.
     // This documents the current behavior — titles with pipes are truncated.
-    mockExec.mock.mockImplementation(() => "0|A|B|120|40|0\n");
+    mockExec.mockImplementation(() => "0|A|B|120|40|0\n");
     const panes = listPanes("proj");
     // With pipe in title, index=0, title="A", width=NaN (from "B"), ...
-    assert.strictEqual(panes[0].index, 0);
-    assert.strictEqual(panes[0].title, "A");
+    expect(panes[0].index).toBe(0);
+    expect(panes[0].title).toBe("A");
   });
 });
 
@@ -192,25 +181,25 @@ describe("listPanes", () => {
 
 describe("createDetachedSession", () => {
   it("returns trimmed pane ID", () => {
-    mockExec.mock.mockImplementation(() => "  %0\n");
+    mockExec.mockImplementation(() => "  %0\n");
     const id = createDetachedSession("proj", "/workspace");
-    assert.strictEqual(id, "%0");
+    expect(id).toBe("%0");
   });
 
   it("uses default dimensions when not specified", () => {
-    mockExec.mock.mockImplementation(() => "%0\n");
+    mockExec.mockImplementation(() => "%0\n");
     createDetachedSession("proj", "/workspace");
-    const args = mockExec.mock.calls[0].arguments[1];
-    assert.ok(args.includes("200")); // default cols
-    assert.ok(args.includes("50")); // default lines
+    const args = mockExec.mock.calls[0][1];
+    expect(args.includes("200")).toBeTruthy(); // default cols
+    expect(args.includes("50")).toBeTruthy(); // default lines
   });
 
   it("passes custom dimensions", () => {
-    mockExec.mock.mockImplementation(() => "%0\n");
+    mockExec.mockImplementation(() => "%0\n");
     createDetachedSession("proj", "/workspace", { cols: 300, lines: 80 });
-    const args = mockExec.mock.calls[0].arguments[1];
-    assert.ok(args.includes("300"));
-    assert.ok(args.includes("80"));
+    const args = mockExec.mock.calls[0][1];
+    expect(args.includes("300")).toBeTruthy();
+    expect(args.includes("80")).toBeTruthy();
   });
 });
 
@@ -218,33 +207,33 @@ describe("createDetachedSession", () => {
 
 describe("splitPane", () => {
   it("uses -v for vertical direction", () => {
-    mockExec.mock.mockImplementation(() => "%1\n");
+    mockExec.mockImplementation(() => "%1\n");
     splitPane("%0", "vertical", "/workspace", 30);
-    const args = mockExec.mock.calls[0].arguments[1];
-    assert.ok(args.includes("-v"));
-    assert.ok(!args.includes("-h"));
+    const args = mockExec.mock.calls[0][1];
+    expect(args.includes("-v")).toBeTruthy();
+    expect(!args.includes("-h")).toBeTruthy();
   });
 
   it("uses -h for horizontal direction", () => {
-    mockExec.mock.mockImplementation(() => "%2\n");
+    mockExec.mockImplementation(() => "%2\n");
     splitPane("%0", "horizontal", "/workspace", 50);
-    const args = mockExec.mock.calls[0].arguments[1];
-    assert.ok(args.includes("-h"));
-    assert.ok(!args.includes("-v"));
+    const args = mockExec.mock.calls[0][1];
+    expect(args.includes("-h")).toBeTruthy();
+    expect(!args.includes("-v")).toBeTruthy();
   });
 
   it("passes percent correctly", () => {
-    mockExec.mock.mockImplementation(() => "%3\n");
+    mockExec.mockImplementation(() => "%3\n");
     splitPane("%0", "vertical", "/workspace", 42);
-    const args = mockExec.mock.calls[0].arguments[1];
+    const args = mockExec.mock.calls[0][1];
     const pIdx = args.indexOf("-p");
-    assert.strictEqual(args[pIdx + 1], "42");
+    expect(args[pIdx + 1]).toBe("42");
   });
 
   it("returns trimmed pane ID", () => {
-    mockExec.mock.mockImplementation(() => "  %5\n");
+    mockExec.mockImplementation(() => "  %5\n");
     const id = splitPane("%0", "vertical", "/workspace", 30);
-    assert.strictEqual(id, "%5");
+    expect(id).toBe("%5");
   });
 });
 
@@ -252,15 +241,15 @@ describe("splitPane", () => {
 
 describe("sendLiteral", () => {
   it("sends text with -l flag then Enter", () => {
-    mockExec.mock.mockImplementation(() => "");
+    mockExec.mockImplementation(() => "");
     sendLiteral("%0", "echo hello");
-    assert.strictEqual(mockExec.mock.callCount(), 2);
+    expect(mockExec.mock.calls.length).toBe(2);
     // First call: send-keys with -l and the text
-    const firstArgs = mockExec.mock.calls[0].arguments[1];
-    assert.deepStrictEqual(firstArgs, ["send-keys", "-t", "%0", "-l", "--", "echo hello"]);
+    const firstArgs = mockExec.mock.calls[0][1];
+    expect(firstArgs).toEqual(["send-keys", "-t", "%0", "-l", "--", "echo hello"]);
     // Second call: send Enter
-    const secondArgs = mockExec.mock.calls[1].arguments[1];
-    assert.deepStrictEqual(secondArgs, ["send-keys", "-t", "%0", "Enter"]);
+    const secondArgs = mockExec.mock.calls[1][1];
+    expect(secondArgs).toEqual(["send-keys", "-t", "%0", "Enter"]);
   });
 });
 
@@ -268,31 +257,31 @@ describe("sendLiteral", () => {
 
 describe("getSessionVariable", () => {
   it("returns trimmed value when variable exists", () => {
-    mockExec.mock.mockImplementation(() => "  some-value\n");
+    mockExec.mockImplementation(() => "  some-value\n");
     const value = getSessionVariable("proj", "@my_var");
-    assert.strictEqual(value, "some-value");
+    expect(value).toBe("some-value");
   });
 
   it("returns null when variable is empty", () => {
-    mockExec.mock.mockImplementation(() => "\n");
+    mockExec.mockImplementation(() => "\n");
     const value = getSessionVariable("proj", "@my_var");
-    assert.strictEqual(value, null);
+    expect(value).toBe(null);
   });
 
   it("returns null when show-option throws", () => {
-    mockExec.mock.mockImplementation(() => {
+    mockExec.mockImplementation(() => {
       throw makeExecError("can't find session: proj");
     });
     const value = getSessionVariable("proj", "@my_var");
-    assert.strictEqual(value, null);
+    expect(value).toBe(null);
   });
 });
 
 describe("setSessionVariable", () => {
   it("sets variable with correct args", () => {
-    mockExec.mock.mockImplementation(() => "");
+    mockExec.mockImplementation(() => "");
     setSessionVariable("proj", "@my_var", "hello");
-    assert.deepStrictEqual(mockExec.mock.calls[0].arguments[1], [
+    expect(mockExec.mock.calls[0][1]).toEqual([
       "set-option",
       "-t",
       "proj",
@@ -306,35 +295,35 @@ describe("setSessionVariable", () => {
 
 describe("startSessionMonitor", () => {
   it("spawns detached process and stores PID", () => {
-    const fakeChild = { pid: 12345, unref: mock.fn() };
-    const restoreSpawn = _setSpawner(mock.fn(() => fakeChild));
+    const fakeChild = { pid: 12345, unref: mock() };
+    const restoreSpawn = _setSpawner(mock(() => fakeChild));
 
-    mockExec.mock.mockImplementation(() => "");
+    mockExec.mockImplementation(() => "");
     startSessionMonitor("proj", "/path/to/monitor.js");
 
     // Check spawn was called correctly
-    assert.strictEqual(fakeChild.unref.mock.callCount(), 1);
+    expect(fakeChild.unref.mock.calls.length).toBe(1);
 
     // First call checks for existing PID (show-option), then stores new PID (set-option)
     const lastCall = mockExec.mock.calls[mockExec.mock.calls.length - 1];
-    const setArgs = lastCall.arguments[1];
-    assert.deepStrictEqual(setArgs, ["set-option", "-t", "proj", "@monitor_pid", "12345"]);
+    const setArgs = lastCall[1];
+    expect(setArgs).toEqual(["set-option", "-t", "proj", "@monitor_pid", "12345"]);
 
     restoreSpawn();
   });
 
-  it("spawns node directly without shell wrapper", () => {
-    const fakeChild = { pid: 99, unref: mock.fn() };
-    const mockSpawn = mock.fn(() => fakeChild);
+  it("spawns bun directly without shell wrapper", () => {
+    const fakeChild = { pid: 99, unref: mock() };
+    const mockSpawn = mock(() => fakeChild);
     const restoreSpawn = _setSpawner(mockSpawn);
 
-    mockExec.mock.mockImplementation(() => "");
-    startSessionMonitor("proj", "/path/to/monitor.js");
+    mockExec.mockImplementation(() => "");
+    startSessionMonitor("proj", "/path/to/monitor.ts");
 
     const spawnCall = mockSpawn.mock.calls[0];
-    assert.strictEqual(spawnCall.arguments[0], "node");
-    const args = spawnCall.arguments[1];
-    assert.deepStrictEqual(args, ["/path/to/monitor.js", "proj", "0"]);
+    expect(spawnCall[0]).toBe("bun");
+    const args = spawnCall[1];
+    expect(args).toEqual(["/path/to/monitor.ts", "proj", "0"]);
 
     restoreSpawn();
   });
@@ -342,7 +331,7 @@ describe("startSessionMonitor", () => {
 
 describe("stopSessionMonitor", () => {
   it("kills process group by stored PID", () => {
-    mockExec.mock.mockImplementation(() => "  42\n");
+    mockExec.mockImplementation(() => "  42\n");
     const origKill = process.kill;
     const killCalls: Array<{ pid: number; signal?: string }> = [];
     process.kill = ((pid: number, signal?: string) => {
@@ -351,15 +340,15 @@ describe("stopSessionMonitor", () => {
     try {
       stopSessionMonitor("proj");
       // First tries process group kill (negative PID)
-      assert.strictEqual(killCalls[0]?.pid, -42);
-      assert.strictEqual(killCalls[0]?.signal, "SIGTERM");
+      expect(killCalls[0]?.pid).toBe(-42);
+      expect(killCalls[0]?.signal).toBe("SIGTERM");
     } finally {
       process.kill = origKill;
     }
   });
 
   it("handles missing PID gracefully", () => {
-    mockExec.mock.mockImplementation(() => {
+    mockExec.mockImplementation(() => {
       throw makeExecError("can't find session: proj");
     });
     // Should not throw
@@ -367,7 +356,7 @@ describe("stopSessionMonitor", () => {
   });
 
   it("handles empty PID gracefully", () => {
-    mockExec.mock.mockImplementation(() => "\n");
+    mockExec.mockImplementation(() => "\n");
     // Should not throw (no pid to kill)
     stopSessionMonitor("proj");
   });
@@ -377,9 +366,9 @@ describe("stopSessionMonitor", () => {
 
 describe("setPaneTitle", () => {
   it("calls select-pane with -T flag", () => {
-    mockExec.mock.mockImplementation(() => "");
+    mockExec.mockImplementation(() => "");
     setPaneTitle("%0", "My Pane");
-    assert.deepStrictEqual(mockExec.mock.calls[0].arguments[1], [
+    expect(mockExec.mock.calls[0][1]).toEqual([
       "select-pane",
       "-t",
       "%0",
@@ -391,24 +380,24 @@ describe("setPaneTitle", () => {
 
 describe("selectPane", () => {
   it("calls select-pane with target", () => {
-    mockExec.mock.mockImplementation(() => "");
+    mockExec.mockImplementation(() => "");
     selectPane("%2");
-    assert.deepStrictEqual(mockExec.mock.calls[0].arguments[1], ["select-pane", "-t", "%2"]);
+    expect(mockExec.mock.calls[0][1]).toEqual(["select-pane", "-t", "%2"]);
   });
 });
 
 describe("getPaneCurrentCommand", () => {
   it("returns trimmed command name", () => {
-    mockExec.mock.mockImplementation(() => "  zsh\n");
-    assert.strictEqual(getPaneCurrentCommand("%0"), "zsh");
+    mockExec.mockImplementation(() => "  zsh\n");
+    expect(getPaneCurrentCommand("%0")).toBe("zsh");
   });
 });
 
 describe("setSessionEnvironment", () => {
   it("calls set-environment with correct args", () => {
-    mockExec.mock.mockImplementation(() => "");
+    mockExec.mockImplementation(() => "");
     setSessionEnvironment("proj", "PORT", 3000);
-    assert.deepStrictEqual(mockExec.mock.calls[0].arguments[1], [
+    expect(mockExec.mock.calls[0][1]).toEqual([
       "set-environment",
       "-t",
       "proj",
@@ -420,18 +409,18 @@ describe("setSessionEnvironment", () => {
 
 describe("attachSession", () => {
   it("calls attach with correct args and stdio inherit", () => {
-    mockExec.mock.mockImplementation(() => "");
+    mockExec.mockImplementation(() => "");
     attachSession("proj");
-    assert.deepStrictEqual(mockExec.mock.calls[0].arguments[1], ["attach", "-t", "proj"]);
-    assert.strictEqual(mockExec.mock.calls[0].arguments[2].stdio, "inherit");
+    expect(mockExec.mock.calls[0][1]).toEqual(["attach", "-t", "proj"]);
+    expect(mockExec.mock.calls[0][2].stdio).toBe("inherit");
   });
 });
 
 describe("runSessionCommand", () => {
   it("passes args through to tmux", () => {
-    mockExec.mock.mockImplementation(() => "");
+    mockExec.mockImplementation(() => "");
     runSessionCommand(["resize-pane", "-t", "%0", "-x", "100"]);
-    assert.deepStrictEqual(mockExec.mock.calls[0].arguments[1], [
+    expect(mockExec.mock.calls[0][1]).toEqual([
       "resize-pane",
       "-t",
       "%0",
@@ -451,12 +440,12 @@ describe("debug logging", () => {
     console.error = (...args) => stderrCalls.push(args.join(" "));
 
     globalThis.__tmuxIdeVerbose = true;
-    mockExec.mock.mockImplementation(() => "");
+    mockExec.mockImplementation(() => "");
 
     try {
       hasSession("test-session");
-      assert.ok(stderrCalls.some((msg) => msg.includes("[tmux]")));
-      assert.ok(stderrCalls.some((msg) => msg.includes("has-session")));
+      expect(stderrCalls.some((msg) => msg.includes("[tmux]"))).toBeTruthy();
+      expect(stderrCalls.some((msg) => msg.includes("has-session"))).toBeTruthy();
     } finally {
       globalThis.__tmuxIdeVerbose = origVerbose;
       console.error = origConsoleError;
@@ -470,11 +459,11 @@ describe("debug logging", () => {
     console.error = (...args) => stderrCalls.push(args.join(" "));
 
     globalThis.__tmuxIdeVerbose = false;
-    mockExec.mock.mockImplementation(() => "");
+    mockExec.mockImplementation(() => "");
 
     try {
       hasSession("test-session");
-      assert.strictEqual(stderrCalls.length, 0);
+      expect(stderrCalls.length).toBe(0);
     } finally {
       globalThis.__tmuxIdeVerbose = origVerbose;
       console.error = origConsoleError;
@@ -486,54 +475,54 @@ describe("debug logging", () => {
 
 describe("error classification", () => {
   it('classifies "can\'t find window" as SESSION_NOT_FOUND', () => {
-    mockExec.mock.mockImplementation(() => {
+    mockExec.mockImplementation(() => {
       throw makeExecError("can't find window: proj:0");
     });
     const result = getSessionState("proj");
-    assert.deepStrictEqual(result, { running: false, reason: "SESSION_NOT_FOUND" });
+    expect(result).toEqual({ running: false, reason: "SESSION_NOT_FOUND" });
   });
 
   it('classifies "unknown target" as SESSION_NOT_FOUND', () => {
-    mockExec.mock.mockImplementation(() => {
+    mockExec.mockImplementation(() => {
       throw makeExecError("unknown target: proj");
     });
     const result = getSessionState("proj");
-    assert.deepStrictEqual(result, { running: false, reason: "SESSION_NOT_FOUND" });
+    expect(result).toEqual({ running: false, reason: "SESSION_NOT_FOUND" });
   });
 
   it('classifies "failed to connect to server" as TMUX_UNAVAILABLE', () => {
-    mockExec.mock.mockImplementation(() => {
+    mockExec.mockImplementation(() => {
       throw makeExecError("failed to connect to server: /tmp/tmux-1000/default");
     });
     const result = getSessionState("proj");
-    assert.deepStrictEqual(result, { running: false, reason: "TMUX_UNAVAILABLE" });
+    expect(result).toEqual({ running: false, reason: "TMUX_UNAVAILABLE" });
   });
 
   it('classifies "error connecting to" as TMUX_UNAVAILABLE', () => {
-    mockExec.mock.mockImplementation(() => {
+    mockExec.mockImplementation(() => {
       throw makeExecError("error connecting to /tmp/tmux-1000/default");
     });
     const result = getSessionState("proj");
-    assert.deepStrictEqual(result, { running: false, reason: "TMUX_UNAVAILABLE" });
+    expect(result).toEqual({ running: false, reason: "TMUX_UNAVAILABLE" });
   });
 
   it("handles Buffer stderr in error", () => {
-    mockExec.mock.mockImplementation(() => {
+    mockExec.mockImplementation(() => {
       const err = new Error("Command failed");
       err.stderr = Buffer.from("can't find session: proj");
       throw err;
     });
     const result = getSessionState("proj");
-    assert.deepStrictEqual(result, { running: false, reason: "SESSION_NOT_FOUND" });
+    expect(result).toEqual({ running: false, reason: "SESSION_NOT_FOUND" });
   });
 
   it("falls back to error.message when stderr is empty", () => {
-    mockExec.mock.mockImplementation(() => {
+    mockExec.mockImplementation(() => {
       const err = new Error("can't find session: proj");
       err.stderr = "";
       throw err;
     });
     const result = getSessionState("proj");
-    assert.deepStrictEqual(result, { running: false, reason: "SESSION_NOT_FOUND" });
+    expect(result).toEqual({ running: false, reason: "SESSION_NOT_FOUND" });
   });
 });

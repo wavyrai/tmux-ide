@@ -1,5 +1,4 @@
-import { describe, it, beforeEach, afterEach } from "node:test";
-import assert from "node:assert/strict";
+import { describe, it, beforeEach, afterEach, expect } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, basename } from "node:path";
@@ -37,14 +36,14 @@ describe("writeConfig + readConfig", () => {
     writeConfig(tmpDir, config);
     const { config: loaded, configPath } = readConfig(tmpDir);
 
-    assert.strictEqual(loaded.name, "test-project");
-    assert.strictEqual(loaded.rows.length, 2);
-    assert.strictEqual(loaded.rows[0]!.size, "70%");
-    assert.strictEqual(loaded.rows[0]!.panes.length, 2);
-    assert.strictEqual(loaded.rows[0]!.panes[0]!.title, "Claude");
-    assert.strictEqual(loaded.rows[0]!.panes[0]!.role, "lead");
-    assert.strictEqual(loaded.rows[0]!.panes[0]!.focus, true);
-    assert.ok(configPath.endsWith("ide.yml"));
+    expect(loaded.name).toBe("test-project");
+    expect(loaded.rows.length).toBe(2);
+    expect(loaded.rows[0]!.size).toBe("70%");
+    expect(loaded.rows[0]!.panes.length).toBe(2);
+    expect(loaded.rows[0]!.panes[0]!.title).toBe("Claude");
+    expect(loaded.rows[0]!.panes[0]!.role).toBe("lead");
+    expect(loaded.rows[0]!.panes[0]!.focus).toBe(true);
+    expect(configPath.endsWith("ide.yml")).toBeTruthy();
   });
 
   it("preserves theme config", () => {
@@ -55,8 +54,8 @@ describe("writeConfig + readConfig", () => {
 
     writeConfig(tmpDir, config);
     const { config: loaded } = readConfig(tmpDir);
-    assert.strictEqual(loaded.theme?.accent, "colour75");
-    assert.strictEqual(loaded.theme?.border, "colour238");
+    expect(loaded.theme?.accent).toBe("colour75");
+    expect(loaded.theme?.border).toBe("colour238");
   });
 
   it("preserves orchestrator config", () => {
@@ -72,8 +71,8 @@ describe("writeConfig + readConfig", () => {
 
     writeConfig(tmpDir, config);
     const { config: loaded } = readConfig(tmpDir);
-    assert.strictEqual(loaded.orchestrator?.enabled, true);
-    assert.strictEqual(loaded.orchestrator?.dispatch_mode, "goals");
+    expect(loaded.orchestrator?.enabled).toBe(true);
+    expect(loaded.orchestrator?.dispatch_mode).toBe("goals");
   });
 
   it("preserves team config", () => {
@@ -84,20 +83,20 @@ describe("writeConfig + readConfig", () => {
 
     writeConfig(tmpDir, config);
     const { config: loaded } = readConfig(tmpDir);
-    assert.strictEqual(loaded.team?.name, "my-team");
-    assert.strictEqual(loaded.team?.model, "opus");
-    assert.deepStrictEqual(loaded.team?.permissions, ["read", "write"]);
+    expect(loaded.team?.name).toBe("my-team");
+    expect(loaded.team?.model).toBe("opus");
+    expect(loaded.team?.permissions).toEqual(["read", "write"]);
   });
 });
 
 describe("readConfig", () => {
   it("throws when no ide.yml exists", () => {
-    assert.throws(() => readConfig(tmpDir));
+    expect(() => readConfig(tmpDir)).toThrow();
   });
 
   it("throws on malformed YAML", () => {
     writeFileSync(join(tmpDir, "ide.yml"), ": invalid: yaml: [");
-    assert.throws(() => readConfig(tmpDir));
+    expect(() => readConfig(tmpDir)).toThrow();
   });
 });
 
@@ -106,21 +105,21 @@ describe("getSessionName", () => {
     const config: IdeConfig = { name: "my-project", rows: [{ panes: [{}] }] };
     writeConfig(tmpDir, config);
     const result = getSessionName(tmpDir);
-    assert.strictEqual(result.name, "my-project");
-    assert.strictEqual(result.source, "config");
+    expect(result.name).toBe("my-project");
+    expect(result.source).toBe("config");
   });
 
   it("falls back to directory basename when no name in config", () => {
     const config: IdeConfig = { rows: [{ panes: [{}] }] };
     writeConfig(tmpDir, config);
     const result = getSessionName(tmpDir);
-    assert.strictEqual(result.name, basename(tmpDir));
-    assert.strictEqual(result.source, "fallback");
+    expect(result.name).toBe(basename(tmpDir));
+    expect(result.source).toBe("fallback");
   });
 
   it("falls back to directory basename when no config file", () => {
     const result = getSessionName(tmpDir);
-    assert.strictEqual(result.name, basename(tmpDir));
-    assert.strictEqual(result.source, "fallback");
+    expect(result.name).toBe(basename(tmpDir));
+    expect(result.source).toBe("fallback");
   });
 });

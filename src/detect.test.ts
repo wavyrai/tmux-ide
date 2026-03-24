@@ -1,5 +1,4 @@
-import { describe, it } from "node:test";
-import assert from "node:assert/strict";
+import { describe, it, expect } from "bun:test";
 import { detectStack, suggestConfig } from "./detect.ts";
 import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -13,12 +12,12 @@ describe("suggestConfig", () => {
       devCommand: "pnpm dev",
       language: "javascript",
     });
-    assert.strictEqual(config.rows[0].size, "70%");
-    assert.strictEqual(config.rows[0].panes.length, 2);
+    expect(config.rows[0].size).toBe("70%");
+    expect(config.rows[0].panes.length).toBe(2);
     const bottom = config.rows[1].panes;
-    assert.strictEqual(bottom[0].title, "Next.js");
-    assert.strictEqual(bottom[0].command, "pnpm dev");
-    assert.strictEqual(bottom[bottom.length - 1].title, "Shell");
+    expect(bottom[0].title).toBe("Next.js");
+    expect(bottom[0].command).toBe("pnpm dev");
+    expect(bottom[bottom.length - 1].title).toBe("Shell");
   });
 
   it("creates Next.js + Convex config with 3 Claude panes", () => {
@@ -28,12 +27,12 @@ describe("suggestConfig", () => {
       devCommand: "pnpm dev",
       language: "javascript",
     });
-    assert.strictEqual(config.rows[0].panes.length, 3);
+    expect(config.rows[0].panes.length).toBe(3);
     const bottom = config.rows[1].panes;
     const titles = bottom.map((p) => p.title);
-    assert.ok(titles.includes("Next.js"));
-    assert.ok(titles.includes("Convex"));
-    assert.ok(titles.includes("Shell"));
+    expect(titles.includes("Next.js")).toBeTruthy();
+    expect(titles.includes("Convex")).toBeTruthy();
+    expect(titles.includes("Shell")).toBeTruthy();
   });
 
   it("creates Go config", () => {
@@ -44,8 +43,8 @@ describe("suggestConfig", () => {
       language: "go",
     });
     const bottom = config.rows[1].panes;
-    assert.strictEqual(bottom[0].title, "Go");
-    assert.strictEqual(bottom[0].command, "go run .");
+    expect(bottom[0].title).toBe("Go");
+    expect(bottom[0].command).toBe("go run .");
   });
 
   it("creates Cargo config", () => {
@@ -56,8 +55,8 @@ describe("suggestConfig", () => {
       language: "rust",
     });
     const bottom = config.rows[1].panes;
-    assert.strictEqual(bottom[0].title, "Cargo");
-    assert.strictEqual(bottom[0].command, "cargo watch -x run");
+    expect(bottom[0].title).toBe("Cargo");
+    expect(bottom[0].command).toBe("cargo watch -x run");
   });
 
   it("falls back to dev command when no framework detected", () => {
@@ -68,8 +67,8 @@ describe("suggestConfig", () => {
       language: "javascript",
     });
     const bottom = config.rows[1].panes;
-    assert.strictEqual(bottom[0].title, "Dev Server");
-    assert.strictEqual(bottom[0].command, "npm run dev");
+    expect(bottom[0].title).toBe("Dev Server");
+    expect(bottom[0].command).toBe("npm run dev");
   });
 
   it("creates minimal config with just shell when nothing detected", () => {
@@ -80,8 +79,8 @@ describe("suggestConfig", () => {
       language: null,
     });
     const bottom = config.rows[1].panes;
-    assert.strictEqual(bottom.length, 1);
-    assert.strictEqual(bottom[0].title, "Shell");
+    expect(bottom.length).toBe(1);
+    expect(bottom[0].title).toBe("Shell");
   });
 
   it("uses npm run for npm package manager", () => {
@@ -92,7 +91,7 @@ describe("suggestConfig", () => {
       language: "javascript",
     });
     const bottom = config.rows[1].panes;
-    assert.strictEqual(bottom[0].command, "npm run dev");
+    expect(bottom[0].command).toBe("npm run dev");
   });
 
   it("uses bun for bun package manager", () => {
@@ -103,7 +102,7 @@ describe("suggestConfig", () => {
       language: "javascript",
     });
     const bottom = config.rows[1].panes;
-    assert.strictEqual(bottom[0].command, "bun dev");
+    expect(bottom[0].command).toBe("bun dev");
   });
 
   it("uses project directory basename as session name", () => {
@@ -113,7 +112,7 @@ describe("suggestConfig", () => {
       devCommand: null,
       language: null,
     });
-    assert.strictEqual(config.name, "my-app");
+    expect(config.name).toBe("my-app");
   });
 });
 
@@ -132,10 +131,10 @@ describe("detectStack reasoning", () => {
       writeFileSync(join(dir, "pnpm-lock.yaml"), "lockfileVersion: 9");
 
       const detected = detectStack(dir);
-      assert.strictEqual(detected.packageManager, "pnpm");
-      assert.ok(detected.reasons.some((reason) => reason.includes("pnpm-lock.yaml")));
-      assert.ok(detected.reasons.some((reason) => reason.includes('dependency "next"')));
-      assert.ok(detected.reasons.some((reason) => reason.includes("dev command")));
+      expect(detected.packageManager).toBe("pnpm");
+      expect(detected.reasons.some((reason) => reason.includes("pnpm-lock.yaml"))).toBeTruthy();
+      expect(detected.reasons.some((reason) => reason.includes('dependency "next"'))).toBeTruthy();
+      expect(detected.reasons.some((reason) => reason.includes("dev command"))).toBeTruthy();
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

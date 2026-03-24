@@ -1,15 +1,15 @@
 /**
  * Minimal crash-recovery watchdog for the tmux-ide daemon.
- * Respawns daemon.js on unexpected exits with exponential backoff.
+ * Respawns daemon.ts on unexpected exits with exponential backoff.
  * Gives up after 5 crashes within 60 seconds.
  *
- * Entry: node dist/lib/daemon-watchdog.js <session> [port]
+ * Entry: bun src/lib/daemon-watchdog.ts <session> [port]
  *
  * ZERO imports from business logic — this file must never crash
  * due to broken application code.
  */
 
-import { fork, type ChildProcess } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { appendFileSync, mkdirSync, existsSync } from "node:fs";
@@ -19,13 +19,13 @@ const sessionArg = process.argv[2];
 const port = process.argv[3] ?? "0";
 
 if (!sessionArg) {
-  console.error("Usage: daemon-watchdog.js <session> [port]");
+  console.error("Usage: daemon-watchdog.ts <session> [port]");
   process.exit(1);
 }
 
 const session: string = sessionArg;
 
-const daemonScript = resolve(__dirname, "daemon.js");
+const daemonScript = resolve(__dirname, "daemon.ts");
 
 let backoffMs = 1000;
 let crashCount = 0;
@@ -49,9 +49,9 @@ function logError(msg: string): void {
 }
 
 function spawnDaemon(): void {
-  child = fork(daemonScript, [session, port], {
+  child = spawn("bun", [daemonScript, session, port], {
     cwd: process.cwd(),
-    silent: true,
+    stdio: ["ignore", "pipe", "pipe"],
   });
 
   // Pipe child stdout/stderr to our own so logs are visible in the detached process

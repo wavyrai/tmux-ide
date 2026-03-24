@@ -199,7 +199,7 @@ export function startSessionMonitor(session: string, monitorScript: string, port
   // This prevents duplicate monitors on rapid restart cycles.
   try {
     const existingPid = (
-      runTmux(["show-option", "-gqvt", session, "@monitor_pid"], {
+      runTmux(["show-option", "-qvt", session, "@monitor_pid"], {
         encoding: "utf-8",
       }) as string
     ).trim();
@@ -221,9 +221,9 @@ export function startSessionMonitor(session: string, monitorScript: string, port
     // Session variable not readable — continue with fresh start
   }
 
-  // Spawn the monitor as a direct node process (no shell wrapper).
+  // Spawn the daemon via bun (runs TypeScript source directly).
   // Use a process group so we can kill the entire tree on stop.
-  const child = _spawner("node", [monitorScript, session, String(port ?? 0)], {
+  const child = _spawner("bun", [monitorScript, session, String(port ?? 0)], {
     detached: true,
     stdio: "ignore",
     cwd: process.cwd(),
@@ -237,7 +237,7 @@ export function startSessionMonitor(session: string, monitorScript: string, port
 export function stopSessionMonitor(session: string): void {
   try {
     const pid = (
-      runTmux(["show-option", "-gqvt", session, "@monitor_pid"], {
+      runTmux(["show-option", "-qvt", session, "@monitor_pid"], {
         encoding: "utf-8",
       }) as string
     ).trim();
@@ -262,7 +262,7 @@ export function stopSessionMonitor(session: string): void {
 
 export function getDaemonPort(session: string): number | null {
   try {
-    const raw = runTmux(["show-option", "-gqvt", session, "@command_center_port"], {
+    const raw = runTmux(["show-option", "-qvt", session, "@command_center_port"], {
       encoding: "utf-8",
     }) as string;
     const port = parseInt(raw.trim(), 10);
@@ -288,7 +288,7 @@ export async function isDaemonHealthy(session: string): Promise<boolean> {
 
 export function getSessionVariable(session: string, name: string): string | null {
   try {
-    const raw = runTmux(["show-option", "-gqvt", session, name], {
+    const raw = runTmux(["show-option", "-qvt", session, name], {
       encoding: "utf-8",
     }) as string;
     return raw.trim() || null;

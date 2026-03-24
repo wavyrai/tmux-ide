@@ -1,5 +1,4 @@
-import { describe, it, beforeEach, afterEach, mock } from "node:test";
-import assert from "node:assert/strict";
+import { describe, it, beforeEach, afterEach, mock, expect } from "bun:test";
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -107,8 +106,8 @@ describe("dispatch", () => {
 
     // Task 002 (higher priority) should be assigned first
     const assigned = loadTask(tmpDir, "002");
-    assert.strictEqual(assigned?.assignee, expectedName);
-    assert.strictEqual(assigned?.status, "in-progress");
+    expect(assigned?.assignee).toBe(expectedName);
+    expect(assigned?.status).toBe("in-progress");
   });
 
   it("skips master pane", () => {
@@ -129,7 +128,7 @@ describe("dispatch", () => {
     dispatch(config, state, [task], panes);
 
     const assigned = loadTask(tmpDir, "001");
-    assert.strictEqual(assigned?.assignee, expectedName);
+    expect(assigned?.assignee).toBe(expectedName);
   });
 
   it("does not assign when no idle agents", () => {
@@ -148,7 +147,7 @@ describe("dispatch", () => {
     dispatch(config, state, [task], panes);
 
     const notAssigned = loadTask(tmpDir, "001");
-    assert.strictEqual(notAssigned?.assignee, null);
+    expect(notAssigned?.assignee).toBe(null);
   });
 
   it("does not assign when no todo tasks", () => {
@@ -167,7 +166,7 @@ describe("dispatch", () => {
     const sendCalls = tmuxCalls.filter(
       (c) => c.args.includes("send-keys") && c.args.includes("%2"),
     );
-    assert.strictEqual(sendCalls.length, 0);
+    expect(sendCalls.length).toBe(0);
   });
 });
 
@@ -188,7 +187,7 @@ describe("detectStalls", () => {
 
     // Should have sent a nudge via send-keys
     const sendCalls = tmuxCalls.filter((c) => c.args.includes("send-keys"));
-    assert.ok(sendCalls.length > 0);
+    expect(sendCalls.length > 0).toBeTruthy();
   });
 
   it("does not nudge before timeout", () => {
@@ -206,7 +205,7 @@ describe("detectStalls", () => {
     detectStalls(config, state, [task], panes);
 
     const sendCalls = tmuxCalls.filter((c) => c.args.includes("send-keys"));
-    assert.strictEqual(sendCalls.length, 0);
+    expect(sendCalls.length).toBe(0);
   });
 });
 
@@ -227,7 +226,7 @@ describe("detectCompletions", () => {
     const sendCalls = tmuxCalls.filter(
       (c) => c.args.includes("send-keys") && c.args.includes("%0"),
     );
-    assert.ok(sendCalls.length > 0);
+    expect(sendCalls.length > 0).toBeTruthy();
   });
 
   it("does not notify when task was already done", () => {
@@ -243,7 +242,7 @@ describe("detectCompletions", () => {
     detectCompletions(config, state, [task], panes);
 
     const sendCalls = tmuxCalls.filter((c) => c.args.includes("send-keys"));
-    assert.strictEqual(sendCalls.length, 0);
+    expect(sendCalls.length).toBe(0);
   });
 });
 
@@ -277,48 +276,48 @@ describe("buildTaskPrompt", () => {
 
     const prompt = buildTaskPrompt(tmpDir, task, "/worktrees/001", "task/001-fix");
 
-    assert.ok(prompt.includes("Mission: Build auth"));
-    assert.ok(prompt.includes("Goal: Token storage"));
-    assert.ok(prompt.includes("Acceptance: All tokens encrypted"));
-    assert.ok(prompt.includes("Your Task: Fix middleware"));
-    assert.ok(prompt.includes("Priority: P1"));
-    assert.ok(prompt.includes("Tags: security"));
-    assert.ok(prompt.includes("Workspace: /worktrees/001"));
-    assert.ok(prompt.includes("Branch: task/001-fix"));
-    assert.ok(prompt.includes("tmux-ide task done 001"));
+    expect(prompt.includes("Mission: Build auth")).toBeTruthy();
+    expect(prompt.includes("Goal: Token storage")).toBeTruthy();
+    expect(prompt.includes("Acceptance: All tokens encrypted")).toBeTruthy();
+    expect(prompt.includes("Your Task: Fix middleware")).toBeTruthy();
+    expect(prompt.includes("Priority: P1")).toBeTruthy();
+    expect(prompt.includes("Tags: security")).toBeTruthy();
+    expect(prompt.includes("Workspace: /worktrees/001")).toBeTruthy();
+    expect(prompt.includes("Branch: task/001-fix")).toBeTruthy();
+    expect(prompt.includes("tmux-ide task done 001")).toBeTruthy();
   });
 
   it("works without mission or goal", () => {
     const task = makeTask({ title: "Standalone task" });
     const prompt = buildTaskPrompt(tmpDir, task, "/work", "branch");
-    assert.ok(prompt.includes("Your Task: Standalone task"));
-    assert.ok(!prompt.includes("Mission:"));
-    assert.ok(!prompt.includes("Goal:"));
+    expect(prompt.includes("Your Task: Standalone task")).toBeTruthy();
+    expect(!prompt.includes("Mission:")).toBeTruthy();
+    expect(!prompt.includes("Goal:")).toBeTruthy();
   });
 });
 
 describe("runHook", () => {
   it("returns ok:true for successful command", () => {
     const result = runHook("true", tmpDir);
-    assert.deepStrictEqual(result, { ok: true });
+    expect(result).toEqual({ ok: true });
   });
 
   it("returns ok:false with error for failing command", () => {
     const result = runHook("false", tmpDir);
-    assert.strictEqual(result.ok, false);
-    assert.ok("error" in result && result.error.length > 0);
+    expect(result.ok).toBe(false);
+    expect("error" in result && result.error.length > 0).toBeTruthy();
   });
 
   it("runs command in the specified cwd", () => {
     // Create a marker file, then check it exists via the hook
     writeFileSync(join(tmpDir, "marker.txt"), "hello");
     const result = runHook("test -f marker.txt", tmpDir);
-    assert.deepStrictEqual(result, { ok: true });
+    expect(result).toEqual({ ok: true });
   });
 
   it("fails when cwd does not contain expected file", () => {
     const result = runHook("test -f nonexistent.txt", tmpDir);
-    assert.strictEqual(result.ok, false);
+    expect(result.ok).toBe(false);
   });
 });
 
@@ -341,8 +340,8 @@ describe("dispatch with hooks", () => {
 
     // Task should NOT be assigned
     const loaded = loadTask(tmpDir, "001");
-    assert.strictEqual(loaded?.assignee, null);
-    assert.strictEqual(loaded?.status, "todo");
+    expect(loaded?.assignee).toBe(null);
+    expect(loaded?.status).toBe("todo");
   });
 
   it("dispatches task when before_run succeeds", () => {
@@ -364,8 +363,8 @@ describe("dispatch with hooks", () => {
     dispatch(config, state, [task], panes);
 
     const loaded = loadTask(tmpDir, "001");
-    assert.strictEqual(loaded?.assignee, expectedName);
-    assert.strictEqual(loaded?.status, "in-progress");
+    expect(loaded?.assignee).toBe(expectedName);
+    expect(loaded?.status).toBe("in-progress");
   });
 });
 
@@ -391,7 +390,7 @@ describe("detectCompletions with after_run", () => {
 
     detectCompletions(config, state, [task], panes);
 
-    assert.ok(existsSync(join(wtDir, "after_run_marker")));
+    expect(existsSync(join(wtDir, "after_run_marker"))).toBeTruthy();
   });
 
   it("does not crash when after_run fails", () => {
@@ -419,67 +418,67 @@ describe("detectCompletions with after_run", () => {
     const sendCalls = tmuxCalls.filter(
       (c) => c.args.includes("send-keys") && c.args.includes("%0"),
     );
-    assert.ok(sendCalls.length > 0);
+    expect(sendCalls.length > 0).toBeTruthy();
   });
 });
 
 describe("isAgentPane", () => {
   it("detects claude command", () => {
-    assert.ok(isAgentPane(makePane({ currentCommand: "claude" })));
+    expect(isAgentPane(makePane({ currentCommand: "claude" }))).toBeTruthy();
   });
 
   it("detects codex command", () => {
-    assert.ok(isAgentPane(makePane({ currentCommand: "codex" })));
+    expect(isAgentPane(makePane({ currentCommand: "codex" }))).toBeTruthy();
   });
 
   it("detects Claude Code via version string + title", () => {
-    assert.ok(isAgentPane(makePane({ currentCommand: "2.1.80", title: "Claude Code" })));
+    expect(isAgentPane(makePane({ currentCommand: "2.1.80", title: "Claude Code" }))).toBeTruthy();
   });
 
   it("detects Claude Code via title pattern", () => {
-    assert.ok(isAgentPane(makePane({ currentCommand: "node", title: "Claude Code" })));
+    expect(isAgentPane(makePane({ currentCommand: "node", title: "Claude Code" }))).toBeTruthy();
   });
 
   it("does not match a plain shell", () => {
-    assert.ok(!isAgentPane(makePane({ currentCommand: "zsh", title: "Shell" })));
+    expect(!isAgentPane(makePane({ currentCommand: "zsh", title: "Shell" }))).toBeTruthy();
   });
 
   it("matches version string regardless of title (Claude Code reports version as command)", () => {
-    assert.ok(isAgentPane(makePane({ currentCommand: "2.1.80", title: "Dev Server" })));
+    expect(isAgentPane(makePane({ currentCommand: "2.1.80", title: "Dev Server" }))).toBeTruthy();
   });
 });
 
 describe("isAgentBusy", () => {
   it("returns true when spinner in title", () => {
-    assert.ok(isAgentBusy(makePane({ title: "⠙ Working..." })));
+    expect(isAgentBusy(makePane({ title: "⠙ Working..." }))).toBeTruthy();
   });
 
   it("returns false for normal title", () => {
-    assert.ok(!isAgentBusy(makePane({ title: "Claude Code" })));
+    expect(!isAgentBusy(makePane({ title: "Claude Code" }))).toBeTruthy();
   });
 });
 
 describe("isIdleForDispatch", () => {
   it("returns true for shell command", () => {
-    assert.ok(isIdleForDispatch(makePane({ currentCommand: "zsh" })));
-    assert.ok(isIdleForDispatch(makePane({ currentCommand: "bash" })));
-    assert.ok(isIdleForDispatch(makePane({ currentCommand: "fish" })));
+    expect(isIdleForDispatch(makePane({ currentCommand: "zsh" }))).toBeTruthy();
+    expect(isIdleForDispatch(makePane({ currentCommand: "bash" }))).toBeTruthy();
+    expect(isIdleForDispatch(makePane({ currentCommand: "fish" }))).toBeTruthy();
   });
 
   it("returns true for agent pane without spinner", () => {
-    assert.ok(isIdleForDispatch(makePane({ currentCommand: "claude", title: "Agent 1" })));
+    expect(isIdleForDispatch(makePane({ currentCommand: "claude", title: "Agent 1" }))).toBeTruthy();
   });
 
   it("returns true for Claude with version command and no spinner", () => {
-    assert.ok(isIdleForDispatch(makePane({ currentCommand: "2.1.80", title: "Claude Code" })));
+    expect(isIdleForDispatch(makePane({ currentCommand: "2.1.80", title: "Claude Code" }))).toBeTruthy();
   });
 
   it("returns false for agent pane with spinner", () => {
-    assert.ok(!isIdleForDispatch(makePane({ currentCommand: "claude", title: "⠹ Thinking..." })));
+    expect(!isIdleForDispatch(makePane({ currentCommand: "claude", title: "⠹ Thinking..." }))).toBeTruthy();
   });
 
   it("returns false for non-agent non-shell command", () => {
-    assert.ok(!isIdleForDispatch(makePane({ currentCommand: "vim", title: "Editor" })));
+    expect(!isIdleForDispatch(makePane({ currentCommand: "vim", title: "Editor" }))).toBeTruthy();
   });
 });
 
@@ -499,7 +498,7 @@ describe("claim locking", () => {
 
     // First dispatch claims the task
     dispatch(config, state, [task], panes);
-    assert.ok(state.claimedTasks.has("001"));
+    expect(state.claimedTasks.has("001")).toBeTruthy();
 
     // Reset task to todo to simulate a race (file not yet updated)
     const raceTask = makeTask({ status: "todo", assignee: null });
@@ -510,7 +509,7 @@ describe("claim locking", () => {
     // Only one send-keys call with the task prompt (not two)
     const sendCalls = tmuxCalls.filter((c) => c.args.includes("send-keys"));
     // First dispatch: send-keys text + send-keys Enter = 2 calls
-    assert.strictEqual(sendCalls.length, 2);
+    expect(sendCalls.length).toBe(2);
   });
 
   it("clears claim on task completion", () => {
@@ -530,7 +529,7 @@ describe("claim locking", () => {
 
     detectCompletions(config, state, [task], panes);
 
-    assert.ok(!state.claimedTasks.has("001"));
+    expect(!state.claimedTasks.has("001")).toBeTruthy();
   });
 
   it("releases claim when before_run hook fails", () => {
@@ -548,7 +547,7 @@ describe("claim locking", () => {
     dispatch(config, state, [task], panes);
 
     // Claim should be released so the task can be retried
-    assert.ok(!state.claimedTasks.has("001"));
+    expect(!state.claimedTasks.has("001")).toBeTruthy();
   });
 });
 
@@ -574,8 +573,8 @@ describe("cleanupOnDone", () => {
 
     // Should have called git worktree remove
     const removeCall = gitCalls.find((c) => c.args[0] === "worktree" && c.args[1] === "remove");
-    assert.ok(removeCall, "expected git worktree remove call");
-    assert.ok(removeCall!.args.includes(wtDir));
+    expect(removeCall).toBeTruthy();
+    expect(removeCall!.args.includes(wtDir)).toBeTruthy();
   });
 
   it("does not call removeWorktree when cleanupOnDone is false", () => {
@@ -598,7 +597,7 @@ describe("cleanupOnDone", () => {
     detectCompletions(config, state, [task], panes);
 
     const removeCall = gitCalls.find((c) => c.args[0] === "worktree" && c.args[1] === "remove");
-    assert.strictEqual(removeCall, undefined);
+    expect(removeCall).toBe(undefined);
   });
 });
 
@@ -621,8 +620,8 @@ describe("createOrchestrator timer", () => {
     stop();
 
     const loaded = loadTask(tmpDir, "001");
-    assert.strictEqual(loaded?.status, "in-progress");
-    assert.strictEqual(loaded?.assignee, expectedName);
+    expect(loaded?.status).toBe("in-progress");
+    expect(loaded?.assignee).toBe(expectedName);
   });
 
   it("stops polling when returned function is called", async () => {
@@ -640,8 +639,8 @@ describe("createOrchestrator timer", () => {
     await new Promise((resolve) => setTimeout(resolve, 200));
 
     const loaded = loadTask(tmpDir, "001");
-    assert.strictEqual(loaded?.status, "todo");
-    assert.strictEqual(loaded?.assignee, null);
+    expect(loaded?.status).toBe("todo");
+    expect(loaded?.assignee).toBe(null);
   });
 });
 
@@ -663,8 +662,8 @@ describe("dispatch with version-string agent", () => {
     dispatch(config, state, [task], panes);
 
     const loaded = loadTask(tmpDir, "001");
-    assert.strictEqual(loaded?.assignee, expectedName);
-    assert.strictEqual(loaded?.status, "in-progress");
+    expect(loaded?.assignee).toBe(expectedName);
+    expect(loaded?.status).toBe("in-progress");
   });
 
   it("does not assign to busy agent with spinner", () => {
@@ -682,8 +681,8 @@ describe("dispatch with version-string agent", () => {
     dispatch(config, state, [task], panes);
 
     const loaded = loadTask(tmpDir, "001");
-    assert.strictEqual(loaded?.assignee, null);
-    assert.strictEqual(loaded?.status, "todo");
+    expect(loaded?.assignee).toBe(null);
+    expect(loaded?.status).toBe("todo");
   });
 });
 
@@ -691,19 +690,19 @@ describe("reloadConfig", () => {
   it("updates pollInterval", () => {
     const config = makeOrchestratorConfig(tmpDir, { pollInterval: 5000 });
     reloadConfig(config, { pollInterval: 1000 });
-    assert.strictEqual(config.pollInterval, 1000);
+    expect(config.pollInterval).toBe(1000);
   });
 
   it("updates stallTimeout", () => {
     const config = makeOrchestratorConfig(tmpDir, { stallTimeout: 300000 });
     reloadConfig(config, { stallTimeout: 60000 });
-    assert.strictEqual(config.stallTimeout, 60000);
+    expect(config.stallTimeout).toBe(60000);
   });
 
   it("updates maxConcurrentAgents", () => {
     const config = makeOrchestratorConfig(tmpDir);
     reloadConfig(config, { maxConcurrentAgents: 3 });
-    assert.strictEqual(config.maxConcurrentAgents, 3);
+    expect(config.maxConcurrentAgents).toBe(3);
   });
 
   it("updates multiple fields at once", () => {
@@ -714,17 +713,17 @@ describe("reloadConfig", () => {
       autoDispatch: false,
       cleanupOnDone: true,
     });
-    assert.strictEqual(config.pollInterval, 2000);
-    assert.strictEqual(config.stallTimeout, 120000);
-    assert.strictEqual(config.autoDispatch, false);
-    assert.strictEqual(config.cleanupOnDone, true);
+    expect(config.pollInterval).toBe(2000);
+    expect(config.stallTimeout).toBe(120000);
+    expect(config.autoDispatch).toBe(false);
+    expect(config.cleanupOnDone).toBe(true);
   });
 
   it("preserves fields not in the patch", () => {
     const config = makeOrchestratorConfig(tmpDir, { pollInterval: 5000, stallTimeout: 300000 });
     reloadConfig(config, { pollInterval: 1000 });
-    assert.strictEqual(config.stallTimeout, 300000); // unchanged
-    assert.strictEqual(config.session, "test"); // unchanged
+    expect(config.stallTimeout).toBe(300000); // unchanged
+    expect(config.session).toBe("test"); // unchanged
   });
 });
 
@@ -746,10 +745,10 @@ describe("event logging integration", () => {
 
     const events = readEvents(tmpDir);
     const dispatchEvent = events.find((e) => e.type === "dispatch");
-    assert.ok(dispatchEvent);
-    assert.strictEqual(dispatchEvent!.taskId, "001");
-    assert.strictEqual(dispatchEvent!.agent, pane.title);
-    assert.ok(dispatchEvent!.message.includes("Test task"));
+    expect(dispatchEvent).toBeTruthy();
+    expect(dispatchEvent!.taskId).toBe("001");
+    expect(dispatchEvent!.agent).toBe(pane.title);
+    expect(dispatchEvent!.message.includes("Test task")).toBeTruthy();
   });
 
   it("logs stall events", () => {
@@ -767,9 +766,9 @@ describe("event logging integration", () => {
 
     const events = readEvents(tmpDir);
     const stallEvent = events.find((e) => e.type === "stall");
-    assert.ok(stallEvent);
-    assert.strictEqual(stallEvent!.taskId, "001");
-    assert.strictEqual(stallEvent!.agent, name);
+    expect(stallEvent).toBeTruthy();
+    expect(stallEvent!.taskId).toBe("001");
+    expect(stallEvent!.agent).toBe(name);
   });
 
   it("logs completion events", () => {
@@ -789,9 +788,9 @@ describe("event logging integration", () => {
 
     const events = readEvents(tmpDir);
     const completionEvent = events.find((e) => e.type === "completion");
-    assert.ok(completionEvent);
-    assert.strictEqual(completionEvent!.taskId, "001");
-    assert.strictEqual(completionEvent!.agent, "Agent 1");
+    expect(completionEvent).toBeTruthy();
+    expect(completionEvent!.taskId).toBe("001");
+    expect(completionEvent!.agent).toBe("Agent 1");
   });
 
   it("logs reconcile events when agent vanishes", () => {
@@ -808,10 +807,10 @@ describe("event logging integration", () => {
 
     const events = readEvents(tmpDir);
     const reconcileEvent = events.find((e) => e.type === "reconcile");
-    assert.ok(reconcileEvent);
-    assert.strictEqual(reconcileEvent!.taskId, "001");
-    assert.strictEqual(reconcileEvent!.agent, "Agent 1");
-    assert.ok(reconcileEvent!.message.includes("vanished"));
+    expect(reconcileEvent).toBeTruthy();
+    expect(reconcileEvent!.taskId).toBe("001");
+    expect(reconcileEvent!.agent).toBe("Agent 1");
+    expect(reconcileEvent!.message.includes("vanished")).toBeTruthy();
   });
 });
 
@@ -830,17 +829,17 @@ describe("saveOrchestratorState / loadOrchestratorState", () => {
     const restored = makeOrchestratorState();
     loadOrchestratorState(tmpDir, restored);
 
-    assert.ok(restored.claimedTasks.has("001"));
-    assert.ok(restored.claimedTasks.has("003"));
-    assert.strictEqual(restored.taskClaimTimes.get("001"), 1700000000000);
-    assert.strictEqual(restored.taskClaimTimes.get("003"), 1700000060000);
+    expect(restored.claimedTasks.has("001")).toBeTruthy();
+    expect(restored.claimedTasks.has("003")).toBeTruthy();
+    expect(restored.taskClaimTimes.get("001")).toBe(1700000000000);
+    expect(restored.taskClaimTimes.get("003")).toBe(1700000060000);
   });
 
   it("handles missing state file gracefully", () => {
     const state = makeOrchestratorState();
     loadOrchestratorState(tmpDir, state);
-    assert.strictEqual(state.claimedTasks.size, 0);
-    assert.strictEqual(state.taskClaimTimes.size, 0);
+    expect(state.claimedTasks.size).toBe(0);
+    expect(state.taskClaimTimes.size).toBe(0);
   });
 
   it("handles corrupted state file gracefully", () => {
@@ -849,7 +848,7 @@ describe("saveOrchestratorState / loadOrchestratorState", () => {
 
     const state = makeOrchestratorState();
     loadOrchestratorState(tmpDir, state);
-    assert.strictEqual(state.claimedTasks.size, 0);
+    expect(state.claimedTasks.size).toBe(0);
   });
 });
 
@@ -865,9 +864,9 @@ describe("syncClaims", () => {
 
     syncClaims(tmpDir, state);
 
-    assert.ok(!state.claimedTasks.has("001"), "done task should be removed");
-    assert.ok(!state.claimedTasks.has("002"), "todo task should be removed");
-    assert.ok(state.claimedTasks.has("003"), "in-progress task should remain");
+    expect(!state.claimedTasks.has("001")).toBeTruthy();
+    expect(!state.claimedTasks.has("002")).toBeTruthy();
+    expect(state.claimedTasks.has("003")).toBeTruthy();
   });
 
   it("adds missing claims for in-progress tasks", () => {
@@ -880,8 +879,8 @@ describe("syncClaims", () => {
 
     syncClaims(tmpDir, state);
 
-    assert.ok(state.claimedTasks.has("001"), "in-progress task should be claimed");
-    assert.ok(state.claimedTasks.has("002"), "in-progress task should be claimed");
+    expect(state.claimedTasks.has("001")).toBeTruthy();
+    expect(state.claimedTasks.has("002")).toBeTruthy();
   });
 
   it("rebuilds claims from mixed task statuses", () => {
@@ -898,12 +897,12 @@ describe("syncClaims", () => {
 
     syncClaims(tmpDir, state);
 
-    assert.strictEqual(state.claimedTasks.size, 2);
-    assert.ok(state.claimedTasks.has("002"), "in-progress task 002 should be claimed");
-    assert.ok(state.claimedTasks.has("004"), "in-progress task 004 should be claimed");
-    assert.ok(!state.claimedTasks.has("001"), "done task should not be claimed");
-    assert.ok(!state.claimedTasks.has("003"), "todo task should not be claimed");
-    assert.ok(!state.claimedTasks.has("005"), "review task should not be claimed");
+    expect(state.claimedTasks.size).toBe(2);
+    expect(state.claimedTasks.has("002")).toBeTruthy();
+    expect(state.claimedTasks.has("004")).toBeTruthy();
+    expect(!state.claimedTasks.has("001")).toBeTruthy();
+    expect(!state.claimedTasks.has("003")).toBeTruthy();
+    expect(!state.claimedTasks.has("005")).toBeTruthy();
   });
 
   it("handles empty task store", () => {
@@ -913,7 +912,7 @@ describe("syncClaims", () => {
 
     syncClaims(tmpDir, state);
 
-    assert.strictEqual(state.claimedTasks.size, 0);
+    expect(state.claimedTasks.size).toBe(0);
   });
 });
 
@@ -934,8 +933,8 @@ describe("gracefulShutdown", () => {
     gracefulShutdown(config, state);
 
     const loaded = loadTask(tmpDir, "001")!;
-    assert.strictEqual(loaded.status, "todo");
-    assert.strictEqual(loaded.assignee, null);
+    expect(loaded.status).toBe("todo");
+    expect(loaded.assignee).toBe(null);
   });
 
   it("saves orchestrator state to disk", () => {
@@ -949,11 +948,11 @@ describe("gracefulShutdown", () => {
 
     gracefulShutdown(config, state);
 
-    assert.ok(existsSync(join(tmpDir, ".tasks", "orchestrator-state.json")));
+    expect(existsSync(join(tmpDir, ".tasks", "orchestrator-state.json"))).toBeTruthy();
 
     const restored = makeOrchestratorState();
     loadOrchestratorState(tmpDir, restored);
-    assert.ok(restored.claimedTasks.has("002"));
+    expect(restored.claimedTasks.has("002")).toBeTruthy();
   });
 
   it("cleans worktrees when cleanupOnDone is true", () => {
@@ -973,7 +972,7 @@ describe("gracefulShutdown", () => {
     gracefulShutdown(config, state);
 
     const removeCall = gitCalls.find((c) => c.args[0] === "worktree" && c.args[1] === "remove");
-    assert.ok(removeCall);
+    expect(removeCall).toBeTruthy();
   });
 
   it("does not clean worktrees when cleanupOnDone is false", () => {
@@ -990,7 +989,7 @@ describe("gracefulShutdown", () => {
     gracefulShutdown(config, state);
 
     const removeCall = gitCalls.find((c) => c.args[0] === "worktree" && c.args[1] === "remove");
-    assert.strictEqual(removeCall, undefined);
+    expect(removeCall).toBe(undefined);
   });
 
   it("leaves done and todo tasks untouched", () => {
@@ -1004,26 +1003,26 @@ describe("gracefulShutdown", () => {
 
     gracefulShutdown(config, state);
 
-    assert.strictEqual(loadTask(tmpDir, "001")!.status, "done");
-    assert.strictEqual(loadTask(tmpDir, "002")!.status, "todo");
+    expect(loadTask(tmpDir, "001")!.status).toBe("done");
+    expect(loadTask(tmpDir, "002")!.status).toBe("todo");
   });
 });
 
 describe("normalizePaneTitle", () => {
   it("strips spinner prefix from pane title", () => {
-    assert.strictEqual(normalizePaneTitle("⠂ Claude Code"), "Claude Code");
-    assert.strictEqual(normalizePaneTitle("⠋ Working..."), "Working...");
-    assert.strictEqual(normalizePaneTitle("✳ Claude Code"), "Claude Code");
-    assert.strictEqual(normalizePaneTitle("◐ Thinking"), "Thinking");
+    expect(normalizePaneTitle("⠂ Claude Code")).toBe("Claude Code");
+    expect(normalizePaneTitle("⠋ Working...")).toBe("Working...");
+    expect(normalizePaneTitle("✳ Claude Code")).toBe("Claude Code");
+    expect(normalizePaneTitle("◐ Thinking")).toBe("Thinking");
   });
 
   it("returns title unchanged when no spinner prefix", () => {
-    assert.strictEqual(normalizePaneTitle("Agent 1"), "Agent 1");
-    assert.strictEqual(normalizePaneTitle("Claude Code"), "Claude Code");
+    expect(normalizePaneTitle("Agent 1")).toBe("Agent 1");
+    expect(normalizePaneTitle("Claude Code")).toBe("Claude Code");
   });
 
   it("handles empty string", () => {
-    assert.strictEqual(normalizePaneTitle(""), "");
+    expect(normalizePaneTitle("")).toBe("");
   });
 });
 
@@ -1034,14 +1033,14 @@ describe("getPaneSpecialties", () => {
     });
     const pane = makePane({ title: "Frontend Agent" });
     const specs = getPaneSpecialties(config, pane);
-    assert.deepStrictEqual(specs, ["frontend", "css", "react"]);
+    expect(specs).toEqual(["frontend", "css", "react"]);
   });
 
   it("returns empty array for pane with no specialties", () => {
     const config = makeOrchestratorConfig(tmpDir, { paneSpecialties: new Map() });
     const pane = makePane({ title: "Generic Agent" });
     const specs = getPaneSpecialties(config, pane);
-    assert.deepStrictEqual(specs, []);
+    expect(specs).toEqual([]);
   });
 
   it("matches by pane title", () => {
@@ -1051,15 +1050,15 @@ describe("getPaneSpecialties", () => {
         ["Frontend", ["ui", "css"]],
       ]),
     });
-    assert.deepStrictEqual(getPaneSpecialties(config, makePane({ title: "Backend" })), [
+    expect(getPaneSpecialties(config, makePane({ title: "Backend" }))).toEqual([
       "api",
       "database",
     ]);
-    assert.deepStrictEqual(getPaneSpecialties(config, makePane({ title: "Frontend" })), [
+    expect(getPaneSpecialties(config, makePane({ title: "Frontend" }))).toEqual([
       "ui",
       "css",
     ]);
-    assert.deepStrictEqual(getPaneSpecialties(config, makePane({ title: "Other" })), []);
+    expect(getPaneSpecialties(config, makePane({ title: "Other" }))).toEqual([]);
   });
 });
 
@@ -1088,14 +1087,11 @@ describe("buildGoalPrompt", () => {
     const planner = makePane({ id: "%2", index: 1, title: "Backend Planner" });
     const prompt = buildGoalPrompt(tmpDir, goal, planner);
 
-    assert.ok(prompt.includes("Build REST API"), "should include goal title");
-    assert.ok(
-      prompt.includes("All endpoints return 200 with correct data"),
-      "should include acceptance",
-    );
-    assert.ok(prompt.includes("backend planner"), "should include specialty label");
-    assert.ok(prompt.includes("Ship v2"), "should include mission title");
-    assert.ok(prompt.includes(agentIdentifier(planner)), "should include planner name");
+    expect(prompt.includes("Build REST API")).toBeTruthy();
+    expect(prompt.includes("All endpoints return 200 with correct data")).toBeTruthy();
+    expect(prompt.includes("backend planner")).toBeTruthy();
+    expect(prompt.includes("Ship v2")).toBeTruthy();
+    expect(prompt.includes(agentIdentifier(planner))).toBeTruthy();
   });
 
   it("works without mission", () => {
@@ -1115,9 +1111,9 @@ describe("buildGoalPrompt", () => {
     const planner = makePane({ id: "%1", index: 0 });
     const prompt = buildGoalPrompt(tmpDir, goal, planner);
 
-    assert.ok(prompt.includes("Setup CI"), "should include goal title");
-    assert.ok(prompt.includes("general planner"), "should use 'general' for null specialty");
-    assert.ok(!prompt.includes("Mission:"), "should not include mission section");
+    expect(prompt.includes("Setup CI")).toBeTruthy();
+    expect(prompt.includes("general planner")).toBeTruthy();
+    expect(!prompt.includes("Mission:")).toBeTruthy();
   });
 });
 
@@ -1146,13 +1142,13 @@ describe("dispatchGoals", () => {
     dispatchGoals(config, state, [goal], [], [planner]);
 
     const updated = loadGoal(tmpDir, "01")!;
-    assert.strictEqual(updated.status, "in-progress");
-    assert.strictEqual(updated.assignee, agentIdentifier(planner));
+    expect(updated.status).toBe("in-progress");
+    expect(updated.assignee).toBe(agentIdentifier(planner));
 
     const events = readEvents(tmpDir);
-    assert.strictEqual(events.length, 1);
-    assert.strictEqual(events[0]!.type, "dispatch");
-    assert.ok(events[0]!.message.includes("Build Frontend"));
+    expect(events.length).toBe(1);
+    expect(events[0]!.type).toBe("dispatch");
+    expect(events[0]!.message.includes("Build Frontend")).toBeTruthy();
   });
 
   it("skips master pane", () => {
@@ -1184,8 +1180,8 @@ describe("dispatchGoals", () => {
     dispatchGoals(config, state, [goal], [], [masterPane]);
 
     const unchanged = loadGoal(tmpDir, "01")!;
-    assert.strictEqual(unchanged.status, "todo");
-    assert.strictEqual(unchanged.assignee, null);
+    expect(unchanged.status).toBe("todo");
+    expect(unchanged.assignee).toBe(null);
   });
 
   it("does not assign already-assigned goals", () => {
@@ -1213,6 +1209,6 @@ describe("dispatchGoals", () => {
 
     // Goal should remain unchanged — assignee filter excludes it
     const events = readEvents(tmpDir);
-    assert.strictEqual(events.length, 0);
+    expect(events.length).toBe(0);
   });
 });

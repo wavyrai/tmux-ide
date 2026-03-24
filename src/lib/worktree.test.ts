@@ -1,5 +1,4 @@
-import { describe, it, beforeEach, afterEach } from "node:test";
-import assert from "node:assert/strict";
+import { describe, it, beforeEach, afterEach, expect } from "bun:test";
 import { mkdtempSync, rmSync, existsSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -34,30 +33,30 @@ afterEach(() => {
 describe("createWorktree", () => {
   it("creates directory and branch", () => {
     const result = createWorktree(tmpDir, ".worktrees", "001", "fix-auth");
-    assert.ok(existsSync(result.path));
-    assert.strictEqual(result.branch, "task/001-fix-auth");
-    assert.ok(result.path.includes("001-fix-auth"));
+    expect(existsSync(result.path)).toBeTruthy();
+    expect(result.branch).toBe("task/001-fix-auth");
+    expect(result.path.includes("001-fix-auth")).toBeTruthy();
   });
 
   it("returns existing if already created", () => {
     const first = createWorktree(tmpDir, ".worktrees", "001", "fix-auth");
     const second = createWorktree(tmpDir, ".worktrees", "001", "fix-auth");
-    assert.strictEqual(first.path, second.path);
-    assert.strictEqual(first.branch, second.branch);
+    expect(first.path).toBe(second.path);
+    expect(first.branch).toBe(second.branch);
   });
 
   it("creates worktree root directory", () => {
     createWorktree(tmpDir, ".worktrees", "001", "test");
-    assert.ok(existsSync(join(tmpDir, ".worktrees")));
+    expect(existsSync(join(tmpDir, ".worktrees"))).toBeTruthy();
   });
 });
 
 describe("removeWorktree", () => {
   it("removes an existing worktree", () => {
     const { path } = createWorktree(tmpDir, ".worktrees", "001", "to-remove");
-    assert.ok(existsSync(path));
+    expect(existsSync(path)).toBeTruthy();
     removeWorktree(tmpDir, path);
-    assert.ok(!existsSync(path));
+    expect(!existsSync(path)).toBeTruthy();
   });
 
   it("does not throw for non-existent path", () => {
@@ -69,15 +68,15 @@ describe("removeWorktree", () => {
 describe("listWorktrees", () => {
   it("lists main worktree", () => {
     const trees = listWorktrees(tmpDir);
-    assert.ok(trees.length >= 1);
+    expect(trees.length >= 1).toBeTruthy();
     // macOS resolves /var → /private/var, so just check at least one entry exists
   });
 
   it("includes created worktrees", () => {
     createWorktree(tmpDir, ".worktrees", "001", "listed");
     const trees = listWorktrees(tmpDir);
-    assert.ok(trees.length >= 2);
-    assert.ok(trees.some((t) => t.includes("001-listed")));
+    expect(trees.length >= 2).toBeTruthy();
+    expect(trees.some((t) => t.includes("001-listed"))).toBeTruthy();
   });
 });
 
@@ -89,14 +88,14 @@ describe("validateWorktreePath", () => {
     mkdirSync(wtPath, { recursive: true });
 
     const result = validateWorktreePath(tmpDir, ".worktrees", wtPath);
-    assert.strictEqual(result.valid, true);
-    assert.strictEqual(result.reason, undefined);
+    expect(result.valid).toBe(true);
+    expect(result.reason).toBe(undefined);
   });
 
   it("rejects a path that escapes the worktree root", () => {
     const result = validateWorktreePath(tmpDir, ".worktrees", "/etc/passwd");
-    assert.strictEqual(result.valid, false);
-    assert.ok(result.reason!.includes("escapes root"));
+    expect(result.valid).toBe(false);
+    expect(result.reason!.includes("escapes root")).toBeTruthy();
   });
 
   it("rejects a path using ../ to escape", () => {
@@ -106,8 +105,8 @@ describe("validateWorktreePath", () => {
     const escapedPath = join(root, "..", "escape-attempt");
 
     const result = validateWorktreePath(tmpDir, ".worktrees", escapedPath);
-    assert.strictEqual(result.valid, false);
-    assert.ok(result.reason!.includes("escapes root"));
+    expect(result.valid).toBe(false);
+    expect(result.reason!.includes("escapes root")).toBeTruthy();
   });
 
   it("works with non-existent but valid paths", () => {
@@ -116,7 +115,7 @@ describe("validateWorktreePath", () => {
     const wtPath = join(root, "future-worktree");
 
     const result = validateWorktreePath(tmpDir, ".worktrees", wtPath);
-    assert.strictEqual(result.valid, true);
+    expect(result.valid).toBe(true);
   });
 
   it("handles symlink resolution", () => {
@@ -126,6 +125,6 @@ describe("validateWorktreePath", () => {
     mkdirSync(realDir);
 
     const result = validateWorktreePath(tmpDir, ".worktrees", realDir);
-    assert.strictEqual(result.valid, true);
+    expect(result.valid).toBe(true);
   });
 });
