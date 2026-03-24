@@ -22,7 +22,8 @@ export type EventType =
   | "error"
   | "task_created"
   | "status_change"
-  | "send";
+  | "send"
+  | "notify";
 
 export interface OrchestratorEvent {
   timestamp: string;
@@ -76,6 +77,11 @@ export function formatEventMessage(event: StructuredEvent): string {
       const preview =
         event.message.length > 50 ? event.message.slice(0, 50) + "..." : event.message;
       return `Sent to ${event.target}: "${preview}"`;
+    }
+    case "notify": {
+      const preview =
+        event.message.length > 50 ? event.message.slice(0, 50) + "..." : event.message;
+      return `Notified ${event.target}: "${preview}"`;
     }
   }
 }

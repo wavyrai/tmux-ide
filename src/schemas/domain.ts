@@ -77,6 +77,7 @@ export const EventTypeSchemaZ = z.enum([
   "task_created",
   "status_change",
   "send",
+  "notify",
 ]);
 
 export const OrchestratorEventSchemaZ = z.object({
@@ -164,6 +165,14 @@ const SendEventZ = z.object({
   message: z.string(),
 });
 
+const NotifyEventZ = z.object({
+  timestamp: z.string(),
+  type: z.literal("notify"),
+  target: z.string(),
+  paneId: z.string(),
+  message: z.string(),
+});
+
 export const StructuredEventSchemaZ = z.union([
   DispatchEventZ,
   CompletionEventZ,
@@ -174,6 +183,7 @@ export const StructuredEventSchemaZ = z.union([
   TaskCreatedEventZ,
   StatusChangeEventZ,
   SendEventZ,
+  NotifyEventZ,
 ]);
 
 // ---------------------------------------------------------------------------
