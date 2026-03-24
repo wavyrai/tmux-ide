@@ -1,5 +1,4 @@
-import { describe, it, beforeEach, afterEach } from "node:test";
-import assert from "node:assert/strict";
+import { describe, it, beforeEach, afterEach, expect } from "bun:test";
 import { mkdtempSync, writeFileSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -39,8 +38,8 @@ describe("config dump", () => {
     writeIdeYml(cfg);
     await config(tmpDir, { json: true, action: "dump", args: [] });
     const output = JSON.parse(logged[0]);
-    assert.strictEqual(output.name, "test");
-    assert.strictEqual(output.rows[0].panes[0].title, "Shell");
+    expect(output.name).toBe("test");
+    expect(output.rows[0].panes[0].title).toBe("Shell");
   });
 });
 
@@ -49,31 +48,31 @@ describe("config set", () => {
     writeIdeYml({ name: "old", rows: [{ panes: [{ title: "Shell" }] }] });
     await config(tmpDir, { json: true, action: "set", args: ["name", "new-name"] });
     const output = JSON.parse(logged[0]);
-    assert.strictEqual(output.ok, true);
-    assert.strictEqual(output.value, "new-name");
+    expect(output.ok).toBe(true);
+    expect(output.value).toBe("new-name");
     const saved = readIdeYml();
-    assert.strictEqual(saved.name, "new-name");
+    expect(saved.name).toBe("new-name");
   });
 
   it("updates a nested value", async () => {
     writeIdeYml({ name: "test", rows: [{ panes: [{ title: "Shell" }] }] });
     await config(tmpDir, { json: true, action: "set", args: ["rows.0.panes.0.title", "Editor"] });
     const saved = readIdeYml();
-    assert.strictEqual(saved.rows[0].panes[0].title, "Editor");
+    expect(saved.rows[0].panes[0].title).toBe("Editor");
   });
 
   it("coerces boolean strings", async () => {
     writeIdeYml({ name: "test", rows: [{ panes: [{ title: "Shell" }] }] });
     await config(tmpDir, { json: true, action: "set", args: ["rows.0.panes.0.focus", "true"] });
     const saved = readIdeYml();
-    assert.strictEqual(saved.rows[0].panes[0].focus, true);
+    expect(saved.rows[0].panes[0].focus).toBe(true);
   });
 
   it("coerces numeric strings", async () => {
     writeIdeYml({ name: "test", rows: [{ panes: [{ title: "Shell" }] }] });
     await config(tmpDir, { json: true, action: "set", args: ["rows.0.panes.0.width", "120"] });
     const saved = readIdeYml();
-    assert.strictEqual(saved.rows[0].panes[0].width, 120);
+    expect(saved.rows[0].panes[0].width).toBe(120);
   });
 });
 
@@ -86,12 +85,12 @@ describe("config add-pane", () => {
       args: ["--row", "0", "--title", "Tests", "--command", "pnpm test"],
     });
     const output = JSON.parse(logged[0]);
-    assert.strictEqual(output.ok, true);
-    assert.strictEqual(output.pane.title, "Tests");
-    assert.strictEqual(output.pane.command, "pnpm test");
+    expect(output.ok).toBe(true);
+    expect(output.pane.title).toBe("Tests");
+    expect(output.pane.command).toBe("pnpm test");
     const saved = readIdeYml();
-    assert.strictEqual(saved.rows[0].panes.length, 2);
-    assert.strictEqual(saved.rows[0].panes[1].title, "Tests");
+    expect(saved.rows[0].panes.length).toBe(2);
+    expect(saved.rows[0].panes[1].title).toBe("Tests");
   });
 
   it("adds pane with size", async () => {
@@ -102,7 +101,7 @@ describe("config add-pane", () => {
       args: ["--row", "0", "--title", "Wide", "--size", "60%"],
     });
     const saved = readIdeYml();
-    assert.strictEqual(saved.rows[0].panes[1].size, "60%");
+    expect(saved.rows[0].panes[1].size).toBe("60%");
   });
 });
 
@@ -118,12 +117,12 @@ describe("config remove-pane", () => {
       args: ["--row", "0", "--pane", "1"],
     });
     const output = JSON.parse(logged[0]);
-    assert.strictEqual(output.ok, true);
-    assert.strictEqual(output.removed.title, "B");
+    expect(output.ok).toBe(true);
+    expect(output.removed.title).toBe("B");
     const saved = readIdeYml();
-    assert.strictEqual(saved.rows[0].panes.length, 2);
-    assert.strictEqual(saved.rows[0].panes[0].title, "A");
-    assert.strictEqual(saved.rows[0].panes[1].title, "C");
+    expect(saved.rows[0].panes.length).toBe(2);
+    expect(saved.rows[0].panes[0].title).toBe("A");
+    expect(saved.rows[0].panes[1].title).toBe("C");
   });
 });
 
@@ -132,25 +131,25 @@ describe("config add-row", () => {
     writeIdeYml({ name: "test", rows: [{ panes: [{ title: "Shell" }] }] });
     await config(tmpDir, { json: true, action: "add-row", args: [] });
     const output = JSON.parse(logged[0]);
-    assert.strictEqual(output.ok, true);
-    assert.strictEqual(output.row, 1);
+    expect(output.ok).toBe(true);
+    expect(output.row).toBe(1);
     const saved = readIdeYml();
-    assert.strictEqual(saved.rows.length, 2);
-    assert.deepStrictEqual(saved.rows[1].panes, [{ title: "Shell" }]);
+    expect(saved.rows.length).toBe(2);
+    expect(saved.rows[1].panes).toEqual([{ title: "Shell" }]);
   });
 
   it("creates row with size", async () => {
     writeIdeYml({ name: "test", rows: [{ panes: [{ title: "Shell" }] }] });
     await config(tmpDir, { json: true, action: "add-row", args: ["--size", "30%"] });
     const saved = readIdeYml();
-    assert.strictEqual(saved.rows[1].size, "30%");
+    expect(saved.rows[1].size).toBe("30%");
   });
 
   it("initializes rows array when it doesn't exist", async () => {
     writeIdeYml({ name: "test" });
     await config(tmpDir, { json: true, action: "add-row", args: [] });
     const saved = readIdeYml();
-    assert.strictEqual(saved.rows.length, 1);
+    expect(saved.rows.length).toBe(1);
   });
 });
 
@@ -170,12 +169,12 @@ describe("config enable-team", () => {
     });
     await config(tmpDir, { json: true, action: "enable-team", args: [] });
     const output = JSON.parse(logged[0]);
-    assert.strictEqual(output.ok, true);
-    assert.strictEqual(output.team.name, "my-app");
+    expect(output.ok).toBe(true);
+    expect(output.team.name).toBe("my-app");
     const saved = readIdeYml();
-    assert.strictEqual(saved.rows[0].panes[0].role, "lead");
-    assert.strictEqual(saved.rows[0].panes[1].role, "teammate");
-    assert.strictEqual(saved.rows[0].panes[2].role, undefined);
+    expect(saved.rows[0].panes[0].role).toBe("lead");
+    expect(saved.rows[0].panes[1].role).toBe("teammate");
+    expect(saved.rows[0].panes[2].role).toBe(undefined);
   });
 });
 
@@ -195,12 +194,12 @@ describe("config disable-team", () => {
     });
     await config(tmpDir, { json: true, action: "disable-team", args: [] });
     const output = JSON.parse(logged[0]);
-    assert.strictEqual(output.ok, true);
-    assert.strictEqual(output.disabled, true);
+    expect(output.ok).toBe(true);
+    expect(output.disabled).toBe(true);
     const saved = readIdeYml();
-    assert.strictEqual(saved.team, undefined);
-    assert.strictEqual(saved.rows[0].panes[0].role, undefined);
-    assert.strictEqual(saved.rows[0].panes[1].role, undefined);
-    assert.strictEqual(saved.rows[0].panes[1].task, undefined);
+    expect(saved.team).toBe(undefined);
+    expect(saved.rows[0].panes[0].role).toBe(undefined);
+    expect(saved.rows[0].panes[1].role).toBe(undefined);
+    expect(saved.rows[0].panes[1].task).toBe(undefined);
   });
 });

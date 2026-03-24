@@ -1,5 +1,4 @@
-import { describe, it } from "node:test";
-import assert from "node:assert/strict";
+import { describe, it, expect } from "bun:test";
 import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
@@ -29,9 +28,9 @@ describe("config command hardening", () => {
     try {
       const result = runCli(["config", "set", "rows.0.title", "Shell"], dir);
 
-      assert.notStrictEqual(result.status, 0);
-      assert.match(result.stderr, /config root must be an object/);
-      assert.doesNotMatch(result.stderr, /TypeError/);
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toMatch(/config root must be an object/);
+      expect(result.stderr).not.toMatch(/TypeError/);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -43,9 +42,9 @@ describe("config command hardening", () => {
     try {
       const result = runCli(["config", "add-pane", "--row", "0", "--title", "Shell"], dir);
 
-      assert.notStrictEqual(result.status, 0);
-      assert.match(result.stderr, /row 0 panes must be an array/);
-      assert.doesNotMatch(result.stderr, /TypeError/);
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toMatch(/row 0 panes must be an array/);
+      expect(result.stderr).not.toMatch(/TypeError/);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -57,8 +56,8 @@ describe("config command hardening", () => {
     try {
       const result = runCli(["config", "enable-team"], dir);
 
-      assert.notStrictEqual(result.status, 0);
-      assert.match(result.stderr, /no Claude panes found/i);
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toMatch(/no Claude panes found/i);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -72,11 +71,11 @@ describe("config command hardening", () => {
     try {
       const result = runCli(["config", "enable-team", "--json"], dir);
 
-      assert.strictEqual(result.status, 0);
+      expect(result.status).toBe(0);
 
       const payload = JSON.parse(result.stdout);
-      assert.deepStrictEqual(payload.team, { name: "my-app" });
-      assert.deepStrictEqual(payload.roles, [
+      expect(payload.team).toEqual({ name: "my-app" });
+      expect(payload.roles).toEqual([
         { row: 0, pane: 0, title: "Lead", role: "lead" },
         { row: 0, pane: 1, title: "Reviewer", role: "teammate" },
       ]);

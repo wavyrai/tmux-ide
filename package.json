@@ -4,24 +4,21 @@
   "description": "Turn any project into a tmux-powered terminal IDE with a simple ide.yml",
   "type": "module",
   "bin": {
-    "tmux-ide": "bin/cli.js"
+    "tmux-ide": "bin/cli.ts"
   },
   "files": [
     "bin",
-    "dist",
+    "src",
     "scripts",
     "skill",
     "templates"
   ],
   "scripts": {
-    "clean": "rm -rf dist",
-    "build": "pnpm run clean && tsc && pnpm run build:widgets",
-    "build:widgets": "bun script/build-widgets.ts",
     "typecheck": "tsc --noEmit",
-    "dev": "node --experimental-strip-types bin/cli.js",
-    "test": "node --experimental-strip-types --test src/*.test.ts src/lib/*.test.ts src/widgets/lib/*.test.ts src/widgets/explorer/*.test.ts src/widgets/tasks/*.test.ts src/command-center/*.test.ts src/ui/web/utils/*.test.ts",
-    "test:unit": "node --experimental-strip-types --test src/cli.test.ts src/config-cli.test.ts src/config.test.ts src/detect.test.ts src/doctor.test.ts src/init.test.ts src/inspect.test.ts src/launch.test.ts src/ls.test.ts src/stop.test.ts src/task.test.ts src/validate.test.ts src/lib/*.test.ts src/widgets/lib/*.test.ts src/widgets/explorer/*.test.ts src/widgets/tasks/*.test.ts",
-    "test:integration": "node --experimental-strip-types --test src/integration.test.ts",
+    "dev": "bun bin/cli.ts",
+    "test": "bun test",
+    "test:unit": "bun test src/ --ignore 'src/integration.test.ts'",
+    "test:integration": "bun test src/integration.test.ts",
     "lint": "eslint .",
     "lint:workspace": "turbo run lint",
     "format": "prettier --write .",
@@ -30,8 +27,7 @@
     "typecheck:workspace": "turbo run typecheck",
     "docs:build": "turbo run build --filter=@tmux-ide/docs",
     "pack:check": "npm pack --dry-run --cache /tmp/tmux-ide-npm-cache > /dev/null",
-    "check": "pnpm run lint:workspace && pnpm run format:check && pnpm run build && pnpm run test:unit && pnpm run docs:build && pnpm run pack:check",
-    "prepublishOnly": "pnpm run build",
+    "check": "pnpm run lint:workspace && pnpm run format:check && pnpm run typecheck && pnpm run test:unit && pnpm run docs:build && pnpm run pack:check",
     "postinstall": "node scripts/postinstall.js",
     "test:dashboard": "cd dashboard && pnpm test",
     "docs": "turbo run dev --filter=@tmux-ide/docs"
@@ -44,7 +40,7 @@
     "developer-tools"
   ],
   "engines": {
-    "node": ">=18"
+    "bun": ">=1.0"
   },
   "repository": {
     "type": "git",

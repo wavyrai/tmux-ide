@@ -1,5 +1,4 @@
-import { describe, it, beforeEach, afterEach } from "node:test";
-import assert from "node:assert/strict";
+import { describe, it, beforeEach, afterEach, expect } from "bun:test";
 import { mkdtempSync, writeFileSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -24,7 +23,7 @@ describe("readDirectory", () => {
     const ig = createIgnoreFilter(tmpDir);
     const entries = readDirectory(tmpDir, tmpDir, ig, false);
     const names = entries.map((e) => e.name);
-    assert.deepStrictEqual(names, ["alpha-dir", "beta-dir", "apple.txt", "zebra.txt"]);
+    expect(names).toEqual(["alpha-dir", "beta-dir", "apple.txt", "zebra.txt"]);
   });
 
   it("marks directories and files correctly", () => {
@@ -34,8 +33,8 @@ describe("readDirectory", () => {
     const entries = readDirectory(tmpDir, tmpDir, ig, false);
     const dir = entries.find((e) => e.name === "subdir");
     const file = entries.find((e) => e.name === "file.txt");
-    assert.strictEqual(dir?.isDir, true);
-    assert.strictEqual(file?.isDir, false);
+    expect(dir?.isDir).toBe(true);
+    expect(file?.isDir).toBe(false);
   });
 
   it("filters ALWAYS_IGNORE entries like node_modules and .git", () => {
@@ -46,10 +45,10 @@ describe("readDirectory", () => {
     const ig = createIgnoreFilter(tmpDir);
     const entries = readDirectory(tmpDir, tmpDir, ig, false);
     const names = entries.map((e) => e.name);
-    assert.ok(!names.includes("node_modules"));
-    assert.ok(!names.includes(".git"));
-    assert.ok(names.includes("src"));
-    assert.ok(names.includes("file.txt"));
+    expect(!names.includes("node_modules")).toBeTruthy();
+    expect(!names.includes(".git")).toBeTruthy();
+    expect(names.includes("src")).toBeTruthy();
+    expect(names.includes("file.txt")).toBeTruthy();
   });
 
   it("respects .gitignore patterns", () => {
@@ -60,9 +59,9 @@ describe("readDirectory", () => {
     const ig = createIgnoreFilter(tmpDir);
     const entries = readDirectory(tmpDir, tmpDir, ig, true); // showHidden to see .gitignore
     const names = entries.map((e) => e.name);
-    assert.ok(!names.includes("app.log"));
-    assert.ok(!names.includes("build"));
-    assert.ok(names.includes("main.ts"));
+    expect(!names.includes("app.log")).toBeTruthy();
+    expect(!names.includes("build")).toBeTruthy();
+    expect(names.includes("main.ts")).toBeTruthy();
   });
 
   it("hides hidden files when showHidden is false", () => {
@@ -71,8 +70,8 @@ describe("readDirectory", () => {
     const ig = createIgnoreFilter(tmpDir);
     const entries = readDirectory(tmpDir, tmpDir, ig, false);
     const names = entries.map((e) => e.name);
-    assert.ok(!names.includes(".hidden"));
-    assert.ok(names.includes("visible.txt"));
+    expect(!names.includes(".hidden")).toBeTruthy();
+    expect(names.includes("visible.txt")).toBeTruthy();
   });
 
   it("shows hidden files when showHidden is true", () => {
@@ -81,14 +80,14 @@ describe("readDirectory", () => {
     const ig = createIgnoreFilter(tmpDir);
     const entries = readDirectory(tmpDir, tmpDir, ig, true);
     const names = entries.map((e) => e.name);
-    assert.ok(names.includes(".hidden"));
-    assert.ok(names.includes("visible.txt"));
+    expect(names.includes(".hidden")).toBeTruthy();
+    expect(names.includes("visible.txt")).toBeTruthy();
   });
 
   it("returns empty array for non-existent directory", () => {
     const ig = createIgnoreFilter(tmpDir);
     const entries = readDirectory(join(tmpDir, "nonexistent"), tmpDir, ig, false);
-    assert.deepStrictEqual(entries, []);
+    expect(entries).toEqual([]);
   });
 
   it("provides correct relative and absolute paths", () => {
@@ -97,8 +96,8 @@ describe("readDirectory", () => {
     const ig = createIgnoreFilter(tmpDir);
     const entries = readDirectory(join(tmpDir, "src"), tmpDir, ig, false);
     const file = entries.find((e) => e.name === "file.ts");
-    assert.ok(file);
-    assert.strictEqual(file.path, "src/file.ts");
-    assert.strictEqual(file.absolutePath, join(tmpDir, "src", "file.ts"));
+    expect(file).toBeTruthy();
+    expect(file.path).toBe("src/file.ts");
+    expect(file.absolutePath).toBe(join(tmpDir, "src", "file.ts"));
   });
 });

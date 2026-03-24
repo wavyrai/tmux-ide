@@ -1,5 +1,4 @@
-import { describe, it, beforeEach, afterEach } from "node:test";
-import assert from "node:assert/strict";
+import { describe, it, beforeEach, afterEach, expect } from "bun:test";
 import { mkdtempSync, writeFileSync, readFileSync, mkdirSync, rmSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -77,29 +76,29 @@ afterEach(() => {
 
 describe("loadTasks", () => {
   it("returns empty array when .tasks/ does not exist", () => {
-    assert.deepStrictEqual(loadTasks(tmpDir), []);
+    expect(loadTasks(tmpDir)).toEqual([]);
   });
 
   it("loads tasks from .tasks/tasks/ directory", () => {
     writeTask({ id: "001", title: "First task", status: "todo" });
     writeTask({ id: "002", title: "Second task", status: "in-progress" });
     const tasks = loadTasks(tmpDir);
-    assert.strictEqual(tasks.length, 2);
-    assert.strictEqual(tasks[0]!.id, "001");
-    assert.strictEqual(tasks[1]!.id, "002");
+    expect(tasks.length).toBe(2);
+    expect(tasks[0]!.id).toBe("001");
+    expect(tasks[1]!.id).toBe("002");
   });
 
   it("includes goal field from loaded tasks", () => {
     writeTask({ id: "001", title: "With goal", status: "todo", goal: "01" });
     const tasks = loadTasks(tmpDir);
-    assert.strictEqual(tasks[0]!.goal, "01");
+    expect(tasks[0]!.goal).toBe("01");
   });
 
   it("defaults goal to null for legacy tasks", () => {
     writeLegacyTask({ id: "001", title: "Legacy", status: "todo" });
     const tasks = loadTasks(tmpDir);
     // goal is not in legacy JSON, normalizeTask in task-store should handle it
-    assert.ok(tasks[0]!.goal === null || tasks[0]!.goal === undefined);
+    expect(tasks[0]!.goal === null || tasks[0]!.goal === undefined).toBeTruthy();
   });
 });
 
@@ -108,15 +107,15 @@ describe("updateTaskStatus", () => {
     writeTask({ id: "001", title: "Test", status: "todo" });
     updateTaskStatus(tmpDir, "001", "in-progress");
     const tasks = loadTasks(tmpDir);
-    assert.strictEqual(tasks[0]!.status, "in-progress");
-    assert.notStrictEqual(tasks[0]!.updated, "2026-01-01T00:00:00Z");
+    expect(tasks[0]!.status).toBe("in-progress");
+    expect(tasks[0]!.updated).not.toBe("2026-01-01T00:00:00Z");
   });
 
   it("does nothing for non-existent task ID", () => {
     writeTask({ id: "001", title: "Test", status: "todo" });
     updateTaskStatus(tmpDir, "999", "done");
     const tasks = loadTasks(tmpDir);
-    assert.strictEqual(tasks[0]!.status, "todo");
+    expect(tasks[0]!.status).toBe("todo");
   });
 });
 
@@ -125,14 +124,14 @@ describe("updateTaskAssignee", () => {
     writeTask({ id: "001", title: "Test", status: "todo" });
     updateTaskAssignee(tmpDir, "001", "Agent 1");
     const tasks = loadTasks(tmpDir);
-    assert.strictEqual(tasks[0]!.assignee, "Agent 1");
+    expect(tasks[0]!.assignee).toBe("Agent 1");
   });
 
   it("clears assignee with null", () => {
     writeTask({ id: "001", title: "Test", status: "todo", assignee: "Agent 1" });
     updateTaskAssignee(tmpDir, "001", null);
     const tasks = loadTasks(tmpDir);
-    assert.strictEqual(tasks[0]!.assignee, null);
+    expect(tasks[0]!.assignee).toBe(null);
   });
 });
 
@@ -141,25 +140,25 @@ describe("createTask", () => {
     writeTask({ id: "001", title: "Existing", status: "todo" });
     const existing = loadTasks(tmpDir);
     const task = createTask(tmpDir, existing);
-    assert.strictEqual(task.id, "002");
-    assert.strictEqual(task.status, "todo");
-    assert.strictEqual(task.goal, null);
+    expect(task.id).toBe("002");
+    expect(task.status).toBe("todo");
+    expect(task.goal).toBe(null);
     const all = loadTasks(tmpDir);
-    assert.strictEqual(all.length, 2);
+    expect(all.length).toBe(2);
   });
 
   it("creates .tasks/ directory if it does not exist", () => {
     const task = createTask(tmpDir, []);
-    assert.strictEqual(task.id, "001");
-    assert.ok(existsSync(getTasksDir(tmpDir)));
+    expect(task.id).toBe("001");
+    expect(existsSync(getTasksDir(tmpDir))).toBeTruthy();
   });
 
   it("created task is loadable via loadTasks", () => {
     const task = createTask(tmpDir, []);
     const loaded = loadTasks(tmpDir);
-    assert.strictEqual(loaded.length, 1);
-    assert.strictEqual(loaded[0]!.id, task.id);
-    assert.strictEqual(loaded[0]!.goal, null);
+    expect(loaded.length).toBe(1);
+    expect(loaded[0]!.id).toBe(task.id);
+    expect(loaded[0]!.goal).toBe(null);
   });
 });
 
@@ -187,12 +186,12 @@ describe("groupTasks", () => {
       { ...taskBase, id: "3", title: "C", status: "in-progress", priority: 1 },
     ];
     const groups = groupTasks(tasks);
-    assert.strictEqual(groups[0]!.status, "in-progress");
-    assert.strictEqual(groups[0]!.tasks.length, 1);
-    assert.strictEqual(groups[1]!.status, "todo");
-    assert.strictEqual(groups[1]!.tasks.length, 1);
-    assert.strictEqual(groups[3]!.status, "done");
-    assert.strictEqual(groups[3]!.tasks.length, 1);
+    expect(groups[0]!.status).toBe("in-progress");
+    expect(groups[0]!.tasks.length).toBe(1);
+    expect(groups[1]!.status).toBe("todo");
+    expect(groups[1]!.tasks.length).toBe(1);
+    expect(groups[3]!.status).toBe("done");
+    expect(groups[3]!.tasks.length).toBe(1);
   });
 
   it("sorts by priority within each group", () => {
@@ -202,17 +201,17 @@ describe("groupTasks", () => {
     ];
     const groups = groupTasks(tasks);
     const todo = groups.find((g) => g.status === "todo")!;
-    assert.strictEqual(todo.tasks[0]!.title, "High");
-    assert.strictEqual(todo.tasks[1]!.title, "Low");
+    expect(todo.tasks[0]!.title).toBe("High");
+    expect(todo.tasks[1]!.title).toBe("Low");
   });
 });
 
 describe("nextStatus", () => {
   it("cycles through statuses", () => {
-    assert.strictEqual(nextStatus("todo"), "in-progress");
-    assert.strictEqual(nextStatus("in-progress"), "review");
-    assert.strictEqual(nextStatus("review"), "done");
-    assert.strictEqual(nextStatus("done"), "todo");
+    expect(nextStatus("todo")).toBe("in-progress");
+    expect(nextStatus("in-progress")).toBe("review");
+    expect(nextStatus("review")).toBe("done");
+    expect(nextStatus("done")).toBe("todo");
   });
 });
 
@@ -228,28 +227,28 @@ describe("flattenTaskList", () => {
       { status: "done" as const, tasks: [] },
     ];
     const flat = flattenTaskList(groups);
-    assert.strictEqual(flat.length, 5);
-    assert.strictEqual(flat[0]!.kind, "header");
-    assert.strictEqual(flat[1]!.kind, "task");
-    if (flat[1]!.kind === "task") assert.strictEqual(flat[1]!.task.id, "1");
-    assert.strictEqual(flat[2]!.kind, "header");
-    assert.strictEqual(flat[3]!.kind, "task");
-    if (flat[3]!.kind === "task") assert.strictEqual(flat[3]!.task.id, "2");
-    assert.strictEqual(flat[4]!.kind, "task");
-    if (flat[4]!.kind === "task") assert.strictEqual(flat[4]!.task.id, "3");
+    expect(flat.length).toBe(5);
+    expect(flat[0]!.kind).toBe("header");
+    expect(flat[1]!.kind).toBe("task");
+    if (flat[1]!.kind === "task") expect(flat[1]!.task.id).toBe("1");
+    expect(flat[2]!.kind).toBe("header");
+    expect(flat[3]!.kind).toBe("task");
+    if (flat[3]!.kind === "task") expect(flat[3]!.task.id).toBe("2");
+    expect(flat[4]!.kind).toBe("task");
+    if (flat[4]!.kind === "task") expect(flat[4]!.task.id).toBe("3");
   });
 });
 
 describe("ensureTasksDir", () => {
   it("creates .tasks/ directory", () => {
     ensureTasksDir(tmpDir);
-    assert.ok(existsSync(getTasksDir(tmpDir)));
+    expect(existsSync(getTasksDir(tmpDir))).toBeTruthy();
   });
 
   it("does nothing if already exists", () => {
     ensureTasksDir(tmpDir);
     ensureTasksDir(tmpDir);
-    assert.ok(existsSync(getTasksDir(tmpDir)));
+    expect(existsSync(getTasksDir(tmpDir))).toBeTruthy();
   });
 });
 
@@ -257,12 +256,12 @@ describe("retry field defaults", () => {
   it("loadTasks applies retry defaults to legacy JSON without retry fields", () => {
     writeLegacyTask({ id: "001", title: "Legacy", status: "todo" });
     const tasks = loadTasks(tmpDir);
-    assert.strictEqual(tasks.length, 1);
+    expect(tasks.length).toBe(1);
     const t = tasks[0]!;
-    assert.strictEqual(t.retryCount, 0);
-    assert.strictEqual(t.maxRetries, 5);
-    assert.strictEqual(t.lastError, null);
-    assert.strictEqual(t.nextRetryAt, null);
+    expect(t.retryCount).toBe(0);
+    expect(t.maxRetries).toBe(5);
+    expect(t.lastError).toBe(null);
+    expect(t.nextRetryAt).toBe(null);
   });
 
   it("preserves explicit retry values from JSON", () => {
@@ -277,18 +276,18 @@ describe("retry field defaults", () => {
     });
     const tasks = loadTasks(tmpDir);
     const t = tasks[0]!;
-    assert.strictEqual(t.retryCount, 3);
-    assert.strictEqual(t.maxRetries, 10);
-    assert.strictEqual(t.lastError, "timeout");
-    assert.strictEqual(t.nextRetryAt, "2026-01-01T01:00:00Z");
+    expect(t.retryCount).toBe(3);
+    expect(t.maxRetries).toBe(10);
+    expect(t.lastError).toBe("timeout");
+    expect(t.nextRetryAt).toBe("2026-01-01T01:00:00Z");
   });
 
   it("createTask includes retry defaults", () => {
     const task = createTask(tmpDir, []);
-    assert.strictEqual(task.retryCount, 0);
-    assert.strictEqual(task.maxRetries, 5);
-    assert.strictEqual(task.lastError, null);
-    assert.strictEqual(task.nextRetryAt, null);
+    expect(task.retryCount).toBe(0);
+    expect(task.maxRetries).toBe(5);
+    expect(task.lastError).toBe(null);
+    expect(task.nextRetryAt).toBe(null);
   });
 });
 
@@ -296,7 +295,7 @@ describe("depends_on", () => {
   it("defaults depends_on to empty array for legacy tasks", () => {
     writeLegacyTask({ id: "001", title: "Legacy", status: "todo" });
     const tasks = loadTasks(tmpDir);
-    assert.deepStrictEqual(tasks[0]!.depends_on, []);
+    expect(tasks[0]!.depends_on).toEqual([]);
   });
 
   it("preserves depends_on when present in JSON", () => {
@@ -321,12 +320,12 @@ describe("depends_on", () => {
       }) + "\n",
     );
     const tasks = loadTasks(tmpDir);
-    assert.deepStrictEqual(tasks[0]!.depends_on, ["002", "003"]);
+    expect(tasks[0]!.depends_on).toEqual(["002", "003"]);
   });
 
   it("createTask sets depends_on to empty array", () => {
     const task = createTask(tmpDir, []);
-    assert.deepStrictEqual(task.depends_on, []);
+    expect(task.depends_on).toEqual([]);
   });
 });
 
@@ -355,7 +354,7 @@ describe("isBlocked", () => {
       priority: 1,
       depends_on: [],
     };
-    assert.strictEqual(isBlocked(task, []), false);
+    expect(isBlocked(task, [])).toBe(false);
   });
 
   it("returns true when a dependency is not done", () => {
@@ -375,7 +374,7 @@ describe("isBlocked", () => {
       priority: 1,
       depends_on: ["002"],
     };
-    assert.strictEqual(isBlocked(task, [task, dep]), true);
+    expect(isBlocked(task, [task, dep])).toBe(true);
   });
 
   it("returns false when all dependencies are done", () => {
@@ -395,7 +394,7 @@ describe("isBlocked", () => {
       priority: 1,
       depends_on: ["002"],
     };
-    assert.strictEqual(isBlocked(task, [task, dep]), false);
+    expect(isBlocked(task, [task, dep])).toBe(false);
   });
 
   it("returns true when dependency ID is missing from task list", () => {
@@ -407,7 +406,7 @@ describe("isBlocked", () => {
       priority: 1,
       depends_on: ["999"],
     };
-    assert.strictEqual(isBlocked(task, [task]), true);
+    expect(isBlocked(task, [task])).toBe(true);
   });
 });
 
@@ -436,10 +435,10 @@ describe("CLI interop", () => {
 
     // Widget loadTasks should see it
     const tasks = loadTasks(tmpDir);
-    assert.strictEqual(tasks.length, 1);
-    assert.strictEqual(tasks[0]!.id, "001");
-    assert.strictEqual(tasks[0]!.title, "CLI task");
-    assert.strictEqual(tasks[0]!.goal, "01");
+    expect(tasks.length).toBe(1);
+    expect(tasks[0]!.id).toBe("001");
+    expect(tasks[0]!.title).toBe("CLI task");
+    expect(tasks[0]!.goal).toBe("01");
   });
 
   it("widget updateTaskStatus changes are visible to CLI loadTask", () => {
@@ -469,6 +468,6 @@ describe("CLI interop", () => {
 
     // CLI should see the change
     const loaded = cliLoadTask(tmpDir, "001");
-    assert.strictEqual(loaded?.status, "in-progress");
+    expect(loaded?.status).toBe("in-progress");
   });
 });

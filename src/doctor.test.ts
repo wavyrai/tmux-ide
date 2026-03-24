@@ -1,5 +1,4 @@
-import { describe, it, beforeEach, afterEach } from "node:test";
-import assert from "node:assert/strict";
+import { describe, it, beforeEach, afterEach, expect } from "bun:test";
 import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -34,9 +33,9 @@ describe("doctor", () => {
     await doctor({ json: true });
     const output = JSON.parse(logged[0]);
     const tmuxCheck = output.checks.find((c) => c.label === "tmux installed");
-    assert.ok(tmuxCheck, "should have a 'tmux installed' check");
+    expect(tmuxCheck).toBeTruthy();
     // tmux is installed in this CI/test environment, so it should pass
-    assert.strictEqual(tmuxCheck.pass, true);
+    expect(tmuxCheck.pass).toBe(true);
   });
 
   it("reports tmux version check", async () => {
@@ -45,7 +44,7 @@ describe("doctor", () => {
     await doctor({ json: true });
     const output = JSON.parse(logged[0]);
     const versionCheck = output.checks.find((c) => c.label.includes("tmux version"));
-    assert.ok(versionCheck, "should have a tmux version check");
+    expect(versionCheck).toBeTruthy();
   });
 
   it("reports Node.js version check as passing", async () => {
@@ -54,8 +53,8 @@ describe("doctor", () => {
     await doctor({ json: true });
     const output = JSON.parse(logged[0]);
     const nodeCheck = output.checks.find((c) => c.label.includes("Node.js"));
-    assert.ok(nodeCheck);
-    assert.strictEqual(nodeCheck.pass, true);
+    expect(nodeCheck).toBeTruthy();
+    expect(nodeCheck.pass).toBe(true);
   });
 
   it("reports ide.yml exists check as passing when present", async () => {
@@ -64,8 +63,8 @@ describe("doctor", () => {
     await doctor({ json: true });
     const output = JSON.parse(logged[0]);
     const ideCheck = output.checks.find((c) => c.label.includes("ide.yml"));
-    assert.ok(ideCheck);
-    assert.strictEqual(ideCheck.pass, true);
+    expect(ideCheck).toBeTruthy();
+    expect(ideCheck.pass).toBe(true);
   });
 
   it("reports ide.yml exists check as failing when absent", async () => {
@@ -74,8 +73,8 @@ describe("doctor", () => {
     await doctor({ json: true });
     const output = JSON.parse(logged[0]);
     const ideCheck = output.checks.find((c) => c.label.includes("ide.yml"));
-    assert.ok(ideCheck);
-    assert.strictEqual(ideCheck.pass, false);
+    expect(ideCheck).toBeTruthy();
+    expect(ideCheck.pass).toBe(false);
   });
 
   it("marks agent teams check as optional", async () => {
@@ -84,8 +83,8 @@ describe("doctor", () => {
     await doctor({ json: true });
     const output = JSON.parse(logged[0]);
     const teamsCheck = output.checks.find((c) => c.label.includes("agent teams"));
-    assert.ok(teamsCheck);
-    assert.strictEqual(teamsCheck.optional, true);
+    expect(teamsCheck).toBeTruthy();
+    expect(teamsCheck.optional).toBe(true);
   });
 
   it("optional checks don't fail the overall result", async () => {
@@ -100,7 +99,7 @@ describe("doctor", () => {
       // ok depends on required checks, not optional ones
       const requiredFailing = output.checks.filter((c) => !c.pass && !c.optional);
       if (requiredFailing.length === 0) {
-        assert.strictEqual(output.ok, true);
+        expect(output.ok).toBe(true);
       }
     } finally {
       if (origEnv !== undefined) {
@@ -114,7 +113,7 @@ describe("doctor", () => {
     writeFileSync(join(tmpDir, "ide.yml"), "name: test\nrows:\n  - panes:\n      - title: Shell\n");
     await doctor();
     // Should have printed colored output with ✓ or ✗
-    assert.ok(logged.length > 0);
-    assert.ok(logged.some((l) => l.includes("tmux installed")));
+    expect(logged.length > 0).toBeTruthy();
+    expect(logged.some((l) => l.includes("tmux installed"))).toBeTruthy();
   });
 });

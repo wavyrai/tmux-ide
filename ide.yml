@@ -29,16 +29,13 @@ rows:
         size: 30%
   - size: 30%
     panes:
-      - title: War Room
-        type: warroom
-        size: 25%
-      - title: Tasks
-        type: tasks
-        size: 25%
+      - title: Mission Control
+        type: mission-control
+        size: 40%
       - title: Explorer
         type: explorer
-        size: 25%
+        size: 30%
         target: Preview
       - title: Preview
         type: preview
-        size: 25%
+        size: 30%

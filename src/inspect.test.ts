@@ -1,5 +1,4 @@
-import { describe, it } from "node:test";
-import assert from "node:assert/strict";
+import { describe, it, expect } from "bun:test";
 import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
@@ -31,14 +30,14 @@ describe("inspect command", () => {
     try {
       const result = runCli(["inspect", "--json"], dir);
 
-      assert.strictEqual(result.status, 0);
+      expect(result.status).toBe(0);
       const payload = JSON.parse(result.stdout);
-      assert.strictEqual(payload.session, "inspect-session");
-      assert.strictEqual(payload.valid, true);
-      assert.strictEqual(payload.summary.rows, 1);
-      assert.strictEqual(payload.summary.panes, 2);
-      assert.strictEqual(payload.summary.focus, "rows.0.panes.0");
-      assert.strictEqual(payload.tmux.running, false);
+      expect(payload.session).toBe("inspect-session");
+      expect(payload.valid).toBe(true);
+      expect(payload.summary.rows).toBe(1);
+      expect(payload.summary.panes).toBe(2);
+      expect(payload.summary.focus).toBe("rows.0.panes.0");
+      expect(payload.tmux.running).toBe(false);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -50,11 +49,11 @@ describe("inspect command", () => {
     try {
       const result = runCli(["inspect", "--json"], dir);
 
-      assert.strictEqual(result.status, 0);
+      expect(result.status).toBe(0);
       const payload = JSON.parse(result.stdout);
-      assert.strictEqual(payload.valid, false);
-      assert.match(JSON.stringify(payload.errors), /rows\[0\]\.panes must be an array/);
-      assert.deepStrictEqual(payload.rows, [
+      expect(payload.valid).toBe(false);
+      expect(JSON.stringify(payload.errors)).toMatch(/rows\[0\]\.panes must be an array/);
+      expect(payload.rows).toEqual([
         {
           index: 0,
           size: null,

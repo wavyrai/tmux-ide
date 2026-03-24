@@ -228,16 +228,16 @@ if (isMainModule) {
   // Start orchestrator if enabled in config
   (async () => {
     try {
-      const { readConfig } = await import("./yaml-io.js");
+      const { readConfig } = await import("./yaml-io.ts");
       const { config } = readConfig(process.cwd());
 
       if (config.orchestrator?.enabled) {
         try {
-          const { createOrchestrator } = await import("./orchestrator.js");
+          const { createOrchestrator } = await import("./orchestrator.ts");
 
           // Configure webhooks for event delivery
           if (config.orchestrator.webhooks?.length) {
-            const { setWebhookConfig } = await import("./event-log.js");
+            const { setWebhookConfig } = await import("./event-log.ts");
             setWebhookConfig(config.orchestrator.webhooks);
           }
 

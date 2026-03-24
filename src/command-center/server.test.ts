@@ -1,5 +1,4 @@
-import { describe, it, beforeEach, afterEach } from "node:test";
-import assert from "node:assert/strict";
+import { describe, it, beforeEach, afterEach, expect } from "bun:test";
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -66,15 +65,15 @@ describe("GET /api/sessions", () => {
 
     const app = createApp();
     const res = await app.request("/api/sessions");
-    assert.strictEqual(res.status, 200);
+    expect(res.status).toBe(200);
 
     const body = (await res.json()) as {
       sessions: Array<{ name: string; stats: { totalTasks: number; doneTasks: number } }>;
     };
-    assert.strictEqual(body.sessions.length, 1);
-    assert.strictEqual(body.sessions[0]!.name, "test-project");
-    assert.strictEqual(body.sessions[0]!.stats.totalTasks, 2);
-    assert.strictEqual(body.sessions[0]!.stats.doneTasks, 1);
+    expect(body.sessions.length).toBe(1);
+    expect(body.sessions[0]!.name).toBe("test-project");
+    expect(body.sessions[0]!.stats.totalTasks).toBe(2);
+    expect(body.sessions[0]!.stats.doneTasks).toBe(1);
   });
 });
 
@@ -87,23 +86,23 @@ describe("GET /api/project/:name", () => {
 
     const app = createApp();
     const res = await app.request("/api/project/test-project");
-    assert.strictEqual(res.status, 200);
+    expect(res.status).toBe(200);
 
     const body = (await res.json()) as {
       session: string;
       tasks: Task[];
       agents: Array<{ paneTitle: string }>;
     };
-    assert.strictEqual(body.session, "test-project");
-    assert.strictEqual(body.tasks.length, 1);
-    assert.strictEqual(body.agents.length, 1);
-    assert.strictEqual(body.agents[0]!.paneTitle, name);
+    expect(body.session).toBe("test-project");
+    expect(body.tasks.length).toBe(1);
+    expect(body.agents.length).toBe(1);
+    expect(body.agents[0]!.paneTitle).toBe(name);
   });
 
   it("returns 404 for unknown session", async () => {
     const app = createApp();
     const res = await app.request("/api/project/nonexistent");
-    assert.strictEqual(res.status, 404);
+    expect(res.status).toBe(404);
   });
 });
 
@@ -118,13 +117,13 @@ describe("POST /api/project/:name/task/:id", () => {
       body: JSON.stringify({ status: "in-progress" }),
     });
 
-    assert.strictEqual(res.status, 200);
+    expect(res.status).toBe(200);
     const body = (await res.json()) as { ok: boolean; task: Task };
-    assert.strictEqual(body.ok, true);
-    assert.strictEqual(body.task.status, "in-progress");
+    expect(body.ok).toBe(true);
+    expect(body.task.status).toBe("in-progress");
 
     const loaded = loadTask(tmpDir, "001");
-    assert.strictEqual(loaded?.status, "in-progress");
+    expect(loaded?.status).toBe("in-progress");
   });
 
   it("returns 404 for unknown session", async () => {
@@ -134,7 +133,7 @@ describe("POST /api/project/:name/task/:id", () => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ status: "done" }),
     });
-    assert.strictEqual(res.status, 404);
+    expect(res.status).toBe(404);
   });
 
   it("returns 404 for unknown task", async () => {
@@ -144,7 +143,7 @@ describe("POST /api/project/:name/task/:id", () => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ status: "done" }),
     });
-    assert.strictEqual(res.status, 404);
+    expect(res.status).toBe(404);
   });
 
   it("rejects invalid status via zod validation", async () => {
@@ -155,7 +154,7 @@ describe("POST /api/project/:name/task/:id", () => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ status: "invalid-status" }),
     });
-    assert.strictEqual(res.status, 400);
+    expect(res.status).toBe(400);
   });
 });
 
@@ -167,12 +166,12 @@ describe("POST /api/project/:name/task (create)", () => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ title: "New task", priority: 1 }),
     });
-    assert.strictEqual(res.status, 201);
+    expect(res.status).toBe(201);
     const body = (await res.json()) as { ok: boolean; task: Task };
-    assert.strictEqual(body.ok, true);
-    assert.strictEqual(body.task.title, "New task");
-    assert.strictEqual(body.task.status, "todo");
-    assert.ok(body.task.id);
+    expect(body.ok).toBe(true);
+    expect(body.task.title).toBe("New task");
+    expect(body.task.status).toBe("todo");
+    expect(body.task.id).toBeTruthy();
   });
 
   it("returns 400 when title is missing", async () => {
@@ -182,7 +181,7 @@ describe("POST /api/project/:name/task (create)", () => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ description: "no title" }),
     });
-    assert.strictEqual(res.status, 400);
+    expect(res.status).toBe(400);
   });
 });
 
@@ -193,10 +192,10 @@ describe("DELETE /api/project/:name/task/:id", () => {
     const res = await app.request("/api/project/test-project/task/001", {
       method: "DELETE",
     });
-    assert.strictEqual(res.status, 200);
+    expect(res.status).toBe(200);
     const body = (await res.json()) as { ok: boolean };
-    assert.strictEqual(body.ok, true);
-    assert.strictEqual(loadTask(tmpDir, "001"), null);
+    expect(body.ok).toBe(true);
+    expect(loadTask(tmpDir, "001")).toBe(null);
   });
 
   it("returns 404 for unknown task", async () => {
@@ -204,7 +203,7 @@ describe("DELETE /api/project/:name/task/:id", () => {
     const res = await app.request("/api/project/test-project/task/999", {
       method: "DELETE",
     });
-    assert.strictEqual(res.status, 404);
+    expect(res.status).toBe(404);
   });
 });
 
@@ -219,12 +218,12 @@ describe("GET /api/project/:name/plans", () => {
 
     const app = createApp();
     const res = await app.request("/api/project/test-project/plans");
-    assert.strictEqual(res.status, 200);
+    expect(res.status).toBe(200);
     const body = (await res.json()) as { plans: Array<{ name: string; status: string }> };
-    assert.ok(body.plans.length >= 1);
+    expect(body.plans.length >= 1).toBeTruthy();
     const plan = body.plans.find((p) => p.name === "01-test");
-    assert.ok(plan);
-    assert.strictEqual(plan!.status, "pending");
+    expect(plan).toBeTruthy();
+    expect(plan!.status).toBe("pending");
   });
 });
 
@@ -236,15 +235,15 @@ describe("GET /api/project/:name/plans/:filename", () => {
 
     const app = createApp();
     const res = await app.request("/api/project/test-project/plans/test-plan");
-    assert.strictEqual(res.status, 200);
+    expect(res.status).toBe(200);
     const body = (await res.json()) as { name: string; content: string; marks: unknown };
-    assert.ok(body.content.includes("Test Plan"));
+    expect(body.content.includes("Test Plan")).toBeTruthy();
   });
 
   it("returns 404 for missing plan", async () => {
     const app = createApp();
     const res = await app.request("/api/project/test-project/plans/nonexistent");
-    assert.strictEqual(res.status, 404);
+    expect(res.status).toBe(404);
   });
 });
 
@@ -256,12 +255,12 @@ describe("POST /api/project/:name/plans/:filename", () => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ content: "# New Plan\n\nContent here." }),
     });
-    assert.strictEqual(res.status, 200);
+    expect(res.status).toBe(200);
 
     const getRes = await app.request("/api/project/test-project/plans/new-plan");
-    assert.strictEqual(getRes.status, 200);
+    expect(getRes.status).toBe(200);
     const body = (await getRes.json()) as { content: string };
-    assert.ok(body.content.includes("New Plan"));
+    expect(body.content.includes("New Plan")).toBeTruthy();
   });
 });
 
@@ -275,10 +274,10 @@ describe("DELETE /api/project/:name/plans/:filename", () => {
     const res = await app.request("/api/project/test-project/plans/to-delete", {
       method: "DELETE",
     });
-    assert.strictEqual(res.status, 200);
+    expect(res.status).toBe(200);
 
     const getRes = await app.request("/api/project/test-project/plans/to-delete");
-    assert.strictEqual(getRes.status, 404);
+    expect(getRes.status).toBe(404);
   });
 });
 
@@ -292,10 +291,10 @@ describe("POST /api/project/:name/plans/:filename/done", () => {
     const res = await app.request("/api/project/test-project/plans/70-test/done", {
       method: "POST",
     });
-    assert.strictEqual(res.status, 200);
+    expect(res.status).toBe(200);
     const body = (await res.json()) as { ok: boolean; plan: { status: string } };
-    assert.strictEqual(body.ok, true);
-    assert.strictEqual(body.plan.status, "done");
+    expect(body.ok).toBe(true);
+    expect(body.plan.status).toBe("done");
   });
 });
 
@@ -303,10 +302,10 @@ describe("GET /api/project/:name/diff", () => {
   it("returns diff shape", async () => {
     const app = createApp();
     const res = await app.request("/api/project/test-project/diff");
-    assert.strictEqual(res.status, 200);
+    expect(res.status).toBe(200);
     const body = (await res.json()) as { diff: string; files: unknown[] };
-    assert.strictEqual(typeof body.diff, "string");
-    assert.ok(Array.isArray(body.files));
+    expect(typeof body.diff).toBe("string");
+    expect(Array.isArray(body.files)).toBeTruthy();
   });
 });
 
@@ -321,13 +320,13 @@ describe("GET /api/project/:name/events", () => {
 
     const app = createApp();
     const res = await app.request("/api/project/test-project/events");
-    assert.strictEqual(res.status, 200);
+    expect(res.status).toBe(200);
     const body = (await res.json()) as {
       events: Array<{ type: string; message: string; relative: string }>;
     };
-    assert.ok(body.events.length >= 1);
-    assert.strictEqual(body.events[0]!.message, "Test event");
-    assert.ok(body.events[0]!.relative);
+    expect(body.events.length >= 1).toBeTruthy();
+    expect(body.events[0]!.message).toBe("Test event");
+    expect(body.events[0]!.relative).toBeTruthy();
   });
 });
 
@@ -338,6 +337,6 @@ describe("GET /", () => {
   it("returns health check", async () => {
     const app = createApp();
     const res = await app.request("/");
-    assert.strictEqual(res.status, 200);
+    expect(res.status).toBe(200);
   });
 });

@@ -1,19 +1,15 @@
-import { describe, it } from "node:test";
-import assert from "node:assert/strict";
+import { describe, it, expect } from "bun:test";
 import { buildPaneCommand, collectPaneStartupPlan } from "./launch-plan.ts";
 import type { Row } from "../types.ts";
 
 describe("buildPaneCommand", () => {
   it("passes through normal pane commands", () => {
-    assert.strictEqual(buildPaneCommand({ command: "pnpm dev" }), "pnpm dev");
+    expect(buildPaneCommand({ command: "pnpm dev" })).toBe("pnpm dev");
   });
 
   it("returns the command unchanged for Claude panes", () => {
-    assert.strictEqual(buildPaneCommand({ command: "claude", role: "lead" }), "claude");
-    assert.strictEqual(
-      buildPaneCommand({ command: "claude", role: "teammate", task: 'Fix "lint"' }),
-      "claude",
-    );
+    expect(buildPaneCommand({ command: "claude", role: "lead" })).toBe("claude");
+    expect(buildPaneCommand({ command: "claude", role: "teammate", task: 'Fix "lint"' })).toBe("claude");
   });
 });
 
@@ -38,8 +34,8 @@ describe("collectPaneStartupPlan", () => {
       "/workspace",
     );
 
-    assert.strictEqual(result.focusPane, "%1");
-    assert.deepStrictEqual(result.paneActions, [
+    expect(result.focusPane).toBe("%1");
+    expect(result.paneActions).toEqual([
       {
         targetPane: "%1",
         title: "Lead",
@@ -113,9 +109,9 @@ describe("collectPaneStartupPlan", () => {
     );
 
     // Full has 5 pane actions (3 widgets + agent + shell)
-    assert.strictEqual(fullResult.paneActions.length, 5);
+    expect(fullResult.paneActions.length).toBe(5);
     // Headless has only 2 (agent + shell), 3 widget panes stripped
-    assert.strictEqual(headlessResult.paneActions.length, 2);
-    assert.ok(headlessResult.paneActions.every((a) => a.widgetType === null));
+    expect(headlessResult.paneActions.length).toBe(2);
+    expect(headlessResult.paneActions.every((a) => a.widgetType === null)).toBeTruthy();
   });
 });

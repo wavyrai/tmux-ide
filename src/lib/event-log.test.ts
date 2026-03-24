@@ -1,5 +1,4 @@
-import { describe, it, beforeEach, afterEach } from "node:test";
-import assert from "node:assert/strict";
+import { describe, it, beforeEach, afterEach, expect } from "bun:test";
 import {
   mkdtempSync,
   rmSync,
@@ -33,7 +32,7 @@ describe("appendEvent", () => {
       message: "Dispatched task 001 to Agent 1",
     });
 
-    assert.ok(existsSync(join(tmpDir, ".tasks", "events.log")));
+    expect(existsSync(join(tmpDir, ".tasks", "events.log"))).toBeTruthy();
   });
 
   it("appends events as JSON lines", () => {
@@ -51,9 +50,9 @@ describe("appendEvent", () => {
     });
 
     const events = readEvents(tmpDir);
-    assert.strictEqual(events.length, 2);
-    assert.strictEqual(events[0]!.type, "dispatch");
-    assert.strictEqual(events[1]!.type, "completion");
+    expect(events.length).toBe(2);
+    expect(events[0]!.type).toBe("dispatch");
+    expect(events[1]!.type).toBe("completion");
   });
 
   it("works without optional fields", () => {
@@ -64,15 +63,15 @@ describe("appendEvent", () => {
     });
 
     const events = readEvents(tmpDir);
-    assert.strictEqual(events.length, 1);
-    assert.strictEqual(events[0]!.taskId, undefined);
-    assert.strictEqual(events[0]!.agent, undefined);
+    expect(events.length).toBe(1);
+    expect(events[0]!.taskId).toBe(undefined);
+    expect(events[0]!.agent).toBe(undefined);
   });
 });
 
 describe("readEvents", () => {
   it("returns empty array when log doesn't exist", () => {
-    assert.deepStrictEqual(readEvents(tmpDir), []);
+    expect(readEvents(tmpDir)).toEqual([]);
   });
 
   it("returns all event types", () => {
@@ -89,11 +88,8 @@ describe("readEvents", () => {
     }
 
     const events = readEvents(tmpDir);
-    assert.strictEqual(events.length, 6);
-    assert.deepStrictEqual(
-      events.map((e) => e.type),
-      types,
-    );
+    expect(events.length).toBe(6);
+    expect(events.map((e) => e.type)).toEqual(types);
   });
 
   it("skips corrupted lines and returns valid events", () => {
@@ -109,9 +105,9 @@ describe("readEvents", () => {
     writeFileSync(logPath, `${validEvent}\nnot json at all\n${validEvent}\n`);
 
     const events = readEvents(tmpDir);
-    assert.strictEqual(events.length, 2);
-    assert.strictEqual(events[0]!.message, "valid event");
-    assert.strictEqual(events[1]!.message, "valid event");
+    expect(events.length).toBe(2);
+    expect(events[0]!.message).toBe("valid event");
+    expect(events[1]!.message).toBe("valid event");
   });
 
   it("reads events from both current and rotated log files", () => {
@@ -133,9 +129,9 @@ describe("readEvents", () => {
     writeFileSync(join(tasksDir, "events.log"), newEvent + "\n");
 
     const events = readEvents(tmpDir);
-    assert.strictEqual(events.length, 2);
-    assert.strictEqual(events[0]!.message, "old event");
-    assert.strictEqual(events[1]!.message, "new event");
+    expect(events.length).toBe(2);
+    expect(events[0]!.message).toBe("old event");
+    expect(events[1]!.message).toBe("new event");
   });
 });
 
@@ -156,7 +152,7 @@ describe("log rotation", () => {
     const linesNeeded = Math.ceil(1048577 / lineSize);
     writeFileSync(logPath, (event + "\n").repeat(linesNeeded));
 
-    assert.ok(statSync(logPath).size > 1048576, "log should exceed 1MB before rotation");
+    expect(statSync(logPath).size > 1048576).toBeTruthy();
 
     // Next appendEvent should trigger rotation
     appendEvent(tmpDir, {
@@ -167,17 +163,17 @@ describe("log rotation", () => {
     });
 
     // events.log should now be small (just the new event)
-    assert.ok(statSync(logPath).size < 1024, "events.log should be small after rotation");
+    expect(statSync(logPath).size < 1024).toBeTruthy();
 
     // Rotated file should exist with the old content
     const rotatedPath = join(tasksDir, "events.log.1");
-    assert.ok(existsSync(rotatedPath), "events.log.1 should exist");
-    assert.ok(statSync(rotatedPath).size > 1048576, "rotated file should have old content");
+    expect(existsSync(rotatedPath)).toBeTruthy();
+    expect(statSync(rotatedPath).size > 1048576).toBeTruthy();
 
     // readEvents should return events from both files
     const events = readEvents(tmpDir);
-    assert.ok(events.length > linesNeeded, "should have events from both files");
-    assert.strictEqual(events[events.length - 1]!.message, "trigger rotation");
+    expect(events.length > linesNeeded).toBeTruthy();
+    expect(events[events.length - 1]!.message).toBe("trigger rotation");
   });
 
   it("does not rotate when file is under 1MB", () => {
@@ -193,9 +189,9 @@ describe("log rotation", () => {
     });
 
     const rotatedPath = join(tmpDir, ".tasks", "events.log.1");
-    assert.ok(!existsSync(rotatedPath), "events.log.1 should not exist");
+    expect(!existsSync(rotatedPath)).toBeTruthy();
 
     const events = readEvents(tmpDir);
-    assert.strictEqual(events.length, 2);
+    expect(events.length).toBe(2);
   });
 });

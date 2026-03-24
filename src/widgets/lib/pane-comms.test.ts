@@ -1,5 +1,4 @@
-import { describe, it, beforeEach, afterEach } from "node:test";
-import assert from "node:assert/strict";
+import { describe, it, beforeEach, afterEach, expect } from "bun:test";
 import {
   _setExecutor,
   listSessionPanes,
@@ -44,136 +43,136 @@ describe("listSessionPanes", () => {
   it("parses tmux list-panes output correctly", () => {
     setMockPanes(TWO_PANES);
     const panes = listSessionPanes("test-session");
-    assert.strictEqual(panes.length, 2);
-    assert.strictEqual(panes[0]!.id, "%0");
-    assert.strictEqual(panes[0]!.title, "Files");
-    assert.strictEqual(panes[0]!.currentCommand, "zsh");
-    assert.strictEqual(panes[0]!.active, false);
-    assert.strictEqual(panes[1]!.id, "%1");
-    assert.strictEqual(panes[1]!.title, "Claude");
-    assert.strictEqual(panes[1]!.active, true);
+    expect(panes.length).toBe(2);
+    expect(panes[0]!.id).toBe("%0");
+    expect(panes[0]!.title).toBe("Files");
+    expect(panes[0]!.currentCommand).toBe("zsh");
+    expect(panes[0]!.active).toBe(false);
+    expect(panes[1]!.id).toBe("%1");
+    expect(panes[1]!.title).toBe("Claude");
+    expect(panes[1]!.active).toBe(true);
   });
 
   it("returns empty array when no output", () => {
     setMockPanes("");
     const panes = listSessionPanes("test-session");
-    assert.deepStrictEqual(panes, []);
+    expect(panes).toEqual([]);
   });
 });
 
 describe("findPaneByTitle", () => {
   it("finds pane by exact title match", () => {
     setMockPanes(TWO_PANES);
-    assert.strictEqual(findPaneByTitle("s", "Claude"), "%1");
+    expect(findPaneByTitle("s", "Claude")).toBe("%1");
   });
 
   it("returns null when title not found", () => {
     setMockPanes(TWO_PANES);
-    assert.strictEqual(findPaneByTitle("s", "Shell"), null);
+    expect(findPaneByTitle("s", "Shell")).toBe(null);
   });
 });
 
 describe("findPaneByPattern", () => {
   it("finds pane by case-insensitive substring", () => {
     setMockPanes(TWO_PANES);
-    assert.strictEqual(findPaneByPattern("s", "claude"), "%1");
+    expect(findPaneByPattern("s", "claude")).toBe("%1");
   });
 
   it("returns null when pattern not found", () => {
     setMockPanes(TWO_PANES);
-    assert.strictEqual(findPaneByPattern("s", "editor"), null);
+    expect(findPaneByPattern("s", "editor")).toBe(null);
   });
 });
 
 describe("findAdjacentPane", () => {
   it("returns the next pane", () => {
     setMockPanes(TWO_PANES);
-    assert.strictEqual(findAdjacentPane("s", "%0"), "%1");
+    expect(findAdjacentPane("s", "%0")).toBe("%1");
   });
 
   it("wraps around to the first pane", () => {
     setMockPanes(TWO_PANES);
-    assert.strictEqual(findAdjacentPane("s", "%1"), "%0");
+    expect(findAdjacentPane("s", "%1")).toBe("%0");
   });
 
   it("returns null when only one pane", () => {
     setMockPanes("%0\t0\tFiles\tzsh\t80\t24\t1");
-    assert.strictEqual(findAdjacentPane("s", "%0"), null);
+    expect(findAdjacentPane("s", "%0")).toBe(null);
   });
 
   it("returns null when pane not found", () => {
     setMockPanes(TWO_PANES);
-    assert.strictEqual(findAdjacentPane("s", "%99"), null);
+    expect(findAdjacentPane("s", "%99")).toBe(null);
   });
 });
 
 describe("isPaneBusy", () => {
   it("returns false for shell panes", () => {
     setMockPanes("%0\t0\tShell\tzsh\t80\t24\t0");
-    assert.strictEqual(isPaneBusy("s", "%0"), false);
+    expect(isPaneBusy("s", "%0")).toBe(false);
   });
 
   it("returns true for vim", () => {
     setMockPanes("%0\t0\tEditor\tvim\t80\t24\t0");
-    assert.strictEqual(isPaneBusy("s", "%0"), true);
+    expect(isPaneBusy("s", "%0")).toBe(true);
   });
 
   it("returns true for unknown pane", () => {
     setMockPanes(TWO_PANES);
-    assert.strictEqual(isPaneBusy("s", "%99"), true);
+    expect(isPaneBusy("s", "%99")).toBe(true);
   });
 });
 
 describe("getPaneBusyStatus", () => {
   it("returns agent for claude panes", () => {
     setMockPanes("%0\t0\tClaude\tclaude\t80\t24\t1");
-    assert.strictEqual(getPaneBusyStatus("s", "%0"), "agent");
+    expect(getPaneBusyStatus("s", "%0")).toBe("agent");
   });
 
   it("returns idle for shell panes", () => {
     setMockPanes("%0\t0\tShell\tbash\t80\t24\t0");
-    assert.strictEqual(getPaneBusyStatus("s", "%0"), "idle");
+    expect(getPaneBusyStatus("s", "%0")).toBe("idle");
   });
 
   it("returns busy for vim", () => {
     setMockPanes("%0\t0\tEditor\tvim\t80\t24\t0");
-    assert.strictEqual(getPaneBusyStatus("s", "%0"), "busy");
+    expect(getPaneBusyStatus("s", "%0")).toBe("busy");
   });
 
   it("returns busy for unknown pane", () => {
     setMockPanes(TWO_PANES);
-    assert.strictEqual(getPaneBusyStatus("s", "%99"), "busy");
+    expect(getPaneBusyStatus("s", "%99")).toBe("busy");
   });
 });
 
 describe("resolveTarget", () => {
   it("returns explicit paneId first", () => {
     setMockPanes(THREE_PANES);
-    assert.strictEqual(resolveTarget("s", { paneId: "%2" }), "%2");
+    expect(resolveTarget("s", { paneId: "%2" })).toBe("%2");
   });
 
   it("finds by title", () => {
     setMockPanes(THREE_PANES);
-    assert.strictEqual(resolveTarget("s", { title: "Shell" }), "%2");
+    expect(resolveTarget("s", { title: "Shell" })).toBe("%2");
   });
 
   it("finds by title pattern", () => {
     setMockPanes(THREE_PANES);
-    assert.strictEqual(resolveTarget("s", { titlePattern: "claude" }), "%1");
+    expect(resolveTarget("s", { titlePattern: "claude" })).toBe("%1");
   });
 
   it("falls back to adjacent pane", () => {
     setMockPanes(THREE_PANES);
-    assert.strictEqual(resolveTarget("s", { selfPaneId: "%0" }), "%1");
+    expect(resolveTarget("s", { selfPaneId: "%0" })).toBe("%1");
   });
 
   it("prefers title over adjacency", () => {
     setMockPanes(THREE_PANES);
-    assert.strictEqual(resolveTarget("s", { title: "Shell", selfPaneId: "%0" }), "%2");
+    expect(resolveTarget("s", { title: "Shell", selfPaneId: "%0" })).toBe("%2");
   });
 
   it("returns null when nothing matches", () => {
     setMockPanes(THREE_PANES);
-    assert.strictEqual(resolveTarget("s", {}), null);
+    expect(resolveTarget("s", {})).toBe(null);
   });
 });

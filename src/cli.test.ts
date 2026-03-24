@@ -1,5 +1,4 @@
-import { describe, it } from "node:test";
-import assert from "node:assert/strict";
+import { describe, it, expect } from "bun:test";
 import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
@@ -37,37 +36,37 @@ describe("cli contract regressions", () => {
     const missingDir = join(tmpdir(), "tmux-ide-missing-project");
     const result = runCli([missingDir]);
 
-    assert.notStrictEqual(result.status, 0);
-    assert.match(result.stderr, /No ide\.yml found in/);
-    assert.doesNotMatch(result.stderr, /Unknown command:/);
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toMatch(/No ide\.yml found in/);
+    expect(result.stderr).not.toMatch(/Unknown command:/);
   });
 
   it("returns a structured start json error when ide.yml is missing", () => {
     const missingDir = join(tmpdir(), "tmux-ide-missing-project-json");
     const result = runCli([missingDir, "--json"]);
 
-    assert.notStrictEqual(result.status, 0);
+    expect(result.status).not.toBe(0);
     const payload = JSON.parse(result.stderr);
-    assert.strictEqual(payload.code, "CONFIG_NOT_FOUND");
-    assert.match(payload.error, /No ide\.yml found in/);
-    assert.match(payload.error, /tmux-ide init/);
-    assert.match(payload.error, /tmux-ide detect --write/);
+    expect(payload.code).toBe("CONFIG_NOT_FOUND");
+    expect(payload.error).toMatch(/No ide\.yml found in/);
+    expect(payload.error).toMatch(/tmux-ide init/);
+    expect(payload.error).toMatch(/tmux-ide detect --write/);
   });
 
   it("prints help for --help without trying to launch tmux", () => {
     const result = runCli(["--help"]);
 
-    assert.strictEqual(result.status, 0);
-    assert.match(result.stdout, /Usage:/);
-    assert.match(result.stdout, /tmux-ide <path>/);
-    assert.doesNotMatch(result.stderr, /tmux new-session/);
+    expect(result.status).toBe(0);
+    expect(result.stdout).toMatch(/Usage:/);
+    expect(result.stdout).toMatch(/tmux-ide <path>/);
+    expect(result.stderr).not.toMatch(/tmux new-session/);
   });
 
   it("includes inspect in the CLI help output", () => {
     const result = runCli(["--help"]);
 
-    assert.strictEqual(result.status, 0);
-    assert.match(result.stdout, /tmux-ide inspect/);
+    expect(result.status).toBe(0);
+    expect(result.stdout).toMatch(/tmux-ide inspect/);
   });
 
   it("returns the full non-running status json shape", () => {
@@ -76,13 +75,12 @@ describe("cli contract regressions", () => {
     try {
       const result = runCli(["status", "--json"], { cwd: dir });
 
-      assert.strictEqual(result.status, 0);
-      assert.deepStrictEqual(JSON.parse(result.stdout), {
-        session: "test-session",
-        running: false,
-        configExists: true,
-        panes: [],
-      });
+      expect(result.status).toBe(0);
+      const output = JSON.parse(result.stdout);
+      expect(output.session).toBe("test-session");
+      expect(output.running).toBe(false);
+      expect(output.configExists).toBe(true);
+      expect(output.panes).toEqual([]);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -102,11 +100,11 @@ describe("cli contract regressions", () => {
     try {
       const result = runCli(["detect", "--json"], { cwd: dir });
 
-      assert.strictEqual(result.status, 0);
+      expect(result.status).toBe(0);
       const payload = JSON.parse(result.stdout);
-      assert.deepStrictEqual(Object.keys(payload).sort(), ["detected", "suggestedConfig"]);
-      assert.ok(Array.isArray(payload.detected.reasons));
-      assert.ok(Array.isArray(payload.suggestedConfig.rows));
+      expect(Object.keys(payload).sort()).toEqual(["detected", "suggestedConfig"]);
+      expect(Array.isArray(payload.detected.reasons)).toBeTruthy();
+      expect(Array.isArray(payload.suggestedConfig.rows)).toBeTruthy();
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -118,9 +116,9 @@ describe("cli contract regressions", () => {
     try {
       const result = runCli(["attach"], { cwd: dir });
 
-      assert.notStrictEqual(result.status, 0);
-      assert.match(result.stderr, /Session "test-session" is not running/);
-      assert.doesNotMatch(result.stderr, /ERR_INVALID_ARG_TYPE/);
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toMatch(/Session "test-session" is not running/);
+      expect(result.stderr).not.toMatch(/ERR_INVALID_ARG_TYPE/);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -132,8 +130,8 @@ describe("cli contract regressions", () => {
     try {
       const result = runCli(["init"], { cwd: dir });
 
-      assert.notStrictEqual(result.status, 0);
-      assert.match(result.stderr, /ide\.yml already exists/i);
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toMatch(/ide\.yml already exists/i);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -145,8 +143,8 @@ describe("cli contract regressions", () => {
     try {
       const result = runCli(["init", "--json"], { cwd: dir });
 
-      assert.notStrictEqual(result.status, 0);
-      assert.deepStrictEqual(JSON.parse(result.stderr), {
+      expect(result.status).not.toBe(0);
+      expect(JSON.parse(result.stderr)).toEqual({
         error: "ide.yml already exists in this directory",
         code: "EXISTS",
       });
@@ -161,8 +159,8 @@ describe("cli contract regressions", () => {
     try {
       const result = runCli(["init", "--template", "missing-template", "--json"], { cwd: dir });
 
-      assert.notStrictEqual(result.status, 0);
-      assert.deepStrictEqual(JSON.parse(result.stderr), {
+      expect(result.status).not.toBe(0);
+      expect(JSON.parse(result.stderr)).toEqual({
         error: 'Template "missing-template" not found',
         code: "NOT_FOUND",
       });
@@ -177,9 +175,9 @@ describe("cli contract regressions", () => {
     try {
       const result = runCli([], { cwd: dir });
 
-      assert.notStrictEqual(result.status, 0);
-      assert.match(result.stderr, /Invalid ide\.yml/);
-      assert.match(result.stderr, /tmux-ide validate/);
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toMatch(/Invalid ide\.yml/);
+      expect(result.stderr).toMatch(/tmux-ide validate/);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -191,11 +189,11 @@ describe("cli contract regressions", () => {
     try {
       const result = runCli(["--json"], { cwd: dir });
 
-      assert.notStrictEqual(result.status, 0);
+      expect(result.status).not.toBe(0);
       const payload = JSON.parse(result.stderr);
-      assert.strictEqual(payload.code, "INVALID_CONFIG");
-      assert.match(payload.error, /Invalid ide\.yml/);
-      assert.match(payload.error, /tmux-ide validate/);
+      expect(payload.code).toBe("INVALID_CONFIG");
+      expect(payload.error).toMatch(/Invalid ide\.yml/);
+      expect(payload.error).toMatch(/tmux-ide validate/);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -207,10 +205,10 @@ describe("cli contract regressions", () => {
     try {
       const result = runCli(["restart", "--json"], { cwd: dir });
 
-      assert.notStrictEqual(result.status, 0);
+      expect(result.status).not.toBe(0);
       const payload = JSON.parse(result.stderr);
-      assert.strictEqual(payload.code, "INVALID_CONFIG");
-      assert.match(payload.error, /Invalid ide\.yml/);
+      expect(payload.code).toBe("INVALID_CONFIG");
+      expect(payload.error).toMatch(/Invalid ide\.yml/);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -224,9 +222,9 @@ describe("cli contract regressions", () => {
     try {
       const result = runCli([], { cwd: dir });
 
-      assert.notStrictEqual(result.status, 0);
-      assert.match(result.stderr, /before.*hook failed/i);
-      assert.match(result.stderr, /node -e/);
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toMatch(/before.*hook failed/i);
+      expect(result.stderr).toMatch(/node -e/);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -240,11 +238,11 @@ describe("cli contract regressions", () => {
     try {
       const result = runCli(["--json"], { cwd: dir });
 
-      assert.notStrictEqual(result.status, 0);
+      expect(result.status).not.toBe(0);
       const payload = JSON.parse(result.stderr);
-      assert.strictEqual(payload.code, "BEFORE_HOOK_FAILED");
-      assert.match(payload.error, /before.*hook/i);
-      assert.match(payload.error, /node -e/);
+      expect(payload.code).toBe("BEFORE_HOOK_FAILED");
+      expect(payload.error).toMatch(/before.*hook/i);
+      expect(payload.error).toMatch(/node -e/);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -256,8 +254,8 @@ describe("cli contract regressions", () => {
     try {
       const result = runCli(["attach", "--json"], { cwd: dir });
 
-      assert.notStrictEqual(result.status, 0);
-      assert.deepStrictEqual(JSON.parse(result.stderr), {
+      expect(result.status).not.toBe(0);
+      expect(JSON.parse(result.stderr)).toEqual({
         error: 'Session "test-session" is not running. Start it with: tmux-ide',
         code: "NOT_RUNNING",
       });
@@ -272,8 +270,8 @@ describe("cli contract regressions", () => {
     try {
       const result = runCli(["stop"], { cwd: dir });
 
-      assert.notStrictEqual(result.status, 0);
-      assert.match(result.stderr, /No active session "test-session" found/);
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toMatch(/No active session "test-session" found/);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -285,8 +283,8 @@ describe("cli contract regressions", () => {
     try {
       const result = runCli(["stop", "--json"], { cwd: dir });
 
-      assert.notStrictEqual(result.status, 0);
-      assert.deepStrictEqual(JSON.parse(result.stderr), {
+      expect(result.status).not.toBe(0);
+      expect(JSON.parse(result.stderr)).toEqual({
         error: 'No active session "test-session" found',
         code: "NOT_RUNNING",
       });
@@ -308,7 +306,7 @@ describe("cli contract regressions", () => {
         env: { CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: undefined },
       });
 
-      assert.strictEqual(human.status === 0, JSON.parse(json.stdout).ok);
+      expect(human.status === 0).toBe(JSON.parse(json.stdout).ok);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

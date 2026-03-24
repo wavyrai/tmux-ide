@@ -1,5 +1,4 @@
-import { describe, it } from "node:test";
-import assert from "node:assert/strict";
+import { describe, it, expect } from "bun:test";
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, existsSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
@@ -34,8 +33,8 @@ describe("postinstall", () => {
     try {
       const result = runPostinstall({ home, env: { npm_config_global: undefined } });
 
-      assert.strictEqual(result.status, 0);
-      assert.strictEqual(existsSync(join(home, ".claude")), false);
+      expect(result.status).toBe(0);
+      expect(existsSync(join(home, ".claude"))).toBe(false);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -47,8 +46,8 @@ describe("postinstall", () => {
     try {
       const result = runPostinstall({ home, env: { npm_config_global: "true" } });
 
-      assert.strictEqual(result.status, 0);
-      assert.strictEqual(existsSync(join(home, ".claude")), false);
+      expect(result.status).toBe(0);
+      expect(existsSync(join(home, ".claude"))).toBe(false);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -65,11 +64,11 @@ describe("postinstall", () => {
     try {
       const result = runPostinstall({ home, env: { npm_config_global: "true" } });
 
-      assert.strictEqual(result.status, 0);
-      assert.strictEqual(existsSync(join(claudeDir, "skills", "tmux-ide", "SKILL.md")), true);
+      expect(result.status).toBe(0);
+      expect(existsSync(join(claudeDir, "skills", "tmux-ide", "SKILL.md"))).toBe(true);
 
       const settings = JSON.parse(readFileSync(settingsPath, "utf-8"));
-      assert.deepStrictEqual(settings.env, {
+      expect(settings.env).toEqual({
         KEEP_ME: "1",
         CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: "1",
       });

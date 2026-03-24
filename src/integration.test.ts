@@ -1,5 +1,4 @@
-import { describe, it, before, after } from "node:test";
-import assert from "node:assert/strict";
+import { describe, it, beforeAll, afterAll, expect } from "bun:test";
 import { execSync, execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { join, dirname } from "node:path";
@@ -24,9 +23,10 @@ try {
   // tmux is not installed.
 }
 
-describe(
+const describeIntegration = tmuxAvailable ? describe : describe.skip;
+
+describeIntegration(
   "integration",
-  { skip: !tmuxAvailable && "tmux is unavailable or session access is blocked" },
   () => {
     let tmpDir;
     const session = "tmux-ide-test-integration";
@@ -74,7 +74,7 @@ describe(
       execSync(`tmux new-session -d -s "${session}" -x 80 -y 24`, { stdio: "ignore" });
     }
 
-    before(() => {
+    beforeAll(() => {
       tmpDir = mkdtempSync(join(tmpdir(), "tmux-ide-test-"));
       writeFileSync(
         join(tmpDir, "ide.yml"),
@@ -82,7 +82,7 @@ describe(
       );
     });
 
-    after(() => {
+    afterAll(() => {
       killSession();
       rmSync(tmpDir, { recursive: true, force: true });
     });
@@ -90,14 +90,14 @@ describe(
     it("status --json reports not running when no session exists", () => {
       killSession();
       const result = runJSON(["status"]);
-      assert.strictEqual(result.running, false);
+      expect(result.running).toBe(false);
     });
 
     it("status --json reports running after session is created", () => {
       killSession();
       createSession();
       const result = runJSON(["status"]);
-      assert.strictEqual(result.running, true);
+      expect(result.running).toBe(true);
       killSession();
     });
 
@@ -106,10 +106,10 @@ describe(
       createSession();
       const result = runJSON(["inspect"]);
 
-      assert.strictEqual(result.session, session);
-      assert.strictEqual(result.tmux.running, true);
-      assert.ok(Array.isArray(result.tmux.panes));
-      assert.ok(result.tmux.panes.length >= 1);
+      expect(result.session).toBe(session);
+      expect(result.tmux.running).toBe(true);
+      expect(Array.isArray(result.tmux.panes)).toBeTruthy();
+      expect(result.tmux.panes.length >= 1).toBeTruthy();
 
       killSession();
     });
@@ -120,8 +120,8 @@ describe(
       await launch(tmpDir, { attach: false });
 
       const result = runJSON(["status"]);
-      assert.strictEqual(result.running, true);
-      assert.ok(result.panes.length >= 1);
+      expect(result.running).toBe(true);
+      expect(result.panes.length >= 1).toBeTruthy();
 
       killSession();
     });
@@ -138,10 +138,9 @@ describe(
       await launch(tmpDir, { attach: false });
 
       const result = runJSON(["status"]);
-      assert.strictEqual(result.running, true);
-      assert.deepStrictEqual(
-        result.panes.map((pane) => pane.title),
-        ["Shell"],
+      expect(result.running).toBe(true);
+      expect(
+        result.panes.map((pane) => pane.title)).toEqual(["Shell"],
       );
 
       killSession();
@@ -156,8 +155,8 @@ describe(
 
       await launch(tmpDir, { attach: false });
 
-      assert.strictEqual(runJSON(["status"]).running, true);
-      assert.strictEqual(existsSync(join(tmpDir, "before.ok")), true);
+      expect(runJSON(["status"]).running).toBe(true);
+      expect(existsSync(join(tmpDir, "before.ok"))).toBe(true);
       killSession();
     });
 
@@ -168,8 +167,8 @@ describe(
         `name: ${session}\nbefore: node -e "process.exit(3)"\nrows:\n  - panes:\n      - title: Shell\n`,
       );
 
-      await assert.rejects(() => launch(tmpDir, { attach: false }), /before hook failed/i);
-      assert.strictEqual(runJSON(["status"]).running, false);
+      await expect(launch(tmpDir, { attach: false })).rejects.toThrow(/before hook failed/i);
+      expect(runJSON(["status"]).running).toBe(false);
     });
 
     it("restart recreates the session without attaching when requested", async () => {
@@ -183,8 +182,8 @@ describe(
       await restart(tmpDir, { attach: false });
 
       const result = runJSON(["status"]);
-      assert.strictEqual(result.running, true);
-      assert.ok(result.panes.length >= 1);
+      expect(result.running).toBe(true);
+      expect(result.panes.length >= 1).toBeTruthy();
 
       killSession();
     });
@@ -205,11 +204,10 @@ describe(
       await restart(tmpDir, { attach: false });
 
       const result = runJSON(["status"]);
-      assert.strictEqual(result.running, true);
-      assert.strictEqual(result.panes.length, 2);
-      assert.deepStrictEqual(
-        result.panes.map((pane) => pane.title),
-        ["Claude", "Shell"],
+      expect(result.running).toBe(true);
+      expect(result.panes.length).toBe(2);
+      expect(
+        result.panes.map((pane) => pane.title)).toEqual(["Claude", "Shell"],
       );
 
       killSession();
@@ -225,12 +223,11 @@ describe(
       await launch(tmpDir, { attach: false });
 
       const result = runJSON(["inspect"]);
-      assert.strictEqual(result.valid, true);
-      assert.strictEqual(result.team.name, "test-team");
-      assert.strictEqual(result.tmux.running, true);
-      assert.deepStrictEqual(
-        result.tmux.panes.map((pane) => pane.title),
-        ["Lead", "Worker"],
+      expect(result.valid).toBe(true);
+      expect(result.team.name).toBe("test-team");
+      expect(result.tmux.running).toBe(true);
+      expect(
+        result.tmux.panes.map((pane) => pane.title)).toEqual(["Lead", "Worker"],
       );
 
       killSession();
@@ -247,10 +244,10 @@ describe(
 
       const statusResult = runJSON(["status"]);
       const inspectResult = runJSON(["inspect"]);
-      assert.strictEqual(statusResult.running, true);
-      assert.strictEqual(statusResult.panes.length, 2);
-      assert.strictEqual(inspectResult.team.name, "review-team");
-      assert.strictEqual(inspectResult.summary.panes, 2);
+      expect(statusResult.running).toBe(true);
+      expect(statusResult.panes.length).toBe(2);
+      expect(inspectResult.team.name).toBe("review-team");
+      expect(inspectResult.summary.panes).toBe(2);
 
       killSession();
     });
@@ -260,29 +257,29 @@ describe(
       run(["stop"]);
       // Verify it's gone
       const result = runJSON(["status"]);
-      assert.strictEqual(result.running, false);
+      expect(result.running).toBe(false);
     });
 
     it("validate --json reports valid for our test config", () => {
       const result = runJSON(["validate"]);
-      assert.strictEqual(result.valid, true);
-      assert.deepStrictEqual(result.errors, []);
+      expect(result.valid).toBe(true);
+      expect(result.errors).toEqual([]);
     });
 
     it("doctor --json passes checks", () => {
       const result = runJSON(["doctor"]);
-      assert.strictEqual(result.ok, true);
+      expect(result.ok).toBe(true);
     });
 
     it("config --json dumps config", () => {
       const result = runJSON(["config"]);
-      assert.strictEqual(result.name, session);
-      assert.ok(Array.isArray(result.rows));
+      expect(result.name).toBe(session);
+      expect(Array.isArray(result.rows)).toBeTruthy();
     });
 
     it("ls --json returns sessions list", () => {
       const result = runJSON(["ls"]);
-      assert.ok(Array.isArray(result.sessions));
+      expect(Array.isArray(result.sessions)).toBeTruthy();
     });
   },
 );

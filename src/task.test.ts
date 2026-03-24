@@ -1,5 +1,4 @@
-import { describe, it, beforeEach, afterEach } from "node:test";
-import assert from "node:assert/strict";
+import { describe, it, beforeEach, afterEach, expect } from "bun:test";
 import { mkdtempSync, rmSync, existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -39,22 +38,22 @@ afterEach(() => {
 describe("ensureTasksDir", () => {
   it("creates .tasks/, goals/, and tasks/ directories", () => {
     ensureTasksDir(tmpDir);
-    assert.ok(existsSync(join(tmpDir, ".tasks")));
-    assert.ok(existsSync(join(tmpDir, ".tasks", "goals")));
-    assert.ok(existsSync(join(tmpDir, ".tasks", "tasks")));
+    expect(existsSync(join(tmpDir, ".tasks"))).toBeTruthy();
+    expect(existsSync(join(tmpDir, ".tasks", "goals"))).toBeTruthy();
+    expect(existsSync(join(tmpDir, ".tasks", "tasks"))).toBeTruthy();
   });
 
   it("is idempotent", () => {
     ensureTasksDir(tmpDir);
     ensureTasksDir(tmpDir);
-    assert.ok(existsSync(join(tmpDir, ".tasks")));
+    expect(existsSync(join(tmpDir, ".tasks"))).toBeTruthy();
   });
 });
 
 describe("mission", () => {
   it("returns null when no mission exists", () => {
     ensureTasksDir(tmpDir);
-    assert.strictEqual(loadMission(tmpDir), null);
+    expect(loadMission(tmpDir)).toBe(null);
   });
 
   it("saves and loads a mission", () => {
@@ -66,7 +65,7 @@ describe("mission", () => {
     };
     saveMission(tmpDir, mission);
     const loaded = loadMission(tmpDir);
-    assert.deepStrictEqual(loaded, mission);
+    expect(loaded).toEqual(mission);
   });
 
   it("clears a mission", () => {
@@ -77,25 +76,25 @@ describe("mission", () => {
       updated: "2026-01-01T00:00:00Z",
     });
     clearMission(tmpDir);
-    assert.strictEqual(loadMission(tmpDir), null);
+    expect(loadMission(tmpDir)).toBe(null);
   });
 
   it("clear is safe when no mission exists", () => {
     ensureTasksDir(tmpDir);
     clearMission(tmpDir);
-    assert.strictEqual(loadMission(tmpDir), null);
+    expect(loadMission(tmpDir)).toBe(null);
   });
 });
 
 describe("goals", () => {
   it("returns empty array when no goals exist", () => {
     ensureTasksDir(tmpDir);
-    assert.deepStrictEqual(loadGoals(tmpDir), []);
+    expect(loadGoals(tmpDir)).toEqual([]);
   });
 
   it("auto-increments goal IDs", () => {
     ensureTasksDir(tmpDir);
-    assert.strictEqual(nextGoalId(tmpDir), "01");
+    expect(nextGoalId(tmpDir)).toBe("01");
     saveGoal(tmpDir, {
       id: "01",
       title: "First goal",
@@ -108,7 +107,7 @@ describe("goals", () => {
       assignee: null,
       specialty: null,
     });
-    assert.strictEqual(nextGoalId(tmpDir), "02");
+    expect(nextGoalId(tmpDir)).toBe("02");
   });
 
   it("saves with slugified filename", () => {
@@ -126,9 +125,9 @@ describe("goals", () => {
       specialty: null,
     });
     const files = readdirSync(join(tmpDir, ".tasks", "goals"));
-    assert.strictEqual(files.length, 1);
-    assert.ok(files[0]!.startsWith("01-"));
-    assert.ok(files[0]!.includes("replace-session-storage"));
+    expect(files.length).toBe(1);
+    expect(files[0]!.startsWith("01-")).toBeTruthy();
+    expect(files[0]!.includes("replace-session-storage")).toBeTruthy();
   });
 
   it("loads a goal by ID", () => {
@@ -146,12 +145,12 @@ describe("goals", () => {
       specialty: null,
     };
     saveGoal(tmpDir, goal);
-    assert.deepStrictEqual(loadGoal(tmpDir, "01"), goal);
+    expect(loadGoal(tmpDir, "01")).toEqual(goal);
   });
 
   it("returns null for non-existent goal", () => {
     ensureTasksDir(tmpDir);
-    assert.strictEqual(loadGoal(tmpDir, "99"), null);
+    expect(loadGoal(tmpDir, "99")).toBe(null);
   });
 
   it("updates a goal in place", () => {
@@ -173,8 +172,8 @@ describe("goals", () => {
     goal.title = "Updated Title";
     saveGoal(tmpDir, goal);
     const files = readdirSync(join(tmpDir, ".tasks", "goals"));
-    assert.strictEqual(files.length, 1); // no duplicate
-    assert.strictEqual(loadGoal(tmpDir, "01")!.status, "done");
+    expect(files.length).toBe(1); // no duplicate
+    expect(loadGoal(tmpDir, "01")!.status).toBe("done");
   });
 
   it("deletes a goal", () => {
@@ -191,13 +190,13 @@ describe("goals", () => {
       assignee: null,
       specialty: null,
     });
-    assert.strictEqual(deleteGoal(tmpDir, "01"), true);
-    assert.strictEqual(loadGoal(tmpDir, "01"), null);
+    expect(deleteGoal(tmpDir, "01")).toBe(true);
+    expect(loadGoal(tmpDir, "01")).toBe(null);
   });
 
   it("returns false when deleting non-existent goal", () => {
     ensureTasksDir(tmpDir);
-    assert.strictEqual(deleteGoal(tmpDir, "99"), false);
+    expect(deleteGoal(tmpDir, "99")).toBe(false);
   });
 
   it("lists goals sorted by filename", () => {
@@ -228,21 +227,21 @@ describe("goals", () => {
       specialty: null,
     });
     const goals = loadGoals(tmpDir);
-    assert.strictEqual(goals.length, 2);
-    assert.strictEqual(goals[0]!.id, "01");
-    assert.strictEqual(goals[1]!.id, "02");
+    expect(goals.length).toBe(2);
+    expect(goals[0]!.id).toBe("01");
+    expect(goals[1]!.id).toBe("02");
   });
 });
 
 describe("tasks", () => {
   it("returns empty array when no tasks exist", () => {
     ensureTasksDir(tmpDir);
-    assert.deepStrictEqual(loadTasks(tmpDir), []);
+    expect(loadTasks(tmpDir)).toEqual([]);
   });
 
   it("auto-increments task IDs with 3-digit padding", () => {
     ensureTasksDir(tmpDir);
-    assert.strictEqual(nextTaskId(tmpDir), "001");
+    expect(nextTaskId(tmpDir)).toBe("001");
     saveTask(tmpDir, {
       id: "001",
       title: "First task",
@@ -262,7 +261,7 @@ describe("tasks", () => {
       nextRetryAt: null,
       depends_on: [],
     });
-    assert.strictEqual(nextTaskId(tmpDir), "002");
+    expect(nextTaskId(tmpDir)).toBe("002");
   });
 
   it("creates task with all fields including retry", () => {
@@ -287,7 +286,7 @@ describe("tasks", () => {
       depends_on: [],
     };
     saveTask(tmpDir, task);
-    assert.deepStrictEqual(loadTask(tmpDir, "001"), task);
+    expect(loadTask(tmpDir, "001")).toEqual(task);
   });
 
   it("loads tasks for a specific goal", () => {
@@ -319,8 +318,8 @@ describe("tasks", () => {
       priority: 2,
     });
     const goal01Tasks = loadTasksForGoal(tmpDir, "01");
-    assert.strictEqual(goal01Tasks.length, 2);
-    assert.ok(goal01Tasks.every((t) => t.goal === "01"));
+    expect(goal01Tasks.length).toBe(2);
+    expect(goal01Tasks.every((t) => t.goal === "01")).toBeTruthy();
   });
 
   it("deletes a task", () => {
@@ -344,13 +343,13 @@ describe("tasks", () => {
       nextRetryAt: null,
       depends_on: [],
     });
-    assert.strictEqual(deleteTask(tmpDir, "001"), true);
-    assert.strictEqual(loadTask(tmpDir, "001"), null);
+    expect(deleteTask(tmpDir, "001")).toBe(true);
+    expect(loadTask(tmpDir, "001")).toBe(null);
   });
 
   it("returns false when deleting non-existent task", () => {
     ensureTasksDir(tmpDir);
-    assert.strictEqual(deleteTask(tmpDir, "999"), false);
+    expect(deleteTask(tmpDir, "999")).toBe(false);
   });
 
   it("updates task in place without duplicating file", () => {
@@ -379,8 +378,8 @@ describe("tasks", () => {
     task.status = "in-progress";
     saveTask(tmpDir, task);
     const files = readdirSync(join(tmpDir, ".tasks", "tasks"));
-    assert.strictEqual(files.length, 1);
-    assert.strictEqual(loadTask(tmpDir, "001")!.title, "New Title");
+    expect(files.length).toBe(1);
+    expect(loadTask(tmpDir, "001")!.title).toBe("New Title");
   });
 
   it("applies retry defaults when loading legacy JSON without retry fields", () => {
@@ -407,11 +406,11 @@ describe("tasks", () => {
     );
 
     const loaded = loadTask(tmpDir, "001")!;
-    assert.strictEqual(loaded.retryCount, 0);
-    assert.strictEqual(loaded.maxRetries, 5);
-    assert.strictEqual(loaded.lastError, null);
-    assert.strictEqual(loaded.nextRetryAt, null);
-    assert.deepStrictEqual(loaded.depends_on, []);
+    expect(loaded.retryCount).toBe(0);
+    expect(loaded.maxRetries).toBe(5);
+    expect(loaded.lastError).toBe(null);
+    expect(loaded.nextRetryAt).toBe(null);
+    expect(loaded.depends_on).toEqual([]);
   });
 
   it("preserves explicit retry values from JSON", () => {
@@ -442,10 +441,10 @@ describe("tasks", () => {
     );
 
     const loaded = loadTask(tmpDir, "002")!;
-    assert.strictEqual(loaded.retryCount, 3);
-    assert.strictEqual(loaded.maxRetries, 10);
-    assert.strictEqual(loaded.lastError, "Connection refused");
-    assert.strictEqual(loaded.nextRetryAt, "2026-01-01T01:00:00Z");
+    expect(loaded.retryCount).toBe(3);
+    expect(loaded.maxRetries).toBe(10);
+    expect(loaded.lastError).toBe("Connection refused");
+    expect(loaded.nextRetryAt).toBe("2026-01-01T01:00:00Z");
   });
 
   it("saves and loads task with depends_on", () => {
@@ -471,7 +470,7 @@ describe("tasks", () => {
     };
     saveTask(tmpDir, task);
     const loaded = loadTask(tmpDir, "001")!;
-    assert.deepStrictEqual(loaded.depends_on, ["002", "003"]);
+    expect(loaded.depends_on).toEqual(["002", "003"]);
   });
 
   it("defaults depends_on to empty array for legacy tasks without the field", () => {
@@ -495,7 +494,7 @@ describe("tasks", () => {
       }) + "\n",
     );
     const loaded = loadTask(tmpDir, "001")!;
-    assert.deepStrictEqual(loaded.depends_on, []);
+    expect(loaded.depends_on).toEqual([]);
   });
 
   it("loadTasks defaults depends_on for all legacy tasks", () => {
@@ -521,13 +520,13 @@ describe("tasks", () => {
       );
     }
     const tasks = loadTasks(tmpDir);
-    assert.strictEqual(tasks.length, 2);
+    expect(tasks.length).toBe(2);
     for (const t of tasks) {
-      assert.strictEqual(t.retryCount, 0);
-      assert.strictEqual(t.maxRetries, 5);
-      assert.strictEqual(t.lastError, null);
-      assert.strictEqual(t.nextRetryAt, null);
-      assert.deepStrictEqual(t.depends_on, []);
+      expect(t.retryCount).toBe(0);
+      expect(t.maxRetries).toBe(5);
+      expect(t.lastError).toBe(null);
+      expect(t.nextRetryAt).toBe(null);
+      expect(t.depends_on).toEqual([]);
     }
   });
 });
@@ -535,13 +534,13 @@ describe("tasks", () => {
 describe("parseProof", () => {
   it("treats plain string as proof.notes", () => {
     const result = parseProof("all tests pass", null);
-    assert.deepStrictEqual(result, { notes: "all tests pass" });
+    expect(result).toEqual({ notes: "all tests pass" });
   });
 
   it("merges plain string into existing proof", () => {
     const existing = { tests: { passed: 10, total: 10 } };
     const result = parseProof("verified manually", existing);
-    assert.deepStrictEqual(result, {
+    expect(result).toEqual({
       tests: { passed: 10, total: 10 },
       notes: "verified manually",
     });
@@ -549,7 +548,7 @@ describe("parseProof", () => {
 
   it("parses JSON with tests field", () => {
     const result = parseProof('{"tests":{"passed":5,"total":6}}', null);
-    assert.deepStrictEqual(result, { tests: { passed: 5, total: 6 } });
+    expect(result).toEqual({ tests: { passed: 5, total: 6 } });
   });
 
   it("parses JSON with pr field", () => {
@@ -557,21 +556,21 @@ describe("parseProof", () => {
       '{"pr":{"number":42,"url":"https://github.com/pr/42","status":"merged"}}',
       null,
     );
-    assert.deepStrictEqual(result, {
+    expect(result).toEqual({
       pr: { number: 42, url: "https://github.com/pr/42", status: "merged" },
     });
   });
 
   it("parses JSON with ci field", () => {
     const result = parseProof('{"ci":{"status":"passing","url":"https://ci/123"}}', null);
-    assert.deepStrictEqual(result, {
+    expect(result).toEqual({
       ci: { status: "passing", url: "https://ci/123" },
     });
   });
 
   it("parses JSON with notes field", () => {
     const result = parseProof('{"notes":"done"}', null);
-    assert.deepStrictEqual(result, { notes: "done" });
+    expect(result).toEqual({ notes: "done" });
   });
 
   it("parses JSON with all fields", () => {
@@ -582,7 +581,7 @@ describe("parseProof", () => {
       notes: "ship it",
     });
     const result = parseProof(input, null);
-    assert.deepStrictEqual(result, {
+    expect(result).toEqual({
       tests: { passed: 10, total: 10 },
       pr: { number: 1 },
       ci: { status: "green" },
@@ -593,7 +592,7 @@ describe("parseProof", () => {
   it("merges JSON proof into existing proof", () => {
     const existing = { notes: "old note", tests: { passed: 3, total: 5 } };
     const result = parseProof('{"tests":{"passed":5,"total":5}}', existing);
-    assert.deepStrictEqual(result, {
+    expect(result).toEqual({
       notes: "old note",
       tests: { passed: 5, total: 5 },
     });
@@ -601,12 +600,12 @@ describe("parseProof", () => {
 
   it("falls back to notes for invalid JSON starting with {", () => {
     const result = parseProof("{not valid json", null);
-    assert.deepStrictEqual(result, { notes: "{not valid json" });
+    expect(result).toEqual({ notes: "{not valid json" });
   });
 
   it("ignores invalid tests shape in JSON", () => {
     const result = parseProof('{"tests":"not an object","notes":"ok"}', null);
-    assert.deepStrictEqual(result, { notes: "ok" });
+    expect(result).toEqual({ notes: "ok" });
   });
 
   it("saves and loads proof schema through task store", () => {
@@ -637,7 +636,7 @@ describe("parseProof", () => {
     };
     saveTask(tmpDir, task);
     const loaded = loadTask(tmpDir, "001")!;
-    assert.deepStrictEqual(loaded.proof, task.proof);
+    expect(loaded.proof).toEqual(task.proof);
   });
 
   it("loads legacy Record<string,string> proof from JSON without error", () => {
@@ -661,8 +660,8 @@ describe("parseProof", () => {
       }) + "\n",
     );
     const loaded = loadTask(tmpDir, "001")!;
-    assert.ok(loaded.proof !== null);
-    assert.strictEqual(loaded.proof!.notes, "old format proof");
+    expect(loaded.proof !== null).toBeTruthy();
+    expect(loaded.proof!.notes).toBe("old format proof");
   });
 });
 
@@ -683,7 +682,7 @@ describe("normalizer snapshots", () => {
       proof: null,
     };
     const result = normalizeTask(raw as any);
-    assert.deepStrictEqual(result, {
+    expect(result).toEqual({
       id: "001",
       title: "Test",
       description: "desc",
@@ -720,8 +719,8 @@ describe("normalizer snapshots", () => {
       proof: { note: "legacy note" },
     };
     const result = normalizeTask(raw as any);
-    assert.strictEqual(result.proof?.notes, "legacy note");
-    assert.strictEqual((result.proof as any).note, undefined);
+    expect(result.proof?.notes).toBe("legacy note");
+    expect((result.proof as any).note).toBe(undefined);
   });
 
   it("normalizeGoal defaults missing fields", () => {
@@ -734,16 +733,16 @@ describe("normalizer snapshots", () => {
       priority: 1,
     };
     const result = normalizeGoal(raw as any);
-    assert.strictEqual(result.assignee, null);
-    assert.strictEqual(result.specialty, null);
-    assert.strictEqual(result.created, "1970-01-01T00:00:00.000Z");
-    assert.strictEqual(result.updated, "1970-01-01T00:00:00.000Z");
+    expect(result.assignee).toBe(null);
+    expect(result.specialty).toBe(null);
+    expect(result.created).toBe("1970-01-01T00:00:00.000Z");
+    expect(result.updated).toBe("1970-01-01T00:00:00.000Z");
   });
 
   it("normalizeMission defaults missing timestamps", () => {
     const raw = { title: "M", description: "desc" };
     const result = normalizeMission(raw as any);
-    assert.deepStrictEqual(result, {
+    expect(result).toEqual({
       title: "M",
       description: "desc",
       created: "1970-01-01T00:00:00.000Z",
@@ -772,11 +771,11 @@ describe("normalizer snapshots", () => {
       depends_on: ["002"],
     };
     const result = normalizeTask(raw as any);
-    assert.strictEqual(result.retryCount, 3);
-    assert.strictEqual(result.maxRetries, 10);
-    assert.strictEqual(result.lastError, "timeout");
-    assert.strictEqual(result.nextRetryAt, "2026-01-02T00:00:00Z");
-    assert.deepStrictEqual(result.depends_on, ["002"]);
+    expect(result.retryCount).toBe(3);
+    expect(result.maxRetries).toBe(10);
+    expect(result.lastError).toBe("timeout");
+    expect(result.nextRetryAt).toBe("2026-01-02T00:00:00Z");
+    expect(result.depends_on).toEqual(["002"]);
   });
 });
 
@@ -807,12 +806,12 @@ describe("schema version", () => {
     // Raw JSON should contain _version
     const files = readdirSync(join(tmpDir, ".tasks", "tasks"));
     const raw = JSON.parse(readFileSync(join(tmpDir, ".tasks", "tasks", files[0]!), "utf-8"));
-    assert.strictEqual(raw._version, 1);
+    expect(raw._version).toBe(1);
 
     // Loaded domain object should NOT contain _version
     const loaded = loadTask(tmpDir, "001")!;
-    assert.strictEqual("_version" in loaded, false);
-    assert.deepStrictEqual(loaded, task);
+    expect("_version" in loaded).toBe(false);
+    expect(loaded).toEqual(task);
   });
 
   it("saveGoal writes _version: 1 to JSON but loadGoal strips it", () => {
@@ -833,11 +832,11 @@ describe("schema version", () => {
 
     const files = readdirSync(join(tmpDir, ".tasks", "goals"));
     const raw = JSON.parse(readFileSync(join(tmpDir, ".tasks", "goals", files[0]!), "utf-8"));
-    assert.strictEqual(raw._version, 1);
+    expect(raw._version).toBe(1);
 
     const loaded = loadGoal(tmpDir, "01")!;
-    assert.strictEqual("_version" in loaded, false);
-    assert.deepStrictEqual(loaded, goal);
+    expect("_version" in loaded).toBe(false);
+    expect(loaded).toEqual(goal);
   });
 
   it("saveMission writes _version: 1 to JSON but loadMission strips it", () => {
@@ -850,11 +849,11 @@ describe("schema version", () => {
     saveMission(tmpDir, mission);
 
     const raw = JSON.parse(readFileSync(join(tmpDir, ".tasks", "mission.json"), "utf-8"));
-    assert.strictEqual(raw._version, 1);
+    expect(raw._version).toBe(1);
 
     const loaded = loadMission(tmpDir)!;
-    assert.strictEqual("_version" in loaded, false);
-    assert.deepStrictEqual(loaded, mission);
+    expect("_version" in loaded).toBe(false);
+    expect(loaded).toEqual(mission);
   });
 
   it("loads legacy files without _version field (version 0)", () => {
@@ -878,8 +877,8 @@ describe("schema version", () => {
       }) + "\n",
     );
     const loaded = loadTask(tmpDir, "001")!;
-    assert.strictEqual(loaded.id, "001");
-    assert.strictEqual("_version" in loaded, false);
+    expect(loaded.id).toBe("001");
+    expect("_version" in loaded).toBe(false);
   });
 });
 
@@ -909,15 +908,15 @@ describe("corrupted file resilience", () => {
     writeFileSync(join(tasksDir, "002-broken.json"), "{ not valid json !!!");
 
     const tasks = loadTasks(tmpDir);
-    assert.strictEqual(tasks.length, 1);
-    assert.strictEqual(tasks[0]!.id, "001");
+    expect(tasks.length).toBe(1);
+    expect(tasks[0]!.id).toBe("001");
   });
 
   it("loadTask returns null for corrupted file", () => {
     ensureTasksDir(tmpDir);
     writeFileSync(join(tmpDir, ".tasks", "tasks", "001-broken.json"), "corrupt");
     const result = loadTask(tmpDir, "001");
-    assert.strictEqual(result, null);
+    expect(result).toBe(null);
   });
 
   it("loadGoals skips corrupted files and returns valid goals", () => {
@@ -937,21 +936,21 @@ describe("corrupted file resilience", () => {
     writeFileSync(join(goalsDir, "02-broken.json"), "{{bad json");
 
     const goals = loadGoals(tmpDir);
-    assert.strictEqual(goals.length, 1);
-    assert.strictEqual(goals[0]!.id, "01");
+    expect(goals.length).toBe(1);
+    expect(goals[0]!.id).toBe("01");
   });
 
   it("loadGoal returns null for corrupted file", () => {
     ensureTasksDir(tmpDir);
     writeFileSync(join(tmpDir, ".tasks", "goals", "01-broken.json"), "nope");
     const result = loadGoal(tmpDir, "01");
-    assert.strictEqual(result, null);
+    expect(result).toBe(null);
   });
 
   it("loadMission returns null for corrupted file", () => {
     ensureTasksDir(tmpDir);
     writeFileSync(join(tmpDir, ".tasks", "mission.json"), "not json");
     const result = loadMission(tmpDir);
-    assert.strictEqual(result, null);
+    expect(result).toBe(null);
   });
 });

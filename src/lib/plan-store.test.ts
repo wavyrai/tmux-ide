@@ -1,5 +1,4 @@
-import { describe, it, beforeEach, afterEach } from "node:test";
-import assert from "node:assert/strict";
+import { describe, it, beforeEach, afterEach, expect } from "bun:test";
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -23,7 +22,7 @@ afterEach(() => {
 
 describe("loadPlans", () => {
   it("returns empty when plans/ does not exist", () => {
-    assert.deepStrictEqual(loadPlans(tmpDir), []);
+    expect(loadPlans(tmpDir)).toEqual([]);
   });
 
   it("loads plans and parses status", () => {
@@ -37,13 +36,13 @@ describe("loadPlans", () => {
     );
 
     const plans = loadPlans(tmpDir);
-    assert.strictEqual(plans.length, 2);
-    assert.strictEqual(plans[0]!.name, "01-mouse-support");
-    assert.strictEqual(plans[0]!.status, "done");
-    assert.strictEqual(plans[0]!.effort, "Low");
-    assert.strictEqual(plans[1]!.name, "70-hierarchical-agents");
-    assert.strictEqual(plans[1]!.status, "in-progress");
-    assert.strictEqual(plans[1]!.gate, "agents work");
+    expect(plans.length).toBe(2);
+    expect(plans[0]!.name).toBe("01-mouse-support");
+    expect(plans[0]!.status).toBe("done");
+    expect(plans[0]!.effort).toBe("Low");
+    expect(plans[1]!.name).toBe("70-hierarchical-agents");
+    expect(plans[1]!.status).toBe("in-progress");
+    expect(plans[1]!.gate).toBe("agents work");
   });
 
   it("skips ROADMAP.md", () => {
@@ -51,14 +50,14 @@ describe("loadPlans", () => {
     writePlan("01-test", "# Test\n\n**Status:** `pending`\n");
 
     const plans = loadPlans(tmpDir);
-    assert.strictEqual(plans.length, 1);
-    assert.strictEqual(plans[0]!.name, "01-test");
+    expect(plans.length).toBe(1);
+    expect(plans[0]!.name).toBe("01-test");
   });
 
   it("defaults to pending when no status found", () => {
     writePlan("99-no-status", "# No Status Plan\n\nJust content.\n");
     const plans = loadPlans(tmpDir);
-    assert.strictEqual(plans[0]!.status, "pending");
+    expect(plans[0]!.status).toBe("pending");
   });
 });
 
@@ -69,19 +68,19 @@ describe("listPlans", () => {
     writePlan("03-active", "# Active\n\n**Status:** `in-progress`\n");
 
     const done = listPlans(tmpDir, { status: "done" });
-    assert.strictEqual(done.length, 1);
-    assert.strictEqual(done[0]!.name, "01-done");
+    expect(done.length).toBe(1);
+    expect(done[0]!.name).toBe("01-done");
 
     const active = listPlans(tmpDir, { status: "in-progress" });
-    assert.strictEqual(active.length, 1);
-    assert.strictEqual(active[0]!.name, "03-active");
+    expect(active.length).toBe(1);
+    expect(active[0]!.name).toBe("03-active");
   });
 
   it("returns all when no filter", () => {
     writePlan("01-a", "# A\n\n**Status:** `done`\n");
     writePlan("02-b", "# B\n\n**Status:** `pending`\n");
 
-    assert.strictEqual(listPlans(tmpDir).length, 2);
+    expect(listPlans(tmpDir).length).toBe(2);
   });
 });
 
@@ -93,39 +92,39 @@ describe("markPlanDone", () => {
     );
 
     const result = markPlanDone(tmpDir, "50");
-    assert.ok(result);
-    assert.strictEqual(result!.status, "done");
-    assert.ok(result!.completed);
+    expect(result).toBeTruthy();
+    expect(result!.status).toBe("done");
+    expect(result!.completed).toBeTruthy();
 
     // Verify file was updated
     const content = readFileSync(join(tmpDir, "plans", "50-task-cli.md"), "utf-8");
-    assert.ok(content.includes("**Status:** `done`"));
-    assert.ok(content.includes("**Completed:**"));
+    expect(content.includes("**Status:** `done`")).toBeTruthy();
+    expect(content.includes("**Completed:**")).toBeTruthy();
   });
 
   it("matches by full name", () => {
     writePlan("my-plan", "# My Plan\n\n**Status:** `pending`\n");
     const result = markPlanDone(tmpDir, "my-plan");
-    assert.ok(result);
-    assert.strictEqual(result!.status, "done");
+    expect(result).toBeTruthy();
+    expect(result!.status).toBe("done");
   });
 
   it("matches by number prefix", () => {
     writePlan("70-hierarchical-agents", "# Plan 70\n\n**Status:** `in-progress`\n");
     const result = markPlanDone(tmpDir, "70");
-    assert.ok(result);
+    expect(result).toBeTruthy();
   });
 
   it("returns null for non-existent plan", () => {
-    assert.strictEqual(markPlanDone(tmpDir, "nonexistent"), null);
+    expect(markPlanDone(tmpDir, "nonexistent")).toBe(null);
   });
 
   it("preserves existing completed date format on re-mark", () => {
     writePlan("01-test", "# Test\n\n**Status:** `done`\n**Completed:** 2026-01-01\n");
     const result = markPlanDone(tmpDir, "01");
-    assert.ok(result);
+    expect(result).toBeTruthy();
     // Should update the date
-    assert.notStrictEqual(result!.completed, "2026-01-01");
+    expect(result!.completed).not.toBe("2026-01-01");
   });
 });
 
@@ -133,17 +132,17 @@ describe("getPlan", () => {
   it("finds by name", () => {
     writePlan("50-task-cli", "# Plan 50\n\n**Status:** `done`\n");
     const plan = getPlan(tmpDir, "50-task-cli");
-    assert.ok(plan);
-    assert.strictEqual(plan!.name, "50-task-cli");
+    expect(plan).toBeTruthy();
+    expect(plan!.name).toBe("50-task-cli");
   });
 
   it("finds by number prefix", () => {
     writePlan("50-task-cli", "# Plan 50\n\n**Status:** `done`\n");
     const plan = getPlan(tmpDir, "50");
-    assert.ok(plan);
+    expect(plan).toBeTruthy();
   });
 
   it("returns null when not found", () => {
-    assert.strictEqual(getPlan(tmpDir, "99"), null);
+    expect(getPlan(tmpDir, "99")).toBe(null);
   });
 });

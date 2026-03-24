@@ -1,5 +1,4 @@
-import { describe, it, beforeEach, afterEach } from "node:test";
-import assert from "node:assert/strict";
+import { describe, it, beforeEach, afterEach, expect } from "bun:test";
 import { mkdtempSync, writeFileSync, unlinkSync, rmSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -34,13 +33,13 @@ afterEach(() => {
 
 describe("getGitBranch", () => {
   it("returns the current branch name", () => {
-    assert.strictEqual(getGitBranch(tmpDir), "main");
+    expect(getGitBranch(tmpDir)).toBe("main");
   });
 
   it("returns null for a non-git directory", () => {
     const nonGit = mkdtempSync(join(tmpdir(), "tmux-ide-nongit-"));
     try {
-      assert.strictEqual(getGitBranch(nonGit), null);
+      expect(getGitBranch(nonGit)).toBe(null);
     } finally {
       rmSync(nonGit, { recursive: true, force: true });
     }
@@ -49,13 +48,13 @@ describe("getGitBranch", () => {
 
 describe("isGitRepo", () => {
   it("returns true for a git directory", () => {
-    assert.strictEqual(isGitRepo(tmpDir), true);
+    expect(isGitRepo(tmpDir)).toBe(true);
   });
 
   it("returns false for a non-git directory", () => {
     const nonGit = mkdtempSync(join(tmpdir(), "tmux-ide-nongit-"));
     try {
-      assert.strictEqual(isGitRepo(nonGit), false);
+      expect(isGitRepo(nonGit)).toBe(false);
     } finally {
       rmSync(nonGit, { recursive: true, force: true });
     }
@@ -65,33 +64,33 @@ describe("isGitRepo", () => {
 describe("getGitFileStatuses", () => {
   it("returns empty array for a clean working tree", () => {
     const statuses = getGitFileStatuses(tmpDir);
-    assert.deepStrictEqual(statuses, []);
+    expect(statuses).toEqual([]);
   });
 
   it("detects modified files with line counts", () => {
     writeFileSync(join(tmpDir, "initial.txt"), "hello\nworld\n");
     const statuses = getGitFileStatuses(tmpDir);
     const modified = statuses.find((s) => s.path === "initial.txt");
-    assert.ok(modified);
-    assert.strictEqual(modified.status, "M");
-    assert.strictEqual(modified.additions, 1);
-    assert.strictEqual(modified.deletions, 0);
+    expect(modified).toBeTruthy();
+    expect(modified.status).toBe("M");
+    expect(modified.additions).toBe(1);
+    expect(modified.deletions).toBe(0);
   });
 
   it("detects untracked files", () => {
     writeFileSync(join(tmpDir, "new-file.txt"), "content\n");
     const statuses = getGitFileStatuses(tmpDir);
     const untracked = statuses.find((s) => s.path === "new-file.txt");
-    assert.ok(untracked);
-    assert.strictEqual(untracked.status, "?");
+    expect(untracked).toBeTruthy();
+    expect(untracked.status).toBe("?");
   });
 
   it("detects deleted files", () => {
     unlinkSync(join(tmpDir, "initial.txt"));
     const statuses = getGitFileStatuses(tmpDir);
     const deleted = statuses.find((s) => s.path === "initial.txt");
-    assert.ok(deleted);
-    assert.strictEqual(deleted.status, "D");
+    expect(deleted).toBeTruthy();
+    expect(deleted.status).toBe("D");
   });
 
   it("detects files in subdirectories", () => {
@@ -99,14 +98,14 @@ describe("getGitFileStatuses", () => {
     writeFileSync(join(tmpDir, "subdir", "nested.txt"), "nested\n");
     const statuses = getGitFileStatuses(tmpDir);
     const nested = statuses.find((s) => s.path === "subdir/nested.txt");
-    assert.ok(nested);
-    assert.strictEqual(nested.status, "?");
+    expect(nested).toBeTruthy();
+    expect(nested.status).toBe("?");
   });
 
   it("returns empty array for a non-git directory", () => {
     const nonGit = mkdtempSync(join(tmpdir(), "tmux-ide-nongit-"));
     try {
-      assert.deepStrictEqual(getGitFileStatuses(nonGit), []);
+      expect(getGitFileStatuses(nonGit)).toEqual([]);
     } finally {
       rmSync(nonGit, { recursive: true, force: true });
     }
@@ -119,22 +118,22 @@ describe("getGitStatusMap", () => {
     mkdirSync(join(tmpDir, "src", "lib"));
     writeFileSync(join(tmpDir, "src", "lib", "deep.txt"), "deep\n");
     const map = getGitStatusMap(tmpDir);
-    assert.strictEqual(map.get("src/lib/deep.txt"), "?");
-    assert.strictEqual(map.get("src/lib"), "?");
-    assert.strictEqual(map.get("src"), "?");
+    expect(map.get("src/lib/deep.txt")).toBe("?");
+    expect(map.get("src/lib")).toBe("?");
+    expect(map.get("src")).toBe("?");
   });
 
   it("returns empty map for clean working tree", () => {
     const map = getGitStatusMap(tmpDir);
-    assert.strictEqual(map.size, 0);
+    expect(map.size).toBe(0);
   });
 
   it("includes both modified and untracked files", () => {
     writeFileSync(join(tmpDir, "initial.txt"), "changed\n");
     writeFileSync(join(tmpDir, "new.txt"), "new\n");
     const map = getGitStatusMap(tmpDir);
-    assert.strictEqual(map.get("initial.txt"), "M");
-    assert.strictEqual(map.get("new.txt"), "?");
+    expect(map.get("initial.txt")).toBe("M");
+    expect(map.get("new.txt")).toBe("?");
   });
 });
 
@@ -142,11 +141,11 @@ describe("getFileDiff", () => {
   it("returns a diff for modified files", () => {
     writeFileSync(join(tmpDir, "initial.txt"), "hello\nworld\n");
     const diff = getFileDiff(tmpDir, "initial.txt", false);
-    assert.ok(diff.includes("+world"));
+    expect(diff.includes("+world")).toBeTruthy();
   });
 
   it("returns empty string for unmodified files", () => {
     const diff = getFileDiff(tmpDir, "initial.txt", false);
-    assert.strictEqual(diff, "");
+    expect(diff).toBe("");
   });
 });

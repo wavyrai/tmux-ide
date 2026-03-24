@@ -1,5 +1,4 @@
-import { describe, it, beforeEach, afterEach } from "node:test";
-import assert from "node:assert/strict";
+import { describe, it, beforeEach, afterEach, expect } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -88,10 +87,10 @@ describe("discoverSessions", () => {
     saveTask(tmpDir, makeTask());
 
     const sessions = discoverSessions();
-    assert.strictEqual(sessions.length, 1);
-    assert.strictEqual(sessions[0]!.name, "test-session");
-    assert.strictEqual(sessions[0]!.mission?.title, "Test mission");
-    assert.strictEqual(sessions[0]!.tasks.length, 1);
+    expect(sessions.length).toBe(1);
+    expect(sessions[0]!.name).toBe("test-session");
+    expect(sessions[0]!.mission?.title).toBe("Test mission");
+    expect(sessions[0]!.tasks.length).toBe(1);
   });
 
   it("returns empty when no sessions exist", () => {
@@ -99,7 +98,7 @@ describe("discoverSessions", () => {
     restoreDiscoveryTmux = _setTmuxRunner(() => "");
 
     const sessions = discoverSessions();
-    assert.strictEqual(sessions.length, 0);
+    expect(sessions.length).toBe(0);
   });
 });
 
@@ -118,10 +117,10 @@ describe("computeStats", () => {
     });
 
     const stats = computeStats(info);
-    assert.strictEqual(stats.totalTasks, 3);
-    assert.strictEqual(stats.doneTasks, 1);
-    assert.strictEqual(stats.agents, 1); // only claude pane
-    assert.strictEqual(stats.activeAgents, 0); // no spinner
+    expect(stats.totalTasks).toBe(3);
+    expect(stats.doneTasks).toBe(1);
+    expect(stats.agents).toBe(1); // only claude pane
+    expect(stats.activeAgents).toBe(0); // no spinner
   });
 
   it("detects active agents with spinner", () => {
@@ -130,8 +129,8 @@ describe("computeStats", () => {
     });
 
     const stats = computeStats(info);
-    assert.strictEqual(stats.agents, 1);
-    assert.strictEqual(stats.activeAgents, 1);
+    expect(stats.agents).toBe(1);
+    expect(stats.activeAgents).toBe(1);
   });
 });
 
@@ -159,9 +158,9 @@ describe("computeGoalProgress", () => {
     ];
 
     const progress = computeGoalProgress(goals, tasks);
-    assert.strictEqual(progress.length, 1);
-    assert.strictEqual(progress[0]!.id, "01");
-    assert.strictEqual(progress[0]!.progress, 67); // 2/3
+    expect(progress.length).toBe(1);
+    expect(progress[0]!.id).toBe("01");
+    expect(progress[0]!.progress).toBe(67); // 2/3
   });
 
   it("returns 0 progress for goals with no tasks", () => {
@@ -181,7 +180,7 @@ describe("computeGoalProgress", () => {
     ];
 
     const progress = computeGoalProgress(goals, []);
-    assert.strictEqual(progress[0]!.progress, 0);
+    expect(progress[0]!.progress).toBe(0);
   });
 });
 
@@ -200,10 +199,10 @@ describe("buildOverviews", () => {
     ];
 
     const overviews = buildOverviews(sessions);
-    assert.strictEqual(overviews.length, 1);
-    assert.strictEqual(overviews[0]!.mission?.title, "Ship it");
-    assert.strictEqual(overviews[0]!.stats.totalTasks, 2);
-    assert.strictEqual(overviews[0]!.stats.doneTasks, 1);
+    expect(overviews.length).toBe(1);
+    expect(overviews[0]!.mission?.title).toBe("Ship it");
+    expect(overviews[0]!.stats.totalTasks).toBe(2);
+    expect(overviews[0]!.stats.doneTasks).toBe(1);
   });
 });
 
@@ -224,10 +223,10 @@ describe("buildProjectDetail", () => {
     });
 
     const detail = buildProjectDetail(info);
-    assert.strictEqual(detail.agents.length, 1);
-    assert.strictEqual(detail.agents[0]!.paneTitle, name);
-    assert.strictEqual(detail.agents[0]!.taskTitle, "Test task");
-    assert.strictEqual(detail.agents[0]!.taskId, "001");
+    expect(detail.agents.length).toBe(1);
+    expect(detail.agents[0]!.paneTitle).toBe(name);
+    expect(detail.agents[0]!.taskTitle).toBe("Test task");
+    expect(detail.agents[0]!.taskId).toBe("001");
   });
 
   it("shows idle agent with no task", () => {
@@ -237,8 +236,8 @@ describe("buildProjectDetail", () => {
     });
 
     const detail = buildProjectDetail(info);
-    assert.strictEqual(detail.agents[0]!.taskTitle, null);
-    assert.strictEqual(detail.agents[0]!.isBusy, false);
+    expect(detail.agents[0]!.taskTitle).toBe(null);
+    expect(detail.agents[0]!.isBusy).toBe(false);
   });
 });
 
@@ -247,23 +246,23 @@ describe("updateTask", () => {
     saveTask(tmpDir, makeTask({ id: "001", status: "todo" }));
 
     const result = updateTask(tmpDir, "001", { status: "in-progress" });
-    assert.ok(result);
-    assert.strictEqual(result.status, "in-progress");
+    expect(result).toBeTruthy();
+    expect(result.status).toBe("in-progress");
 
     const loaded = loadTask(tmpDir, "001");
-    assert.strictEqual(loaded?.status, "in-progress");
+    expect(loaded?.status).toBe("in-progress");
   });
 
   it("updates assignee", () => {
     saveTask(tmpDir, makeTask({ id: "001" }));
 
     const result = updateTask(tmpDir, "001", { assignee: "Agent 1" });
-    assert.ok(result);
-    assert.strictEqual(result.assignee, "Agent 1");
+    expect(result).toBeTruthy();
+    expect(result.assignee).toBe("Agent 1");
   });
 
   it("returns null for non-existent task", () => {
     const result = updateTask(tmpDir, "999", { status: "done" });
-    assert.strictEqual(result, null);
+    expect(result).toBe(null);
   });
 });

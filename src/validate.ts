@@ -145,7 +145,7 @@ function mapZodIssue(issue: any, config: unknown): string {
 
   // Enum: pane type
   if (code === "invalid_value" && lastSeg === "type" && path.includes("panes")) {
-    return `${rawPath} must be one of: explorer, changes, preview, tasks, warroom, costs`;
+    return `${rawPath} must be one of: explorer, changes, preview, tasks, costs, config, mission-control`;
   }
 
   // Enum: pane role

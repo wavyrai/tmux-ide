@@ -282,7 +282,7 @@ export async function launch(
   const monitorScript = resolve(
     dirname(fileURLToPath(import.meta.url)),
     "lib",
-    "daemon-watchdog.js",
+    "daemon-watchdog.ts",
   );
   const commandCenterPort = config.command_center?.port ?? 0;
   startSessionMonitor(session, monitorScript, commandCenterPort);

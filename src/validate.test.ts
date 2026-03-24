@@ -1,11 +1,10 @@
-import { describe, it } from "node:test";
-import assert from "node:assert/strict";
+import { describe, it, expect } from "bun:test";
 import { validateConfig } from "./validate.ts";
 
 describe("validateConfig", () => {
   it("accepts a valid minimal config", () => {
     const errors = validateConfig({ rows: [{ panes: [{}] }] });
-    assert.deepStrictEqual(errors, []);
+    expect(errors).toEqual([]);
   });
 
   it("accepts a valid full config", () => {
@@ -33,102 +32,102 @@ describe("validateConfig", () => {
       ],
       theme: { accent: "colour75", border: "colour238", bg: "colour235", fg: "colour248" },
     });
-    assert.deepStrictEqual(errors, []);
+    expect(errors).toEqual([]);
   });
 
   it("rejects null config", () => {
     const errors = validateConfig(null);
-    assert.deepStrictEqual(errors, ["config must be an object"]);
+    expect(errors).toEqual(["config must be an object"]);
   });
 
   it("rejects string config", () => {
     const errors = validateConfig("hello");
-    assert.deepStrictEqual(errors, ["config must be an object"]);
+    expect(errors).toEqual(["config must be an object"]);
   });
 
   it("rejects array config", () => {
     const errors = validateConfig([]);
-    assert.deepStrictEqual(errors, ["config must be an object"]);
+    expect(errors).toEqual(["config must be an object"]);
   });
 
   it("requires rows to be an array", () => {
     const errors = validateConfig({ rows: "nope" });
-    assert.ok(errors.includes("'rows' must be an array"));
+    expect(errors.includes("'rows' must be an array")).toBeTruthy();
   });
 
   it("requires rows to be non-empty", () => {
     const errors = validateConfig({ rows: [] });
-    assert.ok(errors.includes("'rows' must not be empty"));
+    expect(errors.includes("'rows' must not be empty")).toBeTruthy();
   });
 
   it("requires rows to have a panes array", () => {
     const errors = validateConfig({ rows: [{}] });
-    assert.ok(errors.includes("rows[0].panes must be an array"));
+    expect(errors.includes("rows[0].panes must be an array")).toBeTruthy();
   });
 
   it("requires panes to be non-empty", () => {
     const errors = validateConfig({ rows: [{ panes: [] }] });
-    assert.ok(errors.includes("rows[0].panes must not be empty"));
+    expect(errors.includes("rows[0].panes must not be empty")).toBeTruthy();
   });
 
   it("rejects non-string name", () => {
     const errors = validateConfig({ name: 123, rows: [{ panes: [{}] }] });
-    assert.ok(errors.includes("'name' must be a string"));
+    expect(errors.includes("'name' must be a string")).toBeTruthy();
   });
 
   it("rejects non-string before", () => {
     const errors = validateConfig({ before: true, rows: [{ panes: [{}] }] });
-    assert.ok(errors.includes("'before' must be a string"));
+    expect(errors.includes("'before' must be a string")).toBeTruthy();
   });
 
   it("rejects non-string pane.title", () => {
     const errors = validateConfig({ rows: [{ panes: [{ title: 42 }] }] });
-    assert.ok(errors.includes("rows[0].panes[0].title must be a string"));
+    expect(errors.includes("rows[0].panes[0].title must be a string")).toBeTruthy();
   });
 
   it("rejects non-string pane.command", () => {
     const errors = validateConfig({ rows: [{ panes: [{ command: false }] }] });
-    assert.ok(errors.includes("rows[0].panes[0].command must be a string"));
+    expect(errors.includes("rows[0].panes[0].command must be a string")).toBeTruthy();
   });
 
   it("rejects non-string pane.dir", () => {
     const errors = validateConfig({ rows: [{ panes: [{ dir: [] }] }] });
-    assert.ok(errors.includes("rows[0].panes[0].dir must be a string"));
+    expect(errors.includes("rows[0].panes[0].dir must be a string")).toBeTruthy();
   });
 
   it("rejects non-boolean pane.focus", () => {
     const errors = validateConfig({ rows: [{ panes: [{ focus: "yes" }] }] });
-    assert.ok(errors.includes("rows[0].panes[0].focus must be a boolean"));
+    expect(errors.includes("rows[0].panes[0].focus must be a boolean")).toBeTruthy();
   });
 
   it("rejects non-object pane.env", () => {
     const errors = validateConfig({ rows: [{ panes: [{ env: "PORT=3000" }] }] });
-    assert.ok(errors.includes("rows[0].panes[0].env must be an object"));
+    expect(errors.includes("rows[0].panes[0].env must be an object")).toBeTruthy();
   });
 
   it("rejects invalid env values", () => {
     const errors = validateConfig({ rows: [{ panes: [{ env: { PORT: true } }] }] });
-    assert.ok(errors.includes("rows[0].panes[0].env.PORT must be a string or number"));
+    expect(errors.includes("rows[0].panes[0].env.PORT must be a string or number")).toBeTruthy();
   });
 
   it("rejects size without % suffix", () => {
     const errors = validateConfig({ rows: [{ size: "70", panes: [{}] }] });
-    assert.ok(errors.some((e) => e.includes("must be a percentage")));
+    expect(errors.some((e) => e.includes("must be a percentage"))).toBeTruthy();
   });
 
   it("rejects 0% size", () => {
     const errors = validateConfig({ rows: [{ size: "0%", panes: [{}] }] });
-    assert.ok(errors.some((e) => e.includes("must be a percentage")));
+    expect(errors.some((e) => e.includes("must be a percentage"))).toBeTruthy();
   });
 
   it("rejects >100% size", () => {
     const errors = validateConfig({ rows: [{ panes: [{ size: "150%" }] }] });
-    assert.ok(errors.some((e) => e.includes("must not exceed 100%")));
+    expect(errors.some((e) => e.includes("must not exceed 100%"))).toBeTruthy();
   });
 
   it("validates theme fields as strings", () => {
     const errors = validateConfig({ rows: [{ panes: [{}] }], theme: { accent: 123 } });
-    assert.ok(errors.includes("theme.accent must be a string"));
+    expect(errors.includes("theme.accent must be a string")).toBeTruthy();
   });
 
   it("accepts team metadata without requiring a lead pane", () => {
@@ -140,7 +139,7 @@ describe("validateConfig", () => {
         },
       ],
     });
-    assert.deepStrictEqual(errors, []);
+    expect(errors).toEqual([]);
   });
 
   it("validates team pane role and task field types when provided", () => {
@@ -155,21 +154,19 @@ describe("validateConfig", () => {
         },
       ],
     });
-    assert.ok(errors.includes('rows[0].panes[0].role must be "lead", "teammate", or "planner"'));
-    assert.ok(errors.includes("rows[0].panes[0].task must be a string"));
+    expect(errors.includes('rows[0].panes[0].role must be "lead", "teammate", or "planner"')).toBeTruthy();
+    expect(errors.includes("rows[0].panes[0].task must be a string")).toBeTruthy();
   });
 
   it("rejects non-object theme", () => {
     const errors = validateConfig({ rows: [{ panes: [{}] }], theme: "blue" });
-    assert.ok(errors.includes("'theme' must be an object"));
+    expect(errors.includes("'theme' must be an object")).toBeTruthy();
   });
 
   it("rejects leading zeros in size (00%, 007%)", () => {
     const errors = validateConfig({ rows: [{ size: "007%", panes: [{ size: "00%" }] }] });
-    assert.ok(errors.some((e) => e.includes('rows[0].size "007%"') && e.includes("percentage")));
-    assert.ok(
-      errors.some((e) => e.includes('rows[0].panes[0].size "00%"') && e.includes("percentage")),
-    );
+    expect(errors.some((e) => e.includes('rows[0].size "007%"') && e.includes("percentage"))).toBeTruthy();
+    expect(errors.some((e) => e.includes('rows[0].panes[0].size "00%"') && e.includes("percentage")),).toBeTruthy();
   });
 
   it("rejects row sizes summing over 100%", () => {
@@ -179,7 +176,7 @@ describe("validateConfig", () => {
         { size: "40%", panes: [{}] },
       ],
     });
-    assert.ok(errors.some((e) => e.includes("Row sizes sum to 110%")));
+    expect(errors.some((e) => e.includes("Row sizes sum to 110%"))).toBeTruthy();
   });
 
   it("accepts row sizes summing to exactly 100%", () => {
@@ -189,105 +186,105 @@ describe("validateConfig", () => {
         { size: "30%", panes: [{}] },
       ],
     });
-    assert.deepStrictEqual(errors, []);
+    expect(errors).toEqual([]);
   });
 
   it("rejects multiple focus: true in one row", () => {
     const errors = validateConfig({
       rows: [{ panes: [{ focus: true }, { focus: true }] }],
     });
-    assert.ok(errors.some((e) => e.includes("Row 0 has 2 panes with focus: true")));
+    expect(errors.some((e) => e.includes("Row 0 has 2 panes with focus: true"))).toBeTruthy();
   });
 
   it("accepts single focus: true per row", () => {
     const errors = validateConfig({
       rows: [{ panes: [{ focus: true }, {}] }, { panes: [{}, { focus: true }] }],
     });
-    assert.deepStrictEqual(errors, []);
+    expect(errors).toEqual([]);
   });
 
   it("rejects pane sizes summing over 100% in a row", () => {
     const errors = validateConfig({
       rows: [{ panes: [{ size: "60%" }, { size: "50%" }] }],
     });
-    assert.ok(errors.some((e) => e.includes("Row 0 pane sizes sum to 110%")));
+    expect(errors.some((e) => e.includes("Row 0 pane sizes sum to 110%"))).toBeTruthy();
   });
 
   it("accepts pane sizes summing to exactly 100%", () => {
     const errors = validateConfig({
       rows: [{ panes: [{ size: "60%" }, { size: "40%" }] }],
     });
-    assert.deepStrictEqual(errors, []);
+    expect(errors).toEqual([]);
   });
 
   it("accepts type: explorer pane", () => {
     const errors = validateConfig({
       rows: [{ panes: [{ type: "explorer", title: "Files" }] }],
     });
-    assert.deepStrictEqual(errors, []);
+    expect(errors).toEqual([]);
   });
 
   it("accepts type: changes pane", () => {
     const errors = validateConfig({
       rows: [{ panes: [{ type: "changes", title: "Changes" }] }],
     });
-    assert.deepStrictEqual(errors, []);
+    expect(errors).toEqual([]);
   });
 
   it("accepts type: preview pane", () => {
     const errors = validateConfig({
       rows: [{ panes: [{ type: "preview", title: "Preview" }] }],
     });
-    assert.deepStrictEqual(errors, []);
+    expect(errors).toEqual([]);
   });
 
   it("accepts type: tasks pane", () => {
     const errors = validateConfig({
       rows: [{ panes: [{ type: "tasks", title: "Tasks" }] }],
     });
-    assert.deepStrictEqual(errors, []);
+    expect(errors).toEqual([]);
   });
 
-  it("accepts type: warroom pane", () => {
+  it("accepts type: mission-control pane", () => {
     const errors = validateConfig({
-      rows: [{ panes: [{ type: "warroom", title: "War Room" }] }],
+      rows: [{ panes: [{ type: "mission-control", title: "Mission Control" }] }],
     });
-    assert.deepStrictEqual(errors, []);
+    expect(errors).toEqual([]);
   });
 
   it("accepts type: costs pane", () => {
     const errors = validateConfig({
       rows: [{ panes: [{ type: "costs", title: "Costs" }] }],
     });
-    assert.deepStrictEqual(errors, []);
+    expect(errors).toEqual([]);
   });
 
   it("rejects invalid type value", () => {
     const errors = validateConfig({
       rows: [{ panes: [{ type: "invalid" }] }],
     });
-    assert.ok(errors.some((e) => e.includes("rows[0].panes[0].type must be one of:")));
+    expect(errors.some((e) => e.includes("rows[0].panes[0].type must be one of:"))).toBeTruthy();
   });
 
   it("rejects type and command together", () => {
     const errors = validateConfig({
       rows: [{ panes: [{ type: "explorer", command: "vim" }] }],
     });
-    assert.ok(errors.includes("rows[0].panes[0] cannot have both 'type' and 'command'"));
+    expect(errors.includes("rows[0].panes[0] cannot have both 'type' and 'command'")).toBeTruthy();
   });
 
   it("rejects non-string target", () => {
     const errors = validateConfig({
       rows: [{ panes: [{ target: 42 }] }],
     });
-    assert.ok(errors.includes("rows[0].panes[0].target must be a string"));
+    expect(errors.includes("rows[0].panes[0].target must be a string")).toBeTruthy();
   });
 
   it("accepts string target", () => {
     const errors = validateConfig({
       rows: [{ panes: [{ type: "explorer", target: "Claude" }] }],
     });
-    assert.deepStrictEqual(errors, []);
+    expect(errors).toEqual([]);
   });
 
   it("accepts valid orchestrator config", () => {
@@ -302,12 +299,12 @@ describe("validateConfig", () => {
         master_pane: "Master",
       },
     });
-    assert.deepStrictEqual(errors, []);
+    expect(errors).toEqual([]);
   });
 
   it("accepts config without orchestrator", () => {
     const errors = validateConfig({ rows: [{ panes: [{}] }] });
-    assert.deepStrictEqual(errors, []);
+    expect(errors).toEqual([]);
   });
 
   it("rejects non-object orchestrator", () => {
@@ -315,7 +312,7 @@ describe("validateConfig", () => {
       rows: [{ panes: [{}] }],
       orchestrator: "enabled",
     });
-    assert.ok(errors.includes("'orchestrator' must be an object"));
+    expect(errors.includes("'orchestrator' must be an object")).toBeTruthy();
   });
 
   it("rejects orchestrator with wrong field types", () => {
@@ -330,12 +327,12 @@ describe("validateConfig", () => {
         master_pane: false,
       },
     });
-    assert.ok(errors.includes("orchestrator.enabled must be a boolean"));
-    assert.ok(errors.includes("orchestrator.auto_dispatch must be a boolean"));
-    assert.ok(errors.includes("orchestrator.stall_timeout must be a number (ms)"));
-    assert.ok(errors.includes("orchestrator.poll_interval must be a number (ms)"));
-    assert.ok(errors.includes("orchestrator.worktree_root must be a string"));
-    assert.ok(errors.includes("orchestrator.master_pane must be a string"));
+    expect(errors.includes("orchestrator.enabled must be a boolean")).toBeTruthy();
+    expect(errors.includes("orchestrator.auto_dispatch must be a boolean")).toBeTruthy();
+    expect(errors.includes("orchestrator.stall_timeout must be a number (ms)")).toBeTruthy();
+    expect(errors.includes("orchestrator.poll_interval must be a number (ms)")).toBeTruthy();
+    expect(errors.includes("orchestrator.worktree_root must be a string")).toBeTruthy();
+    expect(errors.includes("orchestrator.master_pane must be a string")).toBeTruthy();
   });
 
   it("accepts orchestrator with only some fields", () => {
@@ -343,7 +340,7 @@ describe("validateConfig", () => {
       rows: [{ panes: [{}] }],
       orchestrator: { enabled: true },
     });
-    assert.deepStrictEqual(errors, []);
+    expect(errors).toEqual([]);
   });
 
   it("accepts valid orchestrator hook and concurrency fields", () => {
@@ -357,7 +354,7 @@ describe("validateConfig", () => {
         dispatch_mode: "goals",
       },
     });
-    assert.deepStrictEqual(errors, []);
+    expect(errors).toEqual([]);
   });
 
   it("rejects orchestrator hook and concurrency fields with wrong types", () => {
@@ -370,10 +367,10 @@ describe("validateConfig", () => {
         max_concurrent_agents: "ten",
       },
     });
-    assert.ok(errors.includes("orchestrator.before_run must be a string"));
-    assert.ok(errors.includes("orchestrator.after_run must be a string"));
-    assert.ok(errors.includes("orchestrator.cleanup_on_done must be a boolean"));
-    assert.ok(errors.includes("orchestrator.max_concurrent_agents must be a number"));
+    expect(errors.includes("orchestrator.before_run must be a string")).toBeTruthy();
+    expect(errors.includes("orchestrator.after_run must be a string")).toBeTruthy();
+    expect(errors.includes("orchestrator.cleanup_on_done must be a boolean")).toBeTruthy();
+    expect(errors.includes("orchestrator.max_concurrent_agents must be a number")).toBeTruthy();
   });
 
   it("collects multiple errors at once", () => {
@@ -383,6 +380,6 @@ describe("validateConfig", () => {
       rows: [{ panes: [{ title: 42, focus: "yes", size: "0%" }] }],
       theme: "nope",
     });
-    assert.ok(errors.length >= 4);
+    expect(errors.length >= 4).toBeTruthy();
   });
 });

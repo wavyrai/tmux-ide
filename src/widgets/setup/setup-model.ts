@@ -145,15 +145,16 @@ export const PRESETS: LayoutPreset[] = [
     id: "agent-team",
     label: "Agent Team",
     description:
-      "Lead + 2 teammates on top, warroom/tasks/explorer/preview widgets below with orchestrator.",
+      "Lead + 2 teammates on top, mission control/explorer/preview widgets below with orchestrator.",
     diagram: [
       "┌───────────┬───────────┬───────────┐",
       "│           │           │           │",
       "│   Lead    │ Teammate1 │ Teammate2 │  70%",
       "│           │           │           │",
-      "├─────┬─────┼─────┬─────┴───────────┤",
-      "│ War │Tasks│Explr│    Preview      │  30%",
-      "└─────┴─────┴─────┴─────────────────┘",
+      "├───────────┼───────────┴───────────┤",
+      "│  Mission  │  Explorer  │ Preview  │  30%",
+      "│  Control  │            │          │",
+      "└───────────┴────────────┴──────────┘",
     ],
     buildConfig(name: string, _detected?: DetectedInfo): IdeConfig {
       return {
@@ -170,9 +171,8 @@ export const PRESETS: LayoutPreset[] = [
           },
           {
             panes: [
-              { title: "War Room", type: "warroom", size: "20%" },
-              { title: "Tasks", type: "tasks", size: "20%" },
-              { title: "Explorer", type: "explorer", size: "20%" },
+              { title: "Mission Control", type: "mission-control", size: "40%" },
+              { title: "Explorer", type: "explorer", size: "30%" },
               { title: "Preview", type: "preview" },
             ],
           },
