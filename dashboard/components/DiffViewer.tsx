@@ -38,9 +38,7 @@ export function DiffViewer({ patch, diffStyle = "split", preloaded }: DiffViewer
 
   if (!patch.trim()) {
     return (
-      <div className="flex-1 flex items-center justify-center text-[var(--dim)]">
-        No changes
-      </div>
+      <div className="flex-1 flex items-center justify-center text-[var(--dim)]">No changes</div>
     );
   }
 
@@ -116,9 +114,7 @@ function SimpleDiff({ patch }: { patch: string }) {
         );
       })}
       {lines.length >= 500 && (
-        <div style={{ color: "var(--yellow)", padding: "8px 0" }}>
-          ... truncated at 500 lines
-        </div>
+        <div style={{ color: "var(--yellow)", padding: "8px 0" }}>... truncated at 500 lines</div>
       )}
     </div>
   );

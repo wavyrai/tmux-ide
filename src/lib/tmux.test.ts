@@ -49,11 +49,7 @@ describe("getSessionState", () => {
     mockExec.mockImplementation(() => "");
     const result = getSessionState("my-session");
     expect(result).toEqual({ running: true, reason: null });
-    expect(mockExec.mock.calls[0][1]).toEqual([
-      "has-session",
-      "-t",
-      "my-session",
-    ]);
+    expect(mockExec.mock.calls[0][1]).toEqual(["has-session", "-t", "my-session"]);
   });
 
   it('returns SESSION_NOT_FOUND for "can\'t find session"', () => {
@@ -281,13 +277,7 @@ describe("setSessionVariable", () => {
   it("sets variable with correct args", () => {
     mockExec.mockImplementation(() => "");
     setSessionVariable("proj", "@my_var", "hello");
-    expect(mockExec.mock.calls[0][1]).toEqual([
-      "set-option",
-      "-t",
-      "proj",
-      "@my_var",
-      "hello",
-    ]);
+    expect(mockExec.mock.calls[0][1]).toEqual(["set-option", "-t", "proj", "@my_var", "hello"]);
   });
 });
 
@@ -368,13 +358,7 @@ describe("setPaneTitle", () => {
   it("calls select-pane with -T flag", () => {
     mockExec.mockImplementation(() => "");
     setPaneTitle("%0", "My Pane");
-    expect(mockExec.mock.calls[0][1]).toEqual([
-      "select-pane",
-      "-t",
-      "%0",
-      "-T",
-      "My Pane",
-    ]);
+    expect(mockExec.mock.calls[0][1]).toEqual(["select-pane", "-t", "%0", "-T", "My Pane"]);
   });
 });
 
@@ -397,13 +381,7 @@ describe("setSessionEnvironment", () => {
   it("calls set-environment with correct args", () => {
     mockExec.mockImplementation(() => "");
     setSessionEnvironment("proj", "PORT", 3000);
-    expect(mockExec.mock.calls[0][1]).toEqual([
-      "set-environment",
-      "-t",
-      "proj",
-      "PORT",
-      "3000",
-    ]);
+    expect(mockExec.mock.calls[0][1]).toEqual(["set-environment", "-t", "proj", "PORT", "3000"]);
   });
 });
 
@@ -420,13 +398,7 @@ describe("runSessionCommand", () => {
   it("passes args through to tmux", () => {
     mockExec.mockImplementation(() => "");
     runSessionCommand(["resize-pane", "-t", "%0", "-x", "100"]);
-    expect(mockExec.mock.calls[0][1]).toEqual([
-      "resize-pane",
-      "-t",
-      "%0",
-      "-x",
-      "100",
-    ]);
+    expect(mockExec.mock.calls[0][1]).toEqual(["resize-pane", "-t", "%0", "-x", "100"]);
   });
 });
 

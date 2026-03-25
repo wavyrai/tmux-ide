@@ -337,9 +337,7 @@ export function TaskDetail({
           {t.lastError && (
             <div>
               <div className={labelClass}>last error</div>
-              <div className="text-[var(--red)] text-[11px] whitespace-pre-wrap">
-                {t.lastError}
-              </div>
+              <div className="text-[var(--red)] text-[11px] whitespace-pre-wrap">{t.lastError}</div>
             </div>
           )}
 

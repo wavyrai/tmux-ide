@@ -154,7 +154,9 @@ describe("validateConfig", () => {
         },
       ],
     });
-    expect(errors.includes('rows[0].panes[0].role must be "lead", "teammate", or "planner"')).toBeTruthy();
+    expect(
+      errors.includes('rows[0].panes[0].role must be "lead", "teammate", or "planner"'),
+    ).toBeTruthy();
     expect(errors.includes("rows[0].panes[0].task must be a string")).toBeTruthy();
   });
 
@@ -165,8 +167,12 @@ describe("validateConfig", () => {
 
   it("rejects leading zeros in size (00%, 007%)", () => {
     const errors = validateConfig({ rows: [{ size: "007%", panes: [{ size: "00%" }] }] });
-    expect(errors.some((e) => e.includes('rows[0].size "007%"') && e.includes("percentage"))).toBeTruthy();
-    expect(errors.some((e) => e.includes('rows[0].panes[0].size "00%"') && e.includes("percentage")),).toBeTruthy();
+    expect(
+      errors.some((e) => e.includes('rows[0].size "007%"') && e.includes("percentage")),
+    ).toBeTruthy();
+    expect(
+      errors.some((e) => e.includes('rows[0].panes[0].size "00%"') && e.includes("percentage")),
+    ).toBeTruthy();
   });
 
   it("rejects row sizes summing over 100%", () => {

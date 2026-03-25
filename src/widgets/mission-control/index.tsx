@@ -34,7 +34,14 @@ const SPINNERS = /^[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏⠂⠒⠢⠆⠐⠠⠄◐◓◑
 
 function isAgentPane(pane: PaneInfo): boolean {
   const cmd = pane.currentCommand?.toLowerCase() ?? "";
-  return cmd === "claude" || cmd === "codex" || pane.role === "lead" || pane.role === "teammate" || pane.title.includes("Claude Code") || /^\d+\.\d+/.test(cmd);
+  return (
+    cmd === "claude" ||
+    cmd === "codex" ||
+    pane.role === "lead" ||
+    pane.role === "teammate" ||
+    pane.title.includes("Claude Code") ||
+    /^\d+\.\d+/.test(cmd)
+  );
 }
 
 function fmtElapsed(iso: string): string {
@@ -110,9 +117,14 @@ render(
 
     const agents = createMemo(() => buildAgents(panes(), tasks()));
     const wipTasks = createMemo(() => tasks().filter((t) => t.status === "in-progress"));
-    const todoTasks = createMemo(() => tasks().filter((t) => t.status === "todo").sort((a, b) => a.priority - b.priority));
+    const todoTasks = createMemo(() =>
+      tasks()
+        .filter((t) => t.status === "todo")
+        .sort((a, b) => a.priority - b.priority),
+    );
     const recentDone = createMemo(() =>
-      tasks().filter((t) => t.status === "done")
+      tasks()
+        .filter((t) => t.status === "done")
         .sort((a, b) => new Date(b.updated).getTime() - new Date(a.updated).getTime())
         .slice(0, 10),
     );
@@ -141,7 +153,9 @@ render(
 
     // Actions
     function focusPane(paneId: string) {
-      try { execFileSync("tmux", ["select-pane", "-t", paneId], { stdio: "ignore" }); } catch {}
+      try {
+        execFileSync("tmux", ["select-pane", "-t", paneId], { stdio: "ignore" });
+      } catch {}
     }
 
     function addAgent(idx: number) {
@@ -151,12 +165,23 @@ render(
       try {
         const first = panes().find(isAgentPane);
         if (!first) return;
-        const id = execFileSync("tmux", ["split-window", "-h", "-t", first.id, "-P", "-F", "#{pane_id}"], { encoding: "utf-8", cwd: dir }).trim();
+        const id = execFileSync(
+          "tmux",
+          ["split-window", "-h", "-t", first.id, "-P", "-F", "#{pane_id}"],
+          { encoding: "utf-8", cwd: dir },
+        ).trim();
         execFileSync("tmux", ["select-pane", "-t", id, "-T", n]);
         execFileSync("tmux", ["set-option", "-pqt", id, "@ide_role", "teammate"]);
         execFileSync("tmux", ["set-option", "-pqt", id, "@ide_name", n]);
         if (type.command) {
-          execFileSync("tmux", ["send-keys", "-t", id, "-l", "--", type.command + ` --name "${n}"`]);
+          execFileSync("tmux", [
+            "send-keys",
+            "-t",
+            id,
+            "-l",
+            "--",
+            type.command + ` --name "${n}"`,
+          ]);
           execFileSync("tmux", ["send-keys", "-t", id, "Enter"]);
         }
       } catch {}
@@ -173,10 +198,15 @@ render(
           if (!title) return; // Don't submit without a title
           execFileSync("tmux-ide", ["task", "create", title], { cwd: dir });
         } else if ((cmd === "s" || cmd === "send") && args.length >= 2) {
-          const p = panes().find((p) => p.name === args[0] || p.title.toLowerCase().includes(args[0]!.toLowerCase()));
+          const p = panes().find(
+            (p) => p.name === args[0] || p.title.toLowerCase().includes(args[0]!.toLowerCase()),
+          );
           if (p) sendCommand(session, p.id, args.slice(1).join(" "));
-        } else if (cmd === "a" || cmd === "add") { setAddMenu(true); }
-        else if (cmd) { execFileSync("tmux-ide", [cmd, ...args], { cwd: dir, timeout: 5000 }); }
+        } else if (cmd === "a" || cmd === "add") {
+          setAddMenu(true);
+        } else if (cmd) {
+          execFileSync("tmux-ide", [cmd, ...args], { cwd: dir, timeout: 5000 });
+        }
       } catch {}
       setCmdInput("");
       setCmdMode(false);
@@ -185,35 +215,70 @@ render(
     // Keyboard
     useKeyboard((evt) => {
       if (addMenu()) {
-        if (evt.name === "escape") { setAddMenu(false); evt.preventDefault(); }
-        else if (evt.name === "k" || evt.name === "up") { setAddIdx((i) => Math.max(0, i - 1)); evt.preventDefault(); }
-        else if (evt.name === "j" || evt.name === "down") { setAddIdx((i) => Math.min(AGENT_TYPES.length - 1, i + 1)); evt.preventDefault(); }
-        else if (evt.name === "return") { addAgent(addIdx()); evt.preventDefault(); }
+        if (evt.name === "escape") {
+          setAddMenu(false);
+          evt.preventDefault();
+        } else if (evt.name === "k" || evt.name === "up") {
+          setAddIdx((i) => Math.max(0, i - 1));
+          evt.preventDefault();
+        } else if (evt.name === "j" || evt.name === "down") {
+          setAddIdx((i) => Math.min(AGENT_TYPES.length - 1, i + 1));
+          evt.preventDefault();
+        } else if (evt.name === "return") {
+          addAgent(addIdx());
+          evt.preventDefault();
+        }
         return;
       }
       if (cmdMode()) {
-        if (evt.name === "escape") { setCmdMode(false); evt.preventDefault(); }
-        else if (evt.name === "return") { runCmd(cmdInput()); evt.preventDefault(); }
+        if (evt.name === "escape") {
+          setCmdMode(false);
+          evt.preventDefault();
+        } else if (evt.name === "return") {
+          runCmd(cmdInput());
+          evt.preventDefault();
+        }
         return;
       }
       // Tab switching
-      if (evt.name === "1") { setTab("agents"); setSel(0); evt.preventDefault(); }
-      else if (evt.name === "2") { setTab("tasks"); setSel(0); evt.preventDefault(); }
-      else if (evt.name === "3") { setTab("goals"); setSel(0); evt.preventDefault(); }
-      else if (evt.name === "4") { setTab("activity"); setSel(0); evt.preventDefault(); }
-      else if (evt.name === "tab") {
+      if (evt.name === "1") {
+        setTab("agents");
+        setSel(0);
+        evt.preventDefault();
+      } else if (evt.name === "2") {
+        setTab("tasks");
+        setSel(0);
+        evt.preventDefault();
+      } else if (evt.name === "3") {
+        setTab("goals");
+        setSel(0);
+        evt.preventDefault();
+      } else if (evt.name === "4") {
+        setTab("activity");
+        setSel(0);
+        evt.preventDefault();
+      } else if (evt.name === "tab") {
         const ids = TABS.map((t) => t.id);
         setTab(ids[(ids.indexOf(tab()) + 1) % ids.length]!);
         setSel(0);
         evt.preventDefault();
+      } else if (evt.name === "a") {
+        setAddMenu(true);
+        evt.preventDefault();
+      } else if (evt.name === "/" || evt.name === ":") {
+        setCmdMode(true);
+        evt.preventDefault();
+      } else if (evt.name === "q") {
+        process.exit(0);
       }
-      else if (evt.name === "a") { setAddMenu(true); evt.preventDefault(); }
-      else if (evt.name === "/" || evt.name === ":") { setCmdMode(true); evt.preventDefault(); }
-      else if (evt.name === "q") { process.exit(0); }
       // Navigation within tab
-      else if (evt.name === "j" || evt.name === "down") { setSel((i) => i + 1); evt.preventDefault(); }
-      else if (evt.name === "k" || evt.name === "up") { setSel((i) => Math.max(0, i - 1)); evt.preventDefault(); }
-      else if (evt.name === "return" && tab() === "agents") {
+      else if (evt.name === "j" || evt.name === "down") {
+        setSel((i) => i + 1);
+        evt.preventDefault();
+      } else if (evt.name === "k" || evt.name === "up") {
+        setSel((i) => Math.max(0, i - 1));
+        evt.preventDefault();
+      } else if (evt.name === "return" && tab() === "agents") {
         const a = agents()[sel()];
         if (a) focusPane(a.paneId);
         evt.preventDefault();
@@ -223,10 +288,20 @@ render(
     const w = () => dims().width;
 
     return (
-      <box width={w()} height={dims().height} backgroundColor={toRGBA(theme.bg)} flexDirection="column">
-
+      <box
+        width={w()}
+        height={dims().height}
+        backgroundColor={toRGBA(theme.bg)}
+        flexDirection="column"
+      >
         {/* Header */}
-        <box flexShrink={0} paddingLeft={1} paddingRight={1} flexDirection="row" justifyContent="space-between">
+        <box
+          flexShrink={0}
+          paddingLeft={1}
+          paddingRight={1}
+          flexDirection="row"
+          justifyContent="space-between"
+        >
           <text fg={toRGBA(theme.accent)} attributes={TextAttributes.BOLD}>
             {mission()?.title ?? "tmux-ide"}
           </text>
@@ -241,7 +316,12 @@ render(
             {(t) => {
               const active = () => tab() === t.id;
               return (
-                <box onMouseDown={() => { setTab(t.id); setSel(0); }}>
+                <box
+                  onMouseDown={() => {
+                    setTab(t.id);
+                    setSel(0);
+                  }}
+                >
                   <text
                     fg={toRGBA(active() ? theme.accent : theme.fgMuted)}
                     attributes={active() ? TextAttributes.BOLD | TextAttributes.UNDERLINE : 0}
@@ -255,25 +335,36 @@ render(
         </box>
 
         <box flexShrink={0} height={1} paddingLeft={1} paddingRight={1}>
-          <text fg={toRGBA(theme.border)} wrapMode="none">{"─".repeat(Math.max(1, w() - 2))}</text>
+          <text fg={toRGBA(theme.border)} wrapMode="none">
+            {"─".repeat(Math.max(1, w() - 2))}
+          </text>
         </box>
 
         {/* Content area — full width, one tab at a time */}
         <box flexGrow={1} paddingLeft={1} paddingRight={1}>
-
           {/* AGENTS TAB */}
           <Show when={tab() === "agents"}>
             <For each={agents()}>
               {(agent, i) => {
                 const isSel = () => sel() === i();
                 return (
-                  <box flexShrink={0} backgroundColor={isSel() ? toRGBA(theme.selected) : undefined}
-                    onMouseDown={() => { setSel(i()); focusPane(agent.paneId); }}>
+                  <box
+                    flexShrink={0}
+                    backgroundColor={isSel() ? toRGBA(theme.selected) : undefined}
+                    onMouseDown={() => {
+                      setSel(i());
+                      focusPane(agent.paneId);
+                    }}
+                  >
                     <box flexDirection="row" gap={2}>
                       <text fg={toRGBA(agent.busy ? theme.gitModified : theme.gitAdded)}>
                         {agent.busy ? "●" : "○"}
                       </text>
-                      <text fg={toRGBA(isSel() ? theme.accent : theme.fg)} attributes={isSel() ? TextAttributes.BOLD : 0} wrapMode="none">
+                      <text
+                        fg={toRGBA(isSel() ? theme.accent : theme.fg)}
+                        attributes={isSel() ? TextAttributes.BOLD : 0}
+                        wrapMode="none"
+                      >
                         {agent.name.padEnd(14)}
                       </text>
                       <text fg={toRGBA(agent.busy ? theme.fg : theme.fgMuted)} wrapMode="none">
@@ -304,15 +395,26 @@ render(
                 {(t, i) => {
                   const isSel = () => sel() === i();
                   return (
-                    <box flexShrink={0} backgroundColor={isSel() ? toRGBA(theme.selected) : undefined}
-                      onMouseDown={() => setSel(i())}>
+                    <box
+                      flexShrink={0}
+                      backgroundColor={isSel() ? toRGBA(theme.selected) : undefined}
+                      onMouseDown={() => setSel(i())}
+                    >
                       <box flexDirection="row" gap={1}>
-                        <text fg={toRGBA(theme.fg)} wrapMode="none">{t.id}</text>
-                        <text fg={toRGBA(isSel() ? theme.accent : theme.fg)} wrapMode="none">{t.title.slice(0, 45)}</text>
+                        <text fg={toRGBA(theme.fg)} wrapMode="none">
+                          {t.id}
+                        </text>
+                        <text fg={toRGBA(isSel() ? theme.accent : theme.fg)} wrapMode="none">
+                          {t.title.slice(0, 45)}
+                        </text>
                         <Show when={t.assignee}>
-                          <text fg={toRGBA(theme.fgMuted)} wrapMode="none">@{t.assignee}</text>
+                          <text fg={toRGBA(theme.fgMuted)} wrapMode="none">
+                            @{t.assignee}
+                          </text>
                         </Show>
-                        <text fg={toRGBA(theme.fgMuted)} wrapMode="none">{fmtElapsed(t.updated)}</text>
+                        <text fg={toRGBA(theme.fgMuted)} wrapMode="none">
+                          {fmtElapsed(t.updated)}
+                        </text>
                       </box>
                     </box>
                   );
@@ -321,29 +423,49 @@ render(
             </Show>
             <Show when={todoTasks().length > 0}>
               <box paddingTop={wipTasks().length > 0 ? 1 : 0}>
-                <text fg={toRGBA(theme.fgMuted)} attributes={TextAttributes.BOLD}>TODO ({todoTasks().length})</text>
+                <text fg={toRGBA(theme.fgMuted)} attributes={TextAttributes.BOLD}>
+                  TODO ({todoTasks().length})
+                </text>
               </box>
               <For each={todoTasks()}>
                 {(t, i) => {
                   const idx = () => wipTasks().length + i();
                   const isSel = () => sel() === idx();
-                  const blocked = () => t.depends_on.length > 0 && t.depends_on.some((d) => {
-                    const dep = tasks().find((x) => x.id === d);
-                    return dep && dep.status !== "done";
-                  });
+                  const blocked = () =>
+                    t.depends_on.length > 0 &&
+                    t.depends_on.some((d) => {
+                      const dep = tasks().find((x) => x.id === d);
+                      return dep && dep.status !== "done";
+                    });
                   return (
-                    <box flexShrink={0} backgroundColor={isSel() ? toRGBA(theme.selected) : undefined}
-                      onMouseDown={() => setSel(idx())}>
+                    <box
+                      flexShrink={0}
+                      backgroundColor={isSel() ? toRGBA(theme.selected) : undefined}
+                      onMouseDown={() => setSel(idx())}
+                    >
                       <box flexDirection="row" gap={1}>
-                        <text fg={toRGBA(t.priority <= 1 ? theme.gitDeleted : t.priority <= 2 ? theme.gitModified : theme.fgMuted)} wrapMode="none">
+                        <text
+                          fg={toRGBA(
+                            t.priority <= 1
+                              ? theme.gitDeleted
+                              : t.priority <= 2
+                                ? theme.gitModified
+                                : theme.fgMuted,
+                          )}
+                          wrapMode="none"
+                        >
                           P{t.priority}
                         </text>
-                        <text fg={toRGBA(isSel() ? theme.accent : theme.fg)} wrapMode="none">{t.id}</text>
+                        <text fg={toRGBA(isSel() ? theme.accent : theme.fg)} wrapMode="none">
+                          {t.id}
+                        </text>
                         <text fg={toRGBA(blocked() ? theme.fgMuted : theme.fg)} wrapMode="none">
                           {t.title.slice(0, 45)}
                         </text>
                         <Show when={blocked()}>
-                          <text fg={toRGBA(theme.fgMuted)} wrapMode="none">(blocked)</text>
+                          <text fg={toRGBA(theme.fgMuted)} wrapMode="none">
+                            (blocked)
+                          </text>
                         </Show>
                       </box>
                     </box>
@@ -353,7 +475,9 @@ render(
             </Show>
             <Show when={recentDone().length > 0}>
               <box paddingTop={1}>
-                <text fg={toRGBA(theme.gitAdded)} attributes={TextAttributes.BOLD}>RECENTLY DONE</text>
+                <text fg={toRGBA(theme.gitAdded)} attributes={TextAttributes.BOLD}>
+                  RECENTLY DONE
+                </text>
               </box>
               <For each={recentDone()}>
                 {(t) => (
@@ -365,7 +489,14 @@ render(
                 )}
               </For>
             </Show>
-            <box flexShrink={0} onMouseUp={() => { setCmdInput("t create "); setCmdMode(true); }} paddingTop={1}>
+            <box
+              flexShrink={0}
+              onMouseUp={() => {
+                setCmdInput("t create ");
+                setCmdMode(true);
+              }}
+              paddingTop={1}
+            >
               <text fg={toRGBA(theme.fgMuted)}>[+create task]</text>
             </box>
           </Show>
@@ -378,27 +509,39 @@ render(
             <For each={goalRows()}>
               {(g, i) => {
                 const isSel = () => sel() === i();
-                const pct = () => g.total > 0 ? Math.round((g.done / g.total) * 100) : 0;
+                const pct = () => (g.total > 0 ? Math.round((g.done / g.total) * 100) : 0);
                 const barW = () => Math.max(10, Math.min(30, w() - 40));
                 const filled = () => Math.round((pct() / 100) * barW());
                 return (
-                  <box flexShrink={0} paddingBottom={1}
+                  <box
+                    flexShrink={0}
+                    paddingBottom={1}
                     backgroundColor={isSel() ? toRGBA(theme.selected) : undefined}
-                    onMouseDown={() => setSel(i())}>
+                    onMouseDown={() => setSel(i())}
+                  >
                     <box flexDirection="row" gap={1}>
-                      <text fg={toRGBA(isSel() ? theme.accent : theme.fg)} attributes={TextAttributes.BOLD} wrapMode="none">
+                      <text
+                        fg={toRGBA(isSel() ? theme.accent : theme.fg)}
+                        attributes={TextAttributes.BOLD}
+                        wrapMode="none"
+                      >
                         {g.id}
                       </text>
                       <text fg={toRGBA(isSel() ? theme.accent : theme.fg)} wrapMode="none">
                         {g.title}
                       </text>
-                      <text fg={toRGBA(g.status === "done" ? theme.gitAdded : theme.fgMuted)} wrapMode="none">
+                      <text
+                        fg={toRGBA(g.status === "done" ? theme.gitAdded : theme.fgMuted)}
+                        wrapMode="none"
+                      >
                         ({g.status})
                       </text>
                     </box>
                     <box flexDirection="row" gap={1}>
                       <text fg={toRGBA(theme.fgMuted)} wrapMode="none">
-                        {"  "}{"█".repeat(filled())}{"░".repeat(barW() - filled())} {pct()}%
+                        {"  "}
+                        {"█".repeat(filled())}
+                        {"░".repeat(barW() - filled())} {pct()}%
                       </text>
                       <text fg={toRGBA(theme.fgMuted)} wrapMode="none">
                         {g.done}/{g.total} done · {g.wip} wip · {g.todo} todo
@@ -419,14 +562,21 @@ render(
               {(evt, i) => {
                 const isSel = () => sel() === i();
                 const color = () =>
-                  evt.type === "completion" ? theme.gitAdded :
-                  evt.type === "dispatch" ? theme.accent :
-                  evt.type === "error" ? theme.gitDeleted :
-                  evt.type === "stall" ? theme.gitModified :
-                  theme.fgMuted;
+                  evt.type === "completion"
+                    ? theme.gitAdded
+                    : evt.type === "dispatch"
+                      ? theme.accent
+                      : evt.type === "error"
+                        ? theme.gitDeleted
+                        : evt.type === "stall"
+                          ? theme.gitModified
+                          : theme.fgMuted;
                 return (
-                  <box flexShrink={0} backgroundColor={isSel() ? toRGBA(theme.selected) : undefined}
-                    onMouseDown={() => setSel(i())}>
+                  <box
+                    flexShrink={0}
+                    backgroundColor={isSel() ? toRGBA(theme.selected) : undefined}
+                    onMouseDown={() => setSel(i())}
+                  >
                     <box flexDirection="row" gap={1}>
                       <text fg={toRGBA(theme.fgMuted)} wrapMode="none">
                         {fmtElapsed(evt.timestamp).padStart(4)}
@@ -448,13 +598,19 @@ render(
         {/* Add agent overlay */}
         <Show when={addMenu()}>
           <box flexShrink={0} paddingLeft={1}>
-            <text fg={toRGBA(theme.accent)} attributes={TextAttributes.BOLD}>Add agent:</text>
+            <text fg={toRGBA(theme.accent)} attributes={TextAttributes.BOLD}>
+              Add agent:
+            </text>
             <For each={AGENT_TYPES}>
               {(type, i) => (
-                <box flexShrink={0} backgroundColor={addIdx() === i() ? toRGBA(theme.selected) : undefined}
-                  onMouseDown={() => addAgent(i())}>
+                <box
+                  flexShrink={0}
+                  backgroundColor={addIdx() === i() ? toRGBA(theme.selected) : undefined}
+                  onMouseDown={() => addAgent(i())}
+                >
                   <text fg={toRGBA(addIdx() === i() ? theme.accent : theme.fg)}>
-                    {addIdx() === i() ? "▸ " : "  "}{type.label}
+                    {addIdx() === i() ? "▸ " : "  "}
+                    {type.label}
                   </text>
                 </box>
               )}
@@ -464,22 +620,36 @@ render(
 
         {/* Command bar — always visible */}
         <box flexShrink={0} paddingLeft={1} paddingRight={1}>
-          <box height={1}><text fg={toRGBA(theme.border)} wrapMode="none">{"─".repeat(Math.max(1, w() - 2))}</text></box>
+          <box height={1}>
+            <text fg={toRGBA(theme.border)} wrapMode="none">
+              {"─".repeat(Math.max(1, w() - 2))}
+            </text>
+          </box>
           <box flexDirection="row" gap={1}>
-            <text fg={toRGBA(cmdMode() ? theme.accent : theme.fgMuted)} attributes={cmdMode() ? TextAttributes.BOLD : 0}>{">"}</text>
+            <text
+              fg={toRGBA(cmdMode() ? theme.accent : theme.fgMuted)}
+              attributes={cmdMode() ? TextAttributes.BOLD : 0}
+            >
+              {">"}
+            </text>
             <input
               value={cmdInput()}
               placeholder="task create Fix bug, send Agent1 hello, goal create Auth..."
-              onInput={(v: string) => { if (!cmdMode()) setCmdMode(true); setCmdInput(v); }}
+              onInput={(v: string) => {
+                if (!cmdMode()) setCmdMode(true);
+                setCmdInput(v);
+              }}
               focusedBackgroundColor={toRGBA(theme.selected)}
               cursorColor={toRGBA(theme.accent)}
               focusedTextColor={toRGBA(theme.fg)}
               onMouseDown={() => setCmdMode(true)}
-              ref={(r: InputRenderable) => { cmdInputRef = r; }}
+              ref={(r: InputRenderable) => {
+                cmdInputRef = r;
+              }}
             />
           </box>
           <box flexDirection="row" gap={2}>
-            <text fg={toRGBA(theme.fgMuted)}>Tab:switch  1-4:tabs  a:agent  Esc:cancel  Enter:run</text>
+            <text fg={toRGBA(theme.fgMuted)}>Tab:switch 1-4:tabs a:agent Esc:cancel Enter:run</text>
           </box>
         </box>
       </box>

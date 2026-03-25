@@ -64,7 +64,10 @@ export function MirrorTerminal({ sessionName, paneId, paneName, className }: Mir
       term.loadAddon(fitAddon);
 
       term.open(container!);
-      if (cancelled) { term.dispose(); return; }
+      if (cancelled) {
+        term.dispose();
+        return;
+      }
 
       fitAddon.fit();
       // Don't call fitAddon.observeResize() — we match the tmux pane size,
@@ -82,7 +85,10 @@ export function MirrorTerminal({ sessionName, paneId, paneName, className }: Mir
       ws = new WebSocket(getMirrorWsUrl(sessionName, paneId));
 
       ws.onopen = () => {
-        if (cancelled) { ws!.close(); return; }
+        if (cancelled) {
+          ws!.close();
+          return;
+        }
         setConnState("connected");
       };
 
@@ -96,7 +102,9 @@ export function MirrorTerminal({ sessionName, paneId, paneName, className }: Mir
               term!.resize(msg.cols, msg.rows);
               return;
             }
-          } catch { /* not JSON, fall through */ }
+          } catch {
+            /* not JSON, fall through */
+          }
         }
         // Raw bytes from server — write directly
         term!.write(data);

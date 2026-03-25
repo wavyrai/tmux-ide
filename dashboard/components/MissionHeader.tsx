@@ -8,12 +8,7 @@ interface MissionHeaderProps {
   tasks: Task[];
 }
 
-export function MissionHeader({
-  sessionName,
-  mission,
-  goals,
-  tasks,
-}: MissionHeaderProps) {
+export function MissionHeader({ sessionName, mission, goals, tasks }: MissionHeaderProps) {
   const done = tasks.filter((t) => t.status === "done").length;
   const pct = tasks.length > 0 ? Math.round((done / tasks.length) * 100) : 0;
 
@@ -23,13 +18,9 @@ export function MissionHeader({
       <div className="flex items-center gap-4">
         <div className="min-w-0 flex-1">
           <span className="text-[var(--fg)] font-medium">{sessionName}</span>
-          {mission && (
-            <span className="text-[var(--dim)] ml-2">— {mission.title}</span>
-          )}
+          {mission && <span className="text-[var(--dim)] ml-2">— {mission.title}</span>}
           {mission?.description && (
-            <span className="text-[var(--dim)] ml-1 opacity-60">
-              ({mission.description})
-            </span>
+            <span className="text-[var(--dim)] ml-1 opacity-60">({mission.description})</span>
           )}
         </div>
         <ProgressBar percent={pct} width={16} />
@@ -40,19 +31,11 @@ export function MissionHeader({
         <div className="flex gap-2 mt-2 flex-wrap">
           {goals.map((g) => {
             const goalTasks = tasks.filter((t) => t.goal === g.id);
-            const goalDone = goalTasks.filter(
-              (t) => t.status === "done",
-            ).length;
+            const goalDone = goalTasks.filter((t) => t.status === "done").length;
             const goalPct =
-              goalTasks.length > 0
-                ? Math.round((goalDone / goalTasks.length) * 100)
-                : 0;
+              goalTasks.length > 0 ? Math.round((goalDone / goalTasks.length) * 100) : 0;
             const color =
-              goalPct === 100
-                ? "var(--green)"
-                : goalPct > 0
-                  ? "var(--accent)"
-                  : "var(--dim)";
+              goalPct === 100 ? "var(--green)" : goalPct > 0 ? "var(--accent)" : "var(--dim)";
 
             return (
               <span

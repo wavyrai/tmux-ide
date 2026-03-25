@@ -11,10 +11,7 @@ interface DiffPanelProps {
 }
 
 export function DiffPanel({ sessionName }: DiffPanelProps) {
-  const fetcher = useCallback(
-    () => fetchDiff(sessionName),
-    [sessionName],
-  );
+  const fetcher = useCallback(() => fetchDiff(sessionName), [sessionName]);
   const { data, loading } = usePolling<DiffData | null>(fetcher, 5000);
 
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
@@ -97,11 +94,7 @@ export function DiffPanel({ sessionName }: DiffPanelProps) {
       <div className="flex flex-1 min-h-0">
         {/* File sidebar */}
         <div className="w-[260px] shrink-0 border-r border-[var(--border)] overflow-y-auto">
-          <FileList
-            files={data.files}
-            selectedFile={selectedFile}
-            onSelectFile={setSelectedFile}
-          />
+          <FileList files={data.files} selectedFile={selectedFile} onSelectFile={setSelectedFile} />
         </div>
 
         {/* Diff viewer */}

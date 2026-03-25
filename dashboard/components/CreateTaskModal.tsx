@@ -11,12 +11,7 @@ interface CreateTaskModalProps {
   onCreated: () => void;
 }
 
-export function CreateTaskModal({
-  sessionName,
-  goals,
-  onClose,
-  onCreated,
-}: CreateTaskModalProps) {
+export function CreateTaskModal({ sessionName, goals, onClose, onCreated }: CreateTaskModalProps) {
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [priority, setPriority] = useState(2);
@@ -143,9 +138,7 @@ export function CreateTaskModal({
             </div>
           </div>
 
-          {error && (
-            <div className="text-[var(--red)] text-[11px]">{error}</div>
-          )}
+          {error && <div className="text-[var(--red)] text-[11px]">{error}</div>}
 
           {/* Submit */}
           <div className="flex justify-end gap-2 pt-1">

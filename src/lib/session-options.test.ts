@@ -49,33 +49,15 @@ describe("themeOptions", () => {
   it("uses default colors when no theme provided", () => {
     const opts = themeOptions("s", {});
 
-    expect(opts[0]).toEqual([
-      "set-option",
-      "-t",
-      "s",
-      "status-style",
-      "bg=colour235,fg=colour248",
-    ]);
+    expect(opts[0]).toEqual(["set-option", "-t", "s", "status-style", "bg=colour235,fg=colour248"]);
     expect(opts[1]).toEqual(["set-option", "-t", "s", "pane-border-style", "fg=colour238"]);
-    expect(opts[2]).toEqual([
-      "set-option",
-      "-t",
-      "s",
-      "pane-active-border-style",
-      "fg=colour75",
-    ]);
+    expect(opts[2]).toEqual(["set-option", "-t", "s", "pane-active-border-style", "fg=colour75"]);
   });
 
   it("respects custom theme overrides", () => {
     const opts = themeOptions("my-session", { accent: "red", border: "blue" });
 
-    expect(opts[1]).toEqual([
-      "set-option",
-      "-t",
-      "my-session",
-      "pane-border-style",
-      "fg=blue",
-    ]);
+    expect(opts[1]).toEqual(["set-option", "-t", "my-session", "pane-border-style", "fg=blue"]);
     expect(opts[2]).toEqual([
       "set-option",
       "-t",
@@ -90,13 +72,7 @@ describe("borderOptions", () => {
   it("includes pane-border-status and pane-border-format", () => {
     const opts = borderOptions("my-session", {});
 
-    expect(opts[0]).toEqual([
-      "set-option",
-      "-t",
-      "my-session",
-      "pane-border-status",
-      "top",
-    ]);
+    expect(opts[0]).toEqual(["set-option", "-t", "my-session", "pane-border-status", "top"]);
     expect(opts[1][3]).toBe("pane-border-format");
     expect(opts[1][4].includes("pane_current_path")).toBeTruthy();
   });
@@ -113,13 +89,7 @@ describe("behaviorOptions", () => {
     expect(escapeOpt).toEqual(["set-option", "-t", "test-session", "escape-time", "0"]);
 
     const intervalOpt = opts.find((o) => o[3] === "status-interval");
-    expect(intervalOpt).toEqual([
-      "set-option",
-      "-t",
-      "test-session",
-      "status-interval",
-      "1",
-    ]);
+    expect(intervalOpt).toEqual(["set-option", "-t", "test-session", "status-interval", "1"]);
   });
 });
 

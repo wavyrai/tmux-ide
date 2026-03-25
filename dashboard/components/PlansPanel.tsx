@@ -41,10 +41,7 @@ interface MarkdownSection {
   authorAt: string | null;
 }
 
-function splitIntoSections(
-  markdown: string,
-  authorship: AuthorshipData | null,
-): MarkdownSection[] {
+function splitIntoSections(markdown: string, authorship: AuthorshipData | null): MarkdownSection[] {
   const lines = markdown.split("\n");
   const sections: MarkdownSection[] = [];
   let currentHeading = "";
@@ -234,9 +231,7 @@ export function PlansPanel({ sessionName }: PlansPanelProps) {
                 <span className="min-w-0">
                   <span className="block truncate text-[12px]">{p.name}</span>
                   {p.completed && (
-                    <span className="block text-[10px] text-[var(--dimmer)]">
-                      {p.completed}
-                    </span>
+                    <span className="block text-[10px] text-[var(--dimmer)]">{p.completed}</span>
                   )}
                 </span>
               </button>
@@ -289,7 +284,12 @@ export function PlansPanel({ sessionName }: PlansPanelProps) {
                 )}
                 <button
                   onClick={() =>
-                    editing ? setEditing(false) : (() => { setEditContent(planData.content); setEditing(true); })()
+                    editing
+                      ? setEditing(false)
+                      : (() => {
+                          setEditContent(planData.content);
+                          setEditing(true);
+                        })()
                   }
                   className={`text-[11px] px-2 py-0.5 border border-[var(--border)] transition-colors ${
                     editing
@@ -315,10 +315,14 @@ export function PlansPanel({ sessionName }: PlansPanelProps) {
                 {sections.map((section, i) => {
                   const ai = isAiAuthor(section.author);
                   const borderColor = section.author
-                    ? ai ? "var(--ai-color)" : "var(--human-color)"
+                    ? ai
+                      ? "var(--ai-color)"
+                      : "var(--human-color)"
                     : "transparent";
                   const bgColor = section.author
-                    ? ai ? "var(--ai-bg)" : "var(--human-bg)"
+                    ? ai
+                      ? "var(--ai-bg)"
+                      : "var(--human-bg)"
                     : "transparent";
                   const timeLabel = formatAuthorTime(section.authorAt);
 
@@ -348,9 +352,7 @@ export function PlansPanel({ sessionName }: PlansPanelProps) {
                             {section.author}
                           </span>
                           {timeLabel && (
-                            <span className="text-[9px] text-[var(--dimmer)]">
-                              {timeLabel}
-                            </span>
+                            <span className="text-[9px] text-[var(--dimmer)]">{timeLabel}</span>
                           )}
                         </div>
                       )}

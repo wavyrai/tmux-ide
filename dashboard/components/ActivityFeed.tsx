@@ -64,9 +64,7 @@ export function ActivityFeed({ events, maxEvents = 50 }: ActivityFeedProps) {
             </span>
 
             {/* Message */}
-            <span className="flex-1 truncate pl-1 text-[var(--fg)]">
-              {formatMessage(e)}
-            </span>
+            <span className="flex-1 truncate pl-1 text-[var(--fg)]">{formatMessage(e)}</span>
           </div>
         );
       })}

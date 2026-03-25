@@ -80,9 +80,7 @@ export function AgentPanel(props: AgentPanelProps) {
                 props.onSelectAgent(agent);
               }}
             >
-              <text fg={toRGBA(dotColor(agent.state, props.theme))}>
-                {dotChar(agent.state)}
-              </text>
+              <text fg={toRGBA(dotColor(agent.state, props.theme))}>{dotChar(agent.state)}</text>
               <text
                 fg={toRGBA(isSel() ? props.theme.selectedText : props.theme.fg)}
                 attributes={isSel() ? TextAttributes.BOLD : 0}

@@ -27,10 +27,10 @@
   --surface-hover: rgba(255, 255, 255, 0.04);
   --surface-active: rgba(255, 255, 255, 0.06);
   --modal-overlay: rgba(0, 0, 0, 0.6);
-  --ai-color: #A5B4FC;
+  --ai-color: #a5b4fc;
   --ai-bg: rgba(165, 180, 252, 0.08);
   --ai-badge: rgba(165, 180, 252, 0.15);
-  --human-color: #6EE7B7;
+  --human-color: #6ee7b7;
   --human-bg: rgba(110, 231, 183, 0.08);
   --human-badge: rgba(110, 231, 183, 0.15);
 }
@@ -62,7 +62,7 @@
   --surface-hover: rgba(0, 0, 0, 0.03);
   --surface-active: rgba(0, 0, 0, 0.06);
   --modal-overlay: rgba(0, 0, 0, 0.4);
-  --ai-color: #6366F1;
+  --ai-color: #6366f1;
   --ai-bg: rgba(99, 102, 241, 0.08);
   --ai-badge: rgba(99, 102, 241, 0.15);
   --human-color: #059669;
@@ -97,9 +97,18 @@
   margin-top: 1.5em;
   margin-bottom: 0.5em;
 }
-.plan-content h1 { font-size: 1.2em; font-weight: 600; }
-.plan-content h2 { font-size: 1.1em; font-weight: 600; }
-.plan-content h3 { font-size: 1em; font-weight: 500; }
+.plan-content h1 {
+  font-size: 1.2em;
+  font-weight: 600;
+}
+.plan-content h2 {
+  font-size: 1.1em;
+  font-weight: 600;
+}
+.plan-content h3 {
+  font-size: 1em;
+  font-weight: 500;
+}
 .plan-content p {
   color: var(--fg);
   margin-bottom: 0.75em;
@@ -111,7 +120,9 @@
   padding-left: 1.5em;
   margin-bottom: 0.75em;
 }
-.plan-content li { margin-bottom: 0.25em; }
+.plan-content li {
+  margin-bottom: 0.25em;
+}
 .plan-content code {
   background: var(--surface);
   padding: 0.1em 0.3em;
@@ -134,9 +145,16 @@
   text-decoration: underline;
   text-underline-offset: 2px;
 }
-.plan-content a:hover { opacity: 0.8; }
-.plan-content strong { color: var(--fg); font-weight: 600; }
-.plan-content em { color: var(--dim); }
+.plan-content a:hover {
+  opacity: 0.8;
+}
+.plan-content strong {
+  color: var(--fg);
+  font-weight: 600;
+}
+.plan-content em {
+  color: var(--dim);
+}
 .plan-content blockquote {
   border-left: 2px solid var(--border);
   padding-left: 1em;
@@ -167,7 +185,7 @@
 .milkdown-wrap .milkdown {
   background: var(--bg) !important;
   color: var(--fg) !important;
-  font-family: 'IBM Plex Mono', ui-monospace, monospace !important;
+  font-family: "IBM Plex Mono", ui-monospace, monospace !important;
   font-size: 13px !important;
   line-height: 1.5 !important;
 }

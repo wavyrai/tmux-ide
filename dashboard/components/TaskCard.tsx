@@ -28,8 +28,7 @@ export function TaskCard({ task: t, onClick, selected = false }: TaskCardProps) 
   const prio = priorityDots(t.priority);
   const borderColor = BORDER_COLORS[t.status];
 
-  const testsPass =
-    t.proof?.tests && t.proof.tests.passed === t.proof.tests.total;
+  const testsPass = t.proof?.tests && t.proof.tests.passed === t.proof.tests.total;
 
   return (
     <div
@@ -49,26 +48,28 @@ export function TaskCard({ task: t, onClick, selected = false }: TaskCardProps) 
         <span className="flex-1" />
         {/* Badges */}
         {testsPass && (
-          <span className="text-[var(--green)] text-[10px]" title={`${t.proof!.tests!.passed}/${t.proof!.tests!.total} tests`}>
+          <span
+            className="text-[var(--green)] text-[10px]"
+            title={`${t.proof!.tests!.passed}/${t.proof!.tests!.total} tests`}
+          >
             ✓
           </span>
         )}
         {t.proof?.pr && (
-          <span className="text-[var(--cyan)] text-[10px]">
-            PR#{t.proof.pr.number}
-          </span>
+          <span className="text-[var(--cyan)] text-[10px]">PR#{t.proof.pr.number}</span>
         )}
         {t.depends_on?.length > 0 && (
-          <span className="text-[var(--dim)] text-[10px]" title={`depends: ${t.depends_on.join(", ")}`}>
+          <span
+            className="text-[var(--dim)] text-[10px]"
+            title={`depends: ${t.depends_on.join(", ")}`}
+          >
             ⇅{t.depends_on.length}
           </span>
         )}
       </div>
       <div className="truncate text-[var(--fg)] mt-0.5">{t.title}</div>
       {t.assignee && (
-        <div className="text-[var(--cyan)] mt-0.5 truncate text-[11px]">
-          @{t.assignee}
-        </div>
+        <div className="text-[var(--cyan)] mt-0.5 truncate text-[11px]">@{t.assignee}</div>
       )}
     </div>
   );

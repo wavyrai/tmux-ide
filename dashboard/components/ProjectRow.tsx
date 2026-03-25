@@ -10,9 +10,7 @@ interface ProjectRowProps {
 
 export function ProjectRow({ session: s }: ProjectRowProps) {
   const pct =
-    s.stats.totalTasks > 0
-      ? Math.round((s.stats.doneTasks / s.stats.totalTasks) * 100)
-      : 0;
+    s.stats.totalTasks > 0 ? Math.round((s.stats.doneTasks / s.stats.totalTasks) * 100) : 0;
 
   const missionText = s.mission?.title ?? "—";
 
@@ -26,12 +24,8 @@ export function ProjectRow({ session: s }: ProjectRowProps) {
             }`}
           />
         </span>
-        <span className="w-[20ch] shrink-0 text-[var(--fg)] truncate">
-          {s.name}
-        </span>
-        <span className="flex-1 text-[var(--dim)] truncate pr-4">
-          {missionText}
-        </span>
+        <span className="w-[20ch] shrink-0 text-[var(--fg)] truncate">{s.name}</span>
+        <span className="flex-1 text-[var(--dim)] truncate pr-4">{missionText}</span>
         <span className="w-[14ch] text-right shrink-0">
           <ProgressBar percent={pct} width={8} />
         </span>

@@ -19,27 +19,19 @@ export function AgentPanel({ agents, tasks }: AgentPanelProps) {
     <div>
       {agents.map((a, i) => {
         const expanded = expandedAgent === a.paneTitle;
-        const task = a.taskId
-          ? tasks.find((t) => t.id === a.taskId)
-          : null;
+        const task = a.taskId ? tasks.find((t) => t.id === a.taskId) : null;
 
         return (
           <div key={`${a.paneTitle}-${i}`}>
             <div
               className={`flex items-center h-6 px-2 cursor-pointer ${
-                expanded
-                  ? "bg-[var(--surface-active)]"
-                  : "hover:bg-[var(--surface-hover)]"
+                expanded ? "bg-[var(--surface-active)]" : "hover:bg-[var(--surface-hover)]"
               }`}
-              onClick={() =>
-                setExpandedAgent(expanded ? null : a.paneTitle)
-              }
+              onClick={() => setExpandedAgent(expanded ? null : a.paneTitle)}
             >
               {/* Status dot with pulse for busy */}
               <span className="w-3 shrink-0 relative">
-                <span
-                  style={{ color: a.isBusy ? "var(--yellow)" : "var(--dim)" }}
-                >
+                <span style={{ color: a.isBusy ? "var(--yellow)" : "var(--dim)" }}>
                   {a.isBusy ? "●" : "○"}
                 </span>
                 {a.isBusy && (
@@ -52,17 +44,13 @@ export function AgentPanel({ agents, tasks }: AgentPanelProps) {
                 )}
               </span>
 
-              <span className="w-[16ch] shrink-0 text-[var(--fg)] truncate">
-                {a.paneTitle}
-              </span>
-              <span className={`flex-1 truncate ${a.taskTitle ? "text-[var(--fg-secondary)]" : "text-[var(--dim)]"}`}>
+              <span className="w-[16ch] shrink-0 text-[var(--fg)] truncate">{a.paneTitle}</span>
+              <span
+                className={`flex-1 truncate ${a.taskTitle ? "text-[var(--fg-secondary)]" : "text-[var(--dim)]"}`}
+              >
                 {a.taskTitle ?? (a.isBusy ? "working..." : "idle")}
               </span>
-              {a.elapsed && (
-                <span className="text-[var(--dim)] shrink-0 pl-2">
-                  {a.elapsed}
-                </span>
-              )}
+              {a.elapsed && <span className="text-[var(--dim)] shrink-0 pl-2">{a.elapsed}</span>}
             </div>
 
             {/* Expanded detail */}

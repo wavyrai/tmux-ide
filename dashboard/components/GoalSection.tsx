@@ -24,9 +24,7 @@ export function GoalSection({ goal, tasks, selectedTaskId, onSelectTask }: GoalS
         onClick={() => setCollapsed(!collapsed)}
         className="w-full flex items-center gap-2 h-6 px-2 text-left group hover:bg-[var(--surface-hover)]"
       >
-        <span className="text-[var(--dim)] w-3 shrink-0 text-center">
-          {collapsed ? "▸" : "▾"}
-        </span>
+        <span className="text-[var(--dim)] w-3 shrink-0 text-center">{collapsed ? "▸" : "▾"}</span>
         <span className="flex-1 truncate text-[var(--fg)] group-hover:text-[var(--accent)] transition-colors">
           {goal.title}
         </span>

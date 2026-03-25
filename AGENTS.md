@@ -64,20 +64,20 @@ panes:
 ```yaml
 orchestrator:
   enabled: true
-  auto_dispatch: true          # auto-assign tasks to idle agents
-  dispatch_mode: tasks         # "tasks" or "goals"
-  poll_interval: 5000          # ms between ticks
-  stall_timeout: 300000        # ms before nudging idle agent
+  auto_dispatch: true # auto-assign tasks to idle agents
+  dispatch_mode: tasks # "tasks" or "goals"
+  poll_interval: 5000 # ms between ticks
+  stall_timeout: 300000 # ms before nudging idle agent
   max_concurrent_agents: 10
-  worktree_root: .worktrees/   # git worktree per task
-  master_pane: Master          # lead pane excluded from dispatch
-  before_run: pnpm install     # hook before task starts
-  after_run: pnpm lint         # hook after task completes
-  cleanup_on_done: false       # remove worktree after completion
-  webhooks:                    # fire-and-forget event notifications
+  worktree_root: .worktrees/ # git worktree per task
+  master_pane: Master # lead pane excluded from dispatch
+  before_run: pnpm install # hook before task starts
+  after_run: pnpm lint # hook after task completes
+  cleanup_on_done: false # remove worktree after completion
+  webhooks: # fire-and-forget event notifications
     - url: https://example.com/hook
-      events: [completion, dispatch]  # filter (omit = all events)
-      secret: my-signing-key          # HMAC-SHA256 via X-Signature-256
+      events: [completion, dispatch] # filter (omit = all events)
+      secret: my-signing-key # HMAC-SHA256 via X-Signature-256
 ```
 
 ### Widget Pane Types
@@ -85,10 +85,10 @@ orchestrator:
 ```yaml
 panes:
   - title: War Room
-    type: warroom    # explorer | changes | preview | tasks | warroom | costs | config
+    type: warroom # explorer | changes | preview | tasks | warroom | costs | config
   - title: Explorer
     type: explorer
-    target: src/     # optional target path
+    target: src/ # optional target path
 ```
 
 ## Architecture
@@ -438,6 +438,7 @@ When `orchestrator.enabled: true` and `auto_dispatch: true` in ide.yml, the orch
 6. On completion (`tmux-ide task done <id> --proof "..."`): records time, creates PR, notifies master
 
 **Usage flow:**
+
 ```bash
 tmux-ide mission set "Ship v2" -d "description"
 tmux-ide goal create "Auth system" -p 1 --acceptance "JWT + refresh tokens"

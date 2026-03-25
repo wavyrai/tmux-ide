@@ -94,8 +94,9 @@ function DraggableCard({
   selected: boolean;
   onClick: () => void;
 }) {
-  const { attributes, listeners, setNodeRef, transform, isDragging } =
-    useDraggable({ id: task.id });
+  const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
+    id: task.id,
+  });
 
   const style = {
     transform: CSS.Translate.toString(transform),
@@ -122,17 +123,11 @@ export function KanbanBoard({
   const [overColumn, setOverColumn] = useState<string | null>(null);
   const [showCreate, setShowCreate] = useState(false);
 
-  const selectedTask = selectedTaskId
-    ? tasks.find((t) => t.id === selectedTaskId) ?? null
-    : null;
+  const selectedTask = selectedTaskId ? (tasks.find((t) => t.id === selectedTaskId) ?? null) : null;
 
-  const activeTask = activeId
-    ? tasks.find((t) => t.id === activeId) ?? null
-    : null;
+  const activeTask = activeId ? (tasks.find((t) => t.id === activeId) ?? null) : null;
 
-  const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
-  );
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
 
   function handleDragStart(event: DragStartEvent) {
     setActiveId(String(event.active.id));
@@ -197,17 +192,11 @@ export function KanbanBoard({
                     key={t.id}
                     task={t}
                     selected={t.id === selectedTaskId}
-                    onClick={() =>
-                      setSelectedTaskId(
-                        selectedTaskId === t.id ? null : t.id,
-                      )
-                    }
+                    onClick={() => setSelectedTaskId(selectedTaskId === t.id ? null : t.id)}
                   />
                 ))}
                 {colTasks.length === 0 && (
-                  <div className="text-[var(--dim)] text-center py-4 text-[11px]">
-                    —
-                  </div>
+                  <div className="text-[var(--dim)] text-center py-4 text-[11px]">—</div>
                 )}
               </DroppableColumn>
             );

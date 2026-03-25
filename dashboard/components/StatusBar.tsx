@@ -32,9 +32,7 @@ export function StatusBar({ project, lastUpdate, stale = false }: StatusBarProps
   const doneTasks = project.tasks.filter((t) => t.status === "done").length;
   const activeAgents = project.agents.filter((a) => a.isBusy).length;
 
-  const ago = lastUpdate
-    ? Math.max(0, Math.floor((now - lastUpdate) / 1000))
-    : 0;
+  const ago = lastUpdate ? Math.max(0, Math.floor((now - lastUpdate) / 1000)) : 0;
 
   const time = new Date(now).toLocaleTimeString("en-US", {
     hour12: false,
@@ -58,15 +56,11 @@ export function StatusBar({ project, lastUpdate, stale = false }: StatusBarProps
       </span>
       <span className="mx-2 text-[var(--dim)] opacity-30">│</span>
       <span className="text-[var(--dim)]">
-        <span style={{ color: doneTasks > 0 ? "var(--green)" : undefined }}>
-          {doneTasks}
-        </span>
-        /{project.tasks.length} tasks
+        <span style={{ color: doneTasks > 0 ? "var(--green)" : undefined }}>{doneTasks}</span>/
+        {project.tasks.length} tasks
       </span>
       <span className="mx-2 text-[var(--dim)] opacity-30">│</span>
-      <span className="text-[var(--dim)]">
-        updated {ago}s ago
-      </span>
+      <span className="text-[var(--dim)]">updated {ago}s ago</span>
 
       <span className="flex-1" />
 
@@ -80,9 +74,7 @@ export function StatusBar({ project, lastUpdate, stale = false }: StatusBarProps
       >
         ●
       </span>
-      <span className="text-[var(--dim)] ml-1.5">
-        {stale ? "stale" : "live"}
-      </span>
+      <span className="text-[var(--dim)] ml-1.5">{stale ? "stale" : "live"}</span>
       <span className="mx-2 text-[var(--dim)] opacity-30">│</span>
       <span className="text-[var(--dim)]">{time}</span>
     </div>

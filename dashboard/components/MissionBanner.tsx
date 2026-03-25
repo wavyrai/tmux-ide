@@ -31,8 +31,12 @@ export function MissionBanner({
           )}
         </div>
         <div className="flex gap-4 shrink-0 ml-4 text-[var(--dim)]">
-          <span>{doneTasks}/{totalTasks} tasks</span>
-          <span>{activeAgents}/{totalAgents} agents</span>
+          <span>
+            {doneTasks}/{totalTasks} tasks
+          </span>
+          <span>
+            {activeAgents}/{totalAgents} agents
+          </span>
           <span className="text-[var(--accent)]">{pct}%</span>
         </div>
       </div>

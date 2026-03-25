@@ -8,11 +8,7 @@ interface AuthorshipBarProps {
 
 export function AuthorshipBar({ authorship }: AuthorshipBarProps) {
   if (!authorship) {
-    return (
-      <div className="text-[10px] text-[var(--dim)] px-1 py-1">
-        No authorship data
-      </div>
-    );
+    return <div className="text-[10px] text-[var(--dim)] px-1 py-1">No authorship data</div>;
   }
 
   const { aiPercent, humanPercent, totalChars } = authorship.stats;
@@ -48,9 +44,7 @@ export function AuthorshipBar({ authorship }: AuthorshipBarProps) {
         <span style={{ color: "var(--ai-color)" }}>{aiPercent}% AI</span>
         <span className="text-[var(--dim)]">/</span>
         <span style={{ color: "var(--human-color)" }}>{humanPercent}% human</span>
-        <span className="text-[var(--dimmer)]">
-          ({Math.round(totalChars / 1000)}k chars)
-        </span>
+        <span className="text-[var(--dimmer)]">({Math.round(totalChars / 1000)}k chars)</span>
       </span>
     </div>
   );

@@ -52,15 +52,12 @@ export default function OverviewPage() {
         {error && (
           <div className="px-4 py-3 text-[var(--red)] bg-[var(--surface)] border-b border-[var(--border)]">
             cannot reach api — is{" "}
-            <span className="text-[var(--accent)]">tmux-ide command-center</span>{" "}
-            running?
+            <span className="text-[var(--accent)]">tmux-ide command-center</span> running?
           </div>
         )}
 
         {sessions.length === 0 && !error && (
-          <div className="px-4 py-8 text-[var(--dim)]">
-            no tmux-ide sessions running
-          </div>
+          <div className="px-4 py-8 text-[var(--dim)]">no tmux-ide sessions running</div>
         )}
 
         {sessions.length > 0 && (

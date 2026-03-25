@@ -136,17 +136,13 @@ export function TaskPanel(props: TaskPanelProps) {
             <box
               flexShrink={0}
               backgroundColor={
-                props.isActive && selected() === 0
-                  ? toRGBA(props.theme.selected)
-                  : undefined
+                props.isActive && selected() === 0 ? toRGBA(props.theme.selected) : undefined
               }
               onMouseDown={() => props.onCreateTask()}
             >
               <text
                 fg={toRGBA(
-                  props.isActive && selected() === 0
-                    ? props.theme.accent
-                    : props.theme.fgMuted,
+                  props.isActive && selected() === 0 ? props.theme.accent : props.theme.fgMuted,
                 )}
               >
                 [+create]
@@ -182,9 +178,7 @@ export function TaskPanel(props: TaskPanelProps) {
                       props.onCreateTask();
                     }}
                   >
-                    <text
-                      fg={toRGBA(isSel() ? props.theme.accent : props.theme.fgMuted)}
-                    >
+                    <text fg={toRGBA(isSel() ? props.theme.accent : props.theme.fgMuted)}>
                       [+create]
                     </text>
                   </box>

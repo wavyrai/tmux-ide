@@ -9,7 +9,9 @@ describe("buildPaneCommand", () => {
 
   it("returns the command unchanged for Claude panes", () => {
     expect(buildPaneCommand({ command: "claude", role: "lead" })).toBe("claude");
-    expect(buildPaneCommand({ command: "claude", role: "teammate", task: 'Fix "lint"' })).toBe("claude");
+    expect(buildPaneCommand({ command: "claude", role: "teammate", task: 'Fix "lint"' })).toBe(
+      "claude",
+    );
   });
 });
 

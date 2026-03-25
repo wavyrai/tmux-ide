@@ -23,22 +23,18 @@ export interface PaneData {
 }
 
 export async function fetchPanes(name: string): Promise<PaneData[]> {
-  const res = await fetch(
-    `${API_BASE}/api/project/${encodeURIComponent(name)}/panes`,
-    { cache: "no-store" },
-  );
+  const res = await fetch(`${API_BASE}/api/project/${encodeURIComponent(name)}/panes`, {
+    cache: "no-store",
+  });
   if (!res.ok) return [];
   const data = (await res.json()) as { panes: PaneData[] };
   return data.panes;
 }
 
-export async function fetchProject(
-  name: string,
-): Promise<ProjectDetail | null> {
-  const res = await fetch(
-    `${API_BASE}/api/project/${encodeURIComponent(name)}`,
-    { cache: "no-store" },
-  );
+export async function fetchProject(name: string): Promise<ProjectDetail | null> {
+  const res = await fetch(`${API_BASE}/api/project/${encodeURIComponent(name)}`, {
+    cache: "no-store",
+  });
   if (!res.ok) return null;
   return (await res.json()) as ProjectDetail;
 }
@@ -49,18 +45,14 @@ export interface DiffData {
 }
 
 export async function fetchDiff(name: string): Promise<DiffData | null> {
-  const res = await fetch(
-    `${API_BASE}/api/project/${encodeURIComponent(name)}/diff`,
-    { cache: "no-store" },
-  );
+  const res = await fetch(`${API_BASE}/api/project/${encodeURIComponent(name)}/diff`, {
+    cache: "no-store",
+  });
   if (!res.ok) return null;
   return (await res.json()) as DiffData;
 }
 
-export async function fetchFileDiff(
-  name: string,
-  filePath: string,
-): Promise<string> {
+export async function fetchFileDiff(name: string, filePath: string): Promise<string> {
   const res = await fetch(
     `${API_BASE}/api/project/${encodeURIComponent(name)}/diff/${encodeURIComponent(filePath)}`,
     { cache: "no-store" },
@@ -80,10 +72,9 @@ export interface EventData {
 }
 
 export async function fetchEvents(name: string): Promise<EventData[]> {
-  const res = await fetch(
-    `${API_BASE}/api/project/${encodeURIComponent(name)}/events`,
-    { cache: "no-store" },
-  );
+  const res = await fetch(`${API_BASE}/api/project/${encodeURIComponent(name)}/events`, {
+    cache: "no-store",
+  });
   if (!res.ok) return [];
   const data = (await res.json()) as { events: EventData[] };
   return data.events;
@@ -123,14 +114,11 @@ export async function createTask(
     tags?: string[];
   },
 ): Promise<Task | null> {
-  const res = await fetch(
-    `${API_BASE}/api/project/${encodeURIComponent(sessionName)}/task`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(fields),
-    },
-  );
+  const res = await fetch(`${API_BASE}/api/project/${encodeURIComponent(sessionName)}/task`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(fields),
+  });
   if (!res.ok) return null;
   const data = (await res.json()) as { ok: boolean; task: Task };
   return data.task;
@@ -148,19 +136,15 @@ export interface PlanSummary {
 }
 
 export async function fetchPlans(name: string): Promise<PlanSummary[]> {
-  const res = await fetch(
-    `${API_BASE}/api/project/${encodeURIComponent(name)}/plans`,
-    { cache: "no-store" },
-  );
+  const res = await fetch(`${API_BASE}/api/project/${encodeURIComponent(name)}/plans`, {
+    cache: "no-store",
+  });
   if (!res.ok) return [];
   const data = (await res.json()) as { plans: PlanSummary[] };
   return data.plans;
 }
 
-export async function markPlanDone(
-  name: string,
-  filename: string,
-): Promise<boolean> {
+export async function markPlanDone(name: string, filename: string): Promise<boolean> {
   const res = await fetch(
     `${API_BASE}/api/project/${encodeURIComponent(name)}/plans/${encodeURIComponent(filename)}/done`,
     { method: "POST" },
@@ -256,10 +240,7 @@ export function marksToSections(
   return result;
 }
 
-export async function fetchPlan(
-  name: string,
-  filename: string,
-): Promise<PlanData> {
+export async function fetchPlan(name: string, filename: string): Promise<PlanData> {
   const res = await fetch(
     `${API_BASE}/api/project/${encodeURIComponent(name)}/plans/${encodeURIComponent(filename)}`,
     { cache: "no-store" },
@@ -283,10 +264,7 @@ export async function fetchPlan(
   return { content: data.content, authorship };
 }
 
-export async function deleteTaskApi(
-  sessionName: string,
-  taskId: string,
-): Promise<boolean> {
+export async function deleteTaskApi(sessionName: string, taskId: string): Promise<boolean> {
   const res = await fetch(
     `${API_BASE}/api/project/${encodeURIComponent(sessionName)}/task/${encodeURIComponent(taskId)}`,
     { method: "DELETE" },
@@ -294,11 +272,7 @@ export async function deleteTaskApi(
   return res.ok;
 }
 
-export async function savePlan(
-  name: string,
-  filename: string,
-  content: string,
-): Promise<boolean> {
+export async function savePlan(name: string, filename: string, content: string): Promise<boolean> {
   const res = await fetch(
     `${API_BASE}/api/project/${encodeURIComponent(name)}/plans/${encodeURIComponent(filename)}`,
     {
@@ -310,10 +284,7 @@ export async function savePlan(
   return res.ok;
 }
 
-export async function deletePlan(
-  name: string,
-  filename: string,
-): Promise<boolean> {
+export async function deletePlan(name: string, filename: string): Promise<boolean> {
   const res = await fetch(
     `${API_BASE}/api/project/${encodeURIComponent(name)}/plans/${encodeURIComponent(filename)}`,
     { method: "DELETE" },

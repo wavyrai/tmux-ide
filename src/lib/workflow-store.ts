@@ -80,9 +80,7 @@ export function loadCheckpoints(dir: string): Checkpoint[] {
 export function loadCheckpoint(dir: string, id: string): Checkpoint | null {
   const d = checkpointsDir(dir);
   if (!existsSync(d)) return null;
-  const file = readdirSync(d).find(
-    (f) => f.startsWith(id + "-") || f === id + ".json",
-  );
+  const file = readdirSync(d).find((f) => f.startsWith(id + "-") || f === id + ".json");
   if (!file) return null;
   try {
     return JSON.parse(readFileSync(join(d, file), "utf-8")) as Checkpoint;
@@ -111,9 +109,7 @@ export function saveCheckpoint(dir: string, checkpoint: Checkpoint): void {
 export function deleteCheckpoint(dir: string, id: string): boolean {
   const d = checkpointsDir(dir);
   if (!existsSync(d)) return false;
-  const file = readdirSync(d).find(
-    (f) => f.startsWith(id + "-") || f === id + ".json",
-  );
+  const file = readdirSync(d).find((f) => f.startsWith(id + "-") || f === id + ".json");
   if (!file) return false;
   unlinkSync(join(d, file));
   return true;
@@ -178,9 +174,7 @@ export function loadReviews(dir: string): ReviewRequest[] {
 export function loadReview(dir: string, id: string): ReviewRequest | null {
   const d = reviewsDir(dir);
   if (!existsSync(d)) return null;
-  const file = readdirSync(d).find(
-    (f) => f.startsWith(id + "-") || f === id + ".json",
-  );
+  const file = readdirSync(d).find((f) => f.startsWith(id + "-") || f === id + ".json");
   if (!file) return null;
   try {
     return JSON.parse(readFileSync(join(d, file), "utf-8")) as ReviewRequest;
@@ -208,9 +202,7 @@ export function saveReview(dir: string, review: ReviewRequest): void {
 export function deleteReview(dir: string, id: string): boolean {
   const d = reviewsDir(dir);
   if (!existsSync(d)) return false;
-  const file = readdirSync(d).find(
-    (f) => f.startsWith(id + "-") || f === id + ".json",
-  );
+  const file = readdirSync(d).find((f) => f.startsWith(id + "-") || f === id + ".json");
   if (!file) return false;
   unlinkSync(join(d, file));
   return true;

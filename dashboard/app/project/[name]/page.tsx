@@ -21,7 +21,11 @@ const MirrorTerminal = dynamic(
 );
 
 // Responsive pane mirror view — grid on desktop, single pane + selector on mobile
-function PaneMirrorView({ items, sessionName, emptyMessage }: {
+function PaneMirrorView({
+  items,
+  sessionName,
+  emptyMessage,
+}: {
   items: { id: string; name: string }[];
   sessionName: string;
   emptyMessage: string;
@@ -88,10 +92,7 @@ export default function ProjectPage() {
   const name = decodeURIComponent(params.name);
   const [activeTab, setActiveTab] = useState<Tab>("kanban");
 
-  const fetcher = useCallback(
-    () => fetchProject(name) as Promise<ProjectDetail | null>,
-    [name],
-  );
+  const fetcher = useCallback(() => fetchProject(name) as Promise<ProjectDetail | null>, [name]);
   const {
     data: project,
     error,
@@ -116,9 +117,7 @@ export default function ProjectPage() {
 
   if (!project) {
     return (
-      <div className="h-screen flex items-center justify-center text-[var(--dim)]">
-        loading...
-      </div>
+      <div className="h-screen flex items-center justify-center text-[var(--dim)]">loading...</div>
     );
   }
 
@@ -143,20 +142,17 @@ export default function ProjectPage() {
           {project.mission && (
             <>
               <span className="text-[var(--border)]">│</span>
-              <span className="text-[var(--dim)] truncate">
-                {project.mission.title}
-              </span>
+              <span className="text-[var(--dim)] truncate">{project.mission.title}</span>
             </>
           )}
         </div>
         <div className="flex items-center gap-4 text-[var(--dim)]">
           <span>
-            <span className="text-[var(--green)]">{activeAgents}</span>
-            /{project.agents.length} agents
+            <span className="text-[var(--green)]">{activeAgents}</span>/{project.agents.length}{" "}
+            agents
           </span>
           <span>
-            <span className="text-[var(--green)]">{doneTasks}</span>
-            /{totalTasks} tasks
+            <span className="text-[var(--green)]">{doneTasks}</span>/{totalTasks} tasks
           </span>
           <ProgressBar percent={pct} width={10} />
         </div>
@@ -176,18 +172,12 @@ export default function ProjectPage() {
         <div className="flex items-center gap-4 px-4 h-6 bg-[var(--surface)] border-b border-[var(--border)] shrink-0 overflow-x-auto">
           {project.goals.map((g) => {
             const goalTasks = project.tasks.filter((t) => t.goal === g.id);
-            const goalDone = goalTasks.filter(
-              (t) => t.status === "done",
-            ).length;
+            const goalDone = goalTasks.filter((t) => t.status === "done").length;
             const goalPct =
-              goalTasks.length > 0
-                ? Math.round((goalDone / goalTasks.length) * 100)
-                : 0;
+              goalTasks.length > 0 ? Math.round((goalDone / goalTasks.length) * 100) : 0;
             return (
               <span key={g.id} className="flex items-center gap-1.5 shrink-0">
-                <span className="text-[var(--fg)] truncate max-w-[20ch]">
-                  {g.title}
-                </span>
+                <span className="text-[var(--fg)] truncate max-w-[20ch]">{g.title}</span>
                 <ProgressBar percent={goalPct} width={4} />
               </span>
             );
@@ -223,17 +213,11 @@ export default function ProjectPage() {
         />
       )}
 
-      {activeTab === "diffs" && (
-        <DiffPanel sessionName={project.session} />
-      )}
+      {activeTab === "diffs" && <DiffPanel sessionName={project.session} />}
 
-      {activeTab === "plans" && (
-        <PlansPanel sessionName={project.session} />
-      )}
+      {activeTab === "plans" && <PlansPanel sessionName={project.session} />}
 
-      {activeTab === "activity" && (
-        <ActivityFeed events={events ?? []} />
-      )}
+      {activeTab === "activity" && <ActivityFeed events={events ?? []} />}
 
       {activeTab === "agents" && (
         <PaneMirrorView
@@ -245,7 +229,10 @@ export default function ProjectPage() {
 
       {activeTab === "all-panes" && (
         <PaneMirrorView
-          items={(panes ?? []).map((p) => ({ id: p.id, name: p.name || p.title || `pane ${p.index}` }))}
+          items={(panes ?? []).map((p) => ({
+            id: p.id,
+            name: p.name || p.title || `pane ${p.index}`,
+          }))}
           sessionName={project.session}
           emptyMessage="no panes found"
         />
