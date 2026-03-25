@@ -1,4 +1,5 @@
 import { describe, it, beforeEach, afterEach, expect } from "bun:test";
+import assert from "node:assert/strict";
 import { mkdtempSync, rmSync, existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";

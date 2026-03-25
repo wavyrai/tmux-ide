@@ -50,18 +50,22 @@ export async function doctor({ json }: { json?: boolean } = {}): Promise<void> {
   );
 
   checks.push(
-    check("256-color terminal", () => {
-      const term = process.env.TERM ?? "";
-      if (
-        !term.includes("256color") &&
-        !term.includes("ghostty") &&
-        !term.includes("kitty") &&
-        term !== "tmux-256color"
-      ) {
-        throw new Error(`$TERM is "${term}"`);
-      }
-      return term;
-    }),
+    check(
+      "256-color terminal",
+      () => {
+        const term = process.env.TERM ?? "";
+        if (
+          !term.includes("256color") &&
+          !term.includes("ghostty") &&
+          !term.includes("kitty") &&
+          term !== "tmux-256color"
+        ) {
+          throw new Error(`$TERM is "${term}"`);
+        }
+        return term;
+      },
+      { optional: true },
+    ),
   );
 
   checks.push(

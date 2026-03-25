@@ -9,7 +9,7 @@ export const updateTaskSchema = z.object({
 });
 
 export const createTaskSchema = z.object({
-  title: z.string().min(1, "Title is required"),
+  title: z.string().trim().min(1, "Title is required"),
   description: z.string().optional(),
   priority: z.number().optional(),
   goal: z.string().optional(),
