@@ -41,7 +41,6 @@ function MilkdownEditor({ value, onChange, onSave }: MarkdownEditorProps) {
     const editor = getInstance();
     if (!editor) return;
     try {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const md = editor.action(getMarkdown() as any) as string;
       onChangeRef.current(md);
     } catch {
@@ -77,8 +76,7 @@ function MilkdownEditor({ value, onChange, onSave }: MarkdownEditorProps) {
         const editor = getInstance();
         if (!editor) return;
         try {
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const md = editor.action(getMarkdown() as any) as string;
+          const md = editor.action(getMarkdown() as any) as string;
           onSaveRef.current(md);
         } catch {
           // ignore

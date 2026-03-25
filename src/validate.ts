@@ -3,6 +3,15 @@ import { readConfig } from "./lib/yaml-io.ts";
 import { outputError } from "./lib/output.ts";
 import { IdeConfigSchema } from "./schemas/ide-config.ts";
 
+/** Minimal shape of Zod parse issues (v3/v4 compatible for our mappers). */
+interface ZodLikeIssue {
+  path?: (string | number)[];
+  code?: string;
+  message?: string;
+  expected?: string;
+  received?: string;
+}
+
 export function validateConfig(config: unknown): string[] {
   if (config == null || typeof config !== "object" || Array.isArray(config)) {
     return ["config must be an object"];
@@ -11,7 +20,7 @@ export function validateConfig(config: unknown): string[] {
   const result = IdeConfigSchema.safeParse(config);
 
   if (!result.success) {
-    return result.error.issues.map((issue: any) => mapZodIssue(issue, config));
+    return result.error.issues.map((issue) => mapZodIssue(issue as ZodLikeIssue, config));
   }
 
   // Phase 2: semantic checks (only when schema parse succeeds)
@@ -117,7 +126,7 @@ function typeDesc(path: (string | number)[], expected: string): string {
   return desc;
 }
 
-function mapZodIssue(issue: any, config: unknown): string {
+function mapZodIssue(issue: ZodLikeIssue, config: unknown): string {
   const path: (string | number)[] = issue.path ?? [];
   const code: string = issue.code ?? "";
   const rawPath = formatPath(path);
@@ -167,11 +176,11 @@ function mapZodIssue(issue: any, config: unknown): string {
 
   // Type mismatch
   if (code === "invalid_type") {
-    return `${display} must be ${typeDesc(path, issue.expected)}`;
+    return `${display} must be ${typeDesc(path, issue.expected ?? "")}`;
   }
 
   // Fallback
-  return `${display}: ${issue.message}`;
+  return `${display}: ${issue.message ?? "invalid value"}`;
 }
 
 export async function validate(

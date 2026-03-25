@@ -48,13 +48,13 @@ export interface BoxProps {
   right?: number;
   bottom?: number;
   // Mouse events
-  onMouseDown?: (e: any) => void;
-  onMouseUp?: (e: any) => void;
-  onMouseMove?: (e: any) => void;
-  onMouseOver?: (e: any) => void;
+  onMouseDown?: (e: unknown) => void;
+  onMouseUp?: (e: unknown) => void;
+  onMouseMove?: (e: unknown) => void;
+  onMouseOver?: (e: unknown) => void;
   // Children
-  children?: any;
-  ref?: (el: any) => void;
+  children?: unknown;
+  ref?: (el: unknown) => void;
 }
 
 export interface TextProps {
@@ -67,13 +67,13 @@ export interface TextProps {
   flexGrow?: number;
   flexShrink?: number;
   // Mouse events
-  onMouseUp?: (e: any) => void;
-  onMouseDown?: (e: any) => void;
-  children?: any;
+  onMouseUp?: (e: unknown) => void;
+  onMouseDown?: (e: unknown) => void;
+  children?: unknown;
 }
 
 export interface ScrollBoxProps extends BoxProps {
-  verticalScrollbarOptions?: any;
+  verticalScrollbarOptions?: unknown;
   stickyScroll?: boolean;
   stickyStart?: "bottom" | "top";
 }
@@ -85,7 +85,7 @@ export interface InputProps {
   focusedBackgroundColor?: RGBA;
   cursorColor?: RGBA;
   focusedTextColor?: RGBA;
-  onMouseDown?: (e: any) => void;
-  ref?: (el: any) => void;
-  children?: any;
+  onMouseDown?: (e: unknown) => void;
+  ref?: (el: unknown) => void;
+  children?: unknown;
 }

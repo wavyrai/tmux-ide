@@ -6,6 +6,7 @@ import tsPlugin from "@typescript-eslint/eslint-plugin";
 export default [
   {
     ignores: [
+      ".worktrees/**",
       "docs/**",
       "node_modules/**",
       "coverage/**",

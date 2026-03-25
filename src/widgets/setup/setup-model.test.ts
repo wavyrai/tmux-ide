@@ -7,7 +7,6 @@ import {
   addPane,
   removePane,
   validateSetupConfig,
-  type TreeNode,
 } from "./setup-model.ts";
 import type { IdeConfig } from "../../schemas/ide-config.ts";
 
@@ -34,8 +33,10 @@ describe("PRESETS", () => {
     for (const preset of PRESETS) {
       const config = preset.buildConfig("test-project");
       const result = validateSetupConfig(config);
-      expect(result.valid,
-        `preset ${preset.id} produced invalid config: ${!result.valid ? result.errors.join(", ") : ""}`,).toBeTruthy();
+      expect(
+        result.valid,
+        `preset ${preset.id} produced invalid config: ${!result.valid ? result.errors.join(", ") : ""}`,
+      ).toBeTruthy();
     }
   });
 

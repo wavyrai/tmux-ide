@@ -275,7 +275,6 @@ export function tagContent(markdown: string, by: string): string {
     }
   }
 
-  const stats = calculateStats(newMarks);
   const doc: MarksDocument = { version: 2, marks: newMarks };
   return embedMarks(content, doc);
 }

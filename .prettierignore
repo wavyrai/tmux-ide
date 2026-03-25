@@ -1,4 +1,7 @@
 node_modules
+app/build
+app/.build
+.worktrees
 docs/.next
 docs/.source
 docs/node_modules

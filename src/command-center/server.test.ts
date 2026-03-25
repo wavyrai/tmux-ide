@@ -3,14 +3,7 @@ import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { agentIdentifier } from "../lib/orchestrator.ts";
-import {
-  ensureTasksDir,
-  saveMission,
-  saveGoal,
-  saveTask,
-  loadTask,
-  type Task,
-} from "../lib/task-store.ts";
+import { ensureTasksDir, saveMission, saveTask, loadTask, type Task } from "../lib/task-store.ts";
 import { appendEvent } from "../lib/event-log.ts";
 import { _setExecutor, type PaneInfo } from "../widgets/lib/pane-comms.ts";
 import { _setTmuxRunner } from "./discovery.ts";

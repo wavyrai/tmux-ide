@@ -19,7 +19,7 @@ export interface CommandCenterOptions {
  * Attach WebSocket upgrade handling to an HTTP server.
  * Clients connect to /ws/mirror/{session}/{paneId} to mirror a tmux pane.
  */
-export function attachWebSockets(server: Server, session: string, _dir: string): WebSocketServer {
+export function attachWebSockets(server: Server, _session: string, _dir: string): WebSocketServer {
   const wss = new WebSocketServer({ noServer: true });
 
   server.on("upgrade", (req: IncomingMessage, socket, head) => {

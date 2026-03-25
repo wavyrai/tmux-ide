@@ -1,13 +1,6 @@
 import { execFileSync, execFile } from "node:child_process";
 import { promisify } from "node:util";
-import {
-  existsSync,
-  readdirSync,
-  readFileSync,
-  writeFileSync,
-  mkdirSync,
-  unlinkSync,
-} from "node:fs";
+import { existsSync, readFileSync, writeFileSync, mkdirSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
@@ -91,7 +84,7 @@ export function createApp(): Hono {
 
   app.get("/api/project/:name/panes", (c) => {
     const name = c.req.param("name");
-    let panes: ReturnType<typeof listSessionPanes> = [];
+    let panes: ReturnType<typeof listSessionPanes>;
     try {
       panes = listSessionPanes(name);
     } catch {
@@ -407,9 +400,7 @@ export function createApp(): Hono {
     const session = sessions.find((s) => s.name === name);
     if (!session) return c.json({ error: "Session not found" }, 404);
     const taskId = c.req.query("task");
-    const list = taskId
-      ? loadReviewsForTask(session.dir, taskId)
-      : loadReviews(session.dir);
+    const list = taskId ? loadReviewsForTask(session.dir, taskId) : loadReviews(session.dir);
     return c.json({ reviews: list });
   });
 
@@ -596,7 +587,9 @@ export function createApp(): Hono {
         encoding: "utf-8",
         stdio: ["ignore", "pipe", "ignore"],
       });
-    } catch {}
+    } catch {
+      // no committed diff
+    }
     if (!diff) {
       try {
         diff = execFileSync("git", ["diff", "--", file], {
@@ -604,7 +597,9 @@ export function createApp(): Hono {
           encoding: "utf-8",
           stdio: ["ignore", "pipe", "ignore"],
         });
-      } catch {}
+      } catch {
+        // no working-tree diff
+      }
     }
 
     return c.json({ file, diff });

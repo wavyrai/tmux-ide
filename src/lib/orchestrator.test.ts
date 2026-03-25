@@ -1,4 +1,4 @@
-import { describe, it, beforeEach, afterEach, mock, expect } from "bun:test";
+import { describe, it, beforeEach, afterEach, expect } from "bun:test";
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -23,8 +23,6 @@ import {
   normalizePaneTitle,
   getPaneSpecialties,
   dispatchGoals,
-  type OrchestratorConfig,
-  type OrchestratorState,
 } from "./orchestrator.ts";
 import { readEvents } from "./event-log.ts";
 import {
@@ -33,9 +31,7 @@ import {
   saveGoal,
   saveTask,
   loadTask,
-  loadTasks,
   loadGoal,
-  type Task,
   type Goal,
 } from "./task-store.ts";
 import { _setExecutor, type PaneInfo } from "../widgets/lib/pane-comms.ts";
@@ -469,15 +465,21 @@ describe("isIdleForDispatch", () => {
   });
 
   it("returns true for agent pane without spinner", () => {
-    expect(isIdleForDispatch(makePane({ currentCommand: "claude", title: "Agent 1" }))).toBeTruthy();
+    expect(
+      isIdleForDispatch(makePane({ currentCommand: "claude", title: "Agent 1" })),
+    ).toBeTruthy();
   });
 
   it("returns true for Claude with version command and no spinner", () => {
-    expect(isIdleForDispatch(makePane({ currentCommand: "2.1.80", title: "Claude Code" }))).toBeTruthy();
+    expect(
+      isIdleForDispatch(makePane({ currentCommand: "2.1.80", title: "Claude Code" })),
+    ).toBeTruthy();
   });
 
   it("returns false for agent pane with spinner", () => {
-    expect(!isIdleForDispatch(makePane({ currentCommand: "claude", title: "⠹ Thinking..." }))).toBeTruthy();
+    expect(
+      !isIdleForDispatch(makePane({ currentCommand: "claude", title: "⠹ Thinking..." })),
+    ).toBeTruthy();
   });
 
   it("returns false for non-agent non-shell command", () => {
@@ -737,7 +739,6 @@ describe("event logging integration", () => {
     mkdirSync(join(tmpDir, ".worktrees", "001-test-task"), { recursive: true });
 
     const pane = makePane({ id: "%1", index: 0, title: "Agent 1", currentCommand: "zsh" });
-    const expectedName = agentIdentifier(pane);
     const panes: PaneInfo[] = [pane];
     mockPanes = panes;
 
@@ -1053,14 +1054,8 @@ describe("getPaneSpecialties", () => {
         ["Frontend", ["ui", "css"]],
       ]),
     });
-    expect(getPaneSpecialties(config, makePane({ title: "Backend" }))).toEqual([
-      "api",
-      "database",
-    ]);
-    expect(getPaneSpecialties(config, makePane({ title: "Frontend" }))).toEqual([
-      "ui",
-      "css",
-    ]);
+    expect(getPaneSpecialties(config, makePane({ title: "Backend" }))).toEqual(["api", "database"]);
+    expect(getPaneSpecialties(config, makePane({ title: "Frontend" }))).toEqual(["ui", "css"]);
     expect(getPaneSpecialties(config, makePane({ title: "Other" }))).toEqual([]);
   });
 });

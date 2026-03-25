@@ -9,7 +9,7 @@
  */
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, realpathSync } from "node:fs";
-import { basename, join, resolve } from "node:path";
+import { join, resolve } from "node:path";
 
 type GitExecutor = (args: string[], cwd: string) => string;
 

@@ -3,7 +3,6 @@ import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { _setExecutor } from "./lib/tmux.ts";
-import { IdeError } from "./lib/errors.ts";
 import { stop } from "./stop.ts";
 
 let mockExec;

@@ -10,8 +10,6 @@
 
 import { execFileSync } from "node:child_process";
 import { createServer, type Server } from "node:http";
-import { fileURLToPath } from "node:url";
-import { resolve } from "node:path";
 import { computePortPanes, computeAgentStates } from "./session-monitor.ts";
 
 const INTERVAL = 1000;
@@ -246,7 +244,9 @@ async function startCommandCenter(): Promise<void> {
           const addr = server.address();
           const actualPort = typeof addr === "object" && addr ? addr.port : port;
           tmuxSilent("set-option", "-t", session, "@command_center_port", String(actualPort));
-          console.log(`[daemon] Command Center on http://0.0.0.0:${actualPort} (session: ${session})`);
+          console.log(
+            `[daemon] Command Center on http://0.0.0.0:${actualPort} (session: ${session})`,
+          );
           res();
         });
       });

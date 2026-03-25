@@ -10,10 +10,8 @@ import {
   saveTask,
   ensureTasksDir as storeEnsureTasksDir,
   getTasksRoot,
-  nextTaskId,
   type Task,
 } from "../../lib/task-store.ts";
-import { join } from "node:path";
 
 // Re-export the canonical Task type and CRUD functions
 export type { Task };

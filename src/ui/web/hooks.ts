@@ -1,6 +1,17 @@
 import { createSignal, onMount, onCleanup } from "solid-js";
 
-export function useKeyboard(handler: (evt: any) => void): void {
+/** Synthetic key event passed to handlers (mirrors OpenTUI naming). */
+export interface UiKeyEvent {
+  name: string;
+  ctrl: boolean;
+  shift: boolean;
+  alt: boolean;
+  meta: boolean;
+  preventDefault: () => void;
+  stopPropagation: () => void;
+}
+
+export function useKeyboard(handler: (evt: UiKeyEvent) => void): void {
   onMount(() => {
     const listener = (e: KeyboardEvent) => {
       const evt = {

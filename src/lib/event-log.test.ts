@@ -1,13 +1,5 @@
 import { describe, it, beforeEach, afterEach, expect } from "bun:test";
-import {
-  mkdtempSync,
-  rmSync,
-  mkdirSync,
-  writeFileSync,
-  existsSync,
-  statSync,
-  readFileSync,
-} from "node:fs";
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync, existsSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { appendEvent, readEvents, type OrchestratorEvent } from "./event-log.ts";

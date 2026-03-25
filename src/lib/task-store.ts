@@ -76,7 +76,8 @@ export function normalizeMission(raw: Record<string, unknown>): Mission {
 
 export function normalizeGoal(raw: Record<string, unknown>): Goal {
   const epoch = "1970-01-01T00:00:00.000Z";
-  const { _version: _, ...rest } = raw;
+  const rest = { ...raw };
+  delete rest._version;
   return {
     ...(rest as Omit<Goal, "assignee" | "specialty" | "created" | "updated">),
     created: (raw.created as string) ?? epoch,
@@ -102,7 +103,8 @@ export function normalizeTask(raw: Record<string, unknown>): Task {
     delete proof.note;
   }
 
-  const { _version: _, ...rest } = raw;
+  const rest = { ...raw };
+  delete rest._version;
   return {
     ...defaults,
     ...(rest as Omit<

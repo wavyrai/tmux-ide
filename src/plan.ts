@@ -1,6 +1,6 @@
 import { resolve } from "node:path";
 import { outputError } from "./lib/output.ts";
-import { loadPlans, listPlans, markPlanDone, getPlan, type PlanStatus } from "./lib/plan-store.ts";
+import { listPlans, markPlanDone, getPlan, type PlanStatus } from "./lib/plan-store.ts";
 
 const STATUS_ICONS: Record<PlanStatus, string> = {
   pending: "○",

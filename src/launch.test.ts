@@ -1,5 +1,5 @@
 import { describe, it, beforeEach, afterEach, expect } from "bun:test";
-import { mkdtempSync, rmSync, readFileSync, writeFileSync, existsSync } from "node:fs";
+import { mkdtempSync, rmSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildPaneMap, waitForPaneCommand, ensureTaskDocs } from "./launch.ts";

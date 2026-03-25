@@ -32,6 +32,7 @@ import {
   type FSWatcher,
 } from "node:fs";
 import { join } from "node:path";
+import yaml from "js-yaml";
 import {
   loadMission,
   loadGoal,
@@ -39,7 +40,6 @@ import {
   loadTasks,
   saveTask,
   saveGoal,
-  loadTask,
   type Task,
   type Goal,
 } from "./task-store.ts";
@@ -519,7 +519,11 @@ export function dispatchGoals(
     if (!existsSync(goalDispatchDir)) mkdirSync(goalDispatchDir, { recursive: true });
     const goalDispatchFile = join(goalDispatchDir, `goal-${goal.id}.md`);
     writeFileSync(goalDispatchFile, prompt);
-    sendCommand(config.session, planner.id, `Read and execute the goal in .tasks/dispatch/goal-${goal.id}.md`);
+    sendCommand(
+      config.session,
+      planner.id,
+      `Read and execute the goal in .tasks/dispatch/goal-${goal.id}.md`,
+    );
 
     // Log event
     appendEvent(config.dir, {
@@ -593,7 +597,11 @@ export function detectCompletions(
           const msg = `# Task Failed: ${task.title}\n\nFailed after ${task.maxRetries ?? 5} retries.\nLast error: ${task.lastError}\n\nManual intervention required.`;
           writeFileSync(msgFile, msg);
           // Keep under 200 chars to avoid paste preview in Claude Code TUI
-          sendCommand(config.session, masterPaneInfo.id, `Task ${task.id} failed after retries. Run: tmux-ide dispatch retry-exhausted-${task.id}`);
+          sendCommand(
+            config.session,
+            masterPaneInfo.id,
+            `Task ${task.id} failed after retries. Run: tmux-ide dispatch retry-exhausted-${task.id}`,
+          );
         }
       }
     }
@@ -672,7 +680,11 @@ export function detectCompletions(
           writeFileSync(msgFile, msg);
           // Keep under 200 chars to avoid paste preview in Claude Code TUI
           const shortTitle = task.title.length > 60 ? task.title.slice(0, 57) + "..." : task.title;
-          sendCommand(config.session, masterPaneInfo.id, `Task done: "${shortTitle}" by ${task.assignee}. Run: tmux-ide dispatch completed-${task.id}`);
+          sendCommand(
+            config.session,
+            masterPaneInfo.id,
+            `Task done: "${shortTitle}" by ${task.assignee}. Run: tmux-ide dispatch completed-${task.id}`,
+          );
         }
       }
     }
@@ -952,7 +964,6 @@ export function createOrchestrator(initialConfig: OrchestratorConfig): () => voi
       if (debounce) clearTimeout(debounce);
       debounce = setTimeout(() => {
         try {
-          const yaml = require("js-yaml") as { load: (s: string) => unknown };
           const raw = readFileSync(configPath, "utf-8");
           const parsed = yaml.load(raw) as Record<string, unknown>;
           const orch = (parsed.orchestrator ?? {}) as Record<string, unknown>;

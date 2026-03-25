@@ -682,7 +682,7 @@ describe("normalizer snapshots", () => {
       tags: [],
       proof: null,
     };
-    const result = normalizeTask(raw as any);
+    const result = normalizeTask(raw as Record<string, unknown>);
     expect(result).toEqual({
       id: "001",
       title: "Test",
@@ -719,9 +719,9 @@ describe("normalizer snapshots", () => {
       tags: [],
       proof: { note: "legacy note" },
     };
-    const result = normalizeTask(raw as any);
+    const result = normalizeTask(raw as Record<string, unknown>);
     expect(result.proof?.notes).toBe("legacy note");
-    expect((result.proof as any).note).toBe(undefined);
+    expect((result.proof as Record<string, unknown>).note).toBe(undefined);
   });
 
   it("normalizeGoal defaults missing fields", () => {
@@ -733,7 +733,7 @@ describe("normalizer snapshots", () => {
       acceptance: "",
       priority: 1,
     };
-    const result = normalizeGoal(raw as any);
+    const result = normalizeGoal(raw as Record<string, unknown>);
     expect(result.assignee).toBe(null);
     expect(result.specialty).toBe(null);
     expect(result.created).toBe("1970-01-01T00:00:00.000Z");
@@ -742,7 +742,7 @@ describe("normalizer snapshots", () => {
 
   it("normalizeMission defaults missing timestamps", () => {
     const raw = { title: "M", description: "desc" };
-    const result = normalizeMission(raw as any);
+    const result = normalizeMission(raw as Record<string, unknown>);
     expect(result).toEqual({
       title: "M",
       description: "desc",
@@ -771,7 +771,7 @@ describe("normalizer snapshots", () => {
       nextRetryAt: "2026-01-02T00:00:00Z",
       depends_on: ["002"],
     };
-    const result = normalizeTask(raw as any);
+    const result = normalizeTask(raw as Record<string, unknown>);
     expect(result.retryCount).toBe(3);
     expect(result.maxRetries).toBe(10);
     expect(result.lastError).toBe("timeout");
@@ -1032,37 +1032,71 @@ describe("corrupted file resilience", () => {
 describe("normalizer snapshots", () => {
   it("normalizeTask produces exact default shape", () => {
     const raw = {
-      id: "001", title: "Test", description: "desc", goal: null,
-      status: "todo", assignee: null, priority: 1,
-      created: "2026-01-01T00:00:00Z", updated: "2026-01-01T00:00:00Z",
-      branch: null, tags: [], proof: null,
+      id: "001",
+      title: "Test",
+      description: "desc",
+      goal: null,
+      status: "todo",
+      assignee: null,
+      priority: 1,
+      created: "2026-01-01T00:00:00Z",
+      updated: "2026-01-01T00:00:00Z",
+      branch: null,
+      tags: [],
+      proof: null,
     };
-    const result = normalizeTask(raw as any);
+    const result = normalizeTask(raw as Record<string, unknown>);
     assert.deepStrictEqual(result, {
-      id: "001", title: "Test", description: "desc", goal: null,
-      status: "todo", assignee: null, priority: 1,
-      created: "2026-01-01T00:00:00Z", updated: "2026-01-01T00:00:00Z",
-      branch: null, tags: [], proof: null,
-      retryCount: 0, maxRetries: 5, lastError: null, nextRetryAt: null,
+      id: "001",
+      title: "Test",
+      description: "desc",
+      goal: null,
+      status: "todo",
+      assignee: null,
+      priority: 1,
+      created: "2026-01-01T00:00:00Z",
+      updated: "2026-01-01T00:00:00Z",
+      branch: null,
+      tags: [],
+      proof: null,
+      retryCount: 0,
+      maxRetries: 5,
+      lastError: null,
+      nextRetryAt: null,
       depends_on: [],
     });
   });
 
   it("normalizeTask migrates proof.note to proof.notes", () => {
     const raw = {
-      id: "001", title: "Test", description: "", goal: null,
-      status: "todo", assignee: null, priority: 1,
-      created: "2026-01-01T00:00:00Z", updated: "2026-01-01T00:00:00Z",
-      branch: null, tags: [], proof: { note: "legacy note" },
+      id: "001",
+      title: "Test",
+      description: "",
+      goal: null,
+      status: "todo",
+      assignee: null,
+      priority: 1,
+      created: "2026-01-01T00:00:00Z",
+      updated: "2026-01-01T00:00:00Z",
+      branch: null,
+      tags: [],
+      proof: { note: "legacy note" },
     };
-    const result = normalizeTask(raw as any);
+    const result = normalizeTask(raw as Record<string, unknown>);
     assert.strictEqual(result.proof?.notes, "legacy note");
-    assert.strictEqual((result.proof as any).note, undefined);
+    assert.strictEqual((result.proof as Record<string, unknown>).note, undefined);
   });
 
   it("normalizeGoal defaults missing fields", () => {
-    const raw = { id: "01", title: "G", description: "", status: "todo", acceptance: "", priority: 1 };
-    const result = normalizeGoal(raw as any);
+    const raw = {
+      id: "01",
+      title: "G",
+      description: "",
+      status: "todo",
+      acceptance: "",
+      priority: 1,
+    };
+    const result = normalizeGoal(raw as Record<string, unknown>);
     assert.strictEqual(result.assignee, null);
     assert.strictEqual(result.specialty, null);
     assert.strictEqual(result.created, "1970-01-01T00:00:00.000Z");
@@ -1071,9 +1105,10 @@ describe("normalizer snapshots", () => {
 
   it("normalizeMission defaults missing timestamps", () => {
     const raw = { title: "M", description: "desc" };
-    const result = normalizeMission(raw as any);
+    const result = normalizeMission(raw as Record<string, unknown>);
     assert.deepStrictEqual(result, {
-      title: "M", description: "desc",
+      title: "M",
+      description: "desc",
       created: "1970-01-01T00:00:00.000Z",
       updated: "1970-01-01T00:00:00.000Z",
     });
@@ -1081,14 +1116,25 @@ describe("normalizer snapshots", () => {
 
   it("normalizeTask preserves explicit retry values", () => {
     const raw = {
-      id: "001", title: "Test", description: "", goal: null,
-      status: "todo", assignee: null, priority: 1,
-      created: "2026-01-01T00:00:00Z", updated: "2026-01-01T00:00:00Z",
-      branch: null, tags: [], proof: null,
-      retryCount: 3, maxRetries: 10, lastError: "timeout",
-      nextRetryAt: "2026-01-02T00:00:00Z", depends_on: ["002"],
+      id: "001",
+      title: "Test",
+      description: "",
+      goal: null,
+      status: "todo",
+      assignee: null,
+      priority: 1,
+      created: "2026-01-01T00:00:00Z",
+      updated: "2026-01-01T00:00:00Z",
+      branch: null,
+      tags: [],
+      proof: null,
+      retryCount: 3,
+      maxRetries: 10,
+      lastError: "timeout",
+      nextRetryAt: "2026-01-02T00:00:00Z",
+      depends_on: ["002"],
     };
-    const result = normalizeTask(raw as any);
+    const result = normalizeTask(raw as Record<string, unknown>);
     assert.strictEqual(result.retryCount, 3);
     assert.strictEqual(result.maxRetries, 10);
     assert.strictEqual(result.lastError, "timeout");

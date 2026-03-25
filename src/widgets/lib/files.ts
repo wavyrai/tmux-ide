@@ -70,7 +70,9 @@ export function readDirectory(
       let isIgnored = false;
       try {
         isIgnored = ig.ignores(e.isDirectory() ? rel + "/" : rel);
-      } catch {}
+      } catch {
+        // ignore malformed paths for ignore rules
+      }
       return {
         name: e.name,
         path: rel,
