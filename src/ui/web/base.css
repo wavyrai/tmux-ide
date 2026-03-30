@@ -1,0 +1,80 @@
+/* Base styles for the web terminal backend.
+ * Import this in your HTML or bundler entry point to get terminal-like appearance.
+ * These styles are also injected automatically by render() at runtime.
+ */
+
+:root {
+  --ui-line-height: 1.4em;
+  --ui-font-family:
+    "IBM Plex Mono", ui-monospace, "SFMono-Regular", "SF Mono", Menlo, Consolas, "Liberation Mono",
+    monospace;
+  --ui-font-size: 13px;
+  --ui-bg: rgb(19, 16, 16);
+  --ui-fg: rgb(232, 228, 228);
+  --ui-scrollbar-track: rgb(25, 25, 35);
+  --ui-scrollbar-thumb: rgb(60, 60, 80);
+  --ui-scrollbar-thumb-hover: rgb(80, 80, 100);
+}
+
+body,
+#root {
+  font-family: var(--ui-font-family);
+  font-size: var(--ui-font-size);
+  line-height: var(--ui-line-height);
+  background: var(--ui-bg);
+  color: var(--ui-fg);
+  margin: 0;
+  padding: 0;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+/* Flex-column by default — matches terminal box model */
+div {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+span {
+  font-family: inherit;
+  font-size: inherit;
+  line-height: inherit;
+}
+
+input {
+  font-family: inherit;
+  font-size: inherit;
+  line-height: inherit;
+  background: transparent;
+  color: inherit;
+  border: none;
+  outline: none;
+}
+
+input::placeholder {
+  color: rgba(232, 228, 228, 0.4);
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--ui-scrollbar-track);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--ui-scrollbar-thumb);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--ui-scrollbar-thumb-hover);
+}
