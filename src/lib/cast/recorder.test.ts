@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { AsciicastRecorder } from "./recorder.ts";
@@ -30,7 +30,7 @@ describe("AsciicastRecorder", () => {
     }
 
     // The .tasks/recordings/ directory should have been created
-    const { existsSync } = require("node:fs");
+    // existsSync imported at top
     expect(existsSync(join(dir, ".tasks", "recordings"))).toBe(true);
   });
 

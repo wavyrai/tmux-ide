@@ -75,9 +75,14 @@ describe("WsV3Hub", { timeout: 30_000 }, () => {
 
   it("unsubscribe stops STDOUT after UNSUBSCRIBE", async () => {
     const m = createMockDeps();
-    const hub = new WsV3Hub(new AuthService("hub-test-secret"), { method: "none", token_expiry: 86400 }, m.deps, {
-      pollIntervalMs: 15,
-    });
+    const hub = new WsV3Hub(
+      new AuthService("hub-test-secret"),
+      { method: "none", token_expiry: 86400 },
+      m.deps,
+      {
+        pollIntervalMs: 15,
+      },
+    );
 
     await withServer(hub, async (port) => {
       const client = new WebSocket(`ws://127.0.0.1:${port}/`);
@@ -116,9 +121,14 @@ describe("WsV3Hub", { timeout: 30_000 }, () => {
 
   it("subscribe receives STDOUT data frames when capture changes", async () => {
     const m = createMockDeps();
-    const hub = new WsV3Hub(new AuthService("hub-test-secret"), { method: "none", token_expiry: 86400 }, m.deps, {
-      pollIntervalMs: 15,
-    });
+    const hub = new WsV3Hub(
+      new AuthService("hub-test-secret"),
+      { method: "none", token_expiry: 86400 },
+      m.deps,
+      {
+        pollIntervalMs: 15,
+      },
+    );
 
     await withServer(hub, async (port) => {
       const client = new WebSocket(`ws://127.0.0.1:${port}/`);
@@ -178,9 +188,14 @@ describe("WsV3Hub", { timeout: 30_000 }, () => {
 
   it("broadcast delivers frame to all subscribers", async () => {
     const m = createMockDeps();
-    const hub = new WsV3Hub(new AuthService("hub-test-secret"), { method: "none", token_expiry: 86400 }, m.deps, {
-      pollIntervalMs: 500,
-    });
+    const hub = new WsV3Hub(
+      new AuthService("hub-test-secret"),
+      { method: "none", token_expiry: 86400 },
+      m.deps,
+      {
+        pollIntervalMs: 500,
+      },
+    );
 
     await withServer(hub, async (port) => {
       const c1 = new WebSocket(`ws://127.0.0.1:${port}/`);

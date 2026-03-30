@@ -1,5 +1,5 @@
 // Based on VibeTunnel (MIT) — github.com/amantus-ai/vibetunnel
-import { describe, it, expect, beforeEach, afterEach, mock } from "bun:test";
+import { describe, it, expect, beforeEach, afterEach } from "bun:test";
 import { HQClient } from "./client.ts";
 
 // Capture fetch calls
@@ -13,7 +13,10 @@ function mockFetch(url: string | URL | Request, init?: RequestInit): Promise<Res
   fetchCalls.push({ url: urlStr, init: init ?? {} });
   const next = fetchResponses.shift() ?? { ok: true, status: 200, text: "{}" };
   return Promise.resolve(
-    new Response(next.text, { status: next.status, headers: { "Content-Type": "application/json" } }),
+    new Response(next.text, {
+      status: next.status,
+      headers: { "Content-Type": "application/json" },
+    }),
   );
 }
 

@@ -253,12 +253,11 @@ async function startCommandCenter(): Promise<void> {
       });
       // Wire shutdown flag
       const origShutdown = shutdown;
-      // eslint-disable-next-line no-inner-declarations
-      function shutdownWithRegistry() {
+      const shutdownWithRegistry = () => {
         _isShuttingDown = true;
         remoteRegistry?.destroy();
         origShutdown();
-      }
+      };
       process.removeListener("SIGTERM", shutdown);
       process.removeListener("SIGINT", shutdown);
       process.on("SIGTERM", shutdownWithRegistry);

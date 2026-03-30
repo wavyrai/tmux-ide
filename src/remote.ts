@@ -1,7 +1,6 @@
 import { resolve } from "node:path";
 import { IdeError } from "./lib/errors.ts";
 import { HQClient } from "./lib/hq/client.ts";
-import { RemoteRegistry } from "./lib/hq/registry.ts";
 import { HQConfigSchema } from "./lib/hq/types.ts";
 
 interface RemoteOptions {
@@ -11,9 +10,9 @@ interface RemoteOptions {
   values?: Record<string, string | boolean | undefined>;
 }
 
-function loadHQConfig(dir: string) {
+async function loadHQConfig(dir: string) {
   try {
-    const { readConfig } = require("./lib/yaml-io.ts") as typeof import("./lib/yaml-io.ts");
+    const { readConfig } = await import("./lib/yaml-io.ts");
     const { config } = readConfig(dir);
     if (config.hq) {
       return HQConfigSchema.parse(config.hq);
@@ -33,20 +32,25 @@ export async function remoteCommand(
 
   switch (sub) {
     case "register": {
-      const hqConfig = loadHQConfig(dir);
+      const hqConfig = await loadHQConfig(dir);
       if (!hqConfig || hqConfig.role !== "remote") {
-        throw new IdeError('HQ config not found or role is not "remote". Add hq section to ide.yml.', {
-          code: "CONFIG_MISSING",
-        });
+        throw new IdeError(
+          'HQ config not found or role is not "remote". Add hq section to ide.yml.',
+          {
+            code: "CONFIG_MISSING",
+          },
+        );
       }
       if (!hqConfig.hq_url) {
-        throw new IdeError("hq_url is required for remote registration", { code: "CONFIG_MISSING" });
+        throw new IdeError("hq_url is required for remote registration", {
+          code: "CONFIG_MISSING",
+        });
       }
 
       const client = new HQClient({
         hqUrl: hqConfig.hq_url,
         secret: hqConfig.secret ?? "",
-        machineName: hqConfig.machine_name ?? require("node:os").hostname(),
+        machineName: hqConfig.machine_name ?? (await import("node:os")).hostname(),
         remoteUrl: (opts.values?.url as string) ?? `http://localhost:4000`,
         heartbeatInterval: hqConfig.heartbeat_interval,
       });
@@ -78,7 +82,7 @@ export async function remoteCommand(
     }
 
     case "machines": {
-      const hqConfig = loadHQConfig(dir);
+      const hqConfig = await loadHQConfig(dir);
       const hqUrl =
         (opts.values?.["hq-url"] as string) ?? hqConfig?.hq_url ?? "http://localhost:4000";
 
@@ -101,15 +105,18 @@ export async function remoteCommand(
           }
         }
       } catch (err) {
-        throw new IdeError(`Failed to query HQ: ${err instanceof Error ? err.message : String(err)}`, {
-          code: "HQ_ERROR",
-        });
+        throw new IdeError(
+          `Failed to query HQ: ${err instanceof Error ? err.message : String(err)}`,
+          {
+            code: "HQ_ERROR",
+          },
+        );
       }
       break;
     }
 
     case "status": {
-      const hqConfig = loadHQConfig(dir);
+      const hqConfig = await loadHQConfig(dir);
 
       if (json) {
         console.log(

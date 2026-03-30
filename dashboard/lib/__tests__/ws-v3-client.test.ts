@@ -22,11 +22,7 @@ describe("ws-v3-client", () => {
   });
 
   it("round-trips HELLO with empty sessionId", () => {
-    const encoded = encodeFrame(
-      WsV3MessageType.HELLO,
-      "",
-      new TextEncoder().encode("{}"),
-    );
+    const encoded = encodeFrame(WsV3MessageType.HELLO, "", new TextEncoder().encode("{}"));
     const decoded = decodeFrame(encoded);
     expect(decoded!.type).toBe(WsV3MessageType.HELLO);
     expect(decoded!.sessionId).toBe("");
