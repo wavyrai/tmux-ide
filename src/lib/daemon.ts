@@ -212,7 +212,6 @@ let httpServer: Server | null = null;
 async function startCommandCenter(): Promise<void> {
   try {
     const { createApp } = await import("../command-center/server.ts");
-    const { attachWebSockets } = await import("../command-center/index.ts");
     const { getRequestListener } = await import("@hono/node-server");
     const { AuthService } = await import("./auth/auth-service.ts");
     const { AuthConfigSchema } = await import("./auth/types.ts");
@@ -274,9 +273,6 @@ async function startCommandCenter(): Promise<void> {
 
     const listener = getRequestListener(app.fetch);
     const server = createServer(listener);
-
-    // Attach WebSocket upgrade handler for pane mirrors
-    attachWebSockets(server, session, process.cwd(), authService, authConfig);
 
     // Try requested port, fall back to auto-assign if taken
     const tryPort = (port: number): Promise<void> =>

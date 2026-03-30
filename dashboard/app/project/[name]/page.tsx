@@ -2,8 +2,7 @@
 
 import { useState, useCallback } from "react";
 import { useParams, useRouter } from "next/navigation";
-import dynamic from "next/dynamic";
-import { fetchProject, fetchEvents, fetchPanes, type EventData, type PaneData } from "@/lib/api";
+import { fetchProject, fetchEvents, type EventData } from "@/lib/api";
 import { usePolling } from "@/lib/usePolling";
 import { ProgressBar } from "@/components/ProgressBar";
 import { AgentCard } from "@/components/AgentCard";
@@ -14,73 +13,11 @@ import { PlansPanel } from "@/components/PlansPanel";
 import { StatusBar } from "@/components/StatusBar";
 import type { ProjectDetail } from "@/lib/types";
 
-// Lazy-load terminal component to avoid SSR issues with ghostty-web WASM
-const MirrorTerminal = dynamic(
-  () => import("@/components/MirrorTerminal").then((m) => ({ default: m.MirrorTerminal })),
-  { ssr: false },
-);
-
-// Responsive pane mirror view — grid on desktop, single pane + selector on mobile
-function PaneMirrorView({
-  items,
-  sessionName,
-  emptyMessage,
-}: {
-  items: { id: string; name: string }[];
-  sessionName: string;
-  emptyMessage: string;
-}) {
-  const [selectedIdx, setSelectedIdx] = useState(0);
-
-  if (items.length === 0) {
-    return (
-      <div className="flex-1 flex items-center justify-center text-[var(--dim)]">
-        {emptyMessage}
-      </div>
-    );
-  }
-
-  const selected = items[selectedIdx] ?? items[0]!;
-
-  return (
-    <div className="flex-1 min-h-0 flex flex-col">
-      {/* Pane selector — always visible, essential for mobile */}
-      <div className="shrink-0 flex items-center gap-1 px-2 py-1 border-b border-[var(--border)] bg-[var(--surface)] overflow-x-auto">
-        {items.map((item, i) => (
-          <button
-            key={item.id}
-            onClick={() => setSelectedIdx(i)}
-            className={`px-2 py-0.5 text-xs whitespace-nowrap transition-colors rounded ${
-              i === selectedIdx
-                ? "bg-[var(--accent)] text-[var(--bg)]"
-                : "text-[var(--dim)] hover:text-[var(--fg)]"
-            }`}
-          >
-            {item.name}
-          </button>
-        ))}
-      </div>
-
-      {/* Single terminal — full height */}
-      <div className="flex-1 min-h-0">
-        <MirrorTerminal
-          key={selected.id}
-          sessionName={sessionName}
-          paneId={selected.id}
-          paneName={selected.name}
-          className="flex flex-col h-full"
-        />
-      </div>
-    </div>
-  );
-}
-
-type Tab = "kanban" | "agents" | "all-panes" | "diffs" | "plans" | "activity";
+type Tab = "kanban" | "agents" | "diffs" | "plans" | "activity";
 
 const TABS: { id: Tab; label: string }[] = [
   { id: "kanban", label: "kanban" },
   { id: "agents", label: "agents" },
-  { id: "all-panes", label: "all panes" },
   { id: "diffs", label: "diffs" },
   { id: "plans", label: "plans" },
   { id: "activity", label: "activity" },
@@ -104,8 +41,6 @@ export default function ProjectPage() {
   const eventsFetcher = useCallback(() => fetchEvents(name), [name]);
   const { data: events } = usePolling<EventData[]>(eventsFetcher, 3000);
 
-  const panesFetcher = useCallback(() => fetchPanes(name), [name]);
-  const { data: panes } = usePolling<PaneData[]>(panesFetcher, 3000);
 
   if (error) {
     return (
@@ -220,22 +155,18 @@ export default function ProjectPage() {
       {activeTab === "activity" && <ActivityFeed events={events ?? []} />}
 
       {activeTab === "agents" && (
-        <PaneMirrorView
-          items={project.agents.map((a) => ({ id: a.paneId, name: a.paneTitle }))}
-          sessionName={project.session}
-          emptyMessage="no agents in this session"
-        />
-      )}
-
-      {activeTab === "all-panes" && (
-        <PaneMirrorView
-          items={(panes ?? []).map((p) => ({
-            id: p.id,
-            name: p.name || p.title || `pane ${p.index}`,
-          }))}
-          sessionName={project.session}
-          emptyMessage="no panes found"
-        />
+        <div className="flex-1 p-4 overflow-auto">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+            {project.agents.map((a, i) => (
+              <AgentCard key={`${a.paneTitle}-${i}`} agent={a} />
+            ))}
+          </div>
+          {project.agents.length === 0 && (
+            <div className="flex items-center justify-center h-32 text-[var(--dim)]">
+              no agents in this session
+            </div>
+          )}
+        </div>
       )}
 
       <StatusBar project={project} lastUpdate={lastUpdate} stale={stale} />
