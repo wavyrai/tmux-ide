@@ -170,3 +170,6 @@ final class ServerManager {
         }
     }
 }
+
+/// Alias matching integration docs (`DaemonManager` = command-center / daemon status).
+typealias DaemonManager = ServerManager

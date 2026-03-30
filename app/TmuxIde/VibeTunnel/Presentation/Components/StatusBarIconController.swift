@@ -27,8 +27,9 @@ final class StatusBarIconController {
     func update(serverManager: ServerManager, sessionMonitor: SessionMonitor) {
         guard let button else { return }
 
-        // Update icon based on server status
-        self.updateIcon(isServerRunning: serverManager.isRunning)
+        self.updateIcon(
+            isServerRunning: serverManager.isRunning,
+            hasBusyAgents: sessionMonitor.hasBusyAgents)
 
         // Update session count display
         let sessions = sessionMonitor.sessions.values.filter(\.isRunning)
@@ -42,33 +43,38 @@ final class StatusBarIconController {
         button.title = indicator.isEmpty ? "" : " " + indicator
     }
 
-    /// Updates the icon of the status bar button based on the server's running state.
-    /// - Parameter isServerRunning: A boolean indicating if the server is running.
-    private func updateIcon(isServerRunning: Bool) {
+    /// Updates the icon of the status bar button based on the server's running state
+    /// and whether any agent panes are busy (pulse + accent).
+    private func updateIcon(isServerRunning: Bool, hasBusyAgents: Bool) {
         guard let button else { return }
 
-        // Always use the same icon - it's already set as a template in the asset catalog
         guard let image = NSImage(named: "menubar") else {
             logger.warning("menubar icon not found")
             return
         }
 
-        // The image is already configured as a template in Contents.json,
-        // but we set it explicitly to be safe
         image.isTemplate = true
         button.image = image
 
-        // Use opacity to indicate server state:
-        // - 1.0 (fully opaque) when server is running
-        // - 0.5 (semi-transparent) when server is stopped
-        button.alphaValue = isServerRunning ? 1.0 : 0.5
+        if !isServerRunning {
+            button.alphaValue = 0.45
+            button.contentTintColor = nil
+            return
+        }
+
+        if hasBusyAgents {
+            let t = Date.timeIntervalSinceReferenceDate
+            // Smooth pulse while agents are working.
+            let pulse = 0.72 + 0.28 * (0.5 + 0.5 * sin(t * 2.8))
+            button.alphaValue = CGFloat(pulse)
+            button.contentTintColor = .controlAccentColor
+        } else {
+            button.alphaValue = 1.0
+            button.contentTintColor = nil
+        }
     }
 
     /// Formats the session count indicator with a minimalist style.
-    /// - Parameters:
-    ///   - activeCount: The number of active sessions.
-    ///   - idleCount: The number of idle sessions.
-    /// - Returns: A formatted string representing the session counts.
     private func formatSessionIndicator(activeCount: Int, idleCount: Int) -> String {
         let totalCount = activeCount + idleCount
         guard totalCount > 0 else { return "" }

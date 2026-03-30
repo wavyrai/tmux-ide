@@ -17,6 +17,7 @@ struct TmuxIdeApp: App {
             TmuxIdeMenuView()
                 .environment(sessionMonitor)
                 .environment(serverManager)
+                .withTmuxIdeServices()
         }
         .menuBarExtraStyle(.window)
 

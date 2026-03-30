@@ -3,7 +3,7 @@ import SwiftUI
 
 /// Common styling constants and modifiers for the TmuxIde menu.
 enum MenuStyles {
-    static let menuWidth: CGFloat = 384
+    static let menuWidth: CGFloat = 400
     static let cornerRadius: CGFloat = 6
     static let smallCornerRadius: CGFloat = 4
     static let padding: CGFloat = 12

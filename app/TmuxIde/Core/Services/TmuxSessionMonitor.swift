@@ -20,8 +20,14 @@ final class TmuxSessionMonitor {
     /// Keyed by session name.
     private(set) var sessions: [String: SessionInfo] = [:]
 
+    /// Sum of agent panes across sessions (for tooltips / badges).
     var agentCount: Int {
-        sessions.values.reduce(0) { $0 + $1.agentCount }
+        sessions.values.reduce(0) { $0 + $1.agentPanesTotal }
+    }
+
+    /// True when any agent pane is busy (drives menu bar “active” pulse).
+    var hasBusyAgents: Bool {
+        sessions.values.contains { $0.agentPanesBusy > 0 }
     }
 
     var taskProgress: (done: Int, total: Int) {
@@ -30,8 +36,25 @@ final class TmuxSessionMonitor {
         return (done, total)
     }
 
+    /// True when any session has `orchestrator.enabled` in ide.yml (per command-center).
     var orchestratorStatus: Bool {
-        sessions.values.contains { $0.orchestratorRunning }
+        sessions.values.contains { $0.orchestratorEnabled }
+    }
+
+    /// Aggregated orchestrator stats for all sessions where the orchestrator is enabled.
+    var orchestratorAggregate: (
+        dispatchMode: String,
+        activeTasks: Int,
+        queuedTasks: Int,
+        stalledAgents: Int
+    )? {
+        let enabled = sessions.values.filter { $0.orchestratorEnabled }
+        guard !enabled.isEmpty else { return nil }
+        let mode = enabled.first?.dispatchMode ?? "tasks"
+        let active = enabled.reduce(0) { $0 + $1.orchestratorTasksActive }
+        let queued = enabled.reduce(0) { $0 + $1.orchestratorTasksQueued }
+        let stalled = enabled.reduce(0) { $0 + $1.orchestratorStalledAgents }
+        return (mode, active, queued, stalled)
     }
 
     // MARK: - Private
@@ -127,11 +150,19 @@ final class TmuxSessionMonitor {
                 attached: attached,
                 created: created,
                 panes: [],
-                agentCount: 0,
+                agentPanesTotal: 0,
+                agentPanesBusy: 0,
                 missionTitle: nil,
                 tasksDone: 0,
                 tasksTotal: 0,
-                orchestratorRunning: false
+                orchestratorEnabled: false,
+                dispatchMode: "tasks",
+                orchestratorTasksActive: 0,
+                orchestratorTasksQueued: 0,
+                orchestratorStalledAgents: 0,
+                orchestratorRunning: false,
+                projectDirectory: nil,
+                paneCount: windows
             )
         }
     }
@@ -153,7 +184,6 @@ final class TmuxSessionMonitor {
     ) async -> [SessionInfo] {
         let base = "http://127.0.0.1:\(port)"
 
-        // Fetch /api/sessions for an overview
         guard let overviewData = await httpGet("\(base)/api/sessions"),
               let overviewJson = try? JSONSerialization.jsonObject(with: overviewData) as? [String: Any],
               let sessionList = overviewJson["sessions"] as? [[String: Any]]
@@ -163,7 +193,6 @@ final class TmuxSessionMonitor {
 
         var enriched = sessions
 
-        // Build a lookup from the API
         var apiSessions: [String: [String: Any]] = [:]
         for s in sessionList {
             if let name = s["name"] as? String {
@@ -173,24 +202,44 @@ final class TmuxSessionMonitor {
 
         for i in enriched.indices {
             let name = enriched[i].name
-            if let api = apiSessions[name] {
-                // Extract stats if present
-                if let stats = api["stats"] as? [String: Any] {
-                    enriched[i].agentCount = stats["activeAgents"] as? Int ?? 0
-                    enriched[i].tasksDone = stats["doneTasks"] as? Int ?? 0
-                    enriched[i].tasksTotal = stats["totalTasks"] as? Int ?? 0
-                }
+            let pathName = name.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? name
+
+            if let api = apiSessions[name], let stats = api["stats"] as? [String: Any] {
+                enriched[i].agentPanesTotal = stats["agents"] as? Int ?? 0
+                enriched[i].agentPanesBusy = stats["activeAgents"] as? Int ?? 0
+                enriched[i].tasksDone = stats["doneTasks"] as? Int ?? 0
+                enriched[i].tasksTotal = stats["totalTasks"] as? Int ?? 0
             }
 
-            // Fetch per-project detail for mission + orchestrator
-            if let detailData = await httpGet("\(base)/api/project/\(name)"),
+            if let detailData = await httpGet("\(base)/api/project/\(pathName)"),
                let detail = try? JSONSerialization.jsonObject(with: detailData) as? [String: Any]
             {
+                enriched[i].projectDirectory = detail["dir"] as? String
+
                 if let mission = detail["mission"] as? [String: Any] {
                     enriched[i].missionTitle = mission["title"] as? String
                 }
-                if let orch = detail["orchestrator"] as? [String: Any] {
-                    enriched[i].orchestratorRunning = orch["running"] as? Bool ?? false
+
+                if let orchCfg = detail["orchestratorConfig"] as? [String: Any] {
+                    enriched[i].orchestratorEnabled = orchCfg["enabled"] as? Bool ?? false
+                    if let mode = orchCfg["dispatchMode"] as? String {
+                        enriched[i].dispatchMode = mode
+                    }
+                }
+
+                if let snap = detail["orchestratorSnapshot"] as? [String: Any] {
+                    enriched[i].orchestratorTasksActive = snap["inProgressCount"] as? Int ?? 0
+                    enriched[i].orchestratorTasksQueued = snap["pendingCount"] as? Int ?? 0
+                    enriched[i].orchestratorRunning = snap["running"] as? Bool ?? false
+                }
+
+                if let paneData = await httpGet("\(base)/api/project/\(pathName)/panes"),
+                   let paneJson = try? JSONSerialization.jsonObject(with: paneData) as? [String: Any],
+                   let panes = paneJson["panes"] as? [[String: Any]]
+                {
+                    enriched[i].paneCount = panes.count
+                } else {
+                    enriched[i].paneCount = enriched[i].windowCount
                 }
             }
         }

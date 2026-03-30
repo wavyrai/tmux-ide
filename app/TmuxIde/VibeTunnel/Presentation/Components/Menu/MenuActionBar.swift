@@ -1,124 +1,113 @@
 // Based on VibeTunnel (MIT) — github.com/amantus-ai/vibetunnel
 import SwiftUI
 
-/// Focus field enum that matches the one in TmuxIdeMenuView
+/// Focus targets for keyboard navigation in the menu bar panel.
 enum MenuFocusField: Hashable {
     case sessionRow(String)
-    case settingsButton
     case newSessionButton
-    case quitButton
+    case stopSessionButton
+    case dashboardButton
+    case settingsButton
 }
 
-/// Bottom action bar for the menu with New Session, Settings, and Quit buttons.
-///
-/// Provides quick access to common actions with keyboard navigation support
-/// and visual feedback for hover and focus states.
+/// Bottom quick actions: launch IDE, stop session, dashboard, settings.
 struct MenuActionBar: View {
-    @Binding var showingNewSession: Bool
+    let onNewSession: () -> Void
+    let onStopSession: () -> Void
+    let onOpenDashboard: () -> Void
+    let onSettings: () -> Void
+
     @Binding var focusedField: MenuFocusField?
     let hasStartedKeyboardNavigation: Bool
 
-    @Environment(\.openWindow)
-    private var openWindow
     @Environment(\.colorScheme)
     private var colorScheme
 
-    @State private var isHoveringNewSession = false
-    @State private var isHoveringSettings = false
-    @State private var isHoveringQuit = false
+    @State private var hoverNew = false
+    @State private var hoverStop = false
+    @State private var hoverDashboard = false
+    @State private var hoverSettings = false
 
     var body: some View {
-        HStack(spacing: 8) {
-            Button(action: {
-                self.showingNewSession = true
-            }, label: {
-                Label("New Session", systemImage: "plus.circle")
-                    .font(.system(size: 12))
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 10)
-                    .background(
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(
-                                self.isHoveringNewSession ? AppColors.Fallback.controlBackground(for: self.colorScheme)
-                                    .opacity(self.colorScheme == .light ? 0.6 : 0.7) : Color.clear)
-                            .scaleEffect(self.isHoveringNewSession ? 1.08 : 1.0)
-                            .animation(.easeInOut(duration: 0.15), value: self.isHoveringNewSession))
-            })
-            .buttonStyle(.plain)
-            .foregroundColor(.primary)
-            .onHover { hovering in
-                self.isHoveringNewSession = hovering
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                actionButton(
+                    title: "New Session",
+                    systemImage: "plus.circle",
+                    isHovered: self.$hoverNew,
+                    focus: .newSessionButton,
+                    role: .primary,
+                    action: self.onNewSession)
+                actionButton(
+                    title: "Stop Session",
+                    systemImage: "stop.circle",
+                    isHovered: self.$hoverStop,
+                    focus: .stopSessionButton,
+                    role: .destructive,
+                    action: self.onStopSession)
             }
-            .focusable()
-            .overlay(
-                RoundedRectangle(cornerRadius: 4)
-                    .strokeBorder(
-                        self.focusedField == .newSessionButton && self.hasStartedKeyboardNavigation ? AppColors.Fallback
-                            .accentHover(for: self.colorScheme).opacity(2) : Color.clear,
-                        lineWidth: 1)
-                    .animation(.easeInOut(duration: 0.15), value: self.focusedField))
-
-            Button(action: {
-                SettingsOpener.openSettings()
-            }, label: {
-                Label("Settings", systemImage: "gearshape")
-                    .font(.system(size: 12))
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 10)
-                    .background(
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(
-                                self.isHoveringSettings ? AppColors.Fallback.controlBackground(for: self.colorScheme)
-                                    .opacity(self.colorScheme == .light ? 0.6 : 0.7) : Color.clear)
-                            .scaleEffect(self.isHoveringSettings ? 1.08 : 1.0)
-                            .animation(.easeInOut(duration: 0.15), value: self.isHoveringSettings))
-            })
-            .buttonStyle(.plain)
-            .foregroundColor(.secondary)
-            .onHover { hovering in
-                self.isHoveringSettings = hovering
+            HStack(spacing: 8) {
+                actionButton(
+                    title: "Open Dashboard",
+                    systemImage: "safari",
+                    isHovered: self.$hoverDashboard,
+                    focus: .dashboardButton,
+                    role: .standard,
+                    action: self.onOpenDashboard)
+                actionButton(
+                    title: "Settings",
+                    systemImage: "gearshape",
+                    isHovered: self.$hoverSettings,
+                    focus: .settingsButton,
+                    role: .standard,
+                    action: self.onSettings)
             }
-            .focusable()
-            .overlay(
-                RoundedRectangle(cornerRadius: 4)
-                    .strokeBorder(
-                        self.focusedField == .settingsButton && self.hasStartedKeyboardNavigation ? AppColors.Fallback
-                            .accentHover(for: self.colorScheme).opacity(2) : Color.clear,
-                        lineWidth: 1)
-                    .animation(.easeInOut(duration: 0.15), value: self.focusedField))
-
-            Spacer()
-
-            Button(action: {
-                NSApplication.shared.terminate(nil)
-            }, label: {
-                Label("Quit", systemImage: "power")
-                    .font(.system(size: 12))
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 10)
-                    .background(
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(
-                                self.isHoveringQuit ? AppColors.Fallback.controlBackground(for: self.colorScheme)
-                                    .opacity(self.colorScheme == .light ? 0.6 : 0.7) : Color.clear)
-                            .scaleEffect(self.isHoveringQuit ? 1.08 : 1.0)
-                            .animation(.easeInOut(duration: 0.15), value: self.isHoveringQuit))
-            })
-            .buttonStyle(.plain)
-            .foregroundColor(.secondary)
-            .onHover { hovering in
-                self.isHoveringQuit = hovering
-            }
-            .focusable()
-            .overlay(
-                RoundedRectangle(cornerRadius: 4)
-                    .strokeBorder(
-                        self.focusedField == .quitButton && self.hasStartedKeyboardNavigation ? AppColors.Fallback
-                            .accentHover(for: self.colorScheme).opacity(2) : Color.clear,
-                        lineWidth: 1)
-                    .animation(.easeInOut(duration: 0.15), value: self.focusedField))
         }
         .padding(.horizontal)
         .padding(.vertical, 12)
+    }
+
+    private enum ButtonRole {
+        case primary
+        case destructive
+        case standard
+    }
+
+    private func actionButton(
+        title: String,
+        systemImage: String,
+        isHovered: Binding<Bool>,
+        focus: MenuFocusField,
+        role: ButtonRole,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action, label: {
+            Label(title, systemImage: systemImage)
+                .font(.system(size: 12))
+                .padding(.horizontal, 10)
+                .padding(.vertical, 8)
+                .frame(maxWidth: .infinity, alignment: .center)
+                .background(
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(
+                            isHovered.wrappedValue
+                                ? AppColors.Fallback.controlBackground(for: self.colorScheme)
+                                    .opacity(self.colorScheme == .light ? 0.6 : 0.7)
+                                : Color.clear)
+                        .animation(.easeInOut(duration: 0.15), value: isHovered.wrappedValue))
+        })
+        .buttonStyle(.plain)
+        .foregroundColor(
+            role == .destructive ? .red : (role == .primary ? .primary : .secondary))
+        .onHover { isHovered.wrappedValue = $0 }
+        .focusable()
+        .overlay(
+            RoundedRectangle(cornerRadius: 4)
+                .strokeBorder(
+                    self.focusedField == focus && self.hasStartedKeyboardNavigation
+                        ? AppColors.Fallback.accentHover(for: self.colorScheme).opacity(2)
+                        : Color.clear,
+                    lineWidth: 1)
+                .animation(.easeInOut(duration: 0.15), value: self.focusedField))
     }
 }
