@@ -22,6 +22,7 @@ import {
 } from "../widgets/lib/pane-comms.ts";
 import { resolvePane } from "../send.ts";
 import { getSessionState, killSession, stopSessionMonitor } from "../lib/tmux.ts";
+import { readConfig } from "../lib/yaml-io.ts";
 import { ensureTasksDir, nextTaskId, saveTask, deleteTask, type Task } from "../lib/task-store.ts";
 import { readEvents, appendEvent } from "../lib/event-log.ts";
 import { extractMarks, calculateStats, tagContent } from "../lib/authorship.ts";
@@ -130,7 +131,21 @@ export function createApp(options: CreateAppOptions = {}): Hono {
       return c.json({ error: "Session not found" }, 404);
     }
     const detail = buildProjectDetail(session);
-    return c.json(detail);
+    const orchestratorSnapshot = buildOrchestratorSnapshot(session);
+    let orchestratorConfig: { enabled: boolean; dispatchMode: string } | null = null;
+    try {
+      const { config } = readConfig(session.dir);
+      const orch = config.orchestrator;
+      if (orch) {
+        orchestratorConfig = {
+          enabled: orch.enabled ?? false,
+          dispatchMode: orch.dispatch_mode ?? "tasks",
+        };
+      }
+    } catch {
+      // unreadable ide.yml
+    }
+    return c.json({ ...detail, orchestratorSnapshot, orchestratorConfig });
   });
 
   app.get("/api/project/:name/panes", (c) => {
@@ -947,7 +962,8 @@ export function createApp(options: CreateAppOptions = {}): Hono {
     if (!remoteRegistry) return c.json({ error: "HQ registry not enabled" }, 501);
     const body = await c.req.json();
     const parsed = RegistrationPayloadSchema.safeParse(body);
-    if (!parsed.success) return c.json({ error: "Invalid payload", details: parsed.error.issues }, 400);
+    if (!parsed.success)
+      return c.json({ error: "Invalid payload", details: parsed.error.issues }, 400);
     try {
       const machine = remoteRegistry.register(parsed.data);
       return c.json({
@@ -1010,7 +1026,8 @@ export function createApp(options: CreateAppOptions = {}): Hono {
     const body = await c.req.json().catch(() => ({}));
     const { tunnelConfigSchema } = await import("../lib/tunnels/types.ts");
     const parsed = tunnelConfigSchema.safeParse(body);
-    if (!parsed.success) return c.json({ error: "Invalid tunnel config", details: parsed.error.issues }, 400);
+    if (!parsed.success)
+      return c.json({ error: "Invalid tunnel config", details: parsed.error.issues }, 400);
     const status = await tunnelManager.start(parsed.data);
     return c.json(status);
   });

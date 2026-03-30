@@ -14,9 +14,9 @@ function getManager(dir: string, session?: string): TunnelManager {
   return manager;
 }
 
-function resolveSession(): string | undefined {
+async function resolveSession(): Promise<string | undefined> {
   try {
-    const { readConfig } = require("./lib/yaml-io.ts") as typeof import("./lib/yaml-io.ts");
+    const { readConfig } = await import("./lib/yaml-io.ts");
     const { config } = readConfig(process.cwd());
     return config.name ?? undefined;
   } catch {
@@ -24,9 +24,12 @@ function resolveSession(): string | undefined {
   }
 }
 
-function resolveTunnelConfig(dir: string, overrides?: Partial<TunnelConfig>): TunnelConfig {
+async function resolveTunnelConfig(
+  dir: string,
+  overrides?: Partial<TunnelConfig>,
+): Promise<TunnelConfig> {
   try {
-    const { readConfig } = require("./lib/yaml-io.ts") as typeof import("./lib/yaml-io.ts");
+    const { readConfig } = await import("./lib/yaml-io.ts");
     const { config } = readConfig(dir);
     if (config.tunnel) {
       const merged = { ...config.tunnel, ...overrides };
@@ -57,7 +60,7 @@ export async function tunnelCommand(
 ): Promise<void> {
   const dir = resolve(targetDir ?? ".");
   const { json, sub } = opts;
-  const session = resolveSession();
+  const session = await resolveSession();
   const mgr = getManager(dir, session);
 
   switch (sub) {
@@ -67,7 +70,7 @@ export async function tunnelCommand(
       const domain = (opts.values?.domain as string) ?? undefined;
       const authtoken = (opts.values?.authtoken as string) ?? undefined;
 
-      const config = resolveTunnelConfig(dir, {
+      const config = await resolveTunnelConfig(dir, {
         provider: provider as TunnelConfig["provider"],
         port,
         domain,

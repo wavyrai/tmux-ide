@@ -170,9 +170,7 @@ export function MirrorTerminal({
           if (cancelled || !term) return;
           const raw = event.data;
           const buf =
-            raw instanceof ArrayBuffer
-              ? new Uint8Array(raw)
-              : new Uint8Array(raw as ArrayBuffer);
+            raw instanceof ArrayBuffer ? new Uint8Array(raw) : new Uint8Array(raw as ArrayBuffer);
           const frame = decodeFrame(buf);
           if (!frame) return;
 

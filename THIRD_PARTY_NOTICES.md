@@ -10,20 +10,20 @@ Several components in this project are derived from or based on VibeTunnel.
 
 ### Derived Components
 
-| Path | Description |
-|------|-------------|
-| `src/lib/auth/auth-service.ts` | JWT + SSH challenge-response authentication |
-| `src/lib/ws-v3/` | WebSocket v3 binary protocol and hub |
-| `src/lib/tunnels/tailscale.ts` | Tailscale Serve tunnel service |
-| `src/lib/tunnels/ngrok.ts` | ngrok tunnel service |
-| `src/lib/tunnels/cloudflare.ts` | Cloudflare Quick Tunnel service |
-| `src/lib/hq/client.ts` | HQ multi-machine registration client |
-| `src/lib/hq/registry.ts` | HQ remote machine registry |
-| `src/lib/hq/mdns.ts` | mDNS/Bonjour service advertisement |
-| `src/lib/ipc/socket-protocol.ts` | Unix socket IPC protocol |
-| `src/lib/log.ts` | Logger (VibeTunnel-compatible shim) |
-| `src/lib/cast/recorder.ts` | asciicast v2 session recorder |
-| `app/` | macOS app scaffold (entire directory) |
+| Path                             | Description                                 |
+| -------------------------------- | ------------------------------------------- |
+| `src/lib/auth/auth-service.ts`   | JWT + SSH challenge-response authentication |
+| `src/lib/ws-v3/`                 | WebSocket v3 binary protocol and hub        |
+| `src/lib/tunnels/tailscale.ts`   | Tailscale Serve tunnel service              |
+| `src/lib/tunnels/ngrok.ts`       | ngrok tunnel service                        |
+| `src/lib/tunnels/cloudflare.ts`  | Cloudflare Quick Tunnel service             |
+| `src/lib/hq/client.ts`           | HQ multi-machine registration client        |
+| `src/lib/hq/registry.ts`         | HQ remote machine registry                  |
+| `src/lib/hq/mdns.ts`             | mDNS/Bonjour service advertisement          |
+| `src/lib/ipc/socket-protocol.ts` | Unix socket IPC protocol                    |
+| `src/lib/log.ts`                 | Logger (VibeTunnel-compatible shim)         |
+| `src/lib/cast/recorder.ts`       | asciicast v2 session recorder               |
+| `app/`                           | macOS app scaffold (entire directory)       |
 
 ### MIT License
 

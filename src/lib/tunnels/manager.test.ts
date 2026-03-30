@@ -1,35 +1,5 @@
 import { describe, it, expect, beforeEach } from "bun:test";
 import { TunnelManager } from "./manager.ts";
-import type { TunnelStatus, TunnelService } from "./types.ts";
-
-// Mock tunnel service for testing (avoids spawning real processes)
-class MockTunnelService implements TunnelService {
-  started = false;
-  stopped = false;
-  _url: string | null = null;
-  _shouldFail = false;
-
-  async start(): Promise<unknown> {
-    if (this._shouldFail) throw new Error("Mock tunnel failure");
-    this.started = true;
-    this._url = "https://mock.tunnel.test";
-    return { publicUrl: this._url };
-  }
-
-  async stop(): Promise<void> {
-    this.stopped = true;
-    this.started = false;
-    this._url = null;
-  }
-
-  async status(): Promise<TunnelStatus> {
-    return {
-      running: this.started,
-      publicUrl: this._url,
-      port: 4000,
-    };
-  }
-}
 
 describe("TunnelManager", () => {
   let mgr: TunnelManager;

@@ -113,7 +113,11 @@ export class TunnelManager {
     }
   }
 
-  private emitEvent(level: "info" | "error", message: string, url: string | null | undefined): void {
+  private emitEvent(
+    level: "info" | "error",
+    message: string,
+    url: string | null | undefined,
+  ): void {
     try {
       appendEvent(this.dir, {
         timestamp: new Date().toISOString(),

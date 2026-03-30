@@ -218,7 +218,10 @@ export class WsV3Hub {
     try {
       switch (type) {
         case WsV3MessageType.PING:
-          this.safeSend(ws, encodeWsV3Frame({ type: WsV3MessageType.PONG, sessionId: sid, payload }));
+          this.safeSend(
+            ws,
+            encodeWsV3Frame({ type: WsV3MessageType.PONG, sessionId: sid, payload }),
+          );
           return;
 
         case WsV3MessageType.SUBSCRIBE: {
@@ -237,7 +240,11 @@ export class WsV3Hub {
                 type: WsV3MessageType.EVENT,
                 sessionId: sid,
                 payload: utf8.encode(
-                  JSON.stringify({ kind: "subscribed", session: meta.session, paneId: meta.paneId }),
+                  JSON.stringify({
+                    kind: "subscribed",
+                    session: meta.session,
+                    paneId: meta.paneId,
+                  }),
                 ),
               }),
             );
