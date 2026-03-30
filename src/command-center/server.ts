@@ -1,0 +1,910 @@
+import { execFileSync, execFile } from "node:child_process";
+import { promisify } from "node:util";
+import { existsSync, readFileSync, writeFileSync, mkdirSync, unlinkSync } from "node:fs";
+import { join } from "node:path";
+import { Hono } from "hono";
+import { streamSSE } from "hono/streaming";
+import { cors } from "hono/cors";
+import {
+  discoverSessions,
+  buildOverviews,
+  buildProjectDetail,
+  buildOrchestratorSnapshot,
+  updateTask,
+  type SessionOverview,
+  type ProjectDetail,
+} from "./discovery.ts";
+import {
+  listSessionPanes,
+  sendCommand,
+  sendText,
+  getPaneBusyStatus,
+} from "../widgets/lib/pane-comms.ts";
+import { resolvePane } from "../send.ts";
+import { getSessionState, killSession, stopSessionMonitor } from "../lib/tmux.ts";
+import { ensureTasksDir, nextTaskId, saveTask, deleteTask, type Task } from "../lib/task-store.ts";
+import { readEvents, appendEvent } from "../lib/event-log.ts";
+import { extractMarks, calculateStats, tagContent } from "../lib/authorship.ts";
+import { loadPlans, markPlanDone } from "../lib/plan-store.ts";
+import {
+  loadCheckpoints,
+  loadCheckpoint,
+  loadCheckpointsForTask,
+  saveCheckpoint,
+  deleteCheckpoint,
+  nextCheckpointId,
+  loadReviews,
+  loadReview,
+  loadReviewsForTask,
+  saveReview,
+  deleteReview,
+  nextReviewId,
+  type Checkpoint,
+  type ReviewRequest,
+  type ReviewComment,
+} from "../lib/workflow-store.ts";
+import { zValidator } from "@hono/zod-validator";
+import {
+  updateTaskSchema,
+  createTaskSchema,
+  savePlanSchema,
+  sendCommandSchema,
+} from "./schemas.ts";
+
+export function createApp(): Hono {
+  const app = new Hono();
+
+  // Allow cross-origin (Next.js dashboard, Tailscale, etc.)
+  app.use("/*", cors());
+
+  // Global error handler
+  app.onError((err, c) => {
+    console.error("[command-center]", err.message);
+    return c.json({ error: err.message }, 500);
+  });
+
+  // --- API routes ---
+
+  app.get("/api/sessions", (c) => {
+    const sessions = discoverSessions();
+    const overviews = buildOverviews(sessions);
+    return c.json({ sessions: overviews });
+  });
+
+  app.get("/api/project/:name", (c) => {
+    const name = c.req.param("name");
+    const sessions = discoverSessions();
+    const session = sessions.find((s) => s.name === name);
+    if (!session) {
+      return c.json({ error: "Session not found" }, 404);
+    }
+    const detail = buildProjectDetail(session);
+    return c.json(detail);
+  });
+
+  app.get("/api/project/:name/panes", (c) => {
+    const name = c.req.param("name");
+    let panes: ReturnType<typeof listSessionPanes>;
+    try {
+      panes = listSessionPanes(name);
+    } catch {
+      return c.json({ error: "Session not found" }, 404);
+    }
+    if (panes.length === 0) {
+      // Verify the session actually exists before returning empty
+      const sessions = discoverSessions();
+      if (!sessions.find((s) => s.name === name)) {
+        return c.json({ error: "Session not found" }, 404);
+      }
+    }
+    return c.json({
+      panes: panes.map((p) => ({
+        id: p.id,
+        index: p.index,
+        title: p.title,
+        currentCommand: p.currentCommand,
+        width: p.width,
+        height: p.height,
+        active: p.active,
+        role: p.role,
+        name: p.name,
+        type: p.type,
+      })),
+    });
+  });
+
+  app.post("/api/project/:name/task/:id", zValidator("json", updateTaskSchema), async (c) => {
+    const name = c.req.param("name");
+    const taskId = c.req.param("id");
+
+    const sessions = discoverSessions();
+    const session = sessions.find((s) => s.name === name);
+    if (!session) {
+      return c.json({ error: "Session not found" }, 404);
+    }
+
+    const body = c.req.valid("json");
+    const updated = updateTask(session.dir, taskId, body);
+    if (!updated) {
+      return c.json({ error: "Task not found" }, 404);
+    }
+
+    return c.json({ ok: true, task: updated });
+  });
+
+  // Create task
+  app.post("/api/project/:name/task", zValidator("json", createTaskSchema), async (c) => {
+    const name = c.req.param("name");
+    const sessions = discoverSessions();
+    const session = sessions.find((s) => s.name === name);
+    if (!session) {
+      return c.json({ error: "Session not found" }, 404);
+    }
+
+    const body = c.req.valid("json");
+
+    ensureTasksDir(session.dir);
+    const id = nextTaskId(session.dir);
+    const now = new Date().toISOString();
+    const task: Task = {
+      id,
+      title: body.title.trim(),
+      description: body.description ?? "",
+      goal: body.goal ?? null,
+      status: "todo",
+      assignee: null,
+      priority: body.priority ?? 2,
+      created: now,
+      updated: now,
+      branch: null,
+      tags: body.tags ?? [],
+      proof: null,
+      depends_on: [],
+      retryCount: 0,
+      maxRetries: 5,
+      lastError: null,
+      nextRetryAt: null,
+    };
+    saveTask(session.dir, task);
+    return c.json({ ok: true, task }, 201);
+  });
+
+  // Delete task
+  app.delete("/api/project/:name/task/:id", (c) => {
+    const name = c.req.param("name");
+    const taskId = c.req.param("id");
+    const sessions = discoverSessions();
+    const session = sessions.find((s) => s.name === name);
+    if (!session) {
+      return c.json({ error: "Session not found" }, 404);
+    }
+
+    if (!deleteTask(session.dir, taskId)) {
+      return c.json({ error: "Task not found" }, 404);
+    }
+    return c.json({ ok: true, deleted: taskId });
+  });
+
+  // List plan files with status metadata
+  app.get("/api/project/:name/plans", (c) => {
+    const name = c.req.param("name");
+    const sessions = discoverSessions();
+    const session = sessions.find((s) => s.name === name);
+    if (!session) {
+      return c.json({ error: "Session not found" }, 404);
+    }
+
+    const plans = loadPlans(session.dir).map((p) => ({
+      name: p.name,
+      path: `${p.name}.md`,
+      title: p.title,
+      status: p.status,
+      effort: p.effort ?? null,
+      completed: p.completed ?? null,
+    }));
+
+    return c.json({ plans });
+  });
+
+  // Read a single plan file
+  app.get("/api/project/:name/plans/:filename", (c) => {
+    const name = c.req.param("name");
+    const filename = c.req.param("filename");
+    const sessions = discoverSessions();
+    const session = sessions.find((s) => s.name === name);
+    if (!session) {
+      return c.json({ error: "Session not found" }, 404);
+    }
+
+    // Sanitize filename — no path traversal
+    const safeName = filename.replace(/[^a-zA-Z0-9_\-. ]/g, "");
+    const filePath = join(
+      session.dir,
+      "plans",
+      safeName.endsWith(".md") ? safeName : `${safeName}.md`,
+    );
+
+    if (!existsSync(filePath)) {
+      return c.json({ error: "Plan not found" }, 404);
+    }
+
+    const raw = readFileSync(filePath, "utf-8");
+    const { content, marks } = extractMarks(raw);
+    const stats = marks ? calculateStats(marks.marks) : null;
+    return c.json({
+      name: safeName.replace(/\.md$/, ""),
+      content,
+      marks: marks?.marks ?? null,
+      stats,
+    });
+  });
+
+  // Save a plan file (with authorship tagging)
+  app.post("/api/project/:name/plans/:filename", zValidator("json", savePlanSchema), async (c) => {
+    const name = c.req.param("name");
+    const filename = c.req.param("filename");
+    const sessions = discoverSessions();
+    const session = sessions.find((s) => s.name === name);
+    if (!session) {
+      return c.json({ error: "Session not found" }, 404);
+    }
+
+    const body = c.req.valid("json");
+
+    const safeName = filename.replace(/[^a-zA-Z0-9_\-. ]/g, "");
+    const filePath = join(
+      session.dir,
+      "plans",
+      safeName.endsWith(".md") ? safeName : `${safeName}.md`,
+    );
+    const plansDir = join(session.dir, "plans");
+    if (!existsSync(plansDir)) mkdirSync(plansDir, { recursive: true });
+
+    // Auto-tag uncovered character ranges as human-authored
+    const tagged = tagContent(body.content, "human");
+    writeFileSync(filePath, tagged);
+
+    return c.json({ ok: true });
+  });
+
+  // Delete a plan file
+  app.delete("/api/project/:name/plans/:filename", (c) => {
+    const name = c.req.param("name");
+    const filename = c.req.param("filename");
+    const sessions = discoverSessions();
+    const session = sessions.find((s) => s.name === name);
+    if (!session) {
+      return c.json({ error: "Session not found" }, 404);
+    }
+
+    const safeName = filename.replace(/[^a-zA-Z0-9_\-. ]/g, "");
+    const filePath = join(
+      session.dir,
+      "plans",
+      safeName.endsWith(".md") ? safeName : `${safeName}.md`,
+    );
+
+    if (!existsSync(filePath)) {
+      return c.json({ error: "Plan not found" }, 404);
+    }
+
+    unlinkSync(filePath);
+    return c.json({ ok: true, deleted: safeName });
+  });
+
+  // Mark a plan as done
+  app.post("/api/project/:name/plans/:filename/done", (c) => {
+    const name = c.req.param("name");
+    const filename = c.req.param("filename");
+    const sessions = discoverSessions();
+    const session = sessions.find((s) => s.name === name);
+    if (!session) {
+      return c.json({ error: "Session not found" }, 404);
+    }
+
+    const safeName = filename.replace(/[^a-zA-Z0-9_\-. ]/g, "").replace(/\.md$/, "");
+    const result = markPlanDone(session.dir, safeName);
+    if (!result) {
+      return c.json({ error: "Plan not found" }, 404);
+    }
+
+    return c.json({ ok: true, plan: result });
+  });
+
+  // --- Checkpoints ---
+
+  app.get("/api/project/:name/checkpoints", (c) => {
+    const name = c.req.param("name");
+    const sessions = discoverSessions();
+    const session = sessions.find((s) => s.name === name);
+    if (!session) return c.json({ error: "Session not found" }, 404);
+    const taskId = c.req.query("task");
+    const list = taskId
+      ? loadCheckpointsForTask(session.dir, taskId)
+      : loadCheckpoints(session.dir);
+    return c.json({ checkpoints: list });
+  });
+
+  app.get("/api/project/:name/checkpoints/:id", (c) => {
+    const name = c.req.param("name");
+    const id = c.req.param("id");
+    const sessions = discoverSessions();
+    const session = sessions.find((s) => s.name === name);
+    if (!session) return c.json({ error: "Session not found" }, 404);
+    const cp = loadCheckpoint(session.dir, id);
+    if (!cp) return c.json({ error: "Checkpoint not found" }, 404);
+    return c.json({ checkpoint: cp });
+  });
+
+  app.post("/api/project/:name/checkpoints", async (c) => {
+    const name = c.req.param("name");
+    const sessions = discoverSessions();
+    const session = sessions.find((s) => s.name === name);
+    if (!session) return c.json({ error: "Session not found" }, 404);
+    const body = await c.req.json();
+    const now = new Date().toISOString();
+    const id = nextCheckpointId(session.dir);
+    const checkpoint: Checkpoint = {
+      id,
+      taskId: body.taskId ?? "",
+      title: body.title ?? `Checkpoint ${id}`,
+      description: body.description ?? "",
+      status: "pending",
+      createdBy: body.createdBy ?? "",
+      reviewedBy: null,
+      created: now,
+      updated: now,
+      diff: body.diff ?? null,
+      files: body.files ?? [],
+      comments: [],
+    };
+    saveCheckpoint(session.dir, checkpoint);
+    return c.json({ ok: true, checkpoint }, 201);
+  });
+
+  app.post("/api/project/:name/checkpoints/:id", async (c) => {
+    const name = c.req.param("name");
+    const id = c.req.param("id");
+    const sessions = discoverSessions();
+    const session = sessions.find((s) => s.name === name);
+    if (!session) return c.json({ error: "Session not found" }, 404);
+    const existing = loadCheckpoint(session.dir, id);
+    if (!existing) return c.json({ error: "Checkpoint not found" }, 404);
+    const body = await c.req.json();
+    const updated: Checkpoint = {
+      ...existing,
+      ...body,
+      id: existing.id,
+      created: existing.created,
+      updated: new Date().toISOString(),
+    };
+    saveCheckpoint(session.dir, updated);
+    return c.json({ ok: true, checkpoint: updated });
+  });
+
+  app.delete("/api/project/:name/checkpoints/:id", (c) => {
+    const name = c.req.param("name");
+    const id = c.req.param("id");
+    const sessions = discoverSessions();
+    const session = sessions.find((s) => s.name === name);
+    if (!session) return c.json({ error: "Session not found" }, 404);
+    if (!deleteCheckpoint(session.dir, id)) return c.json({ error: "Checkpoint not found" }, 404);
+    return c.json({ ok: true, deleted: id });
+  });
+
+  // --- Reviews ---
+
+  app.get("/api/project/:name/reviews", (c) => {
+    const name = c.req.param("name");
+    const sessions = discoverSessions();
+    const session = sessions.find((s) => s.name === name);
+    if (!session) return c.json({ error: "Session not found" }, 404);
+    const taskId = c.req.query("task");
+    const list = taskId ? loadReviewsForTask(session.dir, taskId) : loadReviews(session.dir);
+    return c.json({ reviews: list });
+  });
+
+  app.get("/api/project/:name/reviews/:id", (c) => {
+    const name = c.req.param("name");
+    const id = c.req.param("id");
+    const sessions = discoverSessions();
+    const session = sessions.find((s) => s.name === name);
+    if (!session) return c.json({ error: "Session not found" }, 404);
+    const review = loadReview(session.dir, id);
+    if (!review) return c.json({ error: "Review not found" }, 404);
+    return c.json({ review });
+  });
+
+  app.post("/api/project/:name/reviews", async (c) => {
+    const name = c.req.param("name");
+    const sessions = discoverSessions();
+    const session = sessions.find((s) => s.name === name);
+    if (!session) return c.json({ error: "Session not found" }, 404);
+    const body = await c.req.json();
+    const now = new Date().toISOString();
+    const id = nextReviewId(session.dir);
+    const review: ReviewRequest = {
+      id,
+      taskId: body.taskId ?? "",
+      checkpointId: body.checkpointId ?? null,
+      title: body.title ?? `Review ${id}`,
+      description: body.description ?? "",
+      status: "open",
+      requestedBy: body.requestedBy ?? "",
+      reviewer: body.reviewer ?? null,
+      created: now,
+      updated: now,
+      comments: [],
+    };
+    saveReview(session.dir, review);
+    return c.json({ ok: true, review }, 201);
+  });
+
+  app.post("/api/project/:name/reviews/:id", async (c) => {
+    const name = c.req.param("name");
+    const id = c.req.param("id");
+    const sessions = discoverSessions();
+    const session = sessions.find((s) => s.name === name);
+    if (!session) return c.json({ error: "Session not found" }, 404);
+    const existing = loadReview(session.dir, id);
+    if (!existing) return c.json({ error: "Review not found" }, 404);
+    const body = await c.req.json();
+    const updated: ReviewRequest = {
+      ...existing,
+      ...body,
+      id: existing.id,
+      created: existing.created,
+      updated: new Date().toISOString(),
+    };
+    saveReview(session.dir, updated);
+    return c.json({ ok: true, review: updated });
+  });
+
+  app.post("/api/project/:name/reviews/:id/comment", async (c) => {
+    const name = c.req.param("name");
+    const id = c.req.param("id");
+    const sessions = discoverSessions();
+    const session = sessions.find((s) => s.name === name);
+    if (!session) return c.json({ error: "Session not found" }, 404);
+    const existing = loadReview(session.dir, id);
+    if (!existing) return c.json({ error: "Review not found" }, 404);
+    const body = await c.req.json();
+    const comment: ReviewComment = {
+      author: body.author ?? "",
+      body: body.body ?? "",
+      created: new Date().toISOString(),
+    };
+    existing.comments.push(comment);
+    existing.updated = comment.created;
+    saveReview(session.dir, existing);
+    return c.json({ ok: true, review: existing });
+  });
+
+  app.delete("/api/project/:name/reviews/:id", (c) => {
+    const name = c.req.param("name");
+    const id = c.req.param("id");
+    const sessions = discoverSessions();
+    const session = sessions.find((s) => s.name === name);
+    if (!session) return c.json({ error: "Session not found" }, 404);
+    if (!deleteReview(session.dir, id)) return c.json({ error: "Review not found" }, 404);
+    return c.json({ ok: true, deleted: id });
+  });
+
+  app.get("/api/project/:name/diff", (c) => {
+    const name = c.req.param("name");
+    const sessions = discoverSessions();
+    const session = sessions.find((s) => s.name === name);
+    if (!session) {
+      return c.json({ error: "Session not found" }, 404);
+    }
+
+    // Get git diff (staged + unstaged vs HEAD)
+    let diff = "";
+    try {
+      diff = execFileSync("git", ["diff", "HEAD"], {
+        cwd: session.dir,
+        encoding: "utf-8",
+        stdio: ["ignore", "pipe", "ignore"],
+      });
+    } catch {
+      // No HEAD yet or not a git repo — try unstaged only
+    }
+    if (!diff) {
+      try {
+        diff = execFileSync("git", ["diff"], {
+          cwd: session.dir,
+          encoding: "utf-8",
+          stdio: ["ignore", "pipe", "ignore"],
+        });
+      } catch {
+        // Not a git repo
+      }
+    }
+
+    // Get list of changed files with stats
+    interface DiffFile {
+      file: string;
+      additions: number;
+      deletions: number;
+    }
+    let files: DiffFile[] = [];
+    try {
+      const numstat = execFileSync("git", ["diff", "--numstat", "HEAD"], {
+        cwd: session.dir,
+        encoding: "utf-8",
+        stdio: ["ignore", "pipe", "ignore"],
+      });
+      files = numstat
+        .split("\n")
+        .filter(Boolean)
+        .map((line) => {
+          const [added, removed, file] = line.split("\t");
+          return {
+            file: file!,
+            additions: parseInt(added!, 10) || 0,
+            deletions: parseInt(removed!, 10) || 0,
+          };
+        });
+    } catch {
+      // Fall back to unstaged
+      try {
+        const numstat = execFileSync("git", ["diff", "--numstat"], {
+          cwd: session.dir,
+          encoding: "utf-8",
+          stdio: ["ignore", "pipe", "ignore"],
+        });
+        files = numstat
+          .split("\n")
+          .filter(Boolean)
+          .map((line) => {
+            const [added, removed, file] = line.split("\t");
+            return {
+              file: file!,
+              additions: parseInt(added!, 10) || 0,
+              deletions: parseInt(removed!, 10) || 0,
+            };
+          });
+      } catch {
+        // Not a git repo
+      }
+    }
+
+    return c.json({ diff, files });
+  });
+
+  // Per-file diff endpoint
+  app.get("/api/project/:name/diff/:file{.+}", (c) => {
+    const name = c.req.param("name");
+    const file = c.req.param("file");
+    const sessions = discoverSessions();
+    const session = sessions.find((s) => s.name === name);
+    if (!session) return c.json({ error: "Session not found" }, 404);
+
+    let diff = "";
+    try {
+      diff = execFileSync("git", ["diff", "HEAD", "--", file], {
+        cwd: session.dir,
+        encoding: "utf-8",
+        stdio: ["ignore", "pipe", "ignore"],
+      });
+    } catch {
+      // no committed diff
+    }
+    if (!diff) {
+      try {
+        diff = execFileSync("git", ["diff", "--", file], {
+          cwd: session.dir,
+          encoding: "utf-8",
+          stdio: ["ignore", "pipe", "ignore"],
+        });
+      } catch {
+        // no working-tree diff
+      }
+    }
+
+    return c.json({ file, diff });
+  });
+
+  // Events endpoint — returns recent orchestrator events
+  app.get("/api/project/:name/events", (c) => {
+    const name = c.req.param("name");
+    const sessions = discoverSessions();
+    const session = sessions.find((s) => s.name === name);
+    if (!session) {
+      return c.json({ error: "Session not found" }, 404);
+    }
+
+    const allEvents = readEvents(session.dir);
+    // Return last 50 events, newest first
+    const recent = allEvents.slice(-50).reverse();
+
+    // Add relative timestamps
+    const now = Date.now();
+    const withRelative = recent.map((e) => {
+      const ms = now - new Date(e.timestamp).getTime();
+      let relative: string;
+      if (ms < 60000) relative = `${Math.floor(ms / 1000)}s ago`;
+      else if (ms < 3600000) relative = `${Math.floor(ms / 60000)}m ago`;
+      else if (ms < 86400000) relative = `${Math.floor(ms / 3600000)}h ago`;
+      else relative = `${Math.floor(ms / 86400000)}d ago`;
+      return { ...e, relative };
+    });
+
+    return c.json({ events: withRelative });
+  });
+
+  // --- Remote command execution endpoints ---
+
+  // Send message to a pane by name/title/role/ID
+  app.post("/api/project/:name/send", zValidator("json", sendCommandSchema), async (c) => {
+    const name = c.req.param("name");
+    const sessions = discoverSessions();
+    const session = sessions.find((s) => s.name === name);
+    if (!session) {
+      return c.json({ error: "Session not found" }, 404);
+    }
+
+    const { target, message, noEnter } = c.req.valid("json");
+
+    const panes = listSessionPanes(name);
+    const pane = resolvePane(panes, target);
+    if (!pane) {
+      const available = panes.map((p) => ({
+        id: p.id,
+        title: p.title,
+        name: p.name,
+        role: p.role,
+      }));
+      return c.json({ error: "Pane not found", target, available }, 404);
+    }
+
+    const busyStatus = getPaneBusyStatus(name, pane.id);
+
+    // Collapse multiline for agent panes
+    const prepared = busyStatus === "agent" ? message.replace(/\n+/g, " ").trim() : message;
+
+    if (noEnter) {
+      sendText(name, pane.id, prepared);
+    } else {
+      sendCommand(name, pane.id, prepared);
+    }
+
+    appendEvent(session.dir, {
+      timestamp: new Date().toISOString(),
+      type: "send",
+      target: pane.name ?? pane.title,
+      paneId: pane.id,
+      message: prepared.length > 100 ? prepared.slice(0, 100) + "..." : prepared,
+    });
+
+    return c.json({
+      ok: true,
+      session: name,
+      target: {
+        paneId: pane.id,
+        name: pane.name,
+        title: pane.title,
+        role: pane.role,
+      },
+      busyStatus,
+    });
+  });
+
+  // Launch a tmux-ide session (shells out to CLI since launch has complex side effects)
+  const execFileAsync = promisify(execFile);
+
+  app.post("/api/project/:name/launch", async (c) => {
+    const name = c.req.param("name");
+    const sessions = discoverSessions();
+    const session = sessions.find((s) => s.name === name);
+    if (!session) {
+      return c.json({ error: "Session not found" }, 404);
+    }
+
+    // Check if already running
+    const state = getSessionState(name);
+    if (state.running) {
+      return c.json({ ok: true, session: name, status: "already_running" });
+    }
+
+    try {
+      await execFileAsync("tmux-ide", ["--json"], {
+        cwd: session.dir,
+        timeout: 30000,
+        env: { ...process.env, TMUX: "" }, // Clear TMUX to avoid nesting
+      });
+      return c.json({ ok: true, session: name, status: "launched" });
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      return c.json({ error: "Launch failed", detail: message }, 500);
+    }
+  });
+
+  // Stop a tmux-ide session
+  app.post("/api/project/:name/stop", async (c) => {
+    const name = c.req.param("name");
+    const sessions = discoverSessions();
+    const session = sessions.find((s) => s.name === name);
+    if (!session) {
+      return c.json({ error: "Session not found" }, 404);
+    }
+
+    const state = getSessionState(name);
+    if (!state.running) {
+      return c.json({ ok: true, session: name, status: "not_running" });
+    }
+
+    stopSessionMonitor(name);
+    const result = killSession(name);
+    if (result.stopped) {
+      return c.json({ ok: true, session: name, status: "stopped" });
+    }
+    return c.json({ error: "Stop failed", reason: result.reason }, 500);
+  });
+
+  // SSE endpoint — cursor-based event streaming with orchestrator state
+  app.get("/api/events", (c) => {
+    return streamSSE(c, async (stream) => {
+      let prevOverviews: SessionOverview[] = [];
+      let prevDetails = new Map<string, ProjectDetail>();
+      const eventCursors = new Map<string, number>(); // session → last-seen event count
+      let prevOrchHashes = new Map<string, string>(); // session → orchestrator snapshot hash
+
+      const poll = () => {
+        const sessions = discoverSessions();
+        const overviews = buildOverviews(sessions);
+
+        // Detect session-level changes
+        const prevNames = new Set(prevOverviews.map((s) => s.name));
+        const currNames = new Set(overviews.map((s) => s.name));
+
+        for (const overview of overviews) {
+          if (!prevNames.has(overview.name)) {
+            stream.writeSSE({
+              event: "session_added",
+              data: JSON.stringify(overview),
+            });
+            continue;
+          }
+
+          const prev = prevOverviews.find((s) => s.name === overview.name);
+          if (
+            prev &&
+            (prev.stats.doneTasks !== overview.stats.doneTasks ||
+              prev.stats.totalTasks !== overview.stats.totalTasks ||
+              prev.stats.activeAgents !== overview.stats.activeAgents)
+          ) {
+            stream.writeSSE({
+              event: "session_update",
+              data: JSON.stringify(overview),
+            });
+          }
+        }
+
+        for (const prev of prevOverviews) {
+          if (!currNames.has(prev.name)) {
+            stream.writeSSE({
+              event: "session_removed",
+              data: JSON.stringify({ name: prev.name }),
+            });
+          }
+        }
+
+        // Per-session: event log cursor + orchestrator state + task/agent diffs
+        for (const session of sessions) {
+          // Cursor-based event streaming from event log
+          const events = readEvents(session.dir);
+          const cursor = eventCursors.get(session.name) ?? 0;
+
+          // Handle log rotation: if events.length < cursor, log was rotated
+          const effectiveCursor = events.length < cursor ? 0 : cursor;
+          const newEvents = events.slice(effectiveCursor);
+
+          for (const evt of newEvents) {
+            const eventId = `${evt.timestamp}:${evt.type}:${evt.taskId ?? ""}`;
+            stream.writeSSE({
+              id: eventId,
+              event: "orchestrator_event",
+              data: JSON.stringify({ session: session.name, ...evt }),
+            });
+          }
+          eventCursors.set(session.name, events.length);
+
+          // Orchestrator state snapshot (emit only on change)
+          const orchSnapshot = buildOrchestratorSnapshot(session);
+          const orchHash = JSON.stringify(orchSnapshot);
+          const prevHash = prevOrchHashes.get(session.name);
+          if (orchHash !== prevHash) {
+            stream.writeSSE({
+              event: "orchestrator_state",
+              data: JSON.stringify({ session: session.name, ...orchSnapshot }),
+            });
+            prevOrchHashes.set(session.name, orchHash);
+          }
+
+          // Task-level and agent-level diffs (existing logic)
+          const detail = buildProjectDetail(session);
+          const prevDetail = prevDetails.get(session.name);
+
+          if (prevDetail) {
+            const prevTaskMap = new Map(prevDetail.tasks.map((t) => [t.id, t]));
+            for (const task of detail.tasks) {
+              const prevTask = prevTaskMap.get(task.id);
+              if (!prevTask) {
+                stream.writeSSE({
+                  event: "task_update",
+                  data: JSON.stringify({
+                    session: session.name,
+                    taskId: task.id,
+                    status: task.status,
+                    title: task.title,
+                  }),
+                });
+              } else if (prevTask.status !== task.status || prevTask.assignee !== task.assignee) {
+                stream.writeSSE({
+                  event: "task_update",
+                  data: JSON.stringify({
+                    session: session.name,
+                    taskId: task.id,
+                    status: task.status,
+                    assignee: task.assignee,
+                  }),
+                });
+              }
+            }
+
+            // Detect agent status changes
+            const prevAgentMap = new Map(prevDetail.agents.map((a) => [a.paneTitle, a]));
+            for (const agent of detail.agents) {
+              const prevAgent = prevAgentMap.get(agent.paneTitle);
+              if (!prevAgent || prevAgent.isBusy !== agent.isBusy) {
+                stream.writeSSE({
+                  event: "agent_status",
+                  data: JSON.stringify({
+                    session: session.name,
+                    agent: agent.paneTitle,
+                    busy: agent.isBusy,
+                    taskId: agent.taskId,
+                  }),
+                });
+              }
+            }
+          }
+
+          prevDetails.set(session.name, detail);
+        }
+
+        prevOverviews = overviews;
+      };
+
+      // Initial snapshot
+      poll();
+
+      // Poll every 2 seconds
+      while (true) {
+        await stream.sleep(2000);
+        poll();
+      }
+    });
+  });
+
+  // Health check for daemon liveness probes
+  app.get("/health", (c) => {
+    return c.json({
+      ok: true,
+      uptime: Math.round(process.uptime()),
+      version: "2.0.0",
+    });
+  });
+
+  // Root: API info
+  app.get("/", (c) => {
+    return c.json({
+      status: "ok",
+      message: "tmux-ide command center API",
+      docs: "/api/sessions",
+    });
+  });
+
+  return app;
+}

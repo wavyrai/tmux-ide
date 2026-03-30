@@ -1,0 +1,222 @@
+@import "tailwindcss";
+
+/* Dark theme (default) */
+:root {
+  --bg: #101010;
+  --bg-weak: #1e1e1e;
+  --bg-strong: #121212;
+  --surface: rgba(255, 255, 255, 0.031);
+  --surface-raised: rgba(255, 255, 255, 0.059);
+  --fg: rgba(255, 255, 255, 0.936);
+  --fg-secondary: rgba(255, 255, 255, 0.618);
+  --dim: rgba(255, 255, 255, 0.422);
+  --dimmer: rgba(255, 255, 255, 0.284);
+  --border: rgba(255, 255, 255, 0.195);
+  --border-weak: #282828;
+  --accent: #fab283;
+  --green: #9bcd97;
+  --yellow: #fcd53a;
+  --red: #fc533a;
+  --cyan: #56b6c2;
+  --magenta: #edb2f1;
+  --diff-add-bg: #1a2919;
+  --diff-add-text: #9bcd97;
+  --diff-del-bg: #42120b;
+  --diff-del-text: #fc533a;
+  --scrollbar-thumb: rgba(255, 255, 255, 0.1);
+  --surface-hover: rgba(255, 255, 255, 0.04);
+  --surface-active: rgba(255, 255, 255, 0.06);
+  --modal-overlay: rgba(0, 0, 0, 0.6);
+  --ai-color: #a5b4fc;
+  --ai-bg: rgba(165, 180, 252, 0.08);
+  --ai-badge: rgba(165, 180, 252, 0.15);
+  --human-color: #6ee7b7;
+  --human-bg: rgba(110, 231, 183, 0.08);
+  --human-badge: rgba(110, 231, 183, 0.15);
+}
+
+/* Light theme — sharp blue accent */
+[data-theme="light"] {
+  --bg: #f8f8f8;
+  --bg-weak: #f0f0f2;
+  --bg-strong: #ffffff;
+  --surface: rgba(0, 0, 0, 0.025);
+  --surface-raised: rgba(0, 0, 0, 0.04);
+  --fg: #1a1a2e;
+  --fg-secondary: #555566;
+  --dim: #888899;
+  --dimmer: #bbbbcc;
+  --border: rgba(0, 0, 0, 0.12);
+  --border-weak: #e2e2ea;
+  --accent: #2563eb;
+  --green: #16a34a;
+  --yellow: #ca8a04;
+  --red: #dc2626;
+  --cyan: #0891b2;
+  --magenta: #9333ea;
+  --diff-add-bg: #dcfce7;
+  --diff-add-text: #15803d;
+  --diff-del-bg: #fef2f2;
+  --diff-del-text: #dc2626;
+  --scrollbar-thumb: rgba(0, 0, 0, 0.12);
+  --surface-hover: rgba(0, 0, 0, 0.03);
+  --surface-active: rgba(0, 0, 0, 0.06);
+  --modal-overlay: rgba(0, 0, 0, 0.4);
+  --ai-color: #6366f1;
+  --ai-bg: rgba(99, 102, 241, 0.08);
+  --ai-badge: rgba(99, 102, 241, 0.15);
+  --human-color: #059669;
+  --human-bg: rgba(5, 150, 105, 0.08);
+  --human-badge: rgba(5, 150, 105, 0.15);
+}
+
+* {
+  border-color: var(--border);
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border-radius: 0;
+}
+
+/* Markdown rendering in plans panel */
+.plan-content h1,
+.plan-content h2,
+.plan-content h3,
+.plan-content h4 {
+  color: var(--accent);
+  margin-top: 1.5em;
+  margin-bottom: 0.5em;
+}
+.plan-content h1 {
+  font-size: 1.2em;
+  font-weight: 600;
+}
+.plan-content h2 {
+  font-size: 1.1em;
+  font-weight: 600;
+}
+.plan-content h3 {
+  font-size: 1em;
+  font-weight: 500;
+}
+.plan-content p {
+  color: var(--fg);
+  margin-bottom: 0.75em;
+  line-height: 1.6;
+}
+.plan-content ul,
+.plan-content ol {
+  color: var(--fg);
+  padding-left: 1.5em;
+  margin-bottom: 0.75em;
+}
+.plan-content li {
+  margin-bottom: 0.25em;
+}
+.plan-content code {
+  background: var(--surface);
+  padding: 0.1em 0.3em;
+  border-radius: 2px;
+  font-size: 0.9em;
+}
+.plan-content pre {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  padding: 0.75em 1em;
+  margin-bottom: 0.75em;
+  overflow-x: auto;
+}
+.plan-content pre code {
+  background: none;
+  padding: 0;
+}
+.plan-content a {
+  color: var(--cyan);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.plan-content a:hover {
+  opacity: 0.8;
+}
+.plan-content strong {
+  color: var(--fg);
+  font-weight: 600;
+}
+.plan-content em {
+  color: var(--dim);
+}
+.plan-content blockquote {
+  border-left: 2px solid var(--border);
+  padding-left: 1em;
+  color: var(--dim);
+  margin-bottom: 0.75em;
+}
+.plan-content table {
+  border-collapse: collapse;
+  margin-bottom: 0.75em;
+  width: 100%;
+}
+.plan-content th,
+.plan-content td {
+  border: 1px solid var(--border);
+  padding: 0.3em 0.6em;
+  text-align: left;
+}
+.plan-content th {
+  color: var(--accent);
+  font-weight: 500;
+}
+.plan-content hr {
+  border-color: var(--border);
+  margin: 1.5em 0;
+}
+
+/* Milkdown editor overrides */
+.milkdown-wrap .milkdown {
+  background: var(--bg) !important;
+  color: var(--fg) !important;
+  font-family: "IBM Plex Mono", ui-monospace, monospace !important;
+  font-size: 13px !important;
+  line-height: 1.5 !important;
+}
+.milkdown-wrap .milkdown .editor {
+  padding: 16px !important;
+}
+.milkdown-wrap .ProseMirror {
+  outline: none !important;
+  min-height: 100%;
+}
+.milkdown-wrap .ProseMirror h1,
+.milkdown-wrap .ProseMirror h2,
+.milkdown-wrap .ProseMirror h3,
+.milkdown-wrap .ProseMirror h4 {
+  color: var(--accent) !important;
+}
+.milkdown-wrap .ProseMirror code {
+  background: var(--surface) !important;
+  color: var(--fg) !important;
+}
+.milkdown-wrap .ProseMirror pre {
+  background: var(--surface) !important;
+  border: 1px solid var(--border) !important;
+}
+.milkdown-wrap .ProseMirror a {
+  color: var(--cyan) !important;
+}
+.milkdown-wrap .ProseMirror blockquote {
+  border-left-color: var(--border) !important;
+  color: var(--dim) !important;
+}
+.milkdown-wrap .ProseMirror ::selection {
+  background: var(--surface-active) !important;
+}

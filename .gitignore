@@ -2,8 +2,13 @@
 node_modules
 docs/node_modules
 
-# docs build output
+# build output
+.next
 docs/.next
+
+# environment files
+.env.local
+.env*.local
 
 # turbo cache
 .turbo
