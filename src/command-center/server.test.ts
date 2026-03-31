@@ -3,7 +3,8 @@ import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { agentIdentifier } from "../lib/orchestrator.ts";
-import { ensureTasksDir, saveMission, saveTask, loadTask, type Task } from "../lib/task-store.ts";
+import { ensureTasksDir, saveMission, saveTask, loadTask, loadMission, type Task } from "../lib/task-store.ts";
+import { saveValidationState } from "../lib/validation.ts";
 import { appendEvent } from "../lib/event-log.ts";
 import { _setExecutor, type PaneInfo } from "../widgets/lib/pane-comms.ts";
 import { _setTmuxRunner } from "./discovery.ts";
@@ -414,5 +415,182 @@ describe("GET /", () => {
     expect(body.status).toBe("ok");
     expect(body.message).toBe("tmux-ide command center API");
     expect(body.docs).toBe("/api/sessions");
+  });
+});
+
+describe("GET /api/project/:name/milestones", () => {
+  it("returns milestones with task counts", async () => {
+    saveMission(tmpDir, {
+      title: "Test",
+      description: "",
+      status: "active",
+      branch: null,
+      milestones: [
+        { id: "M1", title: "Phase 1", description: "", status: "active", order: 1, created: "2026-01-01T00:00:00Z", updated: "2026-01-01T00:00:00Z" },
+        { id: "M2", title: "Phase 2", description: "", status: "locked", order: 2, created: "2026-01-01T00:00:00Z", updated: "2026-01-01T00:00:00Z" },
+      ],
+      created: "2026-01-01T00:00:00Z",
+      updated: "2026-01-01T00:00:00Z",
+    });
+    saveTask(tmpDir, makeTask({ id: "001", milestone: "M1" }));
+    saveTask(tmpDir, makeTask({ id: "002", milestone: "M1", status: "done" }));
+    saveTask(tmpDir, makeTask({ id: "003", milestone: "M2" }));
+
+    const app = createApp();
+    const res = await app.request("/api/project/test-project/milestones");
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { milestones: Array<{ id: string; taskCount: number; tasksDone: number }> };
+    expect(body.milestones.length).toBe(2);
+    expect(body.milestones[0]!.id).toBe("M1");
+    expect(body.milestones[0]!.taskCount).toBe(2);
+    expect(body.milestones[0]!.tasksDone).toBe(1);
+    expect(body.milestones[1]!.id).toBe("M2");
+    expect(body.milestones[1]!.taskCount).toBe(1);
+  });
+});
+
+describe("POST /api/project/:name/milestones", () => {
+  it("creates a milestone", async () => {
+    saveMission(tmpDir, {
+      title: "Test",
+      description: "",
+      status: "planning",
+      branch: null,
+      milestones: [],
+      created: "2026-01-01T00:00:00Z",
+      updated: "2026-01-01T00:00:00Z",
+    });
+
+    const app = createApp();
+    const res = await app.request("/api/project/test-project/milestones", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title: "Foundation", sequence: 1 }),
+    });
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as { ok: boolean; milestone: { id: string; status: string } };
+    expect(body.ok).toBe(true);
+    expect(body.milestone.id).toBe("M1");
+    expect(body.milestone.status).toBe("active");
+
+    // Verify persisted
+    const mission = loadMission(tmpDir)!;
+    expect(mission.milestones.length).toBe(1);
+  });
+
+  it("updates a milestone status", async () => {
+    saveMission(tmpDir, {
+      title: "Test",
+      description: "",
+      status: "active",
+      branch: null,
+      milestones: [
+        { id: "M1", title: "Phase 1", description: "", status: "active", order: 1, created: "2026-01-01T00:00:00Z", updated: "2026-01-01T00:00:00Z" },
+      ],
+      created: "2026-01-01T00:00:00Z",
+      updated: "2026-01-01T00:00:00Z",
+    });
+
+    const app = createApp();
+    const res = await app.request("/api/project/test-project/milestones/M1", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: "done" }),
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { ok: boolean; milestone: { status: string } };
+    expect(body.milestone.status).toBe("done");
+  });
+});
+
+describe("GET /api/project/:name/validation", () => {
+  it("returns validation state and contract", async () => {
+    mkdirSync(join(tmpDir, ".tasks"), { recursive: true });
+    writeFileSync(join(tmpDir, ".tasks", "validation-contract.md"), "**ASSERT01**: Auth works");
+    saveValidationState(tmpDir, {
+      assertions: {
+        ASSERT01: { status: "passing", verifiedBy: "v", verifiedAt: "2026-01-01T00:00:00Z", evidence: "ok", blockedBy: null },
+      },
+      lastVerified: "2026-01-01T00:00:00Z",
+    });
+
+    const app = createApp();
+    const res = await app.request("/api/project/test-project/validation");
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { contract: string; state: { assertions: Record<string, { status: string }> } };
+    expect(body.contract).toContain("ASSERT01");
+    expect(body.state.assertions["ASSERT01"]!.status).toBe("passing");
+  });
+});
+
+describe("GET /api/project/:name/skills", () => {
+  it("returns loaded skills", async () => {
+    const skillsDir = join(tmpDir, ".tmux-ide", "skills");
+    mkdirSync(skillsDir, { recursive: true });
+    writeFileSync(join(skillsDir, "frontend.md"), `---\nname: frontend\nspecialties: [frontend, css]\nrole: teammate\ndescription: Frontend dev\n---\nYou build UIs.`);
+
+    const app = createApp();
+    const res = await app.request("/api/project/test-project/skills");
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { skills: Array<{ name: string; specialties: string[] }> };
+    expect(body.skills.length).toBe(1);
+    expect(body.skills[0]!.name).toBe("frontend");
+    expect(body.skills[0]!.specialties).toContain("frontend");
+  });
+});
+
+describe("GET /api/project/:name/mission", () => {
+  it("returns mission with validation summary", async () => {
+    saveMission(tmpDir, {
+      title: "Ship v2",
+      description: "Major release",
+      status: "active",
+      branch: null,
+      milestones: [
+        { id: "M1", title: "Phase 1", description: "", status: "done", order: 1, created: "2026-01-01T00:00:00Z", updated: "2026-01-01T00:00:00Z" },
+      ],
+      created: "2026-01-01T00:00:00Z",
+      updated: "2026-01-01T00:00:00Z",
+    });
+    saveValidationState(tmpDir, {
+      assertions: {
+        A1: { status: "passing", verifiedBy: null, verifiedAt: null, evidence: null, blockedBy: null },
+        A2: { status: "failing", verifiedBy: null, verifiedAt: null, evidence: null, blockedBy: null },
+      },
+      lastVerified: null,
+    });
+
+    const app = createApp();
+    const res = await app.request("/api/project/test-project/mission");
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { mission: { title: string }; validationSummary: { total: number; passing: number; failing: number } };
+    expect(body.mission.title).toBe("Ship v2");
+    expect(body.validationSummary.total).toBe(2);
+    expect(body.validationSummary.passing).toBe(1);
+    expect(body.validationSummary.failing).toBe(1);
+  });
+});
+
+describe("POST /api/project/:name/mission/plan-complete", () => {
+  it("transitions mission from planning to active", async () => {
+    saveMission(tmpDir, {
+      title: "Test",
+      description: "",
+      status: "planning",
+      branch: null,
+      milestones: [
+        { id: "M1", title: "Phase 1", description: "", status: "locked", order: 1, created: "2026-01-01T00:00:00Z", updated: "2026-01-01T00:00:00Z" },
+      ],
+      created: "2026-01-01T00:00:00Z",
+      updated: "2026-01-01T00:00:00Z",
+    });
+
+    const app = createApp();
+    const res = await app.request("/api/project/test-project/mission/plan-complete", { method: "POST" });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { ok: boolean; mission: { status: string; milestones: Array<{ id: string; status: string }> } };
+    expect(body.ok).toBe(true);
+    expect(body.mission.status).toBe("active");
+    expect(body.mission.milestones[0]!.status).toBe("active");
   });
 });

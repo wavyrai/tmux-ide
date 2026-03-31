@@ -13,6 +13,8 @@ import {
 } from "../lib/task-store.ts";
 import { listSessionPanes, type PaneInfo } from "../widgets/lib/pane-comms.ts";
 import { isAgentPane, isAgentBusy, agentIdentifier } from "../lib/orchestrator.ts";
+import { loadValidationState } from "../lib/validation.ts";
+import { loadSkills } from "../lib/skill-registry.ts";
 
 export interface SessionInfo {
   name: string;
@@ -47,6 +49,19 @@ export interface AgentDetail {
   elapsed: string;
 }
 
+export interface ValidationSummary {
+  total: number;
+  passing: number;
+  failing: number;
+  pending: number;
+  blocked: number;
+}
+
+export interface SkillSummary {
+  name: string;
+  specialties: string[];
+}
+
 export interface ProjectDetail {
   session: string;
   dir: string;
@@ -54,6 +69,9 @@ export interface ProjectDetail {
   goals: Goal[];
   tasks: Task[];
   agents: AgentDetail[];
+  milestones: Mission["milestones"];
+  validationSummary: ValidationSummary;
+  skills: SkillSummary[];
 }
 
 type TmuxRunner = (args: string[]) => string;
@@ -178,6 +196,21 @@ export function buildProjectDetail(info: SessionInfo): ProjectDetail {
       };
     });
 
+  const valState = loadValidationState(info.dir);
+  const assertions = valState ? Object.values(valState.assertions) : [];
+  const validationSummary: ValidationSummary = {
+    total: assertions.length,
+    passing: assertions.filter((a) => a.status === "passing").length,
+    failing: assertions.filter((a) => a.status === "failing").length,
+    pending: assertions.filter((a) => a.status === "pending").length,
+    blocked: assertions.filter((a) => a.status === "blocked").length,
+  };
+
+  const skills = loadSkills(info.dir).map((s) => ({
+    name: s.name,
+    specialties: s.specialties,
+  }));
+
   return {
     session: info.name,
     dir: info.dir,
@@ -185,6 +218,9 @@ export function buildProjectDetail(info: SessionInfo): ProjectDetail {
     goals: info.goals,
     tasks: info.tasks,
     agents,
+    milestones: info.mission?.milestones ?? [],
+    validationSummary,
+    skills,
   };
 }
 
