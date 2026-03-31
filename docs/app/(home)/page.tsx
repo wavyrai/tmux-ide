@@ -28,13 +28,7 @@ const installCommand = "npm i -g tmux-ide";
 function SectionDivider() {
   return (
     <div className="w-full py-1">
-      <div
-        className="h-4 w-full border-y border-fd-border"
-        style={{
-          backgroundImage:
-            "repeating-linear-gradient(-60deg, hsla(225, 50%, 35%, 0.4), hsla(225, 50%, 35%, 0.4) 1px, transparent 1px, transparent 6px)",
-        }}
-      />
+      <div className="h-4 w-full border-y border-fd-border bg-fd-muted/5" />
     </div>
   );
 }
@@ -48,40 +42,13 @@ function FeatureCard({ title, description }: { title: string; description: strin
   );
 }
 
-const DOT = "hsl(225, 60%, 55%)";
 function D({ children }: { children: string }) {
-  return <span style={{ color: DOT }}>{children}</span>;
+  return <span className="text-fd-primary">{children}</span>;
 }
 
 export default function HomePage() {
   return (
-    <>
-      <style
-        dangerouslySetInnerHTML={{
-          __html: `
-            :root, .dark {
-              --background: 225 70% 8% !important;
-              --fd-background: hsl(225, 70%, 8%) !important;
-              --foreground: 0 0% 95% !important;
-              --fd-foreground: hsl(0, 0%, 95%) !important;
-              --muted-foreground: 225 30% 65% !important;
-              --fd-muted-foreground: hsl(225, 30%, 65%) !important;
-              --border: 225 40% 20% !important;
-              --fd-border: hsl(225, 40%, 20%) !important;
-              --primary: 225 60% 55% !important;
-              --fd-primary: hsl(225, 60%, 55%) !important;
-              --primary-foreground: 0 0% 100% !important;
-              --fd-primary-foreground: hsl(0, 0%, 100%) !important;
-              --card: 225 50% 12% !important;
-              --fd-card: hsl(225, 50%, 12%) !important;
-              --accent: 225 40% 15% !important;
-              --fd-accent: hsl(225, 40%, 15%) !important;
-            }
-          `,
-        }}
-      />
-
-      <div className="flex flex-col items-center flex-1">
+    <div className="flex flex-col items-center flex-1">
         {/* HERO */}
         <section className="flex flex-col items-center gap-8 px-6 pt-28 pb-16 max-w-3xl mx-auto text-center">
           <div className="flex flex-col items-center gap-3">
@@ -379,7 +346,6 @@ export default function HomePage() {
             </div>
           </div>
         </footer>
-      </div>
-    </>
+    </div>
   );
 }
