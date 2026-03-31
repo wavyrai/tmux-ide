@@ -26,6 +26,24 @@ export const sendCommandSchema = z.object({
   noEnter: z.boolean().optional(),
 });
 
+export const createMilestoneSchema = z.object({
+  title: z.string().trim().min(1, "Title is required"),
+  sequence: z.number().int().positive(),
+  description: z.string().optional(),
+});
+
+export const updateMilestoneSchema = z.object({
+  status: z.enum(["locked", "active", "done", "validating"]).optional(),
+  title: z.string().optional(),
+  description: z.string().optional(),
+});
+
+export const updateAssertionSchema = z.object({
+  status: z.enum(["pending", "passing", "failing", "blocked"]),
+  evidence: z.string().optional(),
+  verifiedBy: z.string().optional(),
+});
+
 export const launchSchema = z
   .object({
     attach: z.boolean().optional(),
