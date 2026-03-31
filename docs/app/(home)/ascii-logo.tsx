@@ -2,17 +2,12 @@
 
 import { useState, useEffect } from "react";
 
-const LOGO = String.raw`                     ___           ___           ___                                               ___
-                   /\  \         /\  \         /|  |                               _____         /\__\
-      ___         |::\  \        \:\  \       |:|  |                  ___         /::\  \       /:/ _/_
-     /\__\        |:|:\  \        \:\  \      |:|  |                 /\__\       /:/\:\  \     /:/ /\__\
-    /:/  /      __|:|\:\  \   ___  \:\  \   __|:|__|                /:/__/      /:/  \:\__\   /:/ /:/ _/_
-   /:/__/      /::::|_\:\__\ /\  \  \:\__\ /::::\__\_____          /::\  \     /:/__/ \:|__| /:/_/:/ /\__\
-  /::\  \      \:\~~\  \/__/ \:\  \ /:/  / ~~~~\::::/___/          \/\:\  \__  \:\  \ /:/  / \:\/:/ /:/  /
- /:/\:\  \      \:\  \        \:\  /:/  /      |:|~~|               ~~\:\/\__\  \:\  /:/  /   \::/_/:/  /
- \/__\:\  \      \:\  \        \:\/:/  /       |:|  |                  \::/  /   \:\/:/  /     \:\/:/  /
-      \:\__\      \:\__\        \::/  /        |:|__|                  /:/  /     \::/  /       \::/  /
-       \/__/       \/__/         \/__/         |/__/                   \/__/       \/__/         \/__/`;
+const LOGO = `
+ ████████ ██     ██ ██    ██ ██   ██         ██ ██████  ███████
+    ██    ███   ███ ██    ██  ██ ██          ██ ██   ██ ██
+    ██    ████ ████ ██    ██   ███   ██████  ██ ██   ██ █████
+    ██    ██ ███ ██ ██    ██  ██ ██          ██ ██   ██ ██
+    ██    ██     ██  ██████  ██   ██         ██ ██████  ███████`.trimStart();
 
 export function AsciiLogo() {
   const [phase, setPhase] = useState<"hidden" | "visible" | "settled">("hidden");
@@ -44,8 +39,11 @@ export function AsciiLogo() {
   return (
     <div className="overflow-x-auto w-full">
       <pre
-        className="font-mono whitespace-pre select-none text-center text-[4.5px] sm:text-[6px] md:text-[8px] lg:text-[10px] xl:text-xs leading-[1.15]"
+        className="whitespace-pre select-none text-center leading-none text-[7px] sm:text-[9px] md:text-xs lg:text-sm xl:text-base"
         style={{
+          fontFamily: "'Geist Mono', ui-monospace, SFMono-Regular, monospace",
+          fontVariantLigatures: "none",
+          fontFeatureSettings: '"liga" 0, "calt" 0',
           opacity: phase === "hidden" ? 0 : 1,
           transition: "opacity 300ms ease-out, text-shadow 400ms ease-out",
           color: phase === "settled" ? "var(--fd-foreground)" : undefined,
