@@ -25,19 +25,16 @@ export const metadata: Metadata = {
 
 const installCommand = "npm i -g tmux-ide";
 
+const STRIPE_BG =
+  "repeating-linear-gradient(-60deg, transparent, transparent 4px, var(--fd-border) 4px, var(--fd-border) 5px)";
+
 function SectionDivider() {
   return (
     <div className="w-full py-1">
-      <div className="h-4 w-full border-y border-fd-border bg-fd-muted/5" />
-    </div>
-  );
-}
-
-function FeatureCard({ title, description }: { title: string; description: string }) {
-  return (
-    <div className="border border-fd-border p-6 -mt-px -ml-px">
-      <h3 className="font-mono text-sm font-medium text-fd-foreground mb-2">{title}</h3>
-      <p className="text-sm text-fd-muted-foreground leading-relaxed">{description}</p>
+      <div
+        className="h-4 w-full border-y border-fd-border"
+        style={{ backgroundImage: STRIPE_BG }}
+      />
     </div>
   );
 }
@@ -46,158 +43,212 @@ function D({ children }: { children: string }) {
   return <span className="text-fd-primary">{children}</span>;
 }
 
+const features = [
+  {
+    title: "Milestone Gating",
+    description:
+      "Sequential execution phases, each gating the next. Tasks only dispatch when their milestone is active.",
+  },
+  {
+    title: "Validation Contracts",
+    description:
+      "Assertion-based verification with independent validation. Failed assertions auto-create remediation tasks.",
+  },
+  {
+    title: "Skill-Based Dispatch",
+    description:
+      "Match task specialty to agent capabilities. Specialists get specialist work. Tasks wait for the right agent.",
+  },
+  {
+    title: "Knowledge Library",
+    description:
+      "Shared learnings that persist across tasks. Architecture docs and tag-matched references inject into prompts.",
+  },
+  {
+    title: "Researcher Agent",
+    description:
+      "Continuous internal auditing triggered by mission events. Writes findings to the library for future agents.",
+  },
+  {
+    title: "Live Metrics",
+    description:
+      "Session duration, agent utilization, completion rates, retry rates. All computed in real-time.",
+  },
+  {
+    title: "Web Dashboard",
+    description:
+      "Real-time KPIs, milestone timeline, agent performance table, validation status. Auto-refreshes.",
+  },
+  {
+    title: "Coverage Invariant",
+    description:
+      "Every assertion in the contract must be claimed by at least one task before dispatch begins.",
+  },
+  {
+    title: "Multi-Agent",
+    description:
+      "Claude Code, Codex, or any CLI agent. Prefix-matched detection works with platform-specific binaries.",
+  },
+  {
+    title: "Built-in Skills",
+    description:
+      "5 templates: general-worker, frontend, backend, reviewer, researcher. Scaffold custom skills in seconds.",
+  },
+  {
+    title: "Services Registry",
+    description:
+      "Centralized commands, ports, healthchecks in ide.yml. Injected into dispatch prompts for agent awareness.",
+  },
+  {
+    title: "File-Based Send",
+    description:
+      "Long messages auto-route through dispatch files. No paste-mode issues with any agent TUI.",
+  },
+];
+
 export default function HomePage() {
   return (
-    <div className="flex flex-col items-center flex-1">
-        {/* HERO */}
-        <section className="flex flex-col items-center gap-8 px-6 pt-28 pb-16 max-w-3xl mx-auto text-center">
-          <div className="flex flex-col items-center gap-3">
+    <div className="font-mono">
+      {/* HERO */}
+      <section className="max-w-screen-xl mx-auto pt-16 pb-12 md:py-28 flex flex-col lg:flex-row gap-12 justify-between items-center px-6">
+        <div className="lg:max-w-[560px] space-y-8 w-full">
+          <div>
             <span
               aria-hidden="true"
-              className="font-pixel text-6xl sm:text-7xl md:text-8xl tracking-tight text-fd-foreground select-none"
+              className="font-pixel text-5xl sm:text-6xl md:text-7xl tracking-tight text-fd-foreground select-none"
             >
               tmux-ide
             </span>
             <Link
               href="/docs/release-2-0-0"
-              className="inline-flex items-center rounded-full border border-fd-border bg-fd-card px-3 py-1 text-[11px] font-mono font-medium uppercase tracking-[0.18em] text-fd-muted-foreground transition-colors hover:bg-fd-accent hover:text-fd-foreground"
+              className="ml-3 inline-flex items-center border border-fd-border px-2 py-0.5 text-[10px] font-mono uppercase tracking-[0.18em] text-fd-muted-foreground transition-colors hover:bg-fd-accent hover:text-fd-foreground align-middle"
             >
-              New 2.0
+              2.0
             </Link>
+            <h1 className="font-sans text-3xl md:text-4xl lg:text-5xl leading-[1.1] tracking-tight mt-4 text-fd-foreground">
+              Autonomous multi-agent missions.
+            </h1>
+            <p className="text-fd-muted-foreground text-base leading-normal mt-4 md:mt-8">
+              Turn any project into a mission-driven development environment. One config file,
+              multiple AI agents, fully autonomous orchestration.
+            </p>
           </div>
-          <h1 className="text-4xl sm:text-5xl font-bold tracking-tight text-fd-foreground">
-            Autonomous Multi-Agent
-            <br />
-            <span className="text-fd-muted-foreground">Missions</span>
-          </h1>
-          <p className="text-lg text-fd-muted-foreground max-w-xl leading-relaxed">
-            Turn any project into a mission-driven development environment. One config file,
-            multiple AI agents, fully autonomous orchestration.
-          </p>
 
-          <div className="flex flex-col sm:flex-row items-center gap-4">
+          <div className="max-w-[480px]">
+            <CopyButton
+              text={installCommand}
+              className="group flex items-center gap-3 w-full border border-fd-border p-2 px-4 text-sm transition-colors hover:bg-fd-accent cursor-pointer relative bg-fd-muted/10"
+            >
+              <span className="text-fd-foreground">$ {installCommand}</span>
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                className="ml-auto text-fd-muted-foreground group-hover:text-fd-foreground transition-colors shrink-0"
+              >
+                <rect x="9" y="9" width="13" height="13" rx="0" ry="0" />
+                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+              </svg>
+            </CopyButton>
+          </div>
+
+          <div className="flex items-center gap-4">
             <Link
               href="/docs/getting-started"
-              className="rounded-lg bg-fd-primary px-6 py-2.5 text-sm font-medium text-fd-primary-foreground hover:opacity-90 transition-opacity"
+              className="bg-fd-primary px-6 py-2.5 text-sm font-mono text-fd-primary-foreground hover:opacity-90 transition-opacity"
             >
-              Get Started
+              Get started
             </Link>
             <a
               href="https://github.com/wavyrai/tmux-ide"
               target="_blank"
               rel="noopener noreferrer"
-              className="rounded-lg border border-fd-border px-6 py-2.5 text-sm font-medium text-fd-foreground hover:bg-fd-accent transition-colors"
+              className="border border-fd-border px-6 py-2.5 text-sm font-mono text-fd-foreground hover:bg-fd-accent transition-colors"
             >
-              View on GitHub
+              GitHub
             </a>
           </div>
-        </section>
+        </div>
 
-        {/* INSTALL */}
-        <section className="w-full max-w-lg mx-auto px-6 pb-12">
-          <CopyButton
-            text={installCommand}
-            className="group flex items-center gap-3 w-full border border-fd-border p-3 px-5 font-mono text-sm transition-colors hover:bg-fd-accent cursor-pointer"
-          >
-            <span className="text-fd-muted-foreground select-none">$</span>
-            <span className="text-fd-foreground">{installCommand}</span>
-            <svg
-              width="14"
-              height="14"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              className="ml-auto text-fd-muted-foreground group-hover:text-fd-foreground transition-colors shrink-0"
-            >
-              <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
-              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
-            </svg>
-          </CopyButton>
-        </section>
+        <TerminalDemo />
+      </section>
+
+      <div className="space-y-16 max-w-screen-lg mx-auto px-6">
+        {/* FEATURES */}
+        <div>
+          <h2 className="font-sans text-2xl text-fd-foreground">Features</h2>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 mt-4">
+            {features.map((f) => (
+              <div className="border border-fd-border p-1 -mt-[1px] -ml-[1px]" key={f.title}>
+                <div className="p-4 space-y-4">
+                  <h3 className="text-sm text-fd-foreground">{f.title}</h3>
+                  <p className="text-fd-muted-foreground text-sm">{f.description}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
 
         <SectionDivider />
 
-        {/* INTERACTIVE TERMINAL DEMO */}
-        <section className="w-full flex flex-col items-center px-6 py-16">
-          <TerminalDemo />
-        </section>
+        {/* HOW IT WORKS */}
+        <div>
+          <h2 className="font-sans text-2xl text-fd-foreground">How it works</h2>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 mt-4">
+            {[
+              {
+                phase: "01",
+                title: "Planning",
+                description:
+                  "The lead agent analyzes your mission, creates milestones, tasks, and a validation contract with testable assertions.",
+              },
+              {
+                phase: "02",
+                title: "Execution",
+                description:
+                  "Tasks dispatch to skill-matched agents. Milestone gating ensures sequential phases. Knowledge accumulates as agents work.",
+              },
+              {
+                phase: "03",
+                title: "Validation",
+                description:
+                  "An independent validator checks each assertion. Failed checks auto-create remediation tasks. The milestone loops until all pass.",
+              },
+              {
+                phase: "04",
+                title: "Complete",
+                description:
+                  "All milestones validated. Mission marked complete. PR auto-created. Metrics and learnings persisted for next time.",
+              },
+            ].map((item) => (
+              <div className="border border-fd-border p-1 -mt-[1px] -ml-[1px]" key={item.phase}>
+                <div className="p-4 space-y-3">
+                  <span className="text-xs text-fd-muted-foreground uppercase tracking-widest">
+                    Phase {item.phase}
+                  </span>
+                  <h3 className="text-sm text-fd-foreground">{item.title}</h3>
+                  <p className="text-fd-muted-foreground text-sm">{item.description}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
 
         <SectionDivider />
 
-        {/* FEATURE GRID */}
-        <section className="w-full max-w-5xl mx-auto px-6 py-16">
-          <div className="text-center mb-10">
-            <h2 className="text-2xl font-semibold text-fd-foreground">
-              Everything you need for autonomous missions
-            </h2>
-          </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3">
-            <FeatureCard
-              title="Milestone Gating"
-              description="Sequential execution phases, each gating the next. Tasks only dispatch when their milestone is active."
-            />
-            <FeatureCard
-              title="Validation Contracts"
-              description="Assertion-based verification with independent validation. Failed assertions auto-create remediation tasks."
-            />
-            <FeatureCard
-              title="Skill-Based Dispatch"
-              description="Match task specialty to agent capabilities. Specialists get specialist work. Tasks wait for the right agent."
-            />
-            <FeatureCard
-              title="Knowledge Library"
-              description="Shared learnings that persist across tasks. Architecture docs and tag-matched references inject into prompts."
-            />
-            <FeatureCard
-              title="Researcher Agent"
-              description="Continuous internal auditing triggered by mission events. Writes findings to the library for future agents."
-            />
-            <FeatureCard
-              title="Live Metrics"
-              description="Session duration, agent utilization, completion rates, retry rates. All computed in real-time."
-            />
-            <FeatureCard
-              title="Web Dashboard"
-              description="Real-time KPIs, milestone timeline, agent performance table, validation status. Auto-refreshes."
-            />
-            <FeatureCard
-              title="Coverage Invariant"
-              description="Every assertion in the contract must be claimed by at least one task before dispatch begins."
-            />
-            <FeatureCard
-              title="Multi-Agent"
-              description="Claude Code, Codex, or any CLI agent. Prefix-matched detection works with platform-specific binaries."
-            />
-            <FeatureCard
-              title="Built-in Skills"
-              description="5 templates: general-worker, frontend, backend, reviewer, researcher. Scaffold custom skills in seconds."
-            />
-            <FeatureCard
-              title="Services Registry"
-              description="Centralized commands, ports, healthchecks in ide.yml. Injected into dispatch prompts for agent awareness."
-            />
-            <FeatureCard
-              title="File-Based Send"
-              description="Long messages auto-route through dispatch files. No paste-mode issues with any agent TUI."
-            />
-          </div>
-        </section>
-
-        <SectionDivider />
-
-        {/* ARCHITECTURE DIAGRAM */}
-        <section className="w-full max-w-4xl mx-auto px-6 py-16">
-          <div className="text-center mb-8">
-            <h2 className="text-2xl font-semibold text-fd-foreground">Mission Architecture</h2>
-            <p className="text-sm text-fd-muted-foreground mt-2">
-              From mission creation to PR — fully autonomous
-            </p>
-          </div>
-          <div className="border border-fd-border p-6 overflow-x-auto">
-            <pre className="font-mono text-xs sm:text-sm leading-relaxed text-fd-foreground whitespace-pre">
+        {/* ARCHITECTURE */}
+        <div className="hidden md:block text-center">
+          <h2 className="font-sans text-2xl text-fd-foreground">Architecture</h2>
+          <p className="text-fd-muted-foreground text-base leading-normal mt-4 max-w-md mx-auto">
+            From mission creation to PR — fully autonomous.
+          </p>
+          <div className="flex justify-center mt-6">
+            <pre className="text-sm leading-5 text-fd-foreground text-left">
               {"  Mission ──► Planning ──► Milestones ──► Tasks\n"}
               {"                                           │\n"}
               {"                            Skill Match ◄──┘\n"}
@@ -219,133 +270,115 @@ export default function HomePage() {
               {" ──► PR\n"}
             </pre>
           </div>
-        </section>
+        </div>
 
         <SectionDivider />
 
-        {/* HOW IT WORKS — 4 lifecycle phases */}
-        <section className="w-full max-w-4xl mx-auto px-6 py-16">
-          <div className="text-center mb-10">
-            <h2 className="text-2xl font-semibold text-fd-foreground">How It Works</h2>
-            <p className="text-sm text-fd-muted-foreground mt-2">
-              Four phases, fully autonomous
-            </p>
-          </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-px bg-fd-border">
-            {[
-              {
-                phase: "1",
-                title: "Planning",
-                description:
-                  "The lead agent analyzes your mission, creates milestones, tasks, and a validation contract with testable assertions.",
-              },
-              {
-                phase: "2",
-                title: "Execution",
-                description:
-                  "Tasks dispatch to skill-matched agents. Milestone gating ensures sequential phases. Knowledge accumulates as agents work.",
-              },
-              {
-                phase: "3",
-                title: "Validation",
-                description:
-                  "An independent validator checks each assertion. Failed checks auto-create remediation tasks. The milestone loops until all pass.",
-              },
-              {
-                phase: "4",
-                title: "Complete",
-                description:
-                  "All milestones validated. Mission marked complete. PR auto-created. Metrics and learnings persisted for next time.",
-              },
-            ].map((item) => (
-              <div key={item.phase} className="bg-fd-card p-6">
-                <div className="font-mono text-xs text-fd-muted-foreground mb-2">
-                  Phase {item.phase}
-                </div>
-                <h3 className="font-mono text-sm font-medium text-fd-foreground mb-2">
-                  {item.title}
-                </h3>
-                <p className="text-sm text-fd-muted-foreground leading-relaxed">
-                  {item.description}
-                </p>
-              </div>
-            ))}
-          </div>
-        </section>
-
-        <SectionDivider />
-
-        {/* FOOTER CTA */}
-        <section className="w-full max-w-2xl mx-auto px-6 py-16 text-center">
-          <h2 className="text-2xl font-semibold text-fd-foreground mb-4">Ready to build?</h2>
-          <div className="max-w-md mx-auto mb-6">
-            <CopyButton
-              text={installCommand}
-              className="group flex items-center gap-3 w-full border border-fd-border p-3 px-5 font-mono text-sm transition-colors hover:bg-fd-accent cursor-pointer"
-            >
-              <span className="text-fd-muted-foreground select-none">$</span>
-              <span className="text-fd-foreground">{installCommand}</span>
-              <svg
-                width="14"
-                height="14"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                className="ml-auto text-fd-muted-foreground group-hover:text-fd-foreground transition-colors shrink-0"
-              >
-                <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
-                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
-              </svg>
-            </CopyButton>
-          </div>
-          <div className="flex justify-center gap-4">
-            <Link
-              href="/docs/getting-started"
-              className="text-sm text-fd-muted-foreground hover:text-fd-foreground transition-colors"
-            >
-              Read the docs {"\u2192"}
-            </Link>
-            <Link
-              href="/docs/release-2-0-0"
-              className="text-sm text-fd-muted-foreground hover:text-fd-foreground transition-colors"
-            >
-              What&apos;s new in 2.0 {"\u2192"}
-            </Link>
-          </div>
-        </section>
-
-        {/* FOOTER */}
-        <footer className="w-full border-t border-fd-border py-8 px-6">
-          <div className="max-w-3xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-fd-muted-foreground">
-            <span>
-              tmux-ide by{" "}
-              <a
-                href="https://thijsverreck.com"
-                className="hover:text-fd-foreground transition-colors"
-                target="_blank"
-                rel="noopener noreferrer"
-              >
-                Thijs Verreck
-              </a>
-            </span>
-            <div className="flex items-center gap-4">
-              <Link href="/docs" className="hover:text-fd-foreground transition-colors">
-                Docs
-              </Link>
-              <a
-                href="https://github.com/wavyrai/tmux-ide"
-                className="hover:text-fd-foreground transition-colors"
-                target="_blank"
-                rel="noopener noreferrer"
-              >
-                GitHub
-              </a>
+        {/* SURFACE AREAS — 3-column like midday CLI/MCP/DX */}
+        <div className="grid grid-cols-1 md:grid-cols-3">
+          <div className="border border-fd-border p-1 -mt-[1px] -ml-[1px]">
+            <div className="p-4 space-y-4">
+              <h3 className="text-sm text-fd-foreground">Orchestrator</h3>
+              <ul className="text-fd-muted-foreground space-y-2">
+                <li className="text-sm">{"◇"} Mission lifecycle: planning → complete</li>
+                <li className="text-sm">{"◇"} Milestone gating with auto-progression</li>
+                <li className="text-sm">{"◇"} Skill-matched dispatch</li>
+                <li className="text-sm">{"◇"} Stall detection and retry with backoff</li>
+                <li className="text-sm">{"◇"} Agent heartbeat telemetry</li>
+              </ul>
             </div>
           </div>
-        </footer>
+          <div className="border border-fd-border p-1 -mt-[1px] -ml-[1px]">
+            <div className="p-4 space-y-4">
+              <h3 className="text-sm text-fd-foreground">Validation</h3>
+              <ul className="text-fd-muted-foreground space-y-2">
+                <li className="text-sm">{"◇"} Assertion-based contracts</li>
+                <li className="text-sm">{"◇"} Independent validator dispatch</li>
+                <li className="text-sm">{"◇"} Auto-remediation on failure</li>
+                <li className="text-sm">{"◇"} Coverage invariant enforcement</li>
+                <li className="text-sm">{"◇"} Blocked assertion tracking</li>
+              </ul>
+            </div>
+          </div>
+          <div className="border border-fd-border p-1 -mt-[1px] -ml-[1px]">
+            <div className="p-4 space-y-4">
+              <h3 className="text-sm text-fd-foreground">Developer experience</h3>
+              <ul className="text-fd-muted-foreground space-y-2">
+                <li className="text-sm">{"◇"} Single command to start</li>
+                <li className="text-sm">{"◇"} Web dashboard at localhost:6060</li>
+                <li className="text-sm">{"◇"} REST API + SSE events</li>
+                <li className="text-sm">{"◇"} TUI widgets in tmux</li>
+                <li className="text-sm">{"◇"} Open source</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* FOOTER CTA */}
+      <div className="max-w-screen-lg mx-auto mt-16 mb-24 px-6">
+        <div
+          className="bg-fd-background border border-fd-border p-8 lg:p-12 text-center relative before:absolute before:inset-0 before:pointer-events-none"
+          style={{ "--stripe-bg": STRIPE_BG } as React.CSSProperties}
+        >
+          <div
+            className="absolute inset-0 pointer-events-none opacity-30"
+            style={{ backgroundImage: STRIPE_BG }}
+          />
+          <div className="relative z-10">
+            <h2 className="font-sans text-2xl sm:text-3xl text-fd-foreground mb-4">
+              Get started
+            </h2>
+            <p className="font-sans text-base text-fd-muted-foreground mb-6 max-w-lg mx-auto">
+              One config. Multiple agents. Fully autonomous.
+            </p>
+            <div className="flex flex-wrap justify-center gap-4">
+              <Link
+                href="/docs/getting-started"
+                className="bg-fd-primary px-6 py-2.5 text-sm font-mono text-fd-primary-foreground hover:opacity-90 transition-opacity"
+              >
+                Get started
+              </Link>
+              <Link
+                href="/docs/release-2-0-0"
+                className="border border-fd-border px-6 py-2.5 text-sm font-mono text-fd-foreground hover:bg-fd-accent transition-colors"
+              >
+                What&apos;s new in 2.0
+              </Link>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* FOOTER */}
+      <footer className="w-full border-t border-fd-border py-8 px-6">
+        <div className="max-w-3xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-fd-muted-foreground">
+          <span>
+            tmux-ide by{" "}
+            <a
+              href="https://thijsverreck.com"
+              className="hover:text-fd-foreground transition-colors"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              Thijs Verreck
+            </a>
+          </span>
+          <div className="flex items-center gap-4">
+            <Link href="/docs" className="hover:text-fd-foreground transition-colors">
+              Docs
+            </Link>
+            <a
+              href="https://github.com/wavyrai/tmux-ide"
+              className="hover:text-fd-foreground transition-colors"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              GitHub
+            </a>
+          </div>
+        </div>
+      </footer>
     </div>
   );
 }
