@@ -202,6 +202,104 @@ tmux-ide config disable-team
 
 Removes the `team` config and all `role`/`task` fields from panes.
 
+## `tmux-ide mission`
+
+Manage the project mission for autonomous orchestration.
+
+```bash
+tmux-ide mission create "Build auth system" -d "JWT + refresh tokens"
+tmux-ide mission plan-complete          # transition planning → active
+tmux-ide mission status [--json]        # show progress: milestones, tasks, validation
+tmux-ide mission show [--json]          # full mission detail
+tmux-ide mission set "title" [-d "..."] # set mission (status: active)
+tmux-ide mission clear                  # clear the mission
+```
+
+`create` sets the mission status to `planning`, which triggers the orchestrator to dispatch planning to the lead pane. `plan-complete` activates the first milestone and starts autonomous dispatch.
+
+## `tmux-ide milestone`
+
+Manage sequential execution phases within a mission.
+
+```bash
+tmux-ide milestone create "Foundation" --sequence 1 [-d "description"]
+tmux-ide milestone list [--json]
+tmux-ide milestone show <id> [--json]
+tmux-ide milestone update <id> --status active|done|locked
+```
+
+Milestones gate task dispatch — tasks with a milestone only dispatch when that milestone is `active` and all predecessors are `done`.
+
+## `tmux-ide validate`
+
+Manage validation contracts and assertion verification. Also validates `ide.yml` config when called without a subcommand.
+
+```bash
+tmux-ide validate                      # validate ide.yml config
+tmux-ide validate show [--json]        # show contract + assertion state
+tmux-ide validate assert <ID> --status passing|failing|blocked [--evidence "..."]
+tmux-ide validate report [--json]      # summary: passing/failing/pending/blocked counts
+tmux-ide validate coverage [--json]    # check assertion coverage gaps
+```
+
+The `coverage` subcommand checks that every assertion ID in `.tasks/validation-contract.md` is claimed by at least one task's `--fulfills`.
+
+## `tmux-ide skill`
+
+Manage agent skill definitions.
+
+```bash
+tmux-ide skill list [--json]           # list all loaded skills (project + personal)
+tmux-ide skill show <name> [--json]    # show full skill detail with body
+tmux-ide skill create <name>           # scaffold new skill from template
+tmux-ide skill validate                # check pane skill: references resolve
+```
+
+Skills are loaded from `.tmux-ide/skills/` (project) and `~/.tmux-ide/skills/` (personal). Project skills take precedence.
+
+## `tmux-ide research`
+
+Manage the researcher agent for continuous internal auditing.
+
+```bash
+tmux-ide research status [--json]      # current research state
+tmux-ide research trigger <type>       # manually trigger an audit
+```
+
+## `tmux-ide metrics`
+
+Session, task, agent, and mission telemetry.
+
+```bash
+tmux-ide metrics [--json]              # session summary
+tmux-ide metrics agents [--json]       # per-agent utilization table
+tmux-ide metrics timeline [--json]     # activity timeline (5-min samples)
+tmux-ide metrics eval [--json]         # bottleneck milestones, high-retry agents
+tmux-ide metrics history [--json]      # cross-mission comparison
+```
+
+## `tmux-ide orchestrator`
+
+Show the current orchestrator state.
+
+```bash
+tmux-ide orchestrator [--json]
+tmux-ide orch                          # alias
+```
+
+## `tmux-ide send`
+
+Send a message to a pane by name, title, role, or ID.
+
+```bash
+tmux-ide send <target> <message>
+tmux-ide send --to "Agent 1" <message>
+tmux-ide send <target> --no-enter msg  # send text without pressing Enter
+echo "msg" | tmux-ide send <target>    # pipe from stdin
+```
+
+Messages longer than 150 characters are automatically written to a dispatch file to avoid paste-mode issues in agent TUIs.
+
 ## Global Flags
 
 | Flag                | Description                              |

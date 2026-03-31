@@ -85,6 +85,34 @@ Or use tmux directly:
 tmux attach -t my-project
 ```
 
+## Missions Mode (Autonomous)
+
+For fully autonomous multi-agent orchestration, use missions mode:
+
+```bash
+tmux-ide init --template missions
+tmux-ide mission create "Build auth system" -d "JWT + refresh tokens"
+tmux-ide
+```
+
+This gives you:
+
+- **6 agent panes** (lead, frontend, backend, validator, researcher, shell)
+- **Web dashboard** at `http://localhost:6060`
+- **Fully autonomous orchestration** — the lead plans, agents execute, validators verify
+
+The orchestrator dispatches planning to the lead pane, which creates milestones, tasks, and a validation contract. Once planning completes (`tmux-ide mission plan-complete`), the orchestrator manages everything: skill-matched dispatch, milestone gating, validation, remediation, and mission completion.
+
+Monitor progress:
+
+```bash
+tmux-ide mission status       # milestone + task + validation progress
+tmux-ide metrics              # session duration, agent utilization, completion rates
+tmux-ide validate coverage    # check assertion coverage
+```
+
+See [Configuration](/docs/configuration#orchestrator-config) for all orchestrator options and [What's New in 2.0](/docs/release-2-0-0) for the full feature list.
+
 ## Claude Code Skill
 
 tmux-ide ships with a built-in [Claude Code](https://docs.anthropic.com/en/docs/claude-code) skill. When you install tmux-ide, the skill is automatically registered so Claude Code knows how to configure and manage your workspace.

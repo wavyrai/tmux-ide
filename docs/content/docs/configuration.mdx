@@ -122,12 +122,14 @@ When `team` is set, tmux-ide enables `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1` fo
 
 ### Pane Team Fields
 
-When using agent teams, panes can have additional fields:
+When using agent teams or missions mode, panes can have additional fields:
 
-| Field  | Description                                                          |
-| ------ | -------------------------------------------------------------------- |
-| `role` | `"lead"` or `"teammate"` metadata for pane labels and Claude prompts |
-| `task` | Suggested task description for a teammate pane                       |
+| Field       | Description                                                              |
+| ----------- | ------------------------------------------------------------------------ |
+| `role`      | `"lead"`, `"teammate"`, `"planner"`, `"validator"`, or `"researcher"`    |
+| `task`      | Suggested task description for a teammate pane                           |
+| `skill`     | References a skill file in `.tmux-ide/skills/` (e.g., `frontend`)        |
+| `specialty` | Comma-separated capability tags for dispatch matching (e.g., `"api,db"`) |
 
 ```yaml
 panes:
@@ -137,7 +139,12 @@ panes:
   - title: Frontend
     command: claude
     role: teammate
-    task: "Work on React components"
+    skill: frontend
+    specialty: react,css,typescript
+  - title: Validator
+    command: claude
+    role: validator
+    skill: reviewer
 ```
 
 ### `theme`
@@ -169,3 +176,110 @@ The layout is built as a grid:
 Row 1 (size: 70%):  [ Pane A | Pane B | Pane C ]
 Row 2 (remaining):  [ Pane D | Pane E ]
 ```
+
+## Orchestrator Config
+
+The orchestrator manages autonomous task dispatch, stall detection, and mission lifecycle. Add an `orchestrator` block to enable it:
+
+```yaml
+orchestrator:
+  enabled: true
+  auto_dispatch: true
+  dispatch_mode: missions        # "tasks" | "goals" | "missions"
+  poll_interval: 5000            # ms between ticks
+  stall_timeout: 300000          # ms before nudging idle agent
+  max_concurrent_agents: 10
+  master_pane: Lead              # pane excluded from dispatch
+  before_run: pnpm install       # hook before task dispatch
+  after_run: pnpm lint           # hook after task completion
+  services:
+    dev:
+      command: pnpm dev
+      port: 3000
+      healthcheck: "curl -sf http://localhost:3000/health"
+    test:
+      command: pnpm test
+  research:
+    enabled: true
+    triggers:
+      mission_start: true
+      milestone_progress: 3      # trigger every N completed tasks
+      milestone_complete: true
+      periodic_minutes: 15
+      retry_cluster: true
+      stall_detected: true
+      discovered_issue: true
+  webhooks:
+    - url: https://example.com/hook
+      events: [completion, dispatch]
+      secret: my-signing-key
+```
+
+### Dispatch Modes
+
+| Mode       | Description                                                                 |
+| ---------- | --------------------------------------------------------------------------- |
+| `tasks`    | Simple task dispatch — assign todo tasks to idle agents                     |
+| `goals`    | Goal-level dispatch — assign goals to planner agents                        |
+| `missions` | Full mission lifecycle — planning, milestones, validation, skill matching   |
+
+### Services Registry
+
+Services defined under `orchestrator.services` are injected into dispatch prompts so agents know how to run and check services:
+
+```yaml
+services:
+  dev:
+    command: pnpm dev        # how to start it
+    port: 3000               # what port it runs on
+    healthcheck: "curl ..."  # how to verify it's up
+```
+
+## `.tmux-ide/` Directory
+
+The `.tmux-ide/` directory in your project root contains skills and the knowledge library:
+
+```
+.tmux-ide/
+  skills/
+    frontend.md          # skill definition (YAML frontmatter + body)
+    backend.md
+    reviewer.md
+    researcher.md
+    general-worker.md
+  library/
+    architecture.md      # design decisions (populated during missions)
+    learnings.md         # auto-appended from completed tasks
+```
+
+Skill files use YAML frontmatter:
+
+```markdown
+---
+name: frontend
+specialties: [react, css, typescript]
+role: teammate
+description: Frontend component specialist
+---
+You are a frontend developer. Focus on React components and CSS.
+```
+
+## Validation Contract
+
+For missions mode, create `.tasks/validation-contract.md` with assertion IDs that tasks link to via `--fulfills`:
+
+```markdown
+# Validation Contract
+
+**VAL-AUTH-001**: Auth endpoint returns 200 with valid JWT
+**VAL-AUTH-002**: Refresh token rotation works correctly
+**VAL-DB-001**: User data persists across server restarts
+```
+
+Tasks claim assertions:
+
+```bash
+tmux-ide task create "Implement JWT" --milestone M1 --fulfills "VAL-AUTH-001,VAL-AUTH-002"
+```
+
+The coverage invariant warns if any assertion ID is not claimed by at least one task. Run `tmux-ide validate coverage` to check.
