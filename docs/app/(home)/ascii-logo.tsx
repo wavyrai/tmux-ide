@@ -2,53 +2,66 @@
 
 import { useState, useEffect } from "react";
 
-const LOGO = ` _                                _     _
-| |_ _ __ ___  _   ___  __      (_) __| | ___
-| __| '_ \` _ \\| | | \\ \\/ /_____ | |/ _\` |/ _ \\
-| |_| | | | | | |_| |>  <|_____|| | (_| |  __/
- \\__|_| |_| |_|\\__,_/_/\\_\\      |_|\\__,_|\\___|`;
-
-const TOTAL_CHARS = LOGO.length;
-const CHAR_DELAY = 1;
-const PULSE_DELAY = 50;
-const SETTLE_DELAY = 600;
+const LOGO = `                  ___           ___           ___                               _____          ___
+      ___        /__/\\         /__/\\         /__/|                 ___         /  /::\\        /  /\\
+     /  /\\      |  |::\\        \\  \\:\\       |  |:|                /  /\\       /  /:/\\:\\      /  /:/_
+    /  /:/      |  |:|:\\        \\  \\:\\      |  |:|               /  /:/      /  /:/  \\:\\    /  /:/ /\\
+   /  /:/     __|__|:|\\:\\   ___  \\  \\:\\   __|__|:|              /__/::\\     /__/:/ \\__\\:|  /  /:/ /:/_
+  /  /::\\    /__/::::| \\:\\ /__/\\  \\__\\:\\ /__/::::\\____          \\__\\/\\:\\__  \\  \\:\\ /  /:/ /__/:/ /:/ /\\
+ /__/:/\\:\\   \\  \\:\\~~\\__\\/ \\  \\:\\ /  /:/    ~\\~~\\::::/             \\  \\:\\/\\  \\  \\:\\  /:/  \\  \\:\\/:/ /:/
+ \\__\\/  \\:\\   \\  \\:\\        \\  \\:\\  /:/      |~~|:|~~               \\__\\::/   \\  \\:\\/:/    \\  \\::/ /:/
+      \\  \\:\\   \\  \\:\\        \\  \\:\\/:/       |  |:|                 /__/:/     \\  \\::/      \\  \\:\\/:/
+       \\__\\/    \\  \\:\\        \\  \\::/        |  |:|                 \\__\\/       \\__\\/        \\  \\::/
+                 \\__\\/         \\__\\/         |__|/                                            \\__\\/    `;
 
 export function AsciiLogo() {
-  const [charCount, setCharCount] = useState(0);
-  const [phase, setPhase] = useState<"typing" | "pulse" | "settled">("typing");
+  const [phase, setPhase] = useState<"hidden" | "visible" | "settled">("hidden");
 
   useEffect(() => {
-    if (charCount >= TOTAL_CHARS) {
-      const t1 = setTimeout(() => setPhase("pulse"), PULSE_DELAY);
-      const t2 = setTimeout(() => setPhase("settled"), PULSE_DELAY + SETTLE_DELAY);
-      return () => {
-        clearTimeout(t1);
-        clearTimeout(t2);
-      };
-    }
-    const timeout = setTimeout(() => setCharCount((c) => c + 1), CHAR_DELAY);
-    return () => clearTimeout(timeout);
-  }, [charCount]);
+    const t1 = setTimeout(() => setPhase("visible"), 200);
+    const t2 = setTimeout(() => setPhase("settled"), 700);
 
-  const visible = LOGO.slice(0, charCount);
+    // Console greeting
+    console.log(
+      "%c" + LOGO,
+      "color: #34d399; font-family: monospace; font-size: 10px;",
+    );
+    console.log(
+      "%c\uD83E\uDD16 Built with Claude Code — from architecture to landing page, orchestrated by tmux-ide missions.",
+      "color: #a78bfa; font-size: 12px; font-family: system-ui;",
+    );
+    console.log(
+      "%cEvery feature on this page was planned, dispatched, and validated by autonomous agents.",
+      "color: #64748b; font-size: 11px; font-family: system-ui;",
+    );
+
+    return () => {
+      clearTimeout(t1);
+      clearTimeout(t2);
+    };
+  }, []);
 
   return (
-    <pre
-      className={[
-        "text-[10px] sm:text-xs md:text-sm leading-[1.15] select-none origin-left",
-        "transition-all",
-        phase === "typing" ? "text-emerald-400 duration-0" : "",
-        phase === "pulse"
-          ? "text-emerald-300 scale-[1.02] duration-150"
-          : "",
-        phase === "settled" ? "text-fd-foreground scale-100 duration-700" : "",
-      ]
-        .filter(Boolean)
-        .join(" ")}
-      aria-label="tmux-ide"
-    >
-      {visible}
-      {phase === "typing" && <span className="animate-pulse">_</span>}
-    </pre>
+    <div className="overflow-x-auto w-full">
+      <pre
+        className="font-mono whitespace-pre select-none text-center text-[5px] sm:text-[7px] md:text-[9px] lg:text-xs leading-[1.1]"
+        style={{
+          opacity: phase === "hidden" ? 0 : 1,
+          transition: "opacity 300ms ease-out, text-shadow 400ms ease-out",
+          color: phase === "settled" ? "var(--fd-foreground)" : undefined,
+          textShadow:
+            phase === "visible"
+              ? "0 0 12px rgba(52, 211, 153, 0.6), 0 0 4px rgba(52, 211, 153, 0.3)"
+              : phase === "settled"
+                ? "0 0 4px rgba(52, 211, 153, 0.15)"
+                : "none",
+        }}
+        aria-label="tmux-ide"
+      >
+        <span className={phase === "settled" ? "text-fd-foreground" : "text-emerald-400/80"}>
+          {LOGO}
+        </span>
+      </pre>
+    </div>
   );
 }
