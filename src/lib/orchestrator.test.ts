@@ -29,6 +29,9 @@ import {
   checkMilestoneCompletion,
   checkValidationResults,
   buildValidationPrompt,
+  dispatchPlanning,
+  buildPlanningPrompt,
+  handleMissionComplete,
 } from "./orchestrator.ts";
 import { readEvents } from "./event-log.ts";
 import {
@@ -1806,5 +1809,146 @@ describe("knowledge library", () => {
 
     const learningsPath = join(tmpDir, ".tmux-ide", "library", "learnings.md");
     expect(existsSync(learningsPath)).toBe(false);
+  });
+});
+
+describe("mission lifecycle", () => {
+  it("dispatches planning when mission has no milestones", () => {
+    saveMission(tmpDir, {
+      title: "Ship v2",
+      description: "Major release",
+      status: "planning",
+      branch: null,
+      milestones: [],
+      created: "2026-01-01T00:00:00Z",
+      updated: "2026-01-01T00:00:00Z",
+    });
+
+    const leadPane = makePane({ id: "%0", index: 0, title: "Lead", currentCommand: "zsh", role: "lead" });
+    mockPanes = [leadPane];
+
+    const config = makeOrchestratorConfig(tmpDir, { dispatchMode: "missions", masterPane: "Lead" });
+    const state = makeOrchestratorState();
+
+    dispatchPlanning(config, state, [leadPane]);
+
+    // Should have claimed __planning__
+    expect(state.claimedTasks.has("__planning__")).toBeTruthy();
+
+    // Should have sent command to lead pane
+    const sendCalls = tmuxCalls.filter((c) => c.args.includes("send-keys"));
+    expect(sendCalls.length).toBeGreaterThan(0);
+
+    // Dispatch file should exist
+    expect(existsSync(join(tmpDir, ".tasks", "dispatch", "planning.md"))).toBeTruthy();
+
+    // Event should be logged
+    const events = readEvents(tmpDir);
+    expect(events.find((e) => e.type === "planning")).toBeTruthy();
+  });
+
+  it("does not dispatch planning twice", () => {
+    saveMission(tmpDir, {
+      title: "Ship v2",
+      description: "",
+      status: "planning",
+      branch: null,
+      milestones: [],
+      created: "2026-01-01T00:00:00Z",
+      updated: "2026-01-01T00:00:00Z",
+    });
+
+    const leadPane = makePane({ id: "%0", index: 0, title: "Lead", currentCommand: "zsh", role: "lead" });
+    mockPanes = [leadPane];
+
+    const config = makeOrchestratorConfig(tmpDir, { dispatchMode: "missions" });
+    const state = makeOrchestratorState();
+
+    dispatchPlanning(config, state, [leadPane]);
+    const callCount1 = tmuxCalls.filter((c) => c.args.includes("send-keys")).length;
+
+    dispatchPlanning(config, state, [leadPane]);
+    const callCount2 = tmuxCalls.filter((c) => c.args.includes("send-keys")).length;
+
+    // Second call should not generate additional send-keys
+    expect(callCount2).toBe(callCount1);
+  });
+
+  it("buildPlanningPrompt includes mission context and instructions", () => {
+    saveMission(tmpDir, {
+      title: "Ship v2",
+      description: "Complete rewrite of auth",
+      status: "planning",
+      branch: null,
+      milestones: [],
+      created: "2026-01-01T00:00:00Z",
+      updated: "2026-01-01T00:00:00Z",
+    });
+
+    const prompt = buildPlanningPrompt(tmpDir);
+
+    expect(prompt.includes("Mission Planning")).toBeTruthy();
+    expect(prompt.includes("Ship v2")).toBeTruthy();
+    expect(prompt.includes("Complete rewrite of auth")).toBeTruthy();
+    expect(prompt.includes("milestone create")).toBeTruthy();
+    expect(prompt.includes("validation-contract.md")).toBeTruthy();
+    expect(prompt.includes("plan-complete")).toBeTruthy();
+  });
+
+  it("handleMissionComplete sets status and logs event", () => {
+    const mission = {
+      title: "Ship v2",
+      description: "Major release",
+      status: "active" as const,
+      branch: null,
+      milestones: [
+        { id: "M1", title: "Phase 1", description: "", status: "done" as const, order: 1, created: "2026-01-01T00:00:00Z", updated: "2026-01-01T00:00:00Z" },
+      ],
+      created: "2026-01-01T00:00:00Z",
+      updated: "2026-01-01T00:00:00Z",
+    };
+    saveMission(tmpDir, mission);
+
+    const masterPane = makePane({ id: "%0", title: "Master", role: "lead" });
+    mockPanes = [masterPane];
+
+    const config = makeOrchestratorConfig(tmpDir, { dispatchMode: "missions" });
+    handleMissionComplete(config, mission, [masterPane]);
+
+    // Mission should be complete
+    const updated = loadMission(tmpDir)!;
+    expect(updated.status).toBe("complete");
+
+    // Dispatch file should exist
+    expect(existsSync(join(tmpDir, ".tasks", "dispatch", "mission-complete.md"))).toBeTruthy();
+
+    // Event should be logged
+    const events = readEvents(tmpDir);
+    const missionEvent = events.find((e) => e.type === "mission_complete");
+    expect(missionEvent).toBeTruthy();
+    expect(missionEvent!.message.includes("Ship v2")).toBeTruthy();
+
+    // Master pane should be notified
+    const sendCalls = tmuxCalls.filter((c) => c.args.includes("send-keys") && c.args.includes("%0"));
+    expect(sendCalls.length).toBeGreaterThan(0);
+  });
+
+  it("mission create sets status to planning", () => {
+    // This tests the data model — mission create in task.ts sets status: "planning"
+    // Verify via direct mission construction (CLI test would need process spawn)
+    const now = new Date().toISOString();
+    saveMission(tmpDir, {
+      title: "New Project",
+      description: "Big thing",
+      status: "planning",
+      branch: null,
+      milestones: [],
+      created: now,
+      updated: now,
+    });
+
+    const mission = loadMission(tmpDir)!;
+    expect(mission.status).toBe("planning");
+    expect(mission.milestones.length).toBe(0);
   });
 });

@@ -54,6 +54,7 @@ import { recordTaskTime } from "./token-tracker.ts";
 import { listSessionPanes, sendCommand, type PaneInfo } from "../widgets/lib/pane-comms.ts";
 import { appendEvent } from "./event-log.ts";
 import { loadSkill } from "./skill-registry.ts";
+import { isGhAvailable, createMissionPr } from "./github-pr.ts";
 import {
   loadValidationContract,
   loadValidationState,
@@ -651,6 +652,143 @@ export function checkValidationResults(config: OrchestratorConfig, tasks: Task[]
     mission.updated = new Date().toISOString();
     saveMission(config.dir, mission);
   }
+}
+
+// --- Planning dispatch ---
+
+const PLANNING_CLAIM = "__planning__";
+
+/**
+ * Build the planning prompt for the lead/planner agent.
+ */
+export function buildPlanningPrompt(dir: string): string {
+  const mission = loadMission(dir);
+  let prompt = `# Mission Planning\n\n`;
+
+  if (mission) {
+    prompt += `## Mission: ${mission.title}\n`;
+    if (mission.description) prompt += `${mission.description}\n`;
+    prompt += "\n";
+  }
+
+  // AGENTS.md
+  const agentsMdPath = join(dir, "AGENTS.md");
+  const agentsContent = loadLibraryExcerpt(agentsMdPath, 1000);
+  if (agentsContent) {
+    prompt += `## Agent Guidelines\n${agentsContent}\n\n`;
+  }
+
+  prompt += `## Instructions\n\n`;
+  prompt += `You are the mission planner. Analyze the mission scope and create an execution plan.\n\n`;
+  prompt += `1. Design milestones (sequential execution phases):\n`;
+  prompt += `   tmux-ide milestone create "title" --sequence N [-d "description"]\n\n`;
+  prompt += `2. Create a validation contract at .tasks/validation-contract.md with assertion IDs:\n`;
+  prompt += `   Each assertion is a testable claim (e.g., ASSERT01: "Auth endpoint returns 200")\n\n`;
+  prompt += `3. Create tasks linked to milestones:\n`;
+  prompt += `   tmux-ide task create "title" --milestone M1 --specialty frontend --fulfills "ASSERT01,ASSERT02" [-d "description"]\n\n`;
+  prompt += `4. Ensure every assertion in the contract is claimed by at least one task's --fulfills\n\n`;
+  prompt += `5. When planning is complete, signal:\n`;
+  prompt += `   tmux-ide mission plan-complete\n`;
+
+  return prompt.trim();
+}
+
+/**
+ * Dispatch the planning phase to the lead/planner pane.
+ * Only runs once per mission (guarded by __planning__ claim).
+ */
+export function dispatchPlanning(
+  config: OrchestratorConfig,
+  state: OrchestratorState,
+  panes: PaneInfo[],
+): void {
+  if (state.claimedTasks.has(PLANNING_CLAIM)) return;
+
+  // Find the lead/planner pane
+  const plannerPane =
+    panes.find((p) => p.role === "lead") ??
+    panes.find((p) => config.masterPane && normalizePaneTitle(p.title) === config.masterPane) ??
+    panes.find((p) => isIdleForDispatch(p));
+
+  if (!plannerPane) return;
+
+  state.claimedTasks.add(PLANNING_CLAIM);
+
+  const prompt = buildPlanningPrompt(config.dir);
+  const dispatchDir = join(config.dir, ".tasks", "dispatch");
+  if (!existsSync(dispatchDir)) mkdirSync(dispatchDir, { recursive: true });
+  const dispatchFile = join(dispatchDir, "planning.md");
+  writeFileSync(dispatchFile, prompt);
+
+  sendCommand(
+    config.session,
+    plannerPane.id,
+    `Read and execute: .tasks/dispatch/planning.md`,
+  );
+
+  appendEvent(config.dir, {
+    timestamp: new Date().toISOString(),
+    type: "planning",
+    message: `Dispatched mission planning to ${plannerPane.title}`,
+  });
+
+  state.lastActivity.set(plannerPane.id, Date.now());
+}
+
+// --- Mission completion ---
+
+/**
+ * Handle mission completion: all milestones done and all validations passing.
+ */
+export function handleMissionComplete(
+  config: OrchestratorConfig,
+  mission: Mission,
+  panes: PaneInfo[],
+): void {
+  mission.status = "complete";
+  mission.updated = new Date().toISOString();
+  saveMission(config.dir, mission);
+
+  // Try to create a mission-level PR
+  let prResult: { url: string; number: number } | null = null;
+  if (mission.branch && isGhAvailable()) {
+    prResult = createMissionPr(mission, config.dir);
+  }
+
+  // Build completion summary
+  const totalMilestones = mission.milestones.length;
+  const tasks = loadTasks(config.dir);
+  const doneTasks = tasks.filter((t) => t.status === "done").length;
+
+  let summary = `# Mission Complete: ${mission.title}\n\n`;
+  summary += `Milestones: ${totalMilestones} completed\n`;
+  summary += `Tasks: ${doneTasks}/${tasks.length} done\n`;
+  if (prResult) summary += `PR: ${prResult.url}\n`;
+  summary += `\nMission "${mission.title}" has been delivered.`;
+
+  // Write dispatch file and notify master
+  const dispatchDir = join(config.dir, ".tasks", "dispatch");
+  if (!existsSync(dispatchDir)) mkdirSync(dispatchDir, { recursive: true });
+  writeFileSync(join(dispatchDir, "mission-complete.md"), summary);
+
+  if (config.masterPane) {
+    const masterPane =
+      panes.find((p) => p.role === "lead") ??
+      panes.find((p) => p.title === config.masterPane);
+    if (masterPane) {
+      sendCommand(
+        config.session,
+        masterPane.id,
+        `Mission complete: "${mission.title}". Run: tmux-ide dispatch mission-complete`,
+      );
+    }
+  }
+
+  appendEvent(config.dir, {
+    timestamp: new Date().toISOString(),
+    type: "mission_complete",
+    message: `Mission "${mission.title}" completed — ${totalMilestones} milestones, ${doneTasks} tasks${prResult ? `, PR #${prResult.number}` : ""}`,
+  });
 }
 
 export function dispatch(
@@ -1383,9 +1521,15 @@ export function createOrchestrator(initialConfig: OrchestratorConfig): () => voi
       if (config.dispatchMode === "goals") {
         const goals = loadGoals(config.dir);
         dispatchGoals(config, state, goals, tasks, panes);
+      } else if (config.dispatchMode === "missions") {
+        // Mission lifecycle: planning → active → complete
+        const mission = loadMission(config.dir);
+        if (mission?.status === "planning" && mission.milestones.length === 0) {
+          dispatchPlanning(config, state, panes);
+        } else if (mission?.status === "active") {
+          dispatch(config, state, tasks, panes);
+        }
       } else {
-        // Both 'tasks' and 'missions' modes use dispatch() —
-        // milestone gating is applied inside dispatch() when mode is 'missions'
         dispatch(config, state, tasks, panes);
       }
     }
@@ -1396,10 +1540,19 @@ export function createOrchestrator(initialConfig: OrchestratorConfig): () => voi
     // 4. Detect completions: notify master, run hooks, cleanup
     detectCompletions(config, state, tasks, panes);
 
-    // 5. Milestone completion + validation flow
+    // 5. Milestone completion + validation flow + mission completion
     if (config.dispatchMode === "missions") {
       checkMilestoneCompletion(config, state, tasks, panes);
       checkValidationResults(config, tasks);
+
+      // Check if mission is complete: all milestones done
+      const mission = loadMission(config.dir);
+      if (mission?.status === "active" && mission.milestones.length > 0) {
+        const allMilestonesDone = mission.milestones.every((m) => m.status === "done");
+        if (allMilestonesDone) {
+          handleMissionComplete(config, mission, panes);
+        }
+      }
     }
 
     // Update previous state
