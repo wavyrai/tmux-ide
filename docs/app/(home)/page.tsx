@@ -126,27 +126,29 @@ const features = [
 export default function HomePage() {
   return (
     <div className="font-mono">
-      {/* HERO */}
-      <section className="max-w-screen-xl mx-auto pt-16 pb-12 md:py-28 flex flex-col lg:flex-row gap-12 justify-between items-center px-6">
-        <div className="lg:max-w-[560px] space-y-8 w-full">
-          <div>
-            <AsciiLogo />
-            <div className="mt-3">
-              <Link
-                href="/docs/release-2-0-0"
-                className="inline-flex items-center border border-fd-border px-2 py-0.5 text-[10px] font-mono uppercase tracking-[0.18em] text-fd-muted-foreground transition-colors hover:bg-fd-accent hover:text-fd-foreground"
-              >
-                2.0
-              </Link>
-            </div>
-            <h1 className="font-sans text-3xl md:text-4xl lg:text-5xl leading-[1.1] tracking-tight mt-4 text-fd-foreground">
-              Autonomous multi-agent missions.
-            </h1>
-            <p className="text-fd-muted-foreground text-base leading-normal mt-4 md:mt-8">
-              Turn any project into a mission-driven development environment. One config file,
-              multiple AI agents, fully autonomous orchestration.
-            </p>
-          </div>
+      {/* HERO ROW 1 — full-width ASCII logo + subtitle */}
+      <section className="max-w-screen-xl mx-auto pt-16 md:pt-28 px-6 text-center">
+        <AsciiLogo />
+        <div className="mt-4 flex items-center justify-center gap-3">
+          <h1 className="font-sans text-3xl md:text-4xl lg:text-5xl leading-[1.1] tracking-tight text-fd-foreground">
+            Autonomous multi-agent missions.
+          </h1>
+          <Link
+            href="/docs/release-2-0-0"
+            className="inline-flex items-center border border-fd-border px-2 py-0.5 text-[10px] font-mono uppercase tracking-[0.18em] text-fd-muted-foreground transition-colors hover:bg-fd-accent hover:text-fd-foreground shrink-0"
+          >
+            2.0
+          </Link>
+        </div>
+      </section>
+
+      {/* HERO ROW 2 — two columns: content + terminal */}
+      <section className="max-w-screen-xl mx-auto pb-12 md:pb-28 pt-8 md:pt-12 flex flex-col lg:flex-row gap-12 justify-between items-center px-6">
+        <div className="lg:max-w-[480px] space-y-8 w-full">
+          <p className="text-fd-muted-foreground text-base leading-normal">
+            Turn any project into a mission-driven development environment. One config file,
+            multiple AI agents, fully autonomous orchestration.
+          </p>
 
           <div className="max-w-[480px]">
             <CopyButton
