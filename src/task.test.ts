@@ -19,6 +19,7 @@ import {
   deleteTask,
   nextTaskId,
   loadTasksForGoal,
+  detectCycle,
   normalizeTask,
   normalizeGoal,
   normalizeMission,
@@ -1140,5 +1141,59 @@ describe("normalizer snapshots", () => {
     assert.strictEqual(result.lastError, "timeout");
     assert.strictEqual(result.nextRetryAt, "2026-01-02T00:00:00Z");
     assert.deepStrictEqual(result.depends_on, ["002"]);
+  });
+});
+
+describe("detectCycle", () => {
+  function makeMinimalTask(id: string, deps: string[] = []): Task {
+    const now = new Date().toISOString();
+    return {
+      id,
+      title: `Task ${id}`,
+      description: "",
+      goal: null,
+      status: "todo",
+      assignee: null,
+      priority: 2,
+      created: now,
+      updated: now,
+      branch: null,
+      tags: [],
+      proof: null,
+      depends_on: deps,
+      retryCount: 0,
+      maxRetries: 5,
+      lastError: null,
+      nextRetryAt: null,
+    };
+  }
+
+  it("detects A -> B -> A cycle", () => {
+    ensureTasksDir(tmpDir);
+    saveTask(tmpDir, makeMinimalTask("001", ["002"]));
+    saveTask(tmpDir, makeMinimalTask("002"));
+
+    const cycle = detectCycle(tmpDir, "002", ["001"]);
+    expect(cycle).toEqual(["002", "001", "002"]);
+  });
+
+  it("detects A -> B -> C -> A cycle", () => {
+    ensureTasksDir(tmpDir);
+    saveTask(tmpDir, makeMinimalTask("001", ["002"]));
+    saveTask(tmpDir, makeMinimalTask("002", ["003"]));
+    saveTask(tmpDir, makeMinimalTask("003"));
+
+    const cycle = detectCycle(tmpDir, "003", ["001"]);
+    expect(cycle).toEqual(["003", "001", "002", "003"]);
+  });
+
+  it("returns null for valid DAG", () => {
+    ensureTasksDir(tmpDir);
+    saveTask(tmpDir, makeMinimalTask("001"));
+    saveTask(tmpDir, makeMinimalTask("002", ["001"]));
+    saveTask(tmpDir, makeMinimalTask("003"));
+
+    const cycle = detectCycle(tmpDir, "003", ["001"]);
+    expect(cycle).toBeNull();
   });
 });

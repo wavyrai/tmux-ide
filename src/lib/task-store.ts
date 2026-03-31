@@ -288,3 +288,39 @@ export function deleteTask(dir: string, id: string): boolean {
 export function loadTasksForGoal(dir: string, goalId: string): Task[] {
   return loadTasks(dir).filter((t) => t.goal === goalId);
 }
+
+/**
+ * Detect dependency cycles. Builds the full dependency graph, applies
+ * the proposed change (taskId → newDeps), then runs DFS from taskId.
+ * Returns the cycle path if found, null otherwise.
+ */
+export function detectCycle(dir: string, taskId: string, newDeps: string[]): string[] | null {
+  const tasks = loadTasks(dir);
+  const depMap = new Map<string, string[]>();
+  for (const t of tasks) {
+    depMap.set(t.id, [...t.depends_on]);
+  }
+  // Apply proposed change
+  depMap.set(taskId, newDeps);
+
+  // DFS from taskId following depends_on edges
+  const visited = new Set<string>();
+  const path: string[] = [];
+
+  function dfs(id: string): string[] | null {
+    if (path.includes(id)) {
+      return [...path.slice(path.indexOf(id)), id];
+    }
+    if (visited.has(id)) return null;
+    visited.add(id);
+    path.push(id);
+    for (const dep of depMap.get(id) ?? []) {
+      const cycle = dfs(dep);
+      if (cycle) return cycle;
+    }
+    path.pop();
+    return null;
+  }
+
+  return dfs(taskId);
+}

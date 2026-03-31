@@ -17,6 +17,7 @@ import {
   deleteTask,
   nextTaskId,
   loadTasksForGoal,
+  detectCycle,
   type Mission,
   type Goal,
   type Task,
@@ -384,6 +385,13 @@ function handleTask(
         lastError: null,
         nextRetryAt: null,
       };
+      if (task.depends_on.length > 0) {
+        const cycle = detectCycle(dir, task.id, task.depends_on);
+        if (cycle) {
+          outputError(`Dependency cycle detected: ${cycle.join(" -> ")}`, "CYCLE");
+          return;
+        }
+      }
       saveTask(dir, task);
       if (json) {
         console.log(JSON.stringify(task, null, 2));
@@ -404,7 +412,15 @@ function handleTask(
       if (values.priority) task.priority = parseInt(values.priority, 10);
       if (values.tags) task.tags = values.tags.split(",").map((t) => t.trim());
       if (values.goal) task.goal = values.goal;
-      if (values.depends) task.depends_on = values.depends.split(",").map((d) => d.trim());
+      if (values.depends) {
+        const newDeps = values.depends.split(",").map((d) => d.trim());
+        const cycle = detectCycle(dir, task.id, newDeps);
+        if (cycle) {
+          outputError(`Dependency cycle detected: ${cycle.join(" -> ")}`, "CYCLE");
+          return;
+        }
+        task.depends_on = newDeps;
+      }
       if (values.proof) task.proof = parseProof(values.proof, task.proof);
       task.updated = new Date().toISOString();
       saveTask(dir, task);
@@ -520,7 +536,15 @@ function handleTask(
       if (values.tags) task.tags = values.tags.split(",").map((t) => t.trim());
       if (values.branch) task.branch = values.branch;
       if (values.goal) task.goal = values.goal;
-      if (values.depends) task.depends_on = values.depends.split(",").map((d) => d.trim());
+      if (values.depends) {
+        const newDeps = values.depends.split(",").map((d) => d.trim());
+        const cycle = detectCycle(dir, task.id, newDeps);
+        if (cycle) {
+          outputError(`Dependency cycle detected: ${cycle.join(" -> ")}`, "CYCLE");
+          return;
+        }
+        task.depends_on = newDeps;
+      }
       task.updated = new Date().toISOString();
       saveTask(dir, task);
       if (json) {
