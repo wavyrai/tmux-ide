@@ -41,7 +41,8 @@ export function TaskRow({ task: t, selected = false, onSelect }: TaskRowProps) {
           {t.description && <div className="text-[var(--fg)]">{t.description}</div>}
           <div className="flex gap-3">
             <span>P{t.priority}</span>
-            {t.branch && <span>⎇ {t.branch}</span>}
+            {t.milestone && <span className="text-[var(--magenta)]">{t.milestone}</span>}
+            {t.specialty && <span className="text-[var(--cyan)]">{t.specialty}</span>}
             {t.tags.length > 0 && <span>{t.tags.join(", ")}</span>}
           </div>
         </div>

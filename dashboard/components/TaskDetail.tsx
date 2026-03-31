@@ -224,11 +224,27 @@ export function TaskDetail({
             </div>
           )}
 
-          {/* Branch */}
-          {t.branch && (
+          {/* Milestone */}
+          {t.milestone && (
             <div>
-              <div className={labelClass}>branch</div>
-              <div className="text-[var(--cyan)]">⎇ {t.branch}</div>
+              <div className={labelClass}>milestone</div>
+              <div className="text-[var(--magenta)]">{t.milestone}</div>
+            </div>
+          )}
+
+          {/* Specialty */}
+          {t.specialty && (
+            <div>
+              <div className={labelClass}>specialty</div>
+              <div className="text-[var(--cyan)]">{t.specialty}</div>
+            </div>
+          )}
+
+          {/* Fulfills */}
+          {t.fulfills && t.fulfills.length > 0 && (
+            <div>
+              <div className={labelClass}>fulfills</div>
+              <div className="text-[var(--yellow)]">{t.fulfills.join(", ")}</div>
             </div>
           )}
 

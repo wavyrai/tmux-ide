@@ -72,7 +72,7 @@ export function AgentPanel({ agents, tasks }: AgentPanelProps) {
                     {task.status}
                   </span>
                   <span>P{task.priority}</span>
-                  {task.branch && <span>⎇ {task.branch}</span>}
+                  {task.milestone && <span className="text-[var(--magenta)]">{task.milestone}</span>}
                 </div>
               </div>
             )}

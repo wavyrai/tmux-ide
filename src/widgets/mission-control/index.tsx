@@ -15,6 +15,7 @@ import {
   type Task,
 } from "../../lib/task-store.ts";
 import { readEvents, type OrchestratorEvent } from "../../lib/event-log.ts";
+import { loadValidationState } from "../../lib/validation.ts";
 
 const { values } = parseArgs({
   options: { session: { type: "string" }, dir: { type: "string" }, theme: { type: "string" } },
@@ -130,6 +131,29 @@ render(
     );
     const busyCount = createMemo(() => agents().filter((a) => a.busy).length);
     const totalDone = createMemo(() => tasks().filter((t) => t.status === "done").length);
+
+    const milestoneRows = createMemo(() => {
+      const m = mission();
+      if (!m || m.milestones.length === 0) return [];
+      return [...m.milestones].sort((a, b) => a.order - b.order).map((ms) => {
+        const mTasks = tasks().filter((t) => t.milestone === ms.id);
+        const done = mTasks.filter((t) => t.status === "done").length;
+        return { ...ms, done, total: mTasks.length };
+      });
+    });
+
+    const valSummary = createMemo(() => {
+      const state = loadValidationState(dir);
+      if (!state) return null;
+      const entries = Object.values(state.assertions);
+      if (entries.length === 0) return null;
+      return {
+        total: entries.length,
+        passing: entries.filter((e) => e.status === "passing").length,
+        failing: entries.filter((e) => e.status === "failing").length,
+        pending: entries.filter((e) => e.status === "pending").length,
+      };
+    });
 
     const goalRows = createMemo(() =>
       goals().map((g) => {
@@ -503,6 +527,72 @@ render(
 
           {/* GOALS TAB */}
           <Show when={tab() === "goals"}>
+            {/* Mission status + validation */}
+            <Show when={mission()}>
+              <box flexShrink={0} flexDirection="row" gap={1} paddingBottom={1}>
+                <text fg={toRGBA(theme.fgMuted)} wrapMode="none">
+                  mission:
+                </text>
+                <text
+                  fg={toRGBA(
+                    mission()!.status === "complete"
+                      ? theme.gitAdded
+                      : mission()!.status === "active"
+                        ? theme.accent
+                        : theme.gitModified,
+                  )}
+                  attributes={TextAttributes.BOLD}
+                  wrapMode="none"
+                >
+                  {mission()!.status}
+                </text>
+                <Show when={valSummary()}>
+                  <text fg={toRGBA(theme.fgMuted)} wrapMode="none">
+                    │ assertions: {valSummary()!.passing}/{valSummary()!.total} passing
+                  </text>
+                  <Show when={valSummary()!.failing > 0}>
+                    <text fg={toRGBA(theme.gitDeleted)} wrapMode="none">
+                      ({valSummary()!.failing} failing)
+                    </text>
+                  </Show>
+                </Show>
+              </box>
+            </Show>
+            {/* Milestones */}
+            <Show when={milestoneRows().length > 0}>
+              <box flexShrink={0} paddingBottom={1}>
+                <text fg={toRGBA(theme.fgMuted)} attributes={TextAttributes.BOLD}>
+                  MILESTONES
+                </text>
+              </box>
+              <For each={milestoneRows()}>
+                {(ms) => {
+                  const pct = () => (ms.total > 0 ? Math.round((ms.done / ms.total) * 100) : 0);
+                  const statusColor =
+                    ms.status === "done"
+                      ? theme.gitAdded
+                      : ms.status === "active"
+                        ? theme.accent
+                        : ms.status === "validating"
+                          ? theme.gitModified
+                          : theme.fgMuted;
+                  return (
+                    <box flexShrink={0} flexDirection="row" gap={1}>
+                      <text fg={toRGBA(statusColor)} wrapMode="none">
+                        {ms.id}
+                      </text>
+                      <text fg={toRGBA(theme.fg)} wrapMode="none">
+                        {ms.title}
+                      </text>
+                      <text fg={toRGBA(theme.fgMuted)} wrapMode="none">
+                        [{ms.status}] {ms.done}/{ms.total} ({pct()}%)
+                      </text>
+                    </box>
+                  );
+                }}
+              </For>
+              <box flexShrink={0} paddingBottom={1} />
+            </Show>
             <Show when={goalRows().length === 0}>
               <text fg={toRGBA(theme.fgMuted)}>No goals. Create one: /goal create "title"</text>
             </Show>

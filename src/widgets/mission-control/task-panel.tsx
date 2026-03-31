@@ -217,6 +217,11 @@ export function TaskPanel(props: TaskPanelProps) {
                   >
                     {truncate(task.title, 30)}
                   </text>
+                  <Show when={task.milestone}>
+                    <text fg={toRGBA(props.theme.diffHunk)} flexShrink={0} wrapMode="none">
+                      {task.milestone}
+                    </text>
+                  </Show>
                   <Show when={task.assignee}>
                     <text fg={toRGBA(props.theme.fgMuted)} flexShrink={0} wrapMode="none">
                       @{truncate(task.assignee!, 10)}

@@ -198,11 +198,17 @@ export function TaskDetail(props: TaskDetailProps) {
         </box>
       </Show>
 
-      {/* Branch + tags */}
-      <Show when={t().branch || t().tags.length > 0}>
+      {/* Milestone + specialty + fulfills + tags */}
+      <Show when={t().milestone || t().specialty || t().fulfills?.length > 0 || t().tags.length > 0}>
         <box flexShrink={0} flexDirection="row" gap={2}>
-          <Show when={t().branch}>
-            <text fg={toRGBA(theme.fgMuted)}>{t().branch}</text>
+          <Show when={t().milestone}>
+            <text fg={toRGBA(theme.diffHunk)}>{t().milestone}</text>
+          </Show>
+          <Show when={t().specialty}>
+            <text fg={toRGBA(theme.accent)}>{t().specialty}</text>
+          </Show>
+          <Show when={t().fulfills?.length > 0}>
+            <text fg={toRGBA(theme.gitModified)}>fulfills: {t().fulfills.join(", ")}</text>
           </Show>
           <Show when={t().tags.length > 0}>
             <text fg={toRGBA(theme.fgMuted)}>{t().tags.join(", ")}</text>

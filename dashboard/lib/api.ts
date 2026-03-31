@@ -264,6 +264,108 @@ export async function fetchPlan(name: string, filename: string): Promise<PlanDat
   return { content: data.content, authorship };
 }
 
+// --- Milestones ---
+
+export interface MilestoneData {
+  id: string;
+  title: string;
+  description: string;
+  status: "locked" | "active" | "done" | "validating";
+  order: number;
+  taskCount: number;
+  tasksDone: number;
+}
+
+export async function fetchMilestones(name: string): Promise<MilestoneData[]> {
+  const res = await fetch(`${API_BASE}/api/project/${encodeURIComponent(name)}/milestones`, {
+    cache: "no-store",
+  });
+  if (!res.ok) return [];
+  const data = (await res.json()) as { milestones: MilestoneData[] };
+  return data.milestones;
+}
+
+// --- Validation ---
+
+export interface ValidationData {
+  contract: string | null;
+  state: {
+    assertions: Record<
+      string,
+      { status: string; verifiedBy: string | null; evidence: string | null }
+    >;
+    lastVerified: string | null;
+  } | null;
+}
+
+export interface CoverageData {
+  unclaimed: string[];
+  duplicates: Record<string, string[]>;
+}
+
+export async function fetchValidation(name: string): Promise<ValidationData | null> {
+  const res = await fetch(`${API_BASE}/api/project/${encodeURIComponent(name)}/validation`, {
+    cache: "no-store",
+  });
+  if (!res.ok) return null;
+  return (await res.json()) as ValidationData;
+}
+
+export async function fetchCoverage(name: string): Promise<CoverageData | null> {
+  const res = await fetch(
+    `${API_BASE}/api/project/${encodeURIComponent(name)}/validation/coverage`,
+    { cache: "no-store" },
+  );
+  if (!res.ok) return null;
+  return (await res.json()) as CoverageData;
+}
+
+// --- Skills ---
+
+export interface SkillData {
+  name: string;
+  specialties: string[];
+  role: string;
+  description: string;
+  body: string;
+}
+
+export async function fetchSkills(name: string): Promise<SkillData[]> {
+  const res = await fetch(`${API_BASE}/api/project/${encodeURIComponent(name)}/skills`, {
+    cache: "no-store",
+  });
+  if (!res.ok) return [];
+  const data = (await res.json()) as { skills: SkillData[] };
+  return data.skills;
+}
+
+// --- Mission ---
+
+export interface MissionDetail {
+  mission: {
+    title: string;
+    description: string;
+    status: string;
+    branch: string | null;
+    milestones: MilestoneData[];
+  };
+  validationSummary: {
+    total: number;
+    passing: number;
+    failing: number;
+    pending: number;
+    blocked: number;
+  };
+}
+
+export async function fetchMission(name: string): Promise<MissionDetail | null> {
+  const res = await fetch(`${API_BASE}/api/project/${encodeURIComponent(name)}/mission`, {
+    cache: "no-store",
+  });
+  if (!res.ok) return null;
+  return (await res.json()) as MissionDetail;
+}
+
 export async function deleteTaskApi(sessionName: string, taskId: string): Promise<boolean> {
   const res = await fetch(
     `${API_BASE}/api/project/${encodeURIComponent(sessionName)}/task/${encodeURIComponent(taskId)}`,

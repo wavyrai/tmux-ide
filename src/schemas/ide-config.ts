@@ -56,6 +56,7 @@ export const OrchestratorYamlConfigSchema = z.object({
   webhooks: z.array(WebhookConfigSchema).optional(),
   services: z
     .record(
+      z.string(),
       z.object({
         command: z.string(),
         port: z.number().optional(),
