@@ -1,6 +1,7 @@
 import Link from "next/link";
 import type { Metadata } from "next";
 import { CopyButton } from "./copy-button";
+import { AsciiLogo } from "./ascii-logo";
 import TerminalDemo from "@/components/terminal-demo";
 
 export const metadata: Metadata = {
@@ -135,18 +136,15 @@ export default function HomePage() {
       <section className="max-w-screen-xl mx-auto pt-16 pb-12 md:py-28 flex flex-col lg:flex-row gap-12 justify-between items-center px-6">
         <div className="lg:max-w-[560px] space-y-8 w-full">
           <div>
-            <span
-              aria-hidden="true"
-              className="font-pixel text-5xl sm:text-6xl md:text-7xl tracking-tight text-fd-foreground select-none"
-            >
-              tmux-ide
-            </span>
-            <Link
-              href="/docs/release-2-0-0"
-              className="ml-3 inline-flex items-center border border-fd-border px-2 py-0.5 text-[10px] font-mono uppercase tracking-[0.18em] text-fd-muted-foreground transition-colors hover:bg-fd-accent hover:text-fd-foreground align-middle"
-            >
-              2.0
-            </Link>
+            <AsciiLogo />
+            <div className="mt-3">
+              <Link
+                href="/docs/release-2-0-0"
+                className="inline-flex items-center border border-fd-border px-2 py-0.5 text-[10px] font-mono uppercase tracking-[0.18em] text-fd-muted-foreground transition-colors hover:bg-fd-accent hover:text-fd-foreground"
+              >
+                2.0
+              </Link>
+            </div>
             <h1 className="font-sans text-3xl md:text-4xl lg:text-5xl leading-[1.1] tracking-tight mt-4 text-fd-foreground">
               Autonomous multi-agent missions.
             </h1>

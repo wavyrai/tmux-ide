@@ -1,22 +1,155 @@
 ---
 title: Agent Teams
-description: Coordinate multiple Claude Code instances as a team
+description: Coordinate Claude Code panes as classic teams or full mission-driven workflows
 ---
 
 ## Overview
 
-Agent Teams lets you run coordinated Claude Code instances in your tmux-ide layout. One pane acts as the **team lead**, coordinating work and assigning tasks. The others are **teammates** that work independently on their assigned tasks.
+tmux-ide supports two related workflows:
 
-tmux-ide handles the tmux layout and enables the Claude Code agent-team environment. You declare the roles in `ide.yml`, launch the layout, then ask Claude inside the lead pane to start or organize the team.
+- **Agent Teams** for lead + teammate coordination inside Claude Code
+- **Missions** for milestone-gated execution with orchestration, validation, research, and metrics
+
+If you are starting fresh on v2.0, use **missions mode** first. It keeps the agent-team layout, but adds the orchestrator, milestone gating, validation contracts, and monitoring on top.
 
 <Callout type="warn">
   Agent teams are experimental in Claude Code and disabled by default. tmux-ide automatically sets
   `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1` when your config includes a `team` block.
 </Callout>
 
-## Quick Start
+## Missions Mode
 
-The fastest way to get started:
+The most powerful way to use agent teams is missions mode. The orchestrator manages planning handoff, milestone order, specialty-aware dispatch, validation, and completion.
+
+```bash
+tmux-ide init --template missions
+tmux-ide mission create "Ship auth v2" -d "JWT login, refresh, and validation coverage"
+tmux-ide
+```
+
+The `missions` template creates a lead pane plus specialized teammates for frontend, backend, validation, and research. When the mission is active, the orchestrator drives work automatically.
+
+## Mission Lifecycle
+
+1. **Planning**. The lead agent creates milestones, tasks, and the validation contract while the mission is in `planning`.
+2. **Execution**. The orchestrator dispatches tasks in milestone order and prefers agents whose `specialty` matches the task.
+3. **Validation**. When a milestone completes, the validator verifies the claimed assertions.
+4. **Completion**. When all milestones are done and assertions pass, the mission is marked complete and the completion flow can create a PR.
+
+### Quick Start
+
+```bash
+tmux-ide init --template missions
+tmux-ide mission create "Build a todo API" -d "Plan, implement, validate, and summarize the result"
+tmux-ide milestone create "Foundation" --sequence 1
+tmux-ide milestone create "Implementation" --sequence 2
+tmux-ide milestone create "Validation" --sequence 3
+tmux-ide mission plan-complete
+tmux-ide
+```
+
+## Milestones
+
+Milestones are sequential execution phases. In missions mode, `M1` must complete before `M2` can start.
+
+```bash
+tmux-ide milestone create "Foundation" --sequence 1
+tmux-ide milestone create "Frontend" --sequence 2
+tmux-ide milestone list
+tmux-ide milestone show M1
+```
+
+New milestones start as `active` only when they are the first phase. Later ones begin as `locked` and are activated by the orchestrator after validation passes.
+
+## Skill-Based Dispatch
+
+Tasks can declare a `--specialty`, and panes can advertise both a `specialty` and a `skill`.
+
+```yaml
+panes:
+  - title: Frontend Agent
+    command: claude
+    role: teammate
+    specialty: frontend
+    skill: frontend
+```
+
+The `skill` value loads `.tmux-ide/skills/frontend.md` into dispatch prompts. The `specialty` value is used by the orchestrator when selecting the best pane for a task.
+
+```bash
+tmux-ide task create "Build login page" --specialty frontend --milestone M1
+```
+
+That task is a better match for a pane whose `specialty` is `frontend`.
+
+## Validation Contracts
+
+Validation contracts define what “done” means before work begins. Store them in `.tasks/validation-contract.md` with assertion IDs such as `VAL-AUTH-001`.
+
+```md
+**VAL-AUTH-001**: Login endpoint returns JWT on valid credentials
+**VAL-AUTH-002**: Invalid credentials return 401
+```
+
+Tasks can claim the assertions they fulfill:
+
+```bash
+tmux-ide task create "Implement login" --milestone M1 --fulfills "VAL-AUTH-001,VAL-AUTH-002"
+tmux-ide validate coverage
+tmux-ide validate assert VAL-AUTH-001 --status passing --evidence "API test passed"
+tmux-ide validate report
+```
+
+Use `validate coverage` during planning to make sure every assertion is claimed before execution starts.
+
+## Knowledge Library
+
+Missions share context through `.tmux-ide/library/` and other repo-level prompt sources:
+
+- `architecture.md` is injected into every dispatch prompt
+- `learnings.md` is appended as tasks complete with `--summary`
+- `research-findings.md` accumulates completed research output
+- `AGENTS.md` defines project boundaries and operating rules for every agent
+
+This keeps discoveries from one task available to the next dispatch without rebuilding context manually.
+
+## Researcher Agent
+
+The researcher provides continuous internal auditing. Research can trigger at mission start, milestone progress, milestone completion, retry clusters, or stalls.
+
+```yaml
+panes:
+  - title: Researcher
+    command: claude
+    role: researcher
+    specialty: researcher
+    skill: researcher
+```
+
+You can inspect or trigger research manually:
+
+```bash
+tmux-ide research status
+tmux-ide research trigger periodic
+```
+
+## Monitoring
+
+Use the metrics CLI for high-level progress, per-agent utilization, and bottleneck analysis:
+
+```bash
+tmux-ide metrics
+tmux-ide metrics agents
+tmux-ide metrics timeline
+tmux-ide metrics eval
+tmux-ide metrics history
+```
+
+The Command Center runs on `http://localhost:6060` by default, and the dashboard runs on `http://localhost:6061`.
+
+## Classic Agent Teams
+
+Classic agent teams are still supported when you want a lead pane coordinating Claude teammates directly, without mission orchestration.
 
 ```bash
 tmux-ide init --template agent-team
@@ -27,7 +160,7 @@ This creates a layout with a lead and two teammate-ready Claude panes in the top
 
 ## Configuration
 
-Add a `team` block to your `ide.yml` and annotate your Claude panes:
+Add a `team` block to your `ide.yml` and annotate Claude panes with roles:
 
 ```yaml
 name: my-app
@@ -67,21 +200,23 @@ rows:
 
 ### Pane role fields
 
-| Field  | Description                                                                                                    |
-| ------ | -------------------------------------------------------------------------------------------------------------- |
-| `role` | `"lead"` or `"teammate"` metadata for your layout, pane labels, and prompts                                    |
-| `task` | Suggested task description for a teammate pane. Use it in your prompt when asking Claude to organize the team. |
+| Field       | Description                                                                                                          |
+| ----------- | -------------------------------------------------------------------------------------------------------------------- |
+| `role`      | Layout metadata for Claude panes. Supported values are `lead`, `teammate`, `planner`, `validator`, and `researcher`. |
+| `task`      | Suggested task description for a pane. Useful prompt scaffolding for classic team workflows.                         |
+| `specialty` | Routing hint used by the orchestrator to match tasks to the best pane.                                               |
+| `skill`     | Loads `.tmux-ide/skills/<name>.md` into prompts for that pane.                                                       |
 
-## How It Works
+## How Classic Teams Work
 
 When you launch a team-enabled config, tmux-ide:
 
-1. Creates the tmux session and all panes as usual
-2. Sets `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1` on the session
-3. Starts the configured Claude panes in the layout you declared
-4. Leaves you in a lead-focused workspace that is ready for team setup prompts
+1. Creates the tmux session and panes
+2. Sets `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`
+3. Starts the configured Claude panes
+4. Leaves you in a lead-focused workspace ready for team setup prompts
 
-From there, ask Claude in the lead pane to start the team and assign the teammate panes practical tasks, for example:
+From there, ask Claude in the lead pane to organize the team, for example:
 
 ```text
 Start an agent team named my-app. Use the Frontend pane for React components and the Backend pane for API routes.
@@ -89,17 +224,10 @@ Start an agent team named my-app. Use the Frontend pane for React components and
 
 Claude Code handles the actual team creation, coordination, and task assignment.
 
-## Enable Teams on Existing Config
-
-Already have an `ide.yml`? Enable teams in one command:
+## Enable Teams on an Existing Config
 
 ```bash
 tmux-ide config enable-team --name "my-team"
-```
-
-This finds all `command: claude` panes and assigns roles — the first becomes the lead, the rest become teammates. Those fields act as layout metadata and prompt scaffolding. Then set practical task hints:
-
-```bash
 tmux-ide config set rows.0.panes.1.task "Work on frontend components"
 tmux-ide config set rows.0.panes.2.task "Work on API routes"
 tmux-ide validate --json
@@ -107,36 +235,43 @@ tmux-ide validate --json
 
 ## Disable Teams
 
-To go back to independent Claude instances:
-
 ```bash
 tmux-ide config disable-team
 ```
 
-This removes the `team` config and all `role`/`task` fields.
+This removes the `team` config and all `role` and `task` fields.
 
 ## Team Lead Self-Configuration
 
-The team lead can reconfigure its own team from within the session. Since the lead is a full Claude Code instance running inside tmux-ide, it can use the CLI to reshape the layout:
+The lead pane can reconfigure its own workspace from inside tmux-ide:
 
 ```bash
-# Add a new teammate
 tmux-ide config add-pane --row 0 --title "Reviewer" --command "claude"
 tmux-ide config set rows.0.panes.3.role teammate
 tmux-ide config set rows.0.panes.3.task "Review code and check for issues"
-
-# Apply changes
 tmux-ide validate --json
 tmux-ide restart
 ```
 
-After restart, the new teammate pane appears in the layout. Ask the lead to include it in the team workflow.
-
 ## Templates
 
-### Agent Team (default)
+### Missions
 
-Lead + 2 teammates with a generic dev setup.
+```bash
+tmux-ide init --template missions
+```
+
+```
+┌───────────┬───────────┬───────────┐
+│           │           │           │
+│   Lead    │ Frontend  │  Backend  │  70%
+│           │           │           │
+├───────────┼───────────┼───────────┤
+│ Validator │ Researcher│   Shell   │  30%
+└───────────┴───────────┴───────────┘
+```
+
+### Agent Team
 
 ```bash
 tmux-ide init --template agent-team
@@ -152,63 +287,12 @@ tmux-ide init --template agent-team
 └─────────────────┴─────────────────┘
 ```
 
-### Agent Team — Next.js
-
-Lead + frontend teammate + backend teammate with Next.js dev server.
-
-```bash
-tmux-ide init --template agent-team-nextjs
-```
-
-```
-┌───────────┬───────────┬───────────┐
-│           │           │           │
-│   Lead    │ Frontend  │  Backend  │  70%
-│           │           │           │
-├───────────┴─────┬─────┴───────────┤
-│     Next.js     │     Shell       │  30%
-└─────────────────┴─────────────────┘
-```
-
-### Agent Team — Monorepo
-
-Lead architect + per-app teammates with separate working directories.
-
-```bash
-tmux-ide init --template agent-team-monorepo
-```
-
-```
-┌───────────┬───────────┬───────────┐
-│           │ Frontend  │  Backend  │
-│   Lead    │  Agent    │   Agent   │  70%
-│ Architect │ (apps/web)│(apps/api) │
-├─────┬─────┴─────┬─────┴──────────┤
-│ Web │    API    │     Shell      │  30%
-└─────┴───────────┴────────────────┘
-```
-
 ## Best Practices
 
-- **One lead, 2-3 teammates** — more teammates increases token cost and coordination overhead
-- **Specific tasks** — give teammate panes focused task descriptions so your prompts stay clear
-- **Separate files** — assign teammates to different directories or modules to avoid conflicts
-- **Lead as coordinator** — the lead should delegate and review, not do implementation
-- **Use `restart` to apply changes** — after modifying the team config, `tmux-ide restart` applies the new layout
-- **Validate before launch** — always run `tmux-ide validate --json` after config changes
-
-## Comparison with Claude Code Agent Teams
-
-tmux-ide manages the **layout** — it creates the tmux panes, preserves your roles/tasks annotations, and enables the required environment flag. Claude Code manages the **team itself** — creation, coordination, task lists, messaging, and work assignment.
-
-| Aspect                 | tmux-ide handles | Claude Code handles |
-| ---------------------- | ---------------- | ------------------- |
-| Pane layout and sizing | Yes              | No                  |
-| Environment setup      | Yes              | No                  |
-| Role/task hints        | Yes              | No                  |
-| Team creation          | No               | Yes                 |
-| Task coordination      | No               | Yes                 |
-| Inter-agent messaging  | No               | Yes                 |
-| Shared task list       | No               | Yes                 |
-
-This separation means you get reproducible, declarative layouts from tmux-ide with the coordination intelligence of Claude Code's agent teams.
+- Start with `tmux-ide init --template missions` for new multi-agent projects
+- Keep one lead and 2-4 specialized agents instead of a wide generic team
+- Add `specialty` and `skill` fields so dispatch prompts stay targeted
+- Define the validation contract before planning is complete
+- Run `tmux-ide validate coverage` before `tmux-ide mission plan-complete`
+- Use `tmux-ide metrics eval` to spot bottlenecks and retry-heavy agents
+- Use `tmux-ide restart` after changing the layout or pane roles

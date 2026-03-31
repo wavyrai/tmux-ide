@@ -51,12 +51,23 @@ theme: # optional color overrides
 panes:
   - title: Lead
     command: claude
-    role: lead # optional layout metadata: "lead" or "teammate"
+    role: lead # optional layout metadata: lead | teammate | planner | validator | researcher
     focus: true
   - title: Frontend
     command: claude
     role: teammate
+    specialty: frontend
+    skill: frontend # loads .tmux-ide/skills/frontend.md into dispatch prompts
     task: "Work on components" # suggested task text for your prompts
+  - title: Validator
+    command: claude
+    role: validator
+    skill: reviewer
+  - title: Researcher
+    command: claude
+    role: researcher
+    specialty: researcher
+    skill: researcher
 ```
 
 ### Orchestrator Config
@@ -65,15 +76,24 @@ panes:
 orchestrator:
   enabled: true
   auto_dispatch: true # auto-assign tasks to idle agents
-  dispatch_mode: tasks # "tasks" or "goals"
+  dispatch_mode: missions # "tasks" | "goals" | "missions"
   poll_interval: 5000 # ms between ticks
   stall_timeout: 300000 # ms before nudging idle agent
   max_concurrent_agents: 10
-  worktree_root: .worktrees/ # git worktree per task
   master_pane: Master # lead pane excluded from dispatch
   before_run: pnpm install # hook before task starts
   after_run: pnpm lint # hook after task completes
-  cleanup_on_done: false # remove worktree after completion
+  services:
+    web:
+      command: pnpm dev
+      port: 3000
+      healthcheck: http://localhost:3000
+  research:
+    enabled: true
+    triggers:
+      mission_start: true
+      milestone_complete: true
+      periodic_minutes: 20
   webhooks: # fire-and-forget event notifications
     - url: https://example.com/hook
       events: [completion, dispatch] # filter (omit = all events)
@@ -265,7 +285,14 @@ tmux-ide init --template nextjs  # Use specific template
 ### Command Center
 
 ```bash
-tmux-ide command-center [--port 4000]   # Start REST API + SSE + WebSocket server
+tmux-ide command-center [--port 6060]   # Start REST API + SSE + WebSocket server
+```
+
+### Dashboard
+
+```bash
+# Dashboard dev server defaults to port 6061 when launched with tmux-ide
+http://localhost:6061
 ```
 
 ## Claude Skill
@@ -385,7 +412,10 @@ tmux-ide provides structured task management for coordinated multi-agent work.
 ### Mission & Goals
 
 ```bash
-tmux-ide mission set "title" --description "..."   # Set the project mission
+tmux-ide mission create "title" --description "..." # Create mission in planning
+tmux-ide mission plan-complete                      # Move mission to active
+tmux-ide mission status                             # Show mission progress
+tmux-ide mission set "title" --description "..."   # Set the project mission active immediately
 tmux-ide mission show                               # Show current mission
 tmux-ide mission clear                              # Clear the mission
 
@@ -395,6 +425,15 @@ tmux-ide goal show <id> [--json]                    # Show goal with tasks
 tmux-ide goal update <id> --status done
 tmux-ide goal done <id>                             # Mark goal complete
 tmux-ide goal delete <id>
+```
+
+### Milestones
+
+```bash
+tmux-ide milestone create "Foundation" --sequence 1
+tmux-ide milestone list [--json]
+tmux-ide milestone show M1 [--json]
+tmux-ide milestone update M1 --status done
 ```
 
 ### Tasks
@@ -407,6 +446,56 @@ tmux-ide task update <id> --status review --proof '{"tests":{"passed":10,"total"
 tmux-ide task claim <id> --assign "Agent Name"      # Claim and start a task
 tmux-ide task done <id> --proof "description"       # Mark task complete with proof
 tmux-ide task delete <id>
+```
+
+### Validation
+
+Validation contracts live in `.tasks/validation-contract.md`. Tasks claim assertion IDs with `--fulfills`, and the validator updates assertion state as milestones finish.
+
+```bash
+tmux-ide validate show [--json]
+tmux-ide validate assert VAL-001 --status passing --evidence "integration test passed"
+tmux-ide validate report [--json]
+tmux-ide validate coverage [--json]
+```
+
+### Skills
+
+Project skills live in `.tmux-ide/skills/` and are injected into prompts when a pane declares `skill: <name>`.
+
+```bash
+tmux-ide skill list [--json]
+tmux-ide skill show frontend [--json]
+tmux-ide skill create reviewer
+tmux-ide skill validate [--json]
+```
+
+### Knowledge Library
+
+Shared mission context lives in `.tmux-ide/library/`:
+
+- `architecture.md` for repo-wide dispatch context
+- `learnings.md` for task summaries appended over time
+- `research-findings.md` for completed research output
+- `AGENTS.md` for project boundaries injected into prompts
+
+### Metrics
+
+```bash
+tmux-ide metrics [--json]
+tmux-ide metrics agents [--json]
+tmux-ide metrics timeline [--json]
+tmux-ide metrics eval [--json]
+tmux-ide metrics history [--json]
+```
+
+### Researcher
+
+The researcher agent audits the mission continuously. It can trigger on mission start, milestone completion, retry clusters, periodic intervals, and stalls.
+
+```bash
+tmux-ide research status [--json]
+tmux-ide research trigger periodic [--json]
 ```
 
 ### Proof Format
@@ -426,16 +515,20 @@ The `--proof` flag accepts either a plain string (stored as `notes`) or a JSON o
 
 Use `--depends "001,002"` to declare that a task depends on other tasks. The orchestrator will not dispatch a task until all its dependencies are complete.
 
+### Milestone Gating
+
+In `dispatch_mode: missions`, milestone order gates execution. Tasks assigned to `M2` do not dispatch until `M1` is complete and validation passes. `tmux-ide mission plan-complete` normalizes the mission so only the earliest milestone starts as `active`.
+
 ### Orchestrator Auto-Dispatch
 
 When `orchestrator.enabled: true` and `auto_dispatch: true` in ide.yml, the orchestrator automatically:
 
 1. Finds idle agent panes (not the master/lead pane)
-2. Picks the highest-priority unblocked todo task
-3. Creates a git worktree (`task/{id}-{slug}`)
-4. Builds a single-line prompt with mission/goal/task context
+2. Picks the highest-priority unblocked task in the current milestone
+3. Prefers panes whose `specialty` matches the task
+4. Builds a prompt from the mission, milestone, goal, task, skills, and knowledge library
 5. Sends it to the idle agent via `tmux send-keys`
-6. On completion (`tmux-ide task done <id> --proof "..."`): records time, creates PR, notifies master
+6. On completion, records timing, updates validation state, processes research summaries, and notifies the lead
 
 **Usage flow:**
 
@@ -451,13 +544,30 @@ tmux-ide orch   # Monitor progress
 ### Command Center API
 
 ```bash
-tmux-ide command-center   # Start on port 4000
+tmux-ide command-center   # Start on port 6060
 
 # REST endpoints:
 # GET  /api/sessions                    — List all sessions
 # GET  /api/project/:name               — Full project detail (tasks, agents, goals)
 # GET  /api/project/:name/panes         — Live pane listing
 # GET  /api/project/:name/events        — Recent orchestrator events
+# GET  /api/project/:name/mission       — Mission + validation summary
+# POST /api/project/:name/mission/plan-complete
+# GET  /api/project/:name/milestones
+# GET  /api/project/:name/milestones/:id
+# POST /api/project/:name/milestones
+# POST /api/project/:name/milestones/:id
+# GET  /api/project/:name/validation
+# GET  /api/project/:name/validation/coverage
+# POST /api/project/:name/validation/assert/:assertId
+# GET  /api/project/:name/skills
+# GET  /api/project/:name/skills/:skillName
+# GET  /api/project/:name/research
+# POST /api/project/:name/research/trigger
+# GET  /api/project/:name/metrics
+# GET  /api/project/:name/metrics/agents
+# GET  /api/project/:name/metrics/timeline
+# GET  /api/project/:name/metrics/history
 # POST /api/project/:name/task          — Create task
 # POST /api/project/:name/task/:id      — Update task
 # GET  /api/events                      — SSE stream (real-time updates)
