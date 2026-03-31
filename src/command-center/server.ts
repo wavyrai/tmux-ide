@@ -42,6 +42,7 @@ import {
   checkCoverage,
 } from "../lib/validation.ts";
 import { loadSkills, loadSkill } from "../lib/skill-registry.ts";
+import { computeMetrics, loadMissionHistory } from "../lib/metrics.ts";
 import { loadPlans, markPlanDone } from "../lib/plan-store.ts";
 import {
   loadCheckpoints,
@@ -1000,6 +1001,40 @@ export function createApp(options: CreateAppOptions = {}): Hono {
     mission.updated = new Date().toISOString();
     saveMission(session.dir, mission);
     return c.json({ ok: true, mission });
+  });
+
+  // --- Metrics endpoints ---
+
+  app.get("/api/project/:name/metrics", (c) => {
+    const name = c.req.param("name");
+    const sessions = discoverSessions();
+    const session = sessions.find((s) => s.name === name);
+    if (!session) return c.json({ error: "Session not found" }, 404);
+    return c.json(computeMetrics(session.dir));
+  });
+
+  app.get("/api/project/:name/metrics/agents", (c) => {
+    const name = c.req.param("name");
+    const sessions = discoverSessions();
+    const session = sessions.find((s) => s.name === name);
+    if (!session) return c.json({ error: "Session not found" }, 404);
+    return c.json({ agents: computeMetrics(session.dir).agents });
+  });
+
+  app.get("/api/project/:name/metrics/timeline", (c) => {
+    const name = c.req.param("name");
+    const sessions = discoverSessions();
+    const session = sessions.find((s) => s.name === name);
+    if (!session) return c.json({ error: "Session not found" }, 404);
+    return c.json({ timeline: computeMetrics(session.dir).timeline });
+  });
+
+  app.get("/api/project/:name/metrics/history", (c) => {
+    const name = c.req.param("name");
+    const sessions = discoverSessions();
+    const session = sessions.find((s) => s.name === name);
+    if (!session) return c.json({ error: "Session not found" }, 404);
+    return c.json({ history: loadMissionHistory(session.dir) });
   });
 
   // Events endpoint — returns recent orchestrator events
