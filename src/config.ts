@@ -2,6 +2,7 @@ import { resolve } from "node:path";
 import { readConfig, writeConfig } from "./lib/yaml-io.ts";
 import { setByPath } from "./lib/dot-path.ts";
 import { outputError } from "./lib/output.ts";
+import { IdeConfigSchema } from "./schemas/ide-config.ts";
 import type { IdeConfig, Pane, Row } from "./types.ts";
 
 /**
@@ -32,6 +33,14 @@ function withConfig<T>(dir: string, mutator: (cfg: IdeConfig) => T): T | undefin
   }
 
   const result = mutator(cfg);
+
+  const validation = IdeConfigSchema.safeParse(cfg);
+  if (!validation.success) {
+    const issues = validation.error.issues.map((i) => `  ${i.path.join(".")}: ${i.message}`).join("\n");
+    outputError(`Invalid config after mutation:\n${issues}`, "INVALID_CONFIG");
+    return;
+  }
+
   writeConfig(dir, cfg);
   return result;
 }
