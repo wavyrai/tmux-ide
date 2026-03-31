@@ -39,8 +39,30 @@ function SectionDivider() {
   );
 }
 
-function D({ children }: { children: string }) {
-  return <span className="text-fd-primary">{children}</span>;
+function Node({
+  children,
+  highlight,
+}: {
+  children: string;
+  highlight?: boolean;
+}) {
+  return (
+    <div
+      className={`border border-fd-border px-3 py-1.5 text-xs font-mono shrink-0 ${
+        highlight ? "text-fd-primary" : "text-fd-foreground"
+      }`}
+    >
+      {children}
+    </div>
+  );
+}
+
+function Arrow() {
+  return <div className="w-6 border-t border-fd-border shrink-0" />;
+}
+
+function VLine() {
+  return <div className="h-4 border-l border-fd-border" />;
 }
 
 const features = [
@@ -241,34 +263,47 @@ export default function HomePage() {
 
         <SectionDivider />
 
-        {/* ARCHITECTURE */}
-        <div className="hidden md:block text-center">
-          <h2 className="font-sans text-2xl text-fd-foreground">Architecture</h2>
-          <p className="text-fd-muted-foreground text-base leading-normal mt-4 max-w-md mx-auto">
+        {/* ARCHITECTURE — HTML/CSS flowchart */}
+        <div className="hidden md:block">
+          <h2 className="font-sans text-2xl text-fd-foreground text-center">Architecture</h2>
+          <p className="text-fd-muted-foreground text-base leading-normal mt-4 max-w-md mx-auto text-center">
             From mission creation to PR — fully autonomous.
           </p>
-          <div className="flex justify-center mt-6">
-            <pre className="text-sm leading-5 text-fd-foreground text-left">
-              {"  Mission ──► Planning ──► Milestones ──► Tasks\n"}
-              {"                                           │\n"}
-              {"                            Skill Match ◄──┘\n"}
-              {"                                │\n"}
-              {"                          Agent Dispatch\n"}
-              {"                                │\n"}
-              {"                      ┌─────────┴─────────┐\n"}
-              {"                      │                   │\n"}
-              {"                 "}
-              <D>Completion</D>
-              {"          "}
-              <D>Validation</D>
-              {"\n"}
-              {"                      │                   │\n"}
-              {"                 Knowledge ◄──── Remediation\n"}
-              {"                      │\n"}
-              {"                "}
-              <D>Mission Complete</D>
-              {" ──► PR\n"}
-            </pre>
+          <div className="mt-8 flex flex-col items-center gap-0 font-mono text-xs">
+            {/* Row 1: Mission → Planning → Milestones → Tasks */}
+            <div className="flex items-center gap-0">
+              <Node>Mission</Node>
+              <Arrow />
+              <Node>Planning</Node>
+              <Arrow />
+              <Node>Milestones</Node>
+              <Arrow />
+              <Node>Tasks</Node>
+            </div>
+            <VLine />
+            <Node>Skill Match</Node>
+            <VLine />
+            <Node>Agent Dispatch</Node>
+            <VLine />
+            {/* Split: Completion | Validation */}
+            <div className="flex items-start gap-0">
+              <div className="flex flex-col items-center">
+                <Node highlight>Completion</Node>
+                <VLine />
+                <Node>Knowledge</Node>
+              </div>
+              <div className="w-16 border-t border-fd-border mt-[13px]" />
+              <div className="flex flex-col items-center">
+                <Node highlight>Validation</Node>
+                <VLine />
+                <Node>Remediation</Node>
+                <div className="text-[10px] text-fd-muted-foreground mt-1">↻ loops back</div>
+              </div>
+            </div>
+            <VLine />
+            <Node highlight>Mission Complete</Node>
+            <Arrow />
+            <Node>PR</Node>
           </div>
         </div>
 
