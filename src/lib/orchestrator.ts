@@ -43,6 +43,7 @@ import {
   type Task,
   type Goal,
 } from "./task-store.ts";
+import { slugify } from "./slugify.ts";
 import { recordTaskTime } from "./token-tracker.ts";
 import { listSessionPanes, sendCommand, type PaneInfo } from "../widgets/lib/pane-comms.ts";
 import {
@@ -184,14 +185,6 @@ function worktreePathForTask(config: OrchestratorConfig, task: Task): string | n
   return existsSync(wt) ? wt : null;
 }
 
-function slugify(text: string): string {
-  return text
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-|-$/g, "")
-    .slice(0, 30);
-}
-
 export function buildTaskPrompt(
   dir: string,
   task: Task,
@@ -314,7 +307,7 @@ export function dispatch(
     state.claimedTasks.add(task.id);
 
     // Create git worktree
-    const slug = slugify(task.title);
+    const slug = slugify(task.title, 30);
     let worktreePath: string;
     let branch: string;
     try {
@@ -442,13 +435,6 @@ function isPlannerPane(config: OrchestratorConfig, pane: PaneInfo): boolean {
   return isAgentPane(pane);
 }
 
-function slugifyGoal(text: string): string {
-  return text
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-|-$/g, "")
-    .slice(0, 30);
-}
 
 export function buildGoalPrompt(dir: string, goal: Goal, planner: PaneInfo): string {
   const mission = loadMission(dir);
@@ -469,7 +455,7 @@ export function buildGoalPrompt(dir: string, goal: Goal, planner: PaneInfo): str
 
   prompt += `Instructions:\n`;
   prompt += `1. Read plans/MISSION.md for architectural context (if it exists)\n`;
-  prompt += `2. Create your plan file: plans/goal-${goal.id}-${slugifyGoal(goal.title)}.md\n`;
+  prompt += `2. Create your plan file: plans/goal-${goal.id}-${slugify(goal.title, 30)}.md\n`;
   prompt += `   Include: analysis, approach, task breakdown, risks\n`;
   prompt += `3. Create tasks for your goal:\n`;
   prompt += `   tmux-ide task create "task title" --goal ${goal.id} --priority N\n`;

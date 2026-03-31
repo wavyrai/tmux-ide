@@ -1,4 +1,5 @@
 import { resolve, join } from "node:path";
+import { slugify } from "./slugify.ts";
 import {
   readdirSync,
   readFileSync,
@@ -119,13 +120,6 @@ export function normalizeTask(raw: Record<string, unknown>): Task {
   } as Task;
 }
 
-function slugify(text: string): string {
-  return text
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-|-$/g, "")
-    .slice(0, 50);
-}
 
 export function getTasksRoot(dir: string): string {
   return resolve(dir, TASKS_DIR);
@@ -220,7 +214,7 @@ export function saveGoal(dir: string, goal: Goal): void {
   ensureTasksDir(dir);
   const goalsDir = join(getTasksRoot(dir), "goals");
   const existing = findFileById(goalsDir, goal.id);
-  const filename = `${goal.id}-${slugify(goal.title)}.json`;
+  const filename = `${goal.id}-${slugify(goal.title, 50)}.json`;
   const newPath = join(goalsDir, filename);
   // Write new file atomically first, then remove old file if slug changed
   atomicWriteJSON(newPath, { _version: SCHEMA_VERSION, ...goal });
@@ -277,7 +271,7 @@ export function saveTask(dir: string, task: Task): void {
   ensureTasksDir(dir);
   const tasksDir = join(getTasksRoot(dir), "tasks");
   const existing = findFileById(tasksDir, task.id);
-  const filename = `${task.id}-${slugify(task.title)}.json`;
+  const filename = `${task.id}-${slugify(task.title, 50)}.json`;
   const newPath = join(tasksDir, filename);
   // Write new file atomically first, then remove old file if slug changed
   atomicWriteJSON(newPath, { _version: SCHEMA_VERSION, ...task });
