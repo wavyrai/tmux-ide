@@ -152,6 +152,52 @@ function handleMission(
       }
       break;
     }
+    case "create": {
+      const title = args[0];
+      if (!title) outputError('Usage: tmux-ide mission create "title" [-d "description"]', "USAGE");
+      ensureTasksDir(dir);
+      const now = new Date().toISOString();
+      const mission: Mission = {
+        title,
+        description: values.description ?? "",
+        status: "planning",
+        branch: null,
+        milestones: [],
+        created: now,
+        updated: now,
+      };
+      saveMission(dir, mission);
+      if (json) {
+        console.log(JSON.stringify(mission, null, 2));
+      } else {
+        console.log(`Mission created (planning): ${title}`);
+      }
+      break;
+    }
+    case "plan-complete": {
+      const mission = loadMission(dir);
+      if (!mission) outputError("No mission set", "NOT_FOUND");
+      if (mission.status !== "planning") {
+        outputError(`Mission is "${mission.status}", expected "planning"`, "CONFLICT");
+      }
+      mission.status = "active";
+      // Activate first milestone if any
+      const sorted = [...mission.milestones].sort((a, b) => a.order - b.order);
+      const first = sorted.find((m) => m.status === "locked");
+      if (first) {
+        first.status = "active";
+        first.updated = new Date().toISOString();
+      }
+      mission.updated = new Date().toISOString();
+      saveMission(dir, mission);
+      if (json) {
+        console.log(JSON.stringify(mission, null, 2));
+      } else {
+        console.log(`Mission "${mission.title}" planning complete — now active`);
+        if (first) console.log(`  Activated milestone: ${first.id} — ${first.title}`);
+      }
+      break;
+    }
     case "show": {
       const mission = loadMission(dir);
       if (!mission) outputError('No mission set. Run: tmux-ide mission set "..."', "NOT_FOUND");
@@ -160,6 +206,37 @@ function handleMission(
       } else {
         console.log(`Mission: ${mission.title}`);
         if (mission.description) console.log(`  ${mission.description}`);
+      }
+      break;
+    }
+    case "status": {
+      const mission = loadMission(dir);
+      if (!mission) outputError("No mission set", "NOT_FOUND");
+      const tasks = loadTasks(dir);
+      const doneMilestones = mission.milestones.filter((m) => m.status === "done").length;
+      const totalMilestones = mission.milestones.length;
+      const doneTasks = tasks.filter((t) => t.status === "done").length;
+      const totalTasks = tasks.length;
+      const valState = loadValidationState(dir);
+      const assertions = valState ? Object.values(valState.assertions) : [];
+      const passingCount = assertions.filter((a) => a.status === "passing").length;
+      const failingCount = assertions.filter((a) => a.status === "failing").length;
+      const pendingCount = assertions.filter((a) => a.status === "pending").length;
+      if (json) {
+        console.log(JSON.stringify({
+          title: mission.title,
+          status: mission.status,
+          milestones: { done: doneMilestones, total: totalMilestones },
+          tasks: { done: doneTasks, total: totalTasks },
+          validation: { passing: passingCount, failing: failingCount, pending: pendingCount },
+        }, null, 2));
+      } else {
+        console.log(`Mission: ${mission.title} [${mission.status}]`);
+        console.log(`  Milestones: ${doneMilestones}/${totalMilestones} done`);
+        console.log(`  Tasks: ${doneTasks}/${totalTasks} done`);
+        if (assertions.length > 0) {
+          console.log(`  Validation: ${passingCount} passing, ${failingCount} failing, ${pendingCount} pending`);
+        }
       }
       break;
     }
@@ -174,14 +251,20 @@ function handleMission(
     }
     case "help":
     case undefined:
-      console.log(`Usage: tmux-ide mission <set|show|clear>
+      console.log(`Usage: tmux-ide mission <set|create|show|status|plan-complete|clear>
 
-  set "title"  [-d "description"]   Set the project mission
+  set "title"  [-d "description"]   Set mission (status: active)
+  create "title" [-d "description"] Create mission (status: planning)
   show                              Show current mission
+  status                            Show mission progress
+  plan-complete                     Signal planning is done
   clear                             Clear the mission`);
       break;
     default:
-      outputError("Usage: tmux-ide mission <set|show|clear>\nRun: tmux-ide mission help", "USAGE");
+      outputError(
+        "Usage: tmux-ide mission <set|create|show|status|plan-complete|clear>\nRun: tmux-ide mission help",
+        "USAGE",
+      );
   }
 }
 

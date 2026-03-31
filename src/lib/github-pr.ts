@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import type { Task } from "./task-store.ts";
+import type { Task, Mission } from "./task-store.ts";
 import type { ProofSchema } from "../types.ts";
 
 export interface PrResult {
@@ -98,6 +98,83 @@ export function createTaskPr(task: Task, cwd: string, baseBranch?: string): PrRe
     const match = url.match(/\/pull\/(\d+)/);
     const number = match ? parseInt(match[1]!, 10) : 0;
 
+    return { url, number };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Create a GitHub PR for a completed mission.
+ * Uses mission.branch as head; if not set, uses current branch.
+ */
+export function createMissionPr(
+  mission: Mission,
+  cwd: string,
+  baseBranch?: string,
+): PrResult | null {
+  let headBranch: string;
+  if (mission.branch) {
+    headBranch = mission.branch;
+  } else {
+    try {
+      headBranch = execFileSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], {
+        cwd,
+        encoding: "utf-8",
+        stdio: ["ignore", "pipe", "ignore"],
+      }).trim();
+    } catch {
+      return null;
+    }
+  }
+
+  const milestonesSummary = mission.milestones
+    .sort((a, b) => a.order - b.order)
+    .map((m) => `- ${m.id}: ${m.title} [${m.status}]`)
+    .join("\n");
+
+  const title = `Mission: ${mission.title}`;
+  const bodyParts: string[] = [];
+  if (mission.description) bodyParts.push(mission.description);
+  bodyParts.push("");
+  bodyParts.push("## Milestones");
+  bodyParts.push(milestonesSummary || "No milestones");
+  const body = bodyParts.join("\n");
+
+  try {
+    try {
+      execFileSync("git", ["push", "-u", "origin", headBranch], {
+        cwd,
+        encoding: "utf-8",
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+    } catch {
+      // Branch may already be pushed
+    }
+
+    const output = execFileSync(
+      "gh",
+      [
+        "pr",
+        "create",
+        "--title",
+        title,
+        "--body",
+        body,
+        "--head",
+        headBranch,
+        ...(baseBranch ? ["--base", baseBranch] : []),
+      ],
+      {
+        cwd,
+        encoding: "utf-8",
+        stdio: ["ignore", "pipe", "pipe"],
+      },
+    ).trim();
+
+    const url = output;
+    const match = url.match(/\/pull\/(\d+)/);
+    const number = match ? parseInt(match[1]!, 10) : 0;
     return { url, number };
   } catch {
     return null;
