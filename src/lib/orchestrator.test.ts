@@ -23,6 +23,7 @@ import {
   normalizePaneTitle,
   getPaneSpecialties,
   dispatchGoals,
+  findBestAgent,
 } from "./orchestrator.ts";
 import { readEvents } from "./event-log.ts";
 import {
@@ -1095,5 +1096,176 @@ describe("dispatchGoals", () => {
     // Goal should remain unchanged — assignee filter excludes it
     const events = readEvents(tmpDir);
     expect(events.length).toBe(0);
+  });
+});
+
+describe("findBestAgent", () => {
+  it("returns first agent when task has no specialty", () => {
+    const agents = [
+      makePane({ id: "%1", title: "Agent A", currentCommand: "zsh" }),
+      makePane({ id: "%2", title: "Agent B", currentCommand: "zsh" }),
+    ];
+    const config = makeOrchestratorConfig(tmpDir, {
+      paneSpecialties: new Map([["Agent A", ["frontend"]]]),
+    });
+    const task = makeTask({ specialty: null });
+    const result = findBestAgent(config, agents, task, new Set());
+    expect(result?.id).toBe("%1");
+  });
+
+  it("prefers specialist agent for matching specialty", () => {
+    const agents = [
+      makePane({ id: "%1", title: "Generalist", currentCommand: "zsh" }),
+      makePane({ id: "%2", title: "Frontend", currentCommand: "zsh" }),
+    ];
+    const config = makeOrchestratorConfig(tmpDir, {
+      paneSpecialties: new Map([["Frontend", ["frontend", "css"]]]),
+    });
+    const task = makeTask({ specialty: "frontend" });
+    const result = findBestAgent(config, agents, task, new Set());
+    expect(result?.id).toBe("%2");
+  });
+
+  it("falls back to generalist when no specialist matches", () => {
+    const agents = [
+      makePane({ id: "%1", title: "Generalist", currentCommand: "zsh" }),
+      makePane({ id: "%2", title: "Backend", currentCommand: "zsh" }),
+    ];
+    const config = makeOrchestratorConfig(tmpDir, {
+      paneSpecialties: new Map([["Backend", ["api", "database"]]]),
+    });
+    const task = makeTask({ specialty: "frontend" });
+    const result = findBestAgent(config, agents, task, new Set());
+    // Generalist has no specialties → takes anything
+    expect(result?.id).toBe("%1");
+  });
+
+  it("returns null when no suitable agent (all are wrong specialists)", () => {
+    const agents = [
+      makePane({ id: "%1", title: "Backend", currentCommand: "zsh" }),
+      makePane({ id: "%2", title: "DevOps", currentCommand: "zsh" }),
+    ];
+    const config = makeOrchestratorConfig(tmpDir, {
+      paneSpecialties: new Map([
+        ["Backend", ["api", "database"]],
+        ["DevOps", ["infra", "ci"]],
+      ]),
+    });
+    const task = makeTask({ specialty: "frontend" });
+    const result = findBestAgent(config, agents, task, new Set());
+    expect(result).toBeNull();
+  });
+
+  it("excludes agents in excludeIds set", () => {
+    const agents = [
+      makePane({ id: "%1", title: "Agent A", currentCommand: "zsh" }),
+      makePane({ id: "%2", title: "Agent B", currentCommand: "zsh" }),
+    ];
+    const config = makeOrchestratorConfig(tmpDir);
+    const task = makeTask({ specialty: null });
+    const result = findBestAgent(config, agents, task, new Set(["%1"]));
+    expect(result?.id).toBe("%2");
+  });
+});
+
+describe("skill-based dispatch integration", () => {
+  it("dispatches task with specialty to matching specialist agent", () => {
+    const task = makeTask({ id: "001", specialty: "frontend" });
+    saveTask(tmpDir, task);
+
+    const generalist = makePane({ id: "%1", index: 0, title: "Generalist", currentCommand: "zsh" });
+    const specialist = makePane({ id: "%2", index: 1, title: "Frontend", currentCommand: "zsh" });
+    const panes = [generalist, specialist];
+    mockPanes = panes;
+
+    const config = makeOrchestratorConfig(tmpDir, {
+      masterPane: null,
+      paneSpecialties: new Map([["Frontend", ["frontend", "css"]]]),
+    });
+    const state = makeOrchestratorState();
+
+    dispatch(config, state, [task], panes);
+
+    const loaded = loadTask(tmpDir, "001");
+    expect(loaded?.assignee).toBe(agentIdentifier(specialist));
+    expect(loaded?.status).toBe("in-progress");
+  });
+
+  it("dispatches task with no specialty to any idle agent", () => {
+    const task = makeTask({ id: "001", specialty: null });
+    saveTask(tmpDir, task);
+
+    const pane = makePane({ id: "%1", index: 0, title: "Agent 1", currentCommand: "zsh" });
+    const panes = [pane];
+    mockPanes = panes;
+
+    const config = makeOrchestratorConfig(tmpDir, {
+      masterPane: null,
+      paneSpecialties: new Map([["Agent 1", ["backend"]]]),
+    });
+    const state = makeOrchestratorState();
+
+    dispatch(config, state, [task], panes);
+
+    const loaded = loadTask(tmpDir, "001");
+    expect(loaded?.assignee).toBe(agentIdentifier(pane));
+    expect(loaded?.status).toBe("in-progress");
+  });
+
+  it("skips specialist task when no matching agent available", () => {
+    const task = makeTask({ id: "001", specialty: "frontend" });
+    saveTask(tmpDir, task);
+
+    // Only agent is a backend specialist — not a match and not a generalist
+    const panes = [makePane({ id: "%1", index: 0, title: "Backend", currentCommand: "zsh" })];
+    mockPanes = panes;
+
+    const config = makeOrchestratorConfig(tmpDir, {
+      masterPane: null,
+      paneSpecialties: new Map([["Backend", ["api", "database"]]]),
+    });
+    const state = makeOrchestratorState();
+
+    dispatch(config, state, [task], panes);
+
+    const loaded = loadTask(tmpDir, "001");
+    expect(loaded?.assignee).toBe(null);
+    expect(loaded?.status).toBe("todo");
+  });
+});
+
+describe("buildTaskPrompt with skill injection", () => {
+  it("includes skill body when task has specialty and skill file exists", () => {
+    // Create skill file
+    const skillsDir = join(tmpDir, ".tmux-ide", "skills");
+    mkdirSync(skillsDir, { recursive: true });
+    writeFileSync(
+      join(skillsDir, "frontend.md"),
+      `---
+name: frontend
+specialties: [frontend, css]
+role: teammate
+description: Frontend specialist
+---
+You are a frontend expert. Focus on React components and CSS.`,
+    );
+
+    const task = makeTask({ specialty: "frontend" });
+    const prompt = buildTaskPrompt(tmpDir, task);
+
+    expect(prompt.includes("Your Role: frontend")).toBeTruthy();
+    expect(prompt.includes("You are a frontend expert")).toBeTruthy();
+  });
+
+  it("does not include skill section when task has no specialty", () => {
+    const task = makeTask({ specialty: null });
+    const prompt = buildTaskPrompt(tmpDir, task);
+    expect(!prompt.includes("Your Role:")).toBeTruthy();
+  });
+
+  it("does not include skill section when skill file is missing", () => {
+    const task = makeTask({ specialty: "nonexistent" });
+    const prompt = buildTaskPrompt(tmpDir, task);
+    expect(!prompt.includes("Your Role:")).toBeTruthy();
   });
 });

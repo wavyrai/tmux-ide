@@ -47,6 +47,7 @@ import { slugify } from "./slugify.ts";
 import { recordTaskTime } from "./token-tracker.ts";
 import { listSessionPanes, sendCommand, type PaneInfo } from "../widgets/lib/pane-comms.ts";
 import { appendEvent } from "./event-log.ts";
+import { loadSkill } from "./skill-registry.ts";
 
 export interface OrchestratorConfig {
   session: string;
@@ -190,6 +191,14 @@ export function buildTaskPrompt(
     }
   }
 
+  if (task.specialty) {
+    const skill = loadSkill(dir, task.specialty);
+    if (skill?.body) {
+      prompt += `Your Role: ${skill.name}\n`;
+      prompt += `${skill.body}\n\n`;
+    }
+  }
+
   prompt += `Your Task: ${task.title}\n`;
   if (task.description) prompt += `${task.description}\n`;
   prompt += `\nPriority: P${task.priority}\n`;
@@ -261,11 +270,12 @@ export function dispatch(
     })
     .sort((a, b) => a.priority - b.priority);
 
-  const dispatchLimit = Math.min(availableSlots, idleAgents.length);
-  for (let i = 0; i < dispatchLimit; i++) {
-    const task = todoTasks.shift();
-    if (!task) break;
-    const agent = idleAgents[i]!;
+  const assignedAgents = new Set<string>();
+  let dispatched = 0;
+  for (const task of todoTasks) {
+    if (dispatched >= availableSlots) break;
+    const agent = findBestAgent(config, idleAgents, task, assignedAgents);
+    if (!agent) continue; // no suitable agent — skip (specialist task waits)
 
     // Verify the target pane still exists before dispatch
     const currentPanes = listSessionPanes(config.session);
@@ -351,19 +361,58 @@ export function dispatch(
       message: `Dispatched "${task.title}" to ${agent.title}`,
     });
 
+    // Track agent assignment to prevent double-assignment
+    assignedAgents.add(agent.id);
+    dispatched++;
+
     // Track activity
     state.lastActivity.set(agent.id, Date.now());
   }
 }
 
-// --- Goal-level dispatch (planner agents) ---
+// --- Skill-based agent matching ---
 
-function matchesSpecialty(goalSpecialty: string | null, plannerSpecialties: string[]): boolean {
-  if (!goalSpecialty) return true; // no specialty = any planner
-  if (plannerSpecialties.length === 0) return true; // no planner specialty = takes anything
-  const goalTags = goalSpecialty.split(",").map((s) => s.trim().toLowerCase());
-  return goalTags.some((tag) => plannerSpecialties.includes(tag));
+function matchesSpecialty(specialty: string | null, agentSpecialties: string[]): boolean {
+  if (!specialty) return true; // no specialty = any agent
+  if (agentSpecialties.length === 0) return true; // no agent specialty = takes anything
+  const tags = specialty.split(",").map((s) => s.trim().toLowerCase());
+  return tags.some((tag) => agentSpecialties.includes(tag));
 }
+
+/**
+ * Find the best available agent for a task based on specialty matching.
+ *
+ * Priority: specialist match > generalist (no specialties) > null.
+ * Tasks with no specialty go to the first available agent.
+ */
+export function findBestAgent(
+  config: OrchestratorConfig,
+  idleAgents: PaneInfo[],
+  task: Task,
+  excludeIds: Set<string>,
+): PaneInfo | null {
+  const candidates = idleAgents.filter((p) => !excludeIds.has(p.id));
+  if (candidates.length === 0) return null;
+
+  // No specialty required — any idle agent works
+  if (!task.specialty) return candidates[0] ?? null;
+
+  // Prefer agents whose specialties match the task
+  const specialist = candidates.find((p) => {
+    const specs = getPaneSpecialties(config, p);
+    return specs.length > 0 && matchesSpecialty(task.specialty, specs);
+  });
+  if (specialist) return specialist;
+
+  // Fall back to generalist agents (no specialties defined)
+  const generalist = candidates.find((p) => {
+    const specs = getPaneSpecialties(config, p);
+    return specs.length === 0;
+  });
+  return generalist ?? null;
+}
+
+// --- Goal-level dispatch (planner agents) ---
 
 export function getPaneSpecialties(config: OrchestratorConfig, pane: PaneInfo): string[] {
   const key = pane.name ?? pane.title;
