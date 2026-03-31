@@ -43,10 +43,12 @@ jobs:
       - name: Build
         run: pnpm build
 
-      # Tests require --experimental-strip-types (Node >= 22.6)
+      # Tests require Bun runtime; exclude integration tests (need tmux)
       - name: Run test suite
         if: matrix.node >= 22
-        run: pnpm test:unit
+        run: |
+          mv src/integration.test.ts src/integration.test.ts.skip 2>/dev/null || true
+          pnpm test:unit
 
       - name: Smoke test (Node < 22 — verify package contents)
         if: matrix.node < 22
