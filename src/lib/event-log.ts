@@ -23,7 +23,15 @@ export type EventType =
   | "task_created"
   | "status_change"
   | "send"
-  | "notify";
+  | "notify"
+  | "milestone_validating"
+  | "milestone_complete"
+  | "validation_dispatch"
+  | "remediation"
+  | "validation_failed"
+  | "planning"
+  | "mission_complete"
+  | "discovered_issue";
 
 export interface OrchestratorEvent {
   timestamp: string;
@@ -81,6 +89,8 @@ export function formatEventMessage(event: StructuredEvent): string {
         event.message.length > 50 ? event.message.slice(0, 50) + "..." : event.message;
       return `Notified ${event.target}: "${preview}"`;
     }
+    default:
+      return (event as { message?: string }).message ?? `Event: ${(event as { type: string }).type}`;
   }
 }
 

@@ -96,6 +96,14 @@ export const EventTypeSchemaZ = z.enum([
   "status_change",
   "send",
   "notify",
+  "milestone_validating",
+  "milestone_complete",
+  "validation_dispatch",
+  "remediation",
+  "validation_failed",
+  "planning",
+  "mission_complete",
+  "discovered_issue",
 ]);
 
 export const OrchestratorEventSchemaZ = z.object({
@@ -256,7 +264,7 @@ export const PaneInfoSchemaZ = z.object({
   width: z.number(),
   height: z.number(),
   active: z.boolean(),
-  role: z.enum(["lead", "teammate", "widget", "shell"]).nullable(),
+  role: z.enum(["lead", "teammate", "planner", "validator", "widget", "shell"]).nullable(),
   name: z.string().nullable(),
   type: z.string().nullable(),
 });

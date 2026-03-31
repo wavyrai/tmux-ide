@@ -1216,11 +1216,22 @@ export function detectCompletions(
 
       // Append salient summary to knowledge library
       if (task.salientSummary) {
-        const libraryDir = join(config.dir, ".tmux-ide", "library");
-        if (!existsSync(libraryDir)) mkdirSync(libraryDir, { recursive: true });
-        const learningsPath = join(libraryDir, "learnings.md");
-        const entry = `## Task ${task.id}: ${task.title}\n${task.salientSummary}\n---\n\n`;
-        appendFileSync(learningsPath, entry);
+        try {
+          const libraryDir = join(config.dir, ".tmux-ide", "library");
+          if (!existsSync(libraryDir)) mkdirSync(libraryDir, { recursive: true });
+          const learningsPath = join(libraryDir, "learnings.md");
+          const entry = `## Task ${task.id}: ${task.title}\n${task.salientSummary}\n---\n\n`;
+          appendFileSync(learningsPath, entry);
+        } catch (err: unknown) {
+          const msg = err instanceof Error ? err.message : String(err);
+          console.error(`[orchestrator] Failed to write learnings.md: ${msg}`);
+          appendEvent(config.dir, {
+            timestamp: new Date().toISOString(),
+            type: "error",
+            taskId: task.id,
+            message: `Failed to append salientSummary to learnings.md: ${msg}`,
+          });
+        }
       }
 
       // Structured handoff: auto-create follow-up tasks for discovered issues
