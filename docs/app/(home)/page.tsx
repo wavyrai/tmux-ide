@@ -1,279 +1,427 @@
 import Link from "next/link";
 import type { Metadata } from "next";
 import { CopyButton } from "./copy-button";
-import { ConfigPlayground } from "./config-playground";
-import { AgentTeamDemo } from "./agent-team-demo";
 
 export const metadata: Metadata = {
-  title: "tmux-ide — Prepare Claude agent-team layouts in one terminal",
+  title: "tmux-ide — Autonomous Multi-Agent Missions",
   description:
-    "Prepare Claude Code agent-team-ready tmux layouts. One lead pane, multiple teammate panes, practical prompts, and the right environment setup in one YAML config.",
+    "Turn any project into a mission-driven development environment. One config file, multiple AI agents, fully autonomous orchestration.",
   openGraph: {
-    title: "tmux-ide — Prepare Claude agent-team layouts in one terminal",
+    title: "tmux-ide 2.0 — Autonomous Multi-Agent Missions",
     description:
-      "Prepare Claude Code agent-team-ready tmux layouts with lead and teammate panes plus the right environment setup.",
-    images: [
-      {
-        url: "/og-image.png",
-        width: 1200,
-        height: 630,
-        alt: "tmux-ide — Claude agent-team layouts in tmux",
-      },
-    ],
+      "Mission-driven orchestration with milestones, validation contracts, skill-based dispatch, and live metrics.",
+    images: [{ url: "/og-image.png", width: 1200, height: 630, alt: "tmux-ide 2.0" }],
   },
   twitter: {
     card: "summary_large_image",
-    title: "tmux-ide — Prepare Claude agent-team layouts in one terminal",
+    title: "tmux-ide 2.0 — Autonomous Multi-Agent Missions",
     description:
-      "Prepare Claude Code agent-team-ready tmux layouts with lead and teammate panes plus the right environment setup.",
+      "Mission-driven orchestration with milestones, validation contracts, and skill-based dispatch.",
     images: ["/og-image.png"],
   },
-  alternates: {
-    canonical: "/",
-  },
+  alternates: { canonical: "/" },
 };
 
-const installCommand = "curl -fsSL https://tmux.thijsverreck.com/install.sh | sh";
+const installCommand = "npm i -g tmux-ide";
 
-function InstallButton() {
+function SectionDivider() {
   return (
-    <div className="flex flex-col items-center gap-3">
-      <CopyButton
-        text={installCommand}
-        className="group inline-flex items-center gap-3 rounded-lg border border-fd-border bg-fd-background px-5 py-3 font-mono text-sm transition-colors hover:bg-fd-accent cursor-pointer"
-      >
-        <span className="text-fd-muted-foreground select-none">$</span>
-        <span className="text-fd-foreground">{installCommand}</span>
-        <svg
-          width="16"
-          height="16"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          className="text-fd-muted-foreground group-hover:text-fd-foreground transition-colors shrink-0"
-        >
-          <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
-          <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
-        </svg>
-      </CopyButton>
-      <div className="flex flex-wrap items-center justify-center gap-x-4 gap-y-1 text-xs text-fd-muted-foreground">
-        <span>
-          or <code className="font-mono text-fd-foreground">npm i -g tmux-ide</code>
-        </span>
-        <span>
-          or try instantly with <code className="font-mono text-fd-foreground">npx tmux-ide</code>
-        </span>
-      </div>
+    <div className="w-full py-1">
+      <div
+        className="h-4 w-full border-y border-fd-border"
+        style={{
+          backgroundImage:
+            "repeating-linear-gradient(-60deg, hsla(225, 50%, 35%, 0.4), hsla(225, 50%, 35%, 0.4) 1px, transparent 1px, transparent 6px)",
+        }}
+      />
     </div>
   );
 }
 
-function Feature({ title, description }: { title: string; description: string }) {
+function FeatureCard({ title, description }: { title: string; description: string }) {
   return (
-    <div className="text-center space-y-2">
-      <h3 className="font-medium text-fd-foreground">{title}</h3>
+    <div className="border border-fd-border p-6 -mt-px -ml-px">
+      <h3 className="font-mono text-sm font-medium text-fd-foreground mb-2">{title}</h3>
       <p className="text-sm text-fd-muted-foreground leading-relaxed">{description}</p>
     </div>
   );
 }
 
+const DOT = "hsl(225, 60%, 55%)";
+function D({ children }: { children: string }) {
+  return <span style={{ color: DOT }}>{children}</span>;
+}
+
 export default function HomePage() {
   return (
-    <div className="flex flex-col items-center flex-1">
-      {/* Hero */}
-      <section className="flex flex-col items-center gap-8 px-6 pt-24 pb-16 max-w-3xl mx-auto text-center">
-        <div className="flex flex-col items-center gap-3">
-          <span
-            aria-hidden="true"
-            className="font-pixel text-6xl sm:text-7xl md:text-8xl tracking-tight text-fd-foreground select-none"
-          >
-            tmux-ide
-          </span>
-          <Link
-            href="/docs/release-1-3-0"
-            className="inline-flex items-center rounded-full border border-fd-border bg-fd-card px-3 py-1 text-[11px] font-mono font-medium uppercase tracking-[0.18em] text-fd-muted-foreground transition-colors hover:bg-fd-accent hover:text-fd-foreground"
-          >
-            New 1.3.0
-          </Link>
-        </div>
-        <h1 className="text-4xl sm:text-5xl font-bold tracking-tight text-fd-foreground">
-          Prepare Claude agent-team layouts
-          <br />
-          <span className="text-fd-muted-foreground">in one terminal.</span>
-        </h1>
-        <p className="text-lg text-fd-muted-foreground max-w-xl leading-relaxed">
-          Build a lead pane, teammate-ready Claude panes, and your dev tools in one tmux layout.
-          tmux-ide enables the right environment; Claude forms the team after you prompt it.
-        </p>
+    <>
+      <style
+        dangerouslySetInnerHTML={{
+          __html: `
+            :root, .dark {
+              --background: 225 70% 8% !important;
+              --fd-background: hsl(225, 70%, 8%) !important;
+              --foreground: 0 0% 95% !important;
+              --fd-foreground: hsl(0, 0%, 95%) !important;
+              --muted-foreground: 225 30% 65% !important;
+              --fd-muted-foreground: hsl(225, 30%, 65%) !important;
+              --border: 225 40% 20% !important;
+              --fd-border: hsl(225, 40%, 20%) !important;
+              --primary: 225 60% 55% !important;
+              --fd-primary: hsl(225, 60%, 55%) !important;
+              --primary-foreground: 0 0% 100% !important;
+              --fd-primary-foreground: hsl(0, 0%, 100%) !important;
+              --card: 225 50% 12% !important;
+              --fd-card: hsl(225, 50%, 12%) !important;
+              --accent: 225 40% 15% !important;
+              --fd-accent: hsl(225, 40%, 15%) !important;
+            }
+          `,
+        }}
+      />
 
-        <div className="flex flex-col sm:flex-row items-center gap-4">
-          <Link
-            href="/docs/agent-teams"
-            className="rounded-lg bg-fd-primary px-6 py-2.5 text-sm font-medium text-fd-primary-foreground hover:bg-fd-primary/90 transition-colors"
-          >
-            Set Up Agent Teams
-          </Link>
-          <Link
-            href="/docs/getting-started"
-            className="rounded-lg border border-fd-border px-6 py-2.5 text-sm font-medium text-fd-foreground hover:bg-fd-accent transition-colors"
-          >
-            Get Started
-          </Link>
-          <Link
-            href="/docs"
-            className="rounded-lg border border-fd-border px-6 py-2.5 text-sm font-medium text-fd-muted-foreground hover:bg-fd-accent hover:text-fd-foreground transition-colors"
-          >
-            Docs
-          </Link>
-        </div>
-      </section>
-
-      {/* Install */}
-      <section className="flex flex-col items-center gap-4 px-6 pb-20">
-        <InstallButton />
-        <p className="text-xs text-fd-muted-foreground mt-2">
-          The install script also registers the{" "}
-          <Link
-            href="/docs/getting-started#claude-code-skill"
-            className="underline hover:text-fd-foreground transition-colors"
-          >
-            Claude Code skill
-          </Link>{" "}
-          — so Claude can configure your workspace automatically.
-        </p>
-      </section>
-
-      {/* Agent Teams Demo */}
-      <section className="w-full px-6 pb-24">
-        <div className="text-center mb-10">
-          <h2 className="text-2xl font-semibold text-fd-foreground">
-            Team-ready panes, then Claude takes over
-          </h2>
-          <p className="text-sm text-fd-muted-foreground mt-2 max-w-lg mx-auto">
-            tmux-ide prepares the panes and enables agent-team mode. From there, prompt the lead to
-            organize the team and assign work in natural language.
-          </p>
-        </div>
-        <AgentTeamDemo />
-        <div className="flex justify-center mt-6">
-          <Link
-            href="/docs/agent-teams"
-            className="text-sm text-fd-muted-foreground hover:text-fd-foreground transition-colors"
-          >
-            Read the Agent Teams guide →
-          </Link>
-        </div>
-      </section>
-
-      {/* Config Playground */}
-      <section className="w-full px-6 pb-20">
-        <div className="text-center mb-8">
-          <h2 className="text-2xl font-semibold text-fd-foreground">Config in, layout out</h2>
-          <p className="text-sm text-fd-muted-foreground mt-2">
-            Edit the YAML and watch the layout update live. Try a preset to get started.
-          </p>
-        </div>
-        <ConfigPlayground />
-      </section>
-
-      {/* Features */}
-      <section className="w-full max-w-4xl mx-auto px-6 pb-24">
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-10">
-          <Feature
-            title="Lead + teammates"
-            description="One Claude coordinates the team. Teammates work independently in their own panes, each with a focused task."
-          />
-          <Feature
-            title="Shared task list"
-            description="Agents communicate through shared tasks and messages. The lead assigns, teammates claim and report back."
-          />
-          <Feature
-            title="Self-organizing"
-            description="Once the layout is running, the lead can recruit teammates, reassign work, and reshape the workflow through normal Claude prompting."
-          />
-          <Feature
-            title="Declarative YAML"
-            description="Define your team layout in ide.yml — roles, tasks, pane sizes. Reproducible across machines and projects."
-          />
-          <Feature
-            title="Any stack"
-            description="Auto-detects Next.js, Vite, Python, Go, and more. Dev servers run alongside your agent team."
-          />
-          <Feature
-            title="One command"
-            description="tmux-ide handles tmux sessions, pane splitting, and the experimental env flag. You launch the layout, then tell Claude how to organize the team."
-          />
-          <Feature
-            title="Claude Code skill built in"
-            description="The install script registers a Claude Code skill automatically. Ask Claude to set up your workspace and it handles detection, layout, and config."
-          />
-        </div>
-      </section>
-
-      {/* Workflow */}
-      <section className="w-full max-w-2xl mx-auto px-6 pb-24">
-        <div className="rounded-lg border border-fd-border bg-fd-background overflow-hidden">
-          <div className="px-4 py-2.5 border-b border-fd-border">
-            <span className="text-xs text-fd-muted-foreground font-mono">Quick start</span>
-          </div>
-          <div className="p-4 font-mono text-sm space-y-1 text-fd-foreground/80">
-            <p>
-              <span className="text-fd-muted-foreground select-none">$ </span>
-              cd ~/Developer/my-project
-            </p>
-            <p>
-              <span className="text-fd-muted-foreground select-none">$ </span>
-              tmux-ide init --template agent-team
-            </p>
-            <p className="text-fd-muted-foreground">→ Created ide.yml with agent team layout.</p>
-            <p>
-              <span className="text-fd-muted-foreground select-none">$ </span>
-              tmux-ide
-            </p>
-            <p className="text-fd-muted-foreground">
-              → Launching IDE session with lead and teammate-ready panes...
-            </p>
-            <p>
-              <span className="text-fd-muted-foreground select-none">$ </span>
-              tmux-ide restart
-            </p>
-            <p className="text-fd-muted-foreground">→ Restarted with updated layout.</p>
-          </div>
-        </div>
-      </section>
-
-      {/* Footer */}
-      <footer className="w-full border-t border-fd-border py-8 px-6">
-        <div className="max-w-3xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-fd-muted-foreground">
-          <span>
-            tmux-ide by{" "}
-            <a
-              href="https://thijsverreck.com"
-              className="hover:text-fd-foreground transition-colors"
-              target="_blank"
-              rel="noopener noreferrer"
+      <div className="flex flex-col items-center flex-1">
+        {/* HERO */}
+        <section className="flex flex-col items-center gap-8 px-6 pt-28 pb-16 max-w-3xl mx-auto text-center">
+          <div className="flex flex-col items-center gap-3">
+            <span
+              aria-hidden="true"
+              className="font-pixel text-6xl sm:text-7xl md:text-8xl tracking-tight text-fd-foreground select-none"
             >
-              Thijs Verreck
-            </a>
-          </span>
-          <div className="flex items-center gap-4">
-            <Link href="/docs" className="hover:text-fd-foreground transition-colors">
-              Docs
+              tmux-ide
+            </span>
+            <Link
+              href="/docs/release-2-0-0"
+              className="inline-flex items-center rounded-full border border-fd-border bg-fd-card px-3 py-1 text-[11px] font-mono font-medium uppercase tracking-[0.18em] text-fd-muted-foreground transition-colors hover:bg-fd-accent hover:text-fd-foreground"
+            >
+              New 2.0
+            </Link>
+          </div>
+          <h1 className="text-4xl sm:text-5xl font-bold tracking-tight text-fd-foreground">
+            Autonomous Multi-Agent
+            <br />
+            <span className="text-fd-muted-foreground">Missions</span>
+          </h1>
+          <p className="text-lg text-fd-muted-foreground max-w-xl leading-relaxed">
+            Turn any project into a mission-driven development environment. One config file,
+            multiple AI agents, fully autonomous orchestration.
+          </p>
+
+          <div className="flex flex-col sm:flex-row items-center gap-4">
+            <Link
+              href="/docs/getting-started"
+              className="rounded-lg bg-fd-primary px-6 py-2.5 text-sm font-medium text-fd-primary-foreground hover:opacity-90 transition-opacity"
+            >
+              Get Started
             </Link>
             <a
-              href={`https://github.com/wavyrai/tmux-ide`}
-              className="hover:text-fd-foreground transition-colors"
+              href="https://github.com/wavyrai/tmux-ide"
               target="_blank"
               rel="noopener noreferrer"
+              className="rounded-lg border border-fd-border px-6 py-2.5 text-sm font-medium text-fd-foreground hover:bg-fd-accent transition-colors"
             >
-              GitHub
+              View on GitHub
             </a>
           </div>
-        </div>
-      </footer>
-    </div>
+        </section>
+
+        {/* INSTALL */}
+        <section className="w-full max-w-lg mx-auto px-6 pb-12">
+          <CopyButton
+            text={installCommand}
+            className="group flex items-center gap-3 w-full border border-fd-border p-3 px-5 font-mono text-sm transition-colors hover:bg-fd-accent cursor-pointer"
+          >
+            <span className="text-fd-muted-foreground select-none">$</span>
+            <span className="text-fd-foreground">{installCommand}</span>
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              className="ml-auto text-fd-muted-foreground group-hover:text-fd-foreground transition-colors shrink-0"
+            >
+              <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+            </svg>
+          </CopyButton>
+        </section>
+
+        <SectionDivider />
+
+        {/* THREE-COMMAND SETUP */}
+        <section className="w-full max-w-2xl mx-auto px-6 py-16">
+          <div className="border border-fd-border overflow-hidden">
+            <div className="px-4 py-2 border-b border-fd-border">
+              <span className="text-xs text-fd-muted-foreground font-mono">terminal</span>
+            </div>
+            <div className="p-5 font-mono text-sm space-y-1">
+              <p>
+                <span className="text-fd-muted-foreground select-none">$ </span>
+                <span className="text-fd-foreground">
+                  tmux-ide init --template missions
+                </span>
+              </p>
+              <p className="text-fd-muted-foreground">
+                {"\u2192"} Created ide.yml, skills, AGENTS.md
+              </p>
+              <p className="mt-3!">
+                <span className="text-fd-muted-foreground select-none">$ </span>
+                <span className="text-fd-foreground">
+                  {`tmux-ide mission create "Build auth" -d "JWT + refresh tokens"`}
+                </span>
+              </p>
+              <p className="text-fd-muted-foreground">
+                {"\u2192"} Mission created (planning)
+              </p>
+              <p className="mt-3!">
+                <span className="text-fd-muted-foreground select-none">$ </span>
+                <span className="text-fd-foreground">tmux-ide</span>
+              </p>
+              <p className="text-fd-muted-foreground">
+                {"\u2192"} 6 agent panes, dashboard at localhost:6060, fully autonomous
+              </p>
+            </div>
+          </div>
+          <p className="text-center text-sm text-fd-muted-foreground mt-4">
+            That&apos;s it. Fully autonomous from here.
+          </p>
+        </section>
+
+        <SectionDivider />
+
+        {/* FEATURE GRID */}
+        <section className="w-full max-w-5xl mx-auto px-6 py-16">
+          <div className="text-center mb-10">
+            <h2 className="text-2xl font-semibold text-fd-foreground">
+              Everything you need for autonomous missions
+            </h2>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3">
+            <FeatureCard
+              title="Milestone Gating"
+              description="Sequential execution phases, each gating the next. Tasks only dispatch when their milestone is active."
+            />
+            <FeatureCard
+              title="Validation Contracts"
+              description="Assertion-based verification with independent validation. Failed assertions auto-create remediation tasks."
+            />
+            <FeatureCard
+              title="Skill-Based Dispatch"
+              description="Match task specialty to agent capabilities. Specialists get specialist work. Tasks wait for the right agent."
+            />
+            <FeatureCard
+              title="Knowledge Library"
+              description="Shared learnings that persist across tasks. Architecture docs and tag-matched references inject into prompts."
+            />
+            <FeatureCard
+              title="Researcher Agent"
+              description="Continuous internal auditing triggered by mission events. Writes findings to the library for future agents."
+            />
+            <FeatureCard
+              title="Live Metrics"
+              description="Session duration, agent utilization, completion rates, retry rates. All computed in real-time."
+            />
+            <FeatureCard
+              title="Web Dashboard"
+              description="Real-time KPIs, milestone timeline, agent performance table, validation status. Auto-refreshes."
+            />
+            <FeatureCard
+              title="Coverage Invariant"
+              description="Every assertion in the contract must be claimed by at least one task before dispatch begins."
+            />
+            <FeatureCard
+              title="Multi-Agent"
+              description="Claude Code, Codex, or any CLI agent. Prefix-matched detection works with platform-specific binaries."
+            />
+            <FeatureCard
+              title="Built-in Skills"
+              description="5 templates: general-worker, frontend, backend, reviewer, researcher. Scaffold custom skills in seconds."
+            />
+            <FeatureCard
+              title="Services Registry"
+              description="Centralized commands, ports, healthchecks in ide.yml. Injected into dispatch prompts for agent awareness."
+            />
+            <FeatureCard
+              title="File-Based Send"
+              description="Long messages auto-route through dispatch files. No paste-mode issues with any agent TUI."
+            />
+          </div>
+        </section>
+
+        <SectionDivider />
+
+        {/* ARCHITECTURE DIAGRAM */}
+        <section className="w-full max-w-4xl mx-auto px-6 py-16">
+          <div className="text-center mb-8">
+            <h2 className="text-2xl font-semibold text-fd-foreground">Mission Architecture</h2>
+            <p className="text-sm text-fd-muted-foreground mt-2">
+              From mission creation to PR — fully autonomous
+            </p>
+          </div>
+          <div className="border border-fd-border p-6 overflow-x-auto">
+            <pre className="font-mono text-xs sm:text-sm leading-relaxed text-fd-foreground whitespace-pre">
+              {"  Mission ──► Planning ──► Milestones ──► Tasks\n"}
+              {"                                           │\n"}
+              {"                            Skill Match ◄──┘\n"}
+              {"                                │\n"}
+              {"                          Agent Dispatch\n"}
+              {"                                │\n"}
+              {"                      ┌─────────┴─────────┐\n"}
+              {"                      │                   │\n"}
+              {"                 "}
+              <D>Completion</D>
+              {"          "}
+              <D>Validation</D>
+              {"\n"}
+              {"                      │                   │\n"}
+              {"                 Knowledge ◄──── Remediation\n"}
+              {"                      │\n"}
+              {"                "}
+              <D>Mission Complete</D>
+              {" ──► PR\n"}
+            </pre>
+          </div>
+        </section>
+
+        <SectionDivider />
+
+        {/* COMPARISON */}
+        <section className="w-full max-w-3xl mx-auto px-6 py-16">
+          <div className="text-center mb-8">
+            <h2 className="text-2xl font-semibold text-fd-foreground">
+              Factory Droid Missions, open source
+            </h2>
+            <p className="text-sm text-fd-muted-foreground mt-2">
+              Same patterns. Open source. Any agent CLI. tmux-native.
+            </p>
+          </div>
+          <div className="border border-fd-border overflow-hidden">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-fd-border">
+                  <th className="text-left font-mono font-normal text-fd-muted-foreground px-4 py-2">
+                    Capability
+                  </th>
+                  <th className="text-center font-mono font-normal text-fd-muted-foreground px-4 py-2">
+                    Factory
+                  </th>
+                  <th className="text-center font-mono font-normal text-fd-muted-foreground px-4 py-2">
+                    tmux-ide
+                  </th>
+                </tr>
+              </thead>
+              <tbody className="text-fd-foreground">
+                {[
+                  "Missions",
+                  "Milestones",
+                  "Validation contracts",
+                  "Skill-based dispatch",
+                  "Knowledge library",
+                  "Services registry",
+                  "Live dashboard",
+                  "Open source",
+                  "Any agent CLI",
+                  "tmux-native",
+                ].map((cap, i) => (
+                  <tr key={cap} className={i > 0 ? "border-t border-fd-border" : ""}>
+                    <td className="px-4 py-1.5">{cap}</td>
+                    <td className="text-center px-4 py-1.5">
+                      {i < 6 ? (
+                        <span style={{ color: DOT }}>{"\u2713"}</span>
+                      ) : i < 7 ? (
+                        <span style={{ color: DOT }}>{"\u2713"}</span>
+                      ) : (
+                        <span className="text-fd-muted-foreground">{"\u2013"}</span>
+                      )}
+                    </td>
+                    <td className="text-center px-4 py-1.5">
+                      <span style={{ color: DOT }}>{"\u2713"}</span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <SectionDivider />
+
+        {/* FOOTER CTA */}
+        <section className="w-full max-w-2xl mx-auto px-6 py-16 text-center">
+          <h2 className="text-2xl font-semibold text-fd-foreground mb-4">Ready to build?</h2>
+          <div className="max-w-md mx-auto mb-6">
+            <CopyButton
+              text={installCommand}
+              className="group flex items-center gap-3 w-full border border-fd-border p-3 px-5 font-mono text-sm transition-colors hover:bg-fd-accent cursor-pointer"
+            >
+              <span className="text-fd-muted-foreground select-none">$</span>
+              <span className="text-fd-foreground">{installCommand}</span>
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                className="ml-auto text-fd-muted-foreground group-hover:text-fd-foreground transition-colors shrink-0"
+              >
+                <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+              </svg>
+            </CopyButton>
+          </div>
+          <div className="flex justify-center gap-4">
+            <Link
+              href="/docs/getting-started"
+              className="text-sm text-fd-muted-foreground hover:text-fd-foreground transition-colors"
+            >
+              Read the docs {"\u2192"}
+            </Link>
+            <Link
+              href="/docs/release-2-0-0"
+              className="text-sm text-fd-muted-foreground hover:text-fd-foreground transition-colors"
+            >
+              What&apos;s new in 2.0 {"\u2192"}
+            </Link>
+          </div>
+        </section>
+
+        {/* FOOTER */}
+        <footer className="w-full border-t border-fd-border py-8 px-6">
+          <div className="max-w-3xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-fd-muted-foreground">
+            <span>
+              tmux-ide by{" "}
+              <a
+                href="https://thijsverreck.com"
+                className="hover:text-fd-foreground transition-colors"
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                Thijs Verreck
+              </a>
+            </span>
+            <div className="flex items-center gap-4">
+              <Link href="/docs" className="hover:text-fd-foreground transition-colors">
+                Docs
+              </Link>
+              <a
+                href="https://github.com/wavyrai/tmux-ide"
+                className="hover:text-fd-foreground transition-colors"
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                GitHub
+              </a>
+            </div>
+          </div>
+        </footer>
+      </div>
+    </>
   );
 }
