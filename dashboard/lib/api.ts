@@ -366,6 +366,69 @@ export async function fetchMission(name: string): Promise<MissionDetail | null> 
   return (await res.json()) as MissionDetail;
 }
 
+// --- Metrics ---
+
+export interface AgentMetricsData {
+  name: string;
+  totalTimeMs: number;
+  activeTimeMs: number;
+  idleTimeMs: number;
+  taskCount: number;
+  retryCount: number;
+  utilization: number;
+  specialties: string[];
+}
+
+export interface MilestoneMetricsData {
+  id: string;
+  title: string;
+  status: string;
+  taskCount: number;
+  completedCount: number;
+  durationMs: number;
+}
+
+export interface TimelineEntryData {
+  timestamp: string;
+  completedTasks: number;
+  activeTasks: number;
+  busyAgents: number;
+  idleAgents: number;
+}
+
+export interface MetricsData {
+  session: { startedAt: string | null; durationMs: number; status: string; agentCount: number };
+  tasks: {
+    total: number;
+    completed: number;
+    failed: number;
+    retried: number;
+    completionRate: number;
+    retryRate: number;
+    avgDurationMs: number;
+    medianDurationMs: number;
+    p90DurationMs: number;
+    byMilestone: MilestoneMetricsData[];
+  };
+  agents: AgentMetricsData[];
+  mission: {
+    title: string | null;
+    status: string | null;
+    milestonesCompleted: number;
+    validationPassRate: number;
+    wallClockMs: number;
+  };
+  timeline: TimelineEntryData[];
+}
+
+export async function fetchMetrics(name: string): Promise<MetricsData | null> {
+  const res = await fetch(`${API_BASE}/api/project/${encodeURIComponent(name)}/metrics`, {
+    cache: "no-store",
+  });
+  if (!res.ok) return null;
+  return (await res.json()) as MetricsData;
+}
+
 export async function deleteTaskApi(sessionName: string, taskId: string): Promise<boolean> {
   const res = await fetch(
     `${API_BASE}/api/project/${encodeURIComponent(sessionName)}/task/${encodeURIComponent(taskId)}`,
