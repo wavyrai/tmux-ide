@@ -24,16 +24,21 @@ import {
   getPaneSpecialties,
   dispatchGoals,
   findBestAgent,
+  getCurrentMilestone,
+  isMilestoneReady,
+  checkMilestoneCompletion,
 } from "./orchestrator.ts";
 import { readEvents } from "./event-log.ts";
 import {
   ensureTasksDir,
   saveMission,
+  loadMission,
   saveGoal,
   saveTask,
   loadTask,
   loadGoal,
   type Goal,
+  type Mission,
 } from "./task-store.ts";
 import { _setExecutor, type PaneInfo } from "../widgets/lib/pane-comms.ts";
 import {
@@ -1267,5 +1272,159 @@ You are a frontend expert. Focus on React components and CSS.`,
     const task = makeTask({ specialty: "nonexistent" });
     const prompt = buildTaskPrompt(tmpDir, task);
     expect(!prompt.includes("Your Role:")).toBeTruthy();
+  });
+});
+
+describe("milestone gating", () => {
+  function setupMission(milestones: Mission["milestones"]): void {
+    saveMission(tmpDir, {
+      title: "Ship v2",
+      description: "",
+      status: "active",
+      branch: null,
+      milestones,
+      created: "2026-01-01T00:00:00Z",
+      updated: "2026-01-01T00:00:00Z",
+    });
+  }
+
+  it("getCurrentMilestone returns first non-done milestone by order", () => {
+    setupMission([
+      { id: "M2", title: "Phase 2", description: "", status: "locked", order: 2, created: "2026-01-01T00:00:00Z", updated: "2026-01-01T00:00:00Z" },
+      { id: "M1", title: "Phase 1", description: "", status: "active", order: 1, created: "2026-01-01T00:00:00Z", updated: "2026-01-01T00:00:00Z" },
+    ]);
+    const current = getCurrentMilestone(tmpDir);
+    expect(current?.id).toBe("M1");
+  });
+
+  it("isMilestoneReady returns true when all predecessors are done", () => {
+    setupMission([
+      { id: "M1", title: "Phase 1", description: "", status: "done", order: 1, created: "2026-01-01T00:00:00Z", updated: "2026-01-01T00:00:00Z" },
+      { id: "M2", title: "Phase 2", description: "", status: "active", order: 2, created: "2026-01-01T00:00:00Z", updated: "2026-01-01T00:00:00Z" },
+    ]);
+    expect(isMilestoneReady(tmpDir, "M2")).toBe(true);
+  });
+
+  it("isMilestoneReady returns false when predecessor is not done", () => {
+    setupMission([
+      { id: "M1", title: "Phase 1", description: "", status: "active", order: 1, created: "2026-01-01T00:00:00Z", updated: "2026-01-01T00:00:00Z" },
+      { id: "M2", title: "Phase 2", description: "", status: "locked", order: 2, created: "2026-01-01T00:00:00Z", updated: "2026-01-01T00:00:00Z" },
+    ]);
+    expect(isMilestoneReady(tmpDir, "M2")).toBe(false);
+  });
+
+  it("dispatches task with active milestone M1", () => {
+    setupMission([
+      { id: "M1", title: "Phase 1", description: "", status: "active", order: 1, created: "2026-01-01T00:00:00Z", updated: "2026-01-01T00:00:00Z" },
+      { id: "M2", title: "Phase 2", description: "", status: "locked", order: 2, created: "2026-01-01T00:00:00Z", updated: "2026-01-01T00:00:00Z" },
+    ]);
+
+    const task = makeTask({ id: "001", milestone: "M1" });
+    saveTask(tmpDir, task);
+
+    const pane = makePane({ id: "%1", index: 0, title: "Agent 1", currentCommand: "zsh" });
+    const panes = [pane];
+    mockPanes = panes;
+
+    const config = makeOrchestratorConfig(tmpDir, { masterPane: null, dispatchMode: "missions" });
+    const state = makeOrchestratorState();
+
+    dispatch(config, state, [task], panes);
+
+    const loaded = loadTask(tmpDir, "001");
+    expect(loaded?.status).toBe("in-progress");
+    expect(loaded?.assignee).toBe(agentIdentifier(pane));
+  });
+
+  it("skips task with locked milestone M2 when M1 is still active", () => {
+    setupMission([
+      { id: "M1", title: "Phase 1", description: "", status: "active", order: 1, created: "2026-01-01T00:00:00Z", updated: "2026-01-01T00:00:00Z" },
+      { id: "M2", title: "Phase 2", description: "", status: "locked", order: 2, created: "2026-01-01T00:00:00Z", updated: "2026-01-01T00:00:00Z" },
+    ]);
+
+    const task = makeTask({ id: "001", milestone: "M2" });
+    saveTask(tmpDir, task);
+
+    const pane = makePane({ id: "%1", index: 0, title: "Agent 1", currentCommand: "zsh" });
+    const panes = [pane];
+    mockPanes = panes;
+
+    const config = makeOrchestratorConfig(tmpDir, { masterPane: null, dispatchMode: "missions" });
+    const state = makeOrchestratorState();
+
+    dispatch(config, state, [task], panes);
+
+    const loaded = loadTask(tmpDir, "001");
+    expect(loaded?.status).toBe("todo");
+    expect(loaded?.assignee).toBe(null);
+  });
+
+  it("tasks without milestone field always dispatch in missions mode", () => {
+    setupMission([
+      { id: "M1", title: "Phase 1", description: "", status: "active", order: 1, created: "2026-01-01T00:00:00Z", updated: "2026-01-01T00:00:00Z" },
+    ]);
+
+    const task = makeTask({ id: "001", milestone: null });
+    saveTask(tmpDir, task);
+
+    const pane = makePane({ id: "%1", index: 0, title: "Agent 1", currentCommand: "zsh" });
+    const panes = [pane];
+    mockPanes = panes;
+
+    const config = makeOrchestratorConfig(tmpDir, { masterPane: null, dispatchMode: "missions" });
+    const state = makeOrchestratorState();
+
+    dispatch(config, state, [task], panes);
+
+    const loaded = loadTask(tmpDir, "001");
+    expect(loaded?.status).toBe("in-progress");
+  });
+
+  it("checkMilestoneCompletion marks M1 done and activates M2 when all M1 tasks complete", () => {
+    setupMission([
+      { id: "M1", title: "Phase 1", description: "", status: "active", order: 1, created: "2026-01-01T00:00:00Z", updated: "2026-01-01T00:00:00Z" },
+      { id: "M2", title: "Phase 2", description: "", status: "locked", order: 2, created: "2026-01-01T00:00:00Z", updated: "2026-01-01T00:00:00Z" },
+    ]);
+
+    const task1 = makeTask({ id: "001", milestone: "M1", status: "done", assignee: "Agent 1" });
+    const task2 = makeTask({ id: "002", milestone: "M1", status: "done", assignee: "Agent 2" });
+    saveTask(tmpDir, task1);
+    saveTask(tmpDir, task2);
+
+    const config = makeOrchestratorConfig(tmpDir, { dispatchMode: "missions" });
+    checkMilestoneCompletion(config, [task1, task2]);
+
+    const mission = loadMission(tmpDir)!;
+    const m1 = mission.milestones.find((m) => m.id === "M1")!;
+    const m2 = mission.milestones.find((m) => m.id === "M2")!;
+    expect(m1.status).toBe("done");
+    expect(m2.status).toBe("active");
+
+    // Check event logged
+    const events = readEvents(tmpDir);
+    const milestoneEvent = events.find((e) => e.type === "milestone_complete");
+    expect(milestoneEvent).toBeTruthy();
+    expect(milestoneEvent!.message.includes("Phase 1")).toBeTruthy();
+  });
+
+  it("checkMilestoneCompletion does not advance when tasks are still in progress", () => {
+    setupMission([
+      { id: "M1", title: "Phase 1", description: "", status: "active", order: 1, created: "2026-01-01T00:00:00Z", updated: "2026-01-01T00:00:00Z" },
+      { id: "M2", title: "Phase 2", description: "", status: "locked", order: 2, created: "2026-01-01T00:00:00Z", updated: "2026-01-01T00:00:00Z" },
+    ]);
+
+    const task1 = makeTask({ id: "001", milestone: "M1", status: "done", assignee: "Agent 1" });
+    const task2 = makeTask({ id: "002", milestone: "M1", status: "in-progress", assignee: "Agent 2" });
+    saveTask(tmpDir, task1);
+    saveTask(tmpDir, task2);
+
+    const config = makeOrchestratorConfig(tmpDir, { dispatchMode: "missions" });
+    checkMilestoneCompletion(config, [task1, task2]);
+
+    const mission = loadMission(tmpDir)!;
+    const m1 = mission.milestones.find((m) => m.id === "M1")!;
+    const m2 = mission.milestones.find((m) => m.id === "M2")!;
+    expect(m1.status).toBe("active");
+    expect(m2.status).toBe("locked");
   });
 });

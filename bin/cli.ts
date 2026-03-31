@@ -50,6 +50,7 @@ const { positionals, values } = parseArgs({
     depends: { type: "string" },
     pr: { type: "boolean" },
     specialty: { type: "string" },
+    sequence: { type: "string" },
     port: { type: "string" },
     // tunnel command flags
     provider: { type: "string" },
@@ -81,6 +82,7 @@ const knownCommands = new Set([
   "detect",
   "config",
   "mission",
+  "milestone",
   "goal",
   "task",
   "plan",
@@ -111,6 +113,7 @@ const ALIASES: Record<string, string> = {
   t: "task",
   g: "goal",
   m: "mission",
+  ms: "milestone",
   orch: "orchestrator",
   o: "orchestrator",
 };
@@ -290,6 +293,22 @@ try {
         sub,
         args: positionals.slice(2),
         values: { description: values.description },
+      });
+      break;
+    }
+
+    case "milestone": {
+      const sub = positionals[1];
+      await taskCommand(null, {
+        json,
+        action: "milestone",
+        sub,
+        args: positionals.slice(2),
+        values: {
+          description: values.description,
+          status: values.status,
+          sequence: values.sequence,
+        },
       });
       break;
     }

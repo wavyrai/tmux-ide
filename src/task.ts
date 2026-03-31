@@ -77,6 +77,7 @@ interface TaskCommandValues {
   milestone?: string;
   fulfills?: string;
   summary?: string;
+  sequence?: string;
 }
 
 export async function taskCommand(
@@ -100,6 +101,8 @@ export async function taskCommand(
   switch (action) {
     case "mission":
       return handleMission(dir, sub, args, values, json);
+    case "milestone":
+      return handleMilestone(dir, sub, args, values, json);
     case "goal":
       return handleGoal(dir, sub, args, values, json);
     case "task":
@@ -171,6 +174,137 @@ function handleMission(
       break;
     default:
       outputError("Usage: tmux-ide mission <set|show|clear>\nRun: tmux-ide mission help", "USAGE");
+  }
+}
+
+// --- Milestone ---
+
+function handleMilestone(
+  dir: string,
+  sub: string | undefined,
+  args: string[],
+  values: TaskCommandValues,
+  json: boolean,
+): void {
+  switch (sub) {
+    case "create": {
+      const title = args[0];
+      if (!title) outputError('Usage: tmux-ide milestone create "title" --sequence N', "USAGE");
+      const mission = loadMission(dir);
+      if (!mission)
+        outputError('No mission set. Run: tmux-ide mission set "..." first', "NOT_FOUND");
+      const sequence = parseInt(values.sequence ?? "0", 10) || (mission.milestones.length + 1);
+      const id = `M${sequence}`;
+      // Check for duplicate ID
+      if (mission.milestones.find((m) => m.id === id)) {
+        outputError(`Milestone ${id} already exists`, "CONFLICT");
+      }
+      const now = new Date().toISOString();
+      const hasActive = mission.milestones.some(
+        (m) => m.status === "active" || m.status === "done",
+      );
+      const milestone: Mission["milestones"][number] = {
+        id,
+        title,
+        description: values.description ?? "",
+        status: hasActive ? "locked" : "active",
+        order: sequence,
+        created: now,
+        updated: now,
+      };
+      mission.milestones.push(milestone);
+      mission.milestones.sort((a, b) => a.order - b.order);
+      mission.updated = now;
+      saveMission(dir, mission);
+      if (json) {
+        console.log(JSON.stringify(milestone, null, 2));
+      } else {
+        console.log(`Created milestone ${id}: ${title} [${milestone.status}]`);
+      }
+      break;
+    }
+    case "list": {
+      const mission = loadMission(dir);
+      if (!mission) outputError("No mission set", "NOT_FOUND");
+      const tasks = loadTasks(dir);
+      const milestones = [...mission.milestones].sort((a, b) => a.order - b.order);
+      if (json) {
+        const data = milestones.map((m) => {
+          const mTasks = tasks.filter((t) => t.milestone === m.id);
+          const done = mTasks.filter((t) => t.status === "done").length;
+          return { ...m, taskCount: mTasks.length, tasksDone: done };
+        });
+        console.log(JSON.stringify(data, null, 2));
+      } else if (milestones.length === 0) {
+        console.log('No milestones. Run: tmux-ide milestone create "title" --sequence N');
+      } else {
+        for (const m of milestones) {
+          const mTasks = tasks.filter((t) => t.milestone === m.id);
+          const done = mTasks.filter((t) => t.status === "done").length;
+          console.log(`  ${m.id}  [${m.status}]  ${m.title}  (${done}/${mTasks.length} tasks)`);
+        }
+      }
+      break;
+    }
+    case "show": {
+      const id = args[0];
+      if (!id) outputError("Usage: tmux-ide milestone show <id>", "USAGE");
+      const mission = loadMission(dir);
+      if (!mission) outputError("No mission set", "NOT_FOUND");
+      const milestone = mission.milestones.find((m) => m.id === id);
+      if (!milestone) outputError(`Milestone ${id} not found`, "NOT_FOUND");
+      const tasks = loadTasks(dir).filter((t) => t.milestone === id);
+      if (json) {
+        console.log(JSON.stringify({ milestone, tasks }, null, 2));
+      } else {
+        console.log(`Milestone ${milestone.id}: ${milestone.title}`);
+        console.log(`  Status: ${milestone.status}`);
+        console.log(`  Order: ${milestone.order}`);
+        if (milestone.description) console.log(`  Description: ${milestone.description}`);
+        if (tasks.length > 0) {
+          console.log(`  Tasks:`);
+          for (const t of tasks) {
+            console.log(`    ${t.id}  [${t.status}]  ${t.title}`);
+          }
+        }
+      }
+      break;
+    }
+    case "update": {
+      const id = args[0];
+      if (!id) outputError("Usage: tmux-ide milestone update <id> --status <status>", "USAGE");
+      const mission = loadMission(dir);
+      if (!mission) outputError("No mission set", "NOT_FOUND");
+      const milestone = mission.milestones.find((m) => m.id === id);
+      if (!milestone) outputError(`Milestone ${id} not found`, "NOT_FOUND");
+      if (values.status) {
+        milestone.status = values.status as typeof milestone.status;
+      }
+      if (values.description) milestone.description = values.description;
+      milestone.updated = new Date().toISOString();
+      mission.updated = milestone.updated;
+      saveMission(dir, mission);
+      if (json) {
+        console.log(JSON.stringify(milestone, null, 2));
+      } else {
+        console.log(`Updated milestone ${id}`);
+      }
+      break;
+    }
+    case "help":
+    case undefined:
+      console.log(`Usage: tmux-ide milestone <create|list|show|update>
+
+  create "title" [--sequence N] [-d "desc"]   Create a milestone
+  list                                         List milestones
+  show <id>                                    Show milestone with tasks
+  update <id> [--status active|done|locked]    Update milestone`);
+      break;
+    default:
+      outputError(
+        "Usage: tmux-ide milestone <create|list|show|update>\nRun: tmux-ide milestone help",
+        "USAGE",
+      );
   }
 }
 

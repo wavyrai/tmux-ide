@@ -50,7 +50,7 @@ export const OrchestratorYamlConfigSchema = z.object({
   master_pane: z.string().optional(),
   before_run: z.string().optional(),
   after_run: z.string().optional(),
-  dispatch_mode: z.enum(["tasks", "goals"]).optional(),
+  dispatch_mode: z.enum(["tasks", "goals", "missions"]).optional(),
   max_concurrent_agents: z.number().min(1).max(50).optional(),
   widgets: z.boolean().optional(),
   webhooks: z.array(WebhookConfigSchema).optional(),

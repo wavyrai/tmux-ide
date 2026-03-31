@@ -35,6 +35,7 @@ import { join } from "node:path";
 import yaml from "js-yaml";
 import {
   loadMission,
+  saveMission,
   loadGoal,
   loadGoals,
   loadTasks,
@@ -42,6 +43,8 @@ import {
   saveGoal,
   type Task,
   type Goal,
+  type Mission,
+  type Milestone,
 } from "./task-store.ts";
 import { slugify } from "./slugify.ts";
 import { recordTaskTime } from "./token-tracker.ts";
@@ -59,7 +62,7 @@ export interface OrchestratorConfig {
   beforeRun: string | null;
   afterRun: string | null;
   maxConcurrentAgents: number;
-  dispatchMode: "tasks" | "goals";
+  dispatchMode: "tasks" | "goals" | "missions";
   paneSpecialties: Map<string, string[]>;
 }
 
@@ -212,6 +215,89 @@ export function buildTaskPrompt(
   return prompt.trim();
 }
 
+// --- Milestone gating ---
+
+/**
+ * Get the current (first non-done) milestone from the mission, sorted by order.
+ */
+export function getCurrentMilestone(dir: string): Milestone | null {
+  const mission = loadMission(dir);
+  if (!mission || mission.milestones.length === 0) return null;
+  const sorted = [...mission.milestones].sort((a, b) => a.order - b.order);
+  return sorted.find((m) => m.status !== "done") ?? null;
+}
+
+/**
+ * Check that all milestones with lower order than the given one are 'done'.
+ */
+export function isMilestoneReady(dir: string, milestoneId: string): boolean {
+  const mission = loadMission(dir);
+  if (!mission) return false;
+  const target = mission.milestones.find((m) => m.id === milestoneId);
+  if (!target) return false;
+  return mission.milestones
+    .filter((m) => m.order < target.order)
+    .every((m) => m.status === "done");
+}
+
+/**
+ * Check if a task's milestone allows dispatch.
+ * Tasks without a milestone are always eligible (backward compat).
+ * Tasks with a milestone require it to be 'active' and all predecessors done.
+ */
+function isTaskMilestoneEligible(dir: string, task: Task, mission: Mission | null): boolean {
+  if (!task.milestone) return true;
+  if (!mission) return false;
+  const milestone = mission.milestones.find((m) => m.id === task.milestone);
+  if (!milestone) return false;
+  if (milestone.status !== "active") return false;
+  return isMilestoneReady(dir, milestone.id);
+}
+
+/**
+ * Check active milestones for completion. When all tasks for a milestone are done,
+ * mark it 'done' and activate the next one (lowest-order 'locked' milestone).
+ */
+export function checkMilestoneCompletion(config: OrchestratorConfig, tasks: Task[]): void {
+  const mission = loadMission(config.dir);
+  if (!mission || mission.milestones.length === 0) return;
+
+  let changed = false;
+  const sorted = [...mission.milestones].sort((a, b) => a.order - b.order);
+
+  for (const milestone of sorted) {
+    if (milestone.status !== "active") continue;
+
+    const milestoneTasks = tasks.filter((t) => t.milestone === milestone.id);
+    if (milestoneTasks.length === 0) continue;
+    const allDone = milestoneTasks.every((t) => t.status === "done");
+    if (!allDone) continue;
+
+    // Mark milestone as done
+    milestone.status = "done";
+    milestone.updated = new Date().toISOString();
+    changed = true;
+
+    appendEvent(config.dir, {
+      timestamp: new Date().toISOString(),
+      type: "milestone_complete",
+      message: `Milestone "${milestone.title}" (${milestone.id}) completed`,
+    });
+
+    // Activate next locked milestone
+    const next = sorted.find((m) => m.status === "locked");
+    if (next) {
+      next.status = "active";
+      next.updated = new Date().toISOString();
+    }
+  }
+
+  if (changed) {
+    mission.updated = new Date().toISOString();
+    saveMission(config.dir, mission);
+  }
+}
+
 export function dispatch(
   config: OrchestratorConfig,
   state: OrchestratorState,
@@ -243,6 +329,7 @@ export function dispatch(
   // Find unassigned todo tasks that haven't been claimed, sorted by priority
   // Also include retry-eligible tasks (nextRetryAt in the past)
   const now = Date.now();
+  const mission = config.dispatchMode === "missions" ? loadMission(config.dir) : null;
   const todoTasks = tasks
     .filter((t) => {
       // Skip if already claimed
@@ -258,6 +345,10 @@ export function dispatch(
             return dep?.status === "done";
           });
           if (!allDepsDone) return false;
+        }
+        // Milestone gating (missions mode only)
+        if (config.dispatchMode === "missions" && !isTaskMilestoneEligible(config.dir, t, mission)) {
+          return false;
         }
         return true;
       }
@@ -873,6 +964,8 @@ export function createOrchestrator(initialConfig: OrchestratorConfig): () => voi
         const goals = loadGoals(config.dir);
         dispatchGoals(config, state, goals, tasks, panes);
       } else {
+        // Both 'tasks' and 'missions' modes use dispatch() —
+        // milestone gating is applied inside dispatch() when mode is 'missions'
         dispatch(config, state, tasks, panes);
       }
     }
@@ -882,6 +975,11 @@ export function createOrchestrator(initialConfig: OrchestratorConfig): () => voi
 
     // 4. Detect completions: notify master, run hooks, cleanup
     detectCompletions(config, state, tasks, panes);
+
+    // 5. Milestone completion: check if active milestones are done, auto-progress
+    if (config.dispatchMode === "missions") {
+      checkMilestoneCompletion(config, tasks);
+    }
 
     // Update previous state
     for (const task of tasks) {
