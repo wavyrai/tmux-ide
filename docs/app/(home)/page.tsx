@@ -218,6 +218,95 @@ export default function HomePage() {
 
         <SectionDivider />
 
+        {/* DASHBOARD SHOWCASE */}
+        <div>
+          <h2 className="font-sans text-2xl text-fd-foreground">Live Dashboard</h2>
+          <p className="text-fd-muted-foreground text-sm mt-1">
+            Real-time mission monitoring at localhost:6060
+          </p>
+          <div className="mt-4 border border-fd-border overflow-hidden">
+            {/* Browser chrome */}
+            <div className="flex items-center gap-2 border-b border-fd-border bg-fd-muted/30 px-3 py-1.5">
+              <div className="flex gap-1.5">
+                <span className="h-2 w-2 rounded-full bg-red-400/60" />
+                <span className="h-2 w-2 rounded-full bg-yellow-400/60" />
+                <span className="h-2 w-2 rounded-full bg-green-400/60" />
+              </div>
+              <div className="flex-1 mx-2">
+                <div className="border border-fd-border bg-fd-background px-2 py-0.5 text-[10px] text-fd-muted-foreground font-mono">
+                  localhost:6060/project/my-app
+                </div>
+              </div>
+            </div>
+            {/* Dashboard content */}
+            <div className="bg-fd-background p-3 space-y-3 text-[11px]">
+              {/* KPI row */}
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-px bg-fd-border">
+                {[
+                  { label: "session", value: "2h 15m" },
+                  { label: "tasks", value: "12/12 done" },
+                  { label: "agents", value: "4 active" },
+                  { label: "validation", value: "100%" },
+                ].map((kpi) => (
+                  <div key={kpi.label} className="bg-fd-background p-2">
+                    <div className="text-fd-muted-foreground text-[9px] uppercase tracking-wider">{kpi.label}</div>
+                    <div className="text-fd-foreground font-mono text-sm mt-0.5">{kpi.value}</div>
+                  </div>
+                ))}
+              </div>
+              {/* Milestone bar */}
+              <div className="border border-fd-border p-2">
+                <div className="text-fd-muted-foreground text-[9px] uppercase tracking-wider mb-1.5">milestones</div>
+                <div className="flex gap-px">
+                  <div className="flex-1 bg-green-500/20 border border-green-500/30 px-2 py-1">
+                    <span className="text-green-500">M1</span>{" "}
+                    <span className="text-fd-muted-foreground">done</span>
+                  </div>
+                  <div className="flex-1 bg-fd-primary/10 border border-fd-primary/30 px-2 py-1">
+                    <span className="text-fd-primary">M2</span>{" "}
+                    <span className="text-fd-muted-foreground">active 3/5</span>
+                  </div>
+                  <div className="flex-1 bg-fd-muted/20 border border-fd-border px-2 py-1">
+                    <span className="text-fd-muted-foreground">M3 locked</span>
+                  </div>
+                </div>
+              </div>
+              {/* Bottom panels */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-px bg-fd-border">
+                {/* Agent table */}
+                <div className="bg-fd-background p-2">
+                  <div className="text-fd-muted-foreground text-[9px] uppercase tracking-wider mb-1.5">agents</div>
+                  <div className="space-y-px">
+                    {[
+                      { name: "Backend", util: "82%", tasks: 5 },
+                      { name: "Frontend", util: "71%", tasks: 4 },
+                      { name: "Validator", util: "45%", tasks: 3 },
+                    ].map((a) => (
+                      <div key={a.name} className="flex items-center gap-3 font-mono">
+                        <span className="text-fd-foreground w-16">{a.name}</span>
+                        <span className="text-green-500 w-8">{a.util}</span>
+                        <span className="text-fd-muted-foreground">{a.tasks} tasks</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                {/* Events */}
+                <div className="bg-fd-background p-2">
+                  <div className="text-fd-muted-foreground text-[9px] uppercase tracking-wider mb-1.5">recent events</div>
+                  <div className="space-y-0.5 font-mono text-fd-muted-foreground">
+                    <div><span className="text-green-500">2m</span> task 007 completed by Backend</div>
+                    <div><span className="text-fd-primary">3m</span> M2 activated</div>
+                    <div><span className="text-green-500">5m</span> M1 validation passed</div>
+                    <div><span className="text-yellow-500">6m</span> dispatched 008 to Frontend</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <SectionDivider />
+
         {/* HOW IT WORKS */}
         <div>
           <h2 className="font-sans text-2xl text-fd-foreground">How it works</h2>
