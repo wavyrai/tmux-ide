@@ -70,7 +70,6 @@ interface TaskCommandValues {
   assign?: string;
   goal?: string;
   tags?: string;
-  branch?: string;
   proof?: string;
   depends?: string;
   pr?: boolean;
@@ -376,7 +375,6 @@ function handleTask(
         priority: parseInt(values.priority ?? "2", 10),
         created: now,
         updated: now,
-        branch: values.branch ?? null,
         tags: values.tags ? values.tags.split(",").map((t) => t.trim()) : [],
         proof: null,
         depends_on: values.depends ? values.depends.split(",").map((d) => d.trim()) : [],
@@ -408,7 +406,6 @@ function handleTask(
       if (values.status) task.status = values.status as Task["status"];
       if (values.assign) task.assignee = values.assign;
       if (values.description) task.description = values.description;
-      if (values.branch) task.branch = values.branch;
       if (values.priority) task.priority = parseInt(values.priority, 10);
       if (values.tags) task.tags = values.tags.split(",").map((t) => t.trim());
       if (values.goal) task.goal = values.goal;
@@ -440,9 +437,9 @@ function handleTask(
       if (values.proof) task.proof = parseProof(values.proof, task.proof);
       task.updated = new Date().toISOString();
 
-      // Auto-create GitHub PR if --pr flag is set and task has a branch
+      // Auto-create GitHub PR if --pr flag is set
       let prWarning: string | undefined;
-      if (values.pr && task.branch) {
+      if (values.pr) {
         if (isGhAvailable()) {
           const pr = createTaskPr(task, dir);
           if (pr) {
@@ -523,7 +520,6 @@ function handleTask(
         if (task.description) console.log(`  Description: ${task.description}`);
         if (task.assignee) console.log(`  Assignee: ${task.assignee}`);
         if (task.tags.length > 0) console.log(`  Tags: ${task.tags.join(", ")}`);
-        if (task.branch) console.log(`  Branch: ${task.branch}`);
         if (task.depends_on.length > 0) console.log(`  Depends on: ${task.depends_on.join(", ")}`);
         if (task.proof) console.log(`  Proof: ${JSON.stringify(task.proof)}`);
       }
@@ -539,7 +535,6 @@ function handleTask(
       if (values.description) task.description = values.description;
       if (values.priority) task.priority = parseInt(values.priority, 10);
       if (values.tags) task.tags = values.tags.split(",").map((t) => t.trim());
-      if (values.branch) task.branch = values.branch;
       if (values.goal) task.goal = values.goal;
       if (values.depends) {
         const newDeps = values.depends.split(",").map((d) => d.trim());

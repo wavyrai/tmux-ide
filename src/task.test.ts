@@ -254,7 +254,7 @@ describe("tasks", () => {
       priority: 1,
       created: "2026-01-01T00:00:00Z",
       updated: "2026-01-01T00:00:00Z",
-      branch: null,
+
       tags: [],
       proof: null,
       retryCount: 0,
@@ -278,7 +278,6 @@ describe("tasks", () => {
       priority: 1,
       created: "2026-01-01T00:00:00Z",
       updated: "2026-01-01T00:00:00Z",
-      branch: "fix/auth",
       tags: ["security", "compliance"],
       proof: null,
       retryCount: 2,
@@ -300,7 +299,7 @@ describe("tasks", () => {
       priority: 1,
       created: now,
       updated: now,
-      branch: null,
+
       tags: [],
       proof: null,
       retryCount: 0,
@@ -336,7 +335,7 @@ describe("tasks", () => {
       priority: 1,
       created: "2026-01-01T00:00:00Z",
       updated: "2026-01-01T00:00:00Z",
-      branch: null,
+
       tags: [],
       proof: null,
       retryCount: 0,
@@ -366,7 +365,7 @@ describe("tasks", () => {
       priority: 1,
       created: "2026-01-01T00:00:00Z",
       updated: "2026-01-01T00:00:00Z",
-      branch: null,
+
       tags: [],
       proof: null,
       retryCount: 0,
@@ -398,7 +397,7 @@ describe("tasks", () => {
       priority: 1,
       created: "2026-01-01T00:00:00Z",
       updated: "2026-01-01T00:00:00Z",
-      branch: null,
+
       tags: [],
       proof: null,
     };
@@ -428,7 +427,7 @@ describe("tasks", () => {
       priority: 1,
       created: "2026-01-01T00:00:00Z",
       updated: "2026-01-01T00:00:00Z",
-      branch: null,
+
       tags: [],
       proof: null,
       retryCount: 3,
@@ -461,7 +460,7 @@ describe("tasks", () => {
       priority: 1,
       created: "2026-01-01T00:00:00Z",
       updated: "2026-01-01T00:00:00Z",
-      branch: null,
+
       tags: [],
       proof: null,
       retryCount: 0,
@@ -490,7 +489,7 @@ describe("tasks", () => {
         priority: 1,
         created: "2026-01-01T00:00:00Z",
         updated: "2026-01-01T00:00:00Z",
-        branch: null,
+  
         tags: [],
         proof: null,
       }) + "\n",
@@ -515,7 +514,7 @@ describe("tasks", () => {
           priority: 1,
           created: "2026-01-01T00:00:00Z",
           updated: "2026-01-01T00:00:00Z",
-          branch: null,
+    
           tags: [],
           proof: null,
         }) + "\n",
@@ -622,7 +621,7 @@ describe("parseProof", () => {
       priority: 1,
       created: "2026-01-01T00:00:00Z",
       updated: "2026-01-01T00:00:00Z",
-      branch: null,
+
       tags: [],
       proof: {
         tests: { passed: 10, total: 10 },
@@ -656,7 +655,7 @@ describe("parseProof", () => {
         priority: 1,
         created: "2026-01-01T00:00:00Z",
         updated: "2026-01-01T00:00:00Z",
-        branch: null,
+  
         tags: [],
         proof: { note: "old format proof" },
       }) + "\n",
@@ -679,7 +678,7 @@ describe("normalizer snapshots", () => {
       priority: 1,
       created: "2026-01-01T00:00:00Z",
       updated: "2026-01-01T00:00:00Z",
-      branch: null,
+
       tags: [],
       proof: null,
     };
@@ -694,7 +693,7 @@ describe("normalizer snapshots", () => {
       priority: 1,
       created: "2026-01-01T00:00:00Z",
       updated: "2026-01-01T00:00:00Z",
-      branch: null,
+
       tags: [],
       proof: null,
       retryCount: 0,
@@ -716,7 +715,7 @@ describe("normalizer snapshots", () => {
       priority: 1,
       created: "2026-01-01T00:00:00Z",
       updated: "2026-01-01T00:00:00Z",
-      branch: null,
+
       tags: [],
       proof: { note: "legacy note" },
     };
@@ -763,7 +762,7 @@ describe("normalizer snapshots", () => {
       priority: 1,
       created: "2026-01-01T00:00:00Z",
       updated: "2026-01-01T00:00:00Z",
-      branch: null,
+
       tags: [],
       proof: null,
       retryCount: 3,
@@ -794,7 +793,7 @@ describe("schema version", () => {
       priority: 1,
       created: "2026-01-01T00:00:00Z",
       updated: "2026-01-01T00:00:00Z",
-      branch: null,
+
       tags: [],
       proof: null,
       retryCount: 0,
@@ -873,7 +872,7 @@ describe("schema version", () => {
         priority: 1,
         created: "2026-01-01T00:00:00Z",
         updated: "2026-01-01T00:00:00Z",
-        branch: null,
+  
         tags: [],
         proof: null,
       }) + "\n",
@@ -901,7 +900,7 @@ describe("corrupted file resilience", () => {
         priority: 1,
         created: "2026-01-01T00:00:00Z",
         updated: "2026-01-01T00:00:00Z",
-        branch: null,
+  
         tags: [],
         proof: null,
       }) + "\n",
@@ -974,7 +973,7 @@ describe("corrupted file resilience", () => {
         priority: 1,
         created: "2026-01-01T00:00:00Z",
         updated: "2026-01-01T00:00:00Z",
-        branch: null,
+  
         tags: [],
         proof: null,
       }) + "\n",
@@ -1042,7 +1041,7 @@ describe("normalizer snapshots", () => {
       priority: 1,
       created: "2026-01-01T00:00:00Z",
       updated: "2026-01-01T00:00:00Z",
-      branch: null,
+
       tags: [],
       proof: null,
     };
@@ -1057,7 +1056,7 @@ describe("normalizer snapshots", () => {
       priority: 1,
       created: "2026-01-01T00:00:00Z",
       updated: "2026-01-01T00:00:00Z",
-      branch: null,
+
       tags: [],
       proof: null,
       retryCount: 0,
@@ -1079,7 +1078,7 @@ describe("normalizer snapshots", () => {
       priority: 1,
       created: "2026-01-01T00:00:00Z",
       updated: "2026-01-01T00:00:00Z",
-      branch: null,
+
       tags: [],
       proof: { note: "legacy note" },
     };
@@ -1126,7 +1125,7 @@ describe("normalizer snapshots", () => {
       priority: 1,
       created: "2026-01-01T00:00:00Z",
       updated: "2026-01-01T00:00:00Z",
-      branch: null,
+
       tags: [],
       proof: null,
       retryCount: 3,
@@ -1157,7 +1156,7 @@ describe("detectCycle", () => {
       priority: 2,
       created: now,
       updated: now,
-      branch: null,
+
       tags: [],
       proof: null,
       depends_on: deps,

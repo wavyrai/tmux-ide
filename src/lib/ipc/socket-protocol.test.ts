@@ -21,7 +21,7 @@ describe("socket-protocol", () => {
       },
       {
         type: MessageType.GIT_FOLLOW_REQUEST,
-        payload: { enable: true, worktreePath: "/w" },
+        payload: { enable: true },
       },
       {
         type: MessageType.GIT_FOLLOW_RESPONSE,

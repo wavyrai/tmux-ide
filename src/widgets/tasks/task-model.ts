@@ -50,13 +50,12 @@ export function updateTaskAssignee(
 export function updateTaskField(
   projectDir: string,
   taskId: string,
-  fields: Partial<Pick<Task, "title" | "description" | "branch" | "tags" | "priority">>,
+  fields: Partial<Pick<Task, "title" | "description" | "tags" | "priority">>,
 ): void {
   const task = storeLoadTask(projectDir, taskId);
   if (!task) return;
   if (fields.title !== undefined) task.title = fields.title;
   if (fields.description !== undefined) task.description = fields.description;
-  if (fields.branch !== undefined) task.branch = fields.branch;
   if (fields.tags !== undefined) task.tags = fields.tags;
   if (fields.priority !== undefined) task.priority = fields.priority;
   task.updated = new Date().toISOString();
@@ -84,7 +83,6 @@ export function createTask(projectDir: string, tasks: Task[]): Task {
     priority: 2,
     created: new Date().toISOString(),
     updated: new Date().toISOString(),
-    branch: null,
     tags: [],
     proof: null,
     retryCount: 0,

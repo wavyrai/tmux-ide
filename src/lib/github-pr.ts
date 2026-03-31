@@ -27,7 +27,17 @@ export function isGhAvailable(): boolean {
  * Returns the PR URL and number, or null if creation failed.
  */
 export function createTaskPr(task: Task, cwd: string, baseBranch?: string): PrResult | null {
-  if (!task.branch) return null;
+  // Determine the current branch
+  let headBranch: string;
+  try {
+    headBranch = execFileSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], {
+      cwd,
+      encoding: "utf-8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+  } catch {
+    return null;
+  }
 
   // Build PR body
   const bodyParts: string[] = [];
@@ -52,7 +62,7 @@ export function createTaskPr(task: Task, cwd: string, baseBranch?: string): PrRe
   try {
     // Push the branch first (gh pr create needs it on remote)
     try {
-      execFileSync("git", ["push", "-u", "origin", task.branch], {
+      execFileSync("git", ["push", "-u", "origin", headBranch], {
         cwd,
         encoding: "utf-8",
         stdio: ["ignore", "pipe", "pipe"],
@@ -72,7 +82,7 @@ export function createTaskPr(task: Task, cwd: string, baseBranch?: string): PrRe
         "--body",
         body,
         "--head",
-        task.branch,
+        headBranch,
         ...(baseBranch ? ["--base", baseBranch] : []),
       ],
       {

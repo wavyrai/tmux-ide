@@ -47,7 +47,7 @@ function inferFieldType(path: string[]): { type: FieldType; enumValues?: string[
   const last = path[path.length - 1] ?? "";
 
   // Boolean fields
-  if (["focus", "enabled", "auto_dispatch", "cleanup_on_done", "widgets"].includes(last)) {
+  if (["focus", "enabled", "auto_dispatch", "widgets"].includes(last)) {
     return { type: "boolean" };
   }
 
@@ -261,8 +261,6 @@ render(
         ["poll_interval", String(orch?.poll_interval ?? 5000)],
         ["stall_timeout", String(orch?.stall_timeout ?? 300000)],
         ["max_concurrent_agents", String(orch?.max_concurrent_agents ?? 10)],
-        ["worktree_root", orch?.worktree_root ?? ".worktrees/"],
-        ["cleanup_on_done", String(orch?.cleanup_on_done ?? false)],
         ["widgets", String(orch?.widgets ?? false)],
       ];
 

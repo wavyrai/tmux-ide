@@ -35,9 +35,7 @@ export async function orchestratorStatus(
     pollInterval: number;
     stallTimeout: number;
     maxConcurrentAgents: number;
-    worktreeRoot: string;
     masterPane: string | null;
-    cleanupOnDone: boolean;
   } | null = null;
 
   try {
@@ -50,9 +48,7 @@ export async function orchestratorStatus(
         pollInterval: orch.poll_interval ?? 5000,
         stallTimeout: orch.stall_timeout ?? 300000,
         maxConcurrentAgents: orch.max_concurrent_agents ?? 10,
-        worktreeRoot: orch.worktree_root ?? ".worktrees/",
         masterPane: orch.master_pane ?? null,
-        cleanupOnDone: orch.cleanup_on_done ?? false,
       };
     }
   } catch {
@@ -181,9 +177,7 @@ export async function orchestratorStatus(
     console.log(
       `  Poll: ${orchConfig.pollInterval}ms | Stall: ${stallMin}m | Mode: ${orchConfig.dispatchMode} | Auto-dispatch: ${orchConfig.autoDispatch ? "on" : "off"}`,
     );
-    console.log(
-      `  Max concurrent: ${orchConfig.maxConcurrentAgents} | Cleanup: ${orchConfig.cleanupOnDone ? "on" : "off"}`,
-    );
+    console.log(`  Max concurrent: ${orchConfig.maxConcurrentAgents}`);
   }
 
   if (mission) {

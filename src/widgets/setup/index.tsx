@@ -59,7 +59,6 @@ function inferFieldType(path: string[]): { type: FieldType; enumValues?: string[
     last === "focus" ||
     last === "enabled" ||
     last === "auto_dispatch" ||
-    last === "cleanup_on_done" ||
     last === "widgets"
   )
     return { type: "boolean" };

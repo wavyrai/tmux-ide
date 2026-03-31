@@ -35,7 +35,6 @@ import {
   type Goal,
 } from "./task-store.ts";
 import { _setExecutor, type PaneInfo } from "../widgets/lib/pane-comms.ts";
-import { _setGitExecutor } from "./worktree.ts";
 import {
   makeTask,
   makePane,
@@ -45,18 +44,13 @@ import {
 
 let tmpDir: string;
 let restoreTmux: () => void;
-let restoreGit: () => void;
 let tmuxCalls: { args: string[] }[];
-let gitCalls: { args: string[]; cwd: string }[];
 let mockPanes: PaneInfo[];
 
 beforeEach(() => {
   tmpDir = mkdtempSync(join(tmpdir(), "tmux-ide-orch-test-"));
   ensureTasksDir(tmpDir);
-  // Create worktree root so validateWorktreePath succeeds in dispatch tests
-  mkdirSync(join(tmpDir, ".worktrees"), { recursive: true });
   tmuxCalls = [];
-  gitCalls = [];
   mockPanes = [];
 
   restoreTmux = _setExecutor((_cmd: string, args: string[]) => {
@@ -72,17 +66,10 @@ beforeEach(() => {
     }
     return "";
   });
-
-  restoreGit = _setGitExecutor((args: string[], cwd: string) => {
-    gitCalls.push({ args, cwd });
-    if (args[0] === "worktree" && args[1] === "list") return `worktree ${tmpDir}\n`;
-    return "";
-  });
 });
 
 afterEach(() => {
   restoreTmux();
-  restoreGit();
   rmSync(tmpDir, { recursive: true, force: true });
 });
 
@@ -273,7 +260,7 @@ describe("buildTaskPrompt", () => {
       priority: 1,
     });
 
-    const prompt = buildTaskPrompt(tmpDir, task, "/worktrees/001", "task/001-fix");
+    const prompt = buildTaskPrompt(tmpDir, task);
 
     expect(prompt.includes("Mission: Build auth")).toBeTruthy();
     expect(prompt.includes("Goal: Token storage")).toBeTruthy();
@@ -281,14 +268,13 @@ describe("buildTaskPrompt", () => {
     expect(prompt.includes("Your Task: Fix middleware")).toBeTruthy();
     expect(prompt.includes("Priority: P1")).toBeTruthy();
     expect(prompt.includes("Tags: security")).toBeTruthy();
-    expect(prompt.includes("Workspace: /worktrees/001")).toBeTruthy();
-    expect(prompt.includes("Branch: task/001-fix")).toBeTruthy();
+    expect(prompt.includes(`Workspace: ${tmpDir}`)).toBeTruthy();
     expect(prompt.includes("tmux-ide task done 001")).toBeTruthy();
   });
 
   it("works without mission or goal", () => {
     const task = makeTask({ title: "Standalone task" });
-    const prompt = buildTaskPrompt(tmpDir, task, "/work", "branch");
+    const prompt = buildTaskPrompt(tmpDir, task);
     expect(prompt.includes("Your Task: Standalone task")).toBeTruthy();
     expect(!prompt.includes("Mission:")).toBeTruthy();
     expect(!prompt.includes("Goal:")).toBeTruthy();
@@ -325,9 +311,6 @@ describe("dispatch with hooks", () => {
     const task = makeTask();
     saveTask(tmpDir, task);
 
-    // Create the worktree directory so the hook can attempt to run
-    mkdirSync(join(tmpDir, ".worktrees", "001-test-task"), { recursive: true });
-
     const panes: PaneInfo[] = [makePane({ id: "%1", title: "Agent 1", currentCommand: "zsh" })];
     mockPanes = panes;
 
@@ -346,9 +329,6 @@ describe("dispatch with hooks", () => {
   it("dispatches task when before_run succeeds", () => {
     const task = makeTask();
     saveTask(tmpDir, task);
-
-    // Create the worktree directory so the hook can run in it
-    mkdirSync(join(tmpDir, ".worktrees", "001-test-task"), { recursive: true });
 
     const pane = makePane({ id: "%1", index: 0, title: "Agent 1", currentCommand: "zsh" });
     const expectedName = agentIdentifier(pane);
@@ -369,19 +349,14 @@ describe("dispatch with hooks", () => {
 
 describe("detectCompletions with after_run", () => {
   it("runs after_run hook when task completes", () => {
-    // Create worktree directory so after_run can find it
-    const wtDir = join(tmpDir, ".worktrees", "001-test-task");
-    mkdirSync(wtDir, { recursive: true });
-
     const task = makeTask({
       status: "done",
       assignee: "Agent 1",
-      branch: "task/001-test-task",
     });
 
     const panes: PaneInfo[] = [makePane({ id: "%0", title: "Master" })];
 
-    // after_run creates a marker file — proves it ran in the worktree
+    // after_run creates a marker file — proves it ran in the project dir
     const config = makeOrchestratorConfig(tmpDir, { afterRun: "touch after_run_marker" });
     const state = makeOrchestratorState({
       previousTasks: new Map([["001", "in-progress"]]),
@@ -389,17 +364,13 @@ describe("detectCompletions with after_run", () => {
 
     detectCompletions(config, state, [task], panes);
 
-    expect(existsSync(join(wtDir, "after_run_marker"))).toBeTruthy();
+    expect(existsSync(join(tmpDir, "after_run_marker"))).toBeTruthy();
   });
 
   it("does not crash when after_run fails", () => {
-    const wtDir = join(tmpDir, ".worktrees", "001-test-task");
-    mkdirSync(wtDir, { recursive: true });
-
     const task = makeTask({
       status: "done",
       assignee: "Agent 1",
-      branch: "task/001-test-task",
     });
 
     const panes: PaneInfo[] = [makePane({ id: "%0", title: "Master" })];
@@ -527,7 +498,6 @@ describe("claim locking", () => {
     const task = makeTask({
       status: "done",
       assignee: "Agent 1",
-      branch: "task/001-test-task",
     });
 
     const panes: PaneInfo[] = [makePane({ id: "%0", title: "Master" })];
@@ -540,8 +510,6 @@ describe("claim locking", () => {
   it("releases claim when before_run hook fails", () => {
     const task = makeTask();
     saveTask(tmpDir, task);
-
-    mkdirSync(join(tmpDir, ".worktrees", "001-test-task"), { recursive: true });
 
     const panes: PaneInfo[] = [makePane({ id: "%1", title: "Agent 1", currentCommand: "zsh" })];
     mockPanes = panes;
@@ -556,55 +524,6 @@ describe("claim locking", () => {
   });
 });
 
-describe("cleanupOnDone", () => {
-  it("calls removeWorktree when cleanupOnDone is true", () => {
-    const wtDir = join(tmpDir, ".worktrees", "001-test-task");
-    mkdirSync(wtDir, { recursive: true });
-
-    const task = makeTask({
-      status: "done",
-      assignee: "Agent 1",
-      branch: "task/001-test-task",
-    });
-
-    const panes: PaneInfo[] = [makePane({ id: "%0", title: "Master" })];
-
-    const config = makeOrchestratorConfig(tmpDir, { cleanupOnDone: true });
-    const state = makeOrchestratorState({
-      previousTasks: new Map([["001", "in-progress"]]),
-    });
-
-    detectCompletions(config, state, [task], panes);
-
-    // Should have called git worktree remove
-    const removeCall = gitCalls.find((c) => c.args[0] === "worktree" && c.args[1] === "remove");
-    expect(removeCall).toBeTruthy();
-    expect(removeCall!.args.includes(wtDir)).toBeTruthy();
-  });
-
-  it("does not call removeWorktree when cleanupOnDone is false", () => {
-    const wtDir = join(tmpDir, ".worktrees", "001-test-task");
-    mkdirSync(wtDir, { recursive: true });
-
-    const task = makeTask({
-      status: "done",
-      assignee: "Agent 1",
-      branch: "task/001-test-task",
-    });
-
-    const panes: PaneInfo[] = [makePane({ id: "%0", title: "Master" })];
-
-    const config = makeOrchestratorConfig(tmpDir, { cleanupOnDone: false });
-    const state = makeOrchestratorState({
-      previousTasks: new Map([["001", "in-progress"]]),
-    });
-
-    detectCompletions(config, state, [task], panes);
-
-    const removeCall = gitCalls.find((c) => c.args[0] === "worktree" && c.args[1] === "remove");
-    expect(removeCall).toBe(undefined);
-  });
-});
 
 describe("createOrchestrator timer", () => {
   it("auto-assigns a task within poll interval", async () => {
@@ -653,7 +572,6 @@ describe("dispatch with version-string agent", () => {
   it("assigns task to agent reporting version string as command", () => {
     const task = makeTask();
     saveTask(tmpDir, task);
-    mkdirSync(join(tmpDir, ".worktrees", "001-test-task"), { recursive: true });
 
     // Simulate Claude Code showing version as command
     const pane = makePane({ id: "%1", index: 0, title: "Claude Code", currentCommand: "2.1.80" });
@@ -716,12 +634,10 @@ describe("reloadConfig", () => {
       pollInterval: 2000,
       stallTimeout: 120000,
       autoDispatch: false,
-      cleanupOnDone: true,
     });
     expect(config.pollInterval).toBe(2000);
     expect(config.stallTimeout).toBe(120000);
     expect(config.autoDispatch).toBe(false);
-    expect(config.cleanupOnDone).toBe(true);
   });
 
   it("preserves fields not in the patch", () => {
@@ -736,7 +652,6 @@ describe("event logging integration", () => {
   it("logs dispatch events", () => {
     const task = makeTask();
     saveTask(tmpDir, task);
-    mkdirSync(join(tmpDir, ".worktrees", "001-test-task"), { recursive: true });
 
     const pane = makePane({ id: "%1", index: 0, title: "Agent 1", currentCommand: "zsh" });
     const panes: PaneInfo[] = [pane];
@@ -779,7 +694,6 @@ describe("event logging integration", () => {
     const task = makeTask({
       status: "done",
       assignee: "Agent 1",
-      branch: "task/001-test-task",
     });
     const panes: PaneInfo[] = [makePane({ id: "%0", title: "Master" })];
 
@@ -925,11 +839,10 @@ describe("gracefulShutdown", () => {
     const task = makeTask({
       status: "in-progress",
       assignee: "Agent 1",
-      branch: "task/001-test-task",
     });
     saveTask(tmpDir, task);
 
-    const config = makeOrchestratorConfig(tmpDir, { cleanupOnDone: false });
+    const config = makeOrchestratorConfig(tmpDir);
     const state = makeOrchestratorState({
       claimedTasks: new Set(["001"]),
     });
@@ -957,43 +870,6 @@ describe("gracefulShutdown", () => {
     const restored = makeOrchestratorState();
     loadOrchestratorState(tmpDir, restored);
     expect(restored.claimedTasks.has("002")).toBeTruthy();
-  });
-
-  it("cleans worktrees when cleanupOnDone is true", () => {
-    const wtDir = join(tmpDir, ".worktrees", "001-test-task");
-    mkdirSync(wtDir, { recursive: true });
-
-    const task = makeTask({
-      status: "in-progress",
-      assignee: "Agent 1",
-      branch: "task/001-test-task",
-    });
-    saveTask(tmpDir, task);
-
-    const config = makeOrchestratorConfig(tmpDir, { cleanupOnDone: true });
-    const state = makeOrchestratorState();
-
-    gracefulShutdown(config, state);
-
-    const removeCall = gitCalls.find((c) => c.args[0] === "worktree" && c.args[1] === "remove");
-    expect(removeCall).toBeTruthy();
-  });
-
-  it("does not clean worktrees when cleanupOnDone is false", () => {
-    const task = makeTask({
-      status: "in-progress",
-      assignee: "Agent 1",
-      branch: "task/001-test-task",
-    });
-    saveTask(tmpDir, task);
-
-    const config = makeOrchestratorConfig(tmpDir, { cleanupOnDone: false });
-    const state = makeOrchestratorState();
-
-    gracefulShutdown(config, state);
-
-    const removeCall = gitCalls.find((c) => c.args[0] === "worktree" && c.args[1] === "remove");
-    expect(removeCall).toBe(undefined);
   });
 
   it("leaves done and todo tasks untouched", () => {

@@ -33,7 +33,7 @@ function writeTask(task: Partial<Task> & { id: string; title: string; status: st
     priority: 2,
     created: "2026-01-01T00:00:00Z",
     updated: "2026-01-01T00:00:00Z",
-    branch: null,
+
     tags: [],
     proof: null,
     retryCount: 0,
@@ -59,7 +59,7 @@ function writeLegacyTask(task: { id: string; title: string; status: string }) {
     priority: 2,
     created: "2026-01-01T00:00:00Z",
     updated: "2026-01-01T00:00:00Z",
-    branch: null,
+
     tags: [],
     proof: null,
   };
@@ -169,7 +169,7 @@ describe("groupTasks", () => {
     assignee: null,
     created: "",
     updated: "",
-    branch: null,
+
     tags: [],
     proof: null,
     retryCount: 0,
@@ -313,7 +313,7 @@ describe("depends_on", () => {
         priority: 1,
         created: "2026-01-01T00:00:00Z",
         updated: "2026-01-01T00:00:00Z",
-        branch: null,
+    
         tags: [],
         proof: null,
         depends_on: ["002", "003"],
@@ -336,7 +336,7 @@ describe("isBlocked", () => {
     assignee: null,
     created: "",
     updated: "",
-    branch: null,
+
     tags: [],
     proof: null,
     retryCount: 0,
@@ -423,7 +423,7 @@ describe("CLI interop", () => {
       priority: 1,
       created: "2026-01-01T00:00:00Z",
       updated: "2026-01-01T00:00:00Z",
-      branch: null,
+  
       tags: ["test"],
       proof: null,
       retryCount: 0,
@@ -453,7 +453,7 @@ describe("CLI interop", () => {
       priority: 1,
       created: "2026-01-01T00:00:00Z",
       updated: "2026-01-01T00:00:00Z",
-      branch: null,
+  
       tags: [],
       proof: null,
       retryCount: 0,

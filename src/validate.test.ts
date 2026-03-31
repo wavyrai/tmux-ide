@@ -301,7 +301,6 @@ describe("validateConfig", () => {
         auto_dispatch: true,
         stall_timeout: 300000,
         poll_interval: 5000,
-        worktree_root: ".worktrees/",
         master_pane: "Master",
       },
     });
@@ -329,7 +328,6 @@ describe("validateConfig", () => {
         auto_dispatch: 1,
         stall_timeout: "5000",
         poll_interval: true,
-        worktree_root: 42,
         master_pane: false,
       },
     });
@@ -337,7 +335,6 @@ describe("validateConfig", () => {
     expect(errors.includes("orchestrator.auto_dispatch must be a boolean")).toBeTruthy();
     expect(errors.includes("orchestrator.stall_timeout must be a number (ms)")).toBeTruthy();
     expect(errors.includes("orchestrator.poll_interval must be a number (ms)")).toBeTruthy();
-    expect(errors.includes("orchestrator.worktree_root must be a string")).toBeTruthy();
     expect(errors.includes("orchestrator.master_pane must be a string")).toBeTruthy();
   });
 
@@ -355,7 +352,6 @@ describe("validateConfig", () => {
       orchestrator: {
         before_run: "pnpm install",
         after_run: "pnpm test",
-        cleanup_on_done: true,
         max_concurrent_agents: 3,
         dispatch_mode: "goals",
       },
@@ -369,13 +365,11 @@ describe("validateConfig", () => {
       orchestrator: {
         before_run: 123,
         after_run: false,
-        cleanup_on_done: "yes",
         max_concurrent_agents: "ten",
       },
     });
     expect(errors.includes("orchestrator.before_run must be a string")).toBeTruthy();
     expect(errors.includes("orchestrator.after_run must be a string")).toBeTruthy();
-    expect(errors.includes("orchestrator.cleanup_on_done must be a boolean")).toBeTruthy();
     expect(errors.includes("orchestrator.max_concurrent_agents must be a number")).toBeTruthy();
   });
 

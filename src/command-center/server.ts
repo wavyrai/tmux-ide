@@ -222,7 +222,6 @@ export function createApp(options: CreateAppOptions = {}): Hono {
       priority: body.priority ?? 2,
       created: now,
       updated: now,
-      branch: null,
       tags: body.tags ?? [],
       proof: null,
       depends_on: [],

@@ -108,8 +108,6 @@ export interface GitFollowRequest {
   repoPath?: string; // Main repo path (for backward compatibility)
   branch?: string; // Optional - branch name (for backward compatibility)
   enable: boolean;
-  // New fields for worktree-based follow mode
-  worktreePath?: string; // The worktree path to follow
   mainRepoPath?: string; // The main repository path
 }
 

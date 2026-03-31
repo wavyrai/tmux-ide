@@ -55,7 +55,6 @@ export interface Task {
   priority: number;
   created: string;
   updated: string;
-  branch: string | null;
   tags: string[];
   proof: ProofSchema | null;
   retryCount: number;

@@ -347,7 +347,7 @@ ${teammatePanes.map((t) => `- ${t}`).join("\n")}
 ## How it works
 1. You create tasks with tmux-ide task create
 2. The orchestrator automatically assigns unassigned tasks to idle teammates
-3. Teammates work in isolated git worktrees
+3. Teammates work in the project directory
 4. When teammates finish, they run tmux-ide task done
 5. You get notified and review their work
 6. You report progress to the human

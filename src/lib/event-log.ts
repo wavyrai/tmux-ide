@@ -47,10 +47,8 @@ export function setWebhookConfig(webhooks: WebhookConfig[]): void {
  */
 export function formatEventMessage(event: StructuredEvent): string {
   switch (event.type) {
-    case "dispatch": {
-      const branch = event.branch ? ` (branch: ${event.branch})` : "";
-      return `Dispatched task ${event.taskId} to ${event.agent}${branch}`;
-    }
+    case "dispatch":
+      return `Dispatched task ${event.taskId} to ${event.agent}`;
     case "completion": {
       const duration =
         event.durationMs != null ? ` in ${Math.round(event.durationMs / 1000)}s` : "";

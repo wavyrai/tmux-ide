@@ -52,8 +52,6 @@ export async function dispatch(
       mission: mission ?? null,
       goal: goal ?? null,
       prompt,
-      worktree: task?.branch ? `task/${taskId}-worktree` : null,
-      branch: task?.branch ?? null,
     };
     console.log(JSON.stringify(result, null, 2));
     return;
@@ -75,7 +73,7 @@ export async function dispatch(
 /**
  * Build a human-readable prompt from the task store.
  * Mirrors the logic of buildTaskPrompt() in orchestrator.ts but without
- * requiring a worktree path (the task may already have a branch assigned).
+ * requiring an orchestrator config.
  */
 function buildPrompt(dir: string, task: NonNullable<ReturnType<typeof loadTask>>): string {
   let prompt = "";
@@ -100,7 +98,5 @@ function buildPrompt(dir: string, task: NonNullable<ReturnType<typeof loadTask>>
   if (task.description) prompt += `${task.description}\n`;
   prompt += `\nPriority: P${task.priority}\n`;
   if (task.tags?.length) prompt += `Tags: ${task.tags.join(", ")}\n`;
-  if (task.branch) prompt += `\nBranch: ${task.branch}\n`;
-
   return prompt.trim();
 }

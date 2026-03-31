@@ -53,7 +53,6 @@ export const TaskSchemaZ = z.object({
   priority: z.number(),
   created: z.string(),
   updated: z.string(),
-  branch: z.string().nullable(),
   tags: z.array(z.string()),
   proof: ProofSchemaZ.nullable(),
   retryCount: z.number(),
@@ -97,7 +96,6 @@ const DispatchEventZ = z.object({
   type: z.literal("dispatch"),
   taskId: z.string(),
   agent: z.string(),
-  branch: z.string().optional(),
 });
 
 const CompletionEventZ = z.object({

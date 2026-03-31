@@ -9,7 +9,7 @@
  * - **Stall detection** — nudges agents that exceed the configured timeout
  *   without producing output.
  * - **Completion handling** — records cost/time metrics, runs after-hooks,
- *   notifies the master pane, and optionally cleans up worktrees.
+ *   and notifies the master pane.
  * - **Retry with backoff** — re-dispatches failed tasks up to maxRetries,
  *   using nextRetryAt to schedule exponential backoff.
  * - **Reconciliation** — detects crashed or vanished agent panes and
@@ -46,14 +46,7 @@ import {
 import { slugify } from "./slugify.ts";
 import { recordTaskTime } from "./token-tracker.ts";
 import { listSessionPanes, sendCommand, type PaneInfo } from "../widgets/lib/pane-comms.ts";
-import {
-  createWorktree,
-  removeWorktree,
-  validateWorktreePath,
-  cleanupOrphanedWorktrees,
-} from "./worktree.ts";
 import { appendEvent } from "./event-log.ts";
-import { isGhAvailable, createTaskPr } from "./github-pr.ts";
 
 export interface OrchestratorConfig {
   session: string;
@@ -61,11 +54,9 @@ export interface OrchestratorConfig {
   autoDispatch: boolean;
   stallTimeout: number;
   pollInterval: number;
-  worktreeRoot: string;
   masterPane: string | null;
   beforeRun: string | null;
   afterRun: string | null;
-  cleanupOnDone: boolean;
   maxConcurrentAgents: number;
   dispatchMode: "tasks" | "goals";
   paneSpecialties: Map<string, string[]>;
@@ -177,19 +168,9 @@ export function isIdleForDispatch(pane: PaneInfo): boolean {
   return false;
 }
 
-function worktreePathForTask(config: OrchestratorConfig, task: Task): string | null {
-  if (!task.branch) return null;
-  // branch format: "task/001-slug" → worktree dir: "001-slug"
-  const suffix = task.branch.replace(/^task\//, "");
-  const wt = join(config.dir, config.worktreeRoot, suffix);
-  return existsSync(wt) ? wt : null;
-}
-
 export function buildTaskPrompt(
   dir: string,
   task: Task,
-  worktreePath: string,
-  branch: string,
 ): string {
   let prompt = "";
 
@@ -213,8 +194,7 @@ export function buildTaskPrompt(
   if (task.description) prompt += `${task.description}\n`;
   prompt += `\nPriority: P${task.priority}\n`;
   if (task.tags?.length) prompt += `Tags: ${task.tags.join(", ")}\n`;
-  prompt += `\nWorkspace: ${worktreePath}\n`;
-  prompt += `Branch: ${branch}\n`;
+  prompt += `\nWorkspace: ${dir}\n`;
   prompt += `\nWhen done:\n`;
   prompt += `  tmux-ide task done ${task.id} --proof "short summary of what you accomplished"\n`;
 
@@ -258,8 +238,8 @@ export function dispatch(
     .filter((t) => {
       // Skip if already claimed
       if (state.claimedTasks.has(t.id)) return false;
-      // Regular todo tasks (skip if already has a branch — was dispatched before)
-      if (t.status === "todo" && !t.assignee && !t.branch) {
+      // Regular todo tasks
+      if (t.status === "todo" && !t.assignee) {
         // Skip if waiting for scheduled retry (nextRetryAt is in the future)
         if (t.nextRetryAt && new Date(t.nextRetryAt).getTime() > now) return false;
         // Check dependencies: all depends_on tasks must be done
@@ -287,7 +267,7 @@ export function dispatch(
     if (!task) break;
     const agent = idleAgents[i]!;
 
-    // Verify the target pane still exists before investing in worktree setup
+    // Verify the target pane still exists before dispatch
     const currentPanes = listSessionPanes(config.session);
     if (!currentPanes.find((p) => p.id === agent.id)) {
       // Agent pane vanished — skip
@@ -306,53 +286,18 @@ export function dispatch(
     // Claim lock: prevent double-dispatch across poll ticks
     state.claimedTasks.add(task.id);
 
-    // Create git worktree
-    const slug = slugify(task.title, 30);
-    let worktreePath: string;
-    let branch: string;
-    try {
-      const wt = createWorktree(config.dir, config.worktreeRoot, task.id, slug);
-      worktreePath = wt.path;
-      branch = wt.branch;
-    } catch {
-      // Rollback: reset task to todo so it can be retried
-      task.status = "todo";
-      task.assignee = null;
-      task.updated = new Date().toISOString();
-      saveTask(config.dir, task);
-      state.claimedTasks.delete(task.id);
-      continue;
-    }
-
-    // Validate worktree path hasn't escaped root (symlink attacks, etc.)
-    const pathCheck = validateWorktreePath(config.dir, config.worktreeRoot, worktreePath);
-    if (!pathCheck.valid) {
-      task.status = "todo";
-      task.assignee = null;
-      task.updated = new Date().toISOString();
-      saveTask(config.dir, task);
-      state.claimedTasks.delete(task.id);
-      continue;
-    }
-
-    // Run before_run hook in worktree — abort dispatch for this task on failure
+    // Run before_run hook in project directory — abort dispatch for this task on failure
     if (config.beforeRun) {
-      const result = runHook(config.beforeRun, worktreePath);
+      const result = runHook(config.beforeRun, config.dir);
       if (!result.ok) {
         task.status = "todo";
         task.assignee = null;
         task.updated = new Date().toISOString();
         saveTask(config.dir, task);
         state.claimedTasks.delete(task.id);
-        removeWorktree(config.dir, worktreePath);
         continue;
       }
     }
-
-    // Update task with branch info
-    task.branch = branch;
-    task.updated = new Date().toISOString();
-    saveTask(config.dir, task);
 
     // Record claim time for cost tracking
     state.taskClaimTimes.set(task.id, Date.now());
@@ -360,7 +305,7 @@ export function dispatch(
     // Write the full prompt to a dispatch file and send a short command
     // telling the agent to read it. This avoids the paste preview problem
     // entirely — short commands (<200 chars) never trigger it.
-    const prompt = buildTaskPrompt(config.dir, task, worktreePath, branch);
+    const prompt = buildTaskPrompt(config.dir, task);
     const dispatchDir = join(config.dir, ".tasks", "dispatch");
     if (!existsSync(dispatchDir)) mkdirSync(dispatchDir, { recursive: true });
     // Validate task ID to prevent path traversal
@@ -370,7 +315,6 @@ export function dispatch(
       task.updated = new Date().toISOString();
       saveTask(config.dir, task);
       state.claimedTasks.delete(task.id);
-      removeWorktree(config.dir, worktreePath);
       continue;
     }
     const dispatchFile = join(dispatchDir, `${task.id}.md`);
@@ -380,15 +324,13 @@ export function dispatch(
     const sent = sendCommand(config.session, agent.id, shortCmd);
 
     if (!sent) {
-      // Roll back: reset task to todo, remove claim, clean up worktree
+      // Roll back: reset task to todo, remove claim
       task.status = "todo";
       task.assignee = null;
-      task.branch = null;
       task.updated = new Date().toISOString();
       saveTask(config.dir, task);
       state.claimedTasks.delete(task.id);
       state.taskClaimTimes.delete(task.id);
-      removeWorktree(config.dir, worktreePath);
 
       appendEvent(config.dir, {
         timestamp: new Date().toISOString(),
@@ -622,47 +564,9 @@ export function detectCompletions(
         message: `Completed "${task.title}" by ${task.assignee ?? "unknown"}`,
       });
 
-      // Auto-create GitHub PR if task has a branch
-      if (task.branch && isGhAvailable()) {
-        // Target PRs at the current branch (not repo default)
-        let baseBranch: string | undefined;
-        try {
-          baseBranch = execFileSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], {
-            cwd: config.dir,
-            encoding: "utf-8",
-            stdio: ["ignore", "pipe", "ignore"],
-          }).trim();
-        } catch {
-          /* fall back to repo default */
-        }
-        const pr = createTaskPr(task, config.dir, baseBranch);
-        if (pr) {
-          if (!task.proof) task.proof = {};
-          (task.proof as import("../types.ts").ProofSchema).pr = {
-            number: pr.number,
-            url: pr.url,
-            status: "open",
-          };
-          saveTask(config.dir, task);
-          appendEvent(config.dir, {
-            timestamp: new Date().toISOString(),
-            type: "completion",
-            taskId: task.id,
-            message: `PR created: ${pr.url}`,
-          });
-        }
-      }
-
-      const wt = worktreePathForTask(config, task);
-
       // Run after_run hook (failure is logged but ignored)
-      if (config.afterRun && wt) {
-        runHook(config.afterRun, wt);
-      }
-
-      // Cleanup worktree if configured
-      if (config.cleanupOnDone && wt) {
-        removeWorktree(config.dir, wt);
+      if (config.afterRun) {
+        runHook(config.afterRun, config.dir);
       }
 
       if (config.masterPane) {
@@ -709,7 +613,6 @@ export function scheduleRetry(
     task.status = "review";
     task.lastError = reason;
     task.assignee = null;
-    task.branch = null;
     task.updated = new Date().toISOString();
     saveTask(dir, task);
     state.claimedTasks.delete(task.id);
@@ -733,7 +636,6 @@ export function scheduleRetry(
   task.nextRetryAt = nextRetryAt;
   task.status = "todo";
   task.assignee = null;
-  task.branch = null;
   task.updated = new Date().toISOString();
   saveTask(dir, task);
   state.claimedTasks.delete(task.id);
@@ -852,15 +754,8 @@ export function gracefulShutdown(config: OrchestratorConfig, state: Orchestrator
   const tasks = loadTasks(config.dir);
   for (const task of tasks) {
     if (task.status === "in-progress" && task.assignee) {
-      // Clean worktree before clearing branch (needs branch to find path)
-      if (config.cleanupOnDone) {
-        const wt = worktreePathForTask(config, task);
-        if (wt) removeWorktree(config.dir, wt);
-      }
-
       task.assignee = null;
       task.status = "todo";
-      task.branch = null;
       task.updated = new Date().toISOString();
       saveTask(config.dir, task);
     }
@@ -880,7 +775,6 @@ export function reloadConfig(
       | "stallTimeout"
       | "maxConcurrentAgents"
       | "autoDispatch"
-      | "cleanupOnDone"
       | "beforeRun"
       | "afterRun"
     >
@@ -891,7 +785,6 @@ export function reloadConfig(
   if (patch.maxConcurrentAgents !== undefined)
     target.maxConcurrentAgents = patch.maxConcurrentAgents;
   if (patch.autoDispatch !== undefined) target.autoDispatch = patch.autoDispatch;
-  if (patch.cleanupOnDone !== undefined) target.cleanupOnDone = patch.cleanupOnDone;
   if (patch.beforeRun !== undefined) target.beforeRun = patch.beforeRun;
   if (patch.afterRun !== undefined) target.afterRun = patch.afterRun;
 }
@@ -912,9 +805,6 @@ export function createOrchestrator(initialConfig: OrchestratorConfig): () => voi
 
   // Sync claims with actual task store to clear stale claims after crash
   syncClaims(config.dir, state);
-
-  // Clean up orphaned worktrees left behind by a mid-dispatch crash
-  cleanupOrphanedWorktrees(config.dir, config.worktreeRoot, loadTasks(config.dir));
 
   // Initialize previous state
   for (const task of loadTasks(config.dir)) {
@@ -973,7 +863,6 @@ export function createOrchestrator(initialConfig: OrchestratorConfig): () => voi
             maxConcurrentAgents:
               (orch.max_concurrent_agents as number | undefined) ?? config.maxConcurrentAgents,
             autoDispatch: (orch.auto_dispatch as boolean | undefined) ?? config.autoDispatch,
-            cleanupOnDone: (orch.cleanup_on_done as boolean | undefined) ?? config.cleanupOnDone,
             beforeRun: (orch.before_run as string | undefined) ?? config.beforeRun,
             afterRun: (orch.after_run as string | undefined) ?? config.afterRun,
           });

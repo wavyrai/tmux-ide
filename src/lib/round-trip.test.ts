@@ -71,7 +71,7 @@ describe("task lifecycle round-trip", () => {
       priority: 1,
       created: "2026-03-21T10:00:00Z",
       updated: "2026-03-21T10:00:00Z",
-      branch: null,
+
       tags: ["backend"],
       proof: null,
       retryCount: 0,
@@ -170,7 +170,7 @@ describe("discovery round-trip", () => {
       priority: 1,
       created: "2026-03-21T10:00:00Z",
       updated: "2026-03-21T10:05:00Z",
-      branch: null,
+
       tags: [],
       proof: null,
       retryCount: 0,
@@ -244,7 +244,7 @@ describe("normalizer backward compatibility", () => {
         priority: 1,
         created: "2026-01-01T00:00:00Z",
         updated: "2026-01-01T00:00:00Z",
-        branch: null,
+  
         tags: [],
         proof: { note: "old note format" },
       }) + "\n",
