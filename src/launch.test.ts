@@ -167,9 +167,12 @@ describe("dashboard helpers", () => {
 
   it("starts the dashboard and stores pid and url", () => {
     const sessionVars: Array<{ name: string; value: string }> = [];
-    let spawned:
-      | { command: string; args: readonly string[]; envValue: string | undefined; cwd?: string }
-      | null = null;
+    let spawned: {
+      command: string;
+      args: readonly string[];
+      envValue: string | undefined;
+      cwd?: string;
+    } | null = null;
 
     const url = startDashboard("proj", 6060, {
       dashboardPort: 6061,

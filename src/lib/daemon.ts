@@ -361,7 +361,12 @@ async function startCommandCenter(): Promise<void> {
     }
 
     // Auto-start HQ client if role is "remote"
-    if (commandCenterStarted && hqConfig?.enabled && hqConfig.role === "remote" && hqConfig.hq_url) {
+    if (
+      commandCenterStarted &&
+      hqConfig?.enabled &&
+      hqConfig.role === "remote" &&
+      hqConfig.hq_url
+    ) {
       try {
         const { HQClient } = await import("./hq/client.ts");
         const os = await import("node:os");

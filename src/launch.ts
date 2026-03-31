@@ -255,7 +255,9 @@ export async function launch(
     const dashboardUrl = getSessionVariable(session, "@dashboard_url");
 
     if (json) {
-      console.log(JSON.stringify({ session, running: true, configChanged, commandCenterUrl, dashboardUrl }));
+      console.log(
+        JSON.stringify({ session, running: true, configChanged, commandCenterUrl, dashboardUrl }),
+      );
     } else if (configChanged) {
       console.log(`Session "${session}" is running but ide.yml has changed.`);
       console.log(`Run "tmux-ide restart" to apply changes.`);

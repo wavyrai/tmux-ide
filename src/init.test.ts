@@ -90,7 +90,9 @@ describe("init", () => {
     expect(existsSync(join(tmpDir, ".tmux-ide", "skills", "researcher.md"))).toBeTruthy();
     expect(existsSync(join(tmpDir, ".tmux-ide", "library"))).toBeTruthy();
     expect(existsSync(join(tmpDir, "AGENTS.md"))).toBeTruthy();
-    expect(readFileSync(join(tmpDir, "AGENTS.md"), "utf-8")).toContain(`## Project: ${join(tmpDir).split("/").pop()}`);
+    expect(readFileSync(join(tmpDir, "AGENTS.md"), "utf-8")).toContain(
+      `## Project: ${join(tmpDir).split("/").pop()}`,
+    );
 
     const output = JSON.parse(logged[0]);
     expect(output.template).toBe("missions");

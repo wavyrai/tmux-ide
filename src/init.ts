@@ -77,7 +77,9 @@ export async function init({
     writeFileSync(tmpPath, content);
     renameSync(tmpPath, configPath);
     const created =
-      template === "missions" ? scaffoldMissionsWorkspace(dir, name) : copyTemplateSkills(join(dir, ".tmux-ide", "skills"));
+      template === "missions"
+        ? scaffoldMissionsWorkspace(dir, name)
+        : copyTemplateSkills(join(dir, ".tmux-ide", "skills"));
 
     if (json) {
       console.log(JSON.stringify({ created: true, template, name, paths: created }));

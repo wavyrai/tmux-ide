@@ -303,15 +303,7 @@ function fmtPct(n: number): string {
   return `${Math.round(n * 100)}%`;
 }
 
-function KpiCard({
-  label,
-  value,
-  color,
-}: {
-  label: string;
-  value: string;
-  color?: string;
-}) {
+function KpiCard({ label, value, color }: { label: string; value: string; color?: string }) {
   return (
     <div className="px-3 py-2 bg-[var(--surface)] border border-[var(--border)]">
       <div className="text-[var(--dim)] text-[11px]">{label}</div>
@@ -392,13 +384,9 @@ function MetricsTab({ sessionName }: { sessionName: string }) {
           <h3 className="text-[var(--accent)] mb-1">milestones</h3>
           <div className="space-y-px">
             {metrics.tasks.byMilestone.map((m) => {
-              const pct =
-                m.taskCount > 0 ? Math.round((m.completedCount / m.taskCount) * 100) : 0;
+              const pct = m.taskCount > 0 ? Math.round((m.completedCount / m.taskCount) * 100) : 0;
               return (
-                <div
-                  key={m.id}
-                  className="flex items-center gap-2 px-2 py-0.5 bg-[var(--surface)]"
-                >
+                <div key={m.id} className="flex items-center gap-2 px-2 py-0.5 bg-[var(--surface)]">
                   <span
                     style={{ color: MILESTONE_STATUS_COLORS[m.status] ?? "var(--dim)" }}
                     className="w-6 shrink-0"
@@ -451,9 +439,7 @@ function MetricsTab({ sessionName }: { sessionName: string }) {
                     {fmtPct(a.utilization)}
                   </span>
                   {a.retryCount > 0 && (
-                    <span className="text-[var(--red)] shrink-0">
-                      {a.retryCount} retries
-                    </span>
+                    <span className="text-[var(--red)] shrink-0">{a.retryCount} retries</span>
                   )}
                   {a.specialties.length > 0 && (
                     <span className="text-[var(--cyan)] text-[10px] truncate">
@@ -478,9 +464,13 @@ function MetricsTab({ sessionName }: { sessionName: string }) {
           </span>
           <span className="text-[var(--dim)]">
             validation:{" "}
-            <span className="text-[var(--green)]">{fmtPct(metrics.mission.validationPassRate)}</span>
+            <span className="text-[var(--green)]">
+              {fmtPct(metrics.mission.validationPassRate)}
+            </span>
           </span>
-          <span className="text-[var(--dim)]">wall clock: {fmtDuration(metrics.mission.wallClockMs)}</span>
+          <span className="text-[var(--dim)]">
+            wall clock: {fmtDuration(metrics.mission.wallClockMs)}
+          </span>
         </div>
       )}
 
@@ -494,9 +484,7 @@ function MetricsTab({ sessionName }: { sessionName: string }) {
                 key={i}
                 className="flex items-center gap-3 px-2 py-0.5 bg-[var(--surface)] text-[11px] text-[var(--dim)]"
               >
-                <span className="w-20 shrink-0">
-                  {new Date(t.timestamp).toLocaleTimeString()}
-                </span>
+                <span className="w-20 shrink-0">{new Date(t.timestamp).toLocaleTimeString()}</span>
                 <span>
                   done:<span className="text-[var(--green)]">{t.completedTasks}</span>
                 </span>
