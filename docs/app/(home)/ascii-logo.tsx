@@ -17,10 +17,7 @@ export function AsciiLogo() {
     const t2 = setTimeout(() => setPhase("settled"), 700);
 
     // Console greeting
-    console.log(
-      "%c" + LOGO,
-      "color: #34d399; font-family: monospace; font-size: 10px;",
-    );
+    console.log("%c" + LOGO, "color: #34d399; font-family: monospace; font-size: 10px;");
     console.log(
       "%c\uD83E\uDD16 Built with Claude Code \u2014 from architecture to landing page, orchestrated by tmux-ide missions.",
       "color: #a78bfa; font-size: 12px; font-family: system-ui;",
