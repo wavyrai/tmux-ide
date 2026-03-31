@@ -144,7 +144,7 @@ describe("buildResearchPrompt", () => {
   it("includes mission context", () => {
     saveMission(
       tmpDir,
-      makeMission({ title: "Ship Droid Missions", description: "Audit the mission system" }),
+      makeMission({ title: "Ship v2.0", description: "Audit the mission system" }),
     );
 
     const prompt = buildResearchPrompt(tmpDir, "mission_start", {
@@ -152,7 +152,7 @@ describe("buildResearchPrompt", () => {
       reason: "Mission just started",
     });
 
-    expect(prompt).toContain("Mission: Ship Droid Missions");
+    expect(prompt).toContain("Mission: Ship v2.0");
     expect(prompt).toContain("Audit the mission system");
     expect(prompt).toContain("tmux-ide task done 099");
   });
