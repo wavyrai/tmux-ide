@@ -116,6 +116,7 @@ export function makeOrchestratorConfig(
     maxConcurrentAgents: 10,
     dispatchMode: "tasks",
     paneSpecialties: new Map(),
+    services: {},
     ...overrides,
   };
 }

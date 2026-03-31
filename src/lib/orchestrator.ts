@@ -26,8 +26,10 @@ import {
   existsSync,
   readFileSync,
   writeFileSync,
+  appendFileSync,
   renameSync,
   mkdirSync,
+  readdirSync,
   watch,
   type FSWatcher,
 } from "node:fs";
@@ -70,6 +72,7 @@ export interface OrchestratorConfig {
   maxConcurrentAgents: number;
   dispatchMode: "tasks" | "goals" | "missions";
   paneSpecialties: Map<string, string[]>;
+  services: Record<string, { command: string; port?: number; healthcheck?: string }>;
 }
 
 export interface OrchestratorState {
@@ -178,46 +181,145 @@ export function isIdleForDispatch(pane: PaneInfo): boolean {
   return false;
 }
 
+/**
+ * Load a library file excerpt. Returns content truncated to ~500 chars if needed.
+ */
+function loadLibraryExcerpt(filePath: string, maxChars = 500): string | null {
+  if (!existsSync(filePath)) return null;
+  try {
+    const content = readFileSync(filePath, "utf-8").trim();
+    if (!content) return null;
+    if (content.length <= maxChars) return content;
+    return content.slice(0, maxChars) + `\n... (see full file at ${filePath})`;
+  } catch {
+    return null;
+  }
+}
+
 export function buildTaskPrompt(
   dir: string,
   task: Task,
+  config?: OrchestratorConfig,
 ): string {
   let prompt = "";
 
+  // 1. Mission narrative
   const mission = loadMission(dir);
   if (mission) {
-    prompt += `Mission: ${mission.title}\n`;
+    prompt += `## Mission: ${mission.title}\n`;
     if (mission.description) prompt += `${mission.description}\n`;
     prompt += "\n";
   }
 
+  // 2. Milestone context
+  if (task.milestone && mission) {
+    const milestone = mission.milestones.find((m) => m.id === task.milestone);
+    if (milestone) {
+      prompt += `## Milestone: ${milestone.title} (${milestone.id})\n`;
+      if (milestone.description) prompt += `${milestone.description}\n`;
+      prompt += "\n";
+    }
+  }
+
+  // 3. AGENTS.md — project boundaries
+  const agentsMdPath = join(dir, "AGENTS.md");
+  const agentsContent = loadLibraryExcerpt(agentsMdPath, 1000);
+  if (agentsContent) {
+    prompt += `## Agent Guidelines\n${agentsContent}\n\n`;
+  }
+
+  // 4. Skill context
+  if (task.specialty) {
+    const skill = loadSkill(dir, task.specialty);
+    if (skill?.body) {
+      prompt += `## Your Role: ${skill.name}\n`;
+      prompt += `${skill.body}\n\n`;
+    }
+  }
+
+  // 5. Goal context
   if (task.goal) {
     const goal = loadGoal(dir, task.goal);
     if (goal) {
-      prompt += `Goal: ${goal.title}\n`;
+      prompt += `## Goal: ${goal.title}\n`;
       if (goal.acceptance) prompt += `Acceptance: ${goal.acceptance}\n`;
       prompt += "\n";
     }
   }
 
-  if (task.specialty) {
-    const skill = loadSkill(dir, task.specialty);
-    if (skill?.body) {
-      prompt += `Your Role: ${skill.name}\n`;
-      prompt += `${skill.body}\n\n`;
-    }
-  }
-
-  prompt += `Your Task: ${task.title}\n`;
+  // 6. Task details
+  prompt += `## Your Task: ${task.title}\n`;
   if (task.description) prompt += `${task.description}\n`;
   prompt += `\nPriority: P${task.priority}\n`;
   if (task.tags?.length) prompt += `Tags: ${task.tags.join(", ")}\n`;
-  prompt += `\nWorkspace: ${dir}\n`;
-  prompt += `\nWhen done:\n`;
+  if (task.fulfills?.length) prompt += `Fulfills assertions: ${task.fulfills.join(", ")}\n`;
+  prompt += "\n";
+
+  // 7. Recent completions (same milestone, last 5)
+  if (task.milestone) {
+    const allTasks = loadTasks(dir);
+    const recentDone = allTasks
+      .filter((t) => t.milestone === task.milestone && t.status === "done" && t.id !== task.id)
+      .slice(-5);
+    if (recentDone.length > 0) {
+      prompt += `## Recent Completions (${task.milestone})\n`;
+      for (const t of recentDone) {
+        prompt += `- ${t.id}: ${t.title}`;
+        if (t.salientSummary) prompt += ` — ${t.salientSummary}`;
+        prompt += "\n";
+      }
+      prompt += "\n";
+    }
+  }
+
+  // 8. Library references
+  const libraryDir = join(dir, ".tmux-ide", "library");
+  if (existsSync(libraryDir)) {
+    // Always include architecture.md
+    const archExcerpt = loadLibraryExcerpt(join(libraryDir, "architecture.md"));
+    if (archExcerpt) {
+      prompt += `## Architecture\n${archExcerpt}\n\n`;
+    }
+
+    // Match library files by task tags
+    if (task.tags?.length) {
+      try {
+        const files = readdirSync(libraryDir).filter(
+          (f) => f.endsWith(".md") && f !== "architecture.md",
+        );
+        const tagSet = new Set(task.tags.map((t) => t.toLowerCase()));
+        for (const file of files) {
+          const stem = file.replace(/\.md$/, "").toLowerCase();
+          if (tagSet.has(stem)) {
+            const excerpt = loadLibraryExcerpt(join(libraryDir, file));
+            if (excerpt) {
+              prompt += `## Reference: ${file}\n${excerpt}\n\n`;
+            }
+          }
+        }
+      } catch {
+        // Library scan failed — skip
+      }
+    }
+  }
+
+  // 9. Services
+  if (config?.services && Object.keys(config.services).length > 0) {
+    prompt += `## Available Services\n`;
+    for (const [name, svc] of Object.entries(config.services)) {
+      prompt += `- **${name}**: \`${svc.command}\``;
+      if (svc.port) prompt += ` (port ${svc.port})`;
+      if (svc.healthcheck) prompt += ` — healthcheck: \`${svc.healthcheck}\``;
+      prompt += "\n";
+    }
+    prompt += "\n";
+  }
+
+  // 10. Workspace + completion instructions
+  prompt += `Workspace: ${dir}\n\n`;
+  prompt += `When done:\n`;
   prompt += `  tmux-ide task done ${task.id} --proof "short summary of what you accomplished"\n`;
 
-  // Prompt is written to a file (.tasks/dispatch/{id}.md), not pasted.
-  // Keep readable multiline format for the agent.
   return prompt.trim();
 }
 
@@ -659,7 +761,7 @@ export function dispatch(
     // Write the full prompt to a dispatch file and send a short command
     // telling the agent to read it. This avoids the paste preview problem
     // entirely — short commands (<200 chars) never trigger it.
-    const prompt = buildTaskPrompt(config.dir, task);
+    const prompt = buildTaskPrompt(config.dir, task, config);
     const dispatchDir = join(config.dir, ".tasks", "dispatch");
     if (!existsSync(dispatchDir)) mkdirSync(dispatchDir, { recursive: true });
     // Validate task ID to prevent path traversal
@@ -779,9 +881,26 @@ export function buildGoalPrompt(dir: string, goal: Goal, planner: PaneInfo): str
   let prompt = `You are ${name}, a ${specialtyLabel} planner.\n\n`;
 
   if (mission) {
-    prompt += `Mission: ${mission.title}\n`;
+    prompt += `## Mission: ${mission.title}\n`;
     if (mission.description) prompt += `${mission.description}\n`;
     prompt += "\n";
+
+    // Milestone context
+    if (goal.milestone) {
+      const milestone = mission.milestones.find((m) => m.id === goal.milestone);
+      if (milestone) {
+        prompt += `## Milestone: ${milestone.title} (${milestone.id})\n`;
+        if (milestone.description) prompt += `${milestone.description}\n`;
+        prompt += "\n";
+      }
+    }
+  }
+
+  // AGENTS.md — project boundaries
+  const agentsMdPath = join(dir, "AGENTS.md");
+  const agentsContent = loadLibraryExcerpt(agentsMdPath, 1000);
+  if (agentsContent) {
+    prompt += `## Agent Guidelines\n${agentsContent}\n\n`;
   }
 
   prompt += `Your Goal: ${goal.title}\n`;
@@ -956,6 +1075,15 @@ export function detectCompletions(
         agent: task.assignee ?? undefined,
         message: `Completed "${task.title}" by ${task.assignee ?? "unknown"}${task.salientSummary ? ` — ${task.salientSummary}` : ""}`,
       });
+
+      // Append salient summary to knowledge library
+      if (task.salientSummary) {
+        const libraryDir = join(config.dir, ".tmux-ide", "library");
+        if (!existsSync(libraryDir)) mkdirSync(libraryDir, { recursive: true });
+        const learningsPath = join(libraryDir, "learnings.md");
+        const entry = `## Task ${task.id}: ${task.title}\n${task.salientSummary}\n---\n\n`;
+        appendFileSync(learningsPath, entry);
+      }
 
       // Structured handoff: auto-create follow-up tasks for discovered issues
       if (task.discoveredIssues && task.discoveredIssues.length > 0) {

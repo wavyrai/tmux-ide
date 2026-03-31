@@ -190,6 +190,7 @@ async function startOrchestrator(): Promise<void> {
         maxConcurrentAgents: orch.max_concurrent_agents ?? 10,
         dispatchMode: orch.dispatch_mode ?? "tasks",
         paneSpecialties,
+        services: (orch.services as Record<string, { command: string; port?: number; healthcheck?: string }>) ?? {},
       });
     } catch {
       // Orchestrator module not available yet
