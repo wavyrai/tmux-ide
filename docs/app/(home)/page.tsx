@@ -1,6 +1,7 @@
 import Link from "next/link";
 import type { Metadata } from "next";
 import { CopyButton } from "./copy-button";
+import TerminalDemo from "@/components/terminal-demo";
 
 export const metadata: Metadata = {
   title: "tmux-ide — Autonomous Multi-Agent Missions",
@@ -152,43 +153,9 @@ export default function HomePage() {
 
         <SectionDivider />
 
-        {/* THREE-COMMAND SETUP */}
-        <section className="w-full max-w-2xl mx-auto px-6 py-16">
-          <div className="border border-fd-border overflow-hidden">
-            <div className="px-4 py-2 border-b border-fd-border">
-              <span className="text-xs text-fd-muted-foreground font-mono">terminal</span>
-            </div>
-            <div className="p-5 font-mono text-sm space-y-1">
-              <p>
-                <span className="text-fd-muted-foreground select-none">$ </span>
-                <span className="text-fd-foreground">
-                  tmux-ide init --template missions
-                </span>
-              </p>
-              <p className="text-fd-muted-foreground">
-                {"\u2192"} Created ide.yml, skills, AGENTS.md
-              </p>
-              <p className="mt-3!">
-                <span className="text-fd-muted-foreground select-none">$ </span>
-                <span className="text-fd-foreground">
-                  {`tmux-ide mission create "Build auth" -d "JWT + refresh tokens"`}
-                </span>
-              </p>
-              <p className="text-fd-muted-foreground">
-                {"\u2192"} Mission created (planning)
-              </p>
-              <p className="mt-3!">
-                <span className="text-fd-muted-foreground select-none">$ </span>
-                <span className="text-fd-foreground">tmux-ide</span>
-              </p>
-              <p className="text-fd-muted-foreground">
-                {"\u2192"} 6 agent panes, dashboard at localhost:6060, fully autonomous
-              </p>
-            </div>
-          </div>
-          <p className="text-center text-sm text-fd-muted-foreground mt-4">
-            That&apos;s it. Fully autonomous from here.
-          </p>
+        {/* INTERACTIVE TERMINAL DEMO */}
+        <section className="w-full flex flex-col items-center px-6 py-16">
+          <TerminalDemo />
         </section>
 
         <SectionDivider />
@@ -289,62 +256,53 @@ export default function HomePage() {
 
         <SectionDivider />
 
-        {/* COMPARISON */}
-        <section className="w-full max-w-3xl mx-auto px-6 py-16">
-          <div className="text-center mb-8">
-            <h2 className="text-2xl font-semibold text-fd-foreground">
-              Factory Droid Missions, open source
-            </h2>
+        {/* HOW IT WORKS — 4 lifecycle phases */}
+        <section className="w-full max-w-4xl mx-auto px-6 py-16">
+          <div className="text-center mb-10">
+            <h2 className="text-2xl font-semibold text-fd-foreground">How It Works</h2>
             <p className="text-sm text-fd-muted-foreground mt-2">
-              Same patterns. Open source. Any agent CLI. tmux-native.
+              Four phases, fully autonomous
             </p>
           </div>
-          <div className="border border-fd-border overflow-hidden">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-fd-border">
-                  <th className="text-left font-mono font-normal text-fd-muted-foreground px-4 py-2">
-                    Capability
-                  </th>
-                  <th className="text-center font-mono font-normal text-fd-muted-foreground px-4 py-2">
-                    Factory
-                  </th>
-                  <th className="text-center font-mono font-normal text-fd-muted-foreground px-4 py-2">
-                    tmux-ide
-                  </th>
-                </tr>
-              </thead>
-              <tbody className="text-fd-foreground">
-                {[
-                  "Missions",
-                  "Milestones",
-                  "Validation contracts",
-                  "Skill-based dispatch",
-                  "Knowledge library",
-                  "Services registry",
-                  "Live dashboard",
-                  "Open source",
-                  "Any agent CLI",
-                  "tmux-native",
-                ].map((cap, i) => (
-                  <tr key={cap} className={i > 0 ? "border-t border-fd-border" : ""}>
-                    <td className="px-4 py-1.5">{cap}</td>
-                    <td className="text-center px-4 py-1.5">
-                      {i < 6 ? (
-                        <span style={{ color: DOT }}>{"\u2713"}</span>
-                      ) : i < 7 ? (
-                        <span style={{ color: DOT }}>{"\u2713"}</span>
-                      ) : (
-                        <span className="text-fd-muted-foreground">{"\u2013"}</span>
-                      )}
-                    </td>
-                    <td className="text-center px-4 py-1.5">
-                      <span style={{ color: DOT }}>{"\u2713"}</span>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-px bg-fd-border">
+            {[
+              {
+                phase: "1",
+                title: "Planning",
+                description:
+                  "The lead agent analyzes your mission, creates milestones, tasks, and a validation contract with testable assertions.",
+              },
+              {
+                phase: "2",
+                title: "Execution",
+                description:
+                  "Tasks dispatch to skill-matched agents. Milestone gating ensures sequential phases. Knowledge accumulates as agents work.",
+              },
+              {
+                phase: "3",
+                title: "Validation",
+                description:
+                  "An independent validator checks each assertion. Failed checks auto-create remediation tasks. The milestone loops until all pass.",
+              },
+              {
+                phase: "4",
+                title: "Complete",
+                description:
+                  "All milestones validated. Mission marked complete. PR auto-created. Metrics and learnings persisted for next time.",
+              },
+            ].map((item) => (
+              <div key={item.phase} className="bg-fd-card p-6">
+                <div className="font-mono text-xs text-fd-muted-foreground mb-2">
+                  Phase {item.phase}
+                </div>
+                <h3 className="font-mono text-sm font-medium text-fd-foreground mb-2">
+                  {item.title}
+                </h3>
+                <p className="text-sm text-fd-muted-foreground leading-relaxed">
+                  {item.description}
+                </p>
+              </div>
+            ))}
           </div>
         </section>
 
