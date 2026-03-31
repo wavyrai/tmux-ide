@@ -92,6 +92,7 @@ const knownCommands = new Set([
   "research",
   "plan",
   "skill",
+  "metrics",
   "setup",
   "send",
   "dispatch",
@@ -122,6 +123,7 @@ const ALIASES: Record<string, string> = {
   ms: "milestone",
   orch: "orchestrator",
   o: "orchestrator",
+  met: "metrics",
 };
 const firstPositional = positionals[0];
 const resolved = ALIASES[firstPositional] ?? firstPositional;
@@ -417,6 +419,15 @@ try {
         json,
         sub: positionals[1],
         args: positionals.slice(2),
+      });
+      break;
+    }
+
+    case "metrics": {
+      const { metricsCommand } = await import("../src/metrics-cli.ts");
+      await metricsCommand(null, {
+        json,
+        sub: positionals[1],
       });
       break;
     }
