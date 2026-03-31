@@ -41,6 +41,7 @@ import {
   loadTasks,
   saveTask,
   saveGoal,
+  nextTaskId,
   type Task,
   type Goal,
   type Mission,
@@ -51,6 +52,11 @@ import { recordTaskTime } from "./token-tracker.ts";
 import { listSessionPanes, sendCommand, type PaneInfo } from "../widgets/lib/pane-comms.ts";
 import { appendEvent } from "./event-log.ts";
 import { loadSkill } from "./skill-registry.ts";
+import {
+  loadValidationContract,
+  loadValidationState,
+  saveValidationState,
+} from "./validation.ts";
 
 export interface OrchestratorConfig {
   session: string;
@@ -256,9 +262,14 @@ function isTaskMilestoneEligible(dir: string, task: Task, mission: Mission | nul
 
 /**
  * Check active milestones for completion. When all tasks for a milestone are done,
- * mark it 'done' and activate the next one (lowest-order 'locked' milestone).
+ * transition to 'validating' (if a validation contract exists) or straight to 'done'.
  */
-export function checkMilestoneCompletion(config: OrchestratorConfig, tasks: Task[]): void {
+export function checkMilestoneCompletion(
+  config: OrchestratorConfig,
+  state: OrchestratorState,
+  tasks: Task[],
+  panes: PaneInfo[],
+): void {
   const mission = loadMission(config.dir);
   if (!mission || mission.milestones.length === 0) return;
 
@@ -273,22 +284,264 @@ export function checkMilestoneCompletion(config: OrchestratorConfig, tasks: Task
     const allDone = milestoneTasks.every((t) => t.status === "done");
     if (!allDone) continue;
 
-    // Mark milestone as done
-    milestone.status = "done";
-    milestone.updated = new Date().toISOString();
-    changed = true;
+    // Check if a validation contract exists — if so, go through validation
+    const contract = loadValidationContract(config.dir);
+    if (contract) {
+      milestone.status = "validating";
+      milestone.updated = new Date().toISOString();
+      changed = true;
 
-    appendEvent(config.dir, {
-      timestamp: new Date().toISOString(),
-      type: "milestone_complete",
-      message: `Milestone "${milestone.title}" (${milestone.id}) completed`,
+      appendEvent(config.dir, {
+        timestamp: new Date().toISOString(),
+        type: "milestone_validating",
+        message: `Milestone "${milestone.title}" (${milestone.id}) — all tasks done, dispatching validation`,
+      });
+
+      // Dispatch validation to a validator pane
+      dispatchValidation(config, state, milestone, milestoneTasks, panes);
+    } else {
+      // No contract — skip straight to done
+      milestone.status = "done";
+      milestone.updated = new Date().toISOString();
+      changed = true;
+
+      appendEvent(config.dir, {
+        timestamp: new Date().toISOString(),
+        type: "milestone_complete",
+        message: `Milestone "${milestone.title}" (${milestone.id}) completed`,
+      });
+
+      // Activate next locked milestone
+      const next = sorted.find((m) => m.status === "locked");
+      if (next) {
+        next.status = "active";
+        next.updated = new Date().toISOString();
+      }
+    }
+  }
+
+  if (changed) {
+    mission.updated = new Date().toISOString();
+    saveMission(config.dir, mission);
+  }
+}
+
+/**
+ * Build a validation prompt for a milestone.
+ */
+export function buildValidationPrompt(
+  dir: string,
+  milestone: Milestone,
+  completedTasks: Task[],
+): string {
+  const contract = loadValidationContract(dir);
+  let prompt = `# Validation: ${milestone.title} (${milestone.id})\n\n`;
+
+  if (contract) {
+    prompt += `## Validation Contract\n\n${contract}\n\n`;
+  }
+
+  prompt += `## Completed Tasks\n\n`;
+  for (const task of completedTasks) {
+    prompt += `### ${task.id}: ${task.title}\n`;
+    if (task.proof) prompt += `Proof: ${JSON.stringify(task.proof)}\n`;
+    if (task.fulfills.length > 0) prompt += `Fulfills assertions: ${task.fulfills.join(", ")}\n`;
+    if (task.salientSummary) prompt += `Summary: ${task.salientSummary}\n`;
+    prompt += "\n";
+  }
+
+  prompt += `## Instructions\n\n`;
+  prompt += `Verify each assertion in the validation contract. For each assertion:\n`;
+  prompt += `1. Check that the completed work actually satisfies the requirement\n`;
+  prompt += `2. Run any relevant tests or checks\n`;
+  prompt += `3. Report your finding:\n`;
+  prompt += `   tmux-ide validate assert <ASSERT_ID> --status passing --evidence "description"\n`;
+  prompt += `   tmux-ide validate assert <ASSERT_ID> --status failing --evidence "what's wrong"\n\n`;
+  prompt += `When done verifying all assertions, the orchestrator will automatically detect results.\n`;
+
+  return prompt.trim();
+}
+
+/**
+ * Dispatch validation to a validator pane after milestone completion.
+ */
+export function dispatchValidation(
+  config: OrchestratorConfig,
+  state: OrchestratorState,
+  milestone: Milestone,
+  completedTasks: Task[],
+  panes: PaneInfo[],
+): void {
+  // Find validator pane, fall back to any idle non-lead agent
+  const validatorPane =
+    panes.find((p) => p.role === "validator" && isIdleForDispatch(p)) ??
+    panes.find((p) => {
+      if (p.role === "lead") return false;
+      if (config.masterPane && normalizePaneTitle(p.title) === config.masterPane) return false;
+      return isIdleForDispatch(p);
     });
 
-    // Activate next locked milestone
-    const next = sorted.find((m) => m.status === "locked");
-    if (next) {
-      next.status = "active";
-      next.updated = new Date().toISOString();
+  if (!validatorPane) {
+    appendEvent(config.dir, {
+      timestamp: new Date().toISOString(),
+      type: "error",
+      message: `No idle validator pane for milestone "${milestone.title}" — validation pending`,
+    });
+    return;
+  }
+
+  // Initialize validation state with pending entries for all fulfills
+  const valState = loadValidationState(config.dir) ?? { assertions: {}, lastVerified: null };
+  for (const task of completedTasks) {
+    for (const assertionId of task.fulfills) {
+      if (!valState.assertions[assertionId]) {
+        valState.assertions[assertionId] = {
+          status: "pending",
+          verifiedBy: null,
+          verifiedAt: null,
+          evidence: null,
+        };
+      }
+    }
+  }
+  saveValidationState(config.dir, valState);
+
+  // Build and write prompt
+  const prompt = buildValidationPrompt(config.dir, milestone, completedTasks);
+  const dispatchDir = join(config.dir, ".tasks", "dispatch");
+  if (!existsSync(dispatchDir)) mkdirSync(dispatchDir, { recursive: true });
+  const dispatchFile = join(dispatchDir, `validate-${milestone.id}.md`);
+  writeFileSync(dispatchFile, prompt);
+
+  sendCommand(
+    config.session,
+    validatorPane.id,
+    `Read and execute: .tasks/dispatch/validate-${milestone.id}.md`,
+  );
+
+  appendEvent(config.dir, {
+    timestamp: new Date().toISOString(),
+    type: "validation_dispatch",
+    message: `Dispatched validation for "${milestone.title}" to ${validatorPane.title}`,
+  });
+
+  state.lastActivity.set(validatorPane.id, Date.now());
+}
+
+/**
+ * Check validation results for milestones in 'validating' state.
+ * If all assertions pass → mark done, activate next.
+ * If any fail → create remediation tasks, set milestone back to 'active'.
+ */
+export function checkValidationResults(config: OrchestratorConfig, tasks: Task[]): void {
+  const mission = loadMission(config.dir);
+  if (!mission) return;
+
+  const valState = loadValidationState(config.dir);
+  if (!valState) return;
+
+  let changed = false;
+  const sorted = [...mission.milestones].sort((a, b) => a.order - b.order);
+
+  for (const milestone of sorted) {
+    if (milestone.status !== "validating") continue;
+
+    // Collect assertion IDs relevant to this milestone's tasks
+    const milestoneTasks = tasks.filter((t) => t.milestone === milestone.id);
+    const milestoneAssertionIds = new Set(milestoneTasks.flatMap((t) => t.fulfills));
+
+    // Check if all milestone assertions have been verified (no longer pending)
+    const allVerified = [...milestoneAssertionIds].every((id) => {
+      const entry = valState.assertions[id];
+      return entry && entry.status !== "pending";
+    });
+    if (!allVerified) continue;
+
+    // Check if there are zero assertions to verify — skip
+    if (milestoneAssertionIds.size === 0) continue;
+
+    const allPassing = [...milestoneAssertionIds].every(
+      (id) => valState.assertions[id]?.status === "passing",
+    );
+
+    if (allPassing) {
+      milestone.status = "done";
+      milestone.updated = new Date().toISOString();
+      changed = true;
+
+      appendEvent(config.dir, {
+        timestamp: new Date().toISOString(),
+        type: "milestone_complete",
+        message: `Milestone "${milestone.title}" (${milestone.id}) — validation passed`,
+      });
+
+      // Activate next locked milestone
+      const next = sorted.find((m) => m.status === "locked");
+      if (next) {
+        next.status = "active";
+        next.updated = new Date().toISOString();
+      }
+    } else {
+      // Create remediation tasks for failing assertions
+      const failedIds = [...milestoneAssertionIds].filter(
+        (id) => valState.assertions[id]?.status === "failing",
+      );
+
+      for (const assertionId of failedIds) {
+        const entry = valState.assertions[assertionId]!;
+        const id = nextTaskId(config.dir);
+        const now = new Date().toISOString();
+        const task: Task = {
+          id,
+          title: `Remediate: assertion ${assertionId} failing`,
+          description: `Assertion ${assertionId} failed validation.\nEvidence: ${entry.evidence ?? "none"}\n\nFix the issue and ensure the assertion passes.`,
+          goal: null,
+          status: "todo",
+          assignee: null,
+          priority: 1,
+          created: now,
+          updated: now,
+          tags: ["remediation"],
+          proof: null,
+          depends_on: [],
+          retryCount: 0,
+          maxRetries: 5,
+          lastError: null,
+          nextRetryAt: null,
+          milestone: milestone.id,
+          specialty: null,
+          fulfills: [assertionId],
+          discoveredIssues: [],
+          salientSummary: null,
+        };
+        saveTask(config.dir, task);
+
+        // Reset the assertion back to pending for re-verification
+        entry.status = "pending";
+        entry.verifiedBy = null;
+        entry.verifiedAt = null;
+        entry.evidence = null;
+
+        appendEvent(config.dir, {
+          timestamp: new Date().toISOString(),
+          type: "remediation",
+          taskId: id,
+          message: `Created remediation task ${id} for failing assertion ${assertionId}`,
+        });
+      }
+
+      saveValidationState(config.dir, valState);
+
+      // Set milestone back to active so remediation tasks can be dispatched
+      milestone.status = "active";
+      milestone.updated = new Date().toISOString();
+      changed = true;
+
+      appendEvent(config.dir, {
+        timestamp: new Date().toISOString(),
+        type: "validation_failed",
+        message: `Milestone "${milestone.title}" (${milestone.id}) — ${failedIds.length} assertion(s) failed, remediation tasks created`,
+      });
     }
   }
 
@@ -701,8 +954,47 @@ export function detectCompletions(
         type: "completion",
         taskId: task.id,
         agent: task.assignee ?? undefined,
-        message: `Completed "${task.title}" by ${task.assignee ?? "unknown"}`,
+        message: `Completed "${task.title}" by ${task.assignee ?? "unknown"}${task.salientSummary ? ` — ${task.salientSummary}` : ""}`,
       });
+
+      // Structured handoff: auto-create follow-up tasks for discovered issues
+      if (task.discoveredIssues && task.discoveredIssues.length > 0) {
+        for (const issue of task.discoveredIssues) {
+          const followUpId = nextTaskId(config.dir);
+          const now = new Date().toISOString();
+          const followUp: Task = {
+            id: followUpId,
+            title: issue.length > 80 ? issue.slice(0, 77) + "..." : issue,
+            description: `Discovered during task ${task.id} ("${task.title}"):\n\n${issue}`,
+            goal: task.goal,
+            status: "todo",
+            assignee: null,
+            priority: 2,
+            created: now,
+            updated: now,
+            tags: ["discovered-issue"],
+            proof: null,
+            depends_on: [],
+            retryCount: 0,
+            maxRetries: 5,
+            lastError: null,
+            nextRetryAt: null,
+            milestone: task.milestone,
+            specialty: null,
+            fulfills: [],
+            discoveredIssues: [],
+            salientSummary: null,
+          };
+          saveTask(config.dir, followUp);
+
+          appendEvent(config.dir, {
+            timestamp: new Date().toISOString(),
+            type: "discovered_issue",
+            taskId: followUpId,
+            message: `Auto-created follow-up task ${followUpId} from ${task.id}: ${issue}`,
+          });
+        }
+      }
 
       // Run after_run hook (failure is logged but ignored)
       if (config.afterRun) {
@@ -976,9 +1268,10 @@ export function createOrchestrator(initialConfig: OrchestratorConfig): () => voi
     // 4. Detect completions: notify master, run hooks, cleanup
     detectCompletions(config, state, tasks, panes);
 
-    // 5. Milestone completion: check if active milestones are done, auto-progress
+    // 5. Milestone completion + validation flow
     if (config.dispatchMode === "missions") {
-      checkMilestoneCompletion(config, tasks);
+      checkMilestoneCompletion(config, state, tasks, panes);
+      checkValidationResults(config, tasks);
     }
 
     // Update previous state

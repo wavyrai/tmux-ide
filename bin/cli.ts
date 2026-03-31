@@ -51,6 +51,7 @@ const { positionals, values } = parseArgs({
     pr: { type: "boolean" },
     specialty: { type: "string" },
     sequence: { type: "string" },
+    evidence: { type: "string" },
     port: { type: "string" },
     // tunnel command flags
     provider: { type: "string" },
@@ -234,9 +235,25 @@ try {
       await inspect(positionals[1], { json });
       break;
 
-    case "validate":
-      await validate(positionals[1], { json });
+    case "validate": {
+      const valSub = positionals[1];
+      if (valSub === "assert" || valSub === "show" || valSub === "report" || valSub === "help") {
+        await taskCommand(null, {
+          json,
+          action: "validate",
+          sub: valSub,
+          args: positionals.slice(2),
+          values: {
+            status: values.status,
+            evidence: values.evidence,
+            assign: values.assign,
+          },
+        });
+      } else {
+        await validate(valSub, { json });
+      }
       break;
+    }
 
     case "detect":
       await detect(positionals[1], { json, write: values.write });

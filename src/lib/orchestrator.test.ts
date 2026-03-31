@@ -27,6 +27,8 @@ import {
   getCurrentMilestone,
   isMilestoneReady,
   checkMilestoneCompletion,
+  checkValidationResults,
+  buildValidationPrompt,
 } from "./orchestrator.ts";
 import { readEvents } from "./event-log.ts";
 import {
@@ -36,10 +38,15 @@ import {
   saveGoal,
   saveTask,
   loadTask,
+  loadTasks,
   loadGoal,
   type Goal,
   type Mission,
 } from "./task-store.ts";
+import {
+  loadValidationState,
+  saveValidationState,
+} from "./validation.ts";
 import { _setExecutor, type PaneInfo } from "../widgets/lib/pane-comms.ts";
 import {
   makeTask,
@@ -1380,7 +1387,7 @@ describe("milestone gating", () => {
     expect(loaded?.status).toBe("in-progress");
   });
 
-  it("checkMilestoneCompletion marks M1 done and activates M2 when all M1 tasks complete", () => {
+  it("checkMilestoneCompletion marks M1 done and activates M2 when all M1 tasks complete (no contract)", () => {
     setupMission([
       { id: "M1", title: "Phase 1", description: "", status: "active", order: 1, created: "2026-01-01T00:00:00Z", updated: "2026-01-01T00:00:00Z" },
       { id: "M2", title: "Phase 2", description: "", status: "locked", order: 2, created: "2026-01-01T00:00:00Z", updated: "2026-01-01T00:00:00Z" },
@@ -1392,7 +1399,9 @@ describe("milestone gating", () => {
     saveTask(tmpDir, task2);
 
     const config = makeOrchestratorConfig(tmpDir, { dispatchMode: "missions" });
-    checkMilestoneCompletion(config, [task1, task2]);
+    const state = makeOrchestratorState();
+    mockPanes = [];
+    checkMilestoneCompletion(config, state, [task1, task2], []);
 
     const mission = loadMission(tmpDir)!;
     const m1 = mission.milestones.find((m) => m.id === "M1")!;
@@ -1419,12 +1428,218 @@ describe("milestone gating", () => {
     saveTask(tmpDir, task2);
 
     const config = makeOrchestratorConfig(tmpDir, { dispatchMode: "missions" });
-    checkMilestoneCompletion(config, [task1, task2]);
+    const state = makeOrchestratorState();
+    checkMilestoneCompletion(config, state, [task1, task2], []);
 
     const mission = loadMission(tmpDir)!;
     const m1 = mission.milestones.find((m) => m.id === "M1")!;
     const m2 = mission.milestones.find((m) => m.id === "M2")!;
     expect(m1.status).toBe("active");
     expect(m2.status).toBe("locked");
+  });
+});
+
+describe("validation flow", () => {
+  function setupMission(milestones: Mission["milestones"]): void {
+    saveMission(tmpDir, {
+      title: "Ship v2",
+      description: "",
+      status: "active",
+      branch: null,
+      milestones,
+      created: "2026-01-01T00:00:00Z",
+      updated: "2026-01-01T00:00:00Z",
+    });
+  }
+
+  function writeContract(content: string): void {
+    mkdirSync(join(tmpDir, ".tasks"), { recursive: true });
+    writeFileSync(join(tmpDir, ".tasks", "validation-contract.md"), content);
+  }
+
+  it("milestone completion triggers validating state when contract exists", () => {
+    setupMission([
+      { id: "M1", title: "Phase 1", description: "", status: "active", order: 1, created: "2026-01-01T00:00:00Z", updated: "2026-01-01T00:00:00Z" },
+      { id: "M2", title: "Phase 2", description: "", status: "locked", order: 2, created: "2026-01-01T00:00:00Z", updated: "2026-01-01T00:00:00Z" },
+    ]);
+    writeContract("# Assertions\n- A1: Auth works\n- A2: Tests pass");
+
+    const task1 = makeTask({ id: "001", milestone: "M1", status: "done", fulfills: ["A1"] });
+    const task2 = makeTask({ id: "002", milestone: "M1", status: "done", fulfills: ["A2"] });
+    saveTask(tmpDir, task1);
+    saveTask(tmpDir, task2);
+
+    const validatorPane = makePane({ id: "%3", index: 2, title: "Validator", currentCommand: "zsh", role: "validator" });
+    mockPanes = [validatorPane];
+
+    const config = makeOrchestratorConfig(tmpDir, { dispatchMode: "missions", masterPane: null });
+    const state = makeOrchestratorState();
+
+    checkMilestoneCompletion(config, state, [task1, task2], [validatorPane]);
+
+    // Milestone should be in validating, not done
+    const mission = loadMission(tmpDir)!;
+    const m1 = mission.milestones.find((m) => m.id === "M1")!;
+    expect(m1.status).toBe("validating");
+
+    // Validation state should have pending entries
+    const valState = loadValidationState(tmpDir)!;
+    expect(valState.assertions["A1"]?.status).toBe("pending");
+    expect(valState.assertions["A2"]?.status).toBe("pending");
+
+    // Should have dispatched to validator pane
+    const sendCalls = tmuxCalls.filter((c) => c.args.includes("send-keys"));
+    expect(sendCalls.length).toBeGreaterThan(0);
+
+    // Check event
+    const events = readEvents(tmpDir);
+    expect(events.find((e) => e.type === "milestone_validating")).toBeTruthy();
+    expect(events.find((e) => e.type === "validation_dispatch")).toBeTruthy();
+  });
+
+  it("all assertions passing marks milestone done and activates next", () => {
+    setupMission([
+      { id: "M1", title: "Phase 1", description: "", status: "validating", order: 1, created: "2026-01-01T00:00:00Z", updated: "2026-01-01T00:00:00Z" },
+      { id: "M2", title: "Phase 2", description: "", status: "locked", order: 2, created: "2026-01-01T00:00:00Z", updated: "2026-01-01T00:00:00Z" },
+    ]);
+
+    const task1 = makeTask({ id: "001", milestone: "M1", status: "done", fulfills: ["A1"] });
+    const task2 = makeTask({ id: "002", milestone: "M1", status: "done", fulfills: ["A2"] });
+    saveTask(tmpDir, task1);
+    saveTask(tmpDir, task2);
+
+    // All assertions passing
+    saveValidationState(tmpDir, {
+      assertions: {
+        A1: { status: "passing", verifiedBy: "Validator", verifiedAt: "2026-01-01T00:00:00Z", evidence: "works" },
+        A2: { status: "passing", verifiedBy: "Validator", verifiedAt: "2026-01-01T00:00:00Z", evidence: "tests pass" },
+      },
+      lastVerified: "2026-01-01T00:00:00Z",
+    });
+
+    const config = makeOrchestratorConfig(tmpDir, { dispatchMode: "missions" });
+    checkValidationResults(config, [task1, task2]);
+
+    const mission = loadMission(tmpDir)!;
+    const m1 = mission.milestones.find((m) => m.id === "M1")!;
+    const m2 = mission.milestones.find((m) => m.id === "M2")!;
+    expect(m1.status).toBe("done");
+    expect(m2.status).toBe("active");
+
+    const events = readEvents(tmpDir);
+    expect(events.find((e) => e.type === "milestone_complete")).toBeTruthy();
+  });
+
+  it("failed assertion creates remediation task and resets milestone to active", () => {
+    setupMission([
+      { id: "M1", title: "Phase 1", description: "", status: "validating", order: 1, created: "2026-01-01T00:00:00Z", updated: "2026-01-01T00:00:00Z" },
+    ]);
+
+    const task1 = makeTask({ id: "001", milestone: "M1", status: "done", fulfills: ["A1", "A2"] });
+    saveTask(tmpDir, task1);
+
+    saveValidationState(tmpDir, {
+      assertions: {
+        A1: { status: "passing", verifiedBy: "V", verifiedAt: "2026-01-01T00:00:00Z", evidence: "ok" },
+        A2: { status: "failing", verifiedBy: "V", verifiedAt: "2026-01-01T00:00:00Z", evidence: "auth broken" },
+      },
+      lastVerified: "2026-01-01T00:00:00Z",
+    });
+
+    const config = makeOrchestratorConfig(tmpDir, { dispatchMode: "missions" });
+    checkValidationResults(config, [task1]);
+
+    // Milestone should be back to active
+    const mission = loadMission(tmpDir)!;
+    const m1 = mission.milestones.find((m) => m.id === "M1")!;
+    expect(m1.status).toBe("active");
+
+    // Remediation task should exist
+    const allTasks = loadTasks(tmpDir);
+    const remediation = allTasks.find((t) => t.tags.includes("remediation"));
+    expect(remediation).toBeTruthy();
+    expect(remediation!.milestone).toBe("M1");
+    expect(remediation!.fulfills).toContain("A2");
+    expect(remediation!.description).toContain("auth broken");
+
+    // Failed assertion should be reset to pending
+    const valState = loadValidationState(tmpDir)!;
+    expect(valState.assertions["A2"]?.status).toBe("pending");
+
+    // Events
+    const events = readEvents(tmpDir);
+    expect(events.find((e) => e.type === "remediation")).toBeTruthy();
+    expect(events.find((e) => e.type === "validation_failed")).toBeTruthy();
+  });
+
+  it("buildValidationPrompt includes contract and task details", () => {
+    writeContract("# Assertions\n- A1: Auth endpoint returns 200");
+
+    const milestone = { id: "M1", title: "Phase 1", description: "", status: "validating" as const, order: 1, created: "2026-01-01T00:00:00Z", updated: "2026-01-01T00:00:00Z" };
+    const tasks = [
+      makeTask({ id: "001", title: "Fix auth", fulfills: ["A1"], proof: { notes: "done" }, salientSummary: "Patched JWT" }),
+    ];
+
+    const prompt = buildValidationPrompt(tmpDir, milestone, tasks);
+    expect(prompt.includes("Validation: Phase 1")).toBeTruthy();
+    expect(prompt.includes("Auth endpoint returns 200")).toBeTruthy();
+    expect(prompt.includes("Fix auth")).toBeTruthy();
+    expect(prompt.includes("A1")).toBeTruthy();
+    expect(prompt.includes("Patched JWT")).toBeTruthy();
+    expect(prompt.includes("tmux-ide validate assert")).toBeTruthy();
+  });
+});
+
+describe("structured handoff", () => {
+  it("logs salientSummary in completion event", () => {
+    const task = makeTask({
+      status: "done",
+      assignee: "Agent 1",
+      salientSummary: "Discovered JWT needs rotation",
+    });
+
+    const panes: PaneInfo[] = [makePane({ id: "%0", title: "Master" })];
+
+    const config = makeOrchestratorConfig(tmpDir);
+    const state = makeOrchestratorState({
+      previousTasks: new Map([["001", "in-progress"]]),
+    });
+
+    detectCompletions(config, state, [task], panes);
+
+    const events = readEvents(tmpDir);
+    const completionEvent = events.find((e) => e.type === "completion");
+    expect(completionEvent).toBeTruthy();
+    expect(completionEvent!.message.includes("Discovered JWT needs rotation")).toBeTruthy();
+  });
+
+  it("auto-creates follow-up tasks for discoveredIssues", () => {
+    const task = makeTask({
+      status: "done",
+      assignee: "Agent 1",
+      discoveredIssues: ["CSS z-index conflict in modal", "Missing rate limiting on /api/auth"],
+    });
+    saveTask(tmpDir, task);
+
+    const panes: PaneInfo[] = [makePane({ id: "%0", title: "Master" })];
+
+    const config = makeOrchestratorConfig(tmpDir);
+    const state = makeOrchestratorState({
+      previousTasks: new Map([["001", "in-progress"]]),
+    });
+
+    detectCompletions(config, state, [task], panes);
+
+    // Two follow-up tasks should be created
+    const allTasks = loadTasks(tmpDir);
+    const followUps = allTasks.filter((t) => t.tags.includes("discovered-issue"));
+    expect(followUps.length).toBe(2);
+    expect(followUps[0]!.description).toContain("CSS z-index");
+    expect(followUps[1]!.description).toContain("rate limiting");
+
+    // Events
+    const events = readEvents(tmpDir);
+    const issueEvents = events.filter((e) => e.type === "discovered_issue");
+    expect(issueEvents.length).toBe(2);
   });
 });

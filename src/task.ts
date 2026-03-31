@@ -23,6 +23,11 @@ import {
   type Task,
 } from "./lib/task-store.ts";
 import { isGhAvailable, createTaskPr } from "./lib/github-pr.ts";
+import {
+  loadValidationContract,
+  loadValidationState,
+  saveValidationState,
+} from "./lib/validation.ts";
 
 export function parseProof(raw: string, existing: ProofSchema | null): ProofSchema {
   // Try parsing as JSON first
@@ -78,6 +83,7 @@ interface TaskCommandValues {
   fulfills?: string;
   summary?: string;
   sequence?: string;
+  evidence?: string;
 }
 
 export async function taskCommand(
@@ -103,6 +109,8 @@ export async function taskCommand(
       return handleMission(dir, sub, args, values, json);
     case "milestone":
       return handleMilestone(dir, sub, args, values, json);
+    case "validate":
+      return handleValidation(dir, sub, args, values, json);
     case "goal":
       return handleGoal(dir, sub, args, values, json);
     case "task":
@@ -303,6 +311,113 @@ function handleMilestone(
     default:
       outputError(
         "Usage: tmux-ide milestone <create|list|show|update>\nRun: tmux-ide milestone help",
+        "USAGE",
+      );
+  }
+}
+
+// --- Validation ---
+
+function handleValidation(
+  dir: string,
+  sub: string | undefined,
+  args: string[],
+  values: TaskCommandValues,
+  json: boolean,
+): void {
+  switch (sub) {
+    case "show": {
+      const contract = loadValidationContract(dir);
+      const state = loadValidationState(dir);
+      if (json) {
+        console.log(JSON.stringify({ contract: contract ?? null, state: state ?? null }, null, 2));
+      } else {
+        if (contract) {
+          console.log("Validation Contract:");
+          console.log(contract);
+          console.log();
+        } else {
+          console.log("No validation contract found (.tasks/validation-contract.md)");
+        }
+        if (state && Object.keys(state.assertions).length > 0) {
+          console.log("Assertion Status:");
+          for (const [id, entry] of Object.entries(state.assertions)) {
+            const evidence = entry.evidence ? ` — ${entry.evidence}` : "";
+            console.log(`  ${id}  [${entry.status}]${evidence}`);
+          }
+        } else {
+          console.log("No assertion state yet.");
+        }
+      }
+      break;
+    }
+    case "assert": {
+      const assertionId = args[0];
+      if (!assertionId || !values.status) {
+        outputError(
+          'Usage: tmux-ide validate assert <ASSERT_ID> --status passing|failing [--evidence "..."]',
+          "USAGE",
+        );
+      }
+      const status = values.status as "passing" | "failing";
+      if (status !== "passing" && status !== "failing") {
+        outputError("Status must be 'passing' or 'failing'", "USAGE");
+      }
+      ensureTasksDir(dir);
+      const state = loadValidationState(dir) ?? { assertions: {}, lastVerified: null };
+      state.assertions[assertionId] = {
+        status,
+        verifiedBy: values.assign ?? null,
+        verifiedAt: new Date().toISOString(),
+        evidence: values.evidence ?? null,
+      };
+      state.lastVerified = new Date().toISOString();
+      saveValidationState(dir, state);
+      if (json) {
+        console.log(JSON.stringify({ assertionId, ...state.assertions[assertionId] }, null, 2));
+      } else {
+        console.log(`Assertion ${assertionId}: ${status}${values.evidence ? ` — ${values.evidence}` : ""}`);
+      }
+      break;
+    }
+    case "report": {
+      const state = loadValidationState(dir);
+      if (!state || Object.keys(state.assertions).length === 0) {
+        if (json) {
+          console.log(JSON.stringify({ total: 0, passing: 0, failing: 0, pending: 0 }));
+        } else {
+          console.log("No assertions to report.");
+        }
+        break;
+      }
+      const entries = Object.values(state.assertions);
+      const report = {
+        total: entries.length,
+        passing: entries.filter((e) => e.status === "passing").length,
+        failing: entries.filter((e) => e.status === "failing").length,
+        pending: entries.filter((e) => e.status === "pending").length,
+      };
+      if (json) {
+        console.log(JSON.stringify(report, null, 2));
+      } else {
+        console.log(`Validation Report: ${report.total} assertions`);
+        console.log(`  Passing: ${report.passing}`);
+        console.log(`  Failing: ${report.failing}`);
+        console.log(`  Pending: ${report.pending}`);
+      }
+      break;
+    }
+    case "help":
+    case undefined:
+      console.log(`Usage: tmux-ide validate <show|assert|report>
+
+  show                                                Show contract + assertion state
+  assert <ID> --status passing|failing [--evidence]   Update assertion status
+  report                                              Summary of assertion results`);
+      break;
+    default:
+      outputError(
+        "Usage: tmux-ide validate <show|assert|report>\nRun: tmux-ide validate help",
         "USAGE",
       );
   }
