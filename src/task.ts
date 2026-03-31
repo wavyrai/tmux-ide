@@ -441,6 +441,7 @@ function handleTask(
       task.updated = new Date().toISOString();
 
       // Auto-create GitHub PR if --pr flag is set and task has a branch
+      let prWarning: string | undefined;
       if (values.pr && task.branch) {
         if (isGhAvailable()) {
           const pr = createTaskPr(task, dir);
@@ -453,16 +454,20 @@ function handleTask(
             };
             if (!json) console.log(`PR created: ${pr.url}`);
           } else {
-            if (!json) console.log(`Warning: PR creation failed (gh error)`);
+            prWarning = "PR creation failed (gh error)";
+            console.error(`Warning: ${prWarning}`);
           }
         } else {
-          if (!json) console.log(`Warning: gh CLI not found, skipping PR creation`);
+          prWarning = "gh CLI not found, skipping PR creation";
+          console.error(`Warning: ${prWarning}`);
         }
       }
 
       saveTask(dir, task);
       if (json) {
-        console.log(JSON.stringify(task, null, 2));
+        const output: Record<string, unknown> = { ...task };
+        if (prWarning) output.prError = prWarning;
+        console.log(JSON.stringify(output, null, 2));
       } else {
         console.log(`Task ${id} done: ${task.title}`);
       }
