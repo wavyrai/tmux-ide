@@ -140,8 +140,8 @@ function buildRenderedLines(
         active: index === activeStepIndex,
         content: (
           <>
-            <span className="text-emerald-300">{step.prompt ?? "$"}</span>
-            <span className="ml-2 text-fd-foreground">{fullText}</span>
+            <span className="text-emerald-400">{step.prompt ?? "$"}</span>
+            <span className="ml-2 text-gray-100">{fullText}</span>
           </>
         ),
       });
@@ -152,7 +152,7 @@ function buildRenderedLines(
       key: `${scenario.label}-output-${index}`,
       kind: "output",
       content: (
-        <span className="whitespace-pre-wrap text-[hsl(var(--color-fd-muted-foreground))]">
+        <span className="whitespace-pre-wrap text-gray-400">
           {step.text}
         </span>
       ),
@@ -242,7 +242,7 @@ export default function TerminalDemo() {
 
   return (
     <div className="w-full max-w-4xl">
-      <div className="overflow-hidden border border-fd-border bg-[#09090b] text-fd-foreground">
+      <div className="overflow-hidden border border-fd-border bg-[#09090b] text-gray-100">
         <div className="flex items-center gap-3 border-b border-fd-border bg-[#111114] px-4 py-2">
           <div className="flex items-center gap-3">
             <div className="flex gap-2">
@@ -252,12 +252,12 @@ export default function TerminalDemo() {
             </div>
           </div>
           <div className="min-w-0 flex-1 text-center">
-            <div className="truncate font-mono text-[10px] uppercase tracking-[0.24em] text-[hsl(var(--color-fd-muted-foreground))]">
+            <div className="truncate font-mono text-[10px] uppercase tracking-[0.24em] text-gray-500">
               tmux-ide mission demo
             </div>
           </div>
           <div className="hidden min-w-0 flex-1 text-right sm:block">
-            <div className="truncate font-mono text-[10px] uppercase tracking-[0.18em] text-[hsl(var(--color-fd-muted-foreground))]">
+            <div className="truncate font-mono text-[10px] uppercase tracking-[0.18em] text-gray-500">
               {scenario.subtitle}
             </div>
           </div>
@@ -275,8 +275,8 @@ export default function TerminalDemo() {
                   className={joinClasses(
                     "border-r border-fd-border px-4 py-2 text-left font-mono text-[11px] uppercase tracking-[0.22em] transition-colors last:border-r-0",
                     active
-                      ? "bg-[#09090b] text-fd-foreground"
-                      : "bg-[#111114] text-[hsl(var(--color-fd-muted-foreground))] hover:bg-[#16161a] hover:text-fd-foreground",
+                      ? "bg-[#09090b] text-gray-100"
+                      : "bg-[#111114] text-gray-500 hover:bg-[#16161a] hover:text-gray-100",
                   )}
                 >
                   <div>{item.label}</div>
@@ -297,8 +297,8 @@ export default function TerminalDemo() {
                 className={joinClasses(
                   "whitespace-pre-wrap break-words",
                   line.kind === "command"
-                    ? "text-fd-foreground"
-                    : "text-[hsl(var(--color-fd-muted-foreground))]",
+                    ? "text-gray-100"
+                    : "text-gray-500",
                 )}
               >
                 {line.content}
