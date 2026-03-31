@@ -120,7 +120,12 @@ function buildRenderedLines(
   activeStepIndex: number,
   typedChars: number,
 ): Array<{ key: string; kind: "command" | "output"; content: ReactNode; active?: boolean }> {
-  const lines: Array<{ key: string; kind: "command" | "output"; content: ReactNode; active?: boolean }> = [];
+  const lines: Array<{
+    key: string;
+    kind: "command" | "output";
+    content: ReactNode;
+    active?: boolean;
+  }> = [];
 
   for (let index = 0; index < scenario.steps.length; index++) {
     const step = scenario.steps[index]!;
@@ -146,7 +151,11 @@ function buildRenderedLines(
     lines.push({
       key: `${scenario.label}-output-${index}`,
       kind: "output",
-      content: <span className="whitespace-pre-wrap text-slate-300">{step.text}</span>,
+      content: (
+        <span className="whitespace-pre-wrap text-[hsl(var(--color-fd-muted-foreground))]">
+          {step.text}
+        </span>
+      ),
     });
   }
 
@@ -233,25 +242,29 @@ export default function TerminalDemo() {
 
   return (
     <div className="w-full max-w-4xl">
-      <div className="overflow-hidden rounded-2xl border border-white/10 bg-[linear-gradient(180deg,rgba(8,11,20,0.98),rgba(4,7,14,0.98))] shadow-[0_30px_80px_rgba(2,6,23,0.55)]">
-        <div className="border-b border-white/8 bg-[linear-gradient(180deg,rgba(20,27,45,0.98),rgba(13,18,32,0.94))] px-4 py-3">
+      <div className="overflow-hidden border border-fd-border bg-[#09090b] text-fd-foreground">
+        <div className="flex items-center gap-3 border-b border-fd-border bg-[#111114] px-4 py-2">
           <div className="flex items-center gap-3">
             <div className="flex gap-2">
               <span className="h-2.5 w-2.5 rounded-full bg-[#ff5f57]" />
               <span className="h-2.5 w-2.5 rounded-full bg-[#febc2e]" />
               <span className="h-2.5 w-2.5 rounded-full bg-[#28c840]" />
             </div>
-            <div className="min-w-0 flex-1">
-              <div className="truncate font-mono text-[11px] uppercase tracking-[0.24em] text-slate-300/80">
-                tmux-ide 2.0 mission demo
-              </div>
-              <div className="truncate text-[11px] text-slate-400">{scenario.subtitle}</div>
+          </div>
+          <div className="min-w-0 flex-1 text-center">
+            <div className="truncate font-mono text-[10px] uppercase tracking-[0.24em] text-[hsl(var(--color-fd-muted-foreground))]">
+              tmux-ide mission demo
+            </div>
+          </div>
+          <div className="hidden min-w-0 flex-1 text-right sm:block">
+            <div className="truncate font-mono text-[10px] uppercase tracking-[0.18em] text-[hsl(var(--color-fd-muted-foreground))]">
+              {scenario.subtitle}
             </div>
           </div>
         </div>
 
-        <div className="border-b border-white/8 bg-slate-950/40 px-2 pt-2">
-          <div className="flex flex-wrap gap-2">
+        <div className="border-b border-fd-border bg-[#0d0d10]">
+          <div className="flex flex-wrap">
             {SCENARIOS.map((item, index) => {
               const active = index === activeTab;
               return (
@@ -260,13 +273,13 @@ export default function TerminalDemo() {
                   type="button"
                   onClick={() => setActiveTab(index)}
                   className={joinClasses(
-                    "rounded-t-xl border border-b-0 px-3 py-2 text-left transition-colors",
+                    "border-r border-fd-border px-4 py-2 text-left font-mono text-[11px] uppercase tracking-[0.22em] transition-colors last:border-r-0",
                     active
-                      ? "border-cyan-400/30 bg-slate-950 text-white"
-                      : "border-transparent bg-transparent text-slate-400 hover:bg-white/5 hover:text-slate-200",
+                      ? "bg-[#09090b] text-fd-foreground"
+                      : "bg-[#111114] text-[hsl(var(--color-fd-muted-foreground))] hover:bg-[#16161a] hover:text-fd-foreground",
                   )}
                 >
-                  <div className="font-mono text-[11px] uppercase tracking-[0.22em]">{item.label}</div>
+                  <div>{item.label}</div>
                 </button>
               );
             })}
@@ -275,7 +288,7 @@ export default function TerminalDemo() {
 
         <div
           ref={scrollRef}
-          className="max-h-[460px] min-h-[340px] overflow-y-auto bg-[radial-gradient(circle_at_top,rgba(16,185,129,0.08),transparent_35%),linear-gradient(180deg,rgba(7,10,18,0.98),rgba(3,6,12,1))] px-5 py-5 font-mono text-[13px] leading-6 sm:px-6"
+          className="max-h-[460px] min-h-[340px] overflow-y-auto bg-[#09090b] px-5 py-5 font-mono text-[13px] leading-6 sm:px-6"
         >
           <div className="space-y-4">
             {renderedLines.map((line) => (
@@ -283,14 +296,16 @@ export default function TerminalDemo() {
                 key={line.key}
                 className={joinClasses(
                   "whitespace-pre-wrap break-words",
-                  line.kind === "command" ? "text-fd-foreground" : "text-slate-300",
+                  line.kind === "command"
+                    ? "text-fd-foreground"
+                    : "text-[hsl(var(--color-fd-muted-foreground))]",
                 )}
               >
                 {line.content}
                 {line.active && activeStep?.kind === "command" ? (
                   <span
                     className={joinClasses(
-                      "ml-0.5 inline-block h-[1.05rem] w-2 translate-y-0.5 bg-cyan-300 transition-opacity",
+                      "ml-0.5 inline-block h-[1.05rem] w-2 translate-y-0.5 bg-fd-primary transition-opacity",
                       cursorOn ? "opacity-100" : "opacity-0",
                     )}
                   />
