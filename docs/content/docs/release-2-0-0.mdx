@@ -44,11 +44,13 @@ Assertion-based verification with independent validation. Create `.tasks/validat
 ```
 
 Tasks claim assertions via `--fulfills`:
+
 ```bash
 tmux-ide task create "Implement JWT" --milestone M1 --fulfills "VAL-AUTH-001,VAL-AUTH-002"
 ```
 
 When a milestone's tasks complete, a validator agent independently checks each assertion:
+
 ```bash
 tmux-ide validate assert VAL-AUTH-001 --status passing --evidence "endpoint returns 200"
 tmux-ide validate assert VAL-AUTH-002 --status failing --evidence "rotation broken"
@@ -115,6 +117,7 @@ tmux-ide metrics history   # cross-mission comparison
 ### Web Dashboard
 
 Live dashboard at `localhost:6060` with:
+
 - KPI cards (completion rate, utilization, retry rate)
 - Milestone timeline with progress bars
 - Agent performance table

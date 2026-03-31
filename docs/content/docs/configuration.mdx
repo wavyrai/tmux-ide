@@ -185,13 +185,13 @@ The orchestrator manages autonomous task dispatch, stall detection, and mission 
 orchestrator:
   enabled: true
   auto_dispatch: true
-  dispatch_mode: missions        # "tasks" | "goals" | "missions"
-  poll_interval: 5000            # ms between ticks
-  stall_timeout: 300000          # ms before nudging idle agent
+  dispatch_mode: missions # "tasks" | "goals" | "missions"
+  poll_interval: 5000 # ms between ticks
+  stall_timeout: 300000 # ms before nudging idle agent
   max_concurrent_agents: 10
-  master_pane: Lead              # pane excluded from dispatch
-  before_run: pnpm install       # hook before task dispatch
-  after_run: pnpm lint           # hook after task completion
+  master_pane: Lead # pane excluded from dispatch
+  before_run: pnpm install # hook before task dispatch
+  after_run: pnpm lint # hook after task completion
   services:
     dev:
       command: pnpm dev
@@ -203,7 +203,7 @@ orchestrator:
     enabled: true
     triggers:
       mission_start: true
-      milestone_progress: 3      # trigger every N completed tasks
+      milestone_progress: 3 # trigger every N completed tasks
       milestone_complete: true
       periodic_minutes: 15
       retry_cluster: true
@@ -217,11 +217,11 @@ orchestrator:
 
 ### Dispatch Modes
 
-| Mode       | Description                                                                 |
-| ---------- | --------------------------------------------------------------------------- |
-| `tasks`    | Simple task dispatch — assign todo tasks to idle agents                     |
-| `goals`    | Goal-level dispatch — assign goals to planner agents                        |
-| `missions` | Full mission lifecycle — planning, milestones, validation, skill matching   |
+| Mode       | Description                                                               |
+| ---------- | ------------------------------------------------------------------------- |
+| `tasks`    | Simple task dispatch — assign todo tasks to idle agents                   |
+| `goals`    | Goal-level dispatch — assign goals to planner agents                      |
+| `missions` | Full mission lifecycle — planning, milestones, validation, skill matching |
 
 ### Services Registry
 
@@ -230,9 +230,9 @@ Services defined under `orchestrator.services` are injected into dispatch prompt
 ```yaml
 services:
   dev:
-    command: pnpm dev        # how to start it
-    port: 3000               # what port it runs on
-    healthcheck: "curl ..."  # how to verify it's up
+    command: pnpm dev # how to start it
+    port: 3000 # what port it runs on
+    healthcheck: "curl ..." # how to verify it's up
 ```
 
 ## `.tmux-ide/` Directory
@@ -261,6 +261,7 @@ specialties: [react, css, typescript]
 role: teammate
 description: Frontend component specialist
 ---
+
 You are a frontend developer. Focus on React components and CSS.
 ```
 

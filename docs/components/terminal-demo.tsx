@@ -151,11 +151,7 @@ function buildRenderedLines(
     lines.push({
       key: `${scenario.label}-output-${index}`,
       kind: "output",
-      content: (
-        <span className="whitespace-pre-wrap text-gray-400">
-          {step.text}
-        </span>
-      ),
+      content: <span className="whitespace-pre-wrap text-gray-400">{step.text}</span>,
     });
   }
 
@@ -296,9 +292,7 @@ export default function TerminalDemo() {
                 key={line.key}
                 className={joinClasses(
                   "whitespace-pre-wrap break-words",
-                  line.kind === "command"
-                    ? "text-gray-100"
-                    : "text-gray-500",
+                  line.kind === "command" ? "text-gray-100" : "text-gray-500",
                 )}
               >
                 {line.content}

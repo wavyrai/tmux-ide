@@ -40,13 +40,7 @@ function SectionDivider() {
   );
 }
 
-function Node({
-  children,
-  highlight,
-}: {
-  children: string;
-  highlight?: boolean;
-}) {
+function Node({ children, highlight }: { children: string; highlight?: boolean }) {
   return (
     <div
       className={`border border-fd-border px-3 py-1.5 text-xs font-mono shrink-0 ${
@@ -247,14 +241,18 @@ export default function HomePage() {
                   { label: "validation", value: "100%" },
                 ].map((kpi) => (
                   <div key={kpi.label} className="bg-fd-background p-2">
-                    <div className="text-fd-muted-foreground text-[9px] uppercase tracking-wider">{kpi.label}</div>
+                    <div className="text-fd-muted-foreground text-[9px] uppercase tracking-wider">
+                      {kpi.label}
+                    </div>
                     <div className="text-fd-foreground font-mono text-sm mt-0.5">{kpi.value}</div>
                   </div>
                 ))}
               </div>
               {/* Milestone bar */}
               <div className="border border-fd-border p-2">
-                <div className="text-fd-muted-foreground text-[9px] uppercase tracking-wider mb-1.5">milestones</div>
+                <div className="text-fd-muted-foreground text-[9px] uppercase tracking-wider mb-1.5">
+                  milestones
+                </div>
                 <div className="flex gap-px">
                   <div className="flex-1 bg-green-500/20 border border-green-500/30 px-2 py-1">
                     <span className="text-green-500">M1</span>{" "}
@@ -273,7 +271,9 @@ export default function HomePage() {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-px bg-fd-border">
                 {/* Agent table */}
                 <div className="bg-fd-background p-2">
-                  <div className="text-fd-muted-foreground text-[9px] uppercase tracking-wider mb-1.5">agents</div>
+                  <div className="text-fd-muted-foreground text-[9px] uppercase tracking-wider mb-1.5">
+                    agents
+                  </div>
                   <div className="space-y-px">
                     {[
                       { name: "Backend", util: "82%", tasks: 5 },
@@ -290,12 +290,22 @@ export default function HomePage() {
                 </div>
                 {/* Events */}
                 <div className="bg-fd-background p-2">
-                  <div className="text-fd-muted-foreground text-[9px] uppercase tracking-wider mb-1.5">recent events</div>
+                  <div className="text-fd-muted-foreground text-[9px] uppercase tracking-wider mb-1.5">
+                    recent events
+                  </div>
                   <div className="space-y-0.5 font-mono text-fd-muted-foreground">
-                    <div><span className="text-green-500">2m</span> task 007 completed by Backend</div>
-                    <div><span className="text-fd-primary">3m</span> M2 activated</div>
-                    <div><span className="text-green-500">5m</span> M1 validation passed</div>
-                    <div><span className="text-yellow-500">6m</span> dispatched 008 to Frontend</div>
+                    <div>
+                      <span className="text-green-500">2m</span> task 007 completed by Backend
+                    </div>
+                    <div>
+                      <span className="text-fd-primary">3m</span> M2 activated
+                    </div>
+                    <div>
+                      <span className="text-green-500">5m</span> M1 validation passed
+                    </div>
+                    <div>
+                      <span className="text-yellow-500">6m</span> dispatched 008 to Frontend
+                    </div>
                   </div>
                 </div>
               </div>
@@ -448,9 +458,7 @@ export default function HomePage() {
             style={{ backgroundImage: STRIPE_BG }}
           />
           <div className="relative z-10">
-            <h2 className="font-sans text-2xl sm:text-3xl text-fd-foreground mb-4">
-              Get started
-            </h2>
+            <h2 className="font-sans text-2xl sm:text-3xl text-fd-foreground mb-4">Get started</h2>
             <p className="font-sans text-base text-fd-muted-foreground mb-6 max-w-lg mx-auto">
               One config. Multiple agents. Fully autonomous.
             </p>
