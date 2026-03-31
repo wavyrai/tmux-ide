@@ -12,7 +12,7 @@ export interface CommandCenterOptions {
 }
 
 export async function startCommandCenter(options: CommandCenterOptions = {}): Promise<Server> {
-  const port = options.port ?? 4000;
+  const port = options.port ?? 6060;
   const hostname = options.hostname ?? "0.0.0.0";
   const appOpts: CreateAppOptions = {};
   if (options.authService) appOpts.authService = options.authService;

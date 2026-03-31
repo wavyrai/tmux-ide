@@ -80,4 +80,20 @@ describe("init", () => {
     await init();
     expect(logged.some((l) => l.includes("Created ide.yml"))).toBeTruthy();
   });
+
+  it("scaffolds missions skills, library, and AGENTS.md", async () => {
+    await init({ template: "missions", json: true });
+
+    expect(existsSync(join(tmpDir, ".tmux-ide", "skills", "frontend.md"))).toBeTruthy();
+    expect(existsSync(join(tmpDir, ".tmux-ide", "skills", "backend.md"))).toBeTruthy();
+    expect(existsSync(join(tmpDir, ".tmux-ide", "skills", "reviewer.md"))).toBeTruthy();
+    expect(existsSync(join(tmpDir, ".tmux-ide", "skills", "researcher.md"))).toBeTruthy();
+    expect(existsSync(join(tmpDir, ".tmux-ide", "library"))).toBeTruthy();
+    expect(existsSync(join(tmpDir, "AGENTS.md"))).toBeTruthy();
+    expect(readFileSync(join(tmpDir, "AGENTS.md"), "utf-8")).toContain(`## Project: ${join(tmpDir).split("/").pop()}`);
+
+    const output = JSON.parse(logged[0]);
+    expect(output.template).toBe("missions");
+    expect(output.paths.some((path: string) => path.endsWith("frontend.md"))).toBeTruthy();
+  });
 });

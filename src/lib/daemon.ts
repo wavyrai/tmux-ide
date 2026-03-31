@@ -46,7 +46,7 @@ if (!sessionArg) {
   process.exit(1);
 }
 const session: string = sessionArg;
-const requestedPort = parseInt(process.argv[3] ?? "0", 10);
+const requestedPort = parseInt(process.argv[3] ?? "6060", 10);
 
 // ---------------------------------------------------------------------------
 // tmux helpers (same as session-monitor.ts)
@@ -322,41 +322,36 @@ async function startCommandCenter(): Promise<void> {
     const listener = getRequestListener(app.fetch);
     const server = createServer(listener);
 
-    // Try requested port, fall back to auto-assign if taken
-    const tryPort = (port: number): Promise<void> =>
-      new Promise<void>((res, rej) => {
+    const bindRequestedPort = (port: number): Promise<boolean> =>
+      new Promise<boolean>((res, rej) => {
         server.once("error", (err: NodeJS.ErrnoException) => {
-          if (err.code === "EADDRINUSE" && port !== 0) {
-            console.log(`[daemon] Port ${port} in use, falling back to auto-assign`);
+          if (err.code === "EADDRINUSE") {
+            console.error(`[daemon] Command Center port ${port} is in use; skipping HTTP server`);
             server.removeAllListeners("error");
-            tryPort(0).then(res, rej);
+            res(false);
           } else {
             rej(err);
           }
         });
         server.listen(port, "0.0.0.0", () => {
-          const addr = server.address();
-          const actualPort = typeof addr === "object" && addr ? addr.port : port;
-          tmuxSilent("set-option", "-t", session, "@command_center_port", String(actualPort));
-          console.log(
-            `[daemon] Command Center on http://0.0.0.0:${actualPort} (session: ${session})`,
-          );
-          res();
+          tmuxSilent("set-option", "-t", session, "@command_center_port", String(port));
+          console.log(`[daemon] Command Center on http://0.0.0.0:${port} (session: ${session})`);
+          res(true);
         });
       });
 
-    await tryPort(requestedPort);
-    httpServer = server;
+    const commandCenterStarted = await bindRequestedPort(requestedPort);
+    if (commandCenterStarted) {
+      httpServer = server;
+    }
 
     // Auto-start tunnel if configured
-    if (tunnelConfig && tunnelConfig.auto_start) {
+    if (commandCenterStarted && tunnelConfig && tunnelConfig.auto_start) {
       try {
         const { tunnelConfigSchema } = await import("./tunnels/types.ts");
-        const addr = server.address();
-        const ccPort = typeof addr === "object" && addr ? addr.port : requestedPort;
         const parsed = tunnelConfigSchema.parse({
           ...tunnelConfig,
-          port: tunnelConfig.port ?? ccPort,
+          port: tunnelConfig.port ?? requestedPort,
         });
         await tunnelManager.start(parsed);
         console.log("[daemon] Tunnel auto-started");
@@ -366,17 +361,15 @@ async function startCommandCenter(): Promise<void> {
     }
 
     // Auto-start HQ client if role is "remote"
-    if (hqConfig?.enabled && hqConfig.role === "remote" && hqConfig.hq_url) {
+    if (commandCenterStarted && hqConfig?.enabled && hqConfig.role === "remote" && hqConfig.hq_url) {
       try {
         const { HQClient } = await import("./hq/client.ts");
         const os = await import("node:os");
-        const addr = server.address();
-        const ccPort = typeof addr === "object" && addr ? addr.port : requestedPort;
         const hqClient = new HQClient({
           hqUrl: hqConfig.hq_url,
           secret: hqConfig.secret ?? "",
           machineName: hqConfig.machine_name ?? os.hostname(),
-          remoteUrl: `http://localhost:${ccPort}`,
+          remoteUrl: `http://localhost:${requestedPort}`,
           heartbeatInterval: hqConfig.heartbeat_interval,
         });
         await hqClient.register();

@@ -2,7 +2,13 @@ import { describe, it, beforeEach, afterEach, expect } from "bun:test";
 import { mkdtempSync, rmSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { buildPaneMap, waitForPaneCommand, ensureTaskDocs } from "./launch.ts";
+import {
+  buildPaneMap,
+  waitForPaneCommand,
+  ensureTaskDocs,
+  resolveDashboardDir,
+  startDashboard,
+} from "./launch.ts";
 
 describe("buildPaneMap", () => {
   it("uses returned pane ids instead of assuming sequential numbering", () => {
@@ -145,5 +151,70 @@ describe("ensureTaskDocs", () => {
     ensureTaskDocs(tmpDir);
     const second = readFileSync(join(tmpDir, "CLAUDE.md"), "utf-8");
     expect(first).toBe(second);
+  });
+});
+
+describe("dashboard helpers", () => {
+  it("detects a dashboard directory from the package root", () => {
+    expect(resolveDashboardDir("/Users/thijs/Developer/tmux-ide")).toBe(
+      "/Users/thijs/Developer/tmux-ide/dashboard",
+    );
+  });
+
+  it("returns null when the dashboard directory is missing", () => {
+    expect(resolveDashboardDir("/definitely/missing-root")).toBe(null);
+  });
+
+  it("starts the dashboard and stores pid and url", () => {
+    const sessionVars: Array<{ name: string; value: string }> = [];
+    let spawned:
+      | { command: string; args: readonly string[]; envValue: string | undefined; cwd?: string }
+      | null = null;
+
+    const url = startDashboard("proj", 6060, {
+      dashboardPort: 6061,
+      dashboardDir: "/workspace/dashboard",
+      spawnFn: (command, args, options) => {
+        spawned = {
+          command,
+          args,
+          envValue: options.env?.NEXT_PUBLIC_API_URL,
+          cwd: options.cwd,
+        };
+        return { pid: 4321, unref: () => {} };
+      },
+      setVar: (_session, name, value) => {
+        sessionVars.push({ name, value });
+      },
+    });
+
+    expect(url).toBe("http://localhost:6061");
+    expect(spawned).toEqual({
+      command: "pnpm",
+      args: ["dev", "--port", "6061"],
+      envValue: "http://localhost:6060",
+      cwd: "/workspace/dashboard",
+    });
+    expect(sessionVars).toEqual([
+      { name: "@dashboard_pid", value: "4321" },
+      { name: "@dashboard_url", value: "http://localhost:6061" },
+    ]);
+  });
+
+  it("supports overriding the dashboard port", () => {
+    let args: readonly string[] | null = null;
+
+    const url = startDashboard("proj", 6060, {
+      dashboardPort: 7777,
+      dashboardDir: "/workspace/dashboard",
+      spawnFn: (_command, spawnArgs) => {
+        args = spawnArgs;
+        return { pid: 99, unref: () => {} };
+      },
+      setVar: () => {},
+    });
+
+    expect(url).toBe("http://localhost:7777");
+    expect(args).toEqual(["dev", "--port", "7777"]);
   });
 });

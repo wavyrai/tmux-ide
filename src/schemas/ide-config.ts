@@ -44,6 +44,7 @@ export const WebhookConfigSchema = z.object({
 
 export const OrchestratorYamlConfigSchema = z.object({
   enabled: z.boolean().optional(),
+  port: z.number().int().positive().optional(),
   auto_dispatch: z.boolean().optional(),
   stall_timeout: z.number().optional(),
   poll_interval: z.number().min(100).optional(),
@@ -95,6 +96,10 @@ export const CommandCenterConfigSchema = z.object({
   enabled: z.boolean().optional(),
 });
 
+export const DashboardConfigSchema = z.object({
+  port: z.number().int().positive().optional(),
+});
+
 export const IdeConfigSchema = z.object({
   name: z.string().optional(),
   before: z.string().optional(),
@@ -109,6 +114,7 @@ export const IdeConfigSchema = z.object({
   theme: ThemeConfigSchema.optional(),
   orchestrator: OrchestratorYamlConfigSchema.optional(),
   command_center: CommandCenterConfigSchema.optional(),
+  dashboard: DashboardConfigSchema.optional(),
   auth: AuthConfigSchema.optional(),
   tunnel: TunnelConfigSchema.optional(),
   hq: HQConfigSchema.optional(),
@@ -136,6 +142,7 @@ export type Pane = z.infer<typeof PaneSchema>;
 export type Row = z.infer<typeof RowSchema>;
 export type OrchestratorYamlConfig = z.infer<typeof OrchestratorYamlConfigSchema>;
 export type CommandCenterConfig = z.infer<typeof CommandCenterConfigSchema>;
+export type DashboardConfig = z.infer<typeof DashboardConfigSchema>;
 export type IdeConfig = z.infer<typeof IdeConfigSchema>;
 export type PaneAction = z.infer<typeof PaneActionSchema>;
 export type SessionState = z.infer<typeof SessionStateSchema>;

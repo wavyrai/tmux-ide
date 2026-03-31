@@ -4,6 +4,7 @@ export type {
   ThemeConfig,
   OrchestratorYamlConfig,
   CommandCenterConfig,
+  DashboardConfig,
   IdeConfig,
   PaneAction,
   SessionState,

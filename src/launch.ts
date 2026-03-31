@@ -1,6 +1,6 @@
 import { resolve, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { execSync } from "node:child_process";
+import { execSync, spawn, type SpawnOptions } from "node:child_process";
 import { createHash } from "node:crypto";
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { readConfig, getSessionName } from "./lib/yaml-io.ts";
@@ -28,6 +28,58 @@ import { validateConfig } from "./validate.ts";
 import { resolveWidgetCommand } from "./widgets/resolve.ts";
 import { shellEscape } from "./lib/shell.ts";
 import type { IdeConfig, Row, Pane } from "./types.ts";
+
+const DEFAULT_COMMAND_CENTER_PORT = 6060;
+const DEFAULT_DASHBOARD_PORT = 6061;
+
+function packageRoot(): string {
+  return resolve(dirname(fileURLToPath(import.meta.url)), "..");
+}
+
+export function resolveDashboardDir(rootDir = packageRoot()): string | null {
+  const dashboardDir = join(rootDir, "dashboard");
+  return existsSync(join(dashboardDir, "package.json")) ? dashboardDir : null;
+}
+
+export function startDashboard(
+  session: string,
+  apiPort: number,
+  {
+    dashboardPort = DEFAULT_DASHBOARD_PORT,
+    dashboardDir = resolveDashboardDir(),
+    spawnFn = spawn,
+    setVar = setSessionVariable,
+  }: {
+    dashboardPort?: number;
+    dashboardDir?: string | null;
+    spawnFn?: (
+      command: string,
+      args: readonly string[],
+      options: SpawnOptions,
+    ) => { pid?: number; unref: () => void };
+    setVar?: (sessionName: string, name: string, value: string) => void;
+  } = {},
+): string | null {
+  if (!dashboardDir) return null;
+
+  const url = `http://localhost:${dashboardPort}`;
+  const child = spawnFn("pnpm", ["dev", "--port", String(dashboardPort)], {
+    cwd: dashboardDir,
+    detached: true,
+    stdio: "ignore",
+    env: {
+      ...process.env,
+      NEXT_PUBLIC_API_URL: `http://localhost:${apiPort}`,
+    },
+  });
+  child.unref();
+
+  if (child.pid != null) {
+    setVar(session, "@dashboard_pid", String(child.pid));
+  }
+  setVar(session, "@dashboard_url", url);
+  return url;
+}
 
 function stripWidgetPanes(rows: Row[]): Row[] {
   return rows
@@ -199,14 +251,20 @@ export async function launch(
     const currentHash = configHash(config);
     const storedHash = getSessionVariable(session, "@config_hash");
     const configChanged = Boolean(storedHash && currentHash !== storedHash);
+    const commandCenterUrl = `http://localhost:${config.orchestrator?.port ?? config.command_center?.port ?? DEFAULT_COMMAND_CENTER_PORT}`;
+    const dashboardUrl = getSessionVariable(session, "@dashboard_url");
 
     if (json) {
-      console.log(JSON.stringify({ session, running: true, configChanged }));
+      console.log(JSON.stringify({ session, running: true, configChanged, commandCenterUrl, dashboardUrl }));
     } else if (configChanged) {
       console.log(`Session "${session}" is running but ide.yml has changed.`);
       console.log(`Run "tmux-ide restart" to apply changes.`);
     } else {
       console.log(`Session "${session}" is already running. Attaching...`);
+      console.log(`Command Center: ${commandCenterUrl}`);
+      if (dashboardUrl) {
+        console.log(`Dashboard: ${dashboardUrl}`);
+      }
     }
 
     if (attach) {
@@ -285,8 +343,13 @@ export async function launch(
     "lib",
     "daemon-watchdog.ts",
   );
-  const commandCenterPort = config.command_center?.port ?? 4000;
+  const commandCenterPort =
+    config.orchestrator?.port ?? config.command_center?.port ?? DEFAULT_COMMAND_CENTER_PORT;
   startSessionMonitor(session, monitorScript, commandCenterPort);
+  const dashboardPort = config.dashboard?.port ?? DEFAULT_DASHBOARD_PORT;
+  const dashboardUrl = startDashboard(session, commandCenterPort, {
+    dashboardPort,
+  });
 
   // Inject master agent prompt and task docs if orchestrator is enabled
   if (config.orchestrator?.enabled) {
@@ -312,6 +375,10 @@ export async function launch(
   console.log(
     `Starting "${session}" (${rows.length} row${rows.length === 1 ? "" : "s"}, ${totalPanes} pane${totalPanes === 1 ? "" : "s"})...`,
   );
+  console.log(`Command Center: http://localhost:${commandCenterPort}`);
+  if (dashboardUrl) {
+    console.log(`Dashboard: ${dashboardUrl}`);
+  }
 
   // Attach
   if (attach) {

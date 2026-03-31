@@ -1,7 +1,25 @@
 import { resolve } from "node:path";
 import { getSessionName } from "./lib/yaml-io.ts";
 import { outputError } from "./lib/output.ts";
-import { killSession, stopSessionMonitor } from "./lib/tmux.ts";
+import { getSessionVariable, killSession, stopSessionMonitor } from "./lib/tmux.ts";
+
+export function stopDashboard(session: string): void {
+  const pid = getSessionVariable(session, "@dashboard_pid");
+  if (!pid) return;
+
+  const numPid = Number.parseInt(pid, 10);
+  if (Number.isNaN(numPid)) return;
+
+  try {
+    process.kill(-numPid, "SIGTERM");
+  } catch {
+    try {
+      process.kill(numPid, "SIGTERM");
+    } catch {
+      // Process already gone.
+    }
+  }
+}
 
 export async function stop(
   targetDir: string | undefined,
@@ -12,6 +30,7 @@ export async function stop(
 
   // Stop the session monitor before killing the session
   stopSessionMonitor(session);
+  stopDashboard(session);
 
   const result = killSession(session);
 

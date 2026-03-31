@@ -3,7 +3,7 @@ import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { _setExecutor } from "./lib/tmux.ts";
-import { stop } from "./stop.ts";
+import { stop, stopDashboard } from "./stop.ts";
 
 let mockExec;
 let restoreExec;
@@ -147,5 +147,30 @@ describe("stop", () => {
     } finally {
       console.log = origLog;
     }
+  });
+});
+
+describe("stopDashboard", () => {
+  it("kills the stored dashboard pid", () => {
+    writeIdeYml("my-app");
+    mockExec.mockImplementation((_cmd, args) => {
+      if (args[0] === "show-option" && args[3] === "@dashboard_pid") return "4321\n";
+      return "\n";
+    });
+
+    const origKill = process.kill;
+    const kills: Array<{ pid: number; signal?: string | number }> = [];
+    process.kill = ((pid: number, signal?: string | number) => {
+      kills.push({ pid, signal });
+      return true;
+    }) as typeof process.kill;
+
+    try {
+      stopDashboard("my-app");
+    } finally {
+      process.kill = origKill;
+    }
+
+    expect(kills[0]).toEqual({ pid: -4321, signal: "SIGTERM" });
   });
 });

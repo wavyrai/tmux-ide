@@ -15,6 +15,43 @@ import { detectStack, suggestConfig } from "./detect.ts";
 import { outputError, printLayout } from "./lib/output.ts";
 import type { IdeConfig } from "./types.ts";
 
+function copyTemplateSkills(targetDir: string): string[] {
+  const created: string[] = [];
+  const templateSkillsDir = resolve(__dirname, "..", "templates", "skills");
+  if (!existsSync(templateSkillsDir)) return created;
+
+  mkdirSync(targetDir, { recursive: true });
+  for (const file of readdirSync(templateSkillsDir)) {
+    if (!file.endsWith(".md")) continue;
+    const destination = join(targetDir, file);
+    copyFileSync(join(templateSkillsDir, file), destination);
+    created.push(destination);
+  }
+  return created;
+}
+
+function scaffoldMissionsWorkspace(dir: string, name: string): string[] {
+  const created: string[] = [];
+  const skillsDir = join(dir, ".tmux-ide", "skills");
+  created.push(...copyTemplateSkills(skillsDir));
+
+  const libraryDir = join(dir, ".tmux-ide", "library");
+  if (!existsSync(libraryDir)) {
+    mkdirSync(libraryDir, { recursive: true });
+    created.push(libraryDir);
+  }
+
+  const agentsTemplatePath = resolve(__dirname, "..", "templates", "AGENTS.md");
+  if (existsSync(agentsTemplatePath)) {
+    const agentsPath = join(dir, "AGENTS.md");
+    const content = readFileSync(agentsTemplatePath, "utf-8").replace(/{{name}}/g, name);
+    writeFileSync(agentsPath, content);
+    created.push(agentsPath);
+  }
+
+  return created;
+}
+
 export async function init({
   template,
   json,
@@ -39,13 +76,18 @@ export async function init({
     const tmpPath = configPath + ".tmp";
     writeFileSync(tmpPath, content);
     renameSync(tmpPath, configPath);
+    const created =
+      template === "missions" ? scaffoldMissionsWorkspace(dir, name) : copyTemplateSkills(join(dir, ".tmux-ide", "skills"));
 
     if (json) {
-      console.log(JSON.stringify({ created: true, template, name }));
+      console.log(JSON.stringify({ created: true, template, name, paths: created }));
     } else {
       console.log(`Created ide.yml from "${template}" template for "${name}"`);
       const yaml = (await import("js-yaml")).default;
       printLayout(yaml.load(content) as IdeConfig);
+      for (const createdPath of created) {
+        console.log(`Created ${createdPath.replace(dir + "/", "")}`);
+      }
     }
     return;
   }
@@ -92,17 +134,9 @@ export async function init({
   // Copy built-in skills if .tmux-ide/skills/ doesn't exist
   const skillsDir = join(dir, ".tmux-ide", "skills");
   if (!existsSync(skillsDir)) {
-    const templateSkillsDir = resolve(__dirname, "..", "templates", "skills");
-    if (existsSync(templateSkillsDir)) {
-      mkdirSync(skillsDir, { recursive: true });
-      for (const file of readdirSync(templateSkillsDir)) {
-        if (file.endsWith(".md")) {
-          copyFileSync(join(templateSkillsDir, file), join(skillsDir, file));
-        }
-      }
-      if (!json) {
-        console.log("Copied built-in skill templates to .tmux-ide/skills/");
-      }
+    const created = copyTemplateSkills(skillsDir);
+    if (created.length > 0 && !json) {
+      console.log("Copied built-in skill templates to .tmux-ide/skills/");
     }
   }
 }
