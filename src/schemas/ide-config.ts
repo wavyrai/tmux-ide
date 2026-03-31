@@ -54,6 +54,15 @@ export const OrchestratorYamlConfigSchema = z.object({
   max_concurrent_agents: z.number().min(1).max(50).optional(),
   widgets: z.boolean().optional(),
   webhooks: z.array(WebhookConfigSchema).optional(),
+  services: z
+    .record(
+      z.object({
+        command: z.string(),
+        port: z.number().optional(),
+        healthcheck: z.string().optional(),
+      }),
+    )
+    .optional(),
 });
 
 export const TunnelConfigSchema = z.object({

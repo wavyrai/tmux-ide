@@ -1,5 +1,5 @@
 import { describe, it, beforeEach, afterEach, expect } from "bun:test";
-import { mkdtempSync, rmSync, mkdirSync, writeFileSync, existsSync } from "node:fs";
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -1641,5 +1641,170 @@ describe("structured handoff", () => {
     const events = readEvents(tmpDir);
     const issueEvents = events.filter((e) => e.type === "discovered_issue");
     expect(issueEvents.length).toBe(2);
+  });
+});
+
+describe("rich dispatch prompts", () => {
+  it("includes milestone context when task has milestone", () => {
+    saveMission(tmpDir, {
+      title: "Ship v2",
+      description: "",
+      status: "active",
+      branch: null,
+      milestones: [
+        { id: "M1", title: "Foundation", description: "Core infra setup", status: "active", order: 1, created: "2026-01-01T00:00:00Z", updated: "2026-01-01T00:00:00Z" },
+      ],
+      created: "2026-01-01T00:00:00Z",
+      updated: "2026-01-01T00:00:00Z",
+    });
+
+    const task = makeTask({ milestone: "M1" });
+    const prompt = buildTaskPrompt(tmpDir, task);
+
+    expect(prompt.includes("Milestone: Foundation (M1)")).toBeTruthy();
+    expect(prompt.includes("Core infra setup")).toBeTruthy();
+  });
+
+  it("includes AGENTS.md content when file exists", () => {
+    writeFileSync(join(tmpDir, "AGENTS.md"), "Do not modify the auth module.\nStay in your lane.");
+
+    const task = makeTask();
+    const prompt = buildTaskPrompt(tmpDir, task);
+
+    expect(prompt.includes("Agent Guidelines")).toBeTruthy();
+    expect(prompt.includes("Do not modify the auth module")).toBeTruthy();
+  });
+
+  it("includes recent completions from same milestone", () => {
+    saveMission(tmpDir, {
+      title: "Ship v2",
+      description: "",
+      status: "active",
+      branch: null,
+      milestones: [
+        { id: "M1", title: "Phase 1", description: "", status: "active", order: 1, created: "2026-01-01T00:00:00Z", updated: "2026-01-01T00:00:00Z" },
+      ],
+      created: "2026-01-01T00:00:00Z",
+      updated: "2026-01-01T00:00:00Z",
+    });
+
+    // Save a completed task in the same milestone
+    saveTask(tmpDir, makeTask({
+      id: "099",
+      title: "Setup database",
+      milestone: "M1",
+      status: "done",
+      assignee: "Agent 1",
+      salientSummary: "Used Postgres with pgvector",
+    }));
+
+    const task = makeTask({ id: "100", milestone: "M1" });
+    const prompt = buildTaskPrompt(tmpDir, task);
+
+    expect(prompt.includes("Recent Completions")).toBeTruthy();
+    expect(prompt.includes("Setup database")).toBeTruthy();
+    expect(prompt.includes("Used Postgres with pgvector")).toBeTruthy();
+  });
+
+  it("includes library architecture.md when present", () => {
+    const libraryDir = join(tmpDir, ".tmux-ide", "library");
+    mkdirSync(libraryDir, { recursive: true });
+    writeFileSync(join(libraryDir, "architecture.md"), "Monorepo with pnpm workspaces");
+
+    const task = makeTask();
+    const prompt = buildTaskPrompt(tmpDir, task);
+
+    expect(prompt.includes("Architecture")).toBeTruthy();
+    expect(prompt.includes("Monorepo with pnpm workspaces")).toBeTruthy();
+  });
+
+  it("includes library files matching task tags", () => {
+    const libraryDir = join(tmpDir, ".tmux-ide", "library");
+    mkdirSync(libraryDir, { recursive: true });
+    writeFileSync(join(libraryDir, "security.md"), "Always sanitize inputs");
+
+    const task = makeTask({ tags: ["security"] });
+    const prompt = buildTaskPrompt(tmpDir, task);
+
+    expect(prompt.includes("Reference: security.md")).toBeTruthy();
+    expect(prompt.includes("Always sanitize inputs")).toBeTruthy();
+  });
+
+  it("truncates large library files", () => {
+    const libraryDir = join(tmpDir, ".tmux-ide", "library");
+    mkdirSync(libraryDir, { recursive: true });
+    writeFileSync(join(libraryDir, "architecture.md"), "x".repeat(600));
+
+    const task = makeTask();
+    const prompt = buildTaskPrompt(tmpDir, task);
+
+    expect(prompt.includes("... (see full file at")).toBeTruthy();
+  });
+
+  it("includes services when config provides them", () => {
+    const task = makeTask();
+    const config = makeOrchestratorConfig(tmpDir, {
+      services: {
+        dev: { command: "pnpm dev", port: 3000 },
+        test: { command: "pnpm test" },
+      },
+    });
+    const prompt = buildTaskPrompt(tmpDir, task, config);
+
+    expect(prompt.includes("Available Services")).toBeTruthy();
+    expect(prompt.includes("pnpm dev")).toBeTruthy();
+    expect(prompt.includes("port 3000")).toBeTruthy();
+    expect(prompt.includes("pnpm test")).toBeTruthy();
+  });
+
+  it("includes fulfills in task details", () => {
+    const task = makeTask({ fulfills: ["A1", "A2"] });
+    const prompt = buildTaskPrompt(tmpDir, task);
+    expect(prompt.includes("Fulfills assertions: A1, A2")).toBeTruthy();
+  });
+});
+
+describe("knowledge library", () => {
+  it("appends salientSummary to learnings.md on task completion", () => {
+    const task = makeTask({
+      status: "done",
+      assignee: "Agent 1",
+      salientSummary: "JWT refresh tokens need 15min expiry",
+    });
+
+    const panes: PaneInfo[] = [makePane({ id: "%0", title: "Master" })];
+
+    const config = makeOrchestratorConfig(tmpDir);
+    const state = makeOrchestratorState({
+      previousTasks: new Map([["001", "in-progress"]]),
+    });
+
+    detectCompletions(config, state, [task], panes);
+
+    const learningsPath = join(tmpDir, ".tmux-ide", "library", "learnings.md");
+    expect(existsSync(learningsPath)).toBeTruthy();
+    const content = readFileSync(learningsPath, "utf-8");
+    expect(content.includes("Task 001: Test task")).toBeTruthy();
+    expect(content.includes("JWT refresh tokens need 15min expiry")).toBeTruthy();
+  });
+
+  it("does not create learnings.md when no salientSummary", () => {
+    const task = makeTask({
+      status: "done",
+      assignee: "Agent 1",
+      salientSummary: null,
+    });
+
+    const panes: PaneInfo[] = [makePane({ id: "%0", title: "Master" })];
+
+    const config = makeOrchestratorConfig(tmpDir);
+    const state = makeOrchestratorState({
+      previousTasks: new Map([["001", "in-progress"]]),
+    });
+
+    detectCompletions(config, state, [task], panes);
+
+    const learningsPath = join(tmpDir, ".tmux-ide", "library", "learnings.md");
+    expect(existsSync(learningsPath)).toBe(false);
   });
 });
