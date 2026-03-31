@@ -25,6 +25,11 @@ rows:
         command: claude
         role: validator
         skill: reviewer
+      - title: Researcher
+        command: claude
+        role: researcher
+        specialty: researcher
+        skill: researcher
       - title: Shell
 
 orchestrator:

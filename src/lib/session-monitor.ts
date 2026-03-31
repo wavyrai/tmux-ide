@@ -269,6 +269,7 @@ if (isMainModule) {
             dispatchMode: orch.dispatch_mode ?? "tasks",
             paneSpecialties,
             services: orch.services ?? {},
+            research: orch.research,
           });
         } catch {
           // Orchestrator module not available yet

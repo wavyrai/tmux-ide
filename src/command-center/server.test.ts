@@ -13,6 +13,7 @@ import {
 } from "../lib/task-store.ts";
 import { saveValidationState } from "../lib/validation.ts";
 import { appendEvent } from "../lib/event-log.ts";
+import { loadResearchState, saveResearchState } from "../lib/research.ts";
 import { _setExecutor, type PaneInfo } from "../widgets/lib/pane-comms.ts";
 import { _setTmuxRunner } from "./discovery.ts";
 import { createApp } from "./server.ts";
@@ -256,6 +257,82 @@ describe("GET /api/project/:name/plans", () => {
     const plan = body.plans.find((p) => p.name === "01-test");
     expect(plan).toBeTruthy();
     expect(plan!.status).toBe("pending");
+  });
+});
+
+describe("research endpoints", () => {
+  it("returns research state, active task, and recent findings", async () => {
+    saveTask(
+      tmpDir,
+      makeTask({
+        id: "010",
+        title: "Research: mission start",
+        status: "done",
+        updated: "2026-01-02T00:00:00Z",
+        tags: ["research", "mission_start"],
+        salientSummary: "Initial audit completed",
+      }),
+    );
+    saveTask(
+      tmpDir,
+      makeTask({
+        id: "011",
+        title: "Research: periodic",
+        status: "in-progress",
+        updated: "2026-01-03T00:00:00Z",
+        tags: ["research", "periodic"],
+      }),
+    );
+    saveResearchState(tmpDir, {
+      lastResearchAt: { periodic: "2026-01-03T00:00:00Z" },
+      missionStartAnalyzed: true,
+      milestoneTaskCounts: {},
+      activeResearchTaskId: "011",
+      retryWindow: [],
+    });
+
+    const app = createApp();
+    const res = await app.request("/api/project/test-project/research");
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      state: { activeResearchTaskId: string | null; missionStartAnalyzed: boolean };
+      activeTask: Task | null;
+      findings: Task[];
+    };
+    expect(body.state.activeResearchTaskId).toBe("011");
+    expect(body.state.missionStartAnalyzed).toBe(true);
+    expect(body.activeTask?.id).toBe("011");
+    expect(body.findings.map((task) => task.id)).toEqual(["010"]);
+  });
+
+  it("manually dispatches research through the API", async () => {
+    mockPanes = [
+      makePane({
+        id: "%2",
+        index: 1,
+        title: "Researcher",
+        role: "researcher",
+        currentCommand: "zsh",
+      }),
+    ];
+
+    const app = createApp();
+    const res = await app.request("/api/project/test-project/research/trigger", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ type: "periodic" }),
+    });
+
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as { ok: boolean; task: Task };
+    expect(body.ok).toBe(true);
+    expect(body.task.tags).toEqual(["research", "periodic"]);
+    expect(body.task.specialty).toBe("researcher");
+
+    const persisted = loadTask(tmpDir, body.task.id);
+    expect(persisted?.status).toBe("in-progress");
+    expect(loadResearchState(tmpDir).activeResearchTaskId).toBe(body.task.id);
   });
 });
 

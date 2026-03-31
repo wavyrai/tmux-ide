@@ -1,10 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { makeMission, makeOrchestratorConfig, makeOrchestratorState, makePane, makeTask } from "../__tests__/support.ts";
 import { _setExecutor, type PaneInfo } from "../widgets/lib/pane-comms.ts";
-import { saveMission, saveTask, loadTasks, ensureTasksDir } from "./task-store.ts";
+import { saveMission, loadTasks, ensureTasksDir } from "./task-store.ts";
 import {
   buildResearchPrompt,
   dispatchResearch,

@@ -3,6 +3,11 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync, existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { writeConfig } from "./lib/yaml-io.ts";
+import { _setExecutor as setPaneExecutor, type PaneInfo } from "./widgets/lib/pane-comms.ts";
+import { _setExecutor as setTmuxExecutor } from "./lib/tmux.ts";
+import { saveResearchState } from "./lib/research.ts";
+import { makeTask } from "./__tests__/support.ts";
 import {
   ensureTasksDir,
   loadMission,
@@ -28,14 +33,41 @@ import {
 import { parseProof, taskCommand } from "./task.ts";
 
 let tmpDir: string;
+let restorePaneTmux: (() => void) | null = null;
+let restoreSessionTmux: (() => void) | null = null;
+let mockPanes: PaneInfo[] = [];
 
 beforeEach(() => {
   tmpDir = mkdtempSync(join(tmpdir(), "tmux-ide-task-test-"));
+  mockPanes = [];
 });
 
 afterEach(() => {
+  restorePaneTmux?.();
+  restorePaneTmux = null;
+  restoreSessionTmux?.();
+  restoreSessionTmux = null;
   rmSync(tmpDir, { recursive: true, force: true });
 });
+
+function captureLogs(run: () => void | Promise<void>): Promise<string[]> | string[] {
+  const logs: string[] = [];
+  const origLog = console.log;
+  console.log = (...args: unknown[]) => logs.push(args.join(" "));
+  try {
+    const result = run();
+    if (result instanceof Promise) {
+      return result.finally(() => {
+        console.log = origLog;
+      }).then(() => logs);
+    }
+    console.log = origLog;
+    return logs;
+  } catch (error) {
+    console.log = origLog;
+    throw error;
+  }
+}
 
 describe("ensureTasksDir", () => {
   it("creates .tasks/, goals/, and tasks/ directories", () => {
@@ -145,6 +177,116 @@ describe("mission", () => {
     expect(mission.milestones.find((m) => m.id === "M1")?.status).toBe("active");
     expect(mission.milestones.find((m) => m.id === "M2")?.status).toBe("locked");
     expect(mission.milestones.find((m) => m.id === "M3")?.status).toBe("locked");
+  });
+
+  it("reports research status as JSON", async () => {
+    ensureTasksDir(tmpDir);
+    saveTask(
+      tmpDir,
+      makeTask({
+        id: "010",
+        title: "Research: mission start",
+        status: "done",
+        updated: "2026-01-02T00:00:00Z",
+        tags: ["research", "mission_start"],
+        salientSummary: "Initial audit completed",
+      }),
+    );
+    saveTask(
+      tmpDir,
+      makeTask({
+        id: "011",
+        title: "Research: periodic",
+        status: "in-progress",
+        updated: "2026-01-03T00:00:00Z",
+        tags: ["research", "periodic"],
+      }),
+    );
+    saveResearchState(tmpDir, {
+      lastResearchAt: { periodic: "2026-01-03T00:00:00Z" },
+      missionStartAnalyzed: true,
+      milestoneTaskCounts: {},
+      activeResearchTaskId: "011",
+      retryWindow: [],
+    });
+
+    const logs = (await captureLogs(() =>
+      taskCommand(tmpDir, {
+        action: "research",
+        sub: "status",
+        args: [],
+        values: {},
+        json: true,
+      }),
+    )) as string[];
+    const body = JSON.parse(logs.join("\n")) as {
+      activeTask: Task | null;
+      recentFindings: Array<{ id: string }>;
+      missionStartAnalyzed: boolean;
+    };
+
+    expect(body.activeTask?.id).toBe("011");
+    expect(body.recentFindings.map((finding) => finding.id)).toEqual(["010"]);
+    expect(body.missionStartAnalyzed).toBe(true);
+  });
+
+  it("manually dispatches research tasks from the CLI handler", async () => {
+    ensureTasksDir(tmpDir);
+    writeConfig(tmpDir, {
+      name: "test-project",
+      rows: [],
+      orchestrator: {
+        enabled: true,
+        dispatch_mode: "missions",
+        research: { enabled: true },
+      },
+    });
+    mockPanes = [
+      {
+        id: "%2",
+        index: 1,
+        title: "Researcher",
+        currentCommand: "zsh",
+        width: 100,
+        height: 30,
+        active: false,
+        role: "researcher",
+        name: null,
+        type: null,
+      },
+    ];
+    restorePaneTmux = setPaneExecutor((_cmd: string, args: string[]) => {
+      if (args[0] === "list-panes") {
+        return mockPanes
+          .map(
+            (pane) =>
+              `${pane.id}\t${pane.index}\t${pane.title}\t${pane.currentCommand}\t${pane.width}\t${pane.height}\t${pane.active ? "1" : "0"}\t${pane.role ?? ""}\t${pane.name ?? ""}\t${pane.type ?? ""}`,
+          )
+          .join("\n");
+      }
+      return "";
+    });
+    restoreSessionTmux = setTmuxExecutor((_cmd, args) => {
+      if (args[0] === "has-session" && args[2] === "test-project") {
+        return Buffer.from("");
+      }
+      return Buffer.from("");
+    });
+
+    const logs = (await captureLogs(() =>
+      taskCommand(tmpDir, {
+        action: "research",
+        sub: "trigger",
+        args: ["periodic"],
+        values: {},
+        json: true,
+      }),
+    )) as string[];
+    const task = JSON.parse(logs.join("\n")) as Task;
+
+    expect(task.tags).toEqual(["research", "periodic"]);
+    expect(task.specialty).toBe("researcher");
+    expect(loadTask(tmpDir, task.id)?.status).toBe("in-progress");
   });
 });
 

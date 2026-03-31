@@ -33,7 +33,10 @@ export type EventType =
   | "mission_complete"
   | "discovered_issue"
   | "research_dispatch"
-  | "research_finding";
+  | "research_finding"
+  | "agent_heartbeat"
+  | "session_start"
+  | "session_end";
 
 export interface OrchestratorEvent {
   timestamp: string;

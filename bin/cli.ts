@@ -89,6 +89,7 @@ const knownCommands = new Set([
   "milestone",
   "goal",
   "task",
+  "research",
   "plan",
   "skill",
   "setup",
@@ -191,6 +192,8 @@ ${bold("Task Management:")}
   ${cyan("tmux-ide task claim")} <id> [--assign name]  ${dim("Claim a task")}
   ${cyan("tmux-ide task done")} <id> [--proof "..."]   ${dim("Complete a task")}
   ${cyan("tmux-ide task show")} <id>                   ${dim("Show task with full context")}
+  ${cyan("tmux-ide research status")}                  ${dim("Show research agent state")}
+  ${cyan("tmux-ide research trigger")} <type>          ${dim("Manually dispatch a research task")}
 
 ${bold("Flags:")}
   ${cyan("--json")}                      ${dim("Output as JSON (all commands)")}
@@ -381,6 +384,18 @@ try {
           fulfills: values.fulfills,
           summary: values.summary,
         },
+      });
+      break;
+    }
+
+    case "research": {
+      const sub = positionals[1];
+      await taskCommand(null, {
+        json,
+        action: "research",
+        sub,
+        args: positionals.slice(2),
+        values: {},
       });
       break;
     }

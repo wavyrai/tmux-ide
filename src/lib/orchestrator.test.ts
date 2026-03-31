@@ -34,6 +34,7 @@ import {
   handleMissionComplete,
 } from "./orchestrator.ts";
 import { readEvents } from "./event-log.ts";
+import { loadResearchState, saveResearchState } from "./research.ts";
 import {
   ensureTasksDir,
   saveMission,
@@ -242,6 +243,43 @@ describe("detectCompletions", () => {
 
     const sendCalls = tmuxCalls.filter((c) => c.args.includes("send-keys"));
     expect(sendCalls.length).toBe(0);
+  });
+
+  it("processes completed research tasks into the library and clears active state", () => {
+    const task = makeTask({
+      id: "099",
+      title: "Research: periodic",
+      status: "done",
+      assignee: "Researcher",
+      tags: ["research", "periodic"],
+      updated: "2026-01-03T00:00:00Z",
+      salientSummary: "Found a contract gap",
+    });
+    saveResearchState(tmpDir, {
+      lastResearchAt: {},
+      missionStartAnalyzed: false,
+      milestoneTaskCounts: {},
+      activeResearchTaskId: "099",
+      retryWindow: [],
+    });
+
+    const panes: PaneInfo[] = [makePane({ id: "%0", title: "Master" })];
+    const config = makeOrchestratorConfig(tmpDir);
+    const state = makeOrchestratorState({
+      previousTasks: new Map([["099", "in-progress"]]),
+    });
+    const researchState = loadResearchState(tmpDir);
+
+    detectCompletions(config, state, [task], panes, researchState);
+
+    expect(loadResearchState(tmpDir).activeResearchTaskId).toBe(null);
+    expect(
+      existsSync(join(tmpDir, ".tmux-ide", "library", "research-findings.md")),
+    ).toBeTruthy();
+    expect(
+      readFileSync(join(tmpDir, ".tmux-ide", "library", "research-findings.md"), "utf-8"),
+    ).toContain("Found a contract gap");
+    expect(readEvents(tmpDir).some((event) => event.type === "research_finding")).toBeTruthy();
   });
 });
 

@@ -30,6 +30,15 @@ import {
   checkCoverage,
   parseAssertionIds,
 } from "./lib/validation.ts";
+import { getSessionName, readConfig } from "./lib/yaml-io.ts";
+import { getSessionState } from "./lib/tmux.ts";
+import { listSessionPanes } from "./widgets/lib/pane-comms.ts";
+import {
+  dispatchResearch,
+  loadResearchState,
+  type ResearchTrigger,
+} from "./lib/research.ts";
+import { type OrchestratorState } from "./lib/orchestrator.ts";
 
 export function parseProof(raw: string, existing: ProofSchema | null): ProofSchema {
   // Try parsing as JSON first
@@ -113,12 +122,130 @@ export async function taskCommand(
       return handleMilestone(dir, sub, args, values, json);
     case "validate":
       return handleValidation(dir, sub, args, values, json);
+    case "research":
+      return handleResearch(dir, sub, args, json);
     case "goal":
       return handleGoal(dir, sub, args, values, json);
     case "task":
       return handleTask(dir, sub, args, values, json);
     default:
       outputError(`Unknown action: ${action}`, "USAGE");
+  }
+}
+
+function emptyOrchestratorState(): OrchestratorState {
+  return {
+    lastActivity: new Map(),
+    previousTasks: new Map(),
+    claimedTasks: new Set(),
+    taskClaimTimes: new Map(),
+  };
+}
+
+function handleResearch(dir: string, sub: string | undefined, args: string[], json: boolean): void {
+  switch (sub) {
+    case "status": {
+      const researchState = loadResearchState(dir);
+      const tasks = loadTasks(dir);
+      const activeTask =
+        researchState.activeResearchTaskId != null
+          ? tasks.find((task) => task.id === researchState.activeResearchTaskId) ?? null
+          : null;
+      const recentFindings = tasks
+        .filter((task) => task.tags.includes("research") && task.status === "done")
+        .sort((a, b) => Date.parse(b.updated) - Date.parse(a.updated))
+        .slice(0, 5)
+        .map((task) => ({
+          id: task.id,
+          title: task.title,
+          updated: task.updated,
+          type: task.tags.find((tag) => tag !== "research") ?? "research",
+          summary: task.salientSummary,
+        }));
+
+      const payload = {
+        activeTask,
+        recentFindings,
+        cooldowns: researchState.lastResearchAt,
+        missionStartAnalyzed: researchState.missionStartAnalyzed,
+        retryWindow: researchState.retryWindow,
+      };
+
+      if (json) {
+        console.log(JSON.stringify(payload, null, 2));
+      } else {
+        console.log(`Active research task: ${activeTask ? `${activeTask.id} — ${activeTask.title}` : "none"}`);
+        console.log(`Mission start analyzed: ${researchState.missionStartAnalyzed ? "yes" : "no"}`);
+        console.log(`Recent findings: ${recentFindings.length}`);
+      }
+      break;
+    }
+
+    case "trigger": {
+      const type = args[0];
+      if (!type) outputError("Usage: tmux-ide research trigger <type>", "USAGE");
+
+      const { name: session } = getSessionName(dir);
+      const sessionState = getSessionState(session);
+      if (!sessionState.running) {
+        outputError(`Session "${session}" is not running`, "SESSION_NOT_FOUND");
+      }
+
+      const panes = listSessionPanes(session);
+      const tasks = loadTasks(dir);
+      const researchState = loadResearchState(dir);
+      let maxConcurrentAgents = 10;
+      let masterPane: string | null = null;
+      let researchEnabled = true;
+
+      try {
+        const { config } = readConfig(dir);
+        maxConcurrentAgents = config.orchestrator?.max_concurrent_agents ?? 10;
+        masterPane = config.orchestrator?.master_pane ?? null;
+        researchEnabled = config.orchestrator?.research?.enabled ?? true;
+      } catch {
+        // Fall back to defaults when ide.yml is unreadable
+      }
+
+      const task = dispatchResearch(
+        {
+          session,
+          dir,
+          masterPane,
+          maxConcurrentAgents,
+          research: { enabled: researchEnabled },
+        },
+        emptyOrchestratorState(),
+        researchState,
+        tasks,
+        panes,
+        {
+          type,
+          reason: `Manual research trigger: ${type}`,
+        } satisfies ResearchTrigger,
+      );
+
+      if (!task) {
+        outputError(`Unable to dispatch research trigger "${type}"`, "CONFLICT");
+      }
+
+      if (json) {
+        console.log(JSON.stringify(task, null, 2));
+      } else {
+        console.log(`Dispatched research task ${task.id}: ${task.title}`);
+      }
+      break;
+    }
+
+    case "help":
+    case undefined:
+      console.log(`Usage: tmux-ide research <status|trigger>
+
+  status                         Show research agent state
+  trigger <type>                 Manually dispatch a research task`);
+      break;
+    default:
+      outputError("Usage: tmux-ide research <status|trigger>\nRun: tmux-ide research help", "USAGE");
   }
 }
 

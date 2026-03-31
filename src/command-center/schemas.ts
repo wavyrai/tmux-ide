@@ -44,6 +44,10 @@ export const updateAssertionSchema = z.object({
   verifiedBy: z.string().optional(),
 });
 
+export const triggerResearchSchema = z.object({
+  type: z.string().trim().min(1, "Research type is required"),
+});
+
 export const launchSchema = z
   .object({
     attach: z.boolean().optional(),

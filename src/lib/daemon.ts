@@ -239,6 +239,7 @@ async function startOrchestrator(): Promise<void> {
             string,
             { command: string; port?: number; healthcheck?: string }
           >) ?? {},
+        research: orch.research,
       });
     } catch {
       // Orchestrator module not available yet

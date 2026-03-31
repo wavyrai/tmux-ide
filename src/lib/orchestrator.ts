@@ -52,15 +52,25 @@ import {
 import { slugify } from "./slugify.ts";
 import { recordTaskTime } from "./token-tracker.ts";
 import { listSessionPanes, sendCommand, type PaneInfo } from "../widgets/lib/pane-comms.ts";
-import { appendEvent } from "./event-log.ts";
+import { appendEvent, readEvents } from "./event-log.ts";
 import { loadSkill } from "./skill-registry.ts";
 import { isGhAvailable, createMissionPr } from "./github-pr.ts";
+import { computeAndSaveMetrics, appendMissionHistory } from "./metrics.ts";
 import {
   loadValidationContract,
   loadValidationState,
   saveValidationState,
   checkCoverage,
 } from "./validation.ts";
+import {
+  dispatchResearch,
+  evaluateTriggers,
+  loadResearchState,
+  processResearchCompletion,
+  saveResearchState,
+  type ResearchConfigShape,
+  type ResearchState,
+} from "./research.ts";
 
 export interface OrchestratorConfig {
   session: string;
@@ -75,6 +85,7 @@ export interface OrchestratorConfig {
   dispatchMode: "tasks" | "goals" | "missions";
   paneSpecialties: Map<string, string[]>;
   services: Record<string, { command: string; port?: number; healthcheck?: string }>;
+  research?: ResearchConfigShape;
 }
 
 export interface OrchestratorState {
@@ -833,6 +844,9 @@ export function handleMissionComplete(
     }
   }
 
+  // Record mission in history for cross-mission comparison
+  appendMissionHistory(config.dir, mission, tasks);
+
   appendEvent(config.dir, {
     timestamp: new Date().toISOString(),
     type: "mission_complete",
@@ -1200,9 +1214,17 @@ export function detectStalls(
   state: OrchestratorState,
   tasks: Task[],
   panes: PaneInfo[],
+  researchState?: ResearchState,
 ): void {
   const now = Date.now();
   for (const task of tasks.filter((t) => t.status === "in-progress" && t.assignee)) {
+    if (
+      task.tags.includes("research") &&
+      (!researchState?.activeResearchTaskId || researchState.activeResearchTaskId !== task.id)
+    ) {
+      continue;
+    }
+
     const agentPane = panes.find((p) => agentIdentifier(p) === task.assignee);
     if (!agentPane) continue;
 
@@ -1234,6 +1256,7 @@ export function detectCompletions(
   state: OrchestratorState,
   tasks: Task[],
   panes: PaneInfo[],
+  researchState?: ResearchState,
 ): void {
   for (const task of tasks) {
     const prev = state.previousTasks.get(task.id);
@@ -1266,8 +1289,9 @@ export function detectCompletions(
     if (prev === "in-progress" && task.status === "done") {
       // Record elapsed time for cost tracking
       const claimTime = state.taskClaimTimes.get(task.id);
+      const elapsedMs = claimTime ? Date.now() - claimTime : undefined;
       if (claimTime && task.assignee) {
-        recordTaskTime(config.dir, task.assignee, task.id, Date.now() - claimTime);
+        recordTaskTime(config.dir, task.assignee, task.id, elapsedMs!);
       }
       state.taskClaimTimes.delete(task.id);
 
@@ -1279,8 +1303,13 @@ export function detectCompletions(
         type: "completion",
         taskId: task.id,
         agent: task.assignee ?? undefined,
+        durationMs: elapsedMs,
         message: `Completed "${task.title}" by ${task.assignee ?? "unknown"}${task.salientSummary ? ` — ${task.salientSummary}` : ""}`,
-      });
+      } as OrchestratorEvent & { durationMs?: number });
+
+      if (task.tags.includes("research") && researchState) {
+        processResearchCompletion(config, researchState, task);
+      }
 
       // Append salient summary to knowledge library
       if (task.salientSummary) {
@@ -1540,6 +1569,19 @@ export function gracefulShutdown(config: OrchestratorConfig, state: Orchestrator
     }
   }
 
+  // Emit session_end and save metrics
+  appendEvent(config.dir, {
+    timestamp: new Date().toISOString(),
+    type: "session_end",
+    message: `Orchestrator shutting down`,
+  });
+
+  try {
+    computeAndSaveMetrics(config.dir);
+  } catch {
+    // Metrics save failure should not prevent shutdown
+  }
+
   // Persist state for resume
   saveOrchestratorState(config.dir, state);
 }
@@ -1556,6 +1598,7 @@ export function reloadConfig(
       | "autoDispatch"
       | "beforeRun"
       | "afterRun"
+      | "research"
     >
   >,
 ): void {
@@ -1566,6 +1609,7 @@ export function reloadConfig(
   if (patch.autoDispatch !== undefined) target.autoDispatch = patch.autoDispatch;
   if (patch.beforeRun !== undefined) target.beforeRun = patch.beforeRun;
   if (patch.afterRun !== undefined) target.afterRun = patch.afterRun;
+  if (patch.research !== undefined) target.research = patch.research;
 }
 
 export function createOrchestrator(initialConfig: OrchestratorConfig): () => void {
@@ -1578,6 +1622,7 @@ export function createOrchestrator(initialConfig: OrchestratorConfig): () => voi
     claimedTasks: new Set(),
     taskClaimTimes: new Map(),
   };
+  const researchState = loadResearchState(config.dir);
 
   // Load persisted state from previous run
   loadOrchestratorState(config.dir, state);
@@ -1590,8 +1635,18 @@ export function createOrchestrator(initialConfig: OrchestratorConfig): () => voi
     state.previousTasks.set(task.id, task.status);
   }
 
+  // Emit session_start
+  appendEvent(config.dir, {
+    timestamp: new Date().toISOString(),
+    type: "session_start",
+    message: `Orchestrator started — mode: ${config.dispatchMode}, max agents: ${config.maxConcurrentAgents}`,
+  });
+
+  let tickCount = 0;
+
   function tick(): void {
-    const tasks = loadTasks(config.dir);
+    tickCount++;
+    let tasks = loadTasks(config.dir);
     const panes = listSessionPanes(config.session);
 
     // 1. Reconcile: detect crashed agents, unassign their tasks
@@ -1616,10 +1671,19 @@ export function createOrchestrator(initialConfig: OrchestratorConfig): () => voi
     }
 
     // 3. Detect stalls: nudge agents that haven't produced output
-    detectStalls(config, state, tasks, panes);
+    detectStalls(config, state, tasks, panes, researchState);
 
     // 4. Detect completions: notify master, run hooks, cleanup
-    detectCompletions(config, state, tasks, panes);
+    detectCompletions(config, state, tasks, panes, researchState);
+    tasks = loadTasks(config.dir);
+
+    if (config.dispatchMode === "missions" && config.research?.enabled) {
+      const triggers = evaluateTriggers(config, state, researchState, tasks, readEvents(config.dir));
+      if (triggers.length > 0) {
+        dispatchResearch(config, state, researchState, tasks, panes, triggers[0]);
+        tasks = loadTasks(config.dir);
+      }
+    }
 
     // 5. Milestone completion + validation flow + mission completion
     if (config.dispatchMode === "missions") {
@@ -1633,6 +1697,24 @@ export function createOrchestrator(initialConfig: OrchestratorConfig): () => voi
         if (allMilestonesDone) {
           handleMissionComplete(config, mission, panes);
         }
+      }
+    }
+
+    // Agent heartbeat every 6th tick (~30s at default 5s poll)
+    if (tickCount % 6 === 0) {
+      const agentPanes = panes.filter((p) => {
+        if (p.role === "lead") return false;
+        return isAgentPane(p);
+      });
+      if (agentPanes.length > 0) {
+        const statuses = agentPanes
+          .map((p) => `${agentIdentifier(p)}=${isAgentBusy(p) ? "busy" : "idle"}`)
+          .join(", ");
+        appendEvent(config.dir, {
+          timestamp: new Date().toISOString(),
+          type: "agent_heartbeat",
+          message: `agents: ${statuses}`,
+        });
       }
     }
 
@@ -1667,6 +1749,7 @@ export function createOrchestrator(initialConfig: OrchestratorConfig): () => voi
             autoDispatch: (orch.auto_dispatch as boolean | undefined) ?? config.autoDispatch,
             beforeRun: (orch.before_run as string | undefined) ?? config.beforeRun,
             afterRun: (orch.after_run as string | undefined) ?? config.afterRun,
+            research: (orch.research as ResearchConfigShape | undefined) ?? config.research,
           });
 
           // Restart interval if pollInterval changed
@@ -1686,6 +1769,7 @@ export function createOrchestrator(initialConfig: OrchestratorConfig): () => voi
     clearInterval(interval);
     if (watcher) watcher.close();
     gracefulShutdown(config, state);
+    saveResearchState(config.dir, researchState);
     process.exit(0);
   }
 
@@ -1695,6 +1779,7 @@ export function createOrchestrator(initialConfig: OrchestratorConfig): () => voi
   return () => {
     clearInterval(interval);
     if (watcher) watcher.close();
+    saveResearchState(config.dir, researchState);
     process.removeListener("SIGTERM", onSignal);
     process.removeListener("SIGINT", onSignal);
   };

@@ -106,6 +106,9 @@ export const EventTypeSchemaZ = z.enum([
   "discovered_issue",
   "research_dispatch",
   "research_finding",
+  "agent_heartbeat",
+  "session_start",
+  "session_end",
 ]);
 
 export const OrchestratorEventSchemaZ = z.object({

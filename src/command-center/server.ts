@@ -69,6 +69,7 @@ import {
   createMilestoneSchema,
   updateMilestoneSchema,
   updateAssertionSchema,
+  triggerResearchSchema,
 } from "./schemas.ts";
 import { AuthService } from "../lib/auth/auth-service.ts";
 import { authMiddleware } from "../lib/auth/middleware.ts";
@@ -76,6 +77,7 @@ import type { AuthConfig } from "../lib/auth/types.ts";
 import { TunnelManager } from "../lib/tunnels/manager.ts";
 import { RemoteRegistry } from "../lib/hq/registry.ts";
 import { RegistrationPayloadSchema } from "../lib/hq/types.ts";
+import { dispatchResearch, loadResearchState } from "../lib/research.ts";
 
 export interface CreateAppOptions {
   authService?: AuthService;
@@ -856,6 +858,82 @@ export function createApp(options: CreateAppOptions = {}): Hono {
       state.lastVerified = new Date().toISOString();
       saveValidationState(session.dir, state);
       return c.json({ ok: true, assertionId: assertId, ...state.assertions[assertId] });
+    },
+  );
+
+  app.get("/api/project/:name/research", (c) => {
+    const name = c.req.param("name");
+    const sessions = discoverSessions();
+    const session = sessions.find((s) => s.name === name);
+    if (!session) return c.json({ error: "Session not found" }, 404);
+
+    const state = loadResearchState(session.dir);
+    const tasks = loadTasks(session.dir);
+    const activeTask =
+      state.activeResearchTaskId != null
+        ? tasks.find((task) => task.id === state.activeResearchTaskId) ?? null
+        : null;
+    const findings = tasks
+      .filter((task) => task.tags.includes("research") && task.status === "done")
+      .sort((a, b) => Date.parse(b.updated) - Date.parse(a.updated))
+      .slice(0, 10);
+
+    return c.json({ state, activeTask, findings });
+  });
+
+  app.post(
+    "/api/project/:name/research/trigger",
+    zValidator("json", triggerResearchSchema),
+    async (c) => {
+      const name = c.req.param("name");
+      const sessions = discoverSessions();
+      const session = sessions.find((s) => s.name === name);
+      if (!session) return c.json({ error: "Session not found" }, 404);
+
+      const body = c.req.valid("json");
+      const tasks = loadTasks(session.dir);
+      const researchState = loadResearchState(session.dir);
+
+      let maxConcurrentAgents = 10;
+      let masterPane: string | null = null;
+      let researchEnabled = true;
+      try {
+        const { config } = readConfig(session.dir);
+        maxConcurrentAgents = config.orchestrator?.max_concurrent_agents ?? 10;
+        masterPane = config.orchestrator?.master_pane ?? null;
+        researchEnabled = config.orchestrator?.research?.enabled ?? true;
+      } catch {
+        // ide.yml unreadable — use defaults
+      }
+
+      const task = dispatchResearch(
+        {
+          session: name,
+          dir: session.dir,
+          masterPane,
+          maxConcurrentAgents,
+          research: { enabled: researchEnabled },
+        },
+        {
+          lastActivity: new Map(),
+          previousTasks: new Map(),
+          claimedTasks: new Set(),
+          taskClaimTimes: new Map(),
+        },
+        researchState,
+        tasks,
+        listSessionPanes(name),
+        {
+          type: body.type,
+          reason: `Manual research trigger: ${body.type}`,
+        },
+      );
+
+      if (!task) {
+        return c.json({ error: `Unable to dispatch research trigger "${body.type}"` }, 409);
+      }
+
+      return c.json({ ok: true, task }, 201);
     },
   );
 

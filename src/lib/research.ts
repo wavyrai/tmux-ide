@@ -9,7 +9,6 @@ import {
 import { join } from "node:path";
 import {
   loadMission,
-  loadTasks,
   nextTaskId,
   saveTask,
   type Task,
