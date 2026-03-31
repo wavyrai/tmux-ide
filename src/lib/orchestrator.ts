@@ -465,7 +465,7 @@ export function buildGoalPrompt(dir: string, goal: Goal, planner: PaneInfo): str
   prompt += `7. When done: tmux-ide goal done ${goal.id} --proof "summary of what was accomplished"\n\n`;
   prompt += `You own this goal end-to-end. Plan it, execute it, deliver it.\n`;
 
-  return prompt.replace(/\n+/g, " ").trim();
+  return prompt.trim();
 }
 
 export function dispatchGoals(
