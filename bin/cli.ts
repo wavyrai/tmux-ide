@@ -50,6 +50,9 @@ const { positionals, values } = parseArgs({
     depends: { type: "string" },
     pr: { type: "boolean" },
     specialty: { type: "string" },
+    milestone: { type: "string" },
+    fulfills: { type: "string" },
+    summary: { type: "string" },
     sequence: { type: "string" },
     evidence: { type: "string" },
     port: { type: "string" },
@@ -367,6 +370,10 @@ try {
           proof: values.proof,
           depends: values.depends,
           pr: values.pr,
+          specialty: values.specialty,
+          milestone: values.milestone,
+          fulfills: values.fulfills,
+          summary: values.summary,
         },
       });
       break;
