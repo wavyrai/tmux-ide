@@ -156,9 +156,8 @@ describe("ensureTaskDocs", () => {
 
 describe("dashboard helpers", () => {
   it("detects a dashboard directory from the package root", () => {
-    expect(resolveDashboardDir("/Users/thijs/Developer/tmux-ide")).toBe(
-      "/Users/thijs/Developer/tmux-ide/dashboard",
-    );
+    const root = join(import.meta.dir, "..");
+    expect(resolveDashboardDir(root)).toBe(join(root, "dashboard"));
   });
 
   it("returns null when the dashboard directory is missing", () => {
