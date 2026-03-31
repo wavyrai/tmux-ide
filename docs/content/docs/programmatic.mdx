@@ -164,6 +164,131 @@ tmux-ide restart      # or restart to apply config changes
 
 The team lead can also reconfigure from within its session — see [Agent Teams](/docs/agent-teams#team-lead-self-configuration).
 
+## Missions API
+
+Mission workflows are available programmatically from both the CLI and the Command Center.
+
+### Create a mission
+
+Use the CLI to create a mission in `planning` state:
+
+```bash
+tmux-ide mission create "Ship auth v2" -d "JWT login, refresh, validation, and metrics"
+```
+
+### Mission status
+
+```bash
+tmux-ide mission status --json
+```
+
+Command Center:
+
+```text
+GET /api/project/:name/mission
+```
+
+Returns the mission plus a validation summary.
+
+### Mark planning complete
+
+```bash
+tmux-ide mission plan-complete --json
+```
+
+Command Center:
+
+```text
+POST /api/project/:name/mission/plan-complete
+```
+
+This switches the mission from `planning` to `active` and activates the earliest milestone.
+
+## Milestone API
+
+```bash
+tmux-ide milestone create "Foundation" --sequence 1 --json
+tmux-ide milestone list --json
+tmux-ide milestone show M1 --json
+tmux-ide milestone update M1 --status done --json
+```
+
+Command Center:
+
+```text
+GET  /api/project/:name/milestones
+GET  /api/project/:name/milestones/:id
+POST /api/project/:name/milestones
+POST /api/project/:name/milestones/:id
+```
+
+## Validation API
+
+```bash
+tmux-ide validate show --json
+tmux-ide validate assert VAL-AUTH-001 --status passing --evidence "API test passed" --json
+tmux-ide validate report --json
+tmux-ide validate coverage --json
+```
+
+Command Center:
+
+```text
+GET  /api/project/:name/validation
+GET  /api/project/:name/validation/coverage
+POST /api/project/:name/validation/assert/:assertId
+```
+
+## Skills API
+
+```bash
+tmux-ide skill list --json
+tmux-ide skill show frontend --json
+tmux-ide skill validate --json
+```
+
+Command Center:
+
+```text
+GET /api/project/:name/skills
+GET /api/project/:name/skills/:skillName
+```
+
+## Metrics API
+
+```bash
+tmux-ide metrics --json
+tmux-ide metrics agents --json
+tmux-ide metrics timeline --json
+tmux-ide metrics eval --json
+tmux-ide metrics history --json
+```
+
+Command Center:
+
+```text
+GET /api/project/:name/metrics
+GET /api/project/:name/metrics/agents
+GET /api/project/:name/metrics/timeline
+GET /api/project/:name/metrics/history
+```
+
+## Research API
+
+```bash
+tmux-ide research status --json
+tmux-ide research trigger periodic --json
+```
+
+Command Center:
+
+```text
+GET  /api/project/:name/research
+POST /api/project/:name/research/trigger
+```
+
+The researcher can be triggered manually for `mission_start`, `milestone_complete`, `periodic`, `retry_cluster`, or other configured trigger names.
+
 ## Best Practices
 
 - **Always use `--json`** for programmatic access — human output may change between versions
@@ -173,3 +298,6 @@ The team lead can also reconfigure from within its session — see [Agent Teams]
 - **2-3 Claude panes** in the top row for parallel work (feature, review, explore)
 - **Dev servers + shell** in the bottom row
 - **Use `detect --json` first** to understand the project stack before suggesting a config
+- **Use `mission create` + `plan-complete`** when automating v2.0 mission startup
+- **Pair `validate coverage` with planning** so every assertion is claimed before execution
+- **Use metrics + research endpoints together** when building monitoring or dashboards
