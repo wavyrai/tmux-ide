@@ -1514,8 +1514,8 @@ describe("validation flow", () => {
     // All assertions passing
     saveValidationState(tmpDir, {
       assertions: {
-        A1: { status: "passing", verifiedBy: "Validator", verifiedAt: "2026-01-01T00:00:00Z", evidence: "works" },
-        A2: { status: "passing", verifiedBy: "Validator", verifiedAt: "2026-01-01T00:00:00Z", evidence: "tests pass" },
+        A1: { status: "passing", verifiedBy: "Validator", verifiedAt: "2026-01-01T00:00:00Z", evidence: "works", blockedBy: null },
+        A2: { status: "passing", verifiedBy: "Validator", verifiedAt: "2026-01-01T00:00:00Z", evidence: "tests pass", blockedBy: null },
       },
       lastVerified: "2026-01-01T00:00:00Z",
     });
@@ -1543,8 +1543,8 @@ describe("validation flow", () => {
 
     saveValidationState(tmpDir, {
       assertions: {
-        A1: { status: "passing", verifiedBy: "V", verifiedAt: "2026-01-01T00:00:00Z", evidence: "ok" },
-        A2: { status: "failing", verifiedBy: "V", verifiedAt: "2026-01-01T00:00:00Z", evidence: "auth broken" },
+        A1: { status: "passing", verifiedBy: "V", verifiedAt: "2026-01-01T00:00:00Z", evidence: "ok", blockedBy: null },
+        A2: { status: "failing", verifiedBy: "V", verifiedAt: "2026-01-01T00:00:00Z", evidence: "auth broken", blockedBy: null },
       },
       lastVerified: "2026-01-01T00:00:00Z",
     });

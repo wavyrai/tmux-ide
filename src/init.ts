@@ -1,5 +1,13 @@
-import { existsSync, readFileSync, writeFileSync, renameSync } from "node:fs";
-import { resolve, basename, dirname } from "node:path";
+import {
+  existsSync,
+  readFileSync,
+  writeFileSync,
+  renameSync,
+  mkdirSync,
+  readdirSync,
+  copyFileSync,
+} from "node:fs";
+import { resolve, join, basename, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -78,6 +86,23 @@ export async function init({
       const yaml = (await import("js-yaml")).default;
       printLayout(yaml.load(content) as IdeConfig);
       console.log("Edit it to configure your workspace, then run: tmux-ide");
+    }
+  }
+
+  // Copy built-in skills if .tmux-ide/skills/ doesn't exist
+  const skillsDir = join(dir, ".tmux-ide", "skills");
+  if (!existsSync(skillsDir)) {
+    const templateSkillsDir = resolve(__dirname, "..", "templates", "skills");
+    if (existsSync(templateSkillsDir)) {
+      mkdirSync(skillsDir, { recursive: true });
+      for (const file of readdirSync(templateSkillsDir)) {
+        if (file.endsWith(".md")) {
+          copyFileSync(join(templateSkillsDir, file), join(skillsDir, file));
+        }
+      }
+      if (!json) {
+        console.log("Copied built-in skill templates to .tmux-ide/skills/");
+      }
     }
   }
 }

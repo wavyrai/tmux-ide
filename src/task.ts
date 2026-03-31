@@ -27,6 +27,8 @@ import {
   loadValidationContract,
   loadValidationState,
   saveValidationState,
+  checkCoverage,
+  parseAssertionIds,
 } from "./lib/validation.ts";
 
 export function parseProof(raw: string, existing: ProofSchema | null): ProofSchema {
@@ -190,11 +192,16 @@ function handleMission(
       }
       mission.updated = new Date().toISOString();
       saveMission(dir, mission);
+      // Check coverage invariant
+      const { unclaimed } = checkCoverage(dir);
       if (json) {
-        console.log(JSON.stringify(mission, null, 2));
+        console.log(JSON.stringify({ ...mission, coverageGaps: unclaimed }, null, 2));
       } else {
         console.log(`Mission "${mission.title}" planning complete — now active`);
         if (first) console.log(`  Activated milestone: ${first.id} — ${first.title}`);
+        if (unclaimed.length > 0) {
+          console.log(`  Warning: ${unclaimed.length} assertion(s) not claimed by any task: ${unclaimed.join(", ")}`);
+        }
       }
       break;
     }
@@ -442,9 +449,9 @@ function handleValidation(
           "USAGE",
         );
       }
-      const status = values.status as "passing" | "failing";
-      if (status !== "passing" && status !== "failing") {
-        outputError("Status must be 'passing' or 'failing'", "USAGE");
+      const status = values.status as "passing" | "failing" | "blocked";
+      if (status !== "passing" && status !== "failing" && status !== "blocked") {
+        outputError("Status must be 'passing', 'failing', or 'blocked'", "USAGE");
       }
       ensureTasksDir(dir);
       const state = loadValidationState(dir) ?? { assertions: {}, lastVerified: null };
@@ -453,6 +460,7 @@ function handleValidation(
         verifiedBy: values.assign ?? null,
         verifiedAt: new Date().toISOString(),
         evidence: values.evidence ?? null,
+        blockedBy: status === "blocked" ? (values.evidence ?? null) : null,
       };
       state.lastVerified = new Date().toISOString();
       saveValidationState(dir, state);
@@ -467,7 +475,7 @@ function handleValidation(
       const state = loadValidationState(dir);
       if (!state || Object.keys(state.assertions).length === 0) {
         if (json) {
-          console.log(JSON.stringify({ total: 0, passing: 0, failing: 0, pending: 0 }));
+          console.log(JSON.stringify({ total: 0, passing: 0, failing: 0, pending: 0, blocked: 0 }));
         } else {
           console.log("No assertions to report.");
         }
@@ -479,6 +487,7 @@ function handleValidation(
         passing: entries.filter((e) => e.status === "passing").length,
         failing: entries.filter((e) => e.status === "failing").length,
         pending: entries.filter((e) => e.status === "pending").length,
+        blocked: entries.filter((e) => e.status === "blocked").length,
       };
       if (json) {
         console.log(JSON.stringify(report, null, 2));
@@ -487,20 +496,51 @@ function handleValidation(
         console.log(`  Passing: ${report.passing}`);
         console.log(`  Failing: ${report.failing}`);
         console.log(`  Pending: ${report.pending}`);
+        if (report.blocked > 0) console.log(`  Blocked: ${report.blocked}`);
+      }
+      break;
+    }
+    case "coverage": {
+      const result = checkCoverage(dir);
+      const contract = loadValidationContract(dir);
+      const allIds = contract ? parseAssertionIds(contract) : [];
+      const claimed = allIds.length - result.unclaimed.length;
+      if (json) {
+        console.log(JSON.stringify({
+          total: allIds.length,
+          claimed,
+          unclaimed: result.unclaimed,
+          duplicates: result.duplicates,
+        }, null, 2));
+      } else {
+        console.log(`Assertion Coverage: ${claimed}/${allIds.length} claimed`);
+        if (result.unclaimed.length > 0) {
+          console.log(`  Unclaimed: ${result.unclaimed.join(", ")}`);
+        }
+        if (Object.keys(result.duplicates).length > 0) {
+          console.log(`  Duplicate claims:`);
+          for (const [id, taskIds] of Object.entries(result.duplicates)) {
+            console.log(`    ${id}: tasks ${taskIds.join(", ")}`);
+          }
+        }
+        if (result.unclaimed.length === 0 && Object.keys(result.duplicates).length === 0) {
+          console.log("  Full coverage — all assertions claimed.");
+        }
       }
       break;
     }
     case "help":
     case undefined:
-      console.log(`Usage: tmux-ide validate <show|assert|report>
+      console.log(`Usage: tmux-ide validate <show|assert|report|coverage>
 
-  show                                                Show contract + assertion state
-  assert <ID> --status passing|failing [--evidence]   Update assertion status
-  report                                              Summary of assertion results`);
+  show                                                       Show contract + assertion state
+  assert <ID> --status passing|failing|blocked [--evidence]  Update assertion status
+  report                                                     Summary of assertion results
+  coverage                                                   Check assertion coverage`);
       break;
     default:
       outputError(
-        "Usage: tmux-ide validate <show|assert|report>\nRun: tmux-ide validate help",
+        "Usage: tmux-ide validate <show|assert|report|coverage>\nRun: tmux-ide validate help",
         "USAGE",
       );
   }

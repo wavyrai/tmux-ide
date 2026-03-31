@@ -59,6 +59,7 @@ import {
   loadValidationContract,
   loadValidationState,
   saveValidationState,
+  checkCoverage,
 } from "./validation.ts";
 
 export interface OrchestratorConfig {
@@ -503,6 +504,7 @@ export function dispatchValidation(
           verifiedBy: null,
           verifiedAt: null,
           evidence: null,
+          blockedBy: null,
         };
       }
     }
@@ -624,6 +626,7 @@ export function checkValidationResults(config: OrchestratorConfig, tasks: Task[]
         entry.verifiedBy = null;
         entry.verifiedAt = null;
         entry.evidence = null;
+        entry.blockedBy = null;
 
         appendEvent(config.dir, {
           timestamp: new Date().toISOString(),
@@ -797,6 +800,19 @@ export function dispatch(
   tasks: Task[],
   panes: PaneInfo[],
 ): void {
+  // Coverage check: warn about unclaimed assertions (once per session)
+  if (config.dispatchMode === "missions" && !state.claimedTasks.has("__coverage_warned__")) {
+    const { unclaimed } = checkCoverage(config.dir);
+    if (unclaimed.length > 0) {
+      state.claimedTasks.add("__coverage_warned__");
+      appendEvent(config.dir, {
+        timestamp: new Date().toISOString(),
+        type: "error",
+        message: `Coverage gap: ${unclaimed.length} assertion(s) not claimed by any task: ${unclaimed.join(", ")}`,
+      });
+    }
+  }
+
   // Find idle agent panes (not the master pane, not already assigned a task)
   const idleAgents = panes.filter((p) => {
     // Master pane check: use role when available, fall back to title
