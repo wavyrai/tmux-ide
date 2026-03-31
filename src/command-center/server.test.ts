@@ -50,6 +50,9 @@ describe("GET /api/sessions", () => {
     saveMission(tmpDir, {
       title: "Test mission",
       description: "",
+      status: "active",
+      branch: null,
+      milestones: [],
       created: "2026-01-01T00:00:00Z",
       updated: "2026-01-01T00:00:00Z",
     });

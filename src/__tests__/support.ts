@@ -29,6 +29,11 @@ export function makeTask(overrides: Partial<Task> = {}): Task {
     lastError: null,
     nextRetryAt: null,
     depends_on: [],
+    milestone: null,
+    specialty: null,
+    fulfills: [],
+    discoveredIssues: [],
+    salientSummary: null,
     ...overrides,
   };
 }
@@ -49,6 +54,7 @@ export function makeGoal(overrides: Partial<Goal> = {}): Goal {
     updated: "2026-01-01T00:00:00Z",
     assignee: null,
     specialty: null,
+    milestone: null,
     ...overrides,
   };
 }
@@ -61,6 +67,9 @@ export function makeMission(overrides: Partial<Mission> = {}): Mission {
   return {
     title: "Test mission",
     description: "",
+    status: "active",
+    branch: null,
+    milestones: [],
     created: "2026-01-01T00:00:00Z",
     updated: "2026-01-01T00:00:00Z",
     ...overrides,

@@ -90,6 +90,11 @@ export function createTask(projectDir: string, tasks: Task[]): Task {
     lastError: null,
     nextRetryAt: null,
     depends_on: [],
+    milestone: null,
+    specialty: null,
+    fulfills: [],
+    discoveredIssues: [],
+    salientSummary: null,
   };
 
   saveTask(projectDir, task);

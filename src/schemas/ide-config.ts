@@ -25,9 +25,10 @@ export const PaneSchema = z.object({
   size: sizeField.optional(),
   focus: z.boolean().optional(),
   env: z.record(z.string(), z.union([z.string(), z.number()])).optional(),
-  role: z.enum(["lead", "teammate", "planner"]).optional(),
+  role: z.enum(["lead", "teammate", "planner", "validator"]).optional(),
   task: z.string().optional(),
   specialty: z.string().optional(),
+  skill: z.string().optional(),
 });
 
 export const RowSchema = z.object({

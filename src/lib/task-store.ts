@@ -25,9 +25,22 @@ function atomicWriteJSON(filePath: string, data: unknown): void {
   renameSync(tmpPath, filePath);
 }
 
+export interface Milestone {
+  id: string;
+  title: string;
+  description: string;
+  status: "locked" | "active" | "done" | "validating";
+  order: number;
+  created: string;
+  updated: string;
+}
+
 export interface Mission {
   title: string;
   description: string;
+  status: "planning" | "active" | "validating" | "complete";
+  branch: string | null;
+  milestones: Milestone[];
   created: string;
   updated: string;
 }
@@ -43,6 +56,7 @@ export interface Goal {
   updated: string;
   assignee: string | null;
   specialty: string | null;
+  milestone: string | null;
 }
 
 export interface Task {
@@ -62,6 +76,11 @@ export interface Task {
   lastError: string | null;
   nextRetryAt: string | null;
   depends_on: string[];
+  milestone: string | null;
+  specialty: string | null;
+  fulfills: string[];
+  discoveredIssues: string[];
+  salientSummary: string | null;
 }
 
 export function normalizeMission(raw: Record<string, unknown>): Mission {
@@ -69,6 +88,9 @@ export function normalizeMission(raw: Record<string, unknown>): Mission {
   return {
     title: (raw.title as string) ?? "",
     description: (raw.description as string) ?? "",
+    status: (raw.status as Mission["status"]) ?? "active",
+    branch: (raw.branch as string | null) ?? null,
+    milestones: Array.isArray(raw.milestones) ? (raw.milestones as Milestone[]) : [],
     created: (raw.created as string) ?? epoch,
     updated: (raw.updated as string) ?? epoch,
   };
@@ -84,6 +106,7 @@ export function normalizeGoal(raw: Record<string, unknown>): Goal {
     updated: (raw.updated as string) ?? epoch,
     assignee: (raw.assignee as string) ?? null,
     specialty: (raw.specialty as string) ?? null,
+    milestone: (raw.milestone as string | null) ?? null,
   } as Goal;
 }
 
@@ -116,6 +139,11 @@ export function normalizeTask(raw: Record<string, unknown>): Task {
     lastError: (raw.lastError as string | null) ?? defaults.lastError,
     nextRetryAt: (raw.nextRetryAt as string | null) ?? defaults.nextRetryAt,
     depends_on: Array.isArray(raw.depends_on) ? (raw.depends_on as string[]) : defaults.depends_on,
+    milestone: (raw.milestone as string | null) ?? null,
+    specialty: (raw.specialty as string | null) ?? null,
+    fulfills: Array.isArray(raw.fulfills) ? (raw.fulfills as string[]) : [],
+    discoveredIssues: Array.isArray(raw.discoveredIssues) ? (raw.discoveredIssues as string[]) : [],
+    salientSummary: (raw.salientSummary as string | null) ?? null,
   } as Task;
 }
 

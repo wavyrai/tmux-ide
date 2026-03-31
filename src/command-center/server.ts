@@ -229,6 +229,11 @@ export function createApp(options: CreateAppOptions = {}): Hono {
       maxRetries: 5,
       lastError: null,
       nextRetryAt: null,
+      milestone: null,
+      specialty: null,
+      fulfills: [],
+      discoveredIssues: [],
+      salientSummary: null,
     };
     saveTask(session.dir, task);
     return c.json({ ok: true, task }, 201);

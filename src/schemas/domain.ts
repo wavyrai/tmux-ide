@@ -23,9 +23,22 @@ export type ProofSchema = z.infer<typeof ProofSchemaZ>;
 // Task / Goal / Mission (from src/lib/task-store.ts)
 // ---------------------------------------------------------------------------
 
+export const MilestoneSchemaZ = z.object({
+  id: z.string(),
+  title: z.string(),
+  description: z.string(),
+  status: z.enum(["locked", "active", "done", "validating"]),
+  order: z.number(),
+  created: z.string(),
+  updated: z.string(),
+});
+
 export const MissionSchemaZ = z.object({
   title: z.string(),
   description: z.string(),
+  status: z.enum(["planning", "active", "validating", "complete"]),
+  branch: z.string().nullable(),
+  milestones: z.array(MilestoneSchemaZ),
   created: z.string(),
   updated: z.string(),
 });
@@ -41,6 +54,7 @@ export const GoalSchemaZ = z.object({
   updated: z.string(),
   assignee: z.string().nullable(),
   specialty: z.string().nullable(),
+  milestone: z.string().nullable(),
 });
 
 export const TaskSchemaZ = z.object({
@@ -60,6 +74,11 @@ export const TaskSchemaZ = z.object({
   lastError: z.string().nullable(),
   nextRetryAt: z.string().nullable(),
   depends_on: z.array(z.string()),
+  milestone: z.string().nullable(),
+  specialty: z.string().nullable(),
+  fulfills: z.array(z.string()),
+  discoveredIssues: z.array(z.string()),
+  salientSummary: z.string().nullable(),
 });
 
 // ---------------------------------------------------------------------------

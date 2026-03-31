@@ -74,6 +74,9 @@ interface TaskCommandValues {
   depends?: string;
   pr?: boolean;
   specialty?: string;
+  milestone?: string;
+  fulfills?: string;
+  summary?: string;
 }
 
 export async function taskCommand(
@@ -124,6 +127,9 @@ function handleMission(
       const mission: Mission = {
         title,
         description: values.description ?? "",
+        status: "active",
+        branch: null,
+        milestones: [],
         created: now,
         updated: now,
       };
@@ -210,6 +216,7 @@ function handleGoal(
         updated: now,
         assignee: null,
         specialty: values.specialty ?? null,
+        milestone: values.milestone ?? null,
       };
       saveGoal(dir, goal);
       if (json) {
@@ -228,6 +235,7 @@ function handleGoal(
       if (values.description) goal.description = values.description;
       if (values.acceptance) goal.acceptance = values.acceptance;
       if (values.priority) goal.priority = parseInt(values.priority, 10);
+      if (values.milestone) goal.milestone = values.milestone;
       goal.updated = new Date().toISOString();
       saveGoal(dir, goal);
       if (json) {
@@ -382,6 +390,11 @@ function handleTask(
         maxRetries: 5,
         lastError: null,
         nextRetryAt: null,
+        milestone: values.milestone ?? null,
+        specialty: values.specialty ?? null,
+        fulfills: values.fulfills ? values.fulfills.split(",").map((f) => f.trim()) : [],
+        discoveredIssues: [],
+        salientSummary: null,
       };
       if (task.depends_on.length > 0) {
         const cycle = detectCycle(dir, task.id, task.depends_on);
@@ -419,6 +432,9 @@ function handleTask(
         task.depends_on = newDeps;
       }
       if (values.proof) task.proof = parseProof(values.proof, task.proof);
+      if (values.milestone) task.milestone = values.milestone;
+      if (values.specialty) task.specialty = values.specialty;
+      if (values.fulfills) task.fulfills = values.fulfills.split(",").map((f) => f.trim());
       task.updated = new Date().toISOString();
       saveTask(dir, task);
       if (json) {
@@ -435,6 +451,7 @@ function handleTask(
       if (!task) outputError(`Task ${id} not found`, "NOT_FOUND");
       task.status = "done";
       if (values.proof) task.proof = parseProof(values.proof, task.proof);
+      if (values.summary) task.salientSummary = values.summary;
       task.updated = new Date().toISOString();
 
       // Auto-create GitHub PR if --pr flag is set

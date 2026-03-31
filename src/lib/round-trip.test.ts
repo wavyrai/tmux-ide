@@ -42,6 +42,9 @@ describe("task lifecycle round-trip", () => {
     const mission: Mission = {
       title: "Build feature X",
       description: "End-to-end feature delivery",
+      status: "active",
+      branch: null,
+      milestones: [],
       created: "2026-03-21T10:00:00Z",
       updated: "2026-03-21T10:00:00Z",
     };
@@ -58,6 +61,7 @@ describe("task lifecycle round-trip", () => {
       updated: "2026-03-21T10:00:00Z",
       assignee: null,
       specialty: null,
+      milestone: null,
     };
     saveGoal(tmpDir, goal);
 
@@ -79,6 +83,11 @@ describe("task lifecycle round-trip", () => {
       lastError: null,
       nextRetryAt: null,
       depends_on: [],
+      milestone: null,
+      specialty: null,
+      fulfills: [],
+      discoveredIssues: [],
+      salientSummary: null,
     };
     saveTask(tmpDir, task);
 
@@ -141,6 +150,9 @@ describe("discovery round-trip", () => {
     const mission: Mission = {
       title: "Test Project",
       description: "Integration test",
+      status: "active",
+      branch: null,
+      milestones: [],
       created: "2026-03-21T10:00:00Z",
       updated: "2026-03-21T10:00:00Z",
     };
@@ -178,6 +190,11 @@ describe("discovery round-trip", () => {
       lastError: null,
       nextRetryAt: null,
       depends_on: [],
+      milestone: null,
+      specialty: null,
+      fulfills: [],
+      discoveredIssues: [],
+      salientSummary: null,
     };
     saveTask(tmpDir, task);
 

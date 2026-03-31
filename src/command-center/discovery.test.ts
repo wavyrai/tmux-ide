@@ -73,6 +73,9 @@ describe("discoverSessions", () => {
     saveMission(tmpDir, {
       title: "Test mission",
       description: "desc",
+      status: "active",
+      branch: null,
+      milestones: [],
       created: "2026-01-01T00:00:00Z",
       updated: "2026-01-01T00:00:00Z",
     });
@@ -140,6 +143,7 @@ describe("computeGoalProgress", () => {
         updated: "2026-01-01T00:00:00Z",
         assignee: null,
         specialty: null,
+        milestone: null,
       },
     ];
     const tasks = [
@@ -168,6 +172,7 @@ describe("computeGoalProgress", () => {
         updated: "2026-01-01T00:00:00Z",
         assignee: null,
         specialty: null,
+        milestone: null,
       },
     ];
 

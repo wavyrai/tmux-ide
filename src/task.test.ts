@@ -62,6 +62,9 @@ describe("mission", () => {
     const mission = {
       title: "Ship the auth overhaul",
       description: "Before Q2 audit",
+      status: "active" as const,
+      branch: null,
+      milestones: [],
       created: "2026-01-01T00:00:00Z",
       updated: "2026-01-01T00:00:00Z",
     };
@@ -74,6 +77,9 @@ describe("mission", () => {
     saveMission(tmpDir, {
       title: "Test",
       description: "",
+      status: "active",
+      branch: null,
+      milestones: [],
       created: "2026-01-01T00:00:00Z",
       updated: "2026-01-01T00:00:00Z",
     });
@@ -108,6 +114,7 @@ describe("goals", () => {
       updated: "2026-01-01T00:00:00Z",
       assignee: null,
       specialty: null,
+      milestone: null,
     });
     expect(nextGoalId(tmpDir)).toBe("02");
   });
@@ -125,6 +132,7 @@ describe("goals", () => {
       updated: "2026-01-01T00:00:00Z",
       assignee: null,
       specialty: null,
+      milestone: null,
     });
     const files = readdirSync(join(tmpDir, ".tasks", "goals"));
     expect(files.length).toBe(1);
@@ -145,6 +153,7 @@ describe("goals", () => {
       updated: "2026-01-01T00:00:00Z",
       assignee: null,
       specialty: null,
+      milestone: null,
     };
     saveGoal(tmpDir, goal);
     expect(loadGoal(tmpDir, "01")).toEqual(goal);
@@ -168,6 +177,7 @@ describe("goals", () => {
       updated: "2026-01-01T00:00:00Z",
       assignee: null,
       specialty: null,
+      milestone: null,
     });
     const goal = loadGoal(tmpDir, "01")!;
     goal.status = "done";
@@ -191,6 +201,7 @@ describe("goals", () => {
       updated: "2026-01-01T00:00:00Z",
       assignee: null,
       specialty: null,
+      milestone: null,
     });
     expect(deleteGoal(tmpDir, "01")).toBe(true);
     expect(loadGoal(tmpDir, "01")).toBe(null);
@@ -215,6 +226,7 @@ describe("goals", () => {
       updated: now,
       assignee: null,
       specialty: null,
+      milestone: null,
     });
     saveGoal(tmpDir, {
       id: "01",
@@ -227,6 +239,7 @@ describe("goals", () => {
       updated: now,
       assignee: null,
       specialty: null,
+      milestone: null,
     });
     const goals = loadGoals(tmpDir);
     expect(goals.length).toBe(2);
@@ -262,6 +275,11 @@ describe("tasks", () => {
       lastError: null,
       nextRetryAt: null,
       depends_on: [],
+      milestone: null,
+      specialty: null,
+      fulfills: [],
+      discoveredIssues: [],
+      salientSummary: null,
     });
     expect(nextTaskId(tmpDir)).toBe("002");
   });
@@ -285,6 +303,11 @@ describe("tasks", () => {
       lastError: "timeout",
       nextRetryAt: "2026-01-02T00:00:00Z",
       depends_on: [],
+      milestone: null,
+      specialty: null,
+      fulfills: [],
+      discoveredIssues: [],
+      salientSummary: null,
     };
     saveTask(tmpDir, task);
     expect(loadTask(tmpDir, "001")).toEqual(task);
@@ -307,6 +330,11 @@ describe("tasks", () => {
       lastError: null,
       nextRetryAt: null,
       depends_on: [],
+      milestone: null,
+      specialty: null,
+      fulfills: [],
+      discoveredIssues: [],
+      salientSummary: null,
     } as const;
     saveTask(tmpDir, { ...base, id: "001", title: "Task for goal 01", goal: "01", status: "todo" });
     saveTask(tmpDir, { ...base, id: "002", title: "Task for goal 02", goal: "02", status: "todo" });
@@ -343,6 +371,11 @@ describe("tasks", () => {
       lastError: null,
       nextRetryAt: null,
       depends_on: [],
+      milestone: null,
+      specialty: null,
+      fulfills: [],
+      discoveredIssues: [],
+      salientSummary: null,
     });
     expect(deleteTask(tmpDir, "001")).toBe(true);
     expect(loadTask(tmpDir, "001")).toBe(null);
@@ -373,6 +406,11 @@ describe("tasks", () => {
       lastError: null,
       nextRetryAt: null,
       depends_on: [],
+      milestone: null,
+      specialty: null,
+      fulfills: [],
+      discoveredIssues: [],
+      salientSummary: null,
     });
     const task = loadTask(tmpDir, "001")!;
     task.title = "New Title";
@@ -634,6 +672,11 @@ describe("parseProof", () => {
       lastError: null,
       nextRetryAt: null,
       depends_on: [],
+      milestone: null,
+      specialty: null,
+      fulfills: [],
+      discoveredIssues: [],
+      salientSummary: null,
     };
     saveTask(tmpDir, task);
     const loaded = loadTask(tmpDir, "001")!;
@@ -701,6 +744,11 @@ describe("normalizer snapshots", () => {
       lastError: null,
       nextRetryAt: null,
       depends_on: [],
+      milestone: null,
+      specialty: null,
+      fulfills: [],
+      discoveredIssues: [],
+      salientSummary: null,
     });
   });
 
@@ -736,6 +784,7 @@ describe("normalizer snapshots", () => {
     const result = normalizeGoal(raw as Record<string, unknown>);
     expect(result.assignee).toBe(null);
     expect(result.specialty).toBe(null);
+    expect(result.milestone).toBe(null);
     expect(result.created).toBe("1970-01-01T00:00:00.000Z");
     expect(result.updated).toBe("1970-01-01T00:00:00.000Z");
   });
@@ -746,6 +795,9 @@ describe("normalizer snapshots", () => {
     expect(result).toEqual({
       title: "M",
       description: "desc",
+      status: "active",
+      branch: null,
+      milestones: [],
       created: "1970-01-01T00:00:00.000Z",
       updated: "1970-01-01T00:00:00.000Z",
     });
@@ -801,6 +853,11 @@ describe("schema version", () => {
       lastError: null,
       nextRetryAt: null,
       depends_on: [],
+      milestone: null,
+      specialty: null,
+      fulfills: [],
+      discoveredIssues: [],
+      salientSummary: null,
     };
     saveTask(tmpDir, task);
 
@@ -828,6 +885,7 @@ describe("schema version", () => {
       updated: "2026-01-01T00:00:00Z",
       assignee: null,
       specialty: null,
+      milestone: null,
     };
     saveGoal(tmpDir, goal);
 
@@ -844,6 +902,9 @@ describe("schema version", () => {
     const mission = {
       title: "Versioned mission",
       description: "desc",
+      status: "active" as const,
+      branch: null,
+      milestones: [],
       created: "2026-01-01T00:00:00Z",
       updated: "2026-01-01T00:00:00Z",
     };
@@ -1064,6 +1125,11 @@ describe("normalizer snapshots", () => {
       lastError: null,
       nextRetryAt: null,
       depends_on: [],
+      milestone: null,
+      specialty: null,
+      fulfills: [],
+      discoveredIssues: [],
+      salientSummary: null,
     });
   });
 
@@ -1099,6 +1165,7 @@ describe("normalizer snapshots", () => {
     const result = normalizeGoal(raw as Record<string, unknown>);
     assert.strictEqual(result.assignee, null);
     assert.strictEqual(result.specialty, null);
+    assert.strictEqual(result.milestone, null);
     assert.strictEqual(result.created, "1970-01-01T00:00:00.000Z");
     assert.strictEqual(result.updated, "1970-01-01T00:00:00.000Z");
   });
@@ -1109,6 +1176,9 @@ describe("normalizer snapshots", () => {
     assert.deepStrictEqual(result, {
       title: "M",
       description: "desc",
+      status: "active",
+      branch: null,
+      milestones: [],
       created: "1970-01-01T00:00:00.000Z",
       updated: "1970-01-01T00:00:00.000Z",
     });

@@ -237,6 +237,9 @@ describe("buildTaskPrompt", () => {
     saveMission(tmpDir, {
       title: "Build auth",
       description: "Before Q2 audit",
+      status: "active",
+      branch: null,
+      milestones: [],
       created: "2026-01-01T00:00:00Z",
       updated: "2026-01-01T00:00:00Z",
     });
@@ -251,6 +254,7 @@ describe("buildTaskPrompt", () => {
       updated: "2026-01-01T00:00:00Z",
       assignee: null,
       specialty: null,
+      milestone: null,
     });
 
     const task = makeTask({
@@ -941,6 +945,9 @@ describe("buildGoalPrompt", () => {
     saveMission(tmpDir, {
       title: "Ship v2",
       description: "Major release",
+      status: "active",
+      branch: null,
+      milestones: [],
       created: "2026-01-01T00:00:00Z",
       updated: "2026-01-01T00:00:00Z",
     });
@@ -980,6 +987,7 @@ describe("buildGoalPrompt", () => {
       updated: "2026-01-01T00:00:00Z",
       assignee: null,
       specialty: null,
+      milestone: null,
     };
 
     const planner = makePane({ id: "%1", index: 0 });
@@ -1004,6 +1012,7 @@ describe("dispatchGoals", () => {
       updated: "2026-01-01T00:00:00Z",
       assignee: null,
       specialty: null,
+      milestone: null,
     };
     saveGoal(tmpDir, goal);
 
@@ -1037,6 +1046,7 @@ describe("dispatchGoals", () => {
       updated: "2026-01-01T00:00:00Z",
       assignee: null,
       specialty: null,
+      milestone: null,
     };
     saveGoal(tmpDir, goal);
 
@@ -1070,6 +1080,7 @@ describe("dispatchGoals", () => {
       updated: "2026-01-01T00:00:00Z",
       assignee: "Someone",
       specialty: null,
+      milestone: null,
     };
     saveGoal(tmpDir, goal);
 
