@@ -4,6 +4,28 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+## 2.1.3
+
+### Added
+
+- **Full workspace scaffolding** — `tmux-ide init` now creates library stubs (architecture.md, learnings.md), validation contract template, and AGENTS.md for all agent-team and missions templates
+- **Launch-time scaffolding** — `ensureTaskDocs()` creates library and validation stubs on first orchestrator launch for projects set up before this fix
+- **Expanded lead agent prompt** — milestones, validation contracts, knowledge library, and `--fulfills` flag now included in the master agent startup prompt
+- **General-worker skill fallback** — agents without a specific skill now receive the general-worker role context in dispatch prompts
+- **Post-completion flow in skills** — all skills now explain what happens after task done (orchestrator notification, hooks, auto-dispatch)
+- **Validation awareness in worker skills** — frontend and backend skills now reference the validation contract and knowledge library
+
+### Fixed
+
+- **Orphaned daemon cleanup** — `stop` and `launch` now kill ALL daemon processes for the session (by name matching), preventing zombie processes from holding the port
+- **Daemon health check timeout** — `waitForDaemon()` fetch calls now have explicit 1s timeout to prevent indefinite blocking
+- **Activity feed noise** — heartbeat events filtered from dashboard activity feed
+- **Activity feed time column** — widened from 8ch to 10ch for readability
+
+### Removed
+
+- **Raw idle notifications** — monitor loop no longer sends `Agent "X" is now idle` to the Lead; orchestrator completion handler provides better context
+
 ## 2.1.0
 
 ### Added

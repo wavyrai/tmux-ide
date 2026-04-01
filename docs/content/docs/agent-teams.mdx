@@ -36,6 +36,8 @@ The `missions` template creates a lead pane plus specialized teammates for front
 3. **Validation**. When a milestone completes, the validator verifies the claimed assertions.
 4. **Completion**. When all milestones are done and assertions pass, the mission is marked complete and the completion flow can create a PR.
 
+For the full end-to-end lifecycle walkthrough, see [Missions Workflow](/docs/missions-workflow).
+
 ### Quick Start
 
 ```bash
@@ -94,13 +96,19 @@ Validation contracts define what “done” means before work begins. Store them
 Tasks can claim the assertions they fulfill:
 
 ```bash
-tmux-ide task create "Implement login" --milestone M1 --fulfills "VAL-AUTH-001,VAL-AUTH-002"
+tmux-ide task create “Implement login” --milestone M1 --fulfills “VAL-AUTH-001,VAL-AUTH-002”
 tmux-ide validate coverage
-tmux-ide validate assert VAL-AUTH-001 --status passing --evidence "API test passed"
+tmux-ide validate assert VAL-AUTH-001 --status passing --evidence “API test passed”
 tmux-ide validate report
 ```
 
 Use `validate coverage` during planning to make sure every assertion is claimed before execution starts.
+
+### Validator Workflow
+
+After all tasks in a milestone complete, the orchestrator auto-dispatches the validator agent to verify the milestone's assertions. The validator runs the checks defined in the contract, updates each assertion to `passing`, `failing`, or `blocked`, and reports the results. If any assertion fails, the orchestrator can trigger remediation tasks before advancing to the next milestone.
+
+For the full contract format and assertion lifecycle, see [Validation Contracts](/docs/validation-contracts).
 
 ## Knowledge Library
 
@@ -112,6 +120,8 @@ Missions share context through `.tmux-ide/library/` and other repo-level prompt 
 - `AGENTS.md` defines project boundaries and operating rules for every agent
 
 This keeps discoveries from one task available to the next dispatch without rebuilding context manually.
+
+For details on library structure and how content flows between agents, see [Knowledge Library](/docs/knowledge-library).
 
 ## Researcher Agent
 
