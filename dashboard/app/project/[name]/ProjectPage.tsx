@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useCallback } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import {
   fetchProject,
   fetchEvents,
@@ -40,9 +40,11 @@ const TABS: { id: Tab; label: string }[] = [
 ];
 
 export default function ProjectPage() {
-  const params = useParams<{ name: string }>();
+  const pathname = usePathname();
   const router = useRouter();
-  const name = decodeURIComponent(params.name);
+  // Extract project name from URL pathname (not useParams, which returns
+  // the build-time placeholder "__fallback" in static exports)
+  const name = decodeURIComponent(pathname.replace(/^\/project\//, "").replace(/\/$/, ""));
   const [activeTab, setActiveTab] = useState<Tab>("kanban");
 
   const fetcher = useCallback(() => fetchProject(name) as Promise<ProjectDetail | null>, [name]);
