@@ -59,16 +59,16 @@ The validator parses these IDs from the contract file. You can organize assertio
 
 Use a hierarchical ID scheme: `VAL-<DOMAIN>-<NUMBER>`.
 
-| Prefix | Domain |
-| ------------ | --------------------------------- |
-| `VAL-AUTH-` | Authentication and authorization |
-| `VAL-API-` | REST/GraphQL API behavior |
-| `VAL-UI-` | Frontend and user interface |
-| `VAL-DATA-` | Database and data integrity |
-| `VAL-PERF-` | Performance and load |
-| `VAL-SEC-` | Security hardening |
-| `VAL-INT-` | Integration and third-party APIs |
-| `VAL-INFRA-` | Infrastructure and deployment |
+| Prefix       | Domain                           |
+| ------------ | -------------------------------- |
+| `VAL-AUTH-`  | Authentication and authorization |
+| `VAL-API-`   | REST/GraphQL API behavior        |
+| `VAL-UI-`    | Frontend and user interface      |
+| `VAL-DATA-`  | Database and data integrity      |
+| `VAL-PERF-`  | Performance and load             |
+| `VAL-SEC-`   | Security hardening               |
+| `VAL-INT-`   | Integration and third-party APIs |
+| `VAL-INFRA-` | Infrastructure and deployment    |
 
 Numbers are zero-padded to three digits (`001`, `002`, ...) so they sort naturally.
 
@@ -99,18 +99,22 @@ The first assertion tells the validator exactly what to check. The second is unf
 
 ```md
 ## Auth
+
 **VAL-AUTH-001**: POST /auth/login with valid credentials returns 200 and a JWT
 **VAL-AUTH-002**: POST /auth/login with invalid credentials returns 401
 
 ## API
+
 **VAL-API-001**: GET /api/users requires Authorization header; omitting it returns 401
 **VAL-API-002**: GET /api/users?limit=5 returns at most 5 records
 
 ## UI
+
 **VAL-UI-001**: Login form shows inline error on invalid credentials without page reload
 **VAL-UI-002**: Dashboard renders within 2 seconds on a cold load
 
 ## Data
+
 **VAL-DATA-001**: Creating a user with duplicate email returns 409 Conflict
 **VAL-DATA-002**: Soft-deleted users are excluded from list queries by default
 ```
@@ -234,11 +238,11 @@ tmux-ide validate report
 
 Each assertion moves through a lifecycle:
 
-| State | Meaning |
-| ----------- | --------------------------------------------------------------- |
-| `pending` | Default state. The assertion has not been checked yet. |
-| `passing` | The validator confirmed the assertion holds. Evidence attached. |
-| `failing` | The validator checked and the assertion does not hold. |
+| State     | Meaning                                                              |
+| --------- | -------------------------------------------------------------------- |
+| `pending` | Default state. The assertion has not been checked yet.               |
+| `passing` | The validator confirmed the assertion holds. Evidence attached.      |
+| `failing` | The validator checked and the assertion does not hold.               |
 | `blocked` | Cannot be validated because a dependency or precondition is missing. |
 
 State transitions:
@@ -342,7 +346,7 @@ Here is a realistic contract for a todo-list API project with authentication:
 
 ## Security
 
-**VAL-SEC-001**: All /api/* routes return 401 without a valid Authorization header
+**VAL-SEC-001**: All /api/\* routes return 401 without a valid Authorization header
 **VAL-SEC-002**: Users cannot access or modify todos belonging to other users
 ```
 
@@ -398,10 +402,10 @@ Set the state of a specific assertion.
 tmux-ide validate assert <assertion-id> --status <state> --evidence "<text>"
 ```
 
-| Flag | Required | Description |
-| ------------ | -------- | --------------------------------------------- |
-| `--status` | Yes | One of `pending`, `passing`, `failing`, `blocked` |
-| `--evidence` | No | Free-text proof attached to the assertion |
+| Flag         | Required | Description                                       |
+| ------------ | -------- | ------------------------------------------------- |
+| `--status`   | Yes      | One of `pending`, `passing`, `failing`, `blocked` |
+| `--evidence` | No       | Free-text proof attached to the assertion         |
 
 ```bash
 tmux-ide validate assert VAL-AUTH-001 \

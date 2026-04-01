@@ -60,18 +60,21 @@ Create `.tasks/validation-contract.md` with concrete, testable assertions. Each 
 # Validation Contract — Auth v2
 
 ## Authentication
+
 - **VAL-AUTH-001**: POST /api/auth/login returns a JWT on valid credentials
 - **VAL-AUTH-002**: POST /api/auth/login returns 401 on invalid credentials
 - **VAL-AUTH-003**: POST /api/auth/refresh returns a new access token given a valid refresh token
 - **VAL-AUTH-004**: Protected routes return 403 when the JWT is expired
 
 ## Test Coverage
+
 - **VAL-TEST-001**: Unit tests cover all auth service functions with >90% line coverage
 - **VAL-TEST-002**: Integration tests exercise the full login-refresh-logout flow
 ```
 
 <Callout type="info">
-  Write the contract before planning starts. It defines "done" up front so the validator knows exactly what to check.
+  Write the contract before planning starts. It defines "done" up front so the validator knows
+  exactly what to check.
 </Callout>
 
 ### Update architecture.md
@@ -82,16 +85,19 @@ Add relevant context to `.tmux-ide/library/architecture.md` so dispatched agents
 # Architecture
 
 ## Stack
+
 - Next.js 14 (App Router)
 - Drizzle ORM + PostgreSQL
 - JWT via jose library
 
 ## Key Paths
+
 - `src/app/api/auth/` — auth route handlers
 - `src/lib/auth/` — token creation, validation, refresh logic
 - `src/middleware.ts` — route protection
 
 ## Conventions
+
 - All API routes return `{ data }` or `{ error }` JSON envelopes
 - Tests live next to source files as `*.test.ts`
 ```
@@ -361,13 +367,13 @@ tmux-ide metrics history
 
 ## Quick Reference
 
-| Phase | Mission Status | Key Commands |
-|---|---|---|
-| Pre-Planning | -- | Edit `validation-contract.md`, `architecture.md` |
-| Planning | `planning` | `mission set`, `milestone create`, `task create`, `validate coverage`, `mission plan-complete` |
-| Execution | `active` | Automatic dispatch. Monitor with `metrics`, `orch` |
-| Validation | `active` (milestone: `validating`) | `validate assert`, `validate report` |
-| Completion | `complete` | `mission status`, `metrics history` |
+| Phase        | Mission Status                     | Key Commands                                                                                   |
+| ------------ | ---------------------------------- | ---------------------------------------------------------------------------------------------- |
+| Pre-Planning | --                                 | Edit `validation-contract.md`, `architecture.md`                                               |
+| Planning     | `planning`                         | `mission set`, `milestone create`, `task create`, `validate coverage`, `mission plan-complete` |
+| Execution    | `active`                           | Automatic dispatch. Monitor with `metrics`, `orch`                                             |
+| Validation   | `active` (milestone: `validating`) | `validate assert`, `validate report`                                                           |
+| Completion   | `complete`                         | `mission status`, `metrics history`                                                            |
 
 ## Tips
 

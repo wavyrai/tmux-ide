@@ -49,6 +49,7 @@ Monorepo managed with pnpm workspaces and Turborepo.
 - packages/ui — Shared React component library
 
 Key patterns:
+
 - Server components by default, "use client" only when needed
 - All API routes return typed responses via shared zod schemas
 - Database migrations live in packages/db/migrations/
@@ -66,11 +67,13 @@ You do not need to maintain this file manually. As agents complete tasks, the or
 
 ```markdown
 ## Task 003 — Implement JWT auth (2025-01-15)
+
 - jose library requires Node 18+ — use jsonwebtoken for broader compat
 - Refresh tokens stored in httpOnly cookies, not localStorage
 - CORS config in wrangler.toml must include credentials: true
 
 ## Task 007 — Add rate limiting (2025-01-16)
+
 - Cloudflare Workers have no native rate limiting — use Durable Objects
 - Rate limit state persists via DO storage, not KV (too slow for counters)
 ```
@@ -92,16 +95,19 @@ The `AGENTS.md` file in your project root defines project-level boundaries. Its 
 # AGENTS.md
 
 ## Conventions
+
 - Always run `pnpm lint` and `pnpm test` before completing a task
 - Never modify files in packages/db/migrations/ directly — use `pnpm db:generate`
 - CSS uses Tailwind utility classes only — no custom CSS files
 
 ## Ownership
+
 - apps/web — frontend agents only
 - apps/api — backend agents only
 - packages/db — backend agents only (migrations require review)
 
 ## Do NOT
+
 - Install new dependencies without justification in the task proof
 - Modify CI workflows (.github/)
 - Change tsconfig base settings
