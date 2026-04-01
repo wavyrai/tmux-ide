@@ -1,7 +1,8 @@
 import { execFileSync, execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { existsSync, readFileSync, writeFileSync, mkdirSync, unlinkSync } from "node:fs";
-import { join } from "node:path";
+import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
 import { cors } from "hono/cors";
@@ -87,6 +88,11 @@ export interface CreateAppOptions {
   tunnelManager?: TunnelManager;
   remoteRegistry?: RemoteRegistry;
 }
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const pkgVersion: string = JSON.parse(
+  readFileSync(join(__dirname, "../../package.json"), "utf-8"),
+).version;
 
 const ALLOWED_MILESTONE_TRANSITIONS = new Map([
   ["locked", new Set(["active"])],
@@ -1410,7 +1416,7 @@ export function createApp(options: CreateAppOptions = {}): Hono {
     return c.json({
       ok: true,
       uptime: Math.round(process.uptime()),
-      version: "2.1.0",
+      version: pkgVersion,
     });
   });
 

@@ -115,8 +115,6 @@ function listPanes(): MonitorPane[] {
 // ---------------------------------------------------------------------------
 
 let lastState = "";
-let prevAgentStates = new Map<string, "busy" | "idle" | null>();
-let monitorInitialized = false;
 
 function tick(): void {
   if (!sessionExists()) {
@@ -158,22 +156,10 @@ function tick(): void {
     }
   }
 
-  // Notify master pane when an agent transitions from busy → idle
-  if (monitorInitialized) {
-    const masterPane = panes.find((p) => p.role === "lead");
-    if (masterPane) {
-      for (const pane of panes) {
-        const prev = prevAgentStates.get(pane.id);
-        const curr = agentStates.get(pane.id);
-        if (prev === "busy" && curr === "idle" && pane.id !== masterPane.id) {
-          const label = pane.name ?? pane.title ?? pane.id;
-          tmuxSilent("send-keys", "-t", masterPane.id, `Agent "${label}" is now idle`, "Enter");
-        }
-      }
-    }
-  }
-  monitorInitialized = true;
-  prevAgentStates = agentStates;
+  // Agent idle notifications removed — the orchestrator's completion
+  // handler already notifies the lead pane with task context when a
+  // task finishes. Raw busy→idle transitions from the monitor loop
+  // fired on spinner gaps between tool calls, spamming the lead.
 
   tmuxSilent("refresh-client", "-S");
   lastState = stateKey;
