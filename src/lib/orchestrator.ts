@@ -905,8 +905,8 @@ export function dispatch(
     .filter((t) => {
       // Skip if already claimed
       if (state.claimedTasks.has(t.id)) return false;
-      // Regular todo tasks
-      if (t.status === "todo" && !t.assignee) {
+      // Regular todo tasks (include pre-assigned tasks — assignee is a preference hint)
+      if (t.status === "todo") {
         // Skip if waiting for scheduled retry (nextRetryAt is in the future)
         if (t.nextRetryAt && new Date(t.nextRetryAt).getTime() > now) return false;
         // Check dependencies: all depends_on tasks must be done
@@ -1058,6 +1058,14 @@ export function findBestAgent(
 ): PaneInfo | null {
   const candidates = idleAgents.filter((p) => !excludeIds.has(p.id));
   if (candidates.length === 0) return null;
+
+  // Pre-assigned agent preference: if the task has an assignee (set at creation time),
+  // prefer that agent if it's idle. This treats assignee as a preference hint.
+  if (task.assignee) {
+    const preferred = candidates.find((p) => agentIdentifier(p) === task.assignee);
+    if (preferred) return preferred;
+    // Preferred agent not idle — fall through to normal matching
+  }
 
   // No specialty required — any idle agent works
   if (!task.specialty) return candidates[0] ?? null;
