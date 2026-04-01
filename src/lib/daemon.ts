@@ -117,6 +117,14 @@ function listPanes(): MonitorPane[] {
 }
 
 // ---------------------------------------------------------------------------
+// Forward declarations for shutdown — must be initialised before tick() runs
+// because tick() may call shutdown() synchronously on the first invocation.
+// ---------------------------------------------------------------------------
+
+let stopOrchestrator: (() => void) | null = null;
+let httpServer: Server | null = null;
+
+// ---------------------------------------------------------------------------
 // Monitor loop
 // ---------------------------------------------------------------------------
 
@@ -171,14 +179,13 @@ function tick(): void {
   lastState = stateKey;
 }
 
-const monitorInterval = setInterval(tick, INTERVAL);
-tick(); // run immediately
+// NOTE: monitor loop is started AFTER the command center and orchestrator
+// are kicked off (see bottom of file) so that a slow lsof/ps inside tick()
+// cannot block the HTTP server from binding its port.
 
 // ---------------------------------------------------------------------------
 // Orchestrator (if enabled in ide.yml)
 // ---------------------------------------------------------------------------
-
-let stopOrchestrator: (() => void) | null = null;
 
 async function startOrchestrator(): Promise<void> {
   try {
@@ -241,13 +248,9 @@ async function startOrchestrator(): Promise<void> {
   }
 }
 
-void startOrchestrator();
-
 // ---------------------------------------------------------------------------
 // Command Center HTTP + WebSocket server
 // ---------------------------------------------------------------------------
-
-let httpServer: Server | null = null;
 
 async function startCommandCenter(): Promise<void> {
   try {
@@ -415,6 +418,12 @@ async function startCommandCenter(): Promise<void> {
 }
 
 void startCommandCenter();
+void startOrchestrator();
+
+// Start the monitor loop last — tick() uses execFileSync (lsof, ps) which
+// can block the event loop for seconds if the system is under load.
+const monitorInterval = setInterval(tick, INTERVAL);
+tick();
 
 // ---------------------------------------------------------------------------
 // Unified shutdown

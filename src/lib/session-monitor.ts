@@ -23,6 +23,7 @@ function getListeningPids(): Set<string> {
     const raw = execFileSync("lsof", ["-nP", "-iTCP", "-sTCP:LISTEN", "-FpPn"], {
       encoding: "utf-8",
       stdio: ["ignore", "pipe", "ignore"],
+      timeout: 2000,
     });
     const pids = new Set<string>();
     let currentPid: string | null = null;
@@ -49,6 +50,7 @@ function getProcessTree(): Map<string, string> {
     const raw = execFileSync("ps", ["-axo", "pid=,ppid="], {
       encoding: "utf-8",
       stdio: ["ignore", "pipe", "ignore"],
+      timeout: 2000,
     });
     const tree = new Map<string, string>();
     for (const line of raw.trim().split("\n")) {
