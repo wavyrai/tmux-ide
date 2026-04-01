@@ -12,7 +12,13 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readdirSync, statSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { createServer, type Server } from "node:http";
+import { createRequire } from "node:module";
 import { computePortPanes, computeAgentStates } from "./session-monitor.ts";
+
+// Anchor bare-specifier resolution to this file so dependencies like
+// @hono/node-server resolve from tmux-ide's own node_modules regardless
+// of the process's working directory.
+const _require = createRequire(import.meta.url);
 
 /** Remove dispatch files older than 24 hours */
 function cleanupDispatchFiles(dir: string): void {
@@ -246,7 +252,7 @@ let httpServer: Server | null = null;
 async function startCommandCenter(): Promise<void> {
   try {
     const { createApp } = await import("../command-center/server.ts");
-    const { getRequestListener } = await import("@hono/node-server");
+    const { getRequestListener } = await import(_require.resolve("@hono/node-server"));
     const { AuthService } = await import("./auth/auth-service.ts");
     const { AuthConfigSchema } = await import("./auth/types.ts");
     const { TunnelManager } = await import("./tunnels/manager.ts");
