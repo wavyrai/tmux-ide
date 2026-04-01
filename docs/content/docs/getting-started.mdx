@@ -95,6 +95,16 @@ tmux-ide mission create "Build auth system" -d "JWT + refresh tokens"
 tmux-ide
 ```
 
+### What `tmux-ide init --template missions` scaffolds
+
+```
+.tmux-ide/skills/    — agent role definitions
+.tmux-ide/library/   — architecture.md, learnings.md stubs
+.tasks/              — validation-contract.md stub
+AGENTS.md            — project boundaries
+ide.yml              — session config with orchestrator
+```
+
 This gives you:
 
 - **6 agent panes** (lead, frontend, backend, validator, researcher, shell)
@@ -112,6 +122,10 @@ tmux-ide validate coverage    # check assertion coverage
 ```
 
 See [Configuration](/docs/configuration#orchestrator-config) for all orchestrator options and [What's New in 2.0](/docs/release-2-0-0) for the full feature list.
+
+### Missions Mode Quick Start
+
+For the full mission lifecycle walkthrough, see [Missions Workflow](/docs/missions-workflow). That guide covers planning, execution, validation, and completion end-to-end. For details on validation contracts and the knowledge library, see [Validation Contracts](/docs/validation-contracts) and [Knowledge Library](/docs/knowledge-library).
 
 ## Claude Code Skill
 

@@ -1,0 +1,465 @@
+---
+title: Validation Contracts
+description: Define testable assertions upfront so every milestone has a clear definition of done
+---
+
+## What Are Validation Contracts
+
+A validation contract is a set of testable claims about your system that you define before any work begins. Each claim, called an **assertion**, describes a concrete, verifiable behavior. The contract acts as an acceptance test plan that lives alongside your task files and drives the validator agent throughout the mission.
+
+Contracts answer a simple question: _how do we know this milestone is actually done?_ Instead of relying on gut checks or manual review, the contract gives every agent a shared, unambiguous checklist.
+
+Contracts are powerful because they:
+
+- Force you to think about acceptance criteria during planning, not after implementation
+- Give the orchestrator a gate between milestones — work does not advance until assertions pass
+- Let the validator agent run independently, checking claims without blocking other agents
+- Provide a clear audit trail of what was verified, when, and with what evidence
+
+## Creating a Contract
+
+Validation contracts live in `.tasks/validation-contract.md` inside your project root. The file is plain Markdown with bold assertion IDs.
+
+```bash
+# Create the file manually or let the lead agent generate it during planning
+mkdir -p .tasks
+touch .tasks/validation-contract.md
+```
+
+### Format
+
+Each assertion is a single line starting with a bold ID followed by a colon and the claim:
+
+```md
+# Validation Contract
+
+## Authentication
+
+**VAL-AUTH-001**: Login endpoint returns a signed JWT on valid credentials
+**VAL-AUTH-002**: Invalid credentials return 401 with a structured error body
+**VAL-AUTH-003**: Expired tokens are rejected with 401 and a `token_expired` code
+**VAL-AUTH-004**: Refresh token endpoint issues a new access token
+
+## API
+
+**VAL-API-001**: All endpoints require a valid Bearer token except /health
+**VAL-API-002**: Rate limiter returns 429 after 100 requests per minute per key
+
+## Data
+
+**VAL-DATA-001**: User creation persists to the database and is retrievable by ID
+**VAL-DATA-002**: Deleting a user cascades to dependent records
+```
+
+The validator parses these IDs from the contract file. You can organize assertions under headings, add prose between them, or include notes — only lines matching the `**VAL-...**:` pattern are treated as assertions.
+
+## Assertion Design
+
+### Naming Conventions
+
+Use a hierarchical ID scheme: `VAL-<DOMAIN>-<NUMBER>`.
+
+| Prefix       | Domain                           |
+| ------------ | -------------------------------- |
+| `VAL-AUTH-`  | Authentication and authorization |
+| `VAL-API-`   | REST/GraphQL API behavior        |
+| `VAL-UI-`    | Frontend and user interface      |
+| `VAL-DATA-`  | Database and data integrity      |
+| `VAL-PERF-`  | Performance and load             |
+| `VAL-SEC-`   | Security hardening               |
+| `VAL-INT-`   | Integration and third-party APIs |
+| `VAL-INFRA-` | Infrastructure and deployment    |
+
+Numbers are zero-padded to three digits (`001`, `002`, ...) so they sort naturally.
+
+### What Makes a Good Assertion
+
+A good assertion is:
+
+- **Specific** — describes one observable behavior, not a vague quality
+- **Testable** — an agent or script can verify it with a concrete check
+- **Independent** — can be validated without relying on other assertions passing first
+- **Evidenced** — the validator can attach proof (test output, curl response, screenshot)
+
+**Good:**
+
+```md
+**VAL-AUTH-003**: Expired tokens are rejected with 401 and a `token_expired` code
+```
+
+**Bad:**
+
+```md
+**VAL-AUTH-003**: Auth works correctly
+```
+
+The first assertion tells the validator exactly what to check. The second is unfalsifiable.
+
+### Examples Across Domains
+
+```md
+## Auth
+
+**VAL-AUTH-001**: POST /auth/login with valid credentials returns 200 and a JWT
+**VAL-AUTH-002**: POST /auth/login with invalid credentials returns 401
+
+## API
+
+**VAL-API-001**: GET /api/users requires Authorization header; omitting it returns 401
+**VAL-API-002**: GET /api/users?limit=5 returns at most 5 records
+
+## UI
+
+**VAL-UI-001**: Login form shows inline error on invalid credentials without page reload
+**VAL-UI-002**: Dashboard renders within 2 seconds on a cold load
+
+## Data
+
+**VAL-DATA-001**: Creating a user with duplicate email returns 409 Conflict
+**VAL-DATA-002**: Soft-deleted users are excluded from list queries by default
+```
+
+## Linking Tasks to Assertions
+
+When you create a task, use the `--fulfills` flag to declare which assertions that task is expected to satisfy:
+
+```bash
+tmux-ide task create "Implement JWT login" \
+  --milestone M1 \
+  --specialty backend \
+  --fulfills "VAL-AUTH-001,VAL-AUTH-002"
+
+tmux-ide task create "Add token refresh" \
+  --milestone M1 \
+  --specialty backend \
+  --fulfills "VAL-AUTH-004"
+
+tmux-ide task create "Build login form" \
+  --milestone M2 \
+  --specialty frontend \
+  --fulfills "VAL-UI-001"
+```
+
+### Coverage Invariant
+
+Before moving from planning to execution, every assertion in the contract should be claimed by at least one task. The `validate coverage` command checks this:
+
+```bash
+tmux-ide validate coverage
+```
+
+```
+Validation Coverage
+  Covered:   10/12 assertions
+  Uncovered: VAL-PERF-001, VAL-SEC-001
+
+  ✗ Coverage incomplete — 2 assertions have no fulfilling task
+```
+
+If coverage is incomplete, create tasks to fill the gaps before running `tmux-ide mission plan-complete`. The orchestrator will not dispatch work for assertions that no task claims.
+
+```bash
+# Fill the gap
+tmux-ide task create "Add rate limit tests" \
+  --milestone M2 \
+  --fulfills "VAL-PERF-001"
+
+tmux-ide task create "Security headers audit" \
+  --milestone M2 \
+  --fulfills "VAL-SEC-001"
+
+# Verify
+tmux-ide validate coverage
+```
+
+```
+Validation Coverage
+  Covered:   12/12 assertions
+  Uncovered: (none)
+
+  ✓ Full coverage
+```
+
+Use `--json` for programmatic checks:
+
+```bash
+tmux-ide validate coverage --json
+```
+
+```json
+{
+  "total": 12,
+  "covered": 12,
+  "uncovered": [],
+  "complete": true
+}
+```
+
+## Validator Workflow
+
+The validator is a dedicated agent pane that verifies assertions as milestones complete. In the `missions` template, the validator pane is preconfigured:
+
+```yaml
+panes:
+  - title: Validator
+    command: claude
+    role: validator
+    skill: reviewer
+```
+
+### How It Works
+
+1. A milestone's tasks all reach `done` status.
+2. The orchestrator triggers validation for that milestone.
+3. The validator reads `.tasks/validation-contract.md` and identifies which assertions are linked to tasks in the completed milestone.
+4. For each assertion, the validator runs the appropriate check — executing tests, curling endpoints, inspecting files, or reviewing code.
+5. The validator calls `tmux-ide validate assert` for each assertion with a status and evidence.
+6. Once all assertions for the milestone are checked, the validator produces a report.
+7. If all assertions pass, the orchestrator advances to the next milestone. If any fail, remediation kicks in.
+
+### Manual Validation
+
+You can also drive validation manually at any time:
+
+```bash
+# Check a specific assertion
+tmux-ide validate assert VAL-AUTH-001 \
+  --status passing \
+  --evidence "POST /auth/login returns 200 with valid JWT (test suite: 3/3 passed)"
+
+# View the full contract with current states
+tmux-ide validate show
+
+# Generate a summary report
+tmux-ide validate report
+```
+
+## Assertion States
+
+Each assertion moves through a lifecycle:
+
+| State     | Meaning                                                              |
+| --------- | -------------------------------------------------------------------- |
+| `pending` | Default state. The assertion has not been checked yet.               |
+| `passing` | The validator confirmed the assertion holds. Evidence attached.      |
+| `failing` | The validator checked and the assertion does not hold.               |
+| `blocked` | Cannot be validated because a dependency or precondition is missing. |
+
+State transitions:
+
+```
+pending ──→ passing
+pending ──→ failing ──→ passing (after remediation)
+pending ──→ blocked ──→ pending (after unblock) ──→ passing
+```
+
+View assertion states with:
+
+```bash
+tmux-ide validate show
+```
+
+```
+Validation Contract — 12 assertions
+
+  VAL-AUTH-001  passing   Login endpoint returns a signed JWT
+  VAL-AUTH-002  passing   Invalid credentials return 401
+  VAL-AUTH-003  pending   Expired tokens rejected with token_expired code
+  VAL-AUTH-004  failing   Refresh token endpoint issues new access token
+  VAL-API-001   passing   All endpoints require Bearer token
+  VAL-API-002   blocked   Rate limiter returns 429 after 100 req/min
+  ...
+
+Summary: 3 passing, 1 failing, 1 blocked, 7 pending
+```
+
+## Remediation
+
+When assertions fail, the system does not silently move on. Failure triggers a structured remediation flow.
+
+### What Happens on Failure
+
+1. **Milestone blocks.** The orchestrator will not advance to the next milestone while any assertion in the current one is `failing`.
+2. **Auto-task creation.** The orchestrator can create remediation tasks automatically, tagged with the failing assertion IDs.
+3. **Milestone reset.** If the milestone was marked `done` prematurely, it resets to `active` so new tasks can be dispatched.
+4. **Validator re-check.** After remediation tasks complete, the validator re-runs the failing assertions.
+
+### Manual Remediation
+
+If you prefer manual control:
+
+```bash
+# See what failed
+tmux-ide validate report
+
+# Create a fix task
+tmux-ide task create "Fix refresh token rotation" \
+  --milestone M1 \
+  --specialty backend \
+  --fulfills "VAL-AUTH-004"
+
+# After the fix, re-assert
+tmux-ide validate assert VAL-AUTH-004 \
+  --status passing \
+  --evidence "Refresh endpoint returns new access token (test: refresh_flow passed)"
+```
+
+### Blocked Assertions
+
+Mark an assertion as `blocked` when an external dependency prevents validation:
+
+```bash
+tmux-ide validate assert VAL-API-002 \
+  --status blocked \
+  --evidence "Rate limiter depends on Redis, not yet provisioned"
+```
+
+Blocked assertions do not prevent milestone advancement, but they will appear in reports as outstanding items.
+
+## Example Contract
+
+Here is a realistic contract for a todo-list API project with authentication:
+
+```md
+# Validation Contract — Todo API v1
+
+## Authentication
+
+**VAL-AUTH-001**: POST /auth/register creates a user and returns 201 with a JWT
+**VAL-AUTH-002**: POST /auth/register with duplicate email returns 409 Conflict
+**VAL-AUTH-003**: POST /auth/login with valid credentials returns 200 with a JWT
+**VAL-AUTH-004**: POST /auth/login with wrong password returns 401
+**VAL-AUTH-005**: JWT expires after 15 minutes; requests with expired tokens return 401
+
+## API — Todos
+
+**VAL-API-001**: POST /api/todos creates a todo and returns 201
+**VAL-API-002**: GET /api/todos returns only todos belonging to the authenticated user
+**VAL-API-003**: PATCH /api/todos/:id updates title and completed status
+**VAL-API-004**: DELETE /api/todos/:id returns 204 and the todo is no longer retrievable
+**VAL-API-005**: GET /api/todos?completed=true filters to completed todos only
+
+## Data Integrity
+
+**VAL-DATA-001**: Deleting a user cascades to their todos
+**VAL-DATA-002**: Todo titles are trimmed and limited to 255 characters; longer input returns 422
+
+## Security
+
+**VAL-SEC-001**: All /api/\* routes return 401 without a valid Authorization header
+**VAL-SEC-002**: Users cannot access or modify todos belonging to other users
+```
+
+### Tasks Fulfilling This Contract
+
+```bash
+tmux-ide task create "User registration endpoint" \
+  --milestone M1 --specialty backend \
+  --fulfills "VAL-AUTH-001,VAL-AUTH-002"
+
+tmux-ide task create "Login endpoint" \
+  --milestone M1 --specialty backend \
+  --fulfills "VAL-AUTH-003,VAL-AUTH-004"
+
+tmux-ide task create "JWT expiry middleware" \
+  --milestone M1 --specialty backend \
+  --fulfills "VAL-AUTH-005"
+
+tmux-ide task create "Todo CRUD endpoints" \
+  --milestone M2 --specialty backend \
+  --fulfills "VAL-API-001,VAL-API-002,VAL-API-003,VAL-API-004,VAL-API-005"
+
+tmux-ide task create "Cascade delete and input validation" \
+  --milestone M2 --specialty backend \
+  --fulfills "VAL-DATA-001,VAL-DATA-002"
+
+tmux-ide task create "Auth guard and ownership checks" \
+  --milestone M2 --specialty backend \
+  --fulfills "VAL-SEC-001,VAL-SEC-002"
+
+# Confirm full coverage
+tmux-ide validate coverage
+```
+
+## Commands Reference
+
+### `validate show`
+
+Display the full validation contract with current assertion states.
+
+```bash
+tmux-ide validate show
+tmux-ide validate show --json
+```
+
+The `--json` output includes every assertion with its ID, description, state, and attached evidence.
+
+### `validate assert`
+
+Set the state of a specific assertion.
+
+```bash
+tmux-ide validate assert <assertion-id> --status <state> --evidence "<text>"
+```
+
+| Flag         | Required | Description                                       |
+| ------------ | -------- | ------------------------------------------------- |
+| `--status`   | Yes      | One of `pending`, `passing`, `failing`, `blocked` |
+| `--evidence` | No       | Free-text proof attached to the assertion         |
+
+```bash
+tmux-ide validate assert VAL-AUTH-001 \
+  --status passing \
+  --evidence "Integration test auth.login.test.ts: 4/4 passed"
+
+tmux-ide validate assert VAL-API-002 \
+  --status failing \
+  --evidence "GET /api/todos returns all todos regardless of user"
+```
+
+### `validate report`
+
+Generate a summary report of the entire contract.
+
+```bash
+tmux-ide validate report
+tmux-ide validate report --json
+```
+
+```
+Validation Report
+  Total:    14 assertions
+  Passing:  10
+  Failing:   1
+  Blocked:   0
+  Pending:   3
+
+  Failing assertions:
+    VAL-API-002  GET /api/todos returns only todos belonging to the authenticated user
+
+  Pending assertions:
+    VAL-DATA-001  Deleting a user cascades to their todos
+    VAL-DATA-002  Todo titles trimmed and limited to 255 characters
+    VAL-SEC-002   Users cannot access or modify other users' todos
+```
+
+### `validate coverage`
+
+Check whether every assertion in the contract is claimed by at least one task via `--fulfills`.
+
+```bash
+tmux-ide validate coverage
+tmux-ide validate coverage --json
+```
+
+Run this before `tmux-ide mission plan-complete` to catch gaps early.
+
+## Best Practices
+
+- Write the contract during planning, before any code exists
+- Keep assertions atomic — one behavior per assertion
+- Use `validate coverage` as a planning checkpoint, not an afterthought
+- Attach concrete evidence when asserting — test names, curl output, or log excerpts
+- Do not skip `blocked` assertions; track them so they surface in reports
+- Re-run `validate report` after every milestone to maintain an accurate audit trail
+- Let the validator agent own assertion state; avoid manually marking assertions as `passing` unless you are debugging

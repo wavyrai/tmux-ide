@@ -230,6 +230,41 @@ tmux-ide milestone update <id> --status active|done|locked
 
 Milestones gate task dispatch — tasks with a milestone only dispatch when that milestone is `active` and all predecessors are `done`.
 
+## `tmux-ide task`
+
+Create and manage tasks within a mission.
+
+```bash
+tmux-ide task create "title" [--goal NN] [--priority N] [--milestone M1] [--assign "Agent"]
+tmux-ide task list [--status todo] [--json]
+tmux-ide task show <id> [--json]
+tmux-ide task update <id> --status review
+tmux-ide task claim <id> --assign "Agent Name"
+tmux-ide task done <id> --proof "description"
+tmux-ide task delete <id>
+```
+
+### Task creation flags
+
+Link a task to validation assertions with `--fulfills`:
+
+```bash
+tmux-ide task create "Implement login endpoint" --fulfills "VAL-AUTH-001,VAL-AUTH-002"
+```
+
+Route a task to a specialist agent with `--specialty`:
+
+```bash
+tmux-ide task create "Build login page" --specialty frontend
+```
+
+The `--proof` flag accepts plain text or a JSON object:
+
+```bash
+tmux-ide task done 003 --proof "All tests passing"
+tmux-ide task done 003 --proof '{"tests":{"passed":10,"total":10},"notes":"CI green"}'
+```
+
 ## `tmux-ide validate`
 
 Manage validation contracts and assertion verification. Also validates `ide.yml` config when called without a subcommand.

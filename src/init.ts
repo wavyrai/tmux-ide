@@ -30,25 +30,85 @@ function copyTemplateSkills(targetDir: string): string[] {
   return created;
 }
 
-function scaffoldMissionsWorkspace(dir: string, name: string): string[] {
+function scaffoldLibraryStubs(dir: string): string[] {
   const created: string[] = [];
-  const skillsDir = join(dir, ".tmux-ide", "skills");
-  created.push(...copyTemplateSkills(skillsDir));
-
   const libraryDir = join(dir, ".tmux-ide", "library");
   if (!existsSync(libraryDir)) {
     mkdirSync(libraryDir, { recursive: true });
     created.push(libraryDir);
   }
 
+  const archPath = join(libraryDir, "architecture.md");
+  if (!existsSync(archPath)) {
+    writeFileSync(
+      archPath,
+      "# Architecture\n\n<!-- Describe your project's architecture here. This context is injected into agent dispatch prompts. -->\n",
+    );
+    created.push(archPath);
+  }
+
+  const learningsPath = join(libraryDir, "learnings.md");
+  if (!existsSync(learningsPath)) {
+    writeFileSync(
+      learningsPath,
+      "# Learnings\n\n<!-- Task summaries are automatically appended here by the orchestrator. -->\n",
+    );
+    created.push(learningsPath);
+  }
+
+  return created;
+}
+
+function scaffoldValidationContract(dir: string): string[] {
+  const created: string[] = [];
+  const tasksDir = join(dir, ".tasks");
+  if (!existsSync(tasksDir)) {
+    mkdirSync(tasksDir, { recursive: true });
+  }
+
+  const contractPath = join(tasksDir, "validation-contract.md");
+  if (!existsSync(contractPath)) {
+    writeFileSync(
+      contractPath,
+      "# Validation Contract\n\n<!-- Define assertions that the validator agent will verify. Example: -->\n<!-- - VAL-001: All tests pass -->\n<!-- - VAL-002: No TypeScript errors -->\n<!-- - VAL-003: Lint passes with zero warnings -->\n",
+    );
+    created.push(contractPath);
+  }
+
+  return created;
+}
+
+function scaffoldAgentsMd(dir: string, name: string): string[] {
+  const created: string[] = [];
   const agentsTemplatePath = resolve(__dirname, "..", "templates", "AGENTS.md");
   if (existsSync(agentsTemplatePath)) {
     const agentsPath = join(dir, "AGENTS.md");
-    const content = readFileSync(agentsTemplatePath, "utf-8").replace(/{{name}}/g, name);
-    writeFileSync(agentsPath, content);
-    created.push(agentsPath);
+    if (!existsSync(agentsPath)) {
+      const content = readFileSync(agentsTemplatePath, "utf-8").replace(/{{name}}/g, name);
+      writeFileSync(agentsPath, content);
+      created.push(agentsPath);
+    }
   }
+  return created;
+}
 
+function isTeamTemplate(templateName: string): boolean {
+  return templateName === "missions" || templateName.startsWith("agent-team");
+}
+
+function scaffoldTeamWorkspace(dir: string, name: string): string[] {
+  const created: string[] = [];
+  created.push(...scaffoldLibraryStubs(dir));
+  created.push(...scaffoldValidationContract(dir));
+  created.push(...scaffoldAgentsMd(dir, name));
+  return created;
+}
+
+function scaffoldMissionsWorkspace(dir: string, name: string): string[] {
+  const created: string[] = [];
+  const skillsDir = join(dir, ".tmux-ide", "skills");
+  created.push(...copyTemplateSkills(skillsDir));
+  created.push(...scaffoldTeamWorkspace(dir, name));
   return created;
 }
 
@@ -76,10 +136,17 @@ export async function init({
     const tmpPath = configPath + ".tmp";
     writeFileSync(tmpPath, content);
     renameSync(tmpPath, configPath);
-    const created =
-      template === "missions"
-        ? scaffoldMissionsWorkspace(dir, name)
-        : copyTemplateSkills(join(dir, ".tmux-ide", "skills"));
+    let created: string[];
+    if (template === "missions") {
+      created = scaffoldMissionsWorkspace(dir, name);
+    } else if (isTeamTemplate(template)) {
+      created = [
+        ...copyTemplateSkills(join(dir, ".tmux-ide", "skills")),
+        ...scaffoldTeamWorkspace(dir, name),
+      ];
+    } else {
+      created = copyTemplateSkills(join(dir, ".tmux-ide", "skills"));
+    }
 
     if (json) {
       console.log(JSON.stringify({ created: true, template, name, paths: created }));

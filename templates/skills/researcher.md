@@ -67,3 +67,12 @@ Your proof should include:
 - The most important findings
 - Why they matter
 - The exact next action you recommend
+
+## After Completion
+
+When you finish, the orchestrator will:
+
+- Notify the lead with your proof and summary
+- Run any configured after-run hooks
+- Auto-dispatch the next available task
+- Append your summary to the learnings library

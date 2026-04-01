@@ -2,7 +2,7 @@ import { resolve, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { readFileSync, writeFileSync, existsSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { readConfig, getSessionName } from "./lib/yaml-io.ts";
 import { computeSizes, toSplitPercents } from "./lib/sizes.ts";
 import { outputError } from "./lib/output.ts";
@@ -183,7 +183,9 @@ function runBeforeHook(command: string | undefined, dir: string): void {
 async function waitForDaemon(port: number, maxAttempts = 30, delayMs = 100): Promise<boolean> {
   for (let i = 0; i < maxAttempts; i++) {
     try {
-      const res = await fetch(`http://localhost:${port}/health`);
+      const res = await fetch(`http://localhost:${port}/health`, {
+        signal: AbortSignal.timeout(1000),
+      });
       if (res.ok) return true;
     } catch {
       // Not ready yet
@@ -233,6 +235,21 @@ export async function launch(
     const daemonAlive = await isDaemonAlive(commandCenterPort);
     if (!daemonAlive) {
       console.log("Daemon not responding — restarting...");
+
+      // Clean up any orphaned daemon processes from previous runs
+      try {
+        execSync(`pkill -f "daemon-watchdog.ts ${session}" 2>/dev/null || true`, {
+          stdio: "ignore",
+        });
+        execSync(`pkill -f "daemon.ts ${session}" 2>/dev/null || true`, { stdio: "ignore" });
+      } catch {
+        // Best-effort cleanup
+      }
+
+      // Brief wait for orphaned processes to release the port
+      const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+      await sleep(500);
+
       const monitorScript = resolve(
         dirname(fileURLToPath(import.meta.url)),
         "lib",
@@ -322,6 +339,18 @@ export async function launch(
   // Store config hash for drift detection on re-launch
   setSessionVariable(session, "@config_hash", configHash(config));
 
+  // Clean up any orphaned daemon processes from previous runs
+  try {
+    execSync(`pkill -f "daemon-watchdog.ts ${session}" 2>/dev/null || true`, { stdio: "ignore" });
+    execSync(`pkill -f "daemon.ts ${session}" 2>/dev/null || true`, { stdio: "ignore" });
+  } catch {
+    // Best-effort cleanup
+  }
+
+  // Brief wait for orphaned processes to release the port
+  const sleepAsync = (ms: number) => new Promise((r) => setTimeout(r, ms));
+  await sleepAsync(500);
+
   // Start background daemon watchdog (command center + session monitor)
   const monitorScript = resolve(
     dirname(fileURLToPath(import.meta.url)),
@@ -376,10 +405,22 @@ export function buildMasterAgentPrompt(config: IdeConfig): string {
     .map((p: Pane) => p.title)
     .filter(Boolean);
 
-  return `You are the Master Agent for this tmux-ide session.
+  const isMissionsMode = config.orchestrator?.dispatch_mode === "missions";
+
+  const milestonesSection = isMissionsMode
+    ? `
+## Milestones
+Milestones gate execution — tasks in M2 won't dispatch until M1 is validated.
+- tmux-ide milestone create "title" --sequence N
+- tmux-ide milestone list --json
+- tmux-ide mission plan-complete  (activates milestones, starts dispatch)
+`
+    : "";
+
+  return `You are the Lead Agent for this tmux-ide session.
 
 ## Your role
-You coordinate a team of coding agents. The human gives you high-level goals, and you break them into structured tasks that your teammates execute.
+You coordinate a team of coding agents. The human gives you high-level goals, and you break them into structured tasks that your teammates execute. You plan, delegate, and review — you do not implement.
 
 ## Your teammates
 ${teammatePanes.map((t) => `- ${t}`).join("\n")}
@@ -388,21 +429,38 @@ ${teammatePanes.map((t) => `- ${t}`).join("\n")}
 - tmux-ide mission set "title" --description "..."
 - tmux-ide goal create "title" --priority N --acceptance "criteria"
 - tmux-ide goal list --json
-- tmux-ide task create "title" --goal NN --priority N
+- tmux-ide task create "title" --goal NN --priority N --specialty "type" --fulfills "VAL-001,VAL-002"
 - tmux-ide task list --json
 - tmux-ide task show NNN --json (shows full mission→goal→task context)
 - tmux-ide task done NNN --proof "what was accomplished"
 - tmux-ide goal done NN
 
 ## How it works
-1. You create tasks with tmux-ide task create
-2. The orchestrator automatically assigns unassigned tasks to idle teammates
-3. Teammates work in the project directory
-4. When teammates finish, they run tmux-ide task done
-5. You get notified and review their work
-6. You report progress to the human
+1. Set the mission: tmux-ide mission set "title" --description "..."
+2. Create goals with acceptance criteria
+3. Create tasks under goals — use --specialty to hint agent type, --fulfills to link validation assertions
+4. The orchestrator automatically dispatches unassigned tasks to idle teammates
+5. Teammates work in the project directory
+6. When teammates finish, they run tmux-ide task done
+7. You get notified and review their work
+8. You report progress to the human
+${milestonesSection}
+## Validation contracts
+Define acceptance criteria in .tasks/validation-contract.md using assertion IDs:
+  **VAL-001**: All tests pass
+  **VAL-002**: No TypeScript errors
+Link tasks to assertions: tmux-ide task create "title" --fulfills "VAL-001,VAL-002"
+After a milestone's tasks complete, the Validator agent automatically verifies assertions.
+
+## Knowledge library
+- .tmux-ide/library/architecture.md — project context injected into agent prompts
+- .tmux-ide/library/learnings.md — auto-appended by orchestrator after task completion
+- AGENTS.md — project boundaries injected into all agent prompts
+Update architecture.md when the project structure changes significantly.
 
 ## Important
+- Do NOT use --assign when creating tasks — the orchestrator handles dispatch automatically
+- Use --specialty to hint which agent type should pick it up
 - Focus on PLANNING and REVIEWING, not implementing
 - Break work into small, clear tasks (one per teammate)
 - Each task should be completable independently
@@ -460,6 +518,22 @@ The \`--proof\` flag accepts either a plain string (stored as \`notes\`) or a JS
 ### Task Dependencies
 
 Use \`--depends "001,002"\` to declare that a task depends on other tasks. The orchestrator will not dispatch a task until all its dependencies are complete.
+
+### Milestones
+
+\`\`\`bash
+tmux-ide milestone create "title" --sequence N
+tmux-ide milestone list [--json]
+tmux-ide mission plan-complete  # activate milestones and start dispatch
+\`\`\`
+
+### Validation
+
+\`\`\`bash
+tmux-ide validate show [--json]
+tmux-ide validate assert VAL-001 --status passing --evidence "what you verified"
+tmux-ide validate coverage [--json]
+\`\`\`
 `;
 
 export function ensureTaskDocs(dir: string): void {
@@ -467,9 +541,43 @@ export function ensureTaskDocs(dir: string): void {
 
   if (existsSync(claudeMdPath)) {
     const content = readFileSync(claudeMdPath, "utf-8");
-    if (content.includes(TASK_DOCS_MARKER)) return;
-    writeFileSync(claudeMdPath, content + TASK_DOCS_SECTION);
+    if (!content.includes(TASK_DOCS_MARKER)) {
+      writeFileSync(claudeMdPath, content + TASK_DOCS_SECTION);
+    }
   } else {
     writeFileSync(claudeMdPath, `# Project\n${TASK_DOCS_SECTION}`);
+  }
+
+  // Ensure library directory and stubs exist
+  const libraryDir = join(dir, ".tmux-ide", "library");
+  if (!existsSync(libraryDir)) {
+    mkdirSync(libraryDir, { recursive: true });
+  }
+  const archPath = join(libraryDir, "architecture.md");
+  if (!existsSync(archPath)) {
+    writeFileSync(
+      archPath,
+      "# Architecture\n\n<!-- Describe your project architecture here. This is injected into agent dispatch prompts. -->\n",
+    );
+  }
+  const learningsPath = join(libraryDir, "learnings.md");
+  if (!existsSync(learningsPath)) {
+    writeFileSync(
+      learningsPath,
+      "# Learnings\n\n<!-- Task summaries are automatically appended here by the orchestrator. -->\n",
+    );
+  }
+
+  // Ensure .tasks/ directory and validation contract stub
+  const tasksDir = join(dir, ".tasks");
+  if (!existsSync(tasksDir)) {
+    mkdirSync(tasksDir, { recursive: true });
+  }
+  const contractPath = join(tasksDir, "validation-contract.md");
+  if (!existsSync(contractPath)) {
+    writeFileSync(
+      contractPath,
+      "# Validation Contract\n\n<!-- Define assertions for the validator agent. Example: -->\n<!-- - VAL-001: All tests pass -->\n<!-- - VAL-002: No TypeScript errors -->\n",
+    );
   }
 }

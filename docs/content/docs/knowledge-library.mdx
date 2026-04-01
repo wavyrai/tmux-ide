@@ -1,0 +1,211 @@
+---
+title: Knowledge Library
+description: Persistent project context that gets injected into agent dispatch prompts
+---
+
+## Overview
+
+The `.tmux-ide/library/` directory provides persistent context that the orchestrator injects into every agent dispatch prompt. Instead of each agent starting from zero, the knowledge library gives them shared understanding of your project's architecture, accumulated learnings from completed tasks, and project-level boundaries.
+
+When the orchestrator dispatches a task to an idle agent, it assembles the prompt from several sources — the knowledge library is one of the most important.
+
+## Directory Structure
+
+```
+.tmux-ide/
+  library/
+    architecture.md        # project design context
+    learnings.md           # auto-appended after each task
+  skills/
+    frontend.md            # skill definitions (per-role)
+    backend.md
+    reviewer.md
+    researcher.md
+    general-worker.md
+AGENTS.md                  # project boundaries
+```
+
+All of these files feed into dispatch prompts, but they serve different purposes.
+
+## architecture.md
+
+The orchestrator reads the first 500 characters of `.tmux-ide/library/architecture.md` and injects them into every dispatch prompt. This gives agents immediate context about the project without needing to explore the codebase first.
+
+**What to put here:**
+
+- Module boundaries and directory layout
+- Key architectural patterns (monorepo structure, layered architecture, etc.)
+- Tech stack decisions and their rationale
+- Important conventions (naming, file organization, import patterns)
+
+```markdown
+# Architecture
+
+Monorepo managed with pnpm workspaces and Turborepo.
+
+- apps/web — Next.js 15 frontend (App Router, RSC)
+- apps/api — Hono REST API on Cloudflare Workers
+- packages/db — Drizzle ORM + Postgres migrations
+- packages/ui — Shared React component library
+
+Key patterns:
+
+- Server components by default, "use client" only when needed
+- All API routes return typed responses via shared zod schemas
+- Database migrations live in packages/db/migrations/
+```
+
+Keep the most critical information in the first 500 characters since that is the cutoff for dispatch prompts.
+
+## learnings.md
+
+The orchestrator auto-appends to `.tmux-ide/library/learnings.md` after each task completion. This creates a growing record of discoveries, gotchas, and solutions that future agents can reference.
+
+You do not need to maintain this file manually. As agents complete tasks, the orchestrator extracts key takeaways and appends them with a timestamp.
+
+**Example of accumulated content:**
+
+```markdown
+## Task 003 — Implement JWT auth (2025-01-15)
+
+- jose library requires Node 18+ — use jsonwebtoken for broader compat
+- Refresh tokens stored in httpOnly cookies, not localStorage
+- CORS config in wrangler.toml must include credentials: true
+
+## Task 007 — Add rate limiting (2025-01-16)
+
+- Cloudflare Workers have no native rate limiting — use Durable Objects
+- Rate limit state persists via DO storage, not KV (too slow for counters)
+```
+
+This knowledge accumulates across the entire mission, so agents dispatched later benefit from everything learned earlier.
+
+## AGENTS.md
+
+The `AGENTS.md` file in your project root defines project-level boundaries. Its content is injected into all dispatch prompts, giving every agent a shared understanding of ownership rules and things to avoid.
+
+**What to put here:**
+
+- File/directory ownership (who changes what)
+- Conventions agents must follow
+- Things agents should **not** do
+- CI/test requirements before marking tasks complete
+
+```markdown
+# AGENTS.md
+
+## Conventions
+
+- Always run `pnpm lint` and `pnpm test` before completing a task
+- Never modify files in packages/db/migrations/ directly — use `pnpm db:generate`
+- CSS uses Tailwind utility classes only — no custom CSS files
+
+## Ownership
+
+- apps/web — frontend agents only
+- apps/api — backend agents only
+- packages/db — backend agents only (migrations require review)
+
+## Do NOT
+
+- Install new dependencies without justification in the task proof
+- Modify CI workflows (.github/)
+- Change tsconfig base settings
+```
+
+## Skills
+
+Skill files in `.tmux-ide/skills/` define agent personas. Each file uses YAML frontmatter for metadata and a markdown body for the system prompt injected when that skill is active.
+
+```markdown
+---
+name: frontend
+specialties: [react, css, typescript]
+role: teammate
+description: Frontend component specialist
+---
+
+You are a frontend developer. Focus on React components, styling,
+and client-side state management. Run `pnpm dev` in apps/web to
+preview changes. Always check responsive behavior.
+```
+
+### How skills are injected
+
+When a pane declares `skill: frontend` in `ide.yml`, the orchestrator loads `.tmux-ide/skills/frontend.md` and includes its body in the dispatch prompt for that pane. This means the agent receives role-specific instructions on top of the shared knowledge library context.
+
+### The general-worker fallback
+
+If a pane has no `skill` assigned, the orchestrator falls back to `.tmux-ide/skills/general-worker.md`. This should contain broadly applicable instructions — coding standards, how to run tests, how to signal completion.
+
+```markdown
+---
+name: general-worker
+specialties: []
+role: teammate
+description: General-purpose development agent
+---
+
+You are a general-purpose developer. Follow project conventions,
+run tests before completing work, and document any non-obvious
+decisions in your task proof.
+```
+
+### Specialty matching
+
+Panes declare `specialty: react,css` in `ide.yml`. When the orchestrator picks an agent for a task, it prefers panes whose specialties overlap with the task's tags. The skill file's `specialties` array serves the same purpose — it declares what the skill is good at.
+
+## Tag-Matched References
+
+If a task has tags, the orchestrator checks for matching library files and loads them into the dispatch prompt. For example, a task tagged `"database"` will cause the orchestrator to look for `.tmux-ide/library/database.md` and include its content.
+
+This lets you provide domain-specific context on demand:
+
+```
+.tmux-ide/library/
+  architecture.md      # always loaded
+  learnings.md         # always loaded
+  database.md          # loaded when task has "database" tag
+  auth.md              # loaded when task has "auth" tag
+  testing.md           # loaded when task has "testing" tag
+```
+
+Create these files for any domain where agents consistently need extra context. Only the files matching the task's tags are loaded, so there is no prompt bloat from unused files.
+
+## Scaffolding
+
+Running `tmux-ide init` automatically creates the `.tmux-ide/` directory structure:
+
+```bash
+tmux-ide init
+```
+
+This scaffolds:
+
+```
+.tmux-ide/
+  library/
+    architecture.md      # empty, ready for you to fill in
+    learnings.md         # empty, auto-populated during missions
+  skills/
+    frontend.md
+    backend.md
+    reviewer.md
+    researcher.md
+    general-worker.md
+```
+
+The skill files come pre-populated with sensible defaults based on your detected project stack. The library files start empty — fill in `architecture.md` with your project context before launching a mission.
+
+You can also create skill and library files manually at any time:
+
+```bash
+# Create a new skill
+tmux-ide skill create devops
+
+# List existing skills
+tmux-ide skill list
+
+# Validate all skills have correct frontmatter
+tmux-ide skill validate
+```

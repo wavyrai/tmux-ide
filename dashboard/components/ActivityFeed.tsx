@@ -41,7 +41,8 @@ export function ActivityFeed({ events, maxEvents = 50 }: ActivityFeedProps) {
     );
   }
 
-  const visible = events.slice(0, maxEvents);
+  // Filter out heartbeat noise — they flood the feed with no actionable info
+  const visible = events.filter((e) => e.type !== "agent_heartbeat").slice(0, maxEvents);
 
   return (
     <div ref={scrollRef} className="flex-1 overflow-y-auto py-1">
@@ -54,7 +55,7 @@ export function ActivityFeed({ events, maxEvents = 50 }: ActivityFeedProps) {
             className="flex items-start h-6 px-3 hover:bg-[var(--surface-hover)]"
           >
             {/* Relative time */}
-            <span className="w-[8ch] shrink-0 text-right text-[var(--dim)] pr-2">
+            <span className="w-[10ch] shrink-0 text-right text-[var(--dim)] pr-2">
               {e.relative ?? ""}
             </span>
 

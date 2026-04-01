@@ -1,0 +1,385 @@
+---
+title: Missions Workflow
+description: The complete missions lifecycle from pre-planning through validation and completion
+---
+
+## Overview
+
+Missions are the highest-level unit of work in tmux-ide. A mission defines what you are building, milestones gate progress into phases, and the orchestrator dispatches tasks to specialized agents automatically.
+
+This page walks through the full lifecycle: pre-planning, planning, execution, validation, and completion.
+
+## Scaffolded Directory Structure
+
+Running `tmux-ide init --template missions` creates the following project structure:
+
+```
+your-project/
+├── ide.yml                          # tmux-ide layout config
+├── .tasks/
+│   ├── tasks.json                   # Mission, milestones, goals, and tasks
+│   └── validation-contract.md       # Assertion definitions (VAL-XXX)
+├── .tmux-ide/
+│   ├── skills/
+│   │   ├── frontend.md              # Skill prompt for frontend agents
+│   │   ├── backend.md               # Skill prompt for backend agents
+│   │   ├── reviewer.md              # Skill prompt for the validator
+│   │   └── researcher.md            # Skill prompt for the researcher
+│   └── library/
+│       ├── architecture.md          # Repo-wide context injected into every dispatch
+│       ├── learnings.md             # Appended automatically as tasks complete
+│       └── research-findings.md     # Accumulated research output
+└── AGENTS.md                        # Project boundaries and rules for every agent
+```
+
+The `ide.yml` produced by the missions template gives you this layout:
+
+```
+┌───────────┬───────────┬───────────┐
+│           │           │           │
+│   Lead    │ Frontend  │  Backend  │  70%
+│           │           │           │
+├───────────┼───────────┼───────────┤
+│ Validator │ Researcher│   Shell   │  30%
+└───────────┴───────────┴───────────┘
+```
+
+## Phase 1: Pre-Planning
+
+Before creating the mission in tmux-ide, the lead prepares the shared knowledge that agents will rely on.
+
+### Define the mission scope
+
+Decide what the mission delivers, what is in scope, and what is explicitly out of scope. Write this down in plain language -- it becomes the mission description.
+
+### Write the validation contract
+
+Create `.tasks/validation-contract.md` with concrete, testable assertions. Each assertion gets a unique ID that tasks will reference later.
+
+```md
+# Validation Contract — Auth v2
+
+## Authentication
+
+- **VAL-AUTH-001**: POST /api/auth/login returns a JWT on valid credentials
+- **VAL-AUTH-002**: POST /api/auth/login returns 401 on invalid credentials
+- **VAL-AUTH-003**: POST /api/auth/refresh returns a new access token given a valid refresh token
+- **VAL-AUTH-004**: Protected routes return 403 when the JWT is expired
+
+## Test Coverage
+
+- **VAL-TEST-001**: Unit tests cover all auth service functions with >90% line coverage
+- **VAL-TEST-002**: Integration tests exercise the full login-refresh-logout flow
+```
+
+<Callout type="info">
+  Write the contract before planning starts. It defines "done" up front so the validator knows
+  exactly what to check.
+</Callout>
+
+### Update architecture.md
+
+Add relevant context to `.tmux-ide/library/architecture.md` so dispatched agents understand the codebase they are working in.
+
+```md
+# Architecture
+
+## Stack
+
+- Next.js 14 (App Router)
+- Drizzle ORM + PostgreSQL
+- JWT via jose library
+
+## Key Paths
+
+- `src/app/api/auth/` — auth route handlers
+- `src/lib/auth/` — token creation, validation, refresh logic
+- `src/middleware.ts` — route protection
+
+## Conventions
+
+- All API routes return `{ data }` or `{ error }` JSON envelopes
+- Tests live next to source files as `*.test.ts`
+```
+
+## Phase 2: Planning
+
+Mission status: **planning**
+
+### Create the mission
+
+```bash
+tmux-ide mission set "Auth v2" --description "JWT login, token refresh, route protection, and full test coverage"
+```
+
+### Create milestones
+
+Milestones are sequential gates. M1 must complete before M2 starts.
+
+```bash
+tmux-ide milestone create "Foundation" --sequence 1
+tmux-ide milestone create "Implementation" --sequence 2
+tmux-ide milestone create "Validation & Polish" --sequence 3
+```
+
+### Create tasks
+
+Each task belongs to a milestone and can declare which validation assertions it fulfills, what specialty it needs, and what goal it serves.
+
+```bash
+# M1 — Foundation
+tmux-ide task create "Set up auth database schema" \
+  --milestone M1 \
+  --specialty backend \
+  --priority 1 \
+  --goal "Establish the data layer for auth"
+
+tmux-ide task create "Create JWT utility functions" \
+  --milestone M1 \
+  --specialty backend \
+  --priority 2 \
+  --fulfills "VAL-AUTH-001,VAL-AUTH-003" \
+  --goal "Token creation and validation helpers"
+
+# M2 — Implementation
+tmux-ide task create "Build login endpoint" \
+  --milestone M2 \
+  --specialty backend \
+  --priority 1 \
+  --fulfills "VAL-AUTH-001,VAL-AUTH-002" \
+  --goal "POST /api/auth/login with JWT response" \
+  --depends "001,002"
+
+tmux-ide task create "Build refresh endpoint" \
+  --milestone M2 \
+  --specialty backend \
+  --priority 2 \
+  --fulfills "VAL-AUTH-003" \
+  --goal "POST /api/auth/refresh with token rotation" \
+  --depends "002"
+
+tmux-ide task create "Add route protection middleware" \
+  --milestone M2 \
+  --specialty backend \
+  --priority 3 \
+  --fulfills "VAL-AUTH-004" \
+  --goal "Middleware that rejects expired or missing JWTs"
+
+tmux-ide task create "Build login page" \
+  --milestone M2 \
+  --specialty frontend \
+  --priority 2 \
+  --goal "Login form that calls the auth API"
+
+# M3 — Validation & Polish
+tmux-ide task create "Write unit tests for auth service" \
+  --milestone M3 \
+  --specialty backend \
+  --priority 1 \
+  --fulfills "VAL-TEST-001" \
+  --goal "Unit test coverage for all auth functions"
+
+tmux-ide task create "Write integration tests for auth flow" \
+  --milestone M3 \
+  --specialty backend \
+  --priority 2 \
+  --fulfills "VAL-TEST-002" \
+  --goal "End-to-end login, refresh, and logout test" \
+  --depends "007"
+```
+
+### Check coverage
+
+Before leaving planning, verify that every assertion in the validation contract is claimed by at least one task.
+
+```bash
+tmux-ide validate coverage
+```
+
+```
+Validation Coverage Report
+──────────────────────────
+VAL-AUTH-001  ✓  Covered by: 002, 003
+VAL-AUTH-002  ✓  Covered by: 003
+VAL-AUTH-003  ✓  Covered by: 002, 004
+VAL-AUTH-004  ✓  Covered by: 005
+VAL-TEST-001  ✓  Covered by: 007
+VAL-TEST-002  ✓  Covered by: 008
+
+Coverage: 6/6 assertions covered (100%)
+```
+
+If any assertion is uncovered, create additional tasks before proceeding.
+
+### Activate the mission
+
+```bash
+tmux-ide mission plan-complete
+```
+
+This transitions the mission from `planning` to `active`, locks all milestones except M1, and the orchestrator begins dispatching.
+
+## Phase 3: Execution
+
+Mission status: **active**
+
+Once the mission is active and you launch the session with `tmux-ide`, the orchestrator takes over.
+
+### How dispatch works
+
+On each tick (default every 5 seconds), the orchestrator:
+
+1. Identifies idle agent panes (any pane that is not the lead and is not currently working)
+2. Picks the highest-priority unblocked task in the current active milestone
+3. Prefers panes whose `specialty` matches the task's `--specialty`
+4. Builds a full context prompt from the mission description, milestone context, goal, task details, the agent's skill file, and the knowledge library
+5. Sends the prompt to the idle agent via `tmux send-keys`
+
+### What agents receive
+
+Each dispatched agent gets a prompt containing:
+
+- **Mission**: title, description, and current status
+- **Milestone**: which phase this task belongs to
+- **Goal**: the high-level objective the task serves
+- **Task**: title, description, dependencies, and fulfillment targets
+- **Skill**: the contents of `.tmux-ide/skills/<specialty>.md`
+- **Library**: `architecture.md`, `learnings.md`, `AGENTS.md`
+
+### Task completion
+
+When an agent finishes, it reports back:
+
+```bash
+tmux-ide task done 003 \
+  --proof "Login endpoint implemented. Returns JWT on valid creds, 401 on invalid. Tests in src/app/api/auth/login/route.test.ts" \
+  --summary "Implemented POST /api/auth/login using jose for JWT signing. Passwords verified with bcrypt. Response shape: { data: { accessToken, refreshToken, expiresIn } }"
+```
+
+The `--proof` explains what was done and how to verify it. The `--summary` is appended to `learnings.md` so subsequent agents benefit from the knowledge.
+
+### Monitoring progress
+
+```bash
+tmux-ide mission status          # Mission overview with milestone progress
+tmux-ide metrics                 # Task counts, completion rate, time estimates
+tmux-ide metrics agents          # Per-agent utilization and task history
+tmux-ide orch                    # Live orchestrator state (agents, queue, events)
+```
+
+## Phase 4: Validation
+
+Milestone status: **validating**
+
+Validation happens automatically when all tasks in a milestone complete.
+
+### Automatic validator dispatch
+
+When the last task in a milestone is marked done, the orchestrator:
+
+1. Transitions the milestone status to `validating`
+2. Dispatches the validator agent with the validation contract and all assertion IDs that belong to this milestone
+3. The validator reads the contract, inspects the code, runs tests, and checks each assertion
+
+### Reporting assertions
+
+The validator reports the status of each assertion:
+
+```bash
+tmux-ide validate assert VAL-AUTH-001 --status passing \
+  --evidence "POST /api/auth/login returns { accessToken, refreshToken } on valid credentials. Verified via integration test."
+
+tmux-ide validate assert VAL-AUTH-002 --status passing \
+  --evidence "POST /api/auth/login returns 401 with { error: 'Invalid credentials' }. Verified via integration test."
+
+tmux-ide validate assert VAL-AUTH-003 --status failing \
+  --evidence "Refresh endpoint exists but does not rotate the refresh token. Old token remains valid after refresh."
+```
+
+### When all assertions pass
+
+If every assertion for the milestone passes:
+
+1. The milestone status moves to `done`
+2. The next milestone in sequence is unlocked and set to `active`
+3. The orchestrator begins dispatching tasks from the new milestone
+
+### When an assertion fails
+
+If any assertion fails:
+
+1. The orchestrator auto-creates remediation tasks targeting the failing assertions
+2. The milestone status resets to `active`
+3. The remediation tasks are dispatched like any other task
+4. When they complete, the milestone returns to `validating` and the validator runs again
+
+```bash
+# Example: orchestrator auto-creates a remediation task
+# Task 009: "Fix refresh token rotation (remediation for VAL-AUTH-003)"
+#   --milestone M2 --specialty backend --fulfills "VAL-AUTH-003" --priority 1
+```
+
+### Viewing validation state
+
+```bash
+tmux-ide validate report
+```
+
+```
+Validation Report
+─────────────────
+Milestone: M2 — Implementation
+
+VAL-AUTH-001  ✓ passing   Login returns JWT on valid creds
+VAL-AUTH-002  ✓ passing   Invalid creds return 401
+VAL-AUTH-003  ✗ failing   Refresh token not rotated
+VAL-AUTH-004  ✓ passing   Expired JWT returns 403
+
+Status: 3/4 passing — remediation in progress
+```
+
+## Phase 5: Mission Completion
+
+When the final milestone's validation passes and all milestones are `done`, the mission is complete.
+
+### What happens automatically
+
+1. The mission status transitions to `complete`
+2. The orchestrator stops dispatching
+3. The lead is notified of completion
+4. Final metrics are recorded
+
+### Optional: create a pull request
+
+If your workflow ends with a PR, you can create one from the shell:
+
+```bash
+gh pr create --title "Auth v2" --body "JWT login, refresh, route protection, and full test coverage"
+```
+
+### Review the final state
+
+```bash
+tmux-ide mission status
+tmux-ide validate report
+tmux-ide metrics history
+```
+
+## Quick Reference
+
+| Phase        | Mission Status                     | Key Commands                                                                                   |
+| ------------ | ---------------------------------- | ---------------------------------------------------------------------------------------------- |
+| Pre-Planning | --                                 | Edit `validation-contract.md`, `architecture.md`                                               |
+| Planning     | `planning`                         | `mission set`, `milestone create`, `task create`, `validate coverage`, `mission plan-complete` |
+| Execution    | `active`                           | Automatic dispatch. Monitor with `metrics`, `orch`                                             |
+| Validation   | `active` (milestone: `validating`) | `validate assert`, `validate report`                                                           |
+| Completion   | `complete`                         | `mission status`, `metrics history`                                                            |
+
+## Tips
+
+- Write the validation contract first. It forces clarity about what "done" means before any code is written.
+- Use `--fulfills` on every task. Uncovered assertions are a planning gap that `validate coverage` will catch.
+- Keep milestones small (3-7 tasks). Large milestones delay validation feedback.
+- Add `--depends` between tasks that have real ordering constraints, but avoid over-constraining -- the orchestrator handles priority and specialty matching.
+- Check `tmux-ide metrics agents` to spot agents that are idle or overloaded, and adjust specialties if needed.
+- The knowledge library is cumulative. Task summaries in `learnings.md` help later agents avoid re-discovering the same patterns.
