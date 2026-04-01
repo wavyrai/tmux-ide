@@ -2,7 +2,7 @@ import { resolve, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { readFileSync, writeFileSync, existsSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { readConfig, getSessionName } from "./lib/yaml-io.ts";
 import { computeSizes, toSplitPercents } from "./lib/sizes.ts";
 import { outputError } from "./lib/output.ts";
@@ -467,9 +467,43 @@ export function ensureTaskDocs(dir: string): void {
 
   if (existsSync(claudeMdPath)) {
     const content = readFileSync(claudeMdPath, "utf-8");
-    if (content.includes(TASK_DOCS_MARKER)) return;
-    writeFileSync(claudeMdPath, content + TASK_DOCS_SECTION);
+    if (!content.includes(TASK_DOCS_MARKER)) {
+      writeFileSync(claudeMdPath, content + TASK_DOCS_SECTION);
+    }
   } else {
     writeFileSync(claudeMdPath, `# Project\n${TASK_DOCS_SECTION}`);
+  }
+
+  // Ensure library directory and stubs exist
+  const libraryDir = join(dir, ".tmux-ide", "library");
+  if (!existsSync(libraryDir)) {
+    mkdirSync(libraryDir, { recursive: true });
+  }
+  const archPath = join(libraryDir, "architecture.md");
+  if (!existsSync(archPath)) {
+    writeFileSync(
+      archPath,
+      "# Architecture\n\n<!-- Describe your project architecture here. This is injected into agent dispatch prompts. -->\n",
+    );
+  }
+  const learningsPath = join(libraryDir, "learnings.md");
+  if (!existsSync(learningsPath)) {
+    writeFileSync(
+      learningsPath,
+      "# Learnings\n\n<!-- Task summaries are automatically appended here by the orchestrator. -->\n",
+    );
+  }
+
+  // Ensure .tasks/ directory and validation contract stub
+  const tasksDir = join(dir, ".tasks");
+  if (!existsSync(tasksDir)) {
+    mkdirSync(tasksDir, { recursive: true });
+  }
+  const contractPath = join(tasksDir, "validation-contract.md");
+  if (!existsSync(contractPath)) {
+    writeFileSync(
+      contractPath,
+      "# Validation Contract\n\n<!-- Define assertions for the validator agent. Example: -->\n<!-- - VAL-001: All tests pass -->\n<!-- - VAL-002: No TypeScript errors -->\n",
+    );
   }
 }
