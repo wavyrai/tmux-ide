@@ -1,6 +1,6 @@
 import type { SessionOverview, ProjectDetail, Task, Mark, AuthorshipStats } from "./types";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:5050";
+const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "";
 
 export async function fetchSessions(): Promise<SessionOverview[]> {
   const res = await fetch(`${API_BASE}/api/sessions`, { cache: "no-store" });

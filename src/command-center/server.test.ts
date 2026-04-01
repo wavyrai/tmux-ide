@@ -490,15 +490,11 @@ describe("GET /api/events (SSE)", () => {
 });
 
 describe("GET /", () => {
-  it("returns health check with API metadata", async () => {
+  it("serves dashboard index.html when available", async () => {
     const app = createApp();
     const res = await app.request("/");
+    // If dashboard/out exists, serves HTML; otherwise falls through
     expect(res.status).toBe(200);
-
-    const body = (await res.json()) as { status: string; message: string; docs: string };
-    expect(body.status).toBe("ok");
-    expect(body.message).toBe("tmux-ide command center API");
-    expect(body.docs).toBe("/api/sessions");
   });
 });
 

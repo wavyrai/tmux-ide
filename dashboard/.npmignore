@@ -1,0 +1,5 @@
+# npm uses .npmignore instead of .gitignore when this file exists.
+# We need out/ to be included in the npm package (it's the static dashboard build).
+# Everything else in dashboard/ except out/ is excluded by the root files whitelist.
+.next
+node_modules
