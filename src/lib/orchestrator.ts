@@ -21,7 +21,7 @@
  *
  * @module orchestrator
  */
-import { execSync, execFileSync } from "node:child_process";
+import { execSync } from "node:child_process";
 import {
   existsSync,
   readFileSync,
@@ -51,7 +51,12 @@ import {
 } from "./task-store.ts";
 import { slugify } from "./slugify.ts";
 import { recordTaskTime } from "./token-tracker.ts";
-import { listSessionPanes, sendCommand, type PaneInfo } from "../widgets/lib/pane-comms.ts";
+import {
+  listSessionPanes,
+  sendCommand,
+  captureLastLine,
+  type PaneInfo,
+} from "../widgets/lib/pane-comms.ts";
 import { appendEvent, readEvents, type OrchestratorEvent } from "./event-log.ts";
 import { loadSkill } from "./skill-registry.ts";
 import { isGhAvailable, createMissionPr } from "./github-pr.ts";
@@ -170,15 +175,8 @@ export function isAgentBusy(pane: PaneInfo): boolean {
  * can show stale spinners after the agent finishes.
  */
 function isAtAgentPrompt(paneId: string): boolean {
-  try {
-    const lastLine = execFileSync("tmux", ["capture-pane", "-t", paneId, "-p", "-S", "-1"], {
-      encoding: "utf-8",
-      stdio: ["ignore", "pipe", "ignore"],
-    }).trim();
-    return lastLine.includes("❯");
-  } catch {
-    return false;
-  }
+  const lastLine = captureLastLine(paneId);
+  return lastLine.includes("❯");
 }
 
 export function isIdleForDispatch(pane: PaneInfo): boolean {

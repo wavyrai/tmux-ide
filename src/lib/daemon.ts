@@ -326,7 +326,6 @@ async function startCommandCenter(): Promise<void> {
       new Promise<boolean>((res, rej) => {
         server.once("error", (err: NodeJS.ErrnoException) => {
           if (err.code === "EADDRINUSE") {
-            console.error(`[daemon] Command Center port ${port} is in use; skipping HTTP server`);
             server.removeAllListeners("error");
             res(false);
           } else {
@@ -343,6 +342,29 @@ async function startCommandCenter(): Promise<void> {
     const commandCenterStarted = await bindRequestedPort(requestedPort);
     if (commandCenterStarted) {
       httpServer = server;
+    } else {
+      // Port is in use — check if it's another tmux-ide command center we can share
+      try {
+        const res = await fetch(`http://localhost:${requestedPort}/health`, {
+          signal: AbortSignal.timeout(2000),
+        });
+        if (res.ok) {
+          // Another tmux-ide command center is running — store its port so
+          // status/health checks work for this session too
+          tmuxSilent("set-option", "-t", session, "@command_center_port", String(requestedPort));
+          console.log(
+            `[daemon] Sharing Command Center on port ${requestedPort} from another session`,
+          );
+        } else {
+          console.error(
+            `[daemon] Port ${requestedPort} is in use by a non-tmux-ide service; no dashboard for this session`,
+          );
+        }
+      } catch {
+        console.error(
+          `[daemon] Port ${requestedPort} is in use but not responding; no dashboard for this session`,
+        );
+      }
     }
 
     // Auto-start tunnel if configured

@@ -79,6 +79,7 @@ import { TunnelManager } from "../lib/tunnels/manager.ts";
 import { RemoteRegistry } from "../lib/hq/registry.ts";
 import { RegistrationPayloadSchema } from "../lib/hq/types.ts";
 import { dispatchResearch, loadResearchState } from "../lib/research.ts";
+import { serveDashboard } from "./static.ts";
 
 export interface CreateAppOptions {
   authService?: AuthService;
@@ -1409,18 +1410,12 @@ export function createApp(options: CreateAppOptions = {}): Hono {
     return c.json({
       ok: true,
       uptime: Math.round(process.uptime()),
-      version: "2.0.0",
+      version: "2.1.0",
     });
   });
 
-  // Root: API info
-  app.get("/", (c) => {
-    return c.json({
-      status: "ok",
-      message: "tmux-ide command center API",
-      docs: "/api/sessions",
-    });
-  });
+  // Serve the Next.js static dashboard for all non-API routes
+  app.use("*", serveDashboard());
 
   return app;
 }

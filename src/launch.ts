@@ -1,6 +1,6 @@
 import { resolve, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { execSync, spawn, type SpawnOptions } from "node:child_process";
+import { execSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { readConfig, getSessionName } from "./lib/yaml-io.ts";
@@ -30,56 +30,6 @@ import { shellEscape } from "./lib/shell.ts";
 import type { IdeConfig, Row, Pane } from "./types.ts";
 
 const DEFAULT_COMMAND_CENTER_PORT = 6060;
-const DEFAULT_DASHBOARD_PORT = 6061;
-
-function packageRoot(): string {
-  return resolve(dirname(fileURLToPath(import.meta.url)), "..");
-}
-
-export function resolveDashboardDir(rootDir = packageRoot()): string | null {
-  const dashboardDir = join(rootDir, "dashboard");
-  return existsSync(join(dashboardDir, "package.json")) ? dashboardDir : null;
-}
-
-export function startDashboard(
-  session: string,
-  apiPort: number,
-  {
-    dashboardPort = DEFAULT_DASHBOARD_PORT,
-    dashboardDir = resolveDashboardDir(),
-    spawnFn = spawn,
-    setVar = setSessionVariable,
-  }: {
-    dashboardPort?: number;
-    dashboardDir?: string | null;
-    spawnFn?: (
-      command: string,
-      args: readonly string[],
-      options: SpawnOptions,
-    ) => { pid?: number; unref: () => void };
-    setVar?: (sessionName: string, name: string, value: string) => void;
-  } = {},
-): string | null {
-  if (!dashboardDir) return null;
-
-  const url = `http://localhost:${dashboardPort}`;
-  const child = spawnFn("pnpm", ["dev", "--port", String(dashboardPort)], {
-    cwd: dashboardDir,
-    detached: true,
-    stdio: "ignore",
-    env: {
-      ...process.env,
-      NEXT_PUBLIC_API_URL: `http://localhost:${apiPort}`,
-    },
-  });
-  child.unref();
-
-  if (child.pid != null) {
-    setVar(session, "@dashboard_pid", String(child.pid));
-  }
-  setVar(session, "@dashboard_url", url);
-  return url;
-}
 
 function stripWidgetPanes(rows: Row[]): Row[] {
   return rows
@@ -230,6 +180,30 @@ function runBeforeHook(command: string | undefined, dir: string): void {
   }
 }
 
+async function waitForDaemon(port: number, maxAttempts = 30, delayMs = 100): Promise<boolean> {
+  for (let i = 0; i < maxAttempts; i++) {
+    try {
+      const res = await fetch(`http://localhost:${port}/health`);
+      if (res.ok) return true;
+    } catch {
+      // Not ready yet
+    }
+    await new Promise((r) => setTimeout(r, delayMs));
+  }
+  return false;
+}
+
+async function isDaemonAlive(port: number): Promise<boolean> {
+  try {
+    const res = await fetch(`http://localhost:${port}/health`, {
+      signal: AbortSignal.timeout(1000),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
 export async function launch(
   targetDir: string | undefined,
   { json = false, attach = true }: { json?: boolean; attach?: boolean } = {},
@@ -251,22 +225,31 @@ export async function launch(
     const currentHash = configHash(config);
     const storedHash = getSessionVariable(session, "@config_hash");
     const configChanged = Boolean(storedHash && currentHash !== storedHash);
-    const commandCenterUrl = `http://localhost:${config.orchestrator?.port ?? config.command_center?.port ?? DEFAULT_COMMAND_CENTER_PORT}`;
-    const dashboardUrl = getSessionVariable(session, "@dashboard_url");
+    const commandCenterPort =
+      config.orchestrator?.port ?? config.command_center?.port ?? DEFAULT_COMMAND_CENTER_PORT;
+    const commandCenterUrl = `http://localhost:${commandCenterPort}`;
+
+    // Verify daemon is alive, restart if dead
+    const daemonAlive = await isDaemonAlive(commandCenterPort);
+    if (!daemonAlive) {
+      console.log("Daemon not responding — restarting...");
+      const monitorScript = resolve(
+        dirname(fileURLToPath(import.meta.url)),
+        "lib",
+        "daemon-watchdog.ts",
+      );
+      startSessionMonitor(session, monitorScript, commandCenterPort);
+      await waitForDaemon(commandCenterPort);
+    }
 
     if (json) {
-      console.log(
-        JSON.stringify({ session, running: true, configChanged, commandCenterUrl, dashboardUrl }),
-      );
+      console.log(JSON.stringify({ session, running: true, configChanged, commandCenterUrl }));
     } else if (configChanged) {
       console.log(`Session "${session}" is running but ide.yml has changed.`);
       console.log(`Run "tmux-ide restart" to apply changes.`);
     } else {
       console.log(`Session "${session}" is already running. Attaching...`);
-      console.log(`Command Center: ${commandCenterUrl}`);
-      if (dashboardUrl) {
-        console.log(`Dashboard: ${dashboardUrl}`);
-      }
+      console.log(`Dashboard: ${commandCenterUrl}`);
     }
 
     if (attach) {
@@ -348,10 +331,11 @@ export async function launch(
   const commandCenterPort =
     config.orchestrator?.port ?? config.command_center?.port ?? DEFAULT_COMMAND_CENTER_PORT;
   startSessionMonitor(session, monitorScript, commandCenterPort);
-  const dashboardPort = config.dashboard?.port ?? DEFAULT_DASHBOARD_PORT;
-  const dashboardUrl = startDashboard(session, commandCenterPort, {
-    dashboardPort,
-  });
+
+  const daemonReady = await waitForDaemon(commandCenterPort);
+  if (!daemonReady) {
+    console.log("Warning: daemon did not respond to health check within 3s — continuing anyway");
+  }
 
   // Inject master agent prompt and task docs if orchestrator is enabled
   if (config.orchestrator?.enabled) {
@@ -377,10 +361,7 @@ export async function launch(
   console.log(
     `Starting "${session}" (${rows.length} row${rows.length === 1 ? "" : "s"}, ${totalPanes} pane${totalPanes === 1 ? "" : "s"})...`,
   );
-  console.log(`Command Center: http://localhost:${commandCenterPort}`);
-  if (dashboardUrl) {
-    console.log(`Dashboard: ${dashboardUrl}`);
-  }
+  console.log(`Dashboard: http://localhost:${commandCenterPort}`);
 
   // Attach
   if (attach) {

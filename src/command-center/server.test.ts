@@ -490,15 +490,11 @@ describe("GET /api/events (SSE)", () => {
 });
 
 describe("GET /", () => {
-  it("returns health check with API metadata", async () => {
+  it("returns a response for root path", async () => {
     const app = createApp();
     const res = await app.request("/");
-    expect(res.status).toBe(200);
-
-    const body = (await res.json()) as { status: string; message: string; docs: string };
-    expect(body.status).toBe("ok");
-    expect(body.message).toBe("tmux-ide command center API");
-    expect(body.docs).toBe("/api/sessions");
+    // With dashboard/out: serves HTML (200). Without: middleware falls through (404).
+    expect([200, 404]).toContain(res.status);
   });
 });
 

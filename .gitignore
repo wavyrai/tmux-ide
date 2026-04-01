@@ -5,6 +5,7 @@ docs/node_modules
 # build output
 .next
 docs/.next
+dashboard/out
 
 # environment files
 .env.local

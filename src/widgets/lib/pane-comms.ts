@@ -190,3 +190,18 @@ export function resolveTarget(session: string, opts: TargetOptions): string | nu
   if (opts.selfPaneId) return findAdjacentPane(session, opts.selfPaneId);
   return null;
 }
+
+/**
+ * Capture the last line of a tmux pane. Uses the mockable executor so tests
+ * can intercept the call instead of hitting a real tmux server.
+ */
+export function captureLastLine(paneId: string): string {
+  try {
+    return _executor("tmux", ["capture-pane", "-t", paneId, "-p", "-S", "-1"], {
+      encoding: "utf-8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+  } catch {
+    return "";
+  }
+}

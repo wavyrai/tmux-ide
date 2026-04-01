@@ -1,6 +1,6 @@
 {
   "name": "tmux-ide",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "description": "Turn any project into a tmux-powered terminal IDE with a simple ide.yml",
   "type": "module",
   "bin": {
@@ -11,10 +11,13 @@
     "src",
     "scripts",
     "skill",
-    "templates"
+    "templates",
+    "dashboard/out"
   ],
   "scripts": {
     "build": "tsc --noEmit",
+    "build:dashboard": "cd dashboard && npx next build",
+    "prepublishOnly": "npm run build:dashboard",
     "typecheck": "tsc --noEmit",
     "dev": "bun bin/cli.ts",
     "test": "bun test",

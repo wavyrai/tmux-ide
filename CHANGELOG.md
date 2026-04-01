@@ -4,6 +4,26 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+## 2.1.0
+
+### Added
+
+- **Unified startup** — dashboard served from command center as pre-built static export; single process, single port
+- **Daemon health-check gate** — launch polls `/health` before attaching to verify daemon is ready
+- **Service recovery on re-attach** — dead daemons auto-restarted when re-attaching to existing sessions
+- **Multi-session port sharing** — subsequent sessions detect and reuse an existing command center instead of failing silently
+- **Static file middleware** — Hono serves dashboard with SPA fallback, MIME types, and immutable cache headers for hashed assets
+- **Dashboard ships with npm** — `dashboard/out/` included in package via `prepublishOnly` build step
+
+### Removed
+
+- **Separate dashboard process** — `startDashboard()`, `stopDashboard()`, dashboard PID tracking all removed
+- **`pnpm dev` runtime dependency** — dashboard no longer requires Next.js dev server at runtime
+
+### Fixed
+
+- **Flaky orchestrator tests** — `isAtAgentPrompt()` now uses mockable `captureLastLine()` instead of direct `execFileSync("tmux")` which leaked host tmux state into tests
+
 ## 2.0.0
 
 ### Added
