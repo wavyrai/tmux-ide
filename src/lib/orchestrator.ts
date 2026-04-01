@@ -236,8 +236,9 @@ export function buildTaskPrompt(dir: string, task: Task, config?: OrchestratorCo
   }
 
   // 4. Skill context
-  if (task.specialty) {
-    const skill = loadSkill(dir, task.specialty);
+  {
+    const skillName = task.specialty ?? "general-worker";
+    const skill = loadSkill(dir, skillName);
     if (skill?.body) {
       prompt += `## Your Role: ${skill.name}\n`;
       prompt += `${skill.body}\n\n`;

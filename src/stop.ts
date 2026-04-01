@@ -1,4 +1,5 @@
 import { resolve } from "node:path";
+import { execSync } from "node:child_process";
 import { getSessionName } from "./lib/yaml-io.ts";
 import { outputError } from "./lib/output.ts";
 import { killSession, stopSessionMonitor } from "./lib/tmux.ts";
@@ -12,6 +13,14 @@ export async function stop(
 
   // Stop the session monitor before killing the session
   stopSessionMonitor(session);
+
+  // Kill any orphaned daemon processes for this session
+  try {
+    execSync(`pkill -f "daemon-watchdog.ts ${session}" 2>/dev/null || true`, { stdio: "ignore" });
+    execSync(`pkill -f "daemon.ts ${session}" 2>/dev/null || true`, { stdio: "ignore" });
+  } catch {
+    // Best-effort cleanup
+  }
 
   const result = killSession(session);
 

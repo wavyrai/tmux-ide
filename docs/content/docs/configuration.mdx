@@ -267,7 +267,9 @@ You are a frontend developer. Focus on React components and CSS.
 
 ## Validation Contract
 
-For missions mode, create `.tasks/validation-contract.md` with assertion IDs that tasks link to via `--fulfills`:
+When you run `tmux-ide init --template missions`, the `.tasks/validation-contract.md` stub and `.tmux-ide/library/` directory are auto-scaffolded for you.
+
+For missions mode, populate `.tasks/validation-contract.md` with assertion IDs that tasks link to via `--fulfills`:
 
 ```markdown
 # Validation Contract
@@ -284,3 +286,5 @@ tmux-ide task create "Implement JWT" --milestone M1 --fulfills "VAL-AUTH-001,VAL
 ```
 
 The coverage invariant warns if any assertion ID is not claimed by at least one task. Run `tmux-ide validate coverage` to check.
+
+For the full contract format, assertion lifecycle, and validator workflow, see [Validation Contracts](/docs/validation-contracts).

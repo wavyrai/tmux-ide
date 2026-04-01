@@ -28,3 +28,15 @@ tmux-ide validate assert <ASSERT_ID> --status failing --evidence "what's wrong"
 tmux-ide validate assert <ASSERT_ID> --status blocked --evidence "why it's blocked"
 
 The orchestrator will detect your results and advance the milestone automatically.
+
+If you find issues beyond the validation contract:
+tmux-ide task update <TASK_ID> --discovered-issues "description of issue"
+
+## After Completion
+
+When you finish, the orchestrator will:
+
+- Notify the lead with your proof and summary
+- Run any configured after-run hooks (e.g., linting)
+- Auto-dispatch the next available task
+- Append your summary to the learnings library
