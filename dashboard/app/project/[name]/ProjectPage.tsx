@@ -44,9 +44,7 @@ export default function ProjectPage() {
   const router = useRouter();
   // Extract project name from URL pathname (not useParams, which returns
   // the build-time placeholder "__fallback" in static exports)
-  const name = decodeURIComponent(
-    pathname.replace(/^\/project\//, "").replace(/\/$/, ""),
-  );
+  const name = decodeURIComponent(pathname.replace(/^\/project\//, "").replace(/\/$/, ""));
   const [activeTab, setActiveTab] = useState<Tab>("kanban");
 
   const fetcher = useCallback(() => fetchProject(name) as Promise<ProjectDetail | null>, [name]);
