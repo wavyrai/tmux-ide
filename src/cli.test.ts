@@ -24,7 +24,7 @@ function runCli(args, { cwd, env } = {}) {
     }
   }
 
-  return spawnSync("node", [cli, ...args], {
+  return spawnSync("node", ["--no-warnings", cli, ...args], {
     cwd,
     env: mergedEnv,
     encoding: "utf-8",
