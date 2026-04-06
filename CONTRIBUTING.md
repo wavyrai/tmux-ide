@@ -5,6 +5,7 @@
 Requirements:
 
 - Node.js 18 or newer
+- Bun 1.0 or newer
 - pnpm 10 or newer
 - tmux 3.0 or newer for manual CLI smoke tests
 
@@ -12,7 +13,10 @@ Install dependencies:
 
 ```bash
 pnpm install --frozen-lockfile
+npm link
 ```
+
+`npm link` is optional, but it is the easiest way to exercise the locally checked-out CLI as `tmux-ide`.
 
 ## Development Workflow
 
@@ -37,17 +41,19 @@ pnpm check
 For a manual tmux smoke test:
 
 ```bash
-node bin/cli.js init
-node bin/cli.js inspect --json
-node bin/cli.js
+bun bin/cli.ts init
+bun bin/cli.ts inspect --json
+tmux-ide
 ```
 
 Then in another shell:
 
 ```bash
-node bin/cli.js status --json
-node bin/cli.js stop --json
+tmux-ide status --json
+tmux-ide stop --json
 ```
+
+Run the launch step from a real interactive terminal. In headless or restricted PTYs, tmux can still create the session but the attach step may fail with terminal capability errors such as `open terminal failed: terminal does not support clear`.
 
 ## Pull Requests
 
