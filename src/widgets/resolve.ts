@@ -4,6 +4,7 @@ import type { ThemeConfig } from "../types.ts";
 import { shellEscape } from "../lib/shell.ts";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+const packageRoot = resolve(__dirname, "..", "..");
 
 interface WidgetOptions {
   session: string;
@@ -35,6 +36,7 @@ export function resolveWidgetCommand(type: string, opts: WidgetOptions): string 
 
   const escapedArgs = args.map(shellEscape).join(" ");
 
-  // cd to project root first so bunfig.toml preload is found
-  return `cd ${shellEscape(opts.dir)} && bun ${shellEscape(scriptPath)} ${escapedArgs}`;
+  // Run from the tmux-ide package root so Bun picks up the widget preload/JSX config.
+  // The target project still comes through --dir.
+  return `cd ${shellEscape(packageRoot)} && bun ${shellEscape(scriptPath)} ${escapedArgs}`;
 }

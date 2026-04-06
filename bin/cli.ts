@@ -5,6 +5,7 @@ import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+const packageRoot = resolve(__dirname, "..");
 import { launch } from "../src/launch.ts";
 import { init } from "../src/init.ts";
 import { stop } from "../src/stop.ts";
@@ -309,6 +310,7 @@ try {
         const scriptPath = resolve(__dirname, "../src/widgets/setup/index.tsx");
         execFileSync("bun", [scriptPath, "--dir=" + resolve(startTargetDir || "."), "--edit"], {
           stdio: "inherit",
+          cwd: packageRoot,
         });
         break;
       }
@@ -437,7 +439,7 @@ try {
       const setupArgs = [scriptPath, "--dir=" + resolve(startTargetDir || ".")];
       if (positionals[1] === "--edit" || values.edit) setupArgs.push("--edit");
       if (positionals[1] === "--wizard" || values.wizard) setupArgs.push("--wizard");
-      execFileSync("bun", setupArgs, { stdio: "inherit" });
+      execFileSync("bun", setupArgs, { stdio: "inherit", cwd: packageRoot });
       break;
     }
 
@@ -477,6 +479,7 @@ try {
       const scriptPath = resolve(__dirname, "../src/widgets/config/index.tsx");
       execFileSync("bun", [scriptPath, "--dir=" + resolve(startTargetDir || ".")], {
         stdio: "inherit",
+        cwd: packageRoot,
       });
       break;
     }
