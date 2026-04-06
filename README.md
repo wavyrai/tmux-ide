@@ -6,9 +6,31 @@ Turn any project into a tmux-powered terminal IDE with a simple `ide.yml` config
 
 ## Install
 
+Prerequisites:
+
+- `tmux` >= 3.0
+- `Node.js` >= 18
+- `bun` on your `PATH` (`tmux-ide` is published with a `#!/usr/bin/env bun` entrypoint)
+
+On macOS:
+
+```bash
+brew install tmux bun
+```
+
+Then install `tmux-ide`:
+
 ```bash
 npm install -g tmux-ide
 ```
+
+Or run it with `npx` without a global install:
+
+```bash
+npx tmux-ide --version
+```
+
+`npx` still requires `bun` to be installed locally because it executes the same published CLI entrypoint.
 
 Global install also registers the bundled Claude Code skill and enables `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1` in `~/.claude/settings.json` if Claude Code is installed locally on the machine.
 
@@ -16,12 +38,17 @@ Global install also registers the bundled Claude Code skill and enables `CLAUDE_
 
 ```bash
 tmux-ide init         # Scaffold ide.yml (auto-detects your stack)
+tmux-ide doctor       # Check tmux + runtime prerequisites in this project
 tmux-ide              # Launch the IDE
 tmux-ide stop         # Kill the session
 tmux-ide restart      # Stop and relaunch
 tmux-ide attach       # Reattach to a running session
 tmux-ide inspect      # Inspect effective config + runtime state
 ```
+
+`tmux-ide init` writes both `ide.yml` and built-in role files under `.tmux-ide/skills/`.
+
+The default scaffold includes panes that run `claude`. If Claude Code is not installed on the machine, edit `ide.yml` before the first `tmux-ide` launch and replace or remove those commands.
 
 ## ide.yml Format
 
@@ -138,6 +165,7 @@ Release note convention:
 
 - **tmux** >= 3.0
 - **Node.js** >= 18
+- **Bun** on your `PATH`
 
 ## License
 
