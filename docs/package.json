@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@takumi-rs/image-response": "^0.70.4",
+    "@vercel/analytics": "^2.0.1",
     "fumadocs-core": "16.6.13",
     "fumadocs-mdx": "14.2.9",
     "fumadocs-ui": "16.6.13",
