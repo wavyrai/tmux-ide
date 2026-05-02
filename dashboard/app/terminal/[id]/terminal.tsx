@@ -143,7 +143,12 @@ export default function TerminalClient({ id }: TerminalClientProps) {
         });
 
         const port = process.env.NEXT_PUBLIC_TMUX_IDE_SERVER_PORT ?? "6070";
-        socket = new WebSocket(`ws://localhost:${port}/ws/pty/${encodeURIComponent(id)}`);
+        const host = typeof window !== "undefined" ? window.location.hostname : "localhost";
+        const wsProto =
+          typeof window !== "undefined" && window.location.protocol === "https:" ? "wss" : "ws";
+        socket = new WebSocket(
+          `${wsProto}://${host}:${port}/ws/pty/${encodeURIComponent(id)}`,
+        );
         socket.binaryType = "arraybuffer";
         setState("connecting");
         setMessage("connecting");
