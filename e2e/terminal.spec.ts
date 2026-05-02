@@ -4,7 +4,7 @@ async function openTerminal(page: Page) {
   await page.goto("/terminal/default");
   const frame = page.getByTestId("terminal-frame");
   await expect(frame).toHaveAttribute("data-state", "connected", { timeout: 30_000 });
-  await expect(frame.locator("canvas")).toBeVisible();
+  await expect(frame.locator(".xterm-screen")).toBeVisible();
   return frame;
 }
 

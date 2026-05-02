@@ -1,7 +1,9 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { FitAddon, init, Terminal } from "ghostty-web";
+import { Terminal } from "@xterm/xterm";
+import { FitAddon } from "@xterm/addon-fit";
+import "@xterm/xterm/css/xterm.css";
 
 type ConnectionState = "loading" | "connecting" | "connected" | "disconnected" | "error";
 
@@ -12,13 +14,6 @@ interface TerminalClientProps {
 interface TerminalSize {
   cols: number;
   rows: number;
-}
-
-let ghosttyInit: Promise<void> | null = null;
-
-function loadGhostty(): Promise<void> {
-  ghosttyInit ??= init();
-  return ghosttyInit;
 }
 
 function stripAnsi(value: string): string {
@@ -52,6 +47,7 @@ export default function TerminalClient({ id }: TerminalClientProps) {
     let socket: WebSocket | null = null;
     let term: Terminal | null = null;
     let fitAddon: FitAddon | null = null;
+    let resizeObserver: ResizeObserver | null = null;
     let initSent = false;
     const encoder = new TextEncoder();
     const decoder = new TextDecoder();
@@ -62,11 +58,8 @@ export default function TerminalClient({ id }: TerminalClientProps) {
       setTranscript((current) => `${current}${clean}`.slice(-12000));
     };
 
-    async function boot() {
+    function boot() {
       try {
-        await loadGhostty();
-        if (disposed) return;
-
         term = new Terminal({
           cols: 80,
           rows: 24,
@@ -74,6 +67,7 @@ export default function TerminalClient({ id }: TerminalClientProps) {
           fontFamily: "var(--font-mono), ui-monospace, monospace",
           fontSize: 13,
           scrollback: 2000,
+          allowProposedApi: true,
           theme: {
             background: "#101010",
             foreground: "#eeeeee",
@@ -102,11 +96,21 @@ export default function TerminalClient({ id }: TerminalClientProps) {
         term.loadAddon(fitAddon);
         term.open(hostElement);
         fitAddon.fit();
-        fitAddon.observeResize();
         term.focus();
         setSize({ cols: term.cols, rows: term.rows });
 
+        resizeObserver = new ResizeObserver(() => {
+          fitAddon?.fit();
+        });
+        resizeObserver.observe(hostElement);
+
         const dataDisposable = term.onData((data) => {
+          if (socket?.readyState === WebSocket.OPEN) {
+            socket.send(encoder.encode(data));
+          }
+        });
+
+        const binaryDisposable = term.onBinary((data) => {
           if (socket?.readyState === WebSocket.OPEN) {
             socket.send(encoder.encode(data));
           }
@@ -176,6 +180,7 @@ export default function TerminalClient({ id }: TerminalClientProps) {
 
         return () => {
           dataDisposable.dispose();
+          binaryDisposable.dispose();
           resizeDisposable.dispose();
         };
       } catch (err) {
@@ -184,16 +189,14 @@ export default function TerminalClient({ id }: TerminalClientProps) {
       }
     }
 
-    let disposeTerminalHandlers: (() => void) | undefined;
-    boot().then((disposeHandlers) => {
-      disposeTerminalHandlers = disposeHandlers;
-    });
+    const disposeTerminalHandlers = boot();
 
     return () => {
       disposed = true;
       initSent = false;
       disposeTerminalHandlers?.();
       socket?.close();
+      resizeObserver?.disconnect();
       fitAddon?.dispose();
       term?.dispose();
       hostElement.replaceChildren();
