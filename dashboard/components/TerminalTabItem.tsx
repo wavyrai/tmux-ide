@@ -7,11 +7,18 @@ import type { TerminalTab } from "@/lib/useLayoutState";
 interface TerminalTabItemProps {
   tab: TerminalTab;
   active: boolean;
+  paneStatus?: "busy" | "idle" | null;
   onActivate: () => void;
   onClose: () => void;
 }
 
-export function TerminalTabItem({ tab, active, onActivate, onClose }: TerminalTabItemProps) {
+export function TerminalTabItem({
+  tab,
+  active,
+  paneStatus = null,
+  onActivate,
+  onClose,
+}: TerminalTabItemProps) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: tab.id,
   });
@@ -42,9 +49,21 @@ export function TerminalTabItem({ tab, active, onActivate, onClose }: TerminalTa
       {...attributes}
       {...listeners}
     >
+      {tab.paneId && (
+        <span
+          className={`h-1.5 w-1.5 shrink-0 rounded-full ${
+            paneStatus === "busy" ? "bg-[var(--accent)]" : "bg-[var(--dimmer)]"
+          }`}
+          aria-hidden="true"
+        />
+      )}
       <span className="truncate">{tab.title}</span>
-      <span className="text-[var(--dimmer)]">/</span>
-      <span className="truncate text-[var(--dim)]">{tab.projectName}</span>
+      {!tab.paneId && (
+        <>
+          <span className="text-[var(--dimmer)]">/</span>
+          <span className="truncate text-[var(--dim)]">{tab.projectName}</span>
+        </>
+      )}
       <button
         type="button"
         aria-label={`Close ${tab.title}`}

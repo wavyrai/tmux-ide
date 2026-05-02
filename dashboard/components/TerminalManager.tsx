@@ -15,7 +15,11 @@ function projectFromPath(pathname: string): string {
  * (display: flex); every other terminal is mounted with display: none so its
  * scrollback and connection survive.
  */
-export function TerminalManager() {
+interface TerminalManagerProps {
+  onSessionExit?: (id: string) => void;
+}
+
+export function TerminalManager({ onSessionExit }: TerminalManagerProps) {
   const pathname = usePathname();
   const currentProject = projectFromPath(pathname);
   const { tabs, getActiveTabId } = useLayoutState();
@@ -37,7 +41,7 @@ export function TerminalManager() {
               display: visible ? "flex" : "none",
             }}
           >
-            <Terminal id={tab.id} showHeader={false} />
+            <Terminal id={tab.id} showHeader={false} onSessionExit={onSessionExit} />
           </div>
         );
       })}

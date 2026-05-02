@@ -102,6 +102,7 @@ test.describe("workspace tabs shell", () => {
 
   test("Cmd-J still opens terminal mode", async ({ page }) => {
     await page.goto(`/project/${PROJECTS[0]}`);
+    await expect(page.getByTestId("terminal-toggle")).toBeVisible();
 
     await page.keyboard.press(`${MOD_KEY}+KeyJ`);
 

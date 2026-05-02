@@ -7,6 +7,7 @@ export interface TerminalTab {
   id: string;
   title: string;
   projectName: string;
+  paneId?: string;
 }
 
 export type WorkspaceTabKind = "project" | "settings";
@@ -49,6 +50,7 @@ export interface LayoutActions {
   /** Active state is scoped per-project so each project remembers its own focused tab. */
   setActiveTab(projectName: string, id: string): void;
   newTab(projectName: string, title?: string): TerminalTab;
+  newPaneTab(projectName: string, paneId: string, title?: string): TerminalTab;
   closeTab(id: string): void;
   reorderTabs(orderedIds: string[]): void;
   openWorkspaceTab(
@@ -78,7 +80,7 @@ const defaults: PersistedLayoutState = {
 
 const persist = Persist.global<PersistedLayoutState>(
   "tmux-ide.layout",
-  ["v1", "v2", "v3"],
+  ["v1", "v2", "v3", "v4"],
   defaults,
   {
     // Migrating INTO v2: legacy `activeTabId` (single global) → `activeTabIdByProject` map.
@@ -112,6 +114,9 @@ const persist = Persist.global<PersistedLayoutState>(
           ? prev.activitySection
           : "sessions",
     }),
+    // Migrating INTO v4: terminal pane tabs carry an optional paneId. Legacy
+    // bash tabs pass through unchanged with paneId omitted.
+    v4: (prev: unknown) => (isRecord(prev) ? prev : defaults),
   },
 );
 const listeners = new Set<() => void>();
@@ -146,7 +151,14 @@ function normalizePersisted(value: unknown): PersistedLayoutState {
     }
     seenTerminalTabs.add(tab["id"]);
     projectsSeen.add(tab["projectName"]);
-    return [{ id: tab["id"], title: tab["title"], projectName: tab["projectName"] }];
+    return [
+      {
+        id: tab["id"],
+        title: tab["title"],
+        projectName: tab["projectName"],
+        ...(typeof tab["paneId"] === "string" ? { paneId: tab["paneId"] } : {}),
+      },
+    ];
   });
 
   const activeRaw = isRecord(value.activeTabIdByProject) ? value.activeTabIdByProject : {};
@@ -298,6 +310,32 @@ const actions: LayoutActions = {
       id: `${projectName}:${seq}`,
       title: title || `${projectName} ${seq}`,
       projectName,
+    };
+    setState((current) => ({
+      ...current,
+      terminalOpen: true,
+      activeTabIdByProject: { ...current.activeTabIdByProject, [projectName]: tab.id },
+      tabs: [...current.tabs, tab],
+    }));
+    return tab;
+  },
+  newPaneTab(projectName: string, paneId: string, title?: string) {
+    const id = `${projectName}:${paneId}`;
+    const existing = state.tabs.find((tab) => tab.id === id && tab.projectName === projectName);
+    if (existing) {
+      setState((current) => ({
+        ...current,
+        terminalOpen: true,
+        activeTabIdByProject: { ...current.activeTabIdByProject, [projectName]: existing.id },
+      }));
+      return existing;
+    }
+
+    const tab = {
+      id,
+      title: title || `${projectName} · ${paneId}`,
+      projectName,
+      paneId,
     };
     setState((current) => ({
       ...current,

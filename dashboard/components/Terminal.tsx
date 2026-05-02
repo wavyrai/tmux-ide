@@ -39,6 +39,7 @@ interface TerminalProps {
   id: string;
   className?: string;
   showHeader?: boolean;
+  onSessionExit?: (id: string) => void;
 }
 
 interface TerminalSize {
@@ -61,7 +62,7 @@ async function messageToBytes(data: unknown): Promise<Uint8Array> {
   return new Uint8Array();
 }
 
-export function Terminal({ id, className, showHeader = true }: TerminalProps) {
+export function Terminal({ id, className, showHeader = true, onSessionExit }: TerminalProps) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const termRef = useRef<XTerm | null>(null);
   const { resolvedTheme } = useTheme();
@@ -158,9 +159,7 @@ export function Terminal({ id, className, showHeader = true }: TerminalProps) {
         const wsHost = typeof window !== "undefined" ? window.location.hostname : "localhost";
         const wsProto =
           typeof window !== "undefined" && window.location.protocol === "https:" ? "wss" : "ws";
-        socket = new WebSocket(
-          `${wsProto}://${wsHost}:${port}/ws/pty/${encodeURIComponent(id)}`,
-        );
+        socket = new WebSocket(`${wsProto}://${wsHost}:${port}/ws/pty/${encodeURIComponent(id)}`);
         socket.binaryType = "arraybuffer";
         setState("connecting");
         setMessage("connecting");
@@ -192,6 +191,7 @@ export function Terminal({ id, className, showHeader = true }: TerminalProps) {
               setMessage(`exit ${frame.code}`);
               term.writeln(`\r\n[session ended: ${frame.code}]`);
               appendTranscript(`\n[session ended: ${frame.code}]\n`);
+              onSessionExit?.(id);
             }
             return;
           }
@@ -241,7 +241,7 @@ export function Terminal({ id, className, showHeader = true }: TerminalProps) {
       termRef.current = null;
       hostElement.replaceChildren();
     };
-  }, [id]);
+  }, [id, onSessionExit]);
 
   // Re-apply terminal theme whenever next-themes flips the resolved theme.
   // CSS vars on :root update synchronously, but xterm caches its renderer's

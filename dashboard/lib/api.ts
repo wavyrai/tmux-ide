@@ -27,8 +27,8 @@ export async function fetchPanes(name: string): Promise<PaneData[]> {
     cache: "no-store",
   });
   if (!res.ok) return [];
-  const data = (await res.json()) as { panes: PaneData[] };
-  return data.panes;
+  const data = (await res.json()) as { panes?: PaneData[] };
+  return Array.isArray(data.panes) ? data.panes : [];
 }
 
 export async function fetchProject(name: string): Promise<ProjectDetail | null> {
@@ -335,8 +335,8 @@ export async function fetchSkills(name: string): Promise<SkillData[]> {
     cache: "no-store",
   });
   if (!res.ok) return [];
-  const data = (await res.json()) as { skills: SkillData[] };
-  return data.skills;
+  const data = (await res.json()) as { skills?: SkillData[] };
+  return Array.isArray(data.skills) ? data.skills : [];
 }
 
 // --- Mission ---
@@ -363,7 +363,9 @@ export async function fetchMission(name: string): Promise<MissionDetail | null> 
     cache: "no-store",
   });
   if (!res.ok) return null;
-  return (await res.json()) as MissionDetail;
+  const data = (await res.json()) as Partial<MissionDetail> | null;
+  if (!data || typeof data !== "object" || !data.mission || !data.validationSummary) return null;
+  return data as MissionDetail;
 }
 
 // --- Metrics ---

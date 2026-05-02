@@ -15,7 +15,7 @@ beforeEach(() => {
 });
 
 function readPersisted() {
-  const raw = window.localStorage.getItem("tmux-ide.layout.v3");
+  const raw = window.localStorage.getItem("tmux-ide.layout.v4");
   return raw ? (JSON.parse(raw) as unknown) : null;
 }
 
@@ -59,6 +59,31 @@ describe("useLayoutState", () => {
     expect(result.current.tabs[2]?.title).toBe("alpha 2");
     expect(result.current.getActiveTabId("alpha")).toBe("alpha:2");
     expect(result.current.getActiveTabId("beta")).toBe("beta:1");
+  });
+
+  it("creates pane-backed tabs and deduplicates by project pane id", () => {
+    const { result } = renderHook(() => useLayoutState());
+
+    let first;
+    let duplicate;
+    act(() => {
+      first = result.current.newPaneTab("alpha", "%2", "alpha · Agent 1");
+      duplicate = result.current.newPaneTab("alpha", "%2", "Ignored");
+    });
+
+    expect(first).toEqual({
+      id: "alpha:%2",
+      title: "alpha · Agent 1",
+      projectName: "alpha",
+      paneId: "%2",
+    });
+    expect(duplicate).toBe(first);
+    expect(result.current.tabs).toEqual([first]);
+    expect(result.current.getActiveTabId("alpha")).toBe("alpha:%2");
+    expect(readPersisted()).toMatchObject({
+      activeTabIdByProject: { alpha: "alpha:%2" },
+      tabs: [first],
+    });
   });
 
   it("scopes active tab per project — switching projects restores their own focused tab", () => {
@@ -167,7 +192,7 @@ describe("useLayoutState", () => {
       activeWorkspaceTabId: "project:alpha",
       activitySection: "settings",
     };
-    window.localStorage.setItem("tmux-ide.layout.v3", JSON.stringify(persisted));
+    window.localStorage.setItem("tmux-ide.layout.v4", JSON.stringify(persisted));
     __resetLayoutStateForTests();
 
     const { result } = renderHook(() => useLayoutState());
@@ -218,6 +243,26 @@ describe("useLayoutState", () => {
     expect(result.current.workspaceTabs).toEqual([]);
     expect(result.current.activeWorkspaceTabId).toBeNull();
     expect(result.current.activitySection).toBe("sessions");
+  });
+
+  it("migrates v3 layout state into v4 while preserving optional pane ids", () => {
+    const legacy = {
+      activeTabIdByProject: { alpha: "alpha:%1" },
+      tabs: [
+        { id: "alpha:%1", title: "alpha · Master", projectName: "alpha", paneId: "%1" },
+        { id: "alpha:1", title: "alpha 1", projectName: "alpha" },
+      ],
+      workspaceTabs: [],
+      activeWorkspaceTabId: null,
+      activitySection: "sessions",
+    };
+    window.localStorage.setItem("tmux-ide.layout.v3", JSON.stringify(legacy));
+    __resetLayoutStateForTests();
+
+    const { result } = renderHook(() => useLayoutState());
+
+    expect(result.current.tabs).toEqual(legacy.tabs);
+    expect(result.current.getActiveTabId("alpha")).toBe("alpha:%1");
   });
 
   it("opens workspace tabs and deduplicates by kind and projectName", () => {

@@ -158,7 +158,7 @@ export function handlePtyWebSocket(
         return;
       }
 
-      bridge = options.createBridge?.(id) ?? new PtyBridge();
+      bridge = options.createBridge?.(id) ?? new PtyBridge({ id });
       attachBridgeEvents(bridge);
 
       try {
