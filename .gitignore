@@ -38,3 +38,17 @@ plans/
 
 # TypeScript build output
 dist/
+
+# Privately-licensed assets (Berkeley Mono, etc.) — never bundled in OSS
+dashboard/public/fonts/private/*
+!dashboard/public/fonts/private/NOTICE.md
+!dashboard/public/fonts/private/.gitkeep
+
+# Playwright artifacts
+test-results/
+playwright-report/
+
+# Stray npm lockfiles (project uses pnpm)
+package-lock.json
+dashboard/package-lock.json
+

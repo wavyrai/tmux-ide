@@ -1,5 +1,23 @@
 @import "tailwindcss";
 
+/* Berkeley Mono — privately licensed, only present when the asset has been
+   dropped into dashboard/public/fonts/private/. The OSS build resolves to
+   the fallback stack on --font-mono when the file is absent. See
+   dashboard/public/fonts/private/NOTICE.md. */
+@font-face {
+  font-family: "Berkeley Mono";
+  src: url("/fonts/private/Berkeley-Mono-Variable.woff2") format("woff2-variations");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+:root {
+  --font-mono:
+    "Berkeley Mono", ui-monospace, SFMono-Regular, "JetBrains Mono", "IBM Plex Mono", "Menlo",
+    "Consolas", monospace;
+}
+
 /* Dark theme (default) */
 :root {
   --bg: #101010;

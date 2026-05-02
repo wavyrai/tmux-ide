@@ -58,16 +58,35 @@ export default function TerminalClient({ id }: TerminalClientProps) {
       setTranscript((current) => `${current}${clean}`.slice(-12000));
     };
 
-    function boot() {
+    async function boot() {
       try {
+        if (typeof document !== "undefined" && document.fonts?.ready) {
+          await document.fonts.ready;
+          if (disposed) return;
+        }
+
+        const computed = getComputedStyle(document.documentElement);
+        const fontFamily =
+          computed.getPropertyValue("--font-mono").trim() ||
+          'ui-monospace, SFMono-Regular, "JetBrains Mono", "Menlo", monospace';
+
         term = new Terminal({
           cols: 80,
           rows: 24,
           cursorBlink: true,
-          fontFamily: "var(--font-mono), ui-monospace, monospace",
+          cursorStyle: "block",
+          cursorInactiveStyle: "outline",
+          fontFamily,
           fontSize: 13,
-          scrollback: 2000,
+          fontWeight: 400,
+          fontWeightBold: 600,
+          letterSpacing: 0,
+          lineHeight: 1.2,
+          scrollback: 5000,
+          smoothScrollDuration: 80,
           allowProposedApi: true,
+          allowTransparency: false,
+          drawBoldTextInBrightColors: false,
           theme: {
             background: "#101010",
             foreground: "#eeeeee",
@@ -189,7 +208,10 @@ export default function TerminalClient({ id }: TerminalClientProps) {
       }
     }
 
-    const disposeTerminalHandlers = boot();
+    let disposeTerminalHandlers: (() => void) | undefined;
+    boot().then((handlers) => {
+      disposeTerminalHandlers = handlers;
+    });
 
     return () => {
       disposed = true;
@@ -203,25 +225,25 @@ export default function TerminalClient({ id }: TerminalClientProps) {
     };
   }, [id]);
 
+  const dotClass =
+    state === "connected"
+      ? "bg-[var(--green)]"
+      : state === "error"
+        ? "bg-[var(--red)]"
+        : "bg-[var(--yellow)]";
+
   return (
-    <main className="h-[calc(100vh-1.5rem)] min-h-[420px] bg-[var(--bg)] flex flex-col">
-      <div className="h-7 shrink-0 border-b border-[var(--border)] bg-[var(--surface)] px-3 flex items-center gap-3 text-[11px]">
-        <span className="text-[var(--accent)]">terminal</span>
-        <span className="text-[var(--dim)]">{id}</span>
-        <span className="ml-auto text-[var(--dim)]">
-          {size.cols}x{size.rows}
+    <main className="h-[calc(100vh-1.5rem)] min-h-[420px] bg-[var(--bg)] flex flex-col font-[var(--font-mono)]">
+      <div className="h-8 shrink-0 border-b border-[var(--border-weak)] bg-[var(--surface)] px-3 flex items-center gap-3 text-[11px] tracking-[0.02em]">
+        <span className={`inline-block h-1.5 w-1.5 rounded-full ${dotClass}`} aria-hidden="true" />
+        <span className="text-[var(--fg-secondary)]">terminal</span>
+        <span className="text-[var(--dim)]">/</span>
+        <span className="text-[var(--accent)]">{id}</span>
+        <span className="ml-auto text-[var(--dim)] tabular-nums">
+          {size.cols}×{size.rows}
         </span>
-        <span
-          className={
-            state === "connected"
-              ? "text-[var(--green)]"
-              : state === "error"
-                ? "text-[var(--red)]"
-                : "text-[var(--yellow)]"
-          }
-        >
-          {message}
-        </span>
+        <span className="text-[var(--dim)]">·</span>
+        <span className="text-[var(--fg-secondary)]">{message}</span>
       </div>
       <div
         ref={hostRef}
@@ -229,7 +251,8 @@ export default function TerminalClient({ id }: TerminalClientProps) {
         data-state={state}
         data-cols={size.cols}
         data-rows={size.rows}
-        className="min-h-0 flex-1 overflow-hidden bg-[#101010] p-2 focus:outline-none"
+        className="min-h-0 flex-1 overflow-hidden bg-[var(--bg)] px-3 py-2 focus:outline-none"
+        style={{ fontFamily: "var(--font-mono)" }}
       />
       <pre data-testid="terminal-transcript" className="sr-only" aria-hidden="true">
         {transcript}
