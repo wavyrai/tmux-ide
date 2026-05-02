@@ -5,6 +5,7 @@ import { PtyBridge, type PtyBridgeOptions, type PtySpawnOptions } from "./pty-br
 
 class MockWebSocket extends EventEmitter {
   readyState = 1;
+  bufferedAmount = 0;
   sent: Array<{ data: string | Buffer; options?: { binary?: boolean } }> = [];
   closeCount = 0;
 
@@ -36,6 +37,10 @@ class FakeBridge extends EventEmitter {
   running = false;
   writes: Buffer[] = [];
   killed: NodeJS.Signals[] = [];
+  pauseCount = 0;
+  resumeCount = 0;
+  paused = false;
+  pendingOutput: Buffer[] = [];
 
   spawn(cols: number, rows: number, options?: PtySpawnOptions): void {
     this.cols = cols;
@@ -57,6 +62,28 @@ class FakeBridge extends EventEmitter {
     this.killed.push(signal);
     this.running = false;
   }
+
+  pause(): void {
+    this.pauseCount += 1;
+    this.paused = true;
+  }
+
+  resume(): void {
+    this.resumeCount += 1;
+    this.paused = false;
+    if (this.pendingOutput.length === 0) return;
+    const pending = Buffer.concat(this.pendingOutput);
+    this.pendingOutput = [];
+    this.emit("output", pending);
+  }
+
+  emitOutput(bytes: Buffer): void {
+    if (this.paused) {
+      this.pendingOutput.push(bytes);
+      return;
+    }
+    this.emit("output", bytes);
+  }
 }
 
 const bridges: PtyBridge[] = [];
@@ -66,6 +93,7 @@ function makeBridge(options: PtyBridgeOptions = {}): PtyBridge {
     shell: "/bin/sh",
     args: ["-i"],
     cwd: process.cwd(),
+    coalesceMs: 0,
     env: {
       PATH: process.env.PATH,
       HOME: process.env.HOME,
@@ -100,6 +128,7 @@ afterEach(() => {
   for (const bridge of bridges.splice(0)) {
     bridge.kill("SIGKILL");
   }
+  delete process.env.TMUX_IDE_PTY_BACKPRESSURE_BYTES;
 });
 
 describe("handlePtyWebSocket", () => {
@@ -284,6 +313,37 @@ describe("handlePtyWebSocket", () => {
     expect(ws.sent.some((frame) => Buffer.isBuffer(frame.data) && frame.options?.binary)).toBe(
       true,
     );
+  });
+
+  it("pauses bridge output on high WebSocket bufferedAmount and resumes after drain", async () => {
+    process.env.TMUX_IDE_PTY_BACKPRESSURE_BYTES = "10";
+    const ws = new MockWebSocket();
+    let bridge: FakeBridge | null = null;
+    handlePtyWebSocket(ws, "default", {
+      createBridge: () => {
+        bridge = new FakeBridge();
+        return bridge;
+      },
+    });
+
+    ws.receive(JSON.stringify({ type: "init", cols: 80, rows: 24 }));
+    await waitFor(() => bridge?.running === true, "fake PTY spawn");
+
+    ws.bufferedAmount = 11;
+    bridge?.emitOutput(Buffer.from("first"));
+    bridge?.emitOutput(Buffer.from("second"));
+
+    expect(bridge?.pauseCount).toBeGreaterThan(0);
+    expect(
+      ws.sent.filter((frame) => Buffer.isBuffer(frame.data)).map((frame) => frame.data),
+    ).toEqual([Buffer.from("first")]);
+
+    ws.bufferedAmount = 4;
+    await waitFor(() => (bridge?.resumeCount ?? 0) > 0, "bridge resume after drain");
+
+    expect(
+      ws.sent.filter((frame) => Buffer.isBuffer(frame.data)).map((frame) => frame.data),
+    ).toEqual([Buffer.from("first"), Buffer.from("second")]);
   });
 
   it("sends an exit frame and closes when the PTY exits", async () => {

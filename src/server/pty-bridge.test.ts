@@ -9,6 +9,7 @@ function makeBridge(args: string[] = ["-i"]): PtyBridge {
     shell: "/bin/sh",
     args,
     cwd: process.cwd(),
+    coalesceMs: 0,
     env: {
       PATH: process.env.PATH,
       HOME: process.env.HOME,
@@ -17,6 +18,45 @@ function makeBridge(args: string[] = ["-i"]): PtyBridge {
   });
   bridges.push(bridge);
   return bridge;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function fakePty() {
+  const child = new EventEmitter() as EventEmitter & {
+    pid: number;
+    cols: number;
+    rows: number;
+    write: (data: string | Buffer) => void;
+    resize: (cols: number, rows: number) => void;
+    kill: (signal?: NodeJS.Signals) => void;
+    onData: (listener: (data: unknown) => void) => { dispose: () => void };
+    onExit: (listener: (exit: { exitCode: number; signal?: number | null }) => void) => {
+      dispose: () => void;
+    };
+  };
+  child.pid = 12345;
+  child.cols = 100;
+  child.rows = 30;
+  child.write = () => undefined;
+  child.resize = (cols, rows) => {
+    child.cols = cols;
+    child.rows = rows;
+  };
+  child.kill = (signal = "SIGTERM") => {
+    child.emit("exit", { exitCode: 0, signal: signal === "SIGTERM" ? 15 : 9 });
+  };
+  child.onData = (listener) => {
+    child.on("data", listener);
+    return { dispose: () => child.off("data", listener) };
+  };
+  child.onExit = (listener) => {
+    child.on("exit", listener);
+    return { dispose: () => child.off("exit", listener) };
+  };
+  return child;
 }
 
 async function waitForOutput(bridge: PtyBridge, needle: string, timeoutMs = 5000): Promise<string> {
@@ -106,42 +146,15 @@ describe("PtyBridge", () => {
   it("spawns the requested command in the requested cwd", () => {
     const spawnCalls: Array<{ command: string; args: string[]; options: Record<string, unknown> }> =
       [];
-    const fakePty = new EventEmitter() as EventEmitter & {
-      pid: number;
-      cols: number;
-      rows: number;
-      write: (data: string | Buffer) => void;
-      resize: (cols: number, rows: number) => void;
-      kill: (signal?: NodeJS.Signals) => void;
-      onData: (listener: (data: unknown) => void) => { dispose: () => void };
-      onExit: (listener: (exit: { exitCode: number; signal?: number | null }) => void) => {
-        dispose: () => void;
-      };
-    };
-    fakePty.pid = 12345;
-    fakePty.cols = 100;
-    fakePty.rows = 30;
-    fakePty.write = () => undefined;
-    fakePty.resize = (cols, rows) => {
-      fakePty.cols = cols;
-      fakePty.rows = rows;
-    };
-    fakePty.kill = () => undefined;
-    fakePty.onData = (listener) => {
-      fakePty.on("data", listener);
-      return { dispose: () => fakePty.off("data", listener) };
-    };
-    fakePty.onExit = (listener) => {
-      fakePty.on("exit", listener);
-      return { dispose: () => fakePty.off("exit", listener) };
-    };
+    const child = fakePty();
 
     const bridge = new PtyBridge({
       env: { PATH: process.env.PATH, TERM: "xterm-256color" },
+      coalesceMs: 0,
       pty: {
         spawn: (command, args, options) => {
           spawnCalls.push({ command, args, options: options as Record<string, unknown> });
-          return fakePty as never;
+          return child as never;
         },
       },
     });
@@ -160,5 +173,62 @@ describe("PtyBridge", () => {
     expect(spawnCalls[0]?.options.cwd).toBe("/tmp/project-dir");
     expect(spawnCalls[0]?.options.cols).toBe(100);
     expect(spawnCalls[0]?.options.rows).toBe(30);
+  });
+
+  it("coalesces many output chunks into one batch", async () => {
+    const child = fakePty();
+    const bridge = new PtyBridge({
+      coalesceMs: 20,
+      pty: { spawn: () => child as never },
+    });
+    bridges.push(bridge);
+    const outputs: string[] = [];
+    bridge.on("output", (bytes) => outputs.push(bytes.toString("utf8")));
+
+    bridge.spawn(80, 24);
+    child.emit("data", Buffer.from("a"));
+    child.emit("data", Buffer.from("b"));
+    child.emit("data", Buffer.from("c"));
+
+    expect(outputs).toEqual([]);
+    await sleep(35);
+    expect(outputs).toEqual(["abc"]);
+  });
+
+  it("disables coalescing when coalesceMs is zero", () => {
+    const child = fakePty();
+    const bridge = new PtyBridge({
+      coalesceMs: 0,
+      pty: { spawn: () => child as never },
+    });
+    bridges.push(bridge);
+    const outputs: string[] = [];
+    bridge.on("output", (bytes) => outputs.push(bytes.toString("utf8")));
+
+    bridge.spawn(80, 24);
+    child.emit("data", Buffer.from("a"));
+    child.emit("data", Buffer.from("b"));
+
+    expect(outputs).toEqual(["a", "b"]);
+  });
+
+  it("pause holds output and resume flushes it in order", () => {
+    const child = fakePty();
+    const bridge = new PtyBridge({
+      coalesceMs: 0,
+      pty: { spawn: () => child as never },
+    });
+    bridges.push(bridge);
+    const outputs: string[] = [];
+    bridge.on("output", (bytes) => outputs.push(bytes.toString("utf8")));
+
+    bridge.spawn(80, 24);
+    bridge.pause();
+    child.emit("data", Buffer.from("a"));
+    child.emit("data", Buffer.from("b"));
+    expect(outputs).toEqual([]);
+
+    bridge.resume();
+    expect(outputs).toEqual(["ab"]);
   });
 });

@@ -3,11 +3,15 @@ import { PtyBridge, type PtyExit, type PtySpawnOptions } from "./pty-bridge.ts";
 
 const WS_OPEN = 1;
 const KILL_ESCALATION_MS = 2000;
+const DEFAULT_BACKPRESSURE_BYTES = 1 << 20;
+const DRAIN_POLL_MS = 16;
 
 export interface PtyBridgeLike {
   spawn(cols: number, rows: number, options?: PtySpawnOptions): void;
   write(bytes: Buffer): void;
   resize(cols: number, rows: number): void;
+  pause(): void;
+  resume(): void;
   kill(signal?: NodeJS.Signals): void;
   on(event: "output", listener: (bytes: Buffer) => void): this;
   on(event: "exit", listener: (exit: PtyExit) => void): this;
@@ -15,6 +19,7 @@ export interface PtyBridgeLike {
 
 interface WsLike {
   readyState: number;
+  bufferedAmount?: number;
   send(data: string | Buffer, options?: { binary?: boolean }): void;
   close(code?: number, reason?: string): void;
   on(event: "message", listener: (data: RawData | string, isBinary: boolean) => void): this;
@@ -123,6 +128,11 @@ function closeWs(ws: WsLike): void {
   }
 }
 
+function backpressureBytes(): number {
+  const parsed = Number.parseInt(process.env.TMUX_IDE_PTY_BACKPRESSURE_BYTES ?? "", 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_BACKPRESSURE_BYTES;
+}
+
 export function handlePtyWebSocket(
   ws: WebSocket | WsLike,
   id: string,
@@ -133,11 +143,40 @@ export function handlePtyWebSocket(
   let initialized = false;
   let ptyExited = false;
   let killTimer: ReturnType<typeof setTimeout> | null = null;
+  let drainTimer: ReturnType<typeof setTimeout> | null = null;
+  const backpressureThreshold = backpressureBytes();
+  const resumeThreshold = Math.floor(backpressureThreshold / 2);
 
   const clearKillTimer = () => {
     if (!killTimer) return;
     clearTimeout(killTimer);
     killTimer = null;
+  };
+
+  const clearDrainTimer = () => {
+    if (!drainTimer) return;
+    clearTimeout(drainTimer);
+    drainTimer = null;
+  };
+
+  const scheduleDrainCheck = () => {
+    if (drainTimer || !bridge) return;
+    drainTimer = setTimeout(() => {
+      drainTimer = null;
+      if (!bridge || socket.readyState !== WS_OPEN) return;
+      if ((socket.bufferedAmount ?? 0) <= resumeThreshold) {
+        bridge.resume();
+        return;
+      }
+      scheduleDrainCheck();
+    }, DRAIN_POLL_MS);
+    drainTimer.unref?.();
+  };
+
+  const maybePauseForBackpressure = () => {
+    if (!bridge || (socket.bufferedAmount ?? 0) <= backpressureThreshold) return;
+    bridge.pause();
+    scheduleDrainCheck();
   };
 
   const closeWithError = (message: string) => {
@@ -148,13 +187,16 @@ export function handlePtyWebSocket(
   const attachBridgeEvents = (ptyBridge: PtyBridgeLike) => {
     ptyBridge.on("output", (bytes) => {
       if (socket.readyState === WS_OPEN) {
+        maybePauseForBackpressure();
         socket.send(bytes, { binary: true });
+        maybePauseForBackpressure();
       }
     });
 
     ptyBridge.on("exit", (exit) => {
       ptyExited = true;
       clearKillTimer();
+      clearDrainTimer();
       if (socket.readyState === WS_OPEN) {
         socket.send(JSON.stringify({ type: "exit", code: exit.code, signal: exit.signal }));
         socket.close();
@@ -210,6 +252,7 @@ export function handlePtyWebSocket(
   });
 
   socket.on("close", () => {
+    clearDrainTimer();
     if (!bridge || ptyExited) return;
     bridge.kill("SIGTERM");
     killTimer = setTimeout(() => {

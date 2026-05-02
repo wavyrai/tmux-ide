@@ -13,6 +13,7 @@ export interface PtyBridgeOptions {
   cwd?: string;
   env?: Record<string, string | undefined>;
   name?: string;
+  coalesceMs?: number;
   pty?: {
     spawn: typeof pty.spawn;
   };
@@ -51,6 +52,10 @@ export class PtyBridge extends EventEmitter {
   private dataDisposable: pty.IDisposable | null = null;
   private exitDisposable: pty.IDisposable | null = null;
   private exitPoll: ReturnType<typeof setInterval> | null = null;
+  private outputTimer: ReturnType<typeof setTimeout> | null = null;
+  private outputChunks: Buffer[] = [];
+  private pausedOutputChunks: Buffer[] = [];
+  private outputPaused = false;
   private readonly options: PtyBridgeOptions;
   private readonly ptySpawn: typeof pty.spawn;
 
@@ -126,9 +131,20 @@ export class PtyBridge extends EventEmitter {
       this.emitExit({ code: exitCode, signal: signal ?? null });
     });
     this.dataDisposable = child.onData((data: unknown) => {
-      this.emit("output", outputToBuffer(data));
+      this.enqueueOutput(outputToBuffer(data));
     });
     this.startExitPoll(child);
+  }
+
+  pause(): void {
+    this.outputPaused = true;
+  }
+
+  resume(): void {
+    if (!this.outputPaused) return;
+    this.flushCoalescedOutput();
+    this.outputPaused = false;
+    this.flushPausedOutput();
   }
 
   write(bytes: Buffer | Uint8Array | string): void {
@@ -164,6 +180,7 @@ export class PtyBridge extends EventEmitter {
   }
 
   private disposeListeners(): void {
+    this.flushAllOutput();
     this.dataDisposable?.dispose();
     this.exitDisposable?.dispose();
     if (this.exitPoll) {
@@ -172,6 +189,67 @@ export class PtyBridge extends EventEmitter {
     }
     this.dataDisposable = null;
     this.exitDisposable = null;
+  }
+
+  private enqueueOutput(bytes: Buffer): void {
+    if (bytes.byteLength === 0) return;
+
+    const coalesceMs = this.options.coalesceMs ?? 8;
+    if (coalesceMs <= 0) {
+      this.deliverOutput(bytes);
+      return;
+    }
+
+    this.outputChunks.push(bytes);
+    if (this.outputTimer) return;
+
+    this.outputTimer = setTimeout(() => {
+      this.outputTimer = null;
+      this.flushCoalescedOutput();
+    }, coalesceMs);
+    this.outputTimer.unref?.();
+  }
+
+  private flushCoalescedOutput(): void {
+    if (this.outputTimer) {
+      clearTimeout(this.outputTimer);
+      this.outputTimer = null;
+    }
+    if (this.outputChunks.length === 0) return;
+
+    const chunks = this.outputChunks;
+    this.outputChunks = [];
+    this.deliverOutput(Buffer.concat(chunks));
+  }
+
+  private deliverOutput(bytes: Buffer): void {
+    if (this.outputPaused) {
+      this.pausedOutputChunks.push(bytes);
+      return;
+    }
+    this.emit("output", bytes);
+  }
+
+  private flushPausedOutput(): void {
+    if (this.pausedOutputChunks.length === 0) return;
+
+    const chunks = this.pausedOutputChunks;
+    this.pausedOutputChunks = [];
+    this.emit("output", Buffer.concat(chunks));
+  }
+
+  private flushAllOutput(): void {
+    if (this.outputTimer) {
+      clearTimeout(this.outputTimer);
+      this.outputTimer = null;
+    }
+
+    const chunks = [...this.pausedOutputChunks, ...this.outputChunks];
+    this.pausedOutputChunks = [];
+    this.outputChunks = [];
+    if (chunks.length > 0) {
+      this.emit("output", Buffer.concat(chunks));
+    }
   }
 
   private startExitPoll(child: pty.IPty): void {
@@ -194,6 +272,7 @@ export class PtyBridge extends EventEmitter {
 
   private emitExit(exit: PtyExit): void {
     if (!this.ptyProcess) return;
+    this.flushAllOutput();
     this.disposeListeners();
     this.ptyProcess = null;
     this.emit("exit", exit);
