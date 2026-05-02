@@ -25,6 +25,8 @@
   --bg-strong: #121212;
   --surface: rgba(255, 255, 255, 0.031);
   --surface-raised: rgba(255, 255, 255, 0.059);
+  --surface-elevated: #161616;
+  --surface-elevated-shadow: 0 0 0 1px rgba(255, 255, 255, 0.06);
   --fg: rgba(255, 255, 255, 0.936);
   --fg-secondary: rgba(255, 255, 255, 0.618);
   --dim: rgba(255, 255, 255, 0.422);
@@ -77,11 +79,13 @@
 
 /* Light theme — sharp blue accent */
 [data-theme="light"] {
-  --bg: #f8f8f8;
+  --bg: #fafafa;
   --bg-weak: #f0f0f2;
   --bg-strong: #ffffff;
-  --surface: rgba(0, 0, 0, 0.025);
-  --surface-raised: rgba(0, 0, 0, 0.04);
+  --surface: rgba(0, 0, 0, 0.05);
+  --surface-raised: rgba(0, 0, 0, 0.05);
+  --surface-elevated: #ffffff;
+  --surface-elevated-shadow: 0 1px 2px rgba(0, 0, 0, 0.04), 0 0 0 1px rgba(0, 0, 0, 0.06);
   --fg: #1a1a2e;
   --fg-secondary: #555566;
   --dim: #888899;
