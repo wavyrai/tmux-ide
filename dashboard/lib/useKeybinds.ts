@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect } from "react";
+import type { Action } from "./actions";
+import { runAction } from "./actions";
 
 interface UseKeybindOptions {
   allowInput?: boolean;
@@ -18,7 +20,7 @@ interface ParsedKeybind {
   alt: boolean;
 }
 
-function parseKeybind(keybind: string): ParsedKeybind {
+export function parseKeybind(keybind: string): ParsedKeybind {
   const parts = keybind.split("+").map((part) => part.trim());
   const key = parts.pop() ?? "";
   const parsed: ParsedKeybind = {
@@ -54,7 +56,7 @@ function isEditableTarget(target: EventTarget | null): boolean {
   return target.isContentEditable;
 }
 
-function matches(event: KeyboardEvent, parsed: ParsedKeybind): boolean {
+export function matchesKeybind(event: KeyboardEvent, parsed: ParsedKeybind): boolean {
   if (event.key.toLowerCase() !== parsed.key) return false;
   if (parsed.mod) {
     // Either Cmd OR Ctrl satisfies Mod, but not neither.
@@ -71,8 +73,9 @@ export function useKeybind(key: string, handler: () => void, opts: UseKeybindOpt
     const parsed = parseKeybind(key);
 
     const onKeydown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented) return;
       if (!opts.allowInput && isEditableTarget(document.activeElement)) return;
-      if (!matches(event, parsed)) return;
+      if (!matchesKeybind(event, parsed)) return;
       event.preventDefault();
       handler();
     };
@@ -80,4 +83,20 @@ export function useKeybind(key: string, handler: () => void, opts: UseKeybindOpt
     window.addEventListener("keydown", onKeydown);
     return () => window.removeEventListener("keydown", onKeydown);
   }, [handler, key, opts.allowInput]);
+}
+
+export function registerKeybindFromAction(action: Action): () => void {
+  if (typeof window === "undefined" || !action.keybind) return () => undefined;
+
+  const parsed = parseKeybind(action.keybind);
+  const onKeydown = (event: KeyboardEvent) => {
+    if (event.defaultPrevented) return;
+    if (isEditableTarget(document.activeElement)) return;
+    if (!matchesKeybind(event, parsed)) return;
+    event.preventDefault();
+    runAction(action.id);
+  };
+
+  window.addEventListener("keydown", onKeydown);
+  return () => window.removeEventListener("keydown", onKeydown);
 }
