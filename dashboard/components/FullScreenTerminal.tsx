@@ -55,10 +55,13 @@ export function FullScreenTerminal() {
       if (!project?.dir) {
         return newTab(projectName, { title: projectName });
       }
+      // Default to the user's login shell in the project's dir. Users who
+      // want the tmux-ide CLI can run `tmux-ide` themselves from the prompt;
+      // forcing it here meant tmux's default-shell decided your shell, which
+      // routinely demoted zsh users into bash/sh and skipped .zshrc.
       return newTab(projectName, {
         title: projectName,
         cwd: project.dir,
-        cmd: ["tmux-ide"],
       });
     },
     [newTab, projectRouteName],

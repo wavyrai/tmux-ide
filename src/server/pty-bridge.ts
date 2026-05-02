@@ -84,7 +84,11 @@ export class PtyBridge extends EventEmitter {
     assertPositiveDimension("cols", cols);
     assertPositiveDimension("rows", rows);
 
-    const executable = spawnOptions.cmd?.[0] ?? this.options.shell ?? "bash";
+    // When the client doesn't specify cmd, fall back to the user's actual
+    // login shell from $SHELL so .zshrc / .zprofile / etc. load. Defaulting
+    // to "bash" silently downgrades zsh users to a non-zsh experience.
+    const defaultShell = this.options.shell ?? process.env.SHELL ?? "bash";
+    const executable = spawnOptions.cmd?.[0] ?? defaultShell;
     const args = spawnOptions.cmd ? spawnOptions.cmd.slice(1) : (this.options.args ?? ["-l"]);
     const cwd = spawnOptions.cwd ?? this.options.cwd ?? process.env.HOME ?? "/";
     const env = this.options.env ?? cleanEnv();

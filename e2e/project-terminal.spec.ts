@@ -89,7 +89,9 @@ test.describe("project terminal tabs", () => {
     await mockApi(page);
   });
 
-  test("opening terminal mode for a project spawns one tmux-ide tab", async ({ page }) => {
+  test("opening terminal mode for a project spawns one shell tab in the project dir", async ({
+    page,
+  }) => {
     const initFrames = await mockPty(page);
     await page.goto(`/project/${encodeURIComponent(PROJECT)}`);
 
@@ -98,10 +100,14 @@ test.describe("project terminal tabs", () => {
     await expect(page.getByTestId("terminal-tab")).toHaveCount(1);
     await expect(page.getByTestId("terminal-tab")).toContainText(PROJECT);
     await expect.poll(() => initFrames.length).toBe(1);
-    expect(initFrames[0]).toMatchObject({ type: "init", cwd: PROJECT_DIR, cmd: ["tmux-ide"] });
+    // No `cmd` is sent — server falls back to $SHELL -l so users land in
+    // their actual login shell (zsh, etc.). Just verify the project dir
+    // is forwarded as cwd.
+    expect(initFrames[0]).toMatchObject({ type: "init", cwd: PROJECT_DIR });
+    expect((initFrames[0] as { cmd?: string[] }).cmd).toBeUndefined();
   });
 
-  test("+ button creates a second tab with the same cmd and cwd", async ({ page }) => {
+  test("+ button creates a second tab in the same project dir", async ({ page }) => {
     const initFrames = await mockPty(page);
     await page.goto(`/project/${encodeURIComponent(PROJECT)}`);
 
@@ -113,11 +119,9 @@ test.describe("project terminal tabs", () => {
 
     await expect(page.getByTestId("terminal-tab")).toHaveCount(2);
     await expect.poll(() => initFrames.length).toBe(2);
-    expect(initFrames).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ cwd: PROJECT_DIR, cmd: ["tmux-ide"] }),
-        expect.objectContaining({ cwd: PROJECT_DIR, cmd: ["tmux-ide"] }),
-      ]),
-    );
+    for (const frame of initFrames) {
+      expect(frame).toMatchObject({ cwd: PROJECT_DIR });
+      expect((frame as { cmd?: string[] }).cmd).toBeUndefined();
+    }
   });
 });
