@@ -309,6 +309,9 @@ export function Terminal({
         data-state={state}
         data-cols={size.cols}
         data-rows={size.rows}
+        // Suppress the browser's native context menu so right-click goes to
+        // the PTY (tmux mouse-mode treats it as a binding, e.g. paste / menu).
+        onContextMenu={(event) => event.preventDefault()}
         className="min-h-0 flex-1 overflow-hidden bg-[var(--term-bg)] px-3 py-2 focus:outline-none"
         style={{ fontFamily: "var(--font-mono)" }}
       />
