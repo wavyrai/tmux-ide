@@ -1,7 +1,10 @@
 import { ActivityBar } from "@/components/ActivityBar";
+import { CommandPalette } from "@/components/CommandPalette";
+import { KeybindRoot } from "@/components/KeybindRoot";
 import { Sidebar } from "@/components/Sidebar";
 import { FullScreenTerminal } from "@/components/FullScreenTerminal";
 import { ShellStatusBar } from "@/components/StatusBar";
+import { ToastStack } from "@/components/ToastStack";
 import { WorkspaceTabsBar } from "@/components/WorkspaceTabsBar";
 import { WorkspaceTabsManager } from "@/components/WorkspaceTabsManager";
 import { WorkspaceUrlSync } from "@/components/WorkspaceUrlSync";
@@ -22,6 +25,9 @@ export default function ShellLayout({ children }: { children: React.ReactNode })
         </div>
       </div>
       <ShellStatusBar />
+      <CommandPalette />
+      <ToastStack />
+      <KeybindRoot />
     </div>
   );
 }

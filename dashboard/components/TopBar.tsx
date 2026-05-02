@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { openCommandPalette } from "./CommandPalette";
 import { ThemeToggle } from "./ThemeToggle";
 import { useLayoutState } from "@/lib/useLayoutState";
 
@@ -42,6 +43,16 @@ export function TopBar() {
         title="Toggle terminal mode (⌘J)"
       >
         ⌘J
+      </button>
+      <button
+        type="button"
+        onClick={openCommandPalette}
+        data-testid="command-palette-button"
+        className="mr-2 h-5 px-2 text-[10px] text-[var(--dim)] transition-colors hover:bg-[var(--surface-hover)] hover:text-[var(--fg)]"
+        aria-label="Open command palette"
+        title="Open command palette (⌘K)"
+      >
+        ⌘K
       </button>
       <ThemeToggle />
       <span className="text-[var(--dim)] ml-3">{time}</span>
