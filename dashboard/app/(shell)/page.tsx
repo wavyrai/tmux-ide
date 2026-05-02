@@ -33,7 +33,7 @@ export default function OverviewPage() {
   }, []);
 
   return (
-    <div className="h-screen flex flex-col">
+    <div className="h-full flex flex-col">
       {/* Header bar */}
       <div className="flex items-center justify-between px-4 h-7 bg-[var(--surface)] border-b border-[var(--border)] shrink-0">
         <span className="text-[var(--accent)]">tmux-ide command center</span>

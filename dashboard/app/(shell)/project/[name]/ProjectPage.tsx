@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import {
   fetchProject,
@@ -27,10 +27,19 @@ import { PlansPanel } from "@/components/PlansPanel";
 import { StatusBar } from "@/components/StatusBar";
 import type { ProjectDetail } from "@/lib/types";
 
-type Tab = "kanban" | "agents" | "diffs" | "plans" | "validation" | "metrics" | "activity";
+type Tab =
+  | "kanban"
+  | "terminal"
+  | "agents"
+  | "diffs"
+  | "plans"
+  | "validation"
+  | "metrics"
+  | "activity";
 
 const TABS: { id: Tab; label: string }[] = [
   { id: "kanban", label: "kanban" },
+  { id: "terminal", label: "terminal" },
   { id: "agents", label: "agents" },
   { id: "diffs", label: "diffs" },
   { id: "plans", label: "plans" },
@@ -39,13 +48,37 @@ const TABS: { id: Tab; label: string }[] = [
   { id: "activity", label: "activity" },
 ];
 
+function isTab(value: string | null): value is Tab {
+  return TABS.some((t) => t.id === value);
+}
+
 export default function ProjectPage() {
   const pathname = usePathname();
   const router = useRouter();
   // Extract project name from URL pathname (not useParams, which returns
   // the build-time placeholder "__fallback" in static exports)
   const name = decodeURIComponent(pathname.replace(/^\/project\//, "").replace(/\/$/, ""));
-  const [activeTab, setActiveTab] = useState<Tab>("kanban");
+
+  // Tab state lives in URL search params, but read via window.location to keep
+  // this page statically exportable (useSearchParams forces dynamic rendering,
+  // which conflicts with output: "export" in next.config.mjs).
+  const [activeTab, setActiveTabState] = useState<Tab>("kanban");
+
+  useEffect(() => {
+    const tabParam = new URLSearchParams(window.location.search).get("tab");
+    if (isTab(tabParam)) setActiveTabState(tabParam);
+  }, []);
+
+  const setActiveTab = useCallback((tab: Tab) => {
+    setActiveTabState(tab);
+    const url = new URL(window.location.href);
+    if (tab === "kanban") url.searchParams.delete("tab");
+    else url.searchParams.set("tab", tab);
+    window.history.replaceState(null, "", url.toString());
+    // history.replaceState doesn't fire popstate, so notify TerminalPool
+    // (and any other URL-listeners) explicitly that the tab changed.
+    window.dispatchEvent(new CustomEvent("tabchange", { detail: { tab } }));
+  }, []);
 
   const fetcher = useCallback(() => fetchProject(name) as Promise<ProjectDetail | null>, [name]);
   const {
@@ -70,7 +103,7 @@ export default function ProjectPage() {
 
   if (error) {
     return (
-      <div className="h-screen flex items-center justify-center text-[var(--red)]">
+      <div className="h-full flex items-center justify-center text-[var(--red)]">
         failed to load project
       </div>
     );
@@ -78,7 +111,7 @@ export default function ProjectPage() {
 
   if (!project) {
     return (
-      <div className="h-screen flex items-center justify-center text-[var(--dim)]">loading...</div>
+      <div className="h-full flex items-center justify-center text-[var(--dim)]">loading...</div>
     );
   }
 
@@ -88,7 +121,7 @@ export default function ProjectPage() {
   const activeAgents = project.agents.filter((a) => a.isBusy).length;
 
   return (
-    <div className="h-screen flex flex-col">
+    <div className="h-full flex flex-col">
       {/* Top bar */}
       <div className="flex items-center justify-between px-4 h-7 bg-[var(--surface)] border-b border-[var(--border)] shrink-0">
         <div className="flex items-center gap-3">
@@ -253,6 +286,14 @@ export default function ProjectPage() {
           agents={project.agents}
           goals={project.goals}
           onRefresh={refresh}
+        />
+      )}
+
+      {activeTab === "terminal" && (
+        <div
+          data-testid="terminal-tab-placeholder"
+          className="flex-1 min-h-0"
+          aria-hidden="true"
         />
       )}
 

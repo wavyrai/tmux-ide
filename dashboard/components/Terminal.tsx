@@ -1,14 +1,44 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Terminal } from "@xterm/xterm";
+import { useTheme } from "next-themes";
+import { Terminal as XTerm, type ITheme } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
 
+function readTerminalTheme(): ITheme {
+  const cs = getComputedStyle(document.documentElement);
+  const v = (name: string, fallback: string) => cs.getPropertyValue(name).trim() || fallback;
+  return {
+    background: v("--term-bg", "#101010"),
+    foreground: v("--term-fg", "#eeeeee"),
+    cursor: v("--term-cursor", "#fab283"),
+    selectionBackground: v("--term-selection", "#334155"),
+    black: v("--term-black", "#101010"),
+    red: v("--term-red", "#fc533a"),
+    green: v("--term-green", "#9bcd97"),
+    yellow: v("--term-yellow", "#fcd53a"),
+    blue: v("--term-blue", "#60a5fa"),
+    magenta: v("--term-magenta", "#edb2f1"),
+    cyan: v("--term-cyan", "#56b6c2"),
+    white: v("--term-white", "#eeeeee"),
+    brightBlack: v("--term-bright-black", "#777777"),
+    brightRed: v("--term-bright-red", "#ff7a66"),
+    brightGreen: v("--term-bright-green", "#b8e6b3"),
+    brightYellow: v("--term-bright-yellow", "#ffe36d"),
+    brightBlue: v("--term-bright-blue", "#93c5fd"),
+    brightMagenta: v("--term-bright-magenta", "#f5c7f7"),
+    brightCyan: v("--term-bright-cyan", "#80d7e2"),
+    brightWhite: v("--term-bright-white", "#ffffff"),
+  };
+}
+
 type ConnectionState = "loading" | "connecting" | "connected" | "disconnected" | "error";
 
-interface TerminalClientProps {
+interface TerminalProps {
   id: string;
+  className?: string;
+  showHeader?: boolean;
 }
 
 interface TerminalSize {
@@ -31,8 +61,10 @@ async function messageToBytes(data: unknown): Promise<Uint8Array> {
   return new Uint8Array();
 }
 
-export default function TerminalClient({ id }: TerminalClientProps) {
+export function Terminal({ id, className, showHeader = true }: TerminalProps) {
   const hostRef = useRef<HTMLDivElement | null>(null);
+  const termRef = useRef<XTerm | null>(null);
+  const { resolvedTheme } = useTheme();
   const [state, setState] = useState<ConnectionState>("loading");
   const [message, setMessage] = useState("loading renderer");
   const [size, setSize] = useState<TerminalSize>({ cols: 80, rows: 24 });
@@ -45,7 +77,7 @@ export default function TerminalClient({ id }: TerminalClientProps) {
 
     let disposed = false;
     let socket: WebSocket | null = null;
-    let term: Terminal | null = null;
+    let term: XTerm | null = null;
     let fitAddon: FitAddon | null = null;
     let resizeObserver: ResizeObserver | null = null;
     let initSent = false;
@@ -70,7 +102,7 @@ export default function TerminalClient({ id }: TerminalClientProps) {
           computed.getPropertyValue("--font-mono").trim() ||
           'ui-monospace, SFMono-Regular, "JetBrains Mono", "Menlo", monospace';
 
-        term = new Terminal({
+        term = new XTerm({
           cols: 80,
           rows: 24,
           cursorBlink: true,
@@ -87,29 +119,9 @@ export default function TerminalClient({ id }: TerminalClientProps) {
           allowProposedApi: true,
           allowTransparency: false,
           drawBoldTextInBrightColors: false,
-          theme: {
-            background: "#101010",
-            foreground: "#eeeeee",
-            cursor: "#fab283",
-            selectionBackground: "#334155",
-            black: "#101010",
-            red: "#fc533a",
-            green: "#9bcd97",
-            yellow: "#fcd53a",
-            blue: "#60a5fa",
-            magenta: "#edb2f1",
-            cyan: "#56b6c2",
-            white: "#eeeeee",
-            brightBlack: "#777777",
-            brightRed: "#ff7a66",
-            brightGreen: "#b8e6b3",
-            brightYellow: "#ffe36d",
-            brightBlue: "#93c5fd",
-            brightMagenta: "#f5c7f7",
-            brightCyan: "#80d7e2",
-            brightWhite: "#ffffff",
-          },
+          theme: readTerminalTheme(),
         });
+        termRef.current = term;
 
         fitAddon = new FitAddon();
         term.loadAddon(fitAddon);
@@ -143,11 +155,11 @@ export default function TerminalClient({ id }: TerminalClientProps) {
         });
 
         const port = process.env.NEXT_PUBLIC_TMUX_IDE_SERVER_PORT ?? "6070";
-        const host = typeof window !== "undefined" ? window.location.hostname : "localhost";
+        const wsHost = typeof window !== "undefined" ? window.location.hostname : "localhost";
         const wsProto =
           typeof window !== "undefined" && window.location.protocol === "https:" ? "wss" : "ws";
         socket = new WebSocket(
-          `${wsProto}://${host}:${port}/ws/pty/${encodeURIComponent(id)}`,
+          `${wsProto}://${wsHost}:${port}/ws/pty/${encodeURIComponent(id)}`,
         );
         socket.binaryType = "arraybuffer";
         setState("connecting");
@@ -226,9 +238,21 @@ export default function TerminalClient({ id }: TerminalClientProps) {
       resizeObserver?.disconnect();
       fitAddon?.dispose();
       term?.dispose();
+      termRef.current = null;
       hostElement.replaceChildren();
     };
   }, [id]);
+
+  // Re-apply terminal theme whenever next-themes flips the resolved theme.
+  // CSS vars on :root update synchronously, but xterm caches its theme — so
+  // we read the new --term-* values and push them into the live instance.
+  useEffect(() => {
+    if (!termRef.current) return;
+    const apply = () => {
+      if (termRef.current) termRef.current.options.theme = readTerminalTheme();
+    };
+    requestAnimationFrame(apply);
+  }, [resolvedTheme]);
 
   const dotClass =
     state === "connected"
@@ -238,18 +262,26 @@ export default function TerminalClient({ id }: TerminalClientProps) {
         : "bg-[var(--yellow)]";
 
   return (
-    <main className="h-[calc(100vh-1.5rem)] min-h-[420px] bg-[var(--bg)] flex flex-col font-[var(--font-mono)]">
-      <div className="h-8 shrink-0 border-b border-[var(--border-weak)] bg-[var(--surface)] px-3 flex items-center gap-3 text-[11px] tracking-[0.02em]">
-        <span className={`inline-block h-1.5 w-1.5 rounded-full ${dotClass}`} aria-hidden="true" />
-        <span className="text-[var(--fg-secondary)]">terminal</span>
-        <span className="text-[var(--dim)]">/</span>
-        <span className="text-[var(--accent)]">{id}</span>
-        <span className="ml-auto text-[var(--dim)] tabular-nums">
-          {size.cols}×{size.rows}
-        </span>
-        <span className="text-[var(--dim)]">·</span>
-        <span className="text-[var(--fg-secondary)]">{message}</span>
-      </div>
+    <section
+      className={`flex min-h-0 flex-1 flex-col bg-[var(--bg)] ${className ?? ""}`}
+      style={{ fontFamily: "var(--font-mono)" }}
+    >
+      {showHeader && (
+        <div className="h-7 shrink-0 border-b border-[var(--border-weak)] bg-[var(--surface)] px-3 flex items-center gap-3 text-[11px] tracking-[0.02em]">
+          <span
+            className={`inline-block h-1.5 w-1.5 rounded-full ${dotClass}`}
+            aria-hidden="true"
+          />
+          <span className="text-[var(--fg-secondary)]">terminal</span>
+          <span className="text-[var(--dim)]">/</span>
+          <span className="text-[var(--accent)]">{id}</span>
+          <span className="ml-auto text-[var(--dim)] tabular-nums">
+            {size.cols}×{size.rows}
+          </span>
+          <span className="text-[var(--dim)]">·</span>
+          <span className="text-[var(--fg-secondary)]">{message}</span>
+        </div>
+      )}
       <div
         ref={hostRef}
         data-testid="terminal-frame"
@@ -262,6 +294,8 @@ export default function TerminalClient({ id }: TerminalClientProps) {
       <pre data-testid="terminal-transcript" className="sr-only" aria-hidden="true">
         {transcript}
       </pre>
-    </main>
+    </section>
   );
 }
+
+export default Terminal;
