@@ -477,22 +477,48 @@ function getServerSnapshot(): LayoutState {
   return serverSnapshot;
 }
 
-const queries: LayoutQueries = {
-  getProjectTabs(projectName: string) {
-    return projectTabs(state.tabs, projectName);
-  },
-  getActiveTabId(projectName: string) {
-    const explicit = state.activeTabIdByProject[projectName];
-    if (explicit && state.tabs.some((t) => t.id === explicit && t.projectName === projectName)) {
-      return explicit;
-    }
-    return fallbackActive(state.tabs, projectName);
-  },
-};
+function queriesForSnapshot(snapshot: LayoutState): LayoutQueries {
+  return {
+    getProjectTabs(projectName: string) {
+      return projectTabs(snapshot.tabs, projectName);
+    },
+    getActiveTabId(projectName: string) {
+      const explicit = snapshot.activeTabIdByProject[projectName];
+      if (
+        explicit &&
+        snapshot.tabs.some((t) => t.id === explicit && t.projectName === projectName)
+      ) {
+        return explicit;
+      }
+      return fallbackActive(snapshot.tabs, projectName);
+    },
+  };
+}
+
+// Stable module-level live queries for callers OUTSIDE the render lifecycle
+// (e.g., action `run` callbacks registered with the action registry). They
+// read the current module state, which mutates in place. Render-time consumers
+// must use the snapshot-bound queries returned by useLayoutState() so SSR and
+// the first hydration render agree.
+export function getProjectTabsLive(projectName: string): TerminalTab[] {
+  return projectTabs(state.tabs, projectName);
+}
+
+export function getActiveTabIdLive(projectName: string): string | null {
+  const explicit = state.activeTabIdByProject[projectName];
+  if (explicit && state.tabs.some((t) => t.id === explicit && t.projectName === projectName)) {
+    return explicit;
+  }
+  return fallbackActive(state.tabs, projectName);
+}
 
 export function useLayoutState(): LayoutStore {
   const snapshot = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
-  return { ...snapshot, ...actions, ...queries };
+  // Queries must close over the React snapshot (not the module-level `state`)
+  // so server-rendered HTML and the first client render agree during
+  // hydration — otherwise consumers like FullScreenTerminal read live
+  // localStorage state and diverge from the SSR defaults.
+  return { ...snapshot, ...actions, ...queriesForSnapshot(snapshot) };
 }
 
 export function __resetLayoutStateForTests(next?: Partial<LayoutState>): void {

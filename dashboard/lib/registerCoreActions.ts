@@ -2,17 +2,13 @@
 
 import { openCommandPalette } from "@/components/CommandPalette";
 import { registerAction } from "@/lib/actions";
-import type { LayoutActions, LayoutQueries } from "@/lib/useLayoutState";
+import { getActiveTabIdLive, type LayoutActions } from "@/lib/useLayoutState";
 
 interface RegisterCoreActionsInput {
   currentProject: string;
   layout: Pick<
-    LayoutActions & LayoutQueries,
-    | "toggleTerminal"
-    | "setActivitySection"
-    | "newTab"
-    | "closeTab"
-    | "getActiveTabId"
+    LayoutActions,
+    "toggleTerminal" | "setActivitySection" | "newTab" | "closeTab"
   >;
   toggleTheme(): void;
 }
@@ -83,9 +79,9 @@ export function registerCoreActions({
       keybind: "Mod+w",
       scope: { section: "terminal" },
       category: "Terminal",
-      isAvailable: () => layout.getActiveTabId(currentProject) !== null,
+      isAvailable: () => getActiveTabIdLive(currentProject) !== null,
       run: () => {
-        const activeTabId = layout.getActiveTabId(currentProject);
+        const activeTabId = getActiveTabIdLive(currentProject);
         if (activeTabId) layout.closeTab(activeTabId);
       },
     }),
