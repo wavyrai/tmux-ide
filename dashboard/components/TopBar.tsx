@@ -1,7 +1,7 @@
 "use client";
 
 import { Command, Menu, Terminal } from "lucide-react";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { ActivityBar } from "./ActivityBar";
 import { openCommandPalette } from "./CommandPalette";
 import { Sidebar } from "./Sidebar";
@@ -11,6 +11,11 @@ import { useLayoutState } from "@/lib/useLayoutState";
 export function TopBar() {
   const [time, setTime] = useState("");
   const [drawerOpen, setDrawerOpen] = useState(false);
+  // iOS Safari sometimes synthesizes a SECOND click after touchend; if the
+  // hamburger opens the drawer, the synthetic click can land on the
+  // newly-mounted backdrop and immediately close it. Arm the backdrop with
+  // a 200ms grace window after opening so that ghost click is ignored.
+  const drawerArmedAtRef = useRef(0);
   const { terminalOpen, toggleTerminal } = useLayoutState();
 
   useEffect(() => {
@@ -47,7 +52,10 @@ export function TopBar() {
         <button
           type="button"
           data-testid="mobile-nav-toggle"
-          onClick={() => setDrawerOpen(true)}
+          onClick={() => {
+            drawerArmedAtRef.current = Date.now();
+            setDrawerOpen(true);
+          }}
           className="mr-2 flex h-5 w-5 items-center justify-center text-[var(--dim)] transition-colors hover:bg-[var(--surface-hover)] hover:text-[var(--fg)] motion-safe:active:scale-[0.95] md:hidden"
           aria-label="Open navigation"
           aria-expanded={drawerOpen}
@@ -95,7 +103,10 @@ export function TopBar() {
             type="button"
             className="absolute inset-0 bg-[var(--modal-overlay)]"
             aria-label="Close navigation"
-            onClick={() => setDrawerOpen(false)}
+            onClick={() => {
+              if (Date.now() - drawerArmedAtRef.current < 200) return;
+              setDrawerOpen(false);
+            }}
           />
           <div
             id="mobile-shell-drawer"
