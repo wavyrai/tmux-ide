@@ -13,7 +13,7 @@ function resolveApiBase(): string {
   return `${window.location.protocol}//${window.location.hostname}:${port}`;
 }
 
-const API_BASE = resolveApiBase();
+export const API_BASE = resolveApiBase();
 
 export async function fetchSessions(): Promise<SessionOverview[]> {
   const res = await fetch(`${API_BASE}/api/sessions`, { cache: "no-store" });
@@ -50,6 +50,19 @@ export async function fetchProject(name: string): Promise<ProjectDetail | null> 
   });
   if (!res.ok) return null;
   return (await res.json()) as ProjectDetail;
+}
+
+export async function injectIntoProject(
+  name: string,
+  text: string,
+  opts: { paneId?: string; sendEnter?: boolean } = {},
+): Promise<boolean> {
+  const res = await fetch(`${API_BASE}/api/project/${encodeURIComponent(name)}/inject`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ text, ...opts }),
+  });
+  return res.ok;
 }
 
 export interface DiffData {

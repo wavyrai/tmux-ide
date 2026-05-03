@@ -18,6 +18,8 @@ import {
 import {
   listSessionPanes,
   sendCommand,
+  sendEnterToPane,
+  sendLiteralToPane,
   sendText,
   getPaneBusyStatus,
 } from "../widgets/lib/pane-comms.ts";
@@ -1073,6 +1075,61 @@ export function createApp(options: CreateAppOptions = {}): Hono {
   });
 
   // --- Remote command execution endpoints ---
+
+  app.post("/api/project/:name/inject", async (c) => {
+    const name = c.req.param("name");
+    const sessions = discoverSessions();
+    const session = sessions.find((s) => s.name === name);
+    if (!session) {
+      return c.json({ error: "Session not found" }, 404);
+    }
+
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: "Invalid JSON body" }, 400);
+    }
+
+    if (!body || typeof body !== "object" || Array.isArray(body)) {
+      return c.json({ error: "Invalid request body" }, 400);
+    }
+
+    const text = (body as { text?: unknown }).text;
+    const paneId = (body as { paneId?: unknown }).paneId;
+    const sendEnter = (body as { sendEnter?: unknown }).sendEnter;
+
+    if (typeof text !== "string" || text.trim().length === 0) {
+      return c.json({ error: "text must be a non-empty string" }, 400);
+    }
+    if (paneId !== undefined && (typeof paneId !== "string" || !/^%\d+$/.test(paneId))) {
+      return c.json({ error: "paneId must match /^%\\d+$/" }, 400);
+    }
+    if (sendEnter !== undefined && typeof sendEnter !== "boolean") {
+      return c.json({ error: "sendEnter must be a boolean" }, 400);
+    }
+
+    const panes = listSessionPanes(name);
+    const pane = paneId
+      ? panes.find((candidate) => candidate.id === paneId)
+      : panes.find((p) => p.active);
+    if (!pane) {
+      return c.json({ error: "Pane not found" }, 404);
+    }
+
+    sendLiteralToPane(name, pane.id, text);
+    if (sendEnter) sendEnterToPane(name, pane.id);
+
+    appendEvent(session.dir, {
+      timestamp: new Date().toISOString(),
+      type: "send",
+      target: pane.name ?? pane.title,
+      paneId: pane.id,
+      message: text.length > 100 ? text.slice(0, 100) + "..." : text,
+    });
+
+    return c.json({ ok: true });
+  });
 
   // Send message to a pane by name/title/role/ID
   app.post("/api/project/:name/send", zValidator("json", sendCommandSchema), async (c) => {

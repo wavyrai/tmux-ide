@@ -141,6 +141,14 @@ export function sendText(session: string, paneId: string, text: string): void {
   tmux("send-keys", "-t", paneId, "-l", "--", text);
 }
 
+export function sendLiteralToPane(session: string, paneId: string, text: string): void {
+  tmux("send-keys", "-t", `${session}:${paneId}`, "-l", "--", text);
+}
+
+export function sendEnterToPane(session: string, paneId: string): void {
+  tmux("send-keys", "-t", `${session}:${paneId}`, "Enter");
+}
+
 function sleepMs(ms: number): void {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }

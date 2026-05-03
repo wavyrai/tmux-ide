@@ -23,13 +23,16 @@ let tmpDir: string;
 let restoreTmux: () => void;
 let restoreDiscoveryTmux: () => void;
 let mockPanes: PaneInfo[];
+let tmuxCalls: string[][];
 
 beforeEach(() => {
   tmpDir = mkdtempSync(join(tmpdir(), "tmux-ide-cc-srv-test-"));
   ensureTasksDir(tmpDir);
   mockPanes = [];
+  tmuxCalls = [];
 
   restoreTmux = _setExecutor((_cmd: string, args: string[]) => {
+    tmuxCalls.push(args);
     if (args[0] === "list-panes") {
       return mockPanes
         .map(
@@ -45,6 +48,103 @@ beforeEach(() => {
     if (args[0] === "list-sessions") return "test-project";
     if (args[0] === "display-message") return tmpDir;
     return "";
+  });
+});
+
+describe("POST /api/project/:name/inject", () => {
+  it("injects text into the requested pane and sends Enter when requested", async () => {
+    mockPanes = [
+      makePane({ id: "%1", index: 0, title: "Shell", active: true }),
+      makePane({ id: "%2", index: 1, title: "Agent", active: false }),
+    ];
+
+    const app = createApp();
+    const res = await app.request("/api/project/test-project/inject", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text: "hello agent", paneId: "%2", sendEnter: true }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true });
+    expect(tmuxCalls).toContainEqual([
+      "list-panes",
+      "-t",
+      "test-project",
+      "-F",
+      expect.any(String),
+    ]);
+    expect(tmuxCalls).toContainEqual([
+      "send-keys",
+      "-t",
+      "test-project:%2",
+      "-l",
+      "--",
+      "hello agent",
+    ]);
+    expect(tmuxCalls).toContainEqual(["send-keys", "-t", "test-project:%2", "Enter"]);
+  });
+
+  it("targets the active pane when paneId is omitted", async () => {
+    mockPanes = [
+      makePane({ id: "%1", index: 0, title: "Shell", active: false }),
+      makePane({ id: "%2", index: 1, title: "Agent", active: true }),
+    ];
+
+    const app = createApp();
+    const res = await app.request("/api/project/test-project/inject", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text: "context only" }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(tmuxCalls).toContainEqual([
+      "send-keys",
+      "-t",
+      "test-project:%2",
+      "-l",
+      "--",
+      "context only",
+    ]);
+    expect(tmuxCalls).not.toContainEqual(["send-keys", "-t", "test-project:%2", "Enter"]);
+  });
+
+  it("returns 404 for unknown project or pane", async () => {
+    mockPanes = [makePane({ id: "%1", active: true })];
+    const app = createApp();
+
+    const missingProject = await app.request("/api/project/missing/inject", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text: "hello" }),
+    });
+    expect(missingProject.status).toBe(404);
+
+    const missingPane = await app.request("/api/project/test-project/inject", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text: "hello", paneId: "%9" }),
+    });
+    expect(missingPane.status).toBe(404);
+  });
+
+  it("returns 400 for invalid input", async () => {
+    const app = createApp();
+
+    const emptyText = await app.request("/api/project/test-project/inject", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text: "   " }),
+    });
+    expect(emptyText.status).toBe(400);
+
+    const invalidPane = await app.request("/api/project/test-project/inject", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text: "hello", paneId: "1" }),
+    });
+    expect(invalidPane.status).toBe(400);
   });
 });
 

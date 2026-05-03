@@ -1,5 +1,6 @@
 import { ActivityBar } from "@/components/ActivityBar";
 import { CommandPalette } from "@/components/CommandPalette";
+import { EventBridge } from "@/components/EventBridge";
 import { KeybindRoot } from "@/components/KeybindRoot";
 import { Sidebar } from "@/components/Sidebar";
 import { FullScreenTerminal } from "@/components/FullScreenTerminal";
@@ -13,6 +14,7 @@ export default function ShellLayout({ children }: { children: React.ReactNode })
   return (
     <div className="flex h-[calc(100vh-1.5rem)] min-h-0 flex-col">
       <WorkspaceUrlSync />
+      <EventBridge />
       <div className="flex min-h-0 flex-1">
         <ActivityBar />
         <Sidebar />
