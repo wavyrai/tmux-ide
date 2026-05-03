@@ -10,6 +10,8 @@ import { ProgressBar } from "@/components/ProgressBar";
 import {
   EmptyState,
   KpiCard,
+  Panel,
+  PanelBody,
   SectionHeader,
   SkeletonCard,
   SkeletonText,
@@ -186,8 +188,8 @@ export function MissionView({ sessionName }: MissionViewProps) {
 
   if (!snapshot) {
     return (
-      <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-[var(--bg)]">
-        <div className="flex-1 space-y-5 overflow-auto p-4">
+      <Panel>
+        <PanelBody className="space-y-5 p-4">
           <SkeletonCard />
           <div className="grid grid-cols-1 gap-2 md:grid-cols-5">
             {Array.from({ length: 5 }, (_, index) => (
@@ -195,17 +197,14 @@ export function MissionView({ sessionName }: MissionViewProps) {
             ))}
           </div>
           <SkeletonText lines={5} />
-        </div>
-      </div>
+        </PanelBody>
+      </Panel>
     );
   }
 
   if (!mission) {
     return (
-      <div
-        data-testid="mission-view"
-        className="flex min-h-0 flex-1 items-center justify-center bg-[var(--bg)] p-8 text-center"
-      >
+      <Panel testId="mission-view" className="items-center justify-center p-8 text-center">
         <SurfaceCard testId="mission-header" padded="md" className="max-w-md p-5">
           <EmptyState
             title="No active mission"
@@ -217,7 +216,7 @@ export function MissionView({ sessionName }: MissionViewProps) {
             }
           />
         </SurfaceCard>
-      </div>
+      </Panel>
     );
   }
 
@@ -230,11 +229,8 @@ export function MissionView({ sessionName }: MissionViewProps) {
   const validationPercent = percent(validation.passing, validation.total);
 
   return (
-    <div
-      data-testid="mission-view"
-      className="flex min-h-0 flex-1 flex-col overflow-hidden bg-[var(--bg)]"
-    >
-      <div className="flex-1 space-y-5 overflow-auto p-4">
+    <Panel testId="mission-view">
+      <PanelBody className="space-y-5 p-4">
         <section
           data-testid="mission-header"
           className="rounded-md border border-[var(--border-weak)] bg-[var(--bg-strong)] p-4"
@@ -376,7 +372,7 @@ export function MissionView({ sessionName }: MissionViewProps) {
             </div>
           </section>
         )}
-      </div>
-    </div>
+      </PanelBody>
+    </Panel>
   );
 }

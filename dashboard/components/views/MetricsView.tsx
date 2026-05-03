@@ -6,6 +6,8 @@ import { usePolling } from "@/lib/usePolling";
 import { ProgressBar } from "@/components/ProgressBar";
 import {
   KpiCard,
+  Panel,
+  PanelBody,
   SectionHeader,
   SkeletonCard,
   StatusPill,
@@ -42,19 +44,16 @@ export function MetricsView({ sessionName }: MetricsViewProps) {
 
   if (!metrics) {
     return (
-      <div
-        data-testid="metrics-view"
-        className="flex min-h-0 flex-1 flex-col overflow-hidden bg-[var(--bg)]"
-      >
-        <div className="flex-1 space-y-5 overflow-auto p-4">
+      <Panel testId="metrics-view">
+        <PanelBody className="space-y-5 p-4">
           <div className="grid min-w-0 grid-cols-2 gap-2 md:grid-cols-4">
             <SkeletonCard />
             <SkeletonCard />
             <SkeletonCard />
             <SkeletonCard />
           </div>
-        </div>
-      </div>
+        </PanelBody>
+      </Panel>
     );
   }
 
@@ -64,11 +63,8 @@ export function MetricsView({ sessionName }: MetricsViewProps) {
       : 0;
 
   return (
-    <div
-      data-testid="metrics-view"
-      className="flex flex-1 min-h-0 flex-col bg-[var(--bg)] overflow-hidden"
-    >
-      <div className="min-w-0 flex-1 space-y-5 overflow-auto p-4">
+    <Panel testId="metrics-view">
+      <PanelBody className="min-w-0 space-y-5 p-4">
         <div className="grid min-w-0 grid-cols-2 gap-2 md:grid-cols-4">
           <KpiCard label="session duration" value={fmtDuration(metrics.session.durationMs)} />
           <KpiCard
@@ -242,7 +238,7 @@ export function MetricsView({ sessionName }: MetricsViewProps) {
             </div>
           </div>
         )}
-      </div>
-    </div>
+      </PanelBody>
+    </Panel>
   );
 }

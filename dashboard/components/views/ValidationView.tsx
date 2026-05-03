@@ -7,6 +7,8 @@ import { usePolling } from "@/lib/usePolling";
 import {
   EmptyState,
   KpiCard,
+  Panel,
+  PanelBody,
   SectionHeader,
   SkeletonCard,
   SkeletonText,
@@ -96,22 +98,22 @@ export function ValidationView({ sessionName }: ValidationViewProps) {
 
   if (!validation && loading) {
     return (
-      <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-[var(--bg)]">
-        <div className="flex-1 space-y-5 overflow-auto p-4">
+      <Panel>
+        <PanelBody className="space-y-5 p-4">
           <div className="grid grid-cols-1 gap-2 md:grid-cols-5">
             {Array.from({ length: 5 }, (_, index) => (
               <SkeletonCard key={index} />
             ))}
           </div>
           <SkeletonText lines={6} />
-        </div>
-      </div>
+        </PanelBody>
+      </Panel>
     );
   }
 
   if (!validation) {
     return (
-      <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-[var(--bg)]">
+      <Panel>
         <EmptyState
           title="No validation contract found"
           body={
@@ -125,13 +127,13 @@ export function ValidationView({ sessionName }: ValidationViewProps) {
           }
           className="flex-1"
         />
-      </div>
+      </Panel>
     );
   }
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-[var(--bg)]">
-      <div className="flex-1 space-y-5 overflow-auto p-4">
+    <Panel>
+      <PanelBody className="space-y-5 p-4">
         <section className="space-y-2">
           <div className="grid grid-cols-1 gap-2 md:grid-cols-5">
             <KpiCard
@@ -281,7 +283,7 @@ export function ValidationView({ sessionName }: ValidationViewProps) {
             </div>
           </section>
         )}
-      </div>
-    </div>
+      </PanelBody>
+    </Panel>
   );
 }

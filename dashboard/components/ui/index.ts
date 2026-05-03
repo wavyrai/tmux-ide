@@ -11,6 +11,7 @@ export {
   DialogTrigger,
 } from "./dialog";
 export { KpiCard } from "./KpiCard";
+export { Panel, PanelBody, PanelHeader } from "./panel";
 export { SectionHeader } from "./SectionHeader";
 export { Separator } from "./separator";
 export { Skeleton, SkeletonCard, SkeletonText } from "./Skeleton";

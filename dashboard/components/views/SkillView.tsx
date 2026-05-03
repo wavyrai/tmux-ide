@@ -5,7 +5,14 @@ import ReactMarkdown from "react-markdown";
 import { fetchSkill, injectIntoProject, type SkillData } from "@/lib/api";
 import { usePolling } from "@/lib/usePolling";
 import { useToasts } from "@/lib/useToasts";
-import { EmptyState, SkeletonText, StatusPill, SurfaceCard } from "@/components/ui";
+import {
+  EmptyState,
+  Panel,
+  PanelBody,
+  SkeletonText,
+  StatusPill,
+  SurfaceCard,
+} from "@/components/ui";
 
 interface SkillViewProps {
   sessionName: string;
@@ -32,35 +39,35 @@ export function SkillView({ sessionName, skillName }: SkillViewProps) {
 
   if (!skill && loading) {
     return (
-      <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-[var(--bg)]">
-        <div className="flex-1 space-y-5 overflow-auto p-4">
+      <Panel>
+        <PanelBody className="space-y-5 p-4">
           <SurfaceCard>
             <SkeletonText lines={4} />
           </SurfaceCard>
           <SurfaceCard>
             <SkeletonText lines={8} />
           </SurfaceCard>
-        </div>
-      </div>
+        </PanelBody>
+      </Panel>
     );
   }
 
   if (!skill) {
     return (
-      <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-[var(--bg)]">
-        <div className="flex-1 space-y-5 overflow-auto p-4">
+      <Panel>
+        <PanelBody className="space-y-5 p-4">
           <EmptyState
             title="Skill not found"
             body={`Looking for ${skillName} in ${sessionName}.`}
           />
-        </div>
-      </div>
+        </PanelBody>
+      </Panel>
     );
   }
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-[var(--bg)]">
-      <div className="flex-1 space-y-5 overflow-auto p-4">
+    <Panel>
+      <PanelBody className="space-y-5 p-4">
         <SurfaceCard testId="skill-header">
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0 flex-1">
@@ -100,7 +107,7 @@ export function SkillView({ sessionName, skillName }: SkillViewProps) {
         <SurfaceCard testId="skill-body" className="plan-content">
           <ReactMarkdown>{skill.body || "_(empty skill)_"}</ReactMarkdown>
         </SurfaceCard>
-      </div>
-    </div>
+      </PanelBody>
+    </Panel>
   );
 }

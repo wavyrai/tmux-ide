@@ -2,6 +2,7 @@
 
 import { useSessionStream } from "@/lib/useSessionStream";
 import { KanbanBoard } from "@/components/KanbanBoard";
+import { Panel } from "@/components/ui";
 
 interface KanbanViewProps {
   sessionName: string;
@@ -13,14 +14,12 @@ export function KanbanView({ sessionName }: KanbanViewProps) {
 
   if (!project) {
     return (
-      <div className="flex flex-1 min-h-0 flex-col items-center justify-center bg-[var(--bg)] text-[var(--dim)] overflow-hidden">
-        loading...
-      </div>
+      <Panel className="items-center justify-center text-[var(--dim)]">loading...</Panel>
     );
   }
 
   return (
-    <div className="flex flex-1 min-h-0 flex-col bg-[var(--bg)] overflow-hidden">
+    <Panel>
       <KanbanBoard
         tasks={project.tasks}
         sessionName={project.session}
@@ -29,6 +28,6 @@ export function KanbanView({ sessionName }: KanbanViewProps) {
         events={snapshot?.events ?? []}
         onRefresh={() => undefined}
       />
-    </div>
+    </Panel>
   );
 }

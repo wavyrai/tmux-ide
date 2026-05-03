@@ -23,6 +23,8 @@ import { AuthorshipBar } from "@/components/AuthorshipBar";
 import { MarkdownEditor } from "@/components/MarkdownEditor";
 import {
   EmptyState,
+  Panel,
+  PanelBody,
   SectionHeader,
   SkeletonText,
   StatusPill,
@@ -589,23 +591,23 @@ export function PlansView({ sessionName }: PlansViewProps) {
 
   if (loading && !plans) {
     return (
-      <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-[var(--bg)]">
-        <div className="flex-1 space-y-5 overflow-auto p-4">
+      <Panel>
+        <PanelBody className="space-y-5 p-4">
           <SurfaceCard>
             <SkeletonText lines={6} />
           </SurfaceCard>
           <SurfaceCard>
             <SkeletonText lines={10} />
           </SurfaceCard>
-        </div>
-      </div>
+        </PanelBody>
+      </Panel>
     );
   }
 
   if (!plans || plans.length === 0) {
     return (
-      <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-[var(--bg)]">
-        <div className="flex-1 space-y-5 overflow-auto p-4">
+      <Panel>
+        <PanelBody className="space-y-5 p-4">
           <EmptyState
             title="No plan files found in plans/"
             action={
@@ -618,16 +620,13 @@ export function PlansView({ sessionName }: PlansViewProps) {
               </button>
             }
           />
-        </div>
-      </div>
+        </PanelBody>
+      </Panel>
     );
   }
 
   return (
-    <div
-      data-testid="plans-view"
-      className="flex min-h-0 flex-1 flex-col overflow-hidden bg-[var(--bg)]"
-    >
+    <Panel testId="plans-view">
       <div className="flex min-h-0 flex-1">
         <aside
           className={`${mobileDetailOpen ? "hidden" : "flex"} w-full shrink-0 flex-col border-r border-[var(--border)] bg-[var(--bg-weak)] md:flex md:w-[280px]`}
@@ -751,7 +750,7 @@ export function PlansView({ sessionName }: PlansViewProps) {
         </aside>
 
         <main
-          className={`${mobileDetailOpen ? "flex" : "hidden"} min-w-0 flex-1 flex-col md:flex md:flex-row`}
+          className={`${mobileDetailOpen ? "flex" : "hidden"} min-h-0 min-w-0 flex-1 flex-col md:flex md:flex-row`}
         >
           <div className="flex h-9 shrink-0 items-center border-b border-[var(--border)] bg-[var(--bg-weak)] px-2 md:hidden">
             <button
@@ -763,7 +762,7 @@ export function PlansView({ sessionName }: PlansViewProps) {
               ‹ plans
             </button>
           </div>
-          <section ref={scrollRef} className="min-w-0 flex-1 overflow-y-auto">
+          <section ref={scrollRef} className="min-h-0 min-w-0 flex-1 overflow-y-auto">
             {loadingPlan ? (
               <div className="mx-auto max-w-4xl space-y-5 px-6 py-5">
                 <SurfaceCard>
@@ -929,6 +928,6 @@ export function PlansView({ sessionName }: PlansViewProps) {
           </aside>
         </main>
       </div>
-    </div>
+    </Panel>
   );
 }

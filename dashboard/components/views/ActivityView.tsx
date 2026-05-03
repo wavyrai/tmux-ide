@@ -6,6 +6,8 @@ import { useSessionStream } from "@/lib/useSessionStream";
 import {
   EmptyState,
   KpiCard,
+  Panel,
+  PanelBody,
   SectionHeader,
   StatusPill,
   type StatusPillVariant,
@@ -174,11 +176,13 @@ export function ActivityView({ sessionName }: ActivityViewProps) {
   }
 
   return (
-    <div
-      data-testid="activity-view"
-      className="flex min-h-0 flex-1 flex-col overflow-hidden bg-[var(--bg)]"
-    >
-      <div ref={scrollRef} onScroll={handleScroll} className="flex-1 space-y-5 overflow-auto p-4">
+    <Panel testId="activity-view">
+      <PanelBody scrollable={false}>
+        <div
+          ref={scrollRef}
+          onScroll={handleScroll}
+          className="flex-1 space-y-5 overflow-auto p-4"
+        >
         <div className="grid grid-cols-1 gap-2 md:grid-cols-2 lg:grid-cols-5">
           <KpiCard
             label="total events"
@@ -350,7 +354,8 @@ export function ActivityView({ sessionName }: ActivityViewProps) {
             ))}
           </div>
         )}
-      </div>
-    </div>
+        </div>
+      </PanelBody>
+    </Panel>
   );
 }

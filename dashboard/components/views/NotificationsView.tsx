@@ -6,7 +6,14 @@ import {
   type NotificationItem,
   type NotificationKind,
 } from "@/lib/useNotifications";
-import { EmptyState, SectionHeader, StatusPill, SurfaceCard } from "@/components/ui";
+import {
+  EmptyState,
+  Panel,
+  PanelBody,
+  SectionHeader,
+  StatusPill,
+  SurfaceCard,
+} from "@/components/ui";
 
 type Filter = "all" | "unread" | NotificationKind;
 
@@ -43,11 +50,8 @@ export function NotificationsView() {
   );
 
   return (
-    <div
-      data-testid="notifications-view"
-      className="flex min-h-0 flex-1 flex-col overflow-hidden bg-[var(--bg)]"
-    >
-      <div className="flex-1 space-y-5 overflow-auto p-4">
+    <Panel testId="notifications-view">
+      <PanelBody className="space-y-5 p-4">
         <SectionHeader
           label="Notifications"
           rightSlot={
@@ -129,7 +133,7 @@ export function NotificationsView() {
             ))}
           </SurfaceCard>
         )}
-      </div>
-    </div>
+      </PanelBody>
+    </Panel>
   );
 }

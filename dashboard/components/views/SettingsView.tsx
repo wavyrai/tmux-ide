@@ -5,7 +5,7 @@ import { useTheme } from "next-themes";
 import { useActions } from "@/lib/actions";
 import { playSound, type SoundKind } from "@/lib/sounds";
 import { type ThemeId, useSettings } from "@/lib/useSettings";
-import { SectionHeader, SurfaceCard } from "@/components/ui";
+import { Panel, SectionHeader, SurfaceCard } from "@/components/ui";
 
 type SectionId = "general" | "appearance" | "keybinds" | "terminal" | "sounds" | "about";
 
@@ -138,10 +138,7 @@ export function SettingsView() {
   }
 
   return (
-    <div
-      data-testid="settings-view"
-      className="flex min-h-0 flex-1 flex-col overflow-hidden bg-[var(--bg)]"
-    >
+    <Panel testId="settings-view">
       <div className="flex min-h-0 flex-1">
         <nav className="w-52 shrink-0 border-r border-[var(--border-weak)] bg-[var(--bg-strong)] p-2">
           {sections.map((section) => (
@@ -419,6 +416,6 @@ export function SettingsView() {
           )}
         </main>
       </div>
-    </div>
+    </Panel>
   );
 }
