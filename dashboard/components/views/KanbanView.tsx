@@ -26,6 +26,7 @@ export function KanbanView({ sessionName }: KanbanViewProps) {
         sessionName={project.session}
         agents={project.agents}
         goals={project.goals}
+        events={snapshot?.events ?? []}
         onRefresh={() => undefined}
       />
     </div>

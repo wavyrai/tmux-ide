@@ -155,7 +155,7 @@ export function FullScreenTerminal() {
       aria-hidden={!terminalOpen}
       aria-label="Full-screen terminal"
     >
-      <div className="hidden sm:block">
+      <div>
         <ContextBar />
       </div>
       <div className="flex h-8 shrink-0 items-stretch border-b border-[var(--border-weak)] bg-[var(--surface)]">

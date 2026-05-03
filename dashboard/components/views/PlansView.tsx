@@ -4,10 +4,12 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import Markdown from "react-markdown";
 import { useTheme } from "next-themes";
 import {
+  createPlan,
   fetchPlan,
   fetchPlans,
   fetchProject,
   markPlanDone,
+  savePlanContent,
   updatePlanStatus,
   type PlanData,
   type PlanStatus,
@@ -18,6 +20,7 @@ import { Persist } from "@/lib/persist";
 import { usePolling } from "@/lib/usePolling";
 import { useToasts } from "@/lib/useToasts";
 import { AuthorshipBar } from "@/components/AuthorshipBar";
+import { MarkdownEditor } from "@/components/MarkdownEditor";
 import {
   diffStats,
   parsePlanDocument,
@@ -41,10 +44,16 @@ const PLAN_RAIL_STATUSES: PlanStatus[] = ["in-progress", "pending", "done", "arc
 const highlightCache = new Map<string, string>();
 type PlanSort = "recent" | "status" | "title" | "owner";
 type PlanRailCollapseState = Record<string, Partial<Record<PlanStatus, boolean>>>;
+type PlanEditingState = Record<string, boolean>;
 const planRailPersist = Persist.global<PlanRailCollapseState>("tmux-ide.plans.rail", ["v1"], {});
+const planEditingPersist = Persist.global<PlanEditingState>("tmux-ide.plans.editing", ["v1"], {});
 
 function activePlanKey(project: string): string {
   return `tmux-ide.plans.active.${project}`;
+}
+
+function planEditingKey(project: string, filename: string): string {
+  return `${project}:${filename}`;
 }
 
 function formatRelativeTime(value: string | number | null | undefined): string {
@@ -61,6 +70,15 @@ function formatRelativeTime(value: string | number | null | undefined): string {
 
 function planFilename(plan: PlanSummary): string {
   return plan.path || `${plan.name}.md`;
+}
+
+function slugifyPlanTitle(title: string): string {
+  const slug = title
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 48);
+  return slug || "new-plan";
 }
 
 function statusPill(status: PlanStatus): string {
@@ -282,8 +300,18 @@ export function PlansView({ sessionName }: PlansViewProps) {
   const [planSort, setPlanSort] = useState<PlanSort>("recent");
   const [mobileDetailOpen, setMobileDetailOpen] = useState(false);
   const [collapsedGroups, setCollapsedGroups] = useState<Partial<Record<PlanStatus, boolean>>>({});
+  const [editing, setEditing] = useState(false);
+  const [editContent, setEditContent] = useState("");
+  const [saveState, setSaveState] = useState<"idle" | "dirty" | "saving" | "saved" | "error">(
+    "idle",
+  );
+  const [reloadPlan, setReloadPlan] = useState<PlanData | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const loadedFileRef = useRef<string | null>(null);
+  const loadedMtimeRef = useRef<number | null>(null);
+  const savedContentRef = useRef("");
+  const editingRef = useRef(false);
+  const dirtyRef = useRef(false);
 
   const selectedPlan = useMemo(
     () => plans?.find((plan) => planFilename(plan) === selectedFile) ?? null,
@@ -293,6 +321,7 @@ export function PlansView({ sessionName }: PlansViewProps) {
   const status = parsed.frontmatter.status ?? selectedPlan?.status ?? "pending";
   const title = parsed.frontmatter.title ?? selectedPlan?.title ?? selectedPlan?.name ?? "Plan";
   const selectedUpdated = selectedPlan?.updated ?? selectedPlan?.completed ?? null;
+  const dirty = editContent !== savedContentRef.current;
   const visiblePlans = useMemo(() => {
     const query = planQuery.trim().toLowerCase();
     const filtered = (plans ?? []).filter((plan) => {
@@ -334,12 +363,30 @@ export function PlansView({ sessionName }: PlansViewProps) {
         ? null
         : window.localStorage.getItem(activePlanKey(sessionName));
     const next = plans.find((plan) => planFilename(plan) === stored) ?? plans[0];
-    if (next) setSelectedFile(planFilename(next));
+    if (next) {
+      setSelectedFile(planFilename(next));
+      setMobileDetailOpen(true);
+    }
   }, [plans, selectedFile, sessionName]);
 
   useEffect(() => {
     if (!selectedFile || typeof window === "undefined") return;
     window.localStorage.setItem(activePlanKey(sessionName), selectedFile);
+  }, [selectedFile, sessionName]);
+
+  useEffect(() => {
+    editingRef.current = editing;
+  }, [editing]);
+
+  useEffect(() => {
+    dirtyRef.current = dirty;
+    if (editing && dirty) setSaveState("dirty");
+  }, [dirty, editing]);
+
+  useEffect(() => {
+    if (!selectedFile) return;
+    const stored = planEditingPersist.read();
+    setEditing(Boolean(stored[planEditingKey(sessionName, selectedFile)]));
   }, [selectedFile, sessionName]);
 
   useEffect(() => {
@@ -362,8 +409,23 @@ export function PlansView({ sessionName }: PlansViewProps) {
     fetchPlan(sessionName, selectedFile)
       .then((data) => {
         if (!active) return;
+        const nextMtime = data.mtime ?? null;
+        const externalChange =
+          !isInitialLoad &&
+          nextMtime !== null &&
+          loadedMtimeRef.current !== null &&
+          nextMtime !== loadedMtimeRef.current;
+        if (externalChange && editingRef.current && dirtyRef.current) {
+          setReloadPlan(data);
+          return;
+        }
         loadedFileRef.current = selectedFile;
         setPlanData(data);
+        setEditContent(data.content);
+        savedContentRef.current = data.content;
+        loadedMtimeRef.current = nextMtime;
+        setReloadPlan(null);
+        setSaveState("idle");
         if (!isInitialLoad) {
           requestAnimationFrame(() => {
             if (scrollRef.current) scrollRef.current.scrollTop = previousScrollTop;
@@ -377,6 +439,42 @@ export function PlansView({ sessionName }: PlansViewProps) {
       active = false;
     };
   }, [selectedFile, selectedUpdated, sessionName]);
+
+  useEffect(() => {
+    if (!selectedFile || !editing || !dirty) return;
+    setSaveState("dirty");
+    const timer = setTimeout(() => {
+      setSaveState("saving");
+      savePlanContent(sessionName, selectedFile, editContent)
+        .then((result) => {
+          if (!result.ok) {
+            setSaveState("error");
+            push({
+              kind: "error",
+              title: "Failed to save plan",
+              body: selectedFile,
+              scope: { project: sessionName },
+            });
+            return;
+          }
+          savedContentRef.current = editContent;
+          loadedMtimeRef.current = result.mtime ?? loadedMtimeRef.current;
+          setPlanData((current) => ({ ...current, content: editContent, mtime: result.mtime }));
+          setSaveState("saved");
+          refresh();
+        })
+        .catch(() => {
+          setSaveState("error");
+          push({
+            kind: "error",
+            title: "Failed to save plan",
+            body: selectedFile,
+            scope: { project: sessionName },
+          });
+        });
+    }, 800);
+    return () => clearTimeout(timer);
+  }, [dirty, editContent, editing, push, refresh, selectedFile, sessionName]);
 
   useEffect(() => {
     setCollapsedGroups(planRailPersist.read()[sessionName] ?? {});
@@ -426,8 +524,45 @@ export function PlansView({ sessionName }: PlansViewProps) {
     });
   }
 
-  function createPlanStub() {
-    push({ kind: "info", title: "Coming soon", durationMs: 1600 });
+  function setPlanEditing(filename: string, value: boolean) {
+    const stored = planEditingPersist.read();
+    planEditingPersist.write({ ...stored, [planEditingKey(sessionName, filename)]: value });
+    setEditing(value);
+  }
+
+  function reloadFromDisk() {
+    if (!reloadPlan) return;
+    setPlanData(reloadPlan);
+    setEditContent(reloadPlan.content);
+    savedContentRef.current = reloadPlan.content;
+    loadedMtimeRef.current = reloadPlan.mtime ?? loadedMtimeRef.current;
+    setReloadPlan(null);
+    setSaveState("idle");
+  }
+
+  async function createPlanStub() {
+    const title = "New Plan";
+    const filename = `${Date.now()}-${slugifyPlanTitle(title)}.md`;
+    const content = `---\ntitle: ${title}\nstatus: pending\n---\n# ${title}\n\n`;
+    const result = await createPlan(sessionName, filename, content);
+    if (!result.ok) {
+      push({
+        kind: "error",
+        title: "Failed to create plan",
+        body: filename,
+        scope: { project: sessionName },
+      });
+      return;
+    }
+    setSelectedFile(filename);
+    setMobileDetailOpen(true);
+    setPlanEditing(filename, true);
+    setPlanData({ content, authorship: null, mtime: result.mtime ?? null });
+    setEditContent(content);
+    savedContentRef.current = content;
+    loadedMtimeRef.current = result.mtime ?? null;
+    setSaveState("saved");
+    refresh();
   }
 
   function openTaskView() {
@@ -447,8 +582,15 @@ export function PlansView({ sessionName }: PlansViewProps) {
 
   if (!plans || plans.length === 0) {
     return (
-      <div className="flex flex-1 items-center justify-center text-[var(--dim)]">
-        No plan files found in plans/
+      <div className="flex flex-1 flex-col items-center justify-center gap-3 text-[var(--dim)]">
+        <div>No plan files found in plans/</div>
+        <button
+          type="button"
+          onClick={() => void createPlanStub()}
+          className="h-8 rounded-sm border border-[var(--border)] bg-[var(--bg-strong)] px-3 text-[11px] text-[var(--fg-secondary)] hover:border-[var(--accent)] hover:text-[var(--accent)]"
+        >
+          New plan
+        </button>
       </div>
     );
   }
@@ -572,7 +714,7 @@ export function PlansView({ sessionName }: PlansViewProps) {
         <div className="border-t border-[var(--border)] p-3">
           <button
             type="button"
-            onClick={createPlanStub}
+            onClick={() => void createPlanStub()}
             className="h-8 w-full rounded-sm border border-[var(--border)] bg-[var(--bg-strong)] text-[11px] text-[var(--fg-secondary)] hover:border-[var(--accent)] hover:text-[var(--accent)]"
           >
             New plan
@@ -628,62 +770,115 @@ export function PlansView({ sessionName }: PlansViewProps) {
                   >
                     {statusPill(status)}
                   </button>
+                  <div className="flex shrink-0 items-center gap-2">
+                    {editing && (
+                      <span
+                        data-testid="plan-save-state"
+                        className="text-[10px] text-[var(--dimmer)]"
+                      >
+                        {saveState === "dirty"
+                          ? "unsaved"
+                          : saveState === "saving"
+                            ? "saving..."
+                            : saveState === "saved"
+                              ? "saved"
+                              : saveState === "error"
+                                ? "save failed"
+                                : ""}
+                      </span>
+                    )}
+                    <button
+                      type="button"
+                      data-testid="plan-edit-toggle"
+                      onClick={() => selectedFile && setPlanEditing(selectedFile, !editing)}
+                      className={`border px-2 py-1 text-[11px] transition-colors ${
+                        editing
+                          ? "border-[var(--accent)] text-[var(--accent)]"
+                          : "border-[var(--border)] text-[var(--dim)] hover:border-[var(--accent)] hover:text-[var(--fg)]"
+                      }`}
+                    >
+                      {editing ? "View" : "Edit"}
+                    </button>
+                  </div>
                 </div>
               </header>
 
-              <div className="plan-content">
-                <Markdown
-                  components={{
-                    h1: ({ children }) => {
-                      const text = String(children);
-                      const item = parsed.toc.find(
-                        (entry) => entry.text === text && entry.level === 1,
-                      );
-                      return <h1 id={item?.id}>{children}</h1>;
-                    },
-                    h2: ({ children }) => {
-                      const text = String(children);
-                      const matching = parsed.toc.filter(
-                        (entry) => entry.text === text && entry.level === 2,
-                      );
-                      return <h2 id={matching[0]?.id}>{children}</h2>;
-                    },
-                    h3: ({ children }) => {
-                      const text = String(children);
-                      const matching = parsed.toc.filter(
-                        (entry) => entry.text === text && entry.level === 3,
-                      );
-                      return <h3 id={matching[0]?.id}>{children}</h3>;
-                    },
-                    p: ({ children }) => (
-                      <p>
-                        {Array.isArray(children)
-                          ? children.map((child) =>
-                              renderInlineTasks(child, tasksById, openTaskView),
-                            )
-                          : renderInlineTasks(children, tasksById, openTaskView)}
-                      </p>
-                    ),
-                    li: ({ children }) => (
-                      <li>
-                        {Array.isArray(children)
-                          ? children.map((child) =>
-                              renderInlineTasks(child, tasksById, openTaskView),
-                            )
-                          : renderInlineTasks(children, tasksById, openTaskView)}
-                      </li>
-                    ),
-                    code: ({ className, children }) => {
-                      const code = String(children).replace(/\n$/, "");
-                      const match = /language-(\w+)/.exec(className ?? "");
-                      if (!match) return <code>{children}</code>;
-                      return <CodeBlock language={match[1] ?? "text"} code={code} />;
-                    },
-                  }}
-                >
-                  {parsed.content}
-                </Markdown>
-              </div>
+              {editing ? (
+                <div className="flex min-h-[520px] flex-col overflow-hidden rounded-md border border-[var(--border)] bg-[var(--bg-strong)]">
+                  {reloadPlan && (
+                    <div className="flex h-8 shrink-0 items-center justify-between border-b border-[var(--border)] px-3 text-[11px]">
+                      <span className="text-[var(--yellow)]">Plan changed on disk</span>
+                      <button
+                        type="button"
+                        onClick={reloadFromDisk}
+                        className="rounded-sm border border-[var(--border)] px-2 py-0.5 text-[var(--fg-secondary)] hover:border-[var(--accent)] hover:text-[var(--accent)]"
+                      >
+                        Reload from disk?
+                      </button>
+                    </div>
+                  )}
+                  <MarkdownEditor
+                    key={selectedFile}
+                    value={editContent}
+                    onChange={setEditContent}
+                    onSave={(value) => setEditContent(value)}
+                  />
+                </div>
+              ) : (
+                <div className="plan-content">
+                  <Markdown
+                    components={{
+                      h1: ({ children }) => {
+                        const text = String(children);
+                        const item = parsed.toc.find(
+                          (entry) => entry.text === text && entry.level === 1,
+                        );
+                        return <h1 id={item?.id}>{children}</h1>;
+                      },
+                      h2: ({ children }) => {
+                        const text = String(children);
+                        const matching = parsed.toc.filter(
+                          (entry) => entry.text === text && entry.level === 2,
+                        );
+                        return <h2 id={matching[0]?.id}>{children}</h2>;
+                      },
+                      h3: ({ children }) => {
+                        const text = String(children);
+                        const matching = parsed.toc.filter(
+                          (entry) => entry.text === text && entry.level === 3,
+                        );
+                        return <h3 id={matching[0]?.id}>{children}</h3>;
+                      },
+                      p: ({ children }) => (
+                        <p>
+                          {Array.isArray(children)
+                            ? children.map((child) =>
+                                renderInlineTasks(child, tasksById, openTaskView),
+                              )
+                            : renderInlineTasks(children, tasksById, openTaskView)}
+                        </p>
+                      ),
+                      li: ({ children }) => (
+                        <li>
+                          {Array.isArray(children)
+                            ? children.map((child) =>
+                                renderInlineTasks(child, tasksById, openTaskView),
+                              )
+                            : renderInlineTasks(children, tasksById, openTaskView)}
+                        </li>
+                      ),
+                      code: ({ className, children }) => {
+                        const code = String(children).replace(/\n$/, "");
+                        const match = /language-(\w+)/.exec(className ?? "");
+                        if (!match) return <code>{children}</code>;
+                        return <CodeBlock language={match[1] ?? "text"} code={code} />;
+                      },
+                    }}
+                  >
+                    {parsed.content}
+                  </Markdown>
+                </div>
+              )}
 
               <div className="mt-8 border-t border-[var(--border)] pt-3">
                 <AuthorshipBar authorship={planData.authorship} />

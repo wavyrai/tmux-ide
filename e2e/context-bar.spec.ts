@@ -1,8 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 
 const PROJECT = "X";
-const MOD_KEY = process.platform === "darwin" ? "Meta" : "Control";
-
 const mission = {
   mission: {
     title: "Ship context injection",
@@ -96,12 +94,13 @@ async function mockPty(page: Page) {
 
 test.describe("context bar", () => {
   test("injects mission and recap prompts into the active project", async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 720 });
     const injected: Array<Record<string, unknown>> = [];
     await mockApi(page, injected);
     await mockPty(page);
 
     await page.goto(`/project/${encodeURIComponent(PROJECT)}`);
-    await page.keyboard.press(`${MOD_KEY}+KeyJ`);
+    await page.getByTestId("terminal-toggle").click();
 
     await expect(page.getByTestId("context-bar")).toBeVisible({ timeout: 15_000 });
     await page.getByTestId("context-bar-button-mission").click();

@@ -1,5 +1,5 @@
 import { describe, it, beforeEach, afterEach, expect } from "bun:test";
-import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { agentIdentifier } from "../lib/orchestrator.ts";
@@ -439,6 +439,28 @@ describe("GET /api/project/:name/plans/:filename", () => {
     const app = createApp();
     const res = await app.request("/api/project/test-project/plans/nonexistent");
     expect(res.status).toBe(404);
+  });
+});
+
+describe("POST /api/project/:name/plans/:filename/content", () => {
+  it("atomically writes plan content and returns mtime", async () => {
+    const plansDir = join(tmpDir, "plans");
+    mkdirSync(plansDir, { recursive: true });
+    const planPath = join(plansDir, "001-plan.md");
+    writeFileSync(planPath, "# Before\n");
+
+    const app = createApp();
+    const res = await app.request("/api/project/test-project/plans/001-plan.md/content", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content: "# After\n\nSaved." }),
+    });
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { ok: boolean; mtime: number };
+    expect(body.ok).toBe(true);
+    expect(typeof body.mtime).toBe("number");
+    expect(readFileSync(planPath, "utf-8")).toBe("# After\n\nSaved.");
   });
 });
 

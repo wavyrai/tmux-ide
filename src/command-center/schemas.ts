@@ -17,7 +17,11 @@ export const createTaskSchema = z.object({
 });
 
 export const savePlanSchema = z.object({
-  content: z.string(),
+  content: z.string().max(1_000_000, "Plan content is too large"),
+});
+
+export const savePlanContentSchema = z.object({
+  content: z.string().max(1_000_000, "Plan content is too large"),
 });
 
 export const sendCommandSchema = z.object({

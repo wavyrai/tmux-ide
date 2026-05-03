@@ -507,6 +507,42 @@ export async function savePlan(name: string, filename: string, content: string):
   return res.ok;
 }
 
+export async function createPlan(
+  name: string,
+  filename: string,
+  content: string,
+): Promise<{ ok: boolean; mtime?: number | null }> {
+  const res = await fetch(
+    `${API_BASE}/api/project/${encodeURIComponent(name)}/plans/${encodeURIComponent(filename)}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content }),
+    },
+  );
+  if (!res.ok) return { ok: false };
+  const data = (await res.json()) as { ok: boolean; mtime?: number | null };
+  return data;
+}
+
+export async function savePlanContent(
+  name: string,
+  filename: string,
+  content: string,
+): Promise<{ ok: boolean; mtime?: number | null }> {
+  const res = await fetch(
+    `${API_BASE}/api/project/${encodeURIComponent(name)}/plans/${encodeURIComponent(filename)}/content`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content }),
+    },
+  );
+  if (!res.ok) return { ok: false };
+  const data = (await res.json()) as { ok: boolean; mtime?: number | null };
+  return data;
+}
+
 export async function deletePlan(name: string, filename: string): Promise<boolean> {
   const res = await fetch(
     `${API_BASE}/api/project/${encodeURIComponent(name)}/plans/${encodeURIComponent(filename)}`,

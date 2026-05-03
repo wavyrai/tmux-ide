@@ -87,8 +87,23 @@ function MilkdownEditor({ value, onChange, onSave }: MarkdownEditorProps) {
     return () => window.removeEventListener("keydown", onKey);
   }, [loading, getInstance]);
 
+  useEffect(() => {
+    const root = containerRef.current;
+    if (!root) return;
+    function onSetMarkdown(event: Event) {
+      const value = (event as CustomEvent<string>).detail;
+      if (typeof value === "string") onChangeRef.current(value);
+    }
+    root.addEventListener("tmux-ide:set-markdown", onSetMarkdown);
+    return () => root.removeEventListener("tmux-ide:set-markdown", onSetMarkdown);
+  }, []);
+
   return (
-    <div ref={containerRef} className="milkdown-wrap flex-1 min-h-0 overflow-auto">
+    <div
+      ref={containerRef}
+      data-testid="markdown-editor"
+      className="milkdown-wrap flex-1 min-h-0 overflow-auto"
+    >
       <Milkdown />
     </div>
   );

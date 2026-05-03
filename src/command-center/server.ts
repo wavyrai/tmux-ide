@@ -1,6 +1,14 @@
 import { execFileSync, execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { existsSync, readFileSync, writeFileSync, mkdirSync, unlinkSync, statSync } from "node:fs";
+import {
+  existsSync,
+  readFileSync,
+  writeFileSync,
+  mkdirSync,
+  unlinkSync,
+  statSync,
+  renameSync,
+} from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Hono } from "hono";
@@ -72,6 +80,7 @@ import {
   updateTaskSchema,
   createTaskSchema,
   savePlanSchema,
+  savePlanContentSchema,
   sendCommandSchema,
   createMilestoneSchema,
   updateMilestoneSchema,
@@ -130,6 +139,34 @@ function freezePayload<T>(payload: T): T {
 function isPathInside(path: string | null | undefined, root: string): boolean {
   if (!path) return false;
   return path === root || path.startsWith(root + "/");
+}
+
+function safePlanName(filename: string): string {
+  return filename.replace(/[^a-zA-Z0-9_\-. ]/g, "");
+}
+
+function planFilePath(projectDir: string, filename: string): string {
+  const safeName = safePlanName(filename);
+  return join(projectDir, "plans", safeName.endsWith(".md") ? safeName : `${safeName}.md`);
+}
+
+function writePlanAtomic(filePath: string, content: string): number {
+  const dir = dirname(filePath);
+  mkdirSync(dir, { recursive: true });
+  const tmpPath = join(dir, `.${Date.now()}-${Math.random().toString(36).slice(2)}.tmp`);
+  try {
+    writeFileSync(tmpPath, content);
+    renameSync(tmpPath, filePath);
+  } finally {
+    if (existsSync(tmpPath)) {
+      try {
+        unlinkSync(tmpPath);
+      } catch {
+        // Best effort cleanup; the real write has either completed or failed.
+      }
+    }
+  }
+  return statSync(filePath).mtimeMs;
 }
 
 function parsePlanFrontmatterSummary(content: string): {
@@ -457,12 +494,8 @@ export function createApp(options: CreateAppOptions = {}): Hono {
     }
 
     // Sanitize filename — no path traversal
-    const safeName = filename.replace(/[^a-zA-Z0-9_\-. ]/g, "");
-    const filePath = join(
-      session.dir,
-      "plans",
-      safeName.endsWith(".md") ? safeName : `${safeName}.md`,
-    );
+    const safeName = safePlanName(filename);
+    const filePath = planFilePath(session.dir, filename);
 
     if (!existsSync(filePath)) {
       return c.json({ error: "Plan not found" }, 404);
@@ -492,21 +525,37 @@ export function createApp(options: CreateAppOptions = {}): Hono {
 
     const body = c.req.valid("json");
 
-    const safeName = filename.replace(/[^a-zA-Z0-9_\-. ]/g, "");
-    const filePath = join(
-      session.dir,
-      "plans",
-      safeName.endsWith(".md") ? safeName : `${safeName}.md`,
-    );
-    const plansDir = join(session.dir, "plans");
-    if (!existsSync(plansDir)) mkdirSync(plansDir, { recursive: true });
+    const filePath = planFilePath(session.dir, filename);
 
     // Auto-tag uncovered character ranges as human-authored
     const tagged = tagContent(body.content, "human");
-    writeFileSync(filePath, tagged);
+    const mtime = writePlanAtomic(filePath, tagged);
 
-    return c.json({ ok: true });
+    return c.json({ ok: true, mtime });
   });
+
+  app.post(
+    "/api/project/:name/plans/:filename/content",
+    zValidator("json", savePlanContentSchema),
+    async (c) => {
+      const name = c.req.param("name");
+      const filename = c.req.param("filename");
+      const sessions = discoverSessions();
+      const session = sessions.find((s) => s.name === name);
+      if (!session) {
+        return c.json({ error: "Session not found" }, 404);
+      }
+
+      const filePath = planFilePath(session.dir, filename);
+      if (!existsSync(filePath)) {
+        return c.json({ error: "Plan not found" }, 404);
+      }
+
+      const body = c.req.valid("json");
+      const mtime = writePlanAtomic(filePath, body.content);
+      return c.json({ ok: true, mtime });
+    },
+  );
 
   // Delete a plan file
   app.delete("/api/project/:name/plans/:filename", (c) => {
@@ -518,12 +567,8 @@ export function createApp(options: CreateAppOptions = {}): Hono {
       return c.json({ error: "Session not found" }, 404);
     }
 
-    const safeName = filename.replace(/[^a-zA-Z0-9_\-. ]/g, "");
-    const filePath = join(
-      session.dir,
-      "plans",
-      safeName.endsWith(".md") ? safeName : `${safeName}.md`,
-    );
+    const safeName = safePlanName(filename);
+    const filePath = planFilePath(session.dir, filename);
 
     if (!existsSync(filePath)) {
       return c.json({ error: "Plan not found" }, 404);
@@ -578,24 +623,19 @@ export function createApp(options: CreateAppOptions = {}): Hono {
     }
 
     if (status === "done") {
-      const safeName = filename.replace(/[^a-zA-Z0-9_\-. ]/g, "").replace(/\.md$/, "");
+      const safeName = safePlanName(filename).replace(/\.md$/, "");
       const result = markPlanDone(session.dir, safeName);
       if (!result) return c.json({ error: "Plan not found" }, 404);
       return c.json({ ok: true, plan: result });
     }
 
-    const safeName = filename.replace(/[^a-zA-Z0-9_\-. ]/g, "");
-    const filePath = join(
-      session.dir,
-      "plans",
-      safeName.endsWith(".md") ? safeName : `${safeName}.md`,
-    );
+    const filePath = planFilePath(session.dir, filename);
     if (!existsSync(filePath)) {
       return c.json({ error: "Plan not found" }, 404);
     }
     const patched = patchPlanStatus(readFileSync(filePath, "utf-8"), status);
-    writeFileSync(filePath, patched);
-    return c.json({ ok: true });
+    const mtime = writePlanAtomic(filePath, patched);
+    return c.json({ ok: true, mtime });
   });
 
   // --- Checkpoints ---

@@ -29,6 +29,7 @@ export const answer = 42;
 `;
 
 async function mockApi(page: Page) {
+  let savedContent = "";
   await page.addInitScript(() => window.localStorage.clear());
   await page.route("**/api/**", async (route) => {
     const url = new URL(route.request().url());
@@ -107,9 +108,21 @@ async function mockApi(page: Page) {
       return;
     }
 
+    if (sub === "plans/001-plans-v2.md/content" && route.request().method() === "POST") {
+      savedContent = (route.request().postDataJSON() as { content?: string })?.content ?? "";
+      await route.fulfill({ json: { ok: true, mtime: 2 } });
+      return;
+    }
+
     if (sub === "plans/001-plans-v2.md") {
       await route.fulfill({
-        json: { name: "001-plans-v2", content: PLAN, marks: null, stats: null, mtime: 1 },
+        json: {
+          name: "001-plans-v2",
+          content: savedContent || PLAN,
+          marks: null,
+          stats: null,
+          mtime: savedContent ? 2 : 1,
+        },
       });
       return;
     }
@@ -152,5 +165,22 @@ test.describe("plans reader", () => {
     await expect(page.getByText("task-001 · Implement plan reader")).toBeVisible();
     await expect(page.getByText("+1")).toBeVisible();
     await expect(page.getByText("-1")).toBeVisible();
+  });
+
+  test("toggles edit mode and saves plan content", async ({ page }) => {
+    await page.goto(`/project/${encodeURIComponent(PROJECT)}?tab=plans`);
+
+    await expect(page.getByTestId("plans-view")).toBeVisible({ timeout: 15_000 });
+    await page.getByTestId("plan-edit-toggle").click();
+
+    const editor = page.locator(".ProseMirror").first();
+    await expect(editor).toBeVisible();
+    await page.evaluate((content) => {
+      document
+        .querySelector('[data-testid="markdown-editor"]')
+        ?.dispatchEvent(new CustomEvent("tmux-ide:set-markdown", { detail: content }));
+    }, `${PLAN}\nSaved from e2e`);
+
+    await expect(page.getByTestId("plan-save-state")).toHaveText("saved", { timeout: 5000 });
   });
 });

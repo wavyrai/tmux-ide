@@ -16,9 +16,9 @@ import { useDroppable } from "@dnd-kit/core";
 import { useDraggable } from "@dnd-kit/core";
 import { CSS } from "@dnd-kit/utilities";
 import { TaskCard } from "./TaskCard";
-import { TaskDetail } from "./TaskDetail";
+import { TaskDetailPanel } from "./TaskDetailPanel";
 import { CreateTaskModal } from "./CreateTaskModal";
-import { updateTask } from "@/lib/api";
+import { updateTask, type EventData } from "@/lib/api";
 import type { Task, AgentDetail, Goal } from "@/lib/types";
 
 interface KanbanBoardProps {
@@ -26,6 +26,7 @@ interface KanbanBoardProps {
   sessionName: string;
   agents: AgentDetail[];
   goals?: Goal[];
+  events?: EventData[];
   onRefresh: () => void;
 }
 
@@ -117,6 +118,7 @@ export function KanbanBoard({
   sessionName,
   agents,
   goals = [],
+  events = [],
   onRefresh,
 }: KanbanBoardProps) {
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
@@ -218,11 +220,12 @@ export function KanbanBoard({
       </DndContext>
 
       {selectedTask && (
-        <TaskDetail
+        <TaskDetailPanel
           task={selectedTask}
           sessionName={sessionName}
           agents={agents}
-          allTasks={tasks}
+          goals={goals}
+          events={events}
           onClose={() => setSelectedTaskId(null)}
           onUpdated={onRefresh}
         />
