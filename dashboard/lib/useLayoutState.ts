@@ -17,13 +17,16 @@ export interface TerminalTabOptions {
   cmd?: string[];
 }
 
-export type WorkspaceTabKind = "project" | "settings" | "notifications";
+export type WorkspaceTabKind = "project" | "settings" | "notifications" | "skill";
 
 export interface WorkspaceTab {
   id: string;
   kind: WorkspaceTabKind;
   projectName: string | null;
   title: string;
+  /** Optional secondary identifier (e.g. skill name, file path) — used by tab kinds
+   *  that need more than projectName to disambiguate the resource. */
+  ref?: string;
 }
 
 export type ActivitySection = "sessions" | "settings" | "skills";
@@ -63,6 +66,7 @@ export interface LayoutActions {
     kind: WorkspaceTabKind,
     projectName: string | null,
     title?: string,
+    ref?: string,
   ): WorkspaceTab;
   closeWorkspaceTab(id: string): void;
   setActiveWorkspaceTab(id: string): void;
@@ -86,7 +90,7 @@ const defaults: PersistedLayoutState = {
 
 const persist = Persist.global<PersistedLayoutState>(
   "tmux-ide.layout",
-  ["v1", "v2", "v3", "v4", "v5", "v6"],
+  ["v1", "v2", "v3", "v4", "v5", "v6", "v7"],
   defaults,
   {
     // Migrating INTO v2: legacy `activeTabId` (single global) → `activeTabIdByProject` map.
@@ -129,6 +133,9 @@ const persist = Persist.global<PersistedLayoutState>(
     // Migrating INTO v6: workspace tabs add notifications and activity adds
     // skills. Existing project/settings tabs pass through unchanged.
     v6: (prev: unknown) => (isRecord(prev) ? prev : defaults),
+    // Migrating INTO v7: workspace tabs gain optional `ref` for kinds that
+    // need a secondary identifier (e.g. skill name). Pass through unchanged.
+    v7: (prev: unknown) => (isRecord(prev) ? prev : defaults),
   },
 );
 const listeners = new Set<() => void>();
@@ -138,7 +145,9 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function isWorkspaceTabKind(value: unknown): value is WorkspaceTabKind {
-  return value === "project" || value === "settings" || value === "notifications";
+  return (
+    value === "project" || value === "settings" || value === "notifications" || value === "skill"
+  );
 }
 
 function isActivitySection(value: unknown): value is ActivitySection {
@@ -204,6 +213,7 @@ function normalizePersisted(value: unknown): PersistedLayoutState {
         kind: tab["kind"],
         projectName: tab["projectName"],
         title: tab["title"],
+        ...(typeof tab["ref"] === "string" ? { ref: tab["ref"] } : {}),
       },
     ];
   });
@@ -292,18 +302,25 @@ function fallbackActive(tabs: TerminalTab[], projectName: string): string | null
   return first ? first.id : null;
 }
 
-function workspaceTabId(kind: WorkspaceTabKind, projectName: string | null): string {
-  return `${kind}:${projectName ?? ""}`;
+function workspaceTabId(
+  kind: WorkspaceTabKind,
+  projectName: string | null,
+  ref?: string,
+): string {
+  const base = `${kind}:${projectName ?? ""}`;
+  return ref ? `${base}:${ref}` : base;
 }
 
 function workspaceTabTitle(
   kind: WorkspaceTabKind,
   projectName: string | null,
   title?: string,
+  ref?: string,
 ): string {
   if (title) return title;
   if (kind === "settings") return "Settings";
   if (kind === "notifications") return "Notifications";
+  if (kind === "skill" && ref) return `Skill · ${ref}`;
   return projectName || "Project";
 }
 
@@ -388,9 +405,14 @@ const actions: LayoutActions = {
       };
     });
   },
-  openWorkspaceTab(kind: WorkspaceTabKind, projectName: string | null, title?: string) {
+  openWorkspaceTab(
+    kind: WorkspaceTabKind,
+    projectName: string | null,
+    title?: string,
+    ref?: string,
+  ) {
     const existing = state.workspaceTabs.find(
-      (tab) => tab.kind === kind && tab.projectName === projectName,
+      (tab) => tab.kind === kind && tab.projectName === projectName && tab.ref === ref,
     );
     if (existing) {
       setState((current) => ({
@@ -400,11 +422,12 @@ const actions: LayoutActions = {
       return existing;
     }
 
-    const tab = {
-      id: workspaceTabId(kind, projectName),
+    const tab: WorkspaceTab = {
+      id: workspaceTabId(kind, projectName, ref),
       kind,
       projectName,
-      title: workspaceTabTitle(kind, projectName, title),
+      title: workspaceTabTitle(kind, projectName, title, ref),
+      ...(ref ? { ref } : {}),
     };
     setState((current) => ({
       ...current,

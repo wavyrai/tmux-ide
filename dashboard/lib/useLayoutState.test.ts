@@ -15,7 +15,7 @@ beforeEach(() => {
 });
 
 function readPersisted() {
-  const raw = window.localStorage.getItem("tmux-ide.layout.v6");
+  const raw = window.localStorage.getItem("tmux-ide.layout.v7");
   return raw ? (JSON.parse(raw) as unknown) : null;
 }
 

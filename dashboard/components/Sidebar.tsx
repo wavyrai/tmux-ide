@@ -152,21 +152,40 @@ export function Sidebar() {
 
           <nav className="flex-1 overflow-y-auto pb-2">
             {skills.map((skill) => (
-              <button
+              <div
                 key={skill.name}
-                type="button"
-                data-testid={`sidebar-skill-${skill.name}`}
-                onClick={() => void injectSkill(skill)}
-                className="block w-full border-l-2 border-transparent px-3 py-2 text-left text-[var(--fg-secondary)] transition-colors hover:border-[var(--accent)] hover:bg-[var(--surface-hover)] hover:text-[var(--fg)]"
-                title={skill.description}
+                className="group flex items-stretch border-l-2 border-transparent transition-colors hover:border-[var(--accent)] hover:bg-[var(--surface-hover)]"
               >
-                <span className="block truncate text-[12px]">{skill.name}</span>
-                {skill.specialties[0] && (
-                  <span className="mt-1 inline-block max-w-full truncate border border-[var(--border)] px-1 text-[10px] text-[var(--cyan)]">
-                    {skill.specialties[0]}
-                  </span>
-                )}
-              </button>
+                <button
+                  type="button"
+                  data-testid={`sidebar-skill-${skill.name}`}
+                  onClick={() => {
+                    if (!activeProject) return;
+                    openWorkspaceTab("skill", activeProject, `Skill · ${skill.name}`, skill.name);
+                  }}
+                  className="min-w-0 flex-1 px-3 py-2 text-left text-[var(--fg-secondary)] transition-colors hover:text-[var(--fg)]"
+                  title={`Open ${skill.name}`}
+                  disabled={!activeProject}
+                >
+                  <span className="block truncate text-[12px]">{skill.name}</span>
+                  {skill.specialties[0] && (
+                    <span className="mt-1 inline-block max-w-full truncate rounded-sm border border-[var(--border-weak)] bg-[var(--surface)] px-1 text-[10px] text-[var(--cyan)]">
+                      {skill.specialties[0]}
+                    </span>
+                  )}
+                </button>
+                <button
+                  type="button"
+                  data-testid={`sidebar-skill-inject-${skill.name}`}
+                  onClick={() => void injectSkill(skill)}
+                  className="flex w-7 shrink-0 items-center justify-center text-[var(--dim)] opacity-0 transition-opacity hover:text-[var(--accent)] group-hover:opacity-100"
+                  title={`Send ${skill.name} to active agent`}
+                  aria-label={`Send ${skill.name} to active agent`}
+                  disabled={!activeProject}
+                >
+                  →
+                </button>
+              </div>
             ))}
           </nav>
         </>

@@ -376,6 +376,16 @@ export interface SkillData {
   body: string;
 }
 
+export async function fetchSkill(name: string, skillName: string): Promise<SkillData | null> {
+  const res = await fetch(
+    `${API_BASE}/api/project/${encodeURIComponent(name)}/skills/${encodeURIComponent(skillName)}`,
+    { cache: "no-store" },
+  );
+  if (!res.ok) return null;
+  const data = (await res.json()) as { skill?: SkillData };
+  return data.skill ?? null;
+}
+
 export async function fetchSkills(name: string): Promise<SkillData[]> {
   const res = await fetch(`${API_BASE}/api/project/${encodeURIComponent(name)}/skills`, {
     cache: "no-store",

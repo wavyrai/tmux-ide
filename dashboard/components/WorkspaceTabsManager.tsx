@@ -4,10 +4,17 @@ import type { ReactNode } from "react";
 import { usePathname } from "next/navigation";
 import { NotificationsView } from "@/components/views/NotificationsView";
 import { SettingsView } from "@/components/views/SettingsView";
+import { SkillView } from "@/components/views/SkillView";
 import { useLayoutState, type WorkspaceTab } from "@/lib/useLayoutState";
 
 function hrefForWorkspaceTab(tab: WorkspaceTab): string {
-  if (tab.kind === "settings" || tab.kind === "notifications" || !tab.projectName) return "/";
+  if (
+    tab.kind === "settings" ||
+    tab.kind === "notifications" ||
+    tab.kind === "skill" ||
+    !tab.projectName
+  )
+    return "/";
   return `/project/${encodeURIComponent(tab.projectName)}`;
 }
 
@@ -45,6 +52,8 @@ export function WorkspaceTabsManager({ children }: WorkspaceTabsManagerProps) {
               <NotificationsView />
             ) : tab.kind === "settings" ? (
               <SettingsView />
+            ) : tab.kind === "skill" && tab.projectName && tab.ref ? (
+              <SkillView sessionName={tab.projectName} skillName={tab.ref} />
             ) : routeMatches ? (
               children
             ) : (
