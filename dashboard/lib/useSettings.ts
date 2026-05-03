@@ -20,6 +20,13 @@ export interface Settings {
     fontSize: number;
     scrollback: number;
     cursorBlink: boolean;
+    /**
+     * Renderer choice for the embedded xterm. "auto" picks WebGL on desktop
+     * and DOM on iOS / iPadOS where Safari's WebGL has known issues with
+     * subpixel positioning + atlas sizing. Force "webgl" for max perf or
+     * "dom" if you hit rendering glitches.
+     */
+    renderer: "auto" | "webgl" | "dom";
   };
   sounds: {
     onTaskComplete: boolean;
@@ -47,6 +54,7 @@ export const defaultSettings: Settings = {
     fontSize: 13,
     scrollback: 5000,
     cursorBlink: true,
+    renderer: "auto",
   },
   sounds: {
     onTaskComplete: false,
@@ -124,6 +132,10 @@ function normalizeSettings(value: unknown): Settings {
         typeof terminal.cursorBlink === "boolean"
           ? terminal.cursorBlink
           : defaultSettings.terminal.cursorBlink,
+      renderer:
+        terminal.renderer === "webgl" || terminal.renderer === "dom" || terminal.renderer === "auto"
+          ? terminal.renderer
+          : defaultSettings.terminal.renderer,
     },
     sounds: {
       onTaskComplete:

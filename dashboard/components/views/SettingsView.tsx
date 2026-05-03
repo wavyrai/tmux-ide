@@ -322,6 +322,25 @@ export function SettingsView() {
                 onChange={(value) => settings.setTerminal({ cursorBlink: value })}
               />
             </SettingRow>
+            <SettingRow
+              title="Renderer"
+              description="WebGL is fastest on desktop. Auto picks DOM on iOS / iPadOS where Safari WebGL has known glyph artifacts."
+            >
+              <select
+                data-testid="settings-terminal-renderer"
+                value={settings.terminal.renderer}
+                onChange={(event) =>
+                  settings.setTerminal({
+                    renderer: event.currentTarget.value as "auto" | "webgl" | "dom",
+                  })
+                }
+                className="border border-[var(--border)] bg-[var(--surface)] px-2 py-1 text-[12px]"
+              >
+                <option value="auto">Auto</option>
+                <option value="webgl">WebGL (force)</option>
+                <option value="dom">DOM (force)</option>
+              </select>
+            </SettingRow>
           </section>
         )}
 

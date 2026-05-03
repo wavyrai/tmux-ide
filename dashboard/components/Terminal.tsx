@@ -185,20 +185,34 @@ export function Terminal({
         fitAddonRef.current = fitAddon;
         term.loadAddon(fitAddon);
         term.open(hostElement);
-        try {
-          webglAddon = new WebglAddon();
-          webglContextLossDisposable = webglAddon.onContextLoss(() => {
-            webglAddon?.dispose();
-            webglAddon = null;
+
+        // Renderer choice: explicit "webgl" / "dom" wins; "auto" picks DOM
+        // on iOS / iPadOS where Safari WebGL has known glyph-positioning
+        // issues, otherwise WebGL.
+        const rendererPref = getSettingsSnapshot().terminal.renderer;
+        const isiOS =
+          typeof navigator !== "undefined" &&
+          (/iPad|iPhone|iPod/.test(navigator.platform) ||
+            (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1));
+        const useWebgl =
+          rendererPref === "webgl" || (rendererPref === "auto" && !isiOS);
+
+        if (useWebgl) {
+          try {
+            webglAddon = new WebglAddon();
+            webglContextLossDisposable = webglAddon.onContextLoss(() => {
+              webglAddon?.dispose();
+              webglAddon = null;
+              webglContextLossDisposable?.dispose();
+              webglContextLossDisposable = null;
+            });
+            term.loadAddon(webglAddon);
+          } catch {
             webglContextLossDisposable?.dispose();
             webglContextLossDisposable = null;
-          });
-          term.loadAddon(webglAddon);
-        } catch {
-          webglContextLossDisposable?.dispose();
-          webglContextLossDisposable = null;
-          webglAddon?.dispose();
-          webglAddon = null;
+            webglAddon?.dispose();
+            webglAddon = null;
+          }
         }
         fitAddon.fit();
         term.focus();
@@ -329,7 +343,9 @@ export function Terminal({
       termRef.current = null;
       hostElement.replaceChildren();
     };
-  }, [cmd, cwd, id, onSessionExit]);
+    // terminalSettings.renderer is included so toggling WebGL ↔ DOM in the
+    // Settings view tears down + re-boots the xterm with the new renderer.
+  }, [cmd, cwd, id, onSessionExit, terminalSettings.renderer]);
 
   // Re-apply terminal theme whenever the persisted dashboard theme changes.
   // CSS vars on :root update synchronously, but xterm caches its renderer's
