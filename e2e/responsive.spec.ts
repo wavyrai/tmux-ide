@@ -134,12 +134,11 @@ test.describe("responsive dashboard", () => {
     await page.goto(`/project/${encodeURIComponent(PROJECT)}`);
 
     await expect(page.getByTestId("mobile-nav-toggle")).toBeVisible();
-    await expect(page.getByTestId("activity-bar-inline")).toBeHidden();
+    await expect(page.getByTestId("activity-bar-inline")).toBeVisible();
 
     await page.getByTestId("mobile-nav-toggle").click();
-    await expect(page.getByTestId("mobile-shell-drawer")).toBeVisible();
-    await expect(page.getByTestId("activity-bar-drawer")).toBeVisible();
-    await expect(page.getByTestId("sidebar-drawer")).toBeVisible();
+    await expect(page.getByTestId("app-sidebar")).toBeVisible();
+    await expect(page.locator('[data-sidebar="sidebar"][data-mobile="true"]')).toBeVisible();
 
     await expect(page.getByTestId("kanban-board")).toBeVisible();
     await expect

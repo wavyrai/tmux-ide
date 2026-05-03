@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Providers } from "@/components/Providers";
+import { ShellSidebarProvider } from "@/components/ShellSidebarProvider";
 import { TopBar } from "@/components/TopBar";
 import "./globals.css";
 
@@ -16,8 +17,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         style={{ fontFamily: "var(--font-mono)" }}
       >
         <Providers>
-          <TopBar />
-          {children}
+          <ShellSidebarProvider>
+            <TopBar />
+            {children}
+          </ShellSidebarProvider>
         </Providers>
       </body>
     </html>

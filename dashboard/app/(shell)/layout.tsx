@@ -1,14 +1,15 @@
 import { ActivityBar } from "@/components/ActivityBar";
+import { AppSidebar } from "@/components/AppSidebar";
 import { CommandPalette } from "@/components/CommandPalette";
 import { EventBridge } from "@/components/EventBridge";
 import { KeybindRoot } from "@/components/KeybindRoot";
-import { Sidebar } from "@/components/Sidebar";
 import { FullScreenTerminal } from "@/components/FullScreenTerminal";
 import { ShellStatusBar } from "@/components/StatusBar";
 import { ToastStack } from "@/components/ToastStack";
 import { WorkspaceTabsBar } from "@/components/WorkspaceTabsBar";
 import { WorkspaceTabsManager } from "@/components/WorkspaceTabsManager";
 import { WorkspaceUrlSync } from "@/components/WorkspaceUrlSync";
+import { SidebarInset } from "@/components/ui/sidebar";
 
 export default function ShellLayout({ children }: { children: React.ReactNode }) {
   return (
@@ -16,15 +17,15 @@ export default function ShellLayout({ children }: { children: React.ReactNode })
       <WorkspaceUrlSync />
       <EventBridge />
       <div className="flex min-h-0 flex-1">
-        <ActivityBar className="hidden md:flex" testId="activity-bar-inline" />
-        <Sidebar className="hidden md:flex" testId="sidebar-inline" />
-        <div className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+        <ActivityBar testId="activity-bar-inline" />
+        <AppSidebar />
+        <SidebarInset>
           <WorkspaceTabsBar />
           <div className="relative min-h-0 flex-1">
             <WorkspaceTabsManager>{children}</WorkspaceTabsManager>
           </div>
           <FullScreenTerminal />
-        </div>
+        </SidebarInset>
       </div>
       <ShellStatusBar />
       <CommandPalette />

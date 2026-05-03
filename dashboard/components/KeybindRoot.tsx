@@ -8,6 +8,7 @@ import { registerCoreActions } from "@/lib/registerCoreActions";
 import { registerKeybindFromAction } from "@/lib/useKeybinds";
 import { useLayoutState } from "@/lib/useLayoutState";
 import { useSettings } from "@/lib/useSettings";
+import { useSidebar } from "@/components/ui/sidebar";
 
 function projectFromPath(pathname: string): string {
   const match = pathname.match(/^\/project\/([^/]+)/);
@@ -22,11 +23,13 @@ export function KeybindRoot() {
   const { setTheme } = useTheme();
   const { themeId, setThemeId, keybinds } = useSettings();
   const actions = useActions();
+  const { toggleSidebar } = useSidebar();
 
   useEffect(() => {
     return registerCoreActions({
       currentProject,
       layout: { toggleTerminal, setActivitySection, newTab, closeTab, openWorkspaceTab },
+      toggleSidebar,
       toggleTheme: () => {
         const nextTheme = themeId === "light" ? "dark" : "light";
         setThemeId(nextTheme);
@@ -42,6 +45,7 @@ export function KeybindRoot() {
     setTheme,
     setThemeId,
     themeId,
+    toggleSidebar,
     toggleTerminal,
   ]);
 
@@ -56,6 +60,7 @@ export function KeybindRoot() {
   useEffect(() => {
     const unregister = actions.flatMap((action) => {
       if (!action.keybind) return [];
+      if (action.id === "toggle-sidebar") return [];
       return [registerKeybindFromAction(action)];
     });
 

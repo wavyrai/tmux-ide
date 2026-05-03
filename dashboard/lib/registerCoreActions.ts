@@ -10,12 +10,14 @@ interface RegisterCoreActionsInput {
     LayoutActions,
     "toggleTerminal" | "setActivitySection" | "newTab" | "closeTab" | "openWorkspaceTab"
   >;
+  toggleSidebar(): void;
   toggleTheme(): void;
 }
 
 export function registerCoreActions({
   currentProject,
   layout,
+  toggleSidebar,
   toggleTheme,
 }: RegisterCoreActionsInput): () => void {
   const unregister = [
@@ -36,6 +38,15 @@ export function registerCoreActions({
       keybind: "Mod+k",
       category: "General",
       run: openCommandPalette,
+    }),
+    registerAction({
+      id: "toggle-sidebar",
+      label: "Toggle sidebar",
+      description: "Expand or collapse the contextual sidebar",
+      keywords: ["sidebar", "navigation", "collapse"],
+      keybind: "Mod+b",
+      category: "View",
+      run: toggleSidebar,
     }),
     registerAction({
       id: "switch-to-sessions",

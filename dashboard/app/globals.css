@@ -1,5 +1,27 @@
 @import "tailwindcss";
 
+@custom-variant hover-only {
+  @media (hover: hover) and (pointer: fine) {
+    &:hover {
+      @slot;
+    }
+  }
+}
+
+@utility focus-ring {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+@utility focus-field-ring {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+}
+
+@utility no-highlight {
+  -webkit-tap-highlight-color: transparent;
+}
+
 /* Berkeley Mono — privately licensed, only present when the asset has been
    dropped into dashboard/public/fonts/private/. The OSS build resolves to
    the fallback stack on --font-mono when the file is absent. See
@@ -55,6 +77,14 @@
   --human-color: #6ee7b7;
   --human-bg: rgba(110, 231, 183, 0.08);
   --human-badge: rgba(110, 231, 183, 0.15);
+  --sidebar-background: var(--bg-strong);
+  --sidebar-foreground: var(--fg);
+  --sidebar-primary: var(--accent);
+  --sidebar-primary-foreground: var(--bg);
+  --sidebar-accent: var(--surface-active);
+  --sidebar-accent-foreground: var(--fg);
+  --sidebar-border: var(--border-weak);
+  --sidebar-ring: var(--accent);
 
   /* Terminal palette — dark */
   --term-bg: #101010;
@@ -114,6 +144,14 @@
   --human-color: #059669;
   --human-bg: rgba(5, 150, 105, 0.08);
   --human-badge: rgba(5, 150, 105, 0.15);
+  --sidebar-background: var(--bg-strong);
+  --sidebar-foreground: var(--fg);
+  --sidebar-primary: var(--accent);
+  --sidebar-primary-foreground: var(--bg);
+  --sidebar-accent: var(--surface-active);
+  --sidebar-accent-foreground: var(--fg);
+  --sidebar-border: var(--border-weak);
+  --sidebar-ring: var(--accent);
 
   /* Terminal palette — light */
   --term-bg: #ffffff;
