@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { fulfillSnapshotStream } from "./sse";
 
 const PROJECT = "tmux-ide";
 
@@ -47,6 +48,19 @@ test.describe("project shell", () => {
         }
         if (sub === "mission") {
           await route.fulfill({ json: null });
+          return;
+        }
+        if (sub === "stream") {
+          await fulfillSnapshotStream(route, {
+            project: stubProject,
+            mission: null,
+            milestones: [],
+            goals: [],
+            tasks: [],
+            skills: [],
+            agents: [],
+            events: [],
+          });
           return;
         }
         await route.fulfill({ json: [] });

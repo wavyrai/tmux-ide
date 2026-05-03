@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { fulfillSnapshotStream } from "./sse";
 
 const PROJECT = "X";
 
@@ -137,6 +138,19 @@ async function mockApi(page: Page) {
 
     if (!sub) {
       await route.fulfill({ json: project });
+      return;
+    }
+    if (sub === "stream") {
+      await fulfillSnapshotStream(route, {
+        project,
+        mission,
+        milestones,
+        goals: project.goals,
+        tasks: project.tasks,
+        skills,
+        agents: project.agents,
+        events: [],
+      });
       return;
     }
     if (sub === "mission") {

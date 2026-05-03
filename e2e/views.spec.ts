@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { fulfillSnapshotStream } from "./sse";
 
 const PROJECT = "tmux-ide";
 
@@ -112,6 +113,20 @@ async function mockApi(page: Page) {
 
       if (!sub) {
         await route.fulfill({ json: stubProject });
+        return;
+      }
+
+      if (sub === "stream") {
+        await fulfillSnapshotStream(route, {
+          project: stubProject,
+          mission: null,
+          milestones: [],
+          goals: stubProject.goals,
+          tasks: stubProject.tasks,
+          skills: [],
+          agents: stubProject.agents,
+          events: [],
+        });
         return;
       }
 
