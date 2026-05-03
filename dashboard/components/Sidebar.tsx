@@ -8,7 +8,13 @@ import { useLayoutState } from "@/lib/useLayoutState";
 import { useToasts } from "@/lib/useToasts";
 import type { SessionOverview } from "@/lib/types";
 
-export function Sidebar() {
+interface SidebarProps {
+  className?: string;
+  testId?: string;
+  onNavigate?: () => void;
+}
+
+export function Sidebar({ className = "", testId = "sidebar", onNavigate }: SidebarProps) {
   const pathname = usePathname();
   const router = useRouter();
   const [sessions, setSessions] = useState<SessionOverview[]>([]);
@@ -91,17 +97,18 @@ export function Sidebar() {
 
   return (
     <aside
-      data-testid="sidebar"
-      className="w-56 shrink-0 border-r border-[var(--border-weak)] bg-[var(--bg-strong)] flex flex-col text-[12px]"
+      data-testid={testId}
+      className={`w-56 shrink-0 border-r border-[var(--border-weak)] bg-[var(--bg-strong)] flex flex-col text-[12px] ${className}`}
     >
       <Link
         href="/"
-        onClick={() => setActivitySection("sessions")}
+        onClick={() => {
+          setActivitySection("sessions");
+          onNavigate?.();
+        }}
         data-active={onOverview || undefined}
         className={`h-8 px-3 flex items-center gap-2 border-b border-[var(--border-weak)] tracking-[0.02em] ${
-          onOverview
-            ? "text-[var(--accent)]"
-            : "text-[var(--fg-secondary)] hover:text-[var(--fg)]"
+          onOverview ? "text-[var(--accent)]" : "text-[var(--fg-secondary)] hover:text-[var(--fg)]"
         }`}
       >
         <span>overview</span>
@@ -120,6 +127,7 @@ export function Sidebar() {
               openWorkspaceTab("settings", null, "Settings");
               setActivitySection("settings");
               router.push("/");
+              onNavigate?.();
             }}
             className={`mx-0 block px-3 py-1.5 text-left transition-colors ${
               settingsActive
@@ -162,6 +170,7 @@ export function Sidebar() {
                   onClick={() => {
                     if (!activeProject) return;
                     openWorkspaceTab("skill", activeProject, `Skill · ${skill.name}`, skill.name);
+                    onNavigate?.();
                   }}
                   className="min-w-0 flex-1 px-3 py-2 text-left text-[var(--fg-secondary)] transition-colors hover:text-[var(--fg)]"
                   title={`Open ${skill.name}`}
@@ -195,9 +204,7 @@ export function Sidebar() {
             sessions
           </div>
 
-          {error && (
-            <div className="px-3 py-2 text-[var(--red)] text-[11px]">api unreachable</div>
-          )}
+          {error && <div className="px-3 py-2 text-[var(--red)] text-[11px]">api unreachable</div>}
 
           {!error && sessions.length === 0 && (
             <div className="px-3 py-2 text-[var(--dim)] text-[11px]">no sessions</div>
@@ -215,6 +222,7 @@ export function Sidebar() {
                   onClick={() => {
                     openWorkspaceTab("project", session.name, session.name);
                     setActivitySection("sessions");
+                    onNavigate?.();
                   }}
                   className={`group block px-3 py-1.5 transition-colors ${
                     isActive

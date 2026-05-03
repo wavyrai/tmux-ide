@@ -86,7 +86,7 @@ export function WorkspaceTabsBar() {
     >
       <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
         <SortableContext items={tabIds} strategy={horizontalListSortingStrategy}>
-          <div className="flex min-w-0 flex-1 overflow-x-auto">
+          <div className="flex min-w-0 flex-1 touch-pan-x overflow-x-auto">
             {workspaceTabs.map((tab) => (
               <WorkspaceTabItem
                 key={tab.id}

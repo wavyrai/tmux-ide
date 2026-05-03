@@ -16,6 +16,7 @@
   --font-mono:
     "Berkeley Mono", ui-monospace, SFMono-Regular, "JetBrains Mono", "IBM Plex Mono", "Menlo",
     "Consolas", monospace;
+  --ease-out-fluid: cubic-bezier(0.32, 0.72, 0, 1);
 }
 
 /* Dark theme (default) */
@@ -551,4 +552,13 @@
 .diff-container pre,
 .diff-container code {
   background-color: transparent !important;
+}
+
+@keyframes mobile-drawer-in {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(0);
+  }
 }

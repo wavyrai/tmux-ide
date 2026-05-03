@@ -16,8 +16,8 @@ export default function ShellLayout({ children }: { children: React.ReactNode })
       <WorkspaceUrlSync />
       <EventBridge />
       <div className="flex min-h-0 flex-1">
-        <ActivityBar />
-        <Sidebar />
+        <ActivityBar className="hidden md:flex" testId="activity-bar-inline" />
+        <Sidebar className="hidden md:flex" testId="sidebar-inline" />
         <div className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
           <WorkspaceTabsBar />
           <div className="relative min-h-0 flex-1">

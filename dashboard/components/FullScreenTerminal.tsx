@@ -155,11 +155,13 @@ export function FullScreenTerminal() {
       aria-hidden={!terminalOpen}
       aria-label="Full-screen terminal"
     >
-      <ContextBar />
+      <div className="hidden sm:block">
+        <ContextBar />
+      </div>
       <div className="flex h-8 shrink-0 items-stretch border-b border-[var(--border-weak)] bg-[var(--surface)]">
         <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
           <SortableContext items={tabIds} strategy={horizontalListSortingStrategy}>
-            <div className="flex min-w-0 flex-1 overflow-x-auto">
+            <div className="flex min-w-0 flex-1 touch-pan-x overflow-x-auto">
               {projectTabs.map((tab) => (
                 <TerminalTabItem
                   key={tab.id}

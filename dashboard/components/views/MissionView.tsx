@@ -290,7 +290,7 @@ export function MissionView({ sessionName }: MissionViewProps) {
         </section>
 
         <section data-testid="mission-validation-strip" className="space-y-2">
-          <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
+          <div className="grid grid-cols-1 gap-2 md:grid-cols-5">
             <KpiCard label="passing" value={validation.passing} color="var(--green)" />
             <KpiCard label="failing" value={validation.failing} color="var(--red)" />
             <KpiCard label="pending" value={validation.pending} color="var(--dim)" />

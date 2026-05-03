@@ -280,6 +280,7 @@ export function PlansView({ sessionName }: PlansViewProps) {
   const [activeHeading, setActiveHeading] = useState("");
   const [planQuery, setPlanQuery] = useState("");
   const [planSort, setPlanSort] = useState<PlanSort>("recent");
+  const [mobileDetailOpen, setMobileDetailOpen] = useState(false);
   const [collapsedGroups, setCollapsedGroups] = useState<Partial<Record<PlanStatus, boolean>>>({});
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const loadedFileRef = useRef<string | null>(null);
@@ -454,7 +455,9 @@ export function PlansView({ sessionName }: PlansViewProps) {
 
   return (
     <div data-testid="plans-view" className="flex min-h-0 flex-1 bg-[var(--bg)]">
-      <aside className="flex w-[280px] shrink-0 flex-col border-r border-[var(--border)] bg-[var(--bg-weak)]">
+      <aside
+        className={`${mobileDetailOpen ? "hidden" : "flex"} w-full shrink-0 flex-col border-r border-[var(--border)] bg-[var(--bg-weak)] md:flex md:w-[280px]`}
+      >
         <div className="border-b border-[var(--border)] p-3">
           <div className="mb-2 flex items-center gap-2 text-[11px] text-[var(--dim)]">
             plans
@@ -509,7 +512,10 @@ export function PlansView({ sessionName }: PlansViewProps) {
                           key={file}
                           type="button"
                           data-testid="plan-list-item"
-                          onClick={() => setSelectedFile(file)}
+                          onClick={() => {
+                            setSelectedFile(file);
+                            setMobileDetailOpen(true);
+                          }}
                           className={`w-full px-3 py-2 text-left transition-colors ${
                             selected
                               ? "bg-[var(--surface-active)]"
@@ -574,7 +580,19 @@ export function PlansView({ sessionName }: PlansViewProps) {
         </div>
       </aside>
 
-      <main className="flex min-w-0 flex-1">
+      <main
+        className={`${mobileDetailOpen ? "flex" : "hidden"} min-w-0 flex-1 flex-col md:flex md:flex-row`}
+      >
+        <div className="flex h-9 shrink-0 items-center border-b border-[var(--border)] bg-[var(--bg-weak)] px-2 md:hidden">
+          <button
+            type="button"
+            onClick={() => setMobileDetailOpen(false)}
+            className="flex h-7 items-center gap-1 px-2 text-[12px] text-[var(--fg-secondary)] hover:text-[var(--accent)]"
+            aria-label="Back to plans"
+          >
+            ‹ plans
+          </button>
+        </div>
         <section ref={scrollRef} className="min-w-0 flex-1 overflow-y-auto">
           {loadingPlan ? (
             <div className="flex h-full items-center justify-center text-[var(--dim)]">

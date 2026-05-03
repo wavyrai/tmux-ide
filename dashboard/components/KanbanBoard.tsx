@@ -61,11 +61,12 @@ function DroppableColumn({
   return (
     <div
       ref={setNodeRef}
-      className={`bg-[var(--bg)] flex flex-col min-h-0 transition-colors duration-150 ${
+      data-testid="kanban-column"
+      className={`bg-[var(--bg)] flex min-h-64 flex-col transition-colors duration-150 md:min-h-0 ${
         isOver ? "bg-[var(--surface-hover)]" : ""
       }`}
     >
-      <div className="flex items-center justify-between px-2 h-6 bg-[var(--surface)] border-b border-[var(--border)] shrink-0">
+      <div className="sticky top-0 z-10 flex h-6 shrink-0 items-center justify-between border-b border-[var(--border)] bg-[var(--surface)] px-2">
         <span style={{ color }}>{label}</span>
         <div className="flex items-center gap-2">
           {onAction && (
@@ -171,7 +172,10 @@ export function KanbanBoard({
         onDragOver={handleDragOver}
         onDragEnd={handleDragEnd}
       >
-        <div className="grid grid-cols-4 gap-px flex-1 min-h-0 bg-[var(--border)]">
+        <div
+          data-testid="kanban-board"
+          className="grid min-h-0 flex-1 grid-cols-1 gap-px overflow-y-auto bg-[var(--border)] md:grid-cols-4 md:overflow-hidden"
+        >
           {COLUMNS.map((col) => {
             const colTasks = tasks
               .filter((t) => t.status === col.status)

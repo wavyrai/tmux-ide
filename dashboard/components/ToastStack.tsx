@@ -29,7 +29,7 @@ export function ToastStack() {
   return (
     <div
       data-testid="toast-stack"
-      className="fixed bottom-10 right-4 z-50 flex w-[min(360px,calc(100vw-32px))] flex-col gap-2"
+      className="fixed bottom-10 left-1/2 z-50 flex w-[min(360px,calc(100vw-32px))] -translate-x-1/2 flex-col gap-2 md:left-auto md:right-4 md:translate-x-0"
     >
       {toasts.map((toast) => (
         <div

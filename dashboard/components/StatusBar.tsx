@@ -27,23 +27,27 @@ export function ShellStatusBar() {
   return (
     <footer
       data-testid="status-bar"
-      className="flex h-6 shrink-0 items-center border-t border-[var(--border-weak)] bg-[var(--bg-weak)] px-3 text-[11px] tabular-nums text-[var(--dim)]"
+      className="flex h-6 shrink-0 items-center overflow-hidden border-t border-[var(--border-weak)] bg-[var(--bg-weak)] px-2 text-[10px] tabular-nums text-[var(--dim)] md:px-3 md:text-[11px]"
     >
-      <span className="text-[var(--accent)]">{project}</span>
+      <span className="truncate text-[var(--accent)]">{project}</span>
       {projectRoute && (
         <>
           <MissionStatusSegment />
-          <MilestonesSegment />
+          <span className="hidden md:contents">
+            <MilestonesSegment />
+          </span>
           <AgentsSegment />
-          <SkillsSegment />
+          <span className="hidden md:contents">
+            <SkillsSegment />
+          </span>
         </>
       )}
-      <span className="mx-2 opacity-30">│</span>
-      <span>terminal ⌘J</span>
-      <span className="mx-2 opacity-30">│</span>
-      <span>theme ⌘⇧T</span>
+      <span className="mx-1 opacity-30 md:mx-2">│</span>
+      <span className="hidden sm:inline">terminal ⌘J</span>
+      <span className="mx-1 hidden opacity-30 sm:inline md:mx-2">│</span>
+      <span className="hidden sm:inline">theme ⌘⇧T</span>
       <span className="flex-1" />
-      <span>tmux-ide {version}</span>
+      <span className="shrink-0">tmux-ide {version}</span>
     </footer>
   );
 }

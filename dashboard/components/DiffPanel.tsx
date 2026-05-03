@@ -18,6 +18,7 @@ export function DiffPanel({ sessionName }: DiffPanelProps) {
   const [fileDiff, setFileDiff] = useState<string>("");
   const [diffStyle, setDiffStyle] = useState<"split" | "unified">("split");
   const [loadingFile, setLoadingFile] = useState(false);
+  const [mobileDetailOpen, setMobileDetailOpen] = useState(false);
 
   // Fetch per-file diff when selection changes
   useEffect(() => {
@@ -93,14 +94,35 @@ export function DiffPanel({ sessionName }: DiffPanelProps) {
       {/* Content: file list + diff viewer */}
       <div className="flex flex-1 min-h-0 min-w-0">
         {/* File sidebar */}
-        <div className="w-[260px] shrink-0 border-r border-[var(--border)] overflow-y-auto">
-          <FileList files={data.files} selectedFile={selectedFile} onSelectFile={setSelectedFile} />
+        <div
+          className={`${mobileDetailOpen ? "hidden" : "block"} w-full shrink-0 overflow-y-auto border-r border-[var(--border)] md:block md:w-[260px]`}
+        >
+          <FileList
+            files={data.files}
+            selectedFile={selectedFile}
+            onSelectFile={(file) => {
+              setSelectedFile(file);
+              setMobileDetailOpen(true);
+            }}
+          />
         </div>
 
         {/* Diff viewer — min-w-0 lets the flex child shrink below intrinsic
             width of the patch content so split-mode doesn't push past the
             viewport. */}
-        <div className="flex flex-1 min-w-0 min-h-0 flex-col">
+        <div
+          className={`${mobileDetailOpen ? "flex" : "hidden"} min-h-0 min-w-0 flex-1 flex-col md:flex`}
+        >
+          <div className="flex h-9 shrink-0 items-center border-b border-[var(--border)] bg-[var(--bg-weak)] px-2 md:hidden">
+            <button
+              type="button"
+              onClick={() => setMobileDetailOpen(false)}
+              className="flex h-7 items-center gap-1 px-2 text-[12px] text-[var(--fg-secondary)] hover:text-[var(--accent)]"
+              aria-label="Back to files"
+            >
+              ‹ files
+            </button>
+          </div>
           {selectedFile && visiblePatch ? (
             <DiffViewer patch={visiblePatch} diffStyle={diffStyle} />
           ) : loadingFile ? (

@@ -2,17 +2,38 @@
 
 import { useLayoutState } from "@/lib/useLayoutState";
 
-export function ActivityBar() {
+interface ActivityBarProps {
+  className?: string;
+  testId?: string;
+  variant?: "inline" | "drawer";
+  onNavigate?: () => void;
+}
+
+export function ActivityBar({
+  className = "",
+  testId = "activity-bar",
+  variant = "inline",
+  onNavigate,
+}: ActivityBarProps) {
   const { activitySection, openWorkspaceTab, setActivitySection } = useLayoutState();
+  const drawer = variant === "drawer";
 
   return (
-    <nav className="flex w-12 shrink-0 flex-col border-r border-[var(--border-weak)] bg-[var(--bg-strong)] py-2">
+    <nav
+      data-testid={testId}
+      className={`${drawer ? "h-12 flex-row border-b px-2" : "w-12 flex-col border-r py-2"} flex shrink-0 border-[var(--border-weak)] bg-[var(--bg-strong)] ${className}`}
+    >
       <button
         type="button"
         data-testid="activity-section-sessions"
         data-active={activitySection === "sessions" ? "true" : "false"}
-        onClick={() => setActivitySection("sessions")}
+        onClick={() => {
+          setActivitySection("sessions");
+          onNavigate?.();
+        }}
         className={`flex h-10 items-center justify-center text-[17px] transition-colors ${
+          drawer ? "w-10" : ""
+        } ${
           activitySection === "sessions"
             ? "text-[var(--accent)]"
             : "text-[var(--dim)] hover:bg-[var(--surface-hover)] hover:text-[var(--fg)]"
@@ -26,8 +47,13 @@ export function ActivityBar() {
         type="button"
         data-testid="activity-section-skills"
         data-active={activitySection === "skills" ? "true" : "false"}
-        onClick={() => setActivitySection("skills")}
+        onClick={() => {
+          setActivitySection("skills");
+          onNavigate?.();
+        }}
         className={`flex h-10 items-center justify-center text-[15px] transition-colors ${
+          drawer ? "w-10" : ""
+        } ${
           activitySection === "skills"
             ? "text-[var(--accent)]"
             : "text-[var(--dim)] hover:bg-[var(--surface-hover)] hover:text-[var(--fg)]"
@@ -44,8 +70,11 @@ export function ActivityBar() {
         onClick={() => {
           openWorkspaceTab("settings", null, "Settings");
           setActivitySection("settings");
+          onNavigate?.();
         }}
         className={`flex h-10 items-center justify-center text-[16px] transition-colors ${
+          drawer ? "w-10" : ""
+        } ${
           activitySection === "settings"
             ? "text-[var(--accent)]"
             : "text-[var(--dim)] hover:bg-[var(--surface-hover)] hover:text-[var(--fg)]"

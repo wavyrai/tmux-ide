@@ -204,7 +204,7 @@ export function ActivityView({ sessionName }: ActivityViewProps) {
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-[var(--bg)]">
       <div className="space-y-3 border-b border-[var(--border)] bg-[var(--bg)] p-4">
-        <div className="grid grid-cols-2 gap-2 lg:grid-cols-5">
+        <div className="grid grid-cols-1 gap-2 md:grid-cols-2 lg:grid-cols-5">
           <KpiCard
             label="total events"
             value={stats.total}
@@ -247,7 +247,7 @@ export function ActivityView({ sessionName }: ActivityViewProps) {
             value={query}
             onChange={(event) => setQuery(event.target.value)}
             placeholder="Search events"
-            className="h-8 min-w-56 flex-1 rounded-md border border-[var(--border-weak)] bg-[var(--bg-strong)] px-3 text-[12px] text-[var(--fg)] outline-none placeholder:text-[var(--dimmer)] focus:border-[var(--accent)]"
+            className="h-8 min-w-0 flex-1 rounded-md border border-[var(--border-weak)] bg-[var(--bg-strong)] px-3 text-[12px] text-[var(--fg)] outline-none placeholder:text-[var(--dimmer)] focus:border-[var(--accent)] md:min-w-56"
           />
           <button
             type="button"

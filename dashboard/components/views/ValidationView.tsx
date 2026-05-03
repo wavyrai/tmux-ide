@@ -129,8 +129,9 @@ export function ValidationView({ sessionName }: ValidationViewProps) {
       <div className="flex flex-1 min-h-0 flex-col items-center justify-center bg-[var(--bg)] p-8 text-center text-[var(--dim)]">
         <div className="text-[13px]">No validation contract found</div>
         <div className="mt-1 max-w-sm text-[11px]">
-          Add a <code className="rounded-sm bg-[var(--surface)] px-1">.tasks/validation-contract.md</code> file
-          to this project to start tracking assertions.
+          Add a{" "}
+          <code className="rounded-sm bg-[var(--surface)] px-1">.tasks/validation-contract.md</code>{" "}
+          file to this project to start tracking assertions.
         </div>
       </div>
     );
@@ -141,7 +142,7 @@ export function ValidationView({ sessionName }: ValidationViewProps) {
       <div className="flex-1 space-y-5 overflow-auto p-4">
         {/* KPI strip + progress bar */}
         <section className="space-y-2">
-          <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
+          <div className="grid grid-cols-1 gap-2 md:grid-cols-5">
             <KpiCard
               label="total"
               value={stats.total}
@@ -247,8 +248,7 @@ export function ValidationView({ sessionName }: ValidationViewProps) {
                     )}
                     {row.verifiedBy && (
                       <div className="mt-0.5 text-[10px] text-[var(--dim)]">
-                        verified by{" "}
-                        <span className="text-[var(--cyan)]">@{row.verifiedBy}</span>
+                        verified by <span className="text-[var(--cyan)]">@{row.verifiedBy}</span>
                       </div>
                     )}
                   </div>
@@ -265,56 +265,61 @@ export function ValidationView({ sessionName }: ValidationViewProps) {
         )}
 
         {/* Coverage warnings */}
-        {coverage && (coverage.unclaimed.length > 0 || Object.keys(coverage.duplicates).length > 0) && (
-          <section className="space-y-2">
-            <h3 className="text-[12px] uppercase tracking-[0.08em] text-[var(--accent)]">coverage</h3>
-            {coverage.unclaimed.length > 0 && (
-              <div
-                className="rounded-md border-l-2 border-[var(--yellow)] bg-[var(--bg-strong)] px-3 py-2"
-                data-testid="coverage-unclaimed"
-              >
-                <div className="mb-1 text-[11px] uppercase tracking-[0.05em] text-[var(--yellow)]">
-                  {coverage.unclaimed.length} unclaimed assertion
-                  {coverage.unclaimed.length === 1 ? "" : "s"}
+        {coverage &&
+          (coverage.unclaimed.length > 0 || Object.keys(coverage.duplicates).length > 0) && (
+            <section className="space-y-2">
+              <h3 className="text-[12px] uppercase tracking-[0.08em] text-[var(--accent)]">
+                coverage
+              </h3>
+              {coverage.unclaimed.length > 0 && (
+                <div
+                  className="rounded-md border-l-2 border-[var(--yellow)] bg-[var(--bg-strong)] px-3 py-2"
+                  data-testid="coverage-unclaimed"
+                >
+                  <div className="mb-1 text-[11px] uppercase tracking-[0.05em] text-[var(--yellow)]">
+                    {coverage.unclaimed.length} unclaimed assertion
+                    {coverage.unclaimed.length === 1 ? "" : "s"}
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {coverage.unclaimed.map((id) => (
+                      <code
+                        key={id}
+                        className="rounded-sm bg-[var(--surface)] px-1.5 py-0.5 text-[11px] text-[var(--fg-secondary)]"
+                      >
+                        {id}
+                      </code>
+                    ))}
+                  </div>
                 </div>
-                <div className="flex flex-wrap gap-1.5">
-                  {coverage.unclaimed.map((id) => (
-                    <code
-                      key={id}
-                      className="rounded-sm bg-[var(--surface)] px-1.5 py-0.5 text-[11px] text-[var(--fg-secondary)]"
-                    >
-                      {id}
-                    </code>
-                  ))}
+              )}
+              {Object.keys(coverage.duplicates).length > 0 && (
+                <div
+                  className="rounded-md border-l-2 border-[var(--cyan)] bg-[var(--bg-strong)] px-3 py-2"
+                  data-testid="coverage-duplicates"
+                >
+                  <div className="mb-1 text-[11px] uppercase tracking-[0.05em] text-[var(--cyan)]">
+                    duplicate claims
+                  </div>
+                  <div className="space-y-0.5">
+                    {Object.entries(coverage.duplicates).map(([id, taskIds]) => (
+                      <div key={id} className="text-[11px] text-[var(--fg-secondary)]">
+                        <code className="text-[var(--fg)]">{id}</code>
+                        <span className="text-[var(--dim)]"> ← claimed by </span>
+                        {taskIds.map((tid, i) => (
+                          <span key={tid}>
+                            <code className="text-[var(--cyan)]">{tid}</code>
+                            {i < taskIds.length - 1 && (
+                              <span className="text-[var(--dim)]">, </span>
+                            )}
+                          </span>
+                        ))}
+                      </div>
+                    ))}
+                  </div>
                 </div>
-              </div>
-            )}
-            {Object.keys(coverage.duplicates).length > 0 && (
-              <div
-                className="rounded-md border-l-2 border-[var(--cyan)] bg-[var(--bg-strong)] px-3 py-2"
-                data-testid="coverage-duplicates"
-              >
-                <div className="mb-1 text-[11px] uppercase tracking-[0.05em] text-[var(--cyan)]">
-                  duplicate claims
-                </div>
-                <div className="space-y-0.5">
-                  {Object.entries(coverage.duplicates).map(([id, taskIds]) => (
-                    <div key={id} className="text-[11px] text-[var(--fg-secondary)]">
-                      <code className="text-[var(--fg)]">{id}</code>
-                      <span className="text-[var(--dim)]"> ← claimed by </span>
-                      {taskIds.map((tid, i) => (
-                        <span key={tid}>
-                          <code className="text-[var(--cyan)]">{tid}</code>
-                          {i < taskIds.length - 1 && <span className="text-[var(--dim)]">, </span>}
-                        </span>
-                      ))}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-          </section>
-        )}
+              )}
+            </section>
+          )}
 
         {/* Contract markdown */}
         {validation.contract && (
