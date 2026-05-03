@@ -162,6 +162,9 @@ importers:
       react-markdown:
         specifier: ^10.1.0
         version: 10.1.0(@types/react@19.2.14)(react@19.2.4)
+      shiki:
+        specifier: ^4.0.2
+        version: 4.0.2
     devDependencies:
       '@tailwindcss/postcss':
         specifier: ^4.2.1

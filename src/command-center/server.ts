@@ -1,6 +1,6 @@
 import { execFileSync, execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { existsSync, readFileSync, writeFileSync, mkdirSync, unlinkSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, mkdirSync, unlinkSync, statSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Hono } from "hono";
@@ -102,6 +102,45 @@ const ALLOWED_MILESTONE_TRANSITIONS = new Map([
   ["validating", new Set(["done", "active"])],
   ["done", new Set<string>()],
 ]);
+
+function parsePlanFrontmatterSummary(content: string): {
+  owner: string | null;
+  status: string | null;
+} {
+  if (!content.startsWith("---\n")) return { owner: null, status: null };
+  const end = content.indexOf("\n---", 4);
+  if (end === -1) return { owner: null, status: null };
+  let owner: string | null = null;
+  let status: string | null = null;
+  for (const line of content.slice(4, end).split("\n")) {
+    const match = line.match(/^([A-Za-z][A-Za-z0-9_-]*):\s*(.+)$/);
+    if (!match) continue;
+    const key = match[1]!.toLowerCase();
+    const value = match[2]!.trim().replace(/^["']|["']$/g, "");
+    if (key === "owner") owner = value;
+    if (key === "status") status = value.toLowerCase().replace(/\s+/g, "-");
+  }
+  return { owner, status };
+}
+
+function patchPlanStatus(content: string, status: string): string {
+  if (content.startsWith("---\n")) {
+    const end = content.indexOf("\n---", 4);
+    if (end !== -1) {
+      const block = content.slice(4, end);
+      const rest = content.slice(end);
+      if (/^status:\s*.*$/im.test(block)) {
+        return `---\n${block.replace(/^status:\s*.*$/im, `status: ${status}`)}${rest}`;
+      }
+      return `---\nstatus: ${status}\n${block}${rest}`;
+    }
+  }
+
+  if (/\*\*Status:\*\*\s*`[^`]+`/.test(content)) {
+    return content.replace(/\*\*Status:\*\*\s*`[^`]+`/, `**Status:** \`${status}\``);
+  }
+  return `---\nstatus: ${status}\n---\n${content}`;
+}
 
 function isValidMilestoneTransition(
   from: "locked" | "active" | "done" | "validating",
@@ -310,14 +349,21 @@ export function createApp(options: CreateAppOptions = {}): Hono {
       return c.json({ error: "Session not found" }, 404);
     }
 
-    const plans = loadPlans(session.dir).map((p) => ({
-      name: p.name,
-      path: `${p.name}.md`,
-      title: p.title,
-      status: p.status,
-      effort: p.effort ?? null,
-      completed: p.completed ?? null,
-    }));
+    const plans = loadPlans(session.dir).map((p) => {
+      const filePath = join(session.dir, "plans", `${p.name}.md`);
+      const raw = existsSync(filePath) ? readFileSync(filePath, "utf-8") : "";
+      const frontmatter = parsePlanFrontmatterSummary(raw);
+      return {
+        name: p.name,
+        path: `${p.name}.md`,
+        title: p.title,
+        status: frontmatter.status ?? p.status,
+        effort: p.effort ?? null,
+        owner: frontmatter.owner,
+        updated: existsSync(filePath) ? statSync(filePath).mtime.toISOString() : null,
+        completed: p.completed ?? null,
+      };
+    });
 
     return c.json({ plans });
   });
@@ -352,6 +398,7 @@ export function createApp(options: CreateAppOptions = {}): Hono {
       content,
       marks: marks?.marks ?? null,
       stats,
+      mtime: statSync(filePath).mtimeMs,
     });
   });
 
@@ -425,6 +472,52 @@ export function createApp(options: CreateAppOptions = {}): Hono {
     }
 
     return c.json({ ok: true, plan: result });
+  });
+
+  app.post("/api/project/:name/plans/:filename/status", async (c) => {
+    const name = c.req.param("name");
+    const filename = c.req.param("filename");
+    const sessions = discoverSessions();
+    const session = sessions.find((s) => s.name === name);
+    if (!session) {
+      return c.json({ error: "Session not found" }, 404);
+    }
+
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: "Invalid JSON body" }, 400);
+    }
+    const status = (body as { status?: unknown })?.status;
+    if (
+      status !== "pending" &&
+      status !== "in-progress" &&
+      status !== "done" &&
+      status !== "archived"
+    ) {
+      return c.json({ error: "Invalid status" }, 400);
+    }
+
+    if (status === "done") {
+      const safeName = filename.replace(/[^a-zA-Z0-9_\-. ]/g, "").replace(/\.md$/, "");
+      const result = markPlanDone(session.dir, safeName);
+      if (!result) return c.json({ error: "Plan not found" }, 404);
+      return c.json({ ok: true, plan: result });
+    }
+
+    const safeName = filename.replace(/[^a-zA-Z0-9_\-. ]/g, "");
+    const filePath = join(
+      session.dir,
+      "plans",
+      safeName.endsWith(".md") ? safeName : `${safeName}.md`,
+    );
+    if (!existsSync(filePath)) {
+      return c.json({ error: "Plan not found" }, 404);
+    }
+    const patched = patchPlanStatus(readFileSync(filePath, "utf-8"), status);
+    writeFileSync(filePath, patched);
+    return c.json({ ok: true });
   });
 
   // --- Checkpoints ---

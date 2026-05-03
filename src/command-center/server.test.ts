@@ -77,12 +77,12 @@ describe("POST /api/project/:name/inject", () => {
     expect(tmuxCalls).toContainEqual([
       "send-keys",
       "-t",
-      "test-project:%2",
+      "%2",
       "-l",
       "--",
       "hello agent",
     ]);
-    expect(tmuxCalls).toContainEqual(["send-keys", "-t", "test-project:%2", "Enter"]);
+    expect(tmuxCalls).toContainEqual(["send-keys", "-t", "%2", "Enter"]);
   });
 
   it("targets the active pane when paneId is omitted", async () => {
@@ -102,12 +102,12 @@ describe("POST /api/project/:name/inject", () => {
     expect(tmuxCalls).toContainEqual([
       "send-keys",
       "-t",
-      "test-project:%2",
+      "%2",
       "-l",
       "--",
       "context only",
     ]);
-    expect(tmuxCalls).not.toContainEqual(["send-keys", "-t", "test-project:%2", "Enter"]);
+    expect(tmuxCalls).not.toContainEqual(["send-keys", "-t", "%2", "Enter"]);
   });
 
   it("returns 404 for unknown project or pane", async () => {

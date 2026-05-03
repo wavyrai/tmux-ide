@@ -158,6 +158,8 @@ export interface PlanSummary {
   title: string;
   status: PlanStatus;
   effort: string | null;
+  owner?: string | null;
+  updated?: string | null;
   completed: string | null;
 }
 
@@ -178,6 +180,22 @@ export async function markPlanDone(name: string, filename: string): Promise<bool
   return res.ok;
 }
 
+export async function updatePlanStatus(
+  name: string,
+  filename: string,
+  status: PlanStatus,
+): Promise<boolean> {
+  const res = await fetch(
+    `${API_BASE}/api/project/${encodeURIComponent(name)}/plans/${encodeURIComponent(filename)}/status`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status }),
+    },
+  );
+  return res.ok;
+}
+
 export interface AuthorshipSection {
   author: string;
   at: string;
@@ -192,6 +210,7 @@ export interface AuthorshipData {
 export interface PlanData {
   content: string;
   authorship: AuthorshipData | null;
+  mtime?: number | null;
 }
 
 /**
@@ -277,6 +296,7 @@ export async function fetchPlan(name: string, filename: string): Promise<PlanDat
     content: string;
     marks: Record<string, Mark> | null;
     stats: AuthorshipStats | null;
+    mtime?: number | null;
   };
 
   let authorship: AuthorshipData | null = null;
@@ -287,7 +307,7 @@ export async function fetchPlan(name: string, filename: string): Promise<PlanDat
     };
   }
 
-  return { content: data.content, authorship };
+  return { content: data.content, authorship, mtime: data.mtime ?? null };
 }
 
 // --- Milestones ---
