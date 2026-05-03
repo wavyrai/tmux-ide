@@ -17,11 +17,21 @@ export default function ShellLayout({ children }: { children: React.ReactNode })
       <WorkspaceUrlSync />
       <EventBridge />
       <div className="flex min-h-0 flex-1">
-        <ActivityBar testId="activity-bar-inline" />
+        <ActivityBar className="hidden md:flex" testId="activity-bar-inline" />
         <AppSidebar />
         <SidebarInset>
           <WorkspaceTabsBar />
-          <div className="relative min-h-0 flex-1">
+          {/*
+            Active workspace tab renders here in normal flow (single child).
+            Inactive tabs are unmounted; per-view persistence is the view's
+            responsibility (see WorkspaceTabsManager). SidebarInset is itself
+            `relative`, so FullScreenTerminal's `absolute inset-0` overlay
+            pins to the inset and lifts above this tab content via z-20 —
+            its xterm + WS state survives all workspace tab/route switches
+            because the FullScreenTerminal subtree stays mounted in the shell
+            layout regardless of the active tab.
+          */}
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col">
             <WorkspaceTabsManager>{children}</WorkspaceTabsManager>
           </div>
           <FullScreenTerminal />

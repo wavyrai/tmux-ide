@@ -176,7 +176,7 @@ export function KanbanBoard({
       >
         <div
           data-testid="kanban-board"
-          className="grid min-h-0 flex-1 grid-cols-1 gap-px overflow-y-auto bg-[var(--border)] md:grid-cols-4 md:overflow-hidden"
+          className="grid min-h-0 min-w-0 flex-1 grid-cols-1 gap-px overflow-y-auto bg-[var(--border)] md:grid-cols-4 md:overflow-hidden"
         >
           {COLUMNS.map((col) => {
             const colTasks = tasks
