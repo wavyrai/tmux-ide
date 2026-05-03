@@ -537,3 +537,18 @@
 .milkdown-wrap .ProseMirror ::selection {
   background: var(--surface-active) !important;
 }
+
+/* Pierre's PatchDiff (DiffViewer) ships its own near-black pierre-dark /
+   pierre-light theme. When diff content is shorter than the wrapper, the
+   empty area showed our page bg → a visible seam. Force the diff container
+   to inherit the page bg so the whole tab reads as one surface. */
+.diff-container,
+.diff-container > div,
+.diff-container [class*="patch"],
+.diff-container [class*="diff"] {
+  background-color: var(--bg) !important;
+}
+.diff-container pre,
+.diff-container code {
+  background-color: transparent !important;
+}
