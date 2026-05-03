@@ -91,24 +91,28 @@ export function DiffPanel({ sessionName }: DiffPanelProps) {
       </div>
 
       {/* Content: file list + diff viewer */}
-      <div className="flex flex-1 min-h-0">
+      <div className="flex flex-1 min-h-0 min-w-0">
         {/* File sidebar */}
         <div className="w-[260px] shrink-0 border-r border-[var(--border)] overflow-y-auto">
           <FileList files={data.files} selectedFile={selectedFile} onSelectFile={setSelectedFile} />
         </div>
 
-        {/* Diff viewer */}
-        {selectedFile && visiblePatch ? (
-          <DiffViewer patch={visiblePatch} diffStyle={diffStyle} />
-        ) : loadingFile ? (
-          <div className="flex-1 flex items-center justify-center text-[var(--dim)]">
-            loading diff...
-          </div>
-        ) : (
-          <div className="flex-1 flex items-center justify-center text-[var(--dim)]">
-            select a file to view diff
-          </div>
-        )}
+        {/* Diff viewer — min-w-0 lets the flex child shrink below intrinsic
+            width of the patch content so split-mode doesn't push past the
+            viewport. */}
+        <div className="flex flex-1 min-w-0 min-h-0 flex-col">
+          {selectedFile && visiblePatch ? (
+            <DiffViewer patch={visiblePatch} diffStyle={diffStyle} />
+          ) : loadingFile ? (
+            <div className="flex-1 flex items-center justify-center text-[var(--dim)]">
+              loading diff...
+            </div>
+          ) : (
+            <div className="flex-1 flex items-center justify-center text-[var(--dim)]">
+              select a file to view diff
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );

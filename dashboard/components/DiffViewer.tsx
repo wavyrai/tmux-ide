@@ -47,7 +47,7 @@ export function DiffViewer({ patch, diffStyle = "split", preloaded }: DiffViewer
   const displayDiff = truncated ? lines.slice(0, MAX_DIFF_LINES).join("\n") : patch;
 
   return (
-    <div className="flex-1 overflow-auto">
+    <div className="flex-1 min-w-0 overflow-auto">
       {truncated && (
         <div className="px-4 py-2 bg-[var(--surface)] border-b border-[var(--border)] flex items-center justify-between">
           <span className="text-[var(--yellow)]">
