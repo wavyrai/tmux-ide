@@ -231,4 +231,59 @@ describe("PtyBridge", () => {
     bridge.resume();
     expect(outputs).toEqual(["ab"]);
   });
+
+  it("keeps replay output in FIFO order within the ring capacity", () => {
+    const child = fakePty();
+    const bridge = new PtyBridge({
+      coalesceMs: 0,
+      ringBufferBytes: 5,
+      pty: { spawn: () => child as never },
+    });
+    bridges.push(bridge);
+
+    bridge.spawn(80, 24);
+    child.emit("data", Buffer.from("abc"));
+    child.emit("data", Buffer.from("def"));
+
+    expect(bridge.getReplayBuffer().toString("utf8")).toBe("bcdef");
+  });
+
+  it("returns a contiguous replay buffer and clears it on explicit flush", () => {
+    const child = fakePty();
+    const bridge = new PtyBridge({
+      coalesceMs: 0,
+      ringBufferBytes: 64,
+      pty: { spawn: () => child as never },
+    });
+    bridges.push(bridge);
+
+    bridge.spawn(80, 24);
+    child.emit("data", Buffer.from("one"));
+    child.emit("data", Buffer.from("two"));
+
+    expect(bridge.getReplayBuffer()).toEqual(Buffer.from("onetwo"));
+    bridge.flushReplayBuffer();
+    expect(bridge.getReplayBuffer().byteLength).toBe(0);
+  });
+
+  it("clears replay output when the PTY exits", async () => {
+    const child = fakePty();
+    const bridge = new PtyBridge({
+      coalesceMs: 0,
+      pty: { spawn: () => child as never },
+    });
+    bridges.push(bridge);
+
+    bridge.spawn(80, 24);
+    child.emit("data", Buffer.from("before-exit"));
+    expect(bridge.getReplayBuffer().byteLength).toBeGreaterThan(0);
+    child.emit("exit", { exitCode: 0, signal: null });
+
+    await waitForOutputOnce();
+    expect(bridge.getReplayBuffer().byteLength).toBe(0);
+  });
 });
+
+async function waitForOutputOnce(): Promise<void> {
+  await sleep(0);
+}

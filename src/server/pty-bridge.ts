@@ -1,6 +1,8 @@
 import { EventEmitter } from "node:events";
 import * as pty from "node-pty";
 
+const DEFAULT_RING_BUFFER_BYTES = 256 * 1024;
+
 export interface PtyExit {
   code: number;
   signal: number | null;
@@ -14,6 +16,7 @@ export interface PtyBridgeOptions {
   env?: Record<string, string | undefined>;
   name?: string;
   coalesceMs?: number;
+  ringBufferBytes?: number;
   pty?: {
     spawn: typeof pty.spawn;
   };
@@ -47,6 +50,11 @@ function assertPositiveDimension(name: string, value: number): void {
   }
 }
 
+function readPositiveIntEnv(name: string, fallback: number): number {
+  const parsed = Number.parseInt(process.env[name] ?? "", 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
 export class PtyBridge extends EventEmitter {
   private ptyProcess: pty.IPty | null = null;
   private dataDisposable: pty.IDisposable | null = null;
@@ -56,13 +64,19 @@ export class PtyBridge extends EventEmitter {
   private outputChunks: Buffer[] = [];
   private pausedOutputChunks: Buffer[] = [];
   private outputPaused = false;
+  private replayChunks: Buffer[] = [];
+  private replayBytes = 0;
   private readonly options: PtyBridgeOptions;
   private readonly ptySpawn: typeof pty.spawn;
+  private readonly ringBufferBytes: number;
 
   constructor(options: PtyBridgeOptions = {}) {
     super();
     this.options = options;
     this.ptySpawn = options.pty?.spawn ?? pty.spawn;
+    this.ringBufferBytes =
+      options.ringBufferBytes ??
+      readPositiveIntEnv("TMUX_IDE_PTY_RING_BUFFER_BYTES", DEFAULT_RING_BUFFER_BYTES);
   }
 
   get pid(): number | null {
@@ -79,6 +93,15 @@ export class PtyBridge extends EventEmitter {
 
   get running(): boolean {
     return this.ptyProcess !== null;
+  }
+
+  getReplayBuffer(): Buffer {
+    return Buffer.concat(this.replayChunks, this.replayBytes);
+  }
+
+  flushReplayBuffer(): void {
+    this.replayChunks = [];
+    this.replayBytes = 0;
   }
 
   spawn(cols: number, rows: number, spawnOptions: PtySpawnOptions = {}): void {
@@ -177,6 +200,7 @@ export class PtyBridge extends EventEmitter {
   dispose(): void {
     this.disposeListeners();
     this.kill("SIGTERM");
+    this.flushReplayBuffer();
   }
 
   private disposeListeners(): void {
@@ -223,6 +247,7 @@ export class PtyBridge extends EventEmitter {
   }
 
   private deliverOutput(bytes: Buffer): void {
+    this.appendReplay(bytes);
     if (this.outputPaused) {
       this.pausedOutputChunks.push(bytes);
       return;
@@ -244,11 +269,39 @@ export class PtyBridge extends EventEmitter {
       this.outputTimer = null;
     }
 
+    if (this.outputChunks.length > 0) this.appendReplay(Buffer.concat(this.outputChunks));
     const chunks = [...this.pausedOutputChunks, ...this.outputChunks];
     this.pausedOutputChunks = [];
     this.outputChunks = [];
     if (chunks.length > 0) {
-      this.emit("output", Buffer.concat(chunks));
+      const bytes = Buffer.concat(chunks);
+      this.emit("output", bytes);
+    }
+  }
+
+  private appendReplay(bytes: Buffer): void {
+    if (this.ringBufferBytes <= 0 || bytes.byteLength === 0) return;
+
+    if (bytes.byteLength >= this.ringBufferBytes) {
+      const tail = bytes.subarray(bytes.byteLength - this.ringBufferBytes);
+      this.replayChunks = [Buffer.from(tail)];
+      this.replayBytes = tail.byteLength;
+      return;
+    }
+
+    this.replayChunks.push(Buffer.from(bytes));
+    this.replayBytes += bytes.byteLength;
+
+    while (this.replayBytes > this.ringBufferBytes && this.replayChunks.length > 0) {
+      const first = this.replayChunks[0]!;
+      const overflow = this.replayBytes - this.ringBufferBytes;
+      if (first.byteLength <= overflow) {
+        this.replayChunks.shift();
+        this.replayBytes -= first.byteLength;
+      } else {
+        this.replayChunks[0] = first.subarray(overflow);
+        this.replayBytes -= overflow;
+      }
     }
   }
 
@@ -275,6 +328,7 @@ export class PtyBridge extends EventEmitter {
     this.flushAllOutput();
     this.disposeListeners();
     this.ptyProcess = null;
+    this.flushReplayBuffer();
     this.emit("exit", exit);
   }
 }

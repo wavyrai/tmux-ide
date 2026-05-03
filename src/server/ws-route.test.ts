@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "bun:test";
 import { EventEmitter } from "node:events";
-import { handlePtyWebSocket } from "./ws-route.ts";
+import { PtyBridgeRegistry, handlePtyWebSocket, shutdownPtyBridges } from "./ws-route.ts";
 import { PtyBridge, type PtyBridgeOptions, type PtySpawnOptions } from "./pty-bridge.ts";
 
 class MockWebSocket extends EventEmitter {
@@ -37,10 +37,12 @@ class FakeBridge extends EventEmitter {
   running = false;
   writes: Buffer[] = [];
   killed: NodeJS.Signals[] = [];
+  resizeError: Error | null = null;
   pauseCount = 0;
   resumeCount = 0;
   paused = false;
   pendingOutput: Buffer[] = [];
+  replay = Buffer.alloc(0);
 
   spawn(cols: number, rows: number, options?: PtySpawnOptions): void {
     this.cols = cols;
@@ -54,6 +56,7 @@ class FakeBridge extends EventEmitter {
   }
 
   resize(cols: number, rows: number): void {
+    if (this.resizeError) throw this.resizeError;
     this.cols = cols;
     this.rows = rows;
   }
@@ -78,11 +81,16 @@ class FakeBridge extends EventEmitter {
   }
 
   emitOutput(bytes: Buffer): void {
+    this.replay = Buffer.concat([this.replay, bytes]);
     if (this.paused) {
       this.pendingOutput.push(bytes);
       return;
     }
     this.emit("output", bytes);
+  }
+
+  getReplayBuffer(): Buffer {
+    return this.replay;
   }
 }
 
@@ -125,6 +133,7 @@ async function waitFor(predicate: () => boolean, label: string, timeoutMs = 5000
 }
 
 afterEach(() => {
+  shutdownPtyBridges();
   for (const bridge of bridges.splice(0)) {
     bridge.kill("SIGKILL");
   }
@@ -375,6 +384,7 @@ describe("handlePtyWebSocket", () => {
         bridge = makeBridge(["-c", "trap 'exit 42' TERM; while true; do sleep 1; done"]);
         return bridge;
       },
+      idleMs: 0,
     });
 
     ws.receive(JSON.stringify({ type: "init", cols: 80, rows: 24 }));
@@ -382,5 +392,116 @@ describe("handlePtyWebSocket", () => {
     ws.clientClose();
 
     await waitFor(() => bridge?.running === false, "PTY SIGTERM exit");
+  });
+
+  it("reconnects within the idle window, replays buffered output, and continues live output", async () => {
+    const registry = new PtyBridgeRegistry();
+    const bridge = new FakeBridge();
+    const ws1 = new MockWebSocket();
+    handlePtyWebSocket(ws1, "tab-1", {
+      registry,
+      createBridge: () => bridge,
+      idleMs: 1000,
+    });
+
+    ws1.receive(JSON.stringify({ type: "init", cols: 80, rows: 24 }));
+    await waitFor(() => bridge.running === true, "first fake PTY spawn");
+    bridge.emitOutput(Buffer.from("before-drop"));
+    ws1.clientClose();
+
+    const ws2 = new MockWebSocket();
+    handlePtyWebSocket(ws2, "tab-1", {
+      registry,
+      createBridge: () => {
+        throw new Error("should reuse bridge");
+      },
+      idleMs: 1000,
+    });
+    ws2.receive(JSON.stringify({ type: "init", cols: 100, rows: 30 }));
+
+    await waitFor(
+      () => ws2.sent.some((frame) => Buffer.isBuffer(frame.data)),
+      "replay frame on reconnect",
+    );
+    expect(ws2.sent[0]?.data).toEqual(Buffer.from("before-drop"));
+    expect(jsonFrames(ws2).some((frame) => frame.type === "replay-end")).toBe(true);
+
+    bridge.emitOutput(Buffer.from("after-reconnect"));
+    await waitFor(
+      () =>
+        ws2.sent.some(
+          (frame) =>
+            Buffer.isBuffer(frame.data) && frame.data.toString("utf8") === "after-reconnect",
+        ),
+      "live frame after reconnect",
+    );
+
+    registry.shutdown();
+  });
+
+  it("still replays buffered output when reconnect resize fails", async () => {
+    const registry = new PtyBridgeRegistry();
+    const bridge = new FakeBridge();
+    const ws1 = new MockWebSocket();
+    handlePtyWebSocket(ws1, "tab-resize-fail", {
+      registry,
+      createBridge: () => bridge,
+      idleMs: 1000,
+    });
+
+    ws1.receive(JSON.stringify({ type: "init", cols: 80, rows: 24 }));
+    await waitFor(() => bridge.running === true, "first fake PTY spawn");
+    bridge.emitOutput(Buffer.from("before-resize-fail"));
+    ws1.clientClose();
+    bridge.resizeError = new Error("ioctl failed");
+
+    const ws2 = new MockWebSocket();
+    handlePtyWebSocket(ws2, "tab-resize-fail", {
+      registry,
+      createBridge: () => {
+        throw new Error("should reuse bridge");
+      },
+      idleMs: 1000,
+    });
+    ws2.receive(JSON.stringify({ type: "init", cols: 120, rows: 40 }));
+
+    await waitFor(
+      () => jsonFrames(ws2).some((frame) => frame.type === "replay-end"),
+      "replay-end after resize failure",
+    );
+    expect(ws2.sent[0]?.data).toEqual(Buffer.from("before-resize-fail"));
+    expect(jsonFrames(ws2).find((frame) => frame.type === "error")).toBeUndefined();
+
+    registry.shutdown();
+  });
+
+  it("reconnects after the idle window with a fresh PTY and no replay", async () => {
+    const registry = new PtyBridgeRegistry();
+    const firstBridge = new FakeBridge();
+    const secondBridge = new FakeBridge();
+    const ws1 = new MockWebSocket();
+    let createCount = 0;
+    const createBridge = () => {
+      createCount += 1;
+      return createCount === 1 ? firstBridge : secondBridge;
+    };
+
+    handlePtyWebSocket(ws1, "tab-2", { registry, createBridge, idleMs: 1 });
+    ws1.receive(JSON.stringify({ type: "init", cols: 80, rows: 24 }));
+    await waitFor(() => firstBridge.running === true, "first fake PTY spawn");
+    firstBridge.emitOutput(Buffer.from("old-output"));
+    ws1.clientClose();
+    await waitFor(() => firstBridge.killed.includes("SIGTERM"), "idle cleanup");
+
+    const ws2 = new MockWebSocket();
+    handlePtyWebSocket(ws2, "tab-2", { registry, createBridge, idleMs: 1 });
+    ws2.receive(JSON.stringify({ type: "init", cols: 80, rows: 24 }));
+    await waitFor(() => secondBridge.running === true, "fresh fake PTY spawn");
+
+    expect(createCount).toBe(2);
+    expect(ws2.sent.filter((frame) => Buffer.isBuffer(frame.data))).toEqual([]);
+    expect(jsonFrames(ws2).some((frame) => frame.type === "replay-end")).toBe(false);
+
+    registry.shutdown();
   });
 });

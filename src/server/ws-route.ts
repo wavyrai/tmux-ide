@@ -2,12 +2,15 @@ import type { RawData, WebSocket } from "ws";
 import { PtyBridge, type PtyExit, type PtySpawnOptions } from "./pty-bridge.ts";
 
 const WS_OPEN = 1;
-const KILL_ESCALATION_MS = 2000;
 const DEFAULT_BACKPRESSURE_BYTES = 1 << 20;
 const DRAIN_POLL_MS = 16;
+const DEFAULT_BRIDGE_IDLE_MS = 300000;
 
 export interface PtyBridgeLike {
   spawn(cols: number, rows: number, options?: PtySpawnOptions): void;
+  readonly running?: boolean;
+  getReplayBuffer?(): Buffer;
+  flushReplayBuffer?(): void;
   write(bytes: Buffer): void;
   resize(cols: number, rows: number): void;
   pause(): void;
@@ -15,6 +18,8 @@ export interface PtyBridgeLike {
   kill(signal?: NodeJS.Signals): void;
   on(event: "output", listener: (bytes: Buffer) => void): this;
   on(event: "exit", listener: (exit: PtyExit) => void): this;
+  off(event: "output", listener: (bytes: Buffer) => void): this;
+  off(event: "exit", listener: (exit: PtyExit) => void): this;
 }
 
 interface WsLike {
@@ -29,6 +34,8 @@ interface WsLike {
 
 export interface PtyWebSocketOptions {
   createBridge?: (id: string) => PtyBridgeLike;
+  registry?: PtyBridgeRegistry;
+  idleMs?: number;
 }
 
 export interface PtyWebSocketConnection {
@@ -133,6 +140,82 @@ function backpressureBytes(): number {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_BACKPRESSURE_BYTES;
 }
 
+function bridgeIdleMs(options?: { idleMs?: number }): number {
+  if (options?.idleMs !== undefined) return options.idleMs;
+  const parsed = Number.parseInt(process.env.TMUX_IDE_BRIDGE_IDLE_MS ?? "", 10);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : DEFAULT_BRIDGE_IDLE_MS;
+}
+
+interface BridgeEntry {
+  bridge: PtyBridgeLike;
+  clients: number;
+  idleTimer: ReturnType<typeof setTimeout> | null;
+}
+
+export class PtyBridgeRegistry {
+  private entries = new Map<string, BridgeEntry>();
+
+  acquire(
+    id: string,
+    createBridge: (id: string) => PtyBridgeLike,
+    options: { idleMs?: number } = {},
+  ): { bridge: PtyBridgeLike; reused: boolean; release: () => void } {
+    let entry = this.entries.get(id);
+    const reused = !!entry && entry.bridge.running !== false;
+    if (!entry || entry.bridge.running === false) {
+      entry = { bridge: createBridge(id), clients: 0, idleTimer: null };
+      this.entries.set(id, entry);
+      entry.bridge.on("exit", () => {
+        this.entries.delete(id);
+      });
+    }
+
+    if (entry.idleTimer) {
+      clearTimeout(entry.idleTimer);
+      entry.idleTimer = null;
+    }
+    entry.clients++;
+
+    let released = false;
+    const release = () => {
+      if (released) return;
+      released = true;
+      const current = this.entries.get(id);
+      if (!current) return;
+      current.clients = Math.max(0, current.clients - 1);
+      if (current.clients > 0 || current.bridge.running === false) return;
+      const idleMs = bridgeIdleMs(options);
+      current.idleTimer = setTimeout(() => {
+        const latest = this.entries.get(id);
+        if (!latest || latest.clients > 0) return;
+        latest.bridge.kill("SIGTERM");
+        this.entries.delete(id);
+      }, idleMs);
+      current.idleTimer.unref?.();
+    };
+
+    return { bridge: entry.bridge, reused, release };
+  }
+
+  shutdown(): void {
+    for (const entry of this.entries.values()) {
+      if (entry.idleTimer) clearTimeout(entry.idleTimer);
+      entry.bridge.kill("SIGTERM");
+    }
+    this.entries.clear();
+  }
+
+  size(): number {
+    return this.entries.size;
+  }
+}
+
+export const defaultPtyBridgeRegistry = new PtyBridgeRegistry();
+
+export function shutdownPtyBridges(): void {
+  defaultPtyBridgeRegistry.shutdown();
+}
+
 export function handlePtyWebSocket(
   ws: WebSocket | WsLike,
   id: string,
@@ -144,6 +227,9 @@ export function handlePtyWebSocket(
   let ptyExited = false;
   let killTimer: ReturnType<typeof setTimeout> | null = null;
   let drainTimer: ReturnType<typeof setTimeout> | null = null;
+  let releaseBridge: (() => void) | null = null;
+  let outputListener: ((bytes: Buffer) => void) | null = null;
+  let exitListener: ((exit: PtyExit) => void) | null = null;
   const backpressureThreshold = backpressureBytes();
   const resumeThreshold = Math.floor(backpressureThreshold / 2);
 
@@ -185,15 +271,15 @@ export function handlePtyWebSocket(
   };
 
   const attachBridgeEvents = (ptyBridge: PtyBridgeLike) => {
-    ptyBridge.on("output", (bytes) => {
+    outputListener = (bytes) => {
       if (socket.readyState === WS_OPEN) {
         maybePauseForBackpressure();
         socket.send(bytes, { binary: true });
         maybePauseForBackpressure();
       }
-    });
+    };
 
-    ptyBridge.on("exit", (exit) => {
+    exitListener = (exit) => {
       ptyExited = true;
       clearKillTimer();
       clearDrainTimer();
@@ -201,7 +287,17 @@ export function handlePtyWebSocket(
         socket.send(JSON.stringify({ type: "exit", code: exit.code, signal: exit.signal }));
         socket.close();
       }
-    });
+    };
+
+    ptyBridge.on("output", outputListener);
+    ptyBridge.on("exit", exitListener);
+  };
+
+  const detachBridgeEvents = () => {
+    if (bridge && outputListener) bridge.off("output", outputListener);
+    if (bridge && exitListener) bridge.off("exit", exitListener);
+    outputListener = null;
+    exitListener = null;
   };
 
   socket.on("message", (data, isBinary) => {
@@ -219,16 +315,39 @@ export function handlePtyWebSocket(
         return;
       }
 
-      bridge = options.createBridge?.(id) ?? new PtyBridge({ id });
+      const registry = options.registry ?? defaultPtyBridgeRegistry;
+      const acquired = registry.acquire(id, options.createBridge ?? ((bridgeId) => new PtyBridge({ id: bridgeId })), {
+        idleMs: options.idleMs,
+      });
+      bridge = acquired.bridge;
+      releaseBridge = acquired.release;
       attachBridgeEvents(bridge);
 
       try {
         const spawnOptions: PtySpawnOptions = {};
         if (init.cwd !== undefined) spawnOptions.cwd = init.cwd;
         if (init.cmd !== undefined) spawnOptions.cmd = init.cmd;
-        bridge.spawn(init.cols, init.rows, spawnOptions);
+        if (!acquired.reused) {
+          bridge.spawn(init.cols, init.rows, spawnOptions);
+        } else {
+          try {
+            bridge.resize(init.cols, init.rows);
+          } catch {
+            // Reconnect replay is still useful if the PTY is exiting between
+            // the registry running check and the resize request.
+          }
+          const replay = bridge.getReplayBuffer?.() ?? Buffer.alloc(0);
+          if (replay.byteLength > 0 && socket.readyState === WS_OPEN) {
+            socket.send(replay, { binary: true });
+          }
+          if (socket.readyState === WS_OPEN) {
+            socket.send(JSON.stringify({ type: "replay-end", bytes: replay.byteLength }));
+          }
+        }
         initialized = true;
       } catch (err) {
+        detachBridgeEvents();
+        releaseBridge?.();
         closeWithError(`spawn failed: ${err instanceof Error ? err.message : String(err)}`);
       }
       return;
@@ -253,12 +372,9 @@ export function handlePtyWebSocket(
 
   socket.on("close", () => {
     clearDrainTimer();
+    detachBridgeEvents();
     if (!bridge || ptyExited) return;
-    bridge.kill("SIGTERM");
-    killTimer = setTimeout(() => {
-      bridge?.kill("SIGKILL");
-    }, KILL_ESCALATION_MS);
-    killTimer.unref?.();
+    releaseBridge?.();
   });
 
   socket.on("error", () => {

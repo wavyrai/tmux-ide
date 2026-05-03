@@ -3,7 +3,7 @@ import { parse } from "node:url";
 import { Hono } from "hono";
 import { getRequestListener } from "@hono/node-server";
 import { WebSocketServer } from "ws";
-import { handlePtyWebSocket } from "./ws-route.ts";
+import { handlePtyWebSocket, shutdownPtyBridges } from "./ws-route.ts";
 
 const DEFAULT_PORT = 6070;
 
@@ -66,6 +66,7 @@ export async function start(port?: number): Promise<StartedTmuxIdeServer> {
     server,
     close: () =>
       new Promise<void>((resolve, reject) => {
+        shutdownPtyBridges();
         ptyWss.close();
         server.close((err) => (err ? reject(err) : resolve()));
       }),
