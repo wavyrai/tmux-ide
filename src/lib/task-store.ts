@@ -20,7 +20,8 @@ import type { ProofSchema } from "../types.ts";
 const TASKS_DIR = ".tasks";
 const SCHEMA_VERSION = 1;
 const OWN_WRITE_SUPPRESSION_MS = 200;
-const WATCH_DEBOUNCE_MS = 75;
+const DEFAULT_CACHE_SIZE = 500;
+const DEFAULT_WATCH_DEBOUNCE_MS = 100;
 const RECONCILE_LOG_PREFIX = "[task-store]";
 const ASSERTION_ID_PATTERN = /\*\*((?:VAL|ASSERT)[A-Z0-9_-]+)\*\*/g;
 
@@ -85,6 +86,15 @@ export interface Task {
 type SchemaName = "mission" | "goal" | "task";
 type StoreValue = Mission | Goal | Task;
 
+export interface TaskStoreChangeEvent {
+  path: string | null;
+  schemaName?: SchemaName;
+  source: string;
+  op?: "create" | "update" | "delete" | "invalidate" | "reconcile";
+  id?: string;
+  drift?: number;
+}
+
 const schemas: Record<SchemaName, z.ZodType<StoreValue>> = {
   mission: MissionSchemaZ,
   goal: GoalSchemaZ,
@@ -131,6 +141,36 @@ export interface TaskStoreHealth {
   driftCount: number;
   watcherActive: boolean;
   writeQueueDepth: number;
+}
+
+export interface TaskStoreMetrics {
+  uptimeMs: number;
+  cache: {
+    size: number;
+    maxSize: number;
+    hits: number;
+    misses: number;
+    evictions: number;
+  };
+  watcher: {
+    active: boolean;
+    debounceMs: number;
+    events: number;
+    suppressed: number;
+    batchedFlushes: number;
+    pending: number;
+  };
+  reconcile: {
+    runs: number;
+    driftCount: number;
+    lastMs: number;
+  };
+  writes: {
+    active: number;
+    count: number;
+    lastMs: number;
+    p95Ms: number;
+  };
 }
 
 export class TaskStoreValidationError extends Error {
@@ -202,7 +242,16 @@ export function normalizeGoal(raw: Record<string, unknown>): Goal {
 }
 
 export function normalizeTask(raw: Record<string, unknown>): Task {
+  let proof = raw.proof as ProofSchema | null | undefined;
+  if (isRecord(proof) && "note" in proof && !("notes" in proof)) {
+    const { note, ...rest } = proof;
+    proof = { ...rest, notes: String(note) } as ProofSchema;
+  }
+
   const defaults = {
+    goal: null,
+    assignee: null,
+    tags: [] as string[],
     retryCount: 0,
     maxRetries: 5,
     lastError: null,
@@ -216,8 +265,19 @@ export function normalizeTask(raw: Record<string, unknown>): Task {
     ...defaults,
     ...(rest as Omit<
       Task,
-      "retryCount" | "maxRetries" | "lastError" | "nextRetryAt" | "depends_on"
+      | "goal"
+      | "assignee"
+      | "tags"
+      | "retryCount"
+      | "maxRetries"
+      | "lastError"
+      | "nextRetryAt"
+      | "depends_on"
     >),
+    goal: (raw.goal as string | null) ?? defaults.goal,
+    assignee: (raw.assignee as string | null) ?? defaults.assignee,
+    tags: Array.isArray(raw.tags) ? (raw.tags as string[]) : defaults.tags,
+    proof: proof ?? null,
     retryCount: (raw.retryCount as number) ?? defaults.retryCount,
     maxRetries: (raw.maxRetries as number) ?? defaults.maxRetries,
     lastError: (raw.lastError as string | null) ?? defaults.lastError,
@@ -306,6 +366,33 @@ function parseAssertionIds(contract: string): string[] {
   return [...ids];
 }
 
+function readPositiveIntEnv(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (!raw) return fallback;
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function getCacheLimit(): number {
+  return readPositiveIntEnv("TMUX_IDE_TASKSTORE_CACHE_SIZE", DEFAULT_CACHE_SIZE);
+}
+
+function getWatcherDebounceMs(): number {
+  return readPositiveIntEnv("TMUX_IDE_WATCHER_DEBOUNCE_MS", DEFAULT_WATCH_DEBOUNCE_MS);
+}
+
+function getStoreValueId(value: StoreValue): string | undefined {
+  if ("id" in value) return value.id;
+  return undefined;
+}
+
+function p95(samples: number[]): number {
+  if (samples.length === 0) return 0;
+  const sorted = [...samples].sort((a, b) => a - b);
+  const index = Math.min(sorted.length - 1, Math.ceil(sorted.length * 0.95) - 1);
+  return sorted[index] ?? 0;
+}
+
 function findFileById(directory: string, id: string): string | null {
   if (!existsSync(directory)) return null;
   const files = readdirSync(directory).filter((f) => f.endsWith(".json"));
@@ -320,19 +407,42 @@ function findFileById(directory: string, id: string): string | null {
 export class TaskStore extends EventEmitter {
   private cache = new Map<string, CacheEntry>();
   private ownWriteTimers = new Map<string, ReturnType<typeof setTimeout>>();
-  private invalidateTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  private pendingWatchPaths = new Set<string>();
+  private watchFlushTimer: ReturnType<typeof setTimeout> | null = null;
   private watcher: FSWatcher | null = null;
   private watchedRoot: string | null = null;
   private startedAt = Date.now();
   private lastReconcileMs = 0;
   private driftCount = 0;
   private activeWrites = 0;
+  private taskById = new Map<string, Task>();
+  private taskPathById = new Map<string, string>();
+  private tasksByStatus = new Map<Task["status"], Set<string>>();
+  private tasksByAgentPane = new Map<string, Set<string>>();
+  private tasksByGoal = new Map<string, Set<string>>();
+  private tasksByMilestone = new Map<string, Set<string>>();
+  private cacheHits = 0;
+  private cacheMisses = 0;
+  private cacheEvictions = 0;
+  private watcherEvents = 0;
+  private watcherSuppressed = 0;
+  private watcherBatchedFlushes = 0;
+  private reconcileRuns = 0;
+  private writeCount = 0;
+  private lastWriteMs = 0;
+  private writeSamples: number[] = [];
 
   read<T extends StoreValue>(filePath: string, schemaName: SchemaName): T {
     const absolute = resolve(filePath);
     const cached = this.cache.get(absolute);
-    if (cached) return cached.value as T;
+    if (cached) {
+      this.cacheHits++;
+      this.cache.delete(absolute);
+      this.cache.set(absolute, cached);
+      return cached.value as T;
+    }
 
+    this.cacheMisses++;
     const content = readFileSync(absolute, "utf-8");
     const parsed = this.parseContent<T>(absolute, schemaName, content);
     this.seedCache(absolute, schemaName, parsed, content);
@@ -350,6 +460,7 @@ export class TaskStore extends EventEmitter {
 
   writeAtomic<T extends StoreValue>(filePath: string, schemaName: SchemaName, value: T): void {
     const absolute = resolve(filePath);
+    const op = existsSync(absolute) ? "update" : "create";
     const body = { _version: SCHEMA_VERSION, ...value };
     const content = serializeJson(body);
     const parsed = this.parseContent<T>(absolute, schemaName, content);
@@ -357,13 +468,21 @@ export class TaskStore extends EventEmitter {
 
     mkdirSync(dirname(absolute), { recursive: true });
     this.activeWrites++;
+    const started = Date.now();
     try {
       writeFileSync(tmpPath, content);
       this.markOwnWrite(absolute);
       renameSync(tmpPath, absolute);
       this.seedCache(absolute, schemaName, parsed, content);
-      this.emit("change", { path: absolute, schemaName, source: "write" });
+      this.emit("change", {
+        path: absolute,
+        schemaName,
+        source: "write",
+        op,
+        id: getStoreValueId(parsed),
+      } satisfies TaskStoreChangeEvent);
     } finally {
+      this.recordWriteSample(Date.now() - started);
       this.activeWrites--;
       if (existsSync(tmpPath)) {
         try {
@@ -377,20 +496,33 @@ export class TaskStore extends EventEmitter {
 
   unlink(filePath: string): void {
     const absolute = resolve(filePath);
+    const cached = this.cache.get(absolute);
+    const schemaName = cached?.schemaName ?? schemaForCacheablePath(absolute) ?? undefined;
+    const id = cached ? getStoreValueId(cached.value) : undefined;
     this.markOwnWrite(absolute);
     unlinkSync(absolute);
-    this.invalidate(absolute, "delete");
+    this.removeFromCache(absolute);
+    this.emit("change", { path: absolute, schemaName, source: "delete", op: "delete", id });
   }
 
   invalidate(filePath: string, source = "external"): void {
     const absolute = resolve(filePath);
-    const had = this.cache.delete(absolute);
-    if (had) this.emit("change", { path: absolute, source });
+    const removed = this.removeFromCache(absolute);
+    if (removed) {
+      this.emit("change", {
+        path: absolute,
+        schemaName: removed.schemaName,
+        source,
+        op: "invalidate",
+        id: getStoreValueId(removed.value),
+      } satisfies TaskStoreChangeEvent);
+    }
   }
 
   invalidateAll(): void {
     if (this.cache.size === 0) return;
     this.cache.clear();
+    this.clearIndexes();
     this.emit("change", { path: null, source: "invalidate-all" });
   }
 
@@ -408,6 +540,54 @@ export class TaskStore extends EventEmitter {
       watcherActive: this.watcher !== null,
       writeQueueDepth: this.activeWrites,
     };
+  }
+
+  getMetrics(): TaskStoreMetrics {
+    return {
+      uptimeMs: Date.now() - this.startedAt,
+      cache: {
+        size: this.cache.size,
+        maxSize: getCacheLimit(),
+        hits: this.cacheHits,
+        misses: this.cacheMisses,
+        evictions: this.cacheEvictions,
+      },
+      watcher: {
+        active: this.watcher !== null,
+        debounceMs: getWatcherDebounceMs(),
+        events: this.watcherEvents,
+        suppressed: this.watcherSuppressed,
+        batchedFlushes: this.watcherBatchedFlushes,
+        pending: this.pendingWatchPaths.size,
+      },
+      reconcile: {
+        runs: this.reconcileRuns,
+        driftCount: this.driftCount,
+        lastMs: this.lastReconcileMs,
+      },
+      writes: {
+        active: this.activeWrites,
+        count: this.writeCount,
+        lastMs: this.lastWriteMs,
+        p95Ms: p95(this.writeSamples),
+      },
+    };
+  }
+
+  getTasksByStatus(status: Task["status"]): Task[] {
+    return this.tasksFromIndex(this.tasksByStatus.get(status));
+  }
+
+  getTasksByAgentPane(agentPane: string): Task[] {
+    return this.tasksFromIndex(this.tasksByAgentPane.get(agentPane));
+  }
+
+  getTasksByGoal(goalId: string): Task[] {
+    return this.tasksFromIndex(this.tasksByGoal.get(goalId));
+  }
+
+  getTasksByMilestone(milestoneId: string): Task[] {
+    return this.tasksFromIndex(this.tasksByMilestone.get(milestoneId));
   }
 
   startWatcher(dir: string): () => Promise<void> {
@@ -429,17 +609,15 @@ export class TaskStore extends EventEmitter {
     });
 
     const invalidateFromWatch = (path: string) => {
+      this.watcherEvents++;
       const absolute = resolve(path);
-      if (this.isOwnWrite(absolute)) return;
+      if (this.isOwnWrite(absolute)) {
+        this.watcherSuppressed++;
+        return;
+      }
 
-      const existing = this.invalidateTimers.get(absolute);
-      if (existing) clearTimeout(existing);
-
-      const timer = setTimeout(() => {
-        this.invalidateTimers.delete(absolute);
-        this.invalidate(absolute, "watcher");
-      }, WATCH_DEBOUNCE_MS);
-      this.invalidateTimers.set(absolute, timer);
+      this.pendingWatchPaths.add(absolute);
+      this.scheduleWatchFlush();
     };
 
     this.watcher.on("add", invalidateFromWatch);
@@ -454,8 +632,9 @@ export class TaskStore extends EventEmitter {
   }
 
   async stopWatcher(): Promise<void> {
-    for (const timer of this.invalidateTimers.values()) clearTimeout(timer);
-    this.invalidateTimers.clear();
+    if (this.watchFlushTimer) clearTimeout(this.watchFlushTimer);
+    this.watchFlushTimer = null;
+    this.pendingWatchPaths.clear();
     if (!this.watcher) return;
     const watcher = this.watcher;
     this.watcher = null;
@@ -464,6 +643,8 @@ export class TaskStore extends EventEmitter {
   }
 
   reconcile(dir: string): number {
+    this.reconcileRuns++;
+    const started = Date.now();
     const root = getTasksRoot(dir);
     const diskFiles = cacheableFiles(dir);
     const diskPaths = new Set(diskFiles.map((f) => resolve(f.filePath)));
@@ -487,11 +668,16 @@ export class TaskStore extends EventEmitter {
       }
     }
 
-    this.lastReconcileMs = Date.now();
+    this.lastReconcileMs = Date.now() - started;
     this.driftCount = drift;
     if (drift > 0) {
       console.warn("%s reconcile detected %d cache drift issue(s)", RECONCILE_LOG_PREFIX, drift);
-      this.emit("change", { path: root, source: "reconcile", drift });
+      this.emit("change", {
+        path: root,
+        source: "reconcile",
+        op: "reconcile",
+        drift,
+      } satisfies TaskStoreChangeEvent);
     }
     return drift;
   }
@@ -537,12 +723,103 @@ export class TaskStore extends EventEmitter {
     content: string,
   ): void {
     const absolute = resolve(filePath);
+    this.removeFromCache(absolute);
     this.cache.set(absolute, {
       filePath: absolute,
       schemaName,
       value,
       hash: hashContent(content),
     });
+    if (schemaName === "task") this.addTaskToIndexes(absolute, value as Task);
+    this.enforceCacheLimit();
+  }
+
+  private removeFromCache(filePath: string): CacheEntry | null {
+    const absolute = resolve(filePath);
+    const existing = this.cache.get(absolute);
+    if (!existing) return null;
+    this.cache.delete(absolute);
+    if (existing.schemaName === "task") this.removeTaskFromIndexes(existing.value as Task);
+    return existing;
+  }
+
+  private addTaskToIndexes(filePath: string, task: Task): void {
+    const oldPath = this.taskPathById.get(task.id);
+    if (oldPath && oldPath !== filePath) this.removeFromCache(oldPath);
+    this.taskById.set(task.id, task);
+    this.taskPathById.set(task.id, filePath);
+    this.addIndex(this.tasksByStatus, task.status, task.id);
+    if (task.assignee) this.addIndex(this.tasksByAgentPane, task.assignee, task.id);
+    if (task.goal) this.addIndex(this.tasksByGoal, task.goal, task.id);
+    if (task.milestone) this.addIndex(this.tasksByMilestone, task.milestone, task.id);
+  }
+
+  private removeTaskFromIndexes(task: Task): void {
+    this.taskById.delete(task.id);
+    this.taskPathById.delete(task.id);
+    this.removeIndex(this.tasksByStatus, task.status, task.id);
+    if (task.assignee) this.removeIndex(this.tasksByAgentPane, task.assignee, task.id);
+    if (task.goal) this.removeIndex(this.tasksByGoal, task.goal, task.id);
+    if (task.milestone) this.removeIndex(this.tasksByMilestone, task.milestone, task.id);
+  }
+
+  private addIndex(map: Map<string, Set<string>>, key: string, id: string): void {
+    let ids = map.get(key);
+    if (!ids) {
+      ids = new Set();
+      map.set(key, ids);
+    }
+    ids.add(id);
+  }
+
+  private removeIndex(map: Map<string, Set<string>>, key: string, id: string): void {
+    const ids = map.get(key);
+    if (!ids) return;
+    ids.delete(id);
+    if (ids.size === 0) map.delete(key);
+  }
+
+  private clearIndexes(): void {
+    this.taskById.clear();
+    this.taskPathById.clear();
+    this.tasksByStatus.clear();
+    this.tasksByAgentPane.clear();
+    this.tasksByGoal.clear();
+    this.tasksByMilestone.clear();
+  }
+
+  private tasksFromIndex(ids: Set<string> | undefined): Task[] {
+    if (!ids) return [];
+    return [...ids].map((id) => this.taskById.get(id)).filter((task): task is Task => !!task);
+  }
+
+  private enforceCacheLimit(): void {
+    const limit = getCacheLimit();
+    while (this.cache.size > limit) {
+      const oldest = this.cache.keys().next().value as string | undefined;
+      if (!oldest) return;
+      this.removeFromCache(oldest);
+      this.cacheEvictions++;
+    }
+  }
+
+  private scheduleWatchFlush(): void {
+    if (this.watchFlushTimer) return;
+    this.watchFlushTimer = setTimeout(() => {
+      this.watchFlushTimer = null;
+      const paths = [...this.pendingWatchPaths];
+      this.pendingWatchPaths.clear();
+      if (paths.length === 0) return;
+      this.watcherBatchedFlushes++;
+      for (const path of paths) this.invalidate(path, "watcher");
+    }, getWatcherDebounceMs());
+  }
+
+  private recordWriteSample(durationMs: number): void {
+    this.writeCount++;
+    this.lastWriteMs = durationMs;
+    this.writeSamples.push(durationMs);
+    if (this.writeSamples.length > 100) this.writeSamples.shift();
   }
 
   private markOwnWrite(filePath: string): void {
@@ -585,6 +862,10 @@ export function reconcileTaskStore(dir: string): number {
 
 export function getTaskStoreHealth(): TaskStoreHealth {
   return taskStore.getHealth();
+}
+
+export function getTaskStoreMetrics(): TaskStoreMetrics {
+  return taskStore.getMetrics();
 }
 
 export function invalidateTaskStore(path: string): void {
@@ -712,7 +993,23 @@ export function deleteTask(dir: string, id: string): boolean {
 }
 
 export function loadTasksForGoal(dir: string, goalId: string): Task[] {
-  return loadTasks(dir).filter((t) => t.goal === goalId);
+  loadTasks(dir);
+  return taskStore.getTasksByGoal(goalId);
+}
+
+export function loadTasksByStatus(dir: string, status: Task["status"]): Task[] {
+  loadTasks(dir);
+  return taskStore.getTasksByStatus(status);
+}
+
+export function loadTasksByAgentPane(dir: string, agentPane: string): Task[] {
+  loadTasks(dir);
+  return taskStore.getTasksByAgentPane(agentPane);
+}
+
+export function loadTasksByMilestone(dir: string, milestoneId: string): Task[] {
+  loadTasks(dir);
+  return taskStore.getTasksByMilestone(milestoneId);
 }
 
 export function detectCycle(dir: string, taskId: string, newDeps: string[]): string[] | null {

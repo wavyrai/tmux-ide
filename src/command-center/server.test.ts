@@ -74,14 +74,7 @@ describe("POST /api/project/:name/inject", () => {
       "-F",
       expect.any(String),
     ]);
-    expect(tmuxCalls).toContainEqual([
-      "send-keys",
-      "-t",
-      "%2",
-      "-l",
-      "--",
-      "hello agent",
-    ]);
+    expect(tmuxCalls).toContainEqual(["send-keys", "-t", "%2", "-l", "--", "hello agent"]);
     expect(tmuxCalls).toContainEqual(["send-keys", "-t", "%2", "Enter"]);
   });
 
@@ -99,14 +92,7 @@ describe("POST /api/project/:name/inject", () => {
     });
 
     expect(res.status).toBe(200);
-    expect(tmuxCalls).toContainEqual([
-      "send-keys",
-      "-t",
-      "%2",
-      "-l",
-      "--",
-      "context only",
-    ]);
+    expect(tmuxCalls).toContainEqual(["send-keys", "-t", "%2", "-l", "--", "context only"]);
     expect(tmuxCalls).not.toContainEqual(["send-keys", "-t", "%2", "Enter"]);
   });
 
@@ -586,6 +572,72 @@ describe("GET /api/events (SSE)", () => {
     expect(res.status).toBe(200);
     const contentType = res.headers.get("content-type");
     expect(contentType?.includes("text/event-stream")).toBeTruthy();
+  });
+});
+
+async function readSseUntil(res: Response, predicate: (text: string) => boolean): Promise<string> {
+  const reader = res.body?.getReader();
+  if (!reader) return "";
+  const decoder = new TextDecoder();
+  let text = "";
+  for (let index = 0; index < 20; index++) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    text += decoder.decode(value, { stream: true });
+    if (predicate(text)) break;
+  }
+  await reader.cancel();
+  return text;
+}
+
+describe("GET /api/project/:name/stream", () => {
+  it("emits an initial snapshot and task change events", async () => {
+    const app = createApp();
+    const res = await app.request("/api/project/test-project/stream");
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")?.includes("text/event-stream")).toBeTruthy();
+
+    const streamTextPromise = readSseUntil(
+      res,
+      (text) => text.includes("event: snapshot") && text.includes("event: task.changed"),
+    );
+    await Promise.resolve();
+    saveTask(tmpDir, makeTask({ id: "009", title: "Streamed Task" }));
+    const text = await streamTextPromise;
+
+    expect(text).toContain("event: snapshot");
+    expect(text).toContain("event: task.changed");
+    expect(text).toContain('"id":"009"');
+  });
+
+  it("returns 404 for an unknown project stream", async () => {
+    const app = createApp();
+    const res = await app.request("/api/project/missing/stream");
+    expect(res.status).toBe(404);
+  });
+});
+
+describe("GET /api/daemon/metrics", () => {
+  it("returns cache, watcher, reconcile, sse, and write metrics", async () => {
+    saveTask(tmpDir, makeTask({ id: "001", title: "Metrics" }));
+    const app = createApp();
+    const res = await app.request("/api/daemon/metrics");
+    expect(res.status).toBe(200);
+
+    const body = (await res.json()) as {
+      uptimeMs: number;
+      cache: Record<string, number>;
+      watcher: Record<string, number | boolean>;
+      reconcile: Record<string, number>;
+      sse: Record<string, number>;
+      writes: Record<string, number>;
+    };
+    expect(typeof body.uptimeMs).toBe("number");
+    expect(typeof body.cache.hits).toBe("number");
+    expect(typeof body.watcher.batchedFlushes).toBe("number");
+    expect(typeof body.reconcile.driftCount).toBe("number");
+    expect(typeof body.sse.connections).toBe("number");
+    expect(typeof body.writes.p95Ms).toBe("number");
   });
 });
 

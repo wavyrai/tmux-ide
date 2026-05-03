@@ -34,9 +34,12 @@ import {
   loadMission,
   saveMission,
   loadTasks,
+  taskStore,
+  getTaskStoreMetrics,
   type Task,
+  type TaskStoreChangeEvent,
 } from "../lib/task-store.ts";
-import { readEvents, appendEvent } from "../lib/event-log.ts";
+import { readEvents, appendEvent, eventLogEmitter } from "../lib/event-log.ts";
 import { extractMarks, calculateStats, tagContent } from "../lib/authorship.ts";
 import {
   loadValidationState,
@@ -96,6 +99,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const pkgVersion: string = JSON.parse(
   readFileSync(join(__dirname, "../../package.json"), "utf-8"),
 ).version;
+let projectStreamConnections = 0;
 
 const ALLOWED_MILESTONE_TRANSITIONS = new Map([
   ["locked", new Set(["active"])],
@@ -103,6 +107,30 @@ const ALLOWED_MILESTONE_TRANSITIONS = new Map([
   ["validating", new Set(["done", "active"])],
   ["done", new Set<string>()],
 ]);
+
+const sseMetrics = {
+  connections: 0,
+  messagesSent: 0,
+};
+
+export function getSseMetrics(): { connections: number; messagesSent: number } {
+  return { ...sseMetrics };
+}
+
+function freezePayload<T>(payload: T): T {
+  if (payload && typeof payload === "object") {
+    for (const value of Object.values(payload as Record<string, unknown>)) {
+      freezePayload(value);
+    }
+    Object.freeze(payload);
+  }
+  return payload;
+}
+
+function isPathInside(path: string | null | undefined, root: string): boolean {
+  if (!path) return false;
+  return path === root || path.startsWith(root + "/");
+}
 
 function parsePlanFrontmatterSummary(content: string): {
   owner: string | null;
@@ -149,6 +177,55 @@ function isValidMilestoneTransition(
 ): boolean {
   if (from === to) return true;
   return ALLOWED_MILESTONE_TRANSITIONS.get(from)?.has(to) ?? false;
+}
+
+type DiscoveredSession = ReturnType<typeof discoverSessions>[number];
+
+function validationSummary(dir: string): {
+  total: number;
+  passing: number;
+  failing: number;
+  pending: number;
+  blocked: number;
+} {
+  const valState = loadValidationState(dir);
+  const assertions = valState ? Object.values(valState.assertions) : [];
+  return {
+    total: assertions.length,
+    passing: assertions.filter((a) => a.status === "passing").length,
+    failing: assertions.filter((a) => a.status === "failing").length,
+    pending: assertions.filter((a) => a.status === "pending").length,
+    blocked: assertions.filter((a) => a.status === "blocked").length,
+  };
+}
+
+function buildProjectStreamSnapshot(session: DiscoveredSession) {
+  const project = buildProjectDetail(session);
+  const mission = loadMission(session.dir);
+  const tasks = loadTasks(session.dir);
+  const milestones = mission
+    ? [...mission.milestones]
+        .sort((a, b) => a.order - b.order)
+        .map((milestone) => {
+          const milestoneTasks = tasks.filter((task) => task.milestone === milestone.id);
+          return {
+            ...milestone,
+            taskCount: milestoneTasks.length,
+            tasksDone: milestoneTasks.filter((task) => task.status === "done").length,
+          };
+        })
+    : [];
+
+  return {
+    project,
+    mission: mission ? { mission, validationSummary: validationSummary(session.dir) } : null,
+    milestones,
+    goals: project.goals,
+    tasks: project.tasks,
+    skills: loadSkills(session.dir),
+    agents: project.agents,
+    events: readEvents(session.dir).slice(-100).reverse(),
+  };
 }
 
 export function createApp(options: CreateAppOptions = {}): Hono {
@@ -1178,6 +1255,198 @@ export function createApp(options: CreateAppOptions = {}): Hono {
     });
 
     return c.json({ events: withRelative });
+  });
+
+  app.get("/api/project/:name/stream", (c) => {
+    const name = c.req.param("name");
+    const sessions = discoverSessions();
+    const session = sessions.find((s) => s.name === name);
+    if (!session) {
+      return c.json({ error: "Session not found" }, 404);
+    }
+
+    return streamSSE(c, async (stream) => {
+      projectStreamConnections += 1;
+      sseMetrics.connections = projectStreamConnections;
+      let closed = false;
+      let changeQueued = false;
+      let previousSnapshotHash = "";
+      let previousTaskHashes = new Map<string, string>();
+      let previousGoalHashes = new Map<string, string>();
+      let previousMilestoneHashes = new Map<string, string>();
+      let previousAgentHashes = new Map<string, string>();
+      let previousMissionHash = "";
+      let eventCursor = 0;
+      let lastPing = Date.now();
+      const tasksRoot = join(session.dir, ".tasks");
+
+      function writeSse(event: string, payload: unknown): void {
+        sseMetrics.messagesSent += 1;
+        void stream.writeSSE({ event, data: JSON.stringify(freezePayload(payload)) });
+      }
+
+      function writeSnapshot(currentSession: DiscoveredSession): void {
+        const snapshot = buildProjectStreamSnapshot(currentSession);
+        previousSnapshotHash = JSON.stringify(snapshot);
+        previousTaskHashes = new Map(snapshot.tasks.map((task) => [task.id, JSON.stringify(task)]));
+        previousGoalHashes = new Map(snapshot.goals.map((goal) => [goal.id, JSON.stringify(goal)]));
+        previousMilestoneHashes = new Map(
+          snapshot.milestones.map((milestone) => [milestone.id, JSON.stringify(milestone)]),
+        );
+        previousAgentHashes = new Map(
+          snapshot.agents.map((agent) => [agent.paneId, JSON.stringify(agent)]),
+        );
+        previousMissionHash = JSON.stringify(snapshot.mission);
+        eventCursor = readEvents(currentSession.dir).length;
+        writeSse("snapshot", snapshot);
+      }
+
+      function writeChanges(currentSession: DiscoveredSession): void {
+        const snapshot = buildProjectStreamSnapshot(currentSession);
+        const snapshotHash = JSON.stringify(snapshot);
+        if (!previousSnapshotHash) {
+          writeSnapshot(currentSession);
+          return;
+        }
+
+        const missionHash = JSON.stringify(snapshot.mission);
+        if (missionHash !== previousMissionHash) {
+          writeSse("mission.changed", {});
+          previousMissionHash = missionHash;
+        }
+
+        const nextTaskHashes = new Map(
+          snapshot.tasks.map((task) => [task.id, JSON.stringify(task)]),
+        );
+        for (const task of snapshot.tasks) {
+          if (nextTaskHashes.get(task.id) !== previousTaskHashes.get(task.id)) {
+            const op = previousTaskHashes.has(task.id) ? "update" : "create";
+            writeSse("task.changed", { id: task.id, op });
+          }
+        }
+        for (const id of previousTaskHashes.keys()) {
+          if (!nextTaskHashes.has(id)) {
+            writeSse("task.changed", { id, op: "delete" });
+          }
+        }
+        previousTaskHashes = nextTaskHashes;
+
+        const nextGoalHashes = new Map(
+          snapshot.goals.map((goal) => [goal.id, JSON.stringify(goal)]),
+        );
+        for (const goal of snapshot.goals) {
+          if (nextGoalHashes.get(goal.id) !== previousGoalHashes.get(goal.id)) {
+            const op = previousGoalHashes.has(goal.id) ? "update" : "create";
+            writeSse("goal.changed", { id: goal.id, op });
+          }
+        }
+        for (const id of previousGoalHashes.keys()) {
+          if (!nextGoalHashes.has(id)) {
+            writeSse("goal.changed", { id, op: "delete" });
+          }
+        }
+        previousGoalHashes = nextGoalHashes;
+
+        const nextMilestoneHashes = new Map(
+          snapshot.milestones.map((milestone) => [milestone.id, JSON.stringify(milestone)]),
+        );
+        for (const milestone of snapshot.milestones) {
+          if (nextMilestoneHashes.get(milestone.id) !== previousMilestoneHashes.get(milestone.id)) {
+            const op = previousMilestoneHashes.has(milestone.id) ? "update" : "create";
+            writeSse("milestone.changed", { id: milestone.id, op });
+          }
+        }
+        for (const id of previousMilestoneHashes.keys()) {
+          if (!nextMilestoneHashes.has(id)) {
+            writeSse("milestone.changed", { id, op: "delete" });
+          }
+        }
+        previousMilestoneHashes = nextMilestoneHashes;
+
+        const nextAgentHashes = new Map(
+          snapshot.agents.map((agent) => [agent.paneId, JSON.stringify(agent)]),
+        );
+        for (const agent of snapshot.agents) {
+          if (nextAgentHashes.get(agent.paneId) !== previousAgentHashes.get(agent.paneId)) {
+            writeSse("agent.changed", {
+              paneId: agent.paneId,
+              status: agent.isBusy ? "busy" : "idle",
+            });
+          }
+        }
+        previousAgentHashes = nextAgentHashes;
+
+        const events = readEvents(currentSession.dir);
+        const effectiveCursor = events.length < eventCursor ? 0 : eventCursor;
+        for (const event of events.slice(effectiveCursor)) {
+          writeSse("event.appended", event);
+        }
+        eventCursor = events.length;
+
+        if (snapshotHash !== previousSnapshotHash) {
+          writeSse("snapshot", snapshot);
+          previousSnapshotHash = snapshotHash;
+        }
+      }
+
+      function queueChanges(): void {
+        if (closed || changeQueued) return;
+        changeQueued = true;
+        queueMicrotask(() => {
+          changeQueued = false;
+          const current = discoverSessions().find((candidate) => candidate.name === name);
+          if (current) writeChanges(current);
+        });
+      }
+
+      const onTaskStoreChange = (change: TaskStoreChangeEvent) => {
+        if (!isPathInside(change.path, tasksRoot) && change.path !== null) return;
+        queueChanges();
+      };
+
+      const onEventAppended = (message: { dir: string; event: unknown }) => {
+        if (message.dir !== session.dir) return;
+        queueChanges();
+      };
+
+      try {
+        stream.onAbort(() => {
+          closed = true;
+        });
+        taskStore.on("change", onTaskStoreChange);
+        eventLogEmitter.on("event", onEventAppended);
+        writeSnapshot(session);
+        while (!closed) {
+          await stream.sleep(250);
+          const current = discoverSessions().find((candidate) => candidate.name === name);
+          if (!current) break;
+          writeChanges(current);
+          const now = Date.now();
+          if (now - lastPing >= 25_000) {
+            writeSse("ping", { at: new Date().toISOString() });
+            lastPing = now;
+          }
+        }
+      } finally {
+        closed = true;
+        taskStore.off("change", onTaskStoreChange);
+        eventLogEmitter.off("event", onEventAppended);
+        projectStreamConnections = Math.max(0, projectStreamConnections - 1);
+        sseMetrics.connections = projectStreamConnections;
+      }
+    });
+  });
+
+  app.get("/api/daemon/metrics", (c) => {
+    const metrics = getTaskStoreMetrics();
+    return c.json({
+      uptimeMs: metrics.uptimeMs,
+      cache: metrics.cache,
+      watcher: metrics.watcher,
+      reconcile: metrics.reconcile,
+      sse: getSseMetrics(),
+      writes: metrics.writes,
+    });
   });
 
   app.get("/api/project/:name/orchestrator/health", (c) => {

@@ -8,6 +8,7 @@ import {
   statSync,
   unlinkSync,
 } from "node:fs";
+import { EventEmitter } from "node:events";
 import { join } from "node:path";
 import { StructuredEventSchemaZ } from "../schemas/domain.ts";
 import type { z } from "zod";
@@ -58,6 +59,7 @@ export interface OrchestratorEvent {
 export type StructuredEvent = z.infer<typeof StructuredEventSchemaZ>;
 
 let _webhooks: WebhookConfig[] = [];
+export const eventLogEmitter = new EventEmitter();
 
 /** Configure webhook URLs for event delivery. Call once at startup. */
 export function setWebhookConfig(webhooks: WebhookConfig[]): void {
@@ -179,18 +181,21 @@ export function appendEvent(dir: string, event: OrchestratorEvent | StructuredEv
   }
 
   const line = JSON.stringify(event) + "\n";
+  const writeEvent = () => {
+    appendFileSync(logPath, line);
+    eventLogEmitter.emit("event", { dir, event });
+    if (_webhooks.length > 0) fireWebhooks(_webhooks, event);
+  };
 
   // If it's a structured event (no message field, or error type with typed payload),
   // validate with schema before writing
   if (!("message" in event) || StructuredEventSchemaZ.safeParse(event).success) {
-    appendFileSync(logPath, line);
-    if (_webhooks.length > 0) fireWebhooks(_webhooks, event);
+    writeEvent();
     return;
   }
 
   // Old-format event with free-form message — write as-is
-  appendFileSync(logPath, line);
-  if (_webhooks.length > 0) fireWebhooks(_webhooks, event);
+  writeEvent();
 }
 
 export function readEvents(dir: string): OrchestratorEvent[] {

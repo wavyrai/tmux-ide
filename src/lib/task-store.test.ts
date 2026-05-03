@@ -5,9 +5,15 @@ import { join } from "node:path";
 import {
   ensureTasksDir,
   invalidateAllTaskStore,
+  loadTasksByAgentPane,
+  loadTasksByMilestone,
+  loadTasksByStatus,
   loadTask,
   loadTasks,
+  loadTasksForGoal,
   saveTask,
+  deleteTask,
+  getTaskStoreMetrics,
   startTaskStoreWatcher,
   validateTaskStoreFile,
   type Task,
@@ -54,6 +60,8 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  delete process.env.TMUX_IDE_TASKSTORE_CACHE_SIZE;
+  delete process.env.TMUX_IDE_WATCHER_DEBOUNCE_MS;
   invalidateAllTaskStore();
   rmSync(tmpDir, { recursive: true, force: true });
 });
@@ -135,5 +143,92 @@ describe("task-store", () => {
     const loaded = loadTask(tmpDir, "001");
     expect(loaded?.proof?.notes).toBe("done manually");
     expect(readFileSync(file, "utf-8")).toContain('"note"');
+  });
+
+  it("maintains indexed task views after write, status change, and delete", () => {
+    saveTask(
+      tmpDir,
+      makeTask({
+        id: "001",
+        title: "First",
+        status: "todo",
+        assignee: "Agent 1",
+        goal: "01",
+        milestone: "M1",
+      }),
+    );
+    saveTask(
+      tmpDir,
+      makeTask({
+        id: "002",
+        title: "Second",
+        status: "review",
+        assignee: "Agent 2",
+        goal: "01",
+        milestone: "M2",
+      }),
+    );
+
+    expect(loadTasksByStatus(tmpDir, "todo").map((task) => task.id)).toEqual(["001"]);
+    expect(loadTasksByAgentPane(tmpDir, "Agent 1").map((task) => task.id)).toEqual(["001"]);
+    expect(loadTasksForGoal(tmpDir, "01").map((task) => task.id)).toEqual(["001", "002"]);
+    expect(loadTasksByMilestone(tmpDir, "M1").map((task) => task.id)).toEqual(["001"]);
+
+    saveTask(
+      tmpDir,
+      makeTask({
+        id: "001",
+        title: "First",
+        status: "done",
+        assignee: "Agent 1",
+        goal: "01",
+        milestone: "M1",
+      }),
+    );
+    expect(loadTasksByStatus(tmpDir, "todo").map((task) => task.id)).toEqual([]);
+    expect(loadTasksByStatus(tmpDir, "done").map((task) => task.id)).toEqual(["001"]);
+
+    expect(deleteTask(tmpDir, "001")).toBe(true);
+    expect(loadTasksByStatus(tmpDir, "done").map((task) => task.id)).toEqual([]);
+    expect(loadTasksForGoal(tmpDir, "01").map((task) => task.id)).toEqual(["002"]);
+  });
+
+  it("evicts least-recently-used cache entries at the configured cap", () => {
+    process.env.TMUX_IDE_TASKSTORE_CACHE_SIZE = "2";
+    saveTask(tmpDir, makeTask({ id: "001", title: "One" }));
+    saveTask(tmpDir, makeTask({ id: "002", title: "Two" }));
+    saveTask(tmpDir, makeTask({ id: "003", title: "Three" }));
+
+    const metrics = getTaskStoreMetrics();
+    expect(metrics.cache.maxSize).toBe(2);
+    expect(metrics.cache.size).toBe(2);
+    expect(metrics.cache.evictions).toBeGreaterThanOrEqual(1);
+  });
+
+  it("coalesces watcher events into one invalidation batch", async () => {
+    process.env.TMUX_IDE_WATCHER_DEBOUNCE_MS = "20";
+    ensureTasksDir(tmpDir);
+    saveTask(tmpDir, makeTask({ title: "Before watcher edit" }));
+    const file = join(tmpDir, ".tasks", "tasks", "001-before-watcher-edit.json");
+    expect(loadTask(tmpDir, "001")?.title).toBe("Before watcher edit");
+
+    const stopWatcher = startTaskStoreWatcher(tmpDir);
+    try {
+      await wait(260);
+      writeFileSync(
+        file,
+        JSON.stringify({ _version: 1, ...makeTask({ title: "External one" }) }, null, 2) + "\n",
+      );
+      writeFileSync(
+        file,
+        JSON.stringify({ _version: 1, ...makeTask({ title: "External two" }) }, null, 2) + "\n",
+      );
+      await wait(260);
+
+      expect(loadTask(tmpDir, "001")?.title).toBe("External two");
+      expect(getTaskStoreMetrics().watcher.batchedFlushes).toBeGreaterThanOrEqual(1);
+    } finally {
+      await stopWatcher();
+    }
   });
 });
