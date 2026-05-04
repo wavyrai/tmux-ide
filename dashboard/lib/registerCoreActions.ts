@@ -2,13 +2,19 @@
 
 import { openCommandPalette } from "@/components/CommandPalette";
 import { registerAction } from "@/lib/actions";
-import { getActiveTabIdLive, type LayoutActions } from "@/lib/useLayoutState";
+import {
+  closeTab,
+  ensureDefaultTerminal,
+  getNavigationStateLive,
+  openTerminalTab,
+} from "@/lib/navigation";
+import type { LayoutActions } from "@/lib/useLayoutState";
 
 interface RegisterCoreActionsInput {
   currentProject: string;
   layout: Pick<
     LayoutActions,
-    "toggleTerminal" | "setActivitySection" | "newTab" | "closeTab" | "openWorkspaceTab"
+    "toggleTerminal" | "setActivitySection" | "openWorkspaceTab"
   >;
   toggleSidebar(): void;
   toggleTheme(): void;
@@ -24,11 +30,15 @@ export function registerCoreActions({
     registerAction({
       id: "toggle-terminal",
       label: "Toggle terminal",
-      description: "Open or close full-screen terminal mode",
+      description: "Open or focus the project's default terminal tab",
       keywords: ["terminal", "panel", "shell"],
       keybind: "Mod+j",
       category: "Terminal",
-      run: layout.toggleTerminal,
+      run: () => {
+        const sessionName = activeSessionFor(currentProject);
+        if (!sessionName) return;
+        ensureDefaultTerminal(sessionName);
+      },
     }),
     registerAction({
       id: "open-palette",
@@ -99,24 +109,27 @@ export function registerCoreActions({
     registerAction({
       id: "new-terminal-tab",
       label: "New terminal tab",
-      description: "Create a terminal tab for the current project",
-      keywords: ["terminal", "tab", "new"],
+      description: "Create a fresh shell tab for the current project",
+      keywords: ["terminal", "tab", "new", "shell"],
       keybind: "Mod+Shift+t",
       category: "Terminal",
-      run: () => layout.newTab(currentProject),
+      run: () => {
+        const sessionName = activeSessionFor(currentProject);
+        if (!sessionName) return;
+        openTerminalTab(sessionName, { title: "shell" });
+      },
     }),
     registerAction({
       id: "close-active-tab",
-      label: "Close active terminal tab",
-      description: "Close the active terminal tab for the current project",
+      label: "Close active tab",
+      description: "Close the active main tab",
       keywords: ["terminal", "tab", "close"],
       keybind: "Mod+w",
-      scope: { section: "terminal" },
-      category: "Terminal",
-      isAvailable: () => getActiveTabIdLive(currentProject) !== null,
+      category: "View",
+      isAvailable: () => getNavigationStateLive().activeTabId !== null,
       run: () => {
-        const activeTabId = getActiveTabIdLive(currentProject);
-        if (activeTabId) layout.closeTab(activeTabId);
+        const activeTabId = getNavigationStateLive().activeTabId;
+        if (activeTabId) closeTab(activeTabId);
       },
     }),
   ];
@@ -125,3 +138,13 @@ export function registerCoreActions({
     for (const cleanup of unregister) cleanup();
   };
 }
+
+function activeSessionFor(currentProject: string): string | null {
+  const navSession = getNavigationStateLive().sessionName;
+  if (navSession) return navSession;
+  // Fallback to the URL-derived current project when navigation hasn't
+  // been hydrated yet (e.g. CommandPalette firing on first paint).
+  if (currentProject && currentProject !== "default") return currentProject;
+  return null;
+}
+

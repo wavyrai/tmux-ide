@@ -4,15 +4,21 @@ import { useCallback, type ReactNode } from "react";
 import { AppSidebar } from "@/components/AppSidebar";
 import { CommandPalette, openCommandPalette } from "@/components/CommandPalette";
 import { EventBridge } from "@/components/EventBridge";
-import { FullScreenTerminal } from "@/components/FullScreenTerminal";
 import { KeybindRoot } from "@/components/KeybindRoot";
 import { ShellStatusBar } from "@/components/StatusBar";
 import { ToastStack } from "@/components/ToastStack";
 import { WorkspaceUrlSync } from "@/components/WorkspaceUrlSync";
 import { MainTabContent } from "./MainTabContent";
 import { MainTabsBar } from "./MainTabsBar";
+import { TerminalsHost } from "./TerminalsHost";
 import { SidebarInset } from "@/components/ui/sidebar";
-import { activateTab, closeTab, useNavigation } from "@/lib/navigation";
+import {
+  activateTab,
+  closeTab,
+  ensureDefaultTerminal,
+  openTerminalTab,
+  useNavigation,
+} from "@/lib/navigation";
 import { useKeybind } from "@/lib/useKeybinds";
 
 /**
@@ -26,9 +32,12 @@ import { useKeybind } from "@/lib/useKeybinds";
  * (`{ sessionName, openTabs, activeTabId }`). The mode/type union is
  * gone — modes are derived from the active tab's kind.
  *
- * The previous five-surface choreography (WorkspaceTabsBar +
- * ProjectViewTabs + WorkspaceTabsManager + NavigatorSlot +
- * SecondaryTabsSlot) collapses into MainTabsBar + MainTabContent.
+ * Terminal lifecycle: `TerminalsHost` is mounted as a sibling of
+ * `MainTabContent` and owns every terminal tab's `<Terminal>` for as
+ * long as the tab is in `openTabs`. xterm + WebSocket state survives
+ * tab switches because inactive terminals stay mounted via
+ * `display: none`. The host hides entirely when the active tab is not
+ * a terminal kind.
  */
 const SHELL_CLASS = "flex h-[calc(100vh-1.5rem)] min-h-0 flex-col";
 
@@ -48,7 +57,7 @@ export function AppShell({ children }: { children?: ReactNode }) {
                 lockstep on first paint. */}
             <MainTabContent />
             {children}
-            <FullScreenTerminal />
+            <TerminalsHost />
           </div>
         </SidebarInset>
       </div>
@@ -66,9 +75,11 @@ export function AppShell({ children }: { children?: ReactNode }) {
  *   - Cmd+T: open the command palette (acts as the "new tab" picker)
  *   - Cmd+W: close the active main tab
  *   - Cmd+1..Cmd+9: jump to tab N (1-indexed)
+ *   - Cmd+J: open or focus the active project's default terminal tab
+ *   - Cmd+Shift+T: open a fresh ad-hoc shell tab in the active project
  */
 function TabKeybinds() {
-  const { openTabs, activeTabId } = useNavigation();
+  const { openTabs, activeTabId, sessionName } = useNavigation();
 
   const newTab = useCallback(() => {
     openCommandPalette();
@@ -77,6 +88,16 @@ function TabKeybinds() {
   const closeActive = useCallback(() => {
     if (activeTabId) closeTab(activeTabId);
   }, [activeTabId]);
+
+  const focusDefaultTerminal = useCallback(() => {
+    if (!sessionName) return;
+    ensureDefaultTerminal(sessionName);
+  }, [sessionName]);
+
+  const openShellTab = useCallback(() => {
+    if (!sessionName) return;
+    openTerminalTab(sessionName, { title: "shell" });
+  }, [sessionName]);
 
   const jumpTo = useCallback(
     (index: number) => {
@@ -88,6 +109,8 @@ function TabKeybinds() {
 
   useKeybind("Mod+t", newTab);
   useKeybind("Mod+w", closeActive);
+  useKeybind("Mod+j", focusDefaultTerminal, { allowInput: true });
+  useKeybind("Mod+Shift+t", openShellTab, { allowInput: true });
   useKeybind("Mod+1", () => jumpTo(0));
   useKeybind("Mod+2", () => jumpTo(1));
   useKeybind("Mod+3", () => jumpTo(2));

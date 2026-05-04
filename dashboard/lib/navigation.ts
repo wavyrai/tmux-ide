@@ -75,7 +75,15 @@ export type Tab =
   | { id: string; kind: "view"; sessionName: string; view: ProjectTab; title: string }
   | { id: string; kind: "file"; sessionName: string; path: string; title: string }
   | { id: string; kind: "skill"; sessionName: string; skillName: string; title: string }
-  | { id: string; kind: "settings"; section?: SettingsSection; title: string };
+  | { id: string; kind: "settings"; section?: SettingsSection; title: string }
+  | {
+      id: string;
+      kind: "terminal";
+      sessionName: string;
+      cmd?: string[];
+      cwd?: string;
+      title: string;
+    };
 
 export type TabKind = Tab["kind"];
 
@@ -194,6 +202,9 @@ function toLegacy(state: NavigationState): LegacyNavigationState {
     if (tab.kind === "file") {
       return { type: "sessions", sessionName: tab.sessionName, tab: "kanban" };
     }
+    if (tab.kind === "terminal") {
+      return { type: "sessions", sessionName: tab.sessionName, tab: "kanban" };
+    }
   }
   if (state.sessionName) return { type: "sessions", sessionName: state.sessionName, tab: "kanban" };
   return { type: "overview" };
@@ -302,6 +313,20 @@ function settingsTabId(section?: SettingsSection): string {
   return section ? `settings:${section}` : "settings:";
 }
 
+/** Stable id for the project's "default" terminal tab (the tmux-ide one). */
+export function defaultTerminalTabId(sessionName: string): string {
+  return `terminal:${sessionName}:default`;
+}
+
+function adhocTerminalTabId(sessionName: string): string {
+  // Browser-only random id avoids collisions across persisted strips.
+  const seed =
+    typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+      ? crypto.randomUUID().slice(0, 8)
+      : Math.random().toString(36).slice(2, 10);
+  return `terminal:${sessionName}:${seed}`;
+}
+
 export function viewTab(sessionName: string, view: ProjectTab, title?: string): Tab {
   return {
     id: viewTabId(sessionName, view),
@@ -338,6 +363,25 @@ export function settingsTab(section?: SettingsSection, title?: string): Tab {
     kind: "settings",
     title: title ?? "Settings",
     ...(section ? { section } : {}),
+  };
+}
+
+export interface TerminalTabOptions {
+  /** Stable id (e.g. defaultTerminalTabId(...)). When omitted a fresh ad-hoc id is generated. */
+  id?: string;
+  cmd?: string[];
+  cwd?: string;
+  title?: string;
+}
+
+export function terminalTab(sessionName: string, options: TerminalTabOptions = {}): Tab {
+  return {
+    id: options.id ?? adhocTerminalTabId(sessionName),
+    kind: "terminal",
+    sessionName,
+    title: options.title ?? "shell",
+    ...(options.cwd ? { cwd: options.cwd } : {}),
+    ...(options.cmd ? { cmd: options.cmd } : {}),
   };
 }
 
@@ -404,6 +448,13 @@ function isValidTab(value: unknown): value is Tab {
       return typeof tab.sessionName === "string" && typeof tab.skillName === "string";
     case "settings":
       return tab.section === undefined || isSettingsSection(tab.section as string);
+    case "terminal":
+      return (
+        typeof tab.sessionName === "string" &&
+        (tab.cwd === undefined || typeof tab.cwd === "string") &&
+        (tab.cmd === undefined ||
+          (Array.isArray(tab.cmd) && tab.cmd.every((part) => typeof part === "string")))
+      );
     default:
       return false;
   }
@@ -685,6 +736,42 @@ export function activateTab(tabId: string): void {
   commit();
 }
 
+/**
+ * Open a terminal tab for the given session. If a tab with the same id
+ * already exists (e.g. the project's default terminal id), it is
+ * activated rather than recreated. Generated ad-hoc terminals always get
+ * a fresh id, so each call to `openTerminalTab` without an explicit id
+ * creates a new shell instance.
+ */
+export function openTerminalTab(
+  sessionName: string,
+  options: TerminalTabOptions = {},
+): Tab {
+  const tab = terminalTab(sessionName, options);
+  openTab(tab);
+  return tab;
+}
+
+/**
+ * Ensure the project's default tmux-ide terminal tab exists and is
+ * active. Idempotent — if the tab already exists this just activates it.
+ * Returns the active terminal tab.
+ */
+export function ensureDefaultTerminal(sessionName: string, cwd?: string): Tab {
+  const id = defaultTerminalTabId(sessionName);
+  const existing = state.openTabs.find((t) => t.id === id);
+  if (existing) {
+    activateTab(id);
+    return existing;
+  }
+  return openTerminalTab(sessionName, {
+    id,
+    title: "tmux-ide",
+    cmd: ["__login_shell__", "tmux-ide"],
+    ...(cwd ? { cwd } : {}),
+  });
+}
+
 export function reorderTabs(orderedIds: string[]): void {
   const byId = new Map(state.openTabs.map((tab) => [tab.id, tab]));
   const ordered: Tab[] = [];
@@ -706,10 +793,20 @@ export function useNavigation(): NavigationState {
   useEffect(() => {
     ensureBrowserSync();
     const next = readFromWindow();
+    // If the in-memory state is already aligned with the URL session,
+    // keep the active-tab choice from memory — the URL only encodes
+    // session + view tab; it cannot describe which terminal / skill /
+    // settings tab the user has focused. Only re-seed from URL when the
+    // session itself differs (cold load, popstate to a different route).
+    if (next.sessionName !== state.sessionName) {
+      state = next;
+      refreshSnapshot();
+      emit();
+      return;
+    }
     if (
-      next.sessionName !== state.sessionName ||
-      next.activeTabId !== state.activeTabId ||
-      next.openTabs.length !== state.openTabs.length
+      state.openTabs.length === 0 &&
+      (next.openTabs.length > 0 || next.activeTabId !== null)
     ) {
       state = next;
       refreshSnapshot();

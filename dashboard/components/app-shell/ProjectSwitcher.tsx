@@ -97,10 +97,10 @@ export function ProjectSwitcher() {
         <ChevronDown aria-hidden="true" size={11} className="text-[var(--dim)]" />
       </Popover.Trigger>
       <Popover.Portal>
-        <Popover.Positioner sideOffset={4} align="start">
+        <Popover.Positioner sideOffset={4} align="start" className="z-[80]">
           <Popover.Popup
             data-testid="project-switcher-popover"
-            className="z-40 max-h-[60vh] min-w-[260px] max-w-[360px] overflow-auto rounded-md border border-[var(--border)] bg-[var(--bg-strong)] p-1 text-[11px] text-[var(--fg)] shadow-2xl outline-none transition-[transform,opacity] duration-150 ease-smooth data-closed:opacity-0 data-open:opacity-100 motion-reduce:transition-none"
+            className="z-[80] max-h-[60vh] min-w-[260px] max-w-[360px] overflow-auto rounded-md border border-[var(--border)] bg-[var(--bg-strong)] p-1 text-[11px] text-[var(--fg)] shadow-2xl outline-none transition-[transform,opacity] duration-150 ease-smooth data-closed:opacity-0 data-open:opacity-100 motion-reduce:transition-none"
           >
             <div className="px-2 pb-1 pt-1.5 text-[10px] uppercase tracking-wider text-[var(--dim)]">
               sessions

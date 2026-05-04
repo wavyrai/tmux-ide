@@ -2,7 +2,7 @@
 
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { File, Folder, Settings, Sparkles, X } from "lucide-react";
+import { File, Folder, Settings, Sparkles, TerminalSquare, X } from "lucide-react";
 import type { Tab } from "@/lib/navigation";
 
 interface MainTabItemProps {
@@ -20,6 +20,20 @@ function TabIcon({ kind }: { kind: Tab["kind"] }) {
       return <Sparkles aria-hidden="true" size={14} className="shrink-0 text-[var(--dimmer)]" />;
     case "file":
       return <File aria-hidden="true" size={14} className="shrink-0 text-[var(--dimmer)]" />;
+    case "terminal":
+      return (
+        <span className="relative inline-flex shrink-0 items-center">
+          <TerminalSquare
+            aria-hidden="true"
+            size={14}
+            className="text-[var(--dimmer)]"
+          />
+          <span
+            aria-hidden="true"
+            className="absolute -right-0.5 -top-0.5 h-1.5 w-1.5 rounded-full bg-[var(--green)]"
+          />
+        </span>
+      );
     case "view":
     default:
       return <Folder aria-hidden="true" size={14} className="shrink-0 text-[var(--dimmer)]" />;

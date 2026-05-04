@@ -39,6 +39,21 @@ export function MainTabContent() {
     );
   }
 
+  // Terminal tabs are rendered by `TerminalsHost`, a sibling overlay
+  // mounted at the AppShell level. Returning null here lets the host's
+  // absolute-positioned panel paint above this slot.
+  if (activeTab.kind === "terminal") {
+    return (
+      <div
+        data-testid="main-tab-panel"
+        data-active="true"
+        data-tab-id={activeTab.id}
+        data-tab-kind="terminal"
+        className="flex min-h-0 min-w-0 flex-1 flex-col"
+      />
+    );
+  }
+
   return (
     <section
       key={activeTab.id}
@@ -63,6 +78,11 @@ function renderTab(tab: Tab) {
       return <SettingsView />;
     case "file":
       return <FilePlaceholder path={tab.path} />;
+    case "terminal":
+      // Rendered by TerminalsHost; the early return in MainTabContent
+      // means we never hit this branch in practice. Kept for exhaustive
+      // switch checking.
+      return null;
   }
 }
 

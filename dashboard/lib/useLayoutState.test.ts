@@ -1,259 +1,71 @@
 import { act, renderHook } from "@testing-library/react";
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { __resetLayoutStateForTests, useLayoutState } from "./useLayoutState";
+import {
+  __resetNavigationForTests,
+  defaultTerminalTabId,
+  getNavigationStateLive,
+  setActiveSession,
+} from "./navigation";
 
 beforeEach(() => {
   window.localStorage.clear();
-  __resetLayoutStateForTests({
-    terminalOpen: false,
-    activeTabIdByProject: {},
-    tabs: [],
-  });
+  __resetNavigationForTests({ type: "overview" });
+  __resetLayoutStateForTests();
 });
 
-function readPersisted() {
-  const raw = window.localStorage.getItem("tmux-ide.layout.v8");
-  return raw ? (JSON.parse(raw) as unknown) : null;
-}
+afterEach(() => {
+  __resetNavigationForTests({ type: "overview" });
+});
 
-describe("useLayoutState", () => {
-  it("starts closed and creates a tab whose project becomes active", () => {
+describe("useLayoutState (deprecated terminal shims)", () => {
+  it("terminalOpen is always false — terminals are now part of NavigationState", () => {
     const { result } = renderHook(() => useLayoutState());
-
     expect(result.current.terminalOpen).toBe(false);
-    expect(result.current.activeTabIdByProject).toEqual({});
-    expect(result.current.tabs).toEqual([]);
-
-    let tab: ReturnType<typeof result.current.newTab> | undefined;
-    act(() => {
-      tab = result.current.newTab("alpha");
-    });
-
-    expect(tab).toEqual({ id: "alpha:1", title: "alpha 1", projectName: "alpha" });
-    expect(result.current.terminalOpen).toBe(true);
-    expect(result.current.getActiveTabId("alpha")).toBe("alpha:1");
-    expect(result.current.tabs).toEqual([tab]);
-    expect(readPersisted()).toEqual({
-      activeTabIdByProject: { alpha: "alpha:1" },
-      tabs: [tab],
-    });
   });
 
-  it("supports custom titles and per-project id sequences", () => {
-    const { result } = renderHook(() => useLayoutState());
-
-    act(() => {
-      result.current.newTab("alpha", "Shell");
-      result.current.newTab("beta");
-      result.current.newTab("alpha");
-    });
-
-    expect(result.current.tabs.map((tab) => tab.id)).toEqual(["alpha:1", "beta:1", "alpha:2"]);
-    expect(result.current.tabs[0]?.title).toBe("Shell");
-    expect(result.current.tabs[2]?.title).toBe("alpha 2");
-    expect(result.current.getActiveTabId("alpha")).toBe("alpha:2");
-    expect(result.current.getActiveTabId("beta")).toBe("beta:1");
-  });
-
-  it("creates project tabs with cwd and command metadata", () => {
-    const { result } = renderHook(() => useLayoutState());
-
-    let tab;
-    act(() => {
-      tab = result.current.newTab("alpha", {
-        title: "alpha",
-        cwd: "/tmp/alpha",
-        cmd: ["tmux-ide"],
-      });
-    });
-
-    expect(tab).toEqual({
-      id: "alpha:1",
-      title: "alpha",
-      projectName: "alpha",
-      cwd: "/tmp/alpha",
-      cmd: ["tmux-ide"],
-    });
-    expect(result.current.tabs).toEqual([tab]);
-    expect(result.current.getActiveTabId("alpha")).toBe("alpha:1");
-    expect(readPersisted()).toMatchObject({
-      activeTabIdByProject: { alpha: "alpha:1" },
-      tabs: [tab],
-    });
-  });
-
-  it("scopes active tab per project — switching projects restores their own focused tab", () => {
-    const { result } = renderHook(() => useLayoutState());
-
-    act(() => {
-      result.current.newTab("alpha");
-      result.current.newTab("beta");
-      result.current.setActiveTab("alpha", "alpha:1");
-    });
-
-    expect(result.current.getActiveTabId("alpha")).toBe("alpha:1");
-    expect(result.current.getActiveTabId("beta")).toBe("beta:1");
-
-    expect(result.current.getProjectTabs("alpha").map((t) => t.id)).toEqual(["alpha:1"]);
-    expect(result.current.getProjectTabs("beta").map((t) => t.id)).toEqual(["beta:1"]);
-  });
-
-  it("opens, closes, and toggles terminal mode without persisting terminalOpen", () => {
+  it("openTerminalMode opens the project's default terminal tab", () => {
+    setActiveSession("alpha");
     const { result } = renderHook(() => useLayoutState());
 
     act(() => {
       result.current.openTerminalMode();
     });
-    expect(result.current.terminalOpen).toBe(true);
-    expect(readPersisted()).toBeNull();
+
+    const expectedId = defaultTerminalTabId("alpha");
+    const live = getNavigationStateLive();
+    expect(live.openTabs.some((t) => t.id === expectedId && t.kind === "terminal")).toBe(true);
+    expect(live.activeTabId).toBe(expectedId);
+  });
+
+  it("closeTerminalMode closes the default terminal tab when it is active", () => {
+    setActiveSession("alpha");
+    const { result } = renderHook(() => useLayoutState());
+
+    act(() => {
+      result.current.openTerminalMode();
+      result.current.closeTerminalMode();
+    });
+
+    const expectedId = defaultTerminalTabId("alpha");
+    const live = getNavigationStateLive();
+    expect(live.openTabs.some((t) => t.id === expectedId)).toBe(false);
+  });
+
+  it("toggleTerminal opens then closes the default terminal", () => {
+    setActiveSession("alpha");
+    const { result } = renderHook(() => useLayoutState());
 
     act(() => {
       result.current.toggleTerminal();
     });
-    expect(result.current.terminalOpen).toBe(false);
+    const id = defaultTerminalTabId("alpha");
+    expect(getNavigationStateLive().activeTabId).toBe(id);
 
     act(() => {
-      result.current.closeTerminalMode();
+      result.current.toggleTerminal();
     });
-    expect(result.current.terminalOpen).toBe(false);
-  });
-
-  it("ignores setActiveTab when the tab does not belong to the project", () => {
-    const { result } = renderHook(() => useLayoutState());
-
-    act(() => {
-      result.current.newTab("alpha");
-      result.current.newTab("beta");
-      result.current.setActiveTab("alpha", "beta:1");
-    });
-
-    expect(result.current.getActiveTabId("alpha")).toBe("alpha:1");
-    expect(result.current.getActiveTabId("beta")).toBe("beta:1");
-
-    act(() => {
-      result.current.setActiveTab("alpha", "missing:1");
-    });
-    expect(result.current.getActiveTabId("alpha")).toBe("alpha:1");
-  });
-
-  it("closes active tabs with same-project fallthrough and closes mode after the last tab", () => {
-    const { result } = renderHook(() => useLayoutState());
-
-    act(() => {
-      result.current.newTab("alpha"); // alpha:1
-      result.current.newTab("alpha"); // alpha:2
-      result.current.newTab("beta"); // beta:1
-      result.current.setActiveTab("alpha", "alpha:1");
-      result.current.closeTab("alpha:1");
-    });
-
-    expect(result.current.getActiveTabId("alpha")).toBe("alpha:2");
-    expect(result.current.getActiveTabId("beta")).toBe("beta:1");
-    expect(result.current.terminalOpen).toBe(true);
-
-    act(() => {
-      result.current.closeTab("alpha:2");
-      result.current.closeTab("beta:1");
-    });
-
-    expect(result.current.tabs).toEqual([]);
-    expect(result.current.getActiveTabId("alpha")).toBeNull();
-    expect(result.current.terminalOpen).toBe(false);
-  });
-
-  it("reorders known tab ids and appends omitted tabs", () => {
-    const { result } = renderHook(() => useLayoutState());
-
-    act(() => {
-      result.current.newTab("alpha");
-      result.current.newTab("beta");
-      result.current.newTab("gamma");
-      result.current.reorderTabs(["gamma:1", "alpha:1"]);
-    });
-
-    expect(result.current.tabs.map((tab) => tab.id)).toEqual(["gamma:1", "alpha:1", "beta:1"]);
-  });
-
-  it("loads persisted tabs but defaults terminalOpen to false", () => {
-    const persisted = {
-      activeTabIdByProject: { alpha: "alpha:1", beta: "beta:1" },
-      tabs: [
-        { id: "alpha:1", title: "alpha 1", projectName: "alpha" },
-        { id: "beta:1", title: "beta 1", projectName: "beta" },
-      ],
-    };
-    window.localStorage.setItem("tmux-ide.layout.v8", JSON.stringify(persisted));
-    __resetLayoutStateForTests();
-
-    const { result } = renderHook(() => useLayoutState());
-
-    expect(result.current.terminalOpen).toBe(false);
-    expect(result.current.getActiveTabId("alpha")).toBe("alpha:1");
-    expect(result.current.getActiveTabId("beta")).toBe("beta:1");
-    expect(result.current.tabs).toEqual(persisted.tabs);
-  });
-
-  it("migrates legacy v1 single activeTabId into the per-project map", () => {
-    const legacy = {
-      activeTabId: "alpha:1",
-      tabs: [
-        { id: "alpha:1", title: "alpha 1", projectName: "alpha" },
-        { id: "beta:1", title: "beta 1", projectName: "beta" },
-      ],
-    };
-    window.localStorage.setItem("tmux-ide.layout.v1", JSON.stringify(legacy));
-    __resetLayoutStateForTests();
-
-    const { result } = renderHook(() => useLayoutState());
-
-    expect(result.current.tabs.map((t) => t.id)).toEqual(["alpha:1", "beta:1"]);
-    expect(result.current.getActiveTabId("alpha")).toBe("alpha:1");
-    expect(result.current.getActiveTabId("beta")).toBe("beta:1");
-  });
-
-  it("migrates v2 layout state into v8 while preserving terminal tabs", () => {
-    const legacy = {
-      activeTabIdByProject: { alpha: "alpha:1" },
-      tabs: [{ id: "alpha:1", title: "alpha 1", projectName: "alpha" }],
-    };
-    window.localStorage.setItem("tmux-ide.layout.v2", JSON.stringify(legacy));
-    __resetLayoutStateForTests();
-
-    const { result } = renderHook(() => useLayoutState());
-
-    expect(result.current.tabs).toEqual(legacy.tabs);
-    expect(result.current.activeTabIdByProject).toEqual(legacy.activeTabIdByProject);
-  });
-
-  it("migrates v4 layout state into v8 while preserving cwd and cmd", () => {
-    const legacy = {
-      activeTabIdByProject: { alpha: "alpha:1" },
-      tabs: [
-        {
-          id: "alpha:1",
-          title: "alpha",
-          projectName: "alpha",
-          cwd: "/tmp/alpha",
-          cmd: ["tmux-ide"],
-          paneId: "%1",
-        },
-      ],
-    };
-    window.localStorage.setItem("tmux-ide.layout.v4", JSON.stringify(legacy));
-    __resetLayoutStateForTests();
-
-    const { result } = renderHook(() => useLayoutState());
-
-    expect(result.current.tabs).toEqual([
-      {
-        id: "alpha:1",
-        title: "alpha",
-        projectName: "alpha",
-        cwd: "/tmp/alpha",
-        cmd: ["tmux-ide"],
-      },
-    ]);
-    expect(result.current.getActiveTabId("alpha")).toBe("alpha:1");
+    expect(getNavigationStateLive().openTabs.some((t) => t.id === id)).toBe(false);
   });
 
   it("workspace-tab shims compile but no longer mutate layout state", () => {
@@ -267,8 +79,6 @@ describe("useLayoutState", () => {
       result.current.reorderWorkspaceTabs([]);
     });
 
-    // Workspace state migrated into NavigationState; the layout store
-    // returns inert defaults for the deprecated fields.
     expect(result.current.workspaceTabs).toEqual([]);
     expect(result.current.activeWorkspaceTabId).toBeNull();
     expect(result.current.activitySection).toBe("sessions");

@@ -6,6 +6,8 @@ import {
   activeSkillName,
   activeView,
   closeTab,
+  defaultTerminalTabId,
+  ensureDefaultTerminal,
   getNavigationLive,
   getNavigationStateLive,
   isOverview,
@@ -13,6 +15,7 @@ import {
   isSettings,
   isSkills,
   openTab,
+  openTerminalTab,
   pathFromState,
   reorderTabs,
   setActiveSession,
@@ -20,6 +23,7 @@ import {
   settingsTab,
   skillTab,
   stateFromPath,
+  terminalTab,
   viewTab,
   type LegacyNavigationState,
   type NavigationState,
@@ -167,6 +171,73 @@ describe("setActiveSession + tab actions", () => {
     expect(ids).toContain("view:alpha:plans");
     expect(ids).toContain("view:alpha:kanban");
     expect(ids).not.toContain("view:beta:metrics");
+  });
+});
+
+describe("terminal tabs", () => {
+  it("terminalTab builds a terminal tab with the given metadata", () => {
+    const tab = terminalTab("alpha", {
+      id: "terminal:alpha:default",
+      title: "tmux-ide",
+      cmd: ["__login_shell__", "tmux-ide"],
+      cwd: "/repos/alpha",
+    });
+    expect(tab.kind).toBe("terminal");
+    if (tab.kind === "terminal") {
+      expect(tab.sessionName).toBe("alpha");
+      expect(tab.title).toBe("tmux-ide");
+      expect(tab.cmd).toEqual(["__login_shell__", "tmux-ide"]);
+      expect(tab.cwd).toBe("/repos/alpha");
+    }
+  });
+
+  it("ensureDefaultTerminal creates the default terminal tab for a session", () => {
+    setActiveSession("alpha");
+    const tab = ensureDefaultTerminal("alpha");
+    expect(tab.kind).toBe("terminal");
+    expect(tab.id).toBe(defaultTerminalTabId("alpha"));
+    const live = getNavigationStateLive();
+    expect(live.activeTabId).toBe(tab.id);
+    expect(live.openTabs.some((t) => t.id === tab.id)).toBe(true);
+  });
+
+  it("ensureDefaultTerminal is idempotent — second call activates the existing tab", () => {
+    setActiveSession("alpha");
+    const first = ensureDefaultTerminal("alpha");
+    // Switch away and come back.
+    activateTab("view:alpha:kanban");
+    const second = ensureDefaultTerminal("alpha");
+    expect(second.id).toBe(first.id);
+    const live = getNavigationStateLive();
+    expect(live.activeTabId).toBe(first.id);
+    expect(live.openTabs.filter((t) => t.kind === "terminal").length).toBe(1);
+  });
+
+  it("openTerminalTab without an id creates a fresh ad-hoc shell each time", () => {
+    setActiveSession("alpha");
+    const a = openTerminalTab("alpha", { title: "shell" });
+    const b = openTerminalTab("alpha", { title: "shell" });
+    expect(a.id).not.toBe(b.id);
+    const live = getNavigationStateLive();
+    expect(live.openTabs.filter((t) => t.kind === "terminal").length).toBe(2);
+  });
+
+  it("isSessions stays true when a terminal tab is active (terminals are project-scoped)", () => {
+    setActiveSession("alpha");
+    ensureDefaultTerminal("alpha");
+    const state = getNavigationStateLive();
+    expect(isSessions(state)).toBe(true);
+    expect(isSettings(state)).toBe(false);
+    expect(isSkills(state)).toBe(false);
+  });
+
+  it("closeTab removes a terminal tab and falls back to a sibling tab", () => {
+    setActiveSession("alpha");
+    const term = ensureDefaultTerminal("alpha");
+    closeTab(term.id);
+    const live = getNavigationStateLive();
+    expect(live.openTabs.some((t) => t.id === term.id)).toBe(false);
+    expect(live.activeTabId).toBe("view:alpha:kanban");
   });
 });
 

@@ -29,45 +29,48 @@ export function MissionStatusSegment({ snapshot }: { snapshot: SessionSnapshot |
   return (
     <>
       <span className="mx-2 opacity-30">│</span>
-      <span className="relative inline-flex min-w-0 items-center">
-        <button
-          type="button"
-          data-testid="status-segment-mission"
-          onClick={() => setOpen((value) => !value)}
-          className="inline-flex max-w-64 items-center gap-1.5 truncate text-left text-[var(--dim)] transition-colors motion-safe:active:scale-[0.98] hover:text-[var(--fg)]"
-          title={label}
-        >
-          <Target aria-hidden="true" size={12} className="shrink-0" />
-          <span
-            aria-hidden="true"
-            className="h-1.5 w-1.5 shrink-0 rounded-full"
-            style={{ backgroundColor: statusColor(data.mission.status) }}
-          />
-          <span className="truncate">{label}</span>
-        </button>
-        <StatusPopover open={open} onClose={() => setOpen(false)}>
-          <div className="space-y-2">
-            <div>
-              <div className="text-[var(--accent)]">{data.mission.title}</div>
-              <div className="mt-1 max-w-sm whitespace-pre-wrap text-[var(--dim)]">
-                {data.mission.description || "no description"}
-              </div>
-            </div>
-            <div className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">
-              <span className="text-[var(--dim)]">status</span>
-              <span style={{ color: statusColor(data.mission.status) }}>{data.mission.status}</span>
-              <span className="text-[var(--dim)]">validation</span>
-              <span>{validationText(data.validationSummary)}</span>
-              {data.mission.branch && (
-                <>
-                  <span className="text-[var(--dim)]">branch</span>
-                  <span className="truncate">{data.mission.branch}</span>
-                </>
-              )}
+      <StatusPopover
+        open={open}
+        onClose={() => setOpen(false)}
+        trigger={
+          <button
+            type="button"
+            data-testid="status-segment-mission"
+            onClick={() => setOpen((value) => !value)}
+            className="inline-flex max-w-64 items-center gap-1.5 truncate text-left text-[var(--dim)] transition-colors motion-safe:active:scale-[0.98] hover:text-[var(--fg)]"
+            title={label}
+          >
+            <Target aria-hidden="true" size={12} className="shrink-0" />
+            <span
+              aria-hidden="true"
+              className="h-1.5 w-1.5 shrink-0 rounded-full"
+              style={{ backgroundColor: statusColor(data.mission.status) }}
+            />
+            <span className="truncate">{label}</span>
+          </button>
+        }
+      >
+        <div className="space-y-2">
+          <div>
+            <div className="text-[var(--accent)]">{data.mission.title}</div>
+            <div className="mt-1 max-w-sm whitespace-pre-wrap text-[var(--dim)]">
+              {data.mission.description || "no description"}
             </div>
           </div>
-        </StatusPopover>
-      </span>
+          <div className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">
+            <span className="text-[var(--dim)]">status</span>
+            <span style={{ color: statusColor(data.mission.status) }}>{data.mission.status}</span>
+            <span className="text-[var(--dim)]">validation</span>
+            <span>{validationText(data.validationSummary)}</span>
+            {data.mission.branch && (
+              <>
+                <span className="text-[var(--dim)]">branch</span>
+                <span className="truncate">{data.mission.branch}</span>
+              </>
+            )}
+          </div>
+        </div>
+      </StatusPopover>
     </>
   );
 }

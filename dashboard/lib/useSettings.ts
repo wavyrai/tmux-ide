@@ -51,7 +51,7 @@ export interface Settings {
 export const defaultSettings: Settings = {
   themeId: "dark",
   terminal: {
-    fontSize: 13,
+    fontSize: 11,
     scrollback: 5000,
     cursorBlink: true,
     renderer: "auto",

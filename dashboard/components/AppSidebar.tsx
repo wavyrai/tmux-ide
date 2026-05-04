@@ -13,6 +13,7 @@ import {
   Send,
   Sparkles,
   Target,
+  TerminalSquare,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
@@ -24,6 +25,7 @@ import {
   type SkillData,
 } from "@/lib/api";
 import {
+  ensureDefaultTerminal,
   isOverview,
   isSessions,
   isSkills,
@@ -646,6 +648,16 @@ function buildProjectItems(args: ProjectArgs): SidebarItem[] {
     type: "section",
     label: "views",
     items: [
+      {
+        id: "view-terminal",
+        title: "Terminal",
+        icon: TerminalSquare,
+        tooltip: "Open the project's default terminal",
+        testId: "sidebar-view-terminal",
+        onClick: () => {
+          ensureDefaultTerminal(activeProject);
+        },
+      },
       {
         id: "view-diffs",
         title: "Diffs",
