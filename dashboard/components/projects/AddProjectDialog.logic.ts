@@ -289,10 +289,17 @@ export function chunksToConsoleText(chunks: ReadonlyArray<InitJobChunk>): string
 
 /**
  * Dialog-level UI state derived from the open/init/clone tabs. Used by the
- * tsx component to decide whether the submit button is enabled.
+ * tsx component to decide whether the submit button is enabled and what
+ * action it should take. `kind` lets the caller render different button
+ * text and dispatch a different handler:
+ *
+ *   - "add"     — POST /api/projects (new registration)
+ *   - "open"    — already registered; just navigate to the project
+ *   - "blocked" — disabled (probing, missing ide.yml, invalid dir)
  */
 export interface DialogSubmitState {
   canSubmit: boolean;
+  kind: "add" | "open" | "blocked";
   reason: string | null;
 }
 
@@ -303,16 +310,25 @@ export function deriveOpenTabSubmit(input: {
   existing: ReadonlyArray<RegisteredProject>;
 }): DialogSubmitState {
   const dirValid = validateDir(input.dir);
-  if (!dirValid.valid) return { canSubmit: false, reason: dirValid.reason };
-  if (input.probing) return { canSubmit: false, reason: "Probing…" };
-  if (!input.probed) return { canSubmit: false, reason: "Probe the directory first" };
+  if (!dirValid.valid) return { canSubmit: false, kind: "blocked", reason: dirValid.reason };
+  if (input.probing) return { canSubmit: false, kind: "blocked", reason: "Probing…" };
+  if (!input.probed) {
+    return { canSubmit: false, kind: "blocked", reason: "Probe the directory first" };
+  }
   if (!input.probed.hasIdeYml) {
-    return { canSubmit: false, reason: "No ide.yml found — switch to Initialize" };
+    return {
+      canSubmit: false,
+      kind: "blocked",
+      reason: "No ide.yml found — switch to Initialize",
+    };
   }
   if (input.existing.some((p) => p.name === input.probed!.name)) {
-    return { canSubmit: false, reason: "Project already registered" };
+    // Already in registry — turn the disabled "Add" button into an
+    // enabled "Open" button. Activating an existing project should be
+    // the obvious happy path, not an error state.
+    return { canSubmit: true, kind: "open", reason: null };
   }
-  return { canSubmit: true, reason: null };
+  return { canSubmit: true, kind: "add", reason: null };
 }
 
 export function deriveInitTabSubmit(input: {
@@ -320,9 +336,13 @@ export function deriveInitTabSubmit(input: {
   template: string | null;
   job: InitJobState;
 }): DialogSubmitState {
-  if (input.job.kind === "running") return { canSubmit: false, reason: "Initializing…" };
-  if (input.job.kind === "succeeded") return { canSubmit: false, reason: "Initialized" };
+  if (input.job.kind === "running") {
+    return { canSubmit: false, kind: "blocked", reason: "Initializing…" };
+  }
+  if (input.job.kind === "succeeded") {
+    return { canSubmit: false, kind: "blocked", reason: "Initialized" };
+  }
   const dirValid = validateDir(input.dir);
-  if (!dirValid.valid) return { canSubmit: false, reason: dirValid.reason };
-  return { canSubmit: true, reason: null };
+  if (!dirValid.valid) return { canSubmit: false, kind: "blocked", reason: dirValid.reason };
+  return { canSubmit: true, kind: "add", reason: null };
 }

@@ -248,6 +248,15 @@ function OpenExistingTab({ flow, setFlow }: TabPanelProps) {
 
   const onSubmit = useCallback(async () => {
     if (!inspect || !inspect.hasIdeYml) return;
+    // Already-registered → just open it; don't re-POST. The submit
+    // state already has kind:"open" in this case so the button label
+    // says "Open project" — wire it to the navigation flow.
+    const alreadyRegistered = projects.some((p) => p.name === inspect.name);
+    if (alreadyRegistered) {
+      const existing = projects.find((p) => p.name === inspect.name);
+      if (existing) finishWith(existing, "Project opened");
+      return;
+    }
     setSubmitting(true);
     try {
       const project = await registerProject(inspect.dir, inspect.name);
@@ -261,7 +270,7 @@ function OpenExistingTab({ flow, setFlow }: TabPanelProps) {
     } finally {
       setSubmitting(false);
     }
-  }, [finishWith, inspect, push]);
+  }, [finishWith, inspect, projects, push]);
 
   const onOnboardSubmit = useCallback(
     async (input: OnboardProjectInput) => {
@@ -343,6 +352,7 @@ function OpenExistingTab({ flow, setFlow }: TabPanelProps) {
           submitting={submitting}
           disabled={!submitState.canSubmit || submitting}
           reason={submitState.reason}
+          kind={submitState.kind}
         />
       </div>
     );
@@ -598,9 +608,19 @@ interface ConfirmFooterProps {
   submitting: boolean;
   disabled: boolean;
   reason: string | null;
+  /** "add" → button reads "Add project"; "open" → "Open project" (already registered). */
+  kind: "add" | "open" | "blocked";
 }
 
-function ConfirmFooter({ onBack, onSubmit, submitting, disabled, reason }: ConfirmFooterProps) {
+function ConfirmFooter({
+  onBack,
+  onSubmit,
+  submitting,
+  disabled,
+  reason,
+  kind,
+}: ConfirmFooterProps) {
+  const label = kind === "open" ? "Open project" : "Add project";
   return (
     <FooterRow testId="add-project-footer-confirm">
       <Button variant="ghost" onClick={onBack} data-testid="add-project-back">
@@ -611,12 +631,13 @@ function ConfirmFooter({ onBack, onSubmit, submitting, disabled, reason }: Confi
       </Button>
       <Button
         data-testid="add-project-submit"
+        data-action={kind}
         onClick={onSubmit}
         isPending={submitting}
         disabled={disabled}
         title={reason ?? undefined}
       >
-        Add project
+        {label}
       </Button>
     </FooterRow>
   );

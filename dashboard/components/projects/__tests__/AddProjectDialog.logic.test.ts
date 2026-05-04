@@ -290,14 +290,19 @@ describe("deriveOpenTabSubmit", () => {
     expect(state.reason).toMatch(/Initialize/);
   });
 
-  it("disables when project name already registered", () => {
+  it("flips to open mode when project name already registered", () => {
+    // Already-registered project is a happy path: the button becomes
+    // "Open project" (kind: "open") and stays enabled. The dialog
+    // dispatches navigation instead of POSTing.
     const state = deriveOpenTabSubmit({
       dir: "/repos/alpha",
       probed: PROJECT,
       probing: false,
       existing: [PROJECT],
     });
-    expect(state.canSubmit).toBe(false);
+    expect(state.canSubmit).toBe(true);
+    expect(state.kind).toBe("open");
+    expect(state.reason).toBeNull();
   });
 
   it("enables when probed + has ide.yml + unique name", () => {
