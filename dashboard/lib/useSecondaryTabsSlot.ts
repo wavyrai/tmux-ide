@@ -1,66 +1,27 @@
 "use client";
 
-import { useEffect, useId, useSyncExternalStore, type ReactNode } from "react";
+import type { ReactNode } from "react";
 
-interface Registration {
-  id: string;
-  node: ReactNode;
-}
+/**
+ * @deprecated Compatibility shim retained while Agents 2/3 migrate the
+ * feature folders that still call `<SecondaryTabsPortal>`. AppShell
+ * now renders project view tabs from NavigationState directly, so any
+ * portal registrations here are dropped.
+ *
+ * Removal plan: once `components/views/**` no longer imports
+ * `SecondaryTabsPortal`, delete this module.
+ */
 
-const listeners = new Set<() => void>();
-let registrations: Registration[] = [];
-let activeNode: ReactNode = null;
-
-function recompute() {
-  const next = registrations.length > 0 ? registrations[registrations.length - 1]!.node : null;
-  if (next === activeNode) return;
-  activeNode = next;
-  for (const listener of listeners) listener();
-}
-
-function register(id: string, node: ReactNode): void {
-  const index = registrations.findIndex((entry) => entry.id === id);
-  if (index === -1) {
-    registrations = [...registrations, { id, node }];
-  } else {
-    const next = registrations.slice();
-    next[index] = { id, node };
-    registrations = next;
-  }
-  recompute();
-}
-
-function unregister(id: string): void {
-  const next = registrations.filter((entry) => entry.id !== id);
-  if (next.length === registrations.length) return;
-  registrations = next;
-  recompute();
-}
-
-function subscribe(listener: () => void): () => void {
-  listeners.add(listener);
-  return () => {
-    listeners.delete(listener);
-  };
-}
-
-function getSnapshot(): ReactNode {
-  return activeNode;
-}
-
-function getServerSnapshot(): ReactNode {
+/** @deprecated No-op replacement for the previous portal-store hook. */
+export function useSecondaryTabsSlot(): ReactNode {
   return null;
 }
 
-export function useSecondaryTabsSlot(): ReactNode {
-  return useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
-}
-
-export function SecondaryTabsPortal({ children }: { children: ReactNode }) {
-  const id = useId();
-  useEffect(() => {
-    register(id, children);
-    return () => unregister(id);
-  }, [id, children]);
+/**
+ * @deprecated The shell no longer renders portal-registered secondary
+ * tabs. Call sites can keep mounting `<SecondaryTabsPortal>{...}</...>`
+ * for now — children are simply not rendered.
+ */
+export function SecondaryTabsPortal({ children: _children }: { children: ReactNode }) {
   return null;
 }

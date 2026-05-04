@@ -1,23 +1,15 @@
 "use client";
 
-export type ProjectTab =
-  | "kanban"
-  | "mission"
-  | "diffs"
-  | "plans"
-  | "validation"
-  | "metrics"
-  | "activity";
+import { PROJECT_TABS as PROJECT_TAB_IDS, type ProjectTab } from "@/lib/navigation";
 
-export const PROJECT_TABS: { id: ProjectTab; label: string }[] = [
-  { id: "kanban", label: "kanban" },
-  { id: "mission", label: "mission" },
-  { id: "diffs", label: "diffs" },
-  { id: "plans", label: "plans" },
-  { id: "validation", label: "validation" },
-  { id: "metrics", label: "metrics" },
-  { id: "activity", label: "activity" },
-];
+export type { ProjectTab };
+
+// Pre-built label list. The shape matches the legacy export so call sites
+// consuming `PROJECT_TABS.map(({ id, label }) => ...)` keep working.
+export const PROJECT_TABS: { id: ProjectTab; label: string }[] = PROJECT_TAB_IDS.map((id) => ({
+  id,
+  label: id,
+}));
 
 interface ProjectViewTabsProps {
   active: ProjectTab;

@@ -1,10 +1,16 @@
 "use client";
 
 import { Folder, LayoutDashboard, Send, Settings, Sparkles } from "lucide-react";
-import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { fetchSessions, fetchSkills, injectIntoProject, type SkillData } from "@/lib/api";
+import {
+  isOverview,
+  isSessions,
+  isSettings,
+  isSkills,
+  setNavigation,
+  useNavigation,
+} from "@/lib/navigation";
 import { useLayoutState } from "@/lib/useLayoutState";
 import { useToasts } from "@/lib/useToasts";
 import type { SessionOverview } from "@/lib/types";
@@ -24,9 +30,17 @@ import {
   useSidebar,
 } from "@/components/ui/sidebar";
 
+/**
+ * AppSidebar — primary navigation for the shell.
+ *
+ * Reads NavigationState from `useNavigation()` (single source of truth)
+ * and dispatches changes via `setNavigation(...)`. Replaces the old
+ * blend of `pathname` + `activitySection` reads that disagreed under
+ * load. Workspace tabs are still managed via `useLayoutState` because
+ * tab persistence + ordering is orthogonal to NavigationState.
+ */
 export function AppSidebar() {
-  const pathname = usePathname();
-  const router = useRouter();
+  const nav = useNavigation();
   const [sessions, setSessions] = useState<SessionOverview[]>([]);
   const [sessionsLoading, setSessionsLoading] = useState(true);
   const [skills, setSkills] = useState<SkillData[]>([]);
@@ -35,13 +49,17 @@ export function AppSidebar() {
   const [skillsError, setSkillsError] = useState(false);
   const { push } = useToasts();
   const { setOpenMobile, isMobile } = useSidebar();
-  const {
-    activitySection,
-    activeWorkspaceTabId,
-    workspaceTabs,
-    openWorkspaceTab,
-    setActivitySection,
-  } = useLayoutState();
+  const { openWorkspaceTab } = useLayoutState();
+
+  // Derive current view from NavigationState — these used to come from
+  // pathname + activitySection independently, which is exactly what was
+  // causing the layout drift. Now they all key off `nav`.
+  const activeProject =
+    isSessions(nav) || isSkills(nav) ? (nav.sessionName ?? null) : null;
+  const onOverview = isOverview(nav);
+  const settingsActive = isSettings(nav);
+  const skillsActive = isSkills(nav);
+  const sessionsActive = isSessions(nav) || onOverview;
 
   useEffect(() => {
     let active = true;
@@ -66,15 +84,8 @@ export function AppSidebar() {
     };
   }, []);
 
-  const activeProject = pathname.startsWith("/project/")
-    ? decodeURIComponent(pathname.replace(/^\/project\//, "").replace(/\/$/, ""))
-    : null;
-  const onOverview = pathname === "/" || pathname === "";
-  const activeWorkspaceTab = workspaceTabs.find((tab) => tab.id === activeWorkspaceTabId);
-  const settingsActive = activeWorkspaceTab?.kind === "settings";
-
   useEffect(() => {
-    if (activitySection !== "skills" || !activeProject) {
+    if (!skillsActive || !activeProject) {
       setSkills([]);
       setSkillsLoading(false);
       setSkillsError(false);
@@ -102,7 +113,7 @@ export function AppSidebar() {
     return () => {
       active = false;
     };
-  }, [activeProject, activitySection]);
+  }, [activeProject, skillsActive]);
 
   const closeMobile = useCallback(() => {
     if (isMobile) setOpenMobile(false);
@@ -124,7 +135,7 @@ export function AppSidebar() {
   );
 
   const items = useMemo<SidebarItem[]>(() => {
-    if (activitySection === "settings") {
+    if (settingsActive) {
       const settingsSection: SidebarSection = {
         id: "section-settings",
         type: "section",
@@ -135,13 +146,12 @@ export function AppSidebar() {
             id: "item-settings",
             title: "Settings",
             icon: Settings,
-            isActive: Boolean(settingsActive),
+            isActive: true,
             tooltip: "Settings",
             testId: "sidebar-settings",
             onClick: () => {
               openWorkspaceTab("settings", null, "Settings");
-              setActivitySection("settings");
-              router.push("/");
+              setNavigation({ type: "settings" });
               closeMobile();
             },
           },
@@ -150,7 +160,7 @@ export function AppSidebar() {
       return [settingsSection];
     }
 
-    if (activitySection === "skills") {
+    if (skillsActive) {
       const skillsSection: SidebarSection = {
         id: "section-skills",
         type: "section",
@@ -253,7 +263,6 @@ export function AppSidebar() {
               id: `session-${session.name}`,
               title: session.name,
               icon: Folder,
-              href: `/project/${encodeURIComponent(session.name)}`,
               isActive: activeProject === session.name,
               tooltip: session.name,
               testId: `sidebar-session-${session.name}`,
@@ -264,7 +273,7 @@ export function AppSidebar() {
               subtitle: session.mission?.title ? session.mission.title : undefined,
               onClick: () => {
                 openWorkspaceTab("project", session.name, session.name);
-                setActivitySection("sessions");
+                setNavigation({ type: "sessions", sessionName: session.name });
                 closeMobile();
               },
             }))
@@ -274,19 +283,17 @@ export function AppSidebar() {
     return [sessionsSection];
   }, [
     activeProject,
-    activitySection,
     closeMobile,
     error,
     injectSkill,
     sessionsLoading,
     sessions,
+    settingsActive,
     skills,
+    skillsActive,
     skillsError,
     skillsLoading,
-    settingsActive,
     openWorkspaceTab,
-    setActivitySection,
-    router,
   ]);
 
   return (
@@ -295,22 +302,71 @@ export function AppSidebar() {
         <SidebarMenu>
           <SidebarMenuItem>
             <SidebarMenuButton
-              render={
-                <Link
-                  href="/"
-                  onClick={() => {
-                    setActivitySection("sessions");
-                    closeMobile();
-                  }}
-                />
-              }
+              type="button"
               isActive={onOverview}
               tooltip="Overview"
+              onClick={() => {
+                setNavigation({ type: "overview" });
+                closeMobile();
+              }}
             >
               <LayoutDashboard aria-hidden="true" />
               <span>tmux-ide</span>
             </SidebarMenuButton>
+          </SidebarMenuItem>
+          <SidebarMenuItem>
+            <SidebarMenuButton
+              type="button"
+              isActive={sessionsActive && !settingsActive && !skillsActive}
+              tooltip="Sessions"
+              data-testid="sidebar-mode-sessions"
+              onClick={() => {
+                if (activeProject) {
+                  setNavigation({ type: "sessions", sessionName: activeProject });
+                } else {
+                  setNavigation({ type: "overview" });
+                }
+                closeMobile();
+              }}
+            >
+              <Folder aria-hidden="true" />
+              <span>Sessions</span>
+            </SidebarMenuButton>
             <SidebarMenuBadge>{sessions.length}</SidebarMenuBadge>
+          </SidebarMenuItem>
+          <SidebarMenuItem>
+            <SidebarMenuButton
+              type="button"
+              isActive={skillsActive}
+              tooltip="Skills"
+              data-testid="sidebar-mode-skills"
+              onClick={() => {
+                const next: Parameters<typeof setNavigation>[0] = activeProject
+                  ? { type: "skills", sessionName: activeProject }
+                  : { type: "skills" };
+                setNavigation(next);
+                closeMobile();
+              }}
+            >
+              <Sparkles aria-hidden="true" />
+              <span>Skills</span>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+          <SidebarMenuItem>
+            <SidebarMenuButton
+              type="button"
+              isActive={settingsActive}
+              tooltip="Settings"
+              data-testid="sidebar-mode-settings"
+              onClick={() => {
+                openWorkspaceTab("settings", null, "Settings");
+                setNavigation({ type: "settings" });
+                closeMobile();
+              }}
+            >
+              <Settings aria-hidden="true" />
+              <span>Settings</span>
+            </SidebarMenuButton>
           </SidebarMenuItem>
         </SidebarMenu>
       </SidebarHeader>

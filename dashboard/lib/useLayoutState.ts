@@ -29,6 +29,13 @@ export interface WorkspaceTab {
   ref?: string;
 }
 
+/**
+ * @deprecated Use `NavigationState` from `@/lib/navigation` instead. The
+ * activity section concept has been folded into `NavigationState`'s `type`
+ * tag (`overview` | `settings` | `skills` | `sessions`). This alias
+ * remains so legacy navigators/* call sites compile while Agents 2/3
+ * migrate them; new code MUST read from `useNavigation()`.
+ */
 export type ActivitySection = "sessions" | "settings" | "skills";
 
 export interface LayoutState {

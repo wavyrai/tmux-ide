@@ -1,94 +1,36 @@
-import { render, screen } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import { render } from "@testing-library/react";
+import { describe, expect, it } from "vitest";
 import { NavigatorSlot } from "../NavigatorSlot";
 import {
   NavigatorPortal,
   __resetNavigatorSlotForTests,
 } from "@/lib/useNavigatorSlot";
-import { NAVIGATOR_WIDTH } from "@/lib/panel-constants";
 
-describe("NavigatorSlot", () => {
-  afterEach(() => {
-    __resetNavigatorSlotForTests();
-  });
-
-  it("renders nothing when no portal has registered", () => {
+/**
+ * After the AppShell refactor, NavigatorSlot is a deprecated no-op shim.
+ * The new shell picks navigators from NavigationState directly. These
+ * tests now codify the shim contract: the slot renders nothing, and the
+ * portal compat shim drops its children silently.
+ */
+describe("NavigatorSlot (deprecated shim)", () => {
+  it("renders nothing on its own", () => {
     const { container } = render(<NavigatorSlot />);
     expect(container.firstChild).toBeNull();
   });
 
-  it("renders the portal node with NAVIGATOR_WIDTH when a portal mounts", () => {
-    render(
+  it("renders nothing even when a NavigatorPortal is mounted (children dropped)", () => {
+    const { container } = render(
       <>
         <NavigatorPortal>
-          <div data-testid="nav-content">hello</div>
+          <div data-testid="dropped-content">should not render</div>
         </NavigatorPortal>
         <NavigatorSlot />
       </>,
     );
-
-    expect(screen.getByTestId("nav-content")).toBeTruthy();
-    const slot = screen.getByTestId("navigator-slot");
-    expect(slot.style.width).toBe(`${NAVIGATOR_WIDTH}px`);
+    expect(container.firstChild).toBeNull();
   });
 
-  it("hides the slot when hidden=true even with a registered portal", () => {
-    const { container } = render(
-      <>
-        <NavigatorPortal>
-          <div data-testid="nav-content">hello</div>
-        </NavigatorPortal>
-        <NavigatorSlot hidden />
-      </>,
-    );
-
-    expect(container.querySelector('[data-testid="navigator-slot"]')).toBeNull();
-  });
-
-  it("LIFO: most recently mounted portal wins, restores previous on unmount", () => {
-    function Outer({ showInner }: { showInner: boolean }) {
-      return (
-        <>
-          <NavigatorPortal>
-            <div data-testid="outer">outer</div>
-          </NavigatorPortal>
-          {showInner && (
-            <NavigatorPortal>
-              <div data-testid="inner">inner</div>
-            </NavigatorPortal>
-          )}
-          <NavigatorSlot />
-        </>
-      );
-    }
-
-    const { rerender } = render(<Outer showInner={true} />);
-    expect(screen.queryByTestId("inner")).toBeTruthy();
-    expect(screen.queryByTestId("outer")).toBeNull();
-
-    rerender(<Outer showInner={false} />);
-    expect(screen.queryByTestId("inner")).toBeNull();
-    expect(screen.queryByTestId("outer")).toBeTruthy();
-  });
-
-  it("unregisters cleanly when the portal unmounts", () => {
-    function Wrapper({ show }: { show: boolean }) {
-      return (
-        <>
-          {show && (
-            <NavigatorPortal>
-              <div data-testid="nav-content">hello</div>
-            </NavigatorPortal>
-          )}
-          <NavigatorSlot />
-        </>
-      );
-    }
-
-    const { rerender, container } = render(<Wrapper show={true} />);
-    expect(screen.queryByTestId("nav-content")).toBeTruthy();
-
-    rerender(<Wrapper show={false} />);
-    expect(container.querySelector('[data-testid="navigator-slot"]')).toBeNull();
+  it("__resetNavigatorSlotForTests is a safe no-op", () => {
+    expect(() => __resetNavigatorSlotForTests()).not.toThrow();
   });
 });

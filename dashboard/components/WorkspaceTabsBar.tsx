@@ -1,7 +1,6 @@
 "use client";
 
 import { useMemo } from "react";
-import { useRouter } from "next/navigation";
 import {
   DndContext,
   PointerSensor,
@@ -12,28 +11,39 @@ import {
 } from "@dnd-kit/core";
 import { SortableContext, horizontalListSortingStrategy } from "@dnd-kit/sortable";
 import { WorkspaceTabItem } from "@/components/WorkspaceTabItem";
+import { setNavigation, type NavigationState } from "@/lib/navigation";
 import { useLayoutState, type WorkspaceTab } from "@/lib/useLayoutState";
 
-function hrefForWorkspaceTab(tab: WorkspaceTab | null | undefined): string {
-  if (!tab || tab.kind === "settings" || tab.kind === "notifications" || !tab.projectName) {
-    return "/";
+/**
+ * Translate a workspace tab back into a NavigationState. Workspace tabs
+ * are an in-memory cache of recently opened views; activating one is
+ * equivalent to dispatching the corresponding `setNavigation(...)`.
+ */
+function navForTab(tab: WorkspaceTab | null | undefined): NavigationState {
+  if (!tab) return { type: "overview" };
+  if (tab.kind === "settings") return { type: "settings" };
+  if (tab.kind === "notifications") return { type: "overview" };
+  if (tab.kind === "skill" && tab.projectName) {
+    const next: Extract<NavigationState, { type: "skills" }> = {
+      type: "skills",
+      sessionName: tab.projectName,
+    };
+    if (tab.ref) next.skillName = tab.ref;
+    return next;
   }
-  return `/project/${encodeURIComponent(tab.projectName)}`;
-}
-
-function activityForTab(tab: WorkspaceTab | null | undefined): "sessions" | "settings" {
-  return tab?.kind === "settings" ? "settings" : "sessions";
+  if (tab.kind === "project" && tab.projectName) {
+    return { type: "sessions", sessionName: tab.projectName };
+  }
+  return { type: "overview" };
 }
 
 export function WorkspaceTabsBar() {
-  const router = useRouter();
   const {
     workspaceTabs,
     activeWorkspaceTabId,
     setActiveWorkspaceTab,
     closeWorkspaceTab,
     reorderWorkspaceTabs,
-    setActivitySection,
   } = useLayoutState();
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
@@ -43,8 +53,7 @@ export function WorkspaceTabsBar() {
     const tab = workspaceTabs.find((candidate) => candidate.id === id);
     if (!tab) return;
     setActiveWorkspaceTab(id);
-    setActivitySection(activityForTab(tab));
-    router.push(hrefForWorkspaceTab(tab));
+    setNavigation(navForTab(tab));
   }
 
   function close(id: string) {
@@ -57,8 +66,7 @@ export function WorkspaceTabsBar() {
     closeWorkspaceTab(id);
 
     if (closingActive) {
-      if (nextTab) setActivitySection(activityForTab(nextTab));
-      router.push(hrefForWorkspaceTab(nextTab));
+      setNavigation(navForTab(nextTab));
     }
   }
 
