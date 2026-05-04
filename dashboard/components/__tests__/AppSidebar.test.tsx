@@ -196,4 +196,45 @@ describe("AppSidebar", () => {
       expect(window.location.search).toContain("tab=diffs");
     });
   });
+
+  // Regression: clicking the Terminal leaf must add the terminal tab to
+  // openTabs AND make it the active tab, persisting through any subsequent
+  // URL-driven resync. The bug was that the implicit kanban default in the
+  // URL flowed back into navigation state and clobbered the terminal.
+  it("opens the project's default terminal tab when the Terminal leaf is clicked", async () => {
+    const { setActiveSession, getNavigationStateLive, defaultTerminalTabId, stateFromPath, setNavigation: setNav } =
+      await import("@/lib/navigation");
+    window.history.replaceState(null, "", "/project/alpha");
+    setActiveSession("alpha");
+    renderSidebar();
+    const terminal = await screen.findByTestId("sidebar-view-terminal");
+    fireEvent.click(terminal);
+
+    const expectedId = defaultTerminalTabId("alpha");
+    await waitFor(() => {
+      const live = getNavigationStateLive();
+      expect(live.openTabs.some((t) => t.id === expectedId)).toBe(true);
+      expect(live.activeTabId).toBe(expectedId);
+    });
+
+    // localStorage must persist the terminal tab so a reload restores it.
+    const persisted = window.localStorage.getItem("tmux-ide.tabs.alpha");
+    expect(persisted).toBeTruthy();
+    const parsed = JSON.parse(persisted!) as {
+      openTabs: Array<{ id: string }>;
+      activeTabId: string;
+    };
+    expect(parsed.openTabs.some((t) => t.id === expectedId)).toBe(true);
+    expect(parsed.activeTabId).toBe(expectedId);
+
+    // Simulate a popstate-like resync: re-derive state from the URL and
+    // feed it through setNavigation. The terminal must NOT snap back to
+    // kanban — the bug we are fixing.
+    const fromUrl = stateFromPath(window.location.pathname, window.location.search);
+    setNav(fromUrl);
+
+    const after = getNavigationStateLive();
+    expect(after.openTabs.some((t) => t.id === expectedId)).toBe(true);
+    expect(after.activeTabId).toBe(expectedId);
+  });
 });

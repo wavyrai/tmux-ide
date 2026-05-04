@@ -16,7 +16,25 @@ import {
 // Mock heavy xterm boot — we only care about lifecycle (mount/unmount)
 // in this test, not WebSocket / WebGL plumbing.
 vi.mock("@/components/Terminal", () => ({
-  Terminal: ({ id }: { id: string }) => <div data-testid={`mock-terminal-${id}`}>{id}</div>,
+  Terminal: ({
+    id,
+    cwd,
+    cmd,
+  }: {
+    id: string;
+    cwd?: string;
+    cmd?: string[];
+    showHeader?: boolean;
+    onSessionExit?: (id: string) => void;
+  }) => (
+    <div
+      data-testid={`mock-terminal-${id}`}
+      data-cwd={cwd ?? ""}
+      data-cmd={cmd ? cmd.join("|") : ""}
+    >
+      {id}
+    </div>
+  ),
 }));
 
 vi.mock("@/lib/api", () => ({
@@ -124,5 +142,107 @@ describe("TerminalsHost", () => {
     const header = screen.getByTestId("terminal-header");
     expect(header.textContent).toContain("alpha");
     expect(header.textContent).toContain("tmux-ide");
+  });
+
+  it("forwards cwd / cmd from the terminal tab into the Terminal component", () => {
+    setActiveSession("alpha");
+    const cwd = "/tmp/projects/alpha";
+    const cmd = ["__login_shell__", "tmux-ide"];
+    const tab = openTerminalTab("alpha", { cwd, cmd, title: "tmux-ide" });
+
+    render(<TerminalsHost />);
+
+    const mock = screen.getByTestId(`mock-terminal-${tab.id}`);
+    expect(mock.dataset.cwd).toBe(cwd);
+    expect(mock.dataset.cmd).toBe(cmd.join("|"));
+  });
+
+  it("renders the host as an absolute overlay so it covers the panel without competing for flex space", () => {
+    setActiveSession("alpha");
+    ensureDefaultTerminal("alpha");
+
+    render(<TerminalsHost />);
+    const host = screen.getByTestId("terminals-host");
+
+    // Hard requirement: absolute-positioned overlay sitting on top of
+    // MainTabContent. Without `absolute inset-0` the host would steal
+    // flex space and shrink sibling panels.
+    expect(host.className).toContain("absolute");
+    expect(host.className).toContain("inset-0");
+    // z-index has to be > 0 so it paints above MainTabContent.
+    expect(host.className).toMatch(/z-\d+/);
+  });
+
+  it("keeps the Terminal mounted even when a non-terminal tab is active", () => {
+    setActiveSession("alpha");
+    const term = ensureDefaultTerminal("alpha");
+    const view = viewTab("alpha", "kanban");
+    openTab(view);
+    activateTab(view.id);
+
+    render(<TerminalsHost />);
+
+    // Host hides via display:none but the terminal stays mounted so
+    // its xterm + WebSocket survive the tab switch.
+    const host = screen.getByTestId("terminals-host");
+    expect(host.style.display).toBe("none");
+    expect(screen.getByTestId(`mock-terminal-${term.id}`)).toBeTruthy();
+  });
+
+  it("flips slot display from none -> flex when activating a hidden terminal tab", () => {
+    setActiveSession("alpha");
+    const t1 = ensureDefaultTerminal("alpha");
+    const t2 = openTerminalTab("alpha", { title: "shell" });
+
+    const { rerender } = render(<TerminalsHost />);
+
+    // t2 is the most recently opened and is the active terminal.
+    let slots = document.querySelectorAll<HTMLElement>("[data-terminal-slot]");
+    let slotMap = new Map(
+      Array.from(slots).map((s) => [s.dataset.terminalSlot, s.style.display]),
+    );
+    expect(slotMap.get(t2.id)).toBe("flex");
+    expect(slotMap.get(t1.id)).toBe("none");
+
+    // Switch to the older terminal — slot displays flip.
+    activateTab(t1.id);
+    rerender(<TerminalsHost />);
+    slots = document.querySelectorAll<HTMLElement>("[data-terminal-slot]");
+    slotMap = new Map(
+      Array.from(slots).map((s) => [s.dataset.terminalSlot, s.style.display]),
+    );
+    expect(slotMap.get(t1.id)).toBe("flex");
+    expect(slotMap.get(t2.id)).toBe("none");
+  });
+
+  it("updates the terminal header when the active terminal changes", () => {
+    setActiveSession("alpha");
+    ensureDefaultTerminal("alpha");
+    const adhoc = openTerminalTab("alpha", { title: "shell-2" });
+
+    const { rerender } = render(<TerminalsHost />);
+
+    // Most recently opened (adhoc) is active by default.
+    expect(screen.getByTestId("terminal-header").textContent).toContain("shell-2");
+
+    // Switch to default — header swaps title.
+    activateTab(defaultTerminalTabId("alpha"));
+    rerender(<TerminalsHost />);
+    expect(screen.getByTestId("terminal-header").textContent).toContain("tmux-ide");
+
+    // And back.
+    activateTab(adhoc.id);
+    rerender(<TerminalsHost />);
+    expect(screen.getByTestId("terminal-header").textContent).toContain("shell-2");
+  });
+
+  it("exposes data-active-terminal pointing at the active terminal id", () => {
+    setActiveSession("alpha");
+    const tab = ensureDefaultTerminal("alpha");
+
+    render(<TerminalsHost />);
+
+    const host = screen.getByTestId("terminals-host");
+    expect(host.dataset.activeTerminal).toBe(tab.id);
   });
 });

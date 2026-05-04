@@ -272,11 +272,16 @@ export function stateFromPath(pathname: string, search: string): LegacyNavigatio
       return next;
     }
     const tab = params.get("tab");
-    return {
+    const next: Extract<LegacyNavigationState, { type: "sessions" }> = {
       type: "sessions",
       sessionName,
-      tab: isProjectTab(tab) ? tab : "kanban",
     };
+    // Only set `tab` when it is explicitly present in the URL. The
+    // implicit default ("kanban") would otherwise look like an explicit
+    // user request to applyLegacy and clobber any non-view tab the user
+    // had selected (terminal, skill, settings, file).
+    if (isProjectTab(tab)) next.tab = tab;
+    return next;
   }
 
   if (pathname === "/" || pathname === "") {
@@ -556,9 +561,21 @@ function applyLegacy(state: InternalState, legacy: LegacyNavigationState): void 
         state.tabsBySession.get(legacy.sessionName) ?? readPersistedStrip(legacy.sessionName);
       state.openTabs = strip?.openTabs ?? [];
       state.activeTabId = strip?.activeTabId ?? null;
-      const tab = viewTab(legacy.sessionName, legacy.tab ?? "kanban");
+      const requestedView = legacy.tab ?? "kanban";
+      const tab = viewTab(legacy.sessionName, requestedView);
       ensureTab(state, tab);
-      state.activeTabId = tab.id;
+      // Only force-switch the active tab to the requested view tab when
+      // the legacy form supplied an explicit `tab` field (an explicit user
+      // action like a view-leaf click or the project switcher) OR when the
+      // restored strip has no active tab to preserve. Otherwise — e.g. a
+      // popstate / fresh-load resync from a `/project/<name>` URL that
+      // implicitly defaults to kanban — leave the strip's existing active
+      // tab alone so terminal / skill / settings / file tabs the user
+      // already opened do not snap back to kanban. URL is OUTPUT, state is
+      // INPUT: the implicit kanban default must not clobber non-view tabs.
+      if (legacy.tab !== undefined || state.activeTabId === null) {
+        state.activeTabId = tab.id;
+      }
       return;
     }
   }

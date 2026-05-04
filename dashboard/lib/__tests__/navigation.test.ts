@@ -239,6 +239,125 @@ describe("terminal tabs", () => {
     expect(live.openTabs.some((t) => t.id === term.id)).toBe(false);
     expect(live.activeTabId).toBe("view:alpha:kanban");
   });
+
+  // Regression: clicking the sidebar's "Terminal" leaf added a terminal
+  // tab, but the next time something synced from the URL — a popstate
+  // event, a re-mount of `useNavigation`, or any caller hitting the
+  // legacy `setNavigation({ type: "sessions", sessionName, tab: "kanban" })`
+  // path — the active tab snapped back to kanban and the user perceived
+  // the terminal as gone. The terminal must remain in `openTabs` AND
+  // remain active across each of those resyncs.
+  it("regression: terminal tab survives a URL-driven resync", () => {
+    // Arrange: user is on /project/alpha and clicked "Terminal".
+    window.history.replaceState(null, "", "/project/alpha");
+    setActiveSession("alpha");
+    const term = ensureDefaultTerminal("alpha");
+
+    // The popstate handler / mount-time URL sync feeds the store with
+    // `stateFromPath(window.location)`. For `/project/alpha` (no
+    // explicit ?tab=) this must NOT clobber the terminal active tab —
+    // the implicit kanban default is for output only.
+    const fromUrl = stateFromPath(window.location.pathname, window.location.search);
+    setNavigation(fromUrl);
+
+    const live = getNavigationStateLive();
+    expect(live.openTabs.some((t) => t.id === term.id)).toBe(true);
+    expect(live.activeTabId).toBe(term.id);
+
+    // localStorage must also persist the terminal as the active tab so a
+    // page reload restores it.
+    const persisted = window.localStorage.getItem("tmux-ide.tabs.alpha");
+    expect(persisted).toBeTruthy();
+    const parsed = JSON.parse(persisted!) as {
+      openTabs: Array<{ id: string }>;
+      activeTabId: string;
+    };
+    expect(parsed.openTabs.some((t) => t.id === term.id)).toBe(true);
+    expect(parsed.activeTabId).toBe(term.id);
+  });
+
+  it("regression: terminal tab survives a setNavigation resync to the same session", () => {
+    setActiveSession("alpha");
+    const term = ensureDefaultTerminal("alpha");
+
+    // Implicit-default re-sync: AppSidebar's project header click and the
+    // shell URL sync both call `setNavigation({ type: "sessions",
+    // sessionName })` with no explicit `tab`. The terminal must remain
+    // in openTabs AND remain the active tab, otherwise the click flicker
+    // back to kanban is exactly the bug we are fixing.
+    setNavigation({ type: "sessions", sessionName: "alpha" });
+
+    const live = getNavigationStateLive();
+    expect(live.openTabs.some((t) => t.id === term.id)).toBe(true);
+    expect(live.activeTabId).toBe(term.id);
+  });
+
+  it("explicit setNavigation with tab:kanban still switches to kanban (terminal stays in openTabs)", () => {
+    setActiveSession("alpha");
+    const term = ensureDefaultTerminal("alpha");
+
+    // Explicit user request for the kanban view (e.g. from the project
+    // switcher or a future "view: kanban" leaf) should switch the active
+    // tab — but the terminal tab must remain in openTabs so the user can
+    // click back to it.
+    setNavigation({ type: "sessions", sessionName: "alpha", tab: "kanban" });
+
+    const live = getNavigationStateLive();
+    expect(live.openTabs.some((t) => t.id === term.id)).toBe(true);
+    expect(live.activeTabId).toBe("view:alpha:kanban");
+  });
+
+  it("regression: multiple terminals (Cmd-Shift-T) coexist with the default terminal", () => {
+    setActiveSession("alpha");
+    const def = ensureDefaultTerminal("alpha");
+    const adhoc1 = openTerminalTab("alpha", { title: "shell" });
+    const adhoc2 = openTerminalTab("alpha", { title: "shell" });
+
+    // Resync from URL — implicit kanban default must NOT remove the
+    // ad-hoc terminals. All three must remain in openTabs and the most
+    // recently opened tab stays active.
+    const fromUrl = stateFromPath("/project/alpha", "");
+    setNavigation(fromUrl);
+
+    const live = getNavigationStateLive();
+    const terminalIds = live.openTabs.filter((t) => t.kind === "terminal").map((t) => t.id);
+    expect(terminalIds).toContain(def.id);
+    expect(terminalIds).toContain(adhoc1.id);
+    expect(terminalIds).toContain(adhoc2.id);
+    expect(live.activeTabId).toBe(adhoc2.id);
+  });
+
+  it("regression: terminal tab persists across a fresh-state rehydrate", () => {
+    setActiveSession("alpha");
+    const term = ensureDefaultTerminal("alpha");
+
+    // Simulate a fresh hydrate: persisted strip is on disk; spinning
+    // up a brand-new state from URL must restore the terminal AND keep
+    // it active.
+    __resetNavigationForTests({
+      sessionName: null,
+      openTabs: [],
+      activeTabId: null,
+    } as NavigationState);
+    // Re-write the localStorage entry that the previous run produced
+    // (the reset clears it). Mimics the post-reload condition.
+    window.localStorage.setItem(
+      "tmux-ide.tabs.alpha",
+      JSON.stringify({
+        openTabs: [
+          { id: "view:alpha:kanban", kind: "view", sessionName: "alpha", view: "kanban", title: "kanban" },
+          { id: term.id, kind: "terminal", sessionName: "alpha", title: "tmux-ide", cmd: ["__login_shell__", "tmux-ide"] },
+        ],
+        activeTabId: term.id,
+      }),
+    );
+
+    setNavigation({ type: "sessions", sessionName: "alpha" });
+
+    const live = getNavigationStateLive();
+    expect(live.openTabs.some((t) => t.id === term.id)).toBe(true);
+    expect(live.activeTabId).toBe(term.id);
+  });
 });
 
 describe("legacy setNavigation compat", () => {
@@ -340,11 +459,13 @@ describe("stateFromPath", () => {
     expect(stateFromPath("/", "mode=skills")).toEqual({ type: "skills" });
   });
 
-  it("parses session routes with default kanban tab", () => {
+  it("parses session routes without an explicit ?tab= and omits the tab field", () => {
+    // Implicit kanban: omit the field so applyLegacy can preserve any
+    // non-view tab (terminal, skill, settings, file) the user already has
+    // selected. The active tab is restored from the per-session strip.
     expect(stateFromPath("/project/alpha", "")).toEqual({
       type: "sessions",
       sessionName: "alpha",
-      tab: "kanban",
     });
   });
 
@@ -356,11 +477,12 @@ describe("stateFromPath", () => {
     });
   });
 
-  it("falls back to kanban when ?tab= is unknown", () => {
+  it("omits the tab field when ?tab= is unknown", () => {
+    // Same reasoning as the no-tab case: an unrecognised value should not
+    // be treated as an explicit kanban request.
     expect(stateFromPath("/project/alpha", "tab=garbage")).toEqual({
       type: "sessions",
       sessionName: "alpha",
-      tab: "kanban",
     });
   });
 
@@ -384,7 +506,7 @@ describe("stateFromPath", () => {
       { type: "skills" },
       { type: "skills", sessionName: "alpha" },
       { type: "skills", sessionName: "alpha", skillName: "frontend" },
-      { type: "sessions", sessionName: "alpha", tab: "kanban" },
+      { type: "sessions", sessionName: "alpha" },
       { type: "sessions", sessionName: "alpha", tab: "plans" },
       { type: "sessions", sessionName: "alpha", tab: "metrics" },
     ];
@@ -394,5 +516,18 @@ describe("stateFromPath", () => {
       const parsed = stateFromPath(pathname!, search);
       expect(parsed).toEqual(state);
     }
+  });
+
+  it("normalises kanban → no-tab through the round-trip", () => {
+    // The implicit kanban default is omitted by `stateFromPath` so that
+    // popstate / fresh-load syncs do not clobber non-view active tabs.
+    // Inputs that explicitly declared `tab: "kanban"` still produce the
+    // canonical `/project/<name>` URL on the way out.
+    const url = pathFromState({ type: "sessions", sessionName: "alpha", tab: "kanban" });
+    expect(url).toBe("/project/alpha");
+    expect(stateFromPath("/project/alpha", "")).toEqual({
+      type: "sessions",
+      sessionName: "alpha",
+    });
   });
 });
