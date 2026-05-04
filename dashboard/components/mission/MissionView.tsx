@@ -1,7 +1,7 @@
 "use client";
 
 import { CheckCircle2, MoreHorizontal, Pencil, Trash2 } from "lucide-react";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useState, type ReactNode } from "react";
 import {
   AgentActivityRail,
   AgentDetailDialog,
@@ -170,11 +170,13 @@ export function MissionView({ sessionName }: MissionViewProps) {
     }
   }, [push, sessionName]);
 
-  const navigator = (
-    <NavigatorPortal>
-      <MissionTreeNavigator sessionName={sessionName} onTaskClick={handleTaskClick} />
-    </NavigatorPortal>
-  );
+  // Phase Z: NavigatorPortal is a no-op shim now. Mission navigation
+  // lives in AppSidebar's project tree (Mission section with milestones).
+  // If we ever bring back an inline mission tree column, render it as
+  // an aside next to the main content here.
+  const navigator: ReactNode = null;
+  void MissionTreeNavigator;
+  void NavigatorPortal;
 
   if (!snapshot) {
     return (

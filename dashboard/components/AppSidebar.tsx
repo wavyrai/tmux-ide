@@ -655,6 +655,7 @@ function buildProjectItems(args: ProjectArgs): SidebarItem[] {
         tooltip: "Open the project's default terminal",
         testId: "sidebar-view-terminal",
         onClick: () => {
+          if (!activeProject) return;
           ensureDefaultTerminal(activeProject);
         },
       },
