@@ -352,7 +352,15 @@ export function AppSidebar() {
 
     return buildProjectItems({
       activeProject,
-      activeProjectDir: sessions.find((s) => s.name === activeProject)?.dir ?? null,
+      // Look up the project's working dir from the live tmux session list
+      // first, then fall back to the registered-projects list. The fallback
+      // matters for newly-onboarded projects that don't have a running
+      // tmux session yet — without it, the Terminal leaf would spawn in
+      // $HOME and `tmux-ide` would error with "No ide.yml found in /Users/thijs".
+      activeProjectDir:
+        sessions.find((s) => s.name === activeProject)?.dir ??
+        projectsState.projects.find((p) => p.name === activeProject)?.dir ??
+        null,
       activeTab: isSessions(nav) ? (nav.tab ?? "kanban") : "kanban",
       milestones: snapshot?.milestones ?? [],
       missionTitle: snapshot?.mission?.mission?.title ?? null,
