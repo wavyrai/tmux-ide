@@ -421,7 +421,7 @@ export function KanbanBoard({
         >
           <div
             data-testid="kanban-columns"
-            className="flex min-h-0 flex-1 snap-x snap-mandatory gap-3 overflow-x-auto p-3"
+            className="flex min-h-0 min-w-0 flex-1 gap-3 overflow-x-auto overflow-y-hidden p-3"
           >
             <AnimatePresence initial={false}>
               {columns.map((col) => (

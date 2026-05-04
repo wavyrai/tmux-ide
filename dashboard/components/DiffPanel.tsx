@@ -95,7 +95,7 @@ export function DiffPanel({ sessionName }: DiffPanelProps) {
       <div className="flex flex-1 min-h-0 min-w-0">
         {/* File sidebar */}
         <div
-          className={`${mobileDetailOpen ? "hidden" : "block"} w-full shrink-0 overflow-y-auto border-r border-[var(--border)] md:block md:w-[260px]`}
+          className={`${mobileDetailOpen ? "hidden" : "block"} w-full shrink-0 overflow-y-auto border-r border-[var(--border)] sm:block sm:w-[260px]`}
         >
           <FileList
             files={data.files}
@@ -111,9 +111,9 @@ export function DiffPanel({ sessionName }: DiffPanelProps) {
             width of the patch content so split-mode doesn't push past the
             viewport. */}
         <div
-          className={`${mobileDetailOpen ? "flex" : "hidden"} min-h-0 min-w-0 flex-1 flex-col md:flex`}
+          className={`${mobileDetailOpen ? "flex" : "hidden"} min-h-0 min-w-0 flex-1 flex-col sm:flex`}
         >
-          <div className="flex h-9 shrink-0 items-center border-b border-[var(--border)] bg-[var(--bg-weak)] px-2 md:hidden">
+          <div className="flex h-9 shrink-0 items-center border-b border-[var(--border)] bg-[var(--bg-weak)] px-2 sm:hidden">
             <button
               type="button"
               onClick={() => setMobileDetailOpen(false)}

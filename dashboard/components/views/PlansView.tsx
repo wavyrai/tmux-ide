@@ -557,9 +557,9 @@ function PlanDetail({
   if (plans.length === 0) return null;
 
   return (
-    <main className="flex min-h-0 min-w-0 flex-1 flex-col md:flex-row">
+    <main className="flex min-h-0 min-w-0 flex-1 flex-col sm:flex-row">
       {showMobileBack && (
-        <div className="flex h-9 shrink-0 items-center border-b border-[var(--border)] bg-[var(--bg-weak)] px-2 md:hidden">
+        <div className="flex h-9 shrink-0 items-center border-b border-[var(--border)] bg-[var(--bg-weak)] px-2 sm:hidden">
           <button
             type="button"
             onClick={onMobileBack}

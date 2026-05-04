@@ -1,12 +1,12 @@
 "use client";
 
-import { useEffect, useRef, useCallback } from "react";
-import { Editor, defaultValueCtx, rootCtx } from "@milkdown/core";
-import { commonmark } from "@milkdown/preset-commonmark";
-import { nord } from "@milkdown/theme-nord";
-import { Milkdown, MilkdownProvider, useEditor, useInstance } from "@milkdown/react";
-import { getMarkdown } from "@milkdown/utils";
-import "@milkdown/theme-nord/style.css";
+import { useEffect, useRef } from "react";
+import { EditorState } from "@codemirror/state";
+import { EditorView, keymap, lineNumbers } from "@codemirror/view";
+import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
+import { markdown } from "@codemirror/lang-markdown";
+import { syntaxHighlighting, defaultHighlightStyle } from "@codemirror/language";
+import { oneDark } from "@codemirror/theme-one-dark";
 
 interface MarkdownEditorProps {
   value: string;
@@ -14,85 +14,88 @@ interface MarkdownEditorProps {
   onSave: (value: string) => void;
 }
 
-function MilkdownEditor({ value, onChange, onSave }: MarkdownEditorProps) {
+export function MarkdownEditor({ value, onChange, onSave }: MarkdownEditorProps) {
+  const hostRef = useRef<HTMLDivElement | null>(null);
+  const viewRef = useRef<EditorView | null>(null);
   const onChangeRef = useRef(onChange);
   const onSaveRef = useRef(onSave);
   onChangeRef.current = onChange;
   onSaveRef.current = onSave;
 
-  useEditor((root) => {
-    return Editor.make()
-      .config((ctx) => {
-        ctx.set(rootCtx, root);
-        ctx.set(defaultValueCtx, value);
-      })
-      .config(nord)
-      .use(commonmark);
-  }, []);
-
-  const [loading, getInstance] = useInstance();
-
-  // Extract markdown on changes via MutationObserver on ProseMirror
-  const containerRef = useRef<HTMLDivElement | null>(null);
-  const observerRef = useRef<MutationObserver | null>(null);
-
-  const extractMarkdown = useCallback(() => {
-    if (loading) return;
-    const editor = getInstance();
-    if (!editor) return;
-    try {
-      const md = editor.action(getMarkdown() as any) as string;
-      onChangeRef.current(md);
-    } catch {
-      // Editor may not be ready
-    }
-  }, [loading, getInstance]);
-
   useEffect(() => {
-    const el = containerRef.current?.querySelector(".ProseMirror");
-    if (!el) return;
+    if (!hostRef.current) return;
 
-    observerRef.current = new MutationObserver(() => {
-      extractMarkdown();
+    const startState = EditorState.create({
+      doc: value,
+      extensions: [
+        history(),
+        lineNumbers(),
+        markdown(),
+        syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
+        oneDark,
+        EditorView.lineWrapping,
+        EditorView.theme({
+          "&": {
+            height: "100%",
+            fontSize: "13px",
+            fontFamily: "var(--font-mono)",
+            backgroundColor: "transparent",
+          },
+          ".cm-scroller": {
+            fontFamily: "var(--font-mono)",
+          },
+          ".cm-content": {
+            paddingTop: "12px",
+            paddingBottom: "12px",
+          },
+          ".cm-gutters": {
+            backgroundColor: "transparent",
+            borderRight: "1px solid var(--border-weak)",
+          },
+        }),
+        keymap.of([
+          {
+            key: "Mod-s",
+            preventDefault: true,
+            run: (v) => {
+              onSaveRef.current(v.state.doc.toString());
+              return true;
+            },
+          },
+          ...historyKeymap,
+          ...defaultKeymap,
+        ]),
+        EditorView.updateListener.of((update) => {
+          if (update.docChanged) {
+            onChangeRef.current(update.state.doc.toString());
+          }
+        }),
+      ],
     });
 
-    observerRef.current.observe(el, {
-      childList: true,
-      subtree: true,
-      characterData: true,
-    });
+    viewRef.current = new EditorView({ state: startState, parent: hostRef.current });
 
     return () => {
-      observerRef.current?.disconnect();
+      viewRef.current?.destroy();
+      viewRef.current = null;
     };
-  }, [loading, extractMarkdown]);
+    // value is the initial doc only — controlled updates happen via the
+    // dispatched 'tmux-ide:set-markdown' event, so changing the prop
+    // doesn't recreate the editor.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-  // Ctrl+S / Cmd+S
+  // External "set markdown" event (fired when reload-from-disk happens).
   useEffect(() => {
-    function onKey(e: KeyboardEvent) {
-      if ((e.metaKey || e.ctrlKey) && e.key === "s") {
-        e.preventDefault();
-        if (loading) return;
-        const editor = getInstance();
-        if (!editor) return;
-        try {
-          const md = editor.action(getMarkdown() as any) as string;
-          onSaveRef.current(md);
-        } catch {
-          // ignore
-        }
-      }
-    }
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [loading, getInstance]);
-
-  useEffect(() => {
-    const root = containerRef.current;
+    const root = hostRef.current;
     if (!root) return;
     function onSetMarkdown(event: Event) {
-      const value = (event as CustomEvent<string>).detail;
-      if (typeof value === "string") onChangeRef.current(value);
+      const next = (event as CustomEvent<string>).detail;
+      const view = viewRef.current;
+      if (typeof next !== "string" || !view) return;
+      view.dispatch({
+        changes: { from: 0, to: view.state.doc.length, insert: next },
+      });
     }
     root.addEventListener("tmux-ide:set-markdown", onSetMarkdown);
     return () => root.removeEventListener("tmux-ide:set-markdown", onSetMarkdown);
@@ -100,19 +103,9 @@ function MilkdownEditor({ value, onChange, onSave }: MarkdownEditorProps) {
 
   return (
     <div
-      ref={containerRef}
+      ref={hostRef}
       data-testid="markdown-editor"
-      className="milkdown-wrap flex-1 min-h-0 overflow-auto"
-    >
-      <Milkdown />
-    </div>
-  );
-}
-
-export function MarkdownEditor(props: MarkdownEditorProps) {
-  return (
-    <MilkdownProvider>
-      <MilkdownEditor {...props} />
-    </MilkdownProvider>
+      className="flex-1 min-h-0 overflow-auto"
+    />
   );
 }

@@ -10,7 +10,7 @@ export function ShellSidebarProvider({ children }: { children: React.ReactNode }
   return (
     <SidebarProvider
       keyboardShortcut={keybind}
-      defaultOpen={false}
+      defaultOpen
       className="min-h-screen flex-col"
     >
       {children}

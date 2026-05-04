@@ -191,7 +191,7 @@ function Sidebar({
         data-slot="sidebar"
         data-sidebar="sidebar"
         className={cn(
-          "flex h-full w-[--sidebar-width] flex-col bg-[var(--sidebar-background)] text-[var(--sidebar-foreground)]",
+          "flex h-full w-[var(--sidebar-width)] flex-col bg-[var(--sidebar-background)] text-[var(--sidebar-foreground)]",
           className,
         )}
         {...props}
@@ -210,7 +210,7 @@ function Sidebar({
           data-testid="mobile-shell-drawer"
           side={side}
           showClose={false}
-          className={cn("w-[--sidebar-width] p-0", className)}
+          className={cn("w-[var(--sidebar-width)] p-0", className)}
           style={{ "--sidebar-width": SIDEBAR_WIDTH_MOBILE } as React.CSSProperties}
           {...props}
         >
@@ -227,10 +227,10 @@ function Sidebar({
   return (
     <div
       className={cn(
-        "group peer hidden h-full shrink-0 text-[var(--sidebar-foreground)] transition-[width] duration-200 ease-out md:flex",
-        "w-[--sidebar-width]",
+        "group peer flex h-full shrink-0 text-[var(--sidebar-foreground)]",
+        "w-[var(--sidebar-width)]",
         "data-[collapsible=offcanvas]:w-0",
-        "data-[collapsible=icon]:w-[--sidebar-width-icon]",
+        "data-[collapsible=icon]:w-[var(--sidebar-width-icon)]",
         (variant === "floating" || variant === "inset") &&
           "data-[collapsible=icon]:w-[calc(var(--sidebar-width-icon)+0.75rem)]",
       )}
@@ -244,9 +244,9 @@ function Sidebar({
         data-slot="sidebar"
         data-sidebar="sidebar"
         className={cn(
-          "relative z-10 flex h-full w-full transition-[width] duration-200 ease-out",
+          "relative z-10 flex h-full w-full",
           "group-data-[collapsible=offcanvas]:overflow-hidden",
-          "group-data-[collapsible=icon]:w-[--sidebar-width-icon]",
+          "group-data-[collapsible=icon]:w-[var(--sidebar-width-icon)]",
           variant === "floating" || variant === "inset"
             ? "p-2 group-data-[collapsible=icon]:w-[calc(var(--sidebar-width-icon)+0.75rem)]"
             : "border-r border-[var(--sidebar-border)]",
@@ -410,7 +410,7 @@ function SidebarGroupLabel({ className, ...props }: React.ComponentProps<"div">)
       data-sidebar="group-label"
       data-slot="sidebar-group-label"
       className={cn(
-        "flex h-8 shrink-0 items-center gap-2 rounded-md px-2 text-[10px] font-medium uppercase tracking-[0.08em] text-[var(--dim)] outline-none transition-[margin,opacity] duration-200",
+        "flex h-8 shrink-0 items-center gap-2 rounded-md px-2 text-[10px] font-medium uppercase tracking-[0.08em] text-[var(--dim)] outline-none",
         "group-data-[collapsible=icon]:-mt-8 group-data-[collapsible=icon]:opacity-0",
         className,
       )}

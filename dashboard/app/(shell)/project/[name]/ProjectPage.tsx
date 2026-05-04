@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { usePathname } from "next/navigation";
 import { PROJECT_TABS, ProjectViewTabs, type ProjectTab } from "@/components/ProjectViewTabs";
+import { SecondaryTabsPortal } from "@/lib/useSecondaryTabsSlot";
 import { ActivityView } from "@/components/views/ActivityView";
 import { DiffsView } from "@/components/views/DiffsView";
 import { KanbanView } from "@/components/views/KanbanView";
@@ -46,7 +47,9 @@ export default function ProjectPage({ projectName }: ProjectPageProps = {}) {
 
   return (
     <div className="flex flex-1 min-h-0 flex-col bg-[var(--bg)]">
-      <ProjectViewTabs active={activeTab} onChange={setActiveTab} />
+      <SecondaryTabsPortal>
+        <ProjectViewTabs active={activeTab} onChange={setActiveTab} />
+      </SecondaryTabsPortal>
       {activeTab === "kanban" && <KanbanView sessionName={name} />}
       {activeTab === "mission" && <MissionView sessionName={name} />}
       {activeTab === "diffs" && <DiffsView sessionName={name} />}

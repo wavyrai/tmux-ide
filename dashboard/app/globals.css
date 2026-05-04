@@ -1,5 +1,53 @@
 @import "tailwindcss";
 
+/*
+ * Sidebar primitive layout — declare these as plain CSS so the Sidebar's
+ * collapse/expand width and icon-mode reveals are not at the mercy of
+ * Tailwind v4's arbitrary-value JIT compilation (`w-[var(...)]`,
+ * `data-[collapsible=icon]:*`, `group-data-[collapsible=icon]:*` are
+ * unreliable inside cn() blocks and were silently failing before).
+ */
+[data-slot="sidebar-container"] { width: var(--sidebar-width); }
+[data-slot="sidebar-container"][data-collapsible="offcanvas"] { width: 0; }
+[data-slot="sidebar-container"][data-collapsible="icon"] { width: var(--sidebar-width-icon); }
+[data-slot="sidebar-container"][data-variant="floating"][data-collapsible="icon"],
+[data-slot="sidebar-container"][data-variant="inset"][data-collapsible="icon"] {
+  width: calc(var(--sidebar-width-icon) + 0.75rem);
+}
+[data-slot="sidebar-container"][data-collapsible="icon"] [data-slot="sidebar"],
+[data-slot="sidebar-container"][data-collapsible="icon"] [data-sidebar="sidebar-inner"] {
+  width: var(--sidebar-width-icon);
+}
+[data-slot="sidebar-container"][data-collapsible="icon"] [data-sidebar="header"],
+[data-slot="sidebar-container"][data-collapsible="icon"] [data-sidebar="content"] {
+  overflow: hidden;
+}
+[data-slot="sidebar-container"][data-collapsible="icon"] [data-sidebar="group-label"] {
+  margin-top: -2rem;
+  opacity: 0;
+  pointer-events: none;
+}
+[data-slot="sidebar-container"][data-collapsible="icon"] [data-sidebar="menu-badge"],
+[data-slot="sidebar-container"][data-collapsible="icon"] [data-sidebar="menu-action"],
+[data-slot="sidebar-container"][data-collapsible="icon"] [data-sidebar="menu-sub"],
+[data-slot="sidebar-container"][data-collapsible="icon"] [data-sidebar="footer"] > div {
+  display: none;
+}
+[data-slot="sidebar-container"][data-collapsible="icon"] [data-sidebar="menu-button"] {
+  width: 2rem;
+  height: 2rem;
+  padding: 0.5rem;
+}
+[data-slot="sidebar-container"][data-collapsible="icon"] [data-sidebar="menu-button"] > span:last-child {
+  display: none;
+}
+[data-slot="sidebar-container"][data-collapsible="icon"] [data-sidebar="menu-item"] > div.ml-8 {
+  display: none;
+}
+[data-slot="sidebar-container"][data-collapsible="icon"] [data-sidebar="input"] {
+  display: none;
+}
+
 @custom-variant hover-only {
   @media (hover: hover) and (pointer: fine) {
     &:hover {

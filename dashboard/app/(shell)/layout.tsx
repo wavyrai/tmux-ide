@@ -8,8 +8,7 @@ import { ToastStack } from "@/components/ToastStack";
 import { WorkspaceTabsBar } from "@/components/WorkspaceTabsBar";
 import { WorkspaceTabsManager } from "@/components/WorkspaceTabsManager";
 import { WorkspaceUrlSync } from "@/components/WorkspaceUrlSync";
-import { NavigatorSlot } from "@/components/app-shell";
-import { DefaultNavigator } from "@/components/navigators";
+import { NavigatorSlot, SecondaryTabsSlot } from "@/components/app-shell";
 import { SidebarInset } from "@/components/ui/sidebar";
 
 export default function ShellLayout({ children }: { children: React.ReactNode }) {
@@ -18,34 +17,43 @@ export default function ShellLayout({ children }: { children: React.ReactNode })
       <WorkspaceUrlSync />
       <EventBridge />
       <div className="flex min-h-0 flex-1">
-        {/* AppSidebar = narrow icon-only mode picker (Sessions/Skills/Settings).
-            Stays consistent across all routes. The Base UI primitive handles
-            the mobile drawer with full labels. */}
+        {/* AppSidebar — primary navigation. Shows the sessions / skills /
+            settings list. Stays visible across all routes; the per-view
+            contextual content (kanban filters, plan list, mission tree)
+            lives in the navigator slot to its right. */}
         <AppSidebar />
-        {/* Navigator column. Always visible on desktop (md+). When no view
-            registers a navigator via NavigatorPortal, DefaultNavigator picks
-            the right contextual list (Sessions/Skills/MissionTree). */}
-        <NavigatorSlot
-          className="hidden md:flex"
-          fallback={<DefaultNavigator />}
-        />
-        <SidebarInset>
+        {/* Right column — workspace tabs + view tabs span the full width
+            above the navigator+content row, so the project tabs and the
+            in-project sub-tabs feel like a single coherent header strip
+            rather than column-bound widgets. */}
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
           <WorkspaceTabsBar />
-          {/*
-            Active workspace tab renders here in normal flow (single child).
-            Inactive tabs are unmounted; per-view persistence is the view's
-            responsibility (see WorkspaceTabsManager). SidebarInset is itself
-            `relative`, so FullScreenTerminal's `absolute inset-0` overlay
-            pins to the inset and lifts above this tab content via z-20 —
-            its xterm + WS state survives all workspace tab/route switches
-            because the FullScreenTerminal subtree stays mounted in the shell
-            layout regardless of the active tab.
-          */}
-          <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-            <WorkspaceTabsManager>{children}</WorkspaceTabsManager>
+          <SecondaryTabsSlot />
+          <div className="flex min-h-0 min-w-0 flex-1">
+            {/* Navigator column. Renders only when a view registers content
+                via NavigatorPortal (KanbanBoard, MissionView, PlansView,
+                SettingsView). Hidden when no portal is active so the
+                sidebar stays the user's stable home. */}
+            <NavigatorSlot />
+            <SidebarInset>
+              {/*
+                Active workspace tab renders here in normal flow (single
+                child). Inactive tabs are unmounted; per-view persistence
+                is the view's responsibility (see WorkspaceTabsManager).
+                SidebarInset is `relative`, so FullScreenTerminal's
+                `absolute inset-0` overlay pins to the inset (covering the
+                tab content but NOT the workspace/view tab strip above) —
+                its xterm + WS state survives all workspace tab/route
+                switches because the FullScreenTerminal subtree stays
+                mounted in the shell layout regardless of the active tab.
+              */}
+              <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+                <WorkspaceTabsManager>{children}</WorkspaceTabsManager>
+              </div>
+              <FullScreenTerminal />
+            </SidebarInset>
           </div>
-          <FullScreenTerminal />
-        </SidebarInset>
+        </div>
       </div>
       <ShellStatusBar />
       <CommandPalette />

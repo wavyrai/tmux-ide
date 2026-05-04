@@ -48,7 +48,7 @@ export function KanbanColumn({
     <div
       data-testid={`kanban-column-${column.id}`}
       data-column-id={column.id}
-      className="flex h-full w-[280px] shrink-0 snap-start flex-col"
+      className="flex h-full w-[320px] shrink-0 flex-col"
     >
       <header className="mb-2 flex h-7 shrink-0 items-center gap-2 px-2">
         <span

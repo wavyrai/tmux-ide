@@ -1,9 +1,21 @@
 "use client";
 
 import { motion } from "motion/react";
-import type { ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { NAVIGATOR_WIDTH, PANEL_SPRING } from "@/lib/panel-constants";
 import { useNavigatorSlot } from "@/lib/useNavigatorSlot";
+
+function useIsNarrow(): boolean {
+  const [narrow, setNarrow] = useState(false);
+  useEffect(() => {
+    const mq = window.matchMedia("(max-width: 639px)");
+    const update = () => setNarrow(mq.matches);
+    update();
+    mq.addEventListener("change", update);
+    return () => mq.removeEventListener("change", update);
+  }, []);
+  return narrow;
+}
 
 interface NavigatorSlotProps {
   /**
@@ -30,9 +42,10 @@ interface NavigatorSlotProps {
  */
 export function NavigatorSlot({ hidden, fallback, className }: NavigatorSlotProps) {
   const node = useNavigatorSlot();
+  const isNarrow = useIsNarrow();
   const content = node ?? fallback ?? null;
 
-  if (!content || hidden) return null;
+  if (!content || hidden || isNarrow) return null;
 
   return (
     <motion.div

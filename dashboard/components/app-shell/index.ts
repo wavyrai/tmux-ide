@@ -6,6 +6,7 @@ export type {
 export { PanelResizeSash } from "./PanelResizeSash";
 export type { PanelResizeUpdate } from "./PanelResizeSash";
 export { NavigatorSlot } from "./NavigatorSlot";
+export { SecondaryTabsSlot } from "./SecondaryTabsSlot";
 export { SidebarTree } from "./SidebarTree";
 export type {
   SidebarItem,
