@@ -19,6 +19,7 @@ import {
   openTerminalTab,
   useNavigation,
 } from "@/lib/navigation";
+import { fetchProject } from "@/lib/api";
 import { useKeybind } from "@/lib/useKeybinds";
 
 /**
@@ -91,12 +92,30 @@ function TabKeybinds() {
 
   const focusDefaultTerminal = useCallback(() => {
     if (!sessionName) return;
-    ensureDefaultTerminal(sessionName);
+    // Resolve project dir before spawning so the terminal opens with
+    // the right cwd. fetchProject is fast (cached/SSE-driven), but if
+    // it fails we fall back to no-cwd so the terminal still appears.
+    fetchProject(sessionName)
+      .then((project) => {
+        ensureDefaultTerminal(sessionName, project?.dir);
+      })
+      .catch(() => {
+        ensureDefaultTerminal(sessionName);
+      });
   }, [sessionName]);
 
   const openShellTab = useCallback(() => {
     if (!sessionName) return;
-    openTerminalTab(sessionName, { title: "shell" });
+    fetchProject(sessionName)
+      .then((project) => {
+        openTerminalTab(sessionName, {
+          title: "shell",
+          ...(project?.dir ? { cwd: project.dir } : {}),
+        });
+      })
+      .catch(() => {
+        openTerminalTab(sessionName, { title: "shell" });
+      });
   }, [sessionName]);
 
   const jumpTo = useCallback(

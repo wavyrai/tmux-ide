@@ -293,6 +293,7 @@ export function AppSidebar() {
 
     return buildProjectItems({
       activeProject,
+      activeProjectDir: sessions.find((s) => s.name === activeProject)?.dir ?? null,
       activeTab: isSessions(nav) ? (nav.tab ?? "kanban") : "kanban",
       milestones: snapshot?.milestones ?? [],
       missionTitle: snapshot?.mission?.mission?.title ?? null,
@@ -451,6 +452,7 @@ function buildOverviewItems(args: OverviewArgs): SidebarItem[] {
 
 interface ProjectArgs {
   activeProject: string;
+  activeProjectDir: string | null;
   activeTab: ProjectTab;
   milestones: { id: string; title: string; status: string; taskCount: number; tasksDone: number }[];
   missionTitle: string | null;
@@ -470,6 +472,7 @@ interface ProjectArgs {
 function buildProjectItems(args: ProjectArgs): SidebarItem[] {
   const {
     activeProject,
+    activeProjectDir,
     activeTab,
     milestones,
     missionTitle,
@@ -656,7 +659,7 @@ function buildProjectItems(args: ProjectArgs): SidebarItem[] {
         testId: "sidebar-view-terminal",
         onClick: () => {
           if (!activeProject) return;
-          ensureDefaultTerminal(activeProject);
+          ensureDefaultTerminal(activeProject, activeProjectDir ?? undefined);
         },
       },
       {
