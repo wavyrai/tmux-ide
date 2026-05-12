@@ -39,6 +39,15 @@ plans/
 # TypeScript build output
 dist/
 
+# Electron build outputs (binaries exceed GitHub 100MB limit)
+app-electron/release/
+app-electron/dist-electron/
+app-electron/build/
+app-electron/node_modules/
+app-electron/.turbo/
+app-electron/.tasks/
+app-electron/.tmux-ide/
+
 # Privately-licensed assets (Berkeley Mono, etc.) — never bundled in OSS
 dashboard/public/fonts/private/*
 !dashboard/public/fonts/private/NOTICE.md
