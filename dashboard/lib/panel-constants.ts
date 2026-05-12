@@ -10,7 +10,7 @@ export const PANEL_SASH_LINE_WIDTH = 2;
 export const PANEL_SASH_FLEX_MARGIN = -(PANEL_GAP / 2);
 export const PANEL_SASH_HALF_HIT_WIDTH = PANEL_SASH_HIT_WIDTH / 2;
 
-/** Narrow icon-only sidebar (mode picker). 56px matches craft-agents. */
+/** Narrow icon-only sidebar (mode picker). */
 export const SIDEBAR_WIDTH = 56;
 /** Always-visible navigator column (contextual lists). */
 export const NAVIGATOR_WIDTH = 280;
