@@ -8,7 +8,6 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { useSearchParams } from "next/navigation";
 import Markdown from "react-markdown";
 import { useTheme } from "next-themes";
 import {
@@ -335,167 +334,6 @@ function useIsMobileLayout(): boolean {
   return isMobile;
 }
 
-interface PlanListNavigatorProps {
-  plans: PlanSummary[];
-  selectedFile: string | null;
-  onSelect: (file: string) => void;
-  planQuery: string;
-  setPlanQuery: (value: string) => void;
-  planSort: PlanSort;
-  setPlanSort: (value: PlanSort) => void;
-  collapsedGroups: Partial<Record<PlanStatus, boolean>>;
-  togglePlanGroup: (status: PlanStatus) => void;
-  onCreate: () => void;
-  visiblePlans: PlanSummary[];
-}
-
-/**
- * Left rail: search, sort, grouped plan list, and "New plan" footer.
- * Owns no plan state beyond the controlled props it receives.
- */
-function PlanListNavigator({
-  plans,
-  selectedFile,
-  onSelect,
-  planQuery,
-  setPlanQuery,
-  planSort,
-  setPlanSort,
-  collapsedGroups,
-  togglePlanGroup,
-  onCreate,
-  visiblePlans,
-}: PlanListNavigatorProps) {
-  const planGroups = useMemo(
-    () =>
-      PLAN_RAIL_STATUSES.map((railStatus) => ({
-        status: railStatus,
-        plans: visiblePlans.filter((plan) => plan.status === railStatus),
-      })),
-    [visiblePlans],
-  );
-
-  return (
-    <div
-      data-testid="plan-list-navigator"
-      className="flex h-full min-h-0 w-full flex-col bg-[var(--bg-weak)]"
-    >
-      <div className="border-b border-[var(--border)] p-3">
-        <div className="mb-2 flex items-center gap-2 text-[11px] text-[var(--dim)]">
-          plans
-          <span className="ml-auto tabular-nums">
-            {visiblePlans.length}/{plans.length}
-          </span>
-        </div>
-        <input
-          data-testid="plan-list-search"
-          value={planQuery}
-          onChange={(event) => setPlanQuery(event.target.value)}
-          placeholder="search plans"
-          className="mb-2 h-8 w-full rounded-md border border-[var(--border)] bg-[var(--bg-strong)] px-2 text-[12px] text-[var(--fg)] outline-none placeholder:text-[var(--dimmer)] focus:border-[var(--accent)]"
-        />
-        <select
-          data-testid="plan-list-sort"
-          value={planSort}
-          onChange={(event) => setPlanSort(event.target.value as PlanSort)}
-          className="h-8 w-full rounded-md border border-[var(--border)] bg-[var(--bg-strong)] px-2 text-[12px] text-[var(--fg-secondary)] outline-none focus:border-[var(--accent)]"
-        >
-          <option value="recent">recently updated</option>
-          <option value="status">status</option>
-          <option value="title">title</option>
-          <option value="owner">owner</option>
-        </select>
-      </div>
-
-      <div data-testid="plan-list" className="min-h-0 flex-1 overflow-y-auto">
-        {planGroups.map((group) => {
-          const collapsed = Boolean(collapsedGroups[group.status]);
-          return (
-            <section key={group.status} className="border-b border-[var(--border-weak)]">
-              <button
-                type="button"
-                onClick={() => togglePlanGroup(group.status)}
-                aria-expanded={!collapsed}
-                className="flex h-8 w-full items-center gap-2 px-3 text-left text-[10px] uppercase tracking-[0.08em] text-[var(--dim)] hover:text-[var(--fg)]"
-              >
-                <span className="w-3 text-[var(--dimmer)]">{collapsed ? "+" : "-"}</span>
-                <span>{statusPill(group.status)}</span>
-                <span className="ml-auto tabular-nums">{group.plans.length}</span>
-              </button>
-
-              {!collapsed && (
-                <div>
-                  {group.plans.map((plan) => {
-                    const file = planFilename(plan);
-                    const selected = file === selectedFile;
-                    const tags = planTags(plan);
-                    return (
-                      <button
-                        key={file}
-                        type="button"
-                        data-testid="plan-list-item"
-                        onClick={() => onSelect(file)}
-                        className={`w-full px-3 py-2 text-left transition-colors ${
-                          selected
-                            ? "bg-[var(--surface-active)]"
-                            : "hover:bg-[var(--surface-hover)]"
-                        }`}
-                      >
-                        <div className="flex items-center gap-2">
-                          <span
-                            className="h-1.5 w-1.5 shrink-0 rounded-full"
-                            style={{ background: STATUS_COLORS[plan.status] }}
-                            aria-hidden="true"
-                          />
-                          <span className="min-w-0 flex-1 truncate text-[12px] text-[var(--fg)]">
-                            {plan.title || plan.name}
-                          </span>
-                          <StatusPill
-                            variant={statusVariant(plan.status)}
-                            label={statusPill(plan.status)}
-                            dot={false}
-                          />
-                        </div>
-                        <div className="mt-1 flex min-w-0 items-center gap-1.5 text-[10px] text-[var(--dimmer)]">
-                          <span className="truncate">@{planOwner(plan)}</span>
-                          <span>·</span>
-                          <span className="shrink-0 tabular-nums">
-                            {formatRelativeTime(plan.updated ?? plan.completed)}
-                          </span>
-                          {tags.slice(0, 2).map((tag) => (
-                            <span
-                              key={tag}
-                              className="min-w-0 max-w-20 truncate rounded-md bg-[var(--surface)] px-1 text-[var(--fg-secondary)]"
-                            >
-                              #{tag}
-                            </span>
-                          ))}
-                        </div>
-                      </button>
-                    );
-                  })}
-                  {group.plans.length === 0 && (
-                    <div className="px-3 pb-3 text-[10px] text-[var(--dimmer)]">none</div>
-                  )}
-                </div>
-              )}
-            </section>
-          );
-        })}
-      </div>
-
-      <div className="border-t border-[var(--border)] p-3">
-        <button
-          type="button"
-          onClick={onCreate}
-          className="h-8 w-full rounded-md border border-[var(--border)] bg-[var(--bg-strong)] text-[11px] text-[var(--fg-secondary)] hover:border-[var(--accent)] hover:text-[var(--accent)]"
-        >
-          New plan
-        </button>
-      </div>
-    </div>
-  );
-}
 
 interface PlanDetailProps {
   sessionName: string;
@@ -743,7 +581,6 @@ export function PlansView({ sessionName }: PlansViewProps) {
   const { data: plans, loading, refresh } = usePolling<PlanSummary[]>(fetcher, 10000);
   const { push } = useToasts();
   const isMobile = useIsMobileLayout();
-  const searchParams = useSearchParams();
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const [planData, setPlanData] = useState<PlanData>({ content: "", authorship: null });
   const [loadingPlan, setLoadingPlan] = useState(false);
@@ -1057,30 +894,13 @@ export function PlansView({ sessionName }: PlansViewProps) {
     );
   }
 
-  // Feature flag: `?plans=solid` swaps the React rail for the Solid widget
-  // at @tmux-ide/v2-solid-widgets. The Solid widget owns search/sort/
-  // collapsed state internally; this React tree still owns selectedFile
-  // and the detail pane. Falls back to PlanListNavigator otherwise.
-  const useSolidRail = searchParams?.get("plans") === "solid";
-  const navigator = useSolidRail ? (
+  // The Solid `PlansRailBridge` is the only render path after U2 retired
+  // the React `PlanListNavigator` + `?plans=solid` flag.
+  const navigator = (
     <PlansRailBridge
       sessionName={sessionName}
       selectedFile={selectedFile}
       onSelect={handleSelect}
-      onCreate={() => void createPlanStub()}
-    />
-  ) : (
-    <PlanListNavigator
-      plans={plans}
-      visiblePlans={visiblePlans}
-      selectedFile={selectedFile}
-      onSelect={handleSelect}
-      planQuery={planQuery}
-      setPlanQuery={setPlanQuery}
-      planSort={planSort}
-      setPlanSort={setPlanSort}
-      collapsedGroups={collapsedGroups}
-      togglePlanGroup={togglePlanGroup}
       onCreate={() => void createPlanStub()}
     />
   );

@@ -14,7 +14,20 @@
  */
 
 import { useCallback, useEffect, useRef } from "react";
-import type { FileTreeEntry } from "@/components/tui-tree/FileTree";
+
+/**
+ * File-tree node consumed by the Explorer Solid silo. Inlined here after
+ * U2 retired the React `dashboard/components/tui-tree/FileTree.tsx`
+ * (where this interface previously lived). The silo's bridge owns it now
+ * because the silo is the only remaining consumer.
+ */
+export interface FileTreeEntry {
+  name: string;
+  path: string;
+  isDir: boolean;
+  ignored?: boolean;
+  children?: FileTreeEntry[];
+}
 
 interface ExplorerBridgeProps {
   rootEntries: ReadonlyArray<FileTreeEntry>;

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { useParams, useSearchParams } from "next/navigation";
+import { useParams } from "next/navigation";
 import Link from "next/link";
 import { Panel, Group } from "react-resizable-panels";
 import { VSeparator, HSeparator } from "../../_lib/Separators";
@@ -36,12 +36,10 @@ import { V2CostsIsland } from "../../_lib/V2CostsIsland";
 import { V2ExplorerIsland } from "../../_lib/V2ExplorerIsland";
 import { V2ChangesIsland } from "../../_lib/V2ChangesIsland";
 import { V2MissionControlIsland } from "../../_lib/V2MissionControlIsland";
-import { DiffPanel } from "@/components/DiffPanel";
-import { DiffPanel as ChangesPanel } from "@/components/diffs";
+import { DiffsViewerBridge } from "@/components/diffs-viewer-bridge";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { MainTabsBar } from "@/components/MainTabsBar";
-import { FileTree, type FileTreeEntry } from "@/components/tui-tree/FileTree";
-import { ExplorerBridge } from "@/components/explorer-bridge";
+import { ExplorerBridge, type FileTreeEntry } from "@/components/explorer-bridge";
 import { TasksViewBridge } from "@/components/tasks-view-bridge";
 import { CreateTaskDialog } from "@/components/kanban";
 import { openCommandPalette } from "@/components/CommandPalette";
@@ -713,7 +711,7 @@ function MainContent(props: MainContentProps) {
     case "diffs":
       return (
         <div className="flex h-full min-h-0 flex-col overflow-hidden">
-          <DiffPanel sessionName={props.projectName} />
+          <DiffsViewerBridge sessionName={props.projectName} />
         </div>
       );
     case "changes":
@@ -1007,17 +1005,10 @@ function MetricsView({
 
 // ---------------- Tasks ----------------
 
-type TaskStatus = Task["status"];
-type TasksMode = "list" | "detail" | "edit" | "create";
-
-const TASK_STATUSES: TaskStatus[] = ["todo", "in-progress", "review", "done"];
-const TASK_PRIORITIES: number[] = [1, 2, 3, 4];
 
 /**
- * Feature flag: `?tasks=solid` swaps the React TasksView for the Solid
- * widget at @tmux-ide/v2-solid-widgets. Same data source (project page
- * snapshot.tasks + snapshot.goals); the Solid version owns its filter
- * chips + detail panel state internally.
+ * Tasks tab now renders the Solid `TasksViewBridge` unconditionally — the
+ * React TasksView + helpers + `?tasks=solid` feature flag retired in U2.
  */
 function TasksTabContainer({
   projectName,
@@ -1028,454 +1019,13 @@ function TasksTabContainer({
   tasks: Task[];
   goals: Goal[];
 }) {
-  const searchParams = useSearchParams();
-  const useSolid = searchParams?.get("tasks") === "solid";
-  if (useSolid) {
-    return (
-      <div className="flex h-full min-h-0 flex-col overflow-hidden">
-        <TasksViewBridge projectName={projectName} tasks={tasks} goals={goals} />
-      </div>
-    );
-  }
-  return <TasksView projectName={projectName} tasks={tasks} />;
-}
-
-function TasksView({ projectName, tasks }: { projectName: string; tasks: Task[] }) {
-  const [mode, setMode] = useState<TasksMode>("list");
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const [formTitle, setFormTitle] = useState("");
-  const [formDescription, setFormDescription] = useState("");
-  const [formPriority, setFormPriority] = useState(3);
-  const [formStatus, setFormStatus] = useState<TaskStatus>("todo");
-
-  const selected = useMemo(
-    () => tasks.find((t) => t.id === selectedId) ?? null,
-    [tasks, selectedId],
-  );
-
-  const sortedTasks = useMemo(() => {
-    const order: Record<TaskStatus, number> = {
-      "in-progress": 0,
-      review: 1,
-      todo: 2,
-      done: 3,
-    };
-    return [...tasks].sort(
-      (a, b) =>
-        order[a.status] - order[b.status] ||
-        a.priority - b.priority ||
-        a.created.localeCompare(b.created),
-    );
-  }, [tasks]);
-
-  const taskRows = useMemo<string[][]>(() => {
-    const head = ["ID", "TITLE", "STATUS", "PRI", "ASSIGNEE"];
-    if (sortedTasks.length === 0) {
-      return [head, ["—", "no tasks yet", "—", "—", "—"]];
-    }
-    const body = sortedTasks.map((t) => [
-      t.id,
-      t.title,
-      t.status,
-      `P${t.priority}`,
-      t.assignee ?? "—",
-    ]);
-    return [head, ...body];
-  }, [sortedTasks]);
-
-  function openCreate() {
-    setFormTitle("");
-    setFormDescription("");
-    setFormPriority(3);
-    setFormStatus("todo");
-    setError(null);
-    setMode("create");
-  }
-
-  function openEdit() {
-    if (!selected) return;
-    setFormTitle(selected.title);
-    setFormDescription(selected.description ?? "");
-    setFormPriority(selected.priority);
-    setFormStatus(selected.status);
-    setError(null);
-    setMode("edit");
-  }
-
-  function backToList() {
-    setSelectedId(null);
-    setError(null);
-    setMode("list");
-  }
-
-  async function handleSave() {
-    if (!formTitle.trim()) {
-      setError("Title is required.");
-      return;
-    }
-    setSubmitting(true);
-    setError(null);
-    try {
-      if (mode === "create") {
-        const created = await createTask(projectName, {
-          title: formTitle.trim(),
-          description: formDescription.trim() || undefined,
-          priority: formPriority,
-        });
-        if (!created) {
-          setError("Failed to create task.");
-          return;
-        }
-        setSelectedId(created.id);
-        setMode("detail");
-      } else if (mode === "edit" && selectedId) {
-        const updated = await updateTask(projectName, selectedId, {
-          title: formTitle.trim(),
-          description: formDescription,
-          priority: formPriority,
-          status: formStatus,
-        });
-        if (!updated) {
-          setError("Failed to save task.");
-          return;
-        }
-        setMode("detail");
-      }
-    } finally {
-      setSubmitting(false);
-    }
-  }
-
-  async function handleDelete() {
-    if (!selectedId) return;
-    setSubmitting(true);
-    setError(null);
-    try {
-      const ok = await deleteTaskApi(projectName, selectedId);
-      if (!ok) {
-        setError("Failed to delete task.");
-        return;
-      }
-      backToList();
-    } finally {
-      setSubmitting(false);
-    }
-  }
-
-  async function handleStatusChange(next: TaskStatus) {
-    if (!selectedId || !selected || selected.status === next) return;
-    setSubmitting(true);
-    setError(null);
-    try {
-      const updated = await updateTask(projectName, selectedId, { status: next });
-      if (!updated) setError("Failed to update status.");
-    } finally {
-      setSubmitting(false);
-    }
-  }
-
   return (
-    <div className="h-full overflow-y-auto p-3">
-      {mode === "list" && (
-        <Card title="TASKS" mode="left">
-          <RowSpaceBetween>
-            <span className="text-[var(--dim)]">
-              Click a row to open detail. Sorted by status (in-progress first), then priority.
-            </span>
-            <Button onClick={openCreate} theme="PRIMARY">
-              + New
-            </Button>
-          </RowSpaceBetween>
-          <br />
-          <div onClick={(event) => handleRowClick(event, sortedTasks, setSelectedId, setMode)}>
-            <DataTable data={taskRows} />
-          </div>
-        </Card>
-      )}
-
-      {mode === "detail" && selected && (
-        <TaskDetailCard
-          task={selected}
-          submitting={submitting}
-          error={error}
-          onEdit={openEdit}
-          onDelete={() => void handleDelete()}
-          onBack={backToList}
-          onStatusChange={(s) => void handleStatusChange(s)}
-        />
-      )}
-
-      {mode === "detail" && !selected && (
-        <Card title="TASK NOT FOUND" mode="left">
-          <p className="text-[var(--dim)]">The task may have been deleted.</p>
-          <br />
-          <Button onClick={backToList} theme="SECONDARY">
-            Back
-          </Button>
-        </Card>
-      )}
-
-      {(mode === "create" || mode === "edit") && (
-        <TaskFormCard
-          mode={mode}
-          submitting={submitting}
-          error={error}
-          title={formTitle}
-          description={formDescription}
-          priority={formPriority}
-          status={formStatus}
-          onTitleChange={setFormTitle}
-          onDescriptionChange={setFormDescription}
-          onPriorityChange={setFormPriority}
-          onStatusChange={setFormStatus}
-          onSubmit={() => void handleSave()}
-          onCancel={() => (mode === "edit" && selectedId ? setMode("detail") : backToList())}
-        />
-      )}
+    <div className="flex h-full min-h-0 flex-col overflow-hidden">
+      <TasksViewBridge projectName={projectName} tasks={tasks} goals={goals} />
     </div>
   );
 }
 
-// Click delegation: row click identifies the task by index in DataTable's
-// rendered <tr> structure. DataTable doesn't expose row-level handlers, so we
-// resolve the clicked row via DOM traversal — preserving TUI primitive use.
-function handleRowClick(
-  event: React.MouseEvent<HTMLDivElement>,
-  source: Task[],
-  setId: (id: string) => void,
-  setMode: (m: TasksMode) => void,
-) {
-  const target = event.target as HTMLElement;
-  const row = target.closest("tr");
-  if (!row) return;
-  const tbody = row.parentElement;
-  if (!tbody) return;
-  const rows = Array.from(tbody.children);
-  const dataIndex = rows.indexOf(row) - 1;
-  if (dataIndex < 0 || dataIndex >= source.length) return;
-  const task = source[dataIndex];
-  if (!task) return;
-  setId(task.id);
-  setMode("detail");
-}
-
-function TaskDetailCard({
-  task,
-  submitting,
-  error,
-  onEdit,
-  onDelete,
-  onBack,
-  onStatusChange,
-}: {
-  task: Task;
-  submitting: boolean;
-  error: string | null;
-  onEdit: () => void;
-  onDelete: () => void;
-  onBack: () => void;
-  onStatusChange: (next: TaskStatus) => void;
-}) {
-  return (
-    <Card title={`TASK · ${task.id}`} mode="left">
-      <RowSpaceBetween>
-        <div className="flex gap-1">
-          <Button onClick={onBack} theme="SECONDARY" isDisabled={submitting}>
-            ← Back
-          </Button>
-          <Button onClick={onEdit} theme="PRIMARY" isDisabled={submitting}>
-            Edit
-          </Button>
-          <Button onClick={onDelete} theme="SECONDARY" isDisabled={submitting}>
-            Delete
-          </Button>
-        </div>
-        <Badge>P{task.priority}</Badge>
-      </RowSpaceBetween>
-      <br />
-      <RowSpaceBetween>
-        <span className="font-semibold text-[var(--fg)]">{task.title}</span>
-        <Badge>{task.status}</Badge>
-      </RowSpaceBetween>
-      {task.description && (
-        <p className="mt-2 whitespace-pre-wrap text-[var(--fg-secondary)]">{task.description}</p>
-      )}
-      <br />
-      <RowSpaceBetween>
-        <span>Set status</span>
-        <div className="flex gap-1">
-          {TASK_STATUSES.map((s) => (
-            <Button
-              key={s}
-              theme={s === task.status ? "PRIMARY" : "SECONDARY"}
-              onClick={() => onStatusChange(s)}
-              isDisabled={submitting}
-            >
-              {s}
-            </Button>
-          ))}
-        </div>
-      </RowSpaceBetween>
-      <RowSpaceBetween>
-        <span>Assignee</span>
-        <Badge>{task.assignee ?? "—"}</Badge>
-      </RowSpaceBetween>
-      <RowSpaceBetween>
-        <span>Goal</span>
-        <Badge>{task.goal ?? "—"}</Badge>
-      </RowSpaceBetween>
-      <RowSpaceBetween>
-        <span>Milestone</span>
-        <Badge>{task.milestone ?? "—"}</Badge>
-      </RowSpaceBetween>
-      <RowSpaceBetween>
-        <span>Created</span>
-        <span className="text-[var(--dim)] tabular-nums">{task.created}</span>
-      </RowSpaceBetween>
-      <RowSpaceBetween>
-        <span>Updated</span>
-        <span className="text-[var(--dim)] tabular-nums">{task.updated}</span>
-      </RowSpaceBetween>
-      {task.depends_on.length > 0 && (
-        <RowSpaceBetween>
-          <span>Depends on</span>
-          <Badge>{task.depends_on.join(", ")}</Badge>
-        </RowSpaceBetween>
-      )}
-      {task.tags.length > 0 && (
-        <RowSpaceBetween>
-          <span>Tags</span>
-          <Badge>{task.tags.join(", ")}</Badge>
-        </RowSpaceBetween>
-      )}
-      {error && <p className="mt-2 text-[var(--red)]">{error}</p>}
-    </Card>
-  );
-}
-
-function TaskFormCard({
-  mode,
-  submitting,
-  error,
-  title,
-  description,
-  priority,
-  status,
-  onTitleChange,
-  onDescriptionChange,
-  onPriorityChange,
-  onStatusChange,
-  onSubmit,
-  onCancel,
-}: {
-  mode: "create" | "edit";
-  submitting: boolean;
-  error: string | null;
-  title: string;
-  description: string;
-  priority: number;
-  status: TaskStatus;
-  onTitleChange: (v: string) => void;
-  onDescriptionChange: (v: string) => void;
-  onPriorityChange: (v: number) => void;
-  onStatusChange: (v: TaskStatus) => void;
-  onSubmit: () => void;
-  onCancel: () => void;
-}) {
-  const heading = mode === "create" ? "NEW TASK" : "EDIT TASK";
-  const fieldClass =
-    "w-full rounded border border-[var(--border)] bg-[var(--bg-strong)] px-2 py-1 text-[12px] text-[var(--fg)] outline-none focus:border-[var(--accent)]";
-
-  return (
-    <Card title={heading} mode="left">
-      <form
-        onSubmit={(event) => {
-          event.preventDefault();
-          if (!submitting) onSubmit();
-        }}
-        className="flex flex-col gap-3"
-      >
-        <label className="flex flex-col gap-1">
-          <span className="text-[10px] uppercase tracking-wider text-[var(--dim)]">Title</span>
-          <input
-            type="text"
-            value={title}
-            onChange={(event) => onTitleChange(event.target.value)}
-            placeholder="Short task title"
-            className={fieldClass}
-            autoFocus
-          />
-        </label>
-
-        <label className="flex flex-col gap-1">
-          <span className="text-[10px] uppercase tracking-wider text-[var(--dim)]">
-            Description
-          </span>
-          <textarea
-            value={description}
-            onChange={(event) => onDescriptionChange(event.target.value)}
-            placeholder="Detailed description"
-            rows={6}
-            className={`${fieldClass} resize-y`}
-          />
-        </label>
-
-        <div className="grid grid-cols-2 gap-3">
-          <label className="flex flex-col gap-1">
-            <span className="text-[10px] uppercase tracking-wider text-[var(--dim)]">Priority</span>
-            <select
-              value={priority}
-              onChange={(event) => onPriorityChange(Number(event.target.value))}
-              className={fieldClass}
-            >
-              {TASK_PRIORITIES.map((p) => (
-                <option key={p} value={p}>
-                  P{p}
-                </option>
-              ))}
-            </select>
-          </label>
-
-          {mode === "edit" && (
-            <label className="flex flex-col gap-1">
-              <span className="text-[10px] uppercase tracking-wider text-[var(--dim)]">Status</span>
-              <select
-                value={status}
-                onChange={(event) => onStatusChange(event.target.value as TaskStatus)}
-                className={fieldClass}
-              >
-                {TASK_STATUSES.map((s) => (
-                  <option key={s} value={s}>
-                    {s}
-                  </option>
-                ))}
-              </select>
-            </label>
-          )}
-        </div>
-
-        {error && <p className="text-[var(--red)]">{error}</p>}
-
-        <RowSpaceBetween>
-          <span className="text-[var(--dim)]">
-            {mode === "create" ? "Create new task" : "Edit task"}
-          </span>
-          <div className="flex gap-1">
-            <Button onClick={onCancel} theme="SECONDARY" isDisabled={submitting}>
-              Cancel
-            </Button>
-            <Button onClick={onSubmit} theme="PRIMARY" isDisabled={submitting}>
-              {submitting ? "Saving…" : mode === "create" ? "Create" : "Save"}
-            </Button>
-          </div>
-        </RowSpaceBetween>
-      </form>
-    </Card>
-  );
-}
 
 // ---------------- Preview ----------------
 
@@ -1666,12 +1216,8 @@ interface FilesViewProps {
 }
 
 function FilesView({ projectName, onOpenFile }: FilesViewProps) {
-  // Feature flag: `?explorer=solid` swaps the React FileTree for the
-  // Solid widget at @tmux-ide/v2-solid-widgets. Same data source +
-  // same onSelect contract; the Solid version uses fine-grained
-  // signals so toggling one folder only re-renders that subtree.
-  const searchParams = useSearchParams();
-  const useSolid = searchParams?.get("explorer") === "solid";
+  // The Solid `ExplorerBridge` is the only render path after U2 retired
+  // the React FileTree + `?explorer=solid` flag.
   const [tree, setTree] = useState<FileTreeEntry[]>([]);
   const [truncated, setTruncated] = useState<boolean>(false);
   const [loading, setLoading] = useState<boolean>(true);
@@ -1737,23 +1283,13 @@ function FilesView({ projectName, onOpenFile }: FilesViewProps) {
 
       {!error && tree.length > 0 && (
         <div className="min-h-0 flex-1 overflow-auto rounded border border-[var(--border)] bg-[var(--bg-strong)] p-2 font-mono text-[12px] text-[var(--fg)]">
-          {useSolid ? (
-            <ExplorerBridge
-              rootEntries={tree}
-              selectedPath={selectedPath}
-              onSelect={handleSelect}
-              gitignoreFilter={gitignoreFilter}
-              defaultExpanded={false}
-            />
-          ) : (
-            <FileTree
-              rootEntries={tree}
-              selectedPath={selectedPath}
-              onSelect={handleSelect}
-              gitignoreFilter={gitignoreFilter}
-              defaultExpanded={false}
-            />
-          )}
+          <ExplorerBridge
+            rootEntries={tree}
+            selectedPath={selectedPath}
+            onSelect={handleSelect}
+            gitignoreFilter={gitignoreFilter}
+            defaultExpanded={false}
+          />
         </div>
       )}
 
