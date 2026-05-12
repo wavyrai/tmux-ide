@@ -27,6 +27,7 @@ describe("ls", () => {
     const result = spawnSync("bun", [cli, "ls", "--json"], {
       encoding: "utf-8",
       timeout: 10000,
+      env: { ...process.env, TMUX_IDE_CLI_NO_AUTOSTART: "1" },
     });
     expect(result.status).toBe(0);
     const output = JSON.parse(result.stdout);
@@ -37,6 +38,7 @@ describe("ls", () => {
     const result = spawnSync("bun", [cli, "ls", "--json"], {
       encoding: "utf-8",
       timeout: 10000,
+      env: { ...process.env, TMUX_IDE_CLI_NO_AUTOSTART: "1" },
     });
     const output = JSON.parse(result.stdout);
     // If there are sessions, each should have name, created, attached fields
@@ -51,6 +53,7 @@ describe("ls", () => {
     const result = spawnSync("bun", [cli, "ls", "--json"], {
       encoding: "utf-8",
       timeout: 10000,
+      env: { ...process.env, TMUX_IDE_CLI_NO_AUTOSTART: "1" },
     });
     expect(result.status).toBe(0);
     const output = JSON.parse(result.stdout);
@@ -69,6 +72,7 @@ describe("ls", () => {
     const result = spawnSync("bun", [cli, "ls"], {
       encoding: "utf-8",
       timeout: 10000,
+      env: { ...process.env, TMUX_IDE_CLI_NO_AUTOSTART: "1" },
     });
     expect(result.status).toBe(0);
     expect(result.stdout.length > 0).toBeTruthy();

@@ -18,6 +18,10 @@ function runCli(args, cwd) {
   return spawnSync("bun", [cli, ...args], {
     cwd,
     encoding: "utf-8",
+    // Suppress the transient embedded-daemon spawn so short-lived CLI
+    // invocations don't hang waiting for daemon startup; the local-
+    // mutation fallback in cli-action-bridge handles the dispatch.
+    env: { ...process.env, TMUX_IDE_CLI_NO_AUTOSTART: "1" },
   });
 }
 

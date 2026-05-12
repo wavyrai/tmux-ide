@@ -111,6 +111,15 @@ async function resolveCanonicalDaemon(): Promise<{
     deps.clearCanonicalDaemonInfo();
   }
 
+  // Test / short-lived-CLI escape: skip the transient daemon spawn when
+  // TMUX_IDE_CLI_NO_AUTOSTART is set. Callers (e.g. config-cli.test.ts)
+  // exercise the local-mutation fallback path; without this guard a
+  // single `tmux-ide config enable-team` in a fixture dir would start a
+  // full embedded daemon and never tear it down in time.
+  if (process.env.TMUX_IDE_CLI_NO_AUTOSTART) {
+    return null;
+  }
+
   const dir = deps.cwd();
   const previousCwd = process.cwd();
   try {

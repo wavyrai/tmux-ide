@@ -18,6 +18,7 @@ function runCli(args, cwd) {
   return spawnSync("bun", [cli, ...args], {
     cwd,
     encoding: "utf-8",
+    env: { ...process.env, TMUX_IDE_CLI_NO_AUTOSTART: "1" },
   });
 }
 
