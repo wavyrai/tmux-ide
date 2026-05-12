@@ -543,7 +543,7 @@ try {
     }
 
     case "chat": {
-      const { chatCommand } = await import("../src/chat.ts");
+      const { chatCommand } = await import("../packages/daemon/src/chat.ts");
       await chatCommand({
         sub: positionals[1],
         args: positionals.slice(2),
