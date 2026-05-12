@@ -142,6 +142,12 @@ export function getCached(threadId: string): CacheEntry | undefined {
  * fresh `chatThreadGet` and stores the result.
  */
 export function getOrFetchThread(threadId: string): Promise<ThreadState | null> {
+  // Side-effect: ensure the visibility listener is installed the first
+  // time anyone touches the cache. The hook (`usePreloadedThread`) also
+  // calls this, but the imperative path (used by `useOrchestrationRecovery`)
+  // was bypassing it — meaning stale-while-revalidate never armed in
+  // production. Installing on first imperative call closes that gap.
+  ensureVisibilityListener();
   const store = useThreadPrefetchStore.getState();
   const cached = store.cache[threadId];
   if (cached && cached.error === null) {
