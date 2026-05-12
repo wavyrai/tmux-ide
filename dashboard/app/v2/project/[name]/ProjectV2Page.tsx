@@ -43,6 +43,8 @@ import { MainTabsBar } from "@/components/MainTabsBar";
 import { ExplorerBridge, type FileTreeEntry } from "@/components/explorer-bridge";
 import { TasksViewBridge } from "@/components/tasks-view-bridge";
 import { StatusBar } from "@/components/StatusBar";
+import { InspectorBridge } from "@/components/inspector-bridge";
+import { BottomPanel } from "@/components/BottomPanel";
 import { TooltipProvider } from "@/components/ui";
 import { V2ActivityBar, type ActivityBarViewId } from "../../_lib/V2ActivityBar";
 import { useStoredLayout } from "../../_lib/useStoredLayout";
@@ -145,14 +147,12 @@ export default function ProjectV2Page() {
   //   1. ActivityBar    (left, fixed 48px) — view switcher icons
   //   2. LeftSidebar    (resizable, contextual to active activity)
   //   3. Editor         (resizable, the MainContent router)
-  //   4. RightInspector (resizable, slot — pane 2 fills with ActivityBridge)
-  //   5. BottomPanel    (resizable, slot — pane 3 fills with Terminal/Problems/Output)
+  //   4. RightInspector (resizable) — InspectorBridge: live event timeline
+  //                      scoped to the current view; sources from the WS bus.
+  //   5. BottomPanel    (resizable) — BottomPanel: Terminal / Problems /
+  //                      Output tab strip. The Terminal tab embeds the real
+  //                      xterm-backed <Terminal /> (always-mounted host).
   //   + StatusBar       (24px fixed footer with branch, session, agents, latest event)
-  //
-  // Slots: the inspector + bottom-panel contents are rendered through
-  // dedicated internal components (InspectorSlot / BottomPanelSlot) so
-  // sibling agents can swap their bodies without touching the layout
-  // wiring. Both are OPTIONAL — they ship with sensible placeholders.
   return (
     <TooltipProvider delay={200}>
       <div className="flex h-screen flex-col bg-[var(--bg)] text-[var(--fg)]">
@@ -214,7 +214,7 @@ export default function ProjectV2Page() {
                     collapsedSize={0}
                     className="border-l border-[var(--border)]"
                   >
-                    <InspectorSlot agents={agents} tasks={tasks} />
+                    <InspectorBridge projectName={projectName} currentView={view} />
                   </Panel>
                 </Group>
               </Panel>
@@ -229,7 +229,7 @@ export default function ProjectV2Page() {
                 collapsedSize={6}
                 className="border-t border-[var(--border)]"
               >
-                <BottomPanelSlot projectName={projectName} />
+                <BottomPanel projectName={projectName} />
               </Panel>
             </Group>
           </div>
@@ -1046,143 +1046,3 @@ function countFiles(entries: ReadonlyArray<FileTreeEntry>): number {
   return total;
 }
 
-// ---------------- Inspector slot ----------------
-//
-// `InspectorSlot` is the named placement for the right-side inspector
-// region. The default body surfaces agent + task counts so the layout
-// reads as "real" out of the box. Pane 2 owns the substantive content
-// (ActivityBridge / live event timeline) and will swap the body here
-// without touching the layout wiring.
-
-function InspectorSlot({ agents, tasks }: { agents: AgentDetail[]; tasks: Task[] }) {
-  const busyCount = agents.filter((a) => a.isBusy).length;
-  const idleCount = agents.length - busyCount;
-  const doneCount = tasks.filter((t) => t.status === "done").length;
-  const todoCount = tasks.filter((t) => t.status === "todo").length;
-
-  return (
-    <aside
-      data-testid="inspector-slot"
-      className="flex h-full flex-col overflow-y-auto p-3 text-[12px]"
-    >
-      <div className="mb-2 text-[10px] uppercase tracking-wider text-[var(--fg-muted,var(--dim))]">
-        inspector
-      </div>
-
-      <Card title="AGENTS" mode="left">
-        {agents.length === 0 ? (
-          <p className="text-[var(--dim)]">No agents detected.</p>
-        ) : (
-          <>
-            <RowSpaceBetween>
-              <span>Total</span>
-              <Badge>{agents.length}</Badge>
-            </RowSpaceBetween>
-            <RowSpaceBetween>
-              <span>Idle</span>
-              <Badge>{idleCount}</Badge>
-            </RowSpaceBetween>
-            <RowSpaceBetween>
-              <span>Busy</span>
-              <Badge>{busyCount}</Badge>
-            </RowSpaceBetween>
-          </>
-        )}
-      </Card>
-
-      <br />
-
-      <Card title="TASK COUNTS" mode="left">
-        <RowSpaceBetween>
-          <span>Total</span>
-          <Badge>{tasks.length}</Badge>
-        </RowSpaceBetween>
-        <RowSpaceBetween>
-          <span>Done</span>
-          <Badge>{doneCount}</Badge>
-        </RowSpaceBetween>
-        <RowSpaceBetween>
-          <span>Todo</span>
-          <Badge>{todoCount}</Badge>
-        </RowSpaceBetween>
-      </Card>
-
-      <p className="mt-3 text-[10px] italic text-[var(--dim)]">
-        Activity timeline coming — pane 2 fills this slot with the live event
-        feed bridge.
-      </p>
-    </aside>
-  );
-}
-
-// ---------------- Bottom panel slot ----------------
-//
-// `BottomPanelSlot` is the named placement for the bottom region. The
-// default body renders a Terminal | Problems | Output tab strip with
-// empty placeholders for Problems / Output and a tiny placeholder
-// terminal frame for Terminal. Pane 3 owns the substantive content
-// (TerminalsHost + Problems pane + Output stream) and will swap each
-// tab body without touching the layout wiring.
-
-type BottomTab = "terminal" | "problems" | "output";
-
-function BottomPanelSlot({ projectName }: { projectName: string }) {
-  const [tab, setTab] = useState<BottomTab>("terminal");
-
-  return (
-    <div
-      data-testid="bottom-panel-slot"
-      className="flex h-full min-h-0 flex-col bg-[var(--bg-strong)]"
-    >
-      <div className="flex h-7 shrink-0 items-center gap-2 border-b border-[var(--border-weak)] px-2 text-[10px] uppercase tracking-wider">
-        {(["terminal", "problems", "output"] as BottomTab[]).map((t) => {
-          const active = tab === t;
-          return (
-            <button
-              key={t}
-              type="button"
-              data-testid={`bottom-panel-tab-${t}`}
-              data-active={active ? "true" : "false"}
-              onClick={() => setTab(t)}
-              className={
-                "flex h-7 items-center px-2 transition-colors " +
-                (active
-                  ? "text-[var(--accent)] border-b-2 border-[var(--accent)] -mb-px"
-                  : "text-[var(--fg-muted,var(--dim))] hover:text-[var(--fg)]")
-              }
-            >
-              {t}
-            </button>
-          );
-        })}
-      </div>
-      <div className="min-h-0 flex-1 overflow-hidden">
-        {tab === "terminal" && (
-          <div className="h-full overflow-hidden p-3 text-[11px] leading-tight">
-            <div className="mb-2 text-[10px] text-[var(--fg-muted,var(--dim))]">
-              terminal · {projectName}:lead
-            </div>
-            <pre className="whitespace-pre-wrap text-[var(--fg)]">
-              {`$ tmux-ide attach ${projectName}
-session ${projectName} attached
-$ █`}
-            </pre>
-            <p className="mt-3 text-[10px] italic text-[var(--dim)]">
-              Real terminal coming — pane 3 swaps in TerminalsHost here.
-            </p>
-          </div>
-        )}
-        {tab === "problems" && (
-          <div className="flex h-full items-center justify-center text-[11px] italic text-[var(--dim)]">
-            no problems detected
-          </div>
-        )}
-        {tab === "output" && (
-          <div className="flex h-full items-center justify-center text-[11px] italic text-[var(--dim)]">
-            no output streamed
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
