@@ -686,6 +686,22 @@ export async function startEmbeddedDaemon(
       // Already added or persistence failed; non-fatal.
     }
   }
+  // Also register the explicit sessionName when the daemon is launched
+  // against a specific tmux session (e.g. `node daemon.ts new-name 6060`).
+  // Without this the operator has to POST /api/workspaces by hand before
+  // /api/sessions / /api/project/:name return anything — which was the
+  // dashboard's "terminal not connecting" symptom before this fix.
+  if (!sessionless && sessionName !== EMBEDDED_SESSION_NAME && !workspaceRegistry.has(sessionName)) {
+    try {
+      workspaceRegistry.add({
+        name: sessionName,
+        sessionName,
+        projectDir: dir,
+      });
+    } catch {
+      // Already added or persistence failed; non-fatal.
+    }
+  }
   const orchestratorStarter = opts.orchestratorStarter ?? startOrchestrator;
 
   const { server, sockets, closeClients, closeWsServers } = await startHttpServer({

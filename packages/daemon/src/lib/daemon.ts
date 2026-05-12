@@ -11,12 +11,25 @@ import { resolve } from "node:path";
 import { startEmbeddedDaemon, type EmbeddedDaemonHandle } from "./daemon-embed.ts";
 
 async function main(): Promise<void> {
-  const rawPort =
-    process.argv[2] && /^\d+$/.test(process.argv[2]) ? process.argv[2] : process.argv[3];
+  // Accept the legacy `node daemon.ts <session> <port>` invocation: the
+  // first positional may be a session name OR (when omitted) a port. We
+  // sniff by digit-shape and forward both. Without this, an explicit
+  // session name was silently dropped on the floor and the daemon booted
+  // as `__embedded__` — leaving the workspace registry empty for live
+  // tmux sessions the operator clearly meant to expose.
+  const arg2 = process.argv[2];
+  const arg3 = process.argv[3];
+  const arg2IsPort = arg2 != null && /^\d+$/.test(arg2);
+  const sessionName = arg2IsPort ? undefined : arg2;
+  const rawPort = arg2IsPort ? arg2 : arg3;
   const port = rawPort === undefined || rawPort === "0" ? undefined : Number.parseInt(rawPort, 10);
   let handle: EmbeddedDaemonHandle;
   try {
-    handle = await startEmbeddedDaemon({ port, bindHostname: "127.0.0.1" });
+    handle = await startEmbeddedDaemon({
+      port,
+      bindHostname: "127.0.0.1",
+      ...(sessionName ? { sessionName } : {}),
+    });
   } catch (err) {
     console.error("[daemon] failed to start:", err);
     process.exit(1);
