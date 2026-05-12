@@ -1,22 +1,6 @@
 @import "tailwindcss";
 
 /*
- * TUI styles (goal-13 dashboard rebuild). Order matters:
- *  1. tui-fonts.css       — @font-face declarations
- *  2. tui-global.css      — base resets + TUI color/font primitives
- *  3. tui-bridge.css      — maps TUI --theme-* tokens to dashboard --bg/--fg/...
- *
- * Kept after the setup-page port (which dropped its tui/* imports) because
- * ProjectV2Page.tsx, V2PlansView.tsx, v2/page.tsx, and v2/config/page.tsx
- * still consume tui primitives via the `@components/*` path alias. A full
- * port of those four pages is the next step toward retiring this whole
- * tree — see commit body for the follow-up plan.
- */
-@import "./tui-fonts.css";
-@import "./tui-global.css";
-@import "./tui-bridge.css";
-
-/*
  * Design tokens — Tailwind v4 `@theme inline` registration. Implements PR 1
  * of docs/design-mapping-t3-to-tmux-ide.md.
  *

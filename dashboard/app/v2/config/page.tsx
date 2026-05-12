@@ -2,12 +2,6 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import Card from "@components/Card";
-import Badge from "@components/Badge";
-import Button from "@components/Button";
-import RowSpaceBetween from "@components/RowSpaceBetween";
-import CodeBlock from "@components/CodeBlock";
-import Window from "@components/Window";
 import {
   fetchProjectConfig,
   fetchSessions,
@@ -15,6 +9,14 @@ import {
   saveProjectConfig,
   type IdeConfigData,
 } from "@/lib/api";
+import {
+  Badge,
+  Button,
+  Card,
+  CodeBlock,
+  RowSpaceBetween,
+  Window,
+} from "@/components/v2-primitives";
 import type { SessionOverview } from "@/lib/types";
 
 type TabId = "general" | "orchestrator" | "raw";

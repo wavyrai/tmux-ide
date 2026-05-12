@@ -4,10 +4,6 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { Panel, Group } from "react-resizable-panels";
 import { VSeparator, HSeparator } from "./_lib/Separators";
-import Card from "@components/Card";
-import Badge from "@components/Badge";
-import RowSpaceBetween from "@components/RowSpaceBetween";
-import DataTable from "@components/DataTable";
 import { fetchSessions } from "@/lib/api";
 import { useProjects } from "@/lib/projectStore";
 import type { SessionOverview } from "@/lib/types";
@@ -17,6 +13,7 @@ import { MainTabsBar } from "@/components/MainTabsBar";
 import { openCommandPalette } from "@/components/CommandPalette";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui";
 import { TopBarActionButton, TopBarSeparator } from "./_lib/TopBarActionButton";
+import { Badge, Card, DataTable, RowSpaceBetween } from "@/components/v2-primitives";
 
 export default function V2OverviewPage() {
   const { projects, loading: projectsLoading, error: projectsError } = useProjects();

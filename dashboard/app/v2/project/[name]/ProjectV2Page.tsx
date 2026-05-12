@@ -5,14 +5,6 @@ import { useParams } from "next/navigation";
 import Link from "next/link";
 import { Panel, Group } from "react-resizable-panels";
 import { VSeparator, HSeparator } from "../../_lib/Separators";
-import Card from "@components/Card";
-import Badge from "@components/Badge";
-import RowSpaceBetween from "@components/RowSpaceBetween";
-import DataTable from "@components/DataTable";
-import Grid from "@components/Grid";
-import Button from "@components/Button";
-import CodeBlock from "@components/CodeBlock";
-import Window from "@components/Window";
 import { useSessionStream } from "@/lib/useSessionStream";
 import type { Task, AgentDetail, Goal } from "@/lib/types";
 import {
@@ -28,6 +20,16 @@ import {
   type MetricsData,
   type ProjectFileNode,
 } from "@/lib/api";
+import {
+  Badge,
+  Button,
+  Card,
+  CodeBlock,
+  DataTable,
+  Grid,
+  RowSpaceBetween,
+  Window,
+} from "@/components/v2-primitives";
 import { KanbanBoardBridge } from "@/components/kanban-board-bridge";
 import { SkillsViewBridge } from "@/components/skills-view-bridge";
 import { V2PlansView } from "../../_lib/V2PlansView";

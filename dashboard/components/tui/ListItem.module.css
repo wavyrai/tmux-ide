@@ -1,9 +1,0 @@
-.root {
-  padding-left: 1ch;
-
-  &:focus,
-  &:active {
-    outline: 0;
-    background: var(--theme-focused-foreground);
-  }
-}

@@ -3,9 +3,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Group, Panel } from "react-resizable-panels";
 import { VSeparator, HSeparator } from "./Separators";
-import Badge from "@components/Badge";
-import Card from "@components/Card";
-import RowSpaceBetween from "@components/RowSpaceBetween";
 import {
   fetchPlan,
   fetchPlans,
@@ -15,6 +12,7 @@ import {
   type PlanStatus,
   type PlanSummary,
 } from "@/lib/api";
+import { Badge, Card, RowSpaceBetween } from "@/components/v2-primitives";
 import { usePolling } from "@/lib/usePolling";
 import { useToasts } from "@/lib/useToasts";
 import { AuthorshipBar } from "@/components/AuthorshipBar";

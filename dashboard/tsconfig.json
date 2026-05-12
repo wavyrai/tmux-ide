@@ -18,10 +18,7 @@
     "incremental": true,
     "paths": {
       "@/*": ["./*"],
-      "@tmux-ide/contracts": ["../packages/contracts/src/index.ts"],
-      "@components/*": ["./components/tui/*"],
-      "@common/*": ["./components/tui/common/*"],
-      "@modules/*": ["./components/tui/modules/*"]
+      "@tmux-ide/contracts": ["../packages/contracts/src/index.ts"]
     },
     "plugins": [
       {
