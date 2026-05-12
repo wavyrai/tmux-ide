@@ -29,6 +29,46 @@ Key modules:
 - [src/lib/launch-plan.js](/Users/thijs/Developer/tmux-ide/src/lib/launch-plan.js): pure launch planning logic
 - [src/inspect.js](/Users/thijs/Developer/tmux-ide/src/inspect.js): effective config + runtime inspection
 
+## Dashboard architecture
+
+The Next.js dashboard under `dashboard/` follows the **RSC-shell +
+siloed-blocks** rule: RSC by default, React client where state/refs
+demand it, and foreign-framework UI (Solid today: `@tmux-ide/chat-solid`,
+`@tmux-ide/v2-solid-widgets`) lives in named silo packages mounted via
+a single bridge component each. The rule, the decision matrix, the
+canonical bridge template, and the planned lint enforcement live in
+[`docs/adr/0001-rsc-shell-and-siloed-blocks.md`](docs/adr/0001-rsc-shell-and-siloed-blocks.md);
+the copy-pasteable bridge template plus the *why `[]`-deps* explainer
+live in [`docs/contributing/bridge-template.md`](docs/contributing/bridge-template.md).
+PRs touching dashboard ↔ silo boundaries should cite ADR-0001 instead
+of restating the rule.
+
+## PTY layer (T087)
+
+The daemon's terminal surface — `/ws/pty/:id` and the `PtyBridge`
+ring-buffer/replay layer — talks to PTY processes through a thin
+abstraction:
+
+- `packages/daemon/src/terminal/PtyAdapter.ts` is the interface
+  (`spawn`/`spawnSync` → `PtyProcess` with `onData`/`onExit`).
+- `packages/daemon/src/terminal/NodePtyAdapter.ts` is the only place
+  `node-pty` is imported. Ports t3's `ensureNodePtySpawnHelperExecutable`
+  chmod-on-helper trick so a fresh install boots cleanly.
+- `packages/daemon/src/terminal/__tests__/MockPtyAdapter.ts` is the
+  test double; the contract test parameterises every assertion across
+  every registered adapter.
+- `packages/daemon/src/server/pty-bridge.ts` consumes `PtyAdapter` via
+  constructor injection — it no longer imports `node-pty` directly.
+
+The daemon process MUST run under `node`/`tsx`, never `bun`: under Bun,
+`node-pty`'s `onData` callback never fires (the PTY spawns and exits
+silently). All daemon spawn sites pin the runtime to `tsx`
+(`daemon-watchdog.ts`, `packages/tmux-bridge/src/monitor.ts`,
+`src/lib/tmux.ts`). Production is `node dist/lib/daemon.js`.
+
+See `packages/daemon/src/terminal/README.md` for long-form notes plus
+roadmap links to G14-T07 (Effect runtime) and G14-T10 (reactor → Stream).
+
 ## Error Boundary
 
 Structured command failures should reach the CLI edge as `CommandError` instances from [src/lib/output.js](/Users/thijs/Developer/tmux-ide/src/lib/output.js).
