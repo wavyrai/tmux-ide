@@ -2,6 +2,7 @@
 
 import { CheckCircle2, MoreHorizontal, Pencil, Trash2 } from "lucide-react";
 import { useCallback, useMemo, useState, type ReactNode } from "react";
+import { useSearchParams } from "next/navigation";
 import {
   AgentActivityRail,
   AgentDetailDialog,
@@ -25,6 +26,7 @@ import {
   SkeletonText,
   SurfaceCard,
 } from "@/components/ui";
+import { MissionControlBridge } from "@/components/mission-control-bridge";
 import { clearMission, planComplete, setMission } from "@/lib/api";
 import { NavigatorPortal } from "@/lib/useNavigatorSlot";
 import { useSessionStream } from "@/lib/useSessionStream";
@@ -36,6 +38,22 @@ interface MissionViewProps {
 }
 
 export function MissionView({ sessionName }: MissionViewProps) {
+  // Feature flag: `?missionControl=solid` swaps the React composite for
+  // the Solid widget. Identical data flow (useSessionStream → snapshot)
+  // and identical handlers (route to kanban / activity); the widget side
+  // is a pure renderer. Default keeps the React tree for fallback.
+  const searchParams = useSearchParams();
+  if (searchParams?.get("missionControl") === "solid") {
+    return (
+      <Panel variant="grow" testId="mission-view">
+        <MissionControlBridge sessionName={sessionName} />
+      </Panel>
+    );
+  }
+  return <MissionViewReact sessionName={sessionName} />;
+}
+
+function MissionViewReact({ sessionName }: MissionViewProps) {
   const { snapshot } = useSessionStream(sessionName);
   const { push } = useToasts();
   const [editOpen, setEditOpen] = useState(false);

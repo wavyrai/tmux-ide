@@ -56,3 +56,87 @@ export interface DiffsViewerMountHandle {
   unmount(): void;
   setOptions(next: Partial<DiffsViewerMountOptions>): void;
 }
+
+// ---------------------------------------------------------------------------
+// MissionControlDashboard — prop-driven variant of the polling MissionControl
+// widget. Designed to be fed by the React host's SSE/WS snapshot stream
+// (useSessionStream) rather than fetching on its own. Renders the same
+// hero/KPI/milestone/agent/event layout as the React MissionView.
+// ---------------------------------------------------------------------------
+
+export interface DashboardMissionInfo {
+  title: string;
+  description: string;
+  status: string;
+  branch: string | null;
+}
+
+export interface DashboardValidationSummary {
+  total: number;
+  passing: number;
+  failing: number;
+  pending: number;
+  blocked: number;
+}
+
+export interface DashboardMilestone {
+  id: string;
+  title: string;
+  status: "locked" | "active" | "done" | "validating" | string;
+  order: number;
+  taskCount: number;
+  tasksDone: number;
+}
+
+export interface DashboardTask {
+  id: string;
+  title: string;
+  status: string;
+  milestone?: string | null;
+  assignee?: string | null;
+}
+
+export interface DashboardAgent {
+  paneTitle: string;
+  paneId: string;
+  isBusy: boolean;
+  taskTitle: string | null;
+  taskId: string | null;
+  elapsed: string;
+}
+
+export interface DashboardEvent {
+  timestamp: string;
+  type: string;
+  message: string;
+  agent?: string | null;
+  taskId?: string;
+  relative?: string;
+}
+
+export interface MissionControlDashboardSnapshot {
+  mission: DashboardMissionInfo | null;
+  validation: DashboardValidationSummary | null;
+  milestones: DashboardMilestone[];
+  tasks: DashboardTask[];
+  agents: DashboardAgent[];
+  events: DashboardEvent[];
+}
+
+export interface MissionControlDashboardMountOptions {
+  /** Live snapshot of mission state. Null while the host is still loading. */
+  snapshot?: MissionControlDashboardSnapshot | null;
+  /** Recent-event limit shown in the event stream. Defaults to 20. */
+  eventLimit?: number;
+  /** Called when a task row is clicked. The host typically routes to kanban. */
+  onTaskClick?: (taskId: string) => void;
+  /** Called when an agent row is clicked. The host opens the agent dialog. */
+  onAgentClick?: (paneId: string) => void;
+  /** Called when "show all" is clicked under the event stream. */
+  onShowAllEvents?: () => void;
+}
+
+export interface MissionControlDashboardMountHandle {
+  unmount(): void;
+  setOptions(next: Partial<MissionControlDashboardMountOptions>): void;
+}

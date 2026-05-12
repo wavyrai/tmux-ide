@@ -5,6 +5,7 @@ import { CostsView } from "./widgets/Costs";
 import { DiffsViewerView } from "./widgets/DiffsViewer";
 import { ExplorerView } from "./widgets/Explorer";
 import { MissionControlView } from "./widgets/MissionControl";
+import { MissionControlDashboardView } from "./widgets/MissionControlDashboard";
 import { PlansRailView } from "./widgets/PlansRail";
 import type {
   BaseMountOptions,
@@ -12,6 +13,9 @@ import type {
   DiffsViewerMountOptions,
   ExplorerMountHandle,
   ExplorerMountOptions,
+  MissionControlDashboardMountHandle,
+  MissionControlDashboardMountOptions,
+  MissionControlDashboardSnapshot,
   MountHandle,
   PlansRailMountHandle,
   PlansRailMountOptions,
@@ -19,10 +23,19 @@ import type {
 
 export type {
   BaseMountOptions,
+  DashboardAgent,
+  DashboardEvent,
+  DashboardMilestone,
+  DashboardMissionInfo,
+  DashboardTask,
+  DashboardValidationSummary,
   DiffsViewerMountHandle,
   DiffsViewerMountOptions,
   ExplorerMountHandle,
   ExplorerMountOptions,
+  MissionControlDashboardMountHandle,
+  MissionControlDashboardMountOptions,
+  MissionControlDashboardSnapshot,
   MountHandle,
   PlansRailMountHandle,
   PlansRailMountOptions,
@@ -109,6 +122,35 @@ export function mountMissionControl(container: HTMLElement, opts: BaseMountOptio
   const [options, setOpts] = createSignal(opts);
   container.classList.add("v2-solid-widget");
   const dispose = render(() => <MissionControlView options={options} />, container);
+
+  return {
+    unmount() {
+      dispose();
+      container.classList.remove("v2-solid-widget");
+    },
+    setOptions(next) {
+      setOpts((current) => ({ ...current, ...next }));
+    },
+  };
+}
+
+/**
+ * Mount the Mission Control dashboard — prop-driven Solid port of
+ * dashboard/components/mission/MissionView.tsx. The React host owns the
+ * SessionSnapshot stream (useSessionStream + the WebSocket bus) and
+ * pushes it through `setOptions({ snapshot })`. The widget never fetches.
+ *
+ * Layout: HeroStrip + KpiStrip + MilestoneLadder + AgentActivityRail +
+ * EventStream. Same data-* semantic hooks t3's dashboard uses for CSS
+ * overrides.
+ */
+export function mountMissionControlDashboard(
+  container: HTMLElement,
+  opts: MissionControlDashboardMountOptions,
+): MissionControlDashboardMountHandle {
+  const [options, setOpts] = createSignal(opts);
+  container.classList.add("v2-solid-widget");
+  const dispose = render(() => <MissionControlDashboardView options={options} />, container);
 
   return {
     unmount() {
