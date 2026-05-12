@@ -119,7 +119,7 @@ export function HeroStrip({
             transition={{ type: "spring", stiffness: 600, damping: 49 }}
             className="overflow-hidden"
           >
-            <div className="plan-content max-w-3xl text-[12px] leading-6 text-[var(--fg-secondary)]">
+            <div className="plan-content chat-markdown max-w-3xl text-[12px] leading-6 text-[var(--fg-secondary)]">
               <ReactMarkdown>{description}</ReactMarkdown>
             </div>
           </motion.div>

@@ -717,6 +717,217 @@
   margin: 1.5em 0;
 }
 
+/* ===========================================================================
+ * .chat-markdown — t3-aligned markdown block (PR 4 of design adoption).
+ *
+ * Mirrors context/t3code/apps/web/src/index.css lines 273-486 but uses our
+ * PR 1/2 semantic tokens (muted, foreground, muted-foreground, border,
+ * info-foreground, ring). This class is additive and coexists with the
+ * older `.plan-content` rules — declared AFTER it so where the two
+ * conflict, .chat-markdown wins via source-order cascade.
+ *
+ * Apply via `<div className="chat-markdown plan-content">` for now; future
+ * surfaces drop `.plan-content` once visual diff is approved.
+ * =========================================================================== */
+.chat-markdown {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.chat-markdown > :first-child {
+  margin-top: 0;
+}
+
+.chat-markdown > :last-child {
+  margin-bottom: 0;
+}
+
+.chat-markdown p,
+.chat-markdown ul,
+.chat-markdown ol,
+.chat-markdown blockquote,
+.chat-markdown pre,
+.chat-markdown table {
+  margin: 0.65rem 0;
+}
+
+.chat-markdown ul {
+  padding-left: 1.25rem;
+  list-style-type: disc;
+}
+
+.chat-markdown ol {
+  padding-left: 1.25rem;
+  list-style-type: decimal;
+}
+
+.chat-markdown ul ul {
+  list-style-type: circle;
+}
+
+.chat-markdown ul ul ul {
+  list-style-type: square;
+}
+
+.chat-markdown ol ol {
+  list-style-type: lower-alpha;
+}
+
+.chat-markdown ol ol ol {
+  list-style-type: lower-roman;
+}
+
+.chat-markdown li + li {
+  margin-top: 0.25rem;
+}
+
+.chat-markdown a {
+  color: var(--cyan-foreground, var(--cyan));
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, var(--cyan-foreground, var(--cyan)) 40%, transparent);
+}
+
+.chat-markdown a:hover {
+  opacity: 0.8;
+}
+
+.chat-markdown blockquote {
+  border-left: 2px solid var(--border);
+  padding-left: 0.8rem;
+  color: var(--dim);
+}
+
+.chat-markdown :not(pre) > code {
+  border: 1px solid var(--border);
+  border-radius: 0.375rem;
+  background: var(--surface);
+  padding: 0.1rem 0.35rem;
+  color: var(--fg);
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+}
+
+.chat-markdown pre {
+  max-width: 100%;
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: 0.75rem;
+  background: var(--surface);
+  padding: 0.8rem 0.9rem;
+  font-family: var(--font-mono);
+}
+
+.chat-markdown pre code {
+  border: none;
+  background: transparent;
+  padding: 0;
+  font-size: 0.75rem;
+}
+
+.chat-markdown table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.chat-markdown th,
+.chat-markdown td {
+  border: 1px solid var(--border);
+  padding: 0.35rem 0.45rem;
+  text-align: left;
+}
+
+/* File-link chip — for [path/to/file.ts](file:...) references rendered
+ * via a custom remark plugin in t3. Wrap the rendered anchor in a span
+ * with class .chat-markdown-file-link to opt in. */
+.chat-markdown-file-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.28rem;
+  border: 1px solid color-mix(in srgb, var(--border) 92%, transparent);
+  border-radius: 0.375rem;
+  background: color-mix(in srgb, var(--surface) 88%, var(--bg));
+  padding: 0.08rem 0.34rem;
+  color: var(--fg);
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  line-height: 1.15;
+  vertical-align: text-bottom;
+  transition:
+    background-color 120ms ease,
+    border-color 120ms ease,
+    color 120ms ease,
+    opacity 120ms ease;
+}
+
+.chat-markdown-file-link:hover {
+  opacity: 1;
+  color: var(--fg);
+  border-color: color-mix(in srgb, var(--border) 65%, var(--fg));
+  background: color-mix(in srgb, var(--surface) 72%, var(--bg));
+}
+
+.chat-markdown-file-link:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 70%, transparent);
+}
+
+.chat-markdown-file-link-icon {
+  opacity: 0.72;
+}
+
+.chat-markdown-file-link-label {
+  color: color-mix(in srgb, var(--fg) 88%, transparent);
+  line-height: 1.1;
+}
+
+/* Code-block wrapper (when paired with a copy button overlay). Apply on
+ * the parent of <pre> when a copy affordance is rendered above. */
+.chat-markdown .chat-markdown-codeblock {
+  --chat-markdown-codeblock-copy-button-space: 1.5rem;
+  position: relative;
+  margin: 0.65rem 0;
+}
+
+.chat-markdown .chat-markdown-codeblock pre {
+  margin: 0;
+  padding-right: calc(0.9rem + var(--chat-markdown-codeblock-copy-button-space));
+}
+
+.chat-markdown .chat-markdown-copy-button {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.5rem;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 1.5rem;
+  width: 1.5rem;
+  border-radius: 0.375rem;
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--bg) 82%, transparent);
+  color: var(--dim);
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    opacity 120ms ease,
+    color 120ms ease,
+    border-color 120ms ease;
+}
+
+.chat-markdown .chat-markdown-codeblock:hover .chat-markdown-copy-button,
+.chat-markdown .chat-markdown-codeblock:focus-within .chat-markdown-copy-button {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.chat-markdown .chat-markdown-copy-button:hover {
+  color: var(--fg);
+  border-color: color-mix(in srgb, var(--border) 70%, var(--fg));
+}
+
 /* Milkdown editor overrides */
 .milkdown-wrap .milkdown {
   background: var(--bg) !important;

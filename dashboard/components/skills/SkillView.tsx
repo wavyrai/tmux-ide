@@ -104,7 +104,7 @@ export function SkillView({ sessionName, skillName }: SkillViewProps) {
           </div>
         </SurfaceCard>
 
-        <SurfaceCard testId="skill-body" className="plan-content">
+        <SurfaceCard testId="skill-body" className="plan-content chat-markdown">
           <ReactMarkdown>{skill.body || "_(empty skill)_"}</ReactMarkdown>
         </SurfaceCard>
       </PanelBody>

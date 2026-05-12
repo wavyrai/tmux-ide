@@ -247,7 +247,7 @@ export function ValidationView({ sessionName }: ValidationViewProps) {
         {validation.contract && (
           <section>
             <SectionHeader label="contract" />
-            <div className="plan-content rounded-md border border-[var(--border-weak)] bg-[var(--bg-strong)] p-4">
+            <div className="plan-content chat-markdown rounded-md border border-[var(--border-weak)] bg-[var(--bg-strong)] p-4">
               <ReactMarkdown>{validation.contract}</ReactMarkdown>
             </div>
           </section>
