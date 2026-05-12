@@ -11,6 +11,63 @@
 @import "./tui-bridge.css";
 
 /*
+ * Design tokens — Tailwind v4 `@theme inline` registration. Implements PR 1
+ * of docs/design-mapping-t3-to-tmux-ide.md.
+ *
+ * Mirrors t3's apps/web/src/index.css pattern: a single radius scale plus
+ * paired surface/foreground color tokens, all registered with Tailwind via
+ * `--color-*` so utilities like `bg-card`, `text-muted-foreground`,
+ * `border-border` resolve to the active theme's CSS custom properties.
+ *
+ * The `inline` keyword keeps the var() references in the cascade — switching
+ * theme by toggling [data-theme] still updates every Tailwind-tinted surface
+ * because the utility resolves through `var(--color-X)` → `var(--bg)` etc.
+ *
+ * Solid silos (packages/v2-solid-widgets, packages/chat-solid) read
+ * `var(--bg)` / `var(--accent)` directly; they inherit these tokens
+ * automatically — no silo-side change required.
+ */
+@theme inline {
+  /* Radius scale — 7 stops, anchored on 0.625rem = 10px. */
+  --radius: 0.625rem;
+  --radius-sm: calc(var(--radius) - 4px); /* 6px  — inline chips, code */
+  --radius-md: calc(var(--radius) - 2px); /* 8px  — small buttons, badges */
+  --radius-lg: var(--radius); /* 10px — cards, dropdowns */
+  --radius-xl: calc(var(--radius) + 4px); /* 14px — composer, sections */
+  --radius-2xl: calc(var(--radius) + 8px); /* 18px — message bubbles */
+  --radius-3xl: calc(var(--radius) + 12px); /* 22px — hero panels */
+
+  /* Color tokens — alias our existing palette into Tailwind's semantic names
+   * so `bg-card`, `text-muted-foreground`, `border-border` work out of the
+   * box. The right-hand side uses var() so theme switching cascades. */
+  --color-background: var(--bg);
+  --color-foreground: var(--fg);
+  --color-card: var(--surface-elevated);
+  --color-card-foreground: var(--fg);
+  --color-popover: var(--surface-elevated);
+  --color-popover-foreground: var(--fg);
+  --color-muted: var(--surface);
+  --color-muted-foreground: var(--dim);
+  --color-accent: var(--surface-active);
+  --color-accent-foreground: var(--fg);
+  --color-secondary: var(--surface-raised);
+  --color-secondary-foreground: var(--fg);
+  --color-border: var(--border);
+  --color-input: var(--border);
+  --color-ring: var(--accent);
+  --color-primary: var(--accent);
+  --color-primary-foreground: var(--bg);
+  --color-destructive: var(--red);
+  --color-destructive-foreground: var(--bg);
+  --color-success: var(--green);
+  --color-success-foreground: var(--bg);
+  --color-warning: var(--yellow);
+  --color-warning-foreground: var(--bg);
+  --color-info: var(--cyan);
+  --color-info-foreground: var(--bg);
+}
+
+/*
  * Sidebar primitive layout — declare these as plain CSS so the Sidebar's
  * collapse/expand width and icon-mode reveals are not at the mercy of
  * Tailwind v4's arbitrary-value JIT compilation (`w-[var(...)]`,
