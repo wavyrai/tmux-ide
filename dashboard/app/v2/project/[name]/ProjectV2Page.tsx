@@ -39,15 +39,11 @@ import { V2ExplorerIsland } from "../../_lib/V2ExplorerIsland";
 import { V2ChangesIsland } from "../../_lib/V2ChangesIsland";
 import { V2MissionControlIsland } from "../../_lib/V2MissionControlIsland";
 import { DiffsViewerBridge } from "@/components/diffs-viewer-bridge";
-import { ThemeToggle } from "@/components/ThemeToggle";
 import { MainTabsBar } from "@/components/MainTabsBar";
 import { ExplorerBridge, type FileTreeEntry } from "@/components/explorer-bridge";
 import { TasksViewBridge } from "@/components/tasks-view-bridge";
-import { CreateTaskDialog } from "@/components/kanban";
-import { openCommandPalette } from "@/components/CommandPalette";
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui";
-import { useLayoutState } from "@/lib/useLayoutState";
-import { TopBarActionButton, TopBarSeparator } from "../../_lib/TopBarActionButton";
+import { StatusBar } from "@/components/StatusBar";
+import { TooltipProvider } from "@/components/ui";
 import { V2ActivityBar, type ActivityBarViewId } from "../../_lib/V2ActivityBar";
 import { useStoredLayout } from "../../_lib/useStoredLayout";
 import { Terminal } from "@/components/Terminal";
@@ -98,10 +94,11 @@ export default function ProjectV2Page() {
   const { snapshot } = useSessionStream(projectName === "__fallback" ? null : projectName);
 
   const [view, setView] = useState<ViewId>("kanban");
-  const [hLayout, setHLayout] = useStoredLayout("project-h");
-  const [vLayout, setVLayout] = useStoredLayout("project-v");
-  const [bentoVLayout, setBentoVLayout] = useStoredLayout("project-bento-v");
-  const [bentoHLayout, setBentoHLayout] = useStoredLayout("project-bento-h");
+  // Layout persistence keys mirror the VSCode-style regions:
+  //   shell-h        = sidebar | editor | inspector horizontal split
+  //   shell-v        = upper | bottom-panel vertical split
+  const [shellH, setShellH] = useStoredLayout("shell-h");
+  const [shellV, setShellV] = useStoredLayout("shell-v");
   const metrics = useMetricsPoll(
     projectName === "__fallback" ? null : projectName,
     view === "metrics",
@@ -144,213 +141,107 @@ export default function ProjectV2Page() {
   const goals: Goal[] = snapshot?.goals ?? [];
   const events: EventData[] = snapshot?.events ?? [];
 
-  return (
-    <div className="flex h-screen flex-col bg-[var(--bg)] text-[var(--fg)]">
-      <V2TopBar
-        projectName={projectName}
-        mission={mission?.title ?? null}
-        view={view}
-        goals={goals}
-      />
-
-      <MainTabsBar />
-
-      <div className="flex flex-1 min-h-0">
-        <V2ActivityBar view={view} onView={(id: ActivityBarViewId) => setView(id)} />
-        <div className="flex-1 min-w-0">
-          <Group orientation="horizontal" defaultLayout={hLayout} onLayoutChange={setHLayout}>
-            <Panel
-              id="sidebar"
-              defaultSize={20}
-              minSize={14}
-              collapsible
-              collapsedSize={4}
-              className="border-r border-[var(--border)]"
-            >
-              <ProjectSidebar
-                projectName={projectName}
-                projectDir={snapshot?.project?.dir ?? null}
-                milestones={milestones}
-                view={view}
-                onView={setView}
-              />
-            </Panel>
-
-            <VSeparator />
-
-            <Panel id="center" defaultSize={56} minSize={30}>
-              <Group orientation="vertical" defaultLayout={vLayout} onLayoutChange={setVLayout}>
-                <Panel id="main" defaultSize={70} minSize={20}>
-                  <Group
-                    orientation="vertical"
-                    defaultLayout={bentoVLayout}
-                    onLayoutChange={setBentoVLayout}
-                  >
-                    <Panel id="bento" defaultSize={50} minSize={20}>
-                      <Group
-                        orientation="horizontal"
-                        defaultLayout={bentoHLayout}
-                        onLayoutChange={setBentoHLayout}
-                      >
-                        <Panel id="bento-left" defaultSize={50} minSize={20}>
-                          <BentoColumn>
-                            <BentoMissionTile mission={mission} milestones={milestones} />
-                            <BentoTasksTile tasks={tasks} />
-                          </BentoColumn>
-                        </Panel>
-                        <VSeparator />
-                        <Panel id="bento-right" defaultSize={50} minSize={20}>
-                          <BentoColumn>
-                            <BentoMilestoneTile milestones={milestones} />
-                            <BentoAgentsTile agents={agents} />
-                          </BentoColumn>
-                        </Panel>
-                      </Group>
-                    </Panel>
-                    <HSeparator />
-                    <Panel id="bento-detail" defaultSize={50} minSize={20}>
-                      <MainContent
-                        view={view}
-                        projectName={projectName}
-                        mission={mission}
-                        milestones={milestones}
-                        tasks={tasks}
-                        agents={agents}
-                        goals={goals}
-                        events={events}
-                        metrics={metrics}
-                        previewPath={previewPath}
-                        setPreviewPath={setPreviewPath}
-                        openInPreview={openInPreview}
-                      />
-                    </Panel>
-                  </Group>
-                </Panel>
-
-                <HSeparator />
-
-                <Panel id="terminal" defaultSize={30} minSize={10}>
-                  <TerminalPane projectName={projectName} />
-                </Panel>
-              </Group>
-            </Panel>
-
-            <VSeparator />
-
-            <Panel
-              id="inspector"
-              defaultSize={24}
-              minSize={12}
-              collapsible
-              collapsedSize={4}
-              className="border-l border-[var(--border)]"
-            >
-              <InspectorPane agents={agents} tasks={tasks} />
-            </Panel>
-          </Group>
-        </div>
-      </div>
-
-      <V2StatusBar
-        projectName={projectName}
-        view={view}
-        agentCount={agents.length}
-        taskCount={tasks.length}
-        missionTitle={mission?.title ?? null}
-        running={agents.length > 0 || Boolean(snapshot)}
-      />
-    </div>
-  );
-}
-
-// ---------------- Topbar ----------------
-
-function V2TopBar({
-  projectName,
-  mission,
-  view,
-  goals,
-}: {
-  projectName: string;
-  mission: string | null;
-  view: ViewId;
-  goals: Goal[];
-}) {
-  const viewLabel = VIEWS.find((v) => v.id === view)?.label ?? view;
-  const { toggleTerminal } = useLayoutState();
-  const [newTaskOpen, setNewTaskOpen] = useState(false);
-
+  // VSCode-style IDE shell — five logical regions:
+  //   1. ActivityBar    (left, fixed 48px) — view switcher icons
+  //   2. LeftSidebar    (resizable, contextual to active activity)
+  //   3. Editor         (resizable, the MainContent router)
+  //   4. RightInspector (resizable, slot — pane 2 fills with ActivityBridge)
+  //   5. BottomPanel    (resizable, slot — pane 3 fills with Terminal/Problems/Output)
+  //   + StatusBar       (24px fixed footer with branch, session, agents, latest event)
+  //
+  // Slots: the inspector + bottom-panel contents are rendered through
+  // dedicated internal components (InspectorSlot / BottomPanelSlot) so
+  // sibling agents can swap their bodies without touching the layout
+  // wiring. Both are OPTIONAL — they ship with sensible placeholders.
   return (
     <TooltipProvider delay={200}>
-      <header className="flex h-7 shrink-0 items-center border-b border-[var(--border)] bg-[var(--bg-strong)] pl-3 text-[11px] tabular-nums">
-        <Link
-          href="/v2"
-          className="mr-2 inline-flex items-center gap-1 text-[var(--fg)] hover:text-[var(--accent)]"
-        >
-          <span aria-hidden="true">◇</span>
-          <span className="font-medium">tmux-ide</span>
-        </Link>
-        <button
-          type="button"
-          onClick={openCommandPalette}
-          aria-label="Switch project"
-          data-testid="v2-topbar-project-switcher"
-          className="inline-flex h-5 items-center gap-1 px-2 text-[var(--accent)] hover:bg-[var(--surface-hover)]"
-        >
-          <span aria-hidden="true" className="text-[var(--dim)]">
-            ▾
-          </span>
-          <span className="font-medium">{projectName}</span>
-        </button>
-        <span className="mx-1 text-[var(--dimmer)]">·</span>
-        <span className="text-[var(--fg-secondary)]">{viewLabel}</span>
-        {mission && (
-          <>
-            <span className="mx-2 text-[var(--dimmer)]">·</span>
-            <span className="truncate text-[var(--dim)]">{mission}</span>
-          </>
-        )}
-        <span className="flex-1" />
-        <TopBarSeparator />
-        <TopBarActionButton
-          icon="⌕"
-          tooltip="Search · ⌘K"
-          ariaLabel="Search"
-          onClick={openCommandPalette}
-          testId="v2-topbar-find"
-        />
-        <TopBarActionButton
-          icon=">_"
-          tooltip="Toggle terminal · ⌘J"
-          ariaLabel="Toggle terminal"
-          onClick={toggleTerminal}
-          testId="v2-topbar-terminal"
-          glyphSize={12}
-        />
-        <TopBarActionButton
-          icon="+"
-          tooltip="New task"
-          ariaLabel="New task"
-          onClick={() => setNewTaskOpen(true)}
-          testId="v2-topbar-new-task"
-          glyphSize={14}
-        />
-        <TopBarActionButton
-          icon="⌘"
-          tooltip="Command palette · ⌘K"
-          ariaLabel="Command palette"
-          onClick={openCommandPalette}
-          testId="v2-topbar-palette"
-        />
-        <ThemeToggle />
-      </header>
+      <div className="flex h-screen flex-col bg-[var(--bg)] text-[var(--fg)]">
+        <MainTabsBar />
 
-      <CreateTaskDialog
-        open={newTaskOpen}
-        onOpenChange={setNewTaskOpen}
-        sessionName={projectName}
-        goals={goals}
-      />
+        <div className="flex flex-1 min-h-0">
+          <V2ActivityBar view={view} onView={(id: ActivityBarViewId) => setView(id)} />
+          <div className="flex-1 min-w-0">
+            <Group orientation="vertical" defaultLayout={shellV} onLayoutChange={setShellV}>
+              <Panel id="upper" defaultSize={75} minSize={20}>
+                <Group orientation="horizontal" defaultLayout={shellH} onLayoutChange={setShellH}>
+                  <Panel
+                    id="left-sidebar"
+                    defaultSize={18}
+                    minSize={10}
+                    collapsible
+                    collapsedSize={0}
+                    className="border-r border-[var(--border)]"
+                  >
+                    <ProjectSidebar
+                      projectName={projectName}
+                      projectDir={snapshot?.project?.dir ?? null}
+                      milestones={milestones}
+                      view={view}
+                      onView={setView}
+                    />
+                  </Panel>
+
+                  <VSeparator />
+
+                  <Panel id="editor" defaultSize={58} minSize={30}>
+                    <div className="flex h-full min-h-0 flex-col">
+                      <div className="min-h-0 flex-1">
+                        <MainContent
+                          view={view}
+                          projectName={projectName}
+                          mission={mission}
+                          milestones={milestones}
+                          tasks={tasks}
+                          agents={agents}
+                          goals={goals}
+                          events={events}
+                          metrics={metrics}
+                          previewPath={previewPath}
+                          setPreviewPath={setPreviewPath}
+                          openInPreview={openInPreview}
+                        />
+                      </div>
+                    </div>
+                  </Panel>
+
+                  <VSeparator />
+
+                  <Panel
+                    id="inspector"
+                    defaultSize={24}
+                    minSize={12}
+                    collapsible
+                    collapsedSize={0}
+                    className="border-l border-[var(--border)]"
+                  >
+                    <InspectorSlot agents={agents} tasks={tasks} />
+                  </Panel>
+                </Group>
+              </Panel>
+
+              <HSeparator />
+
+              <Panel
+                id="bottom-panel"
+                defaultSize={25}
+                minSize={6}
+                collapsible
+                collapsedSize={6}
+                className="border-t border-[var(--border)]"
+              >
+                <BottomPanelSlot projectName={projectName} />
+              </Panel>
+            </Group>
+          </div>
+        </div>
+
+        <StatusBar
+          projectName={projectName}
+          running={agents.length > 0 || Boolean(snapshot)}
+          agentCount={agents.length}
+          events={events}
+        />
+      </div>
     </TooltipProvider>
   );
 }
@@ -507,160 +398,6 @@ interface MainContentProps {
   previewPath: string;
   setPreviewPath: (path: string) => void;
   openInPreview: (path: string) => void;
-}
-
-// ---------------- Bento tiles ----------------
-
-function BentoColumn({ children }: { children: React.ReactNode }) {
-  return (
-    <div className="flex h-full min-h-0 flex-col overflow-hidden">
-      <Grid>{children}</Grid>
-    </div>
-  );
-}
-
-function BentoMissionTile({
-  mission,
-  milestones,
-}: {
-  mission: { title: string; description?: string; status?: string } | null;
-  milestones: ReadonlyArray<{
-    id: string;
-    title: string;
-    status: string;
-    taskCount: number;
-    tasksDone: number;
-  }>;
-}) {
-  const totalTasks = milestones.reduce((acc, m) => acc + m.taskCount, 0);
-  const doneTasks = milestones.reduce((acc, m) => acc + m.tasksDone, 0);
-  return (
-    <Card title="MISSION" mode="left">
-      {mission ? (
-        <>
-          <RowSpaceBetween>
-            <span className="truncate">{mission.title}</span>
-            <Badge>{mission.status ?? "—"}</Badge>
-          </RowSpaceBetween>
-          {milestones.length > 0 && (
-            <RowSpaceBetween>
-              <span>Milestones</span>
-              <Badge>
-                <span className="tabular-nums">
-                  {doneTasks}/{totalTasks}
-                </span>
-              </Badge>
-            </RowSpaceBetween>
-          )}
-        </>
-      ) : (
-        <p className="text-[var(--dim)]">No mission set yet.</p>
-      )}
-    </Card>
-  );
-}
-
-function BentoMilestoneTile({
-  milestones,
-}: {
-  milestones: ReadonlyArray<{
-    id: string;
-    title: string;
-    status: string;
-    taskCount: number;
-    tasksDone: number;
-  }>;
-}) {
-  const active =
-    milestones.find((m) => m.status === "active") ??
-    milestones.find((m) => m.status === "todo") ??
-    milestones[0] ??
-    null;
-  return (
-    <Card title="ACTIVE MILESTONE" mode="left">
-      {active ? (
-        <>
-          <RowSpaceBetween>
-            <span className="truncate">{active.title}</span>
-            <Badge>{active.status}</Badge>
-          </RowSpaceBetween>
-          <RowSpaceBetween>
-            <span>Progress</span>
-            <Badge>
-              <span className="tabular-nums">
-                {active.tasksDone}/{active.taskCount}
-              </span>
-            </Badge>
-          </RowSpaceBetween>
-        </>
-      ) : (
-        <p className="text-[var(--dim)]">No milestones yet.</p>
-      )}
-    </Card>
-  );
-}
-
-function BentoTasksTile({ tasks }: { tasks: Task[] }) {
-  const todo = tasks.filter((t) => t.status === "todo").length;
-  const inProgress = tasks.filter((t) => t.status === "in-progress").length;
-  const review = tasks.filter((t) => t.status === "review").length;
-  const done = tasks.filter((t) => t.status === "done").length;
-  return (
-    <Card title="TASKS" mode="left">
-      <RowSpaceBetween>
-        <span>Todo</span>
-        <Badge>
-          <span className="tabular-nums">{todo}</span>
-        </Badge>
-      </RowSpaceBetween>
-      <RowSpaceBetween>
-        <span>In progress</span>
-        <Badge>
-          <span className="tabular-nums">{inProgress}</span>
-        </Badge>
-      </RowSpaceBetween>
-      <RowSpaceBetween>
-        <span>Review</span>
-        <Badge>
-          <span className="tabular-nums">{review}</span>
-        </Badge>
-      </RowSpaceBetween>
-      <RowSpaceBetween>
-        <span>Done</span>
-        <Badge>
-          <span className="tabular-nums">{done}</span>
-        </Badge>
-      </RowSpaceBetween>
-    </Card>
-  );
-}
-
-function BentoAgentsTile({ agents }: { agents: AgentDetail[] }) {
-  return (
-    <Card title="AGENTS" mode="left">
-      {agents.length === 0 ? (
-        <p className="text-[var(--dim)]">No agents detected.</p>
-      ) : (
-        agents.map((a) => (
-          <RowSpaceBetween key={a.paneId}>
-            <span className="truncate">
-              <span
-                aria-hidden="true"
-                className="mr-1"
-                style={{ color: a.isBusy ? "var(--green)" : "var(--dim)" }}
-              >
-                {a.isBusy ? "●" : "○"}
-              </span>
-              {a.paneTitle}
-            </span>
-            <span className="text-[var(--dim)] tabular-nums">
-              {a.elapsed || (a.isBusy ? "working" : "idle")}
-            </span>
-          </RowSpaceBetween>
-        ))
-      )}
-    </Card>
-  );
 }
 
 function MainContent(props: MainContentProps) {
@@ -1309,37 +1046,28 @@ function countFiles(entries: ReadonlyArray<FileTreeEntry>): number {
   return total;
 }
 
-// ---------------- Terminal ----------------
+// ---------------- Inspector slot ----------------
+//
+// `InspectorSlot` is the named placement for the right-side inspector
+// region. The default body surfaces agent + task counts so the layout
+// reads as "real" out of the box. Pane 2 owns the substantive content
+// (ActivityBridge / live event timeline) and will swap the body here
+// without touching the layout wiring.
 
-function TerminalPane({ projectName }: { projectName: string }) {
-  return (
-    <div className="h-full overflow-hidden bg-[var(--bg-strong)] p-3 text-[11px] leading-tight">
-      <div className="mb-2 flex items-center text-[10px] text-[var(--dim)]">
-        <span aria-hidden="true" className="mr-1">
-          {">_"}
-        </span>
-        <span>terminal · {projectName}:lead</span>
-      </div>
-      <pre className="whitespace-pre-wrap text-[var(--fg)]">
-        {`$ tmux-ide attach ${projectName}
-session ${projectName} attached
-$ █`}
-      </pre>
-    </div>
-  );
-}
-
-// ---------------- Inspector ----------------
-
-function InspectorPane({ agents, tasks }: { agents: AgentDetail[]; tasks: Task[] }) {
+function InspectorSlot({ agents, tasks }: { agents: AgentDetail[]; tasks: Task[] }) {
   const busyCount = agents.filter((a) => a.isBusy).length;
   const idleCount = agents.length - busyCount;
   const doneCount = tasks.filter((t) => t.status === "done").length;
   const todoCount = tasks.filter((t) => t.status === "todo").length;
 
   return (
-    <aside className="flex h-full flex-col overflow-y-auto p-3 text-[12px]">
-      <div className="mb-2 text-[10px] uppercase tracking-wider text-[var(--dim)]">inspector</div>
+    <aside
+      data-testid="inspector-slot"
+      className="flex h-full flex-col overflow-y-auto p-3 text-[12px]"
+    >
+      <div className="mb-2 text-[10px] uppercase tracking-wider text-[var(--fg-muted,var(--dim))]">
+        inspector
+      </div>
 
       <Card title="AGENTS" mode="left">
         {agents.length === 0 ? (
@@ -1378,81 +1106,83 @@ function InspectorPane({ agents, tasks }: { agents: AgentDetail[]; tasks: Task[]
           <Badge>{todoCount}</Badge>
         </RowSpaceBetween>
       </Card>
+
+      <p className="mt-3 text-[10px] italic text-[var(--dim)]">
+        Activity timeline coming — pane 2 fills this slot with the live event
+        feed bridge.
+      </p>
     </aside>
   );
 }
 
-// ---------------- Statusbar ----------------
+// ---------------- Bottom panel slot ----------------
+//
+// `BottomPanelSlot` is the named placement for the bottom region. The
+// default body renders a Terminal | Problems | Output tab strip with
+// empty placeholders for Problems / Output and a tiny placeholder
+// terminal frame for Terminal. Pane 3 owns the substantive content
+// (TerminalsHost + Problems pane + Output stream) and will swap each
+// tab body without touching the layout wiring.
 
-function V2StatusBar({
-  projectName,
-  view,
-  agentCount,
-  taskCount,
-  missionTitle,
-  running,
-}: {
-  projectName: string;
-  view: ViewId;
-  agentCount: number;
-  taskCount: number;
-  missionTitle: string | null;
-  running: boolean;
-}) {
-  const version = process.env.NEXT_PUBLIC_APP_VERSION ?? "dev";
+type BottomTab = "terminal" | "problems" | "output";
+
+function BottomPanelSlot({ projectName }: { projectName: string }) {
+  const [tab, setTab] = useState<BottomTab>("terminal");
+
   return (
-    <footer className="flex h-6 shrink-0 items-center border-t border-[var(--border)] bg-[var(--bg-strong)] px-3 text-[10px] tabular-nums text-[var(--dim)]">
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <span className="inline-flex items-center gap-1 text-[var(--accent)]">
-              <span aria-hidden="true">{running ? "●" : "○"}</span>
-              <span>{projectName}</span>
-            </span>
-          }
-        />
-        <TooltipContent side="top">
-          {running ? "Project session is running" : "Project session is stopped"}
-        </TooltipContent>
-      </Tooltip>
-      <span className="mx-2 opacity-30">│</span>
-      <Tooltip>
-        <TooltipTrigger render={<span>{view}</span>} />
-        <TooltipContent side="top">Active view</TooltipContent>
-      </Tooltip>
-      <span className="mx-2 opacity-30">│</span>
-      <Tooltip>
-        <TooltipTrigger render={<span>{agentCount} agents</span>} />
-        <TooltipContent side="top">Active agent panes</TooltipContent>
-      </Tooltip>
-      <span className="mx-2 opacity-30">│</span>
-      <Tooltip>
-        <TooltipTrigger render={<span>{taskCount} tasks</span>} />
-        <TooltipContent side="top">Total tasks (all statuses)</TooltipContent>
-      </Tooltip>
-      {missionTitle && (
-        <>
-          <span className="mx-2 opacity-30">│</span>
-          <Tooltip>
-            <TooltipTrigger render={<span className="truncate">{missionTitle}</span>} />
-            <TooltipContent side="top">Current mission</TooltipContent>
-          </Tooltip>
-        </>
-      )}
-      <span className="flex-1" />
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <span className="mr-3 rounded-none border border-[var(--border-weak)] px-1.5 text-[var(--fg-secondary)]">
-              v{version}
-            </span>
-          }
-        />
-        <TooltipContent side="top">tmux-ide v2 · build {version}</TooltipContent>
-      </Tooltip>
-      <Link href="/v2" className="hover:text-[var(--fg)]">
-        overview
-      </Link>
-    </footer>
+    <div
+      data-testid="bottom-panel-slot"
+      className="flex h-full min-h-0 flex-col bg-[var(--bg-strong)]"
+    >
+      <div className="flex h-7 shrink-0 items-center gap-2 border-b border-[var(--border-weak)] px-2 text-[10px] uppercase tracking-wider">
+        {(["terminal", "problems", "output"] as BottomTab[]).map((t) => {
+          const active = tab === t;
+          return (
+            <button
+              key={t}
+              type="button"
+              data-testid={`bottom-panel-tab-${t}`}
+              data-active={active ? "true" : "false"}
+              onClick={() => setTab(t)}
+              className={
+                "flex h-7 items-center px-2 transition-colors " +
+                (active
+                  ? "text-[var(--accent)] border-b-2 border-[var(--accent)] -mb-px"
+                  : "text-[var(--fg-muted,var(--dim))] hover:text-[var(--fg)]")
+              }
+            >
+              {t}
+            </button>
+          );
+        })}
+      </div>
+      <div className="min-h-0 flex-1 overflow-hidden">
+        {tab === "terminal" && (
+          <div className="h-full overflow-hidden p-3 text-[11px] leading-tight">
+            <div className="mb-2 text-[10px] text-[var(--fg-muted,var(--dim))]">
+              terminal · {projectName}:lead
+            </div>
+            <pre className="whitespace-pre-wrap text-[var(--fg)]">
+              {`$ tmux-ide attach ${projectName}
+session ${projectName} attached
+$ █`}
+            </pre>
+            <p className="mt-3 text-[10px] italic text-[var(--dim)]">
+              Real terminal coming — pane 3 swaps in TerminalsHost here.
+            </p>
+          </div>
+        )}
+        {tab === "problems" && (
+          <div className="flex h-full items-center justify-center text-[11px] italic text-[var(--dim)]">
+            no problems detected
+          </div>
+        )}
+        {tab === "output" && (
+          <div className="flex h-full items-center justify-center text-[11px] italic text-[var(--dim)]">
+            no output streamed
+          </div>
+        )}
+      </div>
+    </div>
   );
 }
