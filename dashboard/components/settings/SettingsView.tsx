@@ -198,15 +198,6 @@ export function SettingsView() {
                     onChange={(value) => settings.setGeneral({ showNotifications: value })}
                   />
                 </SettingRow>
-                <SettingRow
-                  title="Use old chat (?chat=v1)"
-                  description="Fall back to the legacy chat UI. The new t3-style UI is default; flip this if you hit issues. Equivalent to opening the project with ?chat=v1 in the URL."
-                >
-                  <Toggle
-                    checked={settings.general.useOldChat}
-                    onChange={(value) => settings.setGeneral({ useOldChat: value })}
-                  />
-                </SettingRow>
               </SurfaceCard>
             </section>
           )}

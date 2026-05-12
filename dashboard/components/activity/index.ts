@@ -1,1 +1,0 @@
-export { ActivityView } from "./ActivityView";
