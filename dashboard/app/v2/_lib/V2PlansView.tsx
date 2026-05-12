@@ -1,29 +1,16 @@
 "use client";
 
-import {
-  Fragment,
-  useCallback,
-  useEffect,
-  useMemo,
-  useState,
-  type ChangeEvent,
-  type ReactNode,
-} from "react";
-import { childrenContainBlockElement } from "./V2PlansView.helpers";
-import Markdown from "react-markdown";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Group, Panel } from "react-resizable-panels";
 import { VSeparator, HSeparator } from "./Separators";
 import Badge from "@components/Badge";
 import Card from "@components/Card";
-import CodeBlock from "@components/CodeBlock";
 import RowSpaceBetween from "@components/RowSpaceBetween";
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui";
 import {
   fetchPlan,
   fetchPlans,
   markPlanDone,
   savePlan,
-  updateTask,
   type PlanData,
   type PlanStatus,
   type PlanSummary,
@@ -32,6 +19,7 @@ import { usePolling } from "@/lib/usePolling";
 import { useToasts } from "@/lib/useToasts";
 import { AuthorshipBar } from "@/components/AuthorshipBar";
 import { MarkdownEditor } from "@/components/MarkdownEditor";
+import { PlansPanelBridge } from "@/components/plans-panel-bridge";
 import type { Task } from "@/lib/types";
 
 interface V2PlansViewProps {
@@ -49,7 +37,6 @@ const STATUS_GLYPH: Record<string, string> = {
 const PLAN_STATUSES: ReadonlyArray<PlanStatus | "all"> = ["all", "in-progress", "pending", "done"];
 
 const PROGRESS_CELLS = 16;
-const TASK_REF_RE = /\bT(\d{3})\b|\bTask\s+(\d{3})\b/g;
 
 function progressBar(filled: number): string {
   const safe = Math.max(0, Math.min(PROGRESS_CELLS, Math.round(filled)));
@@ -71,66 +58,6 @@ function timeAgo(iso: string | null | undefined): string | null {
   if (ms < 3_600_000) return `${Math.floor(ms / 60_000)}m`;
   if (ms < 86_400_000) return `${Math.floor(ms / 3_600_000)}h`;
   return `${Math.floor(ms / 86_400_000)}d`;
-}
-
-/**
- * Splits a string on T-task references and wraps each match with a tooltip
- * showing the task title + status. Used inside markdown text-level overrides.
- */
-function linkifyTaskRefs(text: string, tasks: Task[]): ReactNode[] {
-  const out: ReactNode[] = [];
-  let lastIndex = 0;
-  let m: RegExpExecArray | null;
-  TASK_REF_RE.lastIndex = 0;
-  while ((m = TASK_REF_RE.exec(text)) !== null) {
-    if (m.index > lastIndex) out.push(text.slice(lastIndex, m.index));
-    const id = (m[1] ?? m[2])!;
-    const task = tasks.find((t) => t.id === id);
-    if (task) {
-      out.push(
-        <Tooltip key={`${id}-${m.index}`}>
-          <TooltipTrigger
-            render={
-              <span
-                className="cursor-help underline decoration-[var(--theme-border-subdued,var(--border))] decoration-dotted underline-offset-2 text-[var(--accent)]"
-                data-task-ref={id}
-              >
-                {m[0]}
-              </span>
-            }
-          />
-          <TooltipContent>
-            <span className="font-mono text-[10px]">{STATUS_GLYPH[task.status] ?? "·"} </span>
-            <span className="font-medium">{task.title}</span>
-            <span className="ml-2 text-[10px] text-[var(--dim)]">{task.status}</span>
-          </TooltipContent>
-        </Tooltip>,
-      );
-    } else {
-      out.push(m[0]);
-    }
-    lastIndex = m.index + m[0].length;
-  }
-  if (lastIndex < text.length) out.push(text.slice(lastIndex));
-  return out;
-}
-
-/**
- * Recursively walk children and apply linkifyTaskRefs to plain text strings.
- */
-function linkifyChildren(children: ReactNode, tasks: Task[]): ReactNode {
-  if (typeof children === "string") {
-    return linkifyTaskRefs(children, tasks);
-  }
-  if (Array.isArray(children)) {
-    return children.map((c, i) => {
-      if (typeof c === "string") {
-        return <span key={i}>{linkifyTaskRefs(c, tasks)}</span>;
-      }
-      return c;
-    });
-  }
-  return children;
 }
 
 export function V2PlansView({ sessionName, tasks }: V2PlansViewProps) {
@@ -208,31 +135,8 @@ export function V2PlansView({ sessionName, tasks }: V2PlansViewProps) {
     });
   }
 
-  /**
-   * Toggle a task's status when a markdown checkbox is clicked. Find the
-   * matching task by line text equality (case-insensitive); if no match,
-   * silently no-op (the visual checkbox state still flips locally because
-   * the markdown re-renders from updated content).
-   */
-  async function handleCheckboxToggle(lineText: string, checked: boolean): Promise<void> {
-    const trimmed = lineText.trim().toLowerCase();
-    if (!trimmed) return;
-    const matched = tasks.find((t) => t.title.toLowerCase().trim() === trimmed);
-    if (!matched) return;
-    await updateTask(sessionName, matched.id, { status: checked ? "done" : "todo" }).catch(() => {
-      /* surface via toast in a future iteration */
-    });
-  }
-
-  const markdownComponents = useMemo(
-    () => buildMarkdownComponents(tasks, handleCheckboxToggle),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [tasks, sessionName],
-  );
-
   return (
-    <TooltipProvider delay={200}>
-      <div className="flex h-full min-h-0 flex-col bg-[var(--bg)] text-[var(--fg)]">
+    <div className="flex h-full min-h-0 flex-col bg-[var(--bg)] text-[var(--fg)]">
         <header
           data-testid="v2-plans-header"
           className="flex h-7 shrink-0 items-center gap-3 border-b border-[var(--border)] bg-[var(--bg-strong)] px-3 text-[11px] tabular-nums"
@@ -376,9 +280,9 @@ export function V2PlansView({ sessionName, tasks }: V2PlansViewProps) {
                 ) : selectedPlan ? (
                   <div
                     data-testid="v2-plans-markdown"
-                    className="prose-sm h-full max-w-3xl overflow-y-auto px-4 py-3"
+                    className="flex h-full min-h-0 flex-col overflow-hidden"
                   >
-                    <Markdown components={markdownComponents}>{planData.content}</Markdown>
+                    <PlansPanelBridge plan={selectedPlan} planData={planData} />
                   </div>
                 ) : (
                   <div className="flex h-full items-center justify-center text-[var(--dim)]">
@@ -423,110 +327,7 @@ export function V2PlansView({ sessionName, tasks }: V2PlansViewProps) {
           </Group>
         </div>
       </div>
-    </TooltipProvider>
   );
-}
-
-/**
- * react-markdown components map. Wraps text-level nodes with linkify, swaps
- * code blocks to TUI CodeBlock, and turns `- [ ]` checkboxes into clickable
- * inputs that toggle the matching task.
- */
-function buildMarkdownComponents(
-  tasks: Task[],
-  onCheckbox: (lineText: string, checked: boolean) => Promise<void>,
-) {
-  return {
-    p({ children }: { children?: ReactNode }) {
-      // react-markdown emits a <p> wrapper around every paragraph, including
-      // ones whose only content is a fenced code block (rendered by our
-      // `code` override as <CodeBlock>, which emits <pre>). <pre> inside <p>
-      // is invalid HTML and triggers a React hydration warning. Unwrap.
-      if (childrenContainBlockElement(children)) {
-        return <Fragment>{linkifyChildren(children, tasks)}</Fragment>;
-      }
-      return <p>{linkifyChildren(children, tasks)}</p>;
-    },
-    li({ children, ...rest }: { children?: ReactNode; checked?: boolean | null }) {
-      // react-markdown gfm passes `checked: boolean | null` for task list items.
-      const checked = (rest as { checked?: boolean | null }).checked;
-      if (typeof checked === "boolean") {
-        // Children typically begin with a hidden <input> followed by text.
-        // Extract the trailing text content as the task title candidate.
-        const flat = flattenText(children);
-        return (
-          <li className="list-none">
-            <label className="inline-flex cursor-pointer items-center gap-2">
-              <input
-                type="checkbox"
-                defaultChecked={checked}
-                onChange={(e: ChangeEvent<HTMLInputElement>) => {
-                  void onCheckbox(flat, e.target.checked);
-                }}
-                className="cursor-pointer accent-[var(--accent)]"
-              />
-              <span className={checked ? "text-[var(--dim)] line-through" : ""}>
-                {linkifyChildren(stripLeadingCheckbox(children), tasks)}
-              </span>
-            </label>
-          </li>
-        );
-      }
-      return <li>{linkifyChildren(children, tasks)}</li>;
-    },
-    code({
-      inline,
-      className,
-      children,
-    }: {
-      inline?: boolean;
-      className?: string;
-      children?: ReactNode;
-    }) {
-      if (inline) {
-        return <code className={className}>{children}</code>;
-      }
-      const text = typeof children === "string" ? children : flattenText(children);
-      return <CodeBlock>{text}</CodeBlock>;
-    },
-    a({ href, children }: { href?: string; children?: ReactNode }) {
-      return (
-        <a href={href} className="text-[var(--accent)] underline" target="_blank" rel="noreferrer">
-          {linkifyChildren(children, tasks)}
-        </a>
-      );
-    },
-    strong({ children }: { children?: ReactNode }) {
-      return <strong>{linkifyChildren(children, tasks)}</strong>;
-    },
-    em({ children }: { children?: ReactNode }) {
-      return <em>{linkifyChildren(children, tasks)}</em>;
-    },
-  };
-}
-
-function flattenText(node: ReactNode): string {
-  if (node == null || typeof node === "boolean") return "";
-  if (typeof node === "string" || typeof node === "number") return String(node);
-  if (Array.isArray(node)) return node.map(flattenText).join("");
-  if (typeof node === "object" && "props" in (node as { props?: { children?: ReactNode } })) {
-    return flattenText((node as { props?: { children?: ReactNode } }).props?.children);
-  }
-  return "";
-}
-
-function stripLeadingCheckbox(children: ReactNode): ReactNode {
-  // react-markdown renders the list-item input as the first child; we render
-  // our own input above, so drop any input descendants from the rendered text.
-  if (Array.isArray(children)) {
-    return children.filter((c) => {
-      if (typeof c === "object" && c !== null && "type" in (c as { type?: unknown })) {
-        return (c as { type?: unknown }).type !== "input";
-      }
-      return true;
-    });
-  }
-  return children;
 }
 
 function PlanHistory({ plan }: { plan: PlanSummary | null }) {

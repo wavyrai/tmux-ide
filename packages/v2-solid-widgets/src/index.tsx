@@ -353,6 +353,33 @@ export function mountPlansRail(
 }
 
 /**
+ * Mount the Plans panel — markdown body detail companion to
+ * [[mountPlansRail]]. Prop-driven: the React host fetches plan body +
+ * authorship via lib/api.ts and pushes the PlanData snapshot through
+ * `setOptions({ planData, plan })`. The widget renders the markdown
+ * body split by heading into authorship-bordered sections (AI/human
+ * border + author badge + relative timestamp).
+ */
+export function mountPlansPanel(
+  container: HTMLElement,
+  opts: PlansPanelMountOptions,
+): PlansPanelMountHandle {
+  const [options, setOpts] = createSignal(opts);
+  container.classList.add("v2-solid-widget");
+  const dispose = render(() => <PlansPanelView options={options} />, container);
+
+  return {
+    unmount() {
+      dispose();
+      container.classList.remove("v2-solid-widget");
+    },
+    setOptions(next) {
+      setOpts((current) => ({ ...current, ...next }));
+    },
+  };
+}
+
+/**
  * Mount the Tasks view — production replacement for the React TasksView
  * at dashboard/app/v2/project/[name]/ProjectV2Page.tsx (case "tasks").
  *

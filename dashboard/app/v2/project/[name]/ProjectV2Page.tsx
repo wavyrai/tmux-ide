@@ -29,7 +29,6 @@ import {
   type ProjectFileNode,
 } from "@/lib/api";
 import { KanbanBoardBridge } from "@/components/kanban-board-bridge";
-import { PlansPanel } from "@/components/PlansPanel";
 import { V2PlansView } from "../../_lib/V2PlansView";
 import { V2ChatView } from "../../_lib/V2ChatView";
 import { V2CostsIsland } from "../../_lib/V2CostsIsland";

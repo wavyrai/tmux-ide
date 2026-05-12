@@ -47,6 +47,54 @@ export interface PlansRailMountHandle {
   setOptions(next: Partial<PlansRailMountOptions>): void;
 }
 
+// ---------------------------------------------------------------------------
+// PlansPanel — prop-driven Solid port of dashboard/components/PlansPanel.tsx's
+// detail half. Companion to PlansRail (rail = list, panel = detail). The host
+// fetches plan body + authorship via lib/api.ts and pushes it through
+// `setOptions({ planData })`. The widget never fetches; it renders the
+// markdown body split by heading into authorship-bordered sections.
+// ---------------------------------------------------------------------------
+
+export interface PlansPanelAuthorshipSection {
+  author: string;
+  at: string;
+  charCount: number;
+}
+
+export interface PlansPanelAuthorship {
+  sections: Record<string, PlansPanelAuthorshipSection>;
+  stats: { aiPercent: number; humanPercent: number; totalChars: number };
+}
+
+export interface PlansPanelPlanSummary {
+  name: string;
+  path: string;
+  title: string;
+  status: "in-progress" | "pending" | "done" | "archived" | string;
+}
+
+export interface PlansPanelPlanData {
+  content: string;
+  authorship: PlansPanelAuthorship | null;
+  mtime?: number | null;
+}
+
+export interface PlansPanelMountOptions {
+  /** Plan metadata for the header strip (status pill, title). Null until selected. */
+  plan?: PlansPanelPlanSummary | null;
+  /** Markdown body + section authorship. Null while loading or none selected. */
+  planData?: PlansPanelPlanData | null;
+  /** Fired when the user clicks the [edit] toggle. Host owns the editor surface. */
+  onEdit?: () => void;
+  /** Fired when the user clicks [mark done]. Host issues the API mutation. */
+  onMarkDone?: () => void;
+}
+
+export interface PlansPanelMountHandle {
+  unmount(): void;
+  setOptions(next: Partial<PlansPanelMountOptions>): void;
+}
+
 export interface DiffsViewerMountOptions extends BaseMountOptions {
   /** Initial diff view style; the toolbar can override. */
   initialDiffStyle?: "unified" | "split";
