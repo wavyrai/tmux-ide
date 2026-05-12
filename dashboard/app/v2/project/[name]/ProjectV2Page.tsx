@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
+import dynamic from "next/dynamic";
 import { Panel, Group } from "react-resizable-panels";
 import { VSeparator, HSeparator } from "../../_lib/Separators";
 import { useSessionStream } from "@/lib/useSessionStream";
@@ -33,7 +34,24 @@ import {
 import { KanbanBoardBridge } from "@/components/kanban-board-bridge";
 import { SkillsViewBridge } from "@/components/skills-view-bridge";
 import { V2PlansView } from "../../_lib/V2PlansView";
-import { V2ChatView } from "../../_lib/V2ChatView";
+// V2ChatView is loaded dynamically with ssr:false. Reason: the chat
+// surface depends on `@tmux-ide/chat-solid`, whose compiled bundle
+// calls Solid's `delegateEvents(["click"], document)` at module init.
+// `document` defaults to `window.document`, so any SSR pass that
+// imports the chat surface crashes with `window is not defined`
+// before our components ever run. Lazy-loading client-only keeps
+// chat-solid out of the SSR module graph entirely.
+const V2ChatView = dynamic(
+  () => import("../../_lib/V2ChatView").then((m) => m.V2ChatView),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="flex h-full items-center justify-center text-[11px] text-[var(--dim)]">
+        Loading chat…
+      </div>
+    ),
+  },
+);
 import { V2CostsIsland } from "../../_lib/V2CostsIsland";
 import { V2ExplorerIsland } from "../../_lib/V2ExplorerIsland";
 import { V2ChangesIsland } from "../../_lib/V2ChangesIsland";
