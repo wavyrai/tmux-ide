@@ -13,7 +13,7 @@ import { useProjects } from "@/lib/projectStore";
 import type { SessionOverview } from "@/lib/types";
 import { useStoredLayout } from "./_lib/useStoredLayout";
 import { ThemeToggle } from "@/components/ThemeToggle";
-import { MainTabsBar } from "@/components/app-shell/MainTabsBar";
+import { MainTabsBar } from "@/components/MainTabsBar";
 import { openCommandPalette } from "@/components/CommandPalette";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui";
 import { TopBarActionButton, TopBarSeparator } from "./_lib/TopBarActionButton";

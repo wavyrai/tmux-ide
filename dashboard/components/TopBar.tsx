@@ -4,7 +4,7 @@ import { Command, Terminal } from "lucide-react";
 import { useState, useEffect } from "react";
 import { openCommandPalette } from "./CommandPalette";
 import { ThemeToggle } from "./ThemeToggle";
-import { ProjectSwitcher } from "@/components/app-shell";
+import { ProjectSwitcher } from "@/components/ProjectSwitcher";
 import { useLayoutState } from "@/lib/useLayoutState";
 
 export function TopBar() {

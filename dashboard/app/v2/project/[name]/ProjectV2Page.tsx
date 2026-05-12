@@ -39,7 +39,7 @@ import { V2MissionControlIsland } from "../../_lib/V2MissionControlIsland";
 import { DiffPanel } from "@/components/DiffPanel";
 import { DiffPanel as ChangesPanel } from "@/components/diffs";
 import { ThemeToggle } from "@/components/ThemeToggle";
-import { MainTabsBar } from "@/components/app-shell/MainTabsBar";
+import { MainTabsBar } from "@/components/MainTabsBar";
 import { FileTree, type FileTreeEntry } from "@/components/tui-tree/FileTree";
 import { ExplorerBridge } from "@/components/explorer-bridge";
 import { TasksViewBridge } from "@/components/tasks-view-bridge";
