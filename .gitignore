@@ -27,8 +27,9 @@ ide.yml
 # local authoring context
 context/
 
-# local planning artifacts
-plans/
+# local planning artifacts (repo-root only; do NOT match nested
+# directories like dashboard/components/plans/)
+/plans/
 
 # local task board
 .tasks/

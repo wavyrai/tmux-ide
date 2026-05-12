@@ -202,3 +202,38 @@ export async function fetchProjectEvents(opts: BaseMountOptions): Promise<Projec
   if (Array.isArray(data)) return data as ProjectEvent[];
   return (data as { events: ProjectEvent[] }).events ?? [];
 }
+
+// ---------------------------------------------------------------------------
+// Project plans (used by PlansRail)
+//
+// The plans surface is file-based (markdown under the project's plans/
+// directory) and is not yet routed through the typed contracts client —
+// the dashboard's `lib/api.ts` calls `/api/project/:name/plans` directly
+// via fetch(). Mirroring that shape here keeps the rail widget self-
+// contained until the route lands in @tmux-ide/contracts/routes.ts.
+// ---------------------------------------------------------------------------
+
+export type PlanStatus = "pending" | "in-progress" | "done" | "archived";
+
+export interface PlanSummary {
+  name: string;
+  path: string;
+  title: string;
+  status: PlanStatus;
+  effort: string | null;
+  owner?: string | null;
+  updated?: string | null;
+  completed: string | null;
+  tags?: string[];
+}
+
+export async function fetchProjectPlans(opts: BaseMountOptions): Promise<PlanSummary[]> {
+  const base = opts.apiBaseUrl ?? "";
+  const url = `${base}/api/project/${encodeURIComponent(opts.sessionName)}/plans`;
+  const headers: Record<string, string> = {};
+  if (opts.bearerToken) headers["Authorization"] = `Bearer ${opts.bearerToken}`;
+  const res = await fetch(url, { cache: "no-store", headers });
+  if (!res.ok) return [];
+  const data = (await res.json()) as { plans?: PlanSummary[] };
+  return data.plans ?? [];
+}

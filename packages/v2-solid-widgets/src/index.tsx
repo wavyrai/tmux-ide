@@ -4,11 +4,14 @@ import { ChangesView } from "./widgets/Changes";
 import { CostsView } from "./widgets/Costs";
 import { ExplorerView } from "./widgets/Explorer";
 import { MissionControlView } from "./widgets/MissionControl";
+import { PlansRailView } from "./widgets/PlansRail";
 import type {
   BaseMountOptions,
   ExplorerMountHandle,
   ExplorerMountOptions,
   MountHandle,
+  PlansRailMountHandle,
+  PlansRailMountOptions,
 } from "./types";
 
 export type {
@@ -16,6 +19,8 @@ export type {
   ExplorerMountHandle,
   ExplorerMountOptions,
   MountHandle,
+  PlansRailMountHandle,
+  PlansRailMountOptions,
 } from "./types";
 
 /**
@@ -99,6 +104,34 @@ export function mountMissionControl(container: HTMLElement, opts: BaseMountOptio
   const [options, setOpts] = createSignal(opts);
   container.classList.add("v2-solid-widget");
   const dispose = render(() => <MissionControlView options={options} />, container);
+
+  return {
+    unmount() {
+      dispose();
+      container.classList.remove("v2-solid-widget");
+    },
+    setOptions(next) {
+      setOpts((current) => ({ ...current, ...next }));
+    },
+  };
+}
+
+/**
+ * Mount the Plans rail — left-rail navigator for the plans surface.
+ * Backed by /api/project/:name/plans. Owns search / sort / collapsed-
+ * group state internally; the host owns the currently-selected file
+ * (push it via setOptions) and the row-activate + create callbacks.
+ *
+ * Polls every 5s. Visual + behavior parity with the React rail at
+ * dashboard/components/plans/PlansView.tsx → PlanListNavigator.
+ */
+export function mountPlansRail(
+  container: HTMLElement,
+  opts: PlansRailMountOptions,
+): PlansRailMountHandle {
+  const [options, setOpts] = createSignal(opts);
+  container.classList.add("v2-solid-widget");
+  const dispose = render(() => <PlansRailView options={options} />, container);
 
   return {
     unmount() {
