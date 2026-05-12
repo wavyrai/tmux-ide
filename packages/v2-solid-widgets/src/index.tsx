@@ -7,8 +7,10 @@ import { CostsDashboardView } from "./widgets/CostsDashboard";
 import { DiffsViewerView } from "./widgets/DiffsViewer";
 import { ExplorerView } from "./widgets/Explorer";
 import { ExplorerDashboardView } from "./widgets/ExplorerDashboard";
+import { KanbanBoardView } from "./widgets/KanbanBoard";
 import { MissionControlView } from "./widgets/MissionControl";
 import { MissionControlDashboardView } from "./widgets/MissionControlDashboard";
+import { PlansPanelView } from "./widgets/PlansPanel";
 import { PlansRailView } from "./widgets/PlansRail";
 import { TasksViewView } from "./widgets/TasksView";
 import type {
@@ -23,9 +25,13 @@ import type {
   ExplorerDashboardMountOptions,
   ExplorerMountHandle,
   ExplorerMountOptions,
+  KanbanBoardMountHandle,
+  KanbanBoardMountOptions,
   MissionControlDashboardMountHandle,
   MissionControlDashboardMountOptions,
   MountHandle,
+  PlansPanelMountHandle,
+  PlansPanelMountOptions,
   PlansRailMountHandle,
   PlansRailMountOptions,
   TasksViewMountHandle,
@@ -56,10 +62,21 @@ export type {
   ExplorerMountHandle,
   ExplorerMountOptions,
   ExplorerNode,
+  KanbanBoardMountHandle,
+  KanbanBoardMountOptions,
+  KanbanGroupBy,
+  KanbanTask,
+  KanbanTaskStatus,
   MissionControlDashboardMountHandle,
   MissionControlDashboardMountOptions,
   MissionControlDashboardSnapshot,
   MountHandle,
+  PlansPanelAuthorship,
+  PlansPanelAuthorshipSection,
+  PlansPanelMountHandle,
+  PlansPanelMountOptions,
+  PlansPanelPlanData,
+  PlansPanelPlanSummary,
   PlansRailMountHandle,
   PlansRailMountOptions,
   TasksTask,
@@ -356,6 +373,36 @@ export function mountTasksView(
   const [options, setOpts] = createSignal(opts);
   container.classList.add("v2-solid-widget");
   const dispose = render(() => <TasksViewView options={options} />, container);
+
+  return {
+    unmount() {
+      dispose();
+      container.classList.remove("v2-solid-widget");
+    },
+    setOptions(next) {
+      setOpts((current) => ({ ...current, ...next }));
+    },
+  };
+}
+
+/**
+ * Mount the Kanban board — production replacement for the React
+ * dashboard/components/kanban/KanbanBoard.tsx composite.
+ *
+ * Prop-driven: the React host owns the canonical task list (sourced from
+ * /api/project/:name) and pushes it through `setOptions({ tasks })`.
+ * Filter / group / search state lives inside the widget. Mutations leave
+ * the widget via `onTaskStatusChange(id, nextStatus)` — the host issues
+ * the API call (POST /api/project/:name/task/:id) and the next snapshot
+ * replaces the widget's optimistic patch.
+ */
+export function mountKanbanBoard(
+  container: HTMLElement,
+  opts: KanbanBoardMountOptions,
+): KanbanBoardMountHandle {
+  const [options, setOpts] = createSignal(opts);
+  container.classList.add("v2-solid-widget");
+  const dispose = render(() => <KanbanBoardView options={options} />, container);
 
   return {
     unmount() {

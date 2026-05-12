@@ -369,3 +369,62 @@ export interface TasksViewMountHandle {
   unmount(): void;
   setOptions(next: Partial<TasksViewMountOptions>): void;
 }
+
+// ---------------------------------------------------------------------------
+// KanbanBoard — prop-driven Solid port of dashboard/components/kanban/
+// KanbanBoard.tsx. Status-column board with task cards, filters, and
+// click-to-cycle status mutation. The React host owns the canonical task
+// list (sourced from /api/project/:name) and pushes it through
+// `setOptions({ tasks })`. The widget owns its own filter/group/search
+// state. Mutation flows out via onTaskStatusChange — the host issues the
+// API call (POST /api/project/:name/task/:id) and the next snapshot lands
+// back in via setOptions.
+// ---------------------------------------------------------------------------
+
+export type KanbanTaskStatus = "todo" | "in-progress" | "review" | "done";
+
+export type KanbanGroupBy = "status" | "priority";
+
+export interface KanbanTask {
+  id: string;
+  title: string;
+  status: KanbanTaskStatus | string;
+  /** 1 (highest) – 4 (lowest). Renders as a coloured dot. */
+  priority: number;
+  assignee?: string | null;
+  goal?: string | null;
+  milestone?: string | null;
+  depends_on?: ReadonlyArray<string>;
+  tags?: ReadonlyArray<string>;
+  description?: string | null;
+  created?: string;
+  updated?: string;
+}
+
+export interface KanbanBoardMountOptions {
+  /** Canonical task list. Updates flow in via setOptions. */
+  tasks?: ReadonlyArray<KanbanTask>;
+  /** Optional initial filter state. */
+  initialFilters?: {
+    priorities?: number[];
+    agents?: string[];
+    milestones?: string[];
+    search?: string;
+  };
+  /** Initial group-by mode; the toolbar can change it. Defaults to "status". */
+  initialGroupBy?: KanbanGroupBy;
+  /** Click handler for a card body — host typically opens a detail panel. */
+  onTaskClick?: (taskId: string) => void;
+  /** Fired when the user cycles the status dot on a card. Host issues the
+   *  API mutation; the next snapshot will replace the optimistic value. */
+  onTaskStatusChange?: (taskId: string, nextStatus: KanbanTaskStatus) => void;
+  /** Fired when the user clicks "+ New task". */
+  onCreateTask?: () => void;
+  /** Optional density override; defaults to "compact". */
+  density?: "compact" | "regular";
+}
+
+export interface KanbanBoardMountHandle {
+  unmount(): void;
+  setOptions(next: Partial<KanbanBoardMountOptions>): void;
+}

@@ -28,7 +28,7 @@ import {
   type MetricsData,
   type ProjectFileNode,
 } from "@/lib/api";
-import { KanbanBoard } from "@/components/kanban/KanbanBoard";
+import { KanbanBoardBridge } from "@/components/kanban-board-bridge";
 import { PlansPanel } from "@/components/PlansPanel";
 import { V2PlansView } from "../../_lib/V2PlansView";
 import { V2ChatView } from "../../_lib/V2ChatView";
@@ -658,12 +658,10 @@ function MainContent(props: MainContentProps) {
     case "kanban":
       return (
         <div className="flex h-full min-h-0 flex-col overflow-hidden">
-          <KanbanBoard
+          <KanbanBoardBridge
             sessionName={props.projectName}
             tasks={props.tasks}
-            agents={props.agents}
             goals={props.goals}
-            events={props.events}
           />
         </div>
       );
