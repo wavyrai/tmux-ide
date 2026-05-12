@@ -319,3 +319,71 @@ Estimated total landing: **1–1.5 days with two agents**, single-day for one ca
 3. **`KanbanBoard` Solid port**: not in this sweep. Tracked for a future U7 if the user wants kanban-on-Solid before unify completes.
 4. **`@tmux-ide/v2-solid-widgets` package surface**: after U2 the package becomes the canonical UI source. Consider exporting a typed `mountByName(name, container, opts)` switchboard so the dashboard's view router can pull from one entry — out of scope here, but mention as a follow-up.
 5. **Test churn**: many `__tests__/` directories retire alongside their components. `pnpm test` should drop file/test counts significantly; document the new baseline in U6.
+
+---
+
+## Final tally (U6)
+
+The unify sweep landed in **8 commits** between U1 and U6:
+
+```
+6d348d5 refactor(unify): retire (shell)/ route group + app-shell components (U1)
+63a50ed fix(dashboard): drop dead useOldChat setting (chat v1 retired)
+150a3d1 refactor(unify): retire chat v1 surfaces (U3)
+871cb0d refactor(unify): delete 7 React widget duplicates + drop ?xxx=solid flags (U2)
+495de6c chore(licensing): drop craft-agents attribution (deps retired in U1) (U4)
+d93b7dd refactor(unify): orphan cleanup — delete unused views/navigators/bridges (U5)
+6b9c485 fix(unify): release-gate fixes for U6 verification
+8fc36cb fix(unify): clear residual lint errors for U6 release gate
+```
+
+**Delta vs the pre-sweep base (6d348d5^):**
+
+| Metric | Count |
+| --- | ---: |
+| Files changed | 148 |
+| Files deleted | 117 |
+| Files renamed | 6 |
+| Files modified | 25 |
+| Files added | 0 |
+| Lines added | 126 |
+| Lines deleted | 14,674 |
+| **Net** | **−14,548** |
+
+**Retired areas** (every one of these was net-deleted, not relocated):
+
+- `dashboard/app/(shell)/**` — entire route group (Phase-Z stub)
+- `dashboard/components/app-shell/**` — AppShell + MainTabContent + PanelStack + NavigatorSlot + 5 tests
+- `dashboard/components/navigators/**` — 8 nav shims (U5)
+- `dashboard/components/mission/**` except `MissionTreeNavigator.tsx` + `index.ts` — 9 React composite leaves + 7 tests
+- `dashboard/components/{metrics,activity,diffs,tui-tree,plans}` content — React widget duplicates of the 7 Solid silos
+- `dashboard/components/{DiffPanel,DiffViewer,ActivityFeed,AppSidebar,WorkspaceUrlSync}.tsx` — root orphans
+- `dashboard/components/chat/` — chat v1 surface (ChatTabPanel + NewChatPicker + ProviderBadge + types + tests)
+- `dashboard/components/views/{ActivityView,DiffsView,MetricsView,MissionView,PlansView,...}.tsx` — orphan shims
+- `dashboard/lib/{chatVersion,newChatPickerStore,planMarkdown,planMarkdown.test}.ts` — orphan helpers
+- Inline `TasksView` / `TaskDetailCard` / `TaskFormCard` / `handleRowClick` in `ProjectV2Page.tsx` (~440 lines)
+- `licenses/CRAFT-AGENTS-NOTICE` (U4) — attribution dropped with the underlying code
+
+**Feature-flag cleanup** (U2): all 7 `?<feature>=solid` query-flag branches removed (`tasks`, `explorer`, `plans`, `diffs`, `costs`, `missionControl`, `activity`). The Solid silos are the only render path.
+
+**Test count delta** (best estimate from removed test files): **−21** test files retired alongside their components.
+
+**Release gate state** at U6 close:
+
+- ✅ `pnpm --filter @tmux-ide/daemon lint` — clean.
+- ✅ `pnpm --filter @tmux-ide/v2-solid-widgets lint` — clean after U6 fix-ups.
+- ✅ `pnpm --filter @tmux-ide/chat-solid lint` — clean.
+- ✅ `pnpm --filter @tmux-ide/contracts lint` — clean.
+- ✅ Root `pnpm lint` — clean (silo-mount check accepts kebab-case bridges).
+- ⚠️ `pnpm --filter @tmux-ide/dashboard lint` — **12 pre-existing errors** in `dashboard/components/tui/modules/hotkeys/*` + `tui/examples/MessagesInterface.tsx`. **Not unify-caused** (predate the design PR series). Tracked since design PR 1; suitable as a follow-up cleanup.
+- ⚠️ `pnpm --filter @tmux-ide/dashboard exec next build` — **6 pre-existing errors** at `dashboard/app/v2/config/page.tsx:11` (`fetchProjectConfig` export missing from `@/lib/api`). **Not unify-caused** (pane 3's `lib/api.ts` work). Tracked as a known regression at the V2 config surface.
+- ❌ Full `pnpm check` exits non-zero on the dashboard pre-existing errors above. Per U6 brief: "If pre-existing failure unrelated to unify, don't try to fix it — note it and let it stand."
+
+**Smoke-test status**: not executed in this U6 run because no dev server was available in the agent's environment. Smoke URLs for the lead to verify:
+
+- `http://localhost:3000/v2/project/<name>` (project shell)
+- Activity-bar views: files (Explorer Solid), search, diffs (DiffsViewer Solid), plans (PlansRail Solid + React body), tasks (TasksView Solid), mission (MissionControl Solid), chat (chat-v2), terminal
+- Each should render without console errors. `?<feature>=solid` query overrides are gone — Solid is the default everywhere.
+
+**Branch state**: `feat/v2.5.0`, ahead of `origin/feat/v2.5.0` by N commits (lead to push). U6 does NOT push.
+
