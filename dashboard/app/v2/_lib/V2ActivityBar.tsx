@@ -1,5 +1,19 @@
 "use client";
 
+import {
+  Files,
+  Search,
+  GitCompare,
+  ListTodo,
+  CheckSquare,
+  Target,
+  MessagesSquare,
+  Terminal as TerminalIcon,
+  UserCircle,
+  Settings as SettingsIcon,
+  type LucideIcon,
+} from "lucide-react";
+
 import { openCommandPalette } from "@/components/CommandPalette";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui";
 
@@ -26,7 +40,7 @@ export type ActivityBarViewId =
 
 interface ActivityBarItem {
   id: ActivityBarViewId | "search" | "settings" | "account";
-  glyph: string;
+  Icon: LucideIcon;
   label: string;
   /** Tooltip text — defaults to label when omitted. */
   tooltip?: string;
@@ -36,8 +50,6 @@ interface ActivityBarItem {
   /** When provided, render as the active item if it matches the current
    *  page view. */
   view?: ActivityBarViewId;
-  /** Slightly larger glyph render. */
-  glyphSize?: number;
 }
 
 interface V2ActivityBarProps {
@@ -52,83 +64,71 @@ export function V2ActivityBar({ view, onView }: V2ActivityBarProps) {
     {
       id: "files",
       view: "files",
-      glyph: "▤",
+      Icon: Files,
       label: "Files",
-      tooltip: "Files",
       onClick: () => onView("files"),
     },
     {
       id: "search",
-      glyph: "⌕",
+      Icon: Search,
       label: "Search",
       tooltip: "Search · ⌘K",
       onClick: openCommandPalette,
-      glyphSize: 16,
     },
     {
       id: "diffs",
       view: "diffs",
-      glyph: "⎇",
+      Icon: GitCompare,
       label: "Diffs",
-      tooltip: "Diffs",
       onClick: () => onView("diffs"),
     },
     {
       id: "plans",
       view: "plans",
-      glyph: "▦",
+      Icon: ListTodo,
       label: "Plans",
-      tooltip: "Plans",
       onClick: () => onView("plans"),
     },
     {
       id: "tasks",
       view: "tasks",
-      glyph: "≡",
+      Icon: CheckSquare,
       label: "Tasks",
-      tooltip: "Tasks",
       onClick: () => onView("tasks"),
-      glyphSize: 16,
     },
     {
       id: "mission",
       view: "mission",
-      glyph: "◆",
+      Icon: Target,
       label: "Mission",
-      tooltip: "Mission",
       onClick: () => onView("mission"),
     },
     {
       id: "chat",
       view: "chat",
-      glyph: "✎",
+      Icon: MessagesSquare,
       label: "Chat",
-      tooltip: "Chat",
       onClick: () => onView("chat"),
     },
     {
       id: "terminal",
       view: "terminal",
-      glyph: ">_",
+      Icon: TerminalIcon,
       label: "Terminal",
-      tooltip: "Terminal",
       onClick: () => onView("terminal"),
-      glyphSize: 11,
     },
   ];
 
   const bottom: ActivityBarItem[] = [
     {
       id: "account",
-      glyph: "◉",
+      Icon: UserCircle,
       label: "Account",
-      tooltip: "Account",
     },
     {
       id: "settings",
-      glyph: "⚙",
+      Icon: SettingsIcon,
       label: "Settings",
-      tooltip: "Settings",
     },
   ];
 
@@ -137,7 +137,7 @@ export function V2ActivityBar({ view, onView }: V2ActivityBarProps) {
       <nav
         aria-label="Activity bar"
         data-testid="v2-activity-bar"
-        className="flex h-full w-12 shrink-0 flex-col border-r border-[var(--border)] bg-[var(--surface)]"
+        className="flex h-full w-12 shrink-0 flex-col border-r border-[var(--border)] bg-[var(--bg-weak)]"
       >
         <div className="flex flex-col">
           {top.map((item) => (
@@ -178,9 +178,7 @@ function ActivityBarButton({ item, active }: { item: ActivityBarItem; active: bo
           className="absolute left-0 top-1 bottom-1 w-[2px] bg-[var(--accent)]"
         />
       )}
-      <span aria-hidden="true" style={{ fontSize: item.glyphSize ?? 14, lineHeight: 1 }}>
-        {item.glyph}
-      </span>
+      <item.Icon size={18} strokeWidth={1.75} aria-hidden="true" />
     </button>
   );
 
