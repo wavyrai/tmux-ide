@@ -5,22 +5,22 @@ import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-import { launch } from "../src/launch.ts";
-import { init } from "../src/init.ts";
-import { stop } from "../src/stop.ts";
-import { attach } from "../src/attach.ts";
-import { ls } from "../src/ls.ts";
-import { doctor } from "../src/doctor.ts";
-import { status } from "../src/status.ts";
-import { inspect } from "../src/inspect.ts";
-import { validate } from "../src/validate.ts";
-import { detect } from "../src/detect.ts";
-import { config } from "../src/config.ts";
-import { restart } from "../src/restart.ts";
-import { taskCommand } from "../src/task.ts";
-import { send } from "../src/send.ts";
-import { IdeError } from "../src/lib/errors.ts";
-import { printCommandError } from "../src/lib/output.ts";
+import { launch } from "../packages/daemon/src/launch.ts";
+import { init } from "../packages/daemon/src/init.ts";
+import { stop } from "../packages/daemon/src/stop.ts";
+import { attach } from "../packages/daemon/src/attach.ts";
+import { ls } from "../packages/daemon/src/ls.ts";
+import { doctor } from "../packages/daemon/src/doctor.ts";
+import { status } from "../packages/daemon/src/status.ts";
+import { inspect } from "../packages/daemon/src/inspect.ts";
+import { validate } from "../packages/daemon/src/validate.ts";
+import { detect } from "../packages/daemon/src/detect.ts";
+import { config } from "../packages/daemon/src/config.ts";
+import { restart } from "../packages/daemon/src/restart.ts";
+import { taskCommand } from "../packages/daemon/src/task.ts";
+import { send } from "../packages/daemon/src/send.ts";
+import { IdeError } from "../packages/daemon/src/lib/errors.ts";
+import { printCommandError } from "../packages/daemon/src/lib/output.ts";
 
 const { positionals, values } = parseArgs({
   allowPositionals: true,
@@ -318,7 +318,7 @@ try {
         action = "disable-team";
         configArgs = [];
       } else if (sub === "edit") {
-        const scriptPath = resolve(__dirname, "../src/widgets/setup/index.tsx");
+        const scriptPath = resolve(__dirname, "../packages/daemon/src/widgets/setup/index.tsx");
         execFileSync("bun", [scriptPath, "--dir=" + resolve(startTargetDir || "."), "--edit"], {
           stdio: "inherit",
         });
@@ -415,7 +415,7 @@ try {
     }
 
     case "plan": {
-      const { planCommand } = await import("../src/plan.ts");
+      const { planCommand } = await import("../packages/daemon/src/plan.ts");
       await planCommand(null, {
         json,
         sub: positionals[1],
@@ -426,7 +426,7 @@ try {
     }
 
     case "skill": {
-      const { skillCommand } = await import("../src/skill.ts");
+      const { skillCommand } = await import("../packages/daemon/src/skill.ts");
       await skillCommand(null, {
         json,
         sub: positionals[1],
@@ -436,7 +436,7 @@ try {
     }
 
     case "metrics": {
-      const { metricsCommand } = await import("../src/metrics-cli.ts");
+      const { metricsCommand } = await import("../packages/daemon/src/metrics-cli.ts");
       await metricsCommand(null, {
         json,
         sub: positionals[1],
@@ -445,7 +445,7 @@ try {
     }
 
     case "setup": {
-      const scriptPath = resolve(__dirname, "../src/widgets/setup/index.tsx");
+      const scriptPath = resolve(__dirname, "../packages/daemon/src/widgets/setup/index.tsx");
       const setupArgs = [scriptPath, "--dir=" + resolve(startTargetDir || ".")];
       if (positionals[1] === "--edit" || values.edit) setupArgs.push("--edit");
       if (positionals[1] === "--wizard" || values.wizard) setupArgs.push("--wizard");
@@ -466,27 +466,27 @@ try {
     }
 
     case "dispatch": {
-      const { dispatch: dispatchCmd } = await import("../src/dispatch.ts");
+      const { dispatch: dispatchCmd } = await import("../packages/daemon/src/dispatch.ts");
       const taskId = positionals[1];
       await dispatchCmd(null, { taskId, json });
       break;
     }
 
     case "notify": {
-      const { notify: notifyCmd } = await import("../src/notify.ts");
+      const { notify: notifyCmd } = await import("../packages/daemon/src/notify.ts");
       const notifyMessage = positionals.slice(1).join(" ");
       await notifyCmd(null, { message: notifyMessage || undefined, json });
       break;
     }
 
     case "orchestrator": {
-      const { orchestratorStatus } = await import("../src/orchestrator-status.ts");
+      const { orchestratorStatus } = await import("../packages/daemon/src/orchestrator-status.ts");
       await orchestratorStatus(positionals[1], { json });
       break;
     }
 
     case "settings": {
-      const scriptPath = resolve(__dirname, "../src/widgets/config/index.tsx");
+      const scriptPath = resolve(__dirname, "../packages/daemon/src/widgets/config/index.tsx");
       execFileSync("bun", [scriptPath, "--dir=" + resolve(startTargetDir || ".")], {
         stdio: "inherit",
       });
@@ -494,7 +494,7 @@ try {
     }
 
     case "tunnel": {
-      const { tunnelCommand } = await import("../src/tunnel.ts");
+      const { tunnelCommand } = await import("../packages/daemon/src/tunnel.ts");
       await tunnelCommand(null, {
         json,
         sub: positionals[1],
@@ -510,7 +510,7 @@ try {
     }
 
     case "remote": {
-      const { remoteCommand } = await import("../src/remote.ts");
+      const { remoteCommand } = await import("../packages/daemon/src/remote.ts");
       await remoteCommand(null, {
         json,
         sub: positionals[1],
@@ -524,19 +524,19 @@ try {
     }
 
     case "command-center": {
-      const { startCommandCenter } = await import("../src/command-center/index.ts");
+      const { startCommandCenter } = await import("../packages/daemon/src/command-center/index.ts");
       await startCommandCenter({ port: parseInt(values.port ?? "4000") });
       break;
     }
 
     case "server": {
       if ("bun" in process.versions) {
-        const scriptPath = resolve(__dirname, "../src/server/standalone.ts");
+        const scriptPath = resolve(__dirname, "../packages/daemon/src/server/standalone.ts");
         const serverArgs = ["--experimental-strip-types", scriptPath];
         if (values.port) serverArgs.push("--port", values.port);
         execFileSync("node", serverArgs, { stdio: "inherit" });
       } else {
-        const { start } = await import("../src/server/index.ts");
+        const { start } = await import("../packages/daemon/src/server/index.ts");
         await start(values.port ? parseInt(values.port, 10) : undefined);
       }
       break;
@@ -558,9 +558,7 @@ try {
     case "checkpoint": {
       // Reuse the canonical command in packages/daemon to avoid duplicating
       // the engine alongside the unfinished src/ → packages/daemon fold.
-      const { checkpointCommand } = await import(
-        "../packages/daemon/src/checkpoint.ts"
-      );
+      const { checkpointCommand } = await import("../packages/daemon/src/checkpoint.ts");
       await checkpointCommand({
         sub: positionals[1],
         args: positionals.slice(2),

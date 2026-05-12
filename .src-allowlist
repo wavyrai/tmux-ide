@@ -6,4 +6,10 @@
 # Keep this file small and shrinking. Every line is a deletion target.
 # When you remove a path here, also delete the file from src/.
 #
-# (currently empty — repo-root src/ is fully retired as of T041)
+# The src/ → packages/daemon/src/ fold completed in F1..F5 (2026-05-12).
+# Only the two CLI-edge test fixtures remain — they spawn bin/cli.js as a
+# subprocess and resolve it via __dirname/../bin/cli.js, so they live at
+# repo-root src/ rather than under the daemon package. Tracked for future
+# cleanup once the daemon publishes a bin entry.
+src/cli.test.ts
+src/integration.test.ts

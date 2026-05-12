@@ -10,12 +10,7 @@
  */
 import { IdeError } from "./lib/errors.ts";
 
-type SessionRoleArg =
-  | "lead"
-  | "teammate"
-  | "planner"
-  | "validator"
-  | "researcher";
+type SessionRoleArg = "lead" | "teammate" | "planner" | "validator" | "researcher";
 
 const ROLES: ReadonlySet<SessionRoleArg> = new Set([
   "lead",
@@ -73,15 +68,13 @@ export async function chatCommand(opts: ChatCommandArgs): Promise<void> {
   }
   const role = opts.role;
   if (role && !ROLES.has(role as SessionRoleArg)) {
-    throw new IdeError(
-      `Unknown --role: ${role}\nKnown roles: ${[...ROLES].join(", ")}`,
-      { code: "USAGE", exitCode: 1 },
-    );
+    throw new IdeError(`Unknown --role: ${role}\nKnown roles: ${[...ROLES].join(", ")}`, {
+      code: "USAGE",
+      exitCode: 1,
+    });
   }
 
-  const { getDefaultThreadManager, getDefaultThreadStore } = await import(
-    "./chat/defaults.ts"
-  );
+  const { getDefaultThreadManager, getDefaultThreadStore } = await import("./chat/defaults.ts");
   const store = getDefaultThreadStore();
   const thread = await store.get(threadId);
   if (!thread) {
@@ -117,14 +110,11 @@ async function chatEventsSubcommand(opts: ChatCommandArgs): Promise<void> {
   const threadId = opts.args[0];
   if (!threadId) {
     throw new IdeError(
-      `chat events requires a thread id\n` +
-        `Usage: tmux-ide chat events <thread-id> [--json]`,
+      `chat events requires a thread id\n` + `Usage: tmux-ide chat events <thread-id> [--json]`,
       { code: "USAGE", exitCode: 1 },
     );
   }
-  const { getDefaultChatEventStore } = await import(
-    "./chat/defaults.ts"
-  );
+  const { getDefaultChatEventStore } = await import("./chat/defaults.ts");
   const store = getDefaultChatEventStore();
   const events = store.readByStream(threadId);
   if (opts.json) {
