@@ -219,3 +219,93 @@ describe("ThreadView", () => {
     expect(screen.getByTestId("thread-view-usage").textContent).toContain("200");
   });
 });
+
+// ---------------------------------------------------------------------------
+// T101a — TurnDiff panel rendering through ThreadView → TurnBlock
+// ---------------------------------------------------------------------------
+
+import type { TurnDiffEntry } from "@/lib/api";
+import { fireEvent } from "@testing-library/react";
+
+function diffEntry(turnId: string, fileIndex: number, overrides: Partial<TurnDiffEntry> = {}): TurnDiffEntry {
+  return {
+    threadId: "thr_a",
+    turnId,
+    fileIndex,
+    path: `src/file-${fileIndex}.ts`,
+    status: "modified",
+    additions: 5,
+    deletions: 2,
+    rawKind: "modified",
+    ...overrides,
+  };
+}
+
+describe("ThreadView × TurnDiff (T101a)", () => {
+  it("renders the TurnDiffPanel below a Turn when diffsByTurn has entries", () => {
+    render(
+      <ThreadView
+        thread={THREAD}
+        activities={[activity("a1", "t1", { summary: "hello" })]}
+        turns={{ t1: turn("t1", { state: "completed", completedAt: "2026-05-11T10:01:00Z" }) }}
+        checkpointsByTurn={{}}
+        plansById={{}}
+        diffsByTurn={{
+          t1: [
+            diffEntry("t1", 0, { path: "src/foo.ts", status: "added", additions: 12, deletions: 0 }),
+            diffEntry("t1", 1, { path: "src/bar.ts", status: "deleted", additions: 0, deletions: 8 }),
+          ],
+        }}
+        onSubmit={() => {}}
+      />,
+    );
+    const panel = screen.getByTestId("turn-diff-panel");
+    expect(panel).toBeTruthy();
+    expect(panel.getAttribute("data-files")).toBe("2");
+    expect(screen.getByTestId("turn-diff-additions").textContent).toBe("+12");
+    expect(screen.getByTestId("turn-diff-deletions").textContent).toBe("−8");
+  });
+
+  it("does not render the TurnDiffPanel for turns without diff entries", () => {
+    render(
+      <ThreadView
+        thread={THREAD}
+        activities={[activity("a1", "t1", { summary: "hello" })]}
+        turns={{ t1: turn("t1") }}
+        checkpointsByTurn={{}}
+        plansById={{}}
+        diffsByTurn={{}}
+        onSubmit={() => {}}
+      />,
+    );
+    expect(screen.queryByTestId("turn-diff-panel")).toBeNull();
+  });
+
+  it("expands the diff list when the summary button is clicked", () => {
+    render(
+      <ThreadView
+        thread={THREAD}
+        activities={[activity("a1", "t1", { summary: "hello" })]}
+        turns={{ t1: turn("t1", { state: "completed" }) }}
+        checkpointsByTurn={{}}
+        plansById={{}}
+        diffsByTurn={{
+          t1: [
+            diffEntry("t1", 0, { path: "src/foo.ts" }),
+            diffEntry("t1", 1, { path: "src/bar.ts" }),
+          ],
+        }}
+        onSubmit={() => {}}
+      />,
+    );
+    expect(screen.queryByTestId("turn-diff-list")).toBeNull();
+    const panel = screen.getByTestId("turn-diff-panel");
+    const toggle = panel.querySelector("button");
+    expect(toggle).toBeTruthy();
+    fireEvent.click(toggle!);
+    const list = screen.getByTestId("turn-diff-list");
+    expect(list).toBeTruthy();
+    expect(list.textContent).toContain("src/foo.ts");
+    expect(list.textContent).toContain("src/bar.ts");
+  });
+});

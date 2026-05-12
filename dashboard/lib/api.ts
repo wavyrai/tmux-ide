@@ -1079,3 +1079,70 @@ export async function fetchWidgetSpawn(
   }
   return (await res.json()) as WidgetSpawnSpec;
 }
+
+// ---------------------------------------------------------------------------
+// TurnDiff projection client (T101a) — talks to /api/project/:name/turn-diffs/*
+// on the daemon. Used by chat-v2 to render the "changed files" panel for
+// each turn that produced a checkpoint.
+// ---------------------------------------------------------------------------
+
+/** Mirror of the daemon's TurnDiffEntry — see packages/daemon/src/persistence/projections/turn-diff-projection.ts. */
+export interface TurnDiffEntry {
+  threadId: string;
+  turnId: string;
+  fileIndex: number;
+  path: string;
+  status: "added" | "modified" | "deleted" | "renamed";
+  additions: number;
+  deletions: number;
+  rawKind: string;
+}
+
+export interface TurnDiffAggregate {
+  totalAdditions: number;
+  totalDeletions: number;
+  filesChanged: number;
+}
+
+export async function fetchTurnDiffs(
+  name: string,
+  turnId: string,
+): Promise<TurnDiffEntry[]> {
+  const res = await fetch(
+    `${API_BASE}/api/project/${encodeURIComponent(name)}/turn-diffs/${encodeURIComponent(turnId)}`,
+    { cache: "no-store" },
+  );
+  if (!res.ok) return [];
+  const body = (await res.json()) as { turnId: string; entries: TurnDiffEntry[] };
+  return body.entries;
+}
+
+export async function fetchThreadTurnDiffs(
+  name: string,
+  threadId: string,
+): Promise<Record<string, TurnDiffEntry[]>> {
+  const params = new URLSearchParams({ threadId });
+  const res = await fetch(
+    `${API_BASE}/api/project/${encodeURIComponent(name)}/turn-diffs?${params.toString()}`,
+    { cache: "no-store" },
+  );
+  if (!res.ok) return {};
+  const body = (await res.json()) as {
+    threadId: string;
+    byTurn: Record<string, TurnDiffEntry[]>;
+  };
+  return body.byTurn;
+}
+
+export async function fetchThreadDiffAggregate(
+  name: string,
+  threadId: string,
+): Promise<TurnDiffAggregate> {
+  const params = new URLSearchParams({ threadId });
+  const res = await fetch(
+    `${API_BASE}/api/project/${encodeURIComponent(name)}/turn-diffs/aggregate?${params.toString()}`,
+    { cache: "no-store" },
+  );
+  if (!res.ok) return { totalAdditions: 0, totalDeletions: 0, filesChanged: 0 };
+  return (await res.json()) as TurnDiffAggregate;
+}

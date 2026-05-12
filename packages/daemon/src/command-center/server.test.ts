@@ -1059,3 +1059,153 @@ describe("POST /api/project/:name/mission/plan-complete", () => {
     expect(body.mission.milestones[0]!.status).toBe("active");
   });
 });
+
+// ---------------------------------------------------------------------------
+// T101a — TurnDiff REST endpoints
+// ---------------------------------------------------------------------------
+
+describe("GET /api/project/:name/turn-diffs/*", () => {
+  /** Minimal TurnDiffProjection double — just the read API the routes use. */
+  function makeFakeTurnDiffProjection() {
+    return {
+      start: () => undefined,
+      stop: () => undefined,
+      cursor: () => 0,
+      listForTurn(turnId: string) {
+        if (turnId === "turn-1") {
+          return [
+            {
+              threadId: "thr-1",
+              turnId: "turn-1",
+              fileIndex: 0,
+              path: "src/a.ts",
+              status: "modified" as const,
+              additions: 5,
+              deletions: 2,
+              rawKind: "modified",
+            },
+            {
+              threadId: "thr-1",
+              turnId: "turn-1",
+              fileIndex: 1,
+              path: "src/b.ts",
+              status: "added" as const,
+              additions: 12,
+              deletions: 0,
+              rawKind: "added",
+            },
+          ];
+        }
+        return [];
+      },
+      listForThread(threadId: string) {
+        if (threadId === "thr-1") {
+          return {
+            "turn-1": this.listForTurn("turn-1"),
+            "turn-2": [
+              {
+                threadId: "thr-1",
+                turnId: "turn-2",
+                fileIndex: 0,
+                path: "src/c.ts",
+                status: "deleted" as const,
+                additions: 0,
+                deletions: 8,
+                rawKind: "deleted",
+              },
+            ],
+          };
+        }
+        return {};
+      },
+      aggregateForThread(threadId: string) {
+        if (threadId === "thr-1") {
+          return { totalAdditions: 17, totalDeletions: 10, filesChanged: 3 };
+        }
+        return { totalAdditions: 0, totalDeletions: 0, filesChanged: 0 };
+      },
+    };
+  }
+
+  it("returns entries for a known turn", async () => {
+    const app = createApp({ turnDiffProjection: makeFakeTurnDiffProjection() });
+    const res = await app.request("/api/project/test-project/turn-diffs/turn-1");
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      turnId: string;
+      entries: Array<{ path: string; status: string; additions: number; deletions: number }>;
+    };
+    expect(body.turnId).toBe("turn-1");
+    expect(body.entries).toHaveLength(2);
+    expect(body.entries[0]!.path).toBe("src/a.ts");
+    expect(body.entries[0]!.additions).toBe(5);
+    expect(body.entries[1]!.status).toBe("added");
+  });
+
+  it("returns empty entries for an unknown turn (200, not 404)", async () => {
+    const app = createApp({ turnDiffProjection: makeFakeTurnDiffProjection() });
+    const res = await app.request("/api/project/test-project/turn-diffs/no-such-turn");
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ turnId: "no-such-turn", entries: [] });
+  });
+
+  it("404s for an unknown project", async () => {
+    const app = createApp({ turnDiffProjection: makeFakeTurnDiffProjection() });
+    const res = await app.request("/api/project/missing-project/turn-diffs/turn-1");
+    expect(res.status).toBe(404);
+  });
+
+  it("listForThread groups every turn under the right turnId", async () => {
+    const app = createApp({ turnDiffProjection: makeFakeTurnDiffProjection() });
+    const res = await app.request("/api/project/test-project/turn-diffs?threadId=thr-1");
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      threadId: string;
+      byTurn: Record<string, Array<{ path: string }>>;
+    };
+    expect(body.threadId).toBe("thr-1");
+    expect(Object.keys(body.byTurn).sort()).toEqual(["turn-1", "turn-2"]);
+    expect(body.byTurn["turn-1"]!.map((e) => e.path)).toEqual(["src/a.ts", "src/b.ts"]);
+    expect(body.byTurn["turn-2"]!.map((e) => e.path)).toEqual(["src/c.ts"]);
+  });
+
+  it("400s on listForThread without threadId", async () => {
+    const app = createApp({ turnDiffProjection: makeFakeTurnDiffProjection() });
+    const res = await app.request("/api/project/test-project/turn-diffs");
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toMatch(/threadId/);
+  });
+
+  it("aggregate route sums additions/deletions/files across the thread", async () => {
+    const app = createApp({ turnDiffProjection: makeFakeTurnDiffProjection() });
+    const res = await app.request(
+      "/api/project/test-project/turn-diffs/aggregate?threadId=thr-1",
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({
+      totalAdditions: 17,
+      totalDeletions: 10,
+      filesChanged: 3,
+    });
+  });
+
+  it("aggregate returns zeros for an unknown thread", async () => {
+    const app = createApp({ turnDiffProjection: makeFakeTurnDiffProjection() });
+    const res = await app.request(
+      "/api/project/test-project/turn-diffs/aggregate?threadId=ghost",
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({
+      totalAdditions: 0,
+      totalDeletions: 0,
+      filesChanged: 0,
+    });
+  });
+
+  it("aggregate 400s without threadId", async () => {
+    const app = createApp({ turnDiffProjection: makeFakeTurnDiffProjection() });
+    const res = await app.request("/api/project/test-project/turn-diffs/aggregate");
+    expect(res.status).toBe(400);
+  });
+});

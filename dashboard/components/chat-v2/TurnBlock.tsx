@@ -7,8 +7,10 @@
 import { ActivityRow } from "./ActivityRow";
 import { CheckpointChip } from "./CheckpointChip";
 import { PlanCardStub } from "./PlanCardStub";
+import { TurnDiffPanel } from "./TurnDiffPanel";
 import type { TurnGroup } from "./turnGrouping";
 import type { ActivityView, CheckpointSummaryView, ProposedPlanView } from "./useChatStore";
+import type { TurnDiffEntry } from "@/lib/api";
 
 export interface TurnBlockProps {
   group: TurnGroup;
@@ -16,6 +18,13 @@ export interface TurnBlockProps {
   plansById?: Record<string, ProposedPlanView>;
   onRevert?: (checkpointRef: string) => void;
   threadId?: string;
+  /**
+   * Per-turn file diffs (T101a). When provided, the TurnDiffPanel
+   * renders at the bottom of the block as a collapsible summary. Empty
+   * arrays render nothing — turns that produced no checkpoint stay
+   * visually identical to pre-T101a.
+   */
+  diffEntries?: ReadonlyArray<TurnDiffEntry>;
   onApprovePlan?: (input: { threadId: string; planId: string }) => Promise<void> | void;
   onRejectPlan?: (input: {
     threadId: string;
@@ -52,6 +61,7 @@ export function TurnBlock({
   plansById,
   onRevert,
   threadId,
+  diffEntries,
   onApprovePlan,
   onRejectPlan,
 }: TurnBlockProps) {
@@ -112,6 +122,7 @@ export function TurnBlock({
           return <ActivityRow key={a.id} activity={a} />;
         })}
       </div>
+      {diffEntries && diffEntries.length > 0 ? <TurnDiffPanel entries={diffEntries} /> : null}
     </section>
   );
 }

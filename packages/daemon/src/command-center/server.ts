@@ -157,7 +157,9 @@ import {
   getDefaultThreadStore,
   getDefaultSessionStore,
   getDefaultCheckpointStore,
+  getDefaultTurnDiffProjection,
 } from "../chat/defaults.ts";
+import type { TurnDiffProjection } from "../persistence/projections/turn-diff-projection.ts";
 import type { ThreadStore } from "../chat/thread-store.ts";
 import type { SessionStore } from "../chat/session-store.ts";
 import type { CheckpointStore } from "../chat/checkpoint-store.ts";
@@ -207,6 +209,12 @@ export interface CreateAppOptions {
     sessionStore?: SessionStore;
     checkpointStore?: CheckpointStore;
   };
+  /**
+   * TurnDiff projection backing the `/api/project/:name/turn-diffs/*`
+   * endpoints (T101a). Tests inject an in-memory projection populated
+   * from a FakeEventReader; production uses the chat-defaults singleton.
+   */
+  turnDiffProjection?: TurnDiffProjection;
   /** Inject the provider-discovery probe (tests pass stubs). */
   providerDiscovery?: ProviderDiscoveryOptions;
 }
@@ -1224,6 +1232,58 @@ export function createApp(options: CreateAppOptions = {}): Hono {
     if (!session) return c.json({ error: "Session not found" }, 404);
     if (!deleteCheckpoint(session.dir, id)) return c.json({ error: "Checkpoint not found" }, 404);
     return c.json({ ok: true, deleted: id });
+  });
+
+  // --- TurnDiff (T101a) -----------------------------------------------------
+  // Per-turn file-diff aggregate, projected from chat.checkpoint.created
+  // events (see packages/daemon/src/persistence/projections/turn-diff-
+  // projection.ts). All three endpoints are project-scoped: they share the
+  // same `:name → live tmux session` resolution as the rest of /api/project
+  // so 404s line up with the other project routes.
+
+  const turnDiffProjection: TurnDiffProjection =
+    options.turnDiffProjection ?? getDefaultTurnDiffProjection();
+
+  // GET /api/project/:name/turn-diffs/aggregate?threadId=X — must be
+  // registered BEFORE the `/:turnId` route so Hono routes "aggregate" to
+  // the aggregate handler instead of treating it as a turn id.
+  app.get("/api/project/:name/turn-diffs/aggregate", (c) => {
+    const name = c.req.param("name");
+    const sessions = discoverSessions();
+    if (!sessions.find((s) => s.name === name)) {
+      return c.json({ error: "Session not found" }, 404);
+    }
+    const threadId = c.req.query("threadId");
+    if (!threadId) {
+      return c.json({ error: "threadId query parameter is required" }, 400);
+    }
+    return c.json(turnDiffProjection.aggregateForThread(threadId));
+  });
+
+  // GET /api/project/:name/turn-diffs/:turnId → TurnDiffEntry[]
+  app.get("/api/project/:name/turn-diffs/:turnId", (c) => {
+    const name = c.req.param("name");
+    const turnId = c.req.param("turnId");
+    const sessions = discoverSessions();
+    if (!sessions.find((s) => s.name === name)) {
+      return c.json({ error: "Session not found" }, 404);
+    }
+    return c.json({ turnId, entries: turnDiffProjection.listForTurn(turnId) });
+  });
+
+  // GET /api/project/:name/turn-diffs?threadId=X
+  //   → { byTurn: Record<turnId, TurnDiffEntry[]> }
+  app.get("/api/project/:name/turn-diffs", (c) => {
+    const name = c.req.param("name");
+    const sessions = discoverSessions();
+    if (!sessions.find((s) => s.name === name)) {
+      return c.json({ error: "Session not found" }, 404);
+    }
+    const threadId = c.req.query("threadId");
+    if (!threadId) {
+      return c.json({ error: "threadId query parameter is required" }, 400);
+    }
+    return c.json({ threadId, byTurn: turnDiffProjection.listForThread(threadId) });
   });
 
   // --- Reviews ---

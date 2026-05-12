@@ -8,6 +8,7 @@
 
 import { useMemo } from "react";
 import type { ThreadIndexEntry } from "../chat/types";
+import type { TurnDiffEntry } from "@/lib/api";
 
 /**
  * Minimal usage summary shape — kept local so we don't depend on a type
@@ -40,6 +41,12 @@ export interface ThreadViewProps {
   turns: Record<string, TurnSummary>;
   checkpointsByTurn: Record<string, CheckpointSummaryView>;
   plansById: Record<string, ProposedPlanView>;
+  /**
+   * Per-turn file diffs (T101a). Optional — when omitted or empty for
+   * a given turn, the TurnDiffPanel is skipped and the turn renders
+   * exactly as it did pre-T101a.
+   */
+  diffsByTurn?: Readonly<Record<string, ReadonlyArray<TurnDiffEntry>>>;
   onSubmit(text: string): void;
   onRevert?(checkpointRef: string): void;
   onApprovePlan?: (input: { threadId: string; planId: string }) => Promise<void> | void;
@@ -113,6 +120,9 @@ export function ThreadView(props: ThreadViewProps) {
               plansById={props.plansById}
               onRevert={props.onRevert}
               threadId={props.thread!.id}
+              {...(g.turnId !== null && props.diffsByTurn?.[g.turnId]
+                ? { diffEntries: props.diffsByTurn[g.turnId] }
+                : {})}
               {...(props.onApprovePlan ? { onApprovePlan: props.onApprovePlan } : {})}
               {...(props.onRejectPlan ? { onRejectPlan: props.onRejectPlan } : {})}
             />

@@ -11,8 +11,9 @@
 
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import type { ThreadIndexEntry } from "../chat/types";
+import { fetchThreadTurnDiffs, type TurnDiffEntry } from "@/lib/api";
 import { ThreadListRail } from "./ThreadListRail";
 import { ThreadView } from "./ThreadView";
 import { useChatStore } from "./useChatStore";
@@ -67,6 +68,28 @@ export function ChatV2Root(props: ChatV2RootProps) {
   useEffect(() => setThreads(props.threads), [props.threads, setThreads]);
   useEffect(() => setActiveThread(props.activeThreadId), [props.activeThreadId, setActiveThread]);
 
+  // T101a — per-turn file diffs for the active thread. Reactor-driven
+  // updates would normally flow through WS, but the projection is
+  // checkpoint-event-shaped (only updates when a turn completes with a
+  // checkpoint) so a pull-on-thread-change is plenty for now. The
+  // `checkpoints` count changing is the canonical trigger to refresh.
+  const [diffsByTurn, setDiffsByTurn] = useState<Record<string, ReadonlyArray<TurnDiffEntry>>>({});
+  const checkpointCount = Object.keys(checkpoints as Record<string, unknown>).length;
+  useEffect(() => {
+    if (!props.activeThreadId) {
+      setDiffsByTurn({});
+      return;
+    }
+    const threadId = props.activeThreadId;
+    let cancelled = false;
+    void fetchThreadTurnDiffs(props.projectName, threadId).then((next) => {
+      if (!cancelled) setDiffsByTurn(next);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [props.projectName, props.activeThreadId, checkpointCount]);
+
   const activeThread =
     props.activeThreadId !== null
       ? (props.threads.find((t) => t.id === props.activeThreadId) ?? null)
@@ -92,6 +115,7 @@ export function ChatV2Root(props: ChatV2RootProps) {
         turns={turns}
         checkpointsByTurn={checkpoints}
         plansById={plans}
+        diffsByTurn={diffsByTurn}
         onSubmit={(text) => {
           if (props.activeThreadId) props.onSend(props.activeThreadId, text);
         }}

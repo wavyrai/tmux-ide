@@ -15,6 +15,10 @@ import {
   makeTurnProjection,
   type TurnProjection,
 } from "../persistence/projections/turn-projection.ts";
+import {
+  makeTurnDiffProjection,
+  type TurnDiffProjection,
+} from "../persistence/projections/turn-diff-projection.ts";
 import { makeInMemoryCursorStore } from "../persistence/types.ts";
 import { makeThreadManager, type ThreadManager } from "./thread-manager.ts";
 import { makeThreadStore, type ThreadStore } from "./thread-store.ts";
@@ -33,6 +37,7 @@ let defaultCheckpointStore: CheckpointStore | null = null;
 let defaultEventDb: SqliteDb | null = null;
 let defaultEventStore: ChatEventStore | null = null;
 let defaultTurnProjection: TurnProjection | null = null;
+let defaultTurnDiffProjection: TurnDiffProjection | null = null;
 let bootIndexEmitted = false;
 const activeTurns = new Map<string, string>();
 
@@ -113,6 +118,24 @@ export function getDefaultTurnProjection(): TurnProjection {
   });
   projection.start();
   defaultTurnProjection = projection;
+  return projection;
+}
+
+/**
+ * Singleton TurnDiff projection (T101). Same lifecycle as
+ * getDefaultTurnProjection — bootstraps from the chat event store on
+ * first access, then stays current via the store's `subscribe` channel.
+ * Read methods are safe to call concurrently from request handlers.
+ */
+export function getDefaultTurnDiffProjection(): TurnDiffProjection {
+  if (defaultTurnDiffProjection) return defaultTurnDiffProjection;
+  const store = getDefaultChatEventStore();
+  const projection = makeTurnDiffProjection({
+    reader: store,
+    cursorStore: makeInMemoryCursorStore(),
+  });
+  projection.start();
+  defaultTurnDiffProjection = projection;
   return projection;
 }
 
@@ -229,6 +252,8 @@ export async function shutdownDefaultChatRuntime(): Promise<void> {
   defaultManager = null;
   defaultTurnProjection?.stop();
   defaultTurnProjection = null;
+  defaultTurnDiffProjection?.stop();
+  defaultTurnDiffProjection = null;
   try {
     defaultEventDb?.close();
   } catch {
@@ -247,6 +272,8 @@ export function _resetDefaultChatRuntimeForTests(): void {
   defaultCheckpointStore = null;
   defaultTurnProjection?.stop();
   defaultTurnProjection = null;
+  defaultTurnDiffProjection?.stop();
+  defaultTurnDiffProjection = null;
   try {
     defaultEventDb?.close();
   } catch {
