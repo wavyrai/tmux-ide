@@ -28,6 +28,18 @@
  * automatically — no silo-side change required.
  */
 @theme inline {
+  /* Font families (PR 3) — registered here so Tailwind utilities
+     `font-sans` / `font-mono` resolve. Same stacks as the `:root`
+     declarations above; declaring them inside `@theme` makes them
+     available both as Tailwind tokens AND as CSS custom properties
+     on :root, so existing `style={{ fontFamily: 'var(--font-mono)' }}`
+     consumers keep working. */
+  --font-sans:
+    "Geist", "DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --font-mono:
+    "Berkeley Mono", ui-monospace, SFMono-Regular, "JetBrains Mono", "IBM Plex Mono", "Menlo",
+    "Consolas", monospace;
+
   /* Radius scale — 7 stops, anchored on 0.625rem = 10px. */
   --radius: 0.625rem;
   --radius-sm: calc(var(--radius) - 4px); /* 6px  — inline chips, code */
@@ -160,9 +172,9 @@
 }
 
 :root {
-  --font-mono:
-    "Berkeley Mono", ui-monospace, SFMono-Regular, "JetBrains Mono", "IBM Plex Mono", "Menlo",
-    "Consolas", monospace;
+  /* `--font-mono` and `--font-sans` are declared inside the `@theme inline`
+     block above so Tailwind utilities `font-mono` / `font-sans` resolve
+     against the same stack consumers see via `var(--font-sans)`. */
   --ease-out-fluid: cubic-bezier(0.32, 0.72, 0, 1);
   --ease-smooth: cubic-bezier(0.4, 0, 0.2, 1);
 }

@@ -198,7 +198,7 @@ function MissionViewReact({ sessionName }: MissionViewProps) {
 
   if (!snapshot) {
     return (
-      <Panel testId="mission-view">
+      <Panel testId="mission-view" className="font-sans">
         <PanelHeader title="Mission" />
         <PanelBody className="space-y-4 p-4">
           <SkeletonCard />
@@ -217,7 +217,7 @@ function MissionViewReact({ sessionName }: MissionViewProps) {
 
   if (!mission) {
     return (
-      <Panel testId="mission-view">
+      <Panel testId="mission-view" className="font-sans">
         <PanelHeader title="Mission" />
         <PanelBody className="flex items-center justify-center p-8 text-center">
           <SurfaceCard padded="md" className="max-w-md p-5">
@@ -242,7 +242,7 @@ function MissionViewReact({ sessionName }: MissionViewProps) {
   const validationPercent = percent(validation.passing, validation.total);
 
   return (
-    <Panel variant="grow" testId="mission-view">
+    <Panel variant="grow" testId="mission-view" className="font-sans">
       <PanelHeader
         title={mission.mission.title}
         subtitle={`${validation.passing}/${validation.total} validations passing · ${validationPercent}%`}

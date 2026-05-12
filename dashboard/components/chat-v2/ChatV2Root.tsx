@@ -99,7 +99,7 @@ export function ChatV2Root(props: ChatV2RootProps) {
     <div
       data-testid="chat-v2-root"
       data-project={props.projectName}
-      className="flex h-full min-h-0 flex-row text-[12px]"
+      className="font-sans flex h-full min-h-0 flex-row text-[12px]"
     >
       <ThreadListRail
         threads={props.threads}

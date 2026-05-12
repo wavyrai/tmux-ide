@@ -131,7 +131,7 @@ export function SettingsView() {
   }
 
   return (
-    <Panel testId="settings-view">
+    <Panel testId="settings-view" className="font-sans">
       <div className="flex min-h-0 flex-1">
         <aside className="hidden w-[200px] shrink-0 border-r border-[var(--border-weak)] bg-[var(--bg-weak)] sm:block">
           <SettingsNavigator active={active} onChange={setActive} />
