@@ -49,7 +49,11 @@ function logError(msg: string): void {
 }
 
 function spawnDaemon(): void {
-  child = spawn("bun", [daemonScript, session, port], {
+  // The daemon MUST run under node/tsx, never bun: node-pty's `onData`
+  // callback never fires under bun (PTY spawns + exits silently). See T085
+  // for the diagnostic story and T087 for the PtyAdapter abstraction this
+  // pins down. Prod swaps this for `node dist/lib/daemon.js`.
+  child = spawn("tsx", [daemonScript, session, port], {
     cwd: process.cwd(),
     stdio: ["ignore", "pipe", "pipe"],
   });

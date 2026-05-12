@@ -20,7 +20,7 @@ import {
   setSessionEnvironment,
   attachSession,
   runSessionCommand,
-} from "./tmux.ts";
+} from "./index.ts";
 
 let mockExec;
 let restoreExec;

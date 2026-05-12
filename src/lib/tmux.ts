@@ -221,9 +221,10 @@ export function startSessionMonitor(session: string, monitorScript: string, port
     // Session variable not readable — continue with fresh start
   }
 
-  // Spawn the daemon via bun (runs TypeScript source directly).
-  // Use a process group so we can kill the entire tree on stop.
-  const child = _spawner("bun", [monitorScript, session, String(port ?? 0)], {
+  // Spawn the daemon via tsx (runs TypeScript source directly under node).
+  // node-pty's `onData` never fires under bun — T085/T087 lesson sealed by
+  // PtyAdapter. Use a process group so we can kill the entire tree on stop.
+  const child = _spawner("tsx", [monitorScript, session, String(port ?? 0)], {
     detached: true,
     stdio: "ignore",
     cwd: process.cwd(),

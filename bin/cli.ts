@@ -71,6 +71,8 @@ const { positionals, values } = parseArgs({
     // send command flags
     to: { type: "string" },
     "no-enter": { type: "boolean" },
+    // chat command flags (T078)
+    role: { type: "string" },
   },
 });
 
@@ -105,6 +107,8 @@ const knownCommands = new Set([
   "server",
   "tunnel",
   "remote",
+  "checkpoint",
+  "chat",
   "help",
 ]);
 
@@ -186,6 +190,10 @@ ${bold("Orchestrator:")}
   ${cyan("tmux-ide orchestrator")} [--json]         ${dim("Show orchestrator status")}
   ${cyan("tmux-ide orch")}                          ${dim("Alias for orchestrator")}
   ${cyan("tmux-ide server")} [--port N]             ${dim("Start v2.5 HTTP + PTY WebSocket server")}
+
+${bold("Multi-agent Chat:")}
+  ${cyan("tmux-ide chat session add")} <thread-id> --provider <name> [--role <role>]
+                                  ${dim("Register a Session on a Thread (lead|teammate|planner|validator|researcher)")}
 
 ${bold("Task Management:")}
   ${cyan("tmux-ide mission set")} "title"              ${dim("Set the project mission")}
@@ -531,6 +539,33 @@ try {
         const { start } = await import("../src/server/index.ts");
         await start(values.port ? parseInt(values.port, 10) : undefined);
       }
+      break;
+    }
+
+    case "chat": {
+      const { chatCommand } = await import("../src/chat.ts");
+      await chatCommand({
+        sub: positionals[1],
+        args: positionals.slice(2),
+        json,
+        provider: values.provider,
+        role: values.role,
+        name: values.name,
+      });
+      break;
+    }
+
+    case "checkpoint": {
+      // Reuse the canonical command in packages/daemon to avoid duplicating
+      // the engine alongside the unfinished src/ → packages/daemon fold.
+      const { checkpointCommand } = await import(
+        "../packages/daemon/src/checkpoint.ts"
+      );
+      await checkpointCommand({
+        sub: positionals[1],
+        args: positionals.slice(2),
+        json,
+      });
       break;
     }
 
