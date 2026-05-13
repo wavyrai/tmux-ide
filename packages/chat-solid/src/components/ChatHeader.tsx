@@ -1,6 +1,8 @@
-import { createSignal, Show, type Accessor } from "solid-js";
-import type { ChatThreadUsageSummary, StopReason, ThreadState } from "../types";
+import { createMemo, createSignal, Show, type Accessor } from "solid-js";
+import type { AgentProvider, ChatThreadUsageSummary, StopReason, ThreadState } from "../types";
+import type { ProviderInfo } from "../api";
 import { ContextWindowMeter } from "./ContextWindowMeter";
+import { ProviderModelPicker } from "./ProviderModelPicker";
 
 interface ChatHeaderProps {
   thread: Accessor<ThreadState | null>;
@@ -8,6 +10,10 @@ interface ChatHeaderProps {
   stopReason: Accessor<StopReason | null>;
   usage: Accessor<ChatThreadUsageSummary | null>;
   sessionName: Accessor<string | null>;
+  /** Discovered providers used by the right-slot model picker. */
+  availableProviders?: Accessor<ReadonlyArray<ProviderInfo>>;
+  /** Fires when the picker selects a different provider. */
+  onProviderChange?: (next: AgentProvider) => void;
   onCancel(): void;
   onRename(title: string): Promise<void>;
   onClose?: () => void;
@@ -16,6 +22,11 @@ interface ChatHeaderProps {
 export function ChatHeader(props: ChatHeaderProps) {
   const [editing, setEditing] = createSignal(false);
   const [draft, setDraft] = createSignal("");
+
+  const activeProvider = createMemo(() => props.thread()?.provider ?? null);
+  const providerList = createMemo<ReadonlyArray<ProviderInfo>>(
+    () => props.availableProviders?.() ?? [],
+  );
 
   function beginEdit() {
     setDraft(props.thread()?.title ?? "New chat");
@@ -56,6 +67,14 @@ export function ChatHeader(props: ChatHeaderProps) {
         />
       </Show>
       <ContextWindowMeter usage={props.usage} />
+      <Show when={props.availableProviders}>
+        <ProviderModelPicker
+          provider={activeProvider}
+          availableProviders={providerList}
+          onChange={(next) => props.onProviderChange?.(next)}
+          disabled={props.inflight}
+        />
+      </Show>
       <Show when={props.sessionName()}>
         {(session) => (
           <span class="inline-flex items-center rounded-md border border-border-weak px-1.5 py-0.5 text-[11px] text-dim">

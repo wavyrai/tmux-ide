@@ -139,6 +139,46 @@ export function chatContextCaptureTerminal(
   return postAction(runtime, "chat.context.captureTerminal", input);
 }
 
+/**
+ * Wire shape from `GET /api/chat/providers`. Mirrors the daemon's
+ * `ProviderInfo` (packages/daemon/src/chat/provider-discovery.ts) —
+ * inlined here so chat-solid doesn't depend on daemon types directly.
+ */
+export interface ProviderInfo {
+  kind: "claude-code" | "codex" | "gemini" | (string & {});
+  name: string;
+  description: string;
+  available: boolean;
+  binary?: string;
+  version?: string;
+  error?: string;
+}
+
+/**
+ * Discovery of provider binaries on PATH. Used by ProviderStatusBanner
+ * to surface availability problems (red dot + retry) and by
+ * ProviderModelPicker to populate its dropdown.
+ *
+ * The daemon's discovery endpoint is REST, not an action, so this
+ * helper goes through plain fetch rather than `postAction`.
+ */
+export async function chatProvidersList(
+  runtime: ApiRuntime,
+): Promise<{ providers: ProviderInfo[] }> {
+  const url = `${runtime.apiBaseUrl}/api/chat/providers`;
+  const headers: Record<string, string> = {};
+  if (runtime.bearerToken) headers["Authorization"] = `Bearer ${runtime.bearerToken}`;
+  const res = await fetch(url, { cache: "no-store", headers });
+  if (!res.ok) {
+    throw new ChatSolidApiError(
+      `Failed to fetch providers (HTTP ${res.status})`,
+      "providers_fetch_failed",
+    );
+  }
+  const data = (await res.json()) as { providers?: ProviderInfo[] };
+  return { providers: Array.isArray(data.providers) ? data.providers : [] };
+}
+
 export async function fetchProjectPanes(
   runtime: ApiRuntime,
   sessionName: string,

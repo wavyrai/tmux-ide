@@ -227,6 +227,14 @@ export interface ChatMountOptions {
    * bare path that the browser won't navigate to).
    */
   onOpenFile?: (meta: MarkdownFileLinkMeta) => void;
+  /**
+   * Fired when the header's provider picker (or status-banner switch
+   * chip) selects a different provider. The host owns the actual
+   * switch — typically `chat.thread.create` with the new provider +
+   * a redirect to the new thread, since today the daemon doesn't
+   * support hot-swapping a provider on an existing thread.
+   */
+  onProviderChange?: (next: AgentProvider) => void;
   onClose?: () => void;
 }
 
