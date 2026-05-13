@@ -21,6 +21,7 @@
  */
 
 import {
+  createEffect,
   createMemo,
   createSignal,
   For,
@@ -34,6 +35,8 @@ import {
   CaseSensitive,
   ChevronDown,
   ChevronRight,
+  FileText,
+  History,
   Pencil,
   Regex,
   Search as SearchIcon,
@@ -50,6 +53,15 @@ import {
   type SearchService,
 } from "@/lib/search";
 import { openFileAt } from "@/lib/editorOpen";
+import { bufferState } from "@/lib/editor/buffer-store";
+import {
+  consumePendingSearch,
+  loadHistory,
+  loadPersistedQuery,
+  pendingSearchRequest,
+  persistQuery,
+  recordToHistory,
+} from "@/lib/searchBroker";
 
 const SEARCH_DEBOUNCE_MS = 250;
 
@@ -106,6 +118,36 @@ export function SearchView(props: SearchViewProps): JSX.Element {
   service = makeSearchService(props.projectName);
   const rootPath = (): string => props.modelRootPath ?? "/";
 
+  // Recent-searches history — last 10 queries, MRU-first. Hydrated
+  // from localStorage on mount; updated after every successful run.
+  const [history, setHistory] = createSignal<string[]>([]);
+  const [historyOpen, setHistoryOpen] = createSignal(false);
+
+  // Current-file scope — when on, the panel restricts include to the
+  // buffer-store's active file. Toggle off restores the prior glob.
+  const [currentFileMode, setCurrentFileMode] = createSignal(false);
+  const [savedInclude, setSavedInclude] = createSignal<string | null>(null);
+
+  function activeBufferPath(): string | null {
+    const uri = bufferState.activeUri;
+    if (!uri) return null;
+    return bufferState.buffers[uri]?.filePath ?? null;
+  }
+
+  function toggleCurrentFileMode(): void {
+    if (!currentFileMode()) {
+      const path = activeBufferPath();
+      if (!path) return; // no active file → no-op (button is also disabled)
+      setSavedInclude(service.options().include);
+      service.setOptions({ include: path });
+      setCurrentFileMode(true);
+    } else {
+      service.setOptions({ include: savedInclude() ?? "" });
+      setSavedInclude(null);
+      setCurrentFileMode(false);
+    }
+  }
+
   let debounceHandle: ReturnType<typeof setTimeout> | null = null;
   function scheduleRun(): void {
     if (debounceHandle) clearTimeout(debounceHandle);
@@ -115,14 +157,60 @@ export function SearchView(props: SearchViewProps): JSX.Element {
     }, SEARCH_DEBOUNCE_MS);
   }
 
+  function drainPendingRequest(): void {
+    const req = consumePendingSearch();
+    if (!req) return;
+    if (req.query !== undefined) service.setQuery(req.query);
+    const optsPatch: { include?: string; exclude?: string } = {};
+    if (req.include !== undefined) optsPatch.include = req.include;
+    if (req.exclude !== undefined) optsPatch.exclude = req.exclude;
+    if (Object.keys(optsPatch).length > 0) service.setOptions(optsPatch);
+    if (req.focusInput) queueMicrotask(() => queryInputRef?.focus());
+    if (service.query().trim().length > 0) void service.run();
+  }
+
   onMount(() => {
+    // Hydrate persisted query + options for this project.
+    const persisted = loadPersistedQuery(props.projectName);
+    if (persisted) {
+      service.setQuery(persisted.query);
+      service.setOptions(persisted.options);
+    }
+    setHistory(loadHistory(props.projectName));
+
+    // Drain any pending cross-surface request (e.g. Files right-click).
+    drainPendingRequest();
+
     queryInputRef?.focus();
+    if (service.query().trim().length > 0) {
+      // Cold-start the search if we restored a non-empty query.
+      void service.run();
+    }
     window.addEventListener("keydown", onGlobalKey, true);
   });
+
   onCleanup(() => {
     if (debounceHandle) clearTimeout(debounceHandle);
     service.cancel();
     window.removeEventListener("keydown", onGlobalKey, true);
+    // Persist the latest state so re-opening restores it.
+    persistQuery(props.projectName, {
+      query: service.query(),
+      options: service.options(),
+    });
+  });
+
+  // React to broker requests landing while the panel is already mounted.
+  createEffect(() => {
+    if (pendingSearchRequest()) drainPendingRequest();
+  });
+
+  // Push successful runs onto the recent-searches list.
+  createEffect(() => {
+    if (service.state.status !== "done") return;
+    const q = service.query().trim();
+    if (!q) return;
+    setHistory(recordToHistory(props.projectName, q));
   });
 
   // F3 / Shift+F3 — step through matches across files (panel-wide,
@@ -266,11 +354,53 @@ export function SearchView(props: SearchViewProps): JSX.Element {
             data-testid="search-query"
             value={service.query()}
             onInput={onQueryInput}
+            onFocus={() => {
+              if (service.query().trim().length === 0 && history().length > 0) {
+                setHistoryOpen(true);
+              }
+            }}
+            onBlur={() =>
+              // Defer closing so a click on a history row still fires.
+              queueMicrotask(() => setHistoryOpen(false))
+            }
             placeholder="Search workspace…"
             class="h-8 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] pl-7 pr-2 text-[12px] text-[var(--fg)] outline-none focus:border-[var(--accent)]"
             spellcheck={false}
             autocomplete="off"
           />
+          <Show when={historyOpen() && service.query().trim().length === 0 && history().length > 0}>
+            <div
+              data-testid="search-history"
+              role="listbox"
+              aria-label="Recent searches"
+              class="absolute left-0 right-0 top-9 z-20 rounded-md border border-[var(--border)] bg-[var(--surface)] py-1 shadow-2xl"
+            >
+              <div class="flex items-center gap-1 px-2 py-1 text-[10px] uppercase tracking-wider text-[var(--dim)]">
+                <History size={11} />
+                <span>Recent</span>
+              </div>
+              <For each={history()}>
+                {(entry) => (
+                  <button
+                    type="button"
+                    data-testid="search-history-item"
+                    onMouseDown={(event) => {
+                      // mousedown beats the input's blur — picks the
+                      // entry before the dropdown closes.
+                      event.preventDefault();
+                      service.setQuery(entry);
+                      setHistoryOpen(false);
+                      void service.run();
+                    }}
+                    class="flex w-full items-center gap-2 px-3 py-1 text-left text-[12px] text-[var(--fg-secondary)] hover:bg-[var(--surface-hover,var(--bg-strong))] hover:text-[var(--fg)]"
+                  >
+                    <SearchIcon size={11} class="opacity-50" />
+                    <span class="truncate">{entry}</span>
+                  </button>
+                )}
+              </For>
+            </div>
+          </Show>
         </div>
 
         <Show when={replaceOpen()}>
@@ -318,6 +448,18 @@ export function SearchView(props: SearchViewProps): JSX.Element {
             active={replaceOpen()}
             onClick={() => setReplaceOpen((v) => !v)}
             icon={<Pencil size={14} />}
+          />
+          <ToggleButton
+            label={
+              activeBufferPath()
+                ? `Current file (${activeBufferPath()})`
+                : "Current file (no file open)"
+            }
+            testId="toggle-current-file"
+            active={currentFileMode()}
+            disabled={!activeBufferPath()}
+            onClick={toggleCurrentFileMode}
+            icon={<FileText size={14} />}
           />
           <div class="ml-auto flex items-center gap-1">
             <Show when={service.state.status === "running"}>
@@ -646,6 +788,9 @@ interface ToggleButtonProps {
   active: boolean;
   onClick: () => void;
   icon: JSX.Element;
+  /** Disabled buttons mute their color and skip onClick. Tooltip
+   *  (title) still renders the label so the user can see why. */
+  disabled?: boolean;
 }
 
 function ToggleButton(props: ToggleButtonProps): JSX.Element {
@@ -654,9 +799,13 @@ function ToggleButton(props: ToggleButtonProps): JSX.Element {
       type="button"
       data-testid={props.testId}
       aria-pressed={props.active}
+      disabled={props.disabled ?? false}
       title={props.label}
-      onClick={() => props.onClick()}
-      class={`flex h-6 w-6 items-center justify-center rounded text-[var(--fg-secondary)] hover:bg-[var(--surface-hover,var(--bg-strong))] ${
+      onClick={() => {
+        if (props.disabled) return;
+        props.onClick();
+      }}
+      class={`flex h-6 w-6 items-center justify-center rounded text-[var(--fg-secondary)] hover:bg-[var(--surface-hover,var(--bg-strong))] disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent ${
         props.active
           ? "bg-[color-mix(in_oklab,var(--accent)_18%,transparent)] text-[var(--accent)]"
           : ""

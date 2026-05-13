@@ -36,6 +36,7 @@ import { DiffsView } from "@/components/DiffsView";
 import { FilesSurface } from "@/components/files/FilesSurface";
 import { MonacoDiffsView } from "@/components/diffs/MonacoDiffsView";
 import { SearchView } from "@/components/search/SearchView";
+import { ExplorerContextMenu } from "@/components/search/ExplorerContextMenu";
 import { chrome, useChromeShortcuts } from "@/lib/chrome";
 import { useViewParam } from "@/lib/viewParam";
 import { DEFAULT_VIEW, isViewId, VIEWS, type ViewId } from "@/lib/views";
@@ -84,6 +85,10 @@ export default function ProjectV2Route(): JSX.Element {
 
   return (
     <div class="flex h-screen w-screen min-h-0 min-w-0 flex-col bg-[var(--bg)] text-[var(--fg)]">
+      {/* Document-level right-click handler for [data-dir-path]
+          rows in the Files surface. Always mounted so the menu
+          works from any view — closes itself on switch. */}
+      <ExplorerContextMenu onRequestSearchView={() => setView("search")} />
       <div class="flex flex-1 min-h-0">
         <V2ActivityBar view={view()} onView={onActivityBarView} />
 
