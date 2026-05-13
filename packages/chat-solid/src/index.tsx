@@ -42,5 +42,8 @@ export function mount(container: HTMLElement, opts: ChatMountOptions): ChatHandl
     setThreadId(threadId: string) {
       setOptions((current) => ({ ...current, threadId }));
     },
+    setOptions(next) {
+      setOptions((current) => ({ ...current, ...next }));
+    },
   };
 }

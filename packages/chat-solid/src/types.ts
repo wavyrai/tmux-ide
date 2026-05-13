@@ -243,4 +243,11 @@ export type { MarkdownFileLinkMeta } from "./lib/markdownLinks";
 export interface ChatHandle {
   unmount(): void;
   setThreadId(threadId: string): void;
+  /**
+   * Merge a partial update onto the live mount options. Used by React
+   * hosts (chat-v2 bridge) to push new mentionCandidates / projectDir
+   * / callbacks without remounting the Solid runtime. `threadId`
+   * accepted here too for parity with setThreadId.
+   */
+  setOptions(next: Partial<ChatMountOptions>): void;
 }
