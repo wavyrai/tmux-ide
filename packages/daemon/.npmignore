@@ -1,0 +1,25 @@
+# The `files` field in package.json is the authoritative tarball
+# allowlist; this .npmignore is a belt-and-suspenders safety net
+# in case `files` is ever loosened.
+
+# Sources + tooling — never in the published tarball.
+src/
+scripts/
+__tests__/
+*.test.ts
+*.test.tsx
+tsconfig.json
+tsconfig.*.json
+vitest.config.*
+.eslintrc*
+.eslintignore
+.tmp/
+
+# Dev artefacts that don't belong in the published tarball.
+node_modules/
+.DS_Store
+coverage/
+
+# Allow everything under dist/ including the bundled dashboard.
+!dist/
+!dist/**

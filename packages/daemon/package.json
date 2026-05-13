@@ -35,13 +35,17 @@
   },
   "files": [
     "dist",
+    "dist/dashboard/dist",
     "README.md"
   ],
   "publishConfig": {
     "access": "public"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && node scripts/build-dashboard.mjs",
+    "build:tsc": "tsc -p tsconfig.json",
+    "build:dashboard": "node scripts/build-dashboard.mjs",
+    "prepack": "pnpm run build",
     "dev": "tsx --watch src/lib/daemon.ts",
     "start": "node dist/lib/daemon.js",
     "lint": "eslint src",
