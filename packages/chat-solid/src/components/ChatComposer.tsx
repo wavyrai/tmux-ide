@@ -18,6 +18,7 @@ import type {
 } from "../types";
 import { AttachmentChip } from "./AttachmentChip";
 import { AttachmentPicker } from "./AttachmentPicker";
+import { ComposerBannerStack, type ComposerBannerItem } from "./ComposerBannerStack";
 
 export function ChatComposer(props: {
   disabled: Accessor<boolean>;
@@ -46,6 +47,13 @@ export function ChatComposer(props: {
   onRemoveAttachment(index: number): void;
   onSend(content: ContentBlock[]): Promise<void>;
   onCancel(): Promise<void> | void;
+  /**
+   * Optional banner surfaces rendered between the timeline and the
+   * textarea. Host composes the array from approval / plan-follow-up
+   * / pending-user-input state and any project-specific banners.
+   * When omitted (or empty), no banner row renders.
+   */
+  bannerItems?: Accessor<ReadonlyArray<ComposerBannerItem>>;
 }) {
   const [textarea, setTextarea] = createSignal<HTMLTextAreaElement>();
   const [value, setValue] = createSignal("");
@@ -287,6 +295,9 @@ export function ChatComposer(props: {
     void send();
   }
 
+  const bannerItemsAccessor = (): ReadonlyArray<ComposerBannerItem> =>
+    props.bannerItems ? props.bannerItems() : [];
+
   return (
     <form
       class="flex-shrink-0 border-t border-border-weak bg-bg p-3"
@@ -295,6 +306,7 @@ export function ChatComposer(props: {
         void send();
       }}
     >
+      <ComposerBannerStack items={bannerItemsAccessor} />
       <Show when={props.attachments().length > 0}>
         <div class="mb-2 flex flex-wrap gap-1.5">
           <For each={props.attachments()}>
