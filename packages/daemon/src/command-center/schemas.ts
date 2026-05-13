@@ -59,3 +59,24 @@ export const launchSchema = z
   .optional();
 
 export const stopSchema = z.object({}).optional();
+
+const skillNameRegex = /^[A-Za-z0-9._ -]+$/;
+
+export const createSkillSchema = z.object({
+  name: z
+    .string()
+    .trim()
+    .min(1, "Skill name is required")
+    .regex(skillNameRegex, "Skill name may only contain letters, digits, dot, dash, underscore, or space"),
+  role: z.string().trim().optional(),
+  description: z.string().optional(),
+  specialties: z.array(z.string()).optional(),
+  body: z.string().optional(),
+});
+
+export const updateSkillSchema = z.object({
+  role: z.string().trim().optional(),
+  description: z.string().optional(),
+  specialties: z.array(z.string()).optional(),
+  body: z.string().optional(),
+});

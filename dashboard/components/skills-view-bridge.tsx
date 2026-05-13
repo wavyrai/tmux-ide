@@ -16,12 +16,26 @@
  */
 
 import { useCallback, useEffect, useRef } from "react";
-import { fetchSkills, type SkillData } from "@/lib/api";
+import {
+  fetchSkills,
+  skillCreate,
+  skillDelete,
+  skillUpdate,
+  type SkillData,
+} from "@/lib/api";
 
 interface SkillsViewBridgeProps {
   projectName: string;
   /** Optional deep-link: pre-select a skill by name on first mount. */
   initialSelected?: string | null;
+}
+
+interface SkillFormValues {
+  name: string;
+  role?: string;
+  description?: string;
+  specialties?: ReadonlyArray<string>;
+  body?: string;
 }
 
 interface SkillsViewMountHandle {
@@ -30,6 +44,9 @@ interface SkillsViewMountHandle {
     skills?: ReadonlyArray<SkillData>;
     onSelect?: (skillName: string) => void;
     initialSelected?: string | null;
+    onCreate?: (values: SkillFormValues) => void | Promise<void>;
+    onUpdate?: (name: string, values: SkillFormValues) => void | Promise<void>;
+    onDelete?: (name: string) => void | Promise<void>;
   }): void;
 }
 
@@ -51,6 +68,41 @@ export function SkillsViewBridge({
     handleRef.current?.setOptions({ skills });
   }, [projectName]);
 
+  const handleCreate = useCallback(
+    async (values: SkillFormValues) => {
+      await skillCreate(projectName, {
+        name: values.name,
+        role: values.role,
+        description: values.description,
+        specialties: values.specialties ? [...values.specialties] : undefined,
+        body: values.body,
+      });
+      await refresh();
+    },
+    [projectName, refresh],
+  );
+
+  const handleUpdate = useCallback(
+    async (name: string, values: SkillFormValues) => {
+      await skillUpdate(projectName, name, {
+        role: values.role,
+        description: values.description,
+        specialties: values.specialties ? [...values.specialties] : undefined,
+        body: values.body,
+      });
+      await refresh();
+    },
+    [projectName, refresh],
+  );
+
+  const handleDelete = useCallback(
+    async (name: string) => {
+      await skillDelete(projectName, name);
+      await refresh();
+    },
+    [projectName, refresh],
+  );
+
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
@@ -62,6 +114,9 @@ export function SkillsViewBridge({
         skills: [],
         initialSelected: initialSelected ?? null,
         onSelect: handleSelect,
+        onCreate: handleCreate,
+        onUpdate: handleUpdate,
+        onDelete: handleDelete,
       });
       // Initial load.
       void refresh();

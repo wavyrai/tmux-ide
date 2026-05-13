@@ -133,3 +133,33 @@ export function deleteSkill(dir: string, name: string): boolean {
   rmSync(path);
   return true;
 }
+
+/**
+ * Write a skill from structured fields. Builds the YAML frontmatter
+ * for the host so UI surfaces don't have to hand-roll markdown.
+ */
+export interface SkillFields {
+  name: string;
+  specialties?: string[];
+  role?: string;
+  description?: string;
+  body?: string;
+}
+
+export function projectSkillExists(dir: string, name: string): boolean {
+  return existsSync(projectSkillPath(dir, name));
+}
+
+export function writeSkillFromFields(dir: string, fields: SkillFields): Skill {
+  const specialties = (fields.specialties ?? []).map((s) => s.trim()).filter(Boolean);
+  const meta: Record<string, unknown> = {
+    name: fields.name,
+    specialties,
+    role: fields.role && fields.role.trim() ? fields.role.trim() : "teammate",
+    description: fields.description ?? "",
+  };
+  const yamlBlock = yaml.dump(meta, { lineWidth: 1000 }).trimEnd();
+  const body = (fields.body ?? "").replace(/^\n+/, "").replace(/\n+$/, "");
+  const content = `---\n${yamlBlock}\n---\n${body ? `\n${body}\n` : ""}`;
+  return saveSkill(dir, fields.name, content);
+}

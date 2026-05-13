@@ -561,6 +561,14 @@ export interface SkillSummary {
   body?: string;
 }
 
+export interface SkillFormValues {
+  name: string;
+  role?: string;
+  description?: string;
+  specialties?: ReadonlyArray<string>;
+  body?: string;
+}
+
 export interface SkillsViewMountOptions {
   /** Canonical skill list. Updates flow in via setOptions. */
   skills?: ReadonlyArray<SkillSummary>;
@@ -568,6 +576,14 @@ export interface SkillsViewMountOptions {
   initialSelected?: string | null;
   /** Fired when the user picks a skill from the rail. */
   onSelect?: (skillName: string) => void;
+  /**
+   * Optional CRUD handlers. When omitted, the matching UI affordance is
+   * hidden (read-only mode). When provided, the host owns persistence +
+   * refresh — the widget only collects the form values and dispatches.
+   */
+  onCreate?: (values: SkillFormValues) => void | Promise<void>;
+  onUpdate?: (name: string, values: SkillFormValues) => void | Promise<void>;
+  onDelete?: (name: string) => void | Promise<void>;
 }
 
 export interface SkillsViewMountHandle {

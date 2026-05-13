@@ -25,10 +25,51 @@
 
 import { createMemo, createSignal, For, Show } from "solid-js";
 import { marked } from "marked";
-import type { SkillsViewMountOptions, SkillSummary } from "../types";
+import type {
+  SkillFormValues,
+  SkillsViewMountOptions,
+  SkillSummary,
+} from "../types";
 
 interface SkillsViewProps {
   options: () => SkillsViewMountOptions;
+}
+
+type EditorMode = { kind: "create" } | { kind: "edit"; original: SkillSummary };
+
+interface FormState {
+  name: string;
+  role: string;
+  description: string;
+  specialties: string;
+  body: string;
+}
+
+function emptyForm(): FormState {
+  return { name: "", role: "teammate", description: "", specialties: "", body: "" };
+}
+
+function fromSkill(skill: SkillSummary): FormState {
+  return {
+    name: skill.name,
+    role: skill.role ?? "teammate",
+    description: skill.description ?? "",
+    specialties: (skill.specialties ?? []).join(", "),
+    body: skill.body ?? "",
+  };
+}
+
+function toValues(form: FormState): SkillFormValues {
+  return {
+    name: form.name.trim(),
+    role: form.role.trim() || "teammate",
+    description: form.description,
+    specialties: form.specialties
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean),
+    body: form.body,
+  };
 }
 
 function roleLabel(role: string | undefined): string {
@@ -51,6 +92,76 @@ export function SkillsViewView(props: SkillsViewProps) {
     props.options().initialSelected ?? null;
   const [selected, setSelected] = createSignal<string | null>(initialSelected);
   const [query, setQuery] = createSignal("");
+  const [editor, setEditor] = createSignal<EditorMode | null>(null);
+  const [form, setForm] = createSignal<FormState>(emptyForm());
+  const [pendingDelete, setPendingDelete] = createSignal<string | null>(null);
+  const [submitting, setSubmitting] = createSignal(false);
+  const [errorMsg, setErrorMsg] = createSignal<string | null>(null);
+
+  const canCreate = createMemo(() => typeof props.options().onCreate === "function");
+  const canUpdate = createMemo(() => typeof props.options().onUpdate === "function");
+  const canDelete = createMemo(() => typeof props.options().onDelete === "function");
+
+  function openCreate() {
+    if (!canCreate()) return;
+    setForm(emptyForm());
+    setErrorMsg(null);
+    setEditor({ kind: "create" });
+  }
+
+  function openEdit(skill: SkillSummary) {
+    if (!canUpdate()) return;
+    setForm(fromSkill(skill));
+    setErrorMsg(null);
+    setEditor({ kind: "edit", original: skill });
+  }
+
+  function closeEditor() {
+    setEditor(null);
+    setSubmitting(false);
+    setErrorMsg(null);
+  }
+
+  async function submit() {
+    const mode = editor();
+    if (!mode) return;
+    const values = toValues(form());
+    if (!values.name) {
+      setErrorMsg("Name is required.");
+      return;
+    }
+    setSubmitting(true);
+    setErrorMsg(null);
+    try {
+      if (mode.kind === "create") {
+        await props.options().onCreate?.(values);
+      } else {
+        await props.options().onUpdate?.(mode.original.name, values);
+      }
+      closeEditor();
+      setSelected(values.name);
+    } catch (err) {
+      setErrorMsg((err as Error).message ?? "Save failed");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function confirmDelete() {
+    const name = pendingDelete();
+    if (!name) return;
+    setSubmitting(true);
+    setErrorMsg(null);
+    try {
+      await props.options().onDelete?.(name);
+      setPendingDelete(null);
+      if (selected() === name) setSelected(null);
+    } catch (err) {
+      setErrorMsg((err as Error).message ?? "Delete failed");
+    } finally {
+      setSubmitting(false);
+    }
+  }
 
   const allSkills = createMemo<ReadonlyArray<SkillSummary>>(
     () => props.options().skills ?? [],
@@ -100,6 +211,7 @@ export function SkillsViewView(props: SkillsViewProps) {
     <div
       data-testid="skills-view"
       style={{
+        position: "relative",
         display: "flex",
         height: "100%",
         "min-height": "0",
@@ -152,6 +264,26 @@ export function SkillsViewView(props: SkillsViewProps) {
           >
             {filtered().length}/{allSkills().length}
           </span>
+          <Show when={canCreate()}>
+            <button
+              type="button"
+              data-testid="skills-new-button"
+              onClick={() => openCreate()}
+              style={{
+                "margin-left": "6px",
+                padding: "2px 8px",
+                "border-radius": "4px",
+                border: "1px solid var(--border)",
+                "background-color": "transparent",
+                color: "var(--accent)",
+                "font-family": "inherit",
+                "font-size": "10px",
+                cursor: "pointer",
+              }}
+            >
+              + New
+            </button>
+          </Show>
         </header>
         <div style={{ padding: "6px 8px" }}>
           <input
@@ -373,6 +505,57 @@ export function SkillsViewView(props: SkillsViewProps) {
                     </For>
                   </div>
                 </Show>
+                <Show when={canUpdate() || canDelete()}>
+                  <div
+                    style={{
+                      "margin-left": "auto",
+                      display: "flex",
+                      gap: "6px",
+                    }}
+                  >
+                    <Show when={canUpdate()}>
+                      <button
+                        type="button"
+                        data-testid="skill-edit-button"
+                        onClick={() => openEdit(skillAccessor())}
+                        style={{
+                          padding: "2px 8px",
+                          "border-radius": "4px",
+                          border: "1px solid var(--border)",
+                          "background-color": "transparent",
+                          color: "var(--fg)",
+                          "font-family": "inherit",
+                          "font-size": "11px",
+                          cursor: "pointer",
+                        }}
+                      >
+                        Edit
+                      </button>
+                    </Show>
+                    <Show when={canDelete()}>
+                      <button
+                        type="button"
+                        data-testid="skill-delete-button"
+                        onClick={() => {
+                          setErrorMsg(null);
+                          setPendingDelete(skillAccessor().name);
+                        }}
+                        style={{
+                          padding: "2px 8px",
+                          "border-radius": "4px",
+                          border: "1px solid var(--border)",
+                          "background-color": "transparent",
+                          color: "var(--danger, #d34)",
+                          "font-family": "inherit",
+                          "font-size": "11px",
+                          cursor: "pointer",
+                        }}
+                      >
+                        Delete
+                      </button>
+                    </Show>
+                  </div>
+                </Show>
               </header>
               <Show when={skillAccessor().description}>
                 <p
@@ -424,6 +607,296 @@ export function SkillsViewView(props: SkillsViewProps) {
           )}
         </Show>
       </section>
+
+      {/* ----- Editor overlay (create / edit) --------------------------- */}
+      <Show when={editor()}>
+        {(mode) => (
+          <div
+            data-testid="skill-editor"
+            data-editor-mode={mode().kind}
+            style={{
+              position: "absolute",
+              inset: "0",
+              display: "flex",
+              "align-items": "center",
+              "justify-content": "center",
+              "background-color": "rgba(0,0,0,0.4)",
+              "z-index": "20",
+            }}
+            onClick={(e) => {
+              if (e.target === e.currentTarget) closeEditor();
+            }}
+          >
+            <div
+              style={{
+                width: "min(540px, 90%)",
+                "max-height": "85%",
+                display: "flex",
+                "flex-direction": "column",
+                "background-color": "var(--bg)",
+                color: "var(--fg)",
+                border: "1px solid var(--border)",
+                "border-radius": "6px",
+                "box-shadow": "0 12px 32px rgba(0,0,0,0.4)",
+              }}
+            >
+              <header
+                style={{
+                  padding: "10px 14px",
+                  "border-bottom": "1px solid var(--border-weak, var(--border))",
+                  "font-size": "13px",
+                  "font-weight": "600",
+                }}
+              >
+                {mode().kind === "create" ? "New skill" : `Edit ${mode().kind === "edit" ? (mode() as { original: SkillSummary }).original.name : ""}`}
+              </header>
+              <div
+                style={{
+                  padding: "12px 14px",
+                  display: "flex",
+                  "flex-direction": "column",
+                  gap: "10px",
+                  "overflow-y": "auto",
+                  flex: "1 1 0%",
+                  "min-height": "0",
+                }}
+              >
+                <label style={{ display: "flex", "flex-direction": "column", gap: "4px" }}>
+                  <span style={{ "font-size": "10px", color: "var(--dim)", "text-transform": "uppercase", "letter-spacing": "0.06em" }}>Name</span>
+                  <input
+                    data-testid="skill-form-name"
+                    type="text"
+                    value={form().name}
+                    disabled={mode().kind === "edit"}
+                    onInput={(e) => setForm((f) => ({ ...f, name: e.currentTarget.value }))}
+                    style={{
+                      padding: "6px 8px",
+                      border: "1px solid var(--border)",
+                      "border-radius": "4px",
+                      "background-color": "var(--bg-weak, var(--bg))",
+                      color: "var(--fg)",
+                      "font-family": "inherit",
+                      "font-size": "12px",
+                    }}
+                  />
+                </label>
+                <label style={{ display: "flex", "flex-direction": "column", gap: "4px" }}>
+                  <span style={{ "font-size": "10px", color: "var(--dim)", "text-transform": "uppercase", "letter-spacing": "0.06em" }}>Role</span>
+                  <input
+                    data-testid="skill-form-role"
+                    type="text"
+                    value={form().role}
+                    onInput={(e) => setForm((f) => ({ ...f, role: e.currentTarget.value }))}
+                    style={{
+                      padding: "6px 8px",
+                      border: "1px solid var(--border)",
+                      "border-radius": "4px",
+                      "background-color": "var(--bg-weak, var(--bg))",
+                      color: "var(--fg)",
+                      "font-family": "inherit",
+                      "font-size": "12px",
+                    }}
+                  />
+                </label>
+                <label style={{ display: "flex", "flex-direction": "column", gap: "4px" }}>
+                  <span style={{ "font-size": "10px", color: "var(--dim)", "text-transform": "uppercase", "letter-spacing": "0.06em" }}>Specialties (comma-separated)</span>
+                  <input
+                    data-testid="skill-form-specialties"
+                    type="text"
+                    value={form().specialties}
+                    onInput={(e) => setForm((f) => ({ ...f, specialties: e.currentTarget.value }))}
+                    style={{
+                      padding: "6px 8px",
+                      border: "1px solid var(--border)",
+                      "border-radius": "4px",
+                      "background-color": "var(--bg-weak, var(--bg))",
+                      color: "var(--fg)",
+                      "font-family": "inherit",
+                      "font-size": "12px",
+                    }}
+                  />
+                </label>
+                <label style={{ display: "flex", "flex-direction": "column", gap: "4px" }}>
+                  <span style={{ "font-size": "10px", color: "var(--dim)", "text-transform": "uppercase", "letter-spacing": "0.06em" }}>Description</span>
+                  <input
+                    data-testid="skill-form-description"
+                    type="text"
+                    value={form().description}
+                    onInput={(e) => setForm((f) => ({ ...f, description: e.currentTarget.value }))}
+                    style={{
+                      padding: "6px 8px",
+                      border: "1px solid var(--border)",
+                      "border-radius": "4px",
+                      "background-color": "var(--bg-weak, var(--bg))",
+                      color: "var(--fg)",
+                      "font-family": "inherit",
+                      "font-size": "12px",
+                    }}
+                  />
+                </label>
+                <label style={{ display: "flex", "flex-direction": "column", gap: "4px", flex: "1 1 0%", "min-height": "0" }}>
+                  <span style={{ "font-size": "10px", color: "var(--dim)", "text-transform": "uppercase", "letter-spacing": "0.06em" }}>Body (markdown)</span>
+                  <textarea
+                    data-testid="skill-form-body"
+                    value={form().body}
+                    onInput={(e) => setForm((f) => ({ ...f, body: e.currentTarget.value }))}
+                    style={{
+                      padding: "6px 8px",
+                      border: "1px solid var(--border)",
+                      "border-radius": "4px",
+                      "background-color": "var(--bg-weak, var(--bg))",
+                      color: "var(--fg)",
+                      "font-family": "var(--font-family-mono, var(--font-mono))",
+                      "font-size": "12px",
+                      "min-height": "180px",
+                      resize: "vertical",
+                    }}
+                  />
+                </label>
+                <Show when={errorMsg()}>
+                  <div
+                    data-testid="skill-form-error"
+                    style={{ color: "var(--danger, #d34)", "font-size": "11px" }}
+                  >
+                    {errorMsg()}
+                  </div>
+                </Show>
+              </div>
+              <footer
+                style={{
+                  display: "flex",
+                  "justify-content": "flex-end",
+                  gap: "8px",
+                  padding: "10px 14px",
+                  "border-top": "1px solid var(--border-weak, var(--border))",
+                }}
+              >
+                <button
+                  type="button"
+                  data-testid="skill-form-cancel"
+                  onClick={() => closeEditor()}
+                  disabled={submitting()}
+                  style={{
+                    padding: "4px 10px",
+                    "border-radius": "4px",
+                    border: "1px solid var(--border)",
+                    "background-color": "transparent",
+                    color: "var(--fg)",
+                    "font-family": "inherit",
+                    "font-size": "11px",
+                    cursor: "pointer",
+                  }}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  data-testid="skill-form-save"
+                  onClick={() => void submit()}
+                  disabled={submitting()}
+                  style={{
+                    padding: "4px 10px",
+                    "border-radius": "4px",
+                    border: "1px solid var(--accent)",
+                    "background-color": "var(--accent)",
+                    color: "var(--bg)",
+                    "font-family": "inherit",
+                    "font-size": "11px",
+                    cursor: "pointer",
+                  }}
+                >
+                  {submitting() ? "Saving…" : "Save"}
+                </button>
+              </footer>
+            </div>
+          </div>
+        )}
+      </Show>
+
+      {/* ----- Delete confirm ------------------------------------------- */}
+      <Show when={pendingDelete()}>
+        {(name) => (
+          <div
+            data-testid="skill-delete-confirm"
+            data-skill-name={name()}
+            style={{
+              position: "absolute",
+              inset: "0",
+              display: "flex",
+              "align-items": "center",
+              "justify-content": "center",
+              "background-color": "rgba(0,0,0,0.4)",
+              "z-index": "20",
+            }}
+            onClick={(e) => {
+              if (e.target === e.currentTarget) setPendingDelete(null);
+            }}
+          >
+            <div
+              style={{
+                width: "min(420px, 90%)",
+                "background-color": "var(--bg)",
+                color: "var(--fg)",
+                border: "1px solid var(--border)",
+                "border-radius": "6px",
+                padding: "16px 18px",
+                "box-shadow": "0 12px 32px rgba(0,0,0,0.4)",
+              }}
+            >
+              <p style={{ margin: "0 0 12px 0", "font-size": "12px", "line-height": "1.5" }}>
+                Delete skill <strong>{name()}</strong>? This removes
+                {" "}<code>.tmux-ide/skills/{name()}.md</code> from disk.
+              </p>
+              <Show when={errorMsg()}>
+                <div
+                  data-testid="skill-delete-error"
+                  style={{ color: "var(--danger, #d34)", "font-size": "11px", "margin-bottom": "8px" }}
+                >
+                  {errorMsg()}
+                </div>
+              </Show>
+              <div style={{ display: "flex", "justify-content": "flex-end", gap: "8px" }}>
+                <button
+                  type="button"
+                  data-testid="skill-delete-cancel"
+                  onClick={() => setPendingDelete(null)}
+                  disabled={submitting()}
+                  style={{
+                    padding: "4px 10px",
+                    "border-radius": "4px",
+                    border: "1px solid var(--border)",
+                    "background-color": "transparent",
+                    color: "var(--fg)",
+                    "font-family": "inherit",
+                    "font-size": "11px",
+                    cursor: "pointer",
+                  }}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  data-testid="skill-delete-confirm-button"
+                  onClick={() => void confirmDelete()}
+                  disabled={submitting()}
+                  style={{
+                    padding: "4px 10px",
+                    "border-radius": "4px",
+                    border: "1px solid var(--danger, #d34)",
+                    "background-color": "var(--danger, #d34)",
+                    color: "var(--bg)",
+                    "font-family": "inherit",
+                    "font-size": "11px",
+                    cursor: "pointer",
+                  }}
+                >
+                  {submitting() ? "Deleting…" : "Delete"}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+      </Show>
     </div>
   );
 }

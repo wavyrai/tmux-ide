@@ -59,7 +59,13 @@ import {
   saveValidationState,
   checkCoverage,
 } from "../lib/validation.ts";
-import { loadSkills, loadSkill } from "../lib/skill-registry.ts";
+import {
+  loadSkills,
+  loadSkill,
+  writeSkillFromFields,
+  deleteSkill,
+  projectSkillExists,
+} from "../lib/skill-registry.ts";
 import { computeMetrics, loadMissionHistory } from "../lib/metrics.ts";
 import { loadPlans, markPlanDone } from "../lib/plan-store.ts";
 import {
@@ -96,6 +102,8 @@ import {
   updateMilestoneSchema,
   updateAssertionSchema,
   triggerResearchSchema,
+  createSkillSchema,
+  updateSkillSchema,
 } from "./schemas.ts";
 import { AuthService } from "../lib/auth/auth-service.ts";
 import { authMiddleware } from "../lib/auth/middleware.ts";
@@ -1885,6 +1893,66 @@ export function createApp(options: CreateAppOptions = {}): Hono {
     const skill = loadSkill(session.dir, skillName);
     if (!skill) return c.json({ error: "Skill not found" }, 404);
     return c.json({ skill });
+  });
+
+  app.post("/api/project/:name/skill", zValidator("json", createSkillSchema), (c) => {
+    const name = c.req.param("name");
+    const sessions = discoverSessions();
+    const session = sessions.find((s) => s.name === name);
+    if (!session) return c.json({ error: "Session not found" }, 404);
+    const body = c.req.valid("json");
+    if (projectSkillExists(session.dir, body.name)) {
+      return c.json({ error: `Skill "${body.name}" already exists` }, 409);
+    }
+    try {
+      const skill = writeSkillFromFields(session.dir, body);
+      return c.json({ skill }, 201);
+    } catch (err) {
+      return c.json({ error: (err as Error).message }, 400);
+    }
+  });
+
+  app.put(
+    "/api/project/:name/skill/:skillName",
+    zValidator("json", updateSkillSchema),
+    (c) => {
+      const name = c.req.param("name");
+      const skillName = c.req.param("skillName");
+      const sessions = discoverSessions();
+      const session = sessions.find((s) => s.name === name);
+      if (!session) return c.json({ error: "Session not found" }, 404);
+      const existing = loadSkill(session.dir, skillName);
+      if (!existing) return c.json({ error: "Skill not found" }, 404);
+      const body = c.req.valid("json");
+      try {
+        const skill = writeSkillFromFields(session.dir, {
+          name: skillName,
+          role: body.role ?? existing.role,
+          description: body.description ?? existing.description,
+          specialties:
+            body.specialties ?? [...existing.specialties],
+          body: body.body ?? existing.body,
+        });
+        return c.json({ skill });
+      } catch (err) {
+        return c.json({ error: (err as Error).message }, 400);
+      }
+    },
+  );
+
+  app.delete("/api/project/:name/skill/:skillName", (c) => {
+    const name = c.req.param("name");
+    const skillName = c.req.param("skillName");
+    const sessions = discoverSessions();
+    const session = sessions.find((s) => s.name === name);
+    if (!session) return c.json({ error: "Session not found" }, 404);
+    try {
+      const removed = deleteSkill(session.dir, skillName);
+      if (!removed) return c.json({ error: "Skill not found" }, 404);
+      return c.json({ ok: true });
+    } catch (err) {
+      return c.json({ error: (err as Error).message }, 400);
+    }
   });
 
   // --- Mission endpoints ---

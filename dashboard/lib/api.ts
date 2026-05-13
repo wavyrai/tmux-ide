@@ -559,6 +559,74 @@ export async function fetchSkills(name: string): Promise<SkillData[]> {
   return Array.isArray(data.skills) ? data.skills : [];
 }
 
+export interface SkillCreateInput {
+  name: string;
+  role?: string;
+  description?: string;
+  specialties?: string[];
+  body?: string;
+}
+
+export interface SkillUpdateInput {
+  role?: string;
+  description?: string;
+  specialties?: string[];
+  body?: string;
+}
+
+async function readSkillResponse(res: Response): Promise<SkillData> {
+  const data = (await res.json()) as { skill?: SkillData; error?: string };
+  if (!res.ok || !data.skill) {
+    throw new Error(data.error ?? `Skill request failed (${res.status})`);
+  }
+  return data.skill;
+}
+
+export async function skillCreate(
+  name: string,
+  input: SkillCreateInput,
+): Promise<SkillData> {
+  const res = await fetch(`${API_BASE}/api/project/${encodeURIComponent(name)}/skill`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  return readSkillResponse(res);
+}
+
+export async function skillUpdate(
+  name: string,
+  skillName: string,
+  input: SkillUpdateInput,
+): Promise<SkillData> {
+  const res = await fetch(
+    `${API_BASE}/api/project/${encodeURIComponent(name)}/skill/${encodeURIComponent(skillName)}`,
+    {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(input),
+    },
+  );
+  return readSkillResponse(res);
+}
+
+export async function skillDelete(name: string, skillName: string): Promise<void> {
+  const res = await fetch(
+    `${API_BASE}/api/project/${encodeURIComponent(name)}/skill/${encodeURIComponent(skillName)}`,
+    { method: "DELETE" },
+  );
+  if (!res.ok) {
+    let message = `Delete failed (${res.status})`;
+    try {
+      const data = (await res.json()) as { error?: string };
+      if (data.error) message = data.error;
+    } catch {
+      // ignore parse error; keep default message
+    }
+    throw new Error(message);
+  }
+}
+
 // --- Mission ---
 
 export interface MissionDetail {
