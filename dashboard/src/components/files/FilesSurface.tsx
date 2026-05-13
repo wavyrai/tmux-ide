@@ -50,16 +50,24 @@ import {
   type ManagedFileKind,
 } from "@/lib/editor";
 import {
+  acceptExternalChange,
   bufferState,
+  closeBuffer,
+  dismissExternalChange,
+  discardRecoverableBuffer,
+  listRecoverableBuffers,
   markContent,
   markError,
   markReady,
   openBuffer,
+  restoreRecoverableBuffer,
   save,
   setActiveBuffer,
+  type RecoverableSnapshot,
 } from "@/lib/editor/buffer-store";
 import { CodeEditor } from "@/components/editor/CodeEditor";
 import { TabStrip } from "@/components/editor/TabStrip";
+import { startFsWatchClient } from "@/lib/editor/fs-watch-client";
 import { modelRegistry } from "@/lib/monaco/model-registry";
 import { buildMonacoModelPath, toDiskUri } from "@/lib/monaco/model-path";
 
@@ -139,15 +147,45 @@ export function FilesSurface(props: FilesSurfaceProps): JSX.Element {
   // need the registry for content reads; image / binary skip it).
   const registeredDiskUris = new Set<string>();
 
-  // Install the Cmd/Ctrl+S keybind while the surface is mounted.
+  // Crash-recovery prompt — surface persisted dirty buffers for
+  // the active session. Drives the banner; the user picks
+  // restore / discard via callbacks.
+  const [recoverable, setRecoverable] = createSignal<RecoverableSnapshot[]>([]);
+
+  // Install the Cmd/Ctrl+S + Cmd/Ctrl+W keybinds while the surface
+  // is mounted. Cmd+W closes the active tab via the same dirty-
+  // confirm path the tab strip's × uses.
   onMount(() => {
+    setRecoverable(listRecoverableBuffers(props.projectName));
+
     function onKeyDown(event: KeyboardEvent) {
       if (!(event.metaKey || event.ctrlKey)) return;
-      if (event.key !== "s" && event.key !== "S") return;
-      const uri = bufferState.activeUri;
-      if (!uri) return;
-      event.preventDefault();
-      void save(uri);
+      const key = event.key;
+      if (key === "s" || key === "S") {
+        const uri = bufferState.activeUri;
+        if (!uri) return;
+        event.preventDefault();
+        void save(uri);
+        return;
+      }
+      if (key === "w" || key === "W") {
+        const uri = bufferState.activeUri;
+        if (!uri) return;
+        event.preventDefault();
+        const buf = bufferState.buffers[uri];
+        if (!buf) return;
+        if (!buf.dirty) {
+          closeBuffer(uri);
+          return;
+        }
+        if (
+          typeof window !== "undefined" &&
+          typeof window.confirm === "function" &&
+          window.confirm(`Discard unsaved changes to ${buf.filePath}?`)
+        ) {
+          closeBuffer(uri, { discardDirty: true });
+        }
+      }
     }
     window.addEventListener("keydown", onKeyDown);
     onCleanup(() => window.removeEventListener("keydown", onKeyDown));
@@ -156,6 +194,14 @@ export function FilesSurface(props: FilesSurfaceProps): JSX.Element {
   onCleanup(() => {
     for (const uri of registeredDiskUris) modelRegistry.unregisterModel(uri);
     registeredDiskUris.clear();
+  });
+
+  // Open the FS-watch WS subscription for this session so external
+  // file rewrites flow into the buffer store's
+  // `reseedFromExternal` path.
+  onMount(() => {
+    const stop = startFsWatchClient(props.projectName);
+    onCleanup(() => stop());
   });
 
   // Auto-open a non-Monaco preview path when the buffer store has no
@@ -271,6 +317,25 @@ export function FilesSurface(props: FilesSurfaceProps): JSX.Element {
         data-testid="v2-files-preview"
         class="flex flex-1 min-w-0 min-h-0 flex-col"
       >
+        <Show when={recoverable().length > 0}>
+          <RecoveryBanner
+            snapshots={recoverable()}
+            onRestore={(snap) => {
+              restoreRecoverableBuffer(snap);
+              setRecoverable((prev) => prev.filter((s) => s.bufferUri !== snap.bufferUri));
+            }}
+            onDiscard={(snap) => {
+              discardRecoverableBuffer(snap.bufferUri);
+              setRecoverable((prev) => prev.filter((s) => s.bufferUri !== snap.bufferUri));
+            }}
+            onDismissAll={() => {
+              for (const s of recoverable()) {
+                discardRecoverableBuffer(s.bufferUri);
+              }
+              setRecoverable([]);
+            }}
+          />
+        </Show>
         <TabStrip />
         <div class="flex flex-1 min-w-0 min-h-0 flex-col">
           <Show
@@ -293,6 +358,61 @@ export function FilesSurface(props: FilesSurfaceProps): JSX.Element {
           </Show>
         </div>
       </main>
+    </div>
+  );
+}
+
+function RecoveryBanner(props: {
+  snapshots: RecoverableSnapshot[];
+  onRestore: (snap: RecoverableSnapshot) => void;
+  onDiscard: (snap: RecoverableSnapshot) => void;
+  onDismissAll: () => void;
+}) {
+  return (
+    <div
+      data-testid="v2-files-recovery-banner"
+      class="flex items-center gap-2 border-b border-[var(--border)] bg-[var(--surface-active)] px-3 py-2 text-[11px] text-[var(--fg)]"
+    >
+      <span class="text-[var(--accent)]">●</span>
+      <span class="font-mono">
+        {props.snapshots.length} unsaved buffer{props.snapshots.length === 1 ? "" : "s"} from your previous session
+      </span>
+      <span class="flex-1" />
+      <For each={props.snapshots}>
+        {(snap) => (
+          <div class="inline-flex items-center gap-1">
+            <span class="truncate font-mono text-[10px] text-[var(--dim)]">
+              {snap.filePath}
+            </span>
+            <button
+              type="button"
+              data-testid="v2-files-recovery-restore"
+              data-buffer-uri={snap.bufferUri}
+              onClick={() => props.onRestore(snap)}
+              class="h-5 rounded border border-[var(--border)] bg-[var(--surface)] px-1.5 text-[10px] text-[var(--accent)] hover:bg-[var(--surface-hover)]"
+            >
+              Restore
+            </button>
+            <button
+              type="button"
+              data-testid="v2-files-recovery-discard"
+              data-buffer-uri={snap.bufferUri}
+              onClick={() => props.onDiscard(snap)}
+              class="h-5 rounded border border-[var(--border)] bg-[var(--surface)] px-1.5 text-[10px] text-[var(--dim)] hover:bg-[var(--surface-hover)]"
+            >
+              Discard
+            </button>
+          </div>
+        )}
+      </For>
+      <button
+        type="button"
+        data-testid="v2-files-recovery-dismiss-all"
+        onClick={() => props.onDismissAll()}
+        class="h-5 rounded border border-[var(--border)] bg-[var(--surface)] px-1.5 text-[10px] text-[var(--dim)] hover:bg-[var(--surface-hover)]"
+      >
+        Dismiss all
+      </button>
     </div>
   );
 }
@@ -350,14 +470,58 @@ function PreviewBody(props: {
             </div>
           }
         >
-          <CodeEditor
-            uri={buf().bufferUri}
-            readOnly={false}
-            onContentChange={(value) => markContent(buf().bufferUri, value)}
-          />
+          <div class="flex h-full min-h-0 w-full min-w-0 flex-col">
+            <Show when={buf().externalContent !== null}>
+              <ExternalChangeBanner
+                filePath={buf().filePath}
+                onAccept={() => acceptExternalChange(buf().bufferUri)}
+                onDismiss={() => dismissExternalChange(buf().bufferUri)}
+              />
+            </Show>
+            <CodeEditor
+              uri={buf().bufferUri}
+              readOnly={false}
+              onContentChange={(value) => markContent(buf().bufferUri, value)}
+            />
+          </div>
         </Show>
       )}
     </Show>
+  );
+}
+
+function ExternalChangeBanner(props: {
+  filePath: string;
+  onAccept: () => void;
+  onDismiss: () => void;
+}) {
+  return (
+    <div
+      data-testid="v2-files-external-change-banner"
+      class="flex shrink-0 items-center gap-2 border-b border-[var(--yellow,var(--accent))] bg-[var(--surface)] px-3 py-2 text-[11px] text-[var(--fg)]"
+    >
+      <span aria-hidden="true" class="text-[var(--yellow,var(--accent))]">⚠</span>
+      <span>
+        <span class="font-mono">{props.filePath}</span> changed on disk.
+      </span>
+      <span class="flex-1" />
+      <button
+        type="button"
+        data-testid="v2-files-external-change-accept"
+        onClick={() => props.onAccept()}
+        class="h-5 rounded border border-[var(--border)] bg-[var(--surface)] px-1.5 text-[10px] text-[var(--accent)] hover:bg-[var(--surface-hover)]"
+      >
+        Reload from disk
+      </button>
+      <button
+        type="button"
+        data-testid="v2-files-external-change-dismiss"
+        onClick={() => props.onDismiss()}
+        class="h-5 rounded border border-[var(--border)] bg-[var(--surface)] px-1.5 text-[10px] text-[var(--dim)] hover:bg-[var(--surface-hover)]"
+      >
+        Keep my edits
+      </button>
+    </div>
   );
 }
 

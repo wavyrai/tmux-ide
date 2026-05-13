@@ -164,6 +164,13 @@ const TerminalsChangedFrameZ = z.object({
   sessionName: z.string(),
 });
 
+const FileChangedFrameZ = z.object({
+  type: z.literal("file.changed"),
+  sessionName: z.string(),
+  path: z.string(),
+  kind: z.enum(["modify", "delete"]),
+});
+
 const ChatSessionUpdateZ = z.object({ sessionUpdate: z.string() }).passthrough();
 
 const ChatThreadIndexEntryZ = z
@@ -249,6 +256,7 @@ export const ServerFrameSchemaZ = z.discriminatedUnion("type", [
   ValidationChangedFrameZ,
   ConfigChangedFrameZ,
   TerminalsChangedFrameZ,
+  FileChangedFrameZ,
   ChatThreadUpdateFrameZ,
   ChatThreadUsageFrameZ,
   ChatThreadStopFrameZ,

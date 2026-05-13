@@ -10,6 +10,7 @@
 
 import type { RawData, WebSocket } from "ws";
 import { discoverSessions, buildOverviews, buildProjectDetail } from "./discovery.ts";
+import { subscribeFsChanges } from "./fs-watch.ts";
 import { taskStore, loadMission, loadTasks, type TaskStoreChangeEvent } from "../lib/task-store.ts";
 import { readEvents, eventLogEmitter, type OrchestratorEvent } from "../lib/event-log.ts";
 import { loadValidationState } from "../lib/validation.ts";
@@ -38,6 +39,8 @@ interface WsLike {
 interface SessionListener {
   taskListener: (change: TaskStoreChangeEvent) => void;
   eventListener: (message: { dir: string; event: OrchestratorEvent }) => void;
+  /** Unsubscribe hook from the per-session chokidar watcher. */
+  fsUnsubscribe: () => void;
 }
 
 // Module-level globals for cross-connection broadcasts (sessions.changed,
@@ -368,7 +371,22 @@ export function handleWsEventsConnection(socket: WebSocket | WsLike): void {
 
     taskStore.on("change", taskListener);
     eventLogEmitter.on("event", eventListener);
-    subscriptions.set(sessionName, { taskListener, eventListener });
+
+    // FS-watch — fan chokidar events to `file.changed` frames so
+    // the dashboard's buffer-store can reseed open buffers when
+    // files are rewritten externally.
+    const fsUnsubscribe = dir
+      ? subscribeFsChanges(dir, (event) => {
+          send({
+            type: "file.changed",
+            sessionName,
+            path: event.path,
+            kind: event.kind,
+          });
+        })
+      : () => {};
+
+    subscriptions.set(sessionName, { taskListener, eventListener, fsUnsubscribe });
 
     // Push initial snapshot so the dashboard doesn't have to poll on connect.
     if (session) {
@@ -388,6 +406,11 @@ export function handleWsEventsConnection(socket: WebSocket | WsLike): void {
     if (!entry) return;
     taskStore.off("change", entry.taskListener);
     eventLogEmitter.off("event", entry.eventListener);
+    try {
+      entry.fsUnsubscribe();
+    } catch {
+      /* watcher already torn down */
+    }
     subscriptions.delete(sessionName);
     sessionDirs.delete(sessionName);
   };
@@ -400,6 +423,11 @@ export function handleWsEventsConnection(socket: WebSocket | WsLike): void {
     for (const [name, entry] of subscriptions) {
       taskStore.off("change", entry.taskListener);
       eventLogEmitter.off("event", entry.eventListener);
+      try {
+        entry.fsUnsubscribe();
+      } catch {
+        /* watcher already torn down */
+      }
       sessionDirs.delete(name);
     }
     subscriptions.clear();

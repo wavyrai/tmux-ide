@@ -52,6 +52,13 @@ vi.mock("@/components/editor/CodeEditor", () => ({
   ),
 }));
 
+// happy-dom doesn't ship a browser-compatible WebSocket — stub the
+// FS-watch client out so the surface mounts without trying to
+// open `/ws/events`.
+vi.mock("@/lib/editor/fs-watch-client", () => ({
+  startFsWatchClient: () => () => {},
+}));
+
 import { FilesSurface } from "@/components/files/FilesSurface";
 import { modelRegistry } from "@/lib/monaco/model-registry";
 
