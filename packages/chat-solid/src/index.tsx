@@ -21,6 +21,13 @@ export {
   rewriteMarkdownFileUriHref,
 } from "./lib/markdownLinks";
 export { renderMarkdown } from "./lib/markdown";
+export {
+  buildExpandedImagePreview,
+  InlineImagePreview,
+  type ExpandedImageItem,
+  type ExpandedImagePreview,
+} from "./components/ExpandedImagePreview";
+export { ExpandedImageDialog } from "./components/ExpandedImageDialog";
 
 export function mount(container: HTMLElement, opts: ChatMountOptions): ChatHandle {
   const [options, setOptions] = createSignal(opts);
