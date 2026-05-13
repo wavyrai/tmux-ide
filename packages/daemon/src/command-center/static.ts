@@ -19,7 +19,7 @@ const MIME_TYPES: Record<string, string> = {
 const fileCache = new Map<string, { content: Uint8Array; mimeType: string }>();
 
 /**
- * Resolve the dashboard `out/` directory.
+ * Resolve the dashboard build directory.
  *
  * Works in three layouts:
  *  1. Workspace dev — daemon runs from `packages/daemon/src/command-center/`,
@@ -28,18 +28,31 @@ const fileCache = new Map<string, { content: Uint8Array; mimeType: string }>();
  *     `node_modules/@tmux-ide/daemon/...`, dashboard is at the host
  *     package root.
  *  3. Standalone daemon install — caller passes `TMUX_IDE_DASHBOARD_OUT`.
+ *
+ * Goal-16 flavor switch: `DASHBOARD_FLAVOR=solid` looks for the Solid
+ * SPA's `dashboard-solid/dist` instead of the React `dashboard/out`.
+ * Default stays React until G16-P4 cutover. The override env var also
+ * supports either flavor — caller passes the full absolute path.
  */
 function resolveDashboardOut(): string | null {
   const override = process.env.TMUX_IDE_DASHBOARD_OUT;
   if (override) return existsSync(override) ? override : null;
 
+  const flavor = process.env.DASHBOARD_FLAVOR === "solid" ? "solid" : "react";
+  const candidates =
+    flavor === "solid"
+      ? [["dashboard-solid", "dist"]]
+      : [["dashboard", "out"]];
+
   const here = dirname(fileURLToPath(import.meta.url));
-  // Walk up looking for a sibling `dashboard/out` directory. Stops at the
-  // filesystem root.
+  // Walk up looking for a sibling build directory. Stops at filesystem
+  // root.
   let current = here;
   for (let i = 0; i < 10; i += 1) {
-    const candidate = join(current, "dashboard", "out");
-    if (existsSync(candidate)) return candidate;
+    for (const segments of candidates) {
+      const candidate = join(current, ...segments);
+      if (existsSync(candidate)) return candidate;
+    }
     const parent = resolve(current, "..");
     if (parent === current) break;
     current = parent;

@@ -1,0 +1,1023 @@
+@import "tailwindcss";
+
+/*
+ * Design tokens — Tailwind v4 `@theme inline` registration. Implements PR 1
+ * of docs/design-mapping-t3-to-tmux-ide.md.
+ *
+ * Mirrors t3's apps/web/src/index.css pattern: a single radius scale plus
+ * paired surface/foreground color tokens, all registered with Tailwind via
+ * `--color-*` so utilities like `bg-card`, `text-muted-foreground`,
+ * `border-border` resolve to the active theme's CSS custom properties.
+ *
+ * The `inline` keyword keeps the var() references in the cascade — switching
+ * theme by toggling [data-theme] still updates every Tailwind-tinted surface
+ * because the utility resolves through `var(--color-X)` → `var(--bg)` etc.
+ *
+ * Solid silos (packages/v2-solid-widgets, packages/chat-solid) read
+ * `var(--bg)` / `var(--accent)` directly; they inherit these tokens
+ * automatically — no silo-side change required.
+ */
+@theme inline {
+  /* Font families (PR 3) — registered here so Tailwind utilities
+     `font-sans` / `font-mono` resolve. Same stacks as the `:root`
+     declarations above; declaring them inside `@theme` makes them
+     available both as Tailwind tokens AND as CSS custom properties
+     on :root, so existing `style={{ fontFamily: 'var(--font-mono)' }}`
+     consumers keep working. */
+  --font-sans:
+    "Geist", "DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --font-mono:
+    "Berkeley Mono", ui-monospace, SFMono-Regular, "JetBrains Mono", "IBM Plex Mono", "Menlo",
+    "Consolas", monospace;
+
+  /* Radius scale — 7 stops, anchored on 0.625rem = 10px. */
+  --radius: 0.625rem;
+  --radius-sm: calc(var(--radius) - 4px); /* 6px  — inline chips, code */
+  --radius-md: calc(var(--radius) - 2px); /* 8px  — small buttons, badges */
+  --radius-lg: var(--radius); /* 10px — cards, dropdowns */
+  --radius-xl: calc(var(--radius) + 4px); /* 14px — composer, sections */
+  --radius-2xl: calc(var(--radius) + 8px); /* 18px — message bubbles */
+  --radius-3xl: calc(var(--radius) + 12px); /* 22px — hero panels */
+
+  /* Color tokens — alias our existing palette into Tailwind's semantic names
+   * so `bg-card`, `text-muted-foreground`, `border-border` work out of the
+   * box. The right-hand side uses var() so theme switching cascades. */
+  --color-background: var(--bg);
+  --color-foreground: var(--fg);
+  --color-card: var(--surface-elevated);
+  --color-card-foreground: var(--fg);
+  --color-popover: var(--surface-elevated);
+  --color-popover-foreground: var(--fg);
+  --color-muted: var(--surface);
+  --color-muted-foreground: var(--dim);
+  --color-subtle-foreground: var(--dimmer); /* PR 2 — placeholder/disabled tier */
+  --color-accent: var(--surface-active);
+  --color-accent-foreground: var(--fg);
+  --color-secondary: var(--surface-raised);
+  --color-secondary-foreground: var(--fg-secondary); /* PR 2 — was --fg, now stepped */
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong); /* PR 2 — emphasis border */
+  --color-input: var(--border);
+  --color-ring: var(--accent);
+  --color-primary: var(--accent);
+  --color-primary-foreground: var(--bg);
+  --color-destructive: var(--red);
+  --color-destructive-foreground: var(--red-foreground); /* PR 2 — paired status fg */
+  --color-success: var(--green);
+  --color-success-foreground: var(--green-foreground); /* PR 2 — paired status fg */
+  --color-warning: var(--yellow);
+  --color-warning-foreground: var(--yellow-foreground); /* PR 2 — paired status fg */
+  --color-info: var(--cyan);
+  --color-info-foreground: var(--cyan-foreground); /* PR 2 — paired status fg */
+}
+
+/*
+ * Sidebar primitive layout — declare these as plain CSS so the Sidebar's
+ * collapse/expand width and icon-mode reveals are not at the mercy of
+ * Tailwind v4's arbitrary-value JIT compilation (`w-[var(...)]`,
+ * `data-[collapsible=icon]:*`, `group-data-[collapsible=icon]:*` are
+ * unreliable inside cn() blocks and were silently failing before).
+ */
+[data-slot="sidebar-container"] {
+  width: var(--sidebar-width);
+}
+[data-slot="sidebar-container"][data-collapsible="offcanvas"] {
+  width: 0;
+}
+[data-slot="sidebar-container"][data-collapsible="icon"] {
+  width: var(--sidebar-width-icon);
+}
+[data-slot="sidebar-container"][data-variant="floating"][data-collapsible="icon"],
+[data-slot="sidebar-container"][data-variant="inset"][data-collapsible="icon"] {
+  width: calc(var(--sidebar-width-icon) + 0.75rem);
+}
+[data-slot="sidebar-container"][data-collapsible="icon"] [data-slot="sidebar"],
+[data-slot="sidebar-container"][data-collapsible="icon"] [data-sidebar="sidebar-inner"] {
+  width: var(--sidebar-width-icon);
+}
+[data-slot="sidebar-container"][data-collapsible="icon"] [data-sidebar="header"],
+[data-slot="sidebar-container"][data-collapsible="icon"] [data-sidebar="content"] {
+  overflow: hidden;
+}
+[data-slot="sidebar-container"][data-collapsible="icon"] [data-sidebar="group-label"] {
+  margin-top: -2rem;
+  opacity: 0;
+  pointer-events: none;
+}
+[data-slot="sidebar-container"][data-collapsible="icon"] [data-sidebar="menu-badge"],
+[data-slot="sidebar-container"][data-collapsible="icon"] [data-sidebar="menu-action"],
+[data-slot="sidebar-container"][data-collapsible="icon"] [data-sidebar="menu-sub"],
+[data-slot="sidebar-container"][data-collapsible="icon"] [data-sidebar="footer"] > div {
+  display: none;
+}
+[data-slot="sidebar-container"][data-collapsible="icon"] [data-sidebar="menu-button"] {
+  width: 2rem;
+  height: 2rem;
+  padding: 0.5rem;
+}
+[data-slot="sidebar-container"][data-collapsible="icon"]
+  [data-sidebar="menu-button"]
+  > span:last-child {
+  display: none;
+}
+[data-slot="sidebar-container"][data-collapsible="icon"] [data-sidebar="menu-item"] > div.ml-8 {
+  display: none;
+}
+[data-slot="sidebar-container"][data-collapsible="icon"] [data-sidebar="input"] {
+  display: none;
+}
+
+@custom-variant hover-only {
+  @media (hover: hover) and (pointer: fine) {
+    &:hover {
+      @slot;
+    }
+  }
+}
+
+@utility focus-ring {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+@utility focus-field-ring {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+}
+
+@utility no-highlight {
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Berkeley Mono — privately licensed, only present when the asset has been
+   dropped into dashboard/public/fonts/private/. The OSS build resolves to
+   the fallback stack on --font-mono when the file is absent. See
+   dashboard/public/fonts/private/NOTICE.md. */
+@font-face {
+  font-family: "Berkeley Mono";
+  src: url("/fonts/private/Berkeley-Mono-Variable.woff2") format("woff2-variations");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+:root {
+  /* `--font-mono` and `--font-sans` are declared inside the `@theme inline`
+     block above so Tailwind utilities `font-mono` / `font-sans` resolve
+     against the same stack consumers see via `var(--font-sans)`. */
+  --ease-out-fluid: cubic-bezier(0.32, 0.72, 0, 1);
+  --ease-smooth: cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* Dark theme (default) */
+:root {
+  --bg: #101010;
+  --bg-weak: #1e1e1e;
+  --bg-strong: #121212;
+  --surface: rgba(255, 255, 255, 0.031);
+  --surface-raised: rgba(255, 255, 255, 0.059);
+  --surface-elevated: #161616;
+  --surface-elevated-shadow: 0 0 0 1px rgba(255, 255, 255, 0.06);
+  --fg: rgba(255, 255, 255, 0.936);
+  --fg-secondary: rgba(255, 255, 255, 0.618);
+  --dim: rgba(255, 255, 255, 0.422);
+  --dimmer: rgba(255, 255, 255, 0.284);
+  --border: rgba(255, 255, 255, 0.08); /* PR 2 — softened from 0.195 */
+  --border-strong: rgba(255, 255, 255, 0.195); /* PR 2 — emphasis tier */
+  --border-weak: #282828;
+  --accent: #fab283;
+  --green: #9bcd97;
+  --yellow: #fcd53a;
+  --red: #fc533a;
+  --cyan: #56b6c2;
+  --magenta: #edb2f1;
+  /* PR 2 — status foregrounds: brighter/more saturated for dark backgrounds. */
+  --red-foreground: color-mix(in srgb, var(--red) 70%, var(--fg));
+  --green-foreground: color-mix(in srgb, var(--green) 70%, var(--fg));
+  --yellow-foreground: color-mix(in srgb, var(--yellow) 70%, var(--fg));
+  --cyan-foreground: color-mix(in srgb, var(--cyan) 70%, var(--fg));
+  --diff-add-bg: #1a2919;
+  --diff-add-text: #9bcd97;
+  --diff-del-bg: #42120b;
+  --diff-del-text: #fc533a;
+  --scrollbar-thumb: rgba(255, 255, 255, 0.1);
+  --surface-hover: rgba(255, 255, 255, 0.04);
+  --surface-active: rgba(255, 255, 255, 0.06);
+  --modal-overlay: rgba(0, 0, 0, 0.6);
+  --ai-color: #a5b4fc;
+  --ai-bg: rgba(165, 180, 252, 0.08);
+  --ai-badge: rgba(165, 180, 252, 0.15);
+  --human-color: #6ee7b7;
+  --human-bg: rgba(110, 231, 183, 0.08);
+  --human-badge: rgba(110, 231, 183, 0.15);
+  --sidebar-background: var(--bg-strong);
+  --sidebar-foreground: var(--fg);
+  --sidebar-primary: var(--accent);
+  --sidebar-primary-foreground: var(--bg);
+  --sidebar-accent: var(--surface-active);
+  --sidebar-accent-foreground: var(--fg);
+  --sidebar-border: var(--border-weak);
+  --sidebar-ring: var(--accent);
+
+  /* Terminal palette — dark */
+  --term-bg: #101010;
+  --term-fg: #eeeeee;
+  --term-cursor: #fab283;
+  --term-selection: #334155;
+  --term-black: #101010;
+  --term-red: #fc533a;
+  --term-green: #9bcd97;
+  --term-yellow: #fcd53a;
+  --term-blue: #60a5fa;
+  --term-magenta: #edb2f1;
+  --term-cyan: #56b6c2;
+  --term-white: #eeeeee;
+  --term-bright-black: #777777;
+  --term-bright-red: #ff7a66;
+  --term-bright-green: #b8e6b3;
+  --term-bright-yellow: #ffe36d;
+  --term-bright-blue: #93c5fd;
+  --term-bright-magenta: #f5c7f7;
+  --term-bright-cyan: #80d7e2;
+  --term-bright-white: #ffffff;
+}
+
+/* Light theme — sharp blue accent */
+[data-theme="light"] {
+  --bg: #fafafa;
+  --bg-weak: #f0f0f2;
+  --bg-strong: #ffffff;
+  --surface: rgba(0, 0, 0, 0.05);
+  --surface-raised: rgba(0, 0, 0, 0.05);
+  --surface-elevated: #ffffff;
+  --surface-elevated-shadow: 0 1px 2px rgba(0, 0, 0, 0.04), 0 0 0 1px rgba(0, 0, 0, 0.06);
+  --fg: #1a1a2e;
+  --fg-secondary: #555566;
+  --dim: #888899;
+  --dimmer: #bbbbcc;
+  --border: rgba(0, 0, 0, 0.08); /* PR 2 — softened from 0.12 */
+  --border-strong: rgba(0, 0, 0, 0.12); /* PR 2 — emphasis tier */
+  --border-weak: #e2e2ea;
+  --accent: #2563eb;
+  --green: #16a34a;
+  --yellow: #ca8a04;
+  --red: #dc2626;
+  --cyan: #0891b2;
+  --magenta: #9333ea;
+  /* PR 2 — status foregrounds: darker shades for contrast on light surfaces. */
+  --red-foreground: color-mix(in srgb, var(--red) 75%, #000);
+  --green-foreground: color-mix(in srgb, var(--green) 75%, #000);
+  --yellow-foreground: color-mix(in srgb, var(--yellow) 75%, #000);
+  --cyan-foreground: color-mix(in srgb, var(--cyan) 75%, #000);
+  --diff-add-bg: #dcfce7;
+  --diff-add-text: #15803d;
+  --diff-del-bg: #fef2f2;
+  --diff-del-text: #dc2626;
+  --scrollbar-thumb: rgba(0, 0, 0, 0.12);
+  --surface-hover: rgba(0, 0, 0, 0.03);
+  --surface-active: rgba(0, 0, 0, 0.06);
+  --modal-overlay: rgba(0, 0, 0, 0.4);
+  --ai-color: #6366f1;
+  --ai-bg: rgba(99, 102, 241, 0.08);
+  --ai-badge: rgba(99, 102, 241, 0.15);
+  --human-color: #059669;
+  --human-bg: rgba(5, 150, 105, 0.08);
+  --human-badge: rgba(5, 150, 105, 0.15);
+  --sidebar-background: var(--bg-strong);
+  --sidebar-foreground: var(--fg);
+  --sidebar-primary: var(--accent);
+  --sidebar-primary-foreground: var(--bg);
+  --sidebar-accent: var(--surface-active);
+  --sidebar-accent-foreground: var(--fg);
+  --sidebar-border: var(--border-weak);
+  --sidebar-ring: var(--accent);
+
+  /* Terminal palette — light */
+  --term-bg: #ffffff;
+  --term-fg: #1a1a2e;
+  --term-cursor: #2563eb;
+  --term-selection: rgba(37, 99, 235, 0.18);
+  --term-black: #1a1a2e;
+  --term-red: #dc2626;
+  --term-green: #16a34a;
+  --term-yellow: #ca8a04;
+  --term-blue: #2563eb;
+  --term-magenta: #9333ea;
+  --term-cyan: #0891b2;
+  --term-white: #555566;
+  --term-bright-black: #888899;
+  --term-bright-red: #ef4444;
+  --term-bright-green: #22c55e;
+  --term-bright-yellow: #eab308;
+  --term-bright-blue: #3b82f6;
+  --term-bright-magenta: #a855f7;
+  --term-bright-cyan: #06b6d4;
+  --term-bright-white: #1a1a2e;
+}
+
+[data-theme="catppuccin"] {
+  --bg: #1e1e2e;
+  --bg-weak: #181825;
+  --bg-strong: #11111b;
+  --surface: rgba(205, 214, 244, 0.07);
+  --surface-raised: rgba(205, 214, 244, 0.1);
+  --surface-elevated: #242438;
+  --surface-elevated-shadow: 0 0 0 1px rgba(205, 214, 244, 0.08);
+  --fg: #cdd6f4;
+  --fg-secondary: #bac2de;
+  --dim: #9399b2;
+  --dimmer: #6c7086;
+  --border: rgba(205, 214, 244, 0.08); /* PR 2 — softened from 0.16 */
+  --border-strong: rgba(205, 214, 244, 0.16); /* PR 2 — emphasis tier */
+  --border-weak: #313244;
+  --accent: #cba6f7;
+  --green: #a6e3a1;
+  --yellow: #f9e2af;
+  --red: #f38ba8;
+  --cyan: #89dceb;
+  --magenta: #f5c2e7;
+  --red-foreground: color-mix(in srgb, var(--red) 70%, var(--fg));
+  --green-foreground: color-mix(in srgb, var(--green) 70%, var(--fg));
+  --yellow-foreground: color-mix(in srgb, var(--yellow) 70%, var(--fg));
+  --cyan-foreground: color-mix(in srgb, var(--cyan) 70%, var(--fg));
+  --diff-add-bg: #203522;
+  --diff-add-text: #a6e3a1;
+  --diff-del-bg: #3a1f29;
+  --diff-del-text: #f38ba8;
+  --scrollbar-thumb: rgba(205, 214, 244, 0.16);
+  --surface-hover: rgba(205, 214, 244, 0.09);
+  --surface-active: rgba(203, 166, 247, 0.15);
+  --modal-overlay: rgba(17, 17, 27, 0.72);
+  --term-bg: #1e1e2e;
+  --term-fg: #cdd6f4;
+  --term-cursor: #cba6f7;
+  --term-selection: rgba(203, 166, 247, 0.28);
+  --term-black: #45475a;
+  --term-red: #f38ba8;
+  --term-green: #a6e3a1;
+  --term-yellow: #f9e2af;
+  --term-blue: #89b4fa;
+  --term-magenta: #f5c2e7;
+  --term-cyan: #89dceb;
+  --term-white: #bac2de;
+  --term-bright-black: #585b70;
+  --term-bright-red: #f38ba8;
+  --term-bright-green: #a6e3a1;
+  --term-bright-yellow: #f9e2af;
+  --term-bright-blue: #89b4fa;
+  --term-bright-magenta: #f5c2e7;
+  --term-bright-cyan: #89dceb;
+  --term-bright-white: #cdd6f4;
+}
+
+[data-theme="dracula"] {
+  --bg: #282a36;
+  --bg-weak: #21222c;
+  --bg-strong: #191a21;
+  --surface: rgba(248, 248, 242, 0.07);
+  --surface-raised: rgba(248, 248, 242, 0.1);
+  --surface-elevated: #303241;
+  --surface-elevated-shadow: 0 0 0 1px rgba(248, 248, 242, 0.08);
+  --fg: #f8f8f2;
+  --fg-secondary: #cfcfd1;
+  --dim: #8b8c9b;
+  --dimmer: #6272a4;
+  --border: rgba(248, 248, 242, 0.08); /* PR 2 — softened from 0.16 */
+  --border-strong: rgba(248, 248, 242, 0.16); /* PR 2 — emphasis tier */
+  --border-weak: #44475a;
+  --accent: #bd93f9;
+  --green: #50fa7b;
+  --yellow: #f1fa8c;
+  --red: #ff5555;
+  --cyan: #8be9fd;
+  --magenta: #ff79c6;
+  --red-foreground: color-mix(in srgb, var(--red) 70%, var(--fg));
+  --green-foreground: color-mix(in srgb, var(--green) 70%, var(--fg));
+  --yellow-foreground: color-mix(in srgb, var(--yellow) 70%, var(--fg));
+  --cyan-foreground: color-mix(in srgb, var(--cyan) 70%, var(--fg));
+  --diff-add-bg: #1f3b2a;
+  --diff-add-text: #50fa7b;
+  --diff-del-bg: #47242a;
+  --diff-del-text: #ff5555;
+  --scrollbar-thumb: rgba(248, 248, 242, 0.16);
+  --surface-hover: rgba(248, 248, 242, 0.09);
+  --surface-active: rgba(189, 147, 249, 0.16);
+  --modal-overlay: rgba(25, 26, 33, 0.72);
+  --term-bg: #282a36;
+  --term-fg: #f8f8f2;
+  --term-cursor: #bd93f9;
+  --term-selection: rgba(68, 71, 90, 0.8);
+  --term-black: #21222c;
+  --term-red: #ff5555;
+  --term-green: #50fa7b;
+  --term-yellow: #f1fa8c;
+  --term-blue: #8be9fd;
+  --term-magenta: #ff79c6;
+  --term-cyan: #8be9fd;
+  --term-white: #f8f8f2;
+  --term-bright-black: #6272a4;
+  --term-bright-red: #ff6e6e;
+  --term-bright-green: #69ff94;
+  --term-bright-yellow: #ffffa5;
+  --term-bright-blue: #d6acff;
+  --term-bright-magenta: #ff92df;
+  --term-bright-cyan: #a4ffff;
+  --term-bright-white: #ffffff;
+}
+
+[data-theme="tokyonight"] {
+  --bg: #1a1b26;
+  --bg-weak: #16161e;
+  --bg-strong: #11111a;
+  --surface: rgba(192, 202, 245, 0.07);
+  --surface-raised: rgba(192, 202, 245, 0.1);
+  --surface-elevated: #24283b;
+  --surface-elevated-shadow: 0 0 0 1px rgba(192, 202, 245, 0.08);
+  --fg: #c0caf5;
+  --fg-secondary: #a9b1d6;
+  --dim: #787c99;
+  --dimmer: #565f89;
+  --border: rgba(192, 202, 245, 0.08); /* PR 2 — softened from 0.16 */
+  --border-strong: rgba(192, 202, 245, 0.16); /* PR 2 — emphasis tier */
+  --border-weak: #2f3549;
+  --accent: #7aa2f7;
+  --green: #9ece6a;
+  --yellow: #e0af68;
+  --red: #f7768e;
+  --cyan: #7dcfff;
+  --magenta: #bb9af7;
+  --red-foreground: color-mix(in srgb, var(--red) 70%, var(--fg));
+  --green-foreground: color-mix(in srgb, var(--green) 70%, var(--fg));
+  --yellow-foreground: color-mix(in srgb, var(--yellow) 70%, var(--fg));
+  --cyan-foreground: color-mix(in srgb, var(--cyan) 70%, var(--fg));
+  --diff-add-bg: #203221;
+  --diff-add-text: #9ece6a;
+  --diff-del-bg: #40232e;
+  --diff-del-text: #f7768e;
+  --scrollbar-thumb: rgba(192, 202, 245, 0.16);
+  --surface-hover: rgba(192, 202, 245, 0.09);
+  --surface-active: rgba(122, 162, 247, 0.15);
+  --modal-overlay: rgba(17, 17, 26, 0.72);
+  --term-bg: #1a1b26;
+  --term-fg: #c0caf5;
+  --term-cursor: #7aa2f7;
+  --term-selection: rgba(122, 162, 247, 0.28);
+  --term-black: #15161e;
+  --term-red: #f7768e;
+  --term-green: #9ece6a;
+  --term-yellow: #e0af68;
+  --term-blue: #7aa2f7;
+  --term-magenta: #bb9af7;
+  --term-cyan: #7dcfff;
+  --term-white: #a9b1d6;
+  --term-bright-black: #414868;
+  --term-bright-red: #f7768e;
+  --term-bright-green: #9ece6a;
+  --term-bright-yellow: #e0af68;
+  --term-bright-blue: #7aa2f7;
+  --term-bright-magenta: #bb9af7;
+  --term-bright-cyan: #7dcfff;
+  --term-bright-white: #c0caf5;
+}
+
+[data-theme="solarized-dark"] {
+  --bg: #002b36;
+  --bg-weak: #073642;
+  --bg-strong: #001f27;
+  --surface: rgba(238, 232, 213, 0.07);
+  --surface-raised: rgba(238, 232, 213, 0.1);
+  --surface-elevated: #073642;
+  --surface-elevated-shadow: 0 0 0 1px rgba(238, 232, 213, 0.08);
+  --fg: #eee8d5;
+  --fg-secondary: #93a1a1;
+  --dim: #839496;
+  --dimmer: #586e75;
+  --border: rgba(238, 232, 213, 0.08); /* PR 2 — softened from 0.16 */
+  --border-strong: rgba(238, 232, 213, 0.16); /* PR 2 — emphasis tier */
+  --border-weak: #104451;
+  --accent: #268bd2;
+  --green: #859900;
+  --yellow: #b58900;
+  --red: #dc322f;
+  --cyan: #2aa198;
+  --magenta: #d33682;
+  --red-foreground: color-mix(in srgb, var(--red) 70%, var(--fg));
+  --green-foreground: color-mix(in srgb, var(--green) 70%, var(--fg));
+  --yellow-foreground: color-mix(in srgb, var(--yellow) 70%, var(--fg));
+  --cyan-foreground: color-mix(in srgb, var(--cyan) 70%, var(--fg));
+  --term-bg: #002b36;
+  --term-fg: #eee8d5;
+  --term-cursor: #268bd2;
+  --term-selection: rgba(38, 139, 210, 0.28);
+  --term-black: #073642;
+  --term-red: #dc322f;
+  --term-green: #859900;
+  --term-yellow: #b58900;
+  --term-blue: #268bd2;
+  --term-magenta: #d33682;
+  --term-cyan: #2aa198;
+  --term-white: #eee8d5;
+}
+
+[data-theme="gruvbox-dark"],
+[data-theme="gruvbox-light"] {
+  --green: #98971a;
+  --yellow: #d79921;
+  --red: #cc241d;
+  --cyan: #689d6a;
+  --magenta: #b16286;
+}
+
+[data-theme="gruvbox-dark"] {
+  --bg: #282828;
+  --bg-weak: #1d2021;
+  --bg-strong: #1b1b1b;
+  --surface: rgba(235, 219, 178, 0.07);
+  --surface-raised: rgba(235, 219, 178, 0.1);
+  --surface-elevated: #32302f;
+  --surface-elevated-shadow: 0 0 0 1px rgba(235, 219, 178, 0.08);
+  --fg: #ebdbb2;
+  --fg-secondary: #d5c4a1;
+  --dim: #a89984;
+  --dimmer: #928374;
+  --border: rgba(235, 219, 178, 0.08); /* PR 2 — softened from 0.16 */
+  --border-strong: rgba(235, 219, 178, 0.16); /* PR 2 — emphasis tier */
+  --border-weak: #3c3836;
+  --accent: #fabd2f;
+  --red-foreground: color-mix(in srgb, var(--red) 70%, var(--fg));
+  --green-foreground: color-mix(in srgb, var(--green) 70%, var(--fg));
+  --yellow-foreground: color-mix(in srgb, var(--yellow) 70%, var(--fg));
+  --cyan-foreground: color-mix(in srgb, var(--cyan) 70%, var(--fg));
+  --term-bg: #282828;
+  --term-fg: #ebdbb2;
+  --term-cursor: #fabd2f;
+  --term-selection: rgba(250, 189, 47, 0.25);
+  --term-black: #3c3836;
+  --term-red: #cc241d;
+  --term-green: #98971a;
+  --term-yellow: #d79921;
+  --term-blue: #458588;
+  --term-magenta: #b16286;
+  --term-cyan: #689d6a;
+  --term-white: #ebdbb2;
+}
+
+[data-theme="gruvbox-light"] {
+  --bg: #fbf1c7;
+  --bg-weak: #f2e5bc;
+  --bg-strong: #f9f5d7;
+  --surface: rgba(60, 56, 54, 0.06);
+  --surface-raised: rgba(60, 56, 54, 0.09);
+  --surface-elevated: #fff7d6;
+  --surface-elevated-shadow: 0 1px 2px rgba(60, 56, 54, 0.08);
+  --fg: #3c3836;
+  --fg-secondary: #504945;
+  --dim: #7c6f64;
+  --dimmer: #928374;
+  --border: rgba(60, 56, 54, 0.08); /* PR 2 — softened from 0.16 */
+  --border-strong: rgba(60, 56, 54, 0.16); /* PR 2 — emphasis tier */
+  --border-weak: #d5c4a1;
+  --accent: #b57614;
+  --red-foreground: color-mix(in srgb, var(--red) 75%, #000);
+  --green-foreground: color-mix(in srgb, var(--green) 75%, #000);
+  --yellow-foreground: color-mix(in srgb, var(--yellow) 75%, #000);
+  --cyan-foreground: color-mix(in srgb, var(--cyan) 75%, #000);
+  --term-bg: #fbf1c7;
+  --term-fg: #3c3836;
+  --term-cursor: #b57614;
+  --term-selection: rgba(181, 118, 20, 0.22);
+  --term-black: #3c3836;
+  --term-red: #cc241d;
+  --term-green: #98971a;
+  --term-yellow: #d79921;
+  --term-blue: #458588;
+  --term-magenta: #b16286;
+  --term-cyan: #689d6a;
+  --term-white: #fbf1c7;
+}
+
+* {
+  border-color: var(--border);
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border-radius: 0;
+}
+
+/* Markdown rendering in plans panel */
+.plan-content h1,
+.plan-content h2,
+.plan-content h3,
+.plan-content h4 {
+  color: var(--accent);
+  margin-top: 1.5em;
+  margin-bottom: 0.5em;
+}
+.plan-content h1 {
+  font-size: 1.2em;
+  font-weight: 600;
+}
+.plan-content h2 {
+  font-size: 1.1em;
+  font-weight: 600;
+}
+.plan-content h3 {
+  font-size: 1em;
+  font-weight: 500;
+}
+.plan-content p {
+  color: var(--fg);
+  margin-bottom: 0.75em;
+  line-height: 1.6;
+}
+.plan-content ul,
+.plan-content ol {
+  color: var(--fg);
+  padding-left: 1.5em;
+  margin-bottom: 0.75em;
+}
+.plan-content li {
+  margin-bottom: 0.25em;
+}
+.plan-content code {
+  background: var(--surface);
+  padding: 0.1em 0.3em;
+  border-radius: 2px;
+  font-size: 0.9em;
+}
+.plan-content pre {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  padding: 0.75em 1em;
+  margin-bottom: 0.75em;
+  overflow-x: auto;
+}
+.plan-content pre code {
+  background: none;
+  padding: 0;
+}
+.plan-content a {
+  color: var(--cyan);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.plan-content a:hover {
+  opacity: 0.8;
+}
+.plan-content strong {
+  color: var(--fg);
+  font-weight: 600;
+}
+.plan-content em {
+  color: var(--dim);
+}
+.plan-content blockquote {
+  border-left: 2px solid var(--border);
+  padding-left: 1em;
+  color: var(--dim);
+  margin-bottom: 0.75em;
+}
+.plan-content table {
+  border-collapse: collapse;
+  margin-bottom: 0.75em;
+  width: 100%;
+}
+.plan-content th,
+.plan-content td {
+  border: 1px solid var(--border);
+  padding: 0.3em 0.6em;
+  text-align: left;
+}
+.plan-content th {
+  color: var(--accent);
+  font-weight: 500;
+}
+.plan-content hr {
+  border-color: var(--border);
+  margin: 1.5em 0;
+}
+
+/* ===========================================================================
+ * .chat-markdown — t3-aligned markdown block (PR 4 of design adoption).
+ *
+ * Mirrors context/t3code/apps/web/src/index.css lines 273-486 but uses our
+ * PR 1/2 semantic tokens (muted, foreground, muted-foreground, border,
+ * info-foreground, ring). This class is additive and coexists with the
+ * older `.plan-content` rules — declared AFTER it so where the two
+ * conflict, .chat-markdown wins via source-order cascade.
+ *
+ * Apply via `<div className="chat-markdown plan-content">` for now; future
+ * surfaces drop `.plan-content` once visual diff is approved.
+ * =========================================================================== */
+.chat-markdown {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.chat-markdown > :first-child {
+  margin-top: 0;
+}
+
+.chat-markdown > :last-child {
+  margin-bottom: 0;
+}
+
+.chat-markdown p,
+.chat-markdown ul,
+.chat-markdown ol,
+.chat-markdown blockquote,
+.chat-markdown pre,
+.chat-markdown table {
+  margin: 0.65rem 0;
+}
+
+.chat-markdown ul {
+  padding-left: 1.25rem;
+  list-style-type: disc;
+}
+
+.chat-markdown ol {
+  padding-left: 1.25rem;
+  list-style-type: decimal;
+}
+
+.chat-markdown ul ul {
+  list-style-type: circle;
+}
+
+.chat-markdown ul ul ul {
+  list-style-type: square;
+}
+
+.chat-markdown ol ol {
+  list-style-type: lower-alpha;
+}
+
+.chat-markdown ol ol ol {
+  list-style-type: lower-roman;
+}
+
+.chat-markdown li + li {
+  margin-top: 0.25rem;
+}
+
+.chat-markdown a {
+  color: var(--cyan-foreground, var(--cyan));
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, var(--cyan-foreground, var(--cyan)) 40%, transparent);
+}
+
+.chat-markdown a:hover {
+  opacity: 0.8;
+}
+
+.chat-markdown blockquote {
+  border-left: 2px solid var(--border);
+  padding-left: 0.8rem;
+  color: var(--dim);
+}
+
+.chat-markdown :not(pre) > code {
+  border: 1px solid var(--border);
+  border-radius: 0.375rem;
+  background: var(--surface);
+  padding: 0.1rem 0.35rem;
+  color: var(--fg);
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+}
+
+.chat-markdown pre {
+  max-width: 100%;
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: 0.75rem;
+  background: var(--surface);
+  padding: 0.8rem 0.9rem;
+  font-family: var(--font-mono);
+}
+
+.chat-markdown pre code {
+  border: none;
+  background: transparent;
+  padding: 0;
+  font-size: 0.75rem;
+}
+
+.chat-markdown table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.chat-markdown th,
+.chat-markdown td {
+  border: 1px solid var(--border);
+  padding: 0.35rem 0.45rem;
+  text-align: left;
+}
+
+/* File-link chip — for [path/to/file.ts](file:...) references rendered
+ * via a custom remark plugin in t3. Wrap the rendered anchor in a span
+ * with class .chat-markdown-file-link to opt in. */
+.chat-markdown-file-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.28rem;
+  border: 1px solid color-mix(in srgb, var(--border) 92%, transparent);
+  border-radius: 0.375rem;
+  background: color-mix(in srgb, var(--surface) 88%, var(--bg));
+  padding: 0.08rem 0.34rem;
+  color: var(--fg);
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  line-height: 1.15;
+  vertical-align: text-bottom;
+  transition:
+    background-color 120ms ease,
+    border-color 120ms ease,
+    color 120ms ease,
+    opacity 120ms ease;
+}
+
+.chat-markdown-file-link:hover {
+  opacity: 1;
+  color: var(--fg);
+  border-color: color-mix(in srgb, var(--border) 65%, var(--fg));
+  background: color-mix(in srgb, var(--surface) 72%, var(--bg));
+}
+
+.chat-markdown-file-link:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 70%, transparent);
+}
+
+.chat-markdown-file-link-icon {
+  opacity: 0.72;
+}
+
+.chat-markdown-file-link-label {
+  color: color-mix(in srgb, var(--fg) 88%, transparent);
+  line-height: 1.1;
+}
+
+/* Code-block wrapper (when paired with a copy button overlay). Apply on
+ * the parent of <pre> when a copy affordance is rendered above. */
+.chat-markdown .chat-markdown-codeblock {
+  --chat-markdown-codeblock-copy-button-space: 1.5rem;
+  position: relative;
+  margin: 0.65rem 0;
+}
+
+.chat-markdown .chat-markdown-codeblock pre {
+  margin: 0;
+  padding-right: calc(0.9rem + var(--chat-markdown-codeblock-copy-button-space));
+}
+
+.chat-markdown .chat-markdown-copy-button {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.5rem;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 1.5rem;
+  width: 1.5rem;
+  border-radius: 0.375rem;
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--bg) 82%, transparent);
+  color: var(--dim);
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    opacity 120ms ease,
+    color 120ms ease,
+    border-color 120ms ease;
+}
+
+.chat-markdown .chat-markdown-codeblock:hover .chat-markdown-copy-button,
+.chat-markdown .chat-markdown-codeblock:focus-within .chat-markdown-copy-button {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.chat-markdown .chat-markdown-copy-button:hover {
+  color: var(--fg);
+  border-color: color-mix(in srgb, var(--border) 70%, var(--fg));
+}
+
+/* Milkdown editor overrides */
+.milkdown-wrap .milkdown {
+  background: var(--bg) !important;
+  color: var(--fg) !important;
+  font-family: "IBM Plex Mono", ui-monospace, monospace !important;
+  font-size: 13px !important;
+  line-height: 1.5 !important;
+}
+.milkdown-wrap .milkdown .editor {
+  padding: 16px !important;
+}
+.milkdown-wrap .ProseMirror {
+  outline: none !important;
+  min-height: 100%;
+}
+.milkdown-wrap .ProseMirror h1,
+.milkdown-wrap .ProseMirror h2,
+.milkdown-wrap .ProseMirror h3,
+.milkdown-wrap .ProseMirror h4 {
+  color: var(--accent) !important;
+}
+.milkdown-wrap .ProseMirror code {
+  background: var(--surface) !important;
+  color: var(--fg) !important;
+}
+.milkdown-wrap .ProseMirror pre {
+  background: var(--surface) !important;
+  border: 1px solid var(--border) !important;
+}
+.milkdown-wrap .ProseMirror a {
+  color: var(--cyan) !important;
+}
+.milkdown-wrap .ProseMirror blockquote {
+  border-left-color: var(--border) !important;
+  color: var(--dim) !important;
+}
+.milkdown-wrap .ProseMirror ::selection {
+  background: var(--surface-active) !important;
+}
+
+/* Pierre's PatchDiff (DiffViewer) ships its own near-black pierre-dark /
+   pierre-light theme. When diff content is shorter than the wrapper, the
+   empty area showed our page bg → a visible seam. Force the diff container
+   to inherit the page bg so the whole tab reads as one surface. */
+.diff-container,
+.diff-container > div,
+.diff-container [class*="patch"],
+.diff-container [class*="diff"] {
+  background-color: var(--bg) !important;
+}
+.diff-container pre,
+.diff-container code {
+  background-color: transparent !important;
+}
+
+@keyframes mobile-drawer-in {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+
+@keyframes palette-in {
+  from {
+    opacity: 0;
+    transform: translateY(-0.25rem) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(0.25rem);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes workspace-panel-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes terminal-panel-in {
+  from {
+    opacity: 0.94;
+  }
+  to {
+    opacity: 1;
+  }
+}
