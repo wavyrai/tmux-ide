@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "next/navigation";
+import { useViewParam } from "./useViewParam";
 import Link from "next/link";
 import dynamic from "next/dynamic";
 import { Panel, Group, type Layout, type PanelImperativeHandle } from "react-resizable-panels";
@@ -9,6 +10,7 @@ import { VSeparator, HSeparator } from "../../_lib/Separators";
 import { useSessionStream } from "@/lib/useSessionStream";
 import type { Task, AgentDetail, Goal } from "@/lib/types";
 import {
+  API_BASE,
   createTask,
   deleteTaskApi,
   fetchFileDiff,
@@ -62,7 +64,7 @@ import { ExplorerBridge, type FileTreeEntry } from "@/components/explorer-bridge
 import { TasksViewBridge } from "@/components/tasks-view-bridge";
 import { StatusBar } from "@/components/StatusBar";
 import { InspectorBridge } from "@/components/inspector-bridge";
-import { BottomPanel } from "@/components/BottomPanel";
+import { BottomPanel, type OutputChannel, type ProblemEntry } from "@/components/BottomPanel";
 import { useChromeLayout, setLeftSidebarOpen, setRightInspectorOpen, setBottomPanelOpen } from "@/lib/useChromeLayout";
 import { useChromeShortcuts } from "@/lib/useChromeShortcuts";
 import { TooltipProvider } from "@/components/ui";
@@ -199,6 +201,41 @@ export default function ProjectV2Page() {
   const goals: Goal[] = snapshot?.goals ?? [];
   const events: EventData[] = snapshot?.events ?? [];
 
+  // BottomPanel data (WN1):
+  //   - Problems: derive from the orchestrator event stream — any
+  //     event with type "error" / "stall" surfaces as a problem row
+  //     so the user notices fleet failures without scrolling the
+  //     inspector. The agent name fills the "file" column since
+  //     these aren't real files; source = "daemon" labels the
+  //     origin chip.
+  //   - Output channels: point at the daemon's existing
+  //     `/api/logs/:channel` SSE endpoint. Channel ids match the
+  //     `matchLogChannel()` switch on the daemon side (daemon / hq
+  //     / watchdog). Don't ship a `command-center` channel — the
+  //     daemon doesn't expose one.
+  const problems = useMemo<ProblemEntry[]>(() => {
+    const rows: ProblemEntry[] = [];
+    for (const event of events) {
+      if (event.type !== "error" && event.type !== "stall") continue;
+      rows.push({
+        severity: event.type === "error" ? "error" : "warning",
+        file: event.agent ?? event.type,
+        message: event.message,
+        source: "daemon",
+      });
+    }
+    return rows;
+  }, [events]);
+
+  const outputChannels = useMemo<OutputChannel[]>(
+    () => [
+      { id: "daemon", label: "Daemon", streamUrl: `${API_BASE}/api/logs/daemon` },
+      { id: "hq", label: "HQ", streamUrl: `${API_BASE}/api/logs/hq` },
+      { id: "watchdog", label: "Watchdog", streamUrl: `${API_BASE}/api/logs/watchdog` },
+    ],
+    [],
+  );
+
   // VSCode-style IDE shell — five logical regions:
   //   1. ActivityBar    (left, fixed 48px) — view switcher icons
   //   2. LeftSidebar    (resizable, contextual to active activity)
@@ -215,7 +252,18 @@ export default function ProjectV2Page() {
         <MainTabsBar />
 
         <div className="flex flex-1 min-h-0">
-          <V2ActivityBar view={view} onView={(id: ActivityBarViewId) => setView(id)} />
+          <V2ActivityBar
+            view={view}
+            onView={(id: ActivityBarViewId) => {
+              // `ActivityBarViewId` is a superset of the project page's
+              // `ViewId` (it also includes "widgets", which is its own
+              // top-level route, not a per-project tab — the widgets
+              // entry handles that navigation in its own onClick).
+              // Filter at the boundary so the URL-synced setView only
+              // receives ids that are real project views.
+              if (isViewId(id)) setView(id);
+            }}
+          />
           <div className="flex-1 min-w-0">
             <Group orientation="vertical" defaultLayout={shellV} onLayoutChange={setShellV}>
               <Panel id="upper" defaultSize={75} minSize={20}>
@@ -301,7 +349,11 @@ export default function ProjectV2Page() {
                   if (open !== chrome.bottomPanelOpen) setBottomPanelOpen(open);
                 }}
               >
-                <BottomPanel projectName={projectName} />
+                <BottomPanel
+                  projectName={projectName}
+                  problems={problems}
+                  outputChannels={outputChannels}
+                />
               </Panel>
             </Group>
           </div>
@@ -312,6 +364,10 @@ export default function ProjectV2Page() {
           running={agents.length > 0 || Boolean(snapshot)}
           agentCount={agents.length}
           events={events}
+          // Surface problem count on the bottom-panel toggle badge
+          // when the panel is hidden — gives the user a heads-up
+          // about new errors without auto-popping the panel open.
+          bottomPanelUnread={chrome.bottomPanelOpen ? 0 : problems.length}
         />
       </div>
     </TooltipProvider>
