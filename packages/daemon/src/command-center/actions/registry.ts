@@ -72,6 +72,7 @@ import {
   chatThreadGetHandler,
   chatThreadListHandler,
   chatThreadRenameHandler,
+  chatThreadSetProviderHandler,
   chatThreadUsageHandler,
 } from "./handlers/chat-actions.ts";
 
@@ -299,6 +300,11 @@ export const actionRegistry: RegistryShape = {
     inputSchema: ActionContractsZ["chat.thread.rename"].input,
     resultSchema: ActionContractsZ["chat.thread.rename"].result,
     handler: chatThreadRenameHandler,
+  },
+  "chat.thread.setProvider": {
+    inputSchema: ActionContractsZ["chat.thread.setProvider"].input,
+    resultSchema: ActionContractsZ["chat.thread.setProvider"].result,
+    handler: chatThreadSetProviderHandler,
   },
   "chat.thread.get": {
     inputSchema: ActionContractsZ["chat.thread.get"].input,

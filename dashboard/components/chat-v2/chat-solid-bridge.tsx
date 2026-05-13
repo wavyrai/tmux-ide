@@ -24,6 +24,7 @@
 
 import { useEffect, useMemo, useRef } from "react";
 import type {
+  AgentProvider,
   ChatHandle,
   ChatMountOptions,
   MarkdownFileLinkMeta,
@@ -62,6 +63,12 @@ export function ChatSolidBridge({
     [mentionCandidates],
   );
 
+  // Active thread id captured for the onProviderChange handler. The
+  // handler closes over a ref so a thread switch picks up the new id
+  // without recreating the mount.
+  const threadIdRef = useRef<string | null>(threadId);
+  threadIdRef.current = threadId;
+
   // Mount once. lib/api.ts evaluates window.location at module load,
   // so it stays behind a dynamic import here (the host renders this
   // bridge as a "use client" leaf — module init lands during the
@@ -82,6 +89,27 @@ export function ChatSolidBridge({
       // chat-solid expects a fully-qualified ws:// URL it can hand
       // directly to `new WebSocket(...)`. Mirror api.ts' host resolver.
       const wsUrl = apiBaseUrl.replace(/^http/, "ws") + "/ws/chat";
+      const runtime = { apiBaseUrl, bearerToken: null as string | null };
+
+      // Provider switcher: POST chat.thread.setProvider, then nudge
+      // chat-solid's mount options so the header / hooks refetch the
+      // updated thread state. setOptions with the same threadId is the
+      // canonical "refresh now" signal — it forces useChatThread's
+      // refetch effect to re-run without remounting the Solid runtime.
+      const onProviderChange = async (next: AgentProvider) => {
+        const id = threadIdRef.current;
+        if (!id) return;
+        try {
+          await chatSolid.chatThreadSetProvider(runtime, id, next);
+          handleRef.current?.setOptions({ threadId: id });
+        } catch (err) {
+          // Surface the failure on the console; the daemon error
+          // envelope already shapes a useful message and the next
+          // refetch will reveal that nothing changed.
+          // eslint-disable-next-line no-console
+          console.error("chat-solid-bridge: setProvider failed", err);
+        }
+      };
 
       const opts: ChatMountOptions = {
         threadId,
@@ -91,6 +119,7 @@ export function ChatSolidBridge({
         bearerToken: null,
         mentionCandidates: mentionCandidatesMemo,
         onOpenFile: (meta) => onOpenFileRef.current?.(meta),
+        onProviderChange,
       };
       handleRef.current = chatSolid.mount(el, opts);
     })();

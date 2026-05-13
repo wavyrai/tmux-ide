@@ -451,6 +451,9 @@ describe("makeThreadManager", () => {
       async rename() {
         return entry;
       },
+      async setProvider() {
+        return entry;
+      },
       async delete() {
         return;
       },

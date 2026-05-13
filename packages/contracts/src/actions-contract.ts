@@ -602,6 +602,14 @@ export const ChatThreadRenameInputZ = z
   .strict();
 export const ChatThreadRenameResultZ = z.object({ thread: ThreadIndexEntryZ }).strict();
 
+export const ChatThreadSetProviderInputZ = z
+  .object({
+    id: z.string().min(1),
+    provider: AgentProviderZ,
+  })
+  .strict();
+export const ChatThreadSetProviderResultZ = z.object({ thread: ThreadIndexEntryZ }).strict();
+
 export const ChatThreadGetInputZ = z.object({ id: z.string().min(1) }).strict();
 export const ChatThreadGetResultZ = z.object({ thread: ThreadStateZ }).strict();
 
@@ -826,6 +834,10 @@ export const ActionContractsZ = {
   "chat.thread.rename": {
     input: ChatThreadRenameInputZ,
     result: ChatThreadRenameResultZ,
+  },
+  "chat.thread.setProvider": {
+    input: ChatThreadSetProviderInputZ,
+    result: ChatThreadSetProviderResultZ,
   },
   "chat.thread.get": {
     input: ChatThreadGetInputZ,

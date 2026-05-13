@@ -1,4 +1,5 @@
 import type {
+  AgentProvider,
   ChatThreadUsageSummary,
   ComposerTerminalPane,
   ContentBlock,
@@ -108,6 +109,20 @@ export function chatThreadRename(
   title: string,
 ): Promise<{ thread: ThreadIndexEntry }> {
   return postAction(runtime, "chat.thread.rename", { id, title });
+}
+
+/**
+ * Swap the provider on an existing thread. The daemon clears the live
+ * ACP/Codex client; the next `chat.session.send` re-spawns under the
+ * new provider. The header reflects the change once the host refreshes
+ * thread state (typically by re-emitting mount options).
+ */
+export function chatThreadSetProvider(
+  runtime: ApiRuntime,
+  id: string,
+  provider: AgentProvider,
+): Promise<{ thread: ThreadIndexEntry }> {
+  return postAction(runtime, "chat.thread.setProvider", { id, provider });
 }
 
 export function chatSessionSend(

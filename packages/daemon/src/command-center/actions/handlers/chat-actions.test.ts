@@ -22,6 +22,7 @@ import {
   chatThreadGetHandler,
   chatThreadListHandler,
   chatThreadRenameHandler,
+  chatThreadSetProviderHandler,
   chatThreadUsageHandler,
   resetChatProvidersListCache,
 } from "./chat-actions.ts";
@@ -46,6 +47,7 @@ const manager: ThreadManager = {
     permissionResponses.push(input);
     return { responded: true };
   },
+  async disposeLive() {},
   async shutdown() {},
 };
 
@@ -207,6 +209,44 @@ describe("chat action handlers", () => {
       },
     });
     expect(ActionContractsZ["chat.thread.usage"].result.safeParse(result).success).toBe(true);
+  });
+
+  it("swaps the thread provider in place and emits the updated index", async () => {
+    const created = await chatThreadCreateHandler(
+      { provider: { kind: "claude-code" }, title: "Switcher" },
+      deps(),
+    );
+    let disposed = 0;
+    const trackingManager: ThreadManager = {
+      ...manager,
+      async disposeLive() {
+        disposed += 1;
+      },
+    };
+
+    const swapped = await chatThreadSetProviderHandler(
+      { id: created.thread.id, provider: { kind: "codex" } },
+      { ...deps(), manager: trackingManager },
+    );
+
+    expect(swapped.thread.providerKind).toBe("codex");
+    expect(disposed).toBe(1);
+    const state = await chatThreadGetHandler({ id: created.thread.id }, deps());
+    expect(state.thread.provider).toEqual({ kind: "codex" });
+    expect(state.thread.acpSessionId).toBeUndefined();
+    expect(events.filter((event) => event.type === "chat.thread.index")).toHaveLength(2);
+  });
+
+  it("rejects setProvider on a missing thread", async () => {
+    try {
+      await chatThreadSetProviderHandler(
+        { id: "missing", provider: { kind: "codex" } },
+        deps(),
+      );
+      throw new Error("expected setProvider to fail");
+    } catch (err) {
+      expectActionError(err, "thread_not_found");
+    }
   });
 
   it("maps missing thread reads and blank rename to action errors", async () => {

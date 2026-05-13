@@ -4,7 +4,8 @@ import { ChatThreadView } from "./components/ChatThreadView";
 import "./styles.css";
 import type { ChatHandle, ChatMountOptions } from "./types";
 
-export type { ChatHandle, ChatMountOptions } from "./types";
+export type { AgentProvider, ChatHandle, ChatMountOptions } from "./types";
+export { chatThreadSetProvider, type ApiRuntime } from "./api";
 export type { MentionCandidate, MentionSearchResult } from "./lib/mentionSearch";
 export { detectMentionContext, type MentionContext } from "./lib/mentionCursor";
 export { searchMentions } from "./lib/mentionSearch";

@@ -176,6 +176,21 @@ export async function chatThreadRenameHandler(
   return { thread };
 }
 
+export async function chatThreadSetProviderHandler(
+  input: ActionInput<"chat.thread.setProvider">,
+  deps: ChatActionDeps = {},
+): Promise<ActionResult<"chat.thread.setProvider">> {
+  const store = storeFrom(deps);
+  await requireThread(store, input.id);
+  const thread = await store.setProvider(input.id, input.provider);
+  // Tear down any live session bound to the old provider so the next
+  // send re-spawns under the new one. `disposeLive` is a no-op when the
+  // thread isn't live (e.g. fresh thread that never sent a message).
+  await managerFrom(deps).disposeLive(input.id).catch(() => undefined);
+  await emitIndex(store, busFrom(deps));
+  return { thread };
+}
+
 export async function chatThreadGetHandler(
   input: ActionInput<"chat.thread.get">,
   deps: ChatActionDeps = {},

@@ -76,6 +76,14 @@ export interface ThreadManager {
   /** Multi-agent (T078): read-only view of all sessions on a Thread. */
   listSessions(threadId: string): Session[];
   /**
+   * Tear down the live ACP/Codex client for a thread so the next
+   * `send` re-spawns. No-op when the thread has no live session.
+   * Used by `chat.thread.setProvider` after the store flips the
+   * provider — the existing client is bound to the old provider and
+   * must not be reused.
+   */
+  disposeLive(threadId: string): Promise<void>;
+  /**
    * T080: Resolve the ProviderInstance that backs a Thread. Returns `null`
    * when the thread predates the migration (no `providerInstanceId`) or the
    * referenced provider has been removed from the store. The shape returned
@@ -428,6 +436,21 @@ export function makeThreadManager(opts: MakeThreadManagerOptions): ThreadManager
       const id = instanceId ?? sessionInstanceId;
       if (!id) return null;
       return opts.providerStore.get(id);
+    },
+    async disposeLive(threadId) {
+      const liveThread = live.get(threadId);
+      if (!liveThread) return;
+      permissions.cancelForThread(threadId);
+      await liveThread.pipe.forceFlush();
+      live.delete(threadId);
+      for (const unsub of liveThread.unsubs.splice(0)) {
+        try {
+          unsub();
+        } catch {
+          // best effort
+        }
+      }
+      await liveThread.client.close().catch(() => undefined);
     },
     async shutdown() {
       const closing = [...live.entries()].map(async ([threadId, liveThread]) => {

@@ -21,6 +21,13 @@ export interface ThreadStore {
     providerInstanceId?: string;
   }): Promise<ThreadState>;
   rename(id: string, title: string): Promise<ThreadIndexEntry>;
+  /**
+   * Replace the thread's provider in place. Clears `acpSessionId` since
+   * any live session is bound to the old provider — the next
+   * `chat.session.send` re-spawns under the new provider. Returns the
+   * updated index entry.
+   */
+  setProvider(id: string, provider: AgentProvider): Promise<ThreadIndexEntry>;
   delete(id: string): Promise<void>;
   appendMessage(id: string, msg: ThreadMessage): Promise<void>;
   appendMessages(id: string, messages: ThreadMessage[]): Promise<void>;
@@ -229,6 +236,20 @@ export function makeThreadStore(opts: MakeThreadStoreOptions): ThreadStore {
           nextState.title = cleanTitle(title);
           nextState.updatedAt = updatedAt;
           nextEntry.title = nextState.title;
+          nextEntry.updatedAt = updatedAt;
+        });
+        states.set(id, state);
+        return clone(entry);
+      });
+    },
+    setProvider(id, provider) {
+      return enqueue(async () => {
+        const { state, entry } = await updateThread(id, (nextState, nextEntry) => {
+          const updatedAt = now().toISOString();
+          nextState.provider = clone(provider);
+          nextState.acpSessionId = undefined;
+          nextState.updatedAt = updatedAt;
+          nextEntry.providerKind = provider.kind;
           nextEntry.updatedAt = updatedAt;
         });
         states.set(id, state);
