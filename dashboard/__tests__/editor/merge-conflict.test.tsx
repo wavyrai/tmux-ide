@@ -152,54 +152,89 @@ describe("resolveConflict (buffer-store)", () => {
 });
 
 describe("MergeConflictPanel render + actions", () => {
-  it("renders all three sections + diff previews seeded with base/external/local", () => {
+  it("renders one hunk per merge-region with the right kind data attrs", () => {
     const uri = openConflict();
     const buf = bufferState.buffers[uri]!;
-    const { getByTestId, getAllByTestId } = render(() => (
+    const { getAllByTestId, getByTestId } = render(() => (
       <MergeConflictPanel buffer={buf} />
     ));
     expect(getByTestId("v2-merge-conflict-panel").getAttribute("data-buffer-uri")).toBe(uri);
-    expect(getByTestId("v2-merge-section-theirs")).toBeInTheDocument();
-    expect(getByTestId("v2-merge-section-yours")).toBeInTheDocument();
-    expect(getByTestId("v2-merge-section-merged")).toBeInTheDocument();
-    const diffs = getAllByTestId("diff-preview-stub");
-    expect(diffs).toHaveLength(2);
-    const theirs = diffs.find((d) =>
-      d.getAttribute("data-diff-preview-id")?.endsWith("-theirs"),
-    );
-    const yours = diffs.find((d) =>
-      d.getAttribute("data-diff-preview-id")?.endsWith("-yours"),
-    );
-    expect(theirs?.getAttribute("data-original")).toBe("base content\n");
-    expect(theirs?.getAttribute("data-modified")).toBe("external rewrite\n");
-    expect(yours?.getAttribute("data-original")).toBe("base content\n");
-    expect(yours?.getAttribute("data-modified")).toBe("my local edits\n");
+    const hunks = getAllByTestId("v2-merge-hunk");
+    expect(hunks.length).toBeGreaterThanOrEqual(1);
+    // At least one conflict hunk should be in the list — the fixture
+    // diverges on the single body line.
+    const conflict = hunks.find((h) => h.getAttribute("data-hunk-kind") === "conflict");
+    expect(conflict).toBeDefined();
   });
 
-  it("seed-from-external button replaces the merged textarea with the external content", () => {
+  it("status bar reports `0 / N conflicts resolved` on first render", () => {
     const uri = openConflict();
     const buf = bufferState.buffers[uri]!;
     const { getByTestId } = render(() => <MergeConflictPanel buffer={buf} />);
-    const textarea = getByTestId("v2-merge-merged-input") as HTMLTextAreaElement;
-    expect(textarea.value).toBe("my local edits\n");
-    fireEvent.click(getByTestId("v2-merge-seed-external"));
-    expect(textarea.value).toBe("external rewrite\n");
+    const panel = getByTestId("v2-merge-conflict-panel");
+    expect(panel.getAttribute("data-resolved-conflicts")).toBe("0");
+    expect(Number(panel.getAttribute("data-total-conflicts"))).toBeGreaterThanOrEqual(1);
+    expect(getByTestId("v2-merge-status").textContent).toMatch(/0\s*\/\s*1/);
   });
 
-  it("Apply merged calls resolveConflict with the textarea content", () => {
+  it("per-hunk Apply button auto-fires resolveConflict once every conflict is picked", () => {
     const uri = openConflict();
     const buf = bufferState.buffers[uri]!;
-    const { getByTestId } = render(() => <MergeConflictPanel buffer={buf} />);
-    const textarea = getByTestId("v2-merge-merged-input") as HTMLTextAreaElement;
-    fireEvent.input(textarea, { target: { value: "hand-merged content\n" } });
-    fireEvent.click(getByTestId("v2-merge-apply"));
+    const { getAllByTestId } = render(() => <MergeConflictPanel buffer={buf} />);
+    // The fixture has exactly one conflict hunk; clicking Apply on
+    // it should satisfy the "all resolved" gate and auto-fire
+    // `resolveConflict` so externalContent clears.
+    const applyButtons = getAllByTestId("v2-merge-hunk-apply-external");
+    expect(applyButtons.length).toBeGreaterThanOrEqual(1);
+    fireEvent.click(applyButtons[0]!);
     const after = bufferState.buffers[uri]!;
-    expect(after.content).toBe("hand-merged content\n");
     expect(after.externalContent).toBeNull();
+    expect(after.content).toBe("external rewrite\n");
     expect(after.dirty).toBe(true);
   });
 
-  it("Use external runs acceptExternalChange (drops local edits)", () => {
+  it("Keep button picks the local side, then auto-applies the merge", () => {
+    const uri = openConflict();
+    const buf = bufferState.buffers[uri]!;
+    const { getAllByTestId } = render(() => <MergeConflictPanel buffer={buf} />);
+    fireEvent.click(getAllByTestId("v2-merge-hunk-keep-local")[0]!);
+    const after = bufferState.buffers[uri]!;
+    expect(after.externalContent).toBeNull();
+    expect(after.content).toBe("my local edits\n");
+  });
+
+  it("Combine button concatenates external + local for the conflict hunk", () => {
+    const uri = openConflict();
+    const buf = bufferState.buffers[uri]!;
+    const { getAllByTestId } = render(() => <MergeConflictPanel buffer={buf} />);
+    fireEvent.click(getAllByTestId("v2-merge-hunk-combine")[0]!);
+    const after = bufferState.buffers[uri]!;
+    expect(after.externalContent).toBeNull();
+    // `combine` emits external lines first, then local lines.
+    expect(after.content).toBe("external rewrite\nmy local edits\n");
+  });
+
+  it("bulk `Apply all external` resolves every pending conflict in one click", () => {
+    // Two conflict hunks via two divergent line pairs.
+    const { bufferUri } = openBuffer({
+      sessionName: "smoke",
+      rootPath: "/repo",
+      filePath: "src/multi.ts",
+      language: "typescript",
+    });
+    markReady(bufferUri, "a\nb\nc\nd\ne\n");
+    markContent(bufferUri, "a\nLB\nc\nLD\ne\n");
+    reseedFromExternal(bufferUri, "a\nXB\nc\nXD\ne\n");
+    const buf = bufferState.buffers[bufferUri]!;
+    const { getByTestId } = render(() => <MergeConflictPanel buffer={buf} />);
+    expect(Number(getByTestId("v2-merge-conflict-panel").getAttribute("data-total-conflicts"))).toBeGreaterThanOrEqual(2);
+    fireEvent.click(getByTestId("v2-merge-bulk-external"));
+    const after = bufferState.buffers[bufferUri]!;
+    expect(after.externalContent).toBeNull();
+    expect(after.content).toBe("a\nXB\nc\nXD\ne\n");
+  });
+
+  it("Use external (footer) still drives acceptExternalChange", () => {
     const uri = openConflict();
     const buf = bufferState.buffers[uri]!;
     const { getByTestId } = render(() => <MergeConflictPanel buffer={buf} />);
@@ -211,7 +246,7 @@ describe("MergeConflictPanel render + actions", () => {
     expect(after.externalContent).toBeNull();
   });
 
-  it("Use mine runs dismissExternalChange (keeps local edits)", () => {
+  it("Use mine (footer) still drives dismissExternalChange", () => {
     const uri = openConflict();
     const buf = bufferState.buffers[uri]!;
     const { getByTestId } = render(() => <MergeConflictPanel buffer={buf} />);
