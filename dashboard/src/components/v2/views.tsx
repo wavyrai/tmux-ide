@@ -308,14 +308,18 @@ export function SkillsSurfaceView(props: ProjectProps): JSX.Element {
 }
 
 export function CostsView(props: ProjectProps): JSX.Element {
-  const { metrics } = createMetrics(() => props.projectName);
+  const { metrics, loaded } = createMetrics(() => props.projectName);
   const options = createMemo<CostsDashboardMountOptions>(() => {
     const m = metrics();
-    if (!m) return { snapshot: null };
+    // Still in flight — let the widget render its loading spinner.
+    if (!m && !loaded()) return { snapshot: null };
+    // Daemon answered (success or failure) but produced no metrics —
+    // pass a fully-shaped empty snapshot so the widget trips its
+    // "No usage yet" empty state instead of hanging on the spinner.
     const snapshot: CostsDashboardSnapshot = {
-      session: m.session ?? { startedAt: null, durationMs: 0, status: "idle", agentCount: 0 },
+      session: m?.session ?? { startedAt: null, durationMs: 0, status: "idle", agentCount: 0 },
       tasks:
-        (m.tasks as CostsDashboardSnapshot["tasks"]) ?? {
+        (m?.tasks as CostsDashboardSnapshot["tasks"]) ?? {
           total: 0,
           completed: 0,
           failed: 0,
@@ -327,16 +331,16 @@ export function CostsView(props: ProjectProps): JSX.Element {
           p90DurationMs: 0,
           byMilestone: [] as CostsMilestoneEntry[],
         },
-      agents: (m.agents as CostsAgentEntry[]) ?? [],
+      agents: (m?.agents as CostsAgentEntry[]) ?? [],
       mission:
-        m.mission ?? {
+        m?.mission ?? {
           title: null,
           status: null,
           milestonesCompleted: 0,
           validationPassRate: 0,
           wallClockMs: 0,
         },
-      timeline: (m.timeline as CostsTimelineEntry[]) ?? [],
+      timeline: (m?.timeline as CostsTimelineEntry[]) ?? [],
     };
     return { snapshot };
   });

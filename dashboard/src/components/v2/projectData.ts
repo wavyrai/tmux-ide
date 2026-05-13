@@ -219,9 +219,14 @@ export interface MetricsLike {
 export function createMetrics(
   projectName: () => string,
   opts: PollerOpts = {},
-): { metrics: () => MetricsLike | null } {
+): { metrics: () => MetricsLike | null; loaded: () => boolean } {
   const interval = opts.intervalMs ?? 6000;
   const [metrics, setMetrics] = createSignal<MetricsLike | null>(null);
+  // Flips on the first poll *attempt* completing — regardless of whether the
+  // daemon answered. Lets the host distinguish "still loading" from
+  // "daemon responded but project has no metrics yet" so the widget can
+  // show its empty state instead of an indefinite loading spinner.
+  const [loaded, setLoaded] = createSignal(false);
   let timer: ReturnType<typeof setInterval> | null = null;
   let cancelled = false;
 
@@ -229,7 +234,9 @@ export function createMetrics(
     const name = projectName();
     if (!name) return;
     const data = await safeJson<MetricsLike>(`/api/project/${encodeURIComponent(name)}/metrics`);
-    if (!cancelled && data) setMetrics(data);
+    if (cancelled) return;
+    if (data) setMetrics(data);
+    setLoaded(true);
   }
 
   void tick();
@@ -240,5 +247,5 @@ export function createMetrics(
     if (timer) clearInterval(timer);
   });
 
-  return { metrics };
+  return { metrics, loaded };
 }
