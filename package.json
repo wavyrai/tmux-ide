@@ -18,7 +18,7 @@
     "build": "tsc --noEmit",
     "build:cli": "node scripts/build-cli.mjs",
     "build:dashboard": "cd dashboard && pnpm build",
-    "prepublishOnly": "npm run build:cli && npm run build:dashboard",
+    "prepublishOnly": "pnpm check && pnpm --filter @tmux-ide/dashboard build",
     "typecheck": "tsc --noEmit",
     "dev": "node bin/cli.js",
     "test": "vitest run",
