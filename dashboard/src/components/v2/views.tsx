@@ -44,6 +44,8 @@ import {
 } from "@tmux-ide/v2-solid-widgets";
 import { Terminal } from "@/components/Terminal";
 import { API_BASE } from "@/lib/api";
+import { ProblemsTab } from "./ProblemsTab";
+import { totalDiagnosticsCount } from "@/lib/lsp/diagnostics-store";
 import { WidgetHost } from "./widgetHost";
 import {
   createMetrics,
@@ -359,9 +361,10 @@ export function InspectorPaneView(props: { projectName: string; currentView: str
  * stream the Inspector uses.
  */
 export function BottomPanelView(props: ProjectProps): JSX.Element {
-  type Tab = "terminal" | "output";
+  type Tab = "terminal" | "problems" | "output";
   const [tab, setTab] = createSignal<Tab>("terminal");
   const { events } = createProjectEvents(() => props.projectName);
+  const problemCount = createMemo<number>(() => totalDiagnosticsCount(2));
 
   const activityOptions = createMemo<ActivityMountOptions>(() => ({
     events: events(),
@@ -374,7 +377,7 @@ export function BottomPanelView(props: ProjectProps): JSX.Element {
       class="flex h-full min-h-0 flex-col overflow-hidden"
     >
       <div class="flex h-7 shrink-0 items-center gap-2 border-b border-[var(--border)] bg-[var(--bg-strong)] px-3 text-[11px] uppercase tracking-wide">
-        {(["terminal", "output"] as Tab[]).map((t) => {
+        {(["terminal", "problems", "output"] as Tab[]).map((t) => {
           const active = () => tab() === t;
           return (
             <button
@@ -383,13 +386,21 @@ export function BottomPanelView(props: ProjectProps): JSX.Element {
               data-active={active() ? "true" : undefined}
               onClick={() => setTab(t)}
               class={
-                "px-2 py-0.5 transition-colors " +
+                "flex items-center gap-1 px-2 py-0.5 transition-colors " +
                 (active()
                   ? "text-[var(--fg)] border-b border-[var(--accent)]"
                   : "text-[var(--dim)] hover:text-[var(--fg)]")
               }
             >
-              {t}
+              <span>{t}</span>
+              <Show when={t === "problems" && problemCount() > 0}>
+                <span
+                  data-testid="v2-problems-badge"
+                  class="rounded bg-[var(--red,#cc6666)] px-1 text-[9px] font-mono text-[var(--bg)]"
+                >
+                  {problemCount()}
+                </span>
+              </Show>
             </button>
           );
         })}
@@ -397,6 +408,9 @@ export function BottomPanelView(props: ProjectProps): JSX.Element {
       <div class="min-h-0 flex-1">
         <Show when={tab() === "terminal"}>
           <Terminal id={`v2-${props.projectName}`} showHeader={false} />
+        </Show>
+        <Show when={tab() === "problems"}>
+          <ProblemsTab />
         </Show>
         <Show when={tab() === "output"}>
           <WidgetHost mount={mountActivity} options={activityOptions} class="h-full w-full" />

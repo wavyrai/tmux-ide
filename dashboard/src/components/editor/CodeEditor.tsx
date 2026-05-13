@@ -18,10 +18,13 @@
  *     needs the model — the registry handles the 60s eviction TTL.
  */
 
-import { createEffect, onCleanup, onMount, Show } from "solid-js";
+import { createEffect, createSignal, onCleanup, onMount, Show } from "solid-js";
 import type * as monaco from "monaco-editor";
 import { codeEditorPool, type CodePoolEntry } from "@/lib/monaco/code-pool";
 import { modelRegistry } from "@/lib/monaco/model-registry";
+import { bufferState } from "@/lib/editor/buffer-store";
+import { wireLspToEditor } from "@/lib/lsp/wire-editor";
+import { LspHoverTooltip } from "@/components/editor/LspHoverTooltip";
 
 export interface CodeEditorProps {
   /**
@@ -49,6 +52,18 @@ export function CodeEditor(props: CodeEditorProps) {
   let cancelled = false;
   let lastAttachedUri: string | undefined;
   let contentDisposable: monaco.IDisposable | null = null;
+  // LSP wiring lifecycle — one wiring per (editor, bufferUri) tuple.
+  // Re-applied whenever the URI changes (buffer swap) so the daemon
+  // talks to the right `filePath`.
+  let lspDispose: (() => void) | null = null;
+  let lspWiredFor: string | undefined;
+  const [editorSignal, setEditorSignal] = createSignal<
+    monaco.editor.IStandaloneCodeEditor | null
+  >(null);
+  const [activeBufferMeta, setActiveBufferMeta] = createSignal<{
+    sessionName: string;
+    filePath: string;
+  } | null>(null);
 
   onMount(() => {
     void codeEditorPool.lease().then((leased) => {
@@ -66,6 +81,7 @@ export function CodeEditor(props: CodeEditorProps) {
         // host may have been unmounted in the same tick.
       }
       leased.editor.updateOptions({ readOnly: props.readOnly ?? true });
+      setEditorSignal(leased.editor);
       props.onEditorChange?.(leased.editor);
       tryAttachModel();
       installContentListener();
@@ -77,7 +93,17 @@ export function CodeEditor(props: CodeEditorProps) {
     cancelled = true;
     contentDisposable?.dispose();
     contentDisposable = null;
+    if (lspDispose) {
+      try {
+        lspDispose();
+      } catch {
+        /* ignore */
+      }
+      lspDispose = null;
+      lspWiredFor = undefined;
+    }
     if (entry) {
+      setEditorSignal(null);
       props.onEditorChange?.(null);
       try {
         entry.editor.setModel(null);
@@ -130,6 +156,44 @@ export function CodeEditor(props: CodeEditorProps) {
     if (e.getModel() !== model) e.setModel(model);
     lastAttachedUri = uri;
     e.layout();
+    syncLspWiring(e, uri);
+  }
+
+  // Tear down any previous wiring and install a fresh one for the
+  // current buffer. Requires the buffer-store to have a record for
+  // `uri` (the FilesSurface path always does; disk-only / preview
+  // mounts skip wiring since LSP is opt-in to the live buffer).
+  function syncLspWiring(
+    e: monaco.editor.IStandaloneCodeEditor,
+    uri: string,
+  ): void {
+    if (lspWiredFor === uri) return;
+    if (lspDispose) {
+      try {
+        lspDispose();
+      } catch {
+        /* ignore */
+      }
+      lspDispose = null;
+    }
+    lspWiredFor = uri;
+    const buffer = bufferState.buffers[uri];
+    if (!buffer) {
+      setActiveBufferMeta(null);
+      return;
+    }
+    setActiveBufferMeta({
+      sessionName: buffer.sessionName,
+      filePath: buffer.filePath,
+    });
+    lspDispose = wireLspToEditor({
+      editor: e,
+      bufferUri: uri,
+      sessionName: buffer.sessionName,
+      rootPath: buffer.rootPath,
+      filePath: buffer.filePath,
+      language: buffer.language,
+    });
   }
 
   const status = () => modelRegistry.modelStatus(props.uri);
@@ -158,6 +222,15 @@ export function CodeEditor(props: CodeEditorProps) {
         </div>
       </Show>
       <div ref={host} class="min-h-0 flex-1" />
+      <Show when={activeBufferMeta()}>
+        {(meta) => (
+          <LspHoverTooltip
+            editor={editorSignal}
+            sessionName={meta().sessionName}
+            filePath={meta().filePath}
+          />
+        )}
+      </Show>
     </div>
   );
 }
