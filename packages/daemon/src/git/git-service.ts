@@ -192,6 +192,40 @@ export function commit(
   });
 }
 
+/** Reject absolute paths and `..` traversal — repo-relative only. */
+function assertSafePaths(paths: ReadonlyArray<string>): Effect.Effect<void, AnyGitError> {
+  for (const p of paths) {
+    if (!p || p.startsWith("/") || p.startsWith("\\") || p.split("/").includes("..")) {
+      return Effect.fail(new GitError({ message: `unsafe path: ${p}` }));
+    }
+  }
+  return Effect.void;
+}
+
+export function stage(
+  cwd: string,
+  paths: ReadonlyArray<string>,
+): Effect.Effect<void, AnyGitError> {
+  return Effect.gen(function* () {
+    yield* assertSafePaths(paths);
+    yield* ensureRepo(cwd);
+    yield* run(cwd, ["add", "--", ...paths]);
+  });
+}
+
+export function unstage(
+  cwd: string,
+  paths: ReadonlyArray<string>,
+): Effect.Effect<void, AnyGitError> {
+  return Effect.gen(function* () {
+    yield* assertSafePaths(paths);
+    yield* ensureRepo(cwd);
+    // `restore --staged` is the modern path; `reset HEAD --` works on
+    // older git but is noisier. Both are idempotent.
+    yield* run(cwd, ["restore", "--staged", "--", ...paths]);
+  });
+}
+
 export interface PushOptions {
   remote?: string;
   branch?: string;

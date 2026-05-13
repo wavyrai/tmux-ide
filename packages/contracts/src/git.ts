@@ -90,6 +90,16 @@ export const commitRequestSchema = z.object({
 });
 export type CommitRequest = z.infer<typeof commitRequestSchema>;
 
+/** Stage / unstage a list of paths. The daemon resolves them against
+ *  the session dir; absolute paths are rejected by the handler. */
+export const stageRequestSchema = z.object({
+  paths: z.array(z.string().trim().min(1)).min(1, "paths is required"),
+});
+export type StageRequest = z.infer<typeof stageRequestSchema>;
+
+export const unstageRequestSchema = stageRequestSchema;
+export type UnstageRequest = StageRequest;
+
 export const pushRequestSchema = z.object({
   /** When omitted: push the current branch to its upstream. */
   remote: z.string().trim().min(1).optional(),

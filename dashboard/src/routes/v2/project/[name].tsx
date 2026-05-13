@@ -32,6 +32,7 @@ import { V2ActivityBar, type ActivityBarViewId } from "@/components/ActivityBar"
 import { StatusBar } from "@/components/StatusBar";
 import { Terminal } from "@/components/Terminal";
 import { ChatView } from "@/components/ChatView";
+import { DiffsView } from "@/components/DiffsView";
 import { chrome, useChromeShortcuts } from "@/lib/chrome";
 import { useViewParam } from "@/lib/viewParam";
 import { DEFAULT_VIEW, isViewId, VIEWS, type ViewId } from "@/lib/views";
@@ -198,7 +199,17 @@ function MainContent(props: { projectName: string; view: ViewId }) {
           <Show
             when={props.view === "terminal"}
             fallback={
-              <Show when={props.view === "files"} fallback={<P3Placeholder view={props.view} />}>
+              <Show
+                when={props.view === "files"}
+                fallback={
+                  <Show
+                    when={props.view === "diffs"}
+                    fallback={<P3Placeholder view={props.view} />}
+                  >
+                    <DiffsView projectName={props.projectName} />
+                  </Show>
+                }
+              >
                 <FilesView projectName={props.projectName} />
               </Show>
             }

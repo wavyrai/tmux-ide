@@ -16,6 +16,7 @@ import {
 } from "@/lib/chrome";
 import { useGitStatus } from "@/lib/git";
 import { BranchPicker } from "@/components/BranchPicker";
+import { PushButton } from "@/components/PushButton";
 
 type IconComponent = Component<{ size?: number; class?: string }>;
 
@@ -79,6 +80,11 @@ export function StatusBar(props: StatusBarProps) {
         onCheckedOut={() => {
           status.refetch();
         }}
+      />
+      <PushButton
+        sessionName={props.projectName}
+        ahead={ahead()}
+        onPushed={() => status.refetch()}
       />
 
       <span aria-hidden="true" class="opacity-30">│</span>

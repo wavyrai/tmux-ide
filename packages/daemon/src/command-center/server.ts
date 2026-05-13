@@ -111,13 +111,23 @@ import {
   checkout as gitCheckout,
   commit as gitCommit,
   push as gitPush,
+  stage as gitStage,
   status as gitStatus,
+  unstage as gitUnstage,
 } from "../git/git-service.ts";
 import { toPayload as gitErrorToPayload } from "../git/errors.ts";
+import {
+  createPullRequest as ghCreatePr,
+  status as ghStatus,
+  toPayload as githubErrorToPayload,
+} from "../git/github-service.ts";
 import {
   checkoutRequestSchema,
   commitRequestSchema,
   pushRequestSchema,
+  stageRequestSchema,
+  unstageRequestSchema,
+  createPrRequestSchema,
 } from "@tmux-ide/contracts";
 import { AuthService } from "../lib/auth/auth-service.ts";
 import { authMiddleware } from "../lib/auth/middleware.ts";
@@ -1600,6 +1610,97 @@ export function createApp(options: CreateAppOptions = {}): Hono {
     return c.json({ file, diff });
   });
 
+  // GET /api/project/:name/git/file?path=...&ref=...
+  // Returns the content of `path` (workspace-relative) at the given ref.
+  // Used by the Monaco StickyDiffEditor's `git://...` side. Refs supported:
+  //   HEAD     — git show HEAD:path (default)
+  //   STAGED   — git show :path (index)
+  //   WORKING  — read the working-tree mirror so callers can request all
+  //              three sides through the same endpoint
+  //   <sha> | <branch> | origin/main — git show <ref>:path
+  // Identity is sandboxed: path must be relative and stay under
+  // session.dir; absolute / `..` paths are rejected.
+  app.get("/api/project/:name/git/file", (c) => {
+    const name = c.req.param("name");
+    const path = c.req.query("path") ?? "";
+    const ref = (c.req.query("ref") ?? "HEAD").trim();
+    const sessions = discoverSessions();
+    const session = sessions.find((s) => s.name === name);
+    if (!session) return c.json({ error: "Session not found" }, 404);
+
+    // Sandbox the path. No leading `/`, no `..` segments.
+    if (!path) return c.json({ error: "Missing ?path=" }, 400);
+    if (
+      path.startsWith("/") ||
+      path.split("/").some((seg) => seg === ".." || seg === ".")
+    ) {
+      return c.json({ error: "Path escapes workspace" }, 403);
+    }
+    // Ref must be a sane shape — alphanumerics, slash, dot, dash, underscore,
+    // plus the two pseudo-refs STAGED + WORKING.
+    if (
+      ref !== "STAGED" &&
+      ref !== "WORKING" &&
+      !/^[A-Za-z0-9_./-]+$/.test(ref)
+    ) {
+      return c.json({ error: "Invalid ref" }, 400);
+    }
+
+    const PER_FILE_MAX_BUFFER = 64 * 1024 * 1024;
+
+    let content = "";
+    let exists = true;
+    try {
+      if (ref === "WORKING") {
+        const requested = pathResolve(session.dir, path);
+        let resolvedRoot: string;
+        try {
+          resolvedRoot = realpathSync(session.dir);
+        } catch {
+          return c.json({ error: "Session directory not accessible" }, 500);
+        }
+        let resolvedTarget: string;
+        try {
+          resolvedTarget = realpathSync(requested);
+        } catch {
+          return c.json({ path, ref, exists: false, content: "" });
+        }
+        if (
+          !resolvedTarget.startsWith(resolvedRoot + "/") &&
+          resolvedTarget !== resolvedRoot
+        ) {
+          return c.json({ error: "Path escapes workspace" }, 403);
+        }
+        try {
+          content = readFileSync(resolvedTarget, "utf-8");
+        } catch {
+          return c.json({ path, ref, exists: false, content: "" });
+        }
+      } else {
+        const spec = ref === "STAGED" ? `:${path}` : `${ref}:${path}`;
+        try {
+          content = execFileSync("git", ["show", spec], {
+            cwd: session.dir,
+            encoding: "utf-8",
+            stdio: ["ignore", "pipe", "ignore"],
+            maxBuffer: PER_FILE_MAX_BUFFER,
+          });
+        } catch {
+          // File didn't exist at that ref (added since, or never tracked).
+          exists = false;
+          content = "";
+        }
+      }
+    } catch (err) {
+      return c.json(
+        { error: err instanceof Error ? err.message : String(err) },
+        500,
+      );
+    }
+
+    return c.json({ path, ref, exists, content });
+  });
+
   // GET /api/project/:name/preview/:file — read a file's contents from inside
   // the session's working directory. The path is sandboxed: we resolve it
   // against session.dir and reject anything that escapes (symlink-aware via
@@ -2061,6 +2162,77 @@ export function createApp(options: CreateAppOptions = {}): Hono {
           Effect.match({
             onFailure: (err) => c.json({ error: gitErrorToPayload(err) }, 400),
             onSuccess: (r) => c.json({ ok: true, remote: r.remote, branch: r.branch }),
+          }),
+        ),
+      );
+    },
+  );
+
+  app.post(
+    "/api/project/:name/git/stage",
+    zValidator("json", stageRequestSchema),
+    async (c) => {
+      const name = c.req.param("name");
+      const sessions = discoverSessions();
+      const session = sessions.find((s) => s.name === name);
+      if (!session) return c.json({ error: "Session not found" }, 404);
+      const body = c.req.valid("json");
+      return Effect.runPromise(
+        gitStage(session.dir, body.paths).pipe(
+          Effect.match({
+            onFailure: (err) => c.json({ error: gitErrorToPayload(err) }, 400),
+            onSuccess: () => c.json({ ok: true }),
+          }),
+        ),
+      );
+    },
+  );
+
+  app.post(
+    "/api/project/:name/git/unstage",
+    zValidator("json", unstageRequestSchema),
+    async (c) => {
+      const name = c.req.param("name");
+      const sessions = discoverSessions();
+      const session = sessions.find((s) => s.name === name);
+      if (!session) return c.json({ error: "Session not found" }, 404);
+      const body = c.req.valid("json");
+      return Effect.runPromise(
+        gitUnstage(session.dir, body.paths).pipe(
+          Effect.match({
+            onFailure: (err) => c.json({ error: gitErrorToPayload(err) }, 400),
+            onSuccess: () => c.json({ ok: true }),
+          }),
+        ),
+      );
+    },
+  );
+
+  app.get("/api/project/:name/git/github-status", async (c) => {
+    const _name = c.req.param("name");
+    // GitHub auth is per-host (gh CLI / env token) — not per-project —
+    // so we don't gate on session lookup beyond URL shape. Still keep
+    // the :name segment so the dashboard can scope future work
+    // (per-repo overrides) without changing the path.
+    return Effect.runPromise(
+      ghStatus().pipe(Effect.map((status) => c.json(status))),
+    );
+  });
+
+  app.post(
+    "/api/project/:name/git/pr",
+    zValidator("json", createPrRequestSchema),
+    async (c) => {
+      const name = c.req.param("name");
+      const sessions = discoverSessions();
+      const session = sessions.find((s) => s.name === name);
+      if (!session) return c.json({ error: "Session not found" }, 404);
+      const body = c.req.valid("json");
+      return Effect.runPromise(
+        ghCreatePr(session.dir, body).pipe(
+          Effect.match({
+            onFailure: (err) => c.json({ error: githubErrorToPayload(err) }, 400),
+            onSuccess: (pr) => c.json({ ok: true, pr }),
           }),
         ),
       );

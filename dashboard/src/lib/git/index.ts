@@ -18,8 +18,12 @@ import type {
   BranchesPayload,
   CheckoutRequest,
   CommitRequest,
+  CreatePrRequest,
+  CreatedPrSummary,
   FullGitStatus,
   GitErrorPayload,
+  GitHubErrorPayload,
+  GitHubStatusResponse,
   PushRequest,
 } from "@tmux-ide/contracts";
 import { API_BASE } from "@/lib/api";
@@ -125,6 +129,99 @@ export function pushBranch(
       body: JSON.stringify(body),
     },
   ).pipe(Effect.map((b) => ({ remote: b.remote, branch: b.branch })));
+}
+
+export function stagePaths(
+  sessionName: string,
+  paths: ReadonlyArray<string>,
+): Effect.Effect<void, GitApiError> {
+  return effect<{ ok: true }>(
+    `/api/project/${encodeURIComponent(sessionName)}/git/stage`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ paths }),
+    },
+  ).pipe(Effect.map(() => undefined));
+}
+
+export function unstagePaths(
+  sessionName: string,
+  paths: ReadonlyArray<string>,
+): Effect.Effect<void, GitApiError> {
+  return effect<{ ok: true }>(
+    `/api/project/${encodeURIComponent(sessionName)}/git/unstage`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ paths }),
+    },
+  ).pipe(Effect.map(() => undefined));
+}
+
+/** GitHub auth probe — branches the UI between "Sign in with gh",
+ *  "Install gh", and "Create PR as @login". */
+export class GitHubApiError extends Data.TaggedError("GitHubApiError")<{
+  readonly status: number;
+  readonly payload: GitHubErrorPayload;
+}> {}
+
+interface GhErrorBody {
+  error?: GitHubErrorPayload | string;
+}
+
+async function ghRequest<T>(path: string, init?: RequestInit): Promise<T> {
+  const res = await fetch(`${API_BASE}${path}`, { cache: "no-store", ...init });
+  const body = (await res.json().catch(() => ({}))) as T & GhErrorBody;
+  if (!res.ok) {
+    const payload =
+      body.error && typeof body.error === "object"
+        ? body.error
+        : {
+            type: "error" as const,
+            message: typeof body.error === "string" ? body.error : `HTTP ${res.status}`,
+          };
+    throw new GitHubApiError({ status: res.status, payload });
+  }
+  return body as T;
+}
+
+function ghEffect<T>(path: string, init?: RequestInit): Effect.Effect<T, GitHubApiError> {
+  return Effect.tryPromise({
+    try: () => ghRequest<T>(path, init),
+    catch: (cause) =>
+      cause instanceof GitHubApiError
+        ? cause
+        : new GitHubApiError({
+            status: 0,
+            payload: {
+              type: "error",
+              message: cause instanceof Error ? cause.message : String(cause),
+            },
+          }),
+  });
+}
+
+export function fetchGitHubStatus(
+  sessionName: string,
+): Effect.Effect<GitHubStatusResponse, GitHubApiError> {
+  return ghEffect<GitHubStatusResponse>(
+    `/api/project/${encodeURIComponent(sessionName)}/git/github-status`,
+  );
+}
+
+export function createPullRequest(
+  sessionName: string,
+  body: CreatePrRequest,
+): Effect.Effect<CreatedPrSummary, GitHubApiError> {
+  return ghEffect<{ ok: true; pr: CreatedPrSummary }>(
+    `/api/project/${encodeURIComponent(sessionName)}/git/pr`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    },
+  ).pipe(Effect.map((r) => r.pr));
 }
 
 // ---------------------------------------------------------------------
