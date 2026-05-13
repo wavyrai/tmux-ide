@@ -33,6 +33,8 @@ import { StatusBar } from "@/components/StatusBar";
 import { Terminal } from "@/components/Terminal";
 import { ChatView } from "@/components/ChatView";
 import { DiffsView } from "@/components/DiffsView";
+import { FilesSurface } from "@/components/files/FilesSurface";
+import { MonacoDiffsView } from "@/components/diffs/MonacoDiffsView";
 import { chrome, useChromeShortcuts } from "@/lib/chrome";
 import { useViewParam } from "@/lib/viewParam";
 import { DEFAULT_VIEW, isViewId, VIEWS, type ViewId } from "@/lib/views";
@@ -193,53 +195,49 @@ function BottomPanelPlaceholder(props: { projectName: string }) {
 function MainContent(props: { projectName: string; view: ViewId }) {
   return (
     <div data-testid="v2-view-root" data-view={props.view} class="flex h-full min-h-0 flex-col">
-      <Show
-        when={props.view === "chat"}
-        fallback={
-          <Show
-            when={props.view === "terminal"}
-            fallback={
-              <Show
-                when={props.view === "files"}
-                fallback={
-                  <Show
-                    when={props.view === "diffs"}
-                    fallback={<P3Placeholder view={props.view} />}
-                  >
-                    <DiffsView projectName={props.projectName} />
-                  </Show>
-                }
-              >
-                <FilesView projectName={props.projectName} />
-              </Show>
-            }
-          >
-            <div class="flex h-full min-h-0 flex-col">
-              <Terminal id={`v2-${props.projectName}-main`} showHeader />
-            </div>
-          </Show>
-        }
-      >
+      <Show when={props.view === "chat"}>
         <div class="flex h-full min-h-0 flex-col overflow-hidden">
           <ChatView projectName={props.projectName} />
         </div>
       </Show>
-    </div>
-  );
-}
-
-function FilesView(props: { projectName: string }) {
-  return (
-    <div
-      data-testid="v2-files-view"
-      class="flex h-full min-h-0 flex-col items-start gap-3 overflow-auto p-4 text-[12px] text-[var(--fg-secondary)]"
-    >
-      <div class="text-[11px] uppercase tracking-wider text-[var(--dim)]">files · {props.projectName}</div>
-      <p>
-        The Solid Explorer + Preview split is reachable in <code class="font-mono">@tmux-ide/v2-solid-widgets</code>
-        already; wiring lands with the daemon file-tree refactor in G16-P3.
-      </p>
-      <p>For now, use the chat or terminal views to drive the workspace.</p>
+      <Show when={props.view === "terminal"}>
+        <div class="flex h-full min-h-0 flex-col">
+          <Terminal id={`v2-${props.projectName}-main`} showHeader />
+        </div>
+      </Show>
+      <Show when={props.view === "files"}>
+        <FilesSurface projectName={props.projectName} />
+      </Show>
+      <Show when={props.view === "diffs"}>
+        <DiffsView projectName={props.projectName} />
+      </Show>
+      <Show when={props.view === "changes"}>
+        <MonacoDiffsView
+          projectName={props.projectName}
+          onAcceptHunk={(file, hunk) => {
+            // Per-hunk write-through to disk lands with the buffer
+            // store in G17-P5. Log the action so the test surface +
+            // dev console can observe the wire-up.
+            // eslint-disable-next-line no-console
+            console.info("[diffs] accept hunk", file, hunk);
+          }}
+          onRejectHunk={(file, hunk) => {
+            // eslint-disable-next-line no-console
+            console.info("[diffs] reject hunk", file, hunk);
+          }}
+        />
+      </Show>
+      <Show
+        when={
+          props.view !== "chat" &&
+          props.view !== "terminal" &&
+          props.view !== "files" &&
+          props.view !== "diffs" &&
+          props.view !== "changes"
+        }
+      >
+        <P3Placeholder view={props.view} />
+      </Show>
     </div>
   );
 }

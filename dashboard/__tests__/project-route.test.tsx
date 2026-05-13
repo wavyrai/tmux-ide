@@ -73,10 +73,12 @@ describe("/v2/project/:name shell", () => {
     expect(getByTestId("v2-view-root").getAttribute("data-view")).toBe("terminal");
   });
 
-  it("activity-bar Files button switches the editor to the files placeholder", async () => {
+  it("activity-bar Files button switches the editor to the FilesSurface", async () => {
     const { getByTestId, findByTestId } = renderRoute();
     fireEvent.click(getByTestId("v2-activity-files"));
-    expect(await findByTestId("v2-files-view")).toBeInTheDocument();
+    // G17-P4 swapped the placeholder for the live Solid surface;
+    // the testid is now `v2-files-surface` (Explorer + preview).
+    expect(await findByTestId("v2-files-surface")).toBeInTheDocument();
     expect(getByTestId("v2-view-root").getAttribute("data-view")).toBe("files");
   });
 

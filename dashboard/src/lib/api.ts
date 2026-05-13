@@ -211,6 +211,70 @@ export function fetchGitFile(
 }
 
 // ---------------------------------------------------------------------
+// File tree + diff — used by the Files / Diffs surfaces in the IDE
+// shell. All three round-trip through the daemon's REST endpoints
+// (`/api/project/:name/files`, `/diff`, `/diff/:file`); same data
+// the v2-solid-widgets RPC client consumes, but Effect-typed for
+// direct dashboard consumption.
+// ---------------------------------------------------------------------
+
+export interface ProjectFileNode {
+  path: string;
+  name: string;
+  isDirectory: boolean;
+  children?: ProjectFileNode[];
+  truncated?: true;
+}
+
+export interface ProjectFilesResponse {
+  tree: ProjectFileNode[];
+  maxDepth: number;
+  truncated: boolean;
+}
+
+export function fetchProjectFiles(
+  sessionName: string,
+): Effect.Effect<ProjectFilesResponse, ApiError> {
+  return request<ProjectFilesResponse>(
+    `/api/project/${encodeURIComponent(sessionName)}/files`,
+  ).pipe(
+    Effect.map(
+      (data) =>
+        (data ?? { tree: [], maxDepth: 0, truncated: false }) as ProjectFilesResponse,
+    ),
+  );
+}
+
+export interface DiffFileEntry {
+  file: string;
+  additions: number;
+  deletions: number;
+}
+
+export interface DiffData {
+  diff: string;
+  files: DiffFileEntry[];
+}
+
+export function fetchProjectDiff(
+  sessionName: string,
+): Effect.Effect<DiffData, ApiError> {
+  return request<DiffData>(
+    `/api/project/${encodeURIComponent(sessionName)}/diff`,
+  ).pipe(Effect.map((data) => data ?? { diff: "", files: [] }));
+}
+
+export function fetchProjectFileDiff(
+  sessionName: string,
+  filePath: string,
+): Effect.Effect<string, ApiError> {
+  const normalized = filePath.replace(/^\/+/g, "");
+  return request<{ diff: string }>(
+    `/api/project/${encodeURIComponent(sessionName)}/diff/${encodeURI(normalized)}`,
+  ).pipe(Effect.map((data) => data?.diff ?? ""));
+}
+
+// ---------------------------------------------------------------------
 // Widget spawn — used by /v2/widget/[name] to ask the daemon where the
 // widget binary lives + how to invoke it, then drive a Terminal via the
 // same WS protocol the tmux panes use.
