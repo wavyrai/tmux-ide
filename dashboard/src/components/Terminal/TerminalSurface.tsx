@@ -19,7 +19,7 @@
  * No xterm work happens in this component — that lives in PtyPane.
  */
 
-import { createEffect, createMemo, createSignal, For, onMount, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show } from "solid-js";
 import { Effect, Exit, Cause } from "effect";
 import { Plus, X } from "lucide-solid";
 import type { TerminalWithRuntime } from "@tmux-ide/contracts";
@@ -32,6 +32,12 @@ import {
 } from "@/lib/pty/registry";
 import { releaseSession } from "@/lib/pty/sessionPool";
 import { PaneSizingProvider } from "@/lib/pty/PaneSizingContext";
+import {
+  detectIsMacPlatform,
+  resolveTabIndexShortcut,
+  shouldCloseCurrentTab,
+  shouldOpenNewTab,
+} from "@/lib/pty/tabKeybindings";
 import { PtyPane } from "./PtyPane";
 
 interface TerminalSurfaceProps {
@@ -116,11 +122,51 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
     }
   }
 
+  let surfaceRoot!: HTMLDivElement;
+  const isMacPlatform = detectIsMacPlatform();
+
   onMount(() => {
     // Fire an explicit refetch so the createResource baseline is
     // current even if the URL/session prop didn't change. Matches the
     // bridge pattern used elsewhere in the dashboard.
     void terminals.refetch();
+
+    // Tab keybinds — scoped to the surface root so Cmd+T / Cmd+W
+    // outside the panel still hit their global handlers (e.g. the
+    // browser's "new tab" gets Cmd+T when the user clicked away).
+    const onKeyDown = (e: KeyboardEvent) => {
+      const focus = document.activeElement as Node | null;
+      if (!focus || !surfaceRoot.contains(focus)) return;
+      if (shouldOpenNewTab(e, isMacPlatform)) {
+        e.preventDefault();
+        void handleNewTab();
+        return;
+      }
+      if (shouldCloseCurrentTab(e, isMacPlatform)) {
+        // Don't close while inline-renaming — Cmd+W during a rename
+        // should commit/cancel via the input handler instead.
+        if (renaming()) return;
+        const id = activeId();
+        if (!id) return;
+        e.preventDefault();
+        void handleClose(id);
+        return;
+      }
+      const tabIdx = resolveTabIndexShortcut(e, isMacPlatform);
+      if (tabIdx !== null) {
+        const list = terminals();
+        if (!list) return;
+        const target = list[tabIdx];
+        if (!target) return;
+        e.preventDefault();
+        setActiveId(target.id);
+        writeActiveId(props.projectName, target.id);
+      }
+    };
+    window.addEventListener("keydown", onKeyDown, true);
+    onCleanup(() => {
+      window.removeEventListener("keydown", onKeyDown, true);
+    });
   });
 
   const allSessionIds = createMemo<readonly string[]>(() =>
@@ -198,9 +244,11 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
 
   return (
     <div
+      ref={surfaceRoot}
+      tabIndex={-1}
       data-testid="terminal-surface"
       data-session-name={props.projectName}
-      class="flex h-full min-h-0 w-full min-w-0 flex-col bg-[var(--bg)] text-[12px] text-[var(--fg)]"
+      class="flex h-full min-h-0 w-full min-w-0 flex-col bg-[var(--bg)] text-[12px] text-[var(--fg)] focus:outline-none"
     >
       <header
         data-testid="terminal-tab-strip"

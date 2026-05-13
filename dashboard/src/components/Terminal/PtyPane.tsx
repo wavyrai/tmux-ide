@@ -20,6 +20,8 @@ import { FitAddon } from "@xterm/addon-fit";
 import { acquireSession } from "@/lib/pty/sessionPool";
 import { usePaneSizingContext } from "@/lib/pty/PaneSizingContext";
 import type { FrontendPtyOptions } from "@/lib/pty/FrontendPty";
+import { useTerminalSearch } from "@/lib/pty/useTerminalSearch";
+import { TerminalSearchOverlay } from "./TerminalSearchOverlay";
 
 interface PtyPaneProps {
   sessionId: string;
@@ -34,6 +36,17 @@ export function PtyPane(props: PtyPaneProps) {
   const session = acquireSession(props.sessionId);
   const [statusText, setStatusText] = createSignal<string>(session.status());
   const sizing = usePaneSizingContext();
+
+  const search = useTerminalSearch({
+    getTerminal: () => session.pty?.terminal ?? null,
+    onCloseFocus: () => {
+      try {
+        session.pty?.terminal.focus();
+      } catch {
+        // ignore — disposed terminal
+      }
+    },
+  });
 
   // Mirror the session's reactive status into our own signal so
   // the header banner re-renders.
@@ -77,9 +90,24 @@ export function PtyPane(props: PtyPaneProps) {
     // surface has its real dimensions.
     requestAnimationFrame(fitNow);
 
+    // Cmd/Ctrl+F → open search overlay (scoped to this pane).
+    const onKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === "f") {
+        // Only intercept when focus is inside this pane — otherwise
+        // we'd hijack the global Cmd-F (palette / browser find).
+        const target = e.target as Node | null;
+        if (target && host.contains(target)) {
+          e.preventDefault();
+          search.show();
+        }
+      }
+    };
+    host.addEventListener("keydown", onKeyDown, true);
+
     onCleanup(() => {
       detached = true;
       observer.disconnect();
+      host.removeEventListener("keydown", onKeyDown, true);
       try {
         localFit.dispose();
       } catch {
@@ -107,6 +135,7 @@ export function PtyPane(props: PtyPaneProps) {
         data-testid="pty-pane-host"
         class="min-h-0 flex-1"
       />
+      <TerminalSearchOverlay handle={search} />
     </div>
   );
 }
