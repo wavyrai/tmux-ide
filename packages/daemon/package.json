@@ -64,6 +64,8 @@
     "js-yaml": "^4.1.1",
     "node-pty": "1.2.0-beta.12",
     "solid-js": "^1.9.11",
+    "vscode-jsonrpc": "^8.2.1",
+    "vscode-languageserver-protocol": "^3.17.5",
     "ws": "^8.20.0",
     "zod": "^4.3.6"
   },

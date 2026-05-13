@@ -203,6 +203,7 @@ import {
 import { realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, resolve as pathResolve } from "node:path";
+import { getLspClientForFile } from "../lsp/registry.ts";
 import { randomUUID } from "node:crypto";
 import { WebSocketServer } from "ws";
 import {
@@ -2867,6 +2868,183 @@ export function createApp(options: CreateAppOptions = {}): Hono {
         sseMetrics.connections = projectStreamConnections;
       }
     });
+  });
+
+  // LSP endpoints — POST { file, line, column } and return raw LSP-shaped responses.
+  // `file` is a workspace-relative path; the daemon sandboxes it under the session
+  // directory before handing it to the language server.
+  const resolveLspTarget = (
+    sessionName: string,
+    file: unknown,
+  ):
+    | { ok: true; root: string; target: string }
+    | { ok: false; status: 400 | 403 | 404; error: string } => {
+    if (typeof file !== "string" || !file) {
+      return { ok: false, status: 400, error: "Missing `file`" };
+    }
+    if (
+      file.startsWith("/") ||
+      file.split("/").some((seg) => seg === ".." || seg === ".")
+    ) {
+      return { ok: false, status: 403, error: "Path escapes workspace" };
+    }
+    const sessions = discoverSessions();
+    const session = sessions.find((s) => s.name === sessionName);
+    if (!session) return { ok: false, status: 404, error: "Session not found" };
+    let root: string;
+    try {
+      root = realpathSync(session.dir);
+    } catch {
+      return { ok: false, status: 404, error: "Session directory not accessible" };
+    }
+    const requested = pathResolve(root, file);
+    let target: string;
+    try {
+      target = realpathSync(requested);
+    } catch {
+      target = requested;
+    }
+    if (!target.startsWith(root + "/") && target !== root) {
+      return { ok: false, status: 403, error: "Path escapes workspace" };
+    }
+    return { ok: true, root, target };
+  };
+
+  type LspRequestBody = { file?: string; line?: number; column?: number };
+
+  const parseLspPositionBody = (
+    raw: unknown,
+  ):
+    | { ok: true; file: string; line: number; column: number }
+    | { ok: false; error: string } => {
+    const body = (raw ?? {}) as LspRequestBody;
+    const { file, line, column } = body;
+    if (typeof file !== "string" || !file) {
+      return { ok: false, error: "Missing `file`" };
+    }
+    if (typeof line !== "number" || line < 0 || !Number.isFinite(line)) {
+      return { ok: false, error: "Missing or invalid `line`" };
+    }
+    if (typeof column !== "number" || column < 0 || !Number.isFinite(column)) {
+      return { ok: false, error: "Missing or invalid `column`" };
+    }
+    return { ok: true, file, line, column };
+  };
+
+  app.post("/api/project/:name/lsp/hover", async (c) => {
+    let raw: unknown;
+    try {
+      raw = await c.req.json();
+    } catch {
+      return c.json({ error: "Invalid JSON body" }, 400);
+    }
+    const parsed = parseLspPositionBody(raw);
+    if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+    const sandbox = resolveLspTarget(c.req.param("name"), parsed.file);
+    if (!sandbox.ok) return c.json({ error: sandbox.error }, sandbox.status);
+    const client = await getLspClientForFile(sandbox.root, sandbox.target).catch(
+      (err) =>
+        ({
+          __error: err instanceof Error ? err.message : String(err),
+        }) as const,
+    );
+    if (client && "__error" in client) {
+      return c.json({ error: `LSP failed to start: ${client.__error}` }, 500);
+    }
+    if (!client) {
+      return c.json({ error: "No LSP server registered for this file type" }, 400);
+    }
+    const hover = await client.hover(sandbox.target, parsed.line, parsed.column);
+    return c.json({ hover });
+  });
+
+  app.post("/api/project/:name/lsp/definition", async (c) => {
+    let raw: unknown;
+    try {
+      raw = await c.req.json();
+    } catch {
+      return c.json({ error: "Invalid JSON body" }, 400);
+    }
+    const parsed = parseLspPositionBody(raw);
+    if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+    const sandbox = resolveLspTarget(c.req.param("name"), parsed.file);
+    if (!sandbox.ok) return c.json({ error: sandbox.error }, sandbox.status);
+    const client = await getLspClientForFile(sandbox.root, sandbox.target).catch(
+      (err) =>
+        ({
+          __error: err instanceof Error ? err.message : String(err),
+        }) as const,
+    );
+    if (client && "__error" in client) {
+      return c.json({ error: `LSP failed to start: ${client.__error}` }, 500);
+    }
+    if (!client) {
+      return c.json({ error: "No LSP server registered for this file type" }, 400);
+    }
+    const definition = await client.definition(
+      sandbox.target,
+      parsed.line,
+      parsed.column,
+    );
+    return c.json({ definition });
+  });
+
+  app.post("/api/project/:name/lsp/references", async (c) => {
+    let raw: unknown;
+    try {
+      raw = await c.req.json();
+    } catch {
+      return c.json({ error: "Invalid JSON body" }, 400);
+    }
+    const parsed = parseLspPositionBody(raw);
+    if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+    const sandbox = resolveLspTarget(c.req.param("name"), parsed.file);
+    if (!sandbox.ok) return c.json({ error: sandbox.error }, sandbox.status);
+    const client = await getLspClientForFile(sandbox.root, sandbox.target).catch(
+      (err) =>
+        ({
+          __error: err instanceof Error ? err.message : String(err),
+        }) as const,
+    );
+    if (client && "__error" in client) {
+      return c.json({ error: `LSP failed to start: ${client.__error}` }, 500);
+    }
+    if (!client) {
+      return c.json({ error: "No LSP server registered for this file type" }, 400);
+    }
+    const references = await client.references(
+      sandbox.target,
+      parsed.line,
+      parsed.column,
+    );
+    return c.json({ references });
+  });
+
+  // POST /api/project/:name/lsp/diagnostics { file } — opens the file in the LSP,
+  // waits briefly for the server to push diagnostics, then returns whatever is
+  // currently cached. `line`/`column` are accepted but unused (diagnostics are
+  // file-scoped); they are not required.
+  app.post("/api/project/:name/lsp/diagnostics", async (c) => {
+    let body: LspRequestBody;
+    try {
+      body = (await c.req.json()) as LspRequestBody;
+    } catch {
+      return c.json({ error: "Invalid JSON body" }, 400);
+    }
+    const sandbox = resolveLspTarget(c.req.param("name"), body?.file);
+    if (!sandbox.ok) return c.json({ error: sandbox.error }, sandbox.status);
+    const client = await getLspClientForFile(sandbox.root, sandbox.target).catch(
+      (err) => ({ __error: err instanceof Error ? err.message : String(err) }) as const,
+    );
+    if (client && "__error" in client) {
+      return c.json({ error: `LSP failed to start: ${client.__error}` }, 500);
+    }
+    if (!client) {
+      return c.json({ error: "No LSP server registered for this file type" }, 400);
+    }
+    await client.ensureOpen(sandbox.target);
+    const diagnostics = await client.waitForDiagnostics(sandbox.target, 1500);
+    return c.json({ diagnostics });
   });
 
   app.get("/api/daemon/metrics", (c) => {
