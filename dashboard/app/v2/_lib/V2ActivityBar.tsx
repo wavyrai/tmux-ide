@@ -1,5 +1,7 @@
 "use client";
 
+import { useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import {
   Files,
   Search,
@@ -11,8 +13,10 @@ import {
   MessagesSquare,
   Terminal as TerminalIcon,
   BookOpen,
+  LogOut,
   UserCircle,
   Settings as SettingsIcon,
+  Sliders,
   type LucideIcon,
 } from "lucide-react";
 
@@ -64,6 +68,31 @@ interface V2ActivityBarProps {
 }
 
 export function V2ActivityBar({ view, onView }: V2ActivityBarProps) {
+  const [accountOpen, setAccountOpen] = useState(false);
+  const accountAnchorRef = useRef<HTMLDivElement | null>(null);
+
+  // Close the Account popover on outside click + Escape — same pattern
+  // the rest of the v2 popovers (chat provider picker, command-palette)
+  // use. Listeners attach only while open to keep the bar cheap when
+  // nobody's interacting with it.
+  useEffect(() => {
+    if (!accountOpen) return;
+    function onPointer(event: PointerEvent) {
+      const root = accountAnchorRef.current;
+      if (!root) return;
+      if (event.target instanceof Node && root.contains(event.target)) return;
+      setAccountOpen(false);
+    }
+    function onKey(event: KeyboardEvent) {
+      if (event.key === "Escape") setAccountOpen(false);
+    }
+    document.addEventListener("pointerdown", onPointer);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("pointerdown", onPointer);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [accountOpen]);
   const top: ActivityBarItem[] = [
     {
       id: "files",
@@ -149,11 +178,20 @@ export function V2ActivityBar({ view, onView }: V2ActivityBarProps) {
       id: "account",
       Icon: UserCircle,
       label: "Account",
+      tooltip: "Account · Sign out",
+      onClick: () => setAccountOpen((v) => !v),
     },
     {
       id: "settings",
       Icon: SettingsIcon,
       label: "Settings",
+      tooltip: "Settings · Theme · Keybinds",
+      // /v2/settings is a standalone top-level route; navigate the
+      // browser rather than switching the project page's view state.
+      // Same pattern the Widgets entry uses above.
+      onClick: () => {
+        if (typeof window !== "undefined") window.location.assign("/v2/settings");
+      },
     },
   ];
 
@@ -174,13 +212,61 @@ export function V2ActivityBar({ view, onView }: V2ActivityBarProps) {
           ))}
         </div>
         <div className="flex-1" />
-        <div className="flex flex-col">
+        <div ref={accountAnchorRef} className="relative flex flex-col">
           {bottom.map((item) => (
             <ActivityBarButton key={item.id} item={item} active={false} />
           ))}
+          {accountOpen && <AccountPopover onClose={() => setAccountOpen(false)} />}
         </div>
       </nav>
     </TooltipProvider>
+  );
+}
+
+function AccountPopover({ onClose }: { onClose: () => void }) {
+  return (
+    <div
+      role="dialog"
+      aria-label="Account"
+      data-testid="v2-account-popover"
+      className="absolute bottom-1 left-[calc(100%+0.5rem)] z-50 w-56 overflow-hidden rounded-md border border-[var(--border)] bg-[var(--surface-elevated,var(--bg-strong))] shadow-2xl"
+    >
+      <div className="flex items-center gap-2 border-b border-[var(--border)] px-3 py-2 text-[12px]">
+        <UserCircle size={16} aria-hidden="true" className="text-[var(--accent)]" />
+        <div className="min-w-0 flex-1">
+          <div className="truncate text-[var(--fg)]">Local user</div>
+          <div className="truncate text-[10px] text-[var(--dim)]">
+            tmux-ide runs locally — no auth wired yet
+          </div>
+        </div>
+      </div>
+      <ul className="m-0 list-none p-1">
+        <li>
+          <Link
+            href="/v2/settings"
+            data-testid="v2-account-popover-settings"
+            onClick={onClose}
+            className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-[12px] text-[var(--fg)] hover:bg-[var(--surface-hover)]"
+          >
+            <Sliders size={12} aria-hidden="true" />
+            <span>Preferences</span>
+          </Link>
+        </li>
+        <li>
+          <button
+            type="button"
+            data-testid="v2-account-popover-signout"
+            onClick={onClose}
+            disabled
+            className="flex w-full items-center gap-2 rounded-sm border-0 bg-transparent px-2 py-1.5 text-left text-[12px] text-[var(--dim)] disabled:cursor-not-allowed"
+            title="Sign-out is not wired — tmux-ide runs locally"
+          >
+            <LogOut size={12} aria-hidden="true" />
+            <span>Sign out</span>
+          </button>
+        </li>
+      </ul>
+    </div>
   );
 }
 
