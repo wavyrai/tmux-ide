@@ -16,6 +16,8 @@
 import { execFile } from "node:child_process";
 import { Effect, Data } from "effect";
 import type {
+  CheckRun,
+  ChecksResponse,
   CreatedPrSummary,
   CreatePrRequest,
   GitHubErrorPayload,
@@ -23,7 +25,7 @@ import type {
   GitHubStatusResponse,
   GitHubUser,
 } from "@tmux-ide/contracts";
-import { parseGitHubRepository } from "@tmux-ide/contracts";
+import { parseGitHubRepository, summarizeChecks } from "@tmux-ide/contracts";
 
 // ---------------------------------------------------------------------
 // Errors
@@ -324,6 +326,146 @@ function createPrWithGh(
       head: input.head ?? "",
       isDraft: Boolean(input.draft),
     };
+  });
+}
+
+// ---------------------------------------------------------------------
+// Check runs (G18-P3)
+// ---------------------------------------------------------------------
+
+interface RawCheckRun {
+  id?: number | string;
+  name?: string;
+  status?: string;
+  conclusion?: string | null;
+  details_url?: string | null;
+  html_url?: string | null;
+  head_sha?: string;
+  started_at?: string | null;
+  completed_at?: string | null;
+  app?: { name?: string | null; slug?: string | null; owner?: { avatar_url?: string | null } } | null;
+  check_suite?: { id?: number; head_sha?: string } | null;
+  output?: { title?: string | null } | null;
+}
+
+function toCheckRun(raw: RawCheckRun, fallbackSha: string): CheckRun {
+  const status: CheckRun["status"] =
+    raw.status === "in_progress" || raw.status === "queued" || raw.status === "completed"
+      ? raw.status
+      : "queued";
+  const conclusionRaw = raw.conclusion;
+  const conclusion: CheckRun["conclusion"] =
+    conclusionRaw === "success" ||
+    conclusionRaw === "failure" ||
+    conclusionRaw === "neutral" ||
+    conclusionRaw === "cancelled" ||
+    conclusionRaw === "timed_out" ||
+    conclusionRaw === "action_required" ||
+    conclusionRaw === "stale" ||
+    conclusionRaw === "skipped"
+      ? conclusionRaw
+      : null;
+  return {
+    id: String(raw.id ?? `${raw.name}-${raw.head_sha ?? fallbackSha}`),
+    name: raw.name ?? "(unnamed check)",
+    status,
+    conclusion,
+    detailsUrl: raw.details_url ?? raw.html_url ?? null,
+    headSha: raw.head_sha ?? fallbackSha,
+    startedAt: raw.started_at ?? null,
+    completedAt: raw.completed_at ?? null,
+    appName: raw.app?.name ?? null,
+    appAvatarUrl: raw.app?.owner?.avatar_url ?? null,
+    workflowName: raw.app?.slug === "github-actions" ? raw.app?.name ?? null : null,
+  };
+}
+
+/** Resolve a ref string (HEAD / short SHA / branch name) to its commit
+ *  SHA. The GitHub Checks API needs a full SHA. */
+function resolveSha(cwd: string, ref: string): Effect.Effect<string, AnyGithubError> {
+  return Effect.tryPromise({
+    try: () => runCli("git", ["rev-parse", ref], cwd),
+    catch: () => new GithubError({ message: `failed to resolve ref "${ref}"` }),
+  }).pipe(Effect.map(({ stdout }) => stdout.trim()));
+}
+
+/** List check runs for the given ref (default HEAD). Prefers `gh api`
+ *  so we inherit the user's auth; falls back to the REST endpoint with
+ *  `gh auth token` when gh isn't on PATH (rare — the daemon usually
+ *  has it). */
+export function listChecks(
+  cwd: string,
+  ref?: string,
+): Effect.Effect<ChecksResponse, AnyGithubError> {
+  return Effect.gen(function* () {
+    const repo = yield* detectRepo(cwd);
+    const headRef = ref?.trim() || "HEAD";
+    const sha = yield* resolveSha(cwd, headRef);
+    const available = yield* ghAvailable();
+    const raw: { check_runs?: RawCheckRun[] } = available
+      ? yield* fetchChecksViaGh(cwd, repo, sha)
+      : yield* fetchChecksViaRest(repo, sha);
+    const runs = (raw.check_runs ?? []).map((r) => toCheckRun(r, sha));
+    return { ref: sha, runs, summary: summarizeChecks(runs) };
+  });
+}
+
+function fetchChecksViaGh(
+  cwd: string,
+  repo: GitHubRepositoryRef,
+  sha: string,
+): Effect.Effect<{ check_runs?: RawCheckRun[] }, AnyGithubError> {
+  const path = `repos/${repo.owner}/${repo.repo}/commits/${sha}/check-runs?per_page=100`;
+  return Effect.tryPromise({
+    try: () => runCli("gh", ["api", "-H", "Accept: application/vnd.github+json", path], cwd),
+    catch: (cause) => classifyGhFailure(cause as ExecFailure),
+  }).pipe(
+    Effect.flatMap(({ stdout }) =>
+      Effect.try({
+        try: () => JSON.parse(stdout) as { check_runs?: RawCheckRun[] },
+        catch: () => new GithubError({ message: "could not parse check-runs JSON" }),
+      }),
+    ),
+  );
+}
+
+function fetchChecksViaRest(
+  repo: GitHubRepositoryRef,
+  sha: string,
+): Effect.Effect<{ check_runs?: RawCheckRun[] }, AnyGithubError> {
+  return Effect.gen(function* () {
+    const token = yield* readGhToken();
+    const res = yield* Effect.tryPromise({
+      try: () =>
+        fetch(
+          `https://api.github.com/repos/${repo.owner}/${repo.repo}/commits/${sha}/check-runs?per_page=100`,
+          {
+            headers: {
+              Authorization: `token ${token}`,
+              Accept: "application/vnd.github+json",
+              "User-Agent": "tmux-ide-daemon",
+            },
+          },
+        ),
+      catch: (cause) =>
+        new GithubNetwork({ message: cause instanceof Error ? cause.message : String(cause) }),
+    });
+    if (res.status === 401 || res.status === 403) {
+      return yield* Effect.fail(new NotAuthenticated({}));
+    }
+    if (res.status === 404) {
+      // No checks for this commit — treat as empty.
+      return { check_runs: [] };
+    }
+    if (!res.ok) {
+      return yield* Effect.fail(
+        new GithubError({ message: `GET check-runs failed (${res.status})` }),
+      );
+    }
+    return (yield* Effect.tryPromise({
+      try: () => res.json() as Promise<{ check_runs?: RawCheckRun[] }>,
+      catch: () => new GithubError({ message: "could not parse check-runs body" }),
+    })) as { check_runs?: RawCheckRun[] };
   });
 }
 

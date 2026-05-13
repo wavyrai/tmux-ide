@@ -16,6 +16,7 @@ import { createResource, type Resource } from "solid-js";
 import { Effect, Data } from "effect";
 import type {
   BranchesPayload,
+  ChecksResponse,
   CheckoutRequest,
   CommitRequest,
   CreatePrRequest,
@@ -208,6 +209,43 @@ export function fetchGitHubStatus(
   return ghEffect<GitHubStatusResponse>(
     `/api/project/${encodeURIComponent(sessionName)}/git/github-status`,
   );
+}
+
+export function fetchChecks(
+  sessionName: string,
+  ref?: string,
+): Effect.Effect<ChecksResponse, GitHubApiError> {
+  const qs = ref ? `?ref=${encodeURIComponent(ref)}` : "";
+  return ghEffect<ChecksResponse>(
+    `/api/project/${encodeURIComponent(sessionName)}/git/checks${qs}`,
+  );
+}
+
+/** Reactive checks resource. Re-keyed on (sessionName, ref) so swapping
+ *  branches or commits refetches without manual orchestration. */
+export function useChecks(
+  sessionName: () => string | null,
+  ref: () => string | null = () => null,
+) {
+  const key = () => {
+    const name = sessionName();
+    if (!name) return null;
+    return { name, ref: ref() ?? undefined };
+  };
+  const [resource, { refetch }] = createResource(key, async (k) => {
+    if (!k) return null;
+    return Effect.runPromise(
+      fetchChecks(k.name, k.ref).pipe(
+        Effect.catchAll(() => Effect.succeed(null as ChecksResponse | null)),
+      ),
+    );
+  });
+  (resource as Resource<ChecksResponse | null> & {
+    refetch: () => Promise<ChecksResponse | null | undefined>;
+  }).refetch = async () => refetch();
+  return resource as Resource<ChecksResponse | null> & {
+    refetch: () => Promise<ChecksResponse | null | undefined>;
+  };
 }
 
 export function createPullRequest(

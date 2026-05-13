@@ -116,6 +116,105 @@ export interface CreatePrResponse {
   pr: CreatedPrSummary;
 }
 
+// ---------------------------------------------------------------------
+// Check runs (G18-P3)
+// ---------------------------------------------------------------------
+
+/** GitHub Checks API `status` enum: queued | in_progress | completed.
+ *  Pending / running maps to queued + in_progress. */
+export type CheckRunStatus = "queued" | "in_progress" | "completed";
+
+/** GitHub Checks API `conclusion` enum. Null while still running. */
+export type CheckRunConclusion =
+  | "success"
+  | "failure"
+  | "neutral"
+  | "cancelled"
+  | "timed_out"
+  | "action_required"
+  | "stale"
+  | "skipped"
+  | null;
+
+export interface CheckRun {
+  /** Check-run id (string for portability — GitHub returns a number). */
+  id: string;
+  /** Display name as set by the action / app (e.g. "build" / "lint"). */
+  name: string;
+  status: CheckRunStatus;
+  conclusion: CheckRunConclusion;
+  /** Logs / job-run URL on github.com — clickable from the rail. */
+  detailsUrl: string | null;
+  /** Commit SHA the run was for. */
+  headSha: string;
+  startedAt: string | null;
+  completedAt: string | null;
+  /** Source app name ("GitHub Actions", "CircleCI", …). */
+  appName: string | null;
+  /** When set, the rail can render the source app's logo. */
+  appAvatarUrl: string | null;
+  /** Workflow name when this is a GitHub Actions run; null otherwise. */
+  workflowName: string | null;
+}
+
+export interface ChecksSummary {
+  total: number;
+  pending: number;
+  passed: number;
+  failed: number;
+  neutral: number;
+  cancelled: number;
+  skipped: number;
+}
+
+export interface ChecksResponse {
+  ref: string;
+  runs: CheckRun[];
+  summary: ChecksSummary;
+}
+
+export function summarizeChecks(runs: ReadonlyArray<CheckRun>): ChecksSummary {
+  const out: ChecksSummary = {
+    total: runs.length,
+    pending: 0,
+    passed: 0,
+    failed: 0,
+    neutral: 0,
+    cancelled: 0,
+    skipped: 0,
+  };
+  for (const run of runs) {
+    if (run.status !== "completed") {
+      out.pending += 1;
+      continue;
+    }
+    switch (run.conclusion) {
+      case "success":
+        out.passed += 1;
+        break;
+      case "failure":
+      case "timed_out":
+      case "action_required":
+        out.failed += 1;
+        break;
+      case "cancelled":
+      case "stale":
+        out.cancelled += 1;
+        break;
+      case "neutral":
+        out.neutral += 1;
+        break;
+      case "skipped":
+        out.skipped += 1;
+        break;
+      default:
+        out.pending += 1;
+        break;
+    }
+  }
+  return out;
+}
+
 /** Failure modes specific to the GitHub side of the flow. The general
  *  git push/auth errors come back as `GitErrorPayload` already. */
 export type GitHubErrorPayload =

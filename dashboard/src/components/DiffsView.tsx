@@ -16,6 +16,7 @@ import { useGitStatus } from "@/lib/git";
 import { CommitDialog } from "@/components/CommitDialog";
 import { CreatePrModal } from "@/components/CreatePrModal";
 import { PushButton } from "@/components/PushButton";
+import { CheckRunsRail } from "@/components/CheckRunsRail";
 
 interface DiffsViewProps {
   projectName: string;
@@ -53,6 +54,7 @@ export function DiffsView(props: DiffsViewProps) {
       data-testid="v2-diffs-view"
       class="flex h-full min-h-0 flex-col bg-[var(--bg)] text-[12px] text-[var(--fg)]"
     >
+      <CheckRunsRail sessionName={props.projectName} ref={status()?.currentBranch ?? null} />
       <header class="flex items-center gap-2 border-b border-[var(--border)] bg-[var(--bg-strong)] px-3 py-2">
         <GitBranch aria-hidden="true" size={12} class="text-[var(--dim)]" />
         <span data-testid="diffs-view-branch" class="font-mono text-[11px]">

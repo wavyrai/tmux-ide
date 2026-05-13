@@ -13,7 +13,7 @@ import {
 import { join, dirname, basename } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Hono, type MiddlewareHandler } from "hono";
-import { streamSSE } from "hono/streaming";
+import { streamSSE, stream as streamResponse } from "hono/streaming";
 import { cors } from "hono/cors";
 import {
   discoverSessions,
@@ -118,6 +118,7 @@ import {
 import { toPayload as gitErrorToPayload } from "../git/errors.ts";
 import {
   createPullRequest as ghCreatePr,
+  listChecks as ghListChecks,
   status as ghStatus,
   toPayload as githubErrorToPayload,
 } from "../git/github-service.ts";
@@ -136,6 +137,12 @@ import { TunnelManager } from "../lib/tunnels/manager.ts";
 import { RemoteRegistry } from "../lib/hq/registry.ts";
 import { RegistrationPayloadSchema } from "../lib/hq/types.ts";
 import { dispatchResearch, loadResearchState } from "../lib/research.ts";
+import {
+  parseSearchQuery,
+  resolveRipgrepPath,
+  runSearch,
+  type SearchFrame,
+} from "./search.ts";
 import { serveDashboard } from "./static.ts";
 import { getOrchestratorHealth, getPaneContentHashMetrics } from "../lib/orchestrator.ts";
 import { handleWsEventsConnection, broadcastInitOutput, broadcastInitError } from "./ws-events.ts";
@@ -1701,6 +1708,72 @@ export function createApp(options: CreateAppOptions = {}): Hono {
     return c.json({ path, ref, exists, content });
   });
 
+  // GET /api/project/:name/search?q=&include=&exclude=&case=&regex=&context=&maxResults=&maxFileSize=
+  //
+  // Streams NDJSON (`Content-Type: application/x-ndjson`) one frame per
+  // line — `{type: 'begin'|'match'|'context'|'end'|'summary'|'error'}`.
+  // See docs/goal-19-repo-search.md §1 for the schema, §2 for the
+  // ripgrep invocation strategy, and `./search.ts` for the
+  // implementation.
+  //
+  // Sandboxing: the search root is `realpathSync(session.dir)`; rg
+  // never sees a path the client could have manipulated. Include /
+  // exclude globs are validated by `parseSearchQuery` (no leading `/`,
+  // no `..` segments) so `--glob` can't break out either.
+  //
+  // Cancellation: when the client disconnects, Hono fires
+  // `stream.onAbort` which kills the rg child via SIGTERM. The cap on
+  // `maxResults` also triggers a SIGTERM mid-stream and emits a
+  // truncated-summary frame.
+  app.get("/api/project/:name/search", async (c) => {
+    const name = c.req.param("name");
+    const sessions = discoverSessions();
+    const session = sessions.find((s) => s.name === name);
+    if (!session) return c.json({ error: "Session not found" }, 404);
+
+    const parsed = parseSearchQuery(c.req.query() as Record<string, string | undefined>);
+    if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+
+    let searchRoot: string;
+    try {
+      searchRoot = realpathSync(session.dir);
+    } catch {
+      return c.json({ error: "Session directory not accessible" }, 500);
+    }
+
+    const rgPath = await resolveRipgrepPath();
+
+    c.header("Content-Type", "application/x-ndjson");
+    c.header("Cache-Control", "no-store");
+    c.header("X-Accel-Buffering", "no");
+
+    return streamResponse(c, async (stream) => {
+      const controller = new AbortController();
+      const onAbort = (): void => controller.abort();
+      stream.onAbort(onAbort);
+
+      try {
+        for await (const frame of runSearch({
+          rgPath,
+          query: parsed.query,
+          searchRoot,
+          signal: controller.signal,
+        })) {
+          if (controller.signal.aborted) break;
+          await stream.writeln(JSON.stringify(frame satisfies SearchFrame));
+        }
+      } catch (err) {
+        // Any unexpected throw inside runSearch — surface as a final
+        // error frame so the client sees structured failure rather than
+        // a half-closed stream.
+        const message = err instanceof Error ? err.message : String(err);
+        await stream.writeln(
+          JSON.stringify({ type: "error", message, fatal: true } satisfies SearchFrame),
+        );
+      }
+    });
+  });
+
   // GET /api/project/:name/preview/:file — read a file's contents from inside
   // the session's working directory. The path is sandboxed: we resolve it
   // against session.dir and reject anything that escapes (symlink-aware via
@@ -2207,6 +2280,22 @@ export function createApp(options: CreateAppOptions = {}): Hono {
       );
     },
   );
+
+  app.get("/api/project/:name/git/checks", async (c) => {
+    const name = c.req.param("name");
+    const sessions = discoverSessions();
+    const session = sessions.find((s) => s.name === name);
+    if (!session) return c.json({ error: "Session not found" }, 404);
+    const ref = c.req.query("ref") ?? undefined;
+    return Effect.runPromise(
+      ghListChecks(session.dir, ref).pipe(
+        Effect.match({
+          onFailure: (err) => c.json({ error: githubErrorToPayload(err) }, 400),
+          onSuccess: (payload) => c.json(payload),
+        }),
+      ),
+    );
+  });
 
   app.get("/api/project/:name/git/github-status", async (c) => {
     const _name = c.req.param("name");
