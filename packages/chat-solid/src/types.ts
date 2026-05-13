@@ -1,3 +1,5 @@
+import type { Accessor } from "solid-js";
+import type { ComposerBannerItem } from "./components/ComposerBannerStack";
 import type { MentionCandidate } from "./lib/mentionSearch";
 import type { MarkdownFileLinkMeta } from "./lib/markdownLinks";
 
@@ -263,6 +265,19 @@ export interface ChatMountOptions {
    * support hot-swapping a provider on an existing thread.
    */
   onProviderChange?: (next: AgentProvider) => void;
+  /**
+   * Host-supplied banners that surface in the `ComposerBannerStack`
+   * alongside the chat surface's own banners (plan follow-up, future
+   * approval verdicts, etc). Use this for project-scoped warnings the
+   * daemon doesn't model — e.g. "merge freeze in effect",
+   * "GROWTHBOOK flag pending review". Returns an empty / missing list
+   * to suppress the host contribution without remounting.
+   *
+   * Stack ordering: chat-surface banners first, host banners appended.
+   * Only the first item in the merged list renders with full chrome;
+   * the rest collapse to a "+N more" cap.
+   */
+  bannerItems?: Accessor<ReadonlyArray<ComposerBannerItem>>;
   onClose?: () => void;
 }
 

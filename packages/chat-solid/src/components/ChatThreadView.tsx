@@ -5,14 +5,12 @@ import { chatProvidersList, type ApiRuntime } from "../api";
 import type { ChatMountOptions } from "../types";
 import { ChatComposer } from "./ChatComposer";
 import { ChatHeader } from "./ChatHeader";
-import {
-  ComposerPlanFollowUpBanner,
-  type PlanFollowUpPayload,
-} from "./ComposerPlanFollowUpBanner";
+import type { ComposerBannerItem } from "./ComposerBannerStack";
 import { MessagesTimeline } from "./MessagesTimeline";
 import { PermissionDialog } from "./PermissionDialog";
 import { ProviderStatusBanner } from "./ProviderStatusBanner";
 import { ThreadErrorBanner, type ThreadError } from "./ThreadErrorBanner";
+import { buildPlanBannerItem } from "../lib/composerBannerItems";
 
 export function ChatThreadView(props: { options: Accessor<ChatMountOptions> }) {
   const chat = useChatThread(props.options);
@@ -48,22 +46,28 @@ export function ChatThreadView(props: { options: Accessor<ChatMountOptions> }) {
     return { message: err.message, stack: err.stack };
   });
 
-  // Plan follow-up payload — derive a UI-friendly shape from the
-  // hook's pendingPlan accessor. Title is pulled from the first
-  // markdown heading when present (so the banner shows
-  // "Implement OAuth" instead of just "Plan ready"); otherwise null.
-  const planPayload = createMemo<PlanFollowUpPayload | null>(() => {
-    const plan = chat.pendingPlan();
-    if (!plan) return null;
-    const firstHeading = plan.planMarkdown
-      .split("\n")
-      .map((line) => line.trim())
-      .find((line) => line.startsWith("#"));
-    const title = firstHeading ? firstHeading.replace(/^#+\s*/, "") : null;
-    return {
-      planId: plan.id,
-      title: title && title.length > 0 ? title : null,
-    };
+  // Banner stack aggregation. Chat-surface banners come first, then
+  // any host-injected items (`options.bannerItems`). Only the first
+  // entry renders with full chrome; the rest collapse into a
+  // "+N more" cap (see ComposerBannerStack). The standalone
+  // `ThreadErrorBanner` stays above the timeline because its
+  // expand-stack-trace UX doesn't fit the single-line actions slot.
+  const aggregatedBannerItems = createMemo<ReadonlyArray<ComposerBannerItem>>(() => {
+    const items: ComposerBannerItem[] = [];
+    const planItem = buildPlanBannerItem(chat.pendingPlan(), {
+      onApply: (id) => {
+        void chat.approvePendingPlan(id);
+      },
+      onReject: (id) => {
+        void chat.rejectPendingPlan(id);
+      },
+      onModify: (id) => chat.modifyPendingPlan(id),
+      isResponding: chat.planResponding(),
+    });
+    if (planItem) items.push(planItem);
+    const host = props.options().bannerItems?.() ?? [];
+    items.push(...host);
+    return items;
   });
 
   return (
@@ -118,17 +122,6 @@ export function ChatThreadView(props: { options: Accessor<ChatMountOptions> }) {
             onOpenFile={props.options().onOpenFile}
             onSendPlanRequest={chat.prefillPrompt}
           />
-          <ComposerPlanFollowUpBanner
-            plan={planPayload}
-            isResponding={chat.planResponding}
-            onApply={(planId) => {
-              void chat.approvePendingPlan(planId);
-            }}
-            onReject={(planId) => {
-              void chat.rejectPendingPlan(planId);
-            }}
-            onModify={(planId) => chat.modifyPendingPlan(planId)}
-          />
           <ChatComposer
             disabled={chat.inflight}
             availableCommands={chat.availableCommands}
@@ -140,6 +133,7 @@ export function ChatThreadView(props: { options: Accessor<ChatMountOptions> }) {
             prefillPromptText={chat.prefillPromptText}
             threadId={() => props.options().threadId}
             mentionCandidates={() => props.options().mentionCandidates ?? []}
+            bannerItems={aggregatedBannerItems}
             onPrefillPromptConsumed={() => chat.prefillPrompt(null)}
             onAddAttachment={chat.addAttachment}
             onRemoveAttachment={chat.removeAttachment}
