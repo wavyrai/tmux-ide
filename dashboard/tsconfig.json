@@ -18,7 +18,8 @@
     "allowImportingTsExtensions": true,
     "paths": {
       "@/*": ["./src/*"],
-      "@tmux-ide/contracts": ["../packages/contracts/src/index.ts"]
+      "@tmux-ide/contracts": ["../packages/contracts/src/index.ts"],
+      "@tmux-ide/v2-solid-widgets": ["../packages/v2-solid-widgets/src/index.tsx"]
     },
     "types": ["vite/client", "@testing-library/jest-dom"]
   },

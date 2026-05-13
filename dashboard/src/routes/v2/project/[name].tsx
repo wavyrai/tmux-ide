@@ -37,6 +37,16 @@ import { FilesSurface } from "@/components/files/FilesSurface";
 import { MonacoDiffsView } from "@/components/diffs/MonacoDiffsView";
 import { SearchView } from "@/components/search/SearchView";
 import { ExplorerContextMenu } from "@/components/search/ExplorerContextMenu";
+import {
+  BottomPanelView,
+  CostsView,
+  InspectorPaneView,
+  KanbanBoardView,
+  MissionControlView,
+  PlansSurfaceView,
+  SkillsSurfaceView,
+  TasksDashboardView,
+} from "@/components/v2/views";
 import { chrome, useChromeShortcuts } from "@/lib/chrome";
 import { useViewParam } from "@/lib/viewParam";
 import { DEFAULT_VIEW, isViewId, VIEWS, type ViewId } from "@/lib/views";
@@ -124,7 +134,7 @@ export default function ProjectV2Route(): JSX.Element {
             style={{ "grid-area": "inspector" }}
           >
             <Show when={chrome().rightInspectorOpen}>
-              <InspectorPlaceholder />
+              <InspectorPaneView projectName={projectName()} currentView={view()} />
             </Show>
           </aside>
 
@@ -134,7 +144,7 @@ export default function ProjectV2Route(): JSX.Element {
             style={{ "grid-area": "bottom" }}
           >
             <Show when={chrome().bottomPanelOpen}>
-              <BottomPanelPlaceholder projectName={projectName()} />
+              <BottomPanelView projectName={projectName()} />
             </Show>
           </section>
         </div>
@@ -185,36 +195,6 @@ function ProjectSidebar(props: { projectName: string; view: ViewId; onView: (v: 
   );
 }
 
-function InspectorPlaceholder() {
-  return (
-    <div
-      data-testid="v2-inspector-placeholder"
-      class="flex h-full min-h-0 flex-col items-start gap-2 overflow-auto p-3 text-[11px] text-[var(--dim)]"
-    >
-      <div class="text-[10px] uppercase tracking-wider">Inspector</div>
-      <p>Event timeline lands in G16-P3 alongside the WS bus port.</p>
-    </div>
-  );
-}
-
-function BottomPanelPlaceholder(props: { projectName: string }) {
-  return (
-    <div
-      data-testid="v2-bottom-panel-placeholder"
-      class="flex h-full min-h-0 flex-col overflow-hidden"
-    >
-      <div class="flex h-7 shrink-0 items-center gap-2 border-b border-[var(--border)] bg-[var(--bg-strong)] px-3 text-[11px] uppercase tracking-wide text-[var(--dim)]">
-        <span data-active="true" class="text-[var(--fg)]">terminal</span>
-        <span aria-hidden="true">·</span>
-        <span>problems / output land in G16-P3</span>
-      </div>
-      <div class="min-h-0 flex-1">
-        <Terminal id={`v2-${props.projectName}`} showHeader={false} />
-      </div>
-    </div>
-  );
-}
-
 function MainContent(props: { projectName: string; view: ViewId }) {
   return (
     <div data-testid="v2-view-root" data-view={props.view} class="flex h-full min-h-0 flex-col">
@@ -253,37 +233,25 @@ function MainContent(props: { projectName: string; view: ViewId }) {
           }}
         />
       </Show>
-      <Show
-        when={
-          props.view !== "chat" &&
-          props.view !== "terminal" &&
-          props.view !== "files" &&
-          props.view !== "search" &&
-          props.view !== "diffs" &&
-          props.view !== "changes"
-        }
-      >
-        <P3Placeholder view={props.view} />
+      <Show when={props.view === "mission" || props.view === "mission-control"}>
+        <MissionControlView projectName={props.projectName} />
+      </Show>
+      <Show when={props.view === "kanban"}>
+        <KanbanBoardView projectName={props.projectName} />
+      </Show>
+      <Show when={props.view === "tasks"}>
+        <TasksDashboardView projectName={props.projectName} />
+      </Show>
+      <Show when={props.view === "plans"}>
+        <PlansSurfaceView projectName={props.projectName} />
+      </Show>
+      <Show when={props.view === "skills"}>
+        <SkillsSurfaceView projectName={props.projectName} />
+      </Show>
+      <Show when={props.view === "metrics" || props.view === "costs"}>
+        <CostsView projectName={props.projectName} />
       </Show>
     </div>
   );
 }
 
-function P3Placeholder(props: { view: ViewId }) {
-  const labelOf = (id: ViewId) => VIEWS.find((v) => v.id === id)?.label ?? id;
-  return (
-    <div
-      data-testid="v2-view-placeholder"
-      class="flex h-full min-h-0 flex-col items-center justify-center gap-3 p-6 text-center text-[12px] text-[var(--fg-secondary)]"
-    >
-      <div class="rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-1 text-[10px] uppercase tracking-wider text-[var(--accent)]">
-        Coming in G16-P3
-      </div>
-      <div class="font-mono text-[13px] text-[var(--fg)]">{labelOf(props.view)}</div>
-      <p class="max-w-md">
-        This view's Solid surface is wired in <code class="font-mono">@tmux-ide/v2-solid-widgets</code> and will be
-        mounted here once the cross-cutting hooks (session stream, settings store) land in G16-P3.
-      </p>
-    </div>
-  );
-}
