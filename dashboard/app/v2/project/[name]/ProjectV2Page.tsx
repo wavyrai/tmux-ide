@@ -54,10 +54,10 @@ const V2ChatView = dynamic(
     ),
   },
 );
-import { V2CostsIsland } from "../../_lib/V2CostsIsland";
 import { V2ExplorerIsland } from "../../_lib/V2ExplorerIsland";
 import { V2ChangesIsland } from "../../_lib/V2ChangesIsland";
-import { V2MissionControlIsland } from "../../_lib/V2MissionControlIsland";
+import { CostsDashboardBridge } from "@/components/costs-dashboard-bridge";
+import { MissionControlDashboardBridge } from "@/components/mission-control-dashboard-bridge";
 import { DiffsViewerBridge } from "@/components/diffs-viewer-bridge";
 import { MainTabsBar } from "@/components/MainTabsBar";
 import { ExplorerBridge, type FileTreeEntry } from "@/components/explorer-bridge";
@@ -549,7 +549,11 @@ function MainContent(props: MainContentProps) {
         <MissionView mission={props.mission} milestones={props.milestones} tasks={props.tasks} />
       );
     case "mission-control":
-      return <V2MissionControlIsland projectName={props.projectName} />;
+      return (
+        <div className="flex h-full min-h-0 flex-col overflow-hidden">
+          <MissionControlDashboardBridge projectName={props.projectName} />
+        </div>
+      );
     case "kanban":
       return (
         <div className="flex h-full min-h-0 flex-col overflow-hidden">
@@ -628,7 +632,7 @@ function MainContent(props: MainContentProps) {
     case "costs":
       return (
         <div className="flex h-full min-h-0 flex-col overflow-hidden">
-          <V2CostsIsland projectName={props.projectName} />
+          <CostsDashboardBridge projectName={props.projectName} />
         </div>
       );
     case "diffs":

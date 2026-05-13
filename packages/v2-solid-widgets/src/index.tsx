@@ -2,14 +2,12 @@ import { createSignal } from "solid-js";
 import { render } from "solid-js/web";
 import { ActivityView } from "./widgets/Activity";
 import { ChangesView } from "./widgets/Changes";
-import { CostsView } from "./widgets/Costs";
 import { CostsDashboardView } from "./widgets/CostsDashboard";
 import { DiffsViewerView } from "./widgets/DiffsViewer";
 import { ExplorerView } from "./widgets/Explorer";
 import { ExplorerDashboardView } from "./widgets/ExplorerDashboard";
 import { InspectorView } from "./widgets/Inspector";
 import { KanbanBoardView } from "./widgets/KanbanBoard";
-import { MissionControlView } from "./widgets/MissionControl";
 import { MissionControlDashboardView } from "./widgets/MissionControlDashboard";
 import { CommandPaletteView } from "./widgets/CommandPalette";
 import { PlansPanelView } from "./widgets/PlansPanel";
@@ -109,36 +107,10 @@ export type {
 } from "./types";
 
 /**
- * Mount the Costs widget as a Solid DOM island into a host container.
- *
- * Usage from React:
- *   const handle = mountCosts(containerRef.current, {
- *     sessionName, apiBaseUrl, bearerToken,
- *   });
- *   handle.setOptions({ ... });   // re-target without remount
- *   handle.unmount();             // dispose Solid runtime
- */
-export function mountCosts(container: HTMLElement, opts: BaseMountOptions): MountHandle {
-  const [options, setOpts] = createSignal(opts);
-  container.classList.add("v2-solid-widget");
-  const dispose = render(() => <CostsView options={options} />, container);
-
-  return {
-    unmount() {
-      dispose();
-      container.classList.remove("v2-solid-widget");
-    },
-    setOptions(next) {
-      setOpts((current) => ({ ...current, ...next }));
-    },
-  };
-}
-
-/**
- * Mount the Explorer widget as a Solid DOM island. Same lifecycle as
- * mountCosts but accepts ExplorerMountOptions which include an optional
- * onOpenFile(path) callback fired when the user activates a file
- * (Enter / l / right or click on a non-directory row).
+ * Mount the Explorer widget as a Solid DOM island. Accepts
+ * ExplorerMountOptions which include an optional onOpenFile(path)
+ * callback fired when the user activates a file (Enter / l / right or
+ * click on a non-directory row).
  */
 export function mountExplorer(
   container: HTMLElement,
@@ -168,27 +140,6 @@ export function mountChanges(container: HTMLElement, opts: BaseMountOptions): Mo
   const [options, setOpts] = createSignal(opts);
   container.classList.add("v2-solid-widget");
   const dispose = render(() => <ChangesView options={options} />, container);
-
-  return {
-    unmount() {
-      dispose();
-      container.classList.remove("v2-solid-widget");
-    },
-    setOptions(next) {
-      setOpts((current) => ({ ...current, ...next }));
-    },
-  };
-}
-
-/**
- * Mount the Mission Control widget — combines mission state, milestones,
- * agents, in-flight tasks, and recent events. Polls every 5s. Backed by
- * /api/project/:name/mission, /api/project/:name, /api/project/:name/events.
- */
-export function mountMissionControl(container: HTMLElement, opts: BaseMountOptions): MountHandle {
-  const [options, setOpts] = createSignal(opts);
-  container.classList.add("v2-solid-widget");
-  const dispose = render(() => <MissionControlView options={options} />, container);
 
   return {
     unmount() {
