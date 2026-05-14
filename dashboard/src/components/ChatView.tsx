@@ -60,36 +60,58 @@ async function resolveThreadId(explicit?: string): Promise<string> {
   return thread.id;
 }
 
+type ErrorKind = "offline" | "daemon";
+
+interface ErrorState {
+  kind: ErrorKind;
+  detail: string;
+}
+
+function classifyError(err: unknown): ErrorState {
+  const message = err instanceof Error ? err.message : String(err);
+  // `fetch` rejects with a TypeError on connection failure (DNS / connection
+  // refused / CORS) — those never reached the daemon. Anything else came
+  // back through it (Zod failure, missing provider, etc.).
+  const offline = err instanceof TypeError || /failed to fetch/i.test(message);
+  return { kind: offline ? "offline" : "daemon", detail: message };
+}
+
 export function ChatView(props: ChatViewProps) {
   let container!: HTMLDivElement;
   let handle: ChatHandle | null = null;
-  const [error, setError] = createSignal<string | null>(null);
+  const [error, setError] = createSignal<ErrorState | null>(null);
   const [ready, setReady] = createSignal(false);
+  const [attempting, setAttempting] = createSignal(false);
+  let cancelled = false;
+
+  async function connect(): Promise<void> {
+    setAttempting(true);
+    setError(null);
+    try {
+      const id = await resolveThreadId(props.threadId);
+      if (cancelled) return;
+      handle?.unmount();
+      handle = mount(container, {
+        threadId: id,
+        sessionName: props.projectName,
+        apiBaseUrl: API_BASE,
+        wsUrl: withWsBase("/ws"),
+        bearerToken: resolveAuthToken(),
+      });
+      setReady(true);
+    } catch (err) {
+      if (!cancelled) setError(classifyError(err));
+    } finally {
+      if (!cancelled) setAttempting(false);
+    }
+  }
 
   onMount(() => {
-    let cancelled = false;
-    void (async () => {
-      try {
-        const id = await resolveThreadId(props.threadId);
-        if (cancelled) return;
-        handle = mount(container, {
-          threadId: id,
-          sessionName: props.projectName,
-          apiBaseUrl: API_BASE,
-          wsUrl: withWsBase("/ws"),
-          bearerToken: resolveAuthToken(),
-        });
-        setReady(true);
-      } catch (err) {
-        if (!cancelled) setError(err instanceof Error ? err.message : String(err));
-      }
-    })();
-    onCleanup(() => {
-      cancelled = true;
-    });
+    void connect();
   });
 
   onCleanup(() => {
+    cancelled = true;
     handle?.unmount();
     handle = null;
   });
@@ -102,10 +124,35 @@ export function ChatView(props: ChatViewProps) {
         </div>
       </Show>
       <Show when={error()}>
-        <div class="flex h-full min-h-0 flex-col items-center justify-center gap-2 p-6 text-center text-[13px] text-[var(--fg-secondary)]">
-          <div class="font-medium text-[var(--fg)]">Couldn't start chat</div>
-          <div class="text-[12px]">{error()}</div>
-        </div>
+        {(e) => (
+          <div
+            data-testid="v2-chat-error"
+            data-chat-error-kind={e().kind}
+            class="flex h-full min-h-0 flex-col items-center justify-center gap-3 p-6 text-center text-[var(--fg-secondary)]"
+          >
+            <div class="text-[13px] font-medium text-[var(--fg)]">
+              {e().kind === "offline" ? "Couldn't reach the daemon" : "Couldn't start chat"}
+            </div>
+            <div class="max-w-md text-[12px] leading-relaxed">
+              {e().kind === "offline"
+                ? "The chat surface needs the tmux-ide daemon running. Start it with tmux-ide command-center, then retry."
+                : "The daemon answered but didn't return a thread. Retry to try a fresh one."}
+            </div>
+            <button
+              type="button"
+              data-testid="v2-chat-retry"
+              disabled={attempting()}
+              onClick={() => void connect()}
+              class="mt-1 rounded border border-[var(--border)] bg-[var(--surface)] px-3 py-1 text-[11px] text-[var(--fg)] transition-colors hover:border-[var(--accent)] hover:text-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {attempting() ? "Retrying…" : "Try again"}
+            </button>
+            <details class="text-[10px] text-[var(--dim)]">
+              <summary class="cursor-pointer">technical detail</summary>
+              <code class="mt-1 block whitespace-pre-wrap font-mono">{e().detail}</code>
+            </details>
+          </div>
+        )}
       </Show>
       <div
         ref={container}
