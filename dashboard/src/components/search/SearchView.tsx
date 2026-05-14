@@ -30,6 +30,7 @@ import {
   Show,
   type JSX,
 } from "solid-js";
+import { createVirtualizer } from "@tanstack/solid-virtual";
 import { useNavigate } from "@solidjs/router";
 import {
   CaseSensitive,
@@ -49,6 +50,7 @@ import {
   stepMatch,
   type FileMatch,
   type FlatMatch,
+  type MatchRow,
   type ReplaceResult,
   type SearchService,
 } from "@/lib/search";
@@ -103,6 +105,77 @@ function languageFor(filePath: string): string {
   return LANGUAGE_BY_EXT[ext] ?? "plaintext";
 }
 
+const CONTEXT_WINDOW = 3;
+
+type ResultEntry =
+  | { kind: "file-header"; key: string; path: string; file: FileMatch }
+  | { kind: "context"; key: string; path: string; line: number; text: string }
+  | {
+      kind: "match";
+      key: string;
+      path: string;
+      match: MatchRow;
+      matchId: string;
+      column: number;
+      length: number;
+    };
+
+/**
+ * Flatten the file-grouped result set into a single linear list of
+ * rows the virtualizer can slice over. Collapsed file groups
+ * contribute their header only; expanded groups contribute the
+ * header followed by interleaved context/match/context blocks.
+ */
+function flattenResults(
+  fileOrder: readonly string[],
+  byFile: Record<string, FileMatch>,
+): ResultEntry[] {
+  const out: ResultEntry[] = [];
+  for (const path of fileOrder) {
+    const file = byFile[path];
+    if (!file) continue;
+    out.push({ kind: "file-header", key: `H:${path}`, path, file });
+    if (!file.expanded) continue;
+    for (const match of file.matches) {
+      const ctx = file.contextByLine;
+      for (let l = match.line - CONTEXT_WINDOW; l < match.line; l += 1) {
+        const text = ctx[l];
+        if (text !== undefined) {
+          out.push({ kind: "context", key: `C:${path}:${l}`, path, line: l, text });
+        }
+      }
+      const first = match.submatches[0];
+      const column = first?.start ?? 0;
+      const length = first ? first.end - first.start : 0;
+      const matchId = `${path}:${match.line}:${column}`;
+      out.push({
+        kind: "match",
+        key: `M:${matchId}`,
+        path,
+        match,
+        matchId,
+        column,
+        length,
+      });
+      for (let l = match.line + 1; l <= match.line + CONTEXT_WINDOW; l += 1) {
+        const text = ctx[l];
+        if (text !== undefined) {
+          out.push({ kind: "context", key: `C:${path}:${l}`, path, line: l, text });
+        }
+      }
+    }
+  }
+  return out;
+}
+
+function estimateEntrySize(kind: ResultEntry["kind"]): number {
+  // Compact monospace rows are ~22px; the file-header strip has a
+  // little more vertical padding. The virtualizer remeasures with
+  // the real size as each row scrolls into view.
+  if (kind === "file-header") return 26;
+  return 22;
+}
+
 export function SearchView(props: SearchViewProps): JSX.Element {
   let service!: SearchService;
   let queryInputRef: HTMLInputElement | undefined;
@@ -113,6 +186,8 @@ export function SearchView(props: SearchViewProps): JSX.Element {
   // Active match id for F3 / Shift+F3 navigation. The clicked row +
   // the row F3 lands on share the same selection visual.
   const [activeMatchId, setActiveMatchId] = createSignal<string | null>(null);
+  // Scroll container ref for the virtualized results list.
+  const [resultsEl, setResultsEl] = createSignal<HTMLDivElement | null>(null);
   const navigate = useNavigate();
 
   service = makeSearchService(props.projectName);
@@ -229,6 +304,34 @@ export function SearchView(props: SearchViewProps): JSX.Element {
     const summary = service.state.summary;
     const fileCount = service.state.fileOrder.length;
     return { matches: summary?.matches ?? 0, fileCount, elapsedMs: summary?.elapsedMs ?? 0 };
+  });
+
+  // Flat list of result rows fed to the virtualizer. Recomputes when
+  // any file's `expanded` or matches array shifts; the virtualizer
+  // diffs and remeasures only the rows it actually renders.
+  const entries = createMemo<ResultEntry[]>(() =>
+    flattenResults(service.state.fileOrder, service.state.byFile),
+  );
+
+  const virtualizer = createVirtualizer({
+    get count() {
+      return entries().length;
+    },
+    getScrollElement: () => resultsEl(),
+    estimateSize: (index) => estimateEntrySize(entries()[index]?.kind ?? "match"),
+    overscan: 8,
+    getItemKey: (index) => entries()[index]?.key ?? index,
+  });
+
+  // F3 / activation: keep the active match scrolled into view by
+  // letting the virtualizer drive the scroll (it can target rows
+  // that aren't currently in the DOM).
+  createEffect(() => {
+    const id = activeMatchId();
+    if (!id) return;
+    const list = entries();
+    const idx = list.findIndex((entry) => entry.kind === "match" && entry.matchId === id);
+    if (idx >= 0) virtualizer.scrollToIndex(idx, { align: "auto" });
   });
 
   function onQueryInput(event: Event): void {
@@ -558,25 +661,56 @@ export function SearchView(props: SearchViewProps): JSX.Element {
         </div>
       </Show>
 
-      <div data-testid="search-results" class="min-h-0 flex-1 overflow-auto">
-        <For each={service.state.fileOrder}>
-          {(path) => (
-            <Show when={service.state.byFile[path]}>
-              {(file) => (
-                <FileGroup
-                  file={file()}
-                  activeMatchId={activeMatchId()}
-                  onToggle={() => service.toggleFile(path)}
-                  onOpenMatch={(line, column, length) => openMatch(path, line, column, length)}
-                  onOpenContext={(line) => openContextLine(path, line)}
-                  replaceVisible={replaceOpen()}
-                  replaceDisabled={service.replaceWith().length === 0}
-                  onReplaceFile={() => void replacePaths([path])}
-                />
-              )}
-            </Show>
-          )}
-        </For>
+      <div
+        ref={setResultsEl}
+        data-testid="search-results"
+        class="min-h-0 flex-1 overflow-auto"
+        style={{ position: "relative" }}
+      >
+        <div
+          data-testid="search-results-spacer"
+          style={{
+            height: `${virtualizer.getTotalSize()}px`,
+            width: "100%",
+            position: "relative",
+          }}
+        >
+          <For each={virtualizer.getVirtualItems()}>
+            {(vItem) => {
+              // Per-row memo keyed on `entry.key`: a sibling row's
+              // mutation produces a new entries() array but unchanged
+              // rows keep their previous reference so the row body
+              // skips re-derivation.
+              const entry = createMemo(() => entries()[vItem.index]!, undefined, {
+                equals: (a, b) => !!a && !!b && a.key === b.key,
+              });
+              return (
+                <div
+                  data-index={vItem.index}
+                  ref={(el) => virtualizer.measureElement(el)}
+                  style={{
+                    position: "absolute",
+                    top: "0",
+                    left: "0",
+                    width: "100%",
+                    transform: `translateY(${vItem.start}px)`,
+                  }}
+                >
+                  <ResultRow
+                    entry={entry()}
+                    activeMatchId={activeMatchId()}
+                    replaceVisible={replaceOpen()}
+                    replaceDisabled={service.replaceWith().length === 0}
+                    onToggleFile={(path) => service.toggleFile(path)}
+                    onReplaceFile={(path) => void replacePaths([path])}
+                    onOpenMatch={openMatch}
+                    onOpenContext={openContextLine}
+                  />
+                </div>
+              );
+            }}
+          </For>
+        </div>
         <Show
           when={
             service.state.status === "done" &&
@@ -606,43 +740,81 @@ export function SearchView(props: SearchViewProps): JSX.Element {
 }
 
 // ---------------------------------------------------------------------
-// File group
+// Row renderers — virtualized: each `ResultEntry` from the flattened
+// list maps to one of these by `kind`.
 // ---------------------------------------------------------------------
 
-interface FileGroupProps {
-  file: FileMatch;
-  /** Currently F3-selected match id (or null). The matching row
-   *  picks up an `aria-current="true"` + accent ring so keyboard
-   *  navigation has a visible anchor. */
+interface ResultRowProps {
+  entry: ResultEntry;
   activeMatchId: string | null;
-  onToggle: () => void;
-  onOpenMatch: (line: number, column: number, length: number) => void;
-  onOpenContext: (line: number) => void;
   replaceVisible: boolean;
   replaceDisabled: boolean;
-  onReplaceFile: () => void;
+  onToggleFile: (path: string) => void;
+  onReplaceFile: (path: string) => void;
+  onOpenMatch: (path: string, line: number, column: number, length: number) => void;
+  onOpenContext: (path: string, line: number) => void;
 }
 
-function FileGroup(props: FileGroupProps): JSX.Element {
+function ResultRow(props: ResultRowProps): JSX.Element {
+  return (
+    <Show when={props.entry} keyed>
+      {(entry) => {
+        if (entry.kind === "file-header") {
+          return (
+            <FileHeaderRow
+              file={entry.file}
+              path={entry.path}
+              replaceVisible={props.replaceVisible}
+              replaceDisabled={props.replaceDisabled}
+              onToggle={() => props.onToggleFile(entry.path)}
+              onReplace={() => props.onReplaceFile(entry.path)}
+            />
+          );
+        }
+        if (entry.kind === "context") {
+          return (
+            <ContextLineRow
+              line={entry.line}
+              text={entry.text}
+              onClick={() => props.onOpenContext(entry.path, entry.line)}
+            />
+          );
+        }
+        return (
+          <MatchRowView
+            path={entry.path}
+            match={entry.match}
+            matchId={entry.matchId}
+            column={entry.column}
+            length={entry.length}
+            isActive={props.activeMatchId === entry.matchId}
+            onClick={() =>
+              props.onOpenMatch(entry.path, entry.match.line, entry.column, entry.length)
+            }
+          />
+        );
+      }}
+    </Show>
+  );
+}
+
+interface FileHeaderRowProps {
+  path: string;
+  file: FileMatch;
+  replaceVisible: boolean;
+  replaceDisabled: boolean;
+  onToggle: () => void;
+  onReplace: () => void;
+}
+
+function FileHeaderRow(props: FileHeaderRowProps): JSX.Element {
   const matchCount = createMemo(() =>
     props.file.matches.reduce((sum, m) => sum + m.submatches.length, 0),
   );
-  const contextLinesForMatch = (matchLine: number, contextWindow: number): number[] => {
-    const lines: number[] = [];
-    const ctx = props.file.contextByLine;
-    for (let l = matchLine - contextWindow; l < matchLine; l += 1) {
-      if (l in ctx) lines.push(l);
-    }
-    for (let l = matchLine + 1; l <= matchLine + contextWindow; l += 1) {
-      if (l in ctx) lines.push(l);
-    }
-    return lines;
-  };
-
   return (
     <div
       data-testid="search-file-group"
-      data-path={props.file.path}
+      data-path={props.path}
       class="border-b border-[var(--border-weak,var(--border))]"
     >
       <div class="group flex w-full items-center gap-1 bg-[var(--bg-weak)] px-2 py-1 text-[11px] text-[var(--fg-secondary)]">
@@ -653,7 +825,7 @@ function FileGroup(props: FileGroupProps): JSX.Element {
           class="flex flex-1 items-center gap-1 text-left hover:text-[var(--fg)]"
         >
           {props.file.expanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-          <span class="truncate font-mono">{props.file.path}</span>
+          <span class="truncate font-mono">{props.path}</span>
           <span class="ml-1 text-[10px] text-[var(--dim)]">
             ({matchCount()} {matchCount() === 1 ? "match" : "matches"})
           </span>
@@ -665,7 +837,7 @@ function FileGroup(props: FileGroupProps): JSX.Element {
             disabled={props.replaceDisabled}
             onClick={(e) => {
               e.stopPropagation();
-              props.onReplaceFile();
+              props.onReplace();
             }}
             class="rounded border border-[var(--border)] bg-[var(--surface)] px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-[var(--accent)] hover:bg-[var(--surface-hover,var(--bg-strong))] disabled:cursor-not-allowed disabled:opacity-50"
           >
@@ -673,95 +845,72 @@ function FileGroup(props: FileGroupProps): JSX.Element {
           </button>
         </Show>
       </div>
-      <Show when={props.file.expanded}>
-        <div class="bg-[var(--bg)] font-mono text-[12px] leading-relaxed">
-          <For each={props.file.matches}>
-            {(match) => (
-              <>
-                <For each={contextLinesForMatch(match.line, 3)}>
-                  {(ctxLine) => (
-                    <Show when={ctxLine < match.line}>
-                      <button
-                        type="button"
-                        class="block w-full px-3 py-0.5 text-left text-[var(--dim)] hover:bg-[var(--surface-hover,var(--bg-strong))]"
-                        onClick={() => props.onOpenContext(ctxLine)}
-                      >
-                        <span class="mr-3 inline-block w-8 text-right tabular-nums">{ctxLine}</span>
-                        <span>{props.file.contextByLine[ctxLine]}</span>
-                      </button>
-                    </Show>
-                  )}
-                </For>
-                {(() => {
-                  const first = match.submatches[0];
-                  const col = first?.start ?? 0;
-                  const len = first ? first.end - first.start : 0;
-                  const matchId = `${props.file.path}:${match.line}:${col}`;
-                  const isActive = props.activeMatchId === matchId;
-                  return (
-                    <button
-                      type="button"
-                      data-testid="search-match-row"
-                      data-line={match.line}
-                      data-match-id={matchId}
-                      ref={(el) => {
-                        // Scroll the active match into view when F3
-                        // moves to it (or any other reactive change
-                        // that flips this row's active state).
-                        if (isActive && el) {
-                          queueMicrotask(() =>
-                            el.scrollIntoView({ block: "nearest", inline: "nearest" }),
-                          );
-                        }
-                      }}
-                      aria-current={isActive ? "true" : undefined}
-                      class={`block w-full px-3 py-0.5 text-left hover:bg-[var(--surface-hover,var(--bg-strong))] ${
-                        isActive
-                          ? "bg-[color-mix(in_oklab,var(--accent)_18%,transparent)] outline outline-1 outline-[var(--accent)]"
-                          : ""
-                      }`}
-                      onClick={() => props.onOpenMatch(match.line, col, len)}
-                    >
-                      <span class="mr-3 inline-block w-8 text-right tabular-nums text-[var(--dim)]">
-                        {match.line}
-                      </span>
-                      <For each={segmentLine(match.text, match.submatches)}>
-                        {(seg) =>
-                          seg.kind === "match" ? (
-                            <mark
-                              data-testid="search-match-highlight"
-                              class="rounded bg-[color-mix(in_oklab,var(--accent)_25%,transparent)] px-0.5 text-[var(--fg)]"
-                            >
-                              {seg.text}
-                            </mark>
-                          ) : (
-                            <span>{seg.text}</span>
-                          )
-                        }
-                      </For>
-                    </button>
-                  );
-                })()}
-                <For each={contextLinesForMatch(match.line, 3)}>
-                  {(ctxLine) => (
-                    <Show when={ctxLine > match.line}>
-                      <button
-                        type="button"
-                        class="block w-full px-3 py-0.5 text-left text-[var(--dim)] hover:bg-[var(--surface-hover,var(--bg-strong))]"
-                        onClick={() => props.onOpenContext(ctxLine)}
-                      >
-                        <span class="mr-3 inline-block w-8 text-right tabular-nums">{ctxLine}</span>
-                        <span>{props.file.contextByLine[ctxLine]}</span>
-                      </button>
-                    </Show>
-                  )}
-                </For>
-              </>
-            )}
-          </For>
-        </div>
-      </Show>
     </div>
+  );
+}
+
+interface ContextLineRowProps {
+  line: number;
+  text: string;
+  onClick: () => void;
+}
+
+function ContextLineRow(props: ContextLineRowProps): JSX.Element {
+  return (
+    <button
+      type="button"
+      class="block w-full bg-[var(--bg)] px-3 py-0.5 text-left font-mono text-[12px] leading-relaxed text-[var(--dim)] hover:bg-[var(--surface-hover,var(--bg-strong))]"
+      onClick={() => props.onClick()}
+    >
+      <span class="mr-3 inline-block w-8 text-right tabular-nums">{props.line}</span>
+      <span>{props.text}</span>
+    </button>
+  );
+}
+
+interface MatchRowViewProps {
+  path: string;
+  match: MatchRow;
+  matchId: string;
+  column: number;
+  length: number;
+  isActive: boolean;
+  onClick: () => void;
+}
+
+function MatchRowView(props: MatchRowViewProps): JSX.Element {
+  return (
+    <button
+      type="button"
+      data-testid="search-match-row"
+      data-line={props.match.line}
+      data-match-id={props.matchId}
+      aria-current={props.isActive ? "true" : undefined}
+      class={`block w-full bg-[var(--bg)] px-3 py-0.5 text-left font-mono text-[12px] leading-relaxed hover:bg-[var(--surface-hover,var(--bg-strong))] ${
+        props.isActive
+          ? "bg-[color-mix(in_oklab,var(--accent)_18%,transparent)] outline outline-1 outline-[var(--accent)]"
+          : ""
+      }`}
+      onClick={() => props.onClick()}
+    >
+      <span class="mr-3 inline-block w-8 text-right tabular-nums text-[var(--dim)]">
+        {props.match.line}
+      </span>
+      <For each={segmentLine(props.match.text, props.match.submatches)}>
+        {(seg) =>
+          seg.kind === "match" ? (
+            <mark
+              data-testid="search-match-highlight"
+              class="rounded bg-[color-mix(in_oklab,var(--accent)_25%,transparent)] px-0.5 text-[var(--fg)]"
+            >
+              {seg.text}
+            </mark>
+          ) : (
+            <span>{seg.text}</span>
+          )
+        }
+      </For>
+    </button>
   );
 }
 
