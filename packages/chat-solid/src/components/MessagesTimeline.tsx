@@ -206,24 +206,34 @@ function TimelineRow(props: TimelineRowProps): JSX.Element {
   if (props.row.kind === "work") {
     return <WorkGroupRow entries={props.row.entries} />;
   }
-  const messageRow = props.row;
-  const showDivider = messageRow.message.role === "assistant" && messageRow.showCompletionDivider;
+  // Re-read the row through a memo so token updates re-evaluate
+  // every getter below. The old code did `const messageRow =
+  // props.row` which captured the value once — subsequent token
+  // arrivals replaced `props.row` but the local stayed pinned to
+  // the original object and the rendered message went stale.
+  type MessageRowVariant = Extract<MessagesTimelineRow, { kind: "message" }>;
+  const messageRow = createMemo<MessageRowVariant>(() => props.row as MessageRowVariant);
+  const message = createMemo(() => messageRow().message);
+  const showDivider = (): boolean =>
+    message().role === "assistant" && Boolean(messageRow().showCompletionDivider);
   const dividerLabel = (): string => {
-    if (!showDivider) return "Completed turn";
-    const start = messageRow.completionTurnStartedAt;
-    const end = messageRow.message.role === "assistant"
-      ? (messageRow.message.completedAt ?? messageRow.createdAt)
-      : messageRow.createdAt;
+    if (!showDivider()) return "Completed turn";
+    const start = messageRow().completionTurnStartedAt;
+    const m = message();
+    const end =
+      m.role === "assistant"
+        ? (m.completedAt ?? messageRow().createdAt)
+        : messageRow().createdAt;
     if (!start) return "Completed turn";
     const duration = formatTurnDuration(start, end);
     return duration ? `Completed in ${duration}` : "Completed turn";
   };
   return (
     <>
-      <Show when={showDivider}>
+      <Show when={showDivider()}>
         <div
           data-testid="message-completion-divider"
-          data-turn-started-at={messageRow.completionTurnStartedAt ?? ""}
+          data-turn-started-at={messageRow().completionTurnStartedAt ?? ""}
           class="my-2 flex items-center gap-2 text-[10px] uppercase tracking-[0.2em] text-[var(--fg-muted,var(--dim))]"
           aria-label={dividerLabel()}
         >
@@ -233,12 +243,12 @@ function TimelineRow(props: TimelineRowProps): JSX.Element {
         </div>
       </Show>
       <MessageRow
-        message={messageRow.message}
+        message={message()}
         providerName={props.providerName}
         cwd={props.cwd}
         onOpenFile={props.onOpenFile}
-        isTerminal={props.isTerminalAssistant(messageRow.message.id)}
-        revertTurnCount={messageRow.revertTurnCount}
+        isTerminal={props.isTerminalAssistant(message().id)}
+        revertTurnCount={messageRow().revertTurnCount}
         onRevertFromMessage={props.onRevertFromMessage}
       />
     </>

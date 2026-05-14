@@ -31,6 +31,24 @@ export interface ThreadStore {
   delete(id: string): Promise<void>;
   appendMessage(id: string, msg: ThreadMessage): Promise<void>;
   appendMessages(id: string, messages: ThreadMessage[]): Promise<void>;
+  /**
+   * Drop every message at or after the supplied user-prompt id.
+   * Used by `chat.session.editFromTurn` to rewind the thread before
+   * re-dispatching with new content. Returns the count of dropped
+   * messages so the caller can surface "Truncated N messages" in
+   * its undo affordance.
+   *
+   * Errors:
+   *   - thread not found → throws `Thread <id> not found`.
+   *   - target id not found in the thread → throws `User message
+   *     <id> not found in thread <threadId>`.
+   *   - target message is not a UserPrompt → throws `Message <id>
+   *     in thread <threadId> is not a user prompt`.
+   */
+  truncateFromUserMessage(
+    id: string,
+    userMessageId: string,
+  ): Promise<{ truncatedCount: number }>;
   recordAcpSessionId(id: string, acpSessionId: string): Promise<void>;
   recordUsage(id: string, usage: ChatThreadUsageSummary): Promise<void>;
   recordStopReason(id: string, reason: StopReason): Promise<void>;
@@ -263,6 +281,46 @@ export function makeThreadStore(opts: MakeThreadStoreOptions): ThreadStore {
         index = index.filter((entry) => entry.id !== id);
         await rm(threadPath(rootDir, id), { force: true });
         await persistIndex();
+      });
+    },
+    truncateFromUserMessage(id, userMessageId) {
+      return enqueue(async () => {
+        const result = { truncatedCount: 0 };
+        const { state, entry } = await updateThread(id, (nextState, nextEntry) => {
+          const idx = nextState.messages.findIndex((message) => {
+            if (message._tag !== "UserPrompt") return false;
+            return message.id === userMessageId;
+          });
+          if (idx === -1) {
+            // Distinguish "user message id not present at all" from
+            // "id exists but belongs to an agent update" so the
+            // action handler can map it to the right error.
+            const exists = nextState.messages.some(
+              (message) =>
+                message._tag === "UserPrompt"
+                  ? message.id === userMessageId
+                  : message.id === userMessageId,
+            );
+            if (exists) {
+              throw new Error(
+                `Message ${userMessageId} in thread ${id} is not a user prompt`,
+              );
+            }
+            throw new Error(
+              `User message ${userMessageId} not found in thread ${id}`,
+            );
+          }
+          const dropped = nextState.messages.length - idx;
+          nextState.messages.splice(idx);
+          const updatedAt = now().toISOString();
+          nextState.updatedAt = updatedAt;
+          nextEntry.updatedAt = updatedAt;
+          nextEntry.messageCount = nextState.messages.length;
+          result.truncatedCount = dropped;
+        });
+        states.set(id, state);
+        index = index.map((candidate) => (candidate.id === id ? entry : candidate));
+        return result;
       });
     },
     appendMessage(id, msg) {

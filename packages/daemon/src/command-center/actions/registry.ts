@@ -66,6 +66,7 @@ import {
   chatPermissionRespondHandler,
   chatProvidersListHandler,
   chatSessionCancelHandler,
+  chatSessionEditFromTurnHandler,
   chatSessionSendHandler,
   chatThreadCreateHandler,
   chatThreadDeleteHandler,
@@ -325,6 +326,11 @@ export const actionRegistry: RegistryShape = {
     inputSchema: ActionContractsZ["chat.session.cancel"].input,
     resultSchema: ActionContractsZ["chat.session.cancel"].result,
     handler: chatSessionCancelHandler,
+  },
+  "chat.session.editFromTurn": {
+    inputSchema: ActionContractsZ["chat.session.editFromTurn"].input,
+    resultSchema: ActionContractsZ["chat.session.editFromTurn"].result,
+    handler: chatSessionEditFromTurnHandler,
   },
   "chat.permission.respond": {
     inputSchema: ActionContractsZ["chat.permission.respond"].input,

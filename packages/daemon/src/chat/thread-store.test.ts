@@ -219,4 +219,57 @@ describe("makeThreadStore", () => {
     expect((await reloaded.list())[0]?.title).toBe("Durable");
     expect((await reloaded.get(created.id))?.messages).toHaveLength(1);
   });
+
+  it("truncateFromUserMessage drops every message at or after the user id", async () => {
+    const store = makeThreadStore({ rootDir, randomId: nextId });
+    const created = await store.create({ provider, title: "Edit" });
+    await store.appendMessages(created.id, [
+      userMessage("u-1", "first"),
+      userMessage("u-2", "second"),
+      userMessage("u-3", "third"),
+    ]);
+
+    const result = await store.truncateFromUserMessage(created.id, "u-2");
+
+    expect(result.truncatedCount).toBe(2);
+    const thread = await store.get(created.id);
+    expect(thread?.messages.map((m) => m.id)).toEqual(["u-1"]);
+    const [entry] = await store.list();
+    expect(entry?.messageCount).toBe(1);
+  });
+
+  it("truncateFromUserMessage updates updatedAt and persists to disk", async () => {
+    const calls: Date[] = [
+      new Date("2026-05-14T10:00:00.000Z"),
+      new Date("2026-05-14T10:00:05.000Z"),
+      new Date("2026-05-14T10:01:00.000Z"),
+    ];
+    const store = makeThreadStore({
+      rootDir,
+      randomId: nextId,
+      now: () => calls.shift() ?? new Date("2026-05-14T10:02:00.000Z"),
+    });
+    const created = await store.create({ provider, title: "Edit" });
+    await store.appendMessage(created.id, userMessage("u-1", "first"));
+    const before = (await store.get(created.id))!;
+
+    await store.truncateFromUserMessage(created.id, "u-1");
+    const after = (await store.get(created.id))!;
+    expect(after.messages).toHaveLength(0);
+    expect(after.updatedAt > before.updatedAt).toBe(true);
+
+    const onDisk = JSON.parse(
+      readFileSync(join(rootDir, "threads", `${created.id}.json`), "utf-8"),
+    );
+    expect(onDisk.messages).toEqual([]);
+  });
+
+  it("throws when the user message id is not in the thread", async () => {
+    const store = makeThreadStore({ rootDir, randomId: nextId });
+    const created = await store.create({ provider, title: "Edit" });
+    await store.appendMessage(created.id, userMessage("u-1", "first"));
+    await expect(store.truncateFromUserMessage(created.id, "u-zzz")).rejects.toThrow(
+      /User message u-zzz not found/,
+    );
+  });
 });

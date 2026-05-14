@@ -18,6 +18,7 @@ import {
   chatPermissionRespondHandler,
   chatProvidersListHandler,
   chatSessionCancelHandler,
+  chatSessionEditFromTurnHandler,
   chatSessionSendHandler,
   chatThreadCreateHandler,
   chatThreadDeleteHandler,
@@ -378,6 +379,128 @@ describe("chat action handlers", () => {
       } catch (err) {
         expectActionError(err, "thread_not_found");
       }
+    }
+  });
+
+  it("editFromTurn truncates at the user message and re-dispatches send", async () => {
+    const thread = await chatThreadCreateHandler(
+      { provider: { kind: "claude-code" } },
+      deps(),
+    );
+    await store.appendMessages(thread.thread.id, [
+      {
+        _tag: "UserPrompt",
+        id: "u-1",
+        createdAt: "2026-05-14T10:00:00.000Z",
+        content: [{ type: "text", text: "first" }],
+      },
+      {
+        _tag: "AgentUpdate",
+        id: "a-1",
+        createdAt: "2026-05-14T10:00:05.000Z",
+        update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "ok" } },
+      },
+      {
+        _tag: "UserPrompt",
+        id: "u-2",
+        createdAt: "2026-05-14T10:01:00.000Z",
+        content: [{ type: "text", text: "second" }],
+      },
+    ]);
+
+    const result = await chatSessionEditFromTurnHandler(
+      {
+        threadId: thread.thread.id,
+        userMessageId: "u-2",
+        content: [{ type: "text", text: "second (edited)" }],
+      },
+      deps(),
+    );
+
+    expect(result.accepted).toBe(true);
+    expect(result.promptId).toBe("prompt-1");
+    expect(result.truncatedCount).toBe(1);
+    expect(cancelled).toContain(thread.thread.id);
+    expect(sent).toEqual([
+      {
+        threadId: thread.thread.id,
+        content: [{ type: "text", text: "second (edited)" }],
+      },
+    ]);
+
+    const after = await store.get(thread.thread.id);
+    expect(after?.messages.map((m) => m.id)).toEqual(["u-1", "a-1"]);
+  });
+
+  it("editFromTurn rejects an unknown user message id with bad_request", async () => {
+    const thread = await chatThreadCreateHandler(
+      { provider: { kind: "claude-code" } },
+      deps(),
+    );
+    try {
+      await chatSessionEditFromTurnHandler(
+        {
+          threadId: thread.thread.id,
+          userMessageId: "u-zzz",
+          content: [{ type: "text", text: "x" }],
+        },
+        deps(),
+      );
+      throw new Error("expected handler to fail");
+    } catch (err) {
+      expectActionError(err, "bad_request");
+    }
+    // No send dispatched on the failure path.
+    expect(sent).toEqual([]);
+  });
+
+  it("editFromTurn rejects a missing thread with thread_not_found", async () => {
+    try {
+      await chatSessionEditFromTurnHandler(
+        {
+          threadId: "missing",
+          userMessageId: "u-1",
+          content: [{ type: "text", text: "x" }],
+        },
+        deps(),
+      );
+      throw new Error("expected handler to fail");
+    } catch (err) {
+      expectActionError(err, "thread_not_found");
+    }
+  });
+
+  it("editFromTurn rejects when the id is an assistant message", async () => {
+    const thread = await chatThreadCreateHandler(
+      { provider: { kind: "claude-code" } },
+      deps(),
+    );
+    await store.appendMessages(thread.thread.id, [
+      {
+        _tag: "UserPrompt",
+        id: "u-1",
+        createdAt: "2026-05-14T10:00:00.000Z",
+        content: [{ type: "text", text: "first" }],
+      },
+      {
+        _tag: "AgentUpdate",
+        id: "a-1",
+        createdAt: "2026-05-14T10:00:05.000Z",
+        update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "ok" } },
+      },
+    ]);
+    try {
+      await chatSessionEditFromTurnHandler(
+        {
+          threadId: thread.thread.id,
+          userMessageId: "a-1",
+          content: [{ type: "text", text: "x" }],
+        },
+        deps(),
+      );
+      throw new Error("expected handler to fail");
+    } catch (err) {
+      expectActionError(err, "bad_request");
     }
   });
 });

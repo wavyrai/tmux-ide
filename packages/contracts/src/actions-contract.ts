@@ -634,6 +634,38 @@ export const ChatSessionSendResultZ = z
 export const ChatSessionCancelInputZ = z.object({ threadId: z.string().min(1) }).strict();
 export const ChatSessionCancelResultZ = z.object({ cancelled: z.literal(true) }).strict();
 
+/**
+ * Rewind the thread to just BEFORE the supplied user message id and
+ * re-prompt with the new content. The daemon drops every message at
+ * or after that user message (history truncation), then dispatches
+ * the new prompt as if the user had sent it from the original point
+ * in the conversation.
+ *
+ * Result includes:
+ *   - `promptId` — same id surface as `chat.session.send`.
+ *   - `truncatedCount` — number of messages that were dropped; the
+ *     UI uses this to render an undo toast or animate the rewind.
+ *
+ * Error modes:
+ *   - thread not found → standard `NotFound`.
+ *   - user message id not found in the thread → `InvalidInput`.
+ *   - the targeted entry is not a user message → `InvalidInput`.
+ */
+export const ChatSessionEditFromTurnInputZ = z
+  .object({
+    threadId: z.string().min(1),
+    userMessageId: z.string().min(1),
+    content: z.array(ContentBlockZ).min(1),
+  })
+  .strict();
+export const ChatSessionEditFromTurnResultZ = z
+  .object({
+    accepted: z.literal(true),
+    promptId: z.string().min(1),
+    truncatedCount: z.number().int().nonnegative(),
+  })
+  .strict();
+
 export const ChatPermissionRespondInputZ = z
   .object({
     threadId: z.string().min(1),
@@ -854,6 +886,10 @@ export const ActionContractsZ = {
   "chat.session.cancel": {
     input: ChatSessionCancelInputZ,
     result: ChatSessionCancelResultZ,
+  },
+  "chat.session.editFromTurn": {
+    input: ChatSessionEditFromTurnInputZ,
+    result: ChatSessionEditFromTurnResultZ,
   },
   "chat.permission.respond": {
     input: ChatPermissionRespondInputZ,

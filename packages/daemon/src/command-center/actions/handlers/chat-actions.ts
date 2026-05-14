@@ -251,6 +251,73 @@ export async function chatSessionCancelHandler(
   return { cancelled: true };
 }
 
+/**
+ * Rewind the thread to just BEFORE `userMessageId` and re-dispatch
+ * with the supplied `content`. Implementation:
+ *
+ *   1. Validate the thread exists.
+ *   2. Cancel any in-flight session for this thread — the old
+ *      branch is about to be discarded, so leaving a live agent
+ *      dangling would race the truncation.
+ *   3. Truncate the thread at the user message id; `ThreadStore`
+ *      throws a precise error when the id is missing or belongs to
+ *      a non-user message, which we map to `bad_request`.
+ *   4. Hand the new content to `ThreadManager.send` exactly as
+ *      `chat.session.send` does, returning the dispatcher's
+ *      `promptId` alongside the truncation count.
+ *
+ * The handler stays out of the wire-event business — `ThreadManager`
+ * already broadcasts the standard `chat.thread.update` stream when
+ * the new turn starts, so the dashboard re-renders without a special
+ * "thread rewound" event.
+ */
+export async function chatSessionEditFromTurnHandler(
+  input: ActionInput<"chat.session.editFromTurn">,
+  deps: ChatActionDeps = {},
+): Promise<ActionResult<"chat.session.editFromTurn">> {
+  const store = storeFrom(deps);
+  const manager = managerFrom(deps);
+  await requireThread(store, input.threadId);
+
+  // Best-effort cancel of any live session for this thread. The
+  // manager surfaces NotFound when nothing is in flight — that's the
+  // common case and we ignore it.
+  try {
+    await manager.cancel({ threadId: input.threadId });
+  } catch (err) {
+    if (!(err instanceof ThreadNotFoundError)) throw err;
+  }
+
+  let truncatedCount: number;
+  try {
+    const result = await store.truncateFromUserMessage(input.threadId, input.userMessageId);
+    truncatedCount = result.truncatedCount;
+  } catch (err) {
+    if (err instanceof Error) {
+      if (err.message.includes("not found")) {
+        throw badRequest(err.message, {
+          threadId: input.threadId,
+          userMessageId: input.userMessageId,
+        });
+      }
+      if (err.message.includes("is not a user prompt")) {
+        throw badRequest(err.message, {
+          threadId: input.threadId,
+          userMessageId: input.userMessageId,
+        });
+      }
+    }
+    throw err;
+  }
+
+  const { promptId } = await manager.send({
+    threadId: input.threadId,
+    content: input.content as ContentBlock[],
+  });
+
+  return { accepted: true, promptId, truncatedCount };
+}
+
 export async function chatPermissionRespondHandler(
   input: ActionInput<"chat.permission.respond">,
   deps: ChatActionDeps = {},
