@@ -31,6 +31,19 @@ import {
   ComposerPendingApprovalActions,
   type ProviderApprovalDecision,
 } from "./ComposerPendingApprovalActions";
+import {
+  ComposerPendingUserInputPanel,
+  type PendingUserInput,
+  type PendingUserInputDraftAnswer,
+} from "./ComposerPendingUserInputPanel";
+import { ComposerPendingTerminalContexts } from "./ComposerPendingTerminalContexts";
+import {
+  CompactComposerControlsMenu,
+  type ProviderInteractionMode,
+  type RuntimeMode,
+} from "./CompactComposerControlsMenu";
+import type { TerminalContextDraft } from "../lib/terminalContext";
+import type { JSX } from "solid-js";
 
 export function ChatComposer(props: {
   disabled: Accessor<boolean>;
@@ -113,6 +126,42 @@ export function ChatComposer(props: {
   compactPrimaryActions?: Accessor<boolean>;
   onPreviousPendingQuestion?: () => void;
   onImplementPlanInNewThread?: () => void;
+  /**
+   * Optional multi-choice pending prompt(s) ("agent asks: pick one").
+   * When set, `ComposerPendingUserInputPanel` mounts above the
+   * textarea and surfaces option buttons with 1-9 keyboard
+   * shortcuts. The host owns answer persistence / advance.
+   */
+  pendingUserInputs?: Accessor<ReadonlyArray<PendingUserInput>>;
+  pendingUserInputAnswers?: Accessor<Record<string, PendingUserInputDraftAnswer>>;
+  pendingUserInputRespondingIds?: Accessor<ReadonlyArray<string>>;
+  pendingUserInputQuestionIndex?: Accessor<number>;
+  onPendingUserInputToggleOption?: (questionId: string, optionLabel: string) => void;
+  onPendingUserInputAdvance?: () => void;
+  /**
+   * Optional terminal-context drafts staged on the current thread.
+   * Renders as a chip strip immediately above the attachment row;
+   * each chip surfaces its terminal label + line range and tags
+   * expired contexts (no body text) with the destructive variant.
+   */
+  pendingTerminalContexts?: Accessor<ReadonlyArray<TerminalContextDraft>>;
+  onRemoveTerminalContext?: (id: string) => void;
+  /**
+   * Optional compact-controls menu state. When set, a "⋯" trigger
+   * renders next to the primary actions and opens a popover with
+   * mode / runtime / plan-sidebar entries.
+   */
+  showCompactControls?: Accessor<boolean>;
+  interactionMode?: Accessor<ProviderInteractionMode>;
+  runtimeMode?: Accessor<RuntimeMode>;
+  activePlan?: Accessor<boolean>;
+  planSidebarLabel?: Accessor<string>;
+  planSidebarOpen?: Accessor<boolean>;
+  showInteractionModeToggle?: Accessor<boolean>;
+  traitsMenuContent?: Accessor<JSX.Element | null>;
+  onToggleInteractionMode?: () => void;
+  onTogglePlanSidebar?: () => void;
+  onRuntimeModeChange?: (mode: RuntimeMode) => void;
 }) {
   const [textarea, setTextarea] = createSignal<HTMLTextAreaElement>();
   const [value, setValue] = createSignal("");
@@ -365,6 +414,20 @@ export function ChatComposer(props: {
       }}
     >
       <ComposerBannerStack items={bannerItemsAccessor} />
+      <Show when={(props.pendingUserInputs?.()?.length ?? 0) > 0}>
+        <div class="mb-2 rounded-md border border-border-weak bg-surface/40">
+          <ComposerPendingUserInputPanel
+            pendingUserInputs={() => props.pendingUserInputs?.() ?? []}
+            respondingRequestIds={() => props.pendingUserInputRespondingIds?.() ?? []}
+            answers={() => props.pendingUserInputAnswers?.() ?? {}}
+            questionIndex={() => props.pendingUserInputQuestionIndex?.() ?? 0}
+            onToggleOption={(questionId, optionLabel) =>
+              props.onPendingUserInputToggleOption?.(questionId, optionLabel)
+            }
+            onAdvance={() => props.onPendingUserInputAdvance?.()}
+          />
+        </div>
+      </Show>
       <Show when={props.pendingApproval?.() ?? null}>
         {(approval) => (
           <div data-testid="composer-pending-approval-surface" class="mb-2">
@@ -383,6 +446,13 @@ export function ChatComposer(props: {
             </Show>
           </div>
         )}
+      </Show>
+      <Show when={(props.pendingTerminalContexts?.()?.length ?? 0) > 0}>
+        <ComposerPendingTerminalContexts
+          contexts={() => props.pendingTerminalContexts?.() ?? []}
+          onRemove={props.onRemoveTerminalContext}
+          class="mb-2"
+        />
       </Show>
       <Show when={props.attachments().length > 0}>
         <div class="mb-2 flex flex-wrap gap-1.5">
@@ -451,6 +521,22 @@ export function ChatComposer(props: {
             onAdd={props.onAddAttachment}
             onClose={() => setPickerOpen(false)}
           />
+          <Show when={props.showCompactControls?.() ?? false}>
+            <CompactComposerControlsMenu
+              activePlan={() => props.activePlan?.() ?? false}
+              interactionMode={() => props.interactionMode?.() ?? "default"}
+              planSidebarLabel={() => props.planSidebarLabel?.() ?? "plan"}
+              planSidebarOpen={() => props.planSidebarOpen?.() ?? false}
+              runtimeMode={() => props.runtimeMode?.() ?? "approval-required"}
+              showInteractionModeToggle={() => props.showInteractionModeToggle?.() ?? true}
+              traitsMenuContent={
+                props.traitsMenuContent ? () => props.traitsMenuContent!() : undefined
+              }
+              onToggleInteractionMode={() => props.onToggleInteractionMode?.()}
+              onTogglePlanSidebar={() => props.onTogglePlanSidebar?.()}
+              onRuntimeModeChange={(mode) => props.onRuntimeModeChange?.(mode)}
+            />
+          </Show>
           <ComposerPrimaryActions
             compact={() => props.compactPrimaryActions?.() ?? false}
             pendingAction={() => props.pendingAction?.() ?? null}

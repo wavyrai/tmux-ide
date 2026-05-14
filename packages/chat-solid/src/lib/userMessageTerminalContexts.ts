@@ -1,0 +1,57 @@
+/**
+ * Helpers for inlining terminal-context references into the prompt
+ * body. Each context's `header` (e.g. "vite lines 12-30") is rewritten
+ * to a stable `@<terminal>:<lines>` token so the agent can quote it
+ * back unambiguously. Outbound use lives in chat-solid; the user-
+ * facing chip strip is rendered by `ComposerPendingTerminalContexts`.
+ *
+ * The header pattern is intentionally permissive — anything we can't
+ * parse as a line range still gets a slug fallback (e.g. "@my-shell")
+ * so a malformed header never silently drops a context.
+ */
+
+import { formatInlineTerminalContextLabel as formatInlineLabel } from "./terminalContext";
+
+const TERMINAL_CONTEXT_HEADER_PATTERN = /^(.*?)\s+line(?:s)?\s+(\d+)(?:-(\d+))?$/i;
+
+export function formatInlineTerminalContextLabel(header: string): string {
+  const trimmed = header.trim();
+  const match = TERMINAL_CONTEXT_HEADER_PATTERN.exec(trimmed);
+  if (!match) {
+    return `@${trimmed.toLowerCase().replace(/\s+/g, "-")}`;
+  }
+  const lineStart = Number.parseInt(match[2] ?? "", 10);
+  const lineEnd = Number.parseInt(match[3] ?? match[2] ?? "", 10);
+  if (!Number.isFinite(lineStart) || !Number.isFinite(lineEnd)) {
+    return `@${trimmed.toLowerCase().replace(/\s+/g, "-")}`;
+  }
+  return formatInlineLabel({
+    terminalLabel: match[1]?.trim() || "terminal",
+    lineStart,
+    lineEnd,
+  });
+}
+
+export function buildInlineTerminalContextText(
+  contexts: ReadonlyArray<{ header: string }>,
+): string {
+  return contexts
+    .map((context) => context.header.trim())
+    .filter((header) => header.length > 0)
+    .map(formatInlineTerminalContextLabel)
+    .join(" ");
+}
+
+export function textContainsInlineTerminalContextLabels(
+  text: string,
+  contexts: ReadonlyArray<{ header: string }>,
+): boolean {
+  let searchStartIndex = 0;
+  for (const context of contexts) {
+    const label = formatInlineTerminalContextLabel(context.header);
+    const matchIndex = text.indexOf(label, searchStartIndex);
+    if (matchIndex === -1) return false;
+    searchStartIndex = matchIndex + label.length;
+  }
+  return true;
+}
