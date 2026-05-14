@@ -81,7 +81,15 @@ interface MonitorPane {
 }
 
 function tmux(...args: string[]): string {
-  return execFileSync("tmux", args, { encoding: "utf-8" }).trim();
+  return execFileSync("tmux", args, {
+    encoding: "utf-8",
+    // Pipe stdio explicitly. Inheriting (the default) inherits the parent's
+    // file descriptors; when the daemon is launched detached (nohup, disown,
+    // launchd, etc.) the controlling terminal's fds can be invalid, and the
+    // child spawn fails with EBADF. The visible symptom is sessionExists()
+    // returning false → stopSelf → ghost daemon.
+    stdio: ["ignore", "pipe", "pipe"],
+  }).trim();
 }
 
 function tmuxSilent(...args: string[]): string {
@@ -125,12 +133,29 @@ async function pickFreePort(hostname: string): Promise<number> {
   });
 }
 
-function sessionExists(sessionName: string): boolean {
+function sessionExists(sessionName: string): "yes" | "no" | "unknown" {
   try {
     tmux("has-session", "-t", sessionName);
-    return true;
-  } catch {
-    return false;
+    return "yes";
+  } catch (err) {
+    const msg = (err as NodeJS.ErrnoException).message ?? "";
+    const code = (err as NodeJS.ErrnoException).code;
+    // Spawn-level failures (EBADF, EAGAIN, etc.) are transient OS issues,
+    // not "session is gone" signals. Same for non-zero exits without stderr
+    // — `has-session` returns 1 only when the session is genuinely missing,
+    // and tmux always writes to stderr in that case.
+    if (
+      code === "EBADF" ||
+      code === "EAGAIN" ||
+      code === "EMFILE" ||
+      code === "ENFILE" ||
+      msg.includes("EBADF") ||
+      msg.includes("EAGAIN")
+    ) {
+      console.error("[daemon] sessionExists transient spawn error:", msg);
+      return "unknown";
+    }
+    return "no";
   }
 }
 
@@ -822,8 +847,13 @@ export async function startEmbeddedDaemon(
 
   const tick = (): void => {
     if (sessionless) return;
-    if (!sessionExists(sessionName)) {
+    const session = sessionExists(sessionName);
+    if (session === "no") {
       stopSelf?.();
+      return;
+    }
+    if (session === "unknown") {
+      // Transient spawn failure — skip this tick rather than self-destruct.
       return;
     }
     if (!hasClients()) return;
