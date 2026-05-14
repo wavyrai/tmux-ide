@@ -46,6 +46,15 @@ goal-*-working-state.gif
 goal-*-commit-readiness.md
 app-electron/
 
+# Internal engineering scratch docs — useful while a cleanup is in flight,
+# obsolete the moment the work lands. Keep `docs/goal-NN-<name>.md` tracked
+# (those are the historical "why we picked X" record per ARCHITECTURE.md §9)
+# and `docs/content/`, `docs/adr/`, `docs/contributing/`.
+docs/audit-*.md
+docs/cleanup-*.md
+docs/incident-*.md
+docs/release-readiness*.md
+
 # TypeScript build output
 dist/
 
