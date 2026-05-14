@@ -40,7 +40,9 @@ describe("ChangedFilesTree", () => {
     expect(container.textContent).toContain("Changed files");
     expect(container.textContent).toContain("ChatComposer.tsx");
     expect(container.textContent).toContain("+2");
-    expect(container.textContent).toContain("-1");
+    // DiffStatLabel uses the typographic minus sign (U+2212) for
+    // visual parity with the upstream surface, not the ASCII hyphen.
+    expect(container.textContent).toContain("−1");
     expect(container.textContent).not.toContain("new line");
 
     [...container.querySelectorAll<HTMLButtonElement>("button")]
