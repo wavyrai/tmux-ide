@@ -6,13 +6,14 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   renameSync,
   statSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { basename, dirname, join, relative, resolve } from "node:path";
-import { watch, type FSWatcher } from "chokidar";
+import parcelWatcher, { type AsyncSubscription } from "@parcel/watcher";
 import { z } from "zod";
 import { slugify } from "./slugify.ts";
 import { GoalSchemaZ, MissionSchemaZ, TaskSchemaZ } from "../schemas/domain.ts";
@@ -26,6 +27,27 @@ const DEFAULT_WATCH_DEBOUNCE_MS = 100;
 const RECONCILE_LOG_PREFIX = "[task-store]";
 const ASSERTION_ID_PATTERN = /\*\*((?:VAL|ASSERT)[A-Z0-9_-]+)\*\*/g;
 const WAL_FILE = "_wal.jsonl";
+
+// Mirrors WATCH_IGNORED_NAMES in command-center/fs-watch.ts (minus
+// `.tasks` itself, since this watcher's root *is* `.tasks/`). The
+// native parcel/watcher subscription avoids the per-file fd
+// exhaustion that chokidar triggered when a project vendored a
+// reference codebase under `context/`.
+const WATCH_IGNORED_NAMES = [
+  ".svn",
+  ".hg",
+  ".git",
+  "node_modules",
+  "dist",
+  "build",
+  "out",
+  ".next",
+  ".turbo",
+  ".cache",
+  "__pycache__",
+  "target",
+];
+const WATCH_IGNORE_GLOBS = WATCH_IGNORED_NAMES.map((n) => `**/${n}/**`);
 
 export interface Milestone {
   id: string;
@@ -440,8 +462,11 @@ export class TaskStore extends EventEmitter {
   private ownWriteTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private pendingWatchPaths = new Set<string>();
   private watchFlushTimer: ReturnType<typeof setTimeout> | null = null;
-  private watcher: FSWatcher | null = null;
+  private subscription: AsyncSubscription | null = null;
+  private subscriptionPending = false;
+  private subscriptionClosed = false;
   private watchedRoot: string | null = null;
+  private resolvedWatchRoot: string | null = null;
   private startedAt = Date.now();
   private lastReconcileMs = 0;
   private driftCount = 0;
@@ -573,7 +598,7 @@ export class TaskStore extends EventEmitter {
       lastReconcileMs: this.lastReconcileMs,
       cacheSize: this.cache.size,
       driftCount: this.driftCount,
-      watcherActive: this.watcher !== null,
+      watcherActive: this.isWatcherActive(),
       writeQueueDepth: this.activeWrites,
     };
   }
@@ -589,7 +614,7 @@ export class TaskStore extends EventEmitter {
         evictions: this.cacheEvictions,
       },
       watcher: {
-        active: this.watcher !== null,
+        active: this.isWatcherActive(),
         debounceMs: getWatcherDebounceMs(),
         events: this.watcherEvents,
         suppressed: this.watcherSuppressed,
@@ -628,52 +653,89 @@ export class TaskStore extends EventEmitter {
 
   startWatcher(dir: string): () => Promise<void> {
     const root = getTasksRoot(dir);
-    if (this.watcher && this.watchedRoot === root) {
+    if (this.isWatcherActive() && this.watchedRoot === root) {
       return async () => this.stopWatcher();
     }
 
     void this.stopWatcher();
     ensureTasksDir(dir);
+    let resolvedRoot: string;
+    try {
+      resolvedRoot = realpathSync(root);
+    } catch {
+      resolvedRoot = root;
+    }
     this.watchedRoot = root;
-    this.watcher = watch(root, {
-      ignoreInitial: true,
-      persistent: true,
-      awaitWriteFinish: {
-        stabilityThreshold: 50,
-        pollInterval: 10,
-      },
-    });
+    this.resolvedWatchRoot = resolvedRoot;
+    this.subscriptionClosed = false;
+    this.subscriptionPending = true;
 
-    const invalidateFromWatch = (path: string) => {
+    const invalidateFromWatch = (absolute: string) => {
       this.watcherEvents++;
-      const absolute = resolve(path);
       if (this.isOwnWrite(absolute)) {
         this.watcherSuppressed++;
         return;
       }
-
       this.pendingWatchPaths.add(absolute);
       this.scheduleWatchFlush();
     };
 
-    this.watcher.on("add", invalidateFromWatch);
-    this.watcher.on("change", invalidateFromWatch);
-    this.watcher.on("unlink", invalidateFromWatch);
-    this.watcher.on("unlinkDir", invalidateFromWatch);
-    this.watcher.on("error", (err) => {
-      console.warn("[task-store] watcher error: %s", (err as Error).message);
-    });
+    // parcel/watcher returns canonicalised paths (e.g. macOS rewrites
+    // `/var/folders/...` to `/private/var/folders/...`). Cache keys
+    // are built from the caller-supplied path via `resolve()`, which
+    // does NOT follow symlinks, so we remap event paths back to the
+    // original root prefix before invalidating.
+    const remapEventPath = (eventPath: string): string => {
+      if (eventPath === resolvedRoot) return root;
+      if (eventPath.startsWith(resolvedRoot + "/")) {
+        return root + eventPath.slice(resolvedRoot.length);
+      }
+      return eventPath;
+    };
+
+    void parcelWatcher
+      .subscribe(
+        resolvedRoot,
+        (err, events) => {
+          if (err) {
+            console.warn("[task-store] watcher error: %s", err.message);
+            return;
+          }
+          for (const event of events) {
+            invalidateFromWatch(resolve(remapEventPath(event.path)));
+          }
+        },
+        { ignore: WATCH_IGNORE_GLOBS },
+      )
+      .then((sub) => {
+        this.subscriptionPending = false;
+        if (this.subscriptionClosed) {
+          void sub.unsubscribe().catch(() => {});
+          return;
+        }
+        this.subscription = sub;
+      })
+      .catch((err) => {
+        this.subscriptionPending = false;
+        console.warn("[task-store] watcher subscribe failed: %s", (err as Error).message);
+      });
 
     return async () => this.stopWatcher();
   }
 
   async stopWatcher(): Promise<void> {
     this.flushPending();
-    if (!this.watcher) return;
-    const watcher = this.watcher;
-    this.watcher = null;
+    this.subscriptionClosed = true;
+    const sub = this.subscription;
+    this.subscription = null;
     this.watchedRoot = null;
-    await watcher.close();
+    this.resolvedWatchRoot = null;
+    if (!sub) return;
+    await sub.unsubscribe().catch(() => {});
+  }
+
+  private isWatcherActive(): boolean {
+    return this.subscription !== null || this.subscriptionPending;
   }
 
   flushPending(): void {
