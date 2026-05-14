@@ -7,7 +7,8 @@
  * integration) is the producer.
  */
 
-import { For, Show, createMemo, type JSX } from "solid-js";
+import { For, Show, createMemo, createSignal, type JSX } from "solid-js";
+import { createVirtualizer } from "@tanstack/solid-virtual";
 import { diagnosticsState } from "@/lib/lsp/diagnostics-store";
 import { openFileAt } from "@/lib/editorOpen";
 import type { LspDiagnostic } from "@/lib/lsp/api";
@@ -92,6 +93,27 @@ export function ProblemsTab(): JSX.Element {
     return rows;
   });
 
+  // Virtualized list — a multi-file LSP run can emit thousands of
+  // diagnostics. createMemo wrappers per 9b139e5 keep the For/spacer
+  // subscribed to the virtualizer's signal.
+  const [scrollEl, setScrollEl] = createSignal<HTMLUListElement | null>(null);
+  const virtualizer = createVirtualizer({
+    get count() {
+      return flat().length;
+    },
+    getScrollElement: () => scrollEl(),
+    estimateSize: () => 44,
+    overscan: 8,
+    getItemKey: (i) => {
+      const r = flat()[i];
+      return r
+        ? `${r.bufferUri}:${r.diagnostic.range.start.line}:${r.diagnostic.range.start.character}:${i}`
+        : i;
+    },
+  });
+  const virtualItems = createMemo(() => virtualizer.getVirtualItems());
+  const virtualTotalSize = createMemo(() => virtualizer.getTotalSize());
+
   return (
     <div
       data-testid="v2-problems-tab"
@@ -108,53 +130,81 @@ export function ProblemsTab(): JSX.Element {
           </div>
         }
       >
-        <ul class="min-h-0 flex-1 overflow-y-auto">
-          <For each={flat()}>
-            {(row) => {
-              const line = () => row.diagnostic.range.start.line + 1;
-              const column = () => row.diagnostic.range.start.character;
-              return (
-                <li>
-                  <button
-                    type="button"
-                    data-testid="v2-problem-row"
-                    data-severity={severityLabel(row.diagnostic.severity)}
-                    onClick={() =>
-                      openFileAt({
-                        sessionName: row.sessionName,
-                        rootPath: row.rootPath,
-                        filePath: row.filePath,
-                        language: row.language,
-                        line: line(),
-                        column: column(),
-                      })
-                    }
-                    class="flex w-full items-start gap-2 border-b border-[var(--border-weak)] px-3 py-1.5 text-left hover:bg-[var(--surface-hover)]"
-                  >
-                    <span
-                      aria-hidden="true"
-                      class={
-                        "mt-0.5 w-3 shrink-0 text-center " + severityClass(row.diagnostic.severity)
-                      }
-                    >
-                      {severityGlyph(row.diagnostic.severity)}
-                    </span>
-                    <div class="min-w-0 flex-1">
-                      <div class="truncate text-[var(--fg)]">{row.diagnostic.message}</div>
-                      <div class="truncate text-[10px] text-[var(--dim)]">
-                        <span class="font-mono">{row.filePath}</span>
-                        <span>
-                          {" "}
-                          · {line()}:{column() + 1}
-                        </span>
-                        <Show when={row.diagnostic.source}>{(src) => <span> · {src()}</span>}</Show>
-                      </div>
-                    </div>
-                  </button>
-                </li>
-              );
+        <ul
+          ref={setScrollEl}
+          class="relative min-h-0 flex-1 overflow-y-auto"
+          data-testid="v2-problems-scroll"
+          style={{ position: "relative" }}
+        >
+          <div
+            data-testid="v2-problems-spacer"
+            style={{
+              height: `${virtualTotalSize()}px`,
+              width: "100%",
+              position: "relative",
             }}
-          </For>
+          >
+            <For each={virtualItems()}>
+              {(vItem) => {
+                const row = () => flat()[vItem.index]!;
+                const line = () => row().diagnostic.range.start.line + 1;
+                const column = () => row().diagnostic.range.start.character;
+                return (
+                  <li
+                    data-index={vItem.index}
+                    ref={(el) => virtualizer.measureElement(el)}
+                    style={{
+                      position: "absolute",
+                      top: "0",
+                      left: "0",
+                      width: "100%",
+                      transform: `translateY(${vItem.start}px)`,
+                    }}
+                  >
+                    <button
+                      type="button"
+                      data-testid="v2-problem-row"
+                      data-severity={severityLabel(row().diagnostic.severity)}
+                      onClick={() =>
+                        openFileAt({
+                          sessionName: row().sessionName,
+                          rootPath: row().rootPath,
+                          filePath: row().filePath,
+                          language: row().language,
+                          line: line(),
+                          column: column(),
+                        })
+                      }
+                      class="flex w-full items-start gap-2 border-b border-[var(--border-weak)] px-3 py-1.5 text-left hover:bg-[var(--surface-hover)]"
+                    >
+                      <span
+                        aria-hidden="true"
+                        class={
+                          "mt-0.5 w-3 shrink-0 text-center " +
+                          severityClass(row().diagnostic.severity)
+                        }
+                      >
+                        {severityGlyph(row().diagnostic.severity)}
+                      </span>
+                      <div class="min-w-0 flex-1">
+                        <div class="truncate text-[var(--fg)]">{row().diagnostic.message}</div>
+                        <div class="truncate text-[10px] text-[var(--dim)]">
+                          <span class="font-mono">{row().filePath}</span>
+                          <span>
+                            {" "}
+                            · {line()}:{column() + 1}
+                          </span>
+                          <Show when={row().diagnostic.source}>
+                            {(src) => <span> · {src()}</span>}
+                          </Show>
+                        </div>
+                      </div>
+                    </button>
+                  </li>
+                );
+              }}
+            </For>
+          </div>
         </ul>
       </Show>
     </div>

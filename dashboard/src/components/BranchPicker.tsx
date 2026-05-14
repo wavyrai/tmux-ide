@@ -13,6 +13,7 @@
  */
 
 import { createMemo, createSignal, For, Show } from "solid-js";
+import { createVirtualizer } from "@tanstack/solid-virtual";
 import { Effect, Exit, Cause } from "effect";
 import type { BranchesPayload, GitErrorPayload } from "@tmux-ide/contracts";
 import { checkoutBranch, GitApiError, useBranches } from "@/lib/git";
@@ -112,6 +113,23 @@ export function BranchPicker(props: BranchPickerProps) {
     if (!q) return list;
     return list.filter((b) => b.name.toLowerCase().includes(q));
   });
+
+  // Repos with hundreds of branches (typical in long-lived projects)
+  // no longer render every button into the bounded popover. createMemo
+  // wrappers per 9b139e5 keep the For/spacer subscribed to the
+  // virtualizer's signal.
+  const [scrollEl, setScrollEl] = createSignal<HTMLDivElement | null>(null);
+  const virtualizer = createVirtualizer({
+    get count() {
+      return filtered().length;
+    },
+    getScrollElement: () => scrollEl(),
+    estimateSize: () => 30,
+    overscan: 6,
+    getItemKey: (i) => filtered()[i]?.name ?? i,
+  });
+  const virtualItems = createMemo(() => virtualizer.getVirtualItems());
+  const virtualTotalSize = createMemo(() => virtualizer.getTotalSize());
 
   async function handleCheckout(entry: ListEntry) {
     if (entry.isCurrent) {
@@ -222,44 +240,76 @@ export function BranchPicker(props: BranchPickerProps) {
               </Show>
             </div>
           </Show>
-          <div class="min-h-0 flex-1 overflow-y-auto py-1">
-            <For each={filtered()}>
-              {(entry) => (
-                <button
-                  type="button"
-                  data-testid={`branch-row-${entry.name}`}
-                  data-current={entry.isCurrent ? "true" : "false"}
-                  data-group={entry.group}
-                  disabled={busy() !== null}
-                  onClick={() => handleCheckout(entry)}
-                  class={
-                    "flex w-full items-center gap-2 px-3 py-1.5 text-left hover:bg-[var(--surface-hover,rgba(127,127,127,0.08))] disabled:opacity-50 " +
-                    (entry.isCurrent ? "text-[var(--accent)]" : "text-[var(--fg)]")
-                  }
-                >
-                  <span aria-hidden="true" class="w-3 text-[var(--dim)]">
-                    {entry.isCurrent ? "●" : entry.group === "remote" ? "↗" : "○"}
-                  </span>
-                  <span class="flex-1 truncate" title={entry.name}>
-                    {entry.name}
-                  </span>
-                  <Show when={entry.group === "remote"}>
-                    <span class="text-[10px] text-[var(--dim)]">{entry.remote}</span>
-                  </Show>
-                  <Show when={busy() === entry.name}>
-                    <span class="text-[10px] text-[var(--dim)]">…</span>
-                  </Show>
-                  <Show
-                    when={entry.ahead !== undefined && (entry.ahead > 0 || (entry.behind ?? 0) > 0)}
-                  >
-                    <span class="text-[10px] text-[var(--dim)] tabular-nums">
-                      <Show when={(entry.ahead ?? 0) > 0}>↑{entry.ahead}</Show>
-                      <Show when={(entry.behind ?? 0) > 0}>↓{entry.behind}</Show>
-                    </span>
-                  </Show>
-                </button>
-              )}
-            </For>
+          <div
+            ref={setScrollEl}
+            class="relative min-h-0 flex-1 overflow-y-auto py-1"
+            data-testid="branch-picker-scroll"
+            style={{ position: "relative" }}
+          >
+            <div
+              data-testid="branch-picker-spacer"
+              style={{
+                height: `${virtualTotalSize()}px`,
+                width: "100%",
+                position: "relative",
+              }}
+            >
+              <For each={virtualItems()}>
+                {(vItem) => {
+                  const entry = () => filtered()[vItem.index]!;
+                  return (
+                    <div
+                      data-index={vItem.index}
+                      ref={(el) => virtualizer.measureElement(el)}
+                      style={{
+                        position: "absolute",
+                        top: "0",
+                        left: "0",
+                        width: "100%",
+                        transform: `translateY(${vItem.start}px)`,
+                      }}
+                    >
+                      <button
+                        type="button"
+                        data-testid={`branch-row-${entry().name}`}
+                        data-current={entry().isCurrent ? "true" : "false"}
+                        data-group={entry().group}
+                        disabled={busy() !== null}
+                        onClick={() => handleCheckout(entry())}
+                        class={
+                          "flex w-full items-center gap-2 px-3 py-1.5 text-left hover:bg-[var(--surface-hover,rgba(127,127,127,0.08))] disabled:opacity-50 " +
+                          (entry().isCurrent ? "text-[var(--accent)]" : "text-[var(--fg)]")
+                        }
+                      >
+                        <span aria-hidden="true" class="w-3 text-[var(--dim)]">
+                          {entry().isCurrent ? "●" : entry().group === "remote" ? "↗" : "○"}
+                        </span>
+                        <span class="flex-1 truncate" title={entry().name}>
+                          {entry().name}
+                        </span>
+                        <Show when={entry().group === "remote"}>
+                          <span class="text-[10px] text-[var(--dim)]">{entry().remote}</span>
+                        </Show>
+                        <Show when={busy() === entry().name}>
+                          <span class="text-[10px] text-[var(--dim)]">…</span>
+                        </Show>
+                        <Show
+                          when={
+                            entry().ahead !== undefined &&
+                            ((entry().ahead ?? 0) > 0 || (entry().behind ?? 0) > 0)
+                          }
+                        >
+                          <span class="text-[10px] text-[var(--dim)] tabular-nums">
+                            <Show when={(entry().ahead ?? 0) > 0}>↑{entry().ahead}</Show>
+                            <Show when={(entry().behind ?? 0) > 0}>↓{entry().behind}</Show>
+                          </span>
+                        </Show>
+                      </button>
+                    </div>
+                  );
+                }}
+              </For>
+            </div>
           </div>
         </div>
       </div>
