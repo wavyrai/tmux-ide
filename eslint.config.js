@@ -42,7 +42,6 @@ export default [
       "bin/**/*.ts",
       "scripts/**/*.ts",
       "src/**/*.ts",
-      "app-electron/src/**/*.ts",
       "packages/contracts/src/**/*.ts",
       "packages/daemon/src/**/*.ts",
       "packages/tmux-bridge/src/**/*.ts",
@@ -70,13 +69,6 @@ export default [
       "@typescript-eslint/no-unused-vars": ["error", { argsIgnorePattern: "^_" }],
     },
   },
-  {
-    files: ["app-electron/src/**/*.ts"],
-    rules: {
-      "@typescript-eslint/no-require-imports": "off",
-    },
-  },
-
   // Solid.js packages use the `let el; … <Foo ref={el} />` pattern that
   // ESLint flags as never-assigned because the assignment happens via
   // the JSX ref attribute at runtime.
@@ -177,7 +169,6 @@ export default [
             {
               group: [
                 "**/dashboard/**",
-                "**/app-electron/**",
                 "**/packages/v2-solid-widgets/**",
                 "**/packages/chat-solid/**",
               ],
