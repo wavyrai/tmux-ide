@@ -148,14 +148,7 @@ export default function WidgetRoute(): JSX.Element {
           {(_) => {
             const s = state();
             if (s.kind !== "ready") return null;
-            return (
-              <Terminal
-                id={s.id}
-                showHeader={false}
-                cwd={s.spec.cwd}
-                cmd={s.spec.cmd}
-              />
-            );
+            return <Terminal id={s.id} showHeader={false} cwd={s.spec.cwd} cmd={s.spec.cmd} />;
           }}
         </Show>
       </div>

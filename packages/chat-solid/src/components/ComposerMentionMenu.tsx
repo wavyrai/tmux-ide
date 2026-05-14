@@ -86,9 +86,7 @@ export function ComposerMentionMenu(props: ComposerMentionMenuProps) {
                   <span class="min-w-0 flex-1">
                     <div class="truncate">{highlightedLabel(result)}</div>
                     <Show when={result.candidate.hint}>
-                      {(hint) => (
-                        <div class="mt-0.5 truncate text-[11px] text-dim">{hint()}</div>
-                      )}
+                      {(hint) => <div class="mt-0.5 truncate text-[11px] text-dim">{hint()}</div>}
                     </Show>
                   </span>
                 </button>

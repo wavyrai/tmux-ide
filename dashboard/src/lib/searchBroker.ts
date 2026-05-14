@@ -56,12 +56,10 @@ export interface PendingSearchRequest {
   source?: string;
 }
 
-const [pendingRequest, setPendingRequestSignal] =
-  createSignal<PendingSearchRequest | null>(null);
+const [pendingRequest, setPendingRequestSignal] = createSignal<PendingSearchRequest | null>(null);
 
 /** Read the current pending request (or null when nothing queued). */
-export const pendingSearchRequest: Accessor<PendingSearchRequest | null> =
-  pendingRequest;
+export const pendingSearchRequest: Accessor<PendingSearchRequest | null> = pendingRequest;
 
 /** Publish a search request. Replaces any prior unconsumed request. */
 export function requestSearch(req: PendingSearchRequest): void {

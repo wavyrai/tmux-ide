@@ -93,16 +93,9 @@ describe("PermissionDialog four-kind verdict cluster (W6)", () => {
     // One fresh mount per kind so the in-flight gate doesn't
     // interfere — the dialog disables every button after the first
     // click while the prior response promise is outstanding.
-    for (const kind of [
-      "allow_once",
-      "allow_always",
-      "reject_once",
-      "reject_always",
-    ] as const) {
+    for (const kind of ["allow_once", "allow_always", "reject_once", "reject_always"] as const) {
       const { container, dispose, onRespond } = mountDialog(request());
-      const btn = container.querySelector<HTMLButtonElement>(
-        `button[data-option-kind='${kind}']`,
-      );
+      const btn = container.querySelector<HTMLButtonElement>(`button[data-option-kind='${kind}']`);
       expect(btn).toBeTruthy();
       btn!.click();
       expect(onRespond).toHaveBeenCalledExactlyOnceWith(kind);
@@ -114,16 +107,12 @@ describe("PermissionDialog four-kind verdict cluster (W6)", () => {
   it("routes Escape to the reject_once fallback", async () => {
     const { dispose, onRespond } = mountDialog(request());
 
-    document.dispatchEvent(
-      new KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
-    );
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
     // The dialog's keydown handler is attached on the dialog node;
     // bubble through it via the focused dialog ref.
     const dialogNode = document.querySelector<HTMLElement>("[role='dialog']");
     expect(dialogNode).toBeTruthy();
-    dialogNode!.dispatchEvent(
-      new KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
-    );
+    dialogNode!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
 
     await new Promise((resolve) => setTimeout(resolve, 5));
     expect(onRespond).toHaveBeenCalledWith("reject_once");
@@ -138,15 +127,8 @@ describe("PermissionDialog four-kind verdict cluster (W6)", () => {
     )!;
     allow.click();
 
-    for (const kind of [
-      "allow_once",
-      "allow_always",
-      "reject_once",
-      "reject_always",
-    ]) {
-      const btn = container.querySelector<HTMLButtonElement>(
-        `button[data-option-kind='${kind}']`,
-      );
+    for (const kind of ["allow_once", "allow_always", "reject_once", "reject_always"]) {
+      const btn = container.querySelector<HTMLButtonElement>(`button[data-option-kind='${kind}']`);
       expect(btn?.disabled).toBe(true);
     }
     dispose();

@@ -165,7 +165,10 @@ function ValidationBar(props: {
         aria-valuemax={100}
         class="h-1 w-full overflow-hidden rounded bg-[var(--border)]"
       >
-        <div class="h-full bg-[var(--green)] transition-[width] duration-200" style={{ width: `${pct()}%` }} />
+        <div
+          class="h-full bg-[var(--green)] transition-[width] duration-200"
+          style={{ width: `${pct()}%` }}
+        />
       </div>
     </section>
   );
@@ -254,7 +257,9 @@ function Goals(props: { items: NonNullable<ProjectDetailLike["goals"]> }): JSX.E
                   data-mission-goal-acceptance={g.id}
                   class="rounded border-l-2 border-[var(--accent)] bg-[var(--bg-strong,var(--surface))] px-3 py-2"
                 >
-                  <div class="mb-1 text-[10px] uppercase tracking-wider text-[var(--dim)]">acceptance</div>
+                  <div class="mb-1 text-[10px] uppercase tracking-wider text-[var(--dim)]">
+                    acceptance
+                  </div>
                   <pre class="m-0 whitespace-pre-wrap font-mono text-[11px] leading-relaxed text-[var(--fg-secondary)]">
                     {g.acceptance}
                   </pre>

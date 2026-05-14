@@ -1,9 +1,6 @@
 import DOMPurify from "dompurify";
 import { marked, Renderer, type Tokens } from "marked";
-import {
-  resolveMarkdownFileLinkMeta,
-  type MarkdownFileLinkMeta,
-} from "./markdownLinks";
+import { resolveMarkdownFileLinkMeta, type MarkdownFileLinkMeta } from "./markdownLinks";
 
 marked.setOptions({
   breaks: true,

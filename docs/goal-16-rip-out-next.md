@@ -44,21 +44,21 @@ the framework boundary exists. Goal-16 deletes the boundary.
 
 ## 1. Next-specific surface in use
 
-| Next feature                | Callsites             | Solid replacement                                  |
-| --------------------------- | --------------------- | -------------------------------------------------- |
-| App Router (`app/**`)       | 11 segments           | File-based routes via `@solidjs/router`            |
-| `next/dynamic({ssr:false})` | 2 (V2ChatView, V2ActivityBar) | Solid `lazy()` + `clientOnly()` wrapper            |
-| `next/link`                 | ~30 callsites         | `<A>` from `@solidjs/router`                       |
-| `next/navigation:useRouter` | 8 callsites           | `useNavigate()` from `@solidjs/router`             |
-| `useSearchParams`           | 7 callsites           | `useSearchParams()` (same name, Solid signature)   |
-| `useParams`                 | 6 callsites           | `useParams()` (same name, Solid signature)         |
-| `usePathname`               | 2 callsites           | `useLocation().pathname`                           |
-| `redirect()` (RSC)          | 4 callsites           | `Navigate` component / `navigate()` imperative     |
-| `"use client"`              | 74 files              | Removed. Single client-side runtime.               |
-| Server Components (RSC)     | 6 files (mostly shells) | Plain components. No server/client split.        |
-| `generateStaticParams`      | 0                     | N/A                                                |
-| `next/image`, `next/font`   | 0                     | N/A                                                |
-| Turbopack                   | dev only              | Vite dev server.                                   |
+| Next feature                | Callsites                     | Solid replacement                                |
+| --------------------------- | ----------------------------- | ------------------------------------------------ |
+| App Router (`app/**`)       | 11 segments                   | File-based routes via `@solidjs/router`          |
+| `next/dynamic({ssr:false})` | 2 (V2ChatView, V2ActivityBar) | Solid `lazy()` + `clientOnly()` wrapper          |
+| `next/link`                 | ~30 callsites                 | `<A>` from `@solidjs/router`                     |
+| `next/navigation:useRouter` | 8 callsites                   | `useNavigate()` from `@solidjs/router`           |
+| `useSearchParams`           | 7 callsites                   | `useSearchParams()` (same name, Solid signature) |
+| `useParams`                 | 6 callsites                   | `useParams()` (same name, Solid signature)       |
+| `usePathname`               | 2 callsites                   | `useLocation().pathname`                         |
+| `redirect()` (RSC)          | 4 callsites                   | `Navigate` component / `navigate()` imperative   |
+| `"use client"`              | 74 files                      | Removed. Single client-side runtime.             |
+| Server Components (RSC)     | 6 files (mostly shells)       | Plain components. No server/client split.        |
+| `generateStaticParams`      | 0                             | N/A                                              |
+| `next/image`, `next/font`   | 0                             | N/A                                              |
+| Turbopack                   | dev only                      | Vite dev server.                                 |
 
 ### What we don't use (and won't miss)
 
@@ -83,15 +83,15 @@ to RSC. They map 1:1 to a thin Solid route file.
 
 ### 2.1 By directory
 
-| Path                          | Files | Disposition                                    |
-| ----------------------------- | ----: | ---------------------------------------------- |
-| `components/` (root)          |    27 | 11 PORT, 13 DELETE, 3 PORT-trivial             |
-| `components/ui/`              |    13 | PORT — wrap Solid headless primitives (corvu)  |
-| `components/chat-v2/`         |     5 | DELETE — chat-solid takes over directly        |
-| `components/kanban/`          |     1 | PORT — CreateTaskDialog → corvu Dialog         |
-| `components/plans/`           |     1 | PORT — CodeMirror MarkdownEditor               |
-| `components/validation/`      |     1 | PORT                                           |
-| `app/`                        |    20 | PORT — route shells + page bodies              |
+| Path                     | Files | Disposition                                   |
+| ------------------------ | ----: | --------------------------------------------- |
+| `components/` (root)     |    27 | 11 PORT, 13 DELETE, 3 PORT-trivial            |
+| `components/ui/`         |    13 | PORT — wrap Solid headless primitives (corvu) |
+| `components/chat-v2/`    |     5 | DELETE — chat-solid takes over directly       |
+| `components/kanban/`     |     1 | PORT — CreateTaskDialog → corvu Dialog        |
+| `components/plans/`      |     1 | PORT — CodeMirror MarkdownEditor              |
+| `components/validation/` |     1 | PORT                                          |
+| `app/`                   |    20 | PORT — route shells + page bodies             |
 
 ### 2.2 Bridge files (DELETE on cutover)
 
@@ -119,25 +119,25 @@ from '@tmux-ide/v2-solid-widgets'` and direct use as a Solid component.
 
 ### 2.3 PORT — components/ root
 
-| File                  | Notes                                                 |
-| --------------------- | ----------------------------------------------------- |
-| `AuthorshipBar.tsx`   | Stateless. Port direct.                               |
-| `BottomPanel.tsx`     | xterm-host + tabs + SSE log streams. Medium effort.   |
-| `CommandPalette.tsx`  | React wrapper over the Solid palette. Mostly DELETE — keep its slash-command keybinds. |
-| `FileList.tsx`        | Stateless list. Port direct.                          |
-| `KeybindRoot.tsx`     | Global keybind handler. Port — Solid effect equivalent. |
-| `MainTabItem.tsx`     | dnd-kit sortable item. Needs `@thisbeyond/solid-dnd`. |
-| `MainTabsBar.tsx`     | dnd-kit sortable list. Same.                          |
-| `MarkdownEditor.tsx`  | Stateless wrapper. Port.                              |
-| `ProjectSwitcher.tsx` | Dialog + dropdown. Port to corvu.                     |
-| `Providers.tsx`       | Theme provider. Replace with Solid context.           |
-| `ShellSidebarProvider.tsx` | Sidebar context. Solid context.                  |
-| `StatusBar.tsx`       | Stateless. Port direct.                               |
-| `Terminal.tsx`        | xterm wrapper — see §5.3.                             |
-| `ThemeToggle.tsx`     | Replace `next-themes` with a Solid theme signal.      |
-| `ToastStack.tsx`      | Animated stack. Port.                                 |
-| `TopBar.tsx`          | Layout shell. Port.                                   |
-| `v2-primitives.tsx`   | Local UI primitives. Port.                            |
+| File                       | Notes                                                                                  |
+| -------------------------- | -------------------------------------------------------------------------------------- |
+| `AuthorshipBar.tsx`        | Stateless. Port direct.                                                                |
+| `BottomPanel.tsx`          | xterm-host + tabs + SSE log streams. Medium effort.                                    |
+| `CommandPalette.tsx`       | React wrapper over the Solid palette. Mostly DELETE — keep its slash-command keybinds. |
+| `FileList.tsx`             | Stateless list. Port direct.                                                           |
+| `KeybindRoot.tsx`          | Global keybind handler. Port — Solid effect equivalent.                                |
+| `MainTabItem.tsx`          | dnd-kit sortable item. Needs `@thisbeyond/solid-dnd`.                                  |
+| `MainTabsBar.tsx`          | dnd-kit sortable list. Same.                                                           |
+| `MarkdownEditor.tsx`       | Stateless wrapper. Port.                                                               |
+| `ProjectSwitcher.tsx`      | Dialog + dropdown. Port to corvu.                                                      |
+| `Providers.tsx`            | Theme provider. Replace with Solid context.                                            |
+| `ShellSidebarProvider.tsx` | Sidebar context. Solid context.                                                        |
+| `StatusBar.tsx`            | Stateless. Port direct.                                                                |
+| `Terminal.tsx`             | xterm wrapper — see §5.3.                                                              |
+| `ThemeToggle.tsx`          | Replace `next-themes` with a Solid theme signal.                                       |
+| `ToastStack.tsx`           | Animated stack. Port.                                                                  |
+| `TopBar.tsx`               | Layout shell. Port.                                                                    |
+| `v2-primitives.tsx`        | Local UI primitives. Port.                                                             |
 
 ### 2.4 REUSE — Solid silos consumed as-is
 
@@ -452,7 +452,7 @@ React until G16-P4.
 **Files in scope**:
 
 - Port `ProjectV2Page.tsx` → `dashboard-solid/src/routes/v2/project/[name].tsx`
-  + supporting components in `dashboard-solid/src/components/`
+  - supporting components in `dashboard-solid/src/components/`
 - Port the 3-region resizable layout (§5.1)
 - Port `BottomPanel`, `StatusBar`, `MainTabsBar`, `ActivityBar`,
   `InspectorBridge` → direct Inspector mount, `KanbanBoardBridge`

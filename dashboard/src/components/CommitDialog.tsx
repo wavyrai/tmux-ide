@@ -119,9 +119,7 @@ export function CommitDialog(props: CommitDialogProps) {
     // explicit work for a future "discard staged" affordance.
     const toStage = picks.filter((p) => !p.staged).map((p) => p.path);
     if (toStage.length > 0) {
-      const stageExit = await Effect.runPromiseExit(
-        stagePaths(props.sessionName, toStage),
-      );
+      const stageExit = await Effect.runPromiseExit(stagePaths(props.sessionName, toStage));
       if (Exit.isFailure(stageExit)) {
         setBusy(false);
         const f = Cause.failureOption(stageExit.cause);
@@ -173,9 +171,7 @@ export function CommitDialog(props: CommitDialogProps) {
 
           <div class="flex min-h-0 flex-1 flex-col gap-2 px-3 py-2">
             <label class="flex flex-col gap-1">
-              <span class="text-[10px] uppercase tracking-wider text-[var(--dim)]">
-                Message
-              </span>
+              <span class="text-[10px] uppercase tracking-wider text-[var(--dim)]">Message</span>
               <textarea
                 data-testid="commit-dialog-message"
                 value={message()}
@@ -188,9 +184,7 @@ export function CommitDialog(props: CommitDialogProps) {
             </label>
 
             <div class="flex min-h-0 flex-1 flex-col gap-1">
-              <span class="text-[10px] uppercase tracking-wider text-[var(--dim)]">
-                Files
-              </span>
+              <span class="text-[10px] uppercase tracking-wider text-[var(--dim)]">Files</span>
               <div
                 data-testid="commit-dialog-files"
                 class="min-h-0 flex-1 overflow-y-auto rounded border border-[var(--border-weak,var(--border))]"

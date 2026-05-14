@@ -130,11 +130,7 @@ export function PtyPane(props: PtyPaneProps) {
           <span data-testid="pty-pane-status">{statusText()}</span>
         </div>
       </Show>
-      <div
-        ref={host}
-        data-testid="pty-pane-host"
-        class="min-h-0 flex-1"
-      />
+      <div ref={host} data-testid="pty-pane-host" class="min-h-0 flex-1" />
       <TerminalSearchOverlay handle={search} />
     </div>
   );

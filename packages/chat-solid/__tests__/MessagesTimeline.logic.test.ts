@@ -107,21 +107,37 @@ describe("MessagesTimeline.logic", () => {
 
   describe("resolveAssistantCopyState", () => {
     it("hides while streaming", () => {
-      const state = resolveAssistantCopyState({ text: "hi", showCopyButton: true, streaming: true });
+      const state = resolveAssistantCopyState({
+        text: "hi",
+        showCopyButton: true,
+        streaming: true,
+      });
       expect(state.visible).toBe(false);
     });
     it("hides when the message has no text", () => {
-      const state = resolveAssistantCopyState({ text: "   ", showCopyButton: true, streaming: false });
+      const state = resolveAssistantCopyState({
+        text: "   ",
+        showCopyButton: true,
+        streaming: false,
+      });
       expect(state.visible).toBe(false);
       expect(state.text).toBe(null);
     });
     it("shows when terminal, non-streaming, has text", () => {
-      const state = resolveAssistantCopyState({ text: "ok", showCopyButton: true, streaming: false });
+      const state = resolveAssistantCopyState({
+        text: "ok",
+        showCopyButton: true,
+        streaming: false,
+      });
       expect(state.visible).toBe(true);
       expect(state.text).toBe("ok");
     });
     it("hides when not a terminal message", () => {
-      const state = resolveAssistantCopyState({ text: "ok", showCopyButton: false, streaming: false });
+      const state = resolveAssistantCopyState({
+        text: "ok",
+        showCopyButton: false,
+        streaming: false,
+      });
       expect(state.visible).toBe(false);
     });
   });

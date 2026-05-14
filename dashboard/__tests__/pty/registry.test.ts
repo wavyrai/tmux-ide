@@ -87,9 +87,7 @@ describe("registry — create / rename / delete", () => {
         },
       });
     }) as typeof fetch;
-    const term = await Effect.runPromise(
-      createTerminal("proj", { scopeId: "main", name: "Dev" }),
-    );
+    const term = await Effect.runPromise(createTerminal("proj", { scopeId: "main", name: "Dev" }));
     expect(term.id).toBe("new");
     const call = calls.find((c) => c.url.endsWith("/terminals"));
     expect(call?.method).toBe("POST");
@@ -115,9 +113,7 @@ describe("registry — create / rename / delete", () => {
         },
       });
     }) as typeof fetch;
-    const term = await Effect.runPromise(
-      renameTerminal("proj", "abc", { name: "Renamed" }),
-    );
+    const term = await Effect.runPromise(renameTerminal("proj", "abc", { name: "Renamed" }));
     expect(url).toContain("/api/project/proj/terminals/abc/rename");
     expect(body).toEqual({ name: "Renamed" });
     expect(term.name).toBe("Renamed");

@@ -74,20 +74,14 @@ function effect<T>(path: string, init?: RequestInit): Effect.Effect<T, GitApiErr
 // Effect-wrapped operations
 // ---------------------------------------------------------------------
 
-export function fetchGitStatus(
-  sessionName: string,
-): Effect.Effect<FullGitStatus, GitApiError> {
+export function fetchGitStatus(sessionName: string): Effect.Effect<FullGitStatus, GitApiError> {
   return effect<{ status: FullGitStatus }>(
     `/api/project/${encodeURIComponent(sessionName)}/git/status`,
   ).pipe(Effect.map((b) => b.status));
 }
 
-export function fetchBranches(
-  sessionName: string,
-): Effect.Effect<BranchesPayload, GitApiError> {
-  return effect<BranchesPayload>(
-    `/api/project/${encodeURIComponent(sessionName)}/git/branches`,
-  );
+export function fetchBranches(sessionName: string): Effect.Effect<BranchesPayload, GitApiError> {
+  return effect<BranchesPayload>(`/api/project/${encodeURIComponent(sessionName)}/git/branches`);
 }
 
 export function checkoutBranch(
@@ -136,28 +130,22 @@ export function stagePaths(
   sessionName: string,
   paths: ReadonlyArray<string>,
 ): Effect.Effect<void, GitApiError> {
-  return effect<{ ok: true }>(
-    `/api/project/${encodeURIComponent(sessionName)}/git/stage`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ paths }),
-    },
-  ).pipe(Effect.map(() => undefined));
+  return effect<{ ok: true }>(`/api/project/${encodeURIComponent(sessionName)}/git/stage`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ paths }),
+  }).pipe(Effect.map(() => undefined));
 }
 
 export function unstagePaths(
   sessionName: string,
   paths: ReadonlyArray<string>,
 ): Effect.Effect<void, GitApiError> {
-  return effect<{ ok: true }>(
-    `/api/project/${encodeURIComponent(sessionName)}/git/unstage`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ paths }),
-    },
-  ).pipe(Effect.map(() => undefined));
+  return effect<{ ok: true }>(`/api/project/${encodeURIComponent(sessionName)}/git/unstage`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ paths }),
+  }).pipe(Effect.map(() => undefined));
 }
 
 /** GitHub auth probe — branches the UI between "Sign in with gh",
@@ -223,10 +211,7 @@ export function fetchChecks(
 
 /** Reactive checks resource. Re-keyed on (sessionName, ref) so swapping
  *  branches or commits refetches without manual orchestration. */
-export function useChecks(
-  sessionName: () => string | null,
-  ref: () => string | null = () => null,
-) {
+export function useChecks(sessionName: () => string | null, ref: () => string | null = () => null) {
   const key = () => {
     const name = sessionName();
     if (!name) return null;
@@ -240,9 +225,11 @@ export function useChecks(
       ),
     );
   });
-  (resource as Resource<ChecksResponse | null> & {
-    refetch: () => Promise<ChecksResponse | null | undefined>;
-  }).refetch = async () => refetch();
+  (
+    resource as Resource<ChecksResponse | null> & {
+      refetch: () => Promise<ChecksResponse | null | undefined>;
+    }
+  ).refetch = async () => refetch();
   return resource as Resource<ChecksResponse | null> & {
     refetch: () => Promise<ChecksResponse | null | undefined>;
   };
@@ -272,13 +259,13 @@ export type GitStatusResource = Resource<FullGitStatus | null> & {
 
 /** Reactive git status for the current session. Pass an accessor so the
  *  resource re-fetches when the session changes. */
-export function useGitStatus(
-  sessionName: () => string | null,
-): GitStatusResource {
+export function useGitStatus(sessionName: () => string | null): GitStatusResource {
   const [resource, { refetch }] = createResource(sessionName, async (name) => {
     if (!name) return null;
     return Effect.runPromise(
-      fetchGitStatus(name).pipe(Effect.catchAll(() => Effect.succeed(null as FullGitStatus | null))),
+      fetchGitStatus(name).pipe(
+        Effect.catchAll(() => Effect.succeed(null as FullGitStatus | null)),
+      ),
     );
   });
   (resource as GitStatusResource).refetch = async () => refetch();
@@ -286,16 +273,16 @@ export function useGitStatus(
 }
 
 /** Reactive branch list for the current session. */
-export function useBranches(
-  sessionName: () => string | null,
-): {
+export function useBranches(sessionName: () => string | null): {
   resource: Resource<BranchesPayload | null>;
   refetch: () => Promise<BranchesPayload | null | undefined>;
 } {
   const [resource, { refetch }] = createResource(sessionName, async (name) => {
     if (!name) return null;
     return Effect.runPromise(
-      fetchBranches(name).pipe(Effect.catchAll(() => Effect.succeed(null as BranchesPayload | null))),
+      fetchBranches(name).pipe(
+        Effect.catchAll(() => Effect.succeed(null as BranchesPayload | null)),
+      ),
     );
   });
   return { resource, refetch: async () => refetch() };

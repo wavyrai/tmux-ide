@@ -78,9 +78,7 @@ function TextRendererPlaceholder(props: { file: ManagedFile }) {
       class="flex h-full flex-col items-center justify-center gap-2 text-[var(--dim)]"
     >
       <code class="font-mono text-[12px]">{fileName()}</code>
-      <p class="text-[11px] opacity-70">
-        Monaco code editor lands in G17-P4 (Files view wire-up).
-      </p>
+      <p class="text-[11px] opacity-70">Monaco code editor lands in G17-P4 (Files view wire-up).</p>
     </div>
   );
 }

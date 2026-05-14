@@ -19,9 +19,7 @@ import { join } from "node:path";
 import { createLspClient, languageForFile } from "../client";
 import { LANGUAGE_SERVERS, languageServerConfig } from "../launch";
 
-const ENV_KEYS = LANGUAGE_SERVERS.map((c) => c.binaryEnvVar).filter(
-  (v): v is string => Boolean(v),
-);
+const ENV_KEYS = LANGUAGE_SERVERS.map((c) => c.binaryEnvVar).filter((v): v is string => Boolean(v));
 
 let savedPath: string | undefined;
 let savedEnv: Record<string, string | undefined> = {};
@@ -84,9 +82,9 @@ describe("createLspClient — degraded no-op mode", () => {
   });
 
   it("throws on a typo'd language id — that's a programmer bug, not a missing binary", async () => {
-    await expect(
-      createLspClient({ root: tempDir, language: "pyhton" as never }),
-    ).rejects.toThrow(/Unknown LSP language/);
+    await expect(createLspClient({ root: tempDir, language: "pyhton" as never })).rejects.toThrow(
+      /Unknown LSP language/,
+    );
     // Sanity: the registered names work.
     expect(languageServerConfig("python").language).toBe("python");
   });

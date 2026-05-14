@@ -266,7 +266,9 @@ export function MissionControlDashboardView(props: MissionControlDashboardViewPr
           }
         >
           {(m) => (
-            <div style={{ padding: "16px", display: "flex", "flex-direction": "column", gap: "16px" }}>
+            <div
+              style={{ padding: "16px", display: "flex", "flex-direction": "column", gap: "16px" }}
+            >
               {/* HeroStrip */}
               <section
                 data-mission-section="hero"
@@ -313,9 +315,7 @@ export function MissionControlDashboardView(props: MissionControlDashboardViewPr
                     </span>
                   </Show>
                   <Show when={m().branch}>
-                    <span style={{ color: "var(--dim)", "font-size": "11px" }}>
-                      ⎇ {m().branch}
-                    </span>
+                    <span style={{ color: "var(--dim)", "font-size": "11px" }}>⎇ {m().branch}</span>
                   </Show>
                 </div>
                 <Show when={m().description}>

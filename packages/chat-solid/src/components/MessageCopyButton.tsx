@@ -38,8 +38,7 @@ export function MessageCopyButton(props: MessageCopyButtonProps): JSX.Element {
     if (empty()) return;
     setError(false);
     try {
-      const writer =
-        props.write ?? ((text: string) => navigator.clipboard.writeText(text));
+      const writer = props.write ?? ((text: string) => navigator.clipboard.writeText(text));
       await writer(props.text);
       setCopied(true);
       window.setTimeout(() => setCopied(false), COPIED_RESET_MS);

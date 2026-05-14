@@ -169,12 +169,7 @@ function parseChanges(records: ParsedRecord[]): ChangeBuckets {
   return { staged, unstaged };
 }
 
-function addBuckets(
-  staged: GitChange[],
-  unstaged: GitChange[],
-  path: string,
-  xy: string,
-): void {
+function addBuckets(staged: GitChange[], unstaged: GitChange[], path: string, xy: string): void {
   const X = xy[0] ?? ".";
   const Y = xy[1] ?? ".";
   if (X !== "." && X !== "?") {
@@ -209,16 +204,34 @@ export function parseStatus(rawZ: string): FullGitStatus {
  *  Each branch is one line, fields NUL-delimited. */
 export function parseBranchList(raw: string): {
   current: string | null;
-  branches: Array<{ name: string; isCurrent: boolean; upstream?: string; ahead?: number; behind?: number }>;
+  branches: Array<{
+    name: string;
+    isCurrent: boolean;
+    upstream?: string;
+    ahead?: number;
+    behind?: number;
+  }>;
 } {
   const lines = raw.split("\n").filter((l) => l.trim().length > 0);
-  const branches: Array<{ name: string; isCurrent: boolean; upstream?: string; ahead?: number; behind?: number }> = [];
+  const branches: Array<{
+    name: string;
+    isCurrent: boolean;
+    upstream?: string;
+    ahead?: number;
+    behind?: number;
+  }> = [];
   let current: string | null = null;
   for (const line of lines) {
     const [headFlag, name, upstream, track] = line.split("\0");
     if (!name) continue;
     const isCurrent = headFlag === "*";
-    const entry: { name: string; isCurrent: boolean; upstream?: string; ahead?: number; behind?: number } = {
+    const entry: {
+      name: string;
+      isCurrent: boolean;
+      upstream?: string;
+      ahead?: number;
+      behind?: number;
+    } = {
       name,
       isCurrent,
     };

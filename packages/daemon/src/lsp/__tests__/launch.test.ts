@@ -32,9 +32,9 @@ import {
 
 const LANGUAGES: Language[] = ["typescript", "python", "rust", "go"];
 
-const ENV_OVERRIDES = LANGUAGES.map(
-  (lang) => languageServerConfig(lang).binaryEnvVar,
-).filter((v): v is string => Boolean(v));
+const ENV_OVERRIDES = LANGUAGES.map((lang) => languageServerConfig(lang).binaryEnvVar).filter(
+  (v): v is string => Boolean(v),
+);
 
 let savedEnv: Record<string, string | undefined> = {};
 let savedPath: string | undefined;

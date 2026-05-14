@@ -12,13 +12,7 @@
  */
 
 /** All possible kinds a file can be in once opened by the editor. */
-export type ManagedFileKind =
-  | "text"
-  | "markdown"
-  | "svg"
-  | "image"
-  | "too-large"
-  | "binary";
+export type ManagedFileKind = "text" | "markdown" | "svg" | "image" | "too-large" | "binary";
 
 /**
  * A file ready for one of the renderers below. Path is workspace-

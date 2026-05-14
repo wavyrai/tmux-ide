@@ -17,25 +17,14 @@
  * `<LspRenameModal editor={editor} sessionName=… filePath=… />`.
  */
 
-import {
-  createEffect,
-  createSignal,
-  For,
-  onCleanup,
-  Show,
-  type JSX,
-} from "solid-js";
+import { createEffect, createSignal, For, onCleanup, Show, type JSX } from "solid-js";
 import { Portal } from "solid-js/web";
 import { Effect } from "effect";
 import type * as monaco from "monaco-editor";
 import { lspRename } from "@/lib/lsp/api";
 import { fetchFilePreview, saveFile } from "@/lib/api";
 import { getSessionDir } from "@/lib/lsp/session-dir";
-import {
-  applyTextEdits,
-  planWorkspaceEdit,
-  type AppliedFileEdit,
-} from "@/lib/lsp/workspace-edit";
+import { applyTextEdits, planWorkspaceEdit, type AppliedFileEdit } from "@/lib/lsp/workspace-edit";
 
 export interface LspRenameModalProps {
   editor: () => monaco.editor.IStandaloneCodeEditor | null;
@@ -73,10 +62,7 @@ export function LspRenameModal(props: LspRenameModalProps): JSX.Element {
       close();
       return;
     }
-    if (
-      !open() &&
-      (event.key === "F2" || (event.key === "F6" && event.shiftKey))
-    ) {
+    if (!open() && (event.key === "F2" || (event.key === "F6" && event.shiftKey))) {
       const editor = props.editor();
       if (!editor) return;
       // Only fire when the editor has focus — F2 also fires inside
@@ -153,9 +139,7 @@ export function LspRenameModal(props: LspRenameModalProps): JSX.Element {
     setErrorMessage(null);
     try {
       for (const file of data.files) {
-        await Effect.runPromise(
-          saveFile(props.sessionName, file.filePath, file.after),
-        );
+        await Effect.runPromise(saveFile(props.sessionName, file.filePath, file.after));
       }
       close();
     } catch (err) {
@@ -225,9 +209,7 @@ export function LspRenameModal(props: LspRenameModalProps): JSX.Element {
                   <div class="flex min-h-0 flex-1 flex-col overflow-hidden">
                     <Show when={data.warnings.length > 0}>
                       <ul class="border-b border-[var(--border)] px-4 py-2 text-[11px] text-[var(--yellow,#d6a44b)]">
-                        <For each={data.warnings}>
-                          {(w) => <li>⚠ {w}</li>}
-                        </For>
+                        <For each={data.warnings}>{(w) => <li>⚠ {w}</li>}</For>
                       </ul>
                     </Show>
                     <Show
@@ -241,10 +223,7 @@ export function LspRenameModal(props: LspRenameModalProps): JSX.Element {
                         </div>
                       }
                     >
-                      <div
-                        data-testid="v2-rename-preview"
-                        class="min-h-0 flex-1 overflow-y-auto"
-                      >
+                      <div data-testid="v2-rename-preview" class="min-h-0 flex-1 overflow-y-auto">
                         <For each={data.files}>
                           {(file) => (
                             <div class="border-b border-[var(--border-weak)]">
@@ -291,9 +270,7 @@ export function LspRenameModal(props: LspRenameModalProps): JSX.Element {
             </Show>
             <Show when={phase() === "error"}>
               <div class="flex flex-col gap-2 p-4 text-[11px]">
-                <div class="text-[var(--red,#cc6666)]">
-                  {errorMessage() ?? "Rename failed."}
-                </div>
+                <div class="text-[var(--red,#cc6666)]">{errorMessage() ?? "Rename failed."}</div>
                 <div class="flex justify-end">
                   <button
                     type="button"
@@ -342,7 +319,7 @@ function RenameDiff(props: { before: string; after: string }): JSX.Element {
           }
           return (
             <div data-row="context" class="whitespace-pre text-[var(--dim)]">
-              <span aria-hidden="true">  </span>
+              <span aria-hidden="true"> </span>
               {row.text}
             </div>
           );
@@ -367,11 +344,7 @@ function diffLines(before: string, after: string): DiffRow[] {
   while (head < a.length && head < b.length && a[head] === b[head]) head++;
   let tailA = a.length - 1;
   let tailB = b.length - 1;
-  while (
-    tailA > head &&
-    tailB > head &&
-    a[tailA] === b[tailB]
-  ) {
+  while (tailA > head && tailB > head && a[tailA] === b[tailB]) {
     tailA--;
     tailB--;
   }

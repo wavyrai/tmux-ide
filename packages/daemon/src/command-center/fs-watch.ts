@@ -66,10 +66,7 @@ function buildRelativePath(resolvedRoot: string, absPath: string): string | null
  * unsubscribe function. When the last listener for a directory
  * unsubscribes, the chokidar watcher is closed.
  */
-export function subscribeFsChanges(
-  sessionDir: string,
-  listener: Listener,
-): () => void {
+export function subscribeFsChanges(sessionDir: string, listener: Listener): () => void {
   let resolvedRoot: string;
   try {
     resolvedRoot = realpathSync(sessionDir);

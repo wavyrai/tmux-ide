@@ -46,8 +46,7 @@ describe("CommitDialog", () => {
       const body = init?.body ? JSON.parse(String(init.body)) : null;
       calls.push({ url, body });
       if (url.endsWith("/git/stage")) return jsonOk({ ok: true });
-      if (url.endsWith("/git/commit"))
-        return jsonOk({ ok: true, sha: "abc1234567890" });
+      if (url.endsWith("/git/commit")) return jsonOk({ ok: true, sha: "abc1234567890" });
       throw new Error(`Unhandled fetch: ${url}`);
     }) as typeof fetch;
 

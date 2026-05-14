@@ -44,13 +44,13 @@ Daemon → dashboard wiring (`packages/daemon/src/command-center/static.ts:32` `
 
 A user runs `npm i -g tmux-ide && tmux-ide` today. Step-by-step:
 
-| # | What happens | Why |
-|---|---|---|
-| 1 | `npm install` succeeds, `postinstall` writes `~/.claude` if `--global`. | OK. |
-| 2 | `tmux-ide` invokes `bin/cli.ts`. | `#!/usr/bin/env bun` → on a node-only machine: **`env: 'bun': No such file or directory`**. |
-| 3 | If user has bun: bun loads `bin/cli.ts`. | First import: `import { launch } from "../packages/daemon/src/launch.ts"`. Tarball has no `packages/` → **`Error: Cannot find module '<install-dir>/packages/daemon/src/launch.ts'`**. |
-| 4 | Even if the daemon resolved, the daemon imports `@tmux-ide/contracts` + `@tmux-ide/tmux-bridge`. | Those packages are `private: true` and aren't on npm. Resolution fails inside `node_modules`. |
-| 5 | If the daemon started, `serveDashboard()` would `resolveDashboardOut()`. | Walks up looking for `dashboard/out`. The tarball ships `dashboard/out/` but it has no `index.html` → root `/` returns 404. |
+| #   | What happens                                                                                     | Why                                                                                                                                                                                    |
+| --- | ------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | `npm install` succeeds, `postinstall` writes `~/.claude` if `--global`.                          | OK.                                                                                                                                                                                    |
+| 2   | `tmux-ide` invokes `bin/cli.ts`.                                                                 | `#!/usr/bin/env bun` → on a node-only machine: **`env: 'bun': No such file or directory`**.                                                                                            |
+| 3   | If user has bun: bun loads `bin/cli.ts`.                                                         | First import: `import { launch } from "../packages/daemon/src/launch.ts"`. Tarball has no `packages/` → **`Error: Cannot find module '<install-dir>/packages/daemon/src/launch.ts'`**. |
+| 4   | Even if the daemon resolved, the daemon imports `@tmux-ide/contracts` + `@tmux-ide/tmux-bridge`. | Those packages are `private: true` and aren't on npm. Resolution fails inside `node_modules`.                                                                                          |
+| 5   | If the daemon started, `serveDashboard()` would `resolveDashboardOut()`.                         | Walks up looking for `dashboard/out`. The tarball ships `dashboard/out/` but it has no `index.html` → root `/` returns 404.                                                            |
 
 Five distinct failure modes, two of them blocking before the daemon can even start. The published artifact is currently **non-functional end-to-end**.
 
@@ -134,14 +134,14 @@ Invariants:
 
 **Recommendation: bundle-and-publish single `tmux-ide` (N2a) for v2.x; revisit multi-publish for v3.**
 
-| Lever | N2a — bundle (one tarball) | N2b — multi-publish |
-|---|---|---|
-| User surface | `npm i -g tmux-ide` — one package | `npm i -g tmux-ide` — six transitive |
-| Release cadence | Single version, single git tag | Per-package SemVer, coordinated bumps |
-| Dependency hell | Inlined → none | `@tmux-ide/contracts^x.y.z` cross-resolution |
-| Code reuse outside this repo | None (private bundle) | `@tmux-ide/daemon` already publishConfig=public — re-usable |
-| Maintenance burden | Bundle config in one place | Six per-package version + publish flows |
-| Time to first working publish | ~1 day | ~3–5 days (bumps, scripts, docs, tests) |
+| Lever                         | N2a — bundle (one tarball)        | N2b — multi-publish                                         |
+| ----------------------------- | --------------------------------- | ----------------------------------------------------------- |
+| User surface                  | `npm i -g tmux-ide` — one package | `npm i -g tmux-ide` — six transitive                        |
+| Release cadence               | Single version, single git tag    | Per-package SemVer, coordinated bumps                       |
+| Dependency hell               | Inlined → none                    | `@tmux-ide/contracts^x.y.z` cross-resolution                |
+| Code reuse outside this repo  | None (private bundle)             | `@tmux-ide/daemon` already publishConfig=public — re-usable |
+| Maintenance burden            | Bundle config in one place        | Six per-package version + publish flows                     |
+| Time to first working publish | ~1 day                            | ~3–5 days (bumps, scripts, docs, tests)                     |
 
 Engineering rigor argues for N2a now (the project ships a single user-facing binary; multi-package publish solves a problem we don't yet have), with a clean escape hatch: `@tmux-ide/daemon` keeps its `publishConfig` so when a downstream consumer needs it (the electron app, or third-party integrations) we flip the switch without re-architecting.
 
@@ -153,12 +153,12 @@ Engineering rigor argues for N2a now (the project ships a single user-facing bin
 
 ## Sub-task index
 
-| ID | Title | Blocks |
-|----|---|---|
-| **N1** | Compile `bin/cli` to JS + drop bun from user surface | N2 |
+| ID     | Title                                                                      | Blocks |
+| ------ | -------------------------------------------------------------------------- | ------ |
+| **N1** | Compile `bin/cli` to JS + drop bun from user surface                       | N2     |
 | **N2** | Bundle daemon + workspace deps into `dist/`, ship `packages/`-free tarball | N3, N4 |
-| **N3** | Make `dashboard/out` self-contained (HTML pages + prepublish gate) | N5 |
-| **N4** | Trim `files` to runtime-only; drop vestigial `src/` | N5 |
-| **N5** | Smoke-test the published tarball end-to-end in CI | — |
+| **N3** | Make `dashboard/out` self-contained (HTML pages + prepublish gate)         | N5     |
+| **N4** | Trim `files` to runtime-only; drop vestigial `src/`                        | N5     |
+| **N5** | Smoke-test the published tarball end-to-end in CI                          | —      |
 
 N2a is the load-bearing decision in §5; everything else is mechanical once it lands.

@@ -54,10 +54,7 @@ export function MessageRoleHeader(props: MessageRoleHeaderProps) {
       >
         {ROLE_GLYPH[props.tone]}
       </span>
-      <span
-        data-testid="message-role-name"
-        class="font-medium text-[var(--fg)]"
-      >
+      <span data-testid="message-role-name" class="font-medium text-[var(--fg)]">
         {props.name}
       </span>
       <Show when={props.badge}>

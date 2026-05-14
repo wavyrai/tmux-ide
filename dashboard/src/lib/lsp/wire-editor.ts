@@ -32,10 +32,7 @@ import {
   type LspLocationLink,
 } from "./api";
 import { getSessionDir } from "./session-dir";
-import {
-  clearDiagnosticsForBuffer,
-  setDiagnosticsForBuffer,
-} from "./diagnostics-store";
+import { clearDiagnosticsForBuffer, setDiagnosticsForBuffer } from "./diagnostics-store";
 import { computePollBackoffDelay } from "./poll-backoff";
 
 export interface WireLspInput {
@@ -78,10 +75,7 @@ function lspSeverityToMonaco(
   }
 }
 
-function lspDiagnosticToMonaco(
-  m: typeof monaco,
-  d: LspDiagnostic,
-): monaco.editor.IMarkerData {
+function lspDiagnosticToMonaco(m: typeof monaco, d: LspDiagnostic): monaco.editor.IMarkerData {
   return {
     severity: lspSeverityToMonaco(m, d.severity),
     message: d.message,
@@ -140,10 +134,7 @@ function firstDefinitionTarget(
   };
 }
 
-async function gotoDefinitionAt(
-  input: WireLspInput,
-  position: monaco.Position,
-): Promise<void> {
+async function gotoDefinitionAt(input: WireLspInput, position: monaco.Position): Promise<void> {
   let result;
   try {
     result = await lspDefinition(input.sessionName, {

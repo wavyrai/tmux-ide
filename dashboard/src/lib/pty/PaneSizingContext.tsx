@@ -44,10 +44,7 @@ export interface PaneSizingContextValue {
   /** Accessor over the wrapper div — null until mount. */
   containerRef: Accessor<HTMLDivElement | null>;
   /** Measure the wrapper using cell metrics; null when offscreen. */
-  measureCurrentDimensions: (
-    cellWidth: number,
-    cellHeight: number,
-  ) => TerminalDimensions | null;
+  measureCurrentDimensions: (cellWidth: number, cellHeight: number) => TerminalDimensions | null;
 }
 
 const Ctx = createContext<PaneSizingContextValue | null>(null);

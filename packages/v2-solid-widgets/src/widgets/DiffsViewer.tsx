@@ -20,15 +20,7 @@
  * setOptions on the mount handle pushes selection/style updates from
  * the React host into the live Solid signal without remount.
  */
-import {
-  createEffect,
-  createMemo,
-  createSignal,
-  For,
-  Show,
-  onCleanup,
-  onMount,
-} from "solid-js";
+import { createEffect, createMemo, createSignal, For, Show, onCleanup, onMount } from "solid-js";
 import { fetchProjectDiff, fetchProjectFileDiff, type DiffData, type DiffFileEntry } from "../api";
 import type { DiffsViewerMountOptions } from "../types";
 
@@ -262,8 +254,7 @@ export function DiffsViewerView(props: DiffsViewerViewProps) {
                       padding: "0 8px",
                       height: "20px",
                       "font-size": "11px",
-                      background:
-                        diffStyle() === style ? "var(--surface-active)" : "transparent",
+                      background: diffStyle() === style ? "var(--surface-active)" : "transparent",
                       color: diffStyle() === style ? "var(--fg)" : "var(--dim)",
                       border: "none",
                       cursor: "pointer",
@@ -310,8 +301,7 @@ export function DiffsViewerView(props: DiffsViewerViewProps) {
                   padding: "0 8px",
                   "text-align": "left",
                   border: "none",
-                  background:
-                    selectedFile() === null ? "var(--surface-active)" : "transparent",
+                  background: selectedFile() === null ? "var(--surface-active)" : "transparent",
                   color: selectedFile() === null ? "var(--accent)" : "var(--dim)",
                   cursor: "pointer",
                   "font-family": "inherit",
@@ -321,9 +311,7 @@ export function DiffsViewerView(props: DiffsViewerViewProps) {
                 <span style={{ flex: "1", overflow: "hidden", "text-overflow": "ellipsis" }}>
                   All files
                 </span>
-                <span style={{ "flex-shrink": "0", color: "var(--dim)" }}>
-                  {files().length}
-                </span>
+                <span style={{ "flex-shrink": "0", color: "var(--dim)" }}>{files().length}</span>
               </button>
               <For each={files()}>
                 {(f) => {

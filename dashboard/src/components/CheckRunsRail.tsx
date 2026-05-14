@@ -12,14 +12,7 @@
  */
 
 import { createMemo, For, Show } from "solid-js";
-import {
-  CheckCircle2,
-  Clock,
-  HelpCircle,
-  Loader2,
-  XCircle,
-  MinusCircle,
-} from "lucide-solid";
+import { CheckCircle2, Clock, HelpCircle, Loader2, XCircle, MinusCircle } from "lucide-solid";
 import type { CheckRun } from "@tmux-ide/contracts";
 import { useChecks } from "@/lib/git";
 
@@ -108,7 +101,9 @@ export function CheckRunsRail(props: CheckRunsRailProps) {
         </span>
 
         <Show when={runs().length > 0}>
-          <span aria-hidden="true" class="opacity-30">│</span>
+          <span aria-hidden="true" class="opacity-30">
+            │
+          </span>
           <For each={runs()}>
             {(run) => {
               const tone = chipTone(run);

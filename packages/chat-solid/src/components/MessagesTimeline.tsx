@@ -19,22 +19,11 @@
  * tone if any failed, accent tone if any in-flight, otherwise quiet.
  */
 
-import {
-  createMemo,
-  createSignal,
-  For,
-  Show,
-  type Accessor,
-  type JSX,
-} from "solid-js";
+import { createMemo, createSignal, For, Show, type Accessor, type JSX } from "solid-js";
 import { useAutoScroll } from "../hooks/useAutoScroll";
 import { deriveChangedFiles } from "../lib/changedFiles";
 import { collectImageBlocks, previewAt } from "../lib/imageBlocks";
-import {
-  ImageExpandContext,
-  useImageExpand,
-  type ImageExpandHandler,
-} from "../lib/imageExpand";
+import { ImageExpandContext, useImageExpand, type ImageExpandHandler } from "../lib/imageExpand";
 import { renderMarkdown } from "../lib/markdown";
 import { resolveMarkdownFileLinkMeta } from "../lib/markdownLinks";
 import type {
@@ -46,13 +35,8 @@ import type {
   ToolCallView,
 } from "../types";
 import { ChangedFilesTree } from "./ChangedFilesTree";
-import {
-  ExpandedImageDialog,
-} from "./ExpandedImageDialog";
-import {
-  InlineImagePreview,
-  type ExpandedImagePreview,
-} from "./ExpandedImagePreview";
+import { ExpandedImageDialog } from "./ExpandedImageDialog";
+import { InlineImagePreview, type ExpandedImagePreview } from "./ExpandedImagePreview";
 import { MessageCopyButton } from "./MessageCopyButton";
 import { MessageRoleHeader } from "./MessageRoleHeader";
 import {
@@ -81,9 +65,7 @@ export function MessagesTimeline(props: {
   const [expandedPreview, setExpandedPreview] = createSignal<ExpandedImagePreview | null>(null);
   const changedFiles = createMemo(() => deriveChangedFiles(props.messages()));
   const followSignal = createMemo(() => props.rows().map(rowSignature).join("|"));
-  const terminalAssistantIds = createMemo(() =>
-    deriveTerminalAssistantMessageIds(props.rows()),
-  );
+  const terminalAssistantIds = createMemo(() => deriveTerminalAssistantMessageIds(props.rows()));
   useAutoScroll(container, sentinel, followSignal);
 
   // Single dialog mount hoisted to the timeline so user / assistant
@@ -127,10 +109,7 @@ export function MessagesTimeline(props: {
           </div>
         </div>
       </Show>
-      <ExpandedImageDialog
-        preview={expandedPreview}
-        onClose={() => setExpandedPreview(null)}
-      />
+      <ExpandedImageDialog preview={expandedPreview} onClose={() => setExpandedPreview(null)} />
     </ImageExpandContext.Provider>
   );
 }
@@ -158,11 +137,7 @@ function TimelineRow(props: TimelineRowProps): JSX.Element {
   }
   if (props.row.kind === "working") {
     return (
-      <div
-        data-testid="message-row"
-        data-kind="working"
-        class="py-2 pl-1"
-      >
+      <div data-testid="message-row" data-kind="working" class="py-2 pl-1">
         <WorkingIndicator />
       </div>
     );
@@ -188,12 +163,7 @@ function MessageRow(props: {
   const tone = createMemo(() => deriveMessageTone(props.message));
   if (props.message.role === "user") {
     return (
-      <UserRow
-        message={props.message}
-        tone={tone}
-        cwd={props.cwd}
-        onOpenFile={props.onOpenFile}
-      />
+      <UserRow message={props.message} tone={tone} cwd={props.cwd} onOpenFile={props.onOpenFile} />
     );
   }
   return (
@@ -228,7 +198,9 @@ function UserRow(props: {
         tone={props.tone()}
         name="You"
         timestamp={props.message.createdAt}
-        actions={<MessageCopyButton text={plainText()} class="opacity-0 group-hover/user:opacity-100" />}
+        actions={
+          <MessageCopyButton text={plainText()} class="opacity-0 group-hover/user:opacity-100" />
+        }
       />
       <div class="min-w-0 text-[13px] leading-relaxed text-[var(--fg)]">
         <For each={props.message.content}>
@@ -261,9 +233,7 @@ function AssistantRow(props: {
   onOpenFile?: (meta: MarkdownFileLinkMeta) => void;
   isTerminal: boolean;
 }): JSX.Element {
-  const renderedText = createMemo(() =>
-    renderMarkdown(props.message.text, { cwd: props.cwd?.() }),
-  );
+  const renderedText = createMemo(() => renderMarkdown(props.message.text, { cwd: props.cwd?.() }));
   const hasText = () => props.message.text.length > 0;
   const hasThought = () =>
     Boolean(props.message.thoughtText && props.message.thoughtText.length > 0);
@@ -307,9 +277,7 @@ function AssistantRow(props: {
           <div
             class="chat-solid-markdown chat-markdown text-[13px] leading-relaxed text-[var(--fg)]"
             innerHTML={renderedText()}
-            onClick={(event) =>
-              handleFileLinkClick(event, props.cwd?.(), props.onOpenFile)
-            }
+            onClick={(event) => handleFileLinkClick(event, props.cwd?.(), props.onOpenFile)}
           />
           <Show when={props.message.streaming}>
             <span class="chat-solid-caret ml-1" />
@@ -341,10 +309,7 @@ function AssistantRow(props: {
       </Show>
 
       <Show when={!hasText() && !hasThought() && !hasTools() && !props.message.streaming}>
-        <span
-          data-testid="message-empty"
-          class="text-[12px] text-[var(--fg-muted,var(--dim))]"
-        >
+        <span data-testid="message-empty" class="text-[12px] text-[var(--fg-muted,var(--dim))]">
           No assistant output.
         </span>
       </Show>
@@ -359,7 +324,9 @@ function AssistantRow(props: {
  * any failed. Clicking expands the inline list (rendered through the
  * existing `ToolCallCard` component, unchanged).
  */
-function ToolCallsCluster(props: { toolCalls: Accessor<ReadonlyArray<ToolCallView>> }): JSX.Element {
+function ToolCallsCluster(props: {
+  toolCalls: Accessor<ReadonlyArray<ToolCallView>>;
+}): JSX.Element {
   const [open, setOpen] = createSignal(false);
   const summary = createMemo(() => summarizeToolCalls(props.toolCalls()));
 
@@ -382,9 +349,7 @@ function ToolCallsCluster(props: { toolCalls: Accessor<ReadonlyArray<ToolCallVie
         >
           {open() ? "▾" : "▸"}
         </span>
-        <span class="font-medium text-[var(--fg)]">
-          Tool calls ({summary().count})
-        </span>
+        <span class="font-medium text-[var(--fg)]">Tool calls ({summary().count})</span>
         <Show when={summary().hasFailure}>
           <span
             data-testid="tool-calls-failure-badge"
@@ -407,9 +372,7 @@ function ToolCallsCluster(props: { toolCalls: Accessor<ReadonlyArray<ToolCallVie
           data-testid="tool-calls-list"
           class="border-t border-[var(--border-weak,var(--border))] px-2 py-2"
         >
-          <For each={props.toolCalls()}>
-            {(toolCall) => <ToolCallCard toolCall={toolCall} />}
-          </For>
+          <For each={props.toolCalls()}>{(toolCall) => <ToolCallCard toolCall={toolCall} />}</For>
         </div>
       </Show>
     </div>
@@ -456,10 +419,7 @@ function UserContentBlockView(props: {
           </p>
         }
       >
-        <div
-          data-testid="user-image-block"
-          class="my-1.5 inline-block max-w-[400px]"
-        >
+        <div data-testid="user-image-block" class="my-1.5 inline-block max-w-[400px]">
           <InlineImagePreview
             src={src}
             alt={() => `image (${block.mimeType || "image"})`}

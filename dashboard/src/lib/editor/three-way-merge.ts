@@ -112,11 +112,7 @@ function splitLines(s: string): string[] {
   return s.split("\n");
 }
 
-function classify(
-  baseSlice: string[],
-  externalSlice: string[],
-  localSlice: string[],
-): HunkKind {
+function classify(baseSlice: string[], externalSlice: string[], localSlice: string[]): HunkKind {
   const baseStr = baseSlice.join("\n");
   const externalStr = externalSlice.join("\n");
   const localStr = localSlice.join("\n");
@@ -134,11 +130,7 @@ function classify(
  * Diff three text blobs into a sequence of hunks. Pure: same
  * inputs always produce the same hunks.
  */
-export function threeWayMerge(
-  base: string,
-  external: string,
-  local: string,
-): MergeHunk[] {
+export function threeWayMerge(base: string, external: string, local: string): MergeHunk[] {
   const baseLines = splitLines(base);
   const externalLines = splitLines(external);
   const localLines = splitLines(local);
@@ -170,11 +162,7 @@ export function threeWayMerge(
     localSlice: string[],
     baseStartLine: number,
   ): void => {
-    if (
-      baseSlice.length === 0 &&
-      externalSlice.length === 0 &&
-      localSlice.length === 0
-    ) {
+    if (baseSlice.length === 0 && externalSlice.length === 0 && localSlice.length === 0) {
       return;
     }
     hunks.push({
@@ -198,12 +186,7 @@ export function threeWayMerge(
       pushHunk(baseSlice, externalSlice, localSlice, bIdx + 1);
     }
     // The anchor line itself is identical across all three.
-    pushHunk(
-      [baseLines[anchor]!],
-      [externalLines[targetE]!],
-      [localLines[targetL]!],
-      anchor + 1,
-    );
+    pushHunk([baseLines[anchor]!], [externalLines[targetE]!], [localLines[targetL]!], anchor + 1);
     bIdx = anchor + 1;
     eIdx = targetE + 1;
     lIdx = targetL + 1;

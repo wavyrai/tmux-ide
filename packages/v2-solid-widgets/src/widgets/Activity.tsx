@@ -113,9 +113,7 @@ export function ActivityView(props: ActivityViewProps) {
   const [query, setQuery] = createSignal("");
   const [live, setLive] = createSignal(true);
 
-  const rawEvents = createMemo<ReadonlyArray<ActivityEvent>>(
-    () => props.options().events ?? [],
-  );
+  const rawEvents = createMemo<ReadonlyArray<ActivityEvent>>(() => props.options().events ?? []);
   const hideHeartbeats = createMemo(() => props.options().hideHeartbeats !== false);
 
   // Base event list: drop heartbeats (unless flagged off), sort newest-first.
@@ -153,9 +151,7 @@ export function ActivityView(props: ActivityViewProps) {
       if (kpi === "types" && !e.type) return false;
       if (selected.size > 0 && !selected.has(e.type)) return false;
       if (!q) return true;
-      const hay = [formatMessage(e), e.agent ?? "", e.type, e.taskId ?? ""]
-        .join(" ")
-        .toLowerCase();
+      const hay = [formatMessage(e), e.agent ?? "", e.type, e.taskId ?? ""].join(" ").toLowerCase();
       return hay.includes(q);
     });
   });

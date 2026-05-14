@@ -105,7 +105,14 @@ const DEFAULT_BATCH_SIZE = 1000;
  */
 export function normaliseDiffStatus(kind: string): TurnDiffStatus {
   const k = kind.trim().toLowerCase();
-  if (k === "added" || k === "add" || k === "create" || k === "created" || k === "a" || k === "new") {
+  if (
+    k === "added" ||
+    k === "add" ||
+    k === "create" ||
+    k === "created" ||
+    k === "a" ||
+    k === "new"
+  ) {
     return "added";
   }
   if (k === "deleted" || k === "delete" || k === "remove" || k === "removed" || k === "d") {

@@ -9,10 +9,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createSignal } from "solid-js";
 import { render } from "solid-js/web";
 import { CommandPaletteView } from "../src/widgets/CommandPalette";
-import type {
-  CommandPaletteMountOptions,
-  PaletteCategoryDef,
-} from "../src/types";
+import type { CommandPaletteMountOptions, PaletteCategoryDef } from "../src/types";
 
 function mountWidget(initial: CommandPaletteMountOptions) {
   const container = document.createElement("div");
@@ -66,9 +63,7 @@ function categories(): PaletteCategoryDef[] {
     {
       category: "threads",
       label: "Threads",
-      items: [
-        { id: "abc", label: "Refactor sweep", description: "claude-code" },
-      ],
+      items: [{ id: "abc", label: "Refactor sweep", description: "claude-code" }],
     },
     {
       category: "views",
@@ -82,9 +77,7 @@ function categories(): PaletteCategoryDef[] {
     {
       category: "commands",
       label: "Commands",
-      items: [
-        { id: "v2.go-overview", label: "Go to v2 overview", keybind: "⌘1" },
-      ],
+      items: [{ id: "v2.go-overview", label: "Go to v2 overview", keybind: "⌘1" }],
     },
   ];
 }
@@ -94,18 +87,14 @@ describe("CommandPalette widget", () => {
     mounted = mountWidget({ open: false, categories: categories() });
     expect(mounted.container.querySelector('[data-testid="command-palette"]')).toBeNull();
     mounted.setOptions({ open: true });
-    expect(
-      mounted.container.querySelector('[data-testid="command-palette"]'),
-    ).toBeTruthy();
+    expect(mounted.container.querySelector('[data-testid="command-palette"]')).toBeTruthy();
     expect(mounted.container.querySelector('[data-testid="palette-input"]')).toBeTruthy();
   });
 
   it("renders one section header per non-empty category and shows all items by default", () => {
     mounted = mountWidget({ open: true, categories: categories() });
     for (const c of ["providers", "skills", "tasks", "threads", "views", "commands"]) {
-      expect(
-        mounted.container.querySelector(`[data-testid="palette-group-${c}"]`),
-      ).toBeTruthy();
+      expect(mounted.container.querySelector(`[data-testid="palette-group-${c}"]`)).toBeTruthy();
     }
     // Every supplied item renders as a row.
     const items = mounted.container.querySelectorAll('[data-testid="palette-item"]');
@@ -181,9 +170,7 @@ describe("CommandPalette widget", () => {
     input.value = "asdfqwertynothing";
     input.dispatchEvent(new Event("input", { bubbles: true }));
     expect(mounted.container.querySelector('[data-testid="palette-empty"]')).toBeTruthy();
-    expect(
-      mounted.container.querySelectorAll('[data-testid="palette-item"]').length,
-    ).toBe(0);
+    expect(mounted.container.querySelectorAll('[data-testid="palette-item"]').length).toBe(0);
   });
 
   it("respects per-category limit when the query is empty", () => {
@@ -198,8 +185,6 @@ describe("CommandPalette widget", () => {
       },
     ];
     mounted = mountWidget({ open: true, categories: big, perCategoryLimit: 4 });
-    expect(
-      mounted.container.querySelectorAll('[data-testid="palette-item"]').length,
-    ).toBe(4);
+    expect(mounted.container.querySelectorAll('[data-testid="palette-item"]').length).toBe(4);
   });
 });

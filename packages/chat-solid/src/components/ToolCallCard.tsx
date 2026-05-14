@@ -45,14 +45,9 @@ export function ToolCallCard(props: { toolCall: ToolCallView }) {
   );
 }
 
-function ToolContent(props: {
-  content: ToolCallContent;
-  onExpandImage?: () => void;
-}) {
+function ToolContent(props: { content: ToolCallContent; onExpandImage?: () => void }) {
   if (props.content.type === "content") {
-    return (
-      <ContentBlockView block={props.content.content} onExpandImage={props.onExpandImage} />
-    );
+    return <ContentBlockView block={props.content.content} onExpandImage={props.onExpandImage} />;
   }
   if (props.content.type === "diff") return <div>Diff: {props.content.path}</div>;
   return <div>Terminal: {props.content.terminalId}</div>;
@@ -82,11 +77,7 @@ export function ContentBlockView(props: {
       return (
         <Show
           when={src().length > 0}
-          fallback={
-            <p class="text-[12px] text-dim">
-              Image attachment ({props.block.mimeType})
-            </p>
-          }
+          fallback={<p class="text-[12px] text-dim">Image attachment ({props.block.mimeType})</p>}
         >
           <div data-testid="tool-image-block" class="my-1.5 inline-block max-w-[400px]">
             <InlineImagePreview

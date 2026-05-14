@@ -215,8 +215,7 @@ export function ChatComposer(props: {
     const tokenTailLength = tail.search(/\s/);
     const replaceEnd = tokenTailLength === -1 ? value().length : caret() + tokenTailLength;
     const replacement = `@${candidate.value} `;
-    const nextValue =
-      value().slice(0, context.atIndex) + replacement + value().slice(replaceEnd);
+    const nextValue = value().slice(0, context.atIndex) + replacement + value().slice(replaceEnd);
     const nextCaret = context.atIndex + replacement.length;
 
     setValue(nextValue);

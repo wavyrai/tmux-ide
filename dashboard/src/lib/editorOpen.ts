@@ -32,12 +32,7 @@
 import { createSignal, batch, type Accessor } from "solid-js";
 import { Effect } from "effect";
 import { fetchFilePreview } from "@/lib/api";
-import {
-  bufferState,
-  markError,
-  markReady,
-  openBuffer,
-} from "@/lib/editor/buffer-store";
+import { bufferState, markError, markReady, openBuffer } from "@/lib/editor/buffer-store";
 import { buildMonacoModelPath } from "@/lib/monaco/model-path";
 
 // ---------------------------------------------------------------------

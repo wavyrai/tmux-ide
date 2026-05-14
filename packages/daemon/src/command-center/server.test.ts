@@ -1179,9 +1179,7 @@ describe("GET /api/project/:name/turn-diffs/*", () => {
 
   it("aggregate route sums additions/deletions/files across the thread", async () => {
     const app = createApp({ turnDiffProjection: makeFakeTurnDiffProjection() });
-    const res = await app.request(
-      "/api/project/test-project/turn-diffs/aggregate?threadId=thr-1",
-    );
+    const res = await app.request("/api/project/test-project/turn-diffs/aggregate?threadId=thr-1");
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({
       totalAdditions: 17,
@@ -1192,9 +1190,7 @@ describe("GET /api/project/:name/turn-diffs/*", () => {
 
   it("aggregate returns zeros for an unknown thread", async () => {
     const app = createApp({ turnDiffProjection: makeFakeTurnDiffProjection() });
-    const res = await app.request(
-      "/api/project/test-project/turn-diffs/aggregate?threadId=ghost",
-    );
+    const res = await app.request("/api/project/test-project/turn-diffs/aggregate?threadId=ghost");
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({
       totalAdditions: 0,
@@ -1226,9 +1222,7 @@ describe("GET /api/project/:name/git/file", () => {
 
   it("rejects paths with `..` segments", async () => {
     const app = createApp();
-    const res = await app.request(
-      "/api/project/test-project/git/file?path=../escape.ts",
-    );
+    const res = await app.request("/api/project/test-project/git/file?path=../escape.ts");
     expect(res.status).toBe(403);
   });
 
@@ -1243,9 +1237,7 @@ describe("GET /api/project/:name/git/file", () => {
 
   it("returns 404 for an unknown session", async () => {
     const app = createApp();
-    const res = await app.request(
-      "/api/project/no-such-session/git/file?path=src/x.ts",
-    );
+    const res = await app.request("/api/project/no-such-session/git/file?path=src/x.ts");
     expect(res.status).toBe(404);
   });
 
@@ -1254,9 +1246,7 @@ describe("GET /api/project/:name/git/file", () => {
     // HEAD:src/x.ts` fails. The endpoint catches that and returns
     // a 200 envelope with exists:false rather than 500.
     const app = createApp();
-    const res = await app.request(
-      "/api/project/test-project/git/file?path=src/x.ts&ref=HEAD",
-    );
+    const res = await app.request("/api/project/test-project/git/file?path=src/x.ts&ref=HEAD");
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
       path: string;
@@ -1369,14 +1359,11 @@ describe("PUT /api/project/:name/file", () => {
 
   it("404s when the parent directory does not exist", async () => {
     const app = createApp();
-    const res = await app.request(
-      "/api/project/test-project/file?path=nope/no/yet.txt",
-      {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ content: "x" }),
-      },
-    );
+    const res = await app.request("/api/project/test-project/file?path=nope/no/yet.txt", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content: "x" }),
+    });
     expect(res.status).toBe(404);
     expect(await res.json()).toEqual({ error: "Parent directory not found" });
   });

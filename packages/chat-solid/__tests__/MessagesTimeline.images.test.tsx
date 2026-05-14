@@ -51,15 +51,19 @@ class MockIntersectionObserver {
 
 beforeEach(() => {
   observers = [];
-  (globalThis as unknown as { IntersectionObserver: typeof IntersectionObserver }).IntersectionObserver =
-    MockIntersectionObserver as unknown as typeof IntersectionObserver;
+  (
+    globalThis as unknown as { IntersectionObserver: typeof IntersectionObserver }
+  ).IntersectionObserver = MockIntersectionObserver as unknown as typeof IntersectionObserver;
 });
 
 afterEach(() => {
   document.body.innerHTML = "";
 });
 
-function userImageMessage(id: string, images: Array<{ data: string; mimeType: string }>): ChatMessage {
+function userImageMessage(
+  id: string,
+  images: Array<{ data: string; mimeType: string }>,
+): ChatMessage {
   return {
     id,
     role: "user",
@@ -82,13 +86,7 @@ function mountTimeline(initialRows: MessagesTimelineRow[]) {
   const [rows] = createSignal<MessagesTimelineRow[]>(initialRows);
   const [messages] = createSignal([]);
   const dispose = render(
-    () => (
-      <MessagesTimeline
-        rows={rows}
-        messages={messages}
-        providerName={() => "Claude"}
-      />
-    ),
+    () => <MessagesTimeline rows={rows} messages={messages} providerName={() => "Claude"} />,
     container,
   );
   return { container, dispose };
@@ -96,40 +94,34 @@ function mountTimeline(initialRows: MessagesTimelineRow[]) {
 
 describe("MessagesTimeline image content blocks (W3)", () => {
   it("renders a lazy placeholder before IntersectionObserver fires", () => {
-    const message = userImageMessage("u1", [
-      { data: "AAAA", mimeType: "image/png" },
-    ]);
+    const message = userImageMessage("u1", [{ data: "AAAA", mimeType: "image/png" }]);
     const { container, dispose } = mountTimeline([row(message)]);
 
     const wrapper = container.querySelector('[data-testid="user-image-block"]');
     expect(wrapper).toBeTruthy();
     const preview = wrapper!.querySelector('[data-testid="inline-image-preview"]');
     expect(preview?.getAttribute("data-loaded")).toBe("false");
-    expect(container.querySelector('[data-testid="inline-image-preview-placeholder"]')).toBeTruthy();
+    expect(
+      container.querySelector('[data-testid="inline-image-preview-placeholder"]'),
+    ).toBeTruthy();
     expect(container.querySelector("img")).toBeNull();
 
     dispose();
   });
 
   it("renders the <img> with a data: URL after IO intersection", () => {
-    const message = userImageMessage("u2", [
-      { data: "BBBB", mimeType: "image/jpeg" },
-    ]);
+    const message = userImageMessage("u2", [{ data: "BBBB", mimeType: "image/jpeg" }]);
     const { container, dispose } = mountTimeline([row(message)]);
 
     // MessagesTimeline also spawns an IntersectionObserver for its
     // auto-scroll sentinel. Find the one watching the inline-image
     // preview button (carries `data-testid="inline-image-preview"`).
-    const previewButton = container.querySelector(
-      '[data-testid="inline-image-preview"]',
-    );
+    const previewButton = container.querySelector('[data-testid="inline-image-preview"]');
     expect(previewButton).toBeTruthy();
     const imageObserver = observers.find((o) => o.observed.includes(previewButton!));
     expect(imageObserver).toBeTruthy();
     imageObserver!.callback(
-      [
-        { isIntersecting: true, target: previewButton! } as IntersectionObserverEntry,
-      ],
+      [{ isIntersecting: true, target: previewButton! } as IntersectionObserverEntry],
       {} as IntersectionObserver,
     );
 
@@ -137,9 +129,7 @@ describe("MessagesTimeline image content blocks (W3)", () => {
     expect(img).toBeTruthy();
     expect(img!.getAttribute("src")).toBe("data:image/jpeg;base64,BBBB");
     expect(
-      container
-        .querySelector('[data-testid="inline-image-preview"]')
-        ?.getAttribute("data-loaded"),
+      container.querySelector('[data-testid="inline-image-preview"]')?.getAttribute("data-loaded"),
     ).toBe("true");
 
     dispose();

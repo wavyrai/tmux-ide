@@ -26,9 +26,16 @@ function update(sessionUpdate: string, extra: Record<string, unknown> = {}): Cha
 
 describe("translateLegacyToV2", () => {
   it("translates agent_message_chunk into chat.activity.appended with the streamed text", () => {
-    const out = translateLegacyToV2(update("agent_message_chunk", { content: { text: "hello world" } }));
+    const out = translateLegacyToV2(
+      update("agent_message_chunk", { content: { text: "hello world" } }),
+    );
     expect(out).toHaveLength(1);
-    const ev = out[0] as { type: string; threadId: string; activity: Record<string, unknown>; seq: number };
+    const ev = out[0] as {
+      type: string;
+      threadId: string;
+      activity: Record<string, unknown>;
+      seq: number;
+    };
     expect(ev.type).toBe("chat.activity.appended");
     expect(ev.threadId).toBe("t1");
     expect(ev.seq).toBe(17);
@@ -52,7 +59,9 @@ describe("translateLegacyToV2", () => {
   });
 
   it("flags failed tool_call_update as error tone", () => {
-    const out = translateLegacyToV2(update("tool_call_update", { title: "Edit", status: "failed" }));
+    const out = translateLegacyToV2(
+      update("tool_call_update", { title: "Edit", status: "failed" }),
+    );
     const ev = out[0] as { activity: Record<string, unknown> };
     expect(ev.activity.kind).toBe("tool_call_update");
     expect(ev.activity.tone).toBe("error");

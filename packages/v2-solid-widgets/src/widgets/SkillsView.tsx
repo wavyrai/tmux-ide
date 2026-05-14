@@ -25,11 +25,7 @@
 
 import { createMemo, createSignal, For, Show } from "solid-js";
 import { marked } from "marked";
-import type {
-  SkillFormValues,
-  SkillsViewMountOptions,
-  SkillSummary,
-} from "../types";
+import type { SkillFormValues, SkillsViewMountOptions, SkillSummary } from "../types";
 
 interface SkillsViewProps {
   options: () => SkillsViewMountOptions;
@@ -88,8 +84,7 @@ function renderMarkdown(body: string): string {
 }
 
 export function SkillsViewView(props: SkillsViewProps) {
-  const initialSelected =
-    props.options().initialSelected ?? null;
+  const initialSelected = props.options().initialSelected ?? null;
   const [selected, setSelected] = createSignal<string | null>(initialSelected);
   const [query, setQuery] = createSignal("");
   const [editor, setEditor] = createSignal<EditorMode | null>(null);
@@ -163,9 +158,7 @@ export function SkillsViewView(props: SkillsViewProps) {
     }
   }
 
-  const allSkills = createMemo<ReadonlyArray<SkillSummary>>(
-    () => props.options().skills ?? [],
-  );
+  const allSkills = createMemo<ReadonlyArray<SkillSummary>>(() => props.options().skills ?? []);
 
   // Filter by search. The match scans name, description, role, specialties.
   const filtered = createMemo<SkillSummary[]>(() => {
@@ -173,7 +166,8 @@ export function SkillsViewView(props: SkillsViewProps) {
     const list = allSkills();
     if (!q) return [...list];
     return list.filter((s) => {
-      const hay = `${s.name} ${s.description ?? ""} ${s.role ?? ""} ${(s.specialties ?? []).join(" ")}`.toLowerCase();
+      const hay =
+        `${s.name} ${s.description ?? ""} ${s.role ?? ""} ${(s.specialties ?? []).join(" ")}`.toLowerCase();
       return hay.includes(q);
     });
   });
@@ -324,10 +318,7 @@ export function SkillsViewView(props: SkillsViewProps) {
                   "text-align": "center",
                 }}
               >
-                <Show
-                  when={allSkills().length === 0}
-                  fallback="No matches."
-                >
+                <Show when={allSkills().length === 0} fallback="No matches.">
                   — no skills registered —
                 </Show>
               </div>
@@ -335,8 +326,7 @@ export function SkillsViewView(props: SkillsViewProps) {
           >
             <For each={filtered()}>
               {(skill) => {
-                const isActive = () =>
-                  visibleSelection()?.name === skill.name;
+                const isActive = () => visibleSelection()?.name === skill.name;
                 return (
                   <button
                     type="button"
@@ -369,9 +359,7 @@ export function SkillsViewView(props: SkillsViewProps) {
                         width: "7px",
                         height: "7px",
                         "border-radius": "50%",
-                        "background-color": isActive()
-                          ? "var(--accent)"
-                          : "var(--dim)",
+                        "background-color": isActive() ? "var(--accent)" : "var(--dim)",
                       }}
                     />
                     <span
@@ -430,10 +418,7 @@ export function SkillsViewView(props: SkillsViewProps) {
                 padding: "40px 12px",
               }}
             >
-              <Show
-                when={allSkills().length === 0}
-                fallback="Select a skill from the rail."
-              >
+              <Show when={allSkills().length === 0} fallback="Select a skill from the rail.">
                 — no skills registered for this project —
               </Show>
             </div>
@@ -468,8 +453,7 @@ export function SkillsViewView(props: SkillsViewProps) {
                   style={{
                     padding: "1px 6px",
                     "border-radius": "10px",
-                    "background-color":
-                      "color-mix(in oklab, var(--accent) 14%, transparent)",
+                    "background-color": "color-mix(in oklab, var(--accent) 14%, transparent)",
                     color: "var(--accent)",
                     "font-size": "10px",
                     "text-transform": "uppercase",
@@ -478,12 +462,7 @@ export function SkillsViewView(props: SkillsViewProps) {
                 >
                   {roleLabel(skillAccessor().role)}
                 </span>
-                <Show
-                  when={
-                    skillAccessor().specialties &&
-                    skillAccessor().specialties!.length > 0
-                  }
-                >
+                <Show when={skillAccessor().specialties && skillAccessor().specialties!.length > 0}>
                   <div
                     data-testid="skill-detail-specialties"
                     style={{ display: "flex", gap: "4px", "flex-wrap": "wrap" }}
@@ -648,7 +627,9 @@ export function SkillsViewView(props: SkillsViewProps) {
                   "font-weight": "600",
                 }}
               >
-                {mode().kind === "create" ? "New skill" : `Edit ${mode().kind === "edit" ? (mode() as { original: SkillSummary }).original.name : ""}`}
+                {mode().kind === "create"
+                  ? "New skill"
+                  : `Edit ${mode().kind === "edit" ? (mode() as { original: SkillSummary }).original.name : ""}`}
               </header>
               <div
                 style={{
@@ -662,7 +643,16 @@ export function SkillsViewView(props: SkillsViewProps) {
                 }}
               >
                 <label style={{ display: "flex", "flex-direction": "column", gap: "4px" }}>
-                  <span style={{ "font-size": "10px", color: "var(--dim)", "text-transform": "uppercase", "letter-spacing": "0.06em" }}>Name</span>
+                  <span
+                    style={{
+                      "font-size": "10px",
+                      color: "var(--dim)",
+                      "text-transform": "uppercase",
+                      "letter-spacing": "0.06em",
+                    }}
+                  >
+                    Name
+                  </span>
                   <input
                     data-testid="skill-form-name"
                     type="text"
@@ -681,7 +671,16 @@ export function SkillsViewView(props: SkillsViewProps) {
                   />
                 </label>
                 <label style={{ display: "flex", "flex-direction": "column", gap: "4px" }}>
-                  <span style={{ "font-size": "10px", color: "var(--dim)", "text-transform": "uppercase", "letter-spacing": "0.06em" }}>Role</span>
+                  <span
+                    style={{
+                      "font-size": "10px",
+                      color: "var(--dim)",
+                      "text-transform": "uppercase",
+                      "letter-spacing": "0.06em",
+                    }}
+                  >
+                    Role
+                  </span>
                   <input
                     data-testid="skill-form-role"
                     type="text"
@@ -699,7 +698,16 @@ export function SkillsViewView(props: SkillsViewProps) {
                   />
                 </label>
                 <label style={{ display: "flex", "flex-direction": "column", gap: "4px" }}>
-                  <span style={{ "font-size": "10px", color: "var(--dim)", "text-transform": "uppercase", "letter-spacing": "0.06em" }}>Specialties (comma-separated)</span>
+                  <span
+                    style={{
+                      "font-size": "10px",
+                      color: "var(--dim)",
+                      "text-transform": "uppercase",
+                      "letter-spacing": "0.06em",
+                    }}
+                  >
+                    Specialties (comma-separated)
+                  </span>
                   <input
                     data-testid="skill-form-specialties"
                     type="text"
@@ -717,7 +725,16 @@ export function SkillsViewView(props: SkillsViewProps) {
                   />
                 </label>
                 <label style={{ display: "flex", "flex-direction": "column", gap: "4px" }}>
-                  <span style={{ "font-size": "10px", color: "var(--dim)", "text-transform": "uppercase", "letter-spacing": "0.06em" }}>Description</span>
+                  <span
+                    style={{
+                      "font-size": "10px",
+                      color: "var(--dim)",
+                      "text-transform": "uppercase",
+                      "letter-spacing": "0.06em",
+                    }}
+                  >
+                    Description
+                  </span>
                   <input
                     data-testid="skill-form-description"
                     type="text"
@@ -734,8 +751,25 @@ export function SkillsViewView(props: SkillsViewProps) {
                     }}
                   />
                 </label>
-                <label style={{ display: "flex", "flex-direction": "column", gap: "4px", flex: "1 1 0%", "min-height": "0" }}>
-                  <span style={{ "font-size": "10px", color: "var(--dim)", "text-transform": "uppercase", "letter-spacing": "0.06em" }}>Body (markdown)</span>
+                <label
+                  style={{
+                    display: "flex",
+                    "flex-direction": "column",
+                    gap: "4px",
+                    flex: "1 1 0%",
+                    "min-height": "0",
+                  }}
+                >
+                  <span
+                    style={{
+                      "font-size": "10px",
+                      color: "var(--dim)",
+                      "text-transform": "uppercase",
+                      "letter-spacing": "0.06em",
+                    }}
+                  >
+                    Body (markdown)
+                  </span>
                   <textarea
                     data-testid="skill-form-body"
                     value={form().body}
@@ -844,13 +878,17 @@ export function SkillsViewView(props: SkillsViewProps) {
               }}
             >
               <p style={{ margin: "0 0 12px 0", "font-size": "12px", "line-height": "1.5" }}>
-                Delete skill <strong>{name()}</strong>? This removes
-                {" "}<code>.tmux-ide/skills/{name()}.md</code> from disk.
+                Delete skill <strong>{name()}</strong>? This removes{" "}
+                <code>.tmux-ide/skills/{name()}.md</code> from disk.
               </p>
               <Show when={errorMsg()}>
                 <div
                   data-testid="skill-delete-error"
-                  style={{ color: "var(--danger, #d34)", "font-size": "11px", "margin-bottom": "8px" }}
+                  style={{
+                    color: "var(--danger, #d34)",
+                    "font-size": "11px",
+                    "margin-bottom": "8px",
+                  }}
                 >
                   {errorMsg()}
                 </div>

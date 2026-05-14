@@ -25,11 +25,11 @@ A type-parameterised pool of pre-warmed Monaco editor instances. Two concrete po
 
 A single mutable singleton that owns every `monaco.editor.ITextModel` instance in the app, keyed by a typed URI. Three URI schemes correspond to three semantically distinct models per file:
 
-| URI scheme | Purpose | Writable | Source of truth |
-| --- | --- | --- | --- |
-| `file://…` | Buffer — what the editor renders + edits | yes | Monaco model + crash-recovery autosave |
-| `disk://…` | Mirror of current on-disk content | no | filesystem (RPC fetch + FS-watch invalidation) |
-| `git://…/<ref>/…` | Snapshot at a specific git ref | no | `git show <ref>:<path>` |
+| URI scheme        | Purpose                                  | Writable | Source of truth                                |
+| ----------------- | ---------------------------------------- | -------- | ---------------------------------------------- |
+| `file://…`        | Buffer — what the editor renders + edits | yes      | Monaco model + crash-recovery autosave         |
+| `disk://…`        | Mirror of current on-disk content        | no       | filesystem (RPC fetch + FS-watch invalidation) |
+| `git://…/<ref>/…` | Snapshot at a specific git ref           | no       | `git show <ref>:<path>`                        |
 
 All three models share the same URI body (file path + workspace), so a buffer-aware dirty-check is one map lookup + one `getValue() !==`. Diff editors take an `(original, modified)` pair where original is typically a `git://…/HEAD/…` model and modified is the live `file://…` buffer — no copy, no reload.
 
@@ -67,14 +67,14 @@ A counter-pattern to the lease/release model: the diff editor used in PR-style s
 
 `fileKind.ts` is a pure extension-keyed switch that returns one of `text | markdown | svg | image | binary | too-large` (the last set after I/O when the FS layer reports `truncated`). The dispatch is taken once at the tab-open site; each kind has a dedicated renderer:
 
-| Kind | Renderer | What it renders |
-| --- | --- | --- |
-| `text` | Monaco code editor (leased) | code with syntax highlighting + autosave |
-| `markdown` | `MarkdownEditorRenderer` | preview (default) + toggle to Monaco source |
-| `svg` | `SvgRenderer` | inline `<img>` from `URL.createObjectURL(blob)` + toggle to Monaco source |
-| `image` | `ImageRenderer` | `<img src={dataUrl}>` (data-URL fetched once) |
-| `too-large` | `TooLargeRenderer` | static "file too large" placeholder |
-| `binary` | `BinaryRenderer` | static "binary file" placeholder |
+| Kind        | Renderer                    | What it renders                                                           |
+| ----------- | --------------------------- | ------------------------------------------------------------------------- |
+| `text`      | Monaco code editor (leased) | code with syntax highlighting + autosave                                  |
+| `markdown`  | `MarkdownEditorRenderer`    | preview (default) + toggle to Monaco source                               |
+| `svg`       | `SvgRenderer`               | inline `<img>` from `URL.createObjectURL(blob)` + toggle to Monaco source |
+| `image`     | `ImageRenderer`             | `<img src={dataUrl}>` (data-URL fetched once)                             |
+| `too-large` | `TooLargeRenderer`          | static "file too large" placeholder                                       |
+| `binary`    | `BinaryRenderer`            | static "binary file" placeholder                                          |
 
 The markdown + SVG renderers explicitly read `modelRegistry.getValue(bufferUri)` so editing in source mode and flipping back to preview shows your unsaved changes immediately — no re-fetch.
 
@@ -123,8 +123,14 @@ export interface MonacoModelRegistry {
     input: RegisterModelInput,
   ) => Effect.Effect<string, ModelRegistryError, FsRpc | GitRpc>;
   readonly unregisterModel: (uri: string) => Effect.Effect<void>;
-  readonly invalidateModel: (uri: string) => Effect.Effect<void, ModelRegistryError, FsRpc | GitRpc>;
-  readonly attach: (editor: monaco.editor.IStandaloneCodeEditor, newUri: string, prevUri?: string) => void;
+  readonly invalidateModel: (
+    uri: string,
+  ) => Effect.Effect<void, ModelRegistryError, FsRpc | GitRpc>;
+  readonly attach: (
+    editor: monaco.editor.IStandaloneCodeEditor,
+    newUri: string,
+    prevUri?: string,
+  ) => void;
   readonly saveFileToDisk: (uri: string) => Effect.Effect<string | null, ModelRegistryError, FsRpc>;
   // …
   // Reactive surfaces (raw Solid stores — no Effect wrapping; reading is the side effect):
@@ -187,7 +193,7 @@ export function StickyDiffEditor(props: StickyDiffEditorProps) {
     if (!e) return;
     const origStatus = registry.modelStatus[props.originalUri];
     const modStatus = registry.modelStatus[props.modifiedUri];
-    if (origStatus !== 'ready' || modStatus !== 'ready') return;
+    if (origStatus !== "ready" || modStatus !== "ready") return;
     const origModel = registry.getModelByUri(props.originalUri);
     const modModel = registry.getModelByUri(props.modifiedUri);
     if (!origModel || !modModel) return;
@@ -206,35 +212,35 @@ Identical mental model; the props are still URI strings, the gating is still `'r
 
 The dispatch table maps 1:1. The renderers themselves are tiny (10–70 LOC each):
 
-| Reference file | Solid port (target) | Notes |
-| --- | --- | --- |
-| `fileKind.ts` | `dashboard/src/lib/editor/fileKind.ts` | Pure — copy unchanged. |
-| `binary-renderer.tsx` | `dashboard/src/components/editor/BinaryRenderer.tsx` | Trivial JSX rewrite. Replace `lucide-react` with `lucide-solid` (already in dashboard deps via the widgets package, confirm at port time). |
-| `image-renderer.tsx` | `…/ImageRenderer.tsx` | Same. `<img src={file.content}>` — content is a data URL provided by the daemon (new endpoint, see §4). |
-| `markdown-renderer.tsx` | `…/MarkdownRenderer.tsx` | Reuses the dashboard's existing markdown renderer (chat-solid's `lib/markdown.ts` or whatever the post-cutover surface has). Reactive read of `registry.bufferVersions[uri]` triggers re-render when the source pane edits. |
-| `svg-renderer.tsx` | `…/SvgRenderer.tsx` | `URL.createObjectURL(new Blob([content], {type:'image/svg+xml'}))` + `onCleanup(() => URL.revokeObjectURL(url))`. |
-| `too-large-renderer.tsx` | `…/TooLargeRenderer.tsx` | Trivial. |
+| Reference file           | Solid port (target)                                  | Notes                                                                                                                                                                                                                       |
+| ------------------------ | ---------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `fileKind.ts`            | `dashboard/src/lib/editor/fileKind.ts`               | Pure — copy unchanged.                                                                                                                                                                                                      |
+| `binary-renderer.tsx`    | `dashboard/src/components/editor/BinaryRenderer.tsx` | Trivial JSX rewrite. Replace `lucide-react` with `lucide-solid` (already in dashboard deps via the widgets package, confirm at port time).                                                                                  |
+| `image-renderer.tsx`     | `…/ImageRenderer.tsx`                                | Same. `<img src={file.content}>` — content is a data URL provided by the daemon (new endpoint, see §4).                                                                                                                     |
+| `markdown-renderer.tsx`  | `…/MarkdownRenderer.tsx`                             | Reuses the dashboard's existing markdown renderer (chat-solid's `lib/markdown.ts` or whatever the post-cutover surface has). Reactive read of `registry.bufferVersions[uri]` triggers re-render when the source pane edits. |
+| `svg-renderer.tsx`       | `…/SvgRenderer.tsx`                                  | `URL.createObjectURL(new Blob([content], {type:'image/svg+xml'}))` + `onCleanup(() => URL.revokeObjectURL(url))`.                                                                                                           |
+| `too-large-renderer.tsx` | `…/TooLargeRenderer.tsx`                             | Trivial.                                                                                                                                                                                                                    |
 
 The dispatch site (post-G16 lives in `dashboard/src/routes/v2/project/[name]/<some-editor-component>`) looks like:
 
 ```tsx
 <Switch>
-  <Match when={file().kind === 'image'}>
+  <Match when={file().kind === "image"}>
     <ImageRenderer file={file()} />
   </Match>
-  <Match when={file().kind === 'svg'}>
+  <Match when={file().kind === "svg"}>
     <SvgRenderer filePath={file().path} />
   </Match>
-  <Match when={file().kind === 'markdown'}>
+  <Match when={file().kind === "markdown"}>
     <MarkdownRenderer filePath={file().path} />
   </Match>
-  <Match when={file().kind === 'text'}>
+  <Match when={file().kind === "text"}>
     <CodeEditor uri={bufferUri()} />
   </Match>
-  <Match when={file().kind === 'binary'}>
+  <Match when={file().kind === "binary"}>
     <BinaryRenderer file={file()} />
   </Match>
-  <Match when={file().kind === 'too-large'}>
+  <Match when={file().kind === "too-large"}>
     <TooLargeRenderer file={file()} />
   </Match>
 </Switch>
@@ -254,16 +260,16 @@ Today's daemon already exposes most of what the editor needs. The gaps:
 
 ### What we need to add
 
-| Endpoint | Why | Shape |
-| --- | --- | --- |
-| **`PUT /api/project/:name/file/:file{.+}`** | Write back the buffer (`saveFileToDisk`). Sandboxed identically to `/preview/`. | Body: `{ content: string }`. Returns `{ saved: true, mtimeMs }`. |
-| **`GET /api/project/:name/git/file?ref=<ref>&path=<file>`** | Original side of diff editors + git:// model fetches. Shells out to `git show <ref>:<path>` inside `session.dir`. | Returns `{ exists, content, ref }`. |
-| **`POST /api/v2/action/editor.buffer.save`** | Crash-recovery autosave. Mirrors the reference codebase's `EditorBufferService` 1:1 — stores under `.tmux-ide/editor-buffers/<projectId>/<workspaceId>/<sha1(filePath)>.txt` (no SQLite needed; the daemon's persistence is filesystem-first). 7-day TTL pruned on daemon boot. | Action input: `{ session, filePath, content }`. |
-| **`POST /api/v2/action/editor.buffer.clear`** | Called after a successful disk save. | `{ session, filePath }`. |
-| **`POST /api/v2/action/editor.buffer.list`** | On project open, list any unsaved buffers and offer to restore. | `{ session }` → `[{ filePath, content, updatedAt }]`. |
-| **WS frame `fs.watch.event`** | Drives `disk://` model invalidation. The daemon already has `@parcel/watcher`; emit the events on the existing `/ws/events` channel. | `{ type: "fs.watch.event", session, path, kind: "modify"\|"create"\|"delete"\|"rename", oldPath?, entryType: "file"\|"dir" }`. |
-| **WS frame `git.workspace.changed`** | Invalidates `git://HEAD/…` / `git://STAGED/…` URIs when the index or HEAD pointer moves. The daemon already polls git status for the changes view; piggyback. | `{ type: "git.workspace.changed", session, kind: "index"\|"head" }`. |
-| **WS frame `git.ref.changed`** | Optional polish — only matters once we surface branch-comparison diffs in chat. Defer until G17-P4. | n/a for the MVP. |
+| Endpoint                                                    | Why                                                                                                                                                                                                                                                                             | Shape                                                                                                                          |
+| ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| **`PUT /api/project/:name/file/:file{.+}`**                 | Write back the buffer (`saveFileToDisk`). Sandboxed identically to `/preview/`.                                                                                                                                                                                                 | Body: `{ content: string }`. Returns `{ saved: true, mtimeMs }`.                                                               |
+| **`GET /api/project/:name/git/file?ref=<ref>&path=<file>`** | Original side of diff editors + git:// model fetches. Shells out to `git show <ref>:<path>` inside `session.dir`.                                                                                                                                                               | Returns `{ exists, content, ref }`.                                                                                            |
+| **`POST /api/v2/action/editor.buffer.save`**                | Crash-recovery autosave. Mirrors the reference codebase's `EditorBufferService` 1:1 — stores under `.tmux-ide/editor-buffers/<projectId>/<workspaceId>/<sha1(filePath)>.txt` (no SQLite needed; the daemon's persistence is filesystem-first). 7-day TTL pruned on daemon boot. | Action input: `{ session, filePath, content }`.                                                                                |
+| **`POST /api/v2/action/editor.buffer.clear`**               | Called after a successful disk save.                                                                                                                                                                                                                                            | `{ session, filePath }`.                                                                                                       |
+| **`POST /api/v2/action/editor.buffer.list`**                | On project open, list any unsaved buffers and offer to restore.                                                                                                                                                                                                                 | `{ session }` → `[{ filePath, content, updatedAt }]`.                                                                          |
+| **WS frame `fs.watch.event`**                               | Drives `disk://` model invalidation. The daemon already has `@parcel/watcher`; emit the events on the existing `/ws/events` channel.                                                                                                                                            | `{ type: "fs.watch.event", session, path, kind: "modify"\|"create"\|"delete"\|"rename", oldPath?, entryType: "file"\|"dir" }`. |
+| **WS frame `git.workspace.changed`**                        | Invalidates `git://HEAD/…` / `git://STAGED/…` URIs when the index or HEAD pointer moves. The daemon already polls git status for the changes view; piggyback.                                                                                                                   | `{ type: "git.workspace.changed", session, kind: "index"\|"head" }`.                                                           |
+| **WS frame `git.ref.changed`**                              | Optional polish — only matters once we surface branch-comparison diffs in chat. Defer until G17-P4.                                                                                                                                                                             | n/a for the MVP.                                                                                                               |
 
 **Effort estimate, daemon-side:** ~4 hours for the file write + git file-at-ref endpoints + buffer service + FS-watch broadcast, plus tests. No new infrastructure (the WS bus + sandboxing + file routes all exist).
 
@@ -340,14 +346,14 @@ The infrastructure from P1 already supports it (model registry refcounts + view 
 
 ## §7 — Effort estimates
 
-| Phase | Scope | Effort |
-| --- | --- | --- |
-| **G17-P1** | Port lib/monaco/* (pool + registry + bridges + themes) to Solid + Effect | ~16 h |
-| **G17-P2** | Per-filetype renderers (6 small files) | ~3 h |
-| **G17-P3** | StickyDiffEditor + daemon `git/file` endpoint | ~6 h |
-| **G17-P4** | Wire into Files view + buffer-save / write / watch endpoints | ~12 h |
-| **G17-P5** | Multi-file tabs + dirty state + crash recovery UI | ~8 h |
-| **Total** | | **~45 h** (~6 person-days) |
+| Phase      | Scope                                                                     | Effort                     |
+| ---------- | ------------------------------------------------------------------------- | -------------------------- |
+| **G17-P1** | Port lib/monaco/\* (pool + registry + bridges + themes) to Solid + Effect | ~16 h                      |
+| **G17-P2** | Per-filetype renderers (6 small files)                                    | ~3 h                       |
+| **G17-P3** | StickyDiffEditor + daemon `git/file` endpoint                             | ~6 h                       |
+| **G17-P4** | Wire into Files view + buffer-save / write / watch endpoints              | ~12 h                      |
+| **G17-P5** | Multi-file tabs + dirty state + crash recovery UI                         | ~8 h                       |
+| **Total**  |                                                                           | **~45 h** (~6 person-days) |
 
 These estimates assume the porter has the reference codebase open as a side-by-side. Compress to ~4 person-days if Monaco + Effect are familiar; expand to ~10 if both are new to the porter.
 

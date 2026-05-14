@@ -12,11 +12,7 @@
 import { createEffect, createMemo, createSignal, For, Show } from "solid-js";
 import { Effect, Exit, Cause } from "effect";
 import type { GitHubErrorPayload } from "@tmux-ide/contracts";
-import {
-  createPullRequest,
-  GitHubApiError,
-  useBranches,
-} from "@/lib/git";
+import { createPullRequest, GitHubApiError, useBranches } from "@/lib/git";
 
 interface CreatePrModalProps {
   sessionName: string;
@@ -95,9 +91,7 @@ export function CreatePrModal(props: CreatePrModalProps) {
     };
     if (head()) payload.head = head();
     if (draft()) payload.draft = true;
-    const exit = await Effect.runPromiseExit(
-      createPullRequest(props.sessionName, payload),
-    );
+    const exit = await Effect.runPromiseExit(createPullRequest(props.sessionName, payload));
     setBusy(false);
     if (Exit.isSuccess(exit)) {
       props.onCreated?.(exit.value.url);
@@ -136,9 +130,7 @@ export function CreatePrModal(props: CreatePrModalProps) {
 
           <div class="flex min-h-0 flex-1 flex-col gap-2 px-3 py-2">
             <label class="flex flex-col gap-1">
-              <span class="text-[10px] uppercase tracking-wider text-[var(--dim)]">
-                Title
-              </span>
+              <span class="text-[10px] uppercase tracking-wider text-[var(--dim)]">Title</span>
               <input
                 type="text"
                 data-testid="create-pr-title"

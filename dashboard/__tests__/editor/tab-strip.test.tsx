@@ -24,7 +24,10 @@ vi.mock("@/lib/api", () => ({
   fetchProjectFiles: vi.fn(),
 }));
 
-const stubModels = new Map<string, { _value: string; getValue(): string; setValue(v: string): void; dispose(): void }>();
+const stubModels = new Map<
+  string,
+  { _value: string; getValue(): string; setValue(v: string): void; dispose(): void }
+>();
 const stubMonaco = {
   Uri: { parse: (s: string) => ({ _raw: s, toString: () => s }) },
   editor: {

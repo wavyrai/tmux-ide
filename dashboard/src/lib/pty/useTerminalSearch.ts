@@ -79,7 +79,7 @@ export function useTerminalSearch(args: UseTerminalSearchArgs) {
       applyMatch(null);
       return;
     }
-    const anchor = reset ? null : (activeIndex() >= 0 ? next[activeIndex()] ?? null : null);
+    const anchor = reset ? null : activeIndex() >= 0 ? (next[activeIndex()] ?? null) : null;
     const idx = getNextTerminalSearchIndex(next, anchor, direction);
     setActiveIndex(idx);
     applyMatch(next[idx] ?? null);

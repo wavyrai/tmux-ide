@@ -2,10 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { createSignal } from "solid-js";
 import { render } from "solid-js/web";
 import { CostsDashboardView } from "../src/widgets/CostsDashboard";
-import type {
-  CostsDashboardMountOptions,
-  CostsDashboardSnapshot,
-} from "../src/types";
+import type { CostsDashboardMountOptions, CostsDashboardSnapshot } from "../src/types";
 
 function mountWidget(initial: CostsDashboardMountOptions) {
   const container = document.createElement("div");
@@ -191,9 +188,7 @@ describe("CostsDashboard (Solid widget)", () => {
     expect(kpiText).toContain("10%"); // retry rate
 
     // Tasks summary line: 7/10 done, 1 failed, avg/median/p90 present.
-    const tasksSummary = container.querySelector(
-      "[data-costs-section='tasks-summary']",
-    );
+    const tasksSummary = container.querySelector("[data-costs-section='tasks-summary']");
     expect(tasksSummary?.textContent).toContain("7");
     expect(tasksSummary?.textContent).toContain("/10");
     expect(tasksSummary?.textContent).toContain("failed");

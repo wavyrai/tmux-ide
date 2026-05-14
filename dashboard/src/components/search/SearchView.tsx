@@ -468,9 +468,7 @@ export function SearchView(props: SearchViewProps): JSX.Element {
               </span>
             </Show>
             <Show when={service.state.status === "cancelled"}>
-              <span class="text-[10px] uppercase tracking-wider text-[var(--dim)]">
-                cancelled
-              </span>
+              <span class="text-[10px] uppercase tracking-wider text-[var(--dim)]">cancelled</span>
             </Show>
           </div>
         </div>
@@ -543,8 +541,7 @@ export function SearchView(props: SearchViewProps): JSX.Element {
             Replaced {result().matchesReplaced} matches in {result().filesUpdated} files
             <Show when={result().skipped.length > 0}>
               <span class="ml-2 text-[var(--dim)]">
-                {result().skipped.length} skipped (
-                {result().skipped[0]?.reason ?? "unknown"}
+                {result().skipped.length} skipped ({result().skipped[0]?.reason ?? "unknown"}
                 {result().skipped.length > 1 ? ", …" : ""})
               </span>
             </Show>
@@ -570,9 +567,7 @@ export function SearchView(props: SearchViewProps): JSX.Element {
                   file={file()}
                   activeMatchId={activeMatchId()}
                   onToggle={() => service.toggleFile(path)}
-                  onOpenMatch={(line, column, length) =>
-                    openMatch(path, line, column, length)
-                  }
+                  onOpenMatch={(line, column, length) => openMatch(path, line, column, length)}
                   onOpenContext={(line) => openContextLine(path, line)}
                   replaceVisible={replaceOpen()}
                   replaceDisabled={service.replaceWith().length === 0}
@@ -657,11 +652,7 @@ function FileGroup(props: FileGroupProps): JSX.Element {
           onClick={() => props.onToggle()}
           class="flex flex-1 items-center gap-1 text-left hover:text-[var(--fg)]"
         >
-          {props.file.expanded ? (
-            <ChevronDown size={12} />
-          ) : (
-            <ChevronRight size={12} />
-          )}
+          {props.file.expanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
           <span class="truncate font-mono">{props.file.path}</span>
           <span class="ml-1 text-[10px] text-[var(--dim)]">
             ({matchCount()} {matchCount() === 1 ? "match" : "matches"})
@@ -695,9 +686,7 @@ function FileGroup(props: FileGroupProps): JSX.Element {
                         class="block w-full px-3 py-0.5 text-left text-[var(--dim)] hover:bg-[var(--surface-hover,var(--bg-strong))]"
                         onClick={() => props.onOpenContext(ctxLine)}
                       >
-                        <span class="mr-3 inline-block w-8 text-right tabular-nums">
-                          {ctxLine}
-                        </span>
+                        <span class="mr-3 inline-block w-8 text-right tabular-nums">{ctxLine}</span>
                         <span>{props.file.contextByLine[ctxLine]}</span>
                       </button>
                     </Show>
@@ -761,9 +750,7 @@ function FileGroup(props: FileGroupProps): JSX.Element {
                         class="block w-full px-3 py-0.5 text-left text-[var(--dim)] hover:bg-[var(--surface-hover,var(--bg-strong))]"
                         onClick={() => props.onOpenContext(ctxLine)}
                       >
-                        <span class="mr-3 inline-block w-8 text-right tabular-nums">
-                          {ctxLine}
-                        </span>
+                        <span class="mr-3 inline-block w-8 text-right tabular-nums">{ctxLine}</span>
                         <span>{props.file.contextByLine[ctxLine]}</span>
                       </button>
                     </Show>
@@ -883,9 +870,9 @@ function ConfirmReplaceDialog(props: ConfirmReplaceDialogProps): JSX.Element {
         </h2>
         <p class="mt-2 text-[12px] text-[var(--fg-secondary)]">
           About to replace <span class="font-mono">{props.totalMatches}</span> matches across{" "}
-          <span class="font-mono">{props.fileCount}</span> files. This is destructive — commit
-          your working tree first if you want easy revert (a non-committed file can still be
-          restored via <code class="font-mono">git checkout -- .</code> if you don't reload).
+          <span class="font-mono">{props.fileCount}</span> files. This is destructive — commit your
+          working tree first if you want easy revert (a non-committed file can still be restored via{" "}
+          <code class="font-mono">git checkout -- .</code> if you don't reload).
         </p>
         <p class="mt-1 text-[12px] text-[var(--fg-secondary)]">
           Files modified since the last search snapshot will be skipped.

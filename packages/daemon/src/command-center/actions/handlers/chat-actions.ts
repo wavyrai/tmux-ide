@@ -186,7 +186,9 @@ export async function chatThreadSetProviderHandler(
   // Tear down any live session bound to the old provider so the next
   // send re-spawns under the new one. `disposeLive` is a no-op when the
   // thread isn't live (e.g. fresh thread that never sent a message).
-  await managerFrom(deps).disposeLive(input.id).catch(() => undefined);
+  await managerFrom(deps)
+    .disposeLive(input.id)
+    .catch(() => undefined);
   await emitIndex(store, busFrom(deps));
   return { thread };
 }

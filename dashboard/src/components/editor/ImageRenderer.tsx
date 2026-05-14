@@ -20,11 +20,7 @@ export function ImageRenderer(props: ImageRendererProps) {
       data-testid="editor-image-renderer"
       class="flex h-full items-center justify-center overflow-auto p-4"
     >
-      <img
-        src={props.file.content}
-        alt={fileName()}
-        class="max-h-full max-w-full object-contain"
-      />
+      <img src={props.file.content} alt={fileName()} class="max-h-full max-w-full object-contain" />
     </div>
   );
 }

@@ -134,9 +134,7 @@ describe("PlansRail (Solid widget)", () => {
 
     await new Promise((r) => setTimeout(r, 0));
 
-    const create = container.querySelector<HTMLElement>(
-      "[data-testid='plans-rail-create']",
-    );
+    const create = container.querySelector<HTMLElement>("[data-testid='plans-rail-create']");
     expect(create).toBeTruthy();
     create!.click();
     expect(onCreate).toHaveBeenCalledTimes(1);
@@ -152,13 +150,9 @@ describe("PlansRail (Solid widget)", () => {
     });
 
     await new Promise((r) => setTimeout(r, 0));
-    expect(
-      container.querySelectorAll("[data-testid='plans-rail-item']").length,
-    ).toBe(3);
+    expect(container.querySelectorAll("[data-testid='plans-rail-item']").length).toBe(3);
 
-    const search = container.querySelector<HTMLInputElement>(
-      "[data-testid='plans-rail-search']",
-    );
+    const search = container.querySelector<HTMLInputElement>("[data-testid='plans-rail-search']");
     expect(search).toBeTruthy();
     search!.value = "alpha";
     search!.dispatchEvent(new Event("input", { bubbles: true }));

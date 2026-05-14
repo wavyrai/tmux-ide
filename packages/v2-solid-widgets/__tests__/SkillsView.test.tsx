@@ -51,9 +51,7 @@ describe("SkillsView widget", () => {
     const detail = mounted.container.querySelector('[data-testid="skills-detail"]')!;
     expect(rail).toBeTruthy();
     expect(detail).toBeTruthy();
-    expect(rail.querySelector("[data-empty-state]")!.textContent).toContain(
-      "no skills registered",
-    );
+    expect(rail.querySelector("[data-empty-state]")!.textContent).toContain("no skills registered");
     expect(detail.querySelector("[data-empty-state]")!.textContent).toContain(
       "no skills registered",
     );
@@ -66,7 +64,7 @@ describe("SkillsView widget", () => {
       skill({ name: "reviewer", specialties: [] }),
     ];
     mounted = mountWidget({ skills });
-    const rows = mounted.container.querySelectorAll('[data-skill-name]');
+    const rows = mounted.container.querySelectorAll("[data-skill-name]");
     expect(rows.length).toBe(3);
     const names = Array.from(rows).map((r) => r.getAttribute("data-skill-name"));
     expect(names).toEqual(["frontend", "backend", "reviewer"]);
@@ -88,9 +86,7 @@ describe("SkillsView widget", () => {
       onSelect,
     });
     // First skill is auto-selected (visibleSelection picks the first row).
-    const detail = mounted.container.querySelector(
-      '[data-testid="skill-detail-body"]',
-    )!;
+    const detail = mounted.container.querySelector('[data-testid="skill-detail-body"]')!;
     expect(detail).toBeTruthy();
     expect(detail.className).toContain("chat-markdown");
     expect(detail.innerHTML).toContain("<strong>bold</strong>");
@@ -101,9 +97,9 @@ describe("SkillsView widget", () => {
     )!;
     backendRow.click();
     expect(onSelect).toHaveBeenCalledWith("backend");
-    expect(
-      mounted.container.querySelector('[data-testid="skill-detail-name"]')!.textContent,
-    ).toBe("backend");
+    expect(mounted.container.querySelector('[data-testid="skill-detail-name"]')!.textContent).toBe(
+      "backend",
+    );
     expect(
       mounted.container.querySelector('[data-testid="skill-detail-body"]')!.innerHTML,
     ).toContain("Different body");
@@ -122,17 +118,15 @@ describe("SkillsView widget", () => {
     )!;
     search.value = "Hono";
     search.dispatchEvent(new Event("input", { bubbles: true }));
-    const visible = Array.from(
-      mounted.container.querySelectorAll("[data-skill-name]"),
-    ).map((el) => el.getAttribute("data-skill-name"));
+    const visible = Array.from(mounted.container.querySelectorAll("[data-skill-name]")).map((el) =>
+      el.getAttribute("data-skill-name"),
+    );
     expect(visible).toEqual(["backend"]);
 
     // Clearing the search restores all rows.
     search.value = "";
     search.dispatchEvent(new Event("input", { bubbles: true }));
-    expect(
-      mounted.container.querySelectorAll("[data-skill-name]").length,
-    ).toBe(3);
+    expect(mounted.container.querySelectorAll("[data-skill-name]").length).toBe(3);
   });
 
   it("renders the role pill and specialty chips in the detail header", () => {
@@ -147,9 +141,7 @@ describe("SkillsView widget", () => {
     });
     const role = mounted.container.querySelector('[data-testid="skill-detail-role"]')!;
     expect(role.textContent).toBe("lead");
-    const specs = mounted.container.querySelector(
-      '[data-testid="skill-detail-specialties"]',
-    )!;
+    const specs = mounted.container.querySelector('[data-testid="skill-detail-specialties"]')!;
     expect(specs.textContent).toContain("frontend");
     expect(specs.textContent).toContain("ui-systems");
   });
@@ -163,9 +155,9 @@ describe("SkillsView widget", () => {
       initialSelected: "backend",
     });
     // initialSelected wins over the first-row default.
-    expect(
-      mounted.container.querySelector('[data-testid="skill-detail-name"]')!.textContent,
-    ).toBe("backend");
+    expect(mounted.container.querySelector('[data-testid="skill-detail-name"]')!.textContent).toBe(
+      "backend",
+    );
     expect(
       mounted.container.querySelector('[data-testid="skill-detail-body"]')!.innerHTML,
     ).toContain("back body");
@@ -175,9 +167,9 @@ describe("SkillsView widget", () => {
     mounted.setOptions({
       skills: [skill({ name: "reviewer", body: "review body" })],
     });
-    expect(
-      mounted.container.querySelector('[data-testid="skill-detail-name"]')!.textContent,
-    ).toBe("reviewer");
+    expect(mounted.container.querySelector('[data-testid="skill-detail-name"]')!.textContent).toBe(
+      "reviewer",
+    );
     expect(
       mounted.container.querySelector('[data-testid="skill-detail-body"]')!.innerHTML,
     ).toContain("review body");
@@ -189,8 +181,6 @@ describe("SkillsView widget", () => {
     });
     const detail = mounted.container.querySelector('[data-testid="skills-detail"]')!;
     expect(detail.querySelector('[data-testid="skill-detail-body"]')).toBeNull();
-    expect(detail.querySelector("[data-empty-state]")!.textContent).toContain(
-      "empty body",
-    );
+    expect(detail.querySelector("[data-empty-state]")!.textContent).toContain("empty body");
   });
 });

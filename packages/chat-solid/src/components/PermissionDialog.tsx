@@ -40,14 +40,10 @@ function variantFor(option: PermissionOption): OptionVariant {
 }
 
 const VARIANT_CLASS: Record<OptionVariant, string> = {
-  primary:
-    "border-transparent bg-green text-bg hover:opacity-90",
-  "allow-outline":
-    "border-green/40 text-green hover:bg-green/10",
-  "reject-outline":
-    "border-red/40 text-red hover:bg-red/10",
-  destructive:
-    "border-transparent bg-red text-bg hover:opacity-90",
+  primary: "border-transparent bg-green text-bg hover:opacity-90",
+  "allow-outline": "border-green/40 text-green hover:bg-green/10",
+  "reject-outline": "border-red/40 text-red hover:bg-red/10",
+  destructive: "border-transparent bg-red text-bg hover:opacity-90",
 };
 
 function optionClass(option: PermissionOption): string {

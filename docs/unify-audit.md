@@ -6,14 +6,14 @@
 
 ## Headline numbers
 
-| Bucket | Files | Notes |
-| --- | ---: | --- |
-| `dashboard/app/(shell)/` route group | **4** | All stubs (`return null`); shell composition lives in `AppShell`. |
-| `dashboard/components/app-shell/` | **19** | Owns the legacy NavigatorSlot + PanelStack rig; only consumed by `(shell)/layout.tsx`. |
-| `dashboard/components/navigators/` | **10** | Five page-Navigators + DefaultNavigator + NavigatorShell. Only the `(shell)/` MainTabContent path hits them. |
-| `dashboard/components/{plans,mission,kanban,skills,sessions,settings,tui-tree,activity,diffs,metrics}/` | **51** | Per-domain React views — each replaced by a Solid silo + bridge, OR routed through V2 (`V2PlansView`, `V2ChatView`, etc). |
-| `dashboard/components/views/*` | **10** | Wrapper layer the legacy MainTabContent dispatches into. Already mostly re-export shims (e.g. `views/ActivityView.tsx` is a 1-line `export { ActivityView } from "@/components/activity/ActivityView"`). |
-| `dashboard/components/chat/` (chat-v1) | **7** (3 prod + 4 tests) | Chat v1: `ChatTabPanel`, `NewChatPicker`, `ProviderBadge`, `index.ts`, `types.ts`. `types.ts` is still imported by `chat-v2` + `lib/api.ts`. |
+| Bucket                                                                                                  |                    Files | Notes                                                                                                                                                                                                    |
+| ------------------------------------------------------------------------------------------------------- | -----------------------: | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `dashboard/app/(shell)/` route group                                                                    |                    **4** | All stubs (`return null`); shell composition lives in `AppShell`.                                                                                                                                        |
+| `dashboard/components/app-shell/`                                                                       |                   **19** | Owns the legacy NavigatorSlot + PanelStack rig; only consumed by `(shell)/layout.tsx`.                                                                                                                   |
+| `dashboard/components/navigators/`                                                                      |                   **10** | Five page-Navigators + DefaultNavigator + NavigatorShell. Only the `(shell)/` MainTabContent path hits them.                                                                                             |
+| `dashboard/components/{plans,mission,kanban,skills,sessions,settings,tui-tree,activity,diffs,metrics}/` |                   **51** | Per-domain React views — each replaced by a Solid silo + bridge, OR routed through V2 (`V2PlansView`, `V2ChatView`, etc).                                                                                |
+| `dashboard/components/views/*`                                                                          |                   **10** | Wrapper layer the legacy MainTabContent dispatches into. Already mostly re-export shims (e.g. `views/ActivityView.tsx` is a 1-line `export { ActivityView } from "@/components/activity/ActivityView"`). |
+| `dashboard/components/chat/` (chat-v1)                                                                  | **7** (3 prod + 4 tests) | Chat v1: `ChatTabPanel`, `NewChatPicker`, `ProviderBadge`, `index.ts`, `types.ts`. `types.ts` is still imported by `chat-v2` + `lib/api.ts`.                                                             |
 
 **Total candidate retire `.tsx` files**: **~73** (production, excluding `__tests__` and `chat-v2/`).
 
@@ -39,30 +39,30 @@ The work happens inside `AppShell` → `MainTabContent`, which switch-cases over
 
 `git grep` confirms **zero v2 surfaces import from `(shell)/` directly**. v2 has its own composition (`/v2/project/[name]/ProjectV2Page.tsx` + `V2ActivityBar` + `_lib/V2*View.tsx` islands). The only consumers of `app-shell/`, `navigators/`, and `components/views/` are:
 
-| Consumer | Lives under | Used by /v2 ? |
-| --- | --- | --- |
-| `(shell)/layout.tsx` → `AppShell` | legacy shell | no |
-| `AppShell` → `MainTabContent` → `components/views/*` | legacy shell | no |
-| `WorkspaceUrlSync` → NavigationState | legacy shell | no |
-| `AppSidebar` → `NavigatorSlot` | legacy shell | no |
+| Consumer                                             | Lives under  | Used by /v2 ? |
+| ---------------------------------------------------- | ------------ | ------------- |
+| `(shell)/layout.tsx` → `AppShell`                    | legacy shell | no            |
+| `AppShell` → `MainTabContent` → `components/views/*` | legacy shell | no            |
+| `WorkspaceUrlSync` → NavigationState                 | legacy shell | no            |
+| `AppSidebar` → `NavigatorSlot`                       | legacy shell | no            |
 
 Net: deleting `(shell)/` plus everything it transitively pulls (AppShell + MainTabContent + WorkspaceUrlSync + AppSidebar + components/navigators + components/app-shell) removes the entire legacy shell composition. `/v2/*` stays untouched.
 
 ### v2 Solid coverage vs legacy `components/views/*`
 
-| Legacy view | v2 / Solid equivalent | Gap? |
-| --- | --- | --- |
-| `MissionView` | MissionControlDashboard Solid + `?missionControl=solid` is now default in V2 page | covered |
-| `PlansView` | V2PlansView + Solid PlansRail (`?plans=solid`) | covered |
-| `KanbanView` | V2 `tab=kanban` → KanbanBoard (still React) | **partial** — KanbanBoard is reused by `/v2`; not yet a Solid silo. Out of scope for this sweep. |
-| `TasksView` | Solid TasksView + `?tasks=solid` | covered |
-| `ActivityView` | Solid Activity + `?activity=solid` | covered |
-| `DiffsView` | Solid DiffsViewer + `?diffs=solid` | covered |
-| `MetricsView` | Solid CostsDashboard + `?costs=solid` | covered |
-| `SkillView` | none — handled inline via `tab=skill` in `MainTabContent` | gap (Solid follow-up) |
-| `SettingsView` | none — V2 page reuses the same React SettingsView path? **No** — `/v2` doesn't surface settings yet. | gap |
-| `ValidationView` | none — V2 doesn't expose validation as a tab. | gap |
-| `NotificationsView` | none — orphan (0 importers, see §4). | retire as orphan |
+| Legacy view         | v2 / Solid equivalent                                                                                | Gap?                                                                                             |
+| ------------------- | ---------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| `MissionView`       | MissionControlDashboard Solid + `?missionControl=solid` is now default in V2 page                    | covered                                                                                          |
+| `PlansView`         | V2PlansView + Solid PlansRail (`?plans=solid`)                                                       | covered                                                                                          |
+| `KanbanView`        | V2 `tab=kanban` → KanbanBoard (still React)                                                          | **partial** — KanbanBoard is reused by `/v2`; not yet a Solid silo. Out of scope for this sweep. |
+| `TasksView`         | Solid TasksView + `?tasks=solid`                                                                     | covered                                                                                          |
+| `ActivityView`      | Solid Activity + `?activity=solid`                                                                   | covered                                                                                          |
+| `DiffsView`         | Solid DiffsViewer + `?diffs=solid`                                                                   | covered                                                                                          |
+| `MetricsView`       | Solid CostsDashboard + `?costs=solid`                                                                | covered                                                                                          |
+| `SkillView`         | none — handled inline via `tab=skill` in `MainTabContent`                                            | gap (Solid follow-up)                                                                            |
+| `SettingsView`      | none — V2 page reuses the same React SettingsView path? **No** — `/v2` doesn't surface settings yet. | gap                                                                                              |
+| `ValidationView`    | none — V2 doesn't expose validation as a tab.                                                        | gap                                                                                              |
+| `NotificationsView` | none — orphan (0 importers, see §4).                                                                 | retire as orphan                                                                                 |
 
 **Conclusion**: of 10 legacy views, **7 have Solid coverage**, **3 have functional gaps** (Skills, Settings, Validation). Retiring `(shell)/` requires either:
 (a) accepting that those 3 surfaces are no longer reachable until a Solid port lands, OR
@@ -101,15 +101,15 @@ Approximately **50 files** in U1 alone — the biggest sub-task.
 
 For each of the 7 Solid silos, identify the React file(s) the silo supersedes and the feature-flag site that controls the swap. After deletion, the flag itself drops (Solid becomes the only path).
 
-| Solid silo | React duplicate(s) | Flag site (file:line) | Default today | After delete |
-| --- | --- | --- | --- | --- |
-| **PlansRail** | `dashboard/components/plans/PlansView.tsx`'s `PlanListNavigator` (the rail half) | `plans/PlansView.tsx:1064` (`?plans=solid`) | React rail | drop flag, Solid always; PlansView body stays React (it renders selected plan content) |
-| **Diffs** | `dashboard/components/DiffPanel.tsx`, `dashboard/components/diffs/DiffPanel.tsx` (5 files in `diffs/`) | `components/views/DiffsView.tsx:18` (`?diffs=solid`) | React DiffPanel | drop flag; the `components/views/DiffsView.tsx` wrapper goes away with U1 anyway |
-| **Mission Control** | `dashboard/components/mission/` (11 files: `MissionView`, `HeroStrip`, `KpiStrip`, `MilestoneLadder`, `AgentActivityRail`, `EventStream`, `utils`, `MissionTreeNavigator` + tests) | `mission/MissionView.tsx:46` (`?missionControl=solid`) | React composite | drop flag; whole `mission/` dir retires |
-| **Costs** | `dashboard/components/views/MetricsView.tsx` + `dashboard/components/metrics/MetricsView.tsx` | `views/MetricsView.tsx:50` (`?costs=solid`) | React composite | drop flag; whole `metrics/` dir retires |
-| **Explorer** | `dashboard/components/tui-tree/FileTree.tsx` | `app/v2/project/[name]/ProjectV2Page.tsx:1674` (`?explorer=solid`) | React FileTree | drop flag; `tui-tree/` dir retires |
-| **Tasks** | `dashboard/app/v2/project/[name]/ProjectV2Page.tsx` (inline `TasksView` function ~~1015–1620~~) — this is INLINE in the V2 page, not a separate component. The Solid bridge is reached via `?tasks=solid`. | `ProjectV2Page.tsx:1032` (`?tasks=solid`) | inline React TasksView | drop flag + inline React TasksView function from ProjectV2Page |
-| **Activity** | `dashboard/components/activity/ActivityView.tsx` (+ ActivityFeed) | `activity/ActivityView.tsx:102` (`?activity=solid`) | React | drop flag; `activity/` dir retires |
+| Solid silo          | React duplicate(s)                                                                                                                                                                                         | Flag site (file:line)                                              | Default today          | After delete                                                                           |
+| ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------ | ---------------------- | -------------------------------------------------------------------------------------- |
+| **PlansRail**       | `dashboard/components/plans/PlansView.tsx`'s `PlanListNavigator` (the rail half)                                                                                                                           | `plans/PlansView.tsx:1064` (`?plans=solid`)                        | React rail             | drop flag, Solid always; PlansView body stays React (it renders selected plan content) |
+| **Diffs**           | `dashboard/components/DiffPanel.tsx`, `dashboard/components/diffs/DiffPanel.tsx` (5 files in `diffs/`)                                                                                                     | `components/views/DiffsView.tsx:18` (`?diffs=solid`)               | React DiffPanel        | drop flag; the `components/views/DiffsView.tsx` wrapper goes away with U1 anyway       |
+| **Mission Control** | `dashboard/components/mission/` (11 files: `MissionView`, `HeroStrip`, `KpiStrip`, `MilestoneLadder`, `AgentActivityRail`, `EventStream`, `utils`, `MissionTreeNavigator` + tests)                         | `mission/MissionView.tsx:46` (`?missionControl=solid`)             | React composite        | drop flag; whole `mission/` dir retires                                                |
+| **Costs**           | `dashboard/components/views/MetricsView.tsx` + `dashboard/components/metrics/MetricsView.tsx`                                                                                                              | `views/MetricsView.tsx:50` (`?costs=solid`)                        | React composite        | drop flag; whole `metrics/` dir retires                                                |
+| **Explorer**        | `dashboard/components/tui-tree/FileTree.tsx`                                                                                                                                                               | `app/v2/project/[name]/ProjectV2Page.tsx:1674` (`?explorer=solid`) | React FileTree         | drop flag; `tui-tree/` dir retires                                                     |
+| **Tasks**           | `dashboard/app/v2/project/[name]/ProjectV2Page.tsx` (inline `TasksView` function ~~1015–1620~~) — this is INLINE in the V2 page, not a separate component. The Solid bridge is reached via `?tasks=solid`. | `ProjectV2Page.tsx:1032` (`?tasks=solid`)                          | inline React TasksView | drop flag + inline React TasksView function from ProjectV2Page                         |
+| **Activity**        | `dashboard/components/activity/ActivityView.tsx` (+ ActivityFeed)                                                                                                                                          | `activity/ActivityView.tsx:102` (`?activity=solid`)                | React                  | drop flag; `activity/` dir retires                                                     |
 
 ### Cross-cutting observations
 
@@ -145,6 +145,7 @@ Plus the feature-flag branches at the 7 flag sites listed above.
 ### Inventory
 
 `dashboard/components/chat/` (excluding `__tests__`):
+
 - `ChatTabPanel.tsx` — Solid-island mount bridge for `@tmux-ide/chat-solid` (legacy chat surface).
 - `NewChatPicker.tsx` — 0 importers outside its own test. **Already orphaned.**
 - `ProviderBadge.tsx` — 0 importers outside its own folder.
@@ -157,6 +158,7 @@ Plus the feature-flag branches at the 7 flag sites listed above.
 ### Parity check — does chat-v2 cover everything chat-v1 does?
 
 `V2ChatView.tsx` already does the version split at line 108:
+
 - `chatVersion === "v2"` → renders `ChatV2Root` (the modern thread/turn/plan/activity/checkpoint stack).
 - `chatVersion === "v1"` → renders an inline `ThreadRail` + `SolidChatIsland` (mounts `@tmux-ide/chat-solid`'s ChatThreadView).
 
@@ -188,24 +190,24 @@ packages/chat-solid/                                   external silo — IF noth
 
 Confirmed orphans (0 importers, ready to delete):
 
-| File | Confidence | Notes |
-| --- | --- | --- |
-| `dashboard/components/ActivityFeed.tsx` | definite | 0 hits in `git grep -l "ActivityFeed"` |
-| `dashboard/components/DiffViewer.tsx` | definite | 0 hits |
-| `dashboard/components/views/NotificationsView.tsx` | definite | 0 hits |
-| `dashboard/components/chat/NewChatPicker.tsx` | definite | only self-ref + own test |
-| `dashboard/components/chat/ProviderBadge.tsx` | definite | only own folder |
-| `dashboard/lib/newChatPickerStore.ts` | likely | only NewChatPicker uses it (assume — verify with grep before delete) |
+| File                                               | Confidence | Notes                                                                |
+| -------------------------------------------------- | ---------- | -------------------------------------------------------------------- |
+| `dashboard/components/ActivityFeed.tsx`            | definite   | 0 hits in `git grep -l "ActivityFeed"`                               |
+| `dashboard/components/DiffViewer.tsx`              | definite   | 0 hits                                                               |
+| `dashboard/components/views/NotificationsView.tsx` | definite   | 0 hits                                                               |
+| `dashboard/components/chat/NewChatPicker.tsx`      | definite   | only self-ref + own test                                             |
+| `dashboard/components/chat/ProviderBadge.tsx`      | definite   | only own folder                                                      |
+| `dashboard/lib/newChatPickerStore.ts`              | likely     | only NewChatPicker uses it (assume — verify with grep before delete) |
 
 Likely orphans after U1 lands (will become so when their only importer goes away):
 
-| File | Becomes orphan when |
-| --- | --- |
-| `dashboard/components/AppSidebar.tsx` | `(shell)/layout.tsx` deletes |
-| `dashboard/components/WorkspaceUrlSync.tsx` | `(shell)/layout.tsx` deletes |
-| `dashboard/lib/useNavigatorSlot.ts` | `app-shell/NavigatorSlot.tsx` deletes |
-| `dashboard/lib/useSessionStream.ts` | confirm `/v2` uses it; if so, NOT orphan |
-| All `dashboard/components/<domain>/<Domain>Navigator.tsx` files | `MainTabContent` deletes |
+| File                                                            | Becomes orphan when                      |
+| --------------------------------------------------------------- | ---------------------------------------- |
+| `dashboard/components/AppSidebar.tsx`                           | `(shell)/layout.tsx` deletes             |
+| `dashboard/components/WorkspaceUrlSync.tsx`                     | `(shell)/layout.tsx` deletes             |
+| `dashboard/lib/useNavigatorSlot.ts`                             | `app-shell/NavigatorSlot.tsx` deletes    |
+| `dashboard/lib/useSessionStream.ts`                             | confirm `/v2` uses it; if so, NOT orphan |
+| All `dashboard/components/<domain>/<Domain>Navigator.tsx` files | `MainTabContent` deletes                 |
 
 Craft-agents attribution (`licenses/CRAFT-AGENTS-NOTICE`): the React `PanelStack`/`PanelResizeSash` pattern under `app-shell/` is derived from Craft. Once those files retire in U1, the attribution can drop. Action: keep `Apache-2.0.txt`; delete `CRAFT-AGENTS-NOTICE`.
 
@@ -219,6 +221,7 @@ Bucketed so two agents can run U2 + U3 concurrently after U1 finishes. Each sub-
 
 **Scope**: largest (~50 files).
 **Files**:
+
 - `dashboard/app/(shell)/**`
 - `dashboard/components/app-shell/**` (AppShell + MainTabContent + MainTabsBar + MainTabItem + NavigatorSlot + PanelStack + PanelResizeSash + ProjectSwitcher + SecondaryTabsSlot + sidebar-shell + SidebarTree + TerminalsHost + sidebar-types + index + 5 tests)
 - `dashboard/components/navigators/**`
@@ -237,6 +240,7 @@ Bucketed so two agents can run U2 + U3 concurrently after U1 finishes. Each sub-
 
 **Scope**: 7 silo retirements.
 **Files**:
+
 - `dashboard/components/{plans,mission,metrics,activity,diffs,tui-tree}/**` (everything not still imported by `/v2`)
 - `dashboard/components/{DiffPanel,ActivityFeed,DiffViewer}.tsx`
 - Inline `TasksView` function in `dashboard/app/v2/project/[name]/ProjectV2Page.tsx` (replace `TasksTabContainer` with direct `TasksViewBridge` render; drop the `useSolid` ternary)
@@ -249,6 +253,7 @@ Bucketed so two agents can run U2 + U3 concurrently after U1 finishes. Each sub-
 
 **Scope**: 7 files + a surgical edit.
 **Files**:
+
 - `dashboard/components/chat/ChatTabPanel.tsx`
 - `dashboard/components/chat/NewChatPicker.tsx`
 - `dashboard/components/chat/ProviderBadge.tsx`
@@ -275,6 +280,7 @@ Bucketed so two agents can run U2 + U3 concurrently after U1 finishes. Each sub-
 
 **Scope**: the orphans that emerge after U1+U2+U3 land.
 **Files**: re-run `git grep -L "from.*<modulename>"` across the §4 candidates and delete the ones that now have 0 importers. Likely includes:
+
 - `dashboard/lib/useSessionStream.ts` (if /v2 doesn't use it — verify)
 - Any `<Domain>Navigator.tsx` that didn't already go in U1
 - Any helper file under `dashboard/lib/` flagged by an automated orphan detector
@@ -286,6 +292,7 @@ Bucketed so two agents can run U2 + U3 concurrently after U1 finishes. Each sub-
 
 **Scope**: full release-gate run; document the final file count delta in a follow-up note.
 **Steps**:
+
 1. `pnpm check` (full release gate).
 2. Manual browser smoke at every `/v2/<view>` surface.
 3. `git diff --stat HEAD~6 HEAD` — count deleted lines, paste into commit body.
@@ -339,16 +346,16 @@ d93b7dd refactor(unify): orphan cleanup — delete unused views/navigators/bridg
 
 **Delta vs the pre-sweep base (6d348d5^):**
 
-| Metric | Count |
-| --- | ---: |
-| Files changed | 148 |
-| Files deleted | 117 |
-| Files renamed | 6 |
-| Files modified | 25 |
-| Files added | 0 |
-| Lines added | 126 |
-| Lines deleted | 14,674 |
-| **Net** | **−14,548** |
+| Metric         |       Count |
+| -------------- | ----------: |
+| Files changed  |         148 |
+| Files deleted  |         117 |
+| Files renamed  |           6 |
+| Files modified |          25 |
+| Files added    |           0 |
+| Lines added    |         126 |
+| Lines deleted  |      14,674 |
+| **Net**        | **−14,548** |
 
 **Retired areas** (every one of these was net-deleted, not relocated):
 
@@ -386,4 +393,3 @@ d93b7dd refactor(unify): orphan cleanup — delete unused views/navigators/bridg
 - Each should render without console errors. `?<feature>=solid` query overrides are gone — Solid is the default everywhere.
 
 **Branch state**: `feat/v2.5.0`, ahead of `origin/feat/v2.5.0` by N commits (lead to push). U6 does NOT push.
-

@@ -33,9 +33,7 @@ class FakeWebSocket extends EventTarget {
   send = vi.fn();
   /** Drive a frame down to the hook's message handler. */
   emit(payload: unknown): void {
-    this.dispatchEvent(
-      new MessageEvent("message", { data: JSON.stringify(payload) }),
-    );
+    this.dispatchEvent(new MessageEvent("message", { data: JSON.stringify(payload) }));
   }
 }
 
@@ -142,12 +140,8 @@ describe("useChatThread — real-time streaming wire", () => {
       await waitFor(() => chat.messages().length === 1);
       const msg = chat.messages()[0] as Extract<ThreadMessage, { _tag: "AgentUpdate" }>;
       expect(msg._tag).toBe("AgentUpdate");
-      expect((msg.update as { sessionUpdate: string }).sessionUpdate).toBe(
-        "agent_message_chunk",
-      );
-      expect(((msg.update as unknown) as { content: { text: string } }).content.text).toBe(
-        "Hello, ",
-      );
+      expect((msg.update as { sessionUpdate: string }).sessionUpdate).toBe("agent_message_chunk");
+      expect((msg.update as unknown as { content: { text: string } }).content.text).toBe("Hello, ");
     } finally {
       dispose();
     }
@@ -214,9 +208,9 @@ describe("useChatThread — real-time streaming wire", () => {
 
       await waitFor(() => chat.messages().length === 1);
       const msg = chat.messages()[0] as Extract<ThreadMessage, { _tag: "AgentUpdate" }>;
-      expect(
-        ((msg.update as unknown) as { content: { text: string } }).content.text,
-      ).toBe("right thread");
+      expect((msg.update as unknown as { content: { text: string } }).content.text).toBe(
+        "right thread",
+      );
     } finally {
       dispose();
     }

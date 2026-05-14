@@ -39,12 +39,20 @@ function makeStubBackend(): { backend: LspBackend; calls: Call[] } {
       },
       async definition(file, line, character) {
         calls.push({ verb: "definition", file, line, character });
-        return [{ uri: `file://${file}`, range: { start: { line, character }, end: { line, character } } }];
+        return [
+          {
+            uri: `file://${file}`,
+            range: { start: { line, character }, end: { line, character } },
+          },
+        ];
       },
       async references(file, line, character) {
         calls.push({ verb: "references", file, line, character });
         return [
-          { uri: `file://${file}`, range: { start: { line, character }, end: { line, character } } },
+          {
+            uri: `file://${file}`,
+            range: { start: { line, character }, end: { line, character } },
+          },
         ];
       },
       async diagnostics(file) {

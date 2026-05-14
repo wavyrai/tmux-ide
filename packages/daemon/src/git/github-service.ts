@@ -37,11 +37,15 @@ export class NoGithubRemote extends Data.TaggedError("NoGithubRemote")<Record<st
 export class HeadNotPushed extends Data.TaggedError("HeadNotPushed")<{
   readonly branch: string;
 }> {}
-export class PrAlreadyExists extends Data.TaggedError("PrAlreadyExists")<{ readonly url?: string }> {}
+export class PrAlreadyExists extends Data.TaggedError("PrAlreadyExists")<{
+  readonly url?: string;
+}> {}
 export class GithubValidation extends Data.TaggedError("GithubValidation")<{
   readonly message: string;
 }> {}
-export class GithubNetwork extends Data.TaggedError("GithubNetwork")<{ readonly message: string }> {}
+export class GithubNetwork extends Data.TaggedError("GithubNetwork")<{
+  readonly message: string;
+}> {}
 export class GithubError extends Data.TaggedError("GithubError")<{ readonly message: string }> {}
 
 export type AnyGithubError =
@@ -65,9 +69,7 @@ export function toPayload(err: AnyGithubError): GitHubErrorPayload {
     case "HeadNotPushed":
       return { type: "head_not_pushed", branch: err.branch };
     case "PrAlreadyExists":
-      return err.url
-        ? { type: "pr_already_exists", url: err.url }
-        : { type: "pr_already_exists" };
+      return err.url ? { type: "pr_already_exists", url: err.url } : { type: "pr_already_exists" };
     case "GithubValidation":
       return { type: "validation_failed", message: err.message };
     case "GithubNetwork":
@@ -91,11 +93,7 @@ interface ExecFailure {
   stderr: string;
 }
 
-function runCli(
-  cmd: string,
-  args: ReadonlyArray<string>,
-  cwd?: string,
-): Promise<RunOk> {
+function runCli(cmd: string, args: ReadonlyArray<string>, cwd?: string): Promise<RunOk> {
   return new Promise((resolve, reject) => {
     execFile(
       cmd,
@@ -134,7 +132,9 @@ function classifyGhFailure(failure: ExecFailure): AnyGithubError {
   if (/not logged into|gh auth login|authentication required/i.test(text)) {
     return new NotAuthenticated({});
   }
-  if (/no such ref|src refspec .* does not match|head ref .* does not exist on the remote/i.test(text)) {
+  if (
+    /no such ref|src refspec .* does not match|head ref .* does not exist on the remote/i.test(text)
+  ) {
     const m = /\b([^\s/]+\/[^\s/]+)\b/.exec(text);
     return new HeadNotPushed({ branch: m?.[1] ?? "" });
   }
@@ -316,7 +316,8 @@ function createPrWithGh(
     });
     // gh prints the PR URL on stdout. Pull it out + GET the metadata.
     const url = (stdout.split("\n").find((l) => l.startsWith("https://")) ?? "").trim();
-    if (!url) return yield* Effect.fail(new GithubError({ message: "gh pr create did not return a URL" }));
+    if (!url)
+      return yield* Effect.fail(new GithubError({ message: "gh pr create did not return a URL" }));
     const number = parseInt(url.split("/").pop() ?? "0", 10) || 0;
     return {
       url,
@@ -343,7 +344,11 @@ interface RawCheckRun {
   head_sha?: string;
   started_at?: string | null;
   completed_at?: string | null;
-  app?: { name?: string | null; slug?: string | null; owner?: { avatar_url?: string | null } } | null;
+  app?: {
+    name?: string | null;
+    slug?: string | null;
+    owner?: { avatar_url?: string | null };
+  } | null;
   check_suite?: { id?: number; head_sha?: string } | null;
   output?: { title?: string | null } | null;
 }
@@ -376,7 +381,7 @@ function toCheckRun(raw: RawCheckRun, fallbackSha: string): CheckRun {
     completedAt: raw.completed_at ?? null,
     appName: raw.app?.name ?? null,
     appAvatarUrl: raw.app?.owner?.avatar_url ?? null,
-    workflowName: raw.app?.slug === "github-actions" ? raw.app?.name ?? null : null,
+    workflowName: raw.app?.slug === "github-actions" ? (raw.app?.name ?? null) : null,
   };
 }
 
@@ -493,7 +498,8 @@ function createPrWithRest(
             draft: Boolean(input.draft),
           }),
         }),
-      catch: (cause) => new GithubNetwork({ message: cause instanceof Error ? cause.message : String(cause) }),
+      catch: (cause) =>
+        new GithubNetwork({ message: cause instanceof Error ? cause.message : String(cause) }),
     });
     const body = (yield* Effect.tryPromise({
       try: () => res.json() as Promise<Record<string, unknown>>,

@@ -13,13 +13,14 @@
  * them directly when a host needs to bypass the dispatch.
  */
 
-export { getFileKind, isPreviewableKind, isBinaryForDiff, RASTER_EXTS, BINARY_EXTS } from "./fileKind";
+export {
+  getFileKind,
+  isPreviewableKind,
+  isBinaryForDiff,
+  RASTER_EXTS,
+  BINARY_EXTS,
+} from "./fileKind";
 export { getDefaultRenderer } from "./renderer-utils";
 export { FileRenderer } from "./dispatch";
 export type { FileRendererProps } from "./dispatch";
-export type {
-  ManagedFile,
-  ManagedFileKind,
-  FileRendererData,
-  FileRendererKind,
-} from "./types";
+export type { ManagedFile, ManagedFileKind, FileRendererData, FileRendererKind } from "./types";

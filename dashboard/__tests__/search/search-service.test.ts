@@ -106,9 +106,7 @@ describe("iterateMatches", () => {
           expanded: true,
           snapshotMs: 0,
           contextByLine: {},
-          matches: [
-            { line: 10, text: "tenth", submatches: [{ start: 2, end: 4 }] },
-          ],
+          matches: [{ line: 10, text: "tenth", submatches: [{ start: 2, end: 4 }] }],
         },
       },
     };
@@ -169,7 +167,9 @@ describe("stepMatch", () => {
 });
 
 describe("consumeNdjson", () => {
-  function withState<T>(fn: (state: SearchState, setState: Parameters<typeof consumeNdjson>[2]) => Promise<T>): Promise<T> {
+  function withState<T>(
+    fn: (state: SearchState, setState: Parameters<typeof consumeNdjson>[2]) => Promise<T>,
+  ): Promise<T> {
     return createRoot(async (dispose) => {
       const [state, setState] = createStore<SearchState>(structuredClone(INITIAL_STATE));
       const result = await fn(state, setState);
@@ -256,7 +256,7 @@ describe("consumeNdjson", () => {
         text: "TODO\n",
         submatches: [{ start: 0, end: 4 }],
       } satisfies SearchFrame);
-      const buffer = (frame1 + "\n" + frame2 + "\n");
+      const buffer = frame1 + "\n" + frame2 + "\n";
       const half = Math.floor(buffer.length / 2);
       const stream = new ReadableStream<Uint8Array>({
         start(c) {

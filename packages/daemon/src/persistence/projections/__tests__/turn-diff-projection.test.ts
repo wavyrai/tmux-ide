@@ -99,12 +99,7 @@ function makeFakeReader(): FakeEventReader {
 // Event helpers
 // ---------------------------------------------------------------------------
 
-function file(
-  path: string,
-  kind: string,
-  additions: number,
-  deletions: number,
-): CheckpointFile {
+function file(path: string, kind: string, additions: number, deletions: number): CheckpointFile {
   return { path, kind, additions, deletions };
 }
 

@@ -43,8 +43,12 @@ export function DiffPreview(props: DiffPreviewProps) {
   let modifiedModel: monaco.editor.ITextModel | null = null;
 
   function buildModels(m: typeof monaco) {
-    const originalUri = m.Uri.parse(`inmemory://diff-preview/${encodeURIComponent(props.id)}/original`);
-    const modifiedUri = m.Uri.parse(`inmemory://diff-preview/${encodeURIComponent(props.id)}/modified`);
+    const originalUri = m.Uri.parse(
+      `inmemory://diff-preview/${encodeURIComponent(props.id)}/original`,
+    );
+    const modifiedUri = m.Uri.parse(
+      `inmemory://diff-preview/${encodeURIComponent(props.id)}/modified`,
+    );
     // Dispose stale models if id collisions ever land us here.
     m.editor.getModel(originalUri)?.dispose();
     m.editor.getModel(modifiedUri)?.dispose();

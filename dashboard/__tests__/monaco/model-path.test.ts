@@ -3,11 +3,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import {
-  buildMonacoModelPath,
-  toDiskUri,
-  toGitUri,
-} from "@/lib/monaco/model-path";
+import { buildMonacoModelPath, toDiskUri, toGitUri } from "@/lib/monaco/model-path";
 
 describe("buildMonacoModelPath", () => {
   it("builds an absolute file:// URI from root + relative file", () => {
@@ -23,9 +19,7 @@ describe("buildMonacoModelPath", () => {
   });
 
   it("percent-encodes spaces and special chars per segment", () => {
-    expect(buildMonacoModelPath("/repo", "src/My File.ts")).toBe(
-      "file:///repo/src/My%20File.ts",
-    );
+    expect(buildMonacoModelPath("/repo", "src/My File.ts")).toBe("file:///repo/src/My%20File.ts");
   });
 
   it("collapses double slashes", () => {

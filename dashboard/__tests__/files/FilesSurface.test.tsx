@@ -65,7 +65,10 @@ import { modelRegistry } from "@/lib/monaco/model-registry";
 // Stub Monaco so `registerDisk` can run end-to-end without pulling
 // the editor bundle.
 let nextModelId = 0;
-const stubModels = new Map<string, { dispose: () => void; getValue: () => string; _value: string }>();
+const stubModels = new Map<
+  string,
+  { dispose: () => void; getValue: () => string; _value: string }
+>();
 const stubMonaco = {
   Uri: { parse: (s: string) => ({ _raw: s, toString: () => s }) },
   editor: {

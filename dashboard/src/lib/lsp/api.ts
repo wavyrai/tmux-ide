@@ -136,7 +136,7 @@ export function lspHover(
   signal?: AbortSignal,
 ): Promise<{ hover: LspHover | null }> {
   void signal; // browsers cancel fetches via signal; we don't pipe it through
-                 // here because the underlying request is debounced & short.
+  // here because the underlying request is debounced & short.
   return postJson(`/api/project/${encodeURIComponent(sessionName)}/lsp/hover`, body);
 }
 
@@ -144,58 +144,40 @@ export function lspDefinition(
   sessionName: string,
   body: PositionBody,
 ): Promise<{ definition: LspLocation | LspLocation[] | LspLocationLink[] | null }> {
-  return postJson(
-    `/api/project/${encodeURIComponent(sessionName)}/lsp/definition`,
-    body,
-  );
+  return postJson(`/api/project/${encodeURIComponent(sessionName)}/lsp/definition`, body);
 }
 
 export function lspReferences(
   sessionName: string,
   body: PositionBody,
 ): Promise<{ references: LspLocation[] | null }> {
-  return postJson(
-    `/api/project/${encodeURIComponent(sessionName)}/lsp/references`,
-    body,
-  );
+  return postJson(`/api/project/${encodeURIComponent(sessionName)}/lsp/references`, body);
 }
 
 export function lspDiagnostics(
   sessionName: string,
   file: string,
 ): Promise<{ diagnostics: LspDiagnostic[] }> {
-  return postJson(
-    `/api/project/${encodeURIComponent(sessionName)}/lsp/diagnostics`,
-    { file },
-  );
+  return postJson(`/api/project/${encodeURIComponent(sessionName)}/lsp/diagnostics`, { file });
 }
 
 export function lspSymbols(
   sessionName: string,
   query: string,
 ): Promise<{ symbols: LspSymbolInformation[] }> {
-  return postJson(
-    `/api/project/${encodeURIComponent(sessionName)}/lsp/symbols`,
-    { query },
-  );
+  return postJson(`/api/project/${encodeURIComponent(sessionName)}/lsp/symbols`, { query });
 }
 
 export function lspRename(
   sessionName: string,
   body: PositionBody & { newName: string },
 ): Promise<{ edit: LspWorkspaceEdit | null }> {
-  return postJson(
-    `/api/project/${encodeURIComponent(sessionName)}/lsp/rename`,
-    body,
-  );
+  return postJson(`/api/project/${encodeURIComponent(sessionName)}/lsp/rename`, body);
 }
 
 export function lspCodeActions(
   sessionName: string,
   body: PositionBody & { endLine?: number; endColumn?: number },
 ): Promise<{ actions: LspCodeAction[] }> {
-  return postJson(
-    `/api/project/${encodeURIComponent(sessionName)}/lsp/codeActions`,
-    body,
-  );
+  return postJson(`/api/project/${encodeURIComponent(sessionName)}/lsp/codeActions`, body);
 }

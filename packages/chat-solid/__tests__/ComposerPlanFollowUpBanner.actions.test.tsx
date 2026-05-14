@@ -19,10 +19,7 @@
 import { createRoot, createSignal, type Accessor } from "solid-js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useChatThread } from "../src/hooks/useChatThread";
-import type {
-  ChatMountOptions,
-  ProposedPlanSummary,
-} from "../src/types";
+import type { ChatMountOptions, ProposedPlanSummary } from "../src/types";
 
 class FakeWebSocket extends EventTarget {
   static instances: FakeWebSocket[] = [];

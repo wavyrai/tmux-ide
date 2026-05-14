@@ -38,17 +38,8 @@ import {
 } from "solid-js";
 import { Effect } from "effect";
 import { ChevronDown, ChevronRight, File, Folder, FolderOpen } from "lucide-solid";
-import {
-  fetchFilePreview,
-  fetchProjectFiles,
-  type ProjectFileNode,
-} from "@/lib/api";
-import {
-  FileRenderer,
-  getFileKind,
-  type ManagedFile,
-  type ManagedFileKind,
-} from "@/lib/editor";
+import { fetchFilePreview, fetchProjectFiles, type ProjectFileNode } from "@/lib/api";
+import { FileRenderer, getFileKind, type ManagedFile, type ManagedFileKind } from "@/lib/editor";
 import {
   acceptExternalChange,
   bufferState,
@@ -276,10 +267,7 @@ export function FilesSurface(props: FilesSurfaceProps): JSX.Element {
   };
 
   return (
-    <div
-      data-testid="v2-files-surface"
-      class="flex h-full min-h-0 w-full flex-row"
-    >
+    <div data-testid="v2-files-surface" class="flex h-full min-h-0 w-full flex-row">
       <aside
         data-testid="v2-files-explorer"
         class="flex w-64 shrink-0 flex-col overflow-y-auto border-r border-[var(--border)] bg-[var(--bg-strong)] text-[12px]"
@@ -289,17 +277,12 @@ export function FilesSurface(props: FilesSurfaceProps): JSX.Element {
         </div>
         <Show
           when={!tree.loading}
-          fallback={
-            <div class="px-3 py-2 text-[11px] text-[var(--dim)]">loading…</div>
-          }
+          fallback={<div class="px-3 py-2 text-[11px] text-[var(--dim)]">loading…</div>}
         >
           <Show
             when={(tree()?.tree ?? []).length > 0}
             fallback={
-              <div
-                data-testid="v2-files-empty"
-                class="px-3 py-2 text-[11px] text-[var(--dim)]"
-              >
+              <div data-testid="v2-files-empty" class="px-3 py-2 text-[11px] text-[var(--dim)]">
                 No files
               </div>
             }
@@ -314,10 +297,7 @@ export function FilesSurface(props: FilesSurfaceProps): JSX.Element {
         </Show>
       </aside>
 
-      <main
-        data-testid="v2-files-preview"
-        class="flex flex-1 min-w-0 min-h-0 flex-col"
-      >
+      <main data-testid="v2-files-preview" class="flex flex-1 min-w-0 min-h-0 flex-col">
         <Show when={recoverable().length > 0}>
           <RecoveryBanner
             snapshots={recoverable()}
@@ -376,15 +356,14 @@ function RecoveryBanner(props: {
     >
       <span class="text-[var(--accent)]">●</span>
       <span class="font-mono">
-        {props.snapshots.length} unsaved buffer{props.snapshots.length === 1 ? "" : "s"} from your previous session
+        {props.snapshots.length} unsaved buffer{props.snapshots.length === 1 ? "" : "s"} from your
+        previous session
       </span>
       <span class="flex-1" />
       <For each={props.snapshots}>
         {(snap) => (
           <div class="inline-flex items-center gap-1">
-            <span class="truncate font-mono text-[10px] text-[var(--dim)]">
-              {snap.filePath}
-            </span>
+            <span class="truncate font-mono text-[10px] text-[var(--dim)]">{snap.filePath}</span>
             <button
               type="button"
               data-testid="v2-files-recovery-restore"
@@ -427,7 +406,7 @@ function PreviewBody(props: {
   // Active text buffer wins; otherwise fall through to the non-text
   // preview routing.
   const activeBuffer = createMemo(() =>
-    props.activeUri ? bufferState.buffers[props.activeUri] ?? null : null,
+    props.activeUri ? (bufferState.buffers[props.activeUri] ?? null) : null,
   );
 
   const previewFile = createMemo<ManagedFile | null>(() => {
@@ -447,11 +426,7 @@ function PreviewBody(props: {
       fallback={
         <Show when={previewFile()}>
           {(f) => (
-            <FileRenderer
-              file={f()}
-              modelRootPath={props.rootPath}
-              onEditSource={undefined}
-            />
+            <FileRenderer file={f()} modelRootPath={props.rootPath} onEditSource={undefined} />
           )}
         </Show>
       }
@@ -465,7 +440,10 @@ function PreviewBody(props: {
               data-buffer-status={buf().status}
               class="flex h-full items-center justify-center text-[11px] text-[var(--dim)]"
             >
-              <Show when={buf().status === "loading"} fallback={<span>{buf().saveError ?? "failed to load file"}</span>}>
+              <Show
+                when={buf().status === "loading"}
+                fallback={<span>{buf().saveError ?? "failed to load file"}</span>}
+              >
                 loading…
               </Show>
             </div>
@@ -513,7 +491,9 @@ function ExternalChangeBanner(props: {
       data-testid="v2-files-external-change-banner"
       class="flex shrink-0 items-center gap-2 border-b border-[var(--yellow,var(--accent))] bg-[var(--surface)] px-3 py-2 text-[11px] text-[var(--fg)]"
     >
-      <span aria-hidden="true" class="text-[var(--yellow,var(--accent))]">⚠</span>
+      <span aria-hidden="true" class="text-[var(--yellow,var(--accent))]">
+        ⚠
+      </span>
       <span>
         <span class="font-mono">{props.filePath}</span> changed on disk.
       </span>
@@ -549,7 +529,14 @@ function FileTree(props: FileTreeProps) {
   return (
     <ul class="m-0 list-none p-0">
       <For each={props.nodes}>
-        {(node) => <FileTreeRow node={node} depth={props.depth} activePath={props.activePath} onPick={props.onPick} />}
+        {(node) => (
+          <FileTreeRow
+            node={node}
+            depth={props.depth}
+            activePath={props.activePath}
+            onPick={props.onPick}
+          />
+        )}
       </For>
     </ul>
   );
@@ -601,10 +588,7 @@ function FileTreeRow(props: {
           <Show when={expanded()} fallback={<ChevronRight class="h-3 w-3 shrink-0" />}>
             <ChevronDown class="h-3 w-3 shrink-0" />
           </Show>
-          <Show
-            when={expanded()}
-            fallback={<Folder class="h-3 w-3 shrink-0 opacity-70" />}
-          >
+          <Show when={expanded()} fallback={<Folder class="h-3 w-3 shrink-0 opacity-70" />}>
             <FolderOpen class="h-3 w-3 shrink-0 opacity-70" />
           </Show>
           <span class="truncate">{props.node.name}</span>

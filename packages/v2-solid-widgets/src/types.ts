@@ -600,13 +600,7 @@ export interface SkillsViewMountHandle {
 // fires `onSelect(category, id)` so the host can route per-category.
 // ---------------------------------------------------------------------------
 
-export type PaletteCategory =
-  | "providers"
-  | "skills"
-  | "tasks"
-  | "threads"
-  | "views"
-  | "commands";
+export type PaletteCategory = "providers" | "skills" | "tasks" | "threads" | "views" | "commands";
 
 export interface PaletteItem {
   /** Stable id within (category, items). */

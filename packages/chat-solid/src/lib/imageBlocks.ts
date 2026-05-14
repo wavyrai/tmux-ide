@@ -7,10 +7,7 @@
  */
 
 import type { ContentBlock, ToolCallContent } from "../types";
-import type {
-  ExpandedImageItem,
-  ExpandedImagePreview,
-} from "../components/ExpandedImagePreview";
+import type { ExpandedImageItem, ExpandedImagePreview } from "../components/ExpandedImagePreview";
 
 export interface ImageBlockEntry {
   /** Index of the source block in the *original* content array. */
@@ -28,9 +25,7 @@ export interface ImageBlockEntry {
  * renderable image block. Skips blocks with missing `data` so the
  * inline preview never points at an empty `data:` URL.
  */
-export function collectImageBlocks(
-  blocks: ReadonlyArray<ContentBlock>,
-): ImageBlockEntry[] {
+export function collectImageBlocks(blocks: ReadonlyArray<ContentBlock>): ImageBlockEntry[] {
   const entries: ImageBlockEntry[] = [];
   for (let i = 0; i < blocks.length; i += 1) {
     const block = blocks[i];

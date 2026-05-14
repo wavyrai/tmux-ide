@@ -56,14 +56,7 @@ const SCOPE_EVENT_TYPES: Partial<Record<InspectorScope, ReadonlySet<string>>> = 
     "completion",
   ]),
   files: new Set(["file.changed", "file.created", "file.deleted", "fs.changed"]),
-  tasks: new Set([
-    "task_created",
-    "status_change",
-    "completion",
-    "dispatch",
-    "retry",
-    "stall",
-  ]),
+  tasks: new Set(["task_created", "status_change", "completion", "dispatch", "retry", "stall"]),
   plans: new Set(["plan.created", "plan.updated", "plan.completed", "plan_done"]),
   diffs: new Set(["chat.checkpoint.created", "diff.applied", "diff.reverted"]),
   mission: new Set(["mission.changed", "milestone.changed", "validation.changed"]),
@@ -119,9 +112,7 @@ export function InspectorView(props: InspectorViewProps) {
     opt.onToggleExpanded?.(next);
   }
 
-  const allEvents = createMemo<ReadonlyArray<ActivityEvent>>(
-    () => props.options().events ?? [],
-  );
+  const allEvents = createMemo<ReadonlyArray<ActivityEvent>>(() => props.options().events ?? []);
 
   // Scope + severity trim — pure transform, applied before the events
   // hit ActivityView. ActivityView's own search/KPI chips keep working
@@ -129,9 +120,7 @@ export function InspectorView(props: InspectorViewProps) {
   const visibleEvents = createMemo<ReadonlyArray<ActivityEvent>>(() => {
     const scope = props.options().currentView;
     const sev = severity();
-    return allEvents().filter(
-      (e) => scopeMatches(scope, e.type) && severityMatches(sev, e.type),
-    );
+    return allEvents().filter((e) => scopeMatches(scope, e.type) && severityMatches(sev, e.type));
   });
 
   // Header count badge — number of events in scope (regardless of

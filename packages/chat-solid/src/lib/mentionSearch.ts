@@ -31,7 +31,10 @@ export interface MentionSearchResult {
 
 const DEFAULT_LIMIT = 12;
 
-function matchSubsequence(name: string, query: string): { score: number; matched: number[] } | null {
+function matchSubsequence(
+  name: string,
+  query: string,
+): { score: number; matched: number[] } | null {
   const matched: number[] = [];
   let qi = 0;
   let prev = -1;
@@ -47,12 +50,16 @@ function matchSubsequence(name: string, query: string): { score: number; matched
   return { score: 500 - gap - name.length, matched };
 }
 
-function scoreCandidate(candidate: MentionCandidate, q: string): { score: number; matched: number[] } | null {
+function scoreCandidate(
+  candidate: MentionCandidate,
+  q: string,
+): { score: number; matched: number[] } | null {
   const lbl = candidate.label.toLowerCase();
   if (lbl === q) return { score: 1_000 - lbl.length, matched: range(0, q.length) };
   if (lbl.startsWith(q)) return { score: 900 - lbl.length, matched: range(0, q.length) };
   const subIndex = lbl.indexOf(q);
-  if (subIndex >= 0) return { score: 750 - subIndex - lbl.length, matched: range(subIndex, q.length) };
+  if (subIndex >= 0)
+    return { score: 750 - subIndex - lbl.length, matched: range(subIndex, q.length) };
   return matchSubsequence(lbl, q);
 }
 

@@ -12,11 +12,7 @@
  */
 
 import { createSignal, type Accessor } from "solid-js";
-import {
-  FrontendPty,
-  type FrontendPtyOptions,
-  type FrontendPtyStatus,
-} from "./FrontendPty";
+import { FrontendPty, type FrontendPtyOptions, type FrontendPtyStatus } from "./FrontendPty";
 
 export class PtySession {
   pty: FrontendPty | null = null;

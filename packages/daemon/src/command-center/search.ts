@@ -160,12 +160,7 @@ function isSafeGlob(glob: string): boolean {
   return !segs.some((seg) => seg === "..");
 }
 
-function clampInt(
-  raw: string | undefined,
-  min: number,
-  max: number,
-  fallback: number,
-): number {
+function clampInt(raw: string | undefined, min: number, max: number, fallback: number): number {
   if (raw === undefined) return fallback;
   const n = Number.parseInt(raw, 10);
   if (!Number.isFinite(n)) return fallback;

@@ -77,16 +77,12 @@ describe("BranchPicker", () => {
     await findByTestId("branch-row-main");
     // remote-only branch should appear under its own row.
     expect(queryByTestId("branch-row-stale-feature")).toBeTruthy();
-    expect(
-      queryByTestId("branch-row-stale-feature")?.getAttribute("data-group"),
-    ).toBe("remote");
+    expect(queryByTestId("branch-row-stale-feature")?.getAttribute("data-group")).toBe("remote");
     // The duplicate "main" on origin must NOT add a second remote row.
     const mainRow = queryByTestId("branch-row-main")!;
     expect(mainRow.getAttribute("data-group")).toBe("local");
     expect(mainRow.getAttribute("data-current")).toBe("true");
-    expect(queryByTestId("branch-row-feature/x")?.getAttribute("data-current")).toBe(
-      "false",
-    );
+    expect(queryByTestId("branch-row-feature/x")?.getAttribute("data-current")).toBe("false");
   });
 
   it("POSTs to /git/checkout on row click + calls onCheckedOut + onClose", async () => {
@@ -115,12 +111,7 @@ describe("BranchPicker", () => {
     const onCheckedOut = vi.fn();
     const onClose = vi.fn();
     const { findByTestId } = render(() => (
-      <BranchPicker
-        sessionName="proj"
-        open={true}
-        onClose={onClose}
-        onCheckedOut={onCheckedOut}
-      />
+      <BranchPicker sessionName="proj" open={true} onClose={onClose} onCheckedOut={onCheckedOut} />
     ));
 
     const devRow = await findByTestId("branch-row-dev");
@@ -169,7 +160,10 @@ describe("BranchPicker", () => {
       const url = String(input);
       if (url.endsWith("/api/project/proj/git/branches")) {
         return jsonOk({
-          local: [{ type: "local", branch: "main" }, { type: "local", branch: "dev" }],
+          local: [
+            { type: "local", branch: "main" },
+            { type: "local", branch: "dev" },
+          ],
           remote: [],
           remotes: [],
           currentBranch: "main",

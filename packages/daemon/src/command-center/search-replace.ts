@@ -24,13 +24,7 @@
  *     array surfaces this; the UI re-runs search to reconcile.
  */
 
-import {
-  readFileSync,
-  renameSync,
-  rmSync,
-  statSync,
-  writeFileSync,
-} from "node:fs";
+import { readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, resolve as pathResolve } from "node:path";
 import { z } from "zod";
 

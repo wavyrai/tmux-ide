@@ -41,7 +41,10 @@ vi.mock("@/components/editor/DiffPreview", () => ({
   ),
 }));
 
-const stubModels = new Map<string, { _value: string; getValue(): string; setValue(v: string): void; dispose(): void }>();
+const stubModels = new Map<
+  string,
+  { _value: string; getValue(): string; setValue(v: string): void; dispose(): void }
+>();
 const stubMonaco = {
   Uri: { parse: (s: string) => ({ _raw: s, toString: () => s }) },
   editor: {
@@ -155,9 +158,7 @@ describe("MergeConflictPanel render + actions", () => {
   it("renders one hunk per merge-region with the right kind data attrs", () => {
     const uri = openConflict();
     const buf = bufferState.buffers[uri]!;
-    const { getAllByTestId, getByTestId } = render(() => (
-      <MergeConflictPanel buffer={buf} />
-    ));
+    const { getAllByTestId, getByTestId } = render(() => <MergeConflictPanel buffer={buf} />);
     expect(getByTestId("v2-merge-conflict-panel").getAttribute("data-buffer-uri")).toBe(uri);
     const hunks = getAllByTestId("v2-merge-hunk");
     expect(hunks.length).toBeGreaterThanOrEqual(1);
@@ -227,7 +228,9 @@ describe("MergeConflictPanel render + actions", () => {
     reseedFromExternal(bufferUri, "a\nXB\nc\nXD\ne\n");
     const buf = bufferState.buffers[bufferUri]!;
     const { getByTestId } = render(() => <MergeConflictPanel buffer={buf} />);
-    expect(Number(getByTestId("v2-merge-conflict-panel").getAttribute("data-total-conflicts"))).toBeGreaterThanOrEqual(2);
+    expect(
+      Number(getByTestId("v2-merge-conflict-panel").getAttribute("data-total-conflicts")),
+    ).toBeGreaterThanOrEqual(2);
     fireEvent.click(getByTestId("v2-merge-bulk-external"));
     const after = bufferState.buffers[bufferUri]!;
     expect(after.externalContent).toBeNull();

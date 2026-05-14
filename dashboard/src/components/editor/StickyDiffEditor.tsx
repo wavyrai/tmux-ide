@@ -54,9 +54,7 @@ export interface StickyDiffEditorProps {
   onHeightChange?: (height: number) => void;
 }
 
-function rangeFromLineChange(
-  change: monaco.editor.ILineChange,
-): DiffHunk {
+function rangeFromLineChange(change: monaco.editor.ILineChange): DiffHunk {
   return {
     originalStartLine: change.originalStartLineNumber,
     originalEndLine: change.originalEndLineNumber,
@@ -207,10 +205,7 @@ function HunkList(props: {
         onClick={props.onToggle}
         class="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[var(--fg-secondary)] hover:bg-[var(--surface-hover)]"
       >
-        <Show
-          when={props.collapsed}
-          fallback={<ChevronDown class="h-3 w-3" aria-hidden="true" />}
-        >
+        <Show when={props.collapsed} fallback={<ChevronDown class="h-3 w-3" aria-hidden="true" />}>
           <ChevronUp class="h-3 w-3" aria-hidden="true" />
         </Show>
         <span class="font-mono text-[10px] uppercase tracking-wider text-[var(--dim)]">

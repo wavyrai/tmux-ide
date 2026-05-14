@@ -10,12 +10,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { createSignal } from "solid-js";
 import { render } from "solid-js/web";
 import { MessagesTimeline } from "../src/components/MessagesTimeline";
-import type {
-  ChatMessage,
-  MessagesTimelineRow,
-  ThreadMessage,
-  ToolCallView,
-} from "../src/types";
+import type { ChatMessage, MessagesTimelineRow, ThreadMessage, ToolCallView } from "../src/types";
 
 function userMsg(id: string, text = "hi"): ChatMessage {
   return {
@@ -90,7 +85,9 @@ describe("MessagesTimeline flat transcript", () => {
     // No `.rounded-2xl` bubble class anywhere — bubble UI is gone.
     expect(mounted.container.querySelector(".rounded-2xl")).toBeNull();
     // Each row carries a role header.
-    expect(mounted.container.querySelectorAll('[data-testid="message-role-header"]')).toHaveLength(2);
+    expect(mounted.container.querySelectorAll('[data-testid="message-role-header"]')).toHaveLength(
+      2,
+    );
   });
 
   it("labels the user row as You and the assistant row as the provider name", () => {
@@ -141,7 +138,9 @@ describe("MessagesTimeline flat transcript", () => {
       content: [],
     };
     mounted = mount({
-      rows: [row(assistantMsg("a1", { toolCalls: [toolCall, { ...toolCall, toolCallId: "tc2" }] }))],
+      rows: [
+        row(assistantMsg("a1", { toolCalls: [toolCall, { ...toolCall, toolCallId: "tc2" }] })),
+      ],
     });
     const cluster = mounted.container.querySelector('[data-testid="tool-calls-cluster"]');
     expect(cluster).toBeTruthy();
@@ -154,7 +153,9 @@ describe("MessagesTimeline flat transcript", () => {
     expect(toggle!.textContent).toContain("Tool calls (2)");
     toggle!.click();
     expect(
-      mounted.container.querySelector('[data-testid="tool-calls-cluster"]')!.getAttribute("data-open"),
+      mounted.container
+        .querySelector('[data-testid="tool-calls-cluster"]')!
+        .getAttribute("data-open"),
     ).toBe("true");
     expect(mounted.container.querySelector('[data-testid="tool-calls-list"]')).toBeTruthy();
   });

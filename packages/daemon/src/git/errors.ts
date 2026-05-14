@@ -19,8 +19,12 @@ export class HookRejected extends Data.TaggedError("HookRejected")<{ readonly me
 export class NothingToCommit extends Data.TaggedError("NothingToCommit")<Record<string, never>> {}
 export class BranchExists extends Data.TaggedError("BranchExists")<{ readonly name: string }> {}
 export class BranchNotFound extends Data.TaggedError("BranchNotFound")<{ readonly name: string }> {}
-export class InvalidBranchName extends Data.TaggedError("InvalidBranchName")<{ readonly name: string }> {}
-export class UncommittedChanges extends Data.TaggedError("UncommittedChanges")<{ readonly message: string }> {}
+export class InvalidBranchName extends Data.TaggedError("InvalidBranchName")<{
+  readonly name: string;
+}> {}
+export class UncommittedChanges extends Data.TaggedError("UncommittedChanges")<{
+  readonly message: string;
+}> {}
 export class GitError extends Data.TaggedError("GitError")<{ readonly message: string }> {}
 
 export type AnyGitError =
@@ -75,7 +79,9 @@ export function classifyExitError(stderr: string): AnyGitError {
   const text = stderr || "";
   // Auth — both HTTPS + SSH paths.
   if (
-    /Authentication failed|could not read Username|Permission denied|publickey|HTTP\s+401/i.test(text)
+    /Authentication failed|could not read Username|Permission denied|publickey|HTTP\s+401/i.test(
+      text,
+    )
   ) {
     return new AuthFailed({ message: text.trim() });
   }
@@ -88,7 +94,9 @@ export function classifyExitError(stderr: string): AnyGitError {
     return new NetworkError({ message: text.trim() });
   }
   // Push rejected (non-fast-forward / branch-protected).
-  if (/\[rejected\]|! \[remote rejected\]|non-fast-forward|protected branch hook declined/i.test(text)) {
+  if (
+    /\[rejected\]|! \[remote rejected\]|non-fast-forward|protected branch hook declined/i.test(text)
+  ) {
     return new PushRejected({ message: text.trim() });
   }
   // Pre-push or commit hook bailed out.
@@ -96,7 +104,11 @@ export function classifyExitError(stderr: string): AnyGitError {
     return new HookRejected({ message: text.trim() });
   }
   // No remote at all.
-  if (/No configured push destination|does not appear to be a git repository.*remote|no upstream/i.test(text)) {
+  if (
+    /No configured push destination|does not appear to be a git repository.*remote|no upstream/i.test(
+      text,
+    )
+  ) {
     return new NoRemote({});
   }
   // Nothing-staged commit attempt.
@@ -105,7 +117,9 @@ export function classifyExitError(stderr: string): AnyGitError {
   }
   // Uncommitted-changes guard from checkout.
   if (
-    /Your local changes to the following files would be overwritten|would be overwritten by checkout/i.test(text)
+    /Your local changes to the following files would be overwritten|would be overwritten by checkout/i.test(
+      text,
+    )
   ) {
     return new UncommittedChanges({ message: text.trim() });
   }
@@ -115,7 +129,11 @@ export function classifyExitError(stderr: string): AnyGitError {
     return new BranchExists({ name: m?.[1] ?? "" });
   }
   // Branch not found.
-  if (/pathspec '.*' did not match|did not match any file\(s\) known to git|invalid reference: /i.test(text)) {
+  if (
+    /pathspec '.*' did not match|did not match any file\(s\) known to git|invalid reference: /i.test(
+      text,
+    )
+  ) {
     return new BranchNotFound({ name: "" });
   }
   // Repo doesn't exist at the cwd.

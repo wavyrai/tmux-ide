@@ -223,10 +223,7 @@ describe("multi-provider thread — store + per-instance resolution", () => {
 
     expect(ollamaResult.features.toolCalls).toBe(false);
     expect(ollamaResult.features.vision).toBe(false);
-    expect(ollamaResult.downgrades.map((d) => d.feature).sort()).toEqual([
-      "toolCalls",
-      "vision",
-    ]);
+    expect(ollamaResult.downgrades.map((d) => d.feature).sort()).toEqual(["toolCalls", "vision"]);
   });
 
   it("per-instance overrides apply only to the target instance", () => {
@@ -293,7 +290,9 @@ describe("ProviderCapabilitiesLive (Effect Service)", () => {
       return { baseClaude, overridden, negotiation, override, cleared };
     });
 
-    const result = await Effect.runPromise(program.pipe(Effect.provide(ProviderCapabilitiesLive())));
+    const result = await Effect.runPromise(
+      program.pipe(Effect.provide(ProviderCapabilitiesLive())),
+    );
 
     expect(result.baseClaude.vision).toBe(true);
     expect(result.overridden.vision).toBe(false);

@@ -11,10 +11,7 @@ function mountWidget(initial: MissionControlDashboardMountOptions) {
   const container = document.createElement("div");
   document.body.appendChild(container);
   const [options, setOptions] = createSignal<MissionControlDashboardMountOptions>(initial);
-  const dispose = render(
-    () => <MissionControlDashboardView options={options} />,
-    container,
-  );
+  const dispose = render(() => <MissionControlDashboardView options={options} />, container);
   return {
     container,
     dispose,
@@ -49,7 +46,13 @@ const richSnapshot: MissionControlDashboardSnapshot = {
     { id: "001", title: "Sqlite event store", status: "done", milestone: "M1", assignee: "Pty" },
     { id: "002", title: "Reactor scaffold", status: "done", milestone: "M2", assignee: "Camille" },
     { id: "003", title: "Effect runtime", status: "done", milestone: "M2", assignee: "Architect" },
-    { id: "004", title: "TurnDiff projection", status: "in-progress", milestone: "M2", assignee: "Pty" },
+    {
+      id: "004",
+      title: "TurnDiff projection",
+      status: "in-progress",
+      milestone: "M2",
+      assignee: "Pty",
+    },
     { id: "005", title: "Provider depth", status: "review", milestone: "M2", assignee: "Camille" },
     { id: "006", title: "ProviderApprovalPolicy", status: "todo", milestone: "M2", assignee: null },
   ],
@@ -112,9 +115,7 @@ describe("MissionControlDashboard (Solid widget)", () => {
   it("renders the empty state when snapshot has no mission", () => {
     const { container, dispose } = mountWidget({ snapshot: emptySnapshot });
     expect(container.querySelector("[data-testid='mission-control-empty']")).toBeTruthy();
-    expect(
-      container.querySelector("[data-mission-section='kpis']"),
-    ).toBeNull();
+    expect(container.querySelector("[data-mission-section='kpis']")).toBeNull();
     expect(container.textContent).toContain("No active mission");
     dispose();
   });
@@ -147,9 +148,7 @@ describe("MissionControlDashboard (Solid widget)", () => {
     // Tasks under M2 — mixed statuses (done/in-progress/review/todo)
     const m2Tasks = m2?.querySelectorAll("[data-mission-task]") ?? [];
     expect(m2Tasks.length).toBe(5);
-    const statuses = Array.from(m2Tasks).map((t) =>
-      t.getAttribute("data-mission-task-status"),
-    );
+    const statuses = Array.from(m2Tasks).map((t) => t.getAttribute("data-mission-task-status"));
     expect(statuses).toContain("done");
     expect(statuses).toContain("in-progress");
     expect(statuses).toContain("review");
@@ -203,12 +202,8 @@ describe("MissionControlDashboard (Solid widget)", () => {
     expect(agentCards.length).toBe(3);
 
     // Busy + idle attributes
-    const busy = Array.from(agentCards).filter(
-      (a) => a.dataset.missionAgentBusy === "true",
-    );
-    const idle = Array.from(agentCards).filter(
-      (a) => a.dataset.missionAgentBusy === "false",
-    );
+    const busy = Array.from(agentCards).filter((a) => a.dataset.missionAgentBusy === "true");
+    const idle = Array.from(agentCards).filter((a) => a.dataset.missionAgentBusy === "false");
     expect(busy.length).toBe(2);
     expect(idle.length).toBe(1);
 
@@ -230,9 +225,7 @@ describe("MissionControlDashboard (Solid widget)", () => {
       onTaskClick,
     });
 
-    const taskRow = container.querySelector<HTMLElement>(
-      "[data-mission-task='004']",
-    );
+    const taskRow = container.querySelector<HTMLElement>("[data-mission-task='004']");
     expect(taskRow).toBeTruthy();
     taskRow!.click();
     expect(onTaskClick).toHaveBeenCalledWith("004");

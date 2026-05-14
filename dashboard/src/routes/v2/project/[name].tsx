@@ -84,9 +84,7 @@ export default function ProjectV2Route(): JSX.Element {
   // SearchView's query input on mount.
   onMount(() => {
     function onKey(event: KeyboardEvent): void {
-      const mod = navigator.platform.toLowerCase().includes("mac")
-        ? event.metaKey
-        : event.ctrlKey;
+      const mod = navigator.platform.toLowerCase().includes("mac") ? event.metaKey : event.ctrlKey;
       if (!mod || !event.shiftKey || event.key.toLowerCase() !== "f") return;
       event.preventDefault();
       setView("search");
@@ -123,11 +121,7 @@ export default function ProjectV2Route(): JSX.Element {
             </Show>
           </aside>
 
-          <main
-            data-testid="v2-editor"
-            class="overflow-hidden"
-            style={{ "grid-area": "editor" }}
-          >
+          <main data-testid="v2-editor" class="overflow-hidden" style={{ "grid-area": "editor" }}>
             <MainContent projectName={projectName()} view={view()} />
           </main>
 
@@ -166,7 +160,9 @@ function ProjectSidebar(props: { projectName: string; view: ViewId; onView: (v: 
     >
       <div class="mb-1 px-3 text-[10px] uppercase tracking-wider text-[var(--dim)]">project</div>
       <div class="mb-3 flex items-center gap-2 px-2 py-1 text-[var(--accent)]">
-        <span aria-hidden="true" class="w-4 text-center">●</span>
+        <span aria-hidden="true" class="w-4 text-center">
+          ●
+        </span>
         <span class="truncate font-medium">{props.projectName}</span>
       </div>
 
@@ -187,9 +183,13 @@ function ProjectSidebar(props: { projectName: string; view: ViewId; onView: (v: 
                 ? "bg-[var(--surface-hover)] text-[var(--accent)]"
                 : "text-[var(--fg)] hover:bg-[var(--surface-hover)]")
             }
-            style={{ "border-left": isActive() ? "2px solid var(--accent)" : "2px solid transparent" }}
+            style={{
+              "border-left": isActive() ? "2px solid var(--accent)" : "2px solid transparent",
+            }}
           >
-            <span aria-hidden="true" class="w-4 text-center">{v.glyph}</span>
+            <span aria-hidden="true" class="w-4 text-center">
+              {v.glyph}
+            </span>
             <span class="truncate">{v.label}</span>
           </button>
         );
@@ -260,4 +260,3 @@ function MainContent(props: { projectName: string; view: ViewId }) {
     </div>
   );
 }
-

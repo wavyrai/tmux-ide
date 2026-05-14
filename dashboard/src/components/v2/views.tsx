@@ -102,7 +102,9 @@ export function MissionControlView(props: ProjectProps): JSX.Element {
     };
   });
 
-  return <WidgetHost mount={mountMissionControlDashboard} options={options} class="h-full w-full" />;
+  return (
+    <WidgetHost mount={mountMissionControlDashboard} options={options} class="h-full w-full" />
+  );
 }
 
 export function KanbanBoardView(props: ProjectProps): JSX.Element {
@@ -230,7 +232,10 @@ export function PlansSurfaceView(props: ProjectProps): JSX.Element {
   }));
 
   return (
-    <div class="grid h-full w-full min-h-0" style={{ "grid-template-columns": "260px minmax(0, 1fr)" }}>
+    <div
+      class="grid h-full w-full min-h-0"
+      style={{ "grid-template-columns": "260px minmax(0, 1fr)" }}
+    >
       <aside class="overflow-hidden border-r border-[var(--border)]">
         <WidgetHost mount={mountPlansRail} options={railOptions} class="h-full w-full" />
       </aside>
@@ -318,28 +323,26 @@ export function CostsView(props: ProjectProps): JSX.Element {
     // "No usage yet" empty state instead of hanging on the spinner.
     const snapshot: CostsDashboardSnapshot = {
       session: m?.session ?? { startedAt: null, durationMs: 0, status: "idle", agentCount: 0 },
-      tasks:
-        (m?.tasks as CostsDashboardSnapshot["tasks"]) ?? {
-          total: 0,
-          completed: 0,
-          failed: 0,
-          retried: 0,
-          completionRate: 0,
-          retryRate: 0,
-          avgDurationMs: 0,
-          medianDurationMs: 0,
-          p90DurationMs: 0,
-          byMilestone: [] as CostsMilestoneEntry[],
-        },
+      tasks: (m?.tasks as CostsDashboardSnapshot["tasks"]) ?? {
+        total: 0,
+        completed: 0,
+        failed: 0,
+        retried: 0,
+        completionRate: 0,
+        retryRate: 0,
+        avgDurationMs: 0,
+        medianDurationMs: 0,
+        p90DurationMs: 0,
+        byMilestone: [] as CostsMilestoneEntry[],
+      },
       agents: (m?.agents as CostsAgentEntry[]) ?? [],
-      mission:
-        m?.mission ?? {
-          title: null,
-          status: null,
-          milestonesCompleted: 0,
-          validationPassRate: 0,
-          wallClockMs: 0,
-        },
+      mission: m?.mission ?? {
+        title: null,
+        status: null,
+        milestonesCompleted: 0,
+        validationPassRate: 0,
+        wallClockMs: 0,
+      },
       timeline: (m?.timeline as CostsTimelineEntry[]) ?? [],
     };
     return { snapshot };
@@ -348,7 +351,10 @@ export function CostsView(props: ProjectProps): JSX.Element {
   return <WidgetHost mount={mountCostsDashboard} options={options} class="h-full w-full" />;
 }
 
-export function InspectorPaneView(props: { projectName: string; currentView: string }): JSX.Element {
+export function InspectorPaneView(props: {
+  projectName: string;
+  currentView: string;
+}): JSX.Element {
   const { events } = createProjectEvents(() => props.projectName);
   const options = createMemo<InspectorMountOptions>(() => ({
     events: events(),
@@ -376,10 +382,7 @@ export function BottomPanelView(props: ProjectProps): JSX.Element {
   }));
 
   return (
-    <div
-      data-testid="v2-bottom-panel-host"
-      class="flex h-full min-h-0 flex-col overflow-hidden"
-    >
+    <div data-testid="v2-bottom-panel-host" class="flex h-full min-h-0 flex-col overflow-hidden">
       <div class="flex h-7 shrink-0 items-center gap-2 border-b border-[var(--border)] bg-[var(--bg-strong)] px-3 text-[11px] uppercase tracking-wide">
         {(["terminal", "problems", "output"] as Tab[]).map((t) => {
           const active = () => tab() === t;

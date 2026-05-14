@@ -8,17 +8,17 @@
 
 ## §0 — Map of the wire (key files)
 
-| Layer | File |
-| --- | --- |
-| Mount options (host ↔ chat-solid surface contract) | `packages/chat-solid/src/types.ts` (`ChatMountOptions`) |
-| Surface root (orchestrator inside the Solid silo) | `packages/chat-solid/src/components/ChatThreadView.tsx` |
-| State / API helpers (Solid side) | `packages/chat-solid/src/hooks/useChatThread.ts`, `packages/chat-solid/src/api.ts` |
-| React→Solid bridge | `dashboard/components/chat-v2/chat-solid-bridge.tsx`, `ChatV2Root.tsx` |
-| Daemon actions (`POST /api/v2/action/:name`) | `packages/daemon/src/command-center/actions/registry.ts`, `…/handlers/chat-actions.ts` |
-| Daemon REST routes | `packages/daemon/src/command-center/server.ts` |
-| Daemon event bus (WS) | `packages/daemon/src/chat/message-pipe.ts`, `…/permission-coordinator.ts`, `…/dispatch-prompt.ts` |
-| Provider approval policy (T102, currently unrouted) | `packages/daemon/src/chat/provider-approval-policy.ts` |
-| Plan orchestrator (REST-only) | `packages/daemon/src/chat/plan-orchestrator.ts`, server.ts `:plans/:planId/approve|reject` |
+| Layer                                               | File                                                                                              |
+| --------------------------------------------------- | ------------------------------------------------------------------------------------------------- | ------- |
+| Mount options (host ↔ chat-solid surface contract)  | `packages/chat-solid/src/types.ts` (`ChatMountOptions`)                                           |
+| Surface root (orchestrator inside the Solid silo)   | `packages/chat-solid/src/components/ChatThreadView.tsx`                                           |
+| State / API helpers (Solid side)                    | `packages/chat-solid/src/hooks/useChatThread.ts`, `packages/chat-solid/src/api.ts`                |
+| React→Solid bridge                                  | `dashboard/components/chat-v2/chat-solid-bridge.tsx`, `ChatV2Root.tsx`                            |
+| Daemon actions (`POST /api/v2/action/:name`)        | `packages/daemon/src/command-center/actions/registry.ts`, `…/handlers/chat-actions.ts`            |
+| Daemon REST routes                                  | `packages/daemon/src/command-center/server.ts`                                                    |
+| Daemon event bus (WS)                               | `packages/daemon/src/chat/message-pipe.ts`, `…/permission-coordinator.ts`, `…/dispatch-prompt.ts` |
+| Provider approval policy (T102, currently unrouted) | `packages/daemon/src/chat/provider-approval-policy.ts`                                            |
+| Plan orchestrator (REST-only)                       | `packages/daemon/src/chat/plan-orchestrator.ts`, server.ts `:plans/:planId/approve                | reject` |
 
 `ChatMountOptions` currently exposes only four host hooks:
 
@@ -36,42 +36,42 @@ That is the entire host surface area. Everything else either fetches over its ba
 
 Every component in `packages/chat-solid/src/components/`. "Wired to" is what the orchestrator (`ChatThreadView` or its peer composer) routes the callback to. **bold** = host-facing (must reach the React bridge / daemon to do anything). _italic_ = internal to chat-solid (no host involvement needed).
 
-| Component | Callback prop | Wired to (in chat-solid) |
-| --- | --- | --- |
-| `AttachmentChip` | _`onRemove`_ | `ChatComposer` → `chat.removeAttachment` (in-memory `attachments` signal) |
-| `AttachmentPicker` | _`onAdd`_ | `ChatComposer` → `chat.addAttachment` (in-memory) |
-| `AttachmentPicker` | _`onClose`_ | `ChatComposer` local `setPickerOpen(false)` |
-| `ChangedFilesTree` | (none — purely render + internal toggles) | n/a |
-| `ChatComposer` | _`onAddAttachment`_, _`onRemoveAttachment`_ | `chat.addAttachment` / `chat.removeAttachment` |
-| `ChatComposer` | _`onSend`_ | `chat.send` → `chat.session.send` action ✅ |
-| `ChatComposer` | _`onCancel`_ | `chat.cancel` → `chat.session.cancel` action ✅ |
-| `ChatComposer` | _`onPrefillPromptConsumed`_ | `chat.prefillPrompt(null)` (internal) |
-| `ChatComposer` | _`bannerItems`_ (accessor, not a callback) | **NOT WIRED**: `ChatThreadView` never passes anything. Stack always renders empty. |
-| `ChatHeader` | **`onProviderChange`** | `props.options().onProviderChange?.(next)` — bubbled up |
-| `ChatHeader` | _`onCancel`_ | `chat.cancel` ✅ |
-| `ChatHeader` | _`onRename`_ | `chat.rename` → `chat.thread.rename` action ✅ |
-| `ChatHeader` | **`onClose`** | `props.options().onClose` — bubbled up |
-| `ChatThreadView` | (the orchestrator itself; no callable props) | n/a |
-| `ComposerBannerStack` | _`onDismiss`_ (per item) | Caller-supplied via `ComposerBannerItem` |
-| `ComposerCommandMenu` | _`onSelect`_, _`onHighlight`_ | `ChatComposer` local (replaces slash token) |
-| `ComposerMentionMenu` | _`onSelect`_, _`onHighlight`_ | `ChatComposer` local (replaces `@` token) |
-| `ComposerPendingApprovalPanel` | **`onRespond(requestId, decision)`** | **Component is orphaned. Never mounted by `ChatThreadView` or any host.** |
-| `ComposerPlanFollowUpBanner` | **`onApply` / `onModify` / `onReject(planId)`** | **Component is orphaned. Never mounted.** |
-| `ContextWindowMeter` | (none — props.usage accessor) | Daemon `chat.thread.usage` action + WS `chat.thread.usage` event ✅ |
-| `ExpandedImageDialog` | **`onClose`** | **Orphaned.** Exported from `index.tsx` but no host wires it. |
-| `ExpandedImagePreview` → `InlineImagePreview` | **`onExpand`** | **Orphaned.** Not used by `MessagesTimeline`/`ToolCallCard`. |
-| `MessageCopyButton` | _`write` (test injection)_ | navigator.clipboard.writeText (browser API; no host wire) |
-| `MessageRoleHeader` | _`actions` slot_ | Render-only |
-| `MessagesTimeline` | **`onOpenFile`** | `props.options().onOpenFile` — bubbled up |
-| `MessagesTimeline` | _`onSendPlanRequest`_ | `chat.prefillPrompt` (writes plan markdown into composer; never sends) |
-| `PermissionDialog` | _`onRespond(optionId)`_ | `chat.respondToPermission` → `chat.permission.respond` action ✅ |
-| `PlanCard` | _`onSendPlanRequest`_ | Forwarded to `MessagesTimeline.onSendPlanRequest` (see above) |
-| `ProviderModelPicker` | **`onChange(provider)`** | `ChatHeader.onProviderChange` → options.onProviderChange — bubbled |
-| `ProviderStatusBanner` | **`onSwitch(provider)`** | `props.options().onProviderChange` — bubbled |
-| `TerminalContextInlineChip` | **`onRemove`** | **Orphaned.** Composer uses `AttachmentChip` instead. |
-| `ThreadErrorBanner` | _`onDismiss`_ | `setDismissedErrorKey` local (chat-solid owns the "dismissed" memo) |
-| `ToolCallCard` | (none) | n/a |
-| `WorkingIndicator` | (none) | n/a |
+| Component                                     | Callback prop                                   | Wired to (in chat-solid)                                                           |
+| --------------------------------------------- | ----------------------------------------------- | ---------------------------------------------------------------------------------- |
+| `AttachmentChip`                              | _`onRemove`_                                    | `ChatComposer` → `chat.removeAttachment` (in-memory `attachments` signal)          |
+| `AttachmentPicker`                            | _`onAdd`_                                       | `ChatComposer` → `chat.addAttachment` (in-memory)                                  |
+| `AttachmentPicker`                            | _`onClose`_                                     | `ChatComposer` local `setPickerOpen(false)`                                        |
+| `ChangedFilesTree`                            | (none — purely render + internal toggles)       | n/a                                                                                |
+| `ChatComposer`                                | _`onAddAttachment`_, _`onRemoveAttachment`_     | `chat.addAttachment` / `chat.removeAttachment`                                     |
+| `ChatComposer`                                | _`onSend`_                                      | `chat.send` → `chat.session.send` action ✅                                        |
+| `ChatComposer`                                | _`onCancel`_                                    | `chat.cancel` → `chat.session.cancel` action ✅                                    |
+| `ChatComposer`                                | _`onPrefillPromptConsumed`_                     | `chat.prefillPrompt(null)` (internal)                                              |
+| `ChatComposer`                                | _`bannerItems`_ (accessor, not a callback)      | **NOT WIRED**: `ChatThreadView` never passes anything. Stack always renders empty. |
+| `ChatHeader`                                  | **`onProviderChange`**                          | `props.options().onProviderChange?.(next)` — bubbled up                            |
+| `ChatHeader`                                  | _`onCancel`_                                    | `chat.cancel` ✅                                                                   |
+| `ChatHeader`                                  | _`onRename`_                                    | `chat.rename` → `chat.thread.rename` action ✅                                     |
+| `ChatHeader`                                  | **`onClose`**                                   | `props.options().onClose` — bubbled up                                             |
+| `ChatThreadView`                              | (the orchestrator itself; no callable props)    | n/a                                                                                |
+| `ComposerBannerStack`                         | _`onDismiss`_ (per item)                        | Caller-supplied via `ComposerBannerItem`                                           |
+| `ComposerCommandMenu`                         | _`onSelect`_, _`onHighlight`_                   | `ChatComposer` local (replaces slash token)                                        |
+| `ComposerMentionMenu`                         | _`onSelect`_, _`onHighlight`_                   | `ChatComposer` local (replaces `@` token)                                          |
+| `ComposerPendingApprovalPanel`                | **`onRespond(requestId, decision)`**            | **Component is orphaned. Never mounted by `ChatThreadView` or any host.**          |
+| `ComposerPlanFollowUpBanner`                  | **`onApply` / `onModify` / `onReject(planId)`** | **Component is orphaned. Never mounted.**                                          |
+| `ContextWindowMeter`                          | (none — props.usage accessor)                   | Daemon `chat.thread.usage` action + WS `chat.thread.usage` event ✅                |
+| `ExpandedImageDialog`                         | **`onClose`**                                   | **Orphaned.** Exported from `index.tsx` but no host wires it.                      |
+| `ExpandedImagePreview` → `InlineImagePreview` | **`onExpand`**                                  | **Orphaned.** Not used by `MessagesTimeline`/`ToolCallCard`.                       |
+| `MessageCopyButton`                           | _`write` (test injection)_                      | navigator.clipboard.writeText (browser API; no host wire)                          |
+| `MessageRoleHeader`                           | _`actions` slot_                                | Render-only                                                                        |
+| `MessagesTimeline`                            | **`onOpenFile`**                                | `props.options().onOpenFile` — bubbled up                                          |
+| `MessagesTimeline`                            | _`onSendPlanRequest`_                           | `chat.prefillPrompt` (writes plan markdown into composer; never sends)             |
+| `PermissionDialog`                            | _`onRespond(optionId)`_                         | `chat.respondToPermission` → `chat.permission.respond` action ✅                   |
+| `PlanCard`                                    | _`onSendPlanRequest`_                           | Forwarded to `MessagesTimeline.onSendPlanRequest` (see above)                      |
+| `ProviderModelPicker`                         | **`onChange(provider)`**                        | `ChatHeader.onProviderChange` → options.onProviderChange — bubbled                 |
+| `ProviderStatusBanner`                        | **`onSwitch(provider)`**                        | `props.options().onProviderChange` — bubbled                                       |
+| `TerminalContextInlineChip`                   | **`onRemove`**                                  | **Orphaned.** Composer uses `AttachmentChip` instead.                              |
+| `ThreadErrorBanner`                           | _`onDismiss`_                                   | `setDismissedErrorKey` local (chat-solid owns the "dismissed" memo)                |
+| `ToolCallCard`                                | (none)                                          | n/a                                                                                |
+| `WorkingIndicator`                            | (none)                                          | n/a                                                                                |
 
 ---
 
@@ -81,94 +81,94 @@ Tables are read **left → right**. ✅ = full chain works. ⚠️ = partial / n
 
 ### Provider switcher (`ProviderModelPicker` + `ProviderStatusBanner`)
 
-| Stage | Wired? | Notes |
-| --- | --- | --- |
-| UI: `ProviderModelPicker` onChange | ✅ | `ChatHeader.tsx:74` |
-| Header → ChatThreadView | ✅ | `ChatHeader.tsx:74` → `ChatThreadView.tsx:73` |
-| ChatThreadView → ChatMountOptions | ✅ | `options().onProviderChange?.(next)` |
-| Bridge passes handler | ❌ | `chat-solid-bridge.tsx:86-94` never assigns `onProviderChange` |
-| Daemon endpoint | ❌❌ | No `chat.thread.setProvider` action and no `POST /api/threads/:id/provider`. The closest is `chat.thread.create` with a new provider (i.e. spin a fresh thread) |
-| WS broadcast on switch | n/a | No event type yet |
+| Stage                              | Wired? | Notes                                                                                                                                                           |
+| ---------------------------------- | ------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| UI: `ProviderModelPicker` onChange | ✅     | `ChatHeader.tsx:74`                                                                                                                                             |
+| Header → ChatThreadView            | ✅     | `ChatHeader.tsx:74` → `ChatThreadView.tsx:73`                                                                                                                   |
+| ChatThreadView → ChatMountOptions  | ✅     | `options().onProviderChange?.(next)`                                                                                                                            |
+| Bridge passes handler              | ❌     | `chat-solid-bridge.tsx:86-94` never assigns `onProviderChange`                                                                                                  |
+| Daemon endpoint                    | ❌❌   | No `chat.thread.setProvider` action and no `POST /api/threads/:id/provider`. The closest is `chat.thread.create` with a new provider (i.e. spin a fresh thread) |
+| WS broadcast on switch             | n/a    | No event type yet                                                                                                                                               |
 
 **Classification:** ❌❌ **DEAD-END at bridge AND daemon.** ProviderStatusBanner's "Switch to" chips share the same dead-end because they call the same `options.onProviderChange`.
 
 ### Close button (`ChatHeader` close affordance)
 
-| Stage | Wired? | Notes |
-| --- | --- | --- |
-| UI: ChatHeader close button | ✅ (renders only when `onClose` truthy) | `ChatHeader.tsx:101-110` |
-| Header → ChatThreadView | ✅ | `onClose={props.options().onClose}` |
-| Bridge passes handler | ❌ | `chat-solid-bridge.tsx` does not pass `onClose` |
-| Daemon endpoint | n/a | Pure host concern (e.g. unmount / route away) |
+| Stage                       | Wired?                                  | Notes                                           |
+| --------------------------- | --------------------------------------- | ----------------------------------------------- |
+| UI: ChatHeader close button | ✅ (renders only when `onClose` truthy) | `ChatHeader.tsx:101-110`                        |
+| Header → ChatThreadView     | ✅                                      | `onClose={props.options().onClose}`             |
+| Bridge passes handler       | ❌                                      | `chat-solid-bridge.tsx` does not pass `onClose` |
+| Daemon endpoint             | n/a                                     | Pure host concern (e.g. unmount / route away)   |
 
 **Classification:** ❌ **DEAD-END at bridge.** Button never renders (since `onClose` is falsy) so the surface offers no "close" affordance at all.
 
 ### File-link click in messages (`MessagesTimeline.onOpenFile`)
 
-| Stage | Wired? | Notes |
-| --- | --- | --- |
-| UI: anchor click on `.chat-file-link` | ✅ | `MessagesTimeline.tsx:426-453` |
-| Timeline → ChatThreadView | ✅ | `onOpenFile={props.options().onOpenFile}` |
-| Bridge passes handler | ✅ | `chat-solid-bridge.tsx:93` (via `onOpenFileRef`) |
-| Host wiring | ✅ | `ChatV2Root` accepts and forwards (caller's responsibility from there) |
+| Stage                                 | Wired? | Notes                                                                  |
+| ------------------------------------- | ------ | ---------------------------------------------------------------------- |
+| UI: anchor click on `.chat-file-link` | ✅     | `MessagesTimeline.tsx:426-453`                                         |
+| Timeline → ChatThreadView             | ✅     | `onOpenFile={props.options().onOpenFile}`                              |
+| Bridge passes handler                 | ✅     | `chat-solid-bridge.tsx:93` (via `onOpenFileRef`)                       |
+| Host wiring                           | ✅     | `ChatV2Root` accepts and forwards (caller's responsibility from there) |
 
 **Classification:** ✅ **WORKS** (assuming the host route is wired — that's outside this audit).
 
 ### Mention candidates (`ChatComposer` @-menu)
 
-| Stage | Wired? | Notes |
-| --- | --- | --- |
-| UI: `@` triggers menu when `mentionCandidates` non-empty | ✅ | `ChatComposer.tsx:87-102` |
-| Composer ← ChatThreadView | ✅ | `mentionCandidates={() => props.options().mentionCandidates ?? []}` |
-| Bridge passes through | ✅ | `chat-solid-bridge.tsx:92`, also pushed on update via `setOptions` |
-| Host sourcing | ⚠️ | Bridge prop is an interface — actual list is what the host hands `ChatV2Root` |
+| Stage                                                    | Wired? | Notes                                                                         |
+| -------------------------------------------------------- | ------ | ----------------------------------------------------------------------------- |
+| UI: `@` triggers menu when `mentionCandidates` non-empty | ✅     | `ChatComposer.tsx:87-102`                                                     |
+| Composer ← ChatThreadView                                | ✅     | `mentionCandidates={() => props.options().mentionCandidates ?? []}`           |
+| Bridge passes through                                    | ✅     | `chat-solid-bridge.tsx:92`, also pushed on update via `setOptions`            |
+| Host sourcing                                            | ⚠️     | Bridge prop is an interface — actual list is what the host hands `ChatV2Root` |
 
 **Classification:** ✅ data path works. (Whether the dashboard actually supplies a non-empty list is an upstream concern; the wire is complete.)
 
 ### Composer banner stack (approval / plan / pending-user-input)
 
-| Stage | Wired? | Notes |
-| --- | --- | --- |
-| UI: `ComposerBannerStack` renders first item + collapsed cap | ✅ | `ComposerBannerStack.tsx:51-67` |
-| Stack ← ChatComposer | ✅ | `bannerItems` is an accessor prop on the composer |
-| Composer ← ChatThreadView | ❌ | **`ChatThreadView.tsx:99-115` never sets `bannerItems`.** Stack always empty. |
-| ChatMountOptions surface | ❌ | No field for host-supplied banners |
-| Daemon endpoints | ❌ | No banner state would be daemon-owned anyway — but pending-approval and plan-follow-up state is daemon-driven (see below) and not surfaced anywhere today |
+| Stage                                                        | Wired? | Notes                                                                                                                                                     |
+| ------------------------------------------------------------ | ------ | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| UI: `ComposerBannerStack` renders first item + collapsed cap | ✅     | `ComposerBannerStack.tsx:51-67`                                                                                                                           |
+| Stack ← ChatComposer                                         | ✅     | `bannerItems` is an accessor prop on the composer                                                                                                         |
+| Composer ← ChatThreadView                                    | ❌     | **`ChatThreadView.tsx:99-115` never sets `bannerItems`.** Stack always empty.                                                                             |
+| ChatMountOptions surface                                     | ❌     | No field for host-supplied banners                                                                                                                        |
+| Daemon endpoints                                             | ❌     | No banner state would be daemon-owned anyway — but pending-approval and plan-follow-up state is daemon-driven (see below) and not surfaced anywhere today |
 
 **Classification:** ❌ **DEAD-END at ChatThreadView (and ChatMountOptions).** The component exists; nothing feeds it.
 
 ### Pending-approval panel (`ComposerPendingApprovalPanel`)
 
-| Stage | Wired? | Notes |
-| --- | --- | --- |
-| UI: render + four-button verdict cluster | ✅ | `ComposerPendingApprovalPanel.tsx` |
-| Mounted in `ChatThreadView`? | ❌ | Component is orphaned — never imported by the orchestrator |
-| WS event the panel would consume | ⚠️ | `chat.permission.request` exists and is already consumed by `PermissionDialog`. The two components have **different shapes**: the dialog speaks `optionId`s (option-driven) while the panel speaks `ApprovalDecision` (`accept` / `acceptForSession` / `decline` / `cancel`). The latter mirrors T102 `ProviderApprovalPolicy` but no daemon event with that vocabulary is currently emitted. |
-| Daemon endpoint for `ApprovalDecision` verdict | ❌ | `chat.permission.respond` only accepts `{threadId, requestId, optionId}`. T102 verdict path is not wired to any HTTP route. |
+| Stage                                          | Wired? | Notes                                                                                                                                                                                                                                                                                                                                                                                         |
+| ---------------------------------------------- | ------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| UI: render + four-button verdict cluster       | ✅     | `ComposerPendingApprovalPanel.tsx`                                                                                                                                                                                                                                                                                                                                                            |
+| Mounted in `ChatThreadView`?                   | ❌     | Component is orphaned — never imported by the orchestrator                                                                                                                                                                                                                                                                                                                                    |
+| WS event the panel would consume               | ⚠️     | `chat.permission.request` exists and is already consumed by `PermissionDialog`. The two components have **different shapes**: the dialog speaks `optionId`s (option-driven) while the panel speaks `ApprovalDecision` (`accept` / `acceptForSession` / `decline` / `cancel`). The latter mirrors T102 `ProviderApprovalPolicy` but no daemon event with that vocabulary is currently emitted. |
+| Daemon endpoint for `ApprovalDecision` verdict | ❌     | `chat.permission.respond` only accepts `{threadId, requestId, optionId}`. T102 verdict path is not wired to any HTTP route.                                                                                                                                                                                                                                                                   |
 
 **Classification:** ❌❌ **DEAD-END at ChatThreadView AND at daemon contract.** Either retire this component in favor of `PermissionDialog`, or add a daemon route that emits the T102 shape and have a banner consume it.
 
 ### Plan follow-up banner (`ComposerPlanFollowUpBanner`)
 
-| Stage | Wired? | Notes |
-| --- | --- | --- |
-| UI: Apply / Modify / Reject | ✅ | `ComposerPlanFollowUpBanner.tsx` |
-| Mounted in `ChatThreadView`? | ❌ | Component is orphaned |
-| Daemon endpoints | ⚠️ existing | `POST /api/threads/:threadId/plans/:planId/approve` and `…/reject` exist (`server.ts:795,826`). `Modify` has no daemon route. |
-| chat-solid `api.ts` helpers | ❌ | No `chatPlanApprove` / `chatPlanReject`. The bridge would have to call the daemon directly. |
-| Plan-id source | ⚠️ | Plan ids come from `chat.plan.upserted` event in plan-store; chat-solid does not subscribe today. The Solid surface only sees `sessionUpdate: "plan"` (an unstructured entry list), not the daemon's persisted planId. |
+| Stage                        | Wired?      | Notes                                                                                                                                                                                                                  |
+| ---------------------------- | ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| UI: Apply / Modify / Reject  | ✅          | `ComposerPlanFollowUpBanner.tsx`                                                                                                                                                                                       |
+| Mounted in `ChatThreadView`? | ❌          | Component is orphaned                                                                                                                                                                                                  |
+| Daemon endpoints             | ⚠️ existing | `POST /api/threads/:threadId/plans/:planId/approve` and `…/reject` exist (`server.ts:795,826`). `Modify` has no daemon route.                                                                                          |
+| chat-solid `api.ts` helpers  | ❌          | No `chatPlanApprove` / `chatPlanReject`. The bridge would have to call the daemon directly.                                                                                                                            |
+| Plan-id source               | ⚠️          | Plan ids come from `chat.plan.upserted` event in plan-store; chat-solid does not subscribe today. The Solid surface only sees `sessionUpdate: "plan"` (an unstructured entry list), not the daemon's persisted planId. |
 
 **Classification:** ❌ **DEAD-END at ChatThreadView, ⚠️ partial at daemon (modify missing, approve/reject exist but un-helpered).**
 
 ### Inline image preview + fullscreen dialog (`InlineImagePreview` + `ExpandedImageDialog`)
 
-| Stage | Wired? | Notes |
-| --- | --- | --- |
-| UI: thumbnail with lazy IO + zoom button | ✅ | `ExpandedImagePreview.tsx` |
-| Fullscreen modal with ←/→ and Esc | ✅ | `ExpandedImageDialog.tsx` |
-| Mounted in `MessagesTimeline` / `ToolCallCard` | ❌ | `ContentBlockView` (`ToolCallCard.tsx:43-44`) currently renders `<p>Image attachment ({mimeType})</p>` — text only. The inline component is not invoked. |
-| Mounted in composer (staged attachment row) | ❌ | Composer uses `AttachmentChip` (text-only chip) |
-| Daemon | n/a | All client-side once the image is in the message |
+| Stage                                          | Wired? | Notes                                                                                                                                                    |
+| ---------------------------------------------- | ------ | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| UI: thumbnail with lazy IO + zoom button       | ✅     | `ExpandedImagePreview.tsx`                                                                                                                               |
+| Fullscreen modal with ←/→ and Esc              | ✅     | `ExpandedImageDialog.tsx`                                                                                                                                |
+| Mounted in `MessagesTimeline` / `ToolCallCard` | ❌     | `ContentBlockView` (`ToolCallCard.tsx:43-44`) currently renders `<p>Image attachment ({mimeType})</p>` — text only. The inline component is not invoked. |
+| Mounted in composer (staged attachment row)    | ❌     | Composer uses `AttachmentChip` (text-only chip)                                                                                                          |
+| Daemon                                         | n/a    | All client-side once the image is in the message                                                                                                         |
 
 **Classification:** ❌ **DEAD-END at MessagesTimeline + ChatComposer.** Components exist and are exported from `index.tsx` (so they're public surface), but no internal renderer mounts them.
 
@@ -180,17 +180,17 @@ Tables are read **left → right**. ✅ = full chain works. ⚠️ = partial / n
 
 All flow through `chat-solid/src/api.ts` → action POSTs → daemon registered actions. ✅ **WORKS** end-to-end. These represent the baseline functioning surface.
 
-| chat-solid API | Daemon action |
-| --- | --- |
-| `chatThreadGet` | `chat.thread.get` ✅ |
-| `chatThreadUsage` | `chat.thread.usage` ✅ |
-| `chatThreadRename` | `chat.thread.rename` ✅ |
-| `chatSessionSend` | `chat.session.send` ✅ |
-| `chatSessionCancel` | `chat.session.cancel` ✅ |
-| `chatPermissionRespond` | `chat.permission.respond` ✅ |
+| chat-solid API               | Daemon action                     |
+| ---------------------------- | --------------------------------- |
+| `chatThreadGet`              | `chat.thread.get` ✅              |
+| `chatThreadUsage`            | `chat.thread.usage` ✅            |
+| `chatThreadRename`           | `chat.thread.rename` ✅           |
+| `chatSessionSend`            | `chat.session.send` ✅            |
+| `chatSessionCancel`          | `chat.session.cancel` ✅          |
+| `chatPermissionRespond`      | `chat.permission.respond` ✅      |
 | `chatContextCaptureTerminal` | `chat.context.captureTerminal` ✅ |
-| `chatProvidersList` | `GET /api/chat/providers` ✅ |
-| `fetchProjectPanes` | `GET /api/project/:name/panes` ✅ |
+| `chatProvidersList`          | `GET /api/chat/providers` ✅      |
+| `fetchProjectPanes`          | `GET /api/project/:name/panes` ✅ |
 
 WS event consumption (`useChatThread`): `chat.thread.update`, `chat.thread.stop`, `chat.thread.usage`, `chat.permission.request`. All emitted by `message-pipe.ts` / `dispatch-prompt.ts` / `permission-coordinator.ts`. ✅
 
@@ -200,7 +200,7 @@ WS event consumption (`useChatThread`): `chat.thread.update`, `chat.thread.stop`
 
 ### Dies at the bridge (handler not passed into `ChatMountOptions`)
 
-1. **`onProviderChange`** — `ChatMountOptions` accepts it, `ChatThreadView` forwards `ProviderModelPicker.onChange` and `ProviderStatusBanner.onSwitch` to it, but `chat-solid-bridge.tsx` never assigns one. Provider picker is a no-op until this lands. *(Once landed, the daemon-side hole below also needs filling.)*
+1. **`onProviderChange`** — `ChatMountOptions` accepts it, `ChatThreadView` forwards `ProviderModelPicker.onChange` and `ProviderStatusBanner.onSwitch` to it, but `chat-solid-bridge.tsx` never assigns one. Provider picker is a no-op until this lands. _(Once landed, the daemon-side hole below also needs filling.)_
 2. **`onClose`** — same story. The Close button never renders.
 
 ### Dies at the daemon (bridge handler can be added but it has nowhere to call)
@@ -219,7 +219,7 @@ WS event consumption (`useChatThread`): `chat.thread.update`, `chat.thread.stop`
 
 ### Dies at host (works inside chat-solid; host responsibility from here)
 
-1. `onOpenFile` — ✅ wired through bridge; what the host *does* with the meta is outside this audit.
+1. `onOpenFile` — ✅ wired through bridge; what the host _does_ with the meta is outside this audit.
 2. `mentionCandidates` — ✅ wired; host needs to source the array.
 
 ---
@@ -270,27 +270,29 @@ Ordered to maximize unblock per hour. **W1** is the smallest end-to-end fix that
 **Bridge gap:** `chat-solid-bridge.tsx` doesn't pass `onClose`; `ChatV2RootProps` has no `onClose` prop
 **Daemon gap:** none (pure host concern)
 **Fix:**
+
 1. Add optional `onClose?: () => void` prop to `ChatSolidBridgeProps` and `ChatV2RootProps`; forward into `ChatMountOptions` (mount + `setOptions` for hot updates).
 2. Decide host behavior: navigate back to thread list, or hide the right pane. Likely "deselect thread" — call `props.onPickThread(null)` equivalent.
-**Effort:** ~15 min
-**Depends on:** none
-**Test gate:** When the host passes an `onClose`, the Close button renders in the header and clicking it triggers the host's handler.
+   **Effort:** ~15 min
+   **Depends on:** none
+   **Test gate:** When the host passes an `onClose`, the Close button renders in the header and clicking it triggers the host's handler.
 
 ---
 
-### W2 — Provider switcher wire end-to-end *(the exemplar from the task brief)*
+### W2 — Provider switcher wire end-to-end _(the exemplar from the task brief)_
 
 **Surface:** `ProviderModelPicker` → `onChange` → `ChatHeader.onProviderChange` → `ChatThreadView` → `options.onProviderChange`
 **Bridge gap:** `chat-solid-bridge.tsx` doesn't pass `onProviderChange`
 **Daemon gap:** no `chat.thread.setProvider` action; no REST route
 **Fix:**
+
 1. Daemon: add action `chat.thread.setProvider` (see §4 D1). On success emit `chat.thread.update` with the new provider snapshot so the WS-driven header refreshes without a refetch.
 2. chat-solid `api.ts`: add `chatThreadSetProvider(runtime, threadId, provider) -> Promise<{thread}>`.
 3. Bridge: pass `onProviderChange: (next) => chatSolid.threadSetProvider(...).then(…)` into `ChatMountOptions`. Handle the "ACP teardown required" case (the daemon's response should signal whether the next-turn rule applies).
 4. Decide whether `ProviderStatusBanner.onSwitch` uses the same handler (recommended — same wire).
-**Effort:** ~45 min if D1 is "next turn uses new provider"; ~90 min if hot-swap is required (touches `chat-integration-harness.ts`).
-**Depends on:** none
-**Test gate:** Click a non-active provider in the picker → daemon receives `chat.thread.setProvider` → broadcast → header re-renders with new provider name + glyph without remounting; in-flight composer drafts survive.
+   **Effort:** ~45 min if D1 is "next turn uses new provider"; ~90 min if hot-swap is required (touches `chat-integration-harness.ts`).
+   **Depends on:** none
+   **Test gate:** Click a non-active provider in the picker → daemon receives `chat.thread.setProvider` → broadcast → header re-renders with new provider name + glyph without remounting; in-flight composer drafts survive.
 
 ---
 
@@ -300,12 +302,13 @@ Ordered to maximize unblock per hour. **W1** is the smallest end-to-end fix that
 **Bridge gap:** none — pure UI wire inside chat-solid
 **Daemon gap:** none — content blocks already carry `data` + `mimeType`
 **Fix:**
+
 1. Replace `<p>Image attachment …</p>` in `ToolCallCard.tsx:44` and the user-content path (`MessagesTimeline.tsx:402`) with `<InlineImagePreview>` for `block.type === "image"`, using a `data:` URL built from `block.data`.
 2. Add a `MessagesTimeline`-scoped `createSignal<ExpandedImagePreview | null>` and mount `<ExpandedImageDialog preview={…} onClose={() => setPreview(null)} />` once at the timeline root.
 3. Build the preview cursor with `buildExpandedImagePreview` over the message's full image attachment list so ←/→ traverses other images in the same message.
-**Effort:** ~30 min
-**Depends on:** none
-**Test gate:** Send / receive a message with an image block → thumbnail renders in the transcript → click expands to fullscreen dialog → Esc / × / backdrop closes.
+   **Effort:** ~30 min
+   **Depends on:** none
+   **Test gate:** Send / receive a message with an image block → thumbnail renders in the transcript → click expands to fullscreen dialog → Esc / × / backdrop closes.
 
 ---
 
@@ -315,13 +318,14 @@ Ordered to maximize unblock per hour. **W1** is the smallest end-to-end fix that
 **Bridge gap:** banner stack itself never receives items; chat-solid `api.ts` has no plan helpers
 **Daemon gap:** approve/reject REST routes already exist; modify does not
 **Fix:**
+
 1. Plumb a `bannerItems` accessor from `ChatThreadView` into `ChatComposer` (currently the prop exists but nothing is passed).
 2. In `useChatThread`, subscribe to a new WS frame `chat.plan.upserted` (emit it from `plan-store.ts` writes) so the latest unresolved plan id surfaces to the orchestrator.
 3. chat-solid `api.ts`: add `chatPlanApprove(runtime, threadId, planId)` and `chatPlanReject(...)`. Use the existing REST routes (`/api/threads/:threadId/plans/:planId/approve|reject`).
 4. Render `ComposerPlanFollowUpBanner` inside the `bannerItems` array when an unresolved plan exists. Wire `onApply` → `chatPlanApprove`, `onReject` → `chatPlanReject`. Drop `onModify` until D3 lands, or wire it to `chat.prefillPrompt` for now (pre-fills composer with the plan markdown so the user can edit + send).
-**Effort:** ~75 min
-**Depends on:** none (modify is deferred)
-**Test gate:** When the assistant emits a plan, the banner shows above the composer; Apply hits the daemon and removes the banner; Reject hits the daemon and removes the banner.
+   **Effort:** ~75 min
+   **Depends on:** none (modify is deferred)
+   **Test gate:** When the assistant emits a plan, the banner shows above the composer; Apply hits the daemon and removes the banner; Reject hits the daemon and removes the banner.
 
 ---
 
@@ -331,11 +335,12 @@ Ordered to maximize unblock per hour. **W1** is the smallest end-to-end fix that
 **Bridge gap:** `ChatThreadView` never assigns this prop
 **Daemon gap:** none new — drives off existing WS events
 **Fix:**
+
 1. Inside `ChatThreadView`, derive a `bannerItems` memo that includes (in priority order): pending T102 approval (once W6 lands), unresolved plan (W4), thread-level errors (already shown via `ThreadErrorBanner` — decide if it stays there or moves into the stack), and any future host-supplied items.
 2. Add `bannerItems?: Accessor<ReadonlyArray<ComposerBannerItem>>` to `ChatMountOptions` to let hosts inject project-specific banners (e.g. "merge freeze in effect").
-**Effort:** ~30 min (after W4)
-**Depends on:** W4 (provides the plan-follow-up item)
-**Test gate:** Multiple concurrent banners render: first item full-chrome, the rest collapsed into the count cap.
+   **Effort:** ~30 min (after W4)
+   **Depends on:** W4 (provides the plan-follow-up item)
+   **Test gate:** Multiple concurrent banners render: first item full-chrome, the rest collapsed into the count cap.
 
 ---
 
@@ -357,11 +362,12 @@ Ordered to maximize unblock per hour. **W1** is the smallest end-to-end fix that
 ### W7 — Terminal-context chip: retire or migrate
 
 **Fix:** Decide:
+
 - Retire `TerminalContextInlineChip` (delete the file + export). Composer keeps `AttachmentChip` which is already wired.
 - OR migrate composer's terminal attachment row to use `TerminalContextInlineChip` (better visual differentiation; needs to source `lineCount` + freshness, currently not tracked).
-**Effort:** ~10 min (retire) / ~45 min (migrate + freshness state)
-**Depends on:** none
-**Test gate:** No regressions in composer attachment row interactions.
+  **Effort:** ~10 min (retire) / ~45 min (migrate + freshness state)
+  **Depends on:** none
+  **Test gate:** No regressions in composer attachment row interactions.
 
 ---
 
@@ -380,7 +386,7 @@ These are not "wire missing" bugs but worth flagging so the W-list doesn't mask 
 - **`ProviderStatusBanner` interval has no `onCleanup`** (`ProviderStatusBanner.tsx:47-55` admits this in a comment). If the banner is ever mounted in a transient owner (e.g. a router-driven side panel), the interval will leak. Migrate to `createEffect(() => { const id = …; onCleanup(() => clearInterval(id)); })`.
 - **`ChatThreadView`'s `availableProviders` `createResource` only fires once** (`ChatThreadView.tsx:25-32`). `ProviderStatusBanner` polls separately. Two fetchers for the same endpoint — fine today since the cadence diverges, but worth consolidating once the picker also wants periodic refresh.
 - **`MessagesTimeline.onSendPlanRequest` is misleading**: it does NOT send anything — it prefills the composer textarea via `chat.prefillPrompt`. Either rename to `onPrefillComposer` or actually send via `chat.send` (with the user's confirmation). Today's behavior is "user clicks 'Send plan to agent' on a `PlanCard`, plan markdown lands in the composer, user has to press Enter."
-- **`ChatComposer` accepts `bannerItems` as a prop on the *composer* but they're rendered above the textarea inside the composer form** (`ChatComposer.tsx:309`). If we want banners to live *between* the timeline and composer (visually distinct), this is the right place — but the prop name suggests a different layout. No fix needed; mention it so future refactors don't move the slot.
+- **`ChatComposer` accepts `bannerItems` as a prop on the _composer_ but they're rendered above the textarea inside the composer form** (`ChatComposer.tsx:309`). If we want banners to live _between_ the timeline and composer (visually distinct), this is the right place — but the prop name suggests a different layout. No fix needed; mention it so future refactors don't move the slot.
 - **The bridge's mount-once guard re-keys on `Boolean(threadId)`** (`chat-solid-bridge.tsx:108`). This means the Solid runtime is preserved when switching between two thread ids but torn down when going thread → no-thread → thread. Acceptable; document the intent if it's surprising.
 - **`ChatComposer` writes the composer draft store on every keystroke** even with no debouncing (`ChatComposer.tsx:138-142`). The comment says "the store debounces internally" — verify in `composerDraftStore.ts` if you're chasing keystroke latency.
 
@@ -391,6 +397,7 @@ These are not "wire missing" bugs but worth flagging so the W-list doesn't mask 
 **What works end-to-end today (✅):** send, cancel, rename, get, usage, permission respond, terminal capture, providers list, panes list, file-link open, mention autocomplete data flow, plus all internal Solid mechanics (drafts, mentions, slash commands, autoscroll, error banner dismissal, copy buttons, plan card editing).
 
 **The four highest-leverage wires to land next (in order):**
+
 1. **W2 — Provider switcher** (closes the smoking-gun example from the brief; ~45 min).
 2. **W3 — Inline image preview + dialog** (huge UX win; ~30 min; pure chat-solid).
 3. **W4 — Plan follow-up banner** (re-enables approve/reject without spinning up a separate UI; ~75 min).

@@ -36,11 +36,11 @@ State the service owns:
 
 ```ts
 interface State {
-  clients:  LSPClient.Info[]                  // every live client
-  servers:  Record<string, LSPServer.Info>    // configured server registry
-  broken:   Set<string>                       // "root+serverID" entries that
-                                              // failed to spawn — never retried
-  spawning: Map<string, Promise<Client|undef>>// in-flight spawns for dedup
+  clients: LSPClient.Info[]; // every live client
+  servers: Record<string, LSPServer.Info>; // configured server registry
+  broken: Set<string>; // "root+serverID" entries that
+  // failed to spawn — never retried
+  spawning: Map<string, Promise<Client | undef>>; // in-flight spawns for dedup
 }
 ```
 
@@ -60,11 +60,13 @@ The key trick is **`getClients(file)`**: lazy per-file resolution.
 Public verbs are thin pipes over `getClients(file)`:
 
 ```ts
-const hover = (input) => run(input.file, (client) =>
-  client.connection.sendRequest("textDocument/hover", {
-    textDocument: { uri: pathToFileURL(input.file).href },
-    position: { line: input.line, character: input.character },
-  }))
+const hover = (input) =>
+  run(input.file, (client) =>
+    client.connection.sendRequest("textDocument/hover", {
+      textDocument: { uri: pathToFileURL(input.file).href },
+      position: { line: input.line, character: input.character },
+    }),
+  );
 ```
 
 `workspaceSymbol` is the odd one — fans out across **every** live client (not
@@ -109,7 +111,7 @@ Important hard-won bits:
   cold-start with type-checking, short enough to fail-fast on a misconfigured
   binary.
 - **First-push seeding for tsserver only.** TypeScript pushes aggressively on
-  the very first `didOpen`; if we naively wait for a *second* push to count
+  the very first `didOpen`; if we naively wait for a _second_ push to count
   as "ready", we wait forever. So we seed the first push as the baseline.
 - **`waitForFreshPush` race + `waitForRegistrationChange` race** —
   `waitForDocumentDiagnostics` actually fires the pull request and races it
@@ -140,16 +142,16 @@ The whole file is one `export const X: Info = {...}` per language server.
 
 ```ts
 interface Info {
-  id: string
-  extensions: string[]
-  global?: boolean
-  root: (file, ctx) => Promise<string|undefined>
-  spawn(root, ctx): Promise<Handle|undefined>
+  id: string;
+  extensions: string[];
+  global?: boolean;
+  root: (file, ctx) => Promise<string | undefined>;
+  spawn(root, ctx): Promise<Handle | undefined>;
 }
 
 interface Handle {
-  process: ChildProcessWithoutNullStreams
-  initialization?: Record<string, any>  // server-specific initOptions
+  process: ChildProcessWithoutNullStreams;
+  initialization?: Record<string, any>; // server-specific initOptions
 }
 ```
 
@@ -187,7 +189,7 @@ agents. Caps at 20 per file, summarises the overflow.
 
 Pure data table. Maps `.ts → typescript`, `.tsx → typescriptreact`, etc.
 The client uses this to populate the `languageId` field in `didOpen`
-notifications. The server registry uses the *extensions* directly when
+notifications. The server registry uses the _extensions_ directly when
 filtering candidates; the languageId lookup is purely cosmetic for the
 LSP wire.
 
@@ -227,7 +229,7 @@ Several insights are load-bearing:
    parallel "agent-only" path. A hover the user asks for and a hover the
    agent asks for hit the same `getClients` cache, the same opened-document
    table, the same diagnostic stream.
-2. **The agent doesn't pick a language server.** It names a *file*; the
+2. **The agent doesn't pick a language server.** It names a _file_; the
    service routes the request to whichever client(s) match the file
    extension + project root. This is critical for monorepos where the same
    path may have TypeScript + ESLint clients running concurrently — both
@@ -249,13 +251,13 @@ Several insights are load-bearing:
 The "tool surface" is therefore tiny — five-ish tools all of which call into
 the same Service:
 
-| Tool | Service call | Returns |
-|---|---|---|
-| `lsp.diagnostics` | `touchFile + diagnostics` | error list per file (XML-wrapped) |
-| `lsp.hover` | `hover` | markdown hover content |
-| `lsp.definitions` | `definition` | `Location[]` (uri+range) |
-| `lsp.references` | `references` | `Location[]` |
-| `lsp.symbols` | `documentSymbol` / `workspaceSymbol` | `Symbol[]` |
+| Tool              | Service call                         | Returns                           |
+| ----------------- | ------------------------------------ | --------------------------------- |
+| `lsp.diagnostics` | `touchFile + diagnostics`            | error list per file (XML-wrapped) |
+| `lsp.hover`       | `hover`                              | markdown hover content            |
+| `lsp.definitions` | `definition`                         | `Location[]` (uri+range)          |
+| `lsp.references`  | `references`                         | `Location[]`                      |
+| `lsp.symbols`     | `documentSymbol` / `workspaceSymbol` | `Symbol[]`                        |
 
 That's the whole MVP.
 
@@ -333,18 +335,18 @@ That's the whole MVP.
 
 ## §4 — Solid port targets
 
-| Reference | Port target | Notes |
-|---|---|---|
-| `src/lsp/launch.ts` | `packages/daemon/src/lsp/launch.ts` | 20 LOC — drop the `Process` wrapper; use `child_process.spawn` directly. |
-| `src/lsp/language.ts` | `packages/daemon/src/lsp/language.ts` | Pure data — copy verbatim. |
-| `src/lsp/diagnostic.ts` | `packages/daemon/src/lsp/diagnostic.ts` | Pure — copy. |
-| `src/lsp/server.ts` (per-server `Info` records) | `packages/daemon/src/lsp/servers/{typescript,gopls,pyright,…}.ts` | Each language gets its own file. P1 ships `typescript.ts` only. |
-| `src/lsp/client.ts` | `packages/daemon/src/lsp/client.ts` | The 700-line port. Same `vscode-jsonrpc` wiring, same diagnostic state machine, same `notify.open` document-sync. Drop the `BusEvent` + `Filesystem.normalizePath` indirection — use Node `node:fs/promises` + our existing event-emitter pattern. |
-| `src/lsp/lsp.ts` (Service) | `packages/daemon/src/lsp/lsp-service.ts` | The orchestrator. Effect-backed (matches our git-service pattern). Replace MobX `runInAction` analogues with direct map mutations under a per-session mutex. The `getClients(file)` algorithm ports unchanged. |
-| Server tool registry | `packages/daemon/src/chat/tools/lsp-*.ts` | Five new tools (hover / diagnostics / definitions / references / symbols). Each wraps a single Service call + result formatter. |
-| Renderer side (no analogue yet) | `dashboard/src/lib/lsp/` + `dashboard/src/components/Editor/*` | Solid resource for diagnostics keyed on `(session, path)` + a Solid component for inline gutter markers. The editor's hover tooltip already has a slot via pane 1's Monaco port — we just feed it from the new Service. |
+| Reference                                       | Port target                                                       | Notes                                                                                                                                                                                                                                              |
+| ----------------------------------------------- | ----------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/lsp/launch.ts`                             | `packages/daemon/src/lsp/launch.ts`                               | 20 LOC — drop the `Process` wrapper; use `child_process.spawn` directly.                                                                                                                                                                           |
+| `src/lsp/language.ts`                           | `packages/daemon/src/lsp/language.ts`                             | Pure data — copy verbatim.                                                                                                                                                                                                                         |
+| `src/lsp/diagnostic.ts`                         | `packages/daemon/src/lsp/diagnostic.ts`                           | Pure — copy.                                                                                                                                                                                                                                       |
+| `src/lsp/server.ts` (per-server `Info` records) | `packages/daemon/src/lsp/servers/{typescript,gopls,pyright,…}.ts` | Each language gets its own file. P1 ships `typescript.ts` only.                                                                                                                                                                                    |
+| `src/lsp/client.ts`                             | `packages/daemon/src/lsp/client.ts`                               | The 700-line port. Same `vscode-jsonrpc` wiring, same diagnostic state machine, same `notify.open` document-sync. Drop the `BusEvent` + `Filesystem.normalizePath` indirection — use Node `node:fs/promises` + our existing event-emitter pattern. |
+| `src/lsp/lsp.ts` (Service)                      | `packages/daemon/src/lsp/lsp-service.ts`                          | The orchestrator. Effect-backed (matches our git-service pattern). Replace MobX `runInAction` analogues with direct map mutations under a per-session mutex. The `getClients(file)` algorithm ports unchanged.                                     |
+| Server tool registry                            | `packages/daemon/src/chat/tools/lsp-*.ts`                         | Five new tools (hover / diagnostics / definitions / references / symbols). Each wraps a single Service call + result formatter.                                                                                                                    |
+| Renderer side (no analogue yet)                 | `dashboard/src/lib/lsp/` + `dashboard/src/components/Editor/*`    | Solid resource for diagnostics keyed on `(session, path)` + a Solid component for inline gutter markers. The editor's hover tooltip already has a slot via pane 1's Monaco port — we just feed it from the new Service.                            |
 
-The renderer-side editor surface is *carefully out of scope* for this audit's
+The renderer-side editor surface is _carefully out of scope_ for this audit's
 port plan — pane 1's Goal-17 owns Monaco wiring + editor hover/gutter slots.
 G21 supplies the data; G17 supplies the UI hooks. The G21 work below
 **must not touch `dashboard/src/lib/editor/` or `dashboard/src/lib/monaco/`**.
@@ -397,12 +399,12 @@ agent can call them.
 Files:
 
 - `packages/daemon/src/chat/tools/lsp-diagnostics.ts` — `{file?, scope?}`
-  → `<diagnostics …>` text block. With no args, returns *all known*
+  → `<diagnostics …>` text block. With no args, returns _all known_
   diagnostics — matches the existing "what's broken" tool ergonomics.
 - `packages/daemon/src/chat/tools/lsp-hover.ts` — `{file, line, character}`
   → hover markdown.
 - `packages/daemon/src/chat/tools/lsp-definitions.ts` — `{file, line,
-  character}` → relative paths + line ranges. Resolved via `references`
+character}` → relative paths + line ranges. Resolved via `references`
   when definition is empty (some servers conflate the two).
 - `packages/daemon/src/chat/tools/lsp-symbols.ts` — `{query}` → list of
   symbols across the workspace.
@@ -495,21 +497,21 @@ Files / surfaces:
 
 ### Totals
 
-| Phase | Scope | Effort |
-| --- | --- | --- |
-| G21-P1 | Daemon LSP service + TypeScript reference | ~24 h |
-| G21-P2 | Chat tools | ~8 h |
-| G21-P3 | IDE-side editor surface | ~16 h |
-| G21-P4 | Multi-language servers | ~16 h |
-| G21-P5 | Polish (rename / code actions / workspace symbols UI) | ~12 h |
-| **Total** | | **~76 h (~9–10 person-days)** |
+| Phase     | Scope                                                 | Effort                        |
+| --------- | ----------------------------------------------------- | ----------------------------- |
+| G21-P1    | Daemon LSP service + TypeScript reference             | ~24 h                         |
+| G21-P2    | Chat tools                                            | ~8 h                          |
+| G21-P3    | IDE-side editor surface                               | ~16 h                         |
+| G21-P4    | Multi-language servers                                | ~16 h                         |
+| G21-P5    | Polish (rename / code actions / workspace symbols UI) | ~12 h                         |
+| **Total** |                                                       | **~76 h (~9–10 person-days)** |
 
 ---
 
 ## §6 — Open questions
 
 1. **Per-session vs per-workspace clients.** Reference uses `(root,
-   serverID)` as the dedup key — multiple sessions opening the same repo
+serverID)` as the dedup key — multiple sessions opening the same repo
    share clients. We probably want per-session for now (matches
    `terminals.json` discipline), but the data structure can flip without
    user-visible changes. Decide at P1.
@@ -542,7 +544,7 @@ which is a long-tail port that can land one language at a time.
 
 **G21-P1 is the load-bearing slice.** It ports `client.ts` (the 700-line
 diagnostic state machine), `lsp.ts` (the per-file router + Service), and
-*one* language (`typescript`). Everything else hangs off it:
+_one_ language (`typescript`). Everything else hangs off it:
 
 - **P2** wraps the Service in tool registrations — five 30-line files.
 - **P3** wraps the Service in REST + Solid resources for the editor.

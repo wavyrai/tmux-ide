@@ -43,9 +43,7 @@ export function SvgRenderer(props: SvgRendererProps) {
     // Subscribe to the buffer version so the memo re-runs on edit.
     void bufferVersion();
     const content =
-      modelRegistry.getValue(bufferUri()) ??
-      modelRegistry.getValue(toDiskUri(bufferUri())) ??
-      "";
+      modelRegistry.getValue(bufferUri()) ?? modelRegistry.getValue(toDiskUri(bufferUri())) ?? "";
     // Revoke the previous URL so we don't leak Blobs on every edit.
     if (prevUrl) URL.revokeObjectURL(prevUrl);
     if (!content) return "";
@@ -62,11 +60,7 @@ export function SvgRenderer(props: SvgRendererProps) {
       data-testid="editor-svg-renderer"
       class="relative flex h-full items-center justify-center overflow-auto p-4"
     >
-      <img
-        src={svgUrl()}
-        alt={fileName()}
-        class="max-h-full max-w-full object-contain"
-      />
+      <img src={svgUrl()} alt={fileName()} class="max-h-full max-w-full object-contain" />
       <Show when={props.onEditSource}>
         <button
           type="button"

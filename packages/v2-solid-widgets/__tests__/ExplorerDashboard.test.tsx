@@ -38,11 +38,7 @@ describe("ExplorerDashboard (Solid widget)", () => {
   });
 
   it("renders single-level files", () => {
-    const tree: ExplorerNode[] = [
-      file("README.md"),
-      file("package.json"),
-      file("tsconfig.json"),
-    ];
+    const tree: ExplorerNode[] = [file("README.md"), file("package.json"), file("tsconfig.json")];
     const { container, dispose } = mountWidget({ rootEntries: tree });
     const rows = container.querySelectorAll<HTMLElement>("[data-explorer-row]");
     expect(rows.length).toBe(3);
@@ -114,15 +110,11 @@ describe("ExplorerDashboard (Solid widget)", () => {
     const { container, setOptions, dispose } = mountWidget({ rootEntries: tree });
 
     // Default: filter ON → node_modules hidden.
-    expect(
-      container.querySelector("[data-explorer-row='node_modules']"),
-    ).toBeNull();
+    expect(container.querySelector("[data-explorer-row='node_modules']")).toBeNull();
 
     // Toggle filter OFF → node_modules visible with reduced opacity.
     setOptions({ gitignoreFilter: false });
-    const ignored = container.querySelector<HTMLElement>(
-      "[data-explorer-row='node_modules']",
-    );
+    const ignored = container.querySelector<HTMLElement>("[data-explorer-row='node_modules']");
     expect(ignored).toBeTruthy();
     expect(ignored?.getAttribute("data-explorer-ignored")).toBe("true");
     // Inline opacity reflects the dim state.
@@ -137,9 +129,7 @@ describe("ExplorerDashboard (Solid widget)", () => {
       dir(
         `dir${di}`,
         `dir${di}`,
-        Array.from({ length: 10 }, (_, fi) =>
-          file(`file${fi}.ts`, `dir${di}/file${fi}.ts`),
-        ),
+        Array.from({ length: 10 }, (_, fi) => file(`file${fi}.ts`, `dir${di}/file${fi}.ts`)),
       ),
     );
     const { container, dispose } = mountWidget({

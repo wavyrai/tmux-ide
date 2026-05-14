@@ -61,15 +61,13 @@ console.log("[build-dashboard] building @tmux-ide/dashboard…");
 // anywhere inside the workspace; we pass `--dir <workspace>` so the
 // command stays robust when invoked by `pnpm run prepack` from
 // `packages/daemon/`.
-const buildResult = spawnSync(
-  "pnpm",
-  ["--filter", "@tmux-ide/dashboard", "build"],
-  { stdio: "inherit", cwd: WORKSPACE_ROOT, env: process.env },
-);
+const buildResult = spawnSync("pnpm", ["--filter", "@tmux-ide/dashboard", "build"], {
+  stdio: "inherit",
+  cwd: WORKSPACE_ROOT,
+  env: process.env,
+});
 if (buildResult.status !== 0) {
-  console.error(
-    `[build-dashboard] dashboard build failed (exit code ${buildResult.status})`,
-  );
+  console.error(`[build-dashboard] dashboard build failed (exit code ${buildResult.status})`);
   process.exit(buildResult.status ?? 1);
 }
 

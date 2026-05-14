@@ -19,15 +19,7 @@
  * `?view=changes` while DiffsView holds `?view=diffs`.
  */
 
-import {
-  createMemo,
-  createResource,
-  createSignal,
-  For,
-  Show,
-  onCleanup,
-  type JSX,
-} from "solid-js";
+import { createMemo, createResource, createSignal, For, Show, onCleanup, type JSX } from "solid-js";
 import { Effect } from "effect";
 import { GitCompare } from "lucide-solid";
 import { fetchProjectDiff, type DiffFileEntry } from "@/lib/api";
@@ -142,7 +134,9 @@ export function MonacoDiffsView(props: MonacoDiffsViewProps): JSX.Element {
           filePath: file,
           language,
         }),
-      ).then(() => registeredUris.add(diskUri)).catch(() => {});
+      )
+        .then(() => registeredUris.add(diskUri))
+        .catch(() => {});
     }
 
     if (modelRegistry.modelStatus(gitUri) !== "ready") {
@@ -154,7 +148,9 @@ export function MonacoDiffsView(props: MonacoDiffsViewProps): JSX.Element {
           language,
           ref: "HEAD",
         }),
-      ).then(() => registeredUris.add(gitUri)).catch(() => {});
+      )
+        .then(() => registeredUris.add(gitUri))
+        .catch(() => {});
     }
   }
 
@@ -219,9 +215,7 @@ export function MonacoDiffsView(props: MonacoDiffsViewProps): JSX.Element {
         >
           <Show
             when={!data.loading}
-            fallback={
-              <div class="px-3 py-2 text-[11px] text-[var(--dim)]">loading…</div>
-            }
+            fallback={<div class="px-3 py-2 text-[11px] text-[var(--dim)]">loading…</div>}
           >
             <Show
               when={files().length > 0}
@@ -255,11 +249,7 @@ export function MonacoDiffsView(props: MonacoDiffsViewProps): JSX.Element {
                         <Show when={fileDirname(f.file)}>
                           <span class="text-[var(--dim)]">{fileDirname(f.file)}</span>
                         </Show>
-                        <span
-                          class={
-                            isActive() ? "text-[var(--accent)]" : "text-[var(--fg)]"
-                          }
-                        >
+                        <span class={isActive() ? "text-[var(--accent)]" : "text-[var(--fg)]"}>
                           {fileBasename(f.file)}
                         </span>
                       </span>
@@ -279,10 +269,7 @@ export function MonacoDiffsView(props: MonacoDiffsViewProps): JSX.Element {
           </Show>
         </aside>
 
-        <section
-          data-testid="v2-monaco-diffs-body"
-          class="flex flex-1 min-w-0 min-h-0 flex-col"
-        >
+        <section data-testid="v2-monaco-diffs-body" class="flex flex-1 min-w-0 min-h-0 flex-col">
           <Show
             when={selectedUris()}
             fallback={
@@ -300,14 +287,10 @@ export function MonacoDiffsView(props: MonacoDiffsViewProps): JSX.Element {
                 modifiedUri={uris().modifiedUri}
                 diffStyle={diffStyle()}
                 onAcceptHunk={
-                  props.onAcceptHunk
-                    ? (h) => props.onAcceptHunk!(uris().file, h)
-                    : undefined
+                  props.onAcceptHunk ? (h) => props.onAcceptHunk!(uris().file, h) : undefined
                 }
                 onRejectHunk={
-                  props.onRejectHunk
-                    ? (h) => props.onRejectHunk!(uris().file, h)
-                    : undefined
+                  props.onRejectHunk ? (h) => props.onRejectHunk!(uris().file, h) : undefined
                 }
               />
             )}

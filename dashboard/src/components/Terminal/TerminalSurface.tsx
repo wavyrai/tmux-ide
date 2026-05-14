@@ -95,8 +95,7 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
     const current = activeId();
     if (current && list.some((t) => t.id === current)) return;
     const stored = readActiveId(props.projectName);
-    const next =
-      stored && list.some((t) => t.id === stored) ? stored : list[0]!.id;
+    const next = stored && list.some((t) => t.id === stored) ? stored : list[0]!.id;
     setActiveId(next);
     writeActiveId(props.projectName, next);
   });
@@ -169,9 +168,7 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
     });
   });
 
-  const allSessionIds = createMemo<readonly string[]>(() =>
-    (terminals() ?? []).map((t) => t.id),
-  );
+  const allSessionIds = createMemo<readonly string[]>(() => (terminals() ?? []).map((t) => t.id));
 
   async function runEffect<T>(eff: Effect.Effect<T, unknown>): Promise<T | null> {
     setError(null);
@@ -284,11 +281,7 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
                       title={t.name}
                     >
                       <Show when={t.runtime.running}>
-                        <span
-                          aria-hidden="true"
-                          class="mr-1 text-[var(--accent)]"
-                          title="running"
-                        >
+                        <span aria-hidden="true" class="mr-1 text-[var(--accent)]" title="running">
                           ●
                         </span>
                       </Show>

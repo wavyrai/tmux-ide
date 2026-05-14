@@ -83,9 +83,7 @@ export function MergeConflictPanel(props: MergeConflictPanelProps) {
 
   const totalConflicts = createMemo(() => conflictCount(hunks()));
   const resolved = createMemo(() => resolvedCount(hunks(), resolutions()));
-  const allResolved = createMemo(
-    () => totalConflicts() > 0 && resolved() === totalConflicts(),
-  );
+  const allResolved = createMemo(() => totalConflicts() > 0 && resolved() === totalConflicts());
 
   // Auto-fire `resolveConflict` once every conflict has a choice
   // so the panel unmounts itself. Guard on `externalContent`
@@ -127,24 +125,16 @@ export function MergeConflictPanel(props: MergeConflictPanelProps) {
       class="flex h-full min-h-0 w-full flex-col bg-[var(--bg)] text-[var(--fg)]"
     >
       <header class="flex shrink-0 items-center gap-2 border-b border-[var(--yellow,var(--accent))] bg-[var(--surface)] px-3 py-2 text-[12px]">
-        <AlertTriangle
-          aria-hidden="true"
-          class="h-4 w-4 text-[var(--yellow,var(--accent))]"
-        />
+        <AlertTriangle aria-hidden="true" class="h-4 w-4 text-[var(--yellow,var(--accent))]" />
         <span>Merge conflict — </span>
         <FileText aria-hidden="true" class="h-3 w-3 opacity-60" />
         <span class="font-mono">{props.buffer.filePath}</span>
         <span class="flex-1" />
-        <span
-          data-testid="v2-merge-status"
-          class="font-mono text-[11px] text-[var(--dim)]"
-        >
+        <span data-testid="v2-merge-status" class="font-mono text-[11px] text-[var(--dim)]">
           <span class="text-[var(--accent)]">{resolved()}</span>
           <span class="opacity-50"> / </span>
           <span>{totalConflicts()}</span>
-          <span class="ml-1 opacity-70">
-            conflict{totalConflicts() === 1 ? "" : "s"} resolved
-          </span>
+          <span class="ml-1 opacity-70">conflict{totalConflicts() === 1 ? "" : "s"} resolved</span>
         </span>
         <button
           type="button"
@@ -168,10 +158,7 @@ export function MergeConflictPanel(props: MergeConflictPanelProps) {
         </button>
       </header>
 
-      <div
-        data-testid="v2-merge-hunk-list"
-        class="flex min-h-0 flex-1 flex-col overflow-y-auto"
-      >
+      <div data-testid="v2-merge-hunk-list" class="flex min-h-0 flex-1 flex-col overflow-y-auto">
         <For each={hunks()}>
           {(hunk) => (
             <HunkRow
@@ -229,30 +216,19 @@ function HunkRow(props: {
       data-hunk-index={props.hunk.index}
       data-hunk-kind={props.hunk.kind}
       data-hunk-choice={props.choice ?? undefined}
-      data-resolved={
-        props.hunk.kind !== "conflict" || props.choice !== null ? "true" : undefined
-      }
+      data-resolved={props.hunk.kind !== "conflict" || props.choice !== null ? "true" : undefined}
       class="border-b border-[var(--border)]"
     >
       <header class="flex shrink-0 items-center gap-2 bg-[var(--bg-strong)] px-3 py-1 text-[10px] uppercase tracking-wide text-[var(--dim)]">
-        <span class="font-mono">
-          line {props.hunk.baseStartLine}
-        </span>
+        <span class="font-mono">line {props.hunk.baseStartLine}</span>
         <span aria-hidden="true">·</span>
         <HunkKindLabel kind={props.hunk.kind} />
         <span class="flex-1" />
         <Show when={props.hunk.kind === "conflict"}>
-          <ChoiceButtons
-            choice={props.choice}
-            onPick={props.onPick}
-            onReset={props.onReset}
-          />
+          <ChoiceButtons choice={props.choice} onPick={props.onPick} onReset={props.onReset} />
         </Show>
       </header>
-      <Show
-        when={props.hunk.kind === "conflict"}
-        fallback={<NonConflictBody hunk={props.hunk} />}
-      >
+      <Show when={props.hunk.kind === "conflict"} fallback={<NonConflictBody hunk={props.hunk} />}>
         <ConflictBody hunk={props.hunk} choice={props.choice} />
       </Show>
     </article>
@@ -269,9 +245,7 @@ function HunkKindLabel(props: { kind: MergeHunk["kind"] }) {
       return <span class="text-[var(--accent)]">local only</span>;
     case "conflict":
       return (
-        <span class="text-[var(--yellow-foreground,var(--yellow,var(--accent)))]">
-          conflict
-        </span>
+        <span class="text-[var(--yellow-foreground,var(--yellow,var(--accent)))]">conflict</span>
       );
   }
 }
@@ -345,7 +319,8 @@ function NonConflictBody(props: { hunk: MergeHunk }) {
       data-testid="v2-merge-hunk-body"
       class="m-0 max-h-32 overflow-y-auto px-3 py-1 font-mono text-[11px] text-[var(--fg-secondary)]"
     >
-      {preview().slice(0, 6).join("\n") + (preview().length > 6 ? `\n…(${preview().length - 6} more)` : "")}
+      {preview().slice(0, 6).join("\n") +
+        (preview().length > 6 ? `\n…(${preview().length - 6} more)` : "")}
     </pre>
   );
 }
@@ -395,13 +370,11 @@ function ConflictBody(props: { hunk: MergeHunk; choice: ConflictChoice | null })
   );
 }
 
-function SidePane(props: {
-  label: string;
-  tone: "external" | "local";
-  lines: string[];
-}) {
+function SidePane(props: { label: string; tone: "external" | "local"; lines: string[] }) {
   const tint =
-    props.tone === "external" ? "var(--diff-add-bg,var(--surface))" : "var(--diff-del-bg,var(--surface))";
+    props.tone === "external"
+      ? "var(--diff-add-bg,var(--surface))"
+      : "var(--diff-del-bg,var(--surface))";
   return (
     <div
       data-testid={`v2-merge-side-${props.tone}`}
@@ -430,9 +403,6 @@ function SidePane(props: {
  */
 function hunkSignature(hunks: ReadonlyArray<MergeHunk>): string {
   return hunks
-    .map(
-      (h) =>
-        `${h.kind}:${h.baseLines.length}:${h.externalLines.length}:${h.localLines.length}`,
-    )
+    .map((h) => `${h.kind}:${h.baseLines.length}:${h.externalLines.length}:${h.localLines.length}`)
     .join("|");
 }

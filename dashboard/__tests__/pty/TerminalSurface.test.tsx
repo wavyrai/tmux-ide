@@ -75,9 +75,7 @@ beforeEach(() => {
 
 describe("TerminalSurface", () => {
   it("renders one tab per daemon terminal + the new-tab button", async () => {
-    globalThis.fetch = vi.fn(async () =>
-      jsonOk({ terminals: SAMPLE_TERMINALS }),
-    ) as typeof fetch;
+    globalThis.fetch = vi.fn(async () => jsonOk({ terminals: SAMPLE_TERMINALS })) as typeof fetch;
     const { findByTestId } = render(() => <TerminalSurface projectName="proj" />);
     await findByTestId(`terminal-tab-${SAMPLE_TERMINALS[0]!.id}`);
     await findByTestId(`terminal-tab-${SAMPLE_TERMINALS[1]!.id}`);
@@ -85,22 +83,15 @@ describe("TerminalSurface", () => {
   });
 
   it("activates the first tab by default and renders PtyPane for it", async () => {
-    globalThis.fetch = vi.fn(async () =>
-      jsonOk({ terminals: SAMPLE_TERMINALS }),
-    ) as typeof fetch;
+    globalThis.fetch = vi.fn(async () => jsonOk({ terminals: SAMPLE_TERMINALS })) as typeof fetch;
     const { findByTestId } = render(() => <TerminalSurface projectName="proj" />);
     const pane = (await findByTestId("pty-pane-stub")) as HTMLElement;
     expect(pane.getAttribute("data-session-id")).toBe(SAMPLE_TERMINALS[0]!.id);
   });
 
   it("restores the persisted active tab from localStorage", async () => {
-    window.localStorage.setItem(
-      "tmux-ide.terminal.active.proj",
-      SAMPLE_TERMINALS[1]!.id,
-    );
-    globalThis.fetch = vi.fn(async () =>
-      jsonOk({ terminals: SAMPLE_TERMINALS }),
-    ) as typeof fetch;
+    window.localStorage.setItem("tmux-ide.terminal.active.proj", SAMPLE_TERMINALS[1]!.id);
+    globalThis.fetch = vi.fn(async () => jsonOk({ terminals: SAMPLE_TERMINALS })) as typeof fetch;
     const { findByTestId } = render(() => <TerminalSurface projectName="proj" />);
     await waitFor(async () => {
       const pane = (await findByTestId("pty-pane-stub")) as HTMLElement;
@@ -140,9 +131,7 @@ describe("TerminalSurface", () => {
     await findByTestId(`terminal-tab-${SAMPLE_TERMINALS[0]!.id}`);
     fireEvent.click(await findByTestId("terminal-tab-new"));
     await waitFor(() => {
-      const postCall = calls.find(
-        (c) => c.method === "POST" && c.url.endsWith("/terminals"),
-      );
+      const postCall = calls.find((c) => c.method === "POST" && c.url.endsWith("/terminals"));
       expect(postCall).toBeTruthy();
       expect((postCall!.body as { name: string }).name).toBe("shell 3");
     });
@@ -171,8 +160,7 @@ describe("TerminalSurface", () => {
       expect(
         calls.some(
           (c) =>
-            c.method === "DELETE" &&
-            c.url.endsWith(`/terminals/${encodeURIComponent(target.id)}`),
+            c.method === "DELETE" && c.url.endsWith(`/terminals/${encodeURIComponent(target.id)}`),
         ),
       ).toBe(true);
     });
@@ -203,9 +191,7 @@ describe("TerminalSurface", () => {
     fireEvent.input(input, { target: { value: "Renamed" } });
     fireEvent.keyDown(input, { key: "Enter" });
     await waitFor(() => {
-      const renameCall = calls.find(
-        (c) => c.method === "POST" && c.url.endsWith("/rename"),
-      );
+      const renameCall = calls.find((c) => c.method === "POST" && c.url.endsWith("/rename"));
       expect(renameCall).toBeTruthy();
       expect((renameCall!.body as { name: string }).name).toBe("Renamed");
     });

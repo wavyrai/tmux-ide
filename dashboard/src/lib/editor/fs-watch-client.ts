@@ -16,11 +16,7 @@
 import { Effect } from "effect";
 import { fetchFilePreview } from "@/lib/api";
 import { withWsBase } from "@/lib/appProtocol";
-import {
-  bufferState,
-  reseedFromExternal,
-  type OpenBuffer,
-} from "./buffer-store";
+import { bufferState, reseedFromExternal, type OpenBuffer } from "./buffer-store";
 
 interface FileChangedFrame {
   type: "file.changed";

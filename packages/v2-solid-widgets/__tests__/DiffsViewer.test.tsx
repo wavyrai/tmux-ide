@@ -16,7 +16,8 @@ interface MockRoutes {
 
 function installFetchMock(routes: MockRoutes) {
   globalThis.fetch = ((input: RequestInfo | URL) => {
-    const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    const url =
+      typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
     // /api/project/:name/diff/:file
     const fileMatch = url.match(/\/api\/project\/[^/]+\/diff\/(.+)$/);
     if (fileMatch) {
@@ -151,15 +152,11 @@ describe("DiffsViewer (Solid widget)", () => {
     await flush();
 
     expect(container.textContent).toContain("2 files changed");
-    const fileRows = container.querySelectorAll<HTMLElement>(
-      "[data-testid='diffs-viewer-file']",
-    );
+    const fileRows = container.querySelectorAll<HTMLElement>("[data-testid='diffs-viewer-file']");
     expect(fileRows.length).toBe(2);
 
     // Click the second file — per-file patch loads via fetchProjectFileDiff.
-    const bRow = Array.from(fileRows).find(
-      (r) => r.dataset.diffFilePath === "src/b.ts",
-    );
+    const bRow = Array.from(fileRows).find((r) => r.dataset.diffFilePath === "src/b.ts");
     expect(bRow).toBeTruthy();
     bRow!.click();
     await flush();
@@ -168,9 +165,7 @@ describe("DiffsViewer (Solid widget)", () => {
     expect(container.textContent).not.toContain("only-in-a");
 
     // Click "All files" — returns to the project-wide patch.
-    const allFiles = container.querySelector<HTMLElement>(
-      "[data-testid='diffs-viewer-file-all']",
-    );
+    const allFiles = container.querySelector<HTMLElement>("[data-testid='diffs-viewer-file-all']");
     allFiles!.click();
     await flush();
 
@@ -203,9 +198,7 @@ describe("DiffsViewer (Solid widget)", () => {
     expect(linesBefore).toBeGreaterThan(1900); // sanity: most of the cap
 
     // Clicking "show all" expands to the full set.
-    const showAll = container.querySelector<HTMLElement>(
-      "[data-testid='diffs-viewer-show-all']",
-    );
+    const showAll = container.querySelector<HTMLElement>("[data-testid='diffs-viewer-show-all']");
     expect(showAll).toBeTruthy();
     showAll!.click();
     await flush();

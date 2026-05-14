@@ -45,12 +45,5 @@ export function WidgetHost<TOpts>(props: WidgetHostProps<TOpts>): JSX.Element {
     handle = null;
   });
 
-  return (
-    <div
-      ref={container}
-      class={props.class}
-      style={props.style}
-      data-widget-host="true"
-    />
-  );
+  return <div ref={container} class={props.class} style={props.style} data-widget-host="true" />;
 }

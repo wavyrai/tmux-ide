@@ -43,9 +43,7 @@ export function MarkdownRenderer(props: MarkdownRendererProps) {
     // every edit. The void read is enough — Solid tracks the call.
     void bufferVersion();
     const content =
-      modelRegistry.getValue(bufferUri()) ??
-      modelRegistry.getValue(toDiskUri(bufferUri())) ??
-      "";
+      modelRegistry.getValue(bufferUri()) ?? modelRegistry.getValue(toDiskUri(bufferUri())) ?? "";
     return renderMarkdown(content);
   });
 

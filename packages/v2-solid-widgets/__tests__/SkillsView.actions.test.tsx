@@ -70,15 +70,11 @@ describe("SkillsView — CRUD actions", () => {
       "validator",
     );
     setInputValue(
-      mounted.container.querySelector<HTMLInputElement>(
-        '[data-testid="skill-form-specialties"]',
-      )!,
+      mounted.container.querySelector<HTMLInputElement>('[data-testid="skill-form-specialties"]')!,
       "lint, tests",
     );
     setInputValue(
-      mounted.container.querySelector<HTMLInputElement>(
-        '[data-testid="skill-form-description"]',
-      )!,
+      mounted.container.querySelector<HTMLInputElement>('[data-testid="skill-form-description"]')!,
       "Reviews PRs",
     );
     setInputValue(
@@ -86,9 +82,7 @@ describe("SkillsView — CRUD actions", () => {
       "Body content.",
     );
 
-    mounted.container
-      .querySelector<HTMLButtonElement>('[data-testid="skill-form-save"]')!
-      .click();
+    mounted.container.querySelector<HTMLButtonElement>('[data-testid="skill-form-save"]')!.click();
 
     // Microtask + a tick for the awaited handler to resolve.
     await Promise.resolve();
@@ -123,9 +117,7 @@ describe("SkillsView — CRUD actions", () => {
     expect(nameInput.value).toBe("frontend");
 
     setInputValue(
-      mounted.container.querySelector<HTMLInputElement>(
-        '[data-testid="skill-form-description"]',
-      )!,
+      mounted.container.querySelector<HTMLInputElement>('[data-testid="skill-form-description"]')!,
       "Updated description.",
     );
     setInputValue(
@@ -133,9 +125,7 @@ describe("SkillsView — CRUD actions", () => {
       "Updated body content.",
     );
 
-    mounted.container
-      .querySelector<HTMLButtonElement>('[data-testid="skill-form-save"]')!
-      .click();
+    mounted.container.querySelector<HTMLButtonElement>('[data-testid="skill-form-save"]')!.click();
 
     await Promise.resolve();
     await Promise.resolve();
@@ -159,9 +149,7 @@ describe("SkillsView — CRUD actions", () => {
       .click();
 
     // Confirm dialog renders but onDelete has not fired yet.
-    const confirm = mounted.container.querySelector(
-      '[data-testid="skill-delete-confirm"]',
-    )!;
+    const confirm = mounted.container.querySelector('[data-testid="skill-delete-confirm"]')!;
     expect(confirm.getAttribute("data-skill-name")).toBe("frontend");
     expect(onDelete).not.toHaveBeenCalled();
 
@@ -169,9 +157,7 @@ describe("SkillsView — CRUD actions", () => {
     mounted.container
       .querySelector<HTMLButtonElement>('[data-testid="skill-delete-cancel"]')!
       .click();
-    expect(
-      mounted.container.querySelector('[data-testid="skill-delete-confirm"]'),
-    ).toBeNull();
+    expect(mounted.container.querySelector('[data-testid="skill-delete-confirm"]')).toBeNull();
     expect(onDelete).not.toHaveBeenCalled();
 
     // Reopen + accept.
@@ -179,9 +165,7 @@ describe("SkillsView — CRUD actions", () => {
       .querySelector<HTMLButtonElement>('[data-testid="skill-delete-button"]')!
       .click();
     mounted.container
-      .querySelector<HTMLButtonElement>(
-        '[data-testid="skill-delete-confirm-button"]',
-      )!
+      .querySelector<HTMLButtonElement>('[data-testid="skill-delete-confirm-button"]')!
       .click();
 
     await Promise.resolve();
@@ -193,14 +177,8 @@ describe("SkillsView — CRUD actions", () => {
 
   it("hides + New / Edit / Delete affordances when no handlers are passed", () => {
     mounted = mountWidget({ skills: [existing] });
-    expect(
-      mounted.container.querySelector('[data-testid="skills-new-button"]'),
-    ).toBeNull();
-    expect(
-      mounted.container.querySelector('[data-testid="skill-edit-button"]'),
-    ).toBeNull();
-    expect(
-      mounted.container.querySelector('[data-testid="skill-delete-button"]'),
-    ).toBeNull();
+    expect(mounted.container.querySelector('[data-testid="skills-new-button"]')).toBeNull();
+    expect(mounted.container.querySelector('[data-testid="skill-edit-button"]')).toBeNull();
+    expect(mounted.container.querySelector('[data-testid="skill-delete-button"]')).toBeNull();
   });
 });

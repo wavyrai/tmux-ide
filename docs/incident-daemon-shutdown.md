@@ -26,7 +26,7 @@ daemon process behind:
    `readCanonicalDaemonInfo()` shows a live canonical daemon, the new daemon
    calls `requestDaemonShutdown()` which POSTs `/api/v2/action/daemon.shutdown`
    to the existing one (`daemon-embed.ts:414`). That hits
-   `daemonShutdownHandler` →  `setDaemonShutdownBackend` →  `handle.stop()`. The
+   `daemonShutdownHandler` → `setDaemonShutdownBackend` → `handle.stop()`. The
    server closes, the canonical file is cleared (`clearCanonicalDaemonInfo()`
    in the `finally`), but the original process keeps its event loop alive on
    leftover unref-pending tasks (task-store WAL flush, async work in flight,
@@ -58,12 +58,13 @@ stop), wipes the canonical file, binds 6060, logs the same banner, and joins
 the pile. Both processes show up under `pgrep`; neither is reachable.
 
 ## Suggested fix (not applied here — `packages/daemon/src/lib/` is in scope
+
 but the right call between options needs sign-off)
 
 Pick one:
 
 - Have `setDaemonShutdownBackend(async () => { await handle.stop(...);
-  process.exit(0); })` so the takeover action actually terminates the
+process.exit(0); })` so the takeover action actually terminates the
   process, matching the SIGTERM contract.
 - Or, on `handle.stop()` completion, unref every remaining handle and let the
   event loop drain naturally, and have `daemon.ts`'s `main()` `await`

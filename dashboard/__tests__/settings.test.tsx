@@ -12,11 +12,7 @@ import { cleanup, fireEvent, render } from "@solidjs/testing-library";
 import { MemoryRouter, Route, createMemoryHistory } from "@solidjs/router";
 
 import SettingsRoute from "@/routes/v2/settings";
-import {
-  __resetSettingsForTests,
-  setKeybindOverride,
-  settings,
-} from "@/lib/settings";
+import { __resetSettingsForTests, setKeybindOverride, settings } from "@/lib/settings";
 
 function renderRoute() {
   const history = createMemoryHistory();

@@ -137,22 +137,20 @@ describe("ProviderApprovalPolicy (plain TS)", () => {
       },
       emitPermissionRequest: () => undefined,
     });
-    expect(
-      policy.evaluate(evalInput({ toolCall: { kind: "read", name: "Read" } })).kind,
-    ).toBe("approved"); // default = never
-    expect(
-      policy.evaluate(evalInput({ toolCall: { kind: "delete", name: "Delete" } })).kind,
-    ).toBe("needs-confirmation"); // per-tool override
-    expect(
-      policy.evaluate(evalInput({ toolCall: { kind: "execute", name: "Bash" } })).kind,
-    ).toBe("denied"); // per-tool override
+    expect(policy.evaluate(evalInput({ toolCall: { kind: "read", name: "Read" } })).kind).toBe(
+      "approved",
+    ); // default = never
+    expect(policy.evaluate(evalInput({ toolCall: { kind: "delete", name: "Delete" } })).kind).toBe(
+      "needs-confirmation",
+    ); // per-tool override
+    expect(policy.evaluate(evalInput({ toolCall: { kind: "execute", name: "Bash" } })).kind).toBe(
+      "denied",
+    ); // per-tool override
     // Unknown provider falls through to wildcard (untrusted → denied).
     expect(
-      policy
-        .evaluate(
-          evalInput({ provider: "rogue-provider", toolCall: { kind: "read", name: "Read" } }),
-        )
-        .kind,
+      policy.evaluate(
+        evalInput({ provider: "rogue-provider", toolCall: { kind: "read", name: "Read" } }),
+      ).kind,
     ).toBe("denied");
   });
 

@@ -21,11 +21,7 @@ export type { CodePoolEntry } from "./code-pool";
 export { diffEditorPool } from "./diff-pool";
 export type { DiffPoolEntry } from "./diff-pool";
 
-export {
-  modelRegistry,
-  MonacoModelRegistry,
-  ModelRegistryError,
-} from "./model-registry";
+export { modelRegistry, MonacoModelRegistry, ModelRegistryError } from "./model-registry";
 export type { ModelStatus, ModelType } from "./model-registry";
 
 export { useMonacoLease } from "./use-lease";
@@ -38,7 +34,4 @@ export {
   configureMonacoEditor,
   addMonacoKeyboardShortcuts,
 } from "./config";
-export {
-  CODE_EDITOR_BASE_OPTIONS,
-  DIFF_EDITOR_BASE_OPTIONS,
-} from "./editor-config";
+export { CODE_EDITOR_BASE_OPTIONS, DIFF_EDITOR_BASE_OPTIONS } from "./editor-config";

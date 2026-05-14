@@ -37,12 +37,7 @@ interface KanbanBoardProps {
   options: () => KanbanBoardMountOptions;
 }
 
-const STATUS_CYCLE: ReadonlyArray<KanbanTaskStatus> = [
-  "todo",
-  "in-progress",
-  "review",
-  "done",
-];
+const STATUS_CYCLE: ReadonlyArray<KanbanTaskStatus> = ["todo", "in-progress", "review", "done"];
 
 const STATUS_COLOR: Record<string, string> = {
   todo: "var(--dim)",
@@ -133,9 +128,7 @@ export function KanbanBoardView(props: KanbanBoardProps) {
   );
 
   const allTasks = createMemo<ReadonlyArray<KanbanTask>>(() => props.options().tasks ?? []);
-  const density = createMemo<"compact" | "regular">(
-    () => props.options().density ?? "compact",
-  );
+  const density = createMemo<"compact" | "regular">(() => props.options().density ?? "compact");
 
   // Merge optimistic status patches onto the canonical list.
   const patched = createMemo<KanbanTask[]>(() => {
@@ -164,7 +157,8 @@ export function KanbanBoardView(props: KanbanBoardProps) {
       if (p.size > 0 && !p.has(t.priority)) return false;
       if (a.size > 0 && !(t.assignee && a.has(t.assignee))) return false;
       if (q) {
-        const hay = `${t.id} ${t.title} ${t.assignee ?? ""} ${(t.tags ?? []).join(" ")}`.toLowerCase();
+        const hay =
+          `${t.id} ${t.title} ${t.assignee ?? ""} ${(t.tags ?? []).join(" ")}`.toLowerCase();
         if (!hay.includes(q)) return false;
       }
       return true;
@@ -272,9 +266,7 @@ export function KanbanBoardView(props: KanbanBoardProps) {
             dataKey="agent"
             items={knownAgents().map((a) => ({ key: a, label: `@${a}` }))}
             selected={agentFilter() as ReadonlySet<string | number>}
-            onToggle={(key) =>
-              setAgentFilter(toggleInSet<string>(agentFilter(), key as string))
-            }
+            onToggle={(key) => setAgentFilter(toggleInSet<string>(agentFilter(), key as string))}
           />
         </Show>
         <input
@@ -458,9 +450,7 @@ export function KanbanBoardView(props: KanbanBoardProps) {
                         gap: "3px",
                       }}
                     >
-                      <header
-                        style={{ display: "flex", "align-items": "center", gap: "6px" }}
-                      >
+                      <header style={{ display: "flex", "align-items": "center", gap: "6px" }}>
                         <button
                           type="button"
                           data-testid={`task-card-status-${task.id}`}
@@ -476,8 +466,7 @@ export function KanbanBoardView(props: KanbanBoardProps) {
                             width: "10px",
                             height: "10px",
                             "border-radius": "50%",
-                            "background-color":
-                              STATUS_COLOR[task.status] ?? "var(--dim)",
+                            "background-color": STATUS_COLOR[task.status] ?? "var(--dim)",
                             border: "none",
                             padding: "0",
                             cursor: "pointer",
@@ -501,8 +490,7 @@ export function KanbanBoardView(props: KanbanBoardProps) {
                             width: "7px",
                             height: "7px",
                             "border-radius": "50%",
-                            "background-color":
-                              PRIORITY_COLOR[task.priority] ?? "var(--dim)",
+                            "background-color": PRIORITY_COLOR[task.priority] ?? "var(--dim)",
                           }}
                         />
                       </header>
@@ -601,7 +589,7 @@ function ChipGroup(props: {
                 "background-color": isSelected()
                   ? "color-mix(in oklab, var(--accent) 18%, transparent)"
                   : "transparent",
-                color: isSelected() ? "var(--accent)" : item.color ?? "var(--fg-soft)",
+                color: isSelected() ? "var(--accent)" : (item.color ?? "var(--fg-soft)"),
                 "font-family": "inherit",
                 "font-size": "10px",
                 cursor: "pointer",

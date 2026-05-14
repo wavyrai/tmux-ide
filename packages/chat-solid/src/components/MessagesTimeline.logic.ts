@@ -8,11 +8,7 @@
  * exercised headlessly.
  */
 
-import type {
-  ChatMessage,
-  MessagesTimelineRow,
-  ToolCallView,
-} from "../types";
+import type { ChatMessage, MessagesTimelineRow, ToolCallView } from "../types";
 
 export const TIMESTAMP_FMT: Intl.DateTimeFormatOptions = {
   hour: "numeric",
@@ -71,9 +67,7 @@ export function deriveTerminalAssistantMessageIds(
       continue;
     }
     const turnId = (message as { turnId?: string | null }).turnId ?? null;
-    const responseKey = turnId
-      ? `turn:${turnId}`
-      : `unkeyed:${nullTurnResponseIndex}`;
+    const responseKey = turnId ? `turn:${turnId}` : `unkeyed:${nullTurnResponseIndex}`;
     lastByResponseKey.set(responseKey, message.id);
   }
 
@@ -128,9 +122,7 @@ export interface ToolCallsSummary {
   hasInProgress: boolean;
 }
 
-export function summarizeToolCalls(
-  toolCalls: ReadonlyArray<ToolCallView>,
-): ToolCallsSummary {
+export function summarizeToolCalls(toolCalls: ReadonlyArray<ToolCallView>): ToolCallsSummary {
   let hasFailure = false;
   let hasInProgress = false;
   for (const call of toolCalls) {
@@ -147,7 +139,6 @@ export function messageRows(
   rows: ReadonlyArray<MessagesTimelineRow>,
 ): Extract<MessagesTimelineRow, { kind: "message" }>[] {
   return rows.filter(
-    (row): row is Extract<MessagesTimelineRow, { kind: "message" }> =>
-      row.kind === "message",
+    (row): row is Extract<MessagesTimelineRow, { kind: "message" }> => row.kind === "message",
   );
 }

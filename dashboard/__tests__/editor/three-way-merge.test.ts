@@ -59,11 +59,7 @@ describe("threeWayMerge — hunk classification", () => {
   });
 
   it("classifies conflicts where both sides diverge from base", () => {
-    const hunks = threeWayMerge(
-      lines("a", "b", "c"),
-      lines("a", "X", "c"),
-      lines("a", "Y", "c"),
-    );
+    const hunks = threeWayMerge(lines("a", "b", "c"), lines("a", "X", "c"), lines("a", "Y", "c"));
     const conflict = hunks.find((h) => h.kind === "conflict");
     expect(conflict).toBeDefined();
     expect(conflict?.baseLines).toEqual(["b"]);
@@ -73,20 +69,12 @@ describe("threeWayMerge — hunk classification", () => {
   });
 
   it("a conflict where both sides converge on the same value is auto-resolved", () => {
-    const hunks = threeWayMerge(
-      lines("a", "b", "c"),
-      lines("a", "Z", "c"),
-      lines("a", "Z", "c"),
-    );
+    const hunks = threeWayMerge(lines("a", "b", "c"), lines("a", "Z", "c"), lines("a", "Z", "c"));
     expect(hunks.find((h) => h.kind === "conflict")).toBeUndefined();
   });
 
   it("emits a tail hunk when only one side appends new lines", () => {
-    const hunks = threeWayMerge(
-      lines("a", "b"),
-      lines("a", "b", "X"),
-      lines("a", "b"),
-    );
+    const hunks = threeWayMerge(lines("a", "b"), lines("a", "b", "X"), lines("a", "b"));
     const tail = hunks[hunks.length - 1]!;
     expect(tail.kind).toBe("external-only");
     expect(tail.externalLines).toEqual(["X"]);
@@ -107,9 +95,9 @@ describe("applyResolutions — choice handling", () => {
   });
 
   it("`external` picks the external side", () => {
-    expect(
-      applyResolutions(hunks, { [conflict.index]: { choice: "external" } }),
-    ).toBe(lines("a", "X", "c"));
+    expect(applyResolutions(hunks, { [conflict.index]: { choice: "external" } })).toBe(
+      lines("a", "X", "c"),
+    );
   });
 
   it("`local` picks the local side", () => {
@@ -119,19 +107,15 @@ describe("applyResolutions — choice handling", () => {
   });
 
   it("`combine` concatenates external + local", () => {
-    expect(
-      applyResolutions(hunks, { [conflict.index]: { choice: "combine" } }),
-    ).toBe(lines("a", "X", "Y", "c"));
+    expect(applyResolutions(hunks, { [conflict.index]: { choice: "combine" } })).toBe(
+      lines("a", "X", "Y", "c"),
+    );
   });
 });
 
 describe("emptyResolutions / resolvedCount", () => {
   it("emptyResolutions only seeds conflict hunks", () => {
-    const hunks = threeWayMerge(
-      lines("a", "b", "c"),
-      lines("a", "X", "c"),
-      lines("a", "Y", "c"),
-    );
+    const hunks = threeWayMerge(lines("a", "b", "c"), lines("a", "X", "c"), lines("a", "Y", "c"));
     const init = emptyResolutions(hunks);
     expect(Object.keys(init).length).toBe(1);
     expect(resolvedCount(hunks, init)).toBe(0);

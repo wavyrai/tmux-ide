@@ -9,13 +9,7 @@
 
 import { createSignal, For, type Component, type JSX } from "solid-js";
 import { A } from "@solidjs/router";
-import {
-  Bell,
-  Keyboard,
-  Palette,
-  SlidersHorizontal,
-  Terminal as TerminalIcon,
-} from "lucide-solid";
+import { Bell, Keyboard, Palette, SlidersHorizontal, Terminal as TerminalIcon } from "lucide-solid";
 import {
   resetKeybind,
   setGeneral,
@@ -310,12 +304,13 @@ function GeneralPanel() {
           }}
           class="h-7 rounded-md border border-[var(--border)] bg-[var(--surface)] px-2 text-[12px] text-[var(--fg)] outline-none focus:border-[var(--accent)]"
         >
-          <For each={PROJECT_TABS}>
-            {(v) => <option value={v}>{v}</option>}
-          </For>
+          <For each={PROJECT_TABS}>{(v) => <option value={v}>{v}</option>}</For>
         </select>
       </FieldRow>
-      <FieldRow label="Add-project base directory" hint="Default starting path in the new-project picker.">
+      <FieldRow
+        label="Add-project base directory"
+        hint="Default starting path in the new-project picker."
+      >
         <input
           type="text"
           data-testid="settings-general-base-directory"

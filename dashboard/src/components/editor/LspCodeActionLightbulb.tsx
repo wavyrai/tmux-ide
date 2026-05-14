@@ -11,27 +11,13 @@
  * daemon; that's a follow-up slice.
  */
 
-import {
-  createEffect,
-  createSignal,
-  For,
-  onCleanup,
-  Show,
-  type JSX,
-} from "solid-js";
+import { createEffect, createSignal, For, onCleanup, Show, type JSX } from "solid-js";
 import { Effect } from "effect";
 import type * as monaco from "monaco-editor";
-import {
-  lspCodeActions,
-  type LspCodeAction,
-  type LspWorkspaceEdit,
-} from "@/lib/lsp/api";
+import { lspCodeActions, type LspCodeAction, type LspWorkspaceEdit } from "@/lib/lsp/api";
 import { fetchFilePreview, saveFile } from "@/lib/api";
 import { getSessionDir } from "@/lib/lsp/session-dir";
-import {
-  applyTextEdits,
-  planWorkspaceEdit,
-} from "@/lib/lsp/workspace-edit";
+import { applyTextEdits, planWorkspaceEdit } from "@/lib/lsp/workspace-edit";
 
 const ACTION_DEBOUNCE_MS = 250;
 
@@ -48,9 +34,7 @@ interface BulbState {
   actions: LspCodeAction[];
 }
 
-export function LspCodeActionLightbulb(
-  props: LspCodeActionLightbulbProps,
-): JSX.Element {
+export function LspCodeActionLightbulb(props: LspCodeActionLightbulbProps): JSX.Element {
   const [bulb, setBulb] = createSignal<BulbState | null>(null);
   const [menuOpen, setMenuOpen] = createSignal(false);
   const [applying, setApplying] = createSignal(false);
@@ -92,9 +76,7 @@ export function LspCodeActionLightbulb(
         ).catch(() => null);
         if (!fetched?.exists) continue;
         const after = applyTextEdits(fetched.content, file.edits);
-        await Effect.runPromise(
-          saveFile(props.sessionName, file.filePath, after),
-        );
+        await Effect.runPromise(saveFile(props.sessionName, file.filePath, after));
       }
       dismiss();
     } catch (err) {
@@ -175,9 +157,7 @@ export function LspCodeActionLightbulb(
         });
         if (!visible) return;
         setBulb((prev) =>
-          prev
-            ? { ...prev, top: visible.top, left: Math.max(0, visible.left - 18) }
-            : prev,
+          prev ? { ...prev, top: visible.top, left: Math.max(0, visible.left - 18) } : prev,
         );
       }),
     );
@@ -235,14 +215,10 @@ export function LspCodeActionLightbulb(
                   >
                     <span class="truncate">{action.title}</span>
                     <Show when={action.disabled?.reason}>
-                      {(reason) => (
-                        <span class="text-[10px] text-[var(--dim)]">{reason()}</span>
-                      )}
+                      {(reason) => <span class="text-[10px] text-[var(--dim)]">{reason()}</span>}
                     </Show>
                     <Show when={!action.edit && action.command}>
-                      <span class="text-[10px] text-[var(--dim)]">
-                        command — not yet supported
-                      </span>
+                      <span class="text-[10px] text-[var(--dim)]">command — not yet supported</span>
                     </Show>
                   </button>
                 )}

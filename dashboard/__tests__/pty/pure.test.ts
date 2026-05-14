@@ -32,21 +32,27 @@ describe("keybindings — Shift-Enter → Ctrl-J", () => {
 describe("keybindings — interrupt", () => {
   it("intercepts plain Escape only", () => {
     expect(shouldHandleInterruptFromTerminal({ ...baseDown, key: "Escape" })).toBe(true);
-    expect(
-      shouldHandleInterruptFromTerminal({ ...baseDown, key: "Escape", metaKey: true }),
-    ).toBe(false);
+    expect(shouldHandleInterruptFromTerminal({ ...baseDown, key: "Escape", metaKey: true })).toBe(
+      false,
+    );
   });
 });
 
 describe("keybindings — copy selection", () => {
   it("requires a selection", () => {
-    expect(shouldCopySelectionFromTerminal({ ...baseDown, key: "c", metaKey: true }, true, false)).toBe(false);
+    expect(
+      shouldCopySelectionFromTerminal({ ...baseDown, key: "c", metaKey: true }, true, false),
+    ).toBe(false);
   });
   it("Cmd+C on mac copies", () => {
-    expect(shouldCopySelectionFromTerminal({ ...baseDown, key: "c", metaKey: true }, true, true)).toBe(true);
+    expect(
+      shouldCopySelectionFromTerminal({ ...baseDown, key: "c", metaKey: true }, true, true),
+    ).toBe(true);
   });
   it("Ctrl+C on linux copies", () => {
-    expect(shouldCopySelectionFromTerminal({ ...baseDown, key: "c", ctrlKey: true }, false, true)).toBe(true);
+    expect(
+      shouldCopySelectionFromTerminal({ ...baseDown, key: "c", ctrlKey: true }, false, true),
+    ).toBe(true);
   });
   it("Ctrl+Shift+C copies on both platforms", () => {
     expect(
@@ -68,9 +74,9 @@ describe("keybindings — copy selection", () => {
 
 describe("keybindings — Cmd-Backspace kill-line on mac only", () => {
   it("matches the mac-only path", () => {
-    expect(
-      shouldKillLineFromTerminal({ ...baseDown, key: "Backspace", metaKey: true }, true),
-    ).toBe(true);
+    expect(shouldKillLineFromTerminal({ ...baseDown, key: "Backspace", metaKey: true }, true)).toBe(
+      true,
+    );
     expect(
       shouldKillLineFromTerminal({ ...baseDown, key: "Backspace", metaKey: true }, false),
     ).toBe(false);
@@ -100,7 +106,10 @@ describe("promptInjection — bracketed paste payload", () => {
   });
 
   it("wraps multiline input in bracketed-paste escapes for non-claude providers", () => {
-    const wrapped = buildPromptInjectionPayload({ providerId: "openai", text: "line one\nline two" });
+    const wrapped = buildPromptInjectionPayload({
+      providerId: "openai",
+      text: "line one\nline two",
+    });
     expect(wrapped.startsWith("\x1b[200~")).toBe(true);
     expect(wrapped.endsWith("\x1b[201~")).toBe(true);
     expect(wrapped).toContain("line one\nline two");
@@ -112,6 +121,8 @@ describe("promptInjection — bracketed paste payload", () => {
   });
 
   it("trims leading + trailing whitespace before checking for newlines", () => {
-    expect(buildPromptInjectionPayload({ providerId: "openai", text: "   hello   " })).toBe("hello");
+    expect(buildPromptInjectionPayload({ providerId: "openai", text: "   hello   " })).toBe(
+      "hello",
+    );
   });
 });

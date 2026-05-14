@@ -43,8 +43,9 @@ class MockIntersectionObserver {
 
 beforeEach(() => {
   observers = [];
-  (globalThis as unknown as { IntersectionObserver: typeof IntersectionObserver }).IntersectionObserver =
-    MockIntersectionObserver as unknown as typeof IntersectionObserver;
+  (
+    globalThis as unknown as { IntersectionObserver: typeof IntersectionObserver }
+  ).IntersectionObserver = MockIntersectionObserver as unknown as typeof IntersectionObserver;
 });
 
 afterEach(() => {
@@ -53,10 +54,7 @@ afterEach(() => {
 
 describe("buildExpandedImagePreview", () => {
   it("returns null when no attachment is previewable (no previewUrl)", () => {
-    const result = buildExpandedImagePreview(
-      [{ id: "a", name: "doc.pdf" }],
-      "a",
-    );
+    const result = buildExpandedImagePreview([{ id: "a", name: "doc.pdf" }], "a");
     expect(result).toBeNull();
   });
 
@@ -84,11 +82,7 @@ describe("buildExpandedImagePreview", () => {
     );
     expect(result).not.toBeNull();
     expect(result!.images.length).toBe(3); // non-previewable filtered out
-    expect(result!.images.map((i) => i.name)).toEqual([
-      "first.png",
-      "second.png",
-      "third.png",
-    ]);
+    expect(result!.images.map((i) => i.name)).toEqual(["first.png", "second.png", "third.png"]);
     expect(result!.index).toBe(1); // 'b' is the 2nd previewable
     expect(result!.images[1].sizeLabel).toBe("2.0 KB");
   });
@@ -102,7 +96,9 @@ describe("InlineImagePreview", () => {
     const [alt] = createSignal("screenshot.png");
     render(() => <InlineImagePreview src={src} alt={alt} />, container);
 
-    expect(container.querySelector('[data-testid="inline-image-preview-placeholder"]')).toBeTruthy();
+    expect(
+      container.querySelector('[data-testid="inline-image-preview-placeholder"]'),
+    ).toBeTruthy();
     expect(container.querySelector("img")).toBeNull();
     expect(
       container.querySelector('[data-testid="inline-image-preview"]')?.getAttribute("data-loaded"),
@@ -119,9 +115,7 @@ describe("InlineImagePreview", () => {
     const observer = observers[0];
     expect(observer).toBeTruthy();
     observer.callback(
-      [
-        { isIntersecting: true, target: observer.observed[0] } as IntersectionObserverEntry,
-      ],
+      [{ isIntersecting: true, target: observer.observed[0] } as IntersectionObserverEntry],
       {} as IntersectionObserver,
     );
     expect(container.querySelector("img")?.getAttribute("src")).toBe("blob:x");
@@ -145,10 +139,7 @@ describe("InlineImagePreview", () => {
     document.body.appendChild(container);
     const [src] = createSignal("blob:x");
     const [alt] = createSignal("a.png");
-    render(
-      () => <InlineImagePreview src={src} alt={alt} eager onExpand={onExpand} />,
-      container,
-    );
+    render(() => <InlineImagePreview src={src} alt={alt} eager onExpand={onExpand} />, container);
     (container.querySelector('[data-testid="inline-image-preview"]') as HTMLButtonElement).click();
     expect(onExpand).toHaveBeenCalledTimes(1);
   });

@@ -37,9 +37,7 @@ let restoreTmux: () => void;
 
 beforeEach(() => {
   tmpDir = realpathSync(mkdtempSync(join(tmpdir(), "tmux-ide-replace-test-")));
-  const mockPanes: PaneInfo[] = [
-    makePane({ id: "%1", index: 0, title: "Shell", active: true }),
-  ];
+  const mockPanes: PaneInfo[] = [makePane({ id: "%1", index: 0, title: "Shell", active: true })];
   restoreExec = _setExecutor((_cmd, args) => {
     if (args[0] === "list-panes") {
       return mockPanes
@@ -104,18 +102,16 @@ describe("applyReplacementsToContent", () => {
   });
 
   it("rejects out-of-bounds line numbers", () => {
-    const out = applyReplacementsToContent("only one line\n", [
-      { line: 5, column: 0, length: 1 },
-    ], "y");
+    const out = applyReplacementsToContent(
+      "only one line\n",
+      [{ line: 5, column: 0, length: 1 }],
+      "y",
+    );
     expect(out).toEqual({ ok: false, reason: "out_of_bounds" });
   });
 
   it("rejects column + length past the end of the line", () => {
-    const out = applyReplacementsToContent(
-      "short\n",
-      [{ line: 1, column: 3, length: 99 }],
-      "y",
-    );
+    const out = applyReplacementsToContent("short\n", [{ line: 1, column: 3, length: 99 }], "y");
     expect(out).toEqual({ ok: false, reason: "out_of_bounds" });
   });
 });
@@ -249,9 +245,7 @@ describe("executeReplace", () => {
       ],
     });
     expect(result.filesUpdated).toBe(0);
-    expect(result.skipped).toEqual([
-      { path: "../etc/passwd", reason: "path_escapes_workspace" },
-    ]);
+    expect(result.skipped).toEqual([{ path: "../etc/passwd", reason: "path_escapes_workspace" }]);
   });
 
   it("processes a partial success — one file replaced, one skipped", () => {
@@ -352,8 +346,6 @@ describe("POST /api/project/:name/search/replace", () => {
       matchesReplaced: 2,
       skipped: [],
     });
-    expect(readFileSync(join(tmpDir, "alpha.txt"), "utf-8")).toBe(
-      "FIXED: alpha\nFIXED: bravo\n",
-    );
+    expect(readFileSync(join(tmpDir, "alpha.txt"), "utf-8")).toBe("FIXED: alpha\nFIXED: bravo\n");
   });
 });

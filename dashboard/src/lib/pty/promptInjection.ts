@@ -22,7 +22,9 @@ export function buildPromptInjectionPayload(args: PromptInjectionArgs): string {
 
 type SendInput = (data: string) => Promise<unknown> | void;
 
-export async function pastePromptInjection(args: PromptInjectionArgs & { sendInput: SendInput }): Promise<void> {
+export async function pastePromptInjection(
+  args: PromptInjectionArgs & { sendInput: SendInput },
+): Promise<void> {
   const payload = buildPromptInjectionPayload({
     providerId: args.providerId,
     text: args.text,

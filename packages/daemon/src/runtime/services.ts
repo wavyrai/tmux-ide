@@ -189,9 +189,7 @@ export interface ProviderCapabilitiesServiceShape {
     override: ProviderCapabilitiesOverride,
   ) => Effect.Effect<void, never>;
   readonly clearOverride: (id: string) => Effect.Effect<boolean, never>;
-  readonly getOverride: (
-    id: string,
-  ) => Effect.Effect<ProviderCapabilitiesOverride | null, never>;
+  readonly getOverride: (id: string) => Effect.Effect<ProviderCapabilitiesOverride | null, never>;
   /** Negotiate a request against the provider's capabilities — returns the
    *  granted feature set + a list of downgrades the UI should surface. */
   readonly negotiate: (

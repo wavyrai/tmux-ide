@@ -187,7 +187,7 @@ export function ProviderModelPicker(props: ProviderModelPickerProps) {
                           style={{
                             background: info.available ? "var(--green)" : "var(--red)",
                           }}
-                          title={info.available ? "available" : info.error ?? "unavailable"}
+                          title={info.available ? "available" : (info.error ?? "unavailable")}
                         />
                       </button>
                     </li>

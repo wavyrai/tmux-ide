@@ -8,12 +8,7 @@
 
 import { createSignal, Show, type Component } from "solid-js";
 import { GitBranch, PanelLeft, PanelBottom, PanelRight } from "lucide-solid";
-import {
-  chrome,
-  toggleBottomPanel,
-  toggleLeftSidebar,
-  toggleRightInspector,
-} from "@/lib/chrome";
+import { chrome, toggleBottomPanel, toggleLeftSidebar, toggleRightInspector } from "@/lib/chrome";
 import { useGitStatus } from "@/lib/git";
 import { BranchPicker } from "@/components/BranchPicker";
 import { PushButton } from "@/components/PushButton";
@@ -63,7 +58,9 @@ export function StatusBar(props: StatusBarProps) {
         <GitBranch aria-hidden="true" size={12} />
         <span data-testid="status-bar-branch-name">{branch() ?? "—"}</span>
         <Show when={dirty()}>
-          <span aria-hidden="true" class="text-[var(--accent)]" title="Uncommitted changes">●</span>
+          <span aria-hidden="true" class="text-[var(--accent)]" title="Uncommitted changes">
+            ●
+          </span>
         </Show>
         <Show when={ahead() > 0}>
           <span class="text-[10px] tabular-nums">↑{ahead()}</span>
@@ -87,23 +84,24 @@ export function StatusBar(props: StatusBarProps) {
         onPushed={() => status.refetch()}
       />
 
-      <span aria-hidden="true" class="opacity-30">│</span>
+      <span aria-hidden="true" class="opacity-30">
+        │
+      </span>
 
       <span
         data-testid="status-bar-session"
         class="inline-flex items-center gap-1"
         title={props.running ? "Project session is running" : "Project session is stopped"}
       >
-        <span
-          aria-hidden="true"
-          style={{ color: props.running ? "var(--accent)" : "var(--dim)" }}
-        >
+        <span aria-hidden="true" style={{ color: props.running ? "var(--accent)" : "var(--dim)" }}>
           ●
         </span>
         <span>{props.projectName}</span>
       </span>
 
-      <span aria-hidden="true" class="opacity-30">│</span>
+      <span aria-hidden="true" class="opacity-30">
+        │
+      </span>
 
       <span data-testid="status-bar-agents" title="Active agent panes">
         {props.agentCount} {props.agentCount === 1 ? "agent" : "agents"}

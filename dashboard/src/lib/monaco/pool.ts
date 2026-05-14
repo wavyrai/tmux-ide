@@ -71,8 +71,7 @@ export class MonacoPool<TEditor> {
       // Expose Monaco globally so module-level singletons (e.g. the
       // model registry) can reach it without a circular import on
       // the pool.
-      (globalThis as unknown as { __monaco?: typeof monaco }).__monaco =
-        this.monacoInstance;
+      (globalThis as unknown as { __monaco?: typeof monaco }).__monaco = this.monacoInstance;
       if (this.options.onInit) await this.options.onInit(this.monacoInstance);
       for (let i = 0; i < this.reserveTarget; i += 1) {
         this.createEntry(this.monacoInstance);

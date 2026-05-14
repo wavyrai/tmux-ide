@@ -46,12 +46,7 @@ interface TasksViewProps {
   options: () => TasksViewMountOptions;
 }
 
-const TASK_STATUSES: ReadonlyArray<TasksTaskStatus> = [
-  "todo",
-  "in-progress",
-  "review",
-  "done",
-];
+const TASK_STATUSES: ReadonlyArray<TasksTaskStatus> = ["todo", "in-progress", "review", "done"];
 
 const STATUS_GLYPH: Record<string, string> = {
   todo: "○",
@@ -119,9 +114,7 @@ export function TasksViewView(props: TasksViewProps) {
   const milestones = createMemo<ReadonlyArray<TasksMilestoneSummary>>(
     () => props.options().milestones ?? [],
   );
-  const density = createMemo<"compact" | "regular">(
-    () => props.options().density ?? "compact",
-  );
+  const density = createMemo<"compact" | "regular">(() => props.options().density ?? "compact");
 
   const filtered = createMemo<TasksTask[]>(() => {
     const s = statusFilter();
@@ -135,7 +128,8 @@ export function TasksViewView(props: TasksViewProps) {
       if (m.size > 0 && !(t.milestone && m.has(t.milestone))) return false;
       if (p.size > 0 && !p.has(t.priority)) return false;
       if (q) {
-        const hay = `${t.id} ${t.title} ${t.assignee ?? ""} ${(t.tags ?? []).join(" ")}`.toLowerCase();
+        const hay =
+          `${t.id} ${t.title} ${t.assignee ?? ""} ${(t.tags ?? []).join(" ")}`.toLowerCase();
         if (!hay.includes(q)) return false;
       }
       return true;
@@ -275,7 +269,15 @@ export function TasksViewView(props: TasksViewProps) {
             "font-size": "11px",
           }}
         />
-        <Show when={statusFilter().size + goalFilter().size + milestoneFilter().size + priorityFilter().size > 0 || search().length > 0}>
+        <Show
+          when={
+            statusFilter().size +
+              goalFilter().size +
+              milestoneFilter().size +
+              priorityFilter().size >
+              0 || search().length > 0
+          }
+        >
           <button
             type="button"
             data-testid="tasks-clear-filters"
@@ -542,7 +544,11 @@ export function TasksViewView(props: TasksViewProps) {
                 {taskAccessor().title}
               </h2>
               <div style={{ display: "flex", "flex-wrap": "wrap", gap: "10px 14px" }}>
-                <DetailField label="Status" value={taskAccessor().status} color={STATUS_COLOR[taskAccessor().status] ?? undefined} />
+                <DetailField
+                  label="Status"
+                  value={taskAccessor().status}
+                  color={STATUS_COLOR[taskAccessor().status] ?? undefined}
+                />
                 <DetailField label="Goal" value={goalLabel(taskAccessor().goal)} />
                 <DetailField label="Milestone" value={milestoneLabel(taskAccessor().milestone)} />
                 <DetailField label="Assignee" value={taskAccessor().assignee ?? "—"} />
@@ -569,10 +575,7 @@ export function TasksViewView(props: TasksViewProps) {
                 </div>
               </Show>
               <Show when={taskAccessor().depends_on && taskAccessor().depends_on!.length > 0}>
-                <DetailField
-                  label="Depends on"
-                  value={taskAccessor().depends_on!.join(", ")}
-                />
+                <DetailField label="Depends on" value={taskAccessor().depends_on!.join(", ")} />
               </Show>
               <Show when={taskAccessor().description}>
                 <p
@@ -640,7 +643,7 @@ function ChipGroup(props: {
                 "background-color": isSelected()
                   ? "color-mix(in oklab, var(--accent) 18%, transparent)"
                   : "transparent",
-                color: isSelected() ? "var(--accent)" : item.color ?? "var(--fg-soft)",
+                color: isSelected() ? "var(--accent)" : (item.color ?? "var(--fg-soft)"),
                 "font-family": "inherit",
                 "font-size": "10px",
                 cursor: "pointer",

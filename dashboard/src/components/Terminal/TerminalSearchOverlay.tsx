@@ -67,10 +67,7 @@ export function TerminalSearchOverlay(props: TerminalSearchOverlayProps) {
           <Show
             when={props.handle.query() && props.handle.matches().length > 0}
             fallback={
-              <Show
-                when={props.handle.query()}
-                fallback={<span aria-hidden="true">·</span>}
-              >
+              <Show when={props.handle.query()} fallback={<span aria-hidden="true">·</span>}>
                 no results
               </Show>
             }

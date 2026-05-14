@@ -54,7 +54,12 @@ import {
   type ProviderCapabilitiesStore,
 } from "../chat/provider-capabilities.ts";
 
-import { ApprovalPolicyError, ChatEventStoreError, ProjectionError, ReactorError } from "./errors.ts";
+import {
+  ApprovalPolicyError,
+  ChatEventStoreError,
+  ProjectionError,
+  ReactorError,
+} from "./errors.ts";
 import {
   ChatEventStoreService,
   ChatReactorService,
@@ -193,9 +198,7 @@ export const TurnProjectionLive = (
 // TurnDiffProjectionService (G14-T101)
 // ---------------------------------------------------------------------------
 
-function wrapTurnDiffProjection(
-  projection: TurnDiffProjection,
-): TurnDiffProjectionServiceShape {
+function wrapTurnDiffProjection(projection: TurnDiffProjection): TurnDiffProjectionServiceShape {
   const start = Effect.try({
     try: () => projection.start(),
     catch: (cause) =>
@@ -212,8 +215,7 @@ function wrapTurnDiffProjection(
     cursor: Effect.sync(() => projection.cursor()),
     listForTurn: (turnId) => Effect.sync(() => projection.listForTurn(turnId)),
     listForThread: (threadId) => Effect.sync(() => projection.listForThread(threadId)),
-    aggregateForThread: (threadId) =>
-      Effect.sync(() => projection.aggregateForThread(threadId)),
+    aggregateForThread: (threadId) => Effect.sync(() => projection.aggregateForThread(threadId)),
     raw: projection,
   };
 }
@@ -253,9 +255,7 @@ interface MakeProviderApprovalPolicyLayerOptions {
   randomId?: () => string;
 }
 
-function wrapApprovalPolicy(
-  policy: ProviderApprovalPolicy,
-): ProviderApprovalPolicyServiceShape {
+function wrapApprovalPolicy(policy: ProviderApprovalPolicy): ProviderApprovalPolicyServiceShape {
   return {
     evaluate: (input) =>
       Effect.try({
@@ -332,9 +332,7 @@ interface MakeProviderCapabilitiesLayerOptions {
   overrides?: Record<string, ProviderCapabilitiesOverride>;
 }
 
-function wrapCapabilitiesStore(
-  store: ProviderCapabilitiesStore,
-): ProviderCapabilitiesServiceShape {
+function wrapCapabilitiesStore(store: ProviderCapabilitiesStore): ProviderCapabilitiesServiceShape {
   return {
     forInstance: (instance) => Effect.sync(() => store.forInstance(instance)),
     setOverride: (id, override) => Effect.sync(() => store.setOverride(id, override)),

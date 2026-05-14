@@ -2,10 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createSignal } from "solid-js";
 import { render } from "solid-js/web";
 import { InspectorView } from "../src/widgets/Inspector";
-import type {
-  ActivityEvent,
-  InspectorMountOptions,
-} from "../src/types";
+import type { ActivityEvent, InspectorMountOptions } from "../src/types";
 
 function mount(initial: InspectorMountOptions) {
   const container = document.createElement("div");
@@ -88,9 +85,7 @@ describe("InspectorView", () => {
       defaultSeverityFilter: "errors",
     });
     const rows = container.querySelectorAll('[data-testid="activity-event"]');
-    const types = Array.from(rows).map(
-      (r) => r.getAttribute("data-activity-event-type") ?? "",
-    );
+    const types = Array.from(rows).map((r) => r.getAttribute("data-activity-event-type") ?? "");
     expect(types).toContain("error");
     expect(types).toContain("stall");
     expect(types).not.toContain("dispatch");
@@ -107,7 +102,9 @@ describe("InspectorView", () => {
     expect(container.querySelector('[data-testid="inspector-collapsed"]')).toBeTruthy();
     expect(container.querySelector('[data-testid="activity-event"]')).toBeNull();
     expect(
-      container.querySelector('[data-testid="inspector-solid"]')?.getAttribute("data-inspector-expanded"),
+      container
+        .querySelector('[data-testid="inspector-solid"]')
+        ?.getAttribute("data-inspector-expanded"),
     ).toBe("false");
     dispose();
   });
@@ -119,9 +116,7 @@ describe("InspectorView", () => {
       expanded: true,
       onToggleExpanded: onToggle,
     });
-    const btn = container.querySelector(
-      '[data-testid="inspector-toggle"]',
-    ) as HTMLButtonElement;
+    const btn = container.querySelector('[data-testid="inspector-toggle"]') as HTMLButtonElement;
     btn.click();
     expect(onToggle).toHaveBeenCalledWith(false);
     dispose();

@@ -12,8 +12,7 @@ function mountWidget(initial: ActivityMountOptions) {
   return {
     container,
     dispose,
-    setOptions: (next: Partial<ActivityMountOptions>) =>
-      setOptions((cur) => ({ ...cur, ...next })),
+    setOptions: (next: Partial<ActivityMountOptions>) => setOptions((cur) => ({ ...cur, ...next })),
   };
 }
 
@@ -150,9 +149,7 @@ describe("Activity (Solid widget)", () => {
     ];
     const { container, dispose } = mountWidget({ events });
 
-    const search = container.querySelector<HTMLInputElement>(
-      "[data-testid='activity-search']",
-    );
+    const search = container.querySelector<HTMLInputElement>("[data-testid='activity-search']");
     expect(search).toBeTruthy();
     search!.value = "Camille";
     search!.dispatchEvent(new Event("input", { bubbles: true }));

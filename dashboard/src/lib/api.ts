@@ -59,7 +59,11 @@ function request<T>(path: string, init?: RequestInit): Effect.Effect<T, ApiError
     catch: (cause) =>
       cause instanceof ApiError
         ? cause
-        : new ApiError({ status: 0, message: cause instanceof Error ? cause.message : String(cause), cause }),
+        : new ApiError({
+            status: 0,
+            message: cause instanceof Error ? cause.message : String(cause),
+            cause,
+          }),
   });
 }
 
@@ -267,8 +271,7 @@ export function fetchProjectFiles(
     `/api/project/${encodeURIComponent(sessionName)}/files`,
   ).pipe(
     Effect.map(
-      (data) =>
-        (data ?? { tree: [], maxDepth: 0, truncated: false }) as ProjectFilesResponse,
+      (data) => (data ?? { tree: [], maxDepth: 0, truncated: false }) as ProjectFilesResponse,
     ),
   );
 }
@@ -284,12 +287,10 @@ export interface DiffData {
   files: DiffFileEntry[];
 }
 
-export function fetchProjectDiff(
-  sessionName: string,
-): Effect.Effect<DiffData, ApiError> {
-  return request<DiffData>(
-    `/api/project/${encodeURIComponent(sessionName)}/diff`,
-  ).pipe(Effect.map((data) => data ?? { diff: "", files: [] }));
+export function fetchProjectDiff(sessionName: string): Effect.Effect<DiffData, ApiError> {
+  return request<DiffData>(`/api/project/${encodeURIComponent(sessionName)}/diff`).pipe(
+    Effect.map((data) => data ?? { diff: "", files: [] }),
+  );
 }
 
 export function fetchProjectFileDiff(

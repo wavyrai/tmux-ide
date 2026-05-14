@@ -59,9 +59,7 @@ describe("ComposerBannerStack", () => {
 
   it("dismiss button calls the item's onDismiss", () => {
     const onDismiss = vi.fn();
-    const container = mount(() => [
-      { id: "x", variant: "info", title: "X", onDismiss },
-    ]);
+    const container = mount(() => [{ id: "x", variant: "info", title: "X", onDismiss }]);
     const btn = container.querySelector(
       "[data-testid='composer-banner-x-dismiss']",
     ) as HTMLButtonElement | null;

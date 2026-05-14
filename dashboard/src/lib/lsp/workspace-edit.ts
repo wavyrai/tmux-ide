@@ -15,11 +15,7 @@
  * can't preview yet". Future work can extend the helper.
  */
 
-import type {
-  LspTextEdit,
-  LspWorkspaceEdit,
-  LspTextDocumentEdit,
-} from "./api";
+import type { LspTextEdit, LspWorkspaceEdit, LspTextDocumentEdit } from "./api";
 
 export interface FileEditPlan {
   /** Workspace-relative path. */
@@ -42,9 +38,7 @@ export interface WorkspaceEditPlan {
   warnings: string[];
 }
 
-function isTextDocumentEdit(
-  doc: unknown,
-): doc is LspTextDocumentEdit {
+function isTextDocumentEdit(doc: unknown): doc is LspTextDocumentEdit {
   if (!doc || typeof doc !== "object") return false;
   const d = doc as Record<string, unknown>;
   return (
@@ -60,10 +54,7 @@ function isTextDocumentEdit(
  * `sessionDir`. Returns `null` when the URI points outside the
  * workspace (e.g., a rename that touches a vendored library).
  */
-export function relativizeWorkspaceUri(
-  uri: string,
-  sessionDir: string,
-): string | null {
+export function relativizeWorkspaceUri(uri: string, sessionDir: string): string | null {
   let absolute: string;
   try {
     absolute = decodeURIComponent(new URL(uri).pathname);
@@ -83,10 +74,7 @@ export function relativizeWorkspaceUri(
  * current content and running `applyTextEdits` to compute the
  * preview body.
  */
-export function planWorkspaceEdit(
-  edit: LspWorkspaceEdit,
-  sessionDir: string,
-): WorkspaceEditPlan {
+export function planWorkspaceEdit(edit: LspWorkspaceEdit, sessionDir: string): WorkspaceEditPlan {
   const files: FileEditPlan[] = [];
   const warnings: string[] = [];
 
@@ -143,8 +131,7 @@ export function applyTextEdits(source: string, edits: LspTextEdit[]): string {
   function offsetFor(line: number, character: number): number {
     const safeLine = Math.max(0, Math.min(line, totalLines - 1));
     const base = lineStarts[safeLine] ?? source.length;
-    const lineEnd =
-      safeLine + 1 < totalLines ? lineStarts[safeLine + 1]! - 1 : source.length;
+    const lineEnd = safeLine + 1 < totalLines ? lineStarts[safeLine + 1]! - 1 : source.length;
     return Math.min(base + character, lineEnd);
   }
 

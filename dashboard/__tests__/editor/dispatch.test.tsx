@@ -32,10 +32,7 @@ afterEach(() => cleanup());
 describe("FileRenderer dispatch", () => {
   it("text → placeholder (Monaco lands in G17-P4)", () => {
     const { getByTestId } = render(() => (
-      <FileRenderer
-        file={makeFile({ path: "src/index.ts", kind: "text" })}
-        modelRootPath="/repo"
-      />
+      <FileRenderer file={makeFile({ path: "src/index.ts", kind: "text" })} modelRootPath="/repo" />
     ));
     expect(getByTestId("editor-text-placeholder")).toBeInTheDocument();
   });
@@ -105,9 +102,11 @@ describe("MarkdownRenderer (registry-backed)", () => {
       getValue: () => "# Hello\n\nthis is **bold**.",
       dispose: () => {},
     };
-    (modelRegistry as unknown as {
-      modelMap: Map<string, { type: string; model: unknown; refs: number }>;
-    }).modelMap.set(diskUri, {
+    (
+      modelRegistry as unknown as {
+        modelMap: Map<string, { type: string; model: unknown; refs: number }>;
+      }
+    ).modelMap.set(diskUri, {
       type: "disk",
       model: fakeModel,
       refs: 1,
@@ -174,9 +173,11 @@ describe("SvgRenderer (registry-backed)", () => {
       getValue: () => "<svg xmlns='http://www.w3.org/2000/svg'></svg>",
       dispose: () => {},
     };
-    (modelRegistry as unknown as {
-      modelMap: Map<string, { type: string; model: unknown; refs: number }>;
-    }).modelMap.set(diskUri, { type: "disk", model: fakeModel, refs: 1 });
+    (
+      modelRegistry as unknown as {
+        modelMap: Map<string, { type: string; model: unknown; refs: number }>;
+      }
+    ).modelMap.set(diskUri, { type: "disk", model: fakeModel, refs: 1 });
   });
 
   afterEach(() => {

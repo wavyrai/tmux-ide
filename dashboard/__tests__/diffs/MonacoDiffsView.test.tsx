@@ -34,9 +34,7 @@ vi.mock("@/lib/api", async (importOriginal) => {
         ],
       }),
     ),
-    fetchFilePreview: vi.fn(() =>
-      Effect.succeed({ file: "ignored", exists: true, content: "" }),
-    ),
+    fetchFilePreview: vi.fn(() => Effect.succeed({ file: "ignored", exists: true, content: "" })),
     fetchGitFile: vi.fn(() =>
       Effect.succeed({ path: "ignored", ref: "HEAD", exists: true, content: "" }),
     ),
@@ -103,9 +101,7 @@ describe("MonacoDiffsView", () => {
     const files = await findAllByTestId("v2-monaco-diffs-file");
     expect(files).toHaveLength(2);
     await waitFor(() =>
-      expect(findByTestId("v2-monaco-diffs-summary")).resolves.toHaveTextContent(
-        "2 files changed",
-      ),
+      expect(findByTestId("v2-monaco-diffs-summary")).resolves.toHaveTextContent("2 files changed"),
     );
     expect(await findByTestId("v2-monaco-diffs-empty-preview")).toBeInTheDocument();
   });

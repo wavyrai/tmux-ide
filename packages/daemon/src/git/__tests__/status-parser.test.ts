@@ -6,12 +6,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import {
-  parseBranchList,
-  parseRemoteBranches,
-  parseRemotes,
-  parseStatus,
-} from "../status-parser";
+import { parseBranchList, parseRemoteBranches, parseRemotes, parseStatus } from "../status-parser";
 
 const NUL = "\0";
 
@@ -37,10 +32,7 @@ describe("parseStatus — porcelain v2", () => {
   });
 
   it("marks an unborn HEAD when branch.oid is (initial)", () => {
-    const raw = records(
-      "# branch.oid (initial)",
-      "# branch.head main",
-    );
+    const raw = records("# branch.oid (initial)", "# branch.head main");
     const s = parseStatus(raw);
     expect(s.isUnborn).toBe(true);
     expect(s.currentBranch).toBe("main");
@@ -80,9 +72,12 @@ describe("parseStatus — porcelain v2", () => {
   it("handles renamed records with their embedded NUL", () => {
     // Format: "2 <XY> <sub> <mH> <mI> <mW> <hH> <hI> <X><score> <newPath>" + NUL + "<oldPath>"
     const raw =
-      "# branch.head main" + NUL +
-      "2 R. N... 100644 100644 100644 abc def R100 new/path.ts" + NUL +
-      "old/path.ts" + NUL;
+      "# branch.head main" +
+      NUL +
+      "2 R. N... 100644 100644 100644 abc def R100 new/path.ts" +
+      NUL +
+      "old/path.ts" +
+      NUL;
     const s = parseStatus(raw);
     expect(s.staged).toEqual([
       { path: "new/path.ts", status: "renamed", additions: 0, deletions: 0 },

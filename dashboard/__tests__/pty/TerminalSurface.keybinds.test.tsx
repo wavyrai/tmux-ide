@@ -109,9 +109,7 @@ describe("TerminalSurface — keybinds", () => {
     pressKey(surface, { key: "t", metaKey: true });
 
     await waitFor(() => {
-      expect(
-        calls.some((c) => c.method === "POST" && c.url.endsWith("/terminals")),
-      ).toBe(true);
+      expect(calls.some((c) => c.method === "POST" && c.url.endsWith("/terminals"))).toBe(true);
     });
   });
 
@@ -147,9 +145,7 @@ describe("TerminalSurface — keybinds", () => {
   });
 
   it("Cmd+2 activates the second tab and persists the choice", async () => {
-    globalThis.fetch = vi.fn(async () =>
-      jsonOk({ terminals: SAMPLE }),
-    ) as typeof fetch;
+    globalThis.fetch = vi.fn(async () => jsonOk({ terminals: SAMPLE })) as typeof fetch;
 
     const { findByTestId } = render(() => <TerminalSurface projectName="proj" />);
     // Wait for the default tab to mount.
@@ -163,27 +159,19 @@ describe("TerminalSurface — keybinds", () => {
       const next = (await findByTestId("pty-pane-stub")) as HTMLElement;
       expect(next.getAttribute("data-session-id")).toBe(SAMPLE[1]!.id);
     });
-    expect(
-      window.localStorage.getItem("tmux-ide.terminal.active.proj"),
-    ).toBe(SAMPLE[1]!.id);
+    expect(window.localStorage.getItem("tmux-ide.terminal.active.proj")).toBe(SAMPLE[1]!.id);
   });
 
   it("Cmd+5 with only two tabs is a no-op", async () => {
-    globalThis.fetch = vi.fn(async () =>
-      jsonOk({ terminals: SAMPLE }),
-    ) as typeof fetch;
+    globalThis.fetch = vi.fn(async () => jsonOk({ terminals: SAMPLE })) as typeof fetch;
     const { findByTestId } = render(() => <TerminalSurface projectName="proj" />);
     await findByTestId(`terminal-tab-${SAMPLE[0]!.id}`);
     const surface = await findByTestId("terminal-surface");
-    const beforeId = (await findByTestId("pty-pane-stub")).getAttribute(
-      "data-session-id",
-    );
+    const beforeId = (await findByTestId("pty-pane-stub")).getAttribute("data-session-id");
     pressKey(surface, { key: "5", metaKey: true });
     // Give the handler a tick — it should NOT change the active id.
     await new Promise((r) => setTimeout(r, 20));
-    expect(
-      (await findByTestId("pty-pane-stub")).getAttribute("data-session-id"),
-    ).toBe(beforeId);
+    expect((await findByTestId("pty-pane-stub")).getAttribute("data-session-id")).toBe(beforeId);
   });
 
   it("ignores keybinds when focus is outside the surface", async () => {

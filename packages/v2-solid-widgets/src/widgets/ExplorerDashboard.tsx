@@ -193,11 +193,7 @@ function ExplorerRow(props: ExplorerRowProps) {
           "padding-right": "8px",
           cursor: "pointer",
           background: isSelected() ? "var(--surface-active, var(--surface))" : "transparent",
-          color: isSelected()
-            ? "var(--accent)"
-            : isIgnored()
-              ? "var(--dim)"
-              : "var(--fg)",
+          color: isSelected() ? "var(--accent)" : isIgnored() ? "var(--dim)" : "var(--fg)",
           "user-select": "none",
           opacity: isIgnored() && !props.gitignoreFilter() ? "0.6" : "1",
         }}

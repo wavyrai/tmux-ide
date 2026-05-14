@@ -112,7 +112,7 @@ export const bufferState = state;
 
 export function getActiveBuffer(): OpenBuffer | null {
   const uri = state.activeUri;
-  return uri ? state.buffers[uri] ?? null : null;
+  return uri ? (state.buffers[uri] ?? null) : null;
 }
 
 export function setActiveBuffer(uri: string | null): void {

@@ -63,9 +63,7 @@ describe("KanbanBoard widget", () => {
       ).toBeTruthy();
     }
     // No task cards anywhere.
-    expect(
-      mounted.container.querySelectorAll('[data-task-id]').length,
-    ).toBe(0);
+    expect(mounted.container.querySelectorAll("[data-task-id]").length).toBe(0);
   });
 
   it("places each task into its status column with a single card per task", () => {
@@ -82,9 +80,7 @@ describe("KanbanBoard widget", () => {
       ["review", "003"],
       ["done", "004"],
     ] as const) {
-      const body = mounted.container.querySelector(
-        `[data-testid="kanban-column-body-${status}"]`,
-      )!;
+      const body = mounted.container.querySelector(`[data-testid="kanban-column-body-${status}"]`)!;
       const cards = body.querySelectorAll("[data-task-id]");
       expect(cards.length).toBe(1);
       expect(body.querySelector(`[data-testid="task-card-${id}"]`)).toBeTruthy();
@@ -103,9 +99,9 @@ describe("KanbanBoard widget", () => {
     )!;
     search.value = "alice";
     search.dispatchEvent(new Event("input", { bubbles: true }));
-    const ids = Array.from(
-      mounted.container.querySelectorAll("[data-task-id]"),
-    ).map((el) => el.getAttribute("data-task-id"));
+    const ids = Array.from(mounted.container.querySelectorAll("[data-task-id]")).map((el) =>
+      el.getAttribute("data-task-id"),
+    );
     expect(ids.sort()).toEqual(["001", "003"]);
   });
 
@@ -121,9 +117,7 @@ describe("KanbanBoard widget", () => {
     dot.click();
     expect(calls).toEqual([["001", "in-progress"]]);
     // The optimistic patch must move the card into the next column.
-    const body = mounted.container.querySelector(
-      '[data-testid="kanban-column-body-in-progress"]',
-    )!;
+    const body = mounted.container.querySelector('[data-testid="kanban-column-body-in-progress"]')!;
     expect(body.querySelector('[data-testid="task-card-001"]')).toBeTruthy();
   });
 
@@ -133,9 +127,7 @@ describe("KanbanBoard widget", () => {
       tasks: [task({ id: "001", title: "Open me" })],
       onTaskClick: (id) => clicks.push(id),
     });
-    const card = mounted.container.querySelector<HTMLElement>(
-      '[data-testid="task-card-001"]',
-    )!;
+    const card = mounted.container.querySelector<HTMLElement>('[data-testid="task-card-001"]')!;
     card.click();
     expect(clicks).toEqual(["001"]);
 
@@ -158,19 +150,11 @@ describe("KanbanBoard widget", () => {
     );
     expect(p1Btn).toBeTruthy();
     p1Btn!.click();
-    expect(
-      mounted.container.querySelector('[data-testid="kanban-column-p1"]'),
-    ).toBeTruthy();
-    expect(
-      mounted.container.querySelector('[data-testid="kanban-column-p4"]'),
-    ).toBeTruthy();
-    const p1Body = mounted.container.querySelector(
-      '[data-testid="kanban-column-body-p1"]',
-    )!;
+    expect(mounted.container.querySelector('[data-testid="kanban-column-p1"]')).toBeTruthy();
+    expect(mounted.container.querySelector('[data-testid="kanban-column-p4"]')).toBeTruthy();
+    const p1Body = mounted.container.querySelector('[data-testid="kanban-column-body-p1"]')!;
     expect(p1Body.querySelector('[data-testid="task-card-001"]')).toBeTruthy();
-    const p4Body = mounted.container.querySelector(
-      '[data-testid="kanban-column-body-p4"]',
-    )!;
+    const p4Body = mounted.container.querySelector('[data-testid="kanban-column-body-p4"]')!;
     expect(p4Body.querySelector('[data-testid="task-card-002"]')).toBeTruthy();
   });
 
@@ -203,9 +187,7 @@ describe("KanbanBoard widget", () => {
 
   it("renders + New task button only when onCreateTask is provided", () => {
     mounted = mountWidget({ tasks: [task()] });
-    expect(
-      mounted.container.querySelector('[data-testid="kanban-add-task"]'),
-    ).toBeNull();
+    expect(mounted.container.querySelector('[data-testid="kanban-add-task"]')).toBeNull();
     const onCreate = vi.fn();
     mounted.setOptions({ onCreateTask: onCreate });
     const btn = mounted.container.querySelector<HTMLButtonElement>(
@@ -227,17 +209,13 @@ describe("KanbanBoard widget", () => {
     )!;
     search.value = "nomatch";
     search.dispatchEvent(new Event("input", { bubbles: true }));
-    expect(
-      mounted.container.querySelectorAll("[data-task-id]").length,
-    ).toBe(0);
+    expect(mounted.container.querySelectorAll("[data-task-id]").length).toBe(0);
     const clear = mounted.container.querySelector<HTMLButtonElement>(
       '[data-testid="kanban-filter-clear"]',
     );
     expect(clear).toBeTruthy();
     clear!.click();
-    expect(
-      mounted.container.querySelectorAll("[data-task-id]").length,
-    ).toBe(2);
+    expect(mounted.container.querySelectorAll("[data-task-id]").length).toBe(2);
     expect(search.value).toBe("");
   });
 });

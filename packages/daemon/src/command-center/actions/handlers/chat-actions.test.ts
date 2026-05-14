@@ -239,10 +239,7 @@ describe("chat action handlers", () => {
 
   it("rejects setProvider on a missing thread", async () => {
     try {
-      await chatThreadSetProviderHandler(
-        { id: "missing", provider: { kind: "codex" } },
-        deps(),
-      );
+      await chatThreadSetProviderHandler({ id: "missing", provider: { kind: "codex" } }, deps());
       throw new Error("expected setProvider to fail");
     } catch (err) {
       expectActionError(err, "thread_not_found");

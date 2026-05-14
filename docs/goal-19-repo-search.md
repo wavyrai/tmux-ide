@@ -1,6 +1,6 @@
 # Goal-19 — Repo search (ripgrep + Cmd-Shift-F panel)
 
-> **Status:** Design proposal. No code changes. **Important caveat:** the reference codebase audited for prior goals does NOT ship a ripgrep-backed repo-search panel — every "search" surface in it is either terminal scrollback (audited in G20-P0), an issue-provider lookup (GitHub/Jira/Linear external APIs), or Monaco's built-in in-file find. This goal is therefore a *design from first principles*, informed by adjacent reference patterns (issue-search wire shapes, panel UX, Monaco find dialog) plus ripgrep's well-known operational best practices.
+> **Status:** Design proposal. No code changes. **Important caveat:** the reference codebase audited for prior goals does NOT ship a ripgrep-backed repo-search panel — every "search" surface in it is either terminal scrollback (audited in G20-P0), an issue-provider lookup (GitHub/Jira/Linear external APIs), or Monaco's built-in in-file find. This goal is therefore a _design from first principles_, informed by adjacent reference patterns (issue-search wire shapes, panel UX, Monaco find dialog) plus ripgrep's well-known operational best practices.
 > **Motivation:** the v2 shell currently has a file-tree but no way to grep across the workspace. Cmd-Shift-F find-in-files is table-stakes for a code editor — bigger UX gap than the editor itself was before G17.
 
 ---
@@ -38,7 +38,7 @@ NDJSON over a JSON array means the UI can render the first hit before ripgrep fi
 
 **Why NDJSON over WebSocket?** A SearchService inside `dashboard/src/lib/search/` opens one fetch per query; cancellation = `AbortController.abort()`. WebSockets would buy us nothing here (no client → server messages after the initial request), and the daemon already proves the NDJSON pattern works (the build-log SSE endpoint uses the same shape).
 
-**Path sandboxing.** Reuse the existing pattern from `/api/project/:name/preview/:file{.+}` (server.ts:1589-1635): resolve via `realpathSync`, reject anything that escapes `session.dir`. Forward the search root to ripgrep as the *only* path argument so a malicious `include` glob can't break out.
+**Path sandboxing.** Reuse the existing pattern from `/api/project/:name/preview/:file{.+}` (server.ts:1589-1635): resolve via `realpathSync`, reject anything that escapes `session.dir`. Forward the search root to ripgrep as the _only_ path argument so a malicious `include` glob can't break out.
 
 **Cancellation.** When the HTTP request closes (client `AbortController.abort()` or page unload), kill the ripgrep child via `child.kill('SIGTERM')`. ripgrep handles SIGTERM cleanly and exits within ~5ms.
 
@@ -69,38 +69,38 @@ rg --json \
 
 **Flags worth pinning:**
 
-| Flag | Why |
-| --- | --- |
-| `--json` | Line-delimited JSON output. The whole strategy hinges on this — see §1 schema. |
-| `--max-count 50` | Cap *per file*. Without it, a `console.log` in node_modules dwarfs everything. The UI's `maxResults` query param maps onto this (rg `--max-count` is per-file; total cap is enforced by the daemon counting `match` events and killing the child once exceeded). |
-| `--max-filesize 5M` | Skip generated lockfiles, bundles, build artifacts. Configurable via query param. |
-| `--hidden` | Include dotfiles (`.github/`, `.env.example`). Users expect them in repo search. |
-| `--no-ignore-vcs=false` | Respect `.gitignore` (and `.ignore`, `.rgignore`). This is the *default*, listing it for clarity. |
-| `--smart-case` | Mixed-case query → case-sensitive; all-lowercase → case-insensitive. Mirrors common editor conventions. The `case=` query param overrides to `--case-sensitive` or `--ignore-case`. |
-| `--no-messages` | Suppress "permission denied" noise from unreadable files; the user doesn't need to see them. |
-| `--color=never` | We don't render ANSI — `--json` already gives us submatch ranges. |
-| `--threads $(nproc)` | ripgrep parallelizes by file automatically; explicit thread count keeps it predictable across deployments. |
-| `--regexp` vs `--fixed-strings` | Toggled by the `regex=` query param. Default is literal-string search (faster + safer; users who want regex tick the box). |
-| `--glob` | Forward `include` query as positive globs, `exclude` as `!` prefixed. ripgrep applies them additively on top of `.gitignore`. |
+| Flag                            | Why                                                                                                                                                                                                                                                              |
+| ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--json`                        | Line-delimited JSON output. The whole strategy hinges on this — see §1 schema.                                                                                                                                                                                   |
+| `--max-count 50`                | Cap _per file_. Without it, a `console.log` in node_modules dwarfs everything. The UI's `maxResults` query param maps onto this (rg `--max-count` is per-file; total cap is enforced by the daemon counting `match` events and killing the child once exceeded). |
+| `--max-filesize 5M`             | Skip generated lockfiles, bundles, build artifacts. Configurable via query param.                                                                                                                                                                                |
+| `--hidden`                      | Include dotfiles (`.github/`, `.env.example`). Users expect them in repo search.                                                                                                                                                                                 |
+| `--no-ignore-vcs=false`         | Respect `.gitignore` (and `.ignore`, `.rgignore`). This is the _default_, listing it for clarity.                                                                                                                                                                |
+| `--smart-case`                  | Mixed-case query → case-sensitive; all-lowercase → case-insensitive. Mirrors common editor conventions. The `case=` query param overrides to `--case-sensitive` or `--ignore-case`.                                                                              |
+| `--no-messages`                 | Suppress "permission denied" noise from unreadable files; the user doesn't need to see them.                                                                                                                                                                     |
+| `--color=never`                 | We don't render ANSI — `--json` already gives us submatch ranges.                                                                                                                                                                                                |
+| `--threads $(nproc)`            | ripgrep parallelizes by file automatically; explicit thread count keeps it predictable across deployments.                                                                                                                                                       |
+| `--regexp` vs `--fixed-strings` | Toggled by the `regex=` query param. Default is literal-string search (faster + safer; users who want regex tick the box).                                                                                                                                       |
+| `--glob`                        | Forward `include` query as positive globs, `exclude` as `!` prefixed. ripgrep applies them additively on top of `.gitignore`.                                                                                                                                    |
 
 **Parsing strategy.** The daemon spawns rg with `stdio: ['ignore', 'pipe', 'pipe']`, attaches a line-buffered reader to stdout, and forwards each line to the NDJSON response with minimal re-shaping:
 
 ```ts
 // Pseudo-code shape
-const child = spawn(rg, args, { cwd: session.dir, stdio: ['ignore', 'pipe', 'pipe'] });
+const child = spawn(rg, args, { cwd: session.dir, stdio: ["ignore", "pipe", "pipe"] });
 const rl = readline.createInterface({ input: child.stdout });
 let matchCount = 0;
 for await (const line of rl) {
   const frame = JSON.parse(line) as RgFrame;
-  if (frame.type === 'match') {
+  if (frame.type === "match") {
     matchCount += 1;
     if (matchCount > maxResults) {
-      child.kill('SIGTERM');
-      yield JSON.stringify({ type: 'summary', matches: matchCount, truncated: true }) + '\n';
+      child.kill("SIGTERM");
+      yield JSON.stringify({ type: "summary", matches: matchCount, truncated: true }) + "\n";
       return;
     }
   }
-  yield reshape(frame) + '\n';
+  yield reshape(frame) + "\n";
 }
 ```
 
@@ -111,6 +111,7 @@ ripgrep's `--json` schema is stable (their CLI docs commit to it). We translate 
 **Cold-start performance.** Without any caching ripgrep parses `.gitignore` per invocation; for monorepos this adds 20–80 ms. Recommend: don't cache. Search queries are usually distinct enough that a parsed-ignore cache would be churn for negligible win.
 
 **`rg` binary discovery.** Three-tier resolution:
+
 1. `process.env.TMUX_IDE_RIPGREP_PATH` (test escape hatch).
 2. Look on `$PATH` via `which('rg')`.
 3. Fall back to the `@vscode/ripgrep` bundled binary (~5 MB extra dep — add it so cross-platform installs always work even without system rg).
@@ -157,11 +158,11 @@ Recommend bundling `@vscode/ripgrep` so the feature works out-of-the-box on Wind
 export interface SearchService {
   readonly query: Signal<string>;
   readonly replaceWith: Signal<string>;
-  readonly options: Signal<SearchOptions>;     // {caseMode, regex, word, include, exclude}
+  readonly options: Signal<SearchOptions>; // {caseMode, regex, word, include, exclude}
   readonly results: Store<{
-    byFile: Record<string, FileMatch>;        // path → FileMatch
+    byFile: Record<string, FileMatch>; // path → FileMatch
     summary: { matches; filesSearched; elapsedMs; truncated };
-    status: 'idle' | 'running' | 'done' | 'error' | 'cancelled';
+    status: "idle" | "running" | "done" | "error" | "cancelled";
     error?: string;
   }>;
   readonly run: (q: string) => Effect.Effect<void, SearchError>;
@@ -199,7 +200,7 @@ Three modes, escalating in scope and confirmation weight:
 
 ### 4.1 — Replace one match
 
-Inline action on a match row: hover reveals a small "replace" button (or right-click menu). Click → daemon writes the file with that single match replaced via the file-write action (`PUT /api/project/:name/file/:file{.+}` from the Goal-17 editor port). The daemon reads the file, performs an in-memory substring replace at the *exact byte offset* from rg's `absolute_offset`, and writes back. **No diff dialog** — single-line replace is reversible via the file's own undo if it's open in the editor.
+Inline action on a match row: hover reveals a small "replace" button (or right-click menu). Click → daemon writes the file with that single match replaced via the file-write action (`PUT /api/project/:name/file/:file{.+}` from the Goal-17 editor port). The daemon reads the file, performs an in-memory substring replace at the _exact byte offset_ from rg's `absolute_offset`, and writes back. **No diff dialog** — single-line replace is reversible via the file's own undo if it's open in the editor.
 
 ### 4.2 — Replace all in file
 
@@ -259,7 +260,7 @@ Modal shows the file list + a per-file diff preview that the user can step throu
 - The action is NOT transactional across files — partial failure is possible. Report per-file outcomes; the UI shows red badges next to skipped/failed files.
 - No undo. The user is expected to commit before mass-replace; if they don't, `git checkout -- .` is the recovery path. **Make this clear in the confirmation modal copy.**
 
-**Regex captures.** When `regex=true`, the replacement supports `$1`/`$2` capture groups. Daemon-side this means we *do* need to re-run the regex per match site (offset-only replacement doesn't carry capture data). Acceptable cost for the regex case — most replace operations are literal.
+**Regex captures.** When `regex=true`, the replacement supports `$1`/`$2` capture groups. Daemon-side this means we _do_ need to re-run the regex per match site (offset-only replacement doesn't carry capture data). Acceptable cost for the regex case — most replace operations are literal.
 
 ---
 
@@ -289,13 +290,13 @@ If the active editor has a focused Monaco instance and the user hits `Cmd-F`, th
 
 ## §6 — Phased plan
 
-| Phase | Scope | Effort |
-| --- | --- | --- |
-| **G19-P1** | Daemon endpoint: `GET /api/project/:name/search` with NDJSON streaming, ripgrep binary discovery, sandboxed search root, cancellation on client close. Plus a SearchService unit-test suite that pins the response schema. | ~10 h |
-| **G19-P2** | Solid panel: activity bar entry, query input, results grouped by file, click → open file. Streaming render via Solid `createStore`. Cmd-Shift-F keybind. No replace yet. | ~12 h |
-| **G19-P3** | Replace flow: inline single-match replace, per-file replace, modal-confirmed across-files replace. Daemon-side `search.replace` action with offset-based writes + mtime guard. | ~12 h |
-| **G19-P4** | Explorer integration: right-click "Search in folder" + open-at-line wiring to the Goal-17 editor (or fallback to preview). Polish: result counters, truncation banner, "show all" escape hatch. | ~6 h |
-| **Total** | | **~40 h (~5 person-days)** |
+| Phase      | Scope                                                                                                                                                                                                                      | Effort                     |
+| ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------- |
+| **G19-P1** | Daemon endpoint: `GET /api/project/:name/search` with NDJSON streaming, ripgrep binary discovery, sandboxed search root, cancellation on client close. Plus a SearchService unit-test suite that pins the response schema. | ~10 h                      |
+| **G19-P2** | Solid panel: activity bar entry, query input, results grouped by file, click → open file. Streaming render via Solid `createStore`. Cmd-Shift-F keybind. No replace yet.                                                   | ~12 h                      |
+| **G19-P3** | Replace flow: inline single-match replace, per-file replace, modal-confirmed across-files replace. Daemon-side `search.replace` action with offset-based writes + mtime guard.                                             | ~12 h                      |
+| **G19-P4** | Explorer integration: right-click "Search in folder" + open-at-line wiring to the Goal-17 editor (or fallback to preview). Polish: result counters, truncation banner, "show all" escape hatch.                            | ~6 h                       |
+| **Total**  |                                                                                                                                                                                                                            | **~40 h (~5 person-days)** |
 
 ---
 

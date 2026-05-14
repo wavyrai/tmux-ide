@@ -133,7 +133,9 @@ export function ProblemsTab(): JSX.Element {
                   >
                     <span
                       aria-hidden="true"
-                      class={"mt-0.5 w-3 shrink-0 text-center " + severityClass(row.diagnostic.severity)}
+                      class={
+                        "mt-0.5 w-3 shrink-0 text-center " + severityClass(row.diagnostic.severity)
+                      }
                     >
                       {severityGlyph(row.diagnostic.severity)}
                     </span>
@@ -141,10 +143,11 @@ export function ProblemsTab(): JSX.Element {
                       <div class="truncate text-[var(--fg)]">{row.diagnostic.message}</div>
                       <div class="truncate text-[10px] text-[var(--dim)]">
                         <span class="font-mono">{row.filePath}</span>
-                        <span> · {line()}:{column() + 1}</span>
-                        <Show when={row.diagnostic.source}>
-                          {(src) => <span> · {src()}</span>}
-                        </Show>
+                        <span>
+                          {" "}
+                          · {line()}:{column() + 1}
+                        </span>
+                        <Show when={row.diagnostic.source}>{(src) => <span> · {src()}</span>}</Show>
                       </div>
                     </div>
                   </button>

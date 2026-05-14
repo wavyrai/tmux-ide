@@ -128,17 +128,13 @@ describe("TasksView widget", () => {
       '[data-filter-group="priority"] [data-filter-key="1"]',
     );
     p1!.click();
-    expect(
-      mounted.container.querySelectorAll('[data-testid="task-row"]').length,
-    ).toBe(2);
+    expect(mounted.container.querySelectorAll('[data-testid="task-row"]').length).toBe(2);
     const clear = mounted.container.querySelector<HTMLButtonElement>(
       '[data-testid="tasks-clear-filters"]',
     );
     expect(clear).toBeTruthy();
     clear!.click();
-    expect(
-      mounted.container.querySelectorAll('[data-testid="task-row"]').length,
-    ).toBe(3);
+    expect(mounted.container.querySelectorAll('[data-testid="task-row"]').length).toBe(3);
     expect(p1!.getAttribute("data-filter-selected")).toBe("false");
   });
 
@@ -163,9 +159,9 @@ describe("TasksView widget", () => {
     const detail = mounted.container.querySelector('[data-testid="task-detail"]');
     expect(detail).toBeTruthy();
     expect(detail!.getAttribute("data-task-id")).toBe("001");
-    expect(
-      mounted.container.querySelector('[data-testid="task-detail-title"]')!.textContent,
-    ).toBe("Open me");
+    expect(mounted.container.querySelector('[data-testid="task-detail-title"]')!.textContent).toBe(
+      "Open me",
+    );
     expect(
       mounted.container.querySelector('[data-testid="task-detail-description"]')!.textContent,
     ).toContain("Detail description for 001");
@@ -187,7 +183,9 @@ describe("TasksView widget", () => {
       tasks: [task({ id: "abc-1" }), task({ id: "abc-2" })],
       onTaskClick: (id) => clicks.push(id),
     });
-    const rows = mounted.container.querySelectorAll<HTMLTableRowElement>('[data-testid="task-row"]');
+    const rows = mounted.container.querySelectorAll<HTMLTableRowElement>(
+      '[data-testid="task-row"]',
+    );
     // Sort is status-first then priority then id; with equal status+pri,
     // rows render in id-string order — rows[0]=abc-1, rows[1]=abc-2.
     rows[1]!.click();
@@ -198,9 +196,7 @@ describe("TasksView widget", () => {
 
   it("live-updates when setOptions pushes a new tasks array", () => {
     mounted = mountWidget({ tasks: [task({ id: "001", title: "first" })] });
-    expect(
-      mounted.container.querySelectorAll('[data-testid="task-row"]').length,
-    ).toBe(1);
+    expect(mounted.container.querySelectorAll('[data-testid="task-row"]').length).toBe(1);
     mounted.setOptions({
       tasks: [
         task({ id: "001", title: "first" }),
@@ -220,9 +216,7 @@ describe("TasksView widget", () => {
     mounted = mountWidget({ tasks: [task()] });
     expect(mounted.container.querySelector('[data-testid="tasks-create"]')).toBeNull();
     mounted.setOptions({ onCreateTask: () => undefined });
-    const btn = mounted.container.querySelector<HTMLButtonElement>(
-      '[data-testid="tasks-create"]',
-    );
+    const btn = mounted.container.querySelector<HTMLButtonElement>('[data-testid="tasks-create"]');
     expect(btn).toBeTruthy();
     expect(btn!.textContent).toContain("New task");
   });

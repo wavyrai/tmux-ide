@@ -57,9 +57,7 @@ function locateSystemRg(): string | null {
 
 beforeEach(() => {
   tmpDir = realpathSync(mkdtempSync(join(tmpdir(), "tmux-ide-search-test-")));
-  const mockPanes: PaneInfo[] = [
-    makePane({ id: "%1", index: 0, title: "Shell", active: true }),
-  ];
+  const mockPanes: PaneInfo[] = [makePane({ id: "%1", index: 0, title: "Shell", active: true })];
   restoreExec = _setExecutor((_cmd, args) => {
     if (args[0] === "list-panes") {
       return mockPanes
@@ -283,9 +281,7 @@ describe("GET /api/project/:name/search", () => {
 
   it("400s on globs that escape the workspace", async () => {
     const app = createApp();
-    const res = await app.request(
-      "/api/project/test-project/search?q=TODO&include=/etc/**",
-    );
+    const res = await app.request("/api/project/test-project/search?q=TODO&include=/etc/**");
     expect(res.status).toBe(400);
     expect(((await res.json()) as { error: string }).error).toMatch(/Glob escapes/);
   });

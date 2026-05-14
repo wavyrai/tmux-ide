@@ -12,24 +12,14 @@
 
 import { execFile } from "node:child_process";
 import { Effect } from "effect";
-import type {
-  BranchesPayload,
-  FullGitStatus,
-  LocalBranch,
-} from "@tmux-ide/contracts";
+import type { BranchesPayload, FullGitStatus, LocalBranch } from "@tmux-ide/contracts";
 import {
   parseBranchList,
   parseRemoteBranches,
   parseRemotes,
   parseStatus,
 } from "./status-parser.ts";
-import {
-  AuthFailed,
-  GitError,
-  NotGitRepo,
-  classifyExitError,
-  type AnyGitError,
-} from "./errors.ts";
+import { AuthFailed, GitError, NotGitRepo, classifyExitError, type AnyGitError } from "./errors.ts";
 
 const GIT_MAX_BUFFER = 32 * 1024 * 1024;
 
@@ -105,12 +95,7 @@ export function ensureRepo(cwd: string): Effect.Effect<void, AnyGitError> {
 export function status(cwd: string): Effect.Effect<FullGitStatus, AnyGitError> {
   return Effect.gen(function* () {
     yield* ensureRepo(cwd);
-    const { stdout } = yield* run(cwd, [
-      "status",
-      "--porcelain=v2",
-      "--branch",
-      "-z",
-    ]);
+    const { stdout } = yield* run(cwd, ["status", "--porcelain=v2", "--branch", "-z"]);
     return parseStatus(stdout);
   });
 }
@@ -118,15 +103,18 @@ export function status(cwd: string): Effect.Effect<FullGitStatus, AnyGitError> {
 export function branches(cwd: string): Effect.Effect<BranchesPayload, AnyGitError> {
   return Effect.gen(function* () {
     yield* ensureRepo(cwd);
-    const [local, remotesRaw, remoteRaw] = yield* Effect.all([
-      run(cwd, [
-        "branch",
-        "--list",
-        "--format=%(HEAD)%00%(refname:short)%00%(upstream:short)%00%(upstream:track,nobracket)",
-      ]),
-      run(cwd, ["remote", "-v"]),
-      run(cwd, ["branch", "-r", "--format=%(refname:short)"]),
-    ], { concurrency: "unbounded" });
+    const [local, remotesRaw, remoteRaw] = yield* Effect.all(
+      [
+        run(cwd, [
+          "branch",
+          "--list",
+          "--format=%(HEAD)%00%(refname:short)%00%(upstream:short)%00%(upstream:track,nobracket)",
+        ]),
+        run(cwd, ["remote", "-v"]),
+        run(cwd, ["branch", "-r", "--format=%(refname:short)"]),
+      ],
+      { concurrency: "unbounded" },
+    );
 
     const parsedLocal = parseBranchList(local.stdout);
     const parsedRemotes = parseRemotes(remotesRaw.stdout);
@@ -161,9 +149,7 @@ export function checkout(
 ): Effect.Effect<{ currentBranch: string }, AnyGitError> {
   return Effect.gen(function* () {
     yield* ensureRepo(cwd);
-    const args = opts.create
-      ? ["checkout", "-b", opts.branch]
-      : ["checkout", opts.branch];
+    const args = opts.create ? ["checkout", "-b", opts.branch] : ["checkout", opts.branch];
     yield* run(cwd, args);
     // Resolve the post-checkout HEAD name authoritatively rather than
     // trusting the requested name (handles short-ref disambiguation).
@@ -183,9 +169,7 @@ export function commit(
 ): Effect.Effect<{ sha: string }, AnyGitError> {
   return Effect.gen(function* () {
     yield* ensureRepo(cwd);
-    const args = opts.all
-      ? ["commit", "-a", "-m", opts.message]
-      : ["commit", "-m", opts.message];
+    const args = opts.all ? ["commit", "-a", "-m", opts.message] : ["commit", "-m", opts.message];
     yield* run(cwd, args);
     const { stdout } = yield* run(cwd, ["rev-parse", "HEAD"]);
     return { sha: stdout.trim() };
@@ -202,10 +186,7 @@ function assertSafePaths(paths: ReadonlyArray<string>): Effect.Effect<void, AnyG
   return Effect.void;
 }
 
-export function stage(
-  cwd: string,
-  paths: ReadonlyArray<string>,
-): Effect.Effect<void, AnyGitError> {
+export function stage(cwd: string, paths: ReadonlyArray<string>): Effect.Effect<void, AnyGitError> {
   return Effect.gen(function* () {
     yield* assertSafePaths(paths);
     yield* ensureRepo(cwd);

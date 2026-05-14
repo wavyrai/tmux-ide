@@ -82,7 +82,13 @@ export function V2ActivityBar(props: V2ActivityBarProps) {
   });
 
   const top: ActivityBarItem[] = [
-    { id: "files", view: "files", Icon: Files, label: "Files", onClick: () => props.onView("files") },
+    {
+      id: "files",
+      view: "files",
+      Icon: Files,
+      label: "Files",
+      onClick: () => props.onView("files"),
+    },
     {
       id: "search",
       view: "search",
@@ -91,11 +97,41 @@ export function V2ActivityBar(props: V2ActivityBarProps) {
       tooltip: "Search · ⇧⌘F",
       onClick: () => props.onView("search"),
     },
-    { id: "diffs", view: "diffs", Icon: GitCompare, label: "Diffs", onClick: () => props.onView("diffs") },
-    { id: "plans", view: "plans", Icon: ListTodo, label: "Plans", onClick: () => props.onView("plans") },
-    { id: "tasks", view: "tasks", Icon: CheckSquare, label: "Tasks", onClick: () => props.onView("tasks") },
-    { id: "skills", view: "skills", Icon: BookOpen, label: "Skills", onClick: () => props.onView("skills") },
-    { id: "mission", view: "mission", Icon: Target, label: "Mission", onClick: () => props.onView("mission") },
+    {
+      id: "diffs",
+      view: "diffs",
+      Icon: GitCompare,
+      label: "Diffs",
+      onClick: () => props.onView("diffs"),
+    },
+    {
+      id: "plans",
+      view: "plans",
+      Icon: ListTodo,
+      label: "Plans",
+      onClick: () => props.onView("plans"),
+    },
+    {
+      id: "tasks",
+      view: "tasks",
+      Icon: CheckSquare,
+      label: "Tasks",
+      onClick: () => props.onView("tasks"),
+    },
+    {
+      id: "skills",
+      view: "skills",
+      Icon: BookOpen,
+      label: "Skills",
+      onClick: () => props.onView("skills"),
+    },
+    {
+      id: "mission",
+      view: "mission",
+      Icon: Target,
+      label: "Mission",
+      onClick: () => props.onView("mission"),
+    },
     {
       id: "chat",
       view: "chat",
@@ -149,7 +185,10 @@ export function V2ActivityBar(props: V2ActivityBarProps) {
       <div class="flex flex-col">
         <For each={top}>
           {(item) => (
-            <ActivityBarButton item={item} active={item.view !== undefined && item.view === props.view} />
+            <ActivityBarButton
+              item={item}
+              active={item.view !== undefined && item.view === props.view}
+            />
           )}
         </For>
       </div>
@@ -226,7 +265,10 @@ function ActivityBarButton(props: { item: ActivityBarItem; active: boolean }) {
       }`}
     >
       <Show when={props.active}>
-        <span aria-hidden="true" class="absolute left-0 top-1 bottom-1 w-[2px] bg-[var(--accent)]" />
+        <span
+          aria-hidden="true"
+          class="absolute left-0 top-1 bottom-1 w-[2px] bg-[var(--accent)]"
+        />
       </Show>
       <props.item.Icon size={18} strokeWidth={1.75} aria-hidden="true" />
     </button>

@@ -13,17 +13,17 @@ not load-bearing.
 
 ## (a) Verified ready — what landed and what proves it
 
-| Concern | Commit | What it gives you |
-|---|---|---|
-| Audit + 5-phase plan | `a029838` (G22-P0) | The map. Defines the rest of the punch list. |
-| `@tmux-ide/daemon` ships its own bundled dashboard | `3a266ba` (G22-P1) | `packages/daemon/scripts/build-dashboard.mjs` copies `dashboard/dist/` into `packages/daemon/dist/dashboard/dist/` at the daemon's `prepack`. Programmatic-daemon consumers no longer depend on the host package layout. |
-| Cross-platform native-deps health check | `d50092f` (G22-P1.5) | `packages/daemon/scripts/check-native-deps.mjs` exercises `better-sqlite3` / `node-pty` / `@vscode/ripgrep` and is wired into `pnpm check` via `check:native-deps`. Any prebuild ABI miss or pnpm optional-dep skip fails the gate before publish. |
-| Duplicate publish workflow removed | `4242064` (G22-P3) | `.github/workflows/publish.yml` deleted; `release.yml` rewritten to a single `publish_npm` job on `v*` tag push. No more race-on-tag noise. |
-| `prepublishOnly` gates on full `pnpm check` | `83156a0` (G22-P4) | `prepublishOnly: "pnpm check && pnpm --filter @tmux-ide/dashboard build"`. Lint, format, typecheck, unit tests, docs build, pack-check, native-deps health check all pass before npm can write a tarball. |
-| Freshness assertions for `bin/cli.js` + `dashboard/dist` | `2d05b90` (G22-P5) | `scripts/prepublish-check.mjs` now asserts `mtime(bin/cli.js) ≥ mtime(bin/cli.ts)` and `mtime(dashboard/dist) ≥ mtime(dashboard/src)`. Error messages name the exact recovery commands. Still **manual** — see (b) below. |
-| Daemon prefers workspace dashboard build over bundled copy | `26a6907` (sibling) | In dev, `serveDashboard()` resolves the workspace `dashboard/dist/` before the daemon's own bundled copy — no more stale-SPA confusion when iterating. |
-| Daemon exits cleanly on non-signal stop paths | `73ba204` (sibling) | `handle.stop()` now terminates the process so ghost daemons don't pile up. Matters for tarball smoke-testing where we shell `tmux-ide command-center` and tear it down between runs. |
-| LSP diagnostics poll resilience | `7d1e7b1` (G21) | Exponential backoff on consecutive errors. Stops the dashboard from melting CPU when an LSP misbehaves. |
+| Concern                                                    | Commit               | What it gives you                                                                                                                                                                                                                                  |
+| ---------------------------------------------------------- | -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Audit + 5-phase plan                                       | `a029838` (G22-P0)   | The map. Defines the rest of the punch list.                                                                                                                                                                                                       |
+| `@tmux-ide/daemon` ships its own bundled dashboard         | `3a266ba` (G22-P1)   | `packages/daemon/scripts/build-dashboard.mjs` copies `dashboard/dist/` into `packages/daemon/dist/dashboard/dist/` at the daemon's `prepack`. Programmatic-daemon consumers no longer depend on the host package layout.                           |
+| Cross-platform native-deps health check                    | `d50092f` (G22-P1.5) | `packages/daemon/scripts/check-native-deps.mjs` exercises `better-sqlite3` / `node-pty` / `@vscode/ripgrep` and is wired into `pnpm check` via `check:native-deps`. Any prebuild ABI miss or pnpm optional-dep skip fails the gate before publish. |
+| Duplicate publish workflow removed                         | `4242064` (G22-P3)   | `.github/workflows/publish.yml` deleted; `release.yml` rewritten to a single `publish_npm` job on `v*` tag push. No more race-on-tag noise.                                                                                                        |
+| `prepublishOnly` gates on full `pnpm check`                | `83156a0` (G22-P4)   | `prepublishOnly: "pnpm check && pnpm --filter @tmux-ide/dashboard build"`. Lint, format, typecheck, unit tests, docs build, pack-check, native-deps health check all pass before npm can write a tarball.                                          |
+| Freshness assertions for `bin/cli.js` + `dashboard/dist`   | `2d05b90` (G22-P5)   | `scripts/prepublish-check.mjs` now asserts `mtime(bin/cli.js) ≥ mtime(bin/cli.ts)` and `mtime(dashboard/dist) ≥ mtime(dashboard/src)`. Error messages name the exact recovery commands. Still **manual** — see (b) below.                          |
+| Daemon prefers workspace dashboard build over bundled copy | `26a6907` (sibling)  | In dev, `serveDashboard()` resolves the workspace `dashboard/dist/` before the daemon's own bundled copy — no more stale-SPA confusion when iterating.                                                                                             |
+| Daemon exits cleanly on non-signal stop paths              | `73ba204` (sibling)  | `handle.stop()` now terminates the process so ghost daemons don't pile up. Matters for tarball smoke-testing where we shell `tmux-ide command-center` and tear it down between runs.                                                               |
+| LSP diagnostics poll resilience                            | `7d1e7b1` (G21)      | Exponential backoff on consecutive errors. Stops the dashboard from melting CPU when an LSP misbehaves.                                                                                                                                            |
 
 Right-now freshness check (verified locally):
 
@@ -90,9 +90,9 @@ Nothing. The npm publish lane is releasable as-is.
 6. **`prepublish-check.mjs` redundant build chain.** The script
    still has `run("pnpm", ["run", "build:dashboard"])` etc. from
    its pre-G22-P4 era. Now that `prepublishOnly` runs `pnpm check`
-   + dashboard build itself, those `run()` calls are duplicate
-   work when invoked from the chain. Slim them out when wiring
-   into `prepublishOnly` (item 1).
+   - dashboard build itself, those `run()` calls are duplicate
+     work when invoked from the chain. Slim them out when wiring
+     into `prepublishOnly` (item 1).
 
 7. **Two sibling pane commits captured cross-pane WIP.** Commit
    `2d05b90` (G22-P5) caught a `dashboard/src/components/ChatView.tsx`

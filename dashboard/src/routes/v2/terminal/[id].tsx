@@ -27,7 +27,9 @@ export default function TerminalRoute() {
           <span>tmux-ide</span>
         </A>
         <span class="mx-1 text-[var(--dimmer)]">/</span>
-        <span aria-hidden="true" class="mr-1">{">_"}</span>
+        <span aria-hidden="true" class="mr-1">
+          {">_"}
+        </span>
         <span class="font-medium text-[var(--accent)]">terminal</span>
         <span class="mx-2 text-[var(--dimmer)]">·</span>
         <span class="text-[var(--dim)]">{id()}</span>

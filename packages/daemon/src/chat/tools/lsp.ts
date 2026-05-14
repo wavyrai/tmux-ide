@@ -36,10 +36,7 @@
 import { z } from "zod";
 import { realpathSync } from "node:fs";
 import { isAbsolute, resolve as pathResolve } from "node:path";
-import {
-  getLspClientForFile,
-  type LspClient,
-} from "../../lsp/registry.ts";
+import { getLspClientForFile, type LspClient } from "../../lsp/registry.ts";
 import type { ChatTool } from "../tool-registry.ts";
 import type { ToolResult } from "./tmux.ts";
 
@@ -54,16 +51,8 @@ const PositionInputSchema = z.object({
     .describe(
       "Workspace-relative path to the file. Absolute paths and `..` traversals are rejected.",
     ),
-  line: z
-    .number()
-    .int()
-    .min(1)
-    .describe("Editor-style 1-based line number."),
-  column: z
-    .number()
-    .int()
-    .min(1)
-    .describe("Editor-style 1-based column number."),
+  line: z.number().int().min(1).describe("Editor-style 1-based line number."),
+  column: z.number().int().min(1).describe("Editor-style 1-based column number."),
 });
 
 const DiagnosticsInputSchema = z.object({

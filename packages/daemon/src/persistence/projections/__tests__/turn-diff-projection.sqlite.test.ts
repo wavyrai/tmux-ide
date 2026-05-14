@@ -16,12 +16,7 @@ import { makeChatEventStore, type ChatEventStore } from "../../chat-event-store.
 import { makeInMemoryCursorStore } from "../../types.ts";
 import { makeTurnDiffProjection } from "../turn-diff-projection.ts";
 
-function file(
-  path: string,
-  kind: string,
-  additions: number,
-  deletions: number,
-): CheckpointFile {
+function file(path: string, kind: string, additions: number, deletions: number): CheckpointFile {
   return { path, kind, additions, deletions };
 }
 

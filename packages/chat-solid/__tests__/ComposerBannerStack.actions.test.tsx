@@ -22,10 +22,7 @@ import { createSignal } from "solid-js";
 import { render } from "solid-js/web";
 import { ChatComposer } from "../src/components/ChatComposer";
 import type { ComposerBannerItem } from "../src/components/ComposerBannerStack";
-import {
-  buildPlanBannerItem,
-  planBannerTitle,
-} from "../src/lib/composerBannerItems";
+import { buildPlanBannerItem, planBannerTitle } from "../src/lib/composerBannerItems";
 import type {
   AvailableCommand,
   ComposerAttachment,
@@ -82,9 +79,9 @@ afterEach(() => {
 
 describe("planBannerTitle", () => {
   it("returns the first markdown heading stripped of #s", () => {
-    expect(
-      planBannerTitle(plan({ planMarkdown: "## Implement OAuth\n- step" })),
-    ).toBe("Implement OAuth");
+    expect(planBannerTitle(plan({ planMarkdown: "## Implement OAuth\n- step" }))).toBe(
+      "Implement OAuth",
+    );
   });
 
   it("falls back to 'Plan ready' when the markdown has no headings", () => {
@@ -168,11 +165,7 @@ describe("ChatComposer + plan banner item (W5)", () => {
       isResponding: true,
     });
     const { container, dispose } = mountComposer({ bannerItems: [item!] });
-    for (const testId of [
-      "plan-banner-apply",
-      "plan-banner-reject",
-      "plan-banner-modify",
-    ]) {
+    for (const testId of ["plan-banner-apply", "plan-banner-reject", "plan-banner-modify"]) {
       const btn = container.querySelector(`[data-testid='${testId}']`) as HTMLButtonElement;
       expect(btn.disabled).toBe(true);
     }

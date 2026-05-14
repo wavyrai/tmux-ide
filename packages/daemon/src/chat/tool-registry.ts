@@ -1,9 +1,6 @@
 import type { z } from "zod";
 import { createTmuxTools, type TmuxToolDeps, type ToolResult } from "./tools/tmux.ts";
-import {
-  createLspTools,
-  type LspBackend,
-} from "./tools/lsp.ts";
+import { createLspTools, type LspBackend } from "./tools/lsp.ts";
 
 export interface ChatTool<TIn = unknown, TOut = unknown> {
   name: string;

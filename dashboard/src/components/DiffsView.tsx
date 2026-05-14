@@ -98,10 +98,7 @@ export function DiffsView(props: DiffsViewProps) {
         <Show
           when={hasChanges()}
           fallback={
-            <div
-              data-empty-state
-              class="flex h-full items-center justify-center text-[var(--dim)]"
-            >
+            <div data-empty-state class="flex h-full items-center justify-center text-[var(--dim)]">
               <Show when={status.loading} fallback="No changes in the working tree.">
                 Loading status…
               </Show>

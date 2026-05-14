@@ -28,12 +28,7 @@ import { withWsBase } from "@/lib/appProtocol";
 
 const SCROLLBACK_LINES = 100_000;
 
-export type FrontendPtyStatus =
-  | "disconnected"
-  | "connecting"
-  | "ready"
-  | "error"
-  | "exited";
+export type FrontendPtyStatus = "disconnected" | "connecting" | "ready" | "error" | "exited";
 
 export interface FrontendPtyOptions {
   cwd?: string;
@@ -51,8 +46,7 @@ type Listener<T> = (value: T) => void;
  *  cascade to live terminals via `applyThemeToAll()`. */
 function readTerminalTheme(): ITheme {
   const cs = getComputedStyle(document.documentElement);
-  const v = (name: string, fallback: string) =>
-    cs.getPropertyValue(name).trim() || fallback;
+  const v = (name: string, fallback: string) => cs.getPropertyValue(name).trim() || fallback;
   return {
     background: v("--term-bg", "#101010"),
     foreground: v("--term-fg", "#eeeeee"),
@@ -91,9 +85,7 @@ export class FrontendPty {
 
     const fontFamily =
       typeof document !== "undefined"
-        ? getComputedStyle(document.documentElement)
-            .getPropertyValue("--font-mono")
-            .trim()
+        ? getComputedStyle(document.documentElement).getPropertyValue("--font-mono").trim()
         : "";
 
     this.terminal = new XTerm({
@@ -102,9 +94,7 @@ export class FrontendPty {
       cursorBlink: true,
       cursorStyle: "block",
       cursorInactiveStyle: "outline",
-      fontFamily:
-        fontFamily ||
-        'ui-monospace, SFMono-Regular, "JetBrains Mono", Menlo, monospace',
+      fontFamily: fontFamily || 'ui-monospace, SFMono-Regular, "JetBrains Mono", Menlo, monospace',
       fontSize: 13,
       fontWeight: 400,
       fontWeightBold: 600,
@@ -272,11 +262,7 @@ export class FrontendPty {
 
   private dispatchResize(cols: number, rows: number): void {
     if (this.socket?.readyState !== WebSocket.OPEN || !this.initSent) return;
-    if (
-      this.lastSentDims &&
-      this.lastSentDims.cols === cols &&
-      this.lastSentDims.rows === rows
-    ) {
+    if (this.lastSentDims && this.lastSentDims.cols === cols && this.lastSentDims.rows === rows) {
       return;
     }
     this.socket.send(JSON.stringify({ type: "resize", cols, rows }));
@@ -311,8 +297,7 @@ export class FrontendPty {
   mount(target: HTMLElement, targetDims?: { cols: number; rows: number }): void {
     if (
       targetDims &&
-      (this.terminal.cols !== targetDims.cols ||
-        this.terminal.rows !== targetDims.rows)
+      (this.terminal.cols !== targetDims.cols || this.terminal.rows !== targetDims.rows)
     ) {
       try {
         this.terminal.resize(targetDims.cols, targetDims.rows);

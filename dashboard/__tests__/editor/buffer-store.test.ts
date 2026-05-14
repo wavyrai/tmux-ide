@@ -23,7 +23,10 @@ vi.mock("@/lib/api", () => ({
 }));
 
 // Minimal Monaco stub.
-const stubModels = new Map<string, { _value: string; getValue(): string; setValue(v: string): void; dispose(): void }>();
+const stubModels = new Map<
+  string,
+  { _value: string; getValue(): string; setValue(v: string): void; dispose(): void }
+>();
 const stubMonaco = {
   Uri: { parse: (s: string) => ({ _raw: s, toString: () => s }) },
   editor: {
@@ -183,9 +186,7 @@ describe("markContent", () => {
 
 describe("save", () => {
   it("PUTs content via saveFile, clears dirty, sets lastSavedAt", async () => {
-    mockSaveFile.mockReturnValue(
-      Effect.succeed({ ok: true, path: "src/x.ts", bytes: 7 }),
-    );
+    mockSaveFile.mockReturnValue(Effect.succeed({ ok: true, path: "src/x.ts", bytes: 7 }));
     const { bufferUri } = openBuffer({
       sessionName: "smoke",
       rootPath: "/repo",

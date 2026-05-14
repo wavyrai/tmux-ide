@@ -65,7 +65,9 @@ import { fetchFilePreview } from "@/lib/api";
 beforeEach(() => {
   // Stash the stub monaco onto globalThis the same way the pool does.
   (globalThis as unknown as { __monaco: typeof stubMonaco }).__monaco = stubMonaco;
-  modelRegistry.notifyMonacoReady(stubMonaco as unknown as Parameters<typeof modelRegistry.notifyMonacoReady>[0]);
+  modelRegistry.notifyMonacoReady(
+    stubMonaco as unknown as Parameters<typeof modelRegistry.notifyMonacoReady>[0],
+  );
   modelRegistry._resetForTests();
   stubModels.clear();
   nextModelId = 0;

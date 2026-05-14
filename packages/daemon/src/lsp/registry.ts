@@ -1,9 +1,4 @@
-import {
-  createLspClient,
-  languageForFile,
-  type LspClient,
-  type Language,
-} from "./client.ts";
+import { createLspClient, languageForFile, type LspClient, type Language } from "./client.ts";
 
 const clients = new Map<string, Promise<LspClient>>();
 
@@ -11,10 +6,7 @@ function keyFor(root: string, language: Language): string {
   return root + "::" + language;
 }
 
-export function getLspClient(
-  root: string,
-  language: Language,
-): Promise<LspClient> {
+export function getLspClient(root: string, language: Language): Promise<LspClient> {
   const key = keyFor(root, language);
   const existing = clients.get(key);
   if (existing) return existing;

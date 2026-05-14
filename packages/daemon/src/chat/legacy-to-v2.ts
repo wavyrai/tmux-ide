@@ -73,7 +73,9 @@ interface UpdateSummary {
  * threadStateToActivities does — keeps live-streamed activities and
  * post-reload-hydrated activities visually identical.
  */
-function summarizeUpdate(update: { sessionUpdate?: string } & Record<string, unknown>): UpdateSummary {
+function summarizeUpdate(
+  update: { sessionUpdate?: string } & Record<string, unknown>,
+): UpdateSummary {
   const sessionUpdate = update.sessionUpdate;
   switch (sessionUpdate) {
     case "agent_message_chunk": {

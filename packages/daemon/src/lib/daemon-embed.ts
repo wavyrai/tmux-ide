@@ -691,7 +691,11 @@ export async function startEmbeddedDaemon(
   // Without this the operator has to POST /api/workspaces by hand before
   // /api/sessions / /api/project/:name return anything — which was the
   // dashboard's "terminal not connecting" symptom before this fix.
-  if (!sessionless && sessionName !== EMBEDDED_SESSION_NAME && !workspaceRegistry.has(sessionName)) {
+  if (
+    !sessionless &&
+    sessionName !== EMBEDDED_SESSION_NAME &&
+    !workspaceRegistry.has(sessionName)
+  ) {
     try {
       workspaceRegistry.add({
         name: sessionName,

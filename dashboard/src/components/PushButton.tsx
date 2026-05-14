@@ -47,9 +47,7 @@ export function PushButton(props: PushButtonProps) {
     setBusy(true);
     setError(null);
     setSuccess(null);
-    const exit = await Effect.runPromiseExit(
-      pushBranch(props.sessionName, { setUpstream: true }),
-    );
+    const exit = await Effect.runPromiseExit(pushBranch(props.sessionName, { setUpstream: true }));
     setBusy(false);
     if (Exit.isSuccess(exit)) {
       setSuccess(`Pushed ${exit.value.branch} → ${exit.value.remote}`);

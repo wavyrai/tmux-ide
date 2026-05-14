@@ -35,9 +35,9 @@ describe("computePollBackoffDelay", () => {
   });
 
   it("handles non-finite arithmetic (extreme factors)", () => {
-    expect(
-      computePollBackoffDelay(2_000, { intervalMs: 5_000, maxMs: 60_000, factor: 10 }),
-    ).toBe(60_000);
+    expect(computePollBackoffDelay(2_000, { intervalMs: 5_000, maxMs: 60_000, factor: 10 })).toBe(
+      60_000,
+    );
   });
 
   it("respects a different config object", () => {

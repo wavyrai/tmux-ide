@@ -15,11 +15,7 @@
 import { createMemo, createSignal, For, Show } from "solid-js";
 import { Effect, Exit, Cause } from "effect";
 import type { BranchesPayload, GitErrorPayload } from "@tmux-ide/contracts";
-import {
-  checkoutBranch,
-  GitApiError,
-  useBranches,
-} from "@/lib/git";
+import { checkoutBranch, GitApiError, useBranches } from "@/lib/git";
 
 interface BranchPickerProps {
   sessionName: string;
@@ -130,9 +126,7 @@ export function BranchPicker(props: BranchPickerProps) {
     // tidy.
     const requestBody: { branch: string; create?: boolean } = { branch: entry.name };
     if (entry.group === "remote") requestBody.create = true;
-    const exit = await Effect.runPromiseExit(
-      checkoutBranch(props.sessionName, requestBody),
-    );
+    const exit = await Effect.runPromiseExit(checkoutBranch(props.sessionName, requestBody));
     setBusy(null);
     if (Exit.isSuccess(exit)) {
       // Close first — the picker is going away, so the internal
@@ -206,7 +200,10 @@ export function BranchPicker(props: BranchPickerProps) {
             />
           </div>
           <Show when={resource.loading}>
-            <div data-testid="branch-picker-loading" class="px-3 py-4 text-center text-[var(--dim)]">
+            <div
+              data-testid="branch-picker-loading"
+              class="px-3 py-4 text-center text-[var(--dim)]"
+            >
               Loading…
             </div>
           </Show>
@@ -252,7 +249,9 @@ export function BranchPicker(props: BranchPickerProps) {
                   <Show when={busy() === entry.name}>
                     <span class="text-[10px] text-[var(--dim)]">…</span>
                   </Show>
-                  <Show when={entry.ahead !== undefined && (entry.ahead > 0 || (entry.behind ?? 0) > 0)}>
+                  <Show
+                    when={entry.ahead !== undefined && (entry.ahead > 0 || (entry.behind ?? 0) > 0)}
+                  >
                     <span class="text-[10px] text-[var(--dim)] tabular-nums">
                       <Show when={(entry.ahead ?? 0) > 0}>↑{entry.ahead}</Show>
                       <Show when={(entry.behind ?? 0) > 0}>↓{entry.behind}</Show>

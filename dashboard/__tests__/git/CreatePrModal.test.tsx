@@ -88,12 +88,7 @@ describe("CreatePrModal", () => {
     const onCreated = vi.fn();
     const onClose = vi.fn();
     const { findByTestId } = render(() => (
-      <CreatePrModal
-        sessionName="proj"
-        open={true}
-        onClose={onClose}
-        onCreated={onCreated}
-      />
+      <CreatePrModal sessionName="proj" open={true} onClose={onClose} onCreated={onCreated} />
     ));
 
     // Wait for branches → default base = main.
@@ -138,14 +133,16 @@ describe("CreatePrModal", () => {
       const url = String(input);
       if (url.endsWith("/git/branches"))
         return jsonOk({
-          local: [{ type: "local", branch: "main" }, { type: "local", branch: "feat/x" }],
+          local: [
+            { type: "local", branch: "main" },
+            { type: "local", branch: "feat/x" },
+          ],
           remote: [],
           remotes: [],
           currentBranch: "feat/x",
           isUnborn: false,
         });
-      if (url.endsWith("/git/pr"))
-        return jsonErr({ error: { type: "gh_unavailable" } });
+      if (url.endsWith("/git/pr")) return jsonErr({ error: { type: "gh_unavailable" } });
       throw new Error(`Unhandled fetch: ${url}`);
     }) as typeof fetch;
 
@@ -168,7 +165,10 @@ describe("CreatePrModal", () => {
       const url = String(input);
       if (url.endsWith("/git/branches"))
         return jsonOk({
-          local: [{ type: "local", branch: "main" }, { type: "local", branch: "feat/x" }],
+          local: [
+            { type: "local", branch: "main" },
+            { type: "local", branch: "feat/x" },
+          ],
           remote: [],
           remotes: [],
           currentBranch: "feat/x",

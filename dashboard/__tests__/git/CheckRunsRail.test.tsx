@@ -49,9 +49,7 @@ describe("CheckRunsRail", () => {
         },
       }),
     ) as typeof fetch;
-    const { queryByTestId } = render(() => (
-      <CheckRunsRail sessionName="proj" />
-    ));
+    const { queryByTestId } = render(() => <CheckRunsRail sessionName="proj" />);
     await waitFor(() => {
       // Once the resource resolves with zero runs + loading=false,
       // the rail's `hasContent` Show guard hides the whole section.
@@ -116,9 +114,7 @@ describe("CheckRunsRail", () => {
       }),
     ) as typeof fetch;
 
-    const { findByTestId, getByTestId } = render(() => (
-      <CheckRunsRail sessionName="proj" />
-    ));
+    const { findByTestId, getByTestId } = render(() => <CheckRunsRail sessionName="proj" />);
 
     await waitFor(async () => {
       const summary = await findByTestId("check-runs-summary");
@@ -131,9 +127,7 @@ describe("CheckRunsRail", () => {
     const success = getByTestId("check-run-1");
     expect(success.getAttribute("data-conclusion")).toBe("success");
     expect(success.tagName).toBe("A");
-    expect(success.getAttribute("href")).toBe(
-      "https://github.com/foo/bar/actions/runs/1",
-    );
+    expect(success.getAttribute("href")).toBe("https://github.com/foo/bar/actions/runs/1");
 
     const failure = getByTestId("check-run-2");
     expect(failure.getAttribute("data-conclusion")).toBe("failure");

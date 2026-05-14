@@ -67,7 +67,9 @@ export function parseGitHubRepository(input?: string | null): GitHubRepositoryRe
   if (ssh) return toRepositoryRef(ssh[1], ssh[2]);
 
   const url =
-    /^https?:\/\/(?:www\.)?github\.com\/([^/\s]+)\/([^/\s?#]+?)(?:\.git)?(?:[/?#].*)?$/i.exec(value);
+    /^https?:\/\/(?:www\.)?github\.com\/([^/\s]+)\/([^/\s?#]+?)(?:\.git)?(?:[/?#].*)?$/i.exec(
+      value,
+    );
   if (url) return toRepositoryRef(url[1], url[2]);
 
   const canonical = /^([^/\s:]+)\/([^/\s?#]+?)(?:\.git)?$/.exec(value);

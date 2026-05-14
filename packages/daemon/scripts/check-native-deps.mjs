@@ -38,9 +38,7 @@ async function check(name, fn) {
     results.push({ name, ok: true, message: msg });
   } catch (err) {
     const message =
-      err && typeof err === "object" && "message" in err
-        ? String(err.message)
-        : String(err);
+      err && typeof err === "object" && "message" in err ? String(err.message) : String(err);
     results.push({ name, ok: false, message });
   }
 }

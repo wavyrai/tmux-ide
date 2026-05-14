@@ -59,9 +59,9 @@ export function CodeEditor(props: CodeEditorProps) {
   // talks to the right `filePath`.
   let lspDispose: (() => void) | null = null;
   let lspWiredFor: string | undefined;
-  const [editorSignal, setEditorSignal] = createSignal<
-    monaco.editor.IStandaloneCodeEditor | null
-  >(null);
+  const [editorSignal, setEditorSignal] = createSignal<monaco.editor.IStandaloneCodeEditor | null>(
+    null,
+  );
   const [activeBufferMeta, setActiveBufferMeta] = createSignal<{
     sessionName: string;
     filePath: string;
@@ -165,10 +165,7 @@ export function CodeEditor(props: CodeEditorProps) {
   // current buffer. Requires the buffer-store to have a record for
   // `uri` (the FilesSurface path always does; disk-only / preview
   // mounts skip wiring since LSP is opt-in to the live buffer).
-  function syncLspWiring(
-    e: monaco.editor.IStandaloneCodeEditor,
-    uri: string,
-  ): void {
+  function syncLspWiring(e: monaco.editor.IStandaloneCodeEditor, uri: string): void {
     if (lspWiredFor === uri) return;
     if (lspDispose) {
       try {

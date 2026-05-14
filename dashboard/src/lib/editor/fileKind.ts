@@ -10,15 +10,7 @@
 import type { ManagedFileKind } from "./types";
 
 /** Raster image extensions — rendered with `<img>`, not Monaco. */
-export const RASTER_EXTS = new Set([
-  "png",
-  "jpg",
-  "jpeg",
-  "gif",
-  "webp",
-  "ico",
-  "bmp",
-]);
+export const RASTER_EXTS = new Set(["png", "jpg", "jpeg", "gif", "webp", "ico", "bmp"]);
 
 /**
  * Known binary / non-text extensions — shown as "unsupported"
@@ -71,9 +63,7 @@ export const BINARY_EXTS = new Set([
  * reading the file and checking the `truncated` flag from the FS
  * layer.
  */
-export function getFileKind(
-  filePath: string,
-): Exclude<ManagedFileKind, "too-large"> {
+export function getFileKind(filePath: string): Exclude<ManagedFileKind, "too-large"> {
   const ext = filePath.split(".").pop()?.toLowerCase() ?? "";
   if (RASTER_EXTS.has(ext)) return "image";
   if (ext === "svg") return "svg";

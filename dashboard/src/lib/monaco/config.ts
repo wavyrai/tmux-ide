@@ -128,9 +128,6 @@ export function addMonacoKeyboardShortcuts(
     editor.addCommand(m.KeyMod.CtrlCmd | m.KeyCode.KeyS, handlers.onSave);
   }
   if (handlers.onSaveAll) {
-    editor.addCommand(
-      m.KeyMod.CtrlCmd | m.KeyMod.Shift | m.KeyCode.KeyS,
-      handlers.onSaveAll,
-    );
+    editor.addCommand(m.KeyMod.CtrlCmd | m.KeyMod.Shift | m.KeyCode.KeyS, handlers.onSaveAll);
   }
 }

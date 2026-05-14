@@ -24,21 +24,14 @@ import { Effect } from "effect";
 import type { ChatThreadEvent, LatestTurn } from "@tmux-ide/contracts";
 
 import type { PersistedChatEvent } from "../persistence/chat-event-store.ts";
-import type {
-  ApprovalVerdict,
-  EvaluateInput,
-} from "../chat/provider-approval-policy.ts";
+import type { ApprovalVerdict, EvaluateInput } from "../chat/provider-approval-policy.ts";
 import {
   ChatEventStoreService,
   ChatReactorService,
   ProviderApprovalPolicyService,
   TurnProjectionService,
 } from "./services.ts";
-import type {
-  ApprovalPolicyError,
-  ChatEventStoreError,
-  ProjectionError,
-} from "./errors.ts";
+import type { ApprovalPolicyError, ChatEventStoreError, ProjectionError } from "./errors.ts";
 
 export interface RunChatTurnPipelineInput {
   /**

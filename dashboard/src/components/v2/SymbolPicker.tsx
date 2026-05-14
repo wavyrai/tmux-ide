@@ -10,15 +10,7 @@
  * URI into the workspace-relative path `openFileAt` expects.
  */
 
-import {
-  createEffect,
-  createSignal,
-  For,
-  onCleanup,
-  onMount,
-  Show,
-  type JSX,
-} from "solid-js";
+import { createEffect, createSignal, For, onCleanup, onMount, Show, type JSX } from "solid-js";
 import { Portal } from "solid-js/web";
 import { lspSymbols, type LspSymbolInformation } from "@/lib/lsp/api";
 import { openFileAt } from "@/lib/editorOpen";
@@ -76,9 +68,7 @@ export function SymbolPicker(props: SymbolPickerProps): JSX.Element {
   let requestSeq = 0;
 
   function onKey(event: KeyboardEvent): void {
-    const mod = navigator.platform.toLowerCase().includes("mac")
-      ? event.metaKey
-      : event.ctrlKey;
+    const mod = navigator.platform.toLowerCase().includes("mac") ? event.metaKey : event.ctrlKey;
     if (mod && !event.shiftKey && event.key.toLowerCase() === "t") {
       event.preventDefault();
       setOpen(true);
@@ -185,9 +175,7 @@ export function SymbolPicker(props: SymbolPickerProps): JSX.Element {
               class="border-b border-[var(--border)] bg-transparent px-3 py-2 text-[13px] text-[var(--fg)] outline-none"
             />
             <Show when={error()}>
-              <div class="px-3 py-1 text-[11px] text-[var(--red,#cc6666)]">
-                {error()}
-              </div>
+              <div class="px-3 py-1 text-[11px] text-[var(--red,#cc6666)]">{error()}</div>
             </Show>
             <ul class="max-h-[50vh] min-h-[40px] overflow-y-auto">
               <Show
@@ -228,7 +216,7 @@ export function SymbolPicker(props: SymbolPickerProps): JSX.Element {
                             </span>
                           </Show>
                           <span class="ml-auto truncate text-[10px] text-[var(--dim)]">
-                            {(symbol.location.uri.split("/").pop() ?? "")}
+                            {symbol.location.uri.split("/").pop() ?? ""}
                           </span>
                         </button>
                       </li>

@@ -30,9 +30,7 @@ function buf(rows: ReadonlyArray<{ text: string; wrapped?: boolean }>): Terminal
 
 describe("collectTerminalSearchMatches", () => {
   it("returns [] for an empty query", () => {
-    expect(
-      collectTerminalSearchMatches(buf([{ text: "hello world" }]), ""),
-    ).toEqual([]);
+    expect(collectTerminalSearchMatches(buf([{ text: "hello world" }]), "")).toEqual([]);
   });
 
   it("matches case-insensitively in a single line", () => {
@@ -44,10 +42,7 @@ describe("collectTerminalSearchMatches", () => {
   });
 
   it("returns multiple matches on the same logical line", () => {
-    const matches = collectTerminalSearchMatches(
-      buf([{ text: "foo bar foo baz foo" }]),
-      "foo",
-    );
+    const matches = collectTerminalSearchMatches(buf([{ text: "foo bar foo baz foo" }]), "foo");
     expect(matches).toHaveLength(3);
     expect(matches.map((m) => m.col)).toEqual([0, 8, 16]);
     for (const m of matches) {

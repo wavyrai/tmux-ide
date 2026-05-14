@@ -125,7 +125,9 @@ export function CostsDashboardView(props: CostsDashboardViewProps) {
         }
       >
         {(s) => (
-          <div style={{ padding: "16px", display: "flex", "flex-direction": "column", gap: "20px" }}>
+          <div
+            style={{ padding: "16px", display: "flex", "flex-direction": "column", gap: "20px" }}
+          >
             {/* KPI grid */}
             <section
               data-costs-section="kpis"
@@ -218,9 +220,7 @@ export function CostsDashboardView(props: CostsDashboardViewProps) {
                   <For each={milestones()}>
                     {(m) => {
                       const pct = () =>
-                        m.taskCount > 0
-                          ? Math.round((m.completedCount / m.taskCount) * 100)
-                          : 0;
+                        m.taskCount > 0 ? Math.round((m.completedCount / m.taskCount) * 100) : 0;
                       return (
                         <div
                           data-costs-milestone={m.id}
@@ -496,9 +496,7 @@ export function CostsDashboardView(props: CostsDashboardViewProps) {
                           </span>
                           <span>
                             done:
-                            <span style={{ color: "var(--green)" }}>
-                              {entry.completedTasks}
-                            </span>
+                            <span style={{ color: "var(--green)" }}>{entry.completedTasks}</span>
                           </span>
                           <span>
                             active:

@@ -202,12 +202,7 @@ export class MonacoModelRegistry {
   }): Effect.Effect<string, ModelRegistryError> {
     return Effect.tryPromise({
       try: () =>
-        this.registerDiskAsync(
-          input.sessionName,
-          input.rootPath,
-          input.filePath,
-          input.language,
-        ),
+        this.registerDiskAsync(input.sessionName, input.rootPath, input.filePath, input.language),
       catch: (cause) =>
         cause instanceof ModelRegistryError
           ? cause
@@ -442,8 +437,7 @@ export class MonacoModelRegistry {
       throw new ModelRegistryError({
         uri: bufferUri,
         stage: "monaco-load",
-        message:
-          "registerBuffer requires Monaco to be loaded (call codeEditorPool.init() first)",
+        message: "registerBuffer requires Monaco to be loaded (call codeEditorPool.init() first)",
       });
     }
 
@@ -575,11 +569,7 @@ export class MonacoModelRegistry {
    * `attach(editor, newUri, prevUri)` shape so multi-tab cursor /
    * scroll / folding state survives tab switches.
    */
-  attach(
-    editor: monaco.editor.IStandaloneCodeEditor,
-    newUri: string,
-    prevUri?: string,
-  ): void {
+  attach(editor: monaco.editor.IStandaloneCodeEditor, newUri: string, prevUri?: string): void {
     // Save outgoing view state.
     if (prevUri) {
       const prevEntry = this.modelMap.get(prevUri);

@@ -76,9 +76,11 @@ describe("ProviderModelPicker", () => {
     expect(menu).toBeTruthy();
     const options = container.querySelectorAll('[data-testid="provider-model-picker-option"]');
     expect(options.length).toBe(3);
-    expect(
-      Array.from(options).map((o) => o.getAttribute("data-kind")),
-    ).toEqual(["claude-code", "codex", "gemini"]);
+    expect(Array.from(options).map((o) => o.getAttribute("data-kind"))).toEqual([
+      "claude-code",
+      "codex",
+      "gemini",
+    ]);
   });
 
   it("marks the active option with data-active='true'", () => {
@@ -86,7 +88,9 @@ describe("ProviderModelPicker", () => {
       provider: { kind: "codex" },
       available: [CLAUDE, CODEX],
     });
-    (container.querySelector('[data-testid="provider-model-picker-trigger"]') as HTMLElement).click();
+    (
+      container.querySelector('[data-testid="provider-model-picker-trigger"]') as HTMLElement
+    ).click();
     const active = container.querySelector(
       '[data-testid="provider-model-picker-option"][data-active="true"]',
     );
@@ -100,7 +104,9 @@ describe("ProviderModelPicker", () => {
       available: [CLAUDE, CODEX],
       onChange,
     });
-    (container.querySelector('[data-testid="provider-model-picker-trigger"]') as HTMLElement).click();
+    (
+      container.querySelector('[data-testid="provider-model-picker-trigger"]') as HTMLElement
+    ).click();
     const codexRow = container.querySelector(
       '[data-testid="provider-model-picker-option"][data-kind="codex"]',
     ) as HTMLButtonElement;
@@ -114,7 +120,9 @@ describe("ProviderModelPicker", () => {
       available: [CLAUDE, CODEX],
       onChange: vi.fn(),
     });
-    (container.querySelector('[data-testid="provider-model-picker-trigger"]') as HTMLElement).click();
+    (
+      container.querySelector('[data-testid="provider-model-picker-trigger"]') as HTMLElement
+    ).click();
     expect(container.querySelector('[data-testid="provider-model-picker-menu"]')).toBeTruthy();
     (
       container.querySelector(
@@ -126,7 +134,9 @@ describe("ProviderModelPicker", () => {
 
   it("renders the 'No providers discovered' placeholder when the list is empty", () => {
     const container = mount({ provider: { kind: "claude-code" }, available: [] });
-    (container.querySelector('[data-testid="provider-model-picker-trigger"]') as HTMLElement).click();
+    (
+      container.querySelector('[data-testid="provider-model-picker-trigger"]') as HTMLElement
+    ).click();
     expect(
       container.querySelector('[data-testid="provider-model-picker-empty"]')?.textContent,
     ).toContain("No providers");

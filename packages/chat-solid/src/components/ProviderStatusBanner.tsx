@@ -22,11 +22,7 @@
  */
 import { createMemo, createResource, createSignal, For, Show, type Accessor } from "solid-js";
 import type { AgentProvider } from "../types";
-import {
-  chatProvidersList,
-  type ApiRuntime,
-  type ProviderInfo,
-} from "../api";
+import { chatProvidersList, type ApiRuntime, type ProviderInfo } from "../api";
 
 interface ProviderStatusBannerProps {
   runtime: Accessor<ApiRuntime>;

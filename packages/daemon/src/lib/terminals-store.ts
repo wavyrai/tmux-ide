@@ -8,13 +8,7 @@
  * the previous list intact.
  */
 
-import {
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  renameSync,
-  writeFileSync,
-} from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { Terminal, TerminalKind } from "@tmux-ide/contracts";
 
@@ -37,9 +31,7 @@ export function loadTerminals(dir: string): Terminal[] {
     const body = readFileSync(file, "utf-8");
     const parsed = JSON.parse(body) as { terminals?: unknown };
     if (!parsed.terminals || !Array.isArray(parsed.terminals)) return [];
-    return parsed.terminals
-      .filter((t): t is Terminal => isTerminal(t))
-      .map((t) => ({ ...t }));
+    return parsed.terminals.filter((t): t is Terminal => isTerminal(t)).map((t) => ({ ...t }));
   } catch {
     return [];
   }

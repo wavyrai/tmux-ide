@@ -10,10 +10,7 @@ afterEach(() => {
   document.body.innerHTML = "";
 });
 
-function mountBanner(opts: {
-  plan: PlanFollowUpPayload | null;
-  isResponding?: boolean;
-}) {
+function mountBanner(opts: { plan: PlanFollowUpPayload | null; isResponding?: boolean }) {
   const container = document.createElement("div");
   document.body.appendChild(container);
   const onApply = vi.fn();
@@ -37,9 +34,7 @@ function mountBanner(opts: {
 describe("ComposerPlanFollowUpBanner", () => {
   it("renders nothing when no plan is pending", () => {
     const { container } = mountBanner({ plan: null });
-    expect(
-      container.querySelector("[data-testid='composer-plan-follow-up-banner']"),
-    ).toBeNull();
+    expect(container.querySelector("[data-testid='composer-plan-follow-up-banner']")).toBeNull();
   });
 
   it("shows the plan headline and source", () => {

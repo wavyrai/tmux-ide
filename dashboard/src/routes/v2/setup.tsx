@@ -263,9 +263,7 @@ export default function SetupRoute() {
           <Show when={state.step === "layout"}>
             <LayoutPanel
               currentId={state.layoutId}
-              onSelect={(layoutId) =>
-                set({ layoutId, agentNames: defaultAgentNames(layoutId) })
-              }
+              onSelect={(layoutId) => set({ layoutId, agentNames: defaultAgentNames(layoutId) })}
             />
           </Show>
           <Show when={state.step === "naming"}>
@@ -463,7 +461,9 @@ function DetectPanel(props: DetectPanelProps) {
         data-testid="setup-detect-dir"
       />
       <div class="mt-3 flex items-center justify-between gap-3">
-        <span class="text-[11px] text-[var(--dim)]">{props.inspectLoading ? "Inspecting..." : ""}</span>
+        <span class="text-[11px] text-[var(--dim)]">
+          {props.inspectLoading ? "Inspecting..." : ""}
+        </span>
         <SetupButton
           onClick={props.onDetect}
           disabled={!props.dir.trim() || props.inspectLoading}
@@ -513,7 +513,10 @@ function DetectSummary(props: { detected: ProjectInspectDetected; hasIdeYml: boo
   );
 }
 
-function LayoutPanel(props: { currentId: LayoutOption["id"]; onSelect: (id: LayoutOption["id"]) => void }) {
+function LayoutPanel(props: {
+  currentId: LayoutOption["id"];
+  onSelect: (id: LayoutOption["id"]) => void;
+}) {
   return (
     <SetupCard title="Pick layout">
       <p class="mb-3 text-xs text-[var(--dim)]">
@@ -561,9 +564,7 @@ function NamingPanel(props: {
 }) {
   return (
     <SetupCard title="Name agents">
-      <p class="mb-3 text-xs text-[var(--dim)]">
-        Pick a session name and per-agent pane titles.
-      </p>
+      <p class="mb-3 text-xs text-[var(--dim)]">Pick a session name and per-agent pane titles.</p>
       <SetupInput
         label="Session name"
         placeholder="my-project"

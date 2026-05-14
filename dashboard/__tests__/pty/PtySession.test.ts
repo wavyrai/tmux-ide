@@ -81,9 +81,7 @@ describe("PtySession", () => {
       ws.open();
       expect(session.status()).toBe("ready");
       // Init frame was sent on open.
-      expect(ws.send).toHaveBeenCalledWith(
-        expect.stringContaining('"type":"init"'),
-      );
+      expect(ws.send).toHaveBeenCalledWith(expect.stringContaining('"type":"init"'));
       dispose();
     });
   });

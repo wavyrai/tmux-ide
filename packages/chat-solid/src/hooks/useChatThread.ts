@@ -381,9 +381,7 @@ export function useChatThread(options: Accessor<ChatMountOptions>) {
       // The daemon broadcasts a fresh chat.plan.upserted with
       // implementedAt set, which the WS effect above flips into the
       // store. Patch optimistically in case the socket is slow.
-      setPlans((current) =>
-        current.map((plan) => (plan.id === planId ? result.plan : plan)),
-      );
+      setPlans((current) => current.map((plan) => (plan.id === planId ? result.plan : plan)));
     } catch (err) {
       setError(err instanceof Error ? err : new Error(String(err)));
       throw err;
@@ -397,9 +395,7 @@ export function useChatThread(options: Accessor<ChatMountOptions>) {
     setPlanResponding(true);
     try {
       const result = await chatPlanReject(runtime(), options().threadId, planId, reason);
-      setPlans((current) =>
-        current.map((plan) => (plan.id === planId ? result.plan : plan)),
-      );
+      setPlans((current) => current.map((plan) => (plan.id === planId ? result.plan : plan)));
     } catch (err) {
       setError(err instanceof Error ? err : new Error(String(err)));
       throw err;

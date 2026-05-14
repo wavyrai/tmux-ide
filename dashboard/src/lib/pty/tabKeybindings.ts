@@ -68,7 +68,6 @@ export function resolveTabIndexShortcut(
 export function detectIsMacPlatform(): boolean {
   if (typeof navigator === "undefined") return false;
   const ua = navigator.userAgent ?? "";
-  const platform =
-    typeof navigator.platform === "string" ? navigator.platform : "";
+  const platform = typeof navigator.platform === "string" ? navigator.platform : "";
   return /mac|iphone|ipad|ipod/i.test(platform) || /Macintosh|Mac OS X/i.test(ua);
 }

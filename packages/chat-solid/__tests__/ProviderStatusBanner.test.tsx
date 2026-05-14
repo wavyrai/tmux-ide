@@ -63,9 +63,7 @@ async function flush() {
 describe("ProviderStatusBanner", () => {
   it("renders nothing when the active provider is available", async () => {
     const container = mount({
-      providers: [
-        { kind: "claude-code", name: "Claude Code", description: "", available: true },
-      ],
+      providers: [{ kind: "claude-code", name: "Claude Code", description: "", available: true }],
       activeKind: "claude-code",
     });
     await flush();
@@ -95,9 +93,7 @@ describe("ProviderStatusBanner", () => {
 
   it("renders nothing when no thread/active provider is set", async () => {
     const container = mount({
-      providers: [
-        { kind: "claude-code", name: "Claude Code", description: "", available: false },
-      ],
+      providers: [{ kind: "claude-code", name: "Claude Code", description: "", available: false }],
       activeKind: null,
     });
     await flush();
@@ -168,9 +164,7 @@ describe("ProviderStatusBanner", () => {
       onSwitch,
     });
     await flush();
-    const chips = container.querySelectorAll(
-      '[data-testid="provider-status-banner-switch"]',
-    );
+    const chips = container.querySelectorAll('[data-testid="provider-status-banner-switch"]');
     expect(chips.length).toBe(2);
     (chips[0] as HTMLButtonElement).click();
     expect(onSwitch).toHaveBeenCalledTimes(1);

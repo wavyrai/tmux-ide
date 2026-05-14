@@ -48,9 +48,7 @@ run("pnpm", ["run", "build:dashboard"]);
 const cliJsPath = join(process.cwd(), "bin", "cli.js");
 const cliTsPath = join(process.cwd(), "bin", "cli.ts");
 if (!existsSync(cliJsPath)) {
-  throw new Error(
-    "bin/cli.js is missing — run: pnpm build:cli && git add bin/cli.js",
-  );
+  throw new Error("bin/cli.js is missing — run: pnpm build:cli && git add bin/cli.js");
 }
 if (!existsSync(cliTsPath)) {
   throw new Error("bin/cli.ts is missing — repository appears corrupted");

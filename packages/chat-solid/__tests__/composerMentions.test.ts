@@ -6,7 +6,12 @@ const SAMPLE: MentionCandidate[] = [
   { kind: "file", value: "src/index.ts", label: "src/index.ts" },
   { kind: "file", value: "src/lib/api.ts", label: "src/lib/api.ts" },
   { kind: "file", value: "src/lib/composerDraftStore.ts", label: "src/lib/composerDraftStore.ts" },
-  { kind: "thread", value: "t-42", label: "Refactor authentication", hint: "claude-code · 12 msgs" },
+  {
+    kind: "thread",
+    value: "t-42",
+    label: "Refactor authentication",
+    hint: "claude-code · 12 msgs",
+  },
   { kind: "agent", value: "%1", label: "Agent 1", hint: "claude" },
 ];
 

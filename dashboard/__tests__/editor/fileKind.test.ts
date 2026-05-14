@@ -7,11 +7,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import {
-  getFileKind,
-  isPreviewableKind,
-  isBinaryForDiff,
-} from "@/lib/editor/fileKind";
+import { getFileKind, isPreviewableKind, isBinaryForDiff } from "@/lib/editor/fileKind";
 
 describe("getFileKind", () => {
   it("routes raster images to 'image'", () => {

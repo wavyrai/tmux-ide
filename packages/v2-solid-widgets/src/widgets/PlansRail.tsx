@@ -13,11 +13,7 @@
  * picks up theme switches without any extra wiring.
  */
 import { createMemo, createSignal, For, Show, onCleanup, onMount } from "solid-js";
-import {
-  fetchProjectPlans,
-  type PlanStatus,
-  type PlanSummary,
-} from "../api";
+import { fetchProjectPlans, type PlanStatus, type PlanSummary } from "../api";
 import type { PlansRailMountOptions } from "../types";
 
 interface PlansRailViewProps {
@@ -335,9 +331,7 @@ export function PlansRailView(props: PlansRailViewProps) {
                               padding: "8px 12px",
                               "text-align": "left",
                               border: "none",
-                              background: isSelected()
-                                ? "var(--surface-active)"
-                                : "transparent",
+                              background: isSelected() ? "var(--surface-active)" : "transparent",
                               cursor: "pointer",
                               transition: "background-color 80ms ease",
                               "font-family": "inherit",

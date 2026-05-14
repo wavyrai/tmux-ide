@@ -203,9 +203,7 @@ const CONSOLE_ERROR_ALLOWLIST: string[] = [
 ];
 
 function filterErrors(errors: string[]): string[] {
-  return errors.filter(
-    (msg) => !CONSOLE_ERROR_ALLOWLIST.some((allowed) => msg.includes(allowed)),
-  );
+  return errors.filter((msg) => !CONSOLE_ERROR_ALLOWLIST.some((allowed) => msg.includes(allowed)));
 }
 
 interface SmokeRoute {
@@ -257,10 +255,9 @@ test.describe("/v2 smoke", () => {
       });
 
       const realErrors = filterErrors(captured.errors);
-      expect(
-        realErrors,
-        `console errors on ${route.path}:\n${realErrors.join("\n---\n")}`,
-      ).toEqual([]);
+      expect(realErrors, `console errors on ${route.path}:\n${realErrors.join("\n---\n")}`).toEqual(
+        [],
+      );
     });
   }
 
@@ -288,8 +285,6 @@ test.describe("/v2 smoke", () => {
     await expect(bridge.first()).toBeVisible({ timeout: 15_000 });
 
     const realErrors = filterErrors(captured.errors);
-    expect(realErrors, `chat-click console errors:\n${realErrors.join("\n---\n")}`).toEqual(
-      [],
-    );
+    expect(realErrors, `chat-click console errors:\n${realErrors.join("\n---\n")}`).toEqual([]);
   });
 });

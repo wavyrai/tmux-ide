@@ -39,13 +39,7 @@ export default defineConfig({
       // separately — counting both under one threshold would double-
       // dip files that have no vitest harness yet.
       include: ["src/chat/**/*.ts", "src/terminal/**/*.ts", "src/git/**/*.ts"],
-      exclude: [
-        "**/*.test.ts",
-        "**/__tests__/**",
-        "**/__mocks__/**",
-        "**/types.ts",
-        "**/index.ts",
-      ],
+      exclude: ["**/*.test.ts", "**/__tests__/**", "**/__mocks__/**", "**/types.ts", "**/index.ts"],
       // Thresholds pin the *floor* — set just below current numbers
       // so a regression fails CI but today's coverage passes. Bump
       // toward the audit target (70%) as new tests land.

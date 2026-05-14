@@ -14,11 +14,7 @@
 
 export interface TerminalSearchBufferLineLike {
   isWrapped?: boolean;
-  translateToString(
-    trimRight?: boolean,
-    startColumn?: number,
-    endColumn?: number,
-  ): string;
+  translateToString(trimRight?: boolean, startColumn?: number, endColumn?: number): string;
 }
 
 export interface TerminalSearchBufferLike {
@@ -60,10 +56,7 @@ function buildLogicalLines(buffer: TerminalSearchBufferLike): LogicalLine[] {
   return out;
 }
 
-function resolveMatchStart(
-  segments: PhysicalSegment[],
-  startIndex: number,
-): TerminalSearchMatch {
+function resolveMatchStart(segments: PhysicalSegment[], startIndex: number): TerminalSearchMatch {
   for (let i = segments.length - 1; i >= 0; i -= 1) {
     const segment = segments[i]!;
     if (startIndex >= segment.startIndex) {
@@ -116,8 +109,7 @@ function findExactIndex(
 ): number {
   if (!current) return -1;
   return matches.findIndex(
-    (m) =>
-      m.row === current.row && m.col === current.col && m.length === current.length,
+    (m) => m.row === current.row && m.col === current.col && m.length === current.length,
   );
 }
 
@@ -138,9 +130,7 @@ export function getNextTerminalSearchIndex(
       }
       return matches.length - 1;
     }
-    const nextIdx = matches.findIndex(
-      (m) => compareMatchPosition(m, current) > 0,
-    );
+    const nextIdx = matches.findIndex((m) => compareMatchPosition(m, current) > 0);
     return nextIdx === -1 ? 0 : nextIdx;
   }
   if (idx === -1) {

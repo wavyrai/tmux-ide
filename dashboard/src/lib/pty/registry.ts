@@ -124,9 +124,7 @@ export type TerminalsResource = Resource<readonly TerminalWithRuntime[] | null> 
  *  bytes). Re-keyed on `sessionName` so a project switch refetches.
  *  P3 wires a `terminals.changed` WS subscription on top to trigger
  *  `refetch()` without polling. */
-export function useTerminals(
-  sessionName: () => string | null,
-): TerminalsResource {
+export function useTerminals(sessionName: () => string | null): TerminalsResource {
   const [resource, { refetch }] = createResource(sessionName, async (name) => {
     if (!name) return null;
     return Effect.runPromise(
