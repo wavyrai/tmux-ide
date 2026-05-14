@@ -80,6 +80,14 @@ export function ExplorerView(props: ExplorerViewProps) {
     overscan: OVERSCAN,
   });
 
+  // `virtualizer.getVirtualItems()` is a method call — calling it inline
+  // inside `<For each={...}>` does not subscribe to the virtualizer's
+  // internal state, so the For sees the empty initial array forever and
+  // the rail renders an empty spacer. Memo wrappers re-run on virtualizer
+  // re-measure (count change, scroll, resize, …).
+  const virtualItems = createMemo(() => virtualizer.getVirtualItems());
+  const virtualTotalSize = createMemo(() => virtualizer.getTotalSize());
+
   function toggle(path: string) {
     setExpanded((prev) => {
       const next = new Set(prev);
@@ -238,12 +246,12 @@ export function ExplorerView(props: ExplorerViewProps) {
         <div
           data-testid="v2-explorer-spacer"
           style={{
-            height: `${virtualizer.getTotalSize()}px`,
+            height: `${virtualTotalSize()}px`,
             width: "100%",
             position: "relative",
           }}
         >
-          <For each={virtualizer.getVirtualItems()}>
+          <For each={virtualItems()}>
             {(vItem) => {
               const row = () => rows()[vItem.index]!;
               const isSel = () => vItem.index === selected();

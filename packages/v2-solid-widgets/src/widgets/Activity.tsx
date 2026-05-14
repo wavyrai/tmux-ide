@@ -221,6 +221,10 @@ export function ActivityView(props: ActivityViewProps) {
     getItemKey: (i) => entries()[i]?.key ?? i,
   });
 
+  // Memo wrappers for reactivity inside <For each={...}>.
+  const virtualItems = createMemo(() => virtualizer.getVirtualItems());
+  const virtualTotalSize = createMemo(() => virtualizer.getTotalSize());
+
   function toggleType(type: string) {
     setSelectedTypes((cur) => {
       const next = new Set(cur);
@@ -454,12 +458,12 @@ export function ActivityView(props: ActivityViewProps) {
           <div
             data-testid="activity-timeline-spacer"
             style={{
-              height: `${virtualizer.getTotalSize()}px`,
+              height: `${virtualTotalSize()}px`,
               width: "100%",
               position: "relative",
             }}
           >
-            <For each={virtualizer.getVirtualItems()}>
+            <For each={virtualItems()}>
               {(vItem) => {
                 const entry = createMemo(() => entries()[vItem.index]!, undefined, {
                   equals: (a, b) => !!a && !!b && a.key === b.key,

@@ -443,6 +443,10 @@ function KanbanColumnBody(props: KanbanColumnBodyProps): JSX.Element {
     getItemKey: (i) => props.tasks[i]?.id ?? i,
   });
 
+  // Memo wrappers for reactivity inside <For each={...}>.
+  const virtualItems = createMemo(() => virtualizer.getVirtualItems());
+  const virtualTotalSize = createMemo(() => virtualizer.getTotalSize());
+
   return (
     <div
       ref={setScrollEl}
@@ -474,12 +478,12 @@ function KanbanColumnBody(props: KanbanColumnBodyProps): JSX.Element {
         <div
           data-testid={`kanban-column-spacer-${props.columnId}`}
           style={{
-            height: `${virtualizer.getTotalSize()}px`,
+            height: `${virtualTotalSize()}px`,
             width: "100%",
             position: "relative",
           }}
         >
-          <For each={virtualizer.getVirtualItems()}>
+          <For each={virtualItems()}>
             {(vItem) => {
               const task = () => props.tasks[vItem.index]!;
               return (

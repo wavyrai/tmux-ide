@@ -92,6 +92,12 @@ export function MessagesTimeline(props: {
     overscan: 4,
   });
 
+  // `virtualizer.getVirtualItems()` is a method call — calling it inline
+  // inside `<For each={...}>` does not subscribe to the virtualizer's
+  // internal state, so the For sees the empty initial array forever.
+  const virtualItems = createMemo(() => virtualizer.getVirtualItems());
+  const virtualTotalSize = createMemo(() => virtualizer.getTotalSize());
+
   // Single dialog mount hoisted to the timeline so user / assistant
   // / tool-call image clicks all open the same overlay. Closing seeds
   // `null` back into the signal so `<ExpandedImageDialog>` unmounts.
@@ -124,12 +130,12 @@ export function MessagesTimeline(props: {
           <div
             data-testid="messages-timeline-spacer"
             style={{
-              height: `${virtualizer.getTotalSize()}px`,
+              height: `${virtualTotalSize()}px`,
               width: "100%",
               position: "relative",
             }}
           >
-            <For each={virtualizer.getVirtualItems()}>
+            <For each={virtualItems()}>
               {(vItem) => {
                 // Per-row memo keyed on `rowSignature`: when a sibling
                 // row streams and a new `rows()` array is produced,

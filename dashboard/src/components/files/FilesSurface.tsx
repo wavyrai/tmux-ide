@@ -731,6 +731,15 @@ function FileRail(props: FileRailProps) {
     overscan: OVERSCAN,
   });
 
+  // `virtualizer.getVirtualItems()` is a method call — calling it inline
+  // inside `<For each={...}>` does not subscribe to the virtualizer's
+  // internal state, so the For sees the empty initial array forever and
+  // the rail renders as an empty spacer (correct height, zero rows).
+  // Memo wrappers re-run when the virtualizer re-measures (count change,
+  // scroll, resize, …) and re-supply the For with fresh items.
+  const virtualItems = createMemo(() => virtualizer.getVirtualItems());
+  const virtualTotalSize = createMemo(() => virtualizer.getTotalSize());
+
   // Keep focusedIndex in range when the row list shrinks (collapse).
   createEffect(() => {
     const len = props.rows.length;
@@ -824,12 +833,12 @@ function FileRail(props: FileRailProps) {
       <div
         data-testid="v2-files-rail-spacer"
         style={{
-          height: `${virtualizer.getTotalSize()}px`,
+          height: `${virtualTotalSize()}px`,
           width: "100%",
           position: "relative",
         }}
       >
-        <For each={virtualizer.getVirtualItems()}>
+        <For each={virtualItems()}>
           {(vItem) => {
             const row = () => props.rows[vItem.index]!;
             const isFocused = () => vItem.index === focusedIndex();

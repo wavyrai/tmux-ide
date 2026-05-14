@@ -399,18 +399,21 @@ function UnifiedDiff(props: DiffViewProps) {
     estimateSize: () => DIFF_LINE_HEIGHT,
     overscan: 16,
   });
+  // Memo wrappers for reactivity inside <For each={...}>.
+  const virtualItems = createMemo(() => virtualizer.getVirtualItems());
+  const virtualTotalSize = createMemo(() => virtualizer.getTotalSize());
   return (
     <div
       data-testid="v2-changes-unified-spacer"
       style={{
         "font-size": "11px",
         "line-height": "1.5",
-        height: `${virtualizer.getTotalSize()}px`,
+        height: `${virtualTotalSize()}px`,
         width: "100%",
         position: "relative",
       }}
     >
-      <For each={virtualizer.getVirtualItems()}>
+      <For each={virtualItems()}>
         {(vItem) => {
           const line = () => props.lines[vItem.index]!;
           const c = () => colorFor(line().kind);
@@ -454,18 +457,21 @@ function SplitDiff(props: DiffViewProps) {
     estimateSize: () => DIFF_LINE_HEIGHT,
     overscan: 16,
   });
+  // Memo wrappers for reactivity inside <For each={...}>.
+  const virtualItems = createMemo(() => virtualizer.getVirtualItems());
+  const virtualTotalSize = createMemo(() => virtualizer.getTotalSize());
   return (
     <div
       data-testid="v2-changes-split-spacer"
       style={{
         "font-size": "11px",
         "line-height": "1.5",
-        height: `${virtualizer.getTotalSize()}px`,
+        height: `${virtualTotalSize()}px`,
         width: "100%",
         position: "relative",
       }}
     >
-      <For each={virtualizer.getVirtualItems()}>
+      <For each={virtualItems()}>
         {(vItem) => {
           const line = () => props.lines[vItem.index]!;
           const c = () => colorFor(line().kind);

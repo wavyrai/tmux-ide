@@ -323,6 +323,13 @@ export function SearchView(props: SearchViewProps): JSX.Element {
     getItemKey: (index) => entries()[index]?.key ?? index,
   });
 
+  // Memo wrappers: `virtualizer.getVirtualItems()` is a method call —
+  // calling it inline inside `<For each={...}>` does not subscribe to
+  // the virtualizer's internal state, so the For sees the empty
+  // initial array forever.
+  const virtualItems = createMemo(() => virtualizer.getVirtualItems());
+  const virtualTotalSize = createMemo(() => virtualizer.getTotalSize());
+
   // F3 / activation: keep the active match scrolled into view by
   // letting the virtualizer drive the scroll (it can target rows
   // that aren't currently in the DOM).
@@ -670,12 +677,12 @@ export function SearchView(props: SearchViewProps): JSX.Element {
         <div
           data-testid="search-results-spacer"
           style={{
-            height: `${virtualizer.getTotalSize()}px`,
+            height: `${virtualTotalSize()}px`,
             width: "100%",
             position: "relative",
           }}
         >
-          <For each={virtualizer.getVirtualItems()}>
+          <For each={virtualItems()}>
             {(vItem) => {
               // Per-row memo keyed on `entry.key`: a sibling row's
               // mutation produces a new entries() array but unchanged
