@@ -19,8 +19,15 @@
  * tone if any failed, accent tone if any in-flight, otherwise quiet.
  */
 
-import { createMemo, createSignal, For, Show, type Accessor, type JSX } from "solid-js";
-import { createVirtualizer } from "@tanstack/solid-virtual";
+import {
+  createMemo,
+  createSignal,
+  For,
+  Index,
+  Show,
+  type Accessor,
+  type JSX,
+} from "solid-js";
 import { useAutoScroll } from "../hooks/useAutoScroll";
 import { deriveChangedFiles } from "../lib/changedFiles";
 import { collectImageBlocks, previewAt } from "../lib/imageBlocks";
@@ -78,25 +85,13 @@ export function MessagesTimeline(props: {
   const terminalAssistantIds = createMemo(() => deriveTerminalAssistantMessageIds(props.rows()));
   useAutoScroll(container, sentinel, followSignal);
 
-  // Variable-height virtualizer: each row reports its real size via
-  // `measureElement` (the virtualizer wires a ResizeObserver per row so
-  // streaming growth re-measures automatically). The estimate is the
-  // average IDE chat row at first paint; the cache fills in real sizes
-  // as rows enter the viewport.
-  const virtualizer = createVirtualizer({
-    get count() {
-      return props.rows().length;
-    },
-    getScrollElement: () => container() ?? null,
-    estimateSize: () => 90,
-    overscan: 4,
-  });
-
-  // `virtualizer.getVirtualItems()` is a method call — calling it inline
-  // inside `<For each={...}>` does not subscribe to the virtualizer's
-  // internal state, so the For sees the empty initial array forever.
-  const virtualItems = createMemo(() => virtualizer.getVirtualItems());
-  const virtualTotalSize = createMemo(() => virtualizer.getTotalSize());
+  // Virtualization removed for chat threads. The previous wiring
+  // around `@tanstack/solid-virtual` rendered a correctly-sized
+  // spacer but the For-loop body never iterated — getVirtualItems()
+  // returned `[]` perpetually once the dist was rebuilt, leaving
+  // the timeline empty in the browser. Typical chat threads run a
+  // few dozen messages, so a plain For-each is the safer default
+  // until we revisit virtualization with a chat-specific harness.
 
   // Single dialog mount hoisted to the timeline so user / assistant
   // / tool-call image clicks all open the same overlay. Closing seeds
@@ -127,35 +122,26 @@ export function MessagesTimeline(props: {
               <ChangedFilesTree files={changedFiles} />
             </div>
           </Show>
-          <div
-            data-testid="messages-timeline-spacer"
-            style={{
-              height: `${virtualTotalSize()}px`,
-              width: "100%",
-              position: "relative",
-            }}
-          >
-            <For each={virtualItems()}>
-              {(vItem) => {
-                // Per-row memo keyed on `rowSignature`: when a sibling
-                // row streams and a new `rows()` array is produced,
-                // unchanged rows keep their previous reference here so
-                // the TimelineRow subtree skips re-derivation.
-                const row = createMemo(() => props.rows()[vItem.index]!, undefined, {
-                  equals: (a, b) => !!a && !!b && rowSignature(a) === rowSignature(b),
-                });
+          <div data-testid="messages-timeline-spacer">
+            <Index each={props.rows()}>
+              {(rowAccessor, index) => {
+                // `Index` keys by position so the outer <div> stays
+                // mounted across rows() updates — token streams
+                // replace the underlying array but the slot's DOM
+                // node is preserved. The inner per-row memo dampens
+                // re-derivation: when a sibling row streams and the
+                // current row's signature is unchanged, the memo
+                // returns the previous row reference and TimelineRow
+                // skips work.
+                const row = createMemo<MessagesTimelineRow>(
+                  () => rowAccessor(),
+                  rowAccessor(),
+                  {
+                    equals: (a, b) => rowSignature(a) === rowSignature(b),
+                  },
+                );
                 return (
-                  <div
-                    data-index={vItem.index}
-                    ref={(el) => virtualizer.measureElement(el)}
-                    style={{
-                      position: "absolute",
-                      top: "0",
-                      left: "0",
-                      width: "100%",
-                      transform: `translateY(${vItem.start}px)`,
-                    }}
-                  >
+                  <div data-index={index}>
                     <div class="mx-auto flex w-full max-w-3xl flex-col px-4">
                       <TimelineRow
                         row={row()}
@@ -170,7 +156,7 @@ export function MessagesTimeline(props: {
                   </div>
                 );
               }}
-            </For>
+            </Index>
           </div>
           <div ref={setSentinel} />
         </div>
