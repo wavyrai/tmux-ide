@@ -1,4 +1,5 @@
 import type { JSX, ParentProps } from "solid-js";
+import { ProjectQuickSwitcher } from "@/components/projects/ProjectQuickSwitcher";
 
 /**
  * Root shell for the Solid dashboard.
@@ -14,6 +15,7 @@ import type { JSX, ParentProps } from "solid-js";
 export function App(props: ParentProps): JSX.Element {
   return (
     <div class="flex h-screen w-screen min-h-0 min-w-0 flex-col bg-[var(--bg)] text-[var(--fg)] font-sans antialiased">
+      <ProjectQuickSwitcher />
       {props.children}
     </div>
   );

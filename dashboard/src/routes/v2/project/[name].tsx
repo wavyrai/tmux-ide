@@ -38,6 +38,7 @@ import { MonacoDiffsView } from "@/components/diffs/MonacoDiffsView";
 import { SearchView } from "@/components/search/SearchView";
 import { ExplorerContextMenu } from "@/components/search/ExplorerContextMenu";
 import { SymbolPicker } from "@/components/v2/SymbolPicker";
+import { recordProjectOpened } from "@/components/projects/ProjectQuickSwitcher";
 import {
   BottomPanelView,
   CostsView,
@@ -72,6 +73,8 @@ export default function ProjectV2Route(): JSX.Element {
   const [view, setView] = useViewParam<ViewId>(DEFAULT_VIEW, isViewId);
 
   useChromeShortcuts();
+
+  onMount(() => recordProjectOpened(projectName()));
 
   function onActivityBarView(id: ActivityBarViewId) {
     // ActivityBarViewId is a strict subset of ViewId; the registry

@@ -79,6 +79,25 @@ export function fetchSessions(): Effect.Effect<readonly SessionOverview[], ApiEr
 }
 
 // ---------------------------------------------------------------------
+// Projects registry — backs the Cmd+P quick-switcher.
+// ---------------------------------------------------------------------
+
+export interface RegisteredProject {
+  name: string;
+  dir: string;
+  hasIdeYml: boolean;
+  gitOrigin: string | null;
+  gitBranch: string | null;
+  registeredAt: string;
+}
+
+export function fetchProjects(): Effect.Effect<readonly RegisteredProject[], ApiError> {
+  return request<{ projects: RegisteredProject[] }>("/api/projects").pipe(
+    Effect.map((data) => data.projects ?? []),
+  );
+}
+
+// ---------------------------------------------------------------------
 // Setup wizard
 // ---------------------------------------------------------------------
 
