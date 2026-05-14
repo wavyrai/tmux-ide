@@ -129,10 +129,17 @@ async function emitIndex(store: ThreadStore, emit: (event: ChatEvent) => void): 
 }
 
 export async function chatThreadListHandler(
-  _input: ActionInput<"chat.thread.list">,
+  input: ActionInput<"chat.thread.list">,
   deps: ChatActionDeps = {},
 ): Promise<ActionResult<"chat.thread.list">> {
-  return { threads: await storeFrom(deps).list() };
+  const all = await storeFrom(deps).list();
+  if (input.projectDir === undefined) return { threads: all };
+  // Project-scoped view — only return threads tagged with the same
+  // workspace dir. Threads without a `projectDir` are global and
+  // currently never returned in this filtered view; if we want them
+  // back later, add an `includeGlobal: true` option to the contract.
+  const threads = all.filter((t) => t.projectDir === input.projectDir);
+  return { threads };
 }
 
 export async function chatProvidersListHandler(

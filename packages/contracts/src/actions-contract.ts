@@ -552,7 +552,16 @@ export const ThreadStateZ = z
   })
   .strict();
 
-export const ChatThreadListInputZ = z.object({}).strict();
+export const ChatThreadListInputZ = z
+  .object({
+    /**
+     * Filter to threads whose `projectDir` matches. Pass the workspace
+     * absolute path. Omit for the legacy global view (returns every
+     * thread across every project).
+     */
+    projectDir: z.string().optional(),
+  })
+  .strict();
 export const ChatThreadListResultZ = z
   .object({
     threads: z.array(ThreadIndexEntryZ),

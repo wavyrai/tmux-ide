@@ -43,20 +43,55 @@ async function postAction<T>(name: string, input: unknown): Promise<T> {
   return body.result;
 }
 
-async function resolveThreadId(explicit?: string): Promise<string> {
+async function resolveProjectDir(projectName: string): Promise<string | null> {
+  // The session/registry endpoint surfaces the workspace's absolute
+  // dir alongside its name. We use it to scope chat threads to a
+  // single project — without this, `chat.thread.list({})` returned
+  // every thread across every project and the dashboard mounted the
+  // first one regardless of which project was open.
+  try {
+    const res = await fetch(`${API_BASE}/api/sessions`, { cache: "no-store" });
+    const body = (await res.json()) as { sessions?: Array<{ name: string; dir?: string }> };
+    const session = body.sessions?.find((s) => s.name === projectName);
+    if (session?.dir) return session.dir;
+  } catch {
+    // fallthrough to projects registry
+  }
+  try {
+    const res = await fetch(
+      `${API_BASE}/api/projects/${encodeURIComponent(projectName)}`,
+      { cache: "no-store" },
+    );
+    const body = (await res.json()) as { project?: { dir?: string } };
+    if (body.project?.dir) return body.project.dir;
+  } catch {
+    // give up — chat will be created without a project tag (legacy
+    // global-thread behavior).
+  }
+  return null;
+}
+
+async function resolveThreadId(projectName: string, explicit?: string): Promise<string> {
   if (explicit) return explicit;
+  const projectDir = await resolveProjectDir(projectName);
+  const listInput = projectDir ? { projectDir } : {};
   const { threads } = await postAction<{
     threads: Array<{ id: string; updatedAt?: string }>;
-  }>("chat.thread.list", {});
+  }>("chat.thread.list", listInput);
   if (threads.length > 0) {
     const sorted = [...threads].sort((a, b) =>
       (b.updatedAt ?? "").localeCompare(a.updatedAt ?? ""),
     );
     return sorted[0]!.id;
   }
-  const { thread } = await postAction<{ thread: { id: string } }>("chat.thread.create", {
+  const createInput: { provider: { kind: string }; projectDir?: string } = {
     provider: { kind: "claude-code" },
-  });
+  };
+  if (projectDir) createInput.projectDir = projectDir;
+  const { thread } = await postAction<{ thread: { id: string } }>(
+    "chat.thread.create",
+    createInput,
+  );
   return thread.id;
 }
 
@@ -88,7 +123,7 @@ export function ChatView(props: ChatViewProps) {
     setAttempting(true);
     setError(null);
     try {
-      const id = await resolveThreadId(props.threadId);
+      const id = await resolveThreadId(props.projectName, props.threadId);
       if (cancelled) return;
       handle?.unmount();
       handle = mount(container, {
