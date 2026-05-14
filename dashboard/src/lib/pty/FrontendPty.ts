@@ -25,8 +25,9 @@ import { WebglAddon } from "@xterm/addon-webgl";
 import "@xterm/xterm/css/xterm.css";
 import { ensureXtermHost } from "./xterm-host";
 import { withWsBase } from "@/lib/appProtocol";
+import { getSettingsSnapshot, onSettingsChange, type Settings } from "@/lib/settings";
 
-const SCROLLBACK_LINES = 100_000;
+const SCROLLBACK_FALLBACK = 100_000;
 
 export type FrontendPtyStatus = "disconnected" | "connecting" | "ready" | "error" | "exited";
 
@@ -83,22 +84,27 @@ export class FrontendPty {
       height: "100%",
     });
 
-    const fontFamily =
+    const userSettings = getSettingsSnapshot().terminal;
+    const cssFontFamily =
       typeof document !== "undefined"
         ? getComputedStyle(document.documentElement).getPropertyValue("--font-mono").trim()
         : "";
+    const fontFamily =
+      userSettings.fontFamily ||
+      cssFontFamily ||
+      'ui-monospace, SFMono-Regular, "JetBrains Mono", Menlo, monospace';
 
     this.terminal = new XTerm({
       cols: 120,
       rows: 32,
-      cursorBlink: true,
+      cursorBlink: userSettings.cursorBlink,
       cursorStyle: "block",
       cursorInactiveStyle: "outline",
-      fontFamily: fontFamily || 'ui-monospace, SFMono-Regular, "JetBrains Mono", Menlo, monospace',
-      fontSize: 13,
+      fontFamily,
+      fontSize: userSettings.fontSize,
       fontWeight: 400,
       fontWeightBold: 600,
-      scrollback: SCROLLBACK_LINES,
+      scrollback: userSettings.scrollback ?? SCROLLBACK_FALLBACK,
       convertEol: true,
       allowProposedApi: true,
       scrollOnUserInput: false,
@@ -108,10 +114,14 @@ export class FrontendPty {
     this.fitAddon = new FitAddon();
     this.terminal.loadAddon(this.fitAddon);
     this.terminal.open(this.ownedContainer);
-    try {
-      this.webgl = new WebglAddon();
-      this.terminal.loadAddon(this.webgl);
-    } catch {
+    if (userSettings.renderer !== "dom") {
+      try {
+        this.webgl = new WebglAddon();
+        this.terminal.loadAddon(this.webgl);
+      } catch {
+        this.webgl = null;
+      }
+    } else {
       this.webgl = null;
     }
 
@@ -269,6 +279,18 @@ export class FrontendPty {
     this.lastSentDims = { cols, rows };
   }
 
+  /** Refit the terminal to its container. No-op if the container is
+   *  detached (off-screen host) or the addon was disposed. */
+  refit(): void {
+    if (!this.fitAddon) return;
+    if (!this.ownedContainer.isConnected) return;
+    try {
+      this.fitAddon.fit();
+    } catch {
+      /* disposed terminal */
+    }
+  }
+
   /** Resize from outside the xterm DOM lifecycle. Used by
    *  PaneSizingContext to broadcast pane geometry to background
    *  sessions (their own xterm hasn't ResizeObserver-fired yet). */
@@ -378,6 +400,41 @@ export function applyThemeToAll(theme?: Partial<ITheme>): void {
     pty.terminal.options.theme = next;
   }
 }
+
+/** Apply terminal preferences (fontSize, fontFamily, cursorBlink) to
+ *  every live FrontendPty. `scrollback` and `renderer` aren't safely
+ *  mutable on a running terminal — they take effect on next session. */
+export function applyTerminalOptionsToAll(terminal: Settings["terminal"]): void {
+  const cssFontFamily =
+    typeof document !== "undefined"
+      ? getComputedStyle(document.documentElement).getPropertyValue("--font-mono").trim()
+      : "";
+  const fontFamily =
+    terminal.fontFamily ||
+    cssFontFamily ||
+    'ui-monospace, SFMono-Regular, "JetBrains Mono", Menlo, monospace';
+  for (const pty of FrontendPty.all) {
+    try {
+      pty.terminal.options.fontSize = terminal.fontSize;
+      pty.terminal.options.fontFamily = fontFamily;
+      pty.terminal.options.cursorBlink = terminal.cursorBlink;
+      pty.refit();
+    } catch {
+      /* disposed terminal — skip */
+    }
+  }
+}
+
+onSettingsChange((next, prev) => {
+  if (
+    next.terminal.fontSize === prev.terminal.fontSize &&
+    next.terminal.fontFamily === prev.terminal.fontFamily &&
+    next.terminal.cursorBlink === prev.terminal.cursorBlink
+  ) {
+    return;
+  }
+  applyTerminalOptionsToAll(next.terminal);
+});
 
 /** Dispose every live FrontendPty. Wired into the
  *  TerminalPoolProvider's `onCleanup`. */

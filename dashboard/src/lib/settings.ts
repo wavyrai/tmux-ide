@@ -27,6 +27,7 @@ export interface Settings {
   themeId: ThemeId;
   terminal: {
     fontSize: number;
+    fontFamily: string;
     scrollback: number;
     cursorBlink: boolean;
     renderer: "auto" | "webgl" | "dom";
@@ -53,7 +54,13 @@ export interface Settings {
 
 export const defaultSettings: Settings = {
   themeId: "dark",
-  terminal: { fontSize: 11, scrollback: 5000, cursorBlink: true, renderer: "auto" },
+  terminal: {
+    fontSize: 11,
+    fontFamily: "",
+    scrollback: 5000,
+    cursorBlink: true,
+    renderer: "auto",
+  },
   sounds: { onTaskComplete: false, onTaskError: false, onAgentIdle: false },
   general: {
     defaultProjectTab: "kanban",
@@ -111,6 +118,10 @@ function normalize(value: unknown): Settings {
     themeId: isThemeId(value.themeId) ? value.themeId : defaultSettings.themeId,
     terminal: {
       fontSize: clamp(terminal.fontSize, defaultSettings.terminal.fontSize, 8, 32),
+      fontFamily:
+        typeof terminal.fontFamily === "string"
+          ? terminal.fontFamily.trim()
+          : defaultSettings.terminal.fontFamily,
       scrollback: clamp(terminal.scrollback, defaultSettings.terminal.scrollback, 1000, 100_000),
       cursorBlink:
         typeof terminal.cursorBlink === "boolean"
@@ -187,11 +198,27 @@ const [settingsSignal, setSettingsSignal] = createSignal<Settings>(readPersisted
 
 if (typeof document !== "undefined") applyTheme(settingsSignal().themeId);
 
+type SettingsListener = (next: Settings, prev: Settings) => void;
+const listeners = new Set<SettingsListener>();
+
+export function onSettingsChange(listener: SettingsListener): () => void {
+  listeners.add(listener);
+  return () => listeners.delete(listener);
+}
+
 function write(next: Settings): void {
   const normalized = normalize(next);
+  const prev = settingsSignal();
   setSettingsSignal(normalized);
   persist(normalized);
   applyTheme(normalized.themeId);
+  for (const fn of listeners) {
+    try {
+      fn(normalized, prev);
+    } catch {
+      /* listener errors are isolated */
+    }
+  }
 }
 
 function patch(recipe: (current: Settings) => Settings): void {

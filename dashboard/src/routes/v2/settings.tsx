@@ -200,7 +200,20 @@ function TerminalPanel() {
           class="h-7 w-20 rounded-md border border-[var(--border)] bg-[var(--surface)] px-2 text-[12px] text-[var(--fg)] outline-none focus:border-[var(--accent)]"
         />
       </FieldRow>
-      <FieldRow label="Scrollback" hint="Lines retained in each terminal buffer.">
+      <FieldRow
+        label="Font family"
+        hint="Monospace stack for the terminal. Empty = dashboard default."
+      >
+        <input
+          type="text"
+          placeholder='ui-monospace, "JetBrains Mono", Menlo, monospace'
+          data-testid="settings-terminal-font-family"
+          value={settings().terminal.fontFamily}
+          onInput={(e) => setTerminal({ fontFamily: e.currentTarget.value })}
+          class="h-7 w-72 max-w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-2 font-mono text-[11px] text-[var(--fg)] outline-none focus:border-[var(--accent)]"
+        />
+      </FieldRow>
+      <FieldRow label="Scrollback" hint="Lines kept in each buffer. Takes effect on new sessions.">
         <input
           type="number"
           min={1000}
@@ -222,7 +235,10 @@ function TerminalPanel() {
           onChange={(value) => setTerminal({ cursorBlink: value })}
         />
       </FieldRow>
-      <FieldRow label="Renderer" hint="Auto picks WebGL on desktop, DOM on iOS Safari.">
+      <FieldRow
+        label="Renderer"
+        hint="Auto/WebGL accelerate; DOM disables WebGL. Applies to new sessions."
+      >
         <select
           data-testid="settings-terminal-renderer"
           value={settings().terminal.renderer}
