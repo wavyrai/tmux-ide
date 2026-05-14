@@ -19,7 +19,7 @@
 import { Pencil } from "lucide-solid";
 import { createMemo, onCleanup, Show } from "solid-js";
 import { modelRegistry } from "@/lib/monaco/model-registry";
-import { useBufferVersion } from "@/lib/monaco/use-model";
+import { useBufferVersion, useModelStatus } from "@/lib/monaco/use-model";
 import { buildMonacoModelPath, toDiskUri } from "@/lib/monaco/model-path";
 
 interface SvgRendererProps {
@@ -33,17 +33,22 @@ interface SvgRendererProps {
 
 export function SvgRenderer(props: SvgRendererProps) {
   const bufferUri = () => buildMonacoModelPath(props.modelRootPath, props.filePath);
+  const diskUri = () => toDiskUri(bufferUri());
   // Either the buffer (`file://`) or the disk mirror (`disk://`)
   // has the SVG source. Prefer the buffer because edits flow there
-  // first, fall back to disk for the read-only preview case.
+  // first, fall back to disk for the read-only preview case. Subscribe
+  // to both URIs' modelStatus so the memo re-runs when the disk model
+  // first lands (registerDisk is async after the click).
   const bufferVersion = useBufferVersion(bufferUri());
+  const bufferStatus = useModelStatus(bufferUri());
+  const diskStatus = useModelStatus(diskUri());
   const fileName = () => props.filePath.split("/").pop() ?? props.filePath;
 
   const svgUrl = createMemo<string>((prevUrl) => {
-    // Subscribe to the buffer version so the memo re-runs on edit.
     void bufferVersion();
-    const content =
-      modelRegistry.getValue(bufferUri()) ?? modelRegistry.getValue(toDiskUri(bufferUri())) ?? "";
+    void bufferStatus();
+    void diskStatus();
+    const content = modelRegistry.getValue(bufferUri()) ?? modelRegistry.getValue(diskUri()) ?? "";
     // Revoke the previous URL so we don't leak Blobs on every edit.
     if (prevUrl) URL.revokeObjectURL(prevUrl);
     if (!content) return "";

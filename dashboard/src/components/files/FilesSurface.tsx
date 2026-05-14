@@ -75,6 +75,7 @@ import { MergeConflictPanel } from "@/components/editor/MergeConflictPanel";
 import { TabStrip } from "@/components/editor/TabStrip";
 import { startFsWatchClient } from "@/lib/editor/fs-watch-client";
 import { consumePendingFileOpen, pendingFileOpen } from "@/lib/filesBroker";
+import { codeEditorPool } from "@/lib/monaco/code-pool";
 import { modelRegistry } from "@/lib/monaco/model-registry";
 import { buildMonacoModelPath, toDiskUri } from "@/lib/monaco/model-path";
 
@@ -187,6 +188,12 @@ export function FilesSurface(props: FilesSurfaceProps): JSX.Element {
 
   onMount(() => {
     void loadChildren("").finally(() => setRootLoading(false));
+    // Warm Monaco up-front. `registerDisk` (used by Markdown/SVG
+    // preview paths) blocks on `waitForMonaco`; without this, opening
+    // a `.md` before any text buffer leaves the renderer stuck on an
+    // empty `getValue()` because the disk model never finishes
+    // registering.
+    void codeEditorPool.init();
   });
 
   function toggleDir(path: string) {

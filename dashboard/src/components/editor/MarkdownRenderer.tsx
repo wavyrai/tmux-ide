@@ -17,7 +17,7 @@ import { Eye, Pencil } from "lucide-solid";
 import { createEffect, createMemo, createSignal, on, Show } from "solid-js";
 import { renderMarkdown } from "@tmux-ide/chat-solid";
 import { modelRegistry } from "@/lib/monaco/model-registry";
-import { useBufferVersion } from "@/lib/monaco/use-model";
+import { useBufferVersion, useModelStatus } from "@/lib/monaco/use-model";
 import { buildMonacoModelPath, toDiskUri } from "@/lib/monaco/model-path";
 import { activeShikiTheme, highlightCode } from "@/lib/syntax/shiki";
 import type { BundledLanguage } from "shiki";
@@ -39,15 +39,19 @@ type Mode = "preview" | "source";
 export function MarkdownRenderer(props: MarkdownRendererProps) {
   const [mode, setMode] = createSignal<Mode>("preview");
   const bufferUri = () => buildMonacoModelPath(props.modelRootPath, props.filePath);
+  const diskUri = () => toDiskUri(bufferUri());
   const bufferVersion = useBufferVersion(bufferUri());
+  // The disk model lands async after first click; reading
+  // `modelRegistry.getValue` is non-reactive, so we explicitly track
+  // both URIs' `modelStatus` to re-run when either flips to "ready".
+  const bufferStatus = useModelStatus(bufferUri());
+  const diskStatus = useModelStatus(diskUri());
 
   const source = createMemo<string>(() => {
-    // Subscribe to the buffer's version so the memo re-evaluates on
-    // every edit. The void read is enough — Solid tracks the call.
     void bufferVersion();
-    return (
-      modelRegistry.getValue(bufferUri()) ?? modelRegistry.getValue(toDiskUri(bufferUri())) ?? ""
-    );
+    void bufferStatus();
+    void diskStatus();
+    return modelRegistry.getValue(bufferUri()) ?? modelRegistry.getValue(diskUri()) ?? "";
   });
 
   const rawHtml = createMemo<string>(() => renderMarkdown(source()));
