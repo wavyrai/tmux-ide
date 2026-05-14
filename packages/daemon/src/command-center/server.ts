@@ -157,6 +157,7 @@ import { dispatchResearch, loadResearchState } from "../lib/research.ts";
 import { parseSearchQuery, resolveRipgrepPath, runSearch, type SearchFrame } from "./search.ts";
 import { executeReplace, ReplaceRequestZ } from "./search-replace.ts";
 import { serveDashboard } from "./static.ts";
+import { attachNotesRoutes } from "../notes/handlers.ts";
 import { getOrchestratorHealth, getPaneContentHashMetrics } from "../lib/orchestrator.ts";
 import { handleWsEventsConnection, broadcastInitOutput, broadcastInitError } from "./ws-events.ts";
 import { createActionDispatcher } from "./actions/dispatcher.ts";
@@ -3992,6 +3993,14 @@ export function createApp(options: CreateAppOptions = {}): Hono {
       }
       throw err;
     }
+  });
+
+  // Notes feature — per-project markdown scratchpad. See
+  // docs/feature-framework.md for the 7-file pattern this exemplifies.
+  attachNotesRoutes(app, {
+    resolveSession(name) {
+      return discoverSessions().find((s) => s.name === name) ?? null;
+    },
   });
 
   // Serve the Next.js static dashboard for all non-API routes

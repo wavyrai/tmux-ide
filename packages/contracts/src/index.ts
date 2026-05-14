@@ -28,3 +28,4 @@ export * from "./chat-thread.ts";
 export * from "./git.ts";
 export * from "./github.ts";
 export * from "./terminals.ts";
+export * from "./notes-contract.ts";

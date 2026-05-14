@@ -25,6 +25,36 @@ export interface ExplorerMountOptions extends BaseMountOptions {
   onOpenFile?: (path: string) => void;
 }
 
+/**
+ * Notes widget — per-project markdown scratchpad. Prop-driven: the
+ * host owns the current content + updatedAt (sourced from the
+ * daemon's GET /api/project/:name/notes) and pushes them via
+ * setOptions. Edits leave the widget through `onSave(content)` so
+ * the host issues PUT /api/project/:name/notes.
+ *
+ * The widget tracks "dirty" state internally — if the host pushes a
+ * fresher `content` while the user is editing, the widget keeps the
+ * user's draft and surfaces an "external change" indicator instead
+ * of clobbering it.
+ */
+export interface NotesMountOptions extends BaseMountOptions {
+  /** Latest server content; "" when no note has been written yet. */
+  content: string;
+  /** ISO timestamp of the last server-side write, or null. */
+  updatedAt: string | null;
+  /** Whether a save is in-flight in the host. */
+  saving?: boolean;
+  /** Last save error, or null. */
+  error?: string | null;
+  /** Fired when the user clicks Save (or presses Cmd/Ctrl+S). */
+  onSave?: (content: string) => void;
+}
+
+export interface NotesMountHandle {
+  unmount(): void;
+  setOptions(next: Partial<NotesMountOptions>): void;
+}
+
 export interface ExplorerMountHandle {
   unmount(): void;
   setOptions(next: Partial<ExplorerMountOptions>): void;

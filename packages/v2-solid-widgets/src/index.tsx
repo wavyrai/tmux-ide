@@ -16,6 +16,7 @@ import { PlansPanelView } from "./widgets/PlansPanel";
 import { PlansRailView } from "./widgets/PlansRail";
 import { SkillsViewView } from "./widgets/SkillsView";
 import { TasksViewView } from "./widgets/TasksView";
+import { NotesView } from "./widgets/Notes";
 import type {
   ActivityMountHandle,
   ActivityMountOptions,
@@ -45,6 +46,8 @@ import type {
   SkillsViewMountOptions,
   TasksViewMountHandle,
   TasksViewMountOptions,
+  NotesMountHandle,
+  NotesMountOptions,
 } from "./types";
 
 export type {
@@ -106,6 +109,8 @@ export type {
   TasksMilestoneSummary,
   TasksViewMountHandle,
   TasksViewMountOptions,
+  NotesMountHandle,
+  NotesMountOptions,
 } from "./types";
 
 /**
@@ -462,6 +467,34 @@ export function mountCommandPalette(
   const [options, setOpts] = createSignal(opts);
   container.classList.add("v2-solid-widget");
   const dispose = render(() => <CommandPaletteView options={options} />, container);
+
+  return {
+    unmount() {
+      dispose();
+      container.classList.remove("v2-solid-widget");
+    },
+    setOptions(next) {
+      setOpts((current) => ({ ...current, ...next }));
+    },
+  };
+}
+
+/**
+ * Mount the Notes widget — per-project markdown scratchpad backed by
+ * `.tmux-ide/notes.md`. Prop-driven: the host (NotesBridge in the
+ * dashboard) fetches the daemon's GET /api/project/:name/notes and
+ * pushes `{ content, updatedAt }` via setOptions; user edits leave
+ * the widget via `onSave(content)` so the host can PUT and
+ * re-broadcast. See docs/feature-framework.md for the worked 7-file
+ * pattern this exemplifies.
+ */
+export function mountNotes(
+  container: HTMLElement,
+  opts: NotesMountOptions,
+): NotesMountHandle {
+  const [options, setOpts] = createSignal(opts);
+  container.classList.add("v2-solid-widget");
+  const dispose = render(() => <NotesView options={options} />, container);
 
   return {
     unmount() {
