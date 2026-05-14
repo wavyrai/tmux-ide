@@ -34,8 +34,17 @@ context/
 # local task board
 .tasks/
 
+# local agent context (per-project skills + library); never ships to npm
+.tmux-ide/
+
 # Orchestrator worktrees
 .worktrees/
+
+# Stale per-goal screenshots and ad-hoc handoff notes — keep out of the public tree
+HANDOFF.md
+goal-*-working-state.gif
+goal-*-commit-readiness.md
+app-electron/
 
 # TypeScript build output
 dist/
