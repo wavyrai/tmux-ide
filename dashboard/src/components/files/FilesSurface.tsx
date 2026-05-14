@@ -38,8 +38,17 @@ import {
 } from "solid-js";
 import { Effect } from "effect";
 import { ChevronDown, ChevronRight, Folder, FolderOpen } from "lucide-solid";
+import { createVirtualizer } from "@tanstack/solid-virtual";
+import type { GitChangeStatus } from "@tmux-ide/contracts";
 import { getFileIcon } from "@/lib/editor/file-icon";
-import { fetchFilePreview, fetchProjectFiles, type ProjectFileNode } from "@/lib/api";
+import { fetchFilePreview, type ProjectFileNode } from "@/lib/api";
+import {
+  aggregateDirStatus,
+  buildGitStatusMap,
+  fetchFolderChildren,
+  fetchGitStatusForRail,
+  gitStatusTextClass,
+} from "@/lib/editor/files-rail";
 import { FileRenderer, getFileKind, type ManagedFile, type ManagedFileKind } from "@/lib/editor";
 import {
   acceptExternalChange,
@@ -131,10 +140,102 @@ export function FilesSurface(props: FilesSurfaceProps): JSX.Element {
   const [previewPath, setPreviewPath] = createSignal<string | null>(null);
   const [previewKind, setPreviewKind] = createSignal<ManagedFileKind | null>(null);
 
-  const [tree] = createResource(
+  // Lazy folder children — keyed by relative dir path. The empty
+  // string is the session root. Entries:
+  //   undefined → never requested
+  //   []        → loaded, empty
+  //   array     → loaded children (one level deep)
+  // Loading state is tracked separately via `loadingPaths`.
+  const [childrenByPath, setChildrenByPath] = createSignal<Record<string, ProjectFileNode[]>>({});
+  const [loadingPaths, setLoadingPaths] = createSignal<Set<string>>(new Set());
+  const [expanded, setExpanded] = createSignal<Set<string>>(new Set());
+  const [rootLoading, setRootLoading] = createSignal(true);
+  const [rootError, setRootError] = createSignal<string | null>(null);
+
+  // Coalesced git status keyed by relative path. Polled on mount;
+  // file-tree colors fall back to no-tint on non-git workspaces.
+  const [gitStatus] = createResource(
     () => props.projectName,
-    async (sessionName) => Effect.runPromise(fetchProjectFiles(sessionName)),
+    async (sessionName) =>
+      buildGitStatusMap(await Effect.runPromise(fetchGitStatusForRail(sessionName))),
   );
+
+  async function loadChildren(dirPath: string): Promise<void> {
+    if (childrenByPath()[dirPath] !== undefined) return;
+    if (loadingPaths().has(dirPath)) return;
+    setLoadingPaths((prev) => new Set(prev).add(dirPath));
+    try {
+      const children = await fetchFolderChildren(props.projectName, dirPath);
+      setChildrenByPath((prev) => ({ ...prev, [dirPath]: children }));
+    } catch (err) {
+      if (dirPath === "") {
+        setRootError(err instanceof Error ? err.message : String(err));
+      }
+    } finally {
+      setLoadingPaths((prev) => {
+        const next = new Set(prev);
+        next.delete(dirPath);
+        return next;
+      });
+    }
+  }
+
+  onMount(() => {
+    void loadChildren("").finally(() => setRootLoading(false));
+  });
+
+  function toggleDir(path: string) {
+    const wasExpanded = expanded().has(path);
+    if (!wasExpanded) {
+      setExpanded((prev) => {
+        const next = new Set(prev);
+        next.add(path);
+        return next;
+      });
+      if (childrenByPath()[path] === undefined) {
+        void loadChildren(path);
+      }
+    } else {
+      setExpanded((prev) => {
+        const next = new Set(prev);
+        next.delete(path);
+        return next;
+      });
+    }
+  }
+
+  interface FlatRow {
+    node: ProjectFileNode;
+    depth: number;
+    expanded: boolean;
+    loading: boolean;
+  }
+
+  // Flatten the visible tree depth-first. Recurses only into directories
+  // that are in the expanded set AND have loaded children — collapsed or
+  // not-yet-loaded directories appear as a single row.
+  const flatRows = createMemo<FlatRow[]>(() => {
+    const out: FlatRow[] = [];
+    const expandedSet = expanded();
+    const loadingSet = loadingPaths();
+    const cache = childrenByPath();
+    function walk(parentPath: string, depth: number) {
+      const list = cache[parentPath];
+      if (!list) return;
+      for (const node of list) {
+        const isExpanded = node.isDirectory && expandedSet.has(node.path);
+        out.push({
+          node,
+          depth,
+          expanded: isExpanded,
+          loading: node.isDirectory && loadingSet.has(node.path),
+        });
+        if (isExpanded) walk(node.path, depth + 1);
+      }
+    }
+    walk("", 0);
+    return out;
+  });
 
   // Track disk URIs registered for non-text kinds (markdown / svg
   // need the registry for content reads; image / binary skip it).
@@ -271,29 +372,39 @@ export function FilesSurface(props: FilesSurfaceProps): JSX.Element {
     <div data-testid="v2-files-surface" class="flex h-full min-h-0 w-full flex-row">
       <aside
         data-testid="v2-files-explorer"
-        class="flex w-64 shrink-0 flex-col overflow-y-auto border-r border-[var(--border)] bg-[var(--bg-strong)] text-[12px]"
+        class="flex w-64 shrink-0 flex-col border-r border-[var(--border)] bg-[var(--bg-strong)] text-[12px]"
       >
         <div class="flex h-7 shrink-0 items-center gap-2 border-b border-[var(--border)] px-3 text-[10px] uppercase tracking-wider text-[var(--dim)]">
           Files
         </div>
         <Show
-          when={!tree.loading}
+          when={!rootLoading()}
           fallback={<div class="px-3 py-2 text-[11px] text-[var(--dim)]">loading…</div>}
         >
           <Show
-            when={(tree()?.tree ?? []).length > 0}
+            when={!rootError()}
             fallback={
-              <div data-testid="v2-files-empty" class="px-3 py-2 text-[11px] text-[var(--dim)]">
-                No files
+              <div class="px-3 py-2 text-[11px] text-[var(--red-foreground,var(--red))]">
+                {rootError()}
               </div>
             }
           >
-            <FileTree
-              nodes={tree()?.tree ?? []}
-              depth={0}
-              activePath={railSelectedPath()}
-              onPick={openFile}
-            />
+            <Show
+              when={flatRows().length > 0}
+              fallback={
+                <div data-testid="v2-files-empty" class="px-3 py-2 text-[11px] text-[var(--dim)]">
+                  No files
+                </div>
+              }
+            >
+              <FileRail
+                rows={flatRows()}
+                activePath={railSelectedPath()}
+                statusMap={gitStatus() ?? new Map<string, GitChangeStatus>()}
+                onPick={openFile}
+                onToggleDir={toggleDir}
+              />
+            </Show>
           </Show>
         </Show>
       </aside>
@@ -519,93 +630,146 @@ function ExternalChangeBanner(props: {
   );
 }
 
-interface FileTreeProps {
-  nodes: ProjectFileNode[];
+interface FlatRailRow {
+  node: ProjectFileNode;
   depth: number;
-  activePath: string | null;
-  onPick: (path: string) => void;
+  expanded: boolean;
+  loading: boolean;
 }
 
-function FileTree(props: FileTreeProps) {
+interface FileRailProps {
+  rows: FlatRailRow[];
+  activePath: string | null;
+  statusMap: Map<string, GitChangeStatus>;
+  onPick: (path: string) => void;
+  onToggleDir: (path: string) => void;
+}
+
+const ROW_HEIGHT = 24;
+const OVERSCAN = 10;
+
+function FileRail(props: FileRailProps) {
+  const [scrollEl, setScrollEl] = createSignal<HTMLDivElement | null>(null);
+
+  const virtualizer = createVirtualizer({
+    get count() {
+      return props.rows.length;
+    },
+    getScrollElement: () => scrollEl(),
+    estimateSize: () => ROW_HEIGHT,
+    overscan: OVERSCAN,
+  });
+
   return (
-    <ul class="m-0 list-none p-0">
-      <For each={props.nodes}>
-        {(node) => (
-          <FileTreeRow
-            node={node}
-            depth={props.depth}
-            activePath={props.activePath}
-            onPick={props.onPick}
-          />
-        )}
-      </For>
-    </ul>
+    <div
+      ref={setScrollEl}
+      data-testid="v2-files-rail-scroll"
+      class="relative min-h-0 flex-1 overflow-y-auto"
+      style={{ contain: "strict" }}
+    >
+      <div
+        data-testid="v2-files-rail-spacer"
+        style={{
+          height: `${virtualizer.getTotalSize()}px`,
+          width: "100%",
+          position: "relative",
+        }}
+      >
+        <For each={virtualizer.getVirtualItems()}>
+          {(vItem) => {
+            const row = () => props.rows[vItem.index]!;
+            return (
+              <div
+                data-row-index={vItem.index}
+                style={{
+                  position: "absolute",
+                  top: "0",
+                  left: "0",
+                  width: "100%",
+                  height: `${vItem.size}px`,
+                  transform: `translateY(${vItem.start}px)`,
+                }}
+              >
+                <FileRailRow
+                  row={row()}
+                  activePath={props.activePath}
+                  statusMap={props.statusMap}
+                  onPick={props.onPick}
+                  onToggleDir={props.onToggleDir}
+                />
+              </div>
+            );
+          }}
+        </For>
+      </div>
+    </div>
   );
 }
 
-function FileTreeRow(props: {
-  node: ProjectFileNode;
-  depth: number;
+function FileRailRow(props: {
+  row: FlatRailRow;
   activePath: string | null;
+  statusMap: Map<string, GitChangeStatus>;
   onPick: (path: string) => void;
+  onToggleDir: (path: string) => void;
 }) {
-  const [expanded, setExpanded] = createSignal(props.depth === 0);
-  const isActive = () => props.activePath === props.node.path;
-  const indent = () => `${0.5 + props.depth * 0.75}rem`;
+  const node = () => props.row.node;
+  const isActive = () => props.activePath === node().path;
+  const indent = () => `${0.5 + props.row.depth * 0.75}rem`;
+  const status = () => {
+    if (node().isDirectory) return aggregateDirStatus(node().path, props.statusMap);
+    return props.statusMap.get(node().path);
+  };
+  const statusClass = () => gitStatusTextClass(status());
 
   return (
-    <li>
-      <Show
-        when={props.node.isDirectory}
-        fallback={
-          <button
-            type="button"
-            data-testid="v2-files-row"
-            data-file-path={props.node.path}
-            data-active={isActive() ? "true" : undefined}
-            onClick={() => props.onPick(props.node.path)}
-            class={
-              "flex h-6 w-full items-center gap-1 px-1 text-left text-[12px] " +
-              (isActive()
-                ? "bg-[var(--surface-active)] text-[var(--accent)]"
-                : "text-[var(--fg-secondary)] hover:bg-[var(--surface-hover)] hover:text-[var(--fg)]")
-            }
-            style={{ "padding-left": indent() }}
-          >
-            {(() => {
-              const Icon = getFileIcon(props.node.name);
-              return <Icon class="h-3 w-3 shrink-0 opacity-60" />;
-            })()}
-            <span class="truncate">{props.node.name}</span>
-          </button>
-        }
-      >
+    <Show
+      when={node().isDirectory}
+      fallback={
         <button
           type="button"
-          data-testid="v2-files-row-dir"
-          data-dir-path={props.node.path}
-          data-expanded={expanded() ? "true" : undefined}
-          onClick={() => setExpanded((v) => !v)}
-          class="flex h-6 w-full items-center gap-1 px-1 text-left text-[12px] text-[var(--fg-secondary)] hover:bg-[var(--surface-hover)] hover:text-[var(--fg)]"
+          data-testid="v2-files-row"
+          data-file-path={node().path}
+          data-active={isActive() ? "true" : undefined}
+          data-git-status={status() ?? undefined}
+          onClick={() => props.onPick(node().path)}
+          class={
+            "flex h-6 w-full items-center gap-1 px-1 text-left text-[12px] " +
+            (isActive()
+              ? "bg-[var(--surface-active)] text-[var(--accent)]"
+              : "text-[var(--fg-secondary)] hover:bg-[var(--surface-hover)] hover:text-[var(--fg)]")
+          }
           style={{ "padding-left": indent() }}
         >
-          <Show when={expanded()} fallback={<ChevronRight class="h-3 w-3 shrink-0" />}>
-            <ChevronDown class="h-3 w-3 shrink-0" />
-          </Show>
-          <Show when={expanded()} fallback={<Folder class="h-3 w-3 shrink-0 opacity-70" />}>
-            <FolderOpen class="h-3 w-3 shrink-0 opacity-70" />
-          </Show>
-          <span class="truncate">{props.node.name}</span>
+          {(() => {
+            const Icon = getFileIcon(node().name);
+            return <Icon class="h-3 w-3 shrink-0 opacity-60" />;
+          })()}
+          <span class={"truncate " + (statusClass() ?? "")}>{node().name}</span>
         </button>
-        <Show when={expanded() && props.node.children}>
-          <FileTree
-            nodes={props.node.children ?? []}
-            depth={props.depth + 1}
-            activePath={props.activePath}
-            onPick={props.onPick}
-          />
+      }
+    >
+      <button
+        type="button"
+        data-testid="v2-files-row-dir"
+        data-dir-path={node().path}
+        data-expanded={props.row.expanded ? "true" : undefined}
+        data-git-status={status() ?? undefined}
+        onClick={() => props.onToggleDir(node().path)}
+        class="flex h-6 w-full items-center gap-1 px-1 text-left text-[12px] text-[var(--fg-secondary)] hover:bg-[var(--surface-hover)] hover:text-[var(--fg)]"
+        style={{ "padding-left": indent() }}
+      >
+        <Show when={props.row.expanded} fallback={<ChevronRight class="h-3 w-3 shrink-0" />}>
+          <ChevronDown class="h-3 w-3 shrink-0" />
         </Show>
-      </Show>
-    </li>
+        <Show when={props.row.expanded} fallback={<Folder class="h-3 w-3 shrink-0 opacity-70" />}>
+          <FolderOpen class="h-3 w-3 shrink-0 opacity-70" />
+        </Show>
+        <span class={"truncate " + (statusClass() ?? "")}>{node().name}</span>
+        <Show when={props.row.loading}>
+          <span class="ml-1 text-[10px] text-[var(--dim)]">…</span>
+        </Show>
+      </button>
+    </Show>
   );
 }

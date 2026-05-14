@@ -1397,10 +1397,7 @@ export function createApp(options: CreateAppOptions = {}): Hono {
     if (!session) {
       return c.json({ error: "Session not found" }, 404);
     }
-    const MAX_DEPTH = 5;
-    const MAX_NODES = 5000;
     const ig = createIgnoreFilter(session.dir);
-    let nodeBudget = MAX_NODES;
     interface FileNode {
       path: string;
       name: string;
@@ -1408,6 +1405,43 @@ export function createApp(options: CreateAppOptions = {}): Hono {
       children?: FileNode[];
       truncated?: true;
     }
+
+    // `?path=<relpath>` — non-recursive single-folder listing for
+    // lazy-loaded file trees. Returns just the immediate children of
+    // the requested directory. Sandboxed via realpath; symlinks that
+    // escape the session root are rejected. An empty/absent `path`
+    // falls through to the legacy recursive walk below.
+    const pathParam = c.req.query("path");
+    if (pathParam !== undefined) {
+      const relPath = pathParam.replace(/^\/+/g, "");
+      const requested = relPath === "" ? session.dir : pathResolve(session.dir, relPath);
+      let resolvedRoot: string;
+      let resolvedTarget: string;
+      try {
+        resolvedRoot = realpathSync(session.dir);
+      } catch {
+        return c.json({ error: "Session directory not accessible" }, 500);
+      }
+      try {
+        resolvedTarget = realpathSync(requested);
+      } catch {
+        return c.json({ tree: [], truncated: false });
+      }
+      if (!resolvedTarget.startsWith(resolvedRoot + "/") && resolvedTarget !== resolvedRoot) {
+        return c.json({ error: "Path outside session" }, 403);
+      }
+      const entries = readDirectory(resolvedTarget, session.dir, ig, false);
+      const children: FileNode[] = entries.map((e) => ({
+        path: e.path,
+        name: e.name,
+        isDirectory: e.isDir,
+      }));
+      return c.json({ tree: children, truncated: false });
+    }
+
+    const MAX_DEPTH = 5;
+    const MAX_NODES = 5000;
+    let nodeBudget = MAX_NODES;
     const walk = (dir: string, depth: number): FileNode[] => {
       if (nodeBudget <= 0) return [];
       const entries = readDirectory(dir, session.dir, ig, false);
