@@ -1,4 +1,13 @@
-import { createEffect, createMemo, createSignal, For, Show, type Accessor } from "solid-js";
+import {
+  createEffect,
+  createMemo,
+  createSignal,
+  For,
+  on,
+  onCleanup,
+  Show,
+  type Accessor,
+} from "solid-js";
 import { ComposerCommandMenu } from "./ComposerCommandMenu";
 import { ComposerMentionMenu } from "./ComposerMentionMenu";
 import { searchSlashCommands } from "../lib/slashCommandSearch";
@@ -9,7 +18,13 @@ import {
   type MentionCandidate,
   type MentionSearchResult,
 } from "../lib/mentionSearch";
-import { clearDraft, loadDraft, saveDraft } from "../lib/composerDraftStore";
+import {
+  clearDraft,
+  loadDraft,
+  loadDraftAttachments,
+  saveDraft,
+  subscribeDraft,
+} from "../lib/composerDraftStore";
 import type {
   AvailableCommand,
   ComposerAttachment,
@@ -20,14 +35,8 @@ import { AttachmentChip } from "./AttachmentChip";
 import { AttachmentCarousel } from "./AttachmentCarousel";
 import { AttachmentPicker } from "./AttachmentPicker";
 import { ComposerBannerStack, type ComposerBannerItem } from "./ComposerBannerStack";
-import {
-  ComposerPrimaryActions,
-  type PendingActionState,
-} from "./ComposerPrimaryActions";
-import {
-  ComposerPendingApprovalPanel,
-  type PendingApproval,
-} from "./ComposerPendingApprovalPanel";
+import { ComposerPrimaryActions, type PendingActionState } from "./ComposerPrimaryActions";
+import { ComposerPendingApprovalPanel, type PendingApproval } from "./ComposerPendingApprovalPanel";
 import {
   ComposerPendingApprovalActions,
   type ProviderApprovalDecision,
@@ -43,6 +52,7 @@ import {
   type ProviderInteractionMode,
   type RuntimeMode,
 } from "./CompactComposerControlsMenu";
+import { ComposerFooterStrip } from "./ComposerFooterStrip";
 import type { TerminalContextDraft } from "../lib/terminalContext";
 import type { JSX } from "solid-js";
 
@@ -160,6 +170,18 @@ export function ChatComposer(props: {
    * mode / runtime / plan-sidebar entries.
    */
   showCompactControls?: Accessor<boolean>;
+  /**
+   * Opt into the responsive footer: when the form is wide enough,
+   * render the inline `ComposerFooterStrip`; otherwise collapse to
+   * the `CompactComposerControlsMenu` popover. Defaults to the
+   * single-popover behavior when omitted — back-compat for hosts
+   * that wired `showCompactControls` explicitly.
+   *
+   * The compactness threshold defaults to 560px (form's measured
+   * width). Hosts can pin the chrome via `showCompactControls`,
+   * which always wins regardless of width.
+   */
+  useResponsiveFooter?: Accessor<boolean>;
   interactionMode?: Accessor<ProviderInteractionMode>;
   runtimeMode?: Accessor<RuntimeMode>;
   activePlan?: Accessor<boolean>;
@@ -231,8 +253,12 @@ export function ChatComposer(props: {
     setMentionHighlight(0);
   });
 
-  // Per-thread draft persistence: restore on thread switch, clear local
-  // state when threadId goes null. Skips during prefill (handled below).
+  // Per-thread draft persistence: restore on thread switch, clear
+  // local state when threadId goes null. Skips during prefill
+  // (handled below). When a draft has persisted file / terminal
+  // attachments, re-stage them via the host's `onAddAttachment` hook
+  // so the chip strip rebuilds across reloads. Image attachments
+  // are intentionally skipped (data URLs too heavy for localStorage).
   createEffect(() => {
     const id = props.threadId?.() ?? null;
     if (!id) {
@@ -247,14 +273,45 @@ export function ChatComposer(props: {
     setHiddenSlash(null);
     setHiddenMention(null);
     setTextareaCaret(draft.length);
+    const persistedAttachments = loadDraftAttachments(id);
+    if (persistedAttachments.length > 0 && props.attachments().length === 0) {
+      for (const attachment of persistedAttachments) {
+        props.onAddAttachment(attachment);
+      }
+    }
   });
 
-  // Save keystrokes to the per-thread draft. The store debounces writes
-  // internally so this is cheap to fire on every value change.
+  // Cross-tab sync: when another browser tab updates this thread's
+  // draft, adopt the new value mid-typing. The store's storage-event
+  // listener fans out via `subscribeDraft`; we install the watcher
+  // per-thread so sibling threads' updates don't trample the local
+  // input. The subscription tears down on thread switch via
+  // `onCleanup` inside the `on()` callback.
+  createEffect(
+    on(
+      () => props.threadId?.() ?? null,
+      (id) => {
+        if (!id) return;
+        const unsubscribe = subscribeDraft(id, (entry) => {
+          const incoming = entry?.prompt ?? "";
+          // Don't trample local edits when the remote tab is simply
+          // mirroring what we just typed.
+          if (incoming === value()) return;
+          setValue(incoming);
+          setTextareaCaret(incoming.length);
+        });
+        onCleanup(unsubscribe);
+      },
+    ),
+  );
+
+  // Save keystrokes (+ the live attachment list) to the per-thread
+  // draft. The store debounces writes internally so this is cheap
+  // to fire on every value change.
   createEffect(() => {
     const id = props.threadId?.() ?? null;
     if (!id) return;
-    saveDraft(id, value());
+    saveDraft(id, value(), props.attachments());
   });
 
   createEffect(() => {
@@ -413,8 +470,50 @@ export function ChatComposer(props: {
   const bannerItemsAccessor = (): ReadonlyArray<ComposerBannerItem> =>
     props.bannerItems ? props.bannerItems() : [];
 
+  // Responsive footer measurement. When `useResponsiveFooter` is
+  // on, a ResizeObserver tracks the form's measured width and the
+  // composer swaps between the inline `ComposerFooterStrip` and
+  // the `CompactComposerControlsMenu` popover. Threshold matches the
+  // upstream measurement: below 560px → compact. Hosts that pin the
+  // chrome via `showCompactControls` always win.
+  const FOOTER_COMPACT_THRESHOLD_PX = 560;
+  const [formWidth, setFormWidth] = createSignal<number | null>(null);
+  function attachFormResizeObserver(form: HTMLFormElement): void {
+    if (typeof ResizeObserver === "undefined") {
+      setFormWidth(form.clientWidth);
+      return;
+    }
+    setFormWidth(form.clientWidth);
+    const ro = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        const width = entry.contentRect.width;
+        setFormWidth((previous) => (previous === width ? previous : width));
+      }
+    });
+    ro.observe(form);
+    onCleanup(() => ro.disconnect());
+  }
+  const responsiveFooterEnabled = (): boolean => props.useResponsiveFooter?.() ?? false;
+  const isFooterCompact = createMemo<boolean>(() => {
+    if (props.showCompactControls?.() === true) return true;
+    if (!responsiveFooterEnabled()) return false;
+    const width = formWidth();
+    if (width === null) return false;
+    return width < FOOTER_COMPACT_THRESHOLD_PX;
+  });
+  const showInlineFooter = createMemo<boolean>(
+    () => responsiveFooterEnabled() && !isFooterCompact(),
+  );
+  const showCompactMenu = createMemo<boolean>(() => {
+    if (props.showCompactControls?.() === true) return true;
+    if (!responsiveFooterEnabled()) return false;
+    return isFooterCompact();
+  });
+
   return (
     <form
+      ref={attachFormResizeObserver}
+      data-footer-compact={isFooterCompact() ? "true" : "false"}
       class="flex-shrink-0 border-t border-border-weak bg-bg p-3"
       onSubmit={(event) => {
         event.preventDefault();
@@ -541,7 +640,7 @@ export function ChatComposer(props: {
             onAdd={props.onAddAttachment}
             onClose={() => setPickerOpen(false)}
           />
-          <Show when={props.showCompactControls?.() ?? false}>
+          <Show when={showCompactMenu()}>
             <CompactComposerControlsMenu
               activePlan={() => props.activePlan?.() ?? false}
               interactionMode={() => props.interactionMode?.() ?? "default"}
@@ -574,6 +673,24 @@ export function ChatComposer(props: {
           />
         </div>
       </div>
+      <Show when={showInlineFooter()}>
+        <div
+          data-testid="composer-footer-row"
+          class="mt-2 flex flex-wrap items-center gap-1"
+        >
+          <ComposerFooterStrip
+            activePlan={() => props.activePlan?.() ?? false}
+            interactionMode={() => props.interactionMode?.() ?? "default"}
+            planSidebarLabel={() => props.planSidebarLabel?.() ?? "plan"}
+            planSidebarOpen={() => props.planSidebarOpen?.() ?? false}
+            runtimeMode={() => props.runtimeMode?.() ?? "approval-required"}
+            showInteractionModeToggle={() => props.showInteractionModeToggle?.() ?? true}
+            onToggleInteractionMode={() => props.onToggleInteractionMode?.()}
+            onTogglePlanSidebar={() => props.onTogglePlanSidebar?.()}
+            onRuntimeModeChange={(mode) => props.onRuntimeModeChange?.(mode)}
+          />
+        </div>
+      </Show>
     </form>
   );
 }
