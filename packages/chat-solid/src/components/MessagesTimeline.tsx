@@ -20,6 +20,7 @@
  */
 
 import { createMemo, createSignal, For, Show, type Accessor, type JSX } from "solid-js";
+import { createVirtualizer } from "@tanstack/solid-virtual";
 import { useAutoScroll } from "../hooks/useAutoScroll";
 import { deriveChangedFiles } from "../lib/changedFiles";
 import { collectImageBlocks, previewAt } from "../lib/imageBlocks";
@@ -68,6 +69,20 @@ export function MessagesTimeline(props: {
   const terminalAssistantIds = createMemo(() => deriveTerminalAssistantMessageIds(props.rows()));
   useAutoScroll(container, sentinel, followSignal);
 
+  // Variable-height virtualizer: each row reports its real size via
+  // `measureElement` (the virtualizer wires a ResizeObserver per row so
+  // streaming growth re-measures automatically). The estimate is the
+  // average IDE chat row at first paint; the cache fills in real sizes
+  // as rows enter the viewport.
+  const virtualizer = createVirtualizer({
+    get count() {
+      return props.rows().length;
+    },
+    getScrollElement: () => container() ?? null,
+    estimateSize: () => 90,
+    overscan: 4,
+  });
+
   // Single dialog mount hoisted to the timeline so user / assistant
   // / tool-call image clicks all open the same overlay. Closing seeds
   // `null` back into the signal so `<ExpandedImageDialog>` unmounts.
@@ -90,23 +105,58 @@ export function MessagesTimeline(props: {
           ref={setContainer}
           data-testid="messages-timeline"
           class="min-h-0 flex-1 overflow-auto bg-[var(--bg)]"
+          style={{ position: "relative" }}
         >
-          <div class="mx-auto flex w-full max-w-3xl flex-col px-4 py-5">
-            <ChangedFilesTree files={changedFiles} />
-            <For each={props.rows()}>
-              {(row) => (
-                <TimelineRow
-                  row={row}
-                  providerName={props.providerName}
-                  cwd={props.cwd}
-                  onOpenFile={props.onOpenFile}
-                  onSendPlanRequest={props.onSendPlanRequest}
-                  isTerminalAssistant={(id) => terminalAssistantIds().has(id)}
-                />
-              )}
+          <Show when={changedFiles().length > 0}>
+            <div class="mx-auto w-full max-w-3xl px-4 pt-5">
+              <ChangedFilesTree files={changedFiles} />
+            </div>
+          </Show>
+          <div
+            data-testid="messages-timeline-spacer"
+            style={{
+              height: `${virtualizer.getTotalSize()}px`,
+              width: "100%",
+              position: "relative",
+            }}
+          >
+            <For each={virtualizer.getVirtualItems()}>
+              {(vItem) => {
+                // Per-row memo keyed on `rowSignature`: when a sibling
+                // row streams and a new `rows()` array is produced,
+                // unchanged rows keep their previous reference here so
+                // the TimelineRow subtree skips re-derivation.
+                const row = createMemo(() => props.rows()[vItem.index]!, undefined, {
+                  equals: (a, b) => !!a && !!b && rowSignature(a) === rowSignature(b),
+                });
+                return (
+                  <div
+                    data-index={vItem.index}
+                    ref={(el) => virtualizer.measureElement(el)}
+                    style={{
+                      position: "absolute",
+                      top: "0",
+                      left: "0",
+                      width: "100%",
+                      transform: `translateY(${vItem.start}px)`,
+                    }}
+                  >
+                    <div class="mx-auto flex w-full max-w-3xl flex-col px-4">
+                      <TimelineRow
+                        row={row()}
+                        providerName={props.providerName}
+                        cwd={props.cwd}
+                        onOpenFile={props.onOpenFile}
+                        onSendPlanRequest={props.onSendPlanRequest}
+                        isTerminalAssistant={(id) => terminalAssistantIds().has(id)}
+                      />
+                    </div>
+                  </div>
+                );
+              }}
             </For>
-            <div ref={setSentinel} />
           </div>
+          <div ref={setSentinel} />
         </div>
       </Show>
       <ExpandedImageDialog preview={expandedPreview} onClose={() => setExpandedPreview(null)} />

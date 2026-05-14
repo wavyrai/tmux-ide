@@ -21,6 +21,7 @@
   },
   "dependencies": {
     "@kobalte/core": "^0.13.11",
+    "@tanstack/solid-virtual": "^3.13.24",
     "@types/dompurify": "^3.2.0",
     "dompurify": "^3.4.2",
     "marked": "^18.0.3",

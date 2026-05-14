@@ -5,6 +5,7 @@ export default defineConfig({
   plugins: [solid()],
   test: {
     environment: "happy-dom",
+    setupFiles: ["./__tests__/setup.ts"],
     coverage: {
       provider: "v8",
       reporter: ["text", "html", "json-summary"],

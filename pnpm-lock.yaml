@@ -270,6 +270,9 @@ importers:
       '@kobalte/core':
         specifier: ^0.13.11
         version: 0.13.11(solid-js@1.9.11)
+      '@tanstack/solid-virtual':
+        specifier: ^3.13.24
+        version: 3.13.24(solid-js@1.9.11)
       '@types/dompurify':
         specifier: ^3.2.0
         version: 3.2.0
