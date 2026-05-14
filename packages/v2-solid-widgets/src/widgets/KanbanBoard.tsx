@@ -25,7 +25,8 @@
  *   - data-testid="kanban-filter-clear"
  */
 
-import { createMemo, createSignal, For, Show } from "solid-js";
+import { createMemo, createSignal, For, Show, type JSX } from "solid-js";
+import { createVirtualizer } from "@tanstack/solid-virtual";
 import type {
   KanbanBoardMountOptions,
   KanbanGroupBy,
@@ -399,145 +400,215 @@ export function KanbanBoardView(props: KanbanBoardProps) {
                   {(tasksByColumn().get(col.id) ?? []).length}
                 </span>
               </header>
-              <div
-                data-testid={`kanban-column-body-${col.id}`}
-                style={{
-                  flex: "1 1 0%",
-                  "min-height": "0",
-                  "overflow-y": "auto",
-                  padding: "6px",
-                  display: "flex",
-                  "flex-direction": "column",
-                  gap: "4px",
-                }}
-              >
-                <For
-                  each={tasksByColumn().get(col.id) ?? []}
-                  fallback={
-                    <div
-                      data-empty-state
-                      style={{
-                        color: "var(--dim)",
-                        "font-size": "10px",
-                        padding: "10px 4px",
-                        "text-align": "center",
-                      }}
-                    >
-                      —
-                    </div>
-                  }
-                >
-                  {(task) => (
-                    <article
-                      data-testid={`task-card-${task.id}`}
-                      data-task-id={task.id}
-                      data-task-status={task.status}
-                      data-task-priority={`P${task.priority}`}
-                      onClick={(e) => {
-                        // ignore clicks on the status dot (handled below)
-                        const target = e.target as HTMLElement | null;
-                        if (target?.closest("[data-status-dot]")) return;
-                        props.options().onTaskClick?.(task.id);
-                      }}
-                      style={{
-                        cursor: "pointer",
-                        "background-color": "var(--bg)",
-                        border: "1px solid var(--border-weak, var(--border))",
-                        "border-radius": "4px",
-                        padding: `${rowPadY()} 8px`,
-                        display: "flex",
-                        "flex-direction": "column",
-                        gap: "3px",
-                      }}
-                    >
-                      <header style={{ display: "flex", "align-items": "center", gap: "6px" }}>
-                        <button
-                          type="button"
-                          data-testid={`task-card-status-${task.id}`}
-                          data-status-dot
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            cycleStatus(task);
-                          }}
-                          aria-label={`Cycle status from ${STATUS_LABEL[task.status] ?? task.status}`}
-                          title={STATUS_LABEL[task.status] ?? task.status}
-                          style={{
-                            display: "inline-block",
-                            width: "10px",
-                            height: "10px",
-                            "border-radius": "50%",
-                            "background-color": STATUS_COLOR[task.status] ?? "var(--dim)",
-                            border: "none",
-                            padding: "0",
-                            cursor: "pointer",
-                          }}
-                        />
-                        <span
-                          style={{
-                            color: "var(--fg-soft)",
-                            "font-size": "10px",
-                            "font-variant-numeric": "tabular-nums",
-                          }}
-                        >
-                          {task.id}
-                        </span>
-                        <span
-                          aria-label={`P${task.priority}`}
-                          title={`Priority ${task.priority}`}
-                          style={{
-                            "margin-left": "auto",
-                            display: "inline-block",
-                            width: "7px",
-                            height: "7px",
-                            "border-radius": "50%",
-                            "background-color": PRIORITY_COLOR[task.priority] ?? "var(--dim)",
-                          }}
-                        />
-                      </header>
-                      <div
-                        style={{
-                          color: "var(--fg)",
-                          "font-size": "12px",
-                          "line-height": "1.3",
-                          "white-space": "nowrap",
-                          overflow: "hidden",
-                          "text-overflow": "ellipsis",
-                        }}
-                        title={task.title}
-                      >
-                        {task.title}
-                      </div>
-                      <Show when={task.assignee || (task.depends_on && task.depends_on.length > 0)}>
-                        <footer
-                          style={{
-                            display: "flex",
-                            "align-items": "center",
-                            gap: "6px",
-                            color: "var(--fg-soft)",
-                            "font-size": "10px",
-                          }}
-                        >
-                          <Show when={task.assignee}>
-                            <span>@{task.assignee}</span>
-                          </Show>
-                          <Show when={task.depends_on && task.depends_on.length > 0}>
-                            <span
-                              title={(task.depends_on ?? []).join(", ")}
-                              style={{ "margin-left": "auto" }}
-                            >
-                              ⛓ {task.depends_on!.length}
-                            </span>
-                          </Show>
-                        </footer>
-                      </Show>
-                    </article>
-                  )}
-                </For>
-              </div>
+              <KanbanColumnBody
+                columnId={col.id}
+                tasks={tasksByColumn().get(col.id) ?? []}
+                rowPadY={rowPadY()}
+                onTaskClick={(id) => props.options().onTaskClick?.(id)}
+                onCycleStatus={cycleStatus}
+              />
             </section>
           )}
         </For>
       </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------
+// KanbanColumnBody — one virtualizer per column so a board with 4
+// columns × 1000 cards each renders only the visible viewport window
+// per column, not 4000 articles.
+// ---------------------------------------------------------------------
+
+interface KanbanColumnBodyProps {
+  columnId: string;
+  tasks: KanbanTask[];
+  rowPadY: string;
+  onTaskClick: (id: string) => void;
+  onCycleStatus: (task: KanbanTask) => void;
+}
+
+function KanbanColumnBody(props: KanbanColumnBodyProps): JSX.Element {
+  const [scrollEl, setScrollEl] = createSignal<HTMLDivElement | null>(null);
+  const virtualizer = createVirtualizer({
+    get count() {
+      return props.tasks.length;
+    },
+    getScrollElement: () => scrollEl(),
+    // Compact rows ≈ 56px, comfortable rows ≈ 72px. measureElement
+    // overwrites with the real height once a card paints.
+    estimateSize: () => 64,
+    overscan: 4,
+    getItemKey: (i) => props.tasks[i]?.id ?? i,
+  });
+
+  return (
+    <div
+      ref={setScrollEl}
+      data-testid={`kanban-column-body-${props.columnId}`}
+      style={{
+        flex: "1 1 0%",
+        "min-height": "0",
+        "overflow-y": "auto",
+        padding: "6px",
+        position: "relative",
+      }}
+    >
+      <Show
+        when={props.tasks.length > 0}
+        fallback={
+          <div
+            data-empty-state
+            style={{
+              color: "var(--dim)",
+              "font-size": "10px",
+              padding: "10px 4px",
+              "text-align": "center",
+            }}
+          >
+            —
+          </div>
+        }
+      >
+        <div
+          data-testid={`kanban-column-spacer-${props.columnId}`}
+          style={{
+            height: `${virtualizer.getTotalSize()}px`,
+            width: "100%",
+            position: "relative",
+          }}
+        >
+          <For each={virtualizer.getVirtualItems()}>
+            {(vItem) => {
+              const task = () => props.tasks[vItem.index]!;
+              return (
+                <div
+                  data-index={vItem.index}
+                  ref={(el) => virtualizer.measureElement(el)}
+                  style={{
+                    position: "absolute",
+                    top: "0",
+                    left: "0",
+                    width: "100%",
+                    transform: `translateY(${vItem.start}px)`,
+                    "padding-bottom": "4px",
+                    "box-sizing": "border-box",
+                  }}
+                >
+                  <article
+                    data-testid={`task-card-${task().id}`}
+                    data-task-id={task().id}
+                    data-task-status={task().status}
+                    data-task-priority={`P${task().priority}`}
+                    onClick={(e) => {
+                      const target = e.target as HTMLElement | null;
+                      if (target?.closest("[data-status-dot]")) return;
+                      props.onTaskClick(task().id);
+                    }}
+                    style={{
+                      cursor: "pointer",
+                      "background-color": "var(--bg)",
+                      border: "1px solid var(--border-weak, var(--border))",
+                      "border-radius": "4px",
+                      padding: `${props.rowPadY} 8px`,
+                      display: "flex",
+                      "flex-direction": "column",
+                      gap: "3px",
+                    }}
+                  >
+                    <header style={{ display: "flex", "align-items": "center", gap: "6px" }}>
+                      <button
+                        type="button"
+                        data-testid={`task-card-status-${task().id}`}
+                        data-status-dot
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          props.onCycleStatus(task());
+                        }}
+                        aria-label={`Cycle status from ${STATUS_LABEL[task().status] ?? task().status}`}
+                        title={STATUS_LABEL[task().status] ?? task().status}
+                        style={{
+                          display: "inline-block",
+                          width: "10px",
+                          height: "10px",
+                          "border-radius": "50%",
+                          "background-color": STATUS_COLOR[task().status] ?? "var(--dim)",
+                          border: "none",
+                          padding: "0",
+                          cursor: "pointer",
+                        }}
+                      />
+                      <span
+                        style={{
+                          color: "var(--fg-soft)",
+                          "font-size": "10px",
+                          "font-variant-numeric": "tabular-nums",
+                        }}
+                      >
+                        {task().id}
+                      </span>
+                      <span
+                        aria-label={`P${task().priority}`}
+                        title={`Priority ${task().priority}`}
+                        style={{
+                          "margin-left": "auto",
+                          display: "inline-block",
+                          width: "7px",
+                          height: "7px",
+                          "border-radius": "50%",
+                          "background-color":
+                            PRIORITY_COLOR[task().priority] ?? "var(--dim)",
+                        }}
+                      />
+                    </header>
+                    <div
+                      style={{
+                        color: "var(--fg)",
+                        "font-size": "12px",
+                        "line-height": "1.3",
+                        "white-space": "nowrap",
+                        overflow: "hidden",
+                        "text-overflow": "ellipsis",
+                      }}
+                      title={task().title}
+                    >
+                      {task().title}
+                    </div>
+                    <Show
+                      when={
+                        task().assignee || (task().depends_on && task().depends_on!.length > 0)
+                      }
+                    >
+                      <footer
+                        style={{
+                          display: "flex",
+                          "align-items": "center",
+                          gap: "6px",
+                          color: "var(--fg-soft)",
+                          "font-size": "10px",
+                        }}
+                      >
+                        <Show when={task().assignee}>
+                          <span>@{task().assignee}</span>
+                        </Show>
+                        <Show when={task().depends_on && task().depends_on!.length > 0}>
+                          <span
+                            title={(task().depends_on ?? []).join(", ")}
+                            style={{ "margin-left": "auto" }}
+                          >
+                            ⛓ {task().depends_on!.length}
+                          </span>
+                        </Show>
+                      </footer>
+                    </Show>
+                  </article>
+                </div>
+              );
+            }}
+          </For>
+        </div>
+      </Show>
     </div>
   );
 }

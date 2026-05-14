@@ -34,6 +34,7 @@
  */
 
 import { createMemo, createSignal, For, Show } from "solid-js";
+import { createVirtualizer } from "@tanstack/solid-virtual";
 import type {
   TasksGoalSummary,
   TasksMilestoneSummary,
@@ -175,6 +176,22 @@ export function TasksViewView(props: TasksViewProps) {
   }
 
   const rowPadY = (): string => (density() === "compact" ? "3px" : "6px");
+
+  // Virtualized task table: tbody renders only the viewport-sized
+  // slice of filtered rows, with top/bottom spacer <tr>s sized to
+  // preserve total scroll height. thead is left as a normal flow
+  // element (sticky if pinned by parent CSS); the virtualizer's
+  // coordinate origin matches the tbody's first row.
+  const [tasksListEl, setTasksListEl] = createSignal<HTMLDivElement | null>(null);
+  const tableVirtualizer = createVirtualizer({
+    get count() {
+      return filtered().length;
+    },
+    getScrollElement: () => tasksListEl(),
+    estimateSize: () => (density() === "compact" ? 26 : 32),
+    overscan: 8,
+    getItemKey: (i) => filtered()[i]?.id ?? i,
+  });
 
   return (
     <div
@@ -326,11 +343,13 @@ export function TasksViewView(props: TasksViewProps) {
         }}
       >
         <div
+          ref={setTasksListEl}
           data-testid="tasks-list"
           style={{
             flex: "1 1 0%",
             "min-width": "0",
             "overflow-y": "auto",
+            position: "relative",
           }}
         >
           <Show
@@ -381,20 +400,35 @@ export function TasksViewView(props: TasksViewProps) {
                   <th style={{ width: "44px", padding: "4px 6px" }}>Deps</th>
                 </tr>
               </thead>
-              <tbody>
-                <For each={filtered()}>
-                  {(task) => (
+              <tbody data-testid="tasks-tbody">
+                <Show
+                  when={(() => {
+                    const first = tableVirtualizer.getVirtualItems()[0];
+                    return first && first.start > 0 ? first.start : null;
+                  })()}
+                >
+                  {(start) => (
+                    <tr aria-hidden="true" style={{ height: `${start()}px` }}>
+                      <td colspan={8} style={{ padding: "0", border: "0" }} />
+                    </tr>
+                  )}
+                </Show>
+                <For each={tableVirtualizer.getVirtualItems()}>
+                  {(vItem) => {
+                    const task = () => filtered()[vItem.index]!;
+                    return (
                     <tr
                       data-testid="task-row"
-                      data-task-id={task.id}
-                      data-task-status={task.status}
-                      data-task-priority={`P${task.priority}`}
-                      data-task-selected={selectedId() === task.id ? "true" : "false"}
-                      onClick={() => handleRowClick(task.id)}
+                      data-index={vItem.index}
+                      data-task-id={task().id}
+                      data-task-status={task().status}
+                      data-task-priority={`P${task().priority}`}
+                      data-task-selected={selectedId() === task().id ? "true" : "false"}
+                      onClick={() => handleRowClick(task().id)}
                       style={{
                         cursor: "pointer",
                         "background-color":
-                          selectedId() === task.id
+                          selectedId() === task().id
                             ? "color-mix(in oklab, var(--accent) 8%, transparent)"
                             : "transparent",
                         "border-bottom": "1px solid var(--border-weak, var(--border))",
@@ -403,22 +437,22 @@ export function TasksViewView(props: TasksViewProps) {
                       <td
                         style={{
                           padding: `${rowPadY()} 8px`,
-                          color: STATUS_COLOR[task.status] ?? "var(--dim)",
+                          color: STATUS_COLOR[task().status] ?? "var(--dim)",
                           "text-align": "center",
                         }}
                       >
-                        {STATUS_GLYPH[task.status] ?? "·"}
+                        {STATUS_GLYPH[task().status] ?? "·"}
                       </td>
                       <td style={{ padding: `${rowPadY()} 0` }}>
                         <span
-                          aria-label={`P${task.priority}`}
-                          title={`Priority ${task.priority}`}
+                          aria-label={`P${task().priority}`}
+                          title={`Priority ${task().priority}`}
                           style={{
                             display: "inline-block",
                             width: "8px",
                             height: "8px",
                             "border-radius": "50%",
-                            "background-color": PRIORITY_COLOR[task.priority] ?? "var(--dim)",
+                            "background-color": PRIORITY_COLOR[task().priority] ?? "var(--dim)",
                           }}
                         />
                       </td>
@@ -429,7 +463,7 @@ export function TasksViewView(props: TasksViewProps) {
                           "font-variant-numeric": "tabular-nums",
                         }}
                       >
-                        {task.id}
+                        {task().id}
                       </td>
                       <td
                         style={{
@@ -439,17 +473,17 @@ export function TasksViewView(props: TasksViewProps) {
                           overflow: "hidden",
                           "text-overflow": "ellipsis",
                         }}
-                        title={task.title}
+                        title={task().title}
                       >
-                        {task.title}
+                        {task().title}
                       </td>
                       <td
                         style={{
                           padding: `${rowPadY()} 6px`,
-                          color: STATUS_COLOR[task.status] ?? "var(--fg-soft)",
+                          color: STATUS_COLOR[task().status] ?? "var(--fg-soft)",
                         }}
                       >
-                        {task.status}
+                        {task().status}
                       </td>
                       <td
                         style={{
@@ -460,24 +494,41 @@ export function TasksViewView(props: TasksViewProps) {
                           "text-overflow": "ellipsis",
                         }}
                       >
-                        {task.assignee ?? "—"}
+                        {task().assignee ?? "—"}
                       </td>
                       <td style={{ padding: `${rowPadY()} 6px`, color: "var(--fg-soft)" }}>
-                        {task.goal ?? "—"}
+                        {task().goal ?? "—"}
                       </td>
                       <td style={{ padding: `${rowPadY()} 6px`, color: "var(--fg-soft)" }}>
                         <Show
-                          when={task.depends_on && task.depends_on.length > 0}
+                          when={task().depends_on && task().depends_on!.length > 0}
                           fallback={<span style={{ color: "var(--dim)" }}>—</span>}
                         >
-                          <span title={(task.depends_on ?? []).join(", ")}>
-                            ⛓ {task.depends_on!.length}
+                          <span title={(task().depends_on ?? []).join(", ")}>
+                            ⛓ {task().depends_on!.length}
                           </span>
                         </Show>
                       </td>
                     </tr>
-                  )}
+                    );
+                  }}
                 </For>
+                <Show
+                  when={(() => {
+                    const items = tableVirtualizer.getVirtualItems();
+                    const last = items[items.length - 1];
+                    if (!last) return null;
+                    const remaining =
+                      tableVirtualizer.getTotalSize() - (last.start + last.size);
+                    return remaining > 0 ? remaining : null;
+                  })()}
+                >
+                  {(remaining) => (
+                    <tr aria-hidden="true" style={{ height: `${remaining()}px` }}>
+                      <td colspan={8} style={{ padding: "0", border: "0" }} />
+                    </tr>
+                  )}
+                </Show>
               </tbody>
             </table>
           </Show>
