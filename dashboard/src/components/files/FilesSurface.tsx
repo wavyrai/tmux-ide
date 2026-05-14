@@ -38,7 +38,7 @@ import {
 } from "solid-js";
 import { Effect } from "effect";
 import { ChevronDown, ChevronRight, Folder, FolderOpen } from "lucide-solid";
-import { createVirtualizer } from "@tanstack/solid-virtual";
+import { Index } from "solid-js";
 import type { GitChangeStatus } from "@tmux-ide/contracts";
 import { getFileIcon } from "@/lib/editor/file-icon";
 import { fetchFilePreview, type ProjectFileNode } from "@/lib/api";
@@ -712,33 +712,18 @@ interface FileRailProps {
   onToggleDir: (path: string) => void;
 }
 
-const ROW_HEIGHT = 24;
-const OVERSCAN = 10;
-
 function FileRail(props: FileRailProps) {
   const [scrollEl, setScrollEl] = createSignal<HTMLDivElement | null>(null);
   // Roving tabindex — only the focused row carries tabIndex=0; the
-  // others get -1. When `focusedIndex` changes we scroll the row
-  // into view (so virtualization mounts it) and call `.focus()`.
+  // others get -1.
   const [focusedIndex, setFocusedIndex] = createSignal(0);
 
-  const virtualizer = createVirtualizer({
-    get count() {
-      return props.rows.length;
-    },
-    getScrollElement: () => scrollEl(),
-    estimateSize: () => ROW_HEIGHT,
-    overscan: OVERSCAN,
-  });
-
-  // `virtualizer.getVirtualItems()` is a method call — calling it inline
-  // inside `<For each={...}>` does not subscribe to the virtualizer's
-  // internal state, so the For sees the empty initial array forever and
-  // the rail renders as an empty spacer (correct height, zero rows).
-  // Memo wrappers re-run when the virtualizer re-measures (count change,
-  // scroll, resize, …) and re-supply the For with fresh items.
-  const virtualItems = createMemo(() => virtualizer.getVirtualItems());
-  const virtualTotalSize = createMemo(() => virtualizer.getTotalSize());
+  // Previously this used `@tanstack/solid-virtual`. Same bug as
+  // MessagesTimeline (fix b15d122): `getVirtualItems()` perpetually
+  // returns `[]` so the rail rendered a correctly-sized spacer with
+  // zero rows. `<Index>` keeps the same nodes mounted across array
+  // replacements and is plenty fast for the lazy-loaded per-folder
+  // listing (typical visible rows < 500).
 
   // Keep focusedIndex in range when the row list shrinks (collapse).
   createEffect(() => {
@@ -752,14 +737,13 @@ function FileRail(props: FileRailProps) {
     if (len === 0) return;
     const clamped = Math.max(0, Math.min(len - 1, nextIndex));
     setFocusedIndex(clamped);
-    virtualizer.scrollToIndex(clamped, { align: "auto" });
     if (opts.focus !== false) {
-      // Wait a microtask so the virtualizer has time to mount the row.
       queueMicrotask(() => {
         const el = scrollEl()?.querySelector<HTMLElement>(
           `[data-row-index="${clamped}"] [data-rail-row]`,
         );
         el?.focus();
+        el?.scrollIntoView({ block: "nearest" });
       });
     }
   }
@@ -828,35 +812,16 @@ function FileRail(props: FileRailProps) {
       aria-label="File explorer"
       onKeyDown={handleKeyDown}
       class="relative min-h-0 flex-1 overflow-y-auto"
-      style={{ contain: "strict" }}
     >
-      <div
-        data-testid="v2-files-rail-spacer"
-        style={{
-          height: `${virtualTotalSize()}px`,
-          width: "100%",
-          position: "relative",
-        }}
-      >
-        <For each={virtualItems()}>
-          {(vItem) => {
-            const row = () => props.rows[vItem.index]!;
-            const isFocused = () => vItem.index === focusedIndex();
+      <div data-testid="v2-files-rail-spacer">
+        <Index each={props.rows}>
+          {(row, index) => {
+            const isFocused = () => index === focusedIndex();
             return (
-              <div
-                data-row-index={vItem.index}
-                style={{
-                  position: "absolute",
-                  top: "0",
-                  left: "0",
-                  width: "100%",
-                  height: `${vItem.size}px`,
-                  transform: `translateY(${vItem.start}px)`,
-                }}
-              >
+              <div data-row-index={index}>
                 <FileRailRow
                   row={row()}
-                  index={vItem.index}
+                  index={index}
                   focused={isFocused()}
                   activePath={props.activePath}
                   statusMap={props.statusMap}
@@ -868,7 +833,7 @@ function FileRail(props: FileRailProps) {
               </div>
             );
           }}
-        </For>
+        </Index>
       </div>
     </div>
   );
