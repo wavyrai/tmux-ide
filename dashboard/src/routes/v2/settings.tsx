@@ -14,6 +14,7 @@ import {
   resetKeybind,
   setGeneral,
   setKeybindOverride,
+  setNotification,
   setSound,
   setTerminal,
   setThemeId,
@@ -263,31 +264,66 @@ function TerminalPanel() {
 // Sounds panel
 // ---------------------------------------------------------------------
 
+function requestBannerPermission(): void {
+  if (typeof Notification === "undefined") return;
+  if (Notification.permission === "default") void Notification.requestPermission();
+}
+
 function SoundsPanel() {
   return (
-    <PanelShell title="Sounds" description="Audio notifications. Off by default.">
-      <FieldRow label="Task complete">
-        <Toggle
-          data-testid="settings-sound-task-complete"
-          checked={settings().sounds.onTaskComplete}
-          onChange={(value) => setSound("onTaskComplete", value)}
-        />
-      </FieldRow>
-      <FieldRow label="Task error">
-        <Toggle
-          data-testid="settings-sound-task-error"
-          checked={settings().sounds.onTaskError}
-          onChange={(value) => setSound("onTaskError", value)}
-        />
-      </FieldRow>
-      <FieldRow label="Agent idle">
-        <Toggle
-          data-testid="settings-sound-agent-idle"
-          checked={settings().sounds.onAgentIdle}
-          onChange={(value) => setSound("onAgentIdle", value)}
-        />
-      </FieldRow>
-    </PanelShell>
+    <>
+      <PanelShell
+        title="Chat notifications"
+        description="Alerts when an assistant turn finishes while the window is in the background."
+      >
+        <FieldRow
+          label="Play sound"
+          hint="Short chime when a reply lands and the window is unfocused."
+        >
+          <Toggle
+            data-testid="settings-notification-sound"
+            checked={settings().notification.sound}
+            onChange={(value) => setNotification({ sound: value })}
+          />
+        </FieldRow>
+        <FieldRow
+          label="Desktop banners"
+          hint="OS notification via the browser Notification API. Asks for permission on enable."
+        >
+          <Toggle
+            data-testid="settings-notification-desktop-banners"
+            checked={settings().notification.desktopBanners}
+            onChange={(value) => {
+              if (value) requestBannerPermission();
+              setNotification({ desktopBanners: value });
+            }}
+          />
+        </FieldRow>
+      </PanelShell>
+      <PanelShell title="Sounds" description="Audio notifications. Off by default.">
+        <FieldRow label="Task complete">
+          <Toggle
+            data-testid="settings-sound-task-complete"
+            checked={settings().sounds.onTaskComplete}
+            onChange={(value) => setSound("onTaskComplete", value)}
+          />
+        </FieldRow>
+        <FieldRow label="Task error">
+          <Toggle
+            data-testid="settings-sound-task-error"
+            checked={settings().sounds.onTaskError}
+            onChange={(value) => setSound("onTaskError", value)}
+          />
+        </FieldRow>
+        <FieldRow label="Agent idle">
+          <Toggle
+            data-testid="settings-sound-agent-idle"
+            checked={settings().sounds.onAgentIdle}
+            onChange={(value) => setSound("onAgentIdle", value)}
+          />
+        </FieldRow>
+      </PanelShell>
+    </>
   );
 }
 

@@ -16,6 +16,7 @@ import {
   type ApiRuntime,
 } from "../api";
 import { coalesceMessages, deriveRuntimeState } from "../coalesce";
+import { notifyAssistantTurnComplete } from "../lib/chatNotify";
 import type {
   AvailableCommand,
   ChatBusEvent,
@@ -212,9 +213,7 @@ export function useChatThread(options: Accessor<ChatMountOptions>) {
   // kind same-messageId chunks into the previous AgentUpdate's
   // text content in place, so a turn ends up as a single
   // AgentUpdate whose text grows character-by-character.
-  let pendingUpdateFrames: Array<
-    Extract<ChatBusEvent, { type: "chat.thread.update" }>
-  > = [];
+  let pendingUpdateFrames: Array<Extract<ChatBusEvent, { type: "chat.thread.update" }>> = [];
   let updateFlushScheduled = false;
 
   function flushUpdateFrames(): void {
@@ -358,6 +357,9 @@ export function useChatThread(options: Accessor<ChatMountOptions>) {
           setInflight(false);
           setStopReason(frame.stopReason);
           setCompletedAt(new Date().toISOString());
+          // Only chime/banner for a turn the user actually triggered
+          // (pending prompt matched), never on replay/reconnect.
+          if (pending) notifyAssistantTurnComplete();
         }
       }
     });

@@ -37,6 +37,10 @@ export interface Settings {
     onTaskError: boolean;
     onAgentIdle: boolean;
   };
+  notification: {
+    sound: boolean;
+    desktopBanners: boolean;
+  };
   general: {
     defaultProjectTab:
       | "kanban"
@@ -62,6 +66,7 @@ export const defaultSettings: Settings = {
     renderer: "auto",
   },
   sounds: { onTaskComplete: false, onTaskError: false, onAgentIdle: false },
+  notification: { sound: true, desktopBanners: false },
   general: {
     defaultProjectTab: "kanban",
     showNotifications: true,
@@ -112,6 +117,7 @@ function normalize(value: unknown): Settings {
   if (!isRecord(value)) return defaultSettings;
   const terminal = isRecord(value.terminal) ? value.terminal : {};
   const sounds = isRecord(value.sounds) ? value.sounds : {};
+  const notification = isRecord(value.notification) ? value.notification : {};
   const general = isRecord(value.general) ? value.general : {};
   const keybinds = isRecord(value.keybinds) ? value.keybinds : {};
   return {
@@ -145,6 +151,16 @@ function normalize(value: unknown): Settings {
         typeof sounds.onAgentIdle === "boolean"
           ? sounds.onAgentIdle
           : defaultSettings.sounds.onAgentIdle,
+    },
+    notification: {
+      sound:
+        typeof notification.sound === "boolean"
+          ? notification.sound
+          : defaultSettings.notification.sound,
+      desktopBanners:
+        typeof notification.desktopBanners === "boolean"
+          ? notification.desktopBanners
+          : defaultSettings.notification.desktopBanners,
     },
     general: {
       defaultProjectTab: isProjectTab(general.defaultProjectTab)
@@ -241,6 +257,10 @@ export function setTerminal(next: Partial<Settings["terminal"]>): void {
 
 export function setSound(kind: keyof Settings["sounds"], value: boolean): void {
   patch((current) => ({ ...current, sounds: { ...current.sounds, [kind]: value } }));
+}
+
+export function setNotification(next: Partial<Settings["notification"]>): void {
+  patch((current) => ({ ...current, notification: { ...current.notification, ...next } }));
 }
 
 export function setGeneral(next: Partial<Settings["general"]>): void {
