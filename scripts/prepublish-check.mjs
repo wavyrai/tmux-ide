@@ -9,9 +9,11 @@
  * forget to rebuild + stage either one before tagging; this script
  * fails loudly when that happens.
  *
- * Not wired into `prepublishOnly` itself yet — it's a separate
- * `pnpm prepublish:check` rung the release runbook calls before
- * tagging.
+ * Wired in as the final rung of `prepublishOnly` (after
+ * `pnpm build:cli` + `pnpm check` + the dashboard build), so the
+ * freshness asserts below run against the just-rebuilt outputs and
+ * fail the publish if a stale `bin/cli.js` or `dashboard/dist/`
+ * somehow slipped through.
  */
 
 import { execFileSync } from "node:child_process";
@@ -40,10 +42,10 @@ run("pnpm", ["run", "test:unit"]);
 run("pnpm", ["run", "build:dashboard"]);
 
 // ---------------------------------------------------------------
-// bin/cli.js freshness — the esbuild output ships in the tarball;
-// `prepublishOnly` does not rebuild it (only `pnpm build:cli` does),
-// so a stale `bin/cli.js` is the #1 way the maintainer accidentally
-// publishes pre-edit CLI behaviour.
+// bin/cli.js freshness — the esbuild output ships in the tarball.
+// `prepublishOnly` now runs `pnpm build:cli` first, but this assert
+// stays as defense-in-depth: a stale `bin/cli.js` is the #1 way the
+// maintainer accidentally publishes pre-edit CLI behaviour.
 // ---------------------------------------------------------------
 const cliJsPath = join(process.cwd(), "bin", "cli.js");
 const cliTsPath = join(process.cwd(), "bin", "cli.ts");

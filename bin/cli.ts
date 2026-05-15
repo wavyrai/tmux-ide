@@ -5,6 +5,7 @@
 import { parseArgs } from "node:util";
 import { resolve, dirname } from "node:path";
 import { execFileSync } from "node:child_process";
+import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -221,6 +222,34 @@ ${bold("Flags:")}
   ${cyan("-v, --version")}               ${dim("Show version number")}`);
 }
 
+// The TUI widgets are `.tsx` files that ship only in a dev checkout and
+// require the `bun` runtime. On a clean `npm i -g tmux-ide` neither is
+// present, so execFileSync("bun", ...) would throw a raw ENOENT. Guard
+// first and surface an actionable IdeError instead.
+function execBunWidget(scriptPath: string, args: string[], commandLabel: string): void {
+  const widgetMissing = !existsSync(scriptPath);
+  let bunMissing = false;
+  try {
+    execFileSync("bun", ["--version"], { stdio: "ignore" });
+  } catch {
+    bunMissing = true;
+  }
+  if (widgetMissing || bunMissing) {
+    const reasons: string[] = [];
+    if (bunMissing) reasons.push("the `bun` runtime is not installed (https://bun.sh)");
+    if (widgetMissing)
+      reasons.push(
+        "the TUI widget sources are absent (they ship only in a cloned tmux-ide checkout, not the npm package)",
+      );
+    throw new IdeError(
+      `\`tmux-ide ${commandLabel}\` is unavailable because ${reasons.join(" and ")}.\n` +
+        `Run it from a cloned tmux-ide checkout with bun installed.`,
+      { code: "USAGE", exitCode: 1 },
+    );
+  }
+  execFileSync("bun", [scriptPath, ...args], { stdio: "inherit" });
+}
+
 try {
   switch (command) {
     case "start":
@@ -322,9 +351,11 @@ try {
         configArgs = [];
       } else if (sub === "edit") {
         const scriptPath = resolve(__dirname, "../packages/daemon/src/widgets/setup/index.tsx");
-        execFileSync("bun", [scriptPath, "--dir=" + resolve(startTargetDir || "."), "--edit"], {
-          stdio: "inherit",
-        });
+        execBunWidget(
+          scriptPath,
+          ["--dir=" + resolve(startTargetDir || "."), "--edit"],
+          "config edit",
+        );
         break;
       }
 
@@ -449,10 +480,10 @@ try {
 
     case "setup": {
       const scriptPath = resolve(__dirname, "../packages/daemon/src/widgets/setup/index.tsx");
-      const setupArgs = [scriptPath, "--dir=" + resolve(startTargetDir || ".")];
+      const setupArgs = ["--dir=" + resolve(startTargetDir || ".")];
       if (positionals[1] === "--edit" || values.edit) setupArgs.push("--edit");
       if (positionals[1] === "--wizard" || values.wizard) setupArgs.push("--wizard");
-      execFileSync("bun", setupArgs, { stdio: "inherit" });
+      execBunWidget(scriptPath, setupArgs, "setup");
       break;
     }
 
@@ -490,9 +521,7 @@ try {
 
     case "settings": {
       const scriptPath = resolve(__dirname, "../packages/daemon/src/widgets/config/index.tsx");
-      execFileSync("bun", [scriptPath, "--dir=" + resolve(startTargetDir || ".")], {
-        stdio: "inherit",
-      });
+      execBunWidget(scriptPath, ["--dir=" + resolve(startTargetDir || ".")], "settings");
       break;
     }
 
