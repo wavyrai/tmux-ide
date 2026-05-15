@@ -11,6 +11,7 @@
 
 import { Maximize2, ZoomIn, ZoomOut } from "lucide-solid";
 import { createResource, createSignal, Show, type JSX } from "solid-js";
+import { API_BASE } from "@/lib/api";
 import type { ManagedFile } from "@/lib/editor/types";
 
 interface ImageRendererProps {
@@ -24,7 +25,7 @@ const ZOOM_STEP = 1.1;
 
 async function fetchImageDataUrl(sessionName: string, filePath: string): Promise<string> {
   const normalized = filePath.replace(/^\/+/g, "");
-  const url = `/api/project/${encodeURIComponent(sessionName)}/image/${encodeURI(normalized)}`;
+  const url = `${API_BASE}/api/project/${encodeURIComponent(sessionName)}/image/${encodeURI(normalized)}`;
   const res = await fetch(url);
   if (!res.ok) throw new Error(`image fetch failed: ${res.status}`);
   const body = (await res.json()) as { dataUrl: string };

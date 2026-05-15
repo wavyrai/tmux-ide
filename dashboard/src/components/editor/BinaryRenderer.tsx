@@ -7,6 +7,7 @@
 
 import { FileQuestion } from "lucide-solid";
 import { createResource, Show, type JSX } from "solid-js";
+import { API_BASE } from "@/lib/api";
 import type { ManagedFile } from "@/lib/editor/types";
 
 interface BinaryRendererProps {
@@ -17,12 +18,9 @@ interface BinaryRendererProps {
 const HEX_DUMP_MAX_BYTES = 64 * 1024;
 const HEX_DUMP_FETCH_BYTES = 64 * 1024;
 
-async function fetchBytes(
-  sessionName: string,
-  filePath: string,
-): Promise<Uint8Array | null> {
+async function fetchBytes(sessionName: string, filePath: string): Promise<Uint8Array | null> {
   const normalized = filePath.replace(/^\/+/g, "");
-  const url = `/api/project/${encodeURIComponent(sessionName)}/image/${encodeURI(normalized)}`;
+  const url = `${API_BASE}/api/project/${encodeURIComponent(sessionName)}/image/${encodeURI(normalized)}`;
   try {
     const res = await fetch(url);
     if (!res.ok) return null;
@@ -80,10 +78,7 @@ export function BinaryRenderer(props: BinaryRendererProps): JSX.Element {
   );
 
   return (
-    <div
-      data-testid="editor-binary-renderer"
-      class="flex h-full min-h-0 flex-col bg-[var(--bg)]"
-    >
+    <div data-testid="editor-binary-renderer" class="flex h-full min-h-0 flex-col bg-[var(--bg)]">
       <Show
         when={bytes()}
         fallback={
