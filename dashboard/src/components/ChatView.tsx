@@ -12,6 +12,7 @@ import { createSignal, onCleanup, onMount, Show } from "solid-js";
 import { mount, type ChatHandle } from "@tmux-ide/chat-solid";
 import { API_BASE } from "@/lib/api";
 import { resolveAuthToken, withWsBase } from "@/lib/appProtocol";
+import { highlightFences } from "@/lib/syntax/markdownShiki";
 
 interface ChatViewProps {
   projectName: string;
@@ -131,6 +132,7 @@ export function ChatView(props: ChatViewProps) {
         apiBaseUrl: API_BASE,
         wsUrl: withWsBase("/ws/events"),
         bearerToken: resolveAuthToken(),
+        highlightCodeFences: highlightFences,
       });
       setReady(true);
     } catch (err) {
