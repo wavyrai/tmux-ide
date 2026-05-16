@@ -1,3 +1,4 @@
+import { createRequire } from "node:module";
 import { z } from "zod";
 import {
   ActionContractsZ,
@@ -10,6 +11,7 @@ import {
   clearCanonicalDaemonInfo,
   isCanonicalDaemonAlive,
   readCanonicalDaemonInfo,
+  warnOnDaemonVersionSkew,
   type CanonicalDaemonInfo,
 } from "./canonical-daemon.ts";
 import {
@@ -98,6 +100,19 @@ function daemonBaseUrl(info: CanonicalDaemonInfo): string {
   return `http://${hostnameForClient(info.bindHostname)}:${info.port}`;
 }
 
+const requireFromHere = createRequire(import.meta.url);
+
+/** The daemon version this CLI client was built against — compared
+ *  against the live daemon's advertised version on attach. */
+function expectedDaemonVersion(): string {
+  try {
+    const pkg = requireFromHere("../../package.json") as { version?: string };
+    return pkg.version ?? "0.0.0";
+  } catch {
+    return "0.0.0";
+  }
+}
+
 async function resolveCanonicalDaemon(): Promise<{
   baseUrl: string;
   transientHandle: EmbeddedDaemonHandle | null;
@@ -106,6 +121,7 @@ async function resolveCanonicalDaemon(): Promise<{
   const existing = deps.readCanonicalDaemonInfo();
   if (existing) {
     if (await deps.isCanonicalDaemonAlive(existing)) {
+      warnOnDaemonVersionSkew(existing, expectedDaemonVersion());
       return { baseUrl: daemonBaseUrl(existing), transientHandle: null, restoreCwd: null };
     }
     deps.clearCanonicalDaemonInfo();

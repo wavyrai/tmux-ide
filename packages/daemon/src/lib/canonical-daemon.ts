@@ -92,6 +92,23 @@ function timeoutSignal(ms: number): AbortSignal {
   return controller.signal;
 }
 
+/**
+ * Version-skew guard. A client (desktop app, editor extension, second
+ * CLI) attaching to the canonical daemon compiles in the daemon
+ * version it expects. If the live daemon advertises a different
+ * `version`, the wire contract may have drifted — warn loudly rather
+ * than failing silently on a mismatched action/WS schema.
+ */
+export function warnOnDaemonVersionSkew(info: CanonicalDaemonInfo, expectedVersion: string): void {
+  if (info.version === expectedVersion) return;
+  console.warn(
+    `[tmux-ide] canonical daemon version skew: daemon.json reports ` +
+      `"${info.version}" but this client expects "${expectedVersion}". ` +
+      `The action/WS contract may have drifted — restart the canonical ` +
+      `daemon (tmux-ide) so it matches this client build.`,
+  );
+}
+
 export async function isCanonicalDaemonAlive(info: CanonicalDaemonInfo): Promise<boolean> {
   if (!isPidAlive(info.pid)) return false;
   try {

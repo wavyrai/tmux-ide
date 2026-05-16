@@ -128,7 +128,7 @@ There are also a handful of REST-shaped legacy endpoints (`/api/sessions`, `/api
 | `/ws/mirror/:session/:paneId` | Raw ANSI mirror of a tmux pane.                                                                                  |
 | `/ws/pty/:id`                 | Interactive PTY (xterm bidirectional).                                                                           |
 
-Frame envelope is `{ type: string, ...payload }` — typed under `packages/contracts/src/ws-events.ts`.
+Frame envelope is `{ type: string, ...payload }` — typed under `packages/daemon/src/schemas/ws-events.ts`.
 
 ### 4.3 Event store + projections (Goal-14)
 
@@ -147,6 +147,30 @@ Daemon services are Effect-typed (`Service<…>` + `Layer.merge(…)`). Service 
 | Async fetches (browser) | `createResource` (default), `Effect.runPromise` for one-shots       | Resources retry+invalidate cleanly.      |
 | Daemon state            | Effect `Ref` / `SubscriptionRef`; sqlite for durable                | All shared state behind Effect services. |
 | Daemon event fanout     | Plain emitter + WS broadcast                                        | Each service exposes a typed channel.    |
+
+### 4.6 Daemon attach contract
+
+There is **exactly one canonical daemon per machine**. Its discovery
+handle is `~/.tmux-ide/daemon.json`, written atomically on startup
+(`packages/daemon/src/lib/canonical-daemon.ts`) with
+`{ pid, port, version, startedAt, bindHostname, authToken }`.
+
+Any external frontend — desktop app, editor extension, a second CLI —
+**MUST**:
+
+1. Read `~/.tmux-ide/daemon.json`.
+2. Health-check the port (`GET /health`, plus a `pid` liveness check).
+3. Attach as a REST/SSE/WS **client** of that daemon.
+
+A client **MUST NOT** embed or spawn its own daemon. If the file is
+absent, or present but the daemon is dead, the client should prompt the
+user to launch `tmux-ide` — never silently start a competing daemon
+(that splits session/registry state and races the info file).
+
+On attach, a client compares its compiled-in expected daemon version
+against `daemon.json.version` and warns on skew
+(`warnOnDaemonVersionSkew`) — a mismatch means the action/WS contract
+may have drifted and the canonical daemon should be restarted.
 
 ---
 
@@ -172,7 +196,7 @@ For each concern: which reference informs us, what we adopt, where we deliberate
 
 ## §6 — Conventions
 
-**TypeScript.** Strict mode. No `any` without `// FIXME(reason)`. Imports use `@/` inside `dashboard/`, `~/` inside `chat-solid` / `v2-solid-widgets`, and bare workspace names across packages.
+**TypeScript.** Strict mode. No `any` without `// FIXME(reason)`. Imports use `@/` inside `dashboard/`, relative paths inside `chat-solid` / `v2-solid-widgets`, and bare workspace names across packages.
 
 **Tests.** Vitest in every package. Test files live alongside source in `__tests__/` directories (matches contracts, dashboard, packages); daemon mostly uses sibling `*.test.ts`. E2E specs in `dashboard/__tests__/e2e/` (Playwright). One contract test per action handler. One wire-coverage test per Solid bridge (T1 pattern).
 

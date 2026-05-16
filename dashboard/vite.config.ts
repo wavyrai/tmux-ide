@@ -25,7 +25,9 @@ export default defineConfig({
   },
   build: {
     outDir: "dist",
-    sourcemap: true,
+    // No sourcemaps in the shipped bundle — *.map files were ~85% of
+    // the npm tarball. Debug locally with `pnpm dev` instead.
+    sourcemap: false,
     target: "es2022",
   },
   test: {
