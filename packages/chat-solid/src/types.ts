@@ -1,5 +1,6 @@
 import type { Accessor } from "solid-js";
 import type { ComposerBannerItem } from "./components/ComposerBannerStack";
+import type { PendingUserInput } from "./components/ComposerPendingUserInputPanel";
 import type { MentionCandidate } from "./lib/mentionSearch";
 import type { MarkdownFileLinkMeta } from "./lib/markdownLinks";
 
@@ -367,6 +368,26 @@ export interface ChatMountOptions {
    * the rest collapse to a "+N more" cap.
    */
   bannerItems?: Accessor<ReadonlyArray<ComposerBannerItem>>;
+  /**
+   * Host-sourced "pick one of these" prompts. Mirrors the
+   * `bannerItems` / `mentionCandidates` pattern: the daemon has no
+   * chat-bus event for user-input requests today, so the host derives
+   * these (e.g. from an orchestration activity stream) and feeds them
+   * in. When present, the composer mounts `ComposerPendingUserInputPanel`
+   * with 1-9 shortcuts; answering the last question submits the picks
+   * as a normal user turn. Empty / omitted hides the panel.
+   */
+  pendingUserInputs?: Accessor<ReadonlyArray<PendingUserInput>>;
+  /**
+   * Optional async post-pass over rendered message HTML. chat-solid
+   * renders markdown synchronously (marked + DOMPurify, plain
+   * `<pre><code class="language-x">` fences); when the host injects
+   * this, the timeline upgrades each rendered body to the host's
+   * syntax-highlighted HTML once it resolves. The host owns the
+   * highlighter (the dashboard passes its shiki pipeline) so
+   * chat-solid stays dependency-light and never imports app code.
+   */
+  highlightCodeFences?: (html: string) => Promise<string>;
   onClose?: () => void;
 }
 

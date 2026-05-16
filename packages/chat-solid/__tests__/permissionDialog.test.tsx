@@ -41,7 +41,7 @@ async function waitFor(assertion: () => boolean): Promise<void> {
   expect(assertion()).toBe(true);
 }
 
-describe("PermissionDialog", () => {
+describe("inline composer approval surface", () => {
   const originalFetch = globalThis.fetch;
   const OriginalWebSocket = globalThis.WebSocket;
 
@@ -57,7 +57,7 @@ describe("PermissionDialog", () => {
     document.body.innerHTML = "";
   });
 
-  it("responds with the selected option and closes optimistically", async () => {
+  it("surfaces the request inline and responds with the resolved option", async () => {
     const actionBodies: unknown[] = [];
     globalThis.fetch = vi.fn(async (_url, init) => {
       const url = String(_url);
@@ -104,12 +104,22 @@ describe("PermissionDialog", () => {
       }),
     );
 
-    await waitFor(() => container.textContent?.includes("Permission required") ?? false);
+    // Default runtime mode is Supervised (approval-required), so an
+    // edit request surfaces the inline composer panel rather than
+    // auto-accepting. kind "edit" → "File-change approval requested".
+    await waitFor(
+      () => !!container.querySelector("[data-testid='composer-pending-approval-panel']"),
+    );
+    expect(container.textContent).toContain("File-change approval requested");
     container
-      .querySelector<HTMLButtonElement>("[data-option-kind^='allow']")
+      .querySelector<HTMLButtonElement>("[data-testid='composer-pending-approval-accept']")
       ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
 
-    await waitFor(() => !(container.textContent?.includes("Permission required") ?? false));
+    await waitFor(
+      () => !container.querySelector("[data-testid='composer-pending-approval-panel']"),
+    );
+    // "Approve once" → decision "accept" → resolved against the
+    // offered options to the concrete allow_once optionId.
     expect(actionBodies).toEqual([
       { threadId: "thread-1", requestId: "request-1", optionId: "allow_once" },
     ]);

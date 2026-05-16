@@ -17,6 +17,18 @@ import {
 } from "../api";
 import { coalesceMessages, deriveRuntimeState } from "../coalesce";
 import { notifyAssistantTurnComplete } from "../lib/chatNotify";
+import {
+  requestKindFromToolCall,
+  resolveApprovalOptionId,
+  toPendingApproval,
+} from "../lib/pendingApproval";
+import type { PendingApproval } from "../components/ComposerPendingApprovalPanel";
+import type { ProviderApprovalDecision } from "../components/ComposerPendingApprovalActions";
+import type {
+  PendingUserInput,
+  PendingUserInputDraftAnswer,
+} from "../components/ComposerPendingUserInputPanel";
+import type { RuntimeMode } from "../components/CompactComposerControlsMenu";
 import type {
   AvailableCommand,
   ChatBusEvent,
@@ -47,6 +59,28 @@ function latestPending(plans: ProposedPlanSummary[]): ProposedPlanSummary | null
     if (plan && isPlanPending(plan)) return plan;
   }
   return null;
+}
+
+/**
+ * Runtime-mode → auto-accept policy. Returns the option id to silently
+ * respond with, or null to surface the inline approval panel.
+ *
+ *   - approval-required (Supervised): always surface (null).
+ *   - auto-accept-edits: silently allow file reads/changes; commands
+ *     still prompt.
+ *   - full-access: silently allow everything.
+ *
+ * This is the only lever chat-solid has to make the runtime-mode
+ * selector "actually change agent behavior" without a daemon set-mode
+ * transport — it gates the existing chat.permission.respond path.
+ */
+function autoApproveOptionId(request: PermissionRequest, mode: RuntimeMode): string | null {
+  if (mode === "approval-required") return null;
+  if (mode === "auto-accept-edits") {
+    const kind = requestKindFromToolCall(request.toolCall.kind);
+    if (kind === "command") return null;
+  }
+  return resolveApprovalOptionId(request, "accept");
 }
 
 interface ChatStore {
@@ -101,6 +135,25 @@ export function useChatThread(options: Accessor<ChatMountOptions>) {
   const [prefillPromptText, setPrefillPromptText] = createSignal<string | null>(null);
   const [plans, setPlans] = createSignal<ProposedPlanSummary[]>([]);
   const [planResponding, setPlanResponding] = createSignal(false);
+  // Session-local runtime mode. Default "approval-required"
+  // (Supervised) preserves the always-prompt behavior until the user
+  // opts into auto-accept. The daemon has no set-mode transport, so
+  // this gates client-side auto-accept of approvals via the existing
+  // chat.permission.respond round-trip — see autoApproveOptionId.
+  const [runtimeMode, setRuntimeMode] = createSignal<RuntimeMode>("approval-required");
+  const [respondingToApproval, setRespondingToApproval] = createSignal(false);
+  // Pending "pick one" prompt state. The questions themselves are
+  // host-sourced (options().pendingUserInputs, mirroring the
+  // mentionCandidates / bannerItems "host owns sourcing" pattern);
+  // answer drafts + cursor + in-flight ids live here, and a completed
+  // prompt submits as a normal user turn via the send path.
+  const [pendingUserInputAnswers, setPendingUserInputAnswers] = createSignal<
+    Record<string, PendingUserInputDraftAnswer>
+  >({});
+  const [pendingUserInputQuestionIndex, setPendingUserInputQuestionIndex] = createSignal(0);
+  const [pendingUserInputRespondingIds, setPendingUserInputRespondingIds] = createSignal<string[]>(
+    [],
+  );
   const [store, setStore] = createStore<ChatStore>({ messages: [] });
 
   const runtime = createMemo<ApiRuntime>(() => ({
@@ -304,13 +357,25 @@ export function useChatThread(options: Accessor<ChatMountOptions>) {
         return;
       }
       if (frame.type === "chat.permission.request") {
-        setPendingPermission({
+        const request: PermissionRequest = {
           threadId: frame.threadId,
           requestId: frame.requestId,
           toolCall: frame.toolCall,
           options: [...frame.options],
           receivedAt: Date.now(),
-        });
+        };
+        const autoOptionId = autoApproveOptionId(request, runtimeMode());
+        if (autoOptionId) {
+          // Runtime mode says don't bother the user — accept on their
+          // behalf through the same respond endpoint, and only fall
+          // back to surfacing the inline panel if that POST fails.
+          void dispatchPermissionResponse(request, autoOptionId).catch((err) => {
+            setPendingPermission(request);
+            setError(err instanceof Error ? err : new Error(String(err)));
+          });
+          return;
+        }
+        setPendingPermission(request);
         return;
       }
       if (frame.type === "chat.thread.update") {
@@ -449,20 +514,55 @@ export function useChatThread(options: Accessor<ChatMountOptions>) {
     );
   }
 
+  // Single source of the permission round-trip. Both the manual
+  // verdict path (respondToPermission / respondToApproval) and the
+  // runtime-mode auto-accept path post through here.
+  async function dispatchPermissionResponse(
+    request: PermissionRequest,
+    optionId: string,
+  ): Promise<void> {
+    await chatPermissionRespond(runtime(), {
+      threadId: request.threadId,
+      requestId: request.requestId,
+      optionId,
+    });
+  }
+
   async function respondToPermission(optionId: string): Promise<void> {
     const pending = pendingPermission();
     if (!pending) return;
     setPendingPermission(null);
     try {
-      await chatPermissionRespond(runtime(), {
-        threadId: pending.threadId,
-        requestId: pending.requestId,
-        optionId,
-      });
+      await dispatchPermissionResponse(pending, optionId);
     } catch (err) {
       setPendingPermission(pending);
       setError(err instanceof Error ? err : new Error(String(err)));
       throw err;
+    }
+  }
+
+  const pendingApproval = createMemo<PendingApproval | null>(() => {
+    const pending = pendingPermission();
+    return pending ? toPendingApproval(pending) : null;
+  });
+
+  // Maps the composer's four-verb decision onto a concrete daemon
+  // option id and reuses respondToPermission so the respond logic
+  // isn't duplicated. No-ops when the request changed underneath
+  // (stale click) or the daemon offered no matching option.
+  async function respondToApproval(
+    requestId: string,
+    decision: ProviderApprovalDecision,
+  ): Promise<void> {
+    const pending = pendingPermission();
+    if (!pending || pending.requestId !== requestId) return;
+    const optionId = resolveApprovalOptionId(pending, decision);
+    if (!optionId) return;
+    setRespondingToApproval(true);
+    try {
+      await respondToPermission(optionId);
+    } finally {
+      setRespondingToApproval(false);
     }
   }
 
@@ -476,6 +576,68 @@ export function useChatThread(options: Accessor<ChatMountOptions>) {
 
   function prefillPrompt(text: string | null): void {
     setPrefillPromptText(text);
+  }
+
+  const pendingUserInputs = (): ReadonlyArray<PendingUserInput> =>
+    options().pendingUserInputs?.() ?? [];
+
+  const activeUserInputPrompt = createMemo<PendingUserInput | null>(
+    () => pendingUserInputs()[0] ?? null,
+  );
+
+  function togglePendingUserInputOption(questionId: string, optionLabel: string): void {
+    const prompt = activeUserInputPrompt();
+    if (!prompt) return;
+    const question = prompt.questions.find((entry) => entry.id === questionId);
+    if (!question) return;
+    setPendingUserInputAnswers((current) => {
+      const previous = current[questionId]?.selectedOptionLabels ?? [];
+      let next: string[];
+      if (question.multiSelect) {
+        next = previous.includes(optionLabel)
+          ? previous.filter((label) => label !== optionLabel)
+          : [...previous, optionLabel];
+      } else {
+        next = [optionLabel];
+      }
+      return { ...current, [questionId]: { ...current[questionId], selectedOptionLabels: next } };
+    });
+  }
+
+  function clearPendingUserInputDraft(): void {
+    setPendingUserInputAnswers({});
+    setPendingUserInputQuestionIndex(0);
+  }
+
+  function advancePendingUserInput(): void {
+    const prompt = activeUserInputPrompt();
+    if (!prompt) return;
+    const index = pendingUserInputQuestionIndex();
+    if (index < prompt.questions.length - 1) {
+      setPendingUserInputQuestionIndex(index + 1);
+      return;
+    }
+    // Last question answered — submit the picks as a normal user turn.
+    // The agent dispatches the follow-up; the host's pendingUserInputs
+    // source clears as that lands. We clear the local draft eagerly.
+    const answers = pendingUserInputAnswers();
+    const lines = prompt.questions
+      .map((question) => {
+        const picked = answers[question.id]?.selectedOptionLabels ?? [];
+        if (picked.length === 0) return null;
+        return `${question.header}: ${picked.join(", ")}`;
+      })
+      .filter((line): line is string => line !== null);
+    if (lines.length === 0) return;
+    setPendingUserInputRespondingIds((current) =>
+      current.includes(prompt.requestId) ? current : [...current, prompt.requestId],
+    );
+    void send([{ type: "text", text: lines.join("\n") }]).finally(() => {
+      setPendingUserInputRespondingIds((current) =>
+        current.filter((id) => id !== prompt.requestId),
+      );
+      clearPendingUserInputDraft();
+    });
   }
 
   const pendingPlan = createMemo<ProposedPlanSummary | null>(() => latestPending(plans()));
@@ -547,6 +709,17 @@ export function useChatThread(options: Accessor<ChatMountOptions>) {
     cancel,
     rename,
     respondToPermission,
+    pendingApproval,
+    respondToApproval,
+    isRespondingToApproval: respondingToApproval,
+    runtimeMode,
+    setRuntimeMode,
+    pendingUserInputs,
+    pendingUserInputAnswers,
+    pendingUserInputQuestionIndex,
+    pendingUserInputRespondingIds,
+    togglePendingUserInputOption,
+    advancePendingUserInput,
     pendingPlan,
     planResponding,
     approvePendingPlan,

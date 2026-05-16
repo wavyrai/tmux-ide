@@ -7,7 +7,6 @@ import { ChatComposer } from "./ChatComposer";
 import { ChatHeader } from "./ChatHeader";
 import type { ComposerBannerItem } from "./ComposerBannerStack";
 import { MessagesTimeline } from "./MessagesTimeline";
-import { PermissionDialog } from "./PermissionDialog";
 import { ProviderStatusBanner } from "./ProviderStatusBanner";
 import { ThreadErrorBanner, type ThreadError } from "./ThreadErrorBanner";
 import { buildPlanBannerItem } from "../lib/composerBannerItems";
@@ -130,6 +129,7 @@ export function ChatThreadView(props: { options: Accessor<ChatMountOptions> }) {
             cwd={() => chat.thread()?.projectDir}
             onOpenFile={props.options().onOpenFile}
             onSendPlanRequest={chat.prefillPrompt}
+            highlightMarkdown={props.options().highlightCodeFences}
           />
           <ChatComposer
             disabled={chat.inflight}
@@ -148,8 +148,21 @@ export function ChatThreadView(props: { options: Accessor<ChatMountOptions> }) {
             onRemoveAttachment={chat.removeAttachment}
             onSend={chat.send}
             onCancel={chat.cancel}
+            pendingApproval={chat.pendingApproval}
+            onRespondToApproval={chat.respondToApproval}
+            isRespondingToApproval={chat.isRespondingToApproval}
+            useResponsiveFooter={() => true}
+            runtimeMode={chat.runtimeMode}
+            onRuntimeModeChange={chat.setRuntimeMode}
+            interactionMode={() => "default"}
+            showInteractionModeToggle={() => false}
+            pendingUserInputs={chat.pendingUserInputs}
+            pendingUserInputAnswers={chat.pendingUserInputAnswers}
+            pendingUserInputRespondingIds={chat.pendingUserInputRespondingIds}
+            pendingUserInputQuestionIndex={chat.pendingUserInputQuestionIndex}
+            onPendingUserInputToggleOption={chat.togglePendingUserInputOption}
+            onPendingUserInputAdvance={chat.advancePendingUserInput}
           />
-          <PermissionDialog pending={chat.pendingPermission} onRespond={chat.respondToPermission} />
         </Show>
       </Show>
     </div>
