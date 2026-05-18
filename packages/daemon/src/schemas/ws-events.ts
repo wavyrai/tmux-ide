@@ -223,6 +223,28 @@ const ChatThreadIndexFrameZ = z.object({
   threads: z.array(ChatThreadIndexEntryZ),
 });
 
+// Server-materialized timeline deltas (e177bda). Rows ride through
+// opaque (`.passthrough()`) — the canonical shape is pinned in
+// @tmux-ide/contracts (TimelineRowZ); validating it twice here would
+// only risk a stricter copy silently dropping a valid frame, which is
+// exactly the regression class this contract row guards against.
+const ChatTimelineRowZ = z
+  .object({ kind: z.string(), id: z.string(), createdAt: z.string() })
+  .passthrough();
+
+const ChatTimelineUpsertFrameZ = z.object({
+  type: z.literal("chat.timeline.upsert"),
+  threadId: z.string(),
+  rows: z.array(ChatTimelineRowZ),
+  order: z.array(z.string()),
+});
+
+const ChatTimelineResetFrameZ = z.object({
+  type: z.literal("chat.timeline.reset"),
+  threadId: z.string(),
+  rows: z.array(ChatTimelineRowZ),
+});
+
 const ChatPermissionRequestFrameZ = z.object({
   type: z.literal("chat.permission.request"),
   threadId: z.string(),
@@ -262,6 +284,8 @@ export const ServerFrameSchemaZ = z.discriminatedUnion("type", [
   ChatThreadStopFrameZ,
   ChatThreadIndexFrameZ,
   ChatPermissionRequestFrameZ,
+  ChatTimelineUpsertFrameZ,
+  ChatTimelineResetFrameZ,
   WorkspaceAddedFrameSchemaZ,
   WorkspaceRemovedFrameSchemaZ,
 ]);

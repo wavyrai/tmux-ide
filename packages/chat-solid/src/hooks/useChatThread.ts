@@ -170,17 +170,50 @@ export function useChatThread(options: Accessor<ChatMountOptions>) {
   // and only the streaming row's text node re-renders per token.
   const [rowStore, setRowStore] = createStore<{ rows: MessagesTimelineRow[] }>({ rows: [] });
 
-  // Merge an incremental timeline delta. `order` is authoritative;
-  // ids absent from `deltaRows` reuse the prior row object (referential
-  // stability → the per-row memo returns the same reference and that
-  // subtree skips re-derivation).
-  function applyTimelineDelta(deltaRows: MessagesTimelineRow[], order: string[]): void {
+  // Upsert rows into the current array in place: replace existing rows
+  // by id (so referential identity churns only for changed rows),
+  // append genuinely-new ids in arrival order. Never drops a row — the
+  // safe fallback when no authoritative `order` is available.
+  function upsertRowsInPlace(
+    current: ReadonlyArray<MessagesTimelineRow>,
+    rows: ReadonlyArray<MessagesTimelineRow>,
+  ): MessagesTimelineRow[] {
+    const byId = new Map(rows.map((row) => [row.id, row]));
+    const next: MessagesTimelineRow[] = current.map((row) => byId.get(row.id) ?? row);
+    const have = new Set(next.map((row) => row.id));
+    for (const row of rows) {
+      if (!have.has(row.id)) {
+        next.push(row);
+        have.add(row.id);
+      }
+    }
+    return next;
+  }
+
+  // Merge an incremental timeline delta. `order` is authoritative when
+  // present: rebuild in that order, reusing prior row objects for ids
+  // absent from `deltaRows` (referential stability → the per-row memo
+  // returns the same reference and that subtree skips re-derivation).
+  //
+  // Robustness: if `order` is missing/empty, or rebuilding from it
+  // would blank a non-empty transcript (a malformed / out-of-context
+  // frame), fall back to an in-place upsert so a bad delta can never
+  // wipe the rendered thread.
+  function applyTimelineDelta(deltaRows: MessagesTimelineRow[], order?: string[]): void {
+    if (!order || order.length === 0) {
+      setRowStore("rows", upsertRowsInPlace(rowStore.rows, deltaRows));
+      return;
+    }
     const prev = new Map(rowStore.rows.map((row) => [row.id, row]));
     const delta = new Map(deltaRows.map((row) => [row.id, row]));
     const next: MessagesTimelineRow[] = [];
     for (const id of order) {
       const row = delta.get(id) ?? prev.get(id);
       if (row) next.push(row);
+    }
+    if (next.length === 0 && (rowStore.rows.length > 0 || deltaRows.length > 0)) {
+      setRowStore("rows", upsertRowsInPlace(rowStore.rows, deltaRows));
+      return;
     }
     setRowStore("rows", next);
   }
@@ -508,18 +541,17 @@ export function useChatThread(options: Accessor<ChatMountOptions>) {
       };
       // Raw-log contract (`chat.messages()`), unchanged.
       setStore(produce((draft) => draft.messages.push(userPrompt)));
-      // Optimistic user row so it shows instantly; the daemon's
-      // `chat.timeline.reset` (broadcast from send) reconciles by the
-      // same id, then agent chunks stream in via `chat.timeline.upsert`.
-      setRowStore("rows", (current) => [
-        ...current,
-        {
-          kind: "message",
-          id: result.promptId,
-          createdAt,
-          message: { id: result.promptId, role: "user", createdAt, content: fullContent },
-        },
-      ]);
+      // Optimistic user row so it shows instantly. Idempotent by id:
+      // the daemon also broadcasts `chat.timeline.reset` from send
+      // (carrying this same prompt id) and the two can race either way
+      // — upsert-in-place so we never duplicate or drop the bubble.
+      const optimisticUserRow: MessagesTimelineRow = {
+        kind: "message",
+        id: result.promptId,
+        createdAt,
+        message: { id: result.promptId, role: "user", createdAt, content: fullContent },
+      };
+      setRowStore("rows", (current) => upsertRowsInPlace(current, [optimisticUserRow]));
     } catch (err) {
       setPendingPromptId(null);
       setInflight(false);
