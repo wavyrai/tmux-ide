@@ -141,6 +141,38 @@ export function chatSessionCancel(
   return postAction(runtime, "chat.session.cancel", { threadId });
 }
 
+/**
+ * Edit a prior user turn in place: the daemon cancels any live
+ * session, truncates the thread back to (and including) the targeted
+ * user message, then dispatches the replacement content as a fresh
+ * turn. Returns the new prompt id + how many trailing messages were
+ * dropped so the caller can reconcile its local store.
+ */
+export function chatSessionEditFromTurn(
+  runtime: ApiRuntime,
+  threadId: string,
+  userMessageId: string,
+  content: ContentBlock[],
+): Promise<{ accepted: true; promptId: string; truncatedCount: number }> {
+  return postAction(runtime, "chat.session.editFromTurn", {
+    threadId,
+    userMessageId,
+    content,
+  });
+}
+
+/**
+ * Create a fresh thread. Used by the "Implement plan in a new thread"
+ * action to spin up a sibling thread under the same project/provider
+ * before seeding it with the implementation prompt.
+ */
+export function chatThreadCreate(
+  runtime: ApiRuntime,
+  input: { provider: AgentProvider; projectDir?: string; title?: string },
+): Promise<{ thread: ThreadState }> {
+  return postAction(runtime, "chat.thread.create", input);
+}
+
 export async function chatPermissionRespond(
   runtime: ApiRuntime,
   input: PermissionRespondInput,

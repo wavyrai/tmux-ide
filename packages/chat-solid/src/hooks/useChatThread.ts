@@ -7,6 +7,7 @@ import {
   chatPlanList,
   chatPlanReject,
   chatSessionCancel,
+  chatSessionEditFromTurn,
   chatSessionSend,
   chatThreadGet,
   chatThreadRename,
@@ -17,6 +18,7 @@ import {
 } from "../api";
 import { coalesceMessages, deriveRuntimeState } from "../coalesce";
 import { notifyAssistantTurnComplete } from "../lib/chatNotify";
+import { buildPlanImplementationPrompt, proposedPlanTitle } from "../lib/proposedPlan";
 import {
   requestKindFromToolCall,
   resolveApprovalOptionId,
@@ -687,6 +689,87 @@ export function useChatThread(options: Accessor<ChatMountOptions>) {
     setPrefillPromptText(plan.planMarkdown);
   }
 
+  // Drives the plan follow-up split button in ComposerPrimaryActions.
+  // True whenever a pending plan is staged for this thread.
+  const showPlanFollowUpPrompt = createMemo<boolean>(() => pendingPlan() !== null);
+
+  /**
+   * Plan implementation prompt for the *current* thread. Used as the
+   * content the composer submits when the user clicks the inline
+   * "Implement" button with an empty draft (mirrors upstream's
+   * empty-draft branch of resolvePlanFollowUpSubmission).
+   */
+  function planImplementationContent(): ContentBlock[] | null {
+    const plan = pendingPlan();
+    if (!plan) return null;
+    return [{ type: "text", text: buildPlanImplementationPrompt(plan.planMarkdown) }];
+  }
+
+  /**
+   * "Implement in a new thread" action. Hands the host a payload to
+   * spin up a sibling thread + navigate to it. When the host doesn't
+   * wire `onImplementPlanInNewThread`, we degrade to implementing the
+   * plan in the current thread so the menu item is never a dead
+   * no-op.
+   */
+  function implementPlanInNewThread(): void {
+    const plan = pendingPlan();
+    if (!plan) return;
+    const handler = options().onImplementPlanInNewThread;
+    if (handler) {
+      handler({
+        planMarkdown: plan.planMarkdown,
+        planTitle: proposedPlanTitle(plan.planMarkdown),
+        implementationPrompt: buildPlanImplementationPrompt(plan.planMarkdown),
+      });
+      return;
+    }
+    const content = planImplementationContent();
+    if (content) void send(content);
+  }
+
+  /**
+   * In-place edit + regenerate. Truncates the thread back through the
+   * targeted user message on the daemon, then dispatches `content` as
+   * a fresh turn. We mirror the truncation locally (drop the edited
+   * prompt and everything after, push the replacement) so the
+   * timeline rewinds immediately; the WS stream fills in the new
+   * assistant reply, and `chat.thread.stop` matches `promptId`.
+   */
+  async function editFromTurn(userMessageId: string, content: ContentBlock[]): Promise<void> {
+    const opts = options();
+    setInflight(true);
+    setStopReason(null);
+    setCompletedAt(null);
+    try {
+      const result = await chatSessionEditFromTurn(
+        runtime(),
+        opts.threadId,
+        userMessageId,
+        content,
+      );
+      setPendingPromptId(result.promptId);
+      setStore(
+        produce((draft) => {
+          const idx = draft.messages.findIndex(
+            (m) => m._tag === "UserPrompt" && m.id === userMessageId,
+          );
+          if (idx >= 0) draft.messages.splice(idx);
+          draft.messages.push({
+            _tag: "UserPrompt",
+            id: result.promptId,
+            createdAt: new Date().toISOString(),
+            content,
+          });
+        }),
+      );
+    } catch (err) {
+      setInflight(false);
+      setError(err instanceof Error ? err : new Error(String(err)));
+      throw err;
+    }
+  }
+
   return {
     thread,
     loading,
@@ -725,6 +808,10 @@ export function useChatThread(options: Accessor<ChatMountOptions>) {
     approvePendingPlan,
     rejectPendingPlan,
     modifyPendingPlan,
+    showPlanFollowUpPrompt,
+    planImplementationContent,
+    implementPlanInNewThread,
+    editFromTurn,
     refetch,
   };
 }

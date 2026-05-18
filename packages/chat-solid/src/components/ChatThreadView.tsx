@@ -129,6 +129,7 @@ export function ChatThreadView(props: { options: Accessor<ChatMountOptions> }) {
             cwd={() => chat.thread()?.projectDir}
             onOpenFile={props.options().onOpenFile}
             onSendPlanRequest={chat.prefillPrompt}
+            onEditMessage={(id, content) => void chat.editFromTurn(id, content)}
             highlightMarkdown={props.options().highlightCodeFences}
           />
           <ChatComposer
@@ -146,7 +147,13 @@ export function ChatThreadView(props: { options: Accessor<ChatMountOptions> }) {
             onPrefillPromptConsumed={() => chat.prefillPrompt(null)}
             onAddAttachment={chat.addAttachment}
             onRemoveAttachment={chat.removeAttachment}
-            onSend={chat.send}
+            showPlanFollowUpPrompt={chat.showPlanFollowUpPrompt}
+            onImplementPlanInNewThread={() => chat.implementPlanInNewThread()}
+            onSend={(content) =>
+              chat.send(
+                content.length === 0 ? (chat.planImplementationContent() ?? content) : content,
+              )
+            }
             onCancel={chat.cancel}
             pendingApproval={chat.pendingApproval}
             onRespondToApproval={chat.respondToApproval}

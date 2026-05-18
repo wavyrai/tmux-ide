@@ -42,6 +42,25 @@ export function stripDisplayedPlanMarkdown(markdown: string): string {
   return markdown;
 }
 
+/**
+ * Prompt seeded into the next turn when the user chooses "Implement"
+ * (or "Implement in a new thread") on a pending plan. Mirrors the
+ * upstream wording verbatim so the agent recognises the directive.
+ */
+export function buildPlanImplementationPrompt(markdown: string): string {
+  return `PLEASE IMPLEMENT THIS PLAN:\n${markdown.trim()}`;
+}
+
+/**
+ * Title for the spun-up thread when implementing a plan in a fresh
+ * thread — "Implement <plan title>", or a generic fallback when the
+ * plan markdown has no derivable heading.
+ */
+export function buildPlanImplementationThreadTitle(markdown: string): string {
+  const title = proposedPlanTitle(markdown);
+  return title ? `Implement ${title}` : "Implement plan";
+}
+
 export function normalizePlanMarkdownForExport(markdown: string): string {
   const trimmed = markdown.replace(/[ \t]+$/gm, "").replace(/\n+$/, "");
   return `${trimmed}\n`;

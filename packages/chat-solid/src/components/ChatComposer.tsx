@@ -435,7 +435,11 @@ export function ChatComposer(props: {
 
   async function send() {
     const text = value().trim();
-    if (!hasContent() || props.disabled()) return;
+    // The plan follow-up "Implement" button submits with an empty
+    // draft — the host substitutes the implementation prompt for the
+    // empty content. Bypass the empty-content guard in that case.
+    const planFollowUp = props.showPlanFollowUpPrompt?.() ?? false;
+    if ((!hasContent() && !planFollowUp) || props.disabled()) return;
     setValue("");
     setCaret(0);
     setHiddenSlash(null);

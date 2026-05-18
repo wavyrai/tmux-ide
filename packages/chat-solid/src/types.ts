@@ -356,6 +356,21 @@ export interface ChatMountOptions {
    */
   onDelete?: (threadId: string) => void;
   /**
+   * Fired when the user picks "Implement in a new thread" from the
+   * plan follow-up split button. The host owns thread creation +
+   * navigation (the same way `onProviderChange` owns the provider
+   * swap): typically `chat.thread.create` under the current project
+   * + a redirect to the new thread, then seeding it with
+   * `implementationPrompt`. When omitted, chat-solid degrades
+   * gracefully and implements the plan in the current thread instead,
+   * so the menu item is never a dead no-op.
+   */
+  onImplementPlanInNewThread?: (payload: {
+    planMarkdown: string;
+    planTitle: string | null;
+    implementationPrompt: string;
+  }) => void;
+  /**
    * Host-supplied banners that surface in the `ComposerBannerStack`
    * alongside the chat surface's own banners (plan follow-up, future
    * approval verdicts, etc). Use this for project-scoped warnings the

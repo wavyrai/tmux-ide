@@ -139,6 +139,13 @@ export function MessagesTimeline(props: {
    * actual rewind dispatch — chat-solid only surfaces the affordance.
    */
   onRevertFromMessage?: (userMessageId: string) => void;
+  /**
+   * Fired when the user saves an in-place edit of a prior user
+   * message. Distinct from revert: the host truncates from that turn
+   * AND regenerates with the new content (chat.session.editFromTurn).
+   * Host owns the dispatch — chat-solid only surfaces the editor.
+   */
+  onEditMessage?: (userMessageId: string, content: ContentBlock[]) => void;
 }) {
   const [container, setContainer] = createSignal<HTMLElement>();
   const [sentinel, setSentinel] = createSignal<HTMLElement>();
@@ -204,6 +211,7 @@ export function MessagesTimeline(props: {
                           onOpenFile={props.onOpenFile}
                           onSendPlanRequest={props.onSendPlanRequest}
                           onRevertFromMessage={props.onRevertFromMessage}
+                          onEditMessage={props.onEditMessage}
                           isTerminalAssistant={(id) => terminalAssistantIds().has(id)}
                         />
                       </div>
@@ -228,6 +236,7 @@ interface TimelineRowProps {
   onOpenFile?: (meta: MarkdownFileLinkMeta) => void;
   onSendPlanRequest?: (markdown: string) => void;
   onRevertFromMessage?: (userMessageId: string) => void;
+  onEditMessage?: (userMessageId: string, content: ContentBlock[]) => void;
   isTerminalAssistant: (id: string) => boolean;
 }
 
@@ -309,6 +318,7 @@ function TimelineRow(props: TimelineRowProps): JSX.Element {
         isTerminal={props.isTerminalAssistant(message().id)}
         revertTurnCount={messageRow().revertTurnCount}
         onRevertFromMessage={props.onRevertFromMessage}
+        onEditMessage={props.onEditMessage}
       />
     </>
   );
@@ -444,6 +454,7 @@ function MessageRow(props: {
   isTerminal: boolean;
   revertTurnCount?: number;
   onRevertFromMessage?: (userMessageId: string) => void;
+  onEditMessage?: (userMessageId: string, content: ContentBlock[]) => void;
 }): JSX.Element {
   const tone = createMemo(() => deriveMessageTone(props.message));
   if (props.message.role === "user") {
@@ -455,6 +466,7 @@ function MessageRow(props: {
         onOpenFile={props.onOpenFile}
         revertTurnCount={props.revertTurnCount}
         onRevertFromMessage={props.onRevertFromMessage}
+        onEditMessage={props.onEditMessage}
       />
     );
   }
@@ -477,6 +489,7 @@ function UserRow(props: {
   onOpenFile?: (meta: MarkdownFileLinkMeta) => void;
   revertTurnCount?: number;
   onRevertFromMessage?: (userMessageId: string) => void;
+  onEditMessage?: (userMessageId: string, content: ContentBlock[]) => void;
 }): JSX.Element {
   const plainText = createMemo(() => extractUserPlainText(props.message.content));
   const imageEntries = createMemo(() => collectImageBlocks(props.message.content));
@@ -486,6 +499,24 @@ function UserRow(props: {
     props.revertTurnCount > 0 &&
     typeof props.onRevertFromMessage === "function";
   const [revertConfirming, setRevertConfirming] = createSignal(false);
+  // Edit is text-only by design: editFromTurn replaces the turn with
+  // a single text block, so we only offer it on purely-text messages
+  // — silently dropping image/resource blocks on save would surprise.
+  const isTextOnly = createMemo(() => props.message.content.every((b) => b.type === "text"));
+  const canEdit = (): boolean =>
+    typeof props.onEditMessage === "function" && isTextOnly() && plainText().trim().length > 0;
+  const [editing, setEditing] = createSignal(false);
+  const [draft, setDraft] = createSignal("");
+  function beginEdit(): void {
+    setDraft(plainText());
+    setEditing(true);
+  }
+  function commitEdit(): void {
+    const text = draft().trim();
+    setEditing(false);
+    if (text.length === 0 || text === plainText().trim()) return;
+    props.onEditMessage?.(props.message.id, [{ type: "text", text }]);
+  }
   return (
     <section
       data-testid="message-row"
@@ -546,29 +577,85 @@ function UserRow(props: {
                 </span>
               </Show>
             </Show>
+            <Show when={canEdit() && !editing()}>
+              <button
+                type="button"
+                data-testid="message-edit"
+                class="cursor-pointer rounded-sm border border-[var(--border-weak,var(--border))] px-1.5 py-0.5 text-[10px] text-[var(--fg-secondary)] opacity-0 transition-opacity hover:border-[var(--accent)] hover:text-[var(--accent)] group-hover/user:opacity-100"
+                onClick={beginEdit}
+                title="Edit this message and regenerate"
+              >
+                Edit
+              </button>
+            </Show>
             <MessageCopyButton text={plainText()} class="opacity-0 group-hover/user:opacity-100" />
           </span>
         }
       />
-      <div class="min-w-0 text-[13px] leading-relaxed text-[var(--fg)]">
-        <For each={props.message.content}>
-          {(block, index) => (
-            <UserContentBlockView
-              block={block}
-              cwd={props.cwd}
-              onOpenFile={props.onOpenFile}
-              onExpandImage={
-                onExpand
-                  ? () => {
-                      const cursor = previewAt(imageEntries(), index());
-                      if (cursor) onExpand(cursor);
-                    }
-                  : undefined
+      <Show
+        when={editing()}
+        fallback={
+          <div class="min-w-0 text-[13px] leading-relaxed text-[var(--fg)]">
+            <For each={props.message.content}>
+              {(block, index) => (
+                <UserContentBlockView
+                  block={block}
+                  cwd={props.cwd}
+                  onOpenFile={props.onOpenFile}
+                  onExpandImage={
+                    onExpand
+                      ? () => {
+                          const cursor = previewAt(imageEntries(), index());
+                          if (cursor) onExpand(cursor);
+                        }
+                      : undefined
+                  }
+                />
+              )}
+            </For>
+          </div>
+        }
+      >
+        <div data-testid="message-edit-form" class="min-w-0">
+          <textarea
+            data-testid="message-edit-input"
+            class="w-full resize-y rounded-sm border border-[var(--accent)] bg-[var(--bg)] px-2 py-1.5 text-[13px] leading-relaxed text-[var(--fg)] outline-none"
+            rows={Math.min(12, Math.max(2, draft().split("\n").length))}
+            value={draft()}
+            autofocus
+            onInput={(event) => setDraft(event.currentTarget.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Escape") {
+                event.preventDefault();
+                setEditing(false);
               }
-            />
-          )}
-        </For>
-      </div>
+              if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+                event.preventDefault();
+                commitEdit();
+              }
+            }}
+          />
+          <div class="mt-1.5 flex items-center justify-end gap-1.5">
+            <span class="mr-auto text-[10px] text-[var(--dim)]">⌘↵ to save · Esc to cancel</span>
+            <button
+              type="button"
+              data-testid="message-edit-cancel"
+              class="cursor-pointer rounded-sm border border-[var(--border-weak,var(--border))] px-2 py-0.5 text-[10px] text-[var(--fg-secondary)] hover:border-[var(--accent)] hover:text-[var(--accent)]"
+              onClick={() => setEditing(false)}
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              data-testid="message-edit-save"
+              class="cursor-pointer rounded-sm bg-[var(--accent)] px-2 py-0.5 text-[10px] text-[var(--bg)] transition-opacity hover:opacity-90"
+              onClick={commitEdit}
+            >
+              Save &amp; regenerate
+            </button>
+          </div>
+        </div>
+      </Show>
     </section>
   );
 }
