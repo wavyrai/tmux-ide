@@ -4,6 +4,12 @@ import type { ProviderInfo } from "../api";
 import { ContextWindowMeter } from "./ContextWindowMeter";
 import { OpenInPicker, type EditorId } from "./OpenInPicker";
 import { ProviderModelPicker } from "./ProviderModelPicker";
+import { DEFAULT_MODEL_BY_KIND, PROVIDER_MODEL_CATALOG } from "../lib/providerModelCatalog";
+import {
+  loadModelFavorites,
+  toggleModelFavorite,
+  type ModelFavorite,
+} from "../lib/modelFavoritesStore";
 import { VscodeEntryIcon, basename } from "./VscodeEntryIcon";
 
 /**
@@ -134,6 +140,36 @@ export function ChatHeader(props: ChatHeaderProps) {
     () => props.availableProviders?.() ?? [],
   );
 
+  // Model picker: static catalog + persisted favorites. The daemon
+  // has no per-model transport, so picking a model switches the
+  // provider (when it differs) and records the slug client-side so
+  // the active row + trigger reflect the choice.
+  const modelsByKind = createMemo(() => PROVIDER_MODEL_CATALOG);
+  const [favorites, setFavorites] = createSignal<ModelFavorite[]>(loadModelFavorites());
+  const favoriteTuples = createMemo(() => favorites().map((f) => ({ kind: f.kind, slug: f.slug })));
+  const [pickedModelByKind, setPickedModelByKind] = createSignal<Record<string, string>>({});
+  const activeModel = createMemo<string | null>(() => {
+    const kind = activeProvider()?.kind ?? null;
+    if (!kind) return null;
+    return pickedModelByKind()[kind] ?? DEFAULT_MODEL_BY_KIND.get(kind) ?? null;
+  });
+  const builtInProvider = (kind: string): AgentProvider | null => {
+    if (kind === "claude-code") return { kind: "claude-code" };
+    if (kind === "codex") return { kind: "codex" };
+    if (kind === "gemini") return { kind: "gemini" };
+    return null;
+  };
+  const handlePickModel = (kind: string, slug: string): void => {
+    setPickedModelByKind((prev) => ({ ...prev, [kind]: slug }));
+    if (kind !== (activeProvider()?.kind ?? null)) {
+      const next = builtInProvider(kind);
+      if (next) props.onProviderChange?.(next);
+    }
+  };
+  const handleToggleFavorite = (kind: string, slug: string): void => {
+    setFavorites((current) => toggleModelFavorite(current, { kind, slug }));
+  };
+
   // OpenInPicker plumbing — self-sufficient when the host doesn't
   // wire the editor surfaces. We default the cwd to the thread's
   // project dir, the editor list to the curated built-in registry,
@@ -213,6 +249,11 @@ export function ChatHeader(props: ChatHeaderProps) {
           availableProviders={providerList}
           onChange={(next) => props.onProviderChange?.(next)}
           disabled={props.inflight}
+          modelsByKind={modelsByKind}
+          activeModel={activeModel}
+          onPickModel={handlePickModel}
+          favorites={favoriteTuples}
+          onToggleFavorite={handleToggleFavorite}
         />
       </Show>
       <Show when={showOpenInPicker()}>

@@ -14,7 +14,8 @@
  */
 
 const NEW_MODEL_KEYS: ReadonlySet<string> = new Set<string>([
-  // intentionally empty — populate when a new model is hot
+  "claude-code:claude-opus-4-7",
+  "claude-code:claude-sonnet-4-6",
 ]);
 
 /**
@@ -23,7 +24,9 @@ const NEW_MODEL_KEYS: ReadonlySet<string> = new Set<string>([
  * editorial nudge for default-pick guidance ("we suggest this one").
  */
 const RECOMMENDED_MODEL_KEYS: ReadonlySet<string> = new Set<string>([
-  // intentionally empty — populate per editorial guidance
+  "claude-code:claude-opus-4-7",
+  "codex:gpt-5-codex",
+  "gemini:gemini-2.5-pro",
 ]);
 
 export function isModelPickerNewModel(driverKind: string, slug: string): boolean {

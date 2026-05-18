@@ -22,7 +22,6 @@
 
 import type { Accessor, JSX } from "solid-js";
 import { createMemo, createSignal, For, Show } from "solid-js";
-import { createVirtualizer } from "@tanstack/solid-virtual";
 import { ModelListRow, type ModelListRowModel } from "./ModelListRow";
 import {
   ModelPickerSidebar,
@@ -252,24 +251,12 @@ export function ModelPickerContent(props: ModelPickerContentProps): JSX.Element 
     return `${props.jumpLabelPrefix}${index + 1}`;
   };
 
-  // Virtualize the (sometimes large) model list. createMemo wrappers
-  // for getVirtualItems + getTotalSize per 9b139e5 so the spacer + For
-  // stay subscribed to the virtualizer's signal.
-  const [scrollEl, setScrollEl] = createSignal<HTMLDivElement | null>(null);
-  const virtualizer = createVirtualizer({
-    get count() {
-      return filteredModels().length;
-    },
-    getScrollElement: () => scrollEl(),
-    estimateSize: () => 44,
-    overscan: 6,
-    getItemKey: (i) => {
-      const m = filteredModels()[i];
-      return m ? `${m.instanceId}:${m.model.slug}` : i;
-    },
-  });
-  const virtualItems = createMemo(() => virtualizer.getVirtualItems());
-  const virtualTotalSize = createMemo(() => virtualizer.getTotalSize());
+  // A model list is bounded (a handful of rows per provider), so it
+  // renders in full with a scroll container. Virtualization was
+  // removed here for the same reason it was removed from
+  // MessagesTimeline: `@tanstack/solid-virtual`'s `getVirtualItems()`
+  // returned `[]` perpetually against the built bundle, leaving the
+  // list silently empty.
 
   return (
     <div
@@ -304,11 +291,9 @@ export function ModelPickerContent(props: ModelPickerContentProps): JSX.Element 
         </div>
 
         <div
-          ref={setScrollEl}
           data-testid="model-picker-content-list"
           role="listbox"
-          class="relative flex min-h-0 flex-1 flex-col overflow-y-auto py-1"
-          style={{ position: "relative" }}
+          class="flex min-h-0 flex-1 flex-col overflow-y-auto py-1"
         >
           <Show
             when={filteredModels().length > 0}
@@ -323,83 +308,59 @@ export function ModelPickerContent(props: ModelPickerContentProps): JSX.Element 
               </div>
             }
           >
-            <div
-              data-testid="model-picker-content-spacer"
-              style={{
-                height: `${virtualTotalSize()}px`,
-                width: "100%",
-                position: "relative",
-              }}
-            >
-              <For each={virtualItems()}>
-                {(vItem) => {
-                  const flat = () => filteredModels()[vItem.index]!;
-                  return (
-                    <div
-                      data-index={vItem.index}
-                      ref={(el) => virtualizer.measureElement(el)}
-                      style={{
-                        position: "absolute",
-                        top: "0",
-                        left: "0",
-                        width: "100%",
-                        transform: `translateY(${vItem.start}px)`,
-                      }}
-                    >
-                      <ModelListRow
-                        index={vItem.index}
-                        model={flat().model}
-                        instanceId={flat().instanceId}
-                        driverKind={flat().driverKind}
-                        providerDisplayName={flat().instanceDisplayName}
-                        providerAccentColor={flat().instanceAccentColor}
-                        providerStatus={flat().instanceStatus}
-                        isActive={() => {
-                          const active = props.active();
-                          return (
-                            active !== null &&
-                            active.instanceId === flat().instanceId &&
-                            active.slug === flat().model.slug
-                          );
-                        }}
-                        isFavorite={() =>
-                          favoritesSet().has(
-                            favoriteKey({
-                              instanceId: flat().instanceId,
-                              slug: flat().model.slug,
-                            }),
-                          )
-                        }
-                        showProvider={!isLocked() || visibleInstances().length > 1}
-                        preferShortName={!isLocked()}
-                        showNewBadge={isModelPickerNewModel(flat().driverKind, flat().model.slug)}
-                        showRecommendedBadge={isModelPickerRecommendedModel(
-                          flat().driverKind,
-                          flat().model.slug,
-                        )}
-                        jumpLabel={jumpLabelFor(vItem.index)}
-                        available={flat().available}
-                        onSelect={() =>
-                          props.onSelect({
-                            instanceId: flat().instanceId,
-                            slug: flat().model.slug,
+            <For each={filteredModels()}>
+              {(flat, index) => (
+                <ModelListRow
+                  index={index()}
+                  model={flat.model}
+                  instanceId={flat.instanceId}
+                  driverKind={flat.driverKind}
+                  providerDisplayName={flat.instanceDisplayName}
+                  providerAccentColor={flat.instanceAccentColor}
+                  providerStatus={flat.instanceStatus}
+                  isActive={() => {
+                    const active = props.active();
+                    return (
+                      active !== null &&
+                      active.instanceId === flat.instanceId &&
+                      active.slug === flat.model.slug
+                    );
+                  }}
+                  isFavorite={() =>
+                    favoritesSet().has(
+                      favoriteKey({
+                        instanceId: flat.instanceId,
+                        slug: flat.model.slug,
+                      }),
+                    )
+                  }
+                  showProvider={!isLocked() || visibleInstances().length > 1}
+                  preferShortName={!isLocked()}
+                  showNewBadge={isModelPickerNewModel(flat.driverKind, flat.model.slug)}
+                  showRecommendedBadge={isModelPickerRecommendedModel(
+                    flat.driverKind,
+                    flat.model.slug,
+                  )}
+                  jumpLabel={jumpLabelFor(index())}
+                  available={flat.available}
+                  onSelect={() =>
+                    props.onSelect({
+                      instanceId: flat.instanceId,
+                      slug: flat.model.slug,
+                    })
+                  }
+                  onToggleFavorite={
+                    props.onToggleFavorite
+                      ? () =>
+                          props.onToggleFavorite!({
+                            instanceId: flat.instanceId,
+                            slug: flat.model.slug,
                           })
-                        }
-                        onToggleFavorite={
-                          props.onToggleFavorite
-                            ? () =>
-                                props.onToggleFavorite!({
-                                  instanceId: flat().instanceId,
-                                  slug: flat().model.slug,
-                                })
-                            : undefined
-                        }
-                      />
-                    </div>
-                  );
-                }}
-              </For>
-            </div>
+                      : undefined
+                  }
+                />
+              )}
+            </For>
           </Show>
         </div>
       </div>

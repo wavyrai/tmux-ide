@@ -822,6 +822,14 @@ export function ChatComposer(props: {
             onTogglePlanSidebar={() => props.onTogglePlanSidebar?.()}
             onRuntimeModeChange={(mode) => props.onRuntimeModeChange?.(mode)}
           />
+          <Show when={props.traitsMenuContent?.()}>
+            {(content) => (
+              <>
+                <span class="mx-0.5 hidden h-3.5 w-px bg-border-weak sm:block" aria-hidden="true" />
+                {content()}
+              </>
+            )}
+          </Show>
         </div>
       </Show>
     </form>

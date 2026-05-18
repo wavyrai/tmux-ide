@@ -10,9 +10,30 @@ import { MessagesTimeline } from "./MessagesTimeline";
 import { ProviderStatusBanner } from "./ProviderStatusBanner";
 import { ThreadErrorBanner, type ThreadError } from "./ThreadErrorBanner";
 import { buildPlanBannerItem } from "../lib/composerBannerItems";
+import { TraitsPicker, type TraitDescriptor } from "./TraitsPicker";
+import {
+  applyPromptEffort,
+  buildEffortDescriptor,
+  DEFAULT_PROMPT_EFFORT,
+  isPromptEffort,
+  type PromptEffort,
+} from "../lib/promptEffort";
 
 export function ChatThreadView(props: { options: Accessor<ChatMountOptions> }) {
   const chat = useChatThread(props.options);
+
+  // Per-turn effort. Session-local (resets on remount) — the daemon
+  // has no provider-options transport, so this feeds the prompt-
+  // prefix lever in `applyPromptEffort` at send time.
+  const [effort, setEffort] = createSignal<PromptEffort>(DEFAULT_PROMPT_EFFORT);
+  const traitDescriptors = createMemo<ReadonlyArray<TraitDescriptor>>(() => [
+    buildEffortDescriptor(effort()),
+  ]);
+  const onTraitChange = (descriptorId: string, value: string | boolean): void => {
+    if (descriptorId === "effort" && typeof value === "string" && isPromptEffort(value)) {
+      setEffort(value);
+    }
+  };
   const providerName = createMemo(() => providerDisplayName(chat.thread()?.provider));
 
   // One-shot provider discovery for the header picker. The
@@ -130,6 +151,7 @@ export function ChatThreadView(props: { options: Accessor<ChatMountOptions> }) {
             onOpenFile={props.options().onOpenFile}
             onSendPlanRequest={chat.prefillPrompt}
             onEditMessage={(id, content) => void chat.editFromTurn(id, content)}
+            onRevertFromMessage={(id) => void chat.revertFromMessage(id)}
             highlightMarkdown={props.options().highlightCodeFences}
           />
           <ChatComposer
@@ -149,11 +171,14 @@ export function ChatThreadView(props: { options: Accessor<ChatMountOptions> }) {
             onRemoveAttachment={chat.removeAttachment}
             showPlanFollowUpPrompt={chat.showPlanFollowUpPrompt}
             onImplementPlanInNewThread={() => chat.implementPlanInNewThread()}
-            onSend={(content) =>
-              chat.send(
-                content.length === 0 ? (chat.planImplementationContent() ?? content) : content,
-              )
-            }
+            onSend={(content) => {
+              const base =
+                content.length === 0 ? (chat.planImplementationContent() ?? content) : content;
+              return chat.send(applyPromptEffort(base, effort()));
+            }}
+            traitsMenuContent={() => (
+              <TraitsPicker descriptors={traitDescriptors} onTraitChange={onTraitChange} />
+            )}
             onCancel={chat.cancel}
             pendingApproval={chat.pendingApproval}
             onRespondToApproval={chat.respondToApproval}

@@ -42,6 +42,43 @@ export function buildInlineTerminalContextText(
     .join(" ");
 }
 
+/**
+ * A terminal context surfaces inside a sent user message as a
+ * `resource` block whose uri is `tmux-pane://<session>/<paneId>`
+ * (see `useChatThread.blocksForAttachments`). This parses such a
+ * block into the chip's display shape — a stable `@<pane>` label,
+ * a tooltip (the captured body, or an "expired" hint), and an
+ * `expired` flag when the capture carried no text.
+ */
+export interface ParsedTerminalContextResource {
+  label: string;
+  tooltipText: string;
+  expired: boolean;
+}
+
+const TMUX_PANE_URI_PREFIX = "tmux-pane://";
+
+export function parseTerminalContextResource(block: {
+  type: string;
+  resource?: { uri?: string; text?: string };
+}): ParsedTerminalContextResource | null {
+  if (block.type !== "resource" || !block.resource) return null;
+  const uri = block.resource.uri ?? "";
+  if (!uri.startsWith(TMUX_PANE_URI_PREFIX)) return null;
+  const rest = uri.slice(TMUX_PANE_URI_PREFIX.length);
+  const paneSegment = rest.split("/").filter(Boolean).pop() ?? rest;
+  const slug = paneSegment.trim().toLowerCase().replace(/\s+/g, "-") || "terminal";
+  const body = (block.resource.text ?? "").replace(/\r\n/g, "\n").replace(/^\n+|\n+$/g, "");
+  const expired = body.length === 0;
+  return {
+    label: `@${slug}`,
+    tooltipText: expired
+      ? `Terminal context expired. Re-add @${slug} to include its output in your message.`
+      : body,
+    expired,
+  };
+}
+
 export function textContainsInlineTerminalContextLabels(
   text: string,
   contexts: ReadonlyArray<{ header: string }>,
