@@ -6,6 +6,7 @@ import {
   on,
   onCleanup,
   Show,
+  untrack,
   type Accessor,
 } from "solid-js";
 import { ComposerCommandMenu } from "./ComposerCommandMenu";
@@ -361,34 +362,51 @@ export function ChatComposer(props: {
   // attachments, re-stage them via the host's `onAddAttachment` hook
   // so the chip strip rebuilds across reloads. Image attachments
   // are intentionally skipped (data URLs too heavy for localStorage).
-  createEffect(() => {
-    const id = props.threadId?.() ?? null;
-    if (!id) {
-      setValue("");
-      setCaret(0);
-      setHiddenSlash(null);
-      setHiddenMention(null);
-      return;
-    }
-    const draft = loadDraft(id);
-    setValue(draft);
-    setHiddenSlash(null);
-    setHiddenMention(null);
-    setTextareaCaret(draft.length);
-    const persistedAttachments = loadDraftAttachments(id);
-    if (persistedAttachments.length > 0 && props.attachments().length === 0) {
-      for (const attachment of persistedAttachments) {
-        props.onAddAttachment(attachment);
-      }
-    }
-  });
+  createEffect(
+    on(
+      () => props.threadId?.() ?? null,
+      (id) => {
+        if (!id) {
+          setValue("");
+          setCaret(0);
+          setHiddenSlash(null);
+          setHiddenMention(null);
+          return;
+        }
+        // Restore must fire ONLY on thread-identity change. Reading
+        // the draft / attachment list untracked keeps a debounced
+        // save, an attachment edit, or a cross-tab store tick from
+        // re-running this and re-applying a stale draft over what the
+        // user is currently typing.
+        untrack(() => {
+          const draft = loadDraft(id);
+          setValue(draft);
+          setHiddenSlash(null);
+          setHiddenMention(null);
+          setTextareaCaret(draft.length);
+          const persistedAttachments = loadDraftAttachments(id);
+          if (persistedAttachments.length > 0 && props.attachments().length === 0) {
+            for (const attachment of persistedAttachments) {
+              props.onAddAttachment(attachment);
+            }
+          }
+        });
+      },
+    ),
+  );
 
-  // Cross-tab sync: when another browser tab updates this thread's
-  // draft, adopt the new value mid-typing. The store's storage-event
-  // listener fans out via `subscribeDraft`; we install the watcher
-  // per-thread so sibling threads' updates don't trample the local
-  // input. The subscription tears down on thread switch via
-  // `onCleanup` inside the `on()` callback.
+  // The last prompt this composer wrote via its own debounced
+  // save. A sibling tab adopting our flush re-persists the same
+  // text, which storage-events back to us; without this guard that
+  // echo would `setValue` our own content and bounce the caret.
+  let lastSelfWrite: string | null = null;
+
+  // Cross-tab sync: when ANOTHER browser tab updates this thread's
+  // draft, adopt it — but never while the user is editing here. The
+  // store's storage-event listener fans out via `subscribeDraft`; we
+  // install the watcher per-thread so sibling threads' updates don't
+  // trample the local input. The subscription tears down on thread
+  // switch via `onCleanup` inside the `on()` callback.
   createEffect(
     on(
       () => props.threadId?.() ?? null,
@@ -396,9 +414,16 @@ export function ChatComposer(props: {
         if (!id) return;
         const unsubscribe = subscribeDraft(id, (entry) => {
           const incoming = entry?.prompt ?? "";
-          // Don't trample local edits when the remote tab is simply
-          // mirroring what we just typed.
+          // Our own debounced flush, echoed back via a sibling tab —
+          // ignore so an A→B→A loop can't revert local edits.
+          if (incoming === lastSelfWrite) return;
+          // Already in sync — nothing to adopt.
           if (incoming === value()) return;
+          // Never overwrite the box while the user is actively
+          // typing into it: only adopt cross-tab updates when this
+          // composer's textarea is unfocused (idle / other tab).
+          const el = textarea();
+          if (el && typeof document !== "undefined" && document.activeElement === el) return;
           setValue(incoming);
           setTextareaCaret(incoming.length);
         });
@@ -409,11 +434,14 @@ export function ChatComposer(props: {
 
   // Save keystrokes (+ the live attachment list) to the per-thread
   // draft. The store debounces writes internally so this is cheap
-  // to fire on every value change.
+  // to fire on every value change. Record the value so the cross-tab
+  // watcher can recognize and skip our own echoed flush.
   createEffect(() => {
     const id = props.threadId?.() ?? null;
     if (!id) return;
-    saveDraft(id, value(), props.attachments());
+    const current = value();
+    lastSelfWrite = current;
+    saveDraft(id, current, props.attachments());
   });
 
   createEffect(() => {
