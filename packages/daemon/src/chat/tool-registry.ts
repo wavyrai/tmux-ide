@@ -1,6 +1,7 @@
 import type { z } from "zod";
 import { createTmuxTools, type TmuxToolDeps, type ToolResult } from "./tools/tmux.ts";
 import { createLspTools, type LspBackend } from "./tools/lsp.ts";
+import { createTmuxideTools, type CreateTmuxideToolsOptions } from "./tools/tmuxide.ts";
 
 export interface ChatTool<TIn = unknown, TOut = unknown> {
   name: string;
@@ -35,6 +36,11 @@ export interface BuildChatToolRegistryOptions {
     /** Test override for the realpath resolver. */
     resolveRoot?: (sessionDir: string) => string;
   };
+  /** When set, registers the `tmuxide.*` self-introspection/control
+   *  suite. Omitted by default — the suite needs an approval requester
+   *  wired to the chat permission flow, so a session can't get it for
+   *  free. `session` defaults to the registry's `session`. */
+  tmuxide?: Omit<CreateTmuxideToolsOptions, "session"> & { session?: string };
   /** Additional tools to register beyond the built-in suites. */
   extraTools?: ChatTool[];
 }
@@ -67,6 +73,14 @@ export function buildChatToolRegistry(opts: BuildChatToolRegistryOptions): ChatT
       lspTools["lsp.diagnostics"] as unknown as ChatTool,
     );
   }
+  if (opts.tmuxide) {
+    const { session: tmuxideSession, ...tmuxideRest } = opts.tmuxide;
+    const tmuxideTools = createTmuxideTools({
+      session: tmuxideSession ?? opts.session,
+      ...tmuxideRest,
+    });
+    all.push(...Object.values(tmuxideTools));
+  }
   if (opts.extraTools) all.push(...opts.extraTools);
   const map = new Map<string, ChatTool>();
   for (const tool of all) {
@@ -91,6 +105,15 @@ export function buildChatToolRegistry(opts: BuildChatToolRegistryOptions): ChatT
 
 export { createTmuxTools } from "./tools/tmux.ts";
 export { createLspTools } from "./tools/lsp.ts";
+export { createTmuxideTools, makePermissionApprovalRequester } from "./tools/tmuxide.ts";
+export type {
+  CreateTmuxideToolsOptions,
+  TmuxideClassification,
+  TmuxideApprovalRequest,
+  TmuxideApprovalDecision,
+  TmuxideApprovalRequester,
+  PermissionApprovalDeps,
+} from "./tools/tmuxide.ts";
 export type {
   TmuxToolDeps,
   ToolResult,
