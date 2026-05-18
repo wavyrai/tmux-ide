@@ -62,6 +62,7 @@ export async function dispatchCodexPrompt(input: DispatchCodexInput): Promise<vo
       promptId: input.promptId,
       stopReason,
     });
+    input.pipe.finishTimeline(input.promptId, stopReason);
     await input.store.recordStopReason(input.threadId, stopReason);
   } catch (err) {
     if (input.readActivePrompt()?.promptId === input.promptId) input.bindActivePrompt(null);
@@ -77,6 +78,7 @@ export async function dispatchCodexPrompt(input: DispatchCodexInput): Promise<vo
       promptId: input.promptId,
       stopReason: "refusal",
     });
+    input.pipe.finishTimeline(input.promptId, "refusal");
     await input.store.recordStopReason(input.threadId, "refusal").catch(() => undefined);
   }
 }
@@ -107,6 +109,7 @@ export async function dispatchAcpPrompt(input: DispatchAcpInput): Promise<void> 
       promptId: input.promptId,
       stopReason,
     });
+    input.pipe.finishTimeline(input.promptId, stopReason);
     await input.store.recordStopReason(input.threadId, stopReason);
   } catch (err) {
     input.logger({
@@ -121,6 +124,7 @@ export async function dispatchAcpPrompt(input: DispatchAcpInput): Promise<void> 
       promptId: input.promptId,
       stopReason: "refusal",
     });
+    input.pipe.finishTimeline(input.promptId, "refusal");
     await input.store.recordStopReason(input.threadId, "refusal").catch(() => undefined);
   }
 }

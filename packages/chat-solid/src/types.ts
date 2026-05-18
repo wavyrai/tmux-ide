@@ -211,12 +211,34 @@ export type ChatPlanUpsertedEvent = {
   plan: ProposedPlanSummary;
 };
 
+/**
+ * Server-materialized timeline deltas. The daemon reduces ACP chunks
+ * into `MessagesTimelineRow[]` and pushes whole-row upserts; the client
+ * is a pure renderer (no client-side coalescing). `upsert.rows` are the
+ * changed/added rows, `upsert.order` is the authoritative full id order
+ * (client reuses prior row objects for ids absent from `rows`).
+ */
+export type ChatTimelineUpsertEvent = {
+  type: "chat.timeline.upsert";
+  threadId: string;
+  rows: MessagesTimelineRow[];
+  order: string[];
+};
+
+export type ChatTimelineResetEvent = {
+  type: "chat.timeline.reset";
+  threadId: string;
+  rows: MessagesTimelineRow[];
+};
+
 export type ChatBusEvent =
   | ChatThreadUpdateEvent
   | ChatThreadStopEvent
   | ChatThreadUsageEvent
   | ChatPermissionRequestEvent
-  | ChatPlanUpsertedEvent;
+  | ChatPlanUpsertedEvent
+  | ChatTimelineUpsertEvent
+  | ChatTimelineResetEvent;
 
 export type ChatMessage =
   | {

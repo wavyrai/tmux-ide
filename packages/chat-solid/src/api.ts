@@ -3,6 +3,7 @@ import type {
   ChatThreadUsageSummary,
   ComposerTerminalPane,
   ContentBlock,
+  MessagesTimelineRow,
   ProposedPlanSummary,
   ThreadIndexEntry,
   ThreadState,
@@ -93,7 +94,10 @@ export async function postAction<T>(runtime: ApiRuntime, name: string, input: un
   return envelope.result;
 }
 
-export function chatThreadGet(runtime: ApiRuntime, id: string): Promise<{ thread: ThreadState }> {
+export function chatThreadGet(
+  runtime: ApiRuntime,
+  id: string,
+): Promise<{ thread: ThreadState; timeline?: MessagesTimelineRow[] }> {
   return postAction(runtime, "chat.thread.get", { id });
 }
 

@@ -1,34 +1,31 @@
 /**
- * Streaming-chunk coalescer.
+ * Server-materialized timeline — client is a pure renderer.
  *
- * The daemon emits one `chat.thread.update` WS frame per token-burst.
- * Before the coalescer, the hook pushed one `AgentUpdate` per frame —
- * a 200-chunk turn ballooned `store.messages` to 200 entries and
- * forced `coalesceMessages` to walk all of them on every render.
- * The fix:
+ * The daemon reduces ACP `agent_message_chunk` bursts into the
+ * canonical `MessagesTimelineRow[]` and pushes whole-row deltas:
  *
- *   1. Buffer `chat.thread.update` frames in a queue.
- *   2. Flush once per animation frame (or microtask in tests).
- *   3. Merge consecutive same-kind same-messageId text chunks into
- *      the previous AgentUpdate's content in place.
+ *   - `chat.timeline.reset`  full replacement (history bootstrap /
+ *                            editFromTurn rewind / user prompt).
+ *   - `chat.timeline.upsert` incremental: `rows` are the changed/added
+ *                            rows, `order` the authoritative id order.
  *
- * The visible UI (concatenated text) is identical — but the store
- * grows by O(1) per turn instead of O(N) per chunk.
- *
- * This file pins:
- *   - 50 consecutive text chunks → 1 store entry, text concatenated.
- *   - A tool_call landing between two text chunks breaks the merge
- *     window and produces 3 entries (chunk, tool_call, chunk).
- *   - Chunks belonging to different messageIds don't merge.
- *   - Non-text chunk content (image, audio) skips the merge.
- *   - The final assistant ChatMessage emitted via `chat.rows` is the
- *     same single bubble whether we got 1 frame or 50.
+ * The client does NO reduction. This file pins:
+ *   1. A `chat.timeline.upsert` populates `chat.rows()`.
+ *   2. Re-upserting the same row id append-grows that row's text
+ *      (streaming) and the row stays a single message row.
+ *   3. Rows whose id is absent from a delta keep object identity
+ *      (referential stability → the renderer's per-row memo skips
+ *      untouched rows).
+ *   4. `chat.timeline.reset` replaces the timeline wholesale.
+ *   5. Deltas for other threadIds are ignored.
+ *   6. The raw `chat.messages()` log is independent of the timeline
+ *      (the daemon still emits `chat.thread.update` for that contract).
  */
 
 import { createRoot, createSignal, type Accessor } from "solid-js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useChatThread } from "../src/hooks/useChatThread";
-import type { ChatMountOptions } from "../src/types";
+import type { ChatMountOptions, MessagesTimelineRow } from "../src/types";
 
 class FakeWebSocket extends EventTarget {
   static instances: FakeWebSocket[] = [];
@@ -65,7 +62,7 @@ function panesOk(): Response {
   });
 }
 
-function threadResult(messages: unknown[] = []) {
+function threadResult(timeline: MessagesTimelineRow[] = []) {
   return {
     thread: {
       id: "thread-1",
@@ -73,8 +70,9 @@ function threadResult(messages: unknown[] = []) {
       createdAt: "2026-05-14T10:00:00.000Z",
       updatedAt: "2026-05-14T10:00:00.000Z",
       provider: { kind: "claude-code" },
-      messages,
+      messages: [],
     },
+    timeline,
   };
 }
 
@@ -108,47 +106,41 @@ function pushMessage(socket: FakeWebSocket, payload: unknown): void {
   socket.dispatchEvent(new MessageEvent("message", { data: JSON.stringify(payload) }));
 }
 
-function textChunkFrame(seq: number, text: string, messageId = "msg-1") {
+function userRow(id: string, text: string): MessagesTimelineRow {
   return {
-    type: "chat.thread.update" as const,
-    threadId: "thread-1",
-    seq,
-    update: {
-      sessionUpdate: "agent_message_chunk" as const,
-      content: { type: "text" as const, text },
-      messageId,
+    kind: "message",
+    id,
+    createdAt: "2026-05-14T10:00:00.000Z",
+    message: {
+      id,
+      role: "user",
+      createdAt: "2026-05-14T10:00:00.000Z",
+      content: [{ type: "text", text }],
     },
   };
 }
 
-function toolCallFrame(seq: number, toolCallId: string) {
+function assistantRow(id: string, text: string, streaming: boolean): MessagesTimelineRow {
   return {
-    type: "chat.thread.update" as const,
-    threadId: "thread-1",
-    seq,
-    update: {
-      sessionUpdate: "tool_call" as const,
-      toolCallId,
-      title: "Run something",
-      status: "in_progress" as const,
+    kind: "message",
+    id,
+    createdAt: "2026-05-14T10:00:05.000Z",
+    message: {
+      id,
+      role: "assistant",
+      createdAt: "2026-05-14T10:00:05.000Z",
+      streaming,
+      text,
+      toolCalls: [],
     },
   };
 }
 
-function imageChunkFrame(seq: number, dataUrl: string, messageId = "msg-img") {
-  return {
-    type: "chat.thread.update" as const,
-    threadId: "thread-1",
-    seq,
-    update: {
-      sessionUpdate: "agent_message_chunk" as const,
-      content: { type: "image" as const, data: dataUrl, mimeType: "image/png" },
-      messageId,
-    },
-  };
+function upsert(rows: MessagesTimelineRow[], order: string[], threadId = "thread-1") {
+  return { type: "chat.timeline.upsert" as const, threadId, rows, order };
 }
 
-describe("useChatThread streaming-chunk coalescer", () => {
+describe("useChatThread — server-materialized timeline", () => {
   const originalFetch = globalThis.fetch;
   const OriginalWebSocket = globalThis.WebSocket;
 
@@ -168,138 +160,135 @@ describe("useChatThread streaming-chunk coalescer", () => {
     globalThis.WebSocket = OriginalWebSocket;
   });
 
-  it("merges 50 consecutive text chunks into ONE assistant ChatMessage", async () => {
+  it("renders a chat.timeline.upsert delta directly", async () => {
     const { chat, dispose } = mountHook();
     await waitFor(() => FakeWebSocket.instances.length > 0);
     const socket = FakeWebSocket.instances[0]!;
     await waitFor(() => chat.thread() !== null);
 
-    const fragments = Array.from({ length: 50 }, (_, i) => `chunk-${i} `);
-    for (let i = 0; i < fragments.length; i += 1) {
-      pushMessage(socket, textChunkFrame(i + 1, fragments[i]!));
+    pushMessage(
+      socket,
+      upsert([userRow("u1", "hello"), assistantRow("a1", "Hi", true)], ["u1", "a1"]),
+    );
+
+    await waitFor(() => chat.rows().length === 2);
+    const rows = chat.rows();
+    expect(rows.map((r) => r.id)).toEqual(["u1", "a1"]);
+    const assistant = rows[1]!;
+    expect(assistant.kind).toBe("message");
+    if (assistant.kind === "message" && assistant.message.role === "assistant") {
+      expect(assistant.message.text).toBe("Hi");
+      expect(assistant.message.streaming).toBe(true);
+    }
+    dispose();
+  });
+
+  it("append-grows the streaming row across upserts (daemon already coalesced)", async () => {
+    const { chat, dispose } = mountHook();
+    await waitFor(() => FakeWebSocket.instances.length > 0);
+    const socket = FakeWebSocket.instances[0]!;
+    await waitFor(() => chat.thread() !== null);
+
+    pushMessage(socket, upsert([userRow("u1", "go")], ["u1"]));
+    // The daemon sends the whole row each burst with cumulative text.
+    for (const text of ["chunk-0 ", "chunk-0 chunk-1 ", "chunk-0 chunk-1 chunk-2"]) {
+      pushMessage(socket, upsert([assistantRow("a1", text, true)], ["u1", "a1"]));
     }
 
-    await waitFor(() => chat.rows().length > 0);
-
-    // Single assistant ChatMessage emitted regardless of frame count.
+    await waitFor(() => chat.rows().length === 2);
     const messageRows = chat
       .rows()
       .filter((row): row is Extract<typeof row, { kind: "message" }> => row.kind === "message");
-    expect(messageRows).toHaveLength(1);
-    const message = messageRows[0]!.message;
-    expect(message.role).toBe("assistant");
-    if (message.role === "assistant") {
-      expect(message.text).toBe(fragments.join(""));
-    }
-
-    dispose();
-  });
-
-  it("splits the merge window on a non-chunk update between text chunks", async () => {
-    const { chat, dispose } = mountHook();
-    await waitFor(() => FakeWebSocket.instances.length > 0);
-    const socket = FakeWebSocket.instances[0]!;
-    await waitFor(() => chat.thread() !== null);
-
-    pushMessage(socket, textChunkFrame(1, "before "));
-    pushMessage(socket, toolCallFrame(2, "tc-1"));
-    pushMessage(socket, textChunkFrame(3, "after"));
-
-    await waitFor(() => chat.rows().length > 0);
-    const messages = chat
-      .rows()
-      .filter((row): row is Extract<typeof row, { kind: "message" }> => row.kind === "message");
-    // Assistant message text concatenates both halves regardless of
-    // the intervening tool call.
-    const assistant = messages[0]!.message;
+    expect(messageRows).toHaveLength(2);
+    const assistant = messageRows[1]!.message;
+    expect(assistant.role).toBe("assistant");
     if (assistant.role === "assistant") {
-      expect(assistant.text).toBe("before after");
-      expect(assistant.toolCalls.map((tc) => tc.toolCallId)).toEqual(["tc-1"]);
+      expect(assistant.text).toBe("chunk-0 chunk-1 chunk-2");
     }
     dispose();
   });
 
-  it("preserves the messageId boundary at the store layer", async () => {
-    // Same-messageId frames collapse into one AgentUpdate; a
-    // messageId change opens a new AgentUpdate. The read-time
-    // coalescer concatenates both into a single assistant bubble
-    // (existing behavior), but the underlying store stays
-    // bounded — two entries for two distinct chunk streams.
+  it("preserves object identity for rows absent from a delta", async () => {
     const { chat, dispose } = mountHook();
     await waitFor(() => FakeWebSocket.instances.length > 0);
     const socket = FakeWebSocket.instances[0]!;
     await waitFor(() => chat.thread() !== null);
 
-    pushMessage(socket, textChunkFrame(1, "A1 ", "msg-A"));
-    pushMessage(socket, textChunkFrame(2, "A2", "msg-A"));
-    pushMessage(socket, textChunkFrame(3, "B1 ", "msg-B"));
-    pushMessage(socket, textChunkFrame(4, "B2", "msg-B"));
+    pushMessage(
+      socket,
+      upsert([userRow("u1", "hello"), assistantRow("a1", "Hi", true)], ["u1", "a1"]),
+    );
+    await waitFor(() => chat.rows().length === 2);
+    const userBefore = chat.rows()[0]!;
 
-    await waitFor(() => chat.rows().length > 0);
-    // Visible UI: one continuous assistant bubble (read-time
-    // coalescer doesn't split on messageId boundaries).
-    const messages = chat
-      .rows()
-      .filter((row): row is Extract<typeof row, { kind: "message" }> => row.kind === "message");
-    expect(messages).toHaveLength(1);
-    const assistant = messages[0]!.message;
-    if (assistant.role === "assistant") {
-      expect(assistant.text).toBe("A1 A2B1 B2");
-    }
-    dispose();
-  });
-
-  it("skips the merge for non-text chunk content", async () => {
-    const { chat, dispose } = mountHook();
-    await waitFor(() => FakeWebSocket.instances.length > 0);
-    const socket = FakeWebSocket.instances[0]!;
-    await waitFor(() => chat.thread() !== null);
-
-    pushMessage(socket, textChunkFrame(1, "before "));
-    pushMessage(socket, imageChunkFrame(2, "data:image/png;base64,xxx", "msg-1"));
-    pushMessage(socket, textChunkFrame(3, "after"));
-
-    await waitFor(() => chat.rows().length > 0);
-    // The image chunk is a distinct AgentUpdate; the surrounding
-    // text chunks still concatenate via the read-time coalescer.
-    const messages = chat
-      .rows()
-      .filter((row): row is Extract<typeof row, { kind: "message" }> => row.kind === "message");
-    expect(messages).toHaveLength(1);
-    const assistant = messages[0]!.message;
-    if (assistant.role === "assistant") {
-      expect(assistant.text).toContain("before ");
-      expect(assistant.text).toContain("after");
-    }
-    dispose();
-  });
-
-  it("batches multiple frames per flush into one reactive update", async () => {
-    const { chat, dispose } = mountHook();
-    await waitFor(() => FakeWebSocket.instances.length > 0);
-    const socket = FakeWebSocket.instances[0]!;
-    await waitFor(() => chat.thread() !== null);
-
-    let rowEvaluations = 0;
-    const stop = chat.rows;
-    createRoot(() => {
-      // Subscribing once causes Solid to run our derivation per
-      // tracked dependency change. We push 20 chunks synchronously
-      // and expect a single flush — so the row memo re-evaluates
-      // at most twice (initial + flush).
-      rowEvaluations += stop().length > -1 ? 1 : 0;
+    // Stream only the assistant row — `u1` is absent from `rows`.
+    pushMessage(socket, upsert([assistantRow("a1", "Hi there", true)], ["u1", "a1"]));
+    await waitFor(() => {
+      const r = chat.rows()[1];
+      return (
+        r?.kind === "message" && r.message.role === "assistant" && r.message.text === "Hi there"
+      );
     });
 
-    const fragments = Array.from({ length: 20 }, (_, i) => `x${i}`);
-    for (let i = 0; i < fragments.length; i += 1) {
-      pushMessage(socket, textChunkFrame(i + 1, fragments[i]!));
-    }
-    // Single microtask = single flush in test env.
-    await Promise.resolve();
-    await new Promise((r) => setTimeout(r, 0));
+    // Same reference → the renderer's per-row memo skips this subtree.
+    expect(chat.rows()[0]).toBe(userBefore);
+    dispose();
+  });
 
-    expect(chat.rows().length).toBeGreaterThan(0);
-    expect(rowEvaluations).toBeLessThanOrEqual(2);
+  it("replaces the timeline wholesale on chat.timeline.reset", async () => {
+    const { chat, dispose } = mountHook();
+    await waitFor(() => FakeWebSocket.instances.length > 0);
+    const socket = FakeWebSocket.instances[0]!;
+    await waitFor(() => chat.thread() !== null);
+
+    pushMessage(
+      socket,
+      upsert([userRow("u1", "first"), assistantRow("a1", "reply", false)], ["u1", "a1"]),
+    );
+    await waitFor(() => chat.rows().length === 2);
+
+    pushMessage(socket, {
+      type: "chat.timeline.reset",
+      threadId: "thread-1",
+      rows: [userRow("u2", "edited")],
+    });
+    await waitFor(() => chat.rows().length === 1);
+    expect(chat.rows().map((r) => r.id)).toEqual(["u2"]);
+    dispose();
+  });
+
+  it("ignores timeline deltas for other threads", async () => {
+    const { chat, dispose } = mountHook();
+    await waitFor(() => FakeWebSocket.instances.length > 0);
+    const socket = FakeWebSocket.instances[0]!;
+    await waitFor(() => chat.thread() !== null);
+
+    pushMessage(socket, upsert([userRow("x", "wrong thread")], ["x"], "OTHER"));
+    pushMessage(socket, upsert([userRow("u1", "right thread")], ["u1"]));
+
+    await waitFor(() => chat.rows().length === 1);
+    expect(chat.rows()[0]!.id).toBe("u1");
+    dispose();
+  });
+
+  it("keeps the raw chat.messages() log independent of the timeline", async () => {
+    const { chat, dispose } = mountHook();
+    await waitFor(() => FakeWebSocket.instances.length > 0);
+    const socket = FakeWebSocket.instances[0]!;
+    await waitFor(() => chat.thread() !== null);
+
+    // The raw-log contract still grows from `chat.thread.update`
+    // (pinned in detail by streaming.test.ts) — independent of the
+    // server-materialized render rows.
+    pushMessage(socket, {
+      type: "chat.thread.update",
+      threadId: "thread-1",
+      seq: 1,
+      update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "raw" } },
+    });
+
+    await waitFor(() => chat.messages().length === 1);
+    expect(chat.rows().length).toBe(0);
     dispose();
   });
 });

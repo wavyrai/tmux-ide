@@ -206,11 +206,13 @@ export function makeThreadManager(opts: MakeThreadManagerOptions): ThreadManager
     threadId: string,
     initialUsage: ChatThreadUsageSummary | undefined,
     seq: number,
+    initialMessages: ThreadMessage[],
   ) {
     return makeMessagePipe({
       threadId,
       initialSeq: seq,
       ...(initialUsage ? { initialUsage } : {}),
+      initialMessages,
       store: opts.store,
       busEmit: opts.busEmit,
       persistDebounceMs,
@@ -226,7 +228,7 @@ export function makeThreadManager(opts: MakeThreadManagerOptions): ThreadManager
     if (thread.provider.kind !== "codex") {
       throw new Error(`Expected codex provider on thread ${threadId}`);
     }
-    const pipe = makePipeFor(threadId, thread.usage, initialSeq(thread.messages));
+    const pipe = makePipeFor(threadId, thread.usage, initialSeq(thread.messages), thread.messages);
     const client = await spawnCodexClient(thread.provider, {
       cwd: thread.projectDir,
       logger: createCodexDebugLogger(threadId),
@@ -289,7 +291,7 @@ export function makeThreadManager(opts: MakeThreadManagerOptions): ThreadManager
   async function spawnAcpLive(threadId: string): Promise<AcpLiveThread> {
     const thread = await opts.store.get(threadId);
     if (!thread) throw new ThreadNotFoundError(threadId);
-    const pipe = makePipeFor(threadId, thread.usage, initialSeq(thread.messages));
+    const pipe = makePipeFor(threadId, thread.usage, initialSeq(thread.messages), thread.messages);
     const client = await opts.spawnClient(thread.provider, { cwd: thread.projectDir });
     await client.initialize();
     const session = await client.newSession({
@@ -347,6 +349,12 @@ export function makeThreadManager(opts: MakeThreadManagerOptions): ThreadManager
         createdAt: new Date().toISOString(),
         content: input.content,
       });
+      // Re-materialize from the authoritative (post-append, possibly
+      // post-truncation) log and open this prompt as the live turn.
+      // Broadcasts `chat.timeline.reset` so the client shows the user
+      // row immediately; agent chunks stream in incrementally after.
+      const persisted = await opts.store.get(input.threadId);
+      liveThread.pipe.resyncTimeline(persisted?.messages ?? [], promptId);
       if (liveThread.kind === "codex") {
         void dispatchCodexPrompt({
           threadId: input.threadId,

@@ -25,6 +25,7 @@ import type {
   ThreadIndexEntry,
   ThreadState,
 } from "../../../chat/types.ts";
+import { materializeRows } from "../../../chat/materialize.ts";
 import { broadcastChatEvent } from "../../ws-events.ts";
 import type { ActionInput, ActionResult } from "../contract.ts";
 import { ActionError } from "../errors.ts";
@@ -226,7 +227,11 @@ export async function chatThreadGetHandler(
   input: ActionInput<"chat.thread.get">,
   deps: ChatActionDeps = {},
 ): Promise<ActionResult<"chat.thread.get">> {
-  return { thread: await requireThread(storeFrom(deps), input.id) };
+  const thread = await requireThread(storeFrom(deps), input.id);
+  // History bootstrap: the materialized projection the client renders
+  // directly. The raw `thread.messages` event log stays for
+  // back-compat (editFromTurn, the daemon test harness).
+  return { thread, timeline: materializeRows(thread.messages) };
 }
 
 export async function chatThreadUsageHandler(

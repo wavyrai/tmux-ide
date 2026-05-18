@@ -25,6 +25,7 @@ export * from "./ws-v3-protocol.ts";
 export * from "./actions-contract.ts";
 export * from "./actions-errors.ts";
 export * from "./chat-thread.ts";
+export * from "./chat-timeline.ts";
 export * from "./git.ts";
 export * from "./github.ts";
 export * from "./terminals.ts";

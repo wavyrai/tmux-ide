@@ -5,10 +5,14 @@ import type {
   StopReason,
   ToolCall,
 } from "../acp/index.ts";
-import type { ChatThreadEvent } from "@tmux-ide/contracts";
+import type {
+  ChatThreadEvent,
+  ChatTimelineUpsertEvent,
+  ChatTimelineResetEvent,
+} from "@tmux-ide/contracts";
 
 export type { AgentProvider, ContentBlock, SessionUpdate, StopReason, ToolCall };
-export type { ChatThreadEvent };
+export type { ChatThreadEvent, ChatTimelineUpsertEvent, ChatTimelineResetEvent };
 
 export interface ThreadIndexEntry {
   id: string;
@@ -105,4 +109,6 @@ export type ChatEvent =
   | ChatThreadUsageEvent
   | ChatThreadIndexEvent
   | ChatPermissionRequestEvent
+  | ChatTimelineUpsertEvent
+  | ChatTimelineResetEvent
   | ChatThreadEvent;

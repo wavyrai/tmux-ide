@@ -18,6 +18,7 @@
  */
 
 import { z } from "zod";
+import { TimelineRowZ } from "./chat-timeline.ts";
 import {
   GoalSchemaZ,
   MilestoneSchemaZ,
@@ -620,7 +621,15 @@ export const ChatThreadSetProviderInputZ = z
 export const ChatThreadSetProviderResultZ = z.object({ thread: ThreadIndexEntryZ }).strict();
 
 export const ChatThreadGetInputZ = z.object({ id: z.string().min(1) }).strict();
-export const ChatThreadGetResultZ = z.object({ thread: ThreadStateZ }).strict();
+/**
+ * `thread` keeps the raw durable event log (back-compat: persistence,
+ * editFromTurn, the daemon test harness all read it). `timeline` is the
+ * server-materialized projection the client renders directly — the
+ * client no longer reduces ACP chunks into the transcript.
+ */
+export const ChatThreadGetResultZ = z
+  .object({ thread: ThreadStateZ, timeline: z.array(TimelineRowZ) })
+  .strict();
 
 export const ChatThreadUsageInputZ = z.object({ id: z.string().min(1) }).strict();
 export const ChatThreadUsageResultZ = z

@@ -16,14 +16,21 @@
 
 import { randomUUID } from "node:crypto";
 import type { SessionUpdate } from "../acp/index.ts";
-import type { ChatEvent, ChatThreadUsageSummary, ThreadMessage } from "./types.ts";
+import type { ChatEvent, ChatThreadUsageSummary, StopReason, ThreadMessage } from "./types.ts";
 import type { ThreadStore } from "./thread-store.ts";
 import { mergeUsage, usageChanged, type UsagePatch } from "./usage-extraction.ts";
+import { ThreadTimeline } from "./materialize.ts";
 
 export interface MessagePipeOptions {
   threadId: string;
   initialSeq: number;
   initialUsage?: ChatThreadUsageSummary;
+  /**
+   * Raw event log the thread already has — used to bootstrap the
+   * server-side materialized timeline so a reattach / mid-history
+   * thread streams into the correct turn.
+   */
+  initialMessages?: ReadonlyArray<ThreadMessage>;
   store: Pick<ThreadStore, "appendMessages" | "recordUsage">;
   busEmit: (event: ChatEvent) => void;
   persistDebounceMs: number;
@@ -50,6 +57,20 @@ export interface MessagePipe {
   emit(update: SessionUpdate): void;
   recordUsage(patch: UsagePatch | null): void;
   forceFlush(): Promise<void>;
+  /**
+   * Re-materialize the timeline from the authoritative event log and
+   * open `activePromptId` as the live streaming turn. Called by
+   * `ThreadManager.send` after the user prompt is persisted — a full
+   * rebuild here keeps the projection correct after a truncation
+   * (editFromTurn) and is cheap (send is rare). Broadcasts
+   * `chat.timeline.reset`.
+   */
+  resyncTimeline(messages: ReadonlyArray<ThreadMessage>, activePromptId: string): void;
+  /**
+   * Close the active turn's streaming row and broadcast the delta.
+   * Called from prompt dispatch alongside `chat.thread.stop`.
+   */
+  finishTimeline(promptId: string, stopReason: StopReason): void;
 }
 
 export function makeMessagePipe(opts: MessagePipeOptions): MessagePipe {
@@ -58,6 +79,19 @@ export function makeMessagePipe(opts: MessagePipeOptions): MessagePipe {
   let usage: ChatThreadUsageSummary | undefined = opts.initialUsage;
   const persist: PendingPersist = { messages: [], timer: null, chain: Promise.resolve() };
   let pendingText: PendingTextChunk | null = null;
+
+  // Server-side materialized projection. Bootstrapped from the thread's
+  // existing log so a reattach streams into the right turn. Each
+  // emitted (coalesced) update folds in here and a whole-row upsert
+  // delta is broadcast — the client renders it with zero reduction.
+  const timeline = new ThreadTimeline();
+  timeline.bootstrap(opts.initialMessages ?? []);
+
+  function broadcastTimelineUpsert(): void {
+    const delta = timeline.drainDelta();
+    if (delta.rows.length === 0) return;
+    busEmit({ type: "chat.timeline.upsert", threadId, rows: delta.rows, order: delta.order });
+  }
 
   function schedulePersist(): void {
     if (persist.timer) clearTimeout(persist.timer);
@@ -105,6 +139,12 @@ export function makeMessagePipe(opts: MessagePipeOptions): MessagePipe {
     seq += 1;
     busEmit({ type: "chat.thread.update", threadId, update, seq });
     queuePersist(update);
+    // Fold the same coalesced update into the materialized timeline
+    // and broadcast the whole-row delta. `agent-update:<seq>` mirrors
+    // the synthetic source id the old client reducer used so assistant
+    // row ids stay stable within a turn.
+    timeline.applyAgentUpdate(`agent-update:${seq}`, new Date().toISOString(), update);
+    broadcastTimelineUpsert();
   }
 
   function textChunkKind(
@@ -209,6 +249,14 @@ export function makeMessagePipe(opts: MessagePipeOptions): MessagePipe {
     async forceFlush() {
       flushText();
       await flushPersist();
+    },
+    resyncTimeline(messages, activePromptId) {
+      timeline.bootstrap(messages, activePromptId);
+      busEmit({ type: "chat.timeline.reset", threadId, rows: timeline.snapshot() });
+    },
+    finishTimeline(promptId, stopReason) {
+      timeline.finish(promptId, stopReason, new Date().toISOString());
+      broadcastTimelineUpsert();
     },
   };
 }
