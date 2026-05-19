@@ -6,15 +6,29 @@ import tailwindcss from "@tailwindcss/vite";
 /**
  * Dashboard Vite config (post-G16 Solid SPA).
  *
+ * The `@tmux-ide/chat-solid` / `@tmux-ide/v2-solid-widgets` aliases
+ * point Vite at each package's SOURCE entry (`src/index.tsx`) instead
+ * of its `package.json` `exports` (the prebuilt `dist/*.js`). Without
+ * this, dashboard dev mounts the stale prebuilt bundle and edits to
+ * the packages' source are invisible until a manual package rebuild —
+ * the "fixed but still see old UI" bug class. Compiling from source
+ * gives true HMR and a single source of truth. One `resolve.alias`
+ * covers the dev server, `vite build`, and vitest alike.
+ *
  * `dedupe: ['solid-js']` is load-bearing — when v2-solid-widgets or
- * chat-solid are consumed via workspace alias, vite must collapse them
- * onto the single `solid-js` instance the dashboard app imports.
+ * chat-solid are consumed via these source aliases, vite must collapse
+ * them onto the single `solid-js` instance the dashboard app imports.
  * Otherwise reactivity silently breaks across the silo boundary.
  */
 export default defineConfig({
   plugins: [solid(), tailwindcss()],
   resolve: {
     alias: {
+      "@tmux-ide/chat-solid": resolve(__dirname, "../packages/chat-solid/src/index.tsx"),
+      "@tmux-ide/v2-solid-widgets": resolve(
+        __dirname,
+        "../packages/v2-solid-widgets/src/index.tsx",
+      ),
       "@": resolve(__dirname, "src"),
     },
     dedupe: ["solid-js"],
