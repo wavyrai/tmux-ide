@@ -23,6 +23,7 @@ export default defineConfig({
       "src/chat/chat-integration.test.ts",
       "src/chat/plan-store.test.ts",
       "src/chat/__tests__/plan-routes.test.ts",
+      "src/chat/__tests__/chat-pipeline.e2e.test.ts",
       "src/chat/provider-registry.test.ts",
       "src/chat/provider-store.test.ts",
       "src/terminal/__tests__/*.test.ts",

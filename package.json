@@ -22,6 +22,7 @@
     "dev": "node bin/cli.js",
     "test": "vitest run",
     "test:unit": "vitest run",
+    "test:chat-e2e": "pnpm --filter @tmux-ide/daemon exec vitest run src/chat/__tests__/chat-pipeline.e2e.test.ts",
     "lint": "eslint bin scripts packages/contracts/src packages/tmux-bridge/src packages/daemon/src packages/v2-solid-widgets/src packages/chat-solid/src && pnpm run check:silo-mounts",
     "lint:workspace": "turbo run lint && pnpm run check:silo-mounts",
     "check:silo-mounts": "bash scripts/check-silo-mounts.sh",
