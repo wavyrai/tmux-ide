@@ -27,6 +27,7 @@ import { useNavigate } from "@solidjs/router";
 import { Effect } from "effect";
 import { fetchProjects, fetchSessions, type RegisteredProject } from "@/lib/api";
 import { projectsBusTick, useProjectsBus } from "@/lib/projectsBus";
+import { registerKeybinds } from "@/lib/keybinds";
 
 const MAX_RESULT_ROWS = 60;
 const LAST_USED_KEY = "tmux-ide.v2.last-used-projects.v1";
@@ -38,11 +39,6 @@ interface SwitcherRow {
   registered: boolean;
   branch: string | null;
   lastUsedAt: number; // 0 if never opened
-}
-
-function isMac(): boolean {
-  if (typeof navigator === "undefined") return false;
-  return navigator.platform.toLowerCase().includes("mac");
 }
 
 function readLastUsed(): Record<string, number> {
@@ -97,14 +93,6 @@ function matchScore(query: string, row: SwitcherRow): number {
   if (basename.includes(q)) return 150;
   if (dir.includes(q)) return 50;
   return 0;
-}
-
-function isEditableTarget(target: EventTarget | null): boolean {
-  if (!target || !(target instanceof HTMLElement)) return false;
-  const tag = target.tagName;
-  if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return true;
-  if (target.isContentEditable) return true;
-  return false;
 }
 
 // Module-level open signal so non-window-key triggers (e.g. the
@@ -218,25 +206,30 @@ export function ProjectQuickSwitcher(): JSX.Element {
     queueMicrotask(() => inputRef?.focus());
   });
 
+  // Escape closes — owned locally; opens come from the keybind
+  // registry (Cmd+P) and the module-level `openProjectQuickSwitcher`.
   function onWindowKey(event: KeyboardEvent): void {
-    const mod = isMac() ? event.metaKey : event.ctrlKey;
-    if (mod && !event.shiftKey && !event.altKey && (event.key === "p" || event.key === "P")) {
-      // Skip when the user is typing in an input that owns Cmd+P (e.g.
-      // Monaco's command palette). The overlay opens from any non-
-      // editable target.
-      if (!open() && isEditableTarget(event.target)) return;
-      event.preventDefault();
-      setOpen(!open());
-      return;
-    }
     if (open() && event.key === "Escape") {
       event.preventDefault();
       setOpen(false);
     }
   }
 
-  onMount(() => window.addEventListener("keydown", onWindowKey));
-  onCleanup(() => window.removeEventListener("keydown", onWindowKey));
+  onMount(() => {
+    window.addEventListener("keydown", onWindowKey);
+    const dispose = registerKeybinds({
+      id: "project.quick-switcher",
+      label: "Quick switch project",
+      group: "Global",
+      scope: "global",
+      combo: { key: "p" },
+      run: () => setOpen(!open()),
+    });
+    onCleanup(() => {
+      window.removeEventListener("keydown", onWindowKey);
+      dispose();
+    });
+  });
 
   function activate(row: SwitcherRow): void {
     setOpen(false);

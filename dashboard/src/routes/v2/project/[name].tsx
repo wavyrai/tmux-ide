@@ -56,6 +56,10 @@ import { MissionStatementView } from "@/components/v2/MissionStatementView";
 import { chrome, useChromeShortcuts } from "@/lib/chrome";
 import { useViewParam } from "@/lib/viewParam";
 import { DEFAULT_VIEW, isViewId, VIEWS, type ViewId } from "@/lib/views";
+import { registerKeybinds } from "@/lib/keybinds";
+import { setCurrentProjectName } from "@/lib/currentProject";
+import { openCommandPalette } from "@/components/CommandPalette";
+import { openKeyboardShortcuts } from "@/components/KeyboardShortcuts";
 
 const ACTIVITY_BAR_VIEWS = new Set<ActivityBarViewId>([
   "files",
@@ -78,7 +82,11 @@ export default function ProjectV2Route(): JSX.Element {
 
   useChromeShortcuts();
 
-  onMount(() => recordProjectOpened(projectName()));
+  onMount(() => {
+    recordProjectOpened(projectName());
+    setCurrentProjectName(projectName());
+    onCleanup(() => setCurrentProjectName(null));
+  });
 
   function onActivityBarView(id: ActivityBarViewId) {
     // ActivityBarViewId is a strict subset of ViewId; the registry
@@ -86,18 +94,64 @@ export default function ProjectV2Route(): JSX.Element {
     if (ACTIVITY_BAR_VIEWS.has(id) && isViewId(id)) setView(id);
   }
 
-  // Global Cmd+Shift+F (Mac) / Ctrl+Shift+F (other) → repo search view.
-  // Mirrors VS Code; reachable from any view, scrolls focus into the
-  // SearchView's query input on mount.
+  // Global, project-scoped keybinds: search/chat/terminal/files view
+  // jumps + palette + cheat sheet. Registered through the central
+  // keybind registry so the Cmd+K palette and Cmd+/ overlay both
+  // see them. The dispatcher (mounted at App root via
+  // useGlobalKeybindDispatcher) handles the keydown.
   onMount(() => {
-    function onKey(event: KeyboardEvent): void {
-      const mod = navigator.platform.toLowerCase().includes("mac") ? event.metaKey : event.ctrlKey;
-      if (!mod || !event.shiftKey || event.key.toLowerCase() !== "f") return;
-      event.preventDefault();
-      setView("search");
-    }
-    window.addEventListener("keydown", onKey);
-    onCleanup(() => window.removeEventListener("keydown", onKey));
+    const dispose = registerKeybinds(
+      {
+        id: "palette.open",
+        label: "Command palette",
+        group: "Global",
+        scope: "global",
+        combo: { key: "k" },
+        altCombo: { key: "p", shift: true },
+        run: () => openCommandPalette(),
+      },
+      {
+        id: "shortcuts.open",
+        label: "Show keyboard shortcuts",
+        group: "Global",
+        scope: "global",
+        combo: { key: "/" },
+        run: () => openKeyboardShortcuts(),
+      },
+      {
+        id: "view.search",
+        label: "Search across project",
+        group: "Search",
+        scope: "global",
+        combo: { key: "f", shift: true },
+        run: () => setView("search"),
+      },
+      {
+        id: "view.chat",
+        label: "Focus Chat view",
+        group: "Chat",
+        scope: "global",
+        combo: { key: "c", shift: true },
+        run: () => setView("chat"),
+      },
+      {
+        id: "view.terminal",
+        label: "Focus Terminal view",
+        group: "Terminal",
+        scope: "global",
+        combo: { key: "t", shift: true },
+        run: () => setView("terminal"),
+      },
+      {
+        id: "view.files",
+        label: "Focus Files view",
+        group: "Editor",
+        scope: "global",
+        combo: { key: "e", shift: true },
+        run: () => setView("files"),
+      },
+    );
+    onCleanup(dispose);
   });
 
   return (

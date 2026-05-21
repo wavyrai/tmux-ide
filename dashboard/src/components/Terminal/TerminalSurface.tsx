@@ -54,6 +54,7 @@ import {
 } from "@/lib/pty/tabKeybindings";
 import { API_BASE } from "@/lib/api";
 import { PtyPane } from "./PtyPane";
+import { TmuxIdeBadge } from "@/components/icons/TmuxIdeBadge";
 
 interface TerminalSurfaceProps {
   /** tmux-ide session name. Also used as the storage namespace for
@@ -82,6 +83,20 @@ function writeActiveId(projectName: string, id: string): void {
   } catch {
     // localStorage may be denied — non-fatal.
   }
+}
+
+/**
+ * Heuristic: a terminal whose name matches the project (tmux session)
+ * name is the pane hosting tmux-ide itself. Picking it out lets the
+ * rail render a distinctive `TmuxIdeBadge` in place of the generic
+ * running-bullet so the user can see "this one is the multiplexer
+ * I'm attached to" at a glance. Case-insensitive compare so a manual
+ * rename to e.g. "Tmux-IDE" still wins.
+ */
+export function isTmuxIdeHostTerminal(terminal: TerminalWithRuntime, projectName: string): boolean {
+  const name = terminal.name.trim().toLowerCase();
+  if (!name) return false;
+  return name === projectName.toLowerCase() || name === "tmux-ide";
 }
 
 /**
@@ -397,14 +412,21 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
                           title={t.name}
                         >
                           <span class="block truncate text-[12px]">
-                            <Show when={t.runtime.running}>
-                              <span
-                                aria-hidden="true"
-                                class="mr-1 text-[var(--accent)]"
-                                title="running"
-                              >
-                                ●
-                              </span>
+                            <Show
+                              when={isTmuxIdeHostTerminal(t, props.projectName)}
+                              fallback={
+                                <Show when={t.runtime.running}>
+                                  <span
+                                    aria-hidden="true"
+                                    class="mr-1 text-[var(--accent)]"
+                                    title="running"
+                                  >
+                                    ●
+                                  </span>
+                                </Show>
+                              }
+                            >
+                              <TmuxIdeBadge />
                             </Show>
                             {t.name}
                           </span>

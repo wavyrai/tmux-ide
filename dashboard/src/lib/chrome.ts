@@ -13,6 +13,7 @@
  */
 
 import { createSignal, onCleanup, onMount } from "solid-js";
+import { registerKeybinds } from "./keybinds";
 
 export interface ChromeLayoutState {
   leftSidebarOpen: boolean;
@@ -91,54 +92,42 @@ export function setBottomPanelOpen(next: boolean): void {
   persistAndSet({ ...chromeState(), bottomPanelOpen: next });
 }
 
-function isEditableTarget(target: EventTarget | null): boolean {
-  if (!target || !(target instanceof HTMLElement)) return false;
-  const tag = target.tagName;
-  if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return true;
-  if (target.isContentEditable) return true;
-  return false;
-}
-
 /**
  * Install Cmd+B / Cmd+Alt+B / Cmd+I / Cmd+J keybinds. Call once per
- * mount of the IDE shell; the listener cleans up automatically.
+ * mount of the IDE shell; the bindings are registered into the
+ * central keybind registry (so the cheat sheet + palette see them)
+ * and auto-removed on unmount.
  */
 export function useChromeShortcuts(): void {
   onMount(() => {
-    function onKeyDown(event: KeyboardEvent): void {
-      if (!(event.metaKey || event.ctrlKey)) return;
-      const key = event.key;
-      const isB = key === "b" || key === "B";
-      const isJ = key === "j" || key === "J";
-      const isI = key === "i" || key === "I";
-      if (!isB && !isJ && !isI) return;
-      if (isEditableTarget(event.target)) return;
-      // Cmd+Alt+B → secondary sidebar. Checked first because plain
-      // Cmd+B would also match this combination.
-      if (event.altKey && isB) {
-        event.preventDefault();
-        toggleRightInspector();
-        return;
-      }
-      if (event.altKey) return;
-      if (isB) {
-        event.preventDefault();
-        toggleLeftSidebar();
-        return;
-      }
-      if (isJ) {
-        event.preventDefault();
-        toggleBottomPanel();
-        return;
-      }
-      if (isI) {
-        // Mnemonic alias for the right inspector.
-        event.preventDefault();
-        toggleRightInspector();
-      }
-    }
-    window.addEventListener("keydown", onKeyDown);
-    onCleanup(() => window.removeEventListener("keydown", onKeyDown));
+    const dispose = registerKeybinds(
+      {
+        id: "chrome.toggle-left-sidebar",
+        label: "Toggle primary sidebar",
+        group: "Global",
+        scope: "global",
+        combo: { key: "b" },
+        run: () => toggleLeftSidebar(),
+      },
+      {
+        id: "chrome.toggle-right-inspector",
+        label: "Toggle secondary sidebar (Inspector)",
+        group: "Global",
+        scope: "global",
+        combo: { key: "i" },
+        altCombo: { key: "b", alt: true },
+        run: () => toggleRightInspector(),
+      },
+      {
+        id: "chrome.toggle-bottom-panel",
+        label: "Toggle bottom panel",
+        group: "Global",
+        scope: "global",
+        combo: { key: "j" },
+        run: () => toggleBottomPanel(),
+      },
+    );
+    onCleanup(dispose);
   });
 }
 
