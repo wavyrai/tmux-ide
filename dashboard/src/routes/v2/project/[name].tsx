@@ -29,8 +29,9 @@
 import { onCleanup, onMount, Show, type JSX } from "solid-js";
 import { useParams } from "@solidjs/router";
 import { V2ActivityBar, type ActivityBarViewId } from "@/components/ActivityBar";
+import { ProjectRail } from "@/components/ProjectRail";
 import { StatusBar } from "@/components/StatusBar";
-import { Terminal } from "@/components/Terminal";
+import { TerminalSurface } from "@/components/Terminal/TerminalSurface";
 import { ChatView } from "@/components/ChatView";
 import { DiffsView } from "@/components/DiffsView";
 import { FilesSurface } from "@/components/files/FilesSurface";
@@ -108,6 +109,7 @@ export default function ProjectV2Route(): JSX.Element {
       <SymbolPicker sessionName={projectName()} rootPath="/" />
       <TopBar projectName={projectName()} />
       <div class="flex flex-1 min-h-0">
+        <ProjectRail activeName={projectName()} />
         <V2ActivityBar view={view()} onView={onActivityBarView} />
 
         <div
@@ -215,7 +217,7 @@ function MainContent(props: { projectName: string; view: ViewId }) {
       </Show>
       <Show when={props.view === "terminal"}>
         <div class="flex h-full min-h-0 flex-col">
-          <Terminal id={`v2-${props.projectName}-main`} showHeader />
+          <TerminalSurface projectName={props.projectName} />
         </div>
       </Show>
       <Show when={props.view === "files"}>

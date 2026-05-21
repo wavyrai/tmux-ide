@@ -19,10 +19,16 @@ import { cleanup, fireEvent, render, waitFor } from "@solidjs/testing-library";
 
 // Stub PtyPane — the surface mounts it for the active tab but the
 // real one needs xterm + a canvas. The stub keeps the surface
-// renderable without dragging that in.
+// renderable without dragging that in. `options.cwd` is reflected
+// onto a data attribute so the cwd-wiring test below can assert the
+// surface threaded the resolved project dir through.
 vi.mock("@/components/Terminal/PtyPane", () => ({
-  PtyPane: (props: { sessionId: string }) => (
-    <div data-testid="pty-pane-stub" data-session-id={props.sessionId}>
+  PtyPane: (props: { sessionId: string; options?: { cwd?: string; cmd?: string[] } }) => (
+    <div
+      data-testid="pty-pane-stub"
+      data-session-id={props.sessionId}
+      data-cwd={props.options?.cwd ?? ""}
+    >
       pane:{props.sessionId}
     </div>
   ),
@@ -137,7 +143,7 @@ describe("TerminalSurface", () => {
     });
   });
 
-  it("clicking × DELETEs the tab", async () => {
+  it("Close → Yes confirm DELETEs the tab; No keeps it", async () => {
     const calls: Array<{ url: string; method: string }> = [];
     let nextList = [...SAMPLE_TERMINALS];
     globalThis.fetch = vi.fn(async (input, init) => {
@@ -145,7 +151,6 @@ describe("TerminalSurface", () => {
       const method = (init?.method as string) ?? "GET";
       calls.push({ url, method });
       if (method === "DELETE") {
-        nextList = nextList.filter((t) => !url.endsWith(t.id) || !url.includes(t.id));
         nextList = SAMPLE_TERMINALS.filter((t) => !url.endsWith(`/terminals/${t.id}`));
         return jsonOk({ ok: true });
       }
@@ -153,9 +158,24 @@ describe("TerminalSurface", () => {
     }) as typeof fetch;
 
     const target = SAMPLE_TERMINALS[1]!;
-    const { findByTestId } = render(() => <TerminalSurface projectName="proj" />);
+    const { findByTestId, queryByTestId } = render(() => <TerminalSurface projectName="proj" />);
     await findByTestId(`terminal-tab-${target.id}`);
+
+    // First Close click only opens the inline confirm — no DELETE yet.
     fireEvent.click(await findByTestId(`terminal-tab-close-${target.id}`));
+    await findByTestId(`terminal-tab-delete-confirm-${target.id}`);
+    expect(calls.some((c) => c.method === "DELETE")).toBe(false);
+
+    // Clicking No dismisses the confirm without deleting.
+    fireEvent.click(await findByTestId(`terminal-tab-delete-cancel-${target.id}`));
+    await waitFor(() => {
+      expect(queryByTestId(`terminal-tab-delete-confirm-${target.id}`)).toBeNull();
+    });
+    expect(calls.some((c) => c.method === "DELETE")).toBe(false);
+
+    // Re-open confirm and click Yes — now the DELETE fires.
+    fireEvent.click(await findByTestId(`terminal-tab-close-${target.id}`));
+    fireEvent.click(await findByTestId(`terminal-tab-delete-confirm-${target.id}`));
     await waitFor(() => {
       expect(
         calls.some(
@@ -163,6 +183,78 @@ describe("TerminalSurface", () => {
             c.method === "DELETE" && c.url.endsWith(`/terminals/${encodeURIComponent(target.id)}`),
         ),
       ).toBe(true);
+    });
+  });
+
+  it("renders the vertical rail with header + new button", async () => {
+    globalThis.fetch = vi.fn(async () => jsonOk({ terminals: SAMPLE_TERMINALS })) as typeof fetch;
+    const { findByTestId } = render(() => <TerminalSurface projectName="proj" />);
+    const rail = await findByTestId("terminal-rail");
+    expect(rail.tagName).toBe("ASIDE");
+    expect(rail.textContent).toContain("Terminals");
+    await findByTestId("terminal-tab-new");
+  });
+
+  it("threads the resolved project dir as the PtyPane cwd", async () => {
+    // /api/sessions resolves the workspace dir for this project; the
+    // surface must forward it to PtyPane so FrontendPty's init frame
+    // tells the daemon to spawn there (instead of the daemon's cwd).
+    const PROJECT_DIR = "/repos/proj";
+    globalThis.fetch = vi.fn(async (input) => {
+      const url = String(input);
+      if (url.endsWith("/api/sessions")) {
+        return jsonOk({ sessions: [{ name: "proj", dir: PROJECT_DIR }] });
+      }
+      return jsonOk({ terminals: SAMPLE_TERMINALS });
+    }) as typeof fetch;
+    const { findByTestId } = render(() => <TerminalSurface projectName="proj" />);
+    await waitFor(async () => {
+      const pane = (await findByTestId("pty-pane-stub")) as HTMLElement;
+      expect(pane.getAttribute("data-cwd")).toBe(PROJECT_DIR);
+    });
+    const surface = (await findByTestId("terminal-surface")) as HTMLElement;
+    expect(surface.getAttribute("data-project-dir")).toBe(PROJECT_DIR);
+  });
+
+  it("scopes new terminals to the resolved project dir", async () => {
+    // The newly created terminal's `scopeId` should be the resolved
+    // workspace dir — that is what the daemon stamps onto its
+    // deterministic-id derivation and what the WS init frame uses.
+    const PROJECT_DIR = "/repos/proj";
+    const calls: Array<{ url: string; method: string; body: unknown }> = [];
+    let nextList = [...SAMPLE_TERMINALS];
+    globalThis.fetch = vi.fn(async (input, init) => {
+      const url = String(input);
+      const method = (init?.method as string) ?? "GET";
+      const body = init?.body ? JSON.parse(String(init.body)) : null;
+      calls.push({ url, method, body });
+      if (url.endsWith("/api/sessions")) {
+        return jsonOk({ sessions: [{ name: "proj", dir: PROJECT_DIR }] });
+      }
+      if (url.endsWith("/terminals") && method === "POST") {
+        const created = {
+          ...SAMPLE_TERMINALS[0]!,
+          id: "newly-created-bbbbbbbbbbbbbbbbbbbbbbb",
+          name: (body as { name?: string }).name ?? "shell",
+          scopeId: (body as { scopeId?: string }).scopeId ?? "",
+        };
+        nextList = [...nextList, { ...created } as never];
+        return jsonOk({ ok: true, terminal: created });
+      }
+      return jsonOk({ terminals: nextList });
+    }) as typeof fetch;
+    const { findByTestId } = render(() => <TerminalSurface projectName="proj" />);
+    // Wait for the project dir to resolve into the surface dataset so
+    // the create call goes out with the correct scope.
+    await waitFor(async () => {
+      const surface = (await findByTestId("terminal-surface")) as HTMLElement;
+      expect(surface.getAttribute("data-project-dir")).toBe(PROJECT_DIR);
+    });
+    fireEvent.click(await findByTestId("terminal-tab-new"));
+    await waitFor(() => {
+      const postCall = calls.find((c) => c.method === "POST" && c.url.endsWith("/terminals"));
+      expect(postCall).toBeTruthy();
+      expect((postCall!.body as { scopeId: string }).scopeId).toBe(PROJECT_DIR);
     });
   });
 
