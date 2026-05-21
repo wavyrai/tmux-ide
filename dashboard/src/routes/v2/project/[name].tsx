@@ -58,8 +58,6 @@ import { useViewParam } from "@/lib/viewParam";
 import { DEFAULT_VIEW, isViewId, VIEWS, type ViewId } from "@/lib/views";
 import { registerKeybinds } from "@/lib/keybinds";
 import { setCurrentProjectName } from "@/lib/currentProject";
-import { openCommandPalette } from "@/components/CommandPalette";
-import { openKeyboardShortcuts } from "@/components/KeyboardShortcuts";
 
 const ACTIVITY_BAR_VIEWS = new Set<ActivityBarViewId>([
   "files",
@@ -99,25 +97,11 @@ export default function ProjectV2Route(): JSX.Element {
   // keybind registry so the Cmd+K palette and Cmd+/ overlay both
   // see them. The dispatcher (mounted at App root via
   // useGlobalKeybindDispatcher) handles the keydown.
+  // palette.open (Cmd+K) and shortcuts.open (Cmd+/) are registered
+  // globally in App.tsx so they work on every route. Project-scoped
+  // view-jumps stay here.
   onMount(() => {
     const dispose = registerKeybinds(
-      {
-        id: "palette.open",
-        label: "Command palette",
-        group: "Global",
-        scope: "global",
-        combo: { key: "k" },
-        altCombo: { key: "p", shift: true },
-        run: () => openCommandPalette(),
-      },
-      {
-        id: "shortcuts.open",
-        label: "Show keyboard shortcuts",
-        group: "Global",
-        scope: "global",
-        combo: { key: "/" },
-        run: () => openKeyboardShortcuts(),
-      },
       {
         id: "view.search",
         label: "Search across project",

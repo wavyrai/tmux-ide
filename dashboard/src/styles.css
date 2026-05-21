@@ -169,6 +169,17 @@
   --ease-smooth: cubic-bezier(0.4, 0, 0.2, 1);
 }
 
+/* IDE-shell scroll containment: the root grid sizes to 100vh; inner
+   panes manage their own scrollers. Without these rules, a child
+   that overflows can scroll the body itself — the "weird main window
+   scroll". */
+html,
+body {
+  height: 100%;
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+
 /* Dark theme (default) */
 :root {
   --bg: #101010;

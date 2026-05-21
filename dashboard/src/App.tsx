@@ -1,8 +1,8 @@
-import type { JSX, ParentProps } from "solid-js";
+import { onCleanup, onMount, type JSX, type ParentProps } from "solid-js";
 import { ProjectQuickSwitcher } from "@/components/projects/ProjectQuickSwitcher";
-import { CommandPalette } from "@/components/CommandPalette";
-import { KeyboardShortcuts } from "@/components/KeyboardShortcuts";
-import { useGlobalKeybindDispatcher } from "@/lib/keybinds";
+import { CommandPalette, openCommandPalette } from "@/components/CommandPalette";
+import { openKeyboardShortcuts, KeyboardShortcuts } from "@/components/KeyboardShortcuts";
+import { registerKeybinds, useGlobalKeybindDispatcher } from "@/lib/keybinds";
 
 /**
  * Root shell for the Solid dashboard.
@@ -19,6 +19,30 @@ import { useGlobalKeybindDispatcher } from "@/lib/keybinds";
  */
 export function App(props: ParentProps): JSX.Element {
   useGlobalKeybindDispatcher();
+  // Cmd+K and Cmd+/ must work on every route (Welcome, project, settings).
+  // Registering them at the project route only left them dead on / and elsewhere.
+  onMount(() => {
+    const dispose = registerKeybinds(
+      {
+        id: "palette.open",
+        label: "Command palette",
+        group: "Global",
+        scope: "global",
+        combo: { key: "k" },
+        altCombo: { key: "p", shift: true },
+        run: () => openCommandPalette(),
+      },
+      {
+        id: "shortcuts.open",
+        label: "Show keyboard shortcuts",
+        group: "Global",
+        scope: "global",
+        combo: { key: "/" },
+        run: () => openKeyboardShortcuts(),
+      },
+    );
+    onCleanup(dispose);
+  });
   return (
     <div class="flex h-screen w-screen min-h-0 min-w-0 flex-col bg-[var(--bg)] text-[var(--fg)] font-sans antialiased">
       <ProjectQuickSwitcher />
