@@ -8,7 +8,19 @@
  * generic [[WidgetHost]] component.
  */
 
-import { createEffect, createMemo, createSignal, on, onMount, Show, type JSX } from "solid-js";
+import {
+  createEffect,
+  createMemo,
+  createSignal,
+  on,
+  onCleanup,
+  onMount,
+  Show,
+  type Accessor,
+  type JSX,
+} from "solid-js";
+import { Pencil } from "lucide-solid";
+import { registerKeybinds } from "@/lib/keybinds";
 import {
   mountActivity,
   mountCostsDashboard,
@@ -171,16 +183,37 @@ export function TasksDashboardView(props: ProjectProps): JSX.Element {
   return <WidgetHost mount={mountTasksView} options={options} class="h-full w-full" />;
 }
 
+export interface PlanEditController {
+  editing: Accessor<boolean>;
+  draft: Accessor<string>;
+  setDraft: (next: string) => void;
+  saving: Accessor<boolean>;
+  saveError: Accessor<string | null>;
+  savedAt: Accessor<number | null>;
+  remoteUpdateAvailable: Accessor<boolean>;
+  canEdit: Accessor<boolean>;
+  beginEdit: () => void;
+  cancelEdit: () => void;
+  saveEdit: () => Promise<void>;
+  discardLocal: () => void;
+}
+
 /**
  * Plan body renderer. The plan markdown used to dump into a raw
  * monospace `<pre>`; now it routes through the shared shiki markdown
  * pipeline so headings, tables, and fenced code render richly. The
  * synchronous fallback (chat-solid `renderMarkdown`) is replaced by
  * the highlighted HTML once the async shiki pass resolves.
+ *
+ * Edit mode: when `controller.editing()` is true, the rendered HTML is
+ * swapped for a plain monospace textarea over the same content. Cmd+S
+ * saves, Esc cancels. The header gets an Edit button (or Cancel/Save
+ * pair while editing) plus a transient "Saved" tick.
  */
-function PlanBodyView(props: {
+export function PlanBodyView(props: {
   plan: PlansPanelMountOptions["plan"];
   data: PlansPanelMountOptions["planData"];
+  controller: PlanEditController;
 }): JSX.Element {
   const [html, setHtml] = createSignal<string>("");
   createEffect(
@@ -205,8 +238,42 @@ function PlanBodyView(props: {
       },
     ),
   );
+
+  let textareaEl: HTMLTextAreaElement | undefined;
+  createEffect(() => {
+    if (props.controller.editing() && textareaEl) {
+      // Autofocus + place caret at end of the draft.
+      textareaEl.focus();
+      const len = textareaEl.value.length;
+      try {
+        textareaEl.setSelectionRange(len, len);
+      } catch {
+        /* ignore — some browsers reject for non-text-area types */
+      }
+    }
+  });
+
+  function onTextareaKeyDown(event: KeyboardEvent) {
+    const mod = event.metaKey || event.ctrlKey;
+    if (mod && event.key.toLowerCase() === "s") {
+      event.preventDefault();
+      void props.controller.saveEdit();
+      return;
+    }
+    if (event.key === "Escape") {
+      event.preventDefault();
+      props.controller.cancelEdit();
+    }
+  }
+
+  const savedRecently = createMemo<boolean>(() => {
+    const at = props.controller.savedAt();
+    if (at === null) return false;
+    return Date.now() - at < 2500;
+  });
+
   return (
-    <div data-testid="plan-body" class="h-full overflow-y-auto bg-[var(--bg)]">
+    <div data-testid="plan-body" class="flex h-full min-h-0 flex-col bg-[var(--bg)]">
       <Show when={props.plan}>
         {(meta) => (
           <header class="sticky top-0 z-10 flex items-center gap-2 border-b border-[var(--border)] bg-[var(--bg-strong,var(--bg))] px-8 py-3">
@@ -214,21 +281,108 @@ function PlanBodyView(props: {
             <span class="rounded-full border border-[var(--border)] px-2 py-0.5 text-[10px] uppercase tracking-[0.08em] text-[var(--dim)]">
               {meta().status}
             </span>
+            <span class="flex-1" />
+            <Show when={props.controller.saveError()}>
+              {(err) => (
+                <span
+                  data-testid="plan-save-error"
+                  class="truncate text-[11px] text-[var(--red,#cc6666)]"
+                  title={err()}
+                >
+                  {err()}
+                </span>
+              )}
+            </Show>
+            <Show when={savedRecently()}>
+              <span data-testid="plan-saved-toast" class="text-[11px] text-[var(--accent)]">
+                Saved
+              </span>
+            </Show>
+            <Show
+              when={props.controller.editing()}
+              fallback={
+                <button
+                  type="button"
+                  data-testid="plan-edit-button"
+                  disabled={!props.controller.canEdit()}
+                  onClick={() => props.controller.beginEdit()}
+                  class="inline-flex items-center gap-1 rounded-md border border-[var(--border)] bg-[var(--surface)] px-2 py-1 text-[11px] text-[var(--fg-secondary)] hover:border-[var(--accent)] hover:text-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-50"
+                  title="Edit plan (⌘E)"
+                >
+                  <Pencil class="h-3 w-3" aria-hidden="true" />
+                  <span>Edit</span>
+                </button>
+              }
+            >
+              <button
+                type="button"
+                data-testid="plan-edit-cancel"
+                onClick={() => props.controller.cancelEdit()}
+                class="rounded-md border border-[var(--border)] bg-[var(--surface)] px-2 py-1 text-[11px] text-[var(--fg-secondary)] hover:border-[var(--accent)] hover:text-[var(--accent)]"
+                title="Cancel (Esc)"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                data-testid="plan-edit-save"
+                disabled={props.controller.saving()}
+                onClick={() => void props.controller.saveEdit()}
+                class="rounded-md border border-[var(--accent)] bg-[var(--accent)] px-2 py-1 text-[11px] text-[var(--bg)] hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+                title="Save (⌘S)"
+              >
+                {props.controller.saving() ? "Saving…" : "Save"}
+              </button>
+            </Show>
           </header>
         )}
       </Show>
+      <Show when={props.controller.editing() && props.controller.remoteUpdateAvailable()}>
+        <div
+          data-testid="plan-remote-update-banner"
+          class="flex items-center gap-2 border-b border-[var(--border)] bg-[var(--surface-active,var(--bg-strong))] px-8 py-2 text-[11px] text-[var(--fg-secondary)]"
+        >
+          <span class="flex-1">Remote update available — your local edit is unsaved.</span>
+          <button
+            type="button"
+            data-testid="plan-remote-discard"
+            onClick={() => props.controller.discardLocal()}
+            class="rounded-md border border-[var(--border)] bg-[var(--surface)] px-2 py-1 text-[11px] hover:border-[var(--accent)] hover:text-[var(--accent)]"
+          >
+            Discard local
+          </button>
+        </div>
+      </Show>
       <Show
-        when={html()}
+        when={props.controller.editing()}
         fallback={
-          <div class="flex h-40 items-center justify-center text-[12px] text-[var(--dim)]">
-            Rendering plan…
+          <div class="min-h-0 flex-1 overflow-y-auto">
+            <Show
+              when={html()}
+              fallback={
+                <div class="flex h-40 items-center justify-center text-[12px] text-[var(--dim)]">
+                  Rendering plan…
+                </div>
+              }
+            >
+              <div
+                class="chat-markdown w-full max-w-3xl px-8 py-8"
+                // eslint-disable-next-line solid/no-innerhtml
+                innerHTML={html()}
+              />
+            </Show>
           </div>
         }
       >
-        <div
-          class="chat-markdown w-full max-w-3xl px-8 py-8"
-          // eslint-disable-next-line solid/no-innerhtml
-          innerHTML={html()}
+        <textarea
+          ref={(el) => (textareaEl = el)}
+          data-testid="plan-edit-textarea"
+          spellcheck={false}
+          autocomplete="off"
+          value={props.controller.draft()}
+          onInput={(e) => props.controller.setDraft(e.currentTarget.value)}
+          onKeyDown={onTextareaKeyDown}
+          class="min-h-0 flex-1 resize-none border-0 bg-[var(--bg)] px-8 py-6 font-mono text-[12px] leading-[1.55] text-[var(--fg)] outline-none focus:outline-none"
         />
       </Show>
     </div>
@@ -245,8 +399,14 @@ export function PlansSurfaceView(props: ProjectProps): JSX.Element {
   const [selected, setSelected] = createSignal<string | null>(null);
   const [planData, setPlanData] = createSignal<PlansPanelMountOptions["planData"]>(null);
   const [planMeta, setPlanMeta] = createSignal<PlansPanelMountOptions["plan"]>(null);
+  const [editing, setEditing] = createSignal<boolean>(false);
+  const [draft, setDraft] = createSignal<string>("");
+  const [saving, setSaving] = createSignal<boolean>(false);
+  const [saveError, setSaveError] = createSignal<string | null>(null);
+  const [savedAt, setSavedAt] = createSignal<number | null>(null);
+  const [remoteUpdateAvailable, setRemoteUpdateAvailable] = createSignal<boolean>(false);
 
-  async function loadPlanBody(filename: string): Promise<void> {
+  async function loadPlanBody(filename: string, opts?: { silent?: boolean }): Promise<void> {
     try {
       const res = await fetch(
         `${API_BASE}/api/project/${encodeURIComponent(props.projectName)}/plans/${encodeURIComponent(filename)}`,
@@ -259,6 +419,7 @@ export function PlansSurfaceView(props: ProjectProps): JSX.Element {
         authorship?: unknown;
         mtime?: number | null;
       };
+      const incomingMtime = json.mtime ?? null;
       if (json.plan) {
         setPlanMeta({
           name: json.plan.name ?? filename,
@@ -267,15 +428,145 @@ export function PlansSurfaceView(props: ProjectProps): JSX.Element {
           status: json.plan.status ?? "in-progress",
         });
       }
+      // Don't stomp a user's in-progress edit. If the user is editing
+      // and the remote mtime moved forward, surface a banner; the user
+      // decides whether to keep the local draft or discard it.
+      if (opts?.silent && editing()) {
+        const knownMtime = planData()?.mtime ?? null;
+        if (incomingMtime !== null && knownMtime !== null && incomingMtime > knownMtime) {
+          setRemoteUpdateAvailable(true);
+        }
+        return;
+      }
       setPlanData({
         content: json.content ?? "",
         authorship: (json.authorship as PlansPanelAuthorship | null | undefined) ?? null,
-        mtime: json.mtime ?? null,
+        mtime: incomingMtime,
       });
+      setRemoteUpdateAvailable(false);
     } catch {
       /* ignore */
     }
   }
+
+  // Periodic re-fetch — keeps the view honest when the file is rewritten
+  // by another tool (Claude pane, manual edit on disk). The daemon does
+  // not emit an SSE event for file-plan mtime, so polling is the only
+  // mechanism. Light cadence — 5s — only while a plan is selected.
+  createEffect(() => {
+    const filename = selected();
+    if (!filename) return;
+    const interval = setInterval(() => {
+      void loadPlanBody(filename, { silent: true });
+    }, 5000);
+    onCleanup(() => clearInterval(interval));
+  });
+
+  const canEdit = createMemo<boolean>(() => selected() !== null && planData() !== null);
+
+  function beginEdit(): void {
+    if (!canEdit() || editing()) return;
+    setDraft(planData()?.content ?? "");
+    setSaveError(null);
+    setRemoteUpdateAvailable(false);
+    setEditing(true);
+  }
+
+  function cancelEdit(): void {
+    if (!editing()) return;
+    const original = planData()?.content ?? "";
+    const dirty = draft() !== original;
+    if (dirty) {
+      const ok =
+        typeof window !== "undefined" && typeof window.confirm === "function"
+          ? window.confirm("Discard unsaved changes to this plan?")
+          : true;
+      if (!ok) return;
+    }
+    setEditing(false);
+    setDraft("");
+    setSaveError(null);
+  }
+
+  async function saveEdit(): Promise<void> {
+    const filename = selected();
+    if (!filename || !editing()) return;
+    setSaving(true);
+    setSaveError(null);
+    try {
+      const res = await fetch(
+        `${API_BASE}/api/project/${encodeURIComponent(props.projectName)}/plans/${encodeURIComponent(filename)}/content`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ content: draft() }),
+        },
+      );
+      if (!res.ok) {
+        const text = await res.text().catch(() => "");
+        let message = `Save failed (HTTP ${res.status})`;
+        try {
+          const json = JSON.parse(text) as { error?: string };
+          if (json.error) message = json.error;
+        } catch {
+          if (text) message = text;
+        }
+        setSaveError(message);
+        return;
+      }
+      setEditing(false);
+      setSaveError(null);
+      setSavedAt(Date.now());
+      setRemoteUpdateAvailable(false);
+      // Refetch so the rendered markdown reflects what the daemon
+      // actually wrote (mtime + any normalization).
+      await loadPlanBody(filename);
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function discardLocal(): void {
+    const filename = selected();
+    setEditing(false);
+    setDraft("");
+    setSaveError(null);
+    setRemoteUpdateAvailable(false);
+    if (filename) void loadPlanBody(filename);
+  }
+
+  // Cmd+E enters edit mode when the plans view is the active surface
+  // and a plan is selected. Gated by `when:` so global dispatch skips
+  // it while editing (the textarea catches Cmd+S / Esc directly).
+  onMount(() => {
+    const dispose = registerKeybinds({
+      id: "plans.editPlan",
+      label: "Edit current plan",
+      group: "Editor",
+      scope: "global",
+      combo: { key: "e" },
+      when: () => canEdit() && !editing(),
+      run: () => beginEdit(),
+    });
+    onCleanup(dispose);
+  });
+
+  const controller: PlanEditController = {
+    editing,
+    draft,
+    setDraft,
+    saving,
+    saveError,
+    savedAt,
+    remoteUpdateAvailable,
+    canEdit,
+    beginEdit,
+    cancelEdit,
+    saveEdit,
+    discardLocal,
+  };
 
   const railOptions = createMemo<PlansRailMountOptions>(() => ({
     sessionName: props.projectName,
@@ -283,6 +574,17 @@ export function PlansSurfaceView(props: ProjectProps): JSX.Element {
     bearerToken: null,
     selectedFile: selected(),
     onSelect: (filename: string) => {
+      if (editing() && draft() !== (planData()?.content ?? "")) {
+        const ok =
+          typeof window !== "undefined" && typeof window.confirm === "function"
+            ? window.confirm("Discard unsaved changes to this plan?")
+            : true;
+        if (!ok) return;
+      }
+      setEditing(false);
+      setDraft("");
+      setSaveError(null);
+      setRemoteUpdateAvailable(false);
       setSelected(filename);
       void loadPlanBody(filename);
     },
@@ -308,7 +610,7 @@ export function PlansSurfaceView(props: ProjectProps): JSX.Element {
             </div>
           }
         >
-          <PlanBodyView plan={planMeta()} data={planData()} />
+          <PlanBodyView plan={planMeta()} data={planData()} controller={controller} />
         </Show>
       </main>
     </div>
