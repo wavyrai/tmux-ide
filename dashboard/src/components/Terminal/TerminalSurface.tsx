@@ -30,6 +30,7 @@ import {
   createResource,
   createSignal,
   For,
+  on,
   onCleanup,
   onMount,
   Show,
@@ -43,7 +44,7 @@ import {
   renameTerminal,
   useTerminals,
 } from "@/lib/pty/registry";
-import { releaseSession } from "@/lib/pty/sessionPool";
+import { peekSession, releaseSession } from "@/lib/pty/sessionPool";
 import { PaneSizingProvider } from "@/lib/pty/PaneSizingContext";
 import {
   detectIsMacPlatform,
@@ -308,12 +309,28 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
     setConfirmDeleteId(null);
   }
 
-  const activeTerminal = createMemo<TerminalWithRuntime | null>(() => {
-    const list = terminals();
-    const id = activeId();
-    if (!list || !id) return null;
-    return list.find((t) => t.id === id) ?? null;
-  });
+  // When the active tab changes, focus the xterm of the now-visible
+  // session so keyboard input lands without an extra mouse click on
+  // the terminal area. Deferred so the visibility flip is applied to
+  // the DOM first (visibility:hidden elements can't receive focus).
+  createEffect(
+    on(
+      activeId,
+      (id) => {
+        if (!id) return;
+        const session = peekSession(id);
+        if (!session?.pty) return;
+        requestAnimationFrame(() => {
+          try {
+            session.pty?.terminal.focus();
+          } catch {
+            // ignore — terminal may be transitioning
+          }
+        });
+      },
+      { defer: true },
+    ),
+  );
 
   return (
     <div
@@ -486,8 +503,21 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
 
       <div class="flex h-full min-h-0 w-full min-w-0 flex-1 flex-col">
         <PaneSizingProvider paneId={`terminals-${props.projectName}`} sessionIds={allSessionIds()}>
+          {/*
+           * Keep-all-mounted body: every open terminal renders a
+           * <PtyPane> in an absolutely-positioned wrapper stacked on
+           * top of the others. Only the active wrapper is `visible`
+           * + `pointer-events-auto`; the rest are `invisible` +
+           * `pointer-events-none`. Visibility (not display:none) so
+           * each xterm keeps the same layout box across switches —
+           * no re-fit, no reparent, no WS reconnect — and switching
+           * tabs is instant. Inactive PtyPanes stay mounted (WS
+           * open, xterm alive) until the user explicitly closes the
+           * tab, at which point `handleClose` calls
+           * `releaseSession` to dispose.
+           */}
           <Show
-            when={activeTerminal()}
+            when={(terminals() ?? []).length > 0}
             fallback={
               <div
                 data-testid="terminal-surface-empty"
@@ -499,20 +529,39 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
               </div>
             }
           >
-            {(t) => (
-              <PtyPane
-                sessionId={t().id}
-                options={{
-                  ...(effectiveCwd() ? { cwd: effectiveCwd() } : {}),
-                  // Default shell tab gets `$SHELL -l`; named tabs
-                  // leave cmd unset so the daemon picks the user's
-                  // login shell.
-                  ...(t().scripted && t().kind === "shell"
-                    ? { cmd: ["sh", "-c", "$SHELL -l || $SHELL"] }
-                    : {}),
+            <div class="relative h-full min-h-0 w-full min-w-0 flex-1">
+              <For each={terminals() ?? []}>
+                {(t) => {
+                  const isActive = () => activeId() === t.id;
+                  return (
+                    <div
+                      data-testid={`pty-pane-host-${t.id}`}
+                      data-session-id={t.id}
+                      data-active={isActive() ? "true" : "false"}
+                      aria-hidden={!isActive()}
+                      class="absolute inset-0 flex"
+                      classList={{
+                        "visible pointer-events-auto z-10": isActive(),
+                        "invisible pointer-events-none z-0": !isActive(),
+                      }}
+                    >
+                      <PtyPane
+                        sessionId={t.id}
+                        options={{
+                          ...(effectiveCwd() ? { cwd: effectiveCwd() } : {}),
+                          // Default shell tab gets `$SHELL -l`; named
+                          // tabs leave cmd unset so the daemon picks
+                          // the user's login shell.
+                          ...(t.scripted && t.kind === "shell"
+                            ? { cmd: ["sh", "-c", "$SHELL -l || $SHELL"] }
+                            : {}),
+                        }}
+                      />
+                    </div>
+                  );
                 }}
-              />
-            )}
+              </For>
+            </div>
           </Show>
         </PaneSizingProvider>
       </div>

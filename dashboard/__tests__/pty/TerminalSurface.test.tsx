@@ -16,23 +16,50 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, waitFor } from "@solidjs/testing-library";
+import { onMount } from "solid-js";
 
-// Stub PtyPane — the surface mounts it for the active tab but the
-// real one needs xterm + a canvas. The stub keeps the surface
+// vi.hoisted lets the stub mock + the assertions share state. We use
+// it to count how many times each PtyPane *mounts* (NOT renders) so
+// the no-remount test can assert that switching active does not
+// cause a previously-mounted pane to re-bootstrap (which is what
+// would happen if the surface fell back to the old single-active
+// render and re-keyed on activeId).
+const stubState = vi.hoisted(() => ({ mounts: new Map<string, number>() }));
+
+// Stub PtyPane — the surface mounts it for every open terminal but
+// the real one needs xterm + a canvas. The stub keeps the surface
 // renderable without dragging that in. `options.cwd` is reflected
 // onto a data attribute so the cwd-wiring test below can assert the
 // surface threaded the resolved project dir through.
 vi.mock("@/components/Terminal/PtyPane", () => ({
-  PtyPane: (props: { sessionId: string; options?: { cwd?: string; cmd?: string[] } }) => (
-    <div
-      data-testid="pty-pane-stub"
-      data-session-id={props.sessionId}
-      data-cwd={props.options?.cwd ?? ""}
-    >
-      pane:{props.sessionId}
-    </div>
-  ),
+  PtyPane: (props: { sessionId: string; options?: { cwd?: string; cmd?: string[] } }) => {
+    onMount(() => {
+      stubState.mounts.set(props.sessionId, (stubState.mounts.get(props.sessionId) ?? 0) + 1);
+    });
+    return (
+      <div
+        data-testid="pty-pane-stub"
+        data-session-id={props.sessionId}
+        data-cwd={props.options?.cwd ?? ""}
+      >
+        pane:{props.sessionId}
+      </div>
+    );
+  },
 }));
+
+/** Find the active pane wrapper. With keep-all-mounted, multiple
+ *  `pty-pane-stub` elements exist — `findByTestId` would throw on
+ *  multi-match, so callers query through the active wrapper instead. */
+function activePaneWrapper(container: HTMLElement): HTMLElement | null {
+  return container.querySelector<HTMLElement>(
+    '[data-testid^="pty-pane-host-"][data-active="true"]',
+  );
+}
+
+function activePaneSessionId(container: HTMLElement): string | null {
+  return activePaneWrapper(container)?.getAttribute("data-session-id") ?? null;
+}
 
 import { TerminalSurface } from "@/components/Terminal/TerminalSurface";
 
@@ -73,6 +100,7 @@ afterEach(() => {
   globalThis.fetch = originalFetch;
   cleanup();
   window.localStorage.clear();
+  stubState.mounts.clear();
 });
 
 beforeEach(() => {
@@ -90,18 +118,18 @@ describe("TerminalSurface", () => {
 
   it("activates the first tab by default and renders PtyPane for it", async () => {
     globalThis.fetch = vi.fn(async () => jsonOk({ terminals: SAMPLE_TERMINALS })) as typeof fetch;
-    const { findByTestId } = render(() => <TerminalSurface projectName="proj" />);
-    const pane = (await findByTestId("pty-pane-stub")) as HTMLElement;
-    expect(pane.getAttribute("data-session-id")).toBe(SAMPLE_TERMINALS[0]!.id);
+    const { container, findByTestId } = render(() => <TerminalSurface projectName="proj" />);
+    await findByTestId(`pty-pane-host-${SAMPLE_TERMINALS[0]!.id}`);
+    expect(activePaneSessionId(container)).toBe(SAMPLE_TERMINALS[0]!.id);
   });
 
   it("restores the persisted active tab from localStorage", async () => {
     window.localStorage.setItem("tmux-ide.terminal.active.proj", SAMPLE_TERMINALS[1]!.id);
     globalThis.fetch = vi.fn(async () => jsonOk({ terminals: SAMPLE_TERMINALS })) as typeof fetch;
-    const { findByTestId } = render(() => <TerminalSurface projectName="proj" />);
-    await waitFor(async () => {
-      const pane = (await findByTestId("pty-pane-stub")) as HTMLElement;
-      expect(pane.getAttribute("data-session-id")).toBe(SAMPLE_TERMINALS[1]!.id);
+    const { container, findByTestId } = render(() => <TerminalSurface projectName="proj" />);
+    await findByTestId(`pty-pane-host-${SAMPLE_TERMINALS[1]!.id}`);
+    await waitFor(() => {
+      expect(activePaneSessionId(container)).toBe(SAMPLE_TERMINALS[1]!.id);
     });
   });
 
@@ -207,10 +235,12 @@ describe("TerminalSurface", () => {
       }
       return jsonOk({ terminals: SAMPLE_TERMINALS });
     }) as typeof fetch;
-    const { findByTestId } = render(() => <TerminalSurface projectName="proj" />);
-    await waitFor(async () => {
-      const pane = (await findByTestId("pty-pane-stub")) as HTMLElement;
-      expect(pane.getAttribute("data-cwd")).toBe(PROJECT_DIR);
+    const { container, findByTestId } = render(() => <TerminalSurface projectName="proj" />);
+    await waitFor(() => {
+      const wrapper = activePaneWrapper(container);
+      expect(wrapper).not.toBeNull();
+      const stub = wrapper!.querySelector<HTMLElement>('[data-testid="pty-pane-stub"]');
+      expect(stub?.getAttribute("data-cwd")).toBe(PROJECT_DIR);
     });
     const surface = (await findByTestId("terminal-surface")) as HTMLElement;
     expect(surface.getAttribute("data-project-dir")).toBe(PROJECT_DIR);
@@ -287,5 +317,57 @@ describe("TerminalSurface", () => {
       expect(renameCall).toBeTruthy();
       expect((renameCall!.body as { name: string }).name).toBe("Renamed");
     });
+  });
+
+  it("keeps every PtyPane mounted across active switches (no re-bootstrap)", async () => {
+    // The perf fix: switching tabs must NOT unmount the previously-
+    // active PtyPane (which would re-bootstrap xterm, reopen the WS,
+    // and replay the buffer). Every open terminal stays mounted; the
+    // active wrapper toggles `data-active="true"` and the inactive
+    // ones go `invisible pointer-events-none`. We assert this by
+    // counting PtyPane mounts and by verifying the inactive wrapper's
+    // DOM node identity is stable across a switch.
+    globalThis.fetch = vi.fn(async () => jsonOk({ terminals: SAMPLE_TERMINALS })) as typeof fetch;
+    const { container, findByTestId } = render(() => <TerminalSurface projectName="proj" />);
+
+    const firstId = SAMPLE_TERMINALS[0]!.id;
+    const secondId = SAMPLE_TERMINALS[1]!.id;
+
+    // Both wrappers render up-front — keep-all-mounted shape.
+    await findByTestId(`pty-pane-host-${firstId}`);
+    await findByTestId(`pty-pane-host-${secondId}`);
+    await waitFor(() => {
+      expect(stubState.mounts.get(firstId)).toBe(1);
+      expect(stubState.mounts.get(secondId)).toBe(1);
+    });
+    expect(activePaneSessionId(container)).toBe(firstId);
+
+    const inactiveWrapperBefore = container.querySelector(
+      `[data-testid="pty-pane-host-${secondId}"]`,
+    );
+    expect(inactiveWrapperBefore).not.toBeNull();
+
+    // Switch active to the second tab.
+    fireEvent.click(await findByTestId(`terminal-tab-label-${secondId}`));
+    await waitFor(() => {
+      expect(activePaneSessionId(container)).toBe(secondId);
+    });
+
+    // No re-mount on either side — connect() never fires again.
+    expect(stubState.mounts.get(firstId)).toBe(1);
+    expect(stubState.mounts.get(secondId)).toBe(1);
+
+    // Inactive wrapper's DOM node identity is preserved across the
+    // switch; Solid's keyed <For> did not destroy + recreate it.
+    const inactiveWrapperAfter = container.querySelector(
+      `[data-testid="pty-pane-host-${secondId}"]`,
+    );
+    expect(inactiveWrapperAfter).toBe(inactiveWrapperBefore);
+
+    // The previously-active wrapper is now `data-active="false"` but
+    // still in the DOM — its xterm/WS keep running underneath.
+    const formerActive = container.querySelector(`[data-testid="pty-pane-host-${firstId}"]`);
+    expect(formerActive?.getAttribute("data-active")).toBe("false");
+    expect(formerActive?.getAttribute("aria-hidden")).toBe("true");
   });
 });
