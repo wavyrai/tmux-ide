@@ -248,7 +248,7 @@ export default function HomePage() {
               </span>
             </div>
             <iframe
-              src="/demo/project/demo-todo-app"
+              src="/demo/"
               title="tmux-ide demo"
               className="block w-full bg-fd-background"
               style={{ height: "720px", border: "0" }}

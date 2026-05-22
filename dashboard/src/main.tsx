@@ -9,10 +9,13 @@ import { isDemoMode, installDemoFetch } from "./lib/demo/install";
 import "./styles.css";
 
 // Demo mode short-circuits every /api/* fetch to canned responses so the
-// landing page can iframe the full IDE without a running daemon.
-// Activated via ?demo=1 (persisted), localStorage flag, or demo.* hostname.
-if (isDemoMode()) {
-  installDemoFetch();
+// landing page can iframe the full IDE without a running daemon. Wrapped
+// so a bootstrap failure can't take down the real dashboard.
+try {
+  if (isDemoMode()) installDemoFetch();
+} catch (err) {
+  // eslint-disable-next-line no-console
+  console.error("[tmux-ide] demo bootstrap failed:", err);
 }
 
 const root = document.getElementById("root");
