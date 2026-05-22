@@ -27339,7 +27339,7 @@ var require_package = __commonJS({
         "dashboard/dist"
       ],
       scripts: {
-        build: "tsc --noEmit",
+        build: "pnpm build:cli",
         "build:cli": "node scripts/build-cli.mjs",
         "build:dashboard": "cd dashboard && pnpm build",
         prepublishOnly: "pnpm build:cli && pnpm check && pnpm --filter @tmux-ide/dashboard build && node scripts/prepublish-check.mjs",
@@ -27405,6 +27405,14 @@ var require_package = __commonJS({
         "vscode-languageserver-protocol": "^3.17.5",
         ws: "^8.20.0",
         zod: "^4.3.6"
+      },
+      pnpm: {
+        onlyBuiltDependencies: [
+          "@parcel/watcher",
+          "better-sqlite3",
+          "esbuild",
+          "node-pty"
+        ]
       },
       devDependencies: {
         "@eslint/js": "^10.0.1",

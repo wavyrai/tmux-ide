@@ -81,6 +81,14 @@
     "ws": "^8.20.0",
     "zod": "^4.3.6"
   },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "@parcel/watcher",
+      "better-sqlite3",
+      "esbuild",
+      "node-pty"
+    ]
+  },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@playwright/test": "^1.59.1",

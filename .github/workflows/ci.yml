@@ -50,7 +50,6 @@ jobs:
           mv src/integration.test.ts src/integration.test.ts.skip 2>/dev/null || true
           pnpm test:unit
 
-
       - name: Validate package contents
         run: pnpm pack:check
 
@@ -86,53 +85,11 @@ jobs:
       - name: Run dashboard tests
         run: cd dashboard && pnpm test
 
-  e2e:
-    name: E2E (Playwright)
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    env:
-      CI: "true"
-      NEXT_PUBLIC_TMUX_IDE_SERVER_PORT: "6070"
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: pnpm
-
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Build CLI (bin/cli.js imports from dist/)
-        run: pnpm build
-
-      - name: Install Playwright browsers
-        run: pnpm exec playwright install --with-deps chromium
-
-      - name: Run E2E suite
-        # playwright.config.ts boots its own webServer (daemon + dashboard dev).
-        # smoke.spec.ts is excluded via testIgnore — smoke.yml owns it.
-        run: pnpm test:e2e
-
-      - name: Upload Playwright report
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: e2e-playwright-report
-          path: |
-            playwright-report
-            test-results
-          if-no-files-found: ignore
-          retention-days: 7
+  # E2E job removed: every spec in e2e/ is in playwright.config.ts
+  # testIgnore (parked since the G16 Solid cutover), so the job collected
+  # zero tests and only spent CI minutes booting a webServer that nothing
+  # exercised. smoke.yml owns the live smoke gate; restore this job when
+  # specs are ported back to the Solid surface.
 
   coverage:
     name: Vitest coverage (per package)
