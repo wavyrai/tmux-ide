@@ -302,6 +302,20 @@ export async function launch(
     `Starting "${session}" (${rows.length} row${rows.length === 1 ? "" : "s"}, ${totalPanes} pane${totalPanes === 1 ? "" : "s"})...`,
   );
 
+  // Surface the dashboard URL so users know where the web UI lives.
+  // Read the canonical daemon info file the daemon writes on startup;
+  // tolerate its absence (daemon may still be coming up, or running
+  // sessionless). Print only when we have a real port to advertise.
+  try {
+    const { readCanonicalDaemonInfo } = await import("./lib/canonical-daemon.ts");
+    const info = readCanonicalDaemonInfo();
+    if (info) {
+      console.log(`Dashboard: http://${info.bindHostname}:${info.port}/`);
+    }
+  } catch {
+    // Non-fatal — the user can still run `tmux-ide dashboard` later.
+  }
+
   // Attach
   if (attach) {
     attachSession(session);

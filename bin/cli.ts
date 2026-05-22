@@ -23,6 +23,7 @@ import { config } from "../packages/daemon/src/config.ts";
 import { restart } from "../packages/daemon/src/restart.ts";
 import { taskCommand } from "../packages/daemon/src/task.ts";
 import { send } from "../packages/daemon/src/send.ts";
+import { dashboard } from "../packages/daemon/src/dashboard.ts";
 import { IdeError } from "../packages/daemon/src/lib/errors.ts";
 import { printCommandError } from "../packages/daemon/src/lib/output.ts";
 
@@ -75,6 +76,9 @@ const { positionals, values } = parseArgs({
     // send command flags
     to: { type: "string" },
     "no-enter": { type: "boolean" },
+    // dashboard command flags
+    open: { type: "boolean" },
+    "no-open": { type: "boolean" },
     // chat command flags (T078)
     role: { type: "string" },
   },
@@ -108,6 +112,7 @@ const knownCommands = new Set([
   "orchestrator",
   "settings",
   "command-center",
+  "dashboard",
   "server",
   "tunnel",
   "remote",
@@ -558,6 +563,14 @@ try {
     case "command-center": {
       const { startCommandCenter } = await import("../packages/daemon/src/command-center/index.ts");
       await startCommandCenter({ port: parseInt(values.port ?? "4000") });
+      break;
+    }
+
+    case "dashboard": {
+      // `tmux-ide dashboard` — print the daemon's dashboard URL and open it.
+      // Pass --no-open to skip the browser open and just print the URL.
+      const noOpen = values["no-open"] === true || values.open === false;
+      await dashboard({ json, open: !noOpen });
       break;
     }
 

@@ -1823,499 +1823,653 @@ var init_ws_v3_protocol = __esm({
   }
 });
 
-// packages/contracts/src/actions-contract.ts
+// packages/contracts/src/chat-timeline.ts
 import { z as z9 } from "zod";
+var IsoDateTimeZ2, OpaqueBlockZ, TimelineToolCallZ, TimelinePlanEntryZ, TimelineUserMessageZ, TimelineAssistantMessageZ, TimelineMessageZ, TimelineRowZ, ChatResumeSubscribeZ;
+var init_chat_timeline = __esm({
+  "packages/contracts/src/chat-timeline.ts"() {
+    "use strict";
+    IsoDateTimeZ2 = z9.string().min(1);
+    OpaqueBlockZ = z9.unknown();
+    TimelineToolCallZ = z9.object({
+      toolCallId: z9.string(),
+      title: z9.string(),
+      kind: z9.string().optional(),
+      status: z9.enum(["pending", "in_progress", "completed", "failed"]),
+      content: z9.array(OpaqueBlockZ),
+      rawInput: z9.unknown().optional(),
+      rawOutput: z9.unknown().optional()
+    });
+    TimelinePlanEntryZ = z9.object({
+      content: z9.string(),
+      status: z9.enum(["pending", "in_progress", "completed"]).optional(),
+      priority: z9.enum(["low", "medium", "high"]).optional()
+    });
+    TimelineUserMessageZ = z9.object({
+      id: z9.string(),
+      role: z9.literal("user"),
+      createdAt: IsoDateTimeZ2,
+      content: z9.array(OpaqueBlockZ)
+    });
+    TimelineAssistantMessageZ = z9.object({
+      id: z9.string(),
+      role: z9.literal("assistant"),
+      createdAt: IsoDateTimeZ2,
+      completedAt: IsoDateTimeZ2.optional(),
+      streaming: z9.boolean(),
+      text: z9.string(),
+      thoughtText: z9.string().optional(),
+      toolCalls: z9.array(TimelineToolCallZ),
+      // Loose: passes through ACP stop reasons verbatim.
+      stopReason: z9.string().optional()
+    });
+    TimelineMessageZ = z9.discriminatedUnion("role", [
+      TimelineUserMessageZ,
+      TimelineAssistantMessageZ
+    ]);
+    TimelineRowZ = z9.discriminatedUnion("kind", [
+      z9.object({
+        kind: z9.literal("message"),
+        id: z9.string(),
+        createdAt: IsoDateTimeZ2,
+        message: TimelineMessageZ,
+        revertTurnCount: z9.number().int().nonnegative().optional()
+      }),
+      z9.object({
+        kind: z9.literal("plan"),
+        id: z9.string(),
+        createdAt: IsoDateTimeZ2,
+        entries: z9.array(TimelinePlanEntryZ)
+      }),
+      z9.object({
+        kind: z9.literal("working"),
+        id: z9.string(),
+        createdAt: IsoDateTimeZ2
+      })
+    ]);
+    ChatResumeSubscribeZ = z9.object({
+      type: z9.literal("chat.subscribe"),
+      threadId: z9.string().min(1),
+      lastSeq: z9.number().int().nonnegative().optional()
+    }).strict();
+  }
+});
+
+// packages/contracts/src/actions-contract.ts
+import { z as z10 } from "zod";
 function isActionName(name) {
   return name in ActionContractsZ;
 }
-var ProjectScopeInputZ, ProofInputZ, SkillSchemaZ, ProjectOpenTerminalInputZ, ProjectOpenTerminalResultZ, ProjectLaunchInputZ, ProjectLaunchResultZ, ProjectStopInputZ, ProjectStopResultZ, ProjectRestartInputZ, ProjectRestartResultZ, ProjectActivateInputZ, ProjectActivateResultZ, TerminalRespawnInputZ, TerminalRespawnResultZ, TerminalStopInputZ, TerminalStopResultZ, TaskCreateInputZ, TaskCreateResultZ, TaskUpdateInputZ, TaskUpdateResultZ, TaskClaimInputZ, TaskClaimResultZ, TaskDoneInputZ, TaskDoneResultZ, TaskDeleteInputZ, TaskDeleteResultZ, GoalCreateInputZ, GoalCreateResultZ, GoalUpdateInputZ, GoalUpdateResultZ, GoalDoneInputZ, GoalDoneResultZ, GoalDeleteInputZ, GoalDeleteResultZ, MilestoneCreateInputZ, MilestoneCreateResultZ, MilestoneUpdateInputZ, MilestoneUpdateResultZ, MissionSetInputZ, MissionSetResultZ, MissionPlanCompleteInputZ, MissionPlanCompleteResultZ, MissionClearInputZ, MissionClearResultZ, SkillCreateInputZ, SkillCreateResultZ, SkillUpdateInputZ, SkillUpdateResultZ, SkillDeleteInputZ, SkillDeleteResultZ, ConfigSetInputZ, ConfigResultZ, ConfigAddPaneInputZ, ConfigAddPaneResultZ, ConfigRemovePaneInputZ, ConfigRemovePaneResultZ, ConfigAddRowInputZ, ConfigAddRowResultZ, ConfigEnableTeamInputZ, ConfigEnableTeamResultZ, ConfigDisableTeamInputZ, ConfigDisableTeamResultZ, AssertionEntryZ, ValidationReportZ, ValidationAssertInputZ, ValidationAssertResultZ, ValidationReportInputZ, ValidationReportResultZ, WebhookAddInputZ, WebhookAddResultZ, WebhookRemoveInputZ, WebhookRemoveResultZ, WebhookTestInputZ, WebhookTestResultZ, AppSetRemoteAccessInputZ, AppSetRemoteAccessResultZ, DaemonShutdownInputZ, DaemonShutdownResultZ, StopReasonZ, AgentProviderZ, ContentBlockZ, SessionUpdateZ, ChatThreadUsageSummaryZ, ThreadMessageZ, ThreadIndexEntryZ, ThreadStateZ, ChatThreadListInputZ, ChatThreadListResultZ, ChatProvidersListInputZ, ChatProvidersListResultZ, ChatThreadCreateInputZ, ChatThreadCreateResultZ, ChatThreadDeleteInputZ, ChatThreadDeleteResultZ, ChatThreadRenameInputZ, ChatThreadRenameResultZ, ChatThreadSetProviderInputZ, ChatThreadSetProviderResultZ, ChatThreadGetInputZ, ChatThreadGetResultZ, ChatThreadUsageInputZ, ChatThreadUsageResultZ, ChatSessionSendInputZ, ChatSessionSendResultZ, ChatSessionCancelInputZ, ChatSessionCancelResultZ, ChatSessionEditFromTurnInputZ, ChatSessionEditFromTurnResultZ, ChatPermissionRespondInputZ, ChatPermissionRespondResultZ, ChatContextCaptureTerminalInputZ, ChatContextCaptureTerminalResultZ, ActionContractsZ, ACTION_NAMES;
+var ProjectScopeInputZ, ProofInputZ, SkillSchemaZ, ProjectOpenTerminalInputZ, ProjectOpenTerminalResultZ, ProjectLaunchInputZ, ProjectLaunchResultZ, ProjectStopInputZ, ProjectStopResultZ, ProjectRestartInputZ, ProjectRestartResultZ, ProjectActivateInputZ, ProjectActivateResultZ, TerminalRespawnInputZ, TerminalRespawnResultZ, TerminalStopInputZ, TerminalStopResultZ, TaskCreateInputZ, TaskCreateResultZ, TaskUpdateInputZ, TaskUpdateResultZ, TaskClaimInputZ, TaskClaimResultZ, TaskDoneInputZ, TaskDoneResultZ, TaskDeleteInputZ, TaskDeleteResultZ, GoalCreateInputZ, GoalCreateResultZ, GoalUpdateInputZ, GoalUpdateResultZ, GoalDoneInputZ, GoalDoneResultZ, GoalDeleteInputZ, GoalDeleteResultZ, MilestoneCreateInputZ, MilestoneCreateResultZ, MilestoneUpdateInputZ, MilestoneUpdateResultZ, MissionSetInputZ, MissionSetResultZ, MissionPlanCompleteInputZ, MissionPlanCompleteResultZ, MissionClearInputZ, MissionClearResultZ, SkillCreateInputZ, SkillCreateResultZ, SkillUpdateInputZ, SkillUpdateResultZ, SkillDeleteInputZ, SkillDeleteResultZ, ConfigSetInputZ, ConfigResultZ, ConfigAddPaneInputZ, ConfigAddPaneResultZ, ConfigRemovePaneInputZ, ConfigRemovePaneResultZ, ConfigAddRowInputZ, ConfigAddRowResultZ, ConfigEnableTeamInputZ, ConfigEnableTeamResultZ, ConfigDisableTeamInputZ, ConfigDisableTeamResultZ, AssertionEntryZ, ValidationReportZ, ValidationAssertInputZ, ValidationAssertResultZ, ValidationReportInputZ, ValidationReportResultZ, WebhookAddInputZ, WebhookAddResultZ, WebhookRemoveInputZ, WebhookRemoveResultZ, WebhookTestInputZ, WebhookTestResultZ, AppSetRemoteAccessInputZ, AppSetRemoteAccessResultZ, DaemonShutdownInputZ, DaemonShutdownResultZ, StopReasonZ, AgentProviderZ, ContentBlockZ, SessionUpdateZ, ChatThreadUsageSummaryZ, ThreadMessageZ, ThreadIndexEntryZ, ThreadStateZ, ChatThreadListInputZ, ChatThreadListResultZ, ProviderOptionSelectionZ, ProviderModelInfoZ, ChatProvidersListInputZ, ChatProvidersListResultZ, ChatThreadCreateInputZ, ChatThreadCreateResultZ, ChatThreadDeleteInputZ, ChatThreadDeleteResultZ, ChatThreadRenameInputZ, ChatThreadRenameResultZ, ChatThreadSetProviderInputZ, ChatThreadSetProviderResultZ, ChatThreadGetInputZ, ChatThreadGetResultZ, ChatThreadUsageInputZ, ChatThreadUsageResultZ, ChatSessionSendInputZ, ChatSessionSendResultZ, ChatSessionCancelInputZ, ChatSessionCancelResultZ, ChatSessionEditFromTurnInputZ, ChatSessionEditFromTurnResultZ, ChatPermissionRespondInputZ, ChatPermissionRespondResultZ, ChatContextCaptureTerminalInputZ, ChatContextCaptureTerminalResultZ, ActionContractsZ, ACTION_NAMES;
 var init_actions_contract = __esm({
   "packages/contracts/src/actions-contract.ts"() {
     "use strict";
+    init_chat_timeline();
     init_domain();
     init_ide_config();
-    ProjectScopeInputZ = z9.object({
+    ProjectScopeInputZ = z10.object({
       /**
        * Optional project/session scope. Dashboard calls include this so task
        * mutations target the selected project; CLI-style callers may omit it
        * to use the command-center process cwd.
        */
-      name: z9.string().min(1).optional(),
-      sessionName: z9.string().min(1).optional()
+      name: z10.string().min(1).optional(),
+      sessionName: z10.string().min(1).optional()
     });
-    ProofInputZ = z9.union([ProofSchemaZ, z9.string()]);
-    SkillSchemaZ = z9.object({
-      name: z9.string(),
-      specialties: z9.array(z9.string()),
-      role: z9.string(),
-      description: z9.string(),
-      body: z9.string()
+    ProofInputZ = z10.union([ProofSchemaZ, z10.string()]);
+    SkillSchemaZ = z10.object({
+      name: z10.string(),
+      specialties: z10.array(z10.string()),
+      role: z10.string(),
+      description: z10.string(),
+      body: z10.string()
     });
-    ProjectOpenTerminalInputZ = z9.object({
-      name: z9.string().min(1)
+    ProjectOpenTerminalInputZ = z10.object({
+      name: z10.string().min(1)
     });
-    ProjectOpenTerminalResultZ = z9.object({
-      sessionName: z9.string(),
-      cwd: z9.string().min(1),
-      terminalTabId: z9.string(),
+    ProjectOpenTerminalResultZ = z10.object({
+      sessionName: z10.string(),
+      cwd: z10.string().min(1),
+      terminalTabId: z10.string(),
       /**
        * `true` when the dispatcher had to launch the tmux session as part of
        * resolving the terminal. `false` when the session was already running.
        */
-      launched: z9.boolean()
+      launched: z10.boolean()
     });
-    ProjectLaunchInputZ = z9.object({
-      name: z9.string().min(1)
+    ProjectLaunchInputZ = z10.object({
+      name: z10.string().min(1)
     });
-    ProjectLaunchResultZ = z9.object({
-      sessionName: z9.string(),
+    ProjectLaunchResultZ = z10.object({
+      sessionName: z10.string(),
       /**
        * `false` when the session was already running (idempotent no-op),
        * `true` when this call started a fresh session.
        */
-      started: z9.boolean()
+      started: z10.boolean()
     });
-    ProjectStopInputZ = z9.object({
-      name: z9.string().min(1)
+    ProjectStopInputZ = z10.object({
+      name: z10.string().min(1)
     });
-    ProjectStopResultZ = z9.object({
-      sessionName: z9.string(),
+    ProjectStopResultZ = z10.object({
+      sessionName: z10.string(),
       /**
        * `false` when no session was running (idempotent no-op),
        * `true` when this call killed a session.
        */
-      stopped: z9.boolean()
+      stopped: z10.boolean()
     });
-    ProjectRestartInputZ = z9.object({
-      name: z9.string().min(1)
+    ProjectRestartInputZ = z10.object({
+      name: z10.string().min(1)
     });
-    ProjectRestartResultZ = z9.object({
-      sessionName: z9.string(),
-      restarted: z9.literal(true)
+    ProjectRestartResultZ = z10.object({
+      sessionName: z10.string(),
+      restarted: z10.literal(true)
     });
-    ProjectActivateInputZ = z9.object({
-      name: z9.string().min(1),
-      orchestrate: z9.boolean().optional()
+    ProjectActivateInputZ = z10.object({
+      name: z10.string().min(1),
+      orchestrate: z10.boolean().optional()
     });
-    ProjectActivateResultZ = z9.object({
-      active: z9.boolean(),
-      projectName: z9.string()
+    ProjectActivateResultZ = z10.object({
+      active: z10.boolean(),
+      projectName: z10.string()
     });
-    TerminalRespawnInputZ = z9.object({
-      sessionName: z9.string().min(1),
-      terminalId: z9.string().min(1),
+    TerminalRespawnInputZ = z10.object({
+      sessionName: z10.string().min(1),
+      terminalId: z10.string().min(1),
       /**
        * Optional cwd override. Omit to respawn at the bridge's current cwd
        * (re-using the `lastCwd` recorded by the PTY bridge).
        */
-      cwd: z9.string().min(1).optional()
+      cwd: z10.string().min(1).optional()
     });
-    TerminalRespawnResultZ = z9.object({
-      respawned: z9.literal(true),
-      cwd: z9.string().min(1)
+    TerminalRespawnResultZ = z10.object({
+      respawned: z10.literal(true),
+      cwd: z10.string().min(1)
     });
-    TerminalStopInputZ = z9.object({
-      sessionName: z9.string().min(1),
-      terminalId: z9.string().min(1)
+    TerminalStopInputZ = z10.object({
+      sessionName: z10.string().min(1),
+      terminalId: z10.string().min(1)
     });
-    TerminalStopResultZ = z9.object({
-      stopped: z9.literal(true)
+    TerminalStopResultZ = z10.object({
+      stopped: z10.literal(true)
     });
     TaskCreateInputZ = ProjectScopeInputZ.extend({
-      title: z9.string().min(1),
-      goalId: z9.string().min(1).optional(),
-      priority: z9.number().int().positive().optional(),
-      assign: z9.string().min(1).optional(),
-      tags: z9.array(z9.string()).optional(),
-      depends: z9.array(z9.string()).optional(),
-      description: z9.string().optional(),
-      milestone: z9.string().nullable().optional(),
-      specialty: z9.string().nullable().optional(),
-      fulfills: z9.array(z9.string()).optional()
+      title: z10.string().min(1),
+      goalId: z10.string().min(1).optional(),
+      priority: z10.number().int().positive().optional(),
+      assign: z10.string().min(1).optional(),
+      tags: z10.array(z10.string()).optional(),
+      depends: z10.array(z10.string()).optional(),
+      description: z10.string().optional(),
+      milestone: z10.string().nullable().optional(),
+      specialty: z10.string().nullable().optional(),
+      fulfills: z10.array(z10.string()).optional()
     });
-    TaskCreateResultZ = z9.object({
-      taskId: z9.string(),
+    TaskCreateResultZ = z10.object({
+      taskId: z10.string(),
       task: TaskSchemaZ
     });
     TaskUpdateInputZ = ProjectScopeInputZ.extend({
-      taskId: z9.string().min(1),
-      status: z9.enum(["todo", "in-progress", "review", "done"]).optional(),
+      taskId: z10.string().min(1),
+      status: z10.enum(["todo", "in-progress", "review", "done"]).optional(),
       proof: ProofInputZ.optional(),
-      title: z9.string().optional(),
-      description: z9.string().optional(),
-      priority: z9.number().int().positive().optional(),
-      assign: z9.string().nullable().optional(),
-      assignee: z9.string().nullable().optional(),
-      goalId: z9.string().nullable().optional(),
-      tags: z9.array(z9.string()).optional(),
-      depends: z9.array(z9.string()).optional(),
-      milestone: z9.string().nullable().optional(),
-      specialty: z9.string().nullable().optional(),
-      fulfills: z9.array(z9.string()).optional(),
-      summary: z9.string().nullable().optional()
+      title: z10.string().optional(),
+      description: z10.string().optional(),
+      priority: z10.number().int().positive().optional(),
+      assign: z10.string().nullable().optional(),
+      assignee: z10.string().nullable().optional(),
+      goalId: z10.string().nullable().optional(),
+      tags: z10.array(z10.string()).optional(),
+      depends: z10.array(z10.string()).optional(),
+      milestone: z10.string().nullable().optional(),
+      specialty: z10.string().nullable().optional(),
+      fulfills: z10.array(z10.string()).optional(),
+      summary: z10.string().nullable().optional()
     });
-    TaskUpdateResultZ = z9.object({
+    TaskUpdateResultZ = z10.object({
       task: TaskSchemaZ
     });
     TaskClaimInputZ = ProjectScopeInputZ.extend({
-      taskId: z9.string().min(1),
-      assign: z9.string().min(1)
+      taskId: z10.string().min(1),
+      assign: z10.string().min(1)
     });
-    TaskClaimResultZ = z9.object({
+    TaskClaimResultZ = z10.object({
       task: TaskSchemaZ
     });
     TaskDoneInputZ = ProjectScopeInputZ.extend({
-      taskId: z9.string().min(1),
+      taskId: z10.string().min(1),
       proof: ProofInputZ.optional()
     });
-    TaskDoneResultZ = z9.object({
+    TaskDoneResultZ = z10.object({
       task: TaskSchemaZ
     });
     TaskDeleteInputZ = ProjectScopeInputZ.extend({
-      taskId: z9.string().min(1)
+      taskId: z10.string().min(1)
     });
-    TaskDeleteResultZ = z9.object({
-      deleted: z9.literal(true)
+    TaskDeleteResultZ = z10.object({
+      deleted: z10.literal(true)
     });
     GoalCreateInputZ = ProjectScopeInputZ.extend({
-      title: z9.string().min(1),
-      priority: z9.number().int().positive().optional(),
-      acceptance: z9.string().optional(),
-      description: z9.string().optional(),
-      milestone: z9.string().nullable().optional(),
-      specialty: z9.string().nullable().optional()
+      title: z10.string().min(1),
+      priority: z10.number().int().positive().optional(),
+      acceptance: z10.string().optional(),
+      description: z10.string().optional(),
+      milestone: z10.string().nullable().optional(),
+      specialty: z10.string().nullable().optional()
     });
-    GoalCreateResultZ = z9.object({
-      goalId: z9.string(),
+    GoalCreateResultZ = z10.object({
+      goalId: z10.string(),
       goal: GoalSchemaZ
     });
     GoalUpdateInputZ = ProjectScopeInputZ.extend({
-      goalId: z9.string().min(1),
-      status: z9.enum(["todo", "in-progress", "done"]).optional(),
-      title: z9.string().optional(),
-      description: z9.string().optional(),
-      acceptance: z9.string().optional(),
-      priority: z9.number().int().positive().optional(),
-      milestone: z9.string().nullable().optional(),
-      specialty: z9.string().nullable().optional(),
-      assign: z9.string().nullable().optional()
+      goalId: z10.string().min(1),
+      status: z10.enum(["todo", "in-progress", "done"]).optional(),
+      title: z10.string().optional(),
+      description: z10.string().optional(),
+      acceptance: z10.string().optional(),
+      priority: z10.number().int().positive().optional(),
+      milestone: z10.string().nullable().optional(),
+      specialty: z10.string().nullable().optional(),
+      assign: z10.string().nullable().optional()
     });
-    GoalUpdateResultZ = z9.object({
+    GoalUpdateResultZ = z10.object({
       goal: GoalSchemaZ
     });
     GoalDoneInputZ = ProjectScopeInputZ.extend({
-      goalId: z9.string().min(1)
+      goalId: z10.string().min(1)
     });
-    GoalDoneResultZ = z9.object({
+    GoalDoneResultZ = z10.object({
       goal: GoalSchemaZ
     });
     GoalDeleteInputZ = ProjectScopeInputZ.extend({
-      goalId: z9.string().min(1)
+      goalId: z10.string().min(1)
     });
-    GoalDeleteResultZ = z9.object({
-      deleted: z9.literal(true)
+    GoalDeleteResultZ = z10.object({
+      deleted: z10.literal(true)
     });
     MilestoneCreateInputZ = ProjectScopeInputZ.extend({
-      title: z9.string().min(1),
-      sequence: z9.number().int().positive().optional(),
-      description: z9.string().optional()
+      title: z10.string().min(1),
+      sequence: z10.number().int().positive().optional(),
+      description: z10.string().optional()
     });
-    MilestoneCreateResultZ = z9.object({
-      milestoneId: z9.string(),
+    MilestoneCreateResultZ = z10.object({
+      milestoneId: z10.string(),
       milestone: MilestoneSchemaZ
     });
     MilestoneUpdateInputZ = ProjectScopeInputZ.extend({
-      milestoneId: z9.string().min(1),
-      status: z9.enum(["locked", "active", "done", "validating"]).optional()
+      milestoneId: z10.string().min(1),
+      status: z10.enum(["locked", "active", "done", "validating"]).optional()
     });
-    MilestoneUpdateResultZ = z9.object({
+    MilestoneUpdateResultZ = z10.object({
       milestone: MilestoneSchemaZ
     });
     MissionSetInputZ = ProjectScopeInputZ.extend({
-      title: z9.string().min(1),
-      description: z9.string().optional()
+      title: z10.string().min(1),
+      description: z10.string().optional()
     });
-    MissionSetResultZ = z9.object({
+    MissionSetResultZ = z10.object({
       mission: MissionSchemaZ
     });
     MissionPlanCompleteInputZ = ProjectScopeInputZ;
-    MissionPlanCompleteResultZ = z9.object({
+    MissionPlanCompleteResultZ = z10.object({
       mission: MissionSchemaZ
     });
     MissionClearInputZ = ProjectScopeInputZ;
-    MissionClearResultZ = z9.object({
-      cleared: z9.literal(true)
+    MissionClearResultZ = z10.object({
+      cleared: z10.literal(true)
     });
-    SkillCreateInputZ = z9.object({
-      projectName: z9.string().min(1).optional(),
-      name: z9.string().min(1),
-      content: z9.string().min(1)
+    SkillCreateInputZ = z10.object({
+      projectName: z10.string().min(1).optional(),
+      name: z10.string().min(1),
+      content: z10.string().min(1)
     });
-    SkillCreateResultZ = z9.object({
+    SkillCreateResultZ = z10.object({
       skill: SkillSchemaZ
     });
     SkillUpdateInputZ = SkillCreateInputZ;
     SkillUpdateResultZ = SkillCreateResultZ;
-    SkillDeleteInputZ = z9.object({
-      projectName: z9.string().min(1).optional(),
-      name: z9.string().min(1)
+    SkillDeleteInputZ = z10.object({
+      projectName: z10.string().min(1).optional(),
+      name: z10.string().min(1)
     });
-    SkillDeleteResultZ = z9.object({
-      deleted: z9.literal(true)
+    SkillDeleteResultZ = z10.object({
+      deleted: z10.literal(true)
     });
-    ConfigSetInputZ = z9.object({
-      projectName: z9.string().min(1).optional(),
-      path: z9.string().min(1),
-      value: z9.unknown()
+    ConfigSetInputZ = z10.object({
+      projectName: z10.string().min(1).optional(),
+      path: z10.string().min(1),
+      value: z10.unknown()
     });
-    ConfigResultZ = z9.object({
+    ConfigResultZ = z10.object({
       config: IdeConfigSchema
     });
     ConfigAddPaneInputZ = PaneSchema.partial().extend({
-      projectName: z9.string().min(1).optional(),
-      rowIndex: z9.number().int().min(0)
+      projectName: z10.string().min(1).optional(),
+      rowIndex: z10.number().int().min(0)
     });
     ConfigAddPaneResultZ = ConfigResultZ;
-    ConfigRemovePaneInputZ = z9.object({
-      projectName: z9.string().min(1).optional(),
-      rowIndex: z9.number().int().min(0),
-      paneIndex: z9.number().int().min(0)
+    ConfigRemovePaneInputZ = z10.object({
+      projectName: z10.string().min(1).optional(),
+      rowIndex: z10.number().int().min(0),
+      paneIndex: z10.number().int().min(0)
     });
     ConfigRemovePaneResultZ = ConfigResultZ;
-    ConfigAddRowInputZ = z9.object({
-      projectName: z9.string().min(1).optional(),
-      size: z9.string().optional()
+    ConfigAddRowInputZ = z10.object({
+      projectName: z10.string().min(1).optional(),
+      size: z10.string().optional()
     });
     ConfigAddRowResultZ = ConfigResultZ;
-    ConfigEnableTeamInputZ = z9.object({
-      projectName: z9.string().min(1).optional(),
-      name: z9.string().min(1).optional()
+    ConfigEnableTeamInputZ = z10.object({
+      projectName: z10.string().min(1).optional(),
+      name: z10.string().min(1).optional()
     });
     ConfigEnableTeamResultZ = ConfigResultZ;
-    ConfigDisableTeamInputZ = z9.object({
-      projectName: z9.string().min(1).optional()
+    ConfigDisableTeamInputZ = z10.object({
+      projectName: z10.string().min(1).optional()
     });
     ConfigDisableTeamResultZ = ConfigResultZ;
-    AssertionEntryZ = z9.object({
-      id: z9.string(),
-      status: z9.enum(["pending", "passing", "failing", "blocked"]),
-      verifiedBy: z9.string().nullable(),
-      verifiedAt: z9.string().nullable(),
-      evidence: z9.string().nullable(),
-      blockedBy: z9.string().nullable()
+    AssertionEntryZ = z10.object({
+      id: z10.string(),
+      status: z10.enum(["pending", "passing", "failing", "blocked"]),
+      verifiedBy: z10.string().nullable(),
+      verifiedAt: z10.string().nullable(),
+      evidence: z10.string().nullable(),
+      blockedBy: z10.string().nullable()
     });
-    ValidationReportZ = z9.object({
-      total: z9.number(),
-      passing: z9.number(),
-      failing: z9.number(),
-      pending: z9.number(),
-      blocked: z9.number()
+    ValidationReportZ = z10.object({
+      total: z10.number(),
+      passing: z10.number(),
+      failing: z10.number(),
+      pending: z10.number(),
+      blocked: z10.number()
     });
-    ValidationAssertInputZ = z9.object({
-      projectName: z9.string().min(1).optional(),
-      assertId: z9.string().min(1),
-      status: z9.enum(["pending", "passing", "failing", "blocked"]),
-      evidence: z9.string().optional()
+    ValidationAssertInputZ = z10.object({
+      projectName: z10.string().min(1).optional(),
+      assertId: z10.string().min(1),
+      status: z10.enum(["pending", "passing", "failing", "blocked"]),
+      evidence: z10.string().optional()
     });
-    ValidationAssertResultZ = z9.object({
+    ValidationAssertResultZ = z10.object({
       assertion: AssertionEntryZ
     });
-    ValidationReportInputZ = z9.object({
-      projectName: z9.string().min(1).optional()
+    ValidationReportInputZ = z10.object({
+      projectName: z10.string().min(1).optional()
     });
-    ValidationReportResultZ = z9.object({
+    ValidationReportResultZ = z10.object({
       report: ValidationReportZ
     });
     WebhookAddInputZ = WebhookConfigSchema.extend({
-      projectName: z9.string().min(1).optional()
+      projectName: z10.string().min(1).optional()
     });
-    WebhookAddResultZ = z9.object({
-      webhookId: z9.string(),
+    WebhookAddResultZ = z10.object({
+      webhookId: z10.string(),
       webhook: WebhookConfigSchema
     });
-    WebhookRemoveInputZ = z9.object({
-      projectName: z9.string().min(1).optional(),
-      webhookId: z9.string().min(1)
+    WebhookRemoveInputZ = z10.object({
+      projectName: z10.string().min(1).optional(),
+      webhookId: z10.string().min(1)
     });
-    WebhookRemoveResultZ = z9.object({
-      deleted: z9.literal(true)
+    WebhookRemoveResultZ = z10.object({
+      deleted: z10.literal(true)
     });
     WebhookTestInputZ = WebhookRemoveInputZ;
-    WebhookTestResultZ = z9.object({
-      status: z9.number(),
-      ok: z9.literal(true)
+    WebhookTestResultZ = z10.object({
+      status: z10.number(),
+      ok: z10.literal(true)
     });
-    AppSetRemoteAccessInputZ = z9.object({
-      enabled: z9.boolean()
+    AppSetRemoteAccessInputZ = z10.object({
+      enabled: z10.boolean()
     });
-    AppSetRemoteAccessResultZ = z9.object({
-      enabled: z9.boolean(),
-      url: z9.string().nullable(),
-      token: z9.string().nullable(),
-      qrPayload: z9.string().nullable()
+    AppSetRemoteAccessResultZ = z10.object({
+      enabled: z10.boolean(),
+      url: z10.string().nullable(),
+      token: z10.string().nullable(),
+      qrPayload: z10.string().nullable()
     });
-    DaemonShutdownInputZ = z9.object({
-      reason: z9.string().optional()
+    DaemonShutdownInputZ = z10.object({
+      reason: z10.string().optional()
     });
-    DaemonShutdownResultZ = z9.object({
-      stopping: z9.literal(true)
+    DaemonShutdownResultZ = z10.object({
+      stopping: z10.literal(true)
     });
-    StopReasonZ = z9.enum([
+    StopReasonZ = z10.enum([
       "end_turn",
       "max_tokens",
       "max_turn_requests",
       "refusal",
       "cancelled"
     ]);
-    AgentProviderZ = z9.discriminatedUnion("kind", [
-      z9.object({ kind: z9.literal("claude-code"), binary: z9.string().optional() }).strict(),
-      z9.object({ kind: z9.literal("codex"), binary: z9.string().optional() }).strict(),
-      z9.object({ kind: z9.literal("gemini"), binary: z9.string().optional() }).strict(),
-      z9.object({
-        kind: z9.literal("custom"),
-        command: z9.string().min(1),
-        args: z9.array(z9.string()),
-        env: z9.record(z9.string(), z9.string()).optional()
+    AgentProviderZ = z10.discriminatedUnion("kind", [
+      z10.object({
+        kind: z10.literal("claude-code"),
+        binary: z10.string().optional(),
+        model: z10.string().min(1).optional()
+      }).strict(),
+      z10.object({
+        kind: z10.literal("codex"),
+        binary: z10.string().optional(),
+        model: z10.string().min(1).optional()
+      }).strict(),
+      z10.object({
+        kind: z10.literal("gemini"),
+        binary: z10.string().optional(),
+        model: z10.string().min(1).optional()
+      }).strict(),
+      z10.object({
+        kind: z10.literal("custom"),
+        command: z10.string().min(1),
+        args: z10.array(z10.string()),
+        env: z10.record(z10.string(), z10.string()).optional(),
+        model: z10.string().min(1).optional()
       }).strict()
     ]);
-    ContentBlockZ = z9.discriminatedUnion("type", [
-      z9.object({ type: z9.literal("text"), text: z9.string() }).passthrough(),
-      z9.object({ type: z9.literal("image") }).passthrough(),
-      z9.object({ type: z9.literal("audio") }).passthrough(),
-      z9.object({ type: z9.literal("resource") }).passthrough(),
-      z9.object({ type: z9.literal("resource_link") }).passthrough()
+    ContentBlockZ = z10.discriminatedUnion("type", [
+      z10.object({ type: z10.literal("text"), text: z10.string() }).passthrough(),
+      z10.object({ type: z10.literal("image") }).passthrough(),
+      z10.object({ type: z10.literal("audio") }).passthrough(),
+      z10.object({ type: z10.literal("resource") }).passthrough(),
+      z10.object({ type: z10.literal("resource_link") }).passthrough()
     ]);
-    SessionUpdateZ = z9.object({ sessionUpdate: z9.string().min(1) }).passthrough();
-    ChatThreadUsageSummaryZ = z9.object({
-      inputTokens: z9.number().int().min(0),
-      outputTokens: z9.number().int().min(0),
-      cacheReadTokens: z9.number().int().min(0).optional(),
-      cacheWriteTokens: z9.number().int().min(0).optional(),
-      totalCostUsd: z9.number().min(0).optional(),
-      contextWindowMaxTokens: z9.number().int().min(0).optional(),
-      contextWindowUsedTokens: z9.number().int().min(0).optional()
+    SessionUpdateZ = z10.object({ sessionUpdate: z10.string().min(1) }).passthrough();
+    ChatThreadUsageSummaryZ = z10.object({
+      inputTokens: z10.number().int().min(0),
+      outputTokens: z10.number().int().min(0),
+      cacheReadTokens: z10.number().int().min(0).optional(),
+      cacheWriteTokens: z10.number().int().min(0).optional(),
+      totalCostUsd: z10.number().min(0).optional(),
+      contextWindowMaxTokens: z10.number().int().min(0).optional(),
+      contextWindowUsedTokens: z10.number().int().min(0).optional()
     }).strict();
-    ThreadMessageZ = z9.discriminatedUnion("_tag", [
-      z9.object({
-        _tag: z9.literal("UserPrompt"),
-        id: z9.string().min(1),
-        createdAt: z9.string().min(1),
-        content: z9.array(ContentBlockZ)
+    ThreadMessageZ = z10.discriminatedUnion("_tag", [
+      z10.object({
+        _tag: z10.literal("UserPrompt"),
+        id: z10.string().min(1),
+        createdAt: z10.string().min(1),
+        content: z10.array(ContentBlockZ)
       }),
-      z9.object({
-        _tag: z9.literal("AgentUpdate"),
-        id: z9.string().min(1),
-        createdAt: z9.string().min(1),
+      z10.object({
+        _tag: z10.literal("AgentUpdate"),
+        id: z10.string().min(1),
+        createdAt: z10.string().min(1),
         update: SessionUpdateZ
       })
     ]);
-    ThreadIndexEntryZ = z9.object({
-      id: z9.string().min(1),
-      title: z9.string(),
-      createdAt: z9.string().min(1),
-      updatedAt: z9.string().min(1),
-      providerKind: z9.enum(["claude-code", "codex", "gemini", "custom"]),
-      projectDir: z9.string().optional(),
-      messageCount: z9.number().int().min(0),
+    ThreadIndexEntryZ = z10.object({
+      id: z10.string().min(1),
+      title: z10.string(),
+      createdAt: z10.string().min(1),
+      updatedAt: z10.string().min(1),
+      providerKind: z10.enum(["claude-code", "codex", "gemini", "custom"]),
+      projectDir: z10.string().optional(),
+      messageCount: z10.number().int().min(0),
       lastStopReason: StopReasonZ.optional()
     }).strict();
-    ThreadStateZ = z9.object({
-      id: z9.string().min(1),
-      title: z9.string(),
-      createdAt: z9.string().min(1),
-      updatedAt: z9.string().min(1),
+    ThreadStateZ = z10.object({
+      id: z10.string().min(1),
+      title: z10.string(),
+      createdAt: z10.string().min(1),
+      updatedAt: z10.string().min(1),
       provider: AgentProviderZ,
-      projectDir: z9.string().optional(),
-      acpSessionId: z9.string().optional(),
+      projectDir: z10.string().optional(),
+      acpSessionId: z10.string().optional(),
       usage: ChatThreadUsageSummaryZ.optional(),
-      messages: z9.array(ThreadMessageZ)
+      messages: z10.array(ThreadMessageZ)
     }).strict();
-    ChatThreadListInputZ = z9.object({
+    ChatThreadListInputZ = z10.object({
       /**
        * Filter to threads whose `projectDir` matches. Pass the workspace
        * absolute path. Omit for the legacy global view (returns every
        * thread across every project).
        */
-      projectDir: z9.string().optional()
+      projectDir: z10.string().optional()
     }).strict();
-    ChatThreadListResultZ = z9.object({
-      threads: z9.array(ThreadIndexEntryZ)
+    ChatThreadListResultZ = z10.object({
+      threads: z10.array(ThreadIndexEntryZ)
     }).strict();
-    ChatProvidersListInputZ = z9.object({}).strict();
-    ChatProvidersListResultZ = z9.object({
-      providers: z9.array(
-        z9.object({
-          kind: z9.enum(["claude-code", "codex"]),
-          name: z9.string().min(1),
-          description: z9.string().min(1),
-          available: z9.boolean(),
-          binary: z9.string().optional(),
-          version: z9.string().optional(),
-          error: z9.string().optional()
+    ProviderOptionSelectionZ = z10.object({
+      id: z10.string().min(1),
+      value: z10.union([z10.string().min(1), z10.boolean()])
+    }).strict();
+    ProviderModelInfoZ = z10.object({
+      slug: z10.string().min(1),
+      name: z10.string().min(1),
+      description: z10.string().optional(),
+      /**
+       * Codex-style per-model capabilities mirroring t3's
+       * `mapCodexModelCapabilities`
+       * (`context/t3code/apps/server/src/provider/Layers/CodexProvider.ts:96`).
+       * Picker renders the reasoning-effort select + fast-mode toggle
+       * straight from this — present only when the daemon's
+       * `provider-discovery` parses non-empty values from the live
+       * `model/list` response.
+       */
+      capabilities: z10.object({
+        reasoningEfforts: z10.array(z10.string().min(1)).optional(),
+        defaultReasoningEffort: z10.string().min(1).optional(),
+        supportsFastMode: z10.boolean().optional()
+      }).strict().optional()
+    }).strict();
+    ChatProvidersListInputZ = z10.object({}).strict();
+    ChatProvidersListResultZ = z10.object({
+      providers: z10.array(
+        z10.object({
+          kind: z10.enum(["claude-code", "codex"]),
+          name: z10.string().min(1),
+          description: z10.string().min(1),
+          available: z10.boolean(),
+          binary: z10.string().optional(),
+          version: z10.string().optional(),
+          error: z10.string().optional(),
+          /**
+           * Real per-provider model list, surfaced by the daemon's
+           * `provider-discovery`. Empty when the provider binary is
+           * unavailable or when the discovery probe returned nothing
+           * usable. The first entry is the recommended default.
+           */
+          models: z10.array(ProviderModelInfoZ).default([])
         }).strict()
       )
     }).strict();
-    ChatThreadCreateInputZ = z9.object({
+    ChatThreadCreateInputZ = z10.object({
       provider: AgentProviderZ,
-      projectDir: z9.string().optional(),
-      title: z9.string().optional()
+      projectDir: z10.string().optional(),
+      title: z10.string().optional()
     }).strict();
-    ChatThreadCreateResultZ = z9.object({
+    ChatThreadCreateResultZ = z10.object({
       thread: ThreadIndexEntryZ
     }).strict();
-    ChatThreadDeleteInputZ = z9.object({ id: z9.string().min(1) }).strict();
-    ChatThreadDeleteResultZ = z9.object({ deleted: z9.literal(true) }).strict();
-    ChatThreadRenameInputZ = z9.object({
-      id: z9.string().min(1),
-      title: z9.string().min(1)
+    ChatThreadDeleteInputZ = z10.object({ id: z10.string().min(1) }).strict();
+    ChatThreadDeleteResultZ = z10.object({ deleted: z10.literal(true) }).strict();
+    ChatThreadRenameInputZ = z10.object({
+      id: z10.string().min(1),
+      title: z10.string().min(1)
     }).strict();
-    ChatThreadRenameResultZ = z9.object({ thread: ThreadIndexEntryZ }).strict();
-    ChatThreadSetProviderInputZ = z9.object({
-      id: z9.string().min(1),
+    ChatThreadRenameResultZ = z10.object({ thread: ThreadIndexEntryZ }).strict();
+    ChatThreadSetProviderInputZ = z10.object({
+      id: z10.string().min(1),
       provider: AgentProviderZ
     }).strict();
-    ChatThreadSetProviderResultZ = z9.object({ thread: ThreadIndexEntryZ }).strict();
-    ChatThreadGetInputZ = z9.object({ id: z9.string().min(1) }).strict();
-    ChatThreadGetResultZ = z9.object({ thread: ThreadStateZ }).strict();
-    ChatThreadUsageInputZ = z9.object({ id: z9.string().min(1) }).strict();
-    ChatThreadUsageResultZ = z9.object({ usage: ChatThreadUsageSummaryZ.nullable() }).strict();
-    ChatSessionSendInputZ = z9.object({
-      threadId: z9.string().min(1),
-      content: z9.array(ContentBlockZ).min(1)
+    ChatThreadSetProviderResultZ = z10.object({ thread: ThreadIndexEntryZ }).strict();
+    ChatThreadGetInputZ = z10.object({ id: z10.string().min(1) }).strict();
+    ChatThreadGetResultZ = z10.object({ thread: ThreadStateZ, timeline: z10.array(TimelineRowZ) }).strict();
+    ChatThreadUsageInputZ = z10.object({ id: z10.string().min(1) }).strict();
+    ChatThreadUsageResultZ = z10.object({ usage: ChatThreadUsageSummaryZ.nullable() }).strict();
+    ChatSessionSendInputZ = z10.object({
+      threadId: z10.string().min(1),
+      content: z10.array(ContentBlockZ).min(1),
+      /**
+       * Per-turn model override (superset-pattern flat `provider/model`,
+       * see docs/learn-from-superset.md §2). The daemon writes this onto
+       * the thread's provider record BEFORE dispatch, so picking a
+       * different Codex / Claude Code model takes effect on the next
+       * turn without any client-side reduction or session teardown.
+       * Omit to use the thread's currently-stored selection.
+       */
+      model: z10.string().min(1).optional(),
+      /**
+       * Accepted for forward-compat with multi-instance providers; not
+       * yet acted on. Today the daemon resolves the live client from
+       * `thread.provider.kind` alone — instance routing is a future
+       * additive change.
+       */
+      providerInstanceId: z10.string().min(1).optional(),
+      /**
+       * Per-turn driver kind (Step 3b — t3-mirror). When supplied, the
+       * daemon dispatches THIS turn through this provider regardless of
+       * `thread.provider.kind`. Lets the client own the "currently
+       * visible" provider without waiting on a `chat.thread.setProvider`
+       * round-trip (the persisted thread.provider is updated lazily,
+       * fire-and-forget, for reload memory only).
+       *
+       * If the live client for this thread is bound to a different
+       * kind, the daemon disposes it and respawns the right one before
+       * dispatching.
+       */
+      provider: z10.object({ kind: z10.enum(["claude-code", "codex", "gemini", "custom"]) }).strict().optional(),
+      /**
+       * Per-turn provider options (Codex reasoning effort + fast-mode).
+       * Canonical t3 array shape (`Array<{id, value}>`) so future
+       * multi-option models migrate additively. Recognized keys today:
+       *   - `reasoningEffort` (string: minimal | low | medium | high | xhigh)
+       *   - `fastMode` (boolean — forwarded as `serviceTier: "fast"`)
+       * Unknown ids are accepted but ignored by the daemon.
+       */
+      providerOptions: z10.array(ProviderOptionSelectionZ).optional()
     }).strict();
-    ChatSessionSendResultZ = z9.object({
-      accepted: z9.literal(true),
-      promptId: z9.string().min(1)
+    ChatSessionSendResultZ = z10.object({
+      accepted: z10.literal(true),
+      promptId: z10.string().min(1)
     }).strict();
-    ChatSessionCancelInputZ = z9.object({ threadId: z9.string().min(1) }).strict();
-    ChatSessionCancelResultZ = z9.object({ cancelled: z9.literal(true) }).strict();
-    ChatSessionEditFromTurnInputZ = z9.object({
-      threadId: z9.string().min(1),
-      userMessageId: z9.string().min(1),
-      content: z9.array(ContentBlockZ).min(1)
+    ChatSessionCancelInputZ = z10.object({ threadId: z10.string().min(1) }).strict();
+    ChatSessionCancelResultZ = z10.object({ cancelled: z10.literal(true) }).strict();
+    ChatSessionEditFromTurnInputZ = z10.object({
+      threadId: z10.string().min(1),
+      userMessageId: z10.string().min(1),
+      content: z10.array(ContentBlockZ).min(1)
     }).strict();
-    ChatSessionEditFromTurnResultZ = z9.object({
-      accepted: z9.literal(true),
-      promptId: z9.string().min(1),
-      truncatedCount: z9.number().int().nonnegative()
+    ChatSessionEditFromTurnResultZ = z10.object({
+      accepted: z10.literal(true),
+      promptId: z10.string().min(1),
+      truncatedCount: z10.number().int().nonnegative()
     }).strict();
-    ChatPermissionRespondInputZ = z9.object({
-      threadId: z9.string().min(1),
-      requestId: z9.string().min(1),
-      optionId: z9.string().min(1)
+    ChatPermissionRespondInputZ = z10.object({
+      threadId: z10.string().min(1),
+      requestId: z10.string().min(1),
+      optionId: z10.string().min(1)
     }).strict();
-    ChatPermissionRespondResultZ = z9.object({ responded: z9.literal(true) }).strict();
-    ChatContextCaptureTerminalInputZ = z9.object({
-      sessionName: z9.string().min(1),
-      paneId: z9.string().min(1)
+    ChatPermissionRespondResultZ = z10.object({ responded: z10.literal(true) }).strict();
+    ChatContextCaptureTerminalInputZ = z10.object({
+      sessionName: z10.string().min(1),
+      paneId: z10.string().min(1)
     }).strict();
-    ChatContextCaptureTerminalResultZ = z9.object({
-      pane: z9.object({
-        id: z9.string().min(1),
-        title: z9.string()
+    ChatContextCaptureTerminalResultZ = z10.object({
+      pane: z10.object({
+        id: z10.string().min(1),
+        title: z10.string()
       }).strict(),
-      content: z9.string(),
-      capturedAt: z9.string().min(1)
+      content: z10.string(),
+      capturedAt: z10.string().min(1)
     }).strict();
     ActionContractsZ = {
       "project.openTerminal": {
@@ -2531,35 +2685,35 @@ var init_actions_errors = __esm({
 });
 
 // packages/contracts/src/git.ts
-import { z as z10 } from "zod";
+import { z as z11 } from "zod";
 var checkoutRequestSchema, commitRequestSchema, stageRequestSchema, unstageRequestSchema, pushRequestSchema;
 var init_git = __esm({
   "packages/contracts/src/git.ts"() {
     "use strict";
-    checkoutRequestSchema = z10.object({
-      branch: z10.string().trim().min(1, "branch is required").max(255, "branch name is too long").refine((s) => !/[\x00-\x1f\x7f \\~^:?*[]/.test(s), "invalid branch name").refine((s) => !s.startsWith("-"), "branch name cannot start with '-'").refine((s) => !s.includes(".."), "branch name cannot contain '..'"),
-      create: z10.boolean().optional()
+    checkoutRequestSchema = z11.object({
+      branch: z11.string().trim().min(1, "branch is required").max(255, "branch name is too long").refine((s) => !/[\x00-\x1f\x7f \\~^:?*[]/.test(s), "invalid branch name").refine((s) => !s.startsWith("-"), "branch name cannot start with '-'").refine((s) => !s.includes(".."), "branch name cannot contain '..'"),
+      create: z11.boolean().optional()
     });
-    commitRequestSchema = z10.object({
-      message: z10.string().trim().min(1, "commit message is required"),
+    commitRequestSchema = z11.object({
+      message: z11.string().trim().min(1, "commit message is required"),
       /** When true: `git commit -a -m <msg>` (stages tracked changes). */
-      all: z10.boolean().optional()
+      all: z11.boolean().optional()
     });
-    stageRequestSchema = z10.object({
-      paths: z10.array(z10.string().trim().min(1)).min(1, "paths is required")
+    stageRequestSchema = z11.object({
+      paths: z11.array(z11.string().trim().min(1)).min(1, "paths is required")
     });
     unstageRequestSchema = stageRequestSchema;
-    pushRequestSchema = z10.object({
+    pushRequestSchema = z11.object({
       /** When omitted: push the current branch to its upstream. */
-      remote: z10.string().trim().min(1).optional(),
-      branch: z10.string().trim().min(1).optional(),
-      setUpstream: z10.boolean().optional()
+      remote: z11.string().trim().min(1).optional(),
+      branch: z11.string().trim().min(1).optional(),
+      setUpstream: z11.boolean().optional()
     });
   }
 });
 
 // packages/contracts/src/github.ts
-import { z as z11 } from "zod";
+import { z as z12 } from "zod";
 function stripGitSuffix(value) {
   return value.endsWith(".git") ? value.slice(0, -4) : value;
 }
@@ -2628,23 +2782,23 @@ var createPrRequestSchema;
 var init_github = __esm({
   "packages/contracts/src/github.ts"() {
     "use strict";
-    createPrRequestSchema = z11.object({
-      title: z11.string().trim().min(1, "title is required").max(256),
+    createPrRequestSchema = z12.object({
+      title: z12.string().trim().min(1, "title is required").max(256),
       /** Body is markdown. Empty string is OK — GitHub renders the diff
        *  alone — but we strip whitespace so the daemon sees real intent. */
-      body: z11.string().optional(),
+      body: z12.string().optional(),
       /** Target branch. Required because PRs need a base. */
-      base: z11.string().trim().min(1, "base branch is required").max(255),
+      base: z12.string().trim().min(1, "base branch is required").max(255),
       /** Source branch. Defaults to the current branch when omitted. */
-      head: z11.string().trim().min(1).max(255).optional(),
+      head: z12.string().trim().min(1).max(255).optional(),
       /** Open as a draft PR. */
-      draft: z11.boolean().optional()
+      draft: z12.boolean().optional()
     });
   }
 });
 
 // packages/contracts/src/terminals.ts
-import { z as z12 } from "zod";
+import { z as z13 } from "zod";
 async function createScriptTerminalId(args) {
   const scope = args.scopeId ?? args.taskId;
   if (!scope) {
@@ -2659,45 +2813,45 @@ var terminalKindSchema, terminalCreateRequestSchema, terminalRenameRequestSchema
 var init_terminals = __esm({
   "packages/contracts/src/terminals.ts"() {
     "use strict";
-    terminalKindSchema = z12.enum(["shell", "setup", "run", "teardown"]);
-    terminalCreateRequestSchema = z12.object({
-      scopeId: z12.string().trim().min(1).max(256),
-      name: z12.string().trim().min(1).max(120),
+    terminalKindSchema = z13.enum(["shell", "setup", "run", "teardown"]);
+    terminalCreateRequestSchema = z13.object({
+      scopeId: z13.string().trim().min(1).max(256),
+      name: z13.string().trim().min(1).max(120),
       kind: terminalKindSchema.optional(),
       /** Provide for script tabs to opt into deterministic id collapse. */
-      script: z12.string().max(2048).optional(),
+      script: z13.string().max(2048).optional(),
       /** Explicit id wins. Used by the dashboard to reserve a known id
        *  (e.g. the default shell tab derived from session.dir). */
-      id: z12.string().trim().min(8).max(64).regex(/^[A-Za-z0-9_-]+$/u, "id may only contain alphanumerics, '-', '_'").optional()
+      id: z13.string().trim().min(8).max(64).regex(/^[A-Za-z0-9_-]+$/u, "id may only contain alphanumerics, '-', '_'").optional()
     }).refine((v) => v.kind !== void 0 || v.script === void 0, {
       message: "script requires kind",
       path: ["script"]
     });
-    terminalRenameRequestSchema = z12.object({
-      name: z12.string().trim().min(1).max(120)
+    terminalRenameRequestSchema = z13.object({
+      name: z13.string().trim().min(1).max(120)
     });
   }
 });
 
 // packages/contracts/src/notes-contract.ts
-import { z as z13 } from "zod";
+import { z as z14 } from "zod";
 var NoteSchemaZ, NoteResponseSchemaZ, UpdateNoteRequestSchemaZ;
 var init_notes_contract = __esm({
   "packages/contracts/src/notes-contract.ts"() {
     "use strict";
-    NoteSchemaZ = z13.object({
+    NoteSchemaZ = z14.object({
       /** Session name the note belongs to (matches a tmux-ide project). */
-      sessionName: z13.string(),
+      sessionName: z14.string(),
       /** Markdown body. Empty string when the project has no notes yet. */
-      content: z13.string(),
+      content: z14.string(),
       /** ISO-8601 timestamp of the last write, or null if no note exists. */
-      updatedAt: z13.string().nullable()
+      updatedAt: z14.string().nullable()
     });
-    NoteResponseSchemaZ = z13.object({
+    NoteResponseSchemaZ = z14.object({
       note: NoteSchemaZ
     });
-    UpdateNoteRequestSchemaZ = z13.object({
-      content: z13.string().max(1e6, "Note exceeds 1 MB")
+    UpdateNoteRequestSchemaZ = z14.object({
+      content: z14.string().max(1e6, "Note exceeds 1 MB")
     });
   }
 });
@@ -2718,6 +2872,7 @@ var init_src2 = __esm({
     init_actions_contract();
     init_actions_errors();
     init_chat_thread();
+    init_chat_timeline();
     init_git();
     init_github();
     init_terminals();
@@ -2941,11 +3096,117 @@ var init_resolve = __esm({
   }
 });
 
+// packages/daemon/src/lib/canonical-daemon.ts
+var canonical_daemon_exports = {};
+__export(canonical_daemon_exports, {
+  clearCanonicalDaemonInfo: () => clearCanonicalDaemonInfo,
+  getCanonicalDaemonInfoPath: () => getCanonicalDaemonInfoPath,
+  isCanonicalDaemonAlive: () => isCanonicalDaemonAlive,
+  readCanonicalDaemonInfo: () => readCanonicalDaemonInfo,
+  warnOnDaemonVersionSkew: () => warnOnDaemonVersionSkew,
+  writeCanonicalDaemonInfo: () => writeCanonicalDaemonInfo
+});
+import { existsSync, mkdirSync, readFileSync as readFileSync2, renameSync, rmSync, writeFileSync as writeFileSync2 } from "node:fs";
+import { homedir } from "node:os";
+import { dirname as dirname2, join } from "node:path";
+function getCanonicalDaemonInfoPath() {
+  const dir = process.env[DAEMON_INFO_DIR_ENV] ?? process.env[REGISTRY_DIR_ENV] ?? join(homedir(), ".tmux-ide");
+  return join(dir, DAEMON_INFO_FILE);
+}
+function parseCanonicalDaemonInfo(raw) {
+  if (!raw || typeof raw !== "object") return null;
+  const info = raw;
+  const pid = info.pid;
+  const port = info.port;
+  if (typeof pid !== "number" || typeof port !== "number") return null;
+  if (!Number.isInteger(pid) || !Number.isInteger(port)) return null;
+  if (typeof info.version !== "string" || typeof info.startedAt !== "string") return null;
+  if (typeof info.bindHostname !== "string") return null;
+  if (info.authToken !== null && typeof info.authToken !== "string") return null;
+  return {
+    pid,
+    port,
+    version: info.version,
+    startedAt: info.startedAt,
+    bindHostname: info.bindHostname,
+    authToken: info.authToken
+  };
+}
+function writeCanonicalDaemonInfo(info) {
+  const path4 = getCanonicalDaemonInfoPath();
+  mkdirSync(dirname2(path4), { recursive: true });
+  const tmpPath = `${path4}.${process.pid}.${Date.now()}.tmp`;
+  const persisted = {
+    pid: info.pid,
+    port: info.port,
+    version: info.version,
+    startedAt: info.startedAt,
+    bindHostname: info.bindHostname,
+    authToken: info.authToken
+  };
+  writeFileSync2(tmpPath, JSON.stringify(persisted, null, 2) + "\n", "utf-8");
+  renameSync(tmpPath, path4);
+}
+function readCanonicalDaemonInfo() {
+  const path4 = getCanonicalDaemonInfoPath();
+  if (!existsSync(path4)) return null;
+  try {
+    return parseCanonicalDaemonInfo(JSON.parse(readFileSync2(path4, "utf-8")));
+  } catch {
+    return null;
+  }
+}
+function clearCanonicalDaemonInfo() {
+  rmSync(getCanonicalDaemonInfoPath(), { force: true });
+}
+function isPidAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+function probeHostname(bindHostname) {
+  return bindHostname === "0.0.0.0" ? "127.0.0.1" : bindHostname;
+}
+function timeoutSignal(ms) {
+  const controller = new AbortController();
+  setTimeout(() => controller.abort(), ms).unref?.();
+  return controller.signal;
+}
+function warnOnDaemonVersionSkew(info, expectedVersion) {
+  if (info.version === expectedVersion) return;
+  console.warn(
+    `[tmux-ide] canonical daemon version skew: daemon.json reports "${info.version}" but this client expects "${expectedVersion}". The action/WS contract may have drifted \u2014 restart the canonical daemon (tmux-ide) so it matches this client build.`
+  );
+}
+async function isCanonicalDaemonAlive(info) {
+  if (!isPidAlive(info.pid)) return false;
+  try {
+    const res = await fetch(`http://${probeHostname(info.bindHostname)}:${info.port}/health`, {
+      signal: timeoutSignal(750)
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+var DAEMON_INFO_DIR_ENV, REGISTRY_DIR_ENV, DAEMON_INFO_FILE;
+var init_canonical_daemon = __esm({
+  "packages/daemon/src/lib/canonical-daemon.ts"() {
+    "use strict";
+    DAEMON_INFO_DIR_ENV = "TMUX_IDE_DAEMON_INFO_DIR";
+    REGISTRY_DIR_ENV = "TMUX_IDE_REGISTRY_DIR";
+    DAEMON_INFO_FILE = "daemon.json";
+  }
+});
+
 // packages/daemon/src/launch.ts
-import { resolve as resolve5, join } from "node:path";
+import { resolve as resolve5, join as join2 } from "node:path";
 import { execSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { readFileSync as readFileSync2, writeFileSync as writeFileSync2, existsSync, mkdirSync } from "node:fs";
+import { readFileSync as readFileSync3, writeFileSync as writeFileSync3, existsSync as existsSync2, mkdirSync as mkdirSync2 } from "node:fs";
 function stripWidgetPanes(rows) {
   return rows.map((row) => ({
     ...row,
@@ -3115,6 +3376,14 @@ async function launch(targetDir, { json: json2 = false, attach: attach2 = true }
   console.log(
     `Starting "${session}" (${rows.length} row${rows.length === 1 ? "" : "s"}, ${totalPanes} pane${totalPanes === 1 ? "" : "s"})...`
   );
+  try {
+    const { readCanonicalDaemonInfo: readCanonicalDaemonInfo2 } = await Promise.resolve().then(() => (init_canonical_daemon(), canonical_daemon_exports));
+    const info = readCanonicalDaemonInfo2();
+    if (info) {
+      console.log(`Dashboard: http://${info.bindHostname}:${info.port}/`);
+    }
+  } catch {
+  }
   if (attach2) {
     attachSession(session);
   }
@@ -3180,41 +3449,41 @@ Update architecture.md when the project structure changes significantly.
 - Check progress: tmux-ide task list --json`;
 }
 function ensureTaskDocs(dir) {
-  const claudeMdPath = join(dir, "CLAUDE.md");
-  if (existsSync(claudeMdPath)) {
-    const content = readFileSync2(claudeMdPath, "utf-8");
+  const claudeMdPath = join2(dir, "CLAUDE.md");
+  if (existsSync2(claudeMdPath)) {
+    const content = readFileSync3(claudeMdPath, "utf-8");
     if (!content.includes(TASK_DOCS_MARKER)) {
-      writeFileSync2(claudeMdPath, content + TASK_DOCS_SECTION);
+      writeFileSync3(claudeMdPath, content + TASK_DOCS_SECTION);
     }
   } else {
-    writeFileSync2(claudeMdPath, `# Project
+    writeFileSync3(claudeMdPath, `# Project
 ${TASK_DOCS_SECTION}`);
   }
-  const libraryDir = join(dir, ".tmux-ide", "library");
-  if (!existsSync(libraryDir)) {
-    mkdirSync(libraryDir, { recursive: true });
+  const libraryDir = join2(dir, ".tmux-ide", "library");
+  if (!existsSync2(libraryDir)) {
+    mkdirSync2(libraryDir, { recursive: true });
   }
-  const archPath = join(libraryDir, "architecture.md");
-  if (!existsSync(archPath)) {
-    writeFileSync2(
+  const archPath = join2(libraryDir, "architecture.md");
+  if (!existsSync2(archPath)) {
+    writeFileSync3(
       archPath,
       "# Architecture\n\n<!-- Describe your project architecture here. This is injected into agent dispatch prompts. -->\n"
     );
   }
-  const learningsPath = join(libraryDir, "learnings.md");
-  if (!existsSync(learningsPath)) {
-    writeFileSync2(
+  const learningsPath = join2(libraryDir, "learnings.md");
+  if (!existsSync2(learningsPath)) {
+    writeFileSync3(
       learningsPath,
       "# Learnings\n\n<!-- Task summaries are automatically appended here by the orchestrator. -->\n"
     );
   }
-  const tasksDir = join(dir, ".tasks");
-  if (!existsSync(tasksDir)) {
-    mkdirSync(tasksDir, { recursive: true });
+  const tasksDir = join2(dir, ".tasks");
+  if (!existsSync2(tasksDir)) {
+    mkdirSync2(tasksDir, { recursive: true });
   }
-  const contractPath = join(tasksDir, "validation-contract.md");
-  if (!existsSync(contractPath)) {
-    writeFileSync2(
+  const contractPath = join2(tasksDir, "validation-contract.md");
+  if (!existsSync2(contractPath)) {
+    writeFileSync3(
       contractPath,
       "# Validation Contract\n\n<!-- Define assertions for the validator agent. Example: -->\n<!-- - VAL-001: All tests pass -->\n<!-- - VAL-002: No TypeScript errors -->\n"
     );
@@ -3304,13 +3573,13 @@ tmux-ide validate coverage [--json]
 
 // packages/daemon/src/detect.ts
 import { resolve as resolve6, basename as basename2 } from "node:path";
-import { readFileSync as readFileSync3, existsSync as existsSync2 } from "node:fs";
+import { readFileSync as readFileSync4, existsSync as existsSync3 } from "node:fs";
 function fileExists(dir, name) {
-  return existsSync2(resolve6(dir, name));
+  return existsSync3(resolve6(dir, name));
 }
 function readJson(dir, name) {
   try {
-    return JSON.parse(readFileSync3(resolve6(dir, name), "utf-8"));
+    return JSON.parse(readFileSync4(resolve6(dir, name), "utf-8"));
   } catch {
     return null;
   }
@@ -3372,7 +3641,7 @@ function detectStack(dir) {
     detected.language = detected.language ?? "python";
     detected.reasons.push('Detected Python from "pyproject.toml" or "requirements.txt".');
     try {
-      const pyproject = readFileSync3(resolve6(dir, "pyproject.toml"), "utf-8");
+      const pyproject = readFileSync4(resolve6(dir, "pyproject.toml"), "utf-8");
       if (pyproject.includes("fastapi"))
         pushFramework(detected, "fastapi", 'Found "fastapi" in pyproject.toml.');
       else if (pyproject.includes("django"))
@@ -3506,16 +3775,16 @@ var init_detect = __esm({
 });
 
 // packages/daemon/src/lib/skill-registry.ts
-import { join as join3 } from "node:path";
-import { homedir } from "node:os";
+import { join as join4 } from "node:path";
+import { homedir as homedir2 } from "node:os";
 import {
-  existsSync as existsSync4,
-  mkdirSync as mkdirSync3,
+  existsSync as existsSync5,
+  mkdirSync as mkdirSync4,
   readdirSync as readdirSync2,
-  readFileSync as readFileSync5,
-  renameSync as renameSync2,
-  rmSync,
-  writeFileSync as writeFileSync4
+  readFileSync as readFileSync6,
+  renameSync as renameSync3,
+  rmSync as rmSync2,
+  writeFileSync as writeFileSync5
 } from "node:fs";
 import yaml2 from "js-yaml";
 function parseSkillFile(content) {
@@ -3539,19 +3808,19 @@ function parseSkillFile(content) {
   }
 }
 function loadSkillsFromDir(skillsDir) {
-  if (!existsSync4(skillsDir)) return [];
+  if (!existsSync5(skillsDir)) return [];
   const files = readdirSync2(skillsDir).filter((f) => f.endsWith(".md"));
   const skills = [];
   for (const file of files) {
-    const content = readFileSync5(join3(skillsDir, file), "utf-8");
+    const content = readFileSync6(join4(skillsDir, file), "utf-8");
     const skill = parseSkillFile(content);
     if (skill) skills.push(skill);
   }
   return skills;
 }
 function loadSkills(dir) {
-  const projectSkills = loadSkillsFromDir(join3(dir, SKILLS_DIR));
-  const personalDir = join3(homedir(), SKILLS_DIR);
+  const projectSkills = loadSkillsFromDir(join4(dir, SKILLS_DIR));
+  const personalDir = join4(homedir2(), SKILLS_DIR);
   const personalSkills = loadSkillsFromDir(personalDir);
   const nameSet = new Set(projectSkills.map((s) => s.name));
   for (const ps of personalSkills) {
@@ -3572,7 +3841,7 @@ function assertSafeSkillName(name) {
 }
 function projectSkillPath(dir, name) {
   assertSafeSkillName(name);
-  return join3(dir, SKILLS_DIR, `${name}.md`);
+  return join4(dir, SKILLS_DIR, `${name}.md`);
 }
 function saveSkill(dir, name, content) {
   const parsed = parseSkillFile(content);
@@ -3583,12 +3852,12 @@ function saveSkill(dir, name, content) {
     throw new Error(`Skill frontmatter name "${parsed.name}" does not match "${name}"`);
   }
   const path4 = projectSkillPath(dir, name);
-  mkdirSync3(join3(dir, SKILLS_DIR), { recursive: true });
+  mkdirSync4(join4(dir, SKILLS_DIR), { recursive: true });
   const tmpPath = `${path4}.tmp`;
-  writeFileSync4(tmpPath, content.endsWith("\n") ? content : `${content}
+  writeFileSync5(tmpPath, content.endsWith("\n") ? content : `${content}
 `);
-  renameSync2(tmpPath, path4);
-  const saved = parseSkillFile(readFileSync5(path4, "utf-8"));
+  renameSync3(tmpPath, path4);
+  const saved = parseSkillFile(readFileSync6(path4, "utf-8"));
   if (!saved) {
     throw new Error(`Saved skill "${name}" could not be parsed`);
   }
@@ -3596,12 +3865,12 @@ function saveSkill(dir, name, content) {
 }
 function deleteSkill(dir, name) {
   const path4 = projectSkillPath(dir, name);
-  if (!existsSync4(path4)) return false;
-  rmSync(path4);
+  if (!existsSync5(path4)) return false;
+  rmSync2(path4);
   return true;
 }
 function projectSkillExists(dir, name) {
-  return existsSync4(projectSkillPath(dir, name));
+  return existsSync5(projectSkillPath(dir, name));
 }
 function writeSkillFromFields(dir, fields) {
   const specialties = (fields.specialties ?? []).map((s) => s.trim()).filter(Boolean);
@@ -3653,35 +3922,35 @@ import { EventEmitter } from "node:events";
 import { createHash as createHash2 } from "node:crypto";
 import {
   appendFileSync,
-  existsSync as existsSync5,
-  mkdirSync as mkdirSync4,
+  existsSync as existsSync6,
+  mkdirSync as mkdirSync5,
   readdirSync as readdirSync3,
-  readFileSync as readFileSync6,
+  readFileSync as readFileSync7,
   realpathSync,
-  renameSync as renameSync3,
+  renameSync as renameSync4,
   statSync,
   unlinkSync,
-  writeFileSync as writeFileSync5
+  writeFileSync as writeFileSync6
 } from "node:fs";
-import { basename as basename4, dirname as dirname3, join as join4, relative, resolve as resolve10 } from "node:path";
+import { basename as basename4, dirname as dirname4, join as join5, relative, resolve as resolve10 } from "node:path";
 import parcelWatcher from "@parcel/watcher";
 function hashContent(content) {
   return createHash2("sha256").update(content).digest("hex");
 }
 function walPathForDir(dir) {
-  return join4(getTasksRoot(dir), WAL_FILE);
+  return join5(getTasksRoot(dir), WAL_FILE);
 }
 function walPathForFile(filePath) {
   const absolute = resolve10(filePath);
   const parts = absolute.split(/[\\/]/);
   const index = parts.lastIndexOf(TASKS_DIR);
-  const root = index >= 0 ? parts.slice(0, index + 1).join("/") : dirname3(absolute);
-  return join4(root, WAL_FILE);
+  const root = index >= 0 ? parts.slice(0, index + 1).join("/") : dirname4(absolute);
+  return join5(root, WAL_FILE);
 }
 function appendWalEntry(filePath, entry) {
   const absolute = resolve10(filePath);
   const walPath = walPathForFile(absolute);
-  mkdirSync4(dirname3(walPath), { recursive: true });
+  mkdirSync5(dirname4(walPath), { recursive: true });
   appendFileSync(
     walPath,
     JSON.stringify({ ts: (/* @__PURE__ */ new Date()).toISOString(), path: absolute, ...entry }) + "\n"
@@ -3796,25 +4065,25 @@ function migrateOnRead(raw, schemaName) {
 function cacheableFiles(dir) {
   const root = getTasksRoot(dir);
   const files = [];
-  const mission = join4(root, "mission.json");
-  if (existsSync5(mission)) files.push({ filePath: mission, schemaName: "mission" });
+  const mission = join5(root, "mission.json");
+  if (existsSync6(mission)) files.push({ filePath: mission, schemaName: "mission" });
   for (const [subdir, schemaName] of [
     ["goals", "goal"],
     ["tasks", "task"]
   ]) {
-    const directory = join4(root, subdir);
-    if (!existsSync5(directory)) continue;
+    const directory = join5(root, subdir);
+    if (!existsSync6(directory)) continue;
     for (const file of readdirSync3(directory).filter((f) => f.endsWith(".json")).sort()) {
-      files.push({ filePath: join4(directory, file), schemaName });
+      files.push({ filePath: join5(directory, file), schemaName });
     }
   }
   return files;
 }
 function walkFiles(root) {
-  if (!existsSync5(root)) return [];
+  if (!existsSync6(root)) return [];
   const out = [];
   for (const entry of readdirSync3(root, { withFileTypes: true })) {
-    const path4 = join4(root, entry.name);
+    const path4 = join5(root, entry.name);
     if (entry.isDirectory()) out.push(...walkFiles(path4));
     else out.push(path4);
   }
@@ -3851,11 +4120,11 @@ function p95(samples) {
   return sorted[index] ?? 0;
 }
 function findFileById(directory, id) {
-  if (!existsSync5(directory)) return null;
+  if (!existsSync6(directory)) return null;
   const files = readdirSync3(directory).filter((f) => f.endsWith(".json"));
   for (const file of files) {
     if (file.startsWith(id + "-") || file === id + ".json") {
-      return join4(directory, file);
+      return join5(directory, file);
     }
   }
   return null;
@@ -3865,19 +4134,19 @@ function getTasksRoot(dir) {
 }
 function ensureTasksDir(dir) {
   const root = getTasksRoot(dir);
-  if (!existsSync5(root)) mkdirSync4(root, { recursive: true });
-  const goalsDir = join4(root, "goals");
-  if (!existsSync5(goalsDir)) mkdirSync4(goalsDir);
-  const tasksDir = join4(root, "tasks");
-  if (!existsSync5(tasksDir)) mkdirSync4(tasksDir);
+  if (!existsSync6(root)) mkdirSync5(root, { recursive: true });
+  const goalsDir = join5(root, "goals");
+  if (!existsSync6(goalsDir)) mkdirSync5(goalsDir);
+  const tasksDir = join5(root, "tasks");
+  if (!existsSync6(tasksDir)) mkdirSync5(tasksDir);
 }
 function replayTaskStoreWal(dir) {
   ensureTasksDir(dir);
   const walPath = walPathForDir(dir);
-  if (!existsSync5(walPath)) return { replayed: 0, skipped: 0 };
+  if (!existsSync6(walPath)) return { replayed: 0, skipped: 0 };
   const pending = /* @__PURE__ */ new Map();
   let skipped = 0;
-  const raw = readFileSync6(walPath, "utf-8");
+  const raw = readFileSync7(walPath, "utf-8");
   for (const line of raw.split("\n")) {
     if (!line.trim()) continue;
     try {
@@ -3901,22 +4170,22 @@ function replayTaskStoreWal(dir) {
     try {
       if (entry.op === "write") {
         const tmpPath = `${entry.path}.tmp`;
-        if (!existsSync5(tmpPath)) {
-          if (entry.hash && existsSync5(entry.path) && hashContent(readFileSync6(entry.path, "utf-8")) === entry.hash) {
+        if (!existsSync6(tmpPath)) {
+          if (entry.hash && existsSync6(entry.path) && hashContent(readFileSync7(entry.path, "utf-8")) === entry.hash) {
             replayed++;
             continue;
           }
           skipped++;
           continue;
         }
-        if (entry.hash && hashContent(readFileSync6(tmpPath, "utf-8")) !== entry.hash) {
+        if (entry.hash && hashContent(readFileSync7(tmpPath, "utf-8")) !== entry.hash) {
           skipped++;
           continue;
         }
-        renameSync3(tmpPath, entry.path);
+        renameSync4(tmpPath, entry.path);
         replayed++;
       } else if (entry.op === "delete") {
-        if (existsSync5(entry.path)) unlinkSync(entry.path);
+        if (existsSync6(entry.path)) unlinkSync(entry.path);
         replayed++;
       }
     } catch (err) {
@@ -3924,7 +4193,7 @@ function replayTaskStoreWal(dir) {
       console.warn("[task-store] WAL replay skipped %s: %s", entry.path, err.message);
     }
   }
-  writeFileSync5(walPath, "");
+  writeFileSync6(walPath, "");
   taskStore.invalidateAll();
   return { replayed, skipped };
 }
@@ -3944,86 +4213,86 @@ function getTaskStoreMetrics() {
   return taskStore.getMetrics();
 }
 function loadMission(dir) {
-  const path4 = join4(getTasksRoot(dir), "mission.json");
-  if (!existsSync5(path4)) return null;
+  const path4 = join5(getTasksRoot(dir), "mission.json");
+  if (!existsSync6(path4)) return null;
   return taskStore.safeRead(path4, "mission");
 }
 function saveMission(dir, mission) {
   ensureTasksDir(dir);
   taskStore.writeAtomic(
-    join4(getTasksRoot(dir), "mission.json"),
+    join5(getTasksRoot(dir), "mission.json"),
     "mission",
     normalizeMission(mission)
   );
 }
 function clearMission(dir) {
-  const path4 = join4(getTasksRoot(dir), "mission.json");
-  if (existsSync5(path4)) taskStore.unlink(path4);
+  const path4 = join5(getTasksRoot(dir), "mission.json");
+  if (existsSync6(path4)) taskStore.unlink(path4);
 }
 function nextGoalId(dir) {
-  const goalsDir = join4(getTasksRoot(dir), "goals");
-  if (!existsSync5(goalsDir)) return "01";
+  const goalsDir = join5(getTasksRoot(dir), "goals");
+  if (!existsSync6(goalsDir)) return "01";
   const files = readdirSync3(goalsDir).filter((f) => f.endsWith(".json"));
   if (files.length === 0) return "01";
   const maxId = Math.max(...files.map((f) => parseInt(f.split("-")[0], 10) || 0));
   return String(maxId + 1).padStart(2, "0");
 }
 function loadGoals(dir) {
-  const goalsDir = join4(getTasksRoot(dir), "goals");
-  if (!existsSync5(goalsDir)) return [];
-  return readdirSync3(goalsDir).filter((f) => f.endsWith(".json")).sort().map((f) => taskStore.safeRead(join4(goalsDir, f), "goal")).filter((g) => g !== null);
+  const goalsDir = join5(getTasksRoot(dir), "goals");
+  if (!existsSync6(goalsDir)) return [];
+  return readdirSync3(goalsDir).filter((f) => f.endsWith(".json")).sort().map((f) => taskStore.safeRead(join5(goalsDir, f), "goal")).filter((g) => g !== null);
 }
 function loadGoal(dir, id) {
-  const file = findFileById(join4(getTasksRoot(dir), "goals"), id);
+  const file = findFileById(join5(getTasksRoot(dir), "goals"), id);
   if (!file) return null;
   return taskStore.safeRead(file, "goal");
 }
 function saveGoal(dir, goal) {
   ensureTasksDir(dir);
   const normalized = normalizeGoal(goal);
-  const goalsDir = join4(getTasksRoot(dir), "goals");
+  const goalsDir = join5(getTasksRoot(dir), "goals");
   const existing = findFileById(goalsDir, normalized.id);
   const filename = `${normalized.id}-${slugify(normalized.title, 50)}.json`;
-  const newPath = join4(goalsDir, filename);
+  const newPath = join5(goalsDir, filename);
   taskStore.writeAtomic(newPath, "goal", normalized);
   if (existing && existing !== newPath) taskStore.unlink(existing);
 }
 function deleteGoal(dir, id) {
-  const file = findFileById(join4(getTasksRoot(dir), "goals"), id);
+  const file = findFileById(join5(getTasksRoot(dir), "goals"), id);
   if (!file) return false;
   taskStore.unlink(file);
   return true;
 }
 function nextTaskId(dir) {
-  const tasksDir = join4(getTasksRoot(dir), "tasks");
-  if (!existsSync5(tasksDir)) return "001";
+  const tasksDir = join5(getTasksRoot(dir), "tasks");
+  if (!existsSync6(tasksDir)) return "001";
   const files = readdirSync3(tasksDir).filter((f) => f.endsWith(".json"));
   if (files.length === 0) return "001";
   const maxId = Math.max(...files.map((f) => parseInt(f.split("-")[0], 10) || 0));
   return String(maxId + 1).padStart(3, "0");
 }
 function loadTasks(dir) {
-  const tasksDir = join4(getTasksRoot(dir), "tasks");
-  if (!existsSync5(tasksDir)) return [];
-  return readdirSync3(tasksDir).filter((f) => f.endsWith(".json")).sort().map((f) => taskStore.safeRead(join4(tasksDir, f), "task")).filter((t) => t !== null);
+  const tasksDir = join5(getTasksRoot(dir), "tasks");
+  if (!existsSync6(tasksDir)) return [];
+  return readdirSync3(tasksDir).filter((f) => f.endsWith(".json")).sort().map((f) => taskStore.safeRead(join5(tasksDir, f), "task")).filter((t) => t !== null);
 }
 function loadTask(dir, id) {
-  const file = findFileById(join4(getTasksRoot(dir), "tasks"), id);
+  const file = findFileById(join5(getTasksRoot(dir), "tasks"), id);
   if (!file) return null;
   return taskStore.safeRead(file, "task");
 }
 function saveTask(dir, task) {
   ensureTasksDir(dir);
   const normalized = normalizeTask(task);
-  const tasksDir = join4(getTasksRoot(dir), "tasks");
+  const tasksDir = join5(getTasksRoot(dir), "tasks");
   const existing = findFileById(tasksDir, normalized.id);
   const filename = `${normalized.id}-${slugify(normalized.title, 50)}.json`;
-  const newPath = join4(tasksDir, filename);
+  const newPath = join5(tasksDir, filename);
   taskStore.writeAtomic(newPath, "task", normalized);
   if (existing && existing !== newPath) taskStore.unlink(existing);
 }
 function deleteTask(dir, id) {
-  const file = findFileById(join4(getTasksRoot(dir), "tasks"), id);
+  const file = findFileById(join5(getTasksRoot(dir), "tasks"), id);
   if (!file) return false;
   taskStore.unlink(file);
   return true;
@@ -4085,7 +4354,7 @@ function validateTasksTree(dir, options = {}) {
   const tasks = loadTasks(dir);
   const taskIds = new Set(tasks.map((task) => task.id));
   for (const task of tasks) {
-    const file = findFileById(join4(root, "tasks"), task.id) ?? void 0;
+    const file = findFileById(join5(root, "tasks"), task.id) ?? void 0;
     if (task.goal && !goalIds.has(task.goal)) {
       const issue = {
         type: "orphan-goal",
@@ -4120,9 +4389,9 @@ function validateTasksTree(dir, options = {}) {
       });
     }
   }
-  const contractPath = join4(root, "validation-contract.md");
-  if (existsSync5(contractPath)) {
-    const assertionIds = parseAssertionIds(readFileSync6(contractPath, "utf-8"));
+  const contractPath = join5(root, "validation-contract.md");
+  if (existsSync6(contractPath)) {
+    const assertionIds = parseAssertionIds(readFileSync7(contractPath, "utf-8"));
     const claimed = new Set(tasks.flatMap((task) => task.fulfills));
     for (const assertionId of assertionIds) {
       if (!claimed.has(assertionId)) {
@@ -4244,7 +4513,7 @@ var init_task_store = __esm({
           return cached.value;
         }
         this.cacheMisses++;
-        const content = readFileSync6(absolute, "utf-8");
+        const content = readFileSync7(absolute, "utf-8");
         const parsed = this.parseContent(absolute, schemaName, content);
         this.seedCache(absolute, schemaName, parsed, content);
         return parsed;
@@ -4259,19 +4528,19 @@ var init_task_store = __esm({
       }
       writeAtomic(filePath, schemaName, value) {
         const absolute = resolve10(filePath);
-        const op = existsSync5(absolute) ? "update" : "create";
+        const op = existsSync6(absolute) ? "update" : "create";
         const body = { _version: SCHEMA_VERSION, ...value };
         const content = serializeJson(body);
         const parsed = this.parseContent(absolute, schemaName, content);
         const tmpPath = `${absolute}.tmp`;
-        mkdirSync4(dirname3(absolute), { recursive: true });
+        mkdirSync5(dirname4(absolute), { recursive: true });
         this.activeWrites++;
         const started = Date.now();
         try {
           appendWalEntry(absolute, { op: "write", hash: hashContent(content) });
-          writeFileSync5(tmpPath, content);
+          writeFileSync6(tmpPath, content);
           this.markOwnWrite(absolute);
-          renameSync3(tmpPath, absolute);
+          renameSync4(tmpPath, absolute);
           appendWalEntry(absolute, { op: "commit" });
           this.seedCache(absolute, schemaName, parsed, content);
           this.emit("change", {
@@ -4284,7 +4553,7 @@ var init_task_store = __esm({
         } finally {
           this.recordWriteSample(Date.now() - started);
           this.activeWrites--;
-          if (existsSync5(tmpPath)) {
+          if (existsSync6(tmpPath)) {
             try {
               unlinkSync(tmpPath);
             } catch {
@@ -4297,7 +4566,7 @@ var init_task_store = __esm({
         const cached = this.cache.get(absolute);
         const schemaName = cached?.schemaName ?? schemaForCacheablePath(absolute) ?? void 0;
         const id = cached ? getStoreValueId(cached.value) : void 0;
-        const hash = existsSync5(absolute) ? hashContent(readFileSync6(absolute, "utf-8")) : void 0;
+        const hash = existsSync6(absolute) ? hashContent(readFileSync7(absolute, "utf-8")) : void 0;
         appendWalEntry(absolute, { op: "delete", hash });
         this.markOwnWrite(absolute);
         unlinkSync(absolute);
@@ -4477,7 +4746,7 @@ var init_task_store = __esm({
             drift++;
             continue;
           }
-          const hash = hashContent(readFileSync6(absolute, "utf-8"));
+          const hash = hashContent(readFileSync7(absolute, "utf-8"));
           if (hash !== cached.hash) drift++;
         }
         for (const [filePath] of this.cache) {
@@ -4501,7 +4770,7 @@ var init_task_store = __esm({
       }
       validateFile(filePath, schemaName) {
         const absolute = resolve10(filePath);
-        const content = readFileSync6(absolute, "utf-8");
+        const content = readFileSync7(absolute, "utf-8");
         return this.parseContent(absolute, schemaName, content);
       }
       parseContent(filePath, schemaName, content) {
@@ -4630,103 +4899,6 @@ var init_task_store = __esm({
     };
     taskStore = new TaskStore();
     taskStore.setMaxListeners(0);
-  }
-});
-
-// packages/daemon/src/lib/canonical-daemon.ts
-import { existsSync as existsSync7, mkdirSync as mkdirSync5, readFileSync as readFileSync7, renameSync as renameSync4, rmSync as rmSync2, writeFileSync as writeFileSync6 } from "node:fs";
-import { homedir as homedir2 } from "node:os";
-import { dirname as dirname4, join as join5 } from "node:path";
-function getCanonicalDaemonInfoPath() {
-  const dir = process.env[DAEMON_INFO_DIR_ENV] ?? process.env[REGISTRY_DIR_ENV] ?? join5(homedir2(), ".tmux-ide");
-  return join5(dir, DAEMON_INFO_FILE);
-}
-function parseCanonicalDaemonInfo(raw) {
-  if (!raw || typeof raw !== "object") return null;
-  const info = raw;
-  const pid = info.pid;
-  const port = info.port;
-  if (typeof pid !== "number" || typeof port !== "number") return null;
-  if (!Number.isInteger(pid) || !Number.isInteger(port)) return null;
-  if (typeof info.version !== "string" || typeof info.startedAt !== "string") return null;
-  if (typeof info.bindHostname !== "string") return null;
-  if (info.authToken !== null && typeof info.authToken !== "string") return null;
-  return {
-    pid,
-    port,
-    version: info.version,
-    startedAt: info.startedAt,
-    bindHostname: info.bindHostname,
-    authToken: info.authToken
-  };
-}
-function writeCanonicalDaemonInfo(info) {
-  const path4 = getCanonicalDaemonInfoPath();
-  mkdirSync5(dirname4(path4), { recursive: true });
-  const tmpPath = `${path4}.${process.pid}.${Date.now()}.tmp`;
-  const persisted = {
-    pid: info.pid,
-    port: info.port,
-    version: info.version,
-    startedAt: info.startedAt,
-    bindHostname: info.bindHostname,
-    authToken: info.authToken
-  };
-  writeFileSync6(tmpPath, JSON.stringify(persisted, null, 2) + "\n", "utf-8");
-  renameSync4(tmpPath, path4);
-}
-function readCanonicalDaemonInfo() {
-  const path4 = getCanonicalDaemonInfoPath();
-  if (!existsSync7(path4)) return null;
-  try {
-    return parseCanonicalDaemonInfo(JSON.parse(readFileSync7(path4, "utf-8")));
-  } catch {
-    return null;
-  }
-}
-function clearCanonicalDaemonInfo() {
-  rmSync2(getCanonicalDaemonInfoPath(), { force: true });
-}
-function isPidAlive(pid) {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-}
-function probeHostname(bindHostname) {
-  return bindHostname === "0.0.0.0" ? "127.0.0.1" : bindHostname;
-}
-function timeoutSignal(ms) {
-  const controller = new AbortController();
-  setTimeout(() => controller.abort(), ms).unref?.();
-  return controller.signal;
-}
-function warnOnDaemonVersionSkew(info, expectedVersion) {
-  if (info.version === expectedVersion) return;
-  console.warn(
-    `[tmux-ide] canonical daemon version skew: daemon.json reports "${info.version}" but this client expects "${expectedVersion}". The action/WS contract may have drifted \u2014 restart the canonical daemon (tmux-ide) so it matches this client build.`
-  );
-}
-async function isCanonicalDaemonAlive(info) {
-  if (!isPidAlive(info.pid)) return false;
-  try {
-    const res = await fetch(`http://${probeHostname(info.bindHostname)}:${info.port}/health`, {
-      signal: timeoutSignal(750)
-    });
-    return res.ok;
-  } catch {
-    return false;
-  }
-}
-var DAEMON_INFO_DIR_ENV, REGISTRY_DIR_ENV, DAEMON_INFO_FILE;
-var init_canonical_daemon = __esm({
-  "packages/daemon/src/lib/canonical-daemon.ts"() {
-    "use strict";
-    DAEMON_INFO_DIR_ENV = "TMUX_IDE_DAEMON_INFO_DIR";
-    REGISTRY_DIR_ENV = "TMUX_IDE_REGISTRY_DIR";
-    DAEMON_INFO_FILE = "daemon.json";
   }
 });
 
@@ -5889,7 +6061,7 @@ import { EventEmitter as EventEmitter3 } from "node:events";
 import { existsSync as existsSync10, mkdirSync as mkdirSync6, readFileSync as readFileSync8, renameSync as renameSync5, writeFileSync as writeFileSync7 } from "node:fs";
 import { homedir as homedir3 } from "node:os";
 import { dirname as dirname6, join as join7 } from "node:path";
-import { z as z14 } from "zod";
+import { z as z15 } from "zod";
 function getDefaultWorkspaceRegistry() {
   if (!_default) _default = new WorkspaceRegistry();
   return _default;
@@ -5912,9 +6084,9 @@ var init_workspace_registry = __esm({
     "use strict";
     init_src2();
     REGISTRY_DIR_ENV2 = "TMUX_IDE_REGISTRY_DIR";
-    RegistryFileSchemaZ = z14.object({
-      version: z14.literal(1),
-      workspaces: z14.array(WorkspaceSchemaZ)
+    RegistryFileSchemaZ = z15.object({
+      version: z15.literal(1),
+      workspaces: z15.array(WorkspaceSchemaZ)
     });
     WorkspaceAlreadyExistsError = class extends Error {
       code = "ALREADY_EXISTS";
@@ -9481,37 +9653,37 @@ var init_fs_watch = __esm({
 });
 
 // packages/daemon/src/schemas/registry.ts
-import { z as z15 } from "zod";
+import { z as z16 } from "zod";
 var RegisteredProjectSchemaZ, RegisterProjectRequestSchemaZ, InitProjectRequestSchemaZ, ProjectTemplateSchemaZ;
 var init_registry = __esm({
   "packages/daemon/src/schemas/registry.ts"() {
     "use strict";
-    RegisteredProjectSchemaZ = z15.object({
+    RegisteredProjectSchemaZ = z16.object({
       /** Unique registry key. Defaults to `basename(dir)`; collisions resolved by appending `-2`, `-3`, … */
-      name: z15.string(),
+      name: z16.string(),
       /** Absolute path to the project directory. */
-      dir: z15.string(),
+      dir: z16.string(),
       /** Whether `<dir>/ide.yml` exists; refreshed on register and on `probe()`. */
-      hasIdeYml: z15.boolean(),
+      hasIdeYml: z16.boolean(),
       /** Git remote origin URL, or `null` if not a git repo / no origin / probe failed. */
-      gitOrigin: z15.string().nullable(),
+      gitOrigin: z16.string().nullable(),
       /** Current git branch, or `null` if not a git repo / detached HEAD / probe failed. */
-      gitBranch: z15.string().nullable(),
+      gitBranch: z16.string().nullable(),
       /** ISO-8601 timestamp the project was first registered. */
-      registeredAt: z15.string()
+      registeredAt: z16.string()
     });
-    RegisterProjectRequestSchemaZ = z15.object({
-      dir: z15.string().min(1),
-      name: z15.string().min(1).optional()
+    RegisterProjectRequestSchemaZ = z16.object({
+      dir: z16.string().min(1),
+      name: z16.string().min(1).optional()
     });
-    InitProjectRequestSchemaZ = z15.object({
-      dir: z15.string().min(1),
-      template: z15.string().min(1).optional()
+    InitProjectRequestSchemaZ = z16.object({
+      dir: z16.string().min(1),
+      template: z16.string().min(1).optional()
     });
-    ProjectTemplateSchemaZ = z15.object({
-      id: z15.string(),
-      label: z15.string(),
-      description: z15.string()
+    ProjectTemplateSchemaZ = z16.object({
+      id: z16.string(),
+      label: z16.string(),
+      description: z16.string()
     });
   }
 });
@@ -9573,7 +9745,7 @@ import { EventEmitter as EventEmitter5 } from "node:events";
 import { existsSync as existsSync19, mkdirSync as mkdirSync14, readFileSync as readFileSync15, renameSync as renameSync11, writeFileSync as writeFileSync14 } from "node:fs";
 import { homedir as homedir4 } from "node:os";
 import { dirname as dirname7, isAbsolute as isAbsolute2, join as join16, resolve as resolve15 } from "node:path";
-import { z as z16 } from "zod";
+import { z as z17 } from "zod";
 function applyAction(state, action) {
   switch (action.type) {
     case "register":
@@ -9708,9 +9880,9 @@ var init_project_registry = __esm({
     init_registry();
     init_project_probe();
     REGISTRY_DIR_ENV3 = "TMUX_IDE_REGISTRY_DIR";
-    RegistryFileSchemaZ2 = z16.object({
-      version: z16.literal(1),
-      projects: z16.array(RegisteredProjectSchemaZ)
+    RegistryFileSchemaZ2 = z17.object({
+      version: z17.literal(1),
+      projects: z17.array(RegisteredProjectSchemaZ)
     });
     ProjectRegistryError = class extends Error {
       code;
@@ -9747,6 +9919,33 @@ var init_project_registry = __esm({
 });
 
 // packages/daemon/src/command-center/ws-events.ts
+function isChatTimelineFrame(event) {
+  return event.type === "chat.timeline.upsert" || event.type === "chat.timeline.reset";
+}
+function recordChatTimelineFrame(event) {
+  if (!isChatTimelineFrame(event)) return;
+  const threadId = event.threadId;
+  const seq = (chatSeqByThread.get(threadId) ?? 0) + 1;
+  chatSeqByThread.set(threadId, seq);
+  event.seq = seq;
+  let buf = chatReplayByThread.get(threadId);
+  if (!buf) {
+    buf = [];
+    chatReplayByThread.set(threadId, buf);
+  }
+  if (event.type === "chat.timeline.reset") buf.length = 0;
+  buf.push({ seq, frame: event });
+  if (buf.length > CHAT_REPLAY_CAP_PER_THREAD) {
+    buf.splice(0, buf.length - CHAT_REPLAY_CAP_PER_THREAD);
+  }
+}
+function replayChatTimelineSince(threadId, lastSeq, send2) {
+  const buf = chatReplayByThread.get(threadId);
+  if (!buf) return;
+  for (const entry of buf) {
+    if (entry.seq > lastSeq) send2(entry.frame);
+  }
+}
 function snapshotSessionsHash() {
   try {
     return JSON.stringify(
@@ -9807,6 +10006,7 @@ function broadcastTerminalsChanged(sessionName) {
   for (const client of allClients) client.broadcastTerminalsChanged(sessionName);
 }
 function broadcastChatEvent(event) {
+  recordChatTimelineFrame(event);
   for (const client of allClients) client.broadcastChatEvent(event);
 }
 function rawDataToText2(data) {
@@ -10040,6 +10240,10 @@ function handleWsEventsConnection(socket) {
       send2({ type: "pong" });
       return;
     }
+    if (parsed.type === "chat.subscribe") {
+      replayChatTimelineSince(parsed.threadId, parsed.lastSeq ?? 0, send2);
+      return;
+    }
   });
   ws.on("close", cleanup);
   ws.on("error", cleanup);
@@ -10050,7 +10254,7 @@ function handleWsEventsConnection(socket) {
     send2({ type: "hello", sessions: [] });
   }
 }
-var WS_OPEN2, KEEPALIVE_INTERVAL_MS, SESSIONS_POLL_MS, allClients, sessionsPollTimer, lastSessionsHash, projectRegistryListener;
+var WS_OPEN2, KEEPALIVE_INTERVAL_MS, SESSIONS_POLL_MS, allClients, CHAT_REPLAY_CAP_PER_THREAD, chatSeqByThread, chatReplayByThread, sessionsPollTimer, lastSessionsHash, projectRegistryListener;
 var init_ws_events = __esm({
   "packages/daemon/src/command-center/ws-events.ts"() {
     "use strict";
@@ -10066,6 +10270,9 @@ var init_ws_events = __esm({
     KEEPALIVE_INTERVAL_MS = 25e3;
     SESSIONS_POLL_MS = 2e3;
     allClients = /* @__PURE__ */ new Set();
+    CHAT_REPLAY_CAP_PER_THREAD = 1024;
+    chatSeqByThread = /* @__PURE__ */ new Map();
+    chatReplayByThread = /* @__PURE__ */ new Map();
     sessionsPollTimer = null;
     lastSessionsHash = "";
     projectRegistryListener = null;
@@ -10478,67 +10685,67 @@ var init_protocol = __esm({
 });
 
 // packages/daemon/src/acp/schema.ts
-import { z as z17 } from "zod";
+import { z as z18 } from "zod";
 var MetaZ, EmbeddedResourceResourceZ, ContentBlockZ2, ToolKindZ, ToolCallStatusZ, ToolCallLocationZ, ToolCallContentZ, PermissionOptionZ, ToolCallUpdateRawZ, ToolCallUpdateZ, PlanEntryZ, AvailableCommandInputZ, AvailableCommandZ, RequestPermissionRequestZ, SessionNotificationZ;
 var init_schema = __esm({
   "packages/daemon/src/acp/schema.ts"() {
     "use strict";
-    MetaZ = z17.record(z17.string(), z17.unknown()).nullable().optional();
-    EmbeddedResourceResourceZ = z17.union([
-      z17.object({
+    MetaZ = z18.record(z18.string(), z18.unknown()).nullable().optional();
+    EmbeddedResourceResourceZ = z18.union([
+      z18.object({
         _meta: MetaZ,
-        mimeType: z17.string().nullable().optional(),
-        text: z17.string(),
-        uri: z17.string()
+        mimeType: z18.string().nullable().optional(),
+        text: z18.string(),
+        uri: z18.string()
       }),
-      z17.object({
+      z18.object({
         _meta: MetaZ,
-        blob: z17.string(),
-        mimeType: z17.string().nullable().optional(),
-        uri: z17.string()
+        blob: z18.string(),
+        mimeType: z18.string().nullable().optional(),
+        uri: z18.string()
       })
     ]);
-    ContentBlockZ2 = z17.discriminatedUnion("type", [
-      z17.object({
-        type: z17.literal("text"),
+    ContentBlockZ2 = z18.discriminatedUnion("type", [
+      z18.object({
+        type: z18.literal("text"),
         _meta: MetaZ,
-        annotations: z17.unknown().optional(),
-        text: z17.string()
+        annotations: z18.unknown().optional(),
+        text: z18.string()
       }),
-      z17.object({
-        type: z17.literal("image"),
+      z18.object({
+        type: z18.literal("image"),
         _meta: MetaZ,
-        annotations: z17.unknown().optional(),
-        data: z17.string(),
-        mimeType: z17.string(),
-        uri: z17.string().nullable().optional()
+        annotations: z18.unknown().optional(),
+        data: z18.string(),
+        mimeType: z18.string(),
+        uri: z18.string().nullable().optional()
       }),
-      z17.object({
-        type: z17.literal("audio"),
+      z18.object({
+        type: z18.literal("audio"),
         _meta: MetaZ,
-        annotations: z17.unknown().optional(),
-        data: z17.string(),
-        mimeType: z17.string()
+        annotations: z18.unknown().optional(),
+        data: z18.string(),
+        mimeType: z18.string()
       }),
-      z17.object({
-        type: z17.literal("resource"),
+      z18.object({
+        type: z18.literal("resource"),
         _meta: MetaZ,
-        annotations: z17.unknown().optional(),
+        annotations: z18.unknown().optional(),
         resource: EmbeddedResourceResourceZ
       }),
-      z17.object({
-        type: z17.literal("resource_link"),
+      z18.object({
+        type: z18.literal("resource_link"),
         _meta: MetaZ,
-        annotations: z17.unknown().optional(),
-        description: z17.string().nullable().optional(),
-        mimeType: z17.string().nullable().optional(),
-        name: z17.string(),
-        size: z17.number().int().nullable().optional(),
-        title: z17.string().nullable().optional(),
-        uri: z17.string()
+        annotations: z18.unknown().optional(),
+        description: z18.string().nullable().optional(),
+        mimeType: z18.string().nullable().optional(),
+        name: z18.string(),
+        size: z18.number().int().nullable().optional(),
+        title: z18.string().nullable().optional(),
+        uri: z18.string()
       })
     ]);
-    ToolKindZ = z17.enum([
+    ToolKindZ = z18.enum([
       "read",
       "edit",
       "delete",
@@ -10550,130 +10757,130 @@ var init_schema = __esm({
       "switch_mode",
       "other"
     ]);
-    ToolCallStatusZ = z17.enum(["pending", "in_progress", "completed", "failed"]);
-    ToolCallLocationZ = z17.object({
+    ToolCallStatusZ = z18.enum(["pending", "in_progress", "completed", "failed"]);
+    ToolCallLocationZ = z18.object({
       _meta: MetaZ,
-      line: z17.number().int().nullable().optional(),
-      path: z17.string()
+      line: z18.number().int().nullable().optional(),
+      path: z18.string()
     });
-    ToolCallContentZ = z17.discriminatedUnion("type", [
-      z17.object({ type: z17.literal("content"), _meta: MetaZ, content: ContentBlockZ2 }),
-      z17.object({
-        type: z17.literal("diff"),
+    ToolCallContentZ = z18.discriminatedUnion("type", [
+      z18.object({ type: z18.literal("content"), _meta: MetaZ, content: ContentBlockZ2 }),
+      z18.object({
+        type: z18.literal("diff"),
         _meta: MetaZ,
-        newText: z17.string(),
-        oldText: z17.string().nullable().optional(),
-        path: z17.string()
+        newText: z18.string(),
+        oldText: z18.string().nullable().optional(),
+        path: z18.string()
       }),
-      z17.object({ type: z17.literal("terminal"), _meta: MetaZ, terminalId: z17.string() })
+      z18.object({ type: z18.literal("terminal"), _meta: MetaZ, terminalId: z18.string() })
     ]);
-    PermissionOptionZ = z17.object({
+    PermissionOptionZ = z18.object({
       _meta: MetaZ,
-      kind: z17.enum(["allow_once", "allow_always", "reject_once", "reject_always"]),
-      name: z17.string(),
-      optionId: z17.string()
+      kind: z18.enum(["allow_once", "allow_always", "reject_once", "reject_always"]),
+      name: z18.string(),
+      optionId: z18.string()
     });
-    ToolCallUpdateRawZ = z17.object({
+    ToolCallUpdateRawZ = z18.object({
       _meta: MetaZ,
-      content: z17.array(ToolCallContentZ).nullable().optional(),
+      content: z18.array(ToolCallContentZ).nullable().optional(),
       kind: ToolKindZ.nullable().optional(),
-      locations: z17.array(ToolCallLocationZ).nullable().optional(),
-      rawInput: z17.unknown().optional(),
-      rawOutput: z17.unknown().optional(),
+      locations: z18.array(ToolCallLocationZ).nullable().optional(),
+      rawInput: z18.unknown().optional(),
+      rawOutput: z18.unknown().optional(),
       status: ToolCallStatusZ.nullable().optional(),
-      title: z17.string().nullable().optional(),
-      toolCallId: z17.string()
+      title: z18.string().nullable().optional(),
+      toolCallId: z18.string()
     });
     ToolCallUpdateZ = ToolCallUpdateRawZ;
-    PlanEntryZ = z17.object({
+    PlanEntryZ = z18.object({
       _meta: MetaZ,
-      content: z17.string(),
-      priority: z17.enum(["high", "medium", "low"]),
-      status: z17.enum(["pending", "in_progress", "completed"])
+      content: z18.string(),
+      priority: z18.enum(["high", "medium", "low"]),
+      status: z18.enum(["pending", "in_progress", "completed"])
     });
-    AvailableCommandInputZ = z17.object({
+    AvailableCommandInputZ = z18.object({
       _meta: MetaZ,
-      hint: z17.string()
+      hint: z18.string()
     });
-    AvailableCommandZ = z17.object({
+    AvailableCommandZ = z18.object({
       _meta: MetaZ,
-      description: z17.string(),
+      description: z18.string(),
       input: AvailableCommandInputZ.nullable().optional(),
-      name: z17.string()
+      name: z18.string()
     });
-    RequestPermissionRequestZ = z17.object({
+    RequestPermissionRequestZ = z18.object({
       _meta: MetaZ,
-      options: z17.array(PermissionOptionZ),
-      sessionId: z17.string(),
+      options: z18.array(PermissionOptionZ),
+      sessionId: z18.string(),
       toolCall: ToolCallUpdateZ
     });
-    SessionNotificationZ = z17.object({
+    SessionNotificationZ = z18.object({
       _meta: MetaZ,
-      sessionId: z17.string(),
-      update: z17.discriminatedUnion("sessionUpdate", [
-        z17.object({
-          sessionUpdate: z17.literal("user_message_chunk"),
+      sessionId: z18.string(),
+      update: z18.discriminatedUnion("sessionUpdate", [
+        z18.object({
+          sessionUpdate: z18.literal("user_message_chunk"),
           _meta: MetaZ,
           content: ContentBlockZ2,
-          messageId: z17.string().nullable().optional()
+          messageId: z18.string().nullable().optional()
         }),
-        z17.object({
-          sessionUpdate: z17.literal("agent_message_chunk"),
+        z18.object({
+          sessionUpdate: z18.literal("agent_message_chunk"),
           _meta: MetaZ,
           content: ContentBlockZ2,
-          messageId: z17.string().nullable().optional()
+          messageId: z18.string().nullable().optional()
         }),
-        z17.object({
-          sessionUpdate: z17.literal("agent_thought_chunk"),
+        z18.object({
+          sessionUpdate: z18.literal("agent_thought_chunk"),
           _meta: MetaZ,
           content: ContentBlockZ2,
-          messageId: z17.string().nullable().optional()
+          messageId: z18.string().nullable().optional()
         }),
-        z17.object({
-          sessionUpdate: z17.literal("tool_call"),
+        z18.object({
+          sessionUpdate: z18.literal("tool_call"),
           _meta: MetaZ,
-          content: z17.array(ToolCallContentZ).optional(),
+          content: z18.array(ToolCallContentZ).optional(),
           kind: ToolKindZ.optional(),
-          locations: z17.array(ToolCallLocationZ).optional(),
-          rawInput: z17.unknown().optional(),
-          rawOutput: z17.unknown().optional(),
+          locations: z18.array(ToolCallLocationZ).optional(),
+          rawInput: z18.unknown().optional(),
+          rawOutput: z18.unknown().optional(),
           status: ToolCallStatusZ.optional(),
-          title: z17.string(),
-          toolCallId: z17.string()
+          title: z18.string(),
+          toolCallId: z18.string()
         }),
-        ToolCallUpdateRawZ.extend({ sessionUpdate: z17.literal("tool_call_update") }),
-        z17.object({
-          sessionUpdate: z17.literal("plan"),
+        ToolCallUpdateRawZ.extend({ sessionUpdate: z18.literal("tool_call_update") }),
+        z18.object({
+          sessionUpdate: z18.literal("plan"),
           _meta: MetaZ,
-          entries: z17.array(PlanEntryZ)
+          entries: z18.array(PlanEntryZ)
         }),
-        z17.object({
-          sessionUpdate: z17.literal("available_commands_update"),
+        z18.object({
+          sessionUpdate: z18.literal("available_commands_update"),
           _meta: MetaZ,
-          availableCommands: z17.array(AvailableCommandZ)
+          availableCommands: z18.array(AvailableCommandZ)
         }),
-        z17.object({
-          sessionUpdate: z17.literal("current_mode_update"),
+        z18.object({
+          sessionUpdate: z18.literal("current_mode_update"),
           _meta: MetaZ,
-          currentModeId: z17.string()
+          currentModeId: z18.string()
         }),
-        z17.object({
-          sessionUpdate: z17.literal("config_option_update"),
+        z18.object({
+          sessionUpdate: z18.literal("config_option_update"),
           _meta: MetaZ,
-          configOptions: z17.array(z17.unknown())
+          configOptions: z18.array(z18.unknown())
         }),
-        z17.object({
-          sessionUpdate: z17.literal("session_info_update"),
+        z18.object({
+          sessionUpdate: z18.literal("session_info_update"),
           _meta: MetaZ,
-          title: z17.string().nullable().optional(),
-          updatedAt: z17.string().nullable().optional()
+          title: z18.string().nullable().optional(),
+          updatedAt: z18.string().nullable().optional()
         }),
-        z17.object({
-          sessionUpdate: z17.literal("usage_update"),
+        z18.object({
+          sessionUpdate: z18.literal("usage_update"),
           _meta: MetaZ,
-          cost: z17.unknown().optional(),
-          size: z17.number().int().nonnegative(),
-          used: z17.number().int().nonnegative()
+          cost: z18.unknown().optional(),
+          size: z18.number().int().nonnegative(),
+          used: z18.number().int().nonnegative()
         })
       ])
     });
@@ -12176,7 +12383,7 @@ var init_protocol2 = __esm({
 });
 
 // packages/daemon/src/codex/schema.ts
-import { z as z18 } from "zod";
+import { z as z19 } from "zod";
 function defaultInitializeRequest() {
   return {
     clientInfo: { name: "tmux-ide", title: "tmux-ide", version: "0.0.1" },
@@ -12188,93 +12395,93 @@ var init_schema2 = __esm({
   "packages/daemon/src/codex/schema.ts"() {
     "use strict";
     init_methods2();
-    JsonObjectZ = z18.record(z18.string(), z18.unknown());
-    ApplyPatchFileChangeZ = z18.discriminatedUnion("type", [
-      z18.object({ type: z18.literal("add"), content: z18.string() }),
-      z18.object({ type: z18.literal("delete"), content: z18.string() }),
-      z18.object({
-        type: z18.literal("update"),
-        unified_diff: z18.string(),
-        move_path: z18.string().nullable().optional()
+    JsonObjectZ = z19.record(z19.string(), z19.unknown());
+    ApplyPatchFileChangeZ = z19.discriminatedUnion("type", [
+      z19.object({ type: z19.literal("add"), content: z19.string() }),
+      z19.object({ type: z19.literal("delete"), content: z19.string() }),
+      z19.object({
+        type: z19.literal("update"),
+        unified_diff: z19.string(),
+        move_path: z19.string().nullable().optional()
       })
     ]);
-    ApplyPatchApprovalRequestZ = z18.object({
-      callId: z18.string(),
-      conversationId: z18.string(),
-      fileChanges: z18.record(z18.string(), ApplyPatchFileChangeZ),
-      grantRoot: z18.string().nullable().optional(),
-      reason: z18.string().nullable().optional()
+    ApplyPatchApprovalRequestZ = z19.object({
+      callId: z19.string(),
+      conversationId: z19.string(),
+      fileChanges: z19.record(z19.string(), ApplyPatchFileChangeZ),
+      grantRoot: z19.string().nullable().optional(),
+      reason: z19.string().nullable().optional()
     });
-    ApplyPatchApprovalDecisionZ = z18.union([
-      z18.literal("approved"),
-      z18.literal("approved_for_session"),
-      z18.literal("denied"),
-      z18.literal("timed_out"),
-      z18.literal("abort"),
-      z18.object({
-        approved_execpolicy_amendment: z18.object({
-          proposed_execpolicy_amendment: z18.array(z18.string())
+    ApplyPatchApprovalDecisionZ = z19.union([
+      z19.literal("approved"),
+      z19.literal("approved_for_session"),
+      z19.literal("denied"),
+      z19.literal("timed_out"),
+      z19.literal("abort"),
+      z19.object({
+        approved_execpolicy_amendment: z19.object({
+          proposed_execpolicy_amendment: z19.array(z19.string())
         })
       }),
-      z18.object({
-        network_policy_amendment: z18.object({
-          network_policy_amendment: z18.object({
-            action: z18.enum(["allow", "deny"]),
-            host: z18.string()
+      z19.object({
+        network_policy_amendment: z19.object({
+          network_policy_amendment: z19.object({
+            action: z19.enum(["allow", "deny"]),
+            host: z19.string()
           })
         })
       })
     ]);
-    ApplyPatchApprovalResponseZ = z18.object({
+    ApplyPatchApprovalResponseZ = z19.object({
       decision: ApplyPatchApprovalDecisionZ
     });
-    ChatgptAuthTokensRefreshRequestZ = z18.object({
-      previousAccountId: z18.string().nullable().optional(),
-      reason: z18.literal("unauthorized")
+    ChatgptAuthTokensRefreshRequestZ = z19.object({
+      previousAccountId: z19.string().nullable().optional(),
+      reason: z19.literal("unauthorized")
     });
-    ChatgptAuthTokensRefreshResponseZ = z18.object({
-      accessToken: z18.string(),
-      chatgptAccountId: z18.string(),
-      chatgptPlanType: z18.string().nullable().optional()
+    ChatgptAuthTokensRefreshResponseZ = z19.object({
+      accessToken: z19.string(),
+      chatgptAccountId: z19.string(),
+      chatgptPlanType: z19.string().nullable().optional()
     });
-    TurnSummaryZ = z18.object({ id: z18.string(), status: z18.string().optional() }).catchall(z18.unknown());
-    AgentMessageDeltaZ = z18.object({
-      delta: z18.string(),
-      itemId: z18.string(),
-      threadId: z18.string(),
-      turnId: z18.string()
+    TurnSummaryZ = z19.object({ id: z19.string(), status: z19.string().optional() }).catchall(z19.unknown());
+    AgentMessageDeltaZ = z19.object({
+      delta: z19.string(),
+      itemId: z19.string(),
+      threadId: z19.string(),
+      turnId: z19.string()
     });
-    ReasoningTextDeltaZ = AgentMessageDeltaZ.extend({ contentIndex: z18.number().int() });
-    ReasoningSummaryTextDeltaZ = AgentMessageDeltaZ.extend({ summaryIndex: z18.number().int() });
-    ReasoningSummaryPartAddedZ = z18.object({
-      itemId: z18.string(),
-      summaryIndex: z18.number().int(),
-      threadId: z18.string(),
-      turnId: z18.string()
+    ReasoningTextDeltaZ = AgentMessageDeltaZ.extend({ contentIndex: z19.number().int() });
+    ReasoningSummaryTextDeltaZ = AgentMessageDeltaZ.extend({ summaryIndex: z19.number().int() });
+    ReasoningSummaryPartAddedZ = z19.object({
+      itemId: z19.string(),
+      summaryIndex: z19.number().int(),
+      threadId: z19.string(),
+      turnId: z19.string()
     });
-    TurnNotificationZ = z18.object({ threadId: z18.string(), turn: TurnSummaryZ });
-    ItemCompletedZ = z18.object({ item: JsonObjectZ, threadId: z18.string(), turnId: z18.string() });
-    CodexAgentEventZ = z18.discriminatedUnion("method", [
-      z18.object({
-        method: z18.literal(CLIENT_METHODS2.item_agent_message_delta),
+    TurnNotificationZ = z19.object({ threadId: z19.string(), turn: TurnSummaryZ });
+    ItemCompletedZ = z19.object({ item: JsonObjectZ, threadId: z19.string(), turnId: z19.string() });
+    CodexAgentEventZ = z19.discriminatedUnion("method", [
+      z19.object({
+        method: z19.literal(CLIENT_METHODS2.item_agent_message_delta),
         params: AgentMessageDeltaZ
       }),
-      z18.object({
-        method: z18.literal(CLIENT_METHODS2.item_reasoning_summary_text_delta),
+      z19.object({
+        method: z19.literal(CLIENT_METHODS2.item_reasoning_summary_text_delta),
         params: ReasoningSummaryTextDeltaZ
       }),
-      z18.object({
-        method: z18.literal(CLIENT_METHODS2.item_reasoning_text_delta),
+      z19.object({
+        method: z19.literal(CLIENT_METHODS2.item_reasoning_text_delta),
         params: ReasoningTextDeltaZ
       }),
-      z18.object({
-        method: z18.literal(CLIENT_METHODS2.item_reasoning_summary_part_added),
+      z19.object({
+        method: z19.literal(CLIENT_METHODS2.item_reasoning_summary_part_added),
         params: ReasoningSummaryPartAddedZ
       }),
-      z18.object({ method: z18.literal(CLIENT_METHODS2.turn_started), params: TurnNotificationZ }),
-      z18.object({ method: z18.literal(CLIENT_METHODS2.turn_completed), params: TurnNotificationZ }),
-      z18.object({ method: z18.literal(CLIENT_METHODS2.item_completed), params: ItemCompletedZ }),
-      z18.object({ method: z18.literal(CLIENT_METHODS2.error), params: JsonObjectZ })
+      z19.object({ method: z19.literal(CLIENT_METHODS2.turn_started), params: TurnNotificationZ }),
+      z19.object({ method: z19.literal(CLIENT_METHODS2.turn_completed), params: TurnNotificationZ }),
+      z19.object({ method: z19.literal(CLIENT_METHODS2.item_completed), params: ItemCompletedZ }),
+      z19.object({ method: z19.literal(CLIENT_METHODS2.error), params: JsonObjectZ })
     ]);
   }
 });
@@ -13052,6 +13259,291 @@ var init_permission_coordinator = __esm({
   }
 });
 
+// packages/daemon/src/chat/materialize.ts
+function clone(value) {
+  return structuredClone(value);
+}
+function mergeToolCallUpdate(toolCalls, update) {
+  let toolCall = toolCalls.find((candidate) => candidate.toolCallId === update.toolCallId);
+  if (!toolCall) {
+    toolCall = {
+      toolCallId: update.toolCallId,
+      title: update.title ?? update.toolCallId,
+      ...update.kind ? { kind: update.kind } : {},
+      status: update.status ?? "pending",
+      content: []
+    };
+    toolCalls.push(toolCall);
+  }
+  if (update.title) toolCall.title = update.title;
+  if (update.kind) toolCall.kind = update.kind;
+  if (update.status) toolCall.status = update.status;
+  if (update.content?.length) toolCall.content = [...toolCall.content, ...update.content];
+  if (update.rawInput !== void 0) toolCall.rawInput = update.rawInput;
+  if (update.rawOutput !== void 0) toolCall.rawOutput = update.rawOutput;
+}
+function assistantHasVisibleContent(message) {
+  return message.text.length > 0 || Boolean(message.thoughtText && message.thoughtText.length > 0) || message.toolCalls.length > 0;
+}
+function assignRevertTurnCounts(rows) {
+  let trailingUserTurns = 0;
+  for (let i = rows.length - 1; i >= 0; i -= 1) {
+    const row = rows[i];
+    if (!row || row.kind !== "message" || row.message.role !== "user") continue;
+    if (trailingUserTurns > 0) row.revertTurnCount = trailingUserTurns;
+    trailingUserTurns += 1;
+  }
+}
+function freshCursor() {
+  return {
+    turnIndex: -1,
+    currentAssistantRowId: null,
+    currentPlanRowId: null,
+    latestUserRowId: null,
+    activePromptId: null
+  };
+}
+function materializeRows(messages) {
+  const timeline = new ThreadTimeline();
+  timeline.bootstrap(messages);
+  return timeline.snapshot();
+}
+var ThreadTimeline;
+var init_materialize = __esm({
+  "packages/daemon/src/chat/materialize.ts"() {
+    "use strict";
+    ThreadTimeline = class {
+      rows = [];
+      cursor = freshCursor();
+      dirty = /* @__PURE__ */ new Set();
+      /**
+       * Rebuild from the raw event log. Settled by default; pass
+       * `activePromptId` to re-open the latest turn as the live streaming
+       * one (used after a user prompt / truncation so the next agent
+       * chunk streams into a fresh assistant row).
+       */
+      bootstrap(messages, activePromptId) {
+        this.rows = [];
+        this.cursor = freshCursor();
+        for (const message of messages) {
+          if (message._tag === "UserPrompt") {
+            this.applyUserPrompt({
+              id: message.id,
+              content: message.content,
+              createdAt: message.createdAt
+            });
+          } else {
+            this.applyAgentUpdate(message.id, message.createdAt, message.update);
+          }
+        }
+        this.cursor.activePromptId = activePromptId ?? null;
+        this.dirty.clear();
+      }
+      snapshot() {
+        return clone(this.rows);
+      }
+      get activePromptId() {
+        return this.cursor.activePromptId;
+      }
+      rowById(id) {
+        if (!id) return null;
+        for (const row of this.rows) {
+          if (row.kind === "message" && row.id === id) return row;
+        }
+        return null;
+      }
+      workingId(assistantId) {
+        return `${assistantId}:working`;
+      }
+      removeWorkingRow(assistantId) {
+        const id = this.workingId(assistantId);
+        const index = this.rows.findIndex((row) => row.kind === "working" && row.id === id);
+        if (index !== -1) {
+          this.rows.splice(index, 1);
+          this.dirty.add(id);
+        }
+      }
+      syncStreaming() {
+        if (!this.cursor.activePromptId) return;
+        const row = this.rowById(this.cursor.currentAssistantRowId);
+        if (!row || row.message.role !== "assistant") return;
+        const assistant = row.message;
+        assistant.streaming = true;
+        this.dirty.add(row.id);
+        if (assistantHasVisibleContent(assistant)) {
+          this.removeWorkingRow(assistant.id);
+          return;
+        }
+        const id = this.workingId(assistant.id);
+        if (!this.rows.some((candidate) => candidate.kind === "working" && candidate.id === id)) {
+          this.rows.push({ kind: "working", id, createdAt: assistant.createdAt });
+          this.dirty.add(id);
+        }
+      }
+      ensureAssistantRow(sourceId, createdAt) {
+        const existing = this.rowById(this.cursor.currentAssistantRowId);
+        if (existing && existing.message.role === "assistant") return existing.message;
+        const id = `assistant:${this.cursor.turnIndex < 0 ? "orphan" : this.cursor.turnIndex}:${sourceId}`;
+        const message = {
+          id,
+          role: "assistant",
+          createdAt,
+          streaming: false,
+          text: "",
+          toolCalls: []
+        };
+        this.rows.push({ kind: "message", id, createdAt, message });
+        this.cursor.currentAssistantRowId = id;
+        this.dirty.add(id);
+        return message;
+      }
+      /**
+       * Open a new turn. `activePromptId` ties the live streaming caret to
+       * a specific prompt; omitted (bootstrap replay) leaves the turn
+       * settled.
+       */
+      applyUserPrompt(input) {
+        this.cursor.turnIndex += 1;
+        this.cursor.currentAssistantRowId = null;
+        this.cursor.currentPlanRowId = null;
+        this.cursor.latestUserRowId = input.id;
+        this.cursor.activePromptId = input.activePromptId ?? null;
+        this.rows.push({
+          kind: "message",
+          id: input.id,
+          createdAt: input.createdAt,
+          message: {
+            id: input.id,
+            role: "user",
+            createdAt: input.createdAt,
+            content: [...input.content]
+          }
+        });
+        this.dirty.add(input.id);
+        assignRevertTurnCounts(this.rows);
+      }
+      /** Fold one ACP session update into the transcript. */
+      applyAgentUpdate(sourceId, createdAt, update) {
+        const assistant = this.ensureAssistantRow(sourceId, createdAt);
+        const assistantRowId = this.cursor.currentAssistantRowId;
+        switch (update.sessionUpdate) {
+          case "agent_message_chunk": {
+            const content = update.content;
+            if (content && content.type === "text") assistant.text += content.text;
+            if (assistantRowId) this.dirty.add(assistantRowId);
+            break;
+          }
+          case "agent_thought_chunk": {
+            const content = update.content;
+            if (content && content.type === "text") {
+              assistant.thoughtText = `${assistant.thoughtText ?? ""}${content.text}`;
+            }
+            if (assistantRowId) this.dirty.add(assistantRowId);
+            break;
+          }
+          case "user_message_chunk": {
+            const content = update.content;
+            const userRow = this.rowById(this.cursor.latestUserRowId);
+            if (content && userRow && userRow.message.role === "user") {
+              userRow.message.content = [...userRow.message.content, content];
+              this.dirty.add(userRow.id);
+            }
+            break;
+          }
+          case "tool_call": {
+            const u = update;
+            assistant.toolCalls.push({
+              toolCallId: u.toolCallId,
+              title: u.title,
+              ...u.kind ? { kind: u.kind } : {},
+              status: u.status ?? "pending",
+              content: [...u.content ?? []],
+              ...u.rawInput !== void 0 ? { rawInput: u.rawInput } : {},
+              ...u.rawOutput !== void 0 ? { rawOutput: u.rawOutput } : {}
+            });
+            if (assistantRowId) this.dirty.add(assistantRowId);
+            break;
+          }
+          case "tool_call_update": {
+            const u = update;
+            mergeToolCallUpdate(assistant.toolCalls, {
+              toolCallId: u.toolCallId,
+              title: u.title ?? void 0,
+              kind: u.kind ?? void 0,
+              status: u.status ?? void 0,
+              content: u.content ?? void 0,
+              rawInput: u.rawInput,
+              rawOutput: u.rawOutput
+            });
+            if (assistantRowId) this.dirty.add(assistantRowId);
+            break;
+          }
+          case "plan": {
+            const rawEntries = update.entries ?? [];
+            const entries = rawEntries.map((entry) => ({
+              content: entry.content,
+              ...entry.status ? { status: entry.status } : {},
+              ...entry.priority ? { priority: entry.priority } : {}
+            }));
+            const planId = this.cursor.currentPlanRowId ?? `plan:${sourceId}`;
+            const planRow = {
+              kind: "plan",
+              id: planId,
+              createdAt,
+              entries
+            };
+            if (this.cursor.currentPlanRowId) {
+              const index = this.rows.findIndex((row) => row.id === this.cursor.currentPlanRowId);
+              if (index !== -1) this.rows[index] = planRow;
+            } else {
+              this.cursor.currentPlanRowId = planId;
+              this.rows.push(planRow);
+            }
+            this.dirty.add(planId);
+            break;
+          }
+          case "available_commands_update":
+          case "current_mode_update":
+            break;
+          default:
+            break;
+        }
+        this.syncStreaming();
+      }
+      /**
+       * Close the active turn's streaming row. Idempotent: a second call
+       * (real stop after an optimistic cancel) is a no-op once the active
+       * prompt is cleared.
+       */
+      finish(promptId, stopReason, completedAt) {
+        if (this.cursor.activePromptId && promptId && this.cursor.activePromptId !== promptId) return;
+        const row = this.rowById(this.cursor.currentAssistantRowId);
+        if (row && row.message.role === "assistant") {
+          const assistant = row.message;
+          assistant.streaming = false;
+          assistant.stopReason = stopReason;
+          assistant.completedAt = completedAt;
+          this.dirty.add(row.id);
+          this.removeWorkingRow(assistant.id);
+        }
+        this.cursor.activePromptId = null;
+      }
+      /** Drain the pending delta (changed rows + authoritative order). */
+      drainDelta() {
+        const order = this.rows.map((row) => row.id);
+        const present = new Map(this.rows.map((row) => [row.id, row]));
+        const rows = [];
+        for (const id of this.dirty) {
+          const row = present.get(id);
+          if (row) rows.push(clone(row));
+        }
+        this.dirty.clear();
+        return { rows, order };
+      }
+    };
+  }
+});
+
 // packages/daemon/src/chat/message-pipe.ts
 import { randomUUID as randomUUID5 } from "node:crypto";
 function makeMessagePipe(opts) {
@@ -13060,6 +13552,13 @@ function makeMessagePipe(opts) {
   let usage = opts.initialUsage;
   const persist = { messages: [], timer: null, chain: Promise.resolve() };
   let pendingText = null;
+  const timeline = new ThreadTimeline();
+  timeline.bootstrap(opts.initialMessages ?? []);
+  function broadcastTimelineUpsert() {
+    const delta = timeline.drainDelta();
+    if (delta.rows.length === 0) return;
+    busEmit({ type: "chat.timeline.upsert", threadId, rows: delta.rows, order: delta.order });
+  }
   function schedulePersist() {
     if (persist.timer) clearTimeout(persist.timer);
     persist.timer = setTimeout(() => {
@@ -13101,6 +13600,8 @@ function makeMessagePipe(opts) {
     seq += 1;
     busEmit({ type: "chat.thread.update", threadId, update, seq });
     queuePersist(update);
+    timeline.applyAgentUpdate(`agent-update:${seq}`, (/* @__PURE__ */ new Date()).toISOString(), update);
+    broadcastTimelineUpsert();
   }
   function textChunkKind(update) {
     if (update.sessionUpdate === "agent_message_chunk" && typeof update.content === "object" && update.content !== null && update.content.type === "text") {
@@ -13181,6 +13682,14 @@ function makeMessagePipe(opts) {
     async forceFlush() {
       flushText();
       await flushPersist();
+    },
+    resyncTimeline(messages, activePromptId) {
+      timeline.bootstrap(messages, activePromptId);
+      busEmit({ type: "chat.timeline.reset", threadId, rows: timeline.snapshot() });
+    },
+    finishTimeline(promptId, stopReason) {
+      timeline.finish(promptId, stopReason, (/* @__PURE__ */ new Date()).toISOString());
+      broadcastTimelineUpsert();
     }
   };
 }
@@ -13188,18 +13697,26 @@ var init_message_pipe = __esm({
   "packages/daemon/src/chat/message-pipe.ts"() {
     "use strict";
     init_usage_extraction();
+    init_materialize();
   }
 });
 
 // packages/daemon/src/chat/dispatch-prompt.ts
+function asReasoningEffort(value) {
+  return KNOWN_REASONING_EFFORTS.includes(value) ? value : null;
+}
 async function dispatchCodexPrompt(input) {
   const completed = new Promise((resolve34) => {
     input.bindActivePrompt({ promptId: input.promptId, turnId: null, resolve: resolve34 });
   });
   try {
+    const effortLevel = input.reasoningEffort ? asReasoningEffort(input.reasoningEffort) : null;
     const response = await input.client.sendUserMessage({
       threadId: input.codexThreadId,
-      input: codexInputFromContent(input.content)
+      input: codexInputFromContent(input.content),
+      ...input.model ? { model: input.model } : {},
+      ...effortLevel ? { effort: effortLevel } : {},
+      ...input.fastMode ? { serviceTier: "fast" } : {}
     });
     const active2 = input.readActivePrompt();
     if (active2?.promptId === input.promptId) {
@@ -13213,6 +13730,7 @@ async function dispatchCodexPrompt(input) {
       promptId: input.promptId,
       stopReason
     });
+    input.pipe.finishTimeline(input.promptId, stopReason);
     await input.store.recordStopReason(input.threadId, stopReason);
   } catch (err) {
     if (input.readActivePrompt()?.promptId === input.promptId) input.bindActivePrompt(null);
@@ -13228,14 +13746,20 @@ async function dispatchCodexPrompt(input) {
       promptId: input.promptId,
       stopReason: "refusal"
     });
+    input.pipe.finishTimeline(input.promptId, "refusal");
     await input.store.recordStopReason(input.threadId, "refusal").catch(() => void 0);
   }
 }
 async function dispatchAcpPrompt(input) {
   try {
+    const meta = {};
+    if (input.model) meta.model = input.model;
+    if (input.reasoningEffort) meta.reasoningEffort = input.reasoningEffort;
+    if (input.fastMode) meta.fastMode = true;
     const response = await input.client.prompt({
       sessionId: input.sessionId,
-      prompt: input.content
+      prompt: input.content,
+      ...Object.keys(meta).length > 0 ? { _meta: meta } : {}
     });
     const stopReason = stopReasonFromResponse(response);
     await input.pipe.forceFlush();
@@ -13245,6 +13769,7 @@ async function dispatchAcpPrompt(input) {
       promptId: input.promptId,
       stopReason
     });
+    input.pipe.finishTimeline(input.promptId, stopReason);
     await input.store.recordStopReason(input.threadId, stopReason);
   } catch (err) {
     input.logger({
@@ -13259,18 +13784,363 @@ async function dispatchAcpPrompt(input) {
       promptId: input.promptId,
       stopReason: "refusal"
     });
+    input.pipe.finishTimeline(input.promptId, "refusal");
     await input.store.recordStopReason(input.threadId, "refusal").catch(() => void 0);
   }
 }
+var KNOWN_REASONING_EFFORTS;
 var init_dispatch_prompt = __esm({
   "packages/daemon/src/chat/dispatch-prompt.ts"() {
     "use strict";
     init_codex_helpers();
+    KNOWN_REASONING_EFFORTS = ["minimal", "low", "medium", "high", "xhigh"];
+  }
+});
+
+// packages/daemon/src/chat/provider-discovery.ts
+import { execFile as execFile2, spawn as spawn5 } from "node:child_process";
+import { once as once3 } from "node:events";
+import { constants as constants3 } from "node:fs";
+import { access } from "node:fs/promises";
+import { delimiter, isAbsolute as isAbsolute3, join as join19 } from "node:path";
+function isCodexCompatibleSlug(slug) {
+  return /-codex(?:-|$)/.test(slug);
+}
+function extractCodexCapabilities(model) {
+  const efforts = [];
+  if (Array.isArray(model.supportedReasoningEfforts)) {
+    for (const entry of model.supportedReasoningEfforts) {
+      if (typeof entry === "string" && entry.length > 0) {
+        efforts.push(entry);
+      } else if (entry && typeof entry === "object" && typeof entry.reasoningEffort === "string") {
+        efforts.push(entry.reasoningEffort);
+      }
+    }
+  }
+  const defaultEffort = typeof model.defaultReasoningEffort === "string" && model.defaultReasoningEffort.length > 0 ? model.defaultReasoningEffort : void 0;
+  const speedTiers = Array.isArray(model.additionalSpeedTiers) ? model.additionalSpeedTiers.filter((t) => typeof t === "string") : [];
+  const supportsFastMode = speedTiers.includes("fast");
+  if (efforts.length === 0 && !defaultEffort && !supportsFastMode) return void 0;
+  const out = {};
+  if (efforts.length > 0) out.reasoningEfforts = efforts;
+  if (defaultEffort) out.defaultReasoningEffort = defaultEffort;
+  if (supportsFastMode) out.supportsFastMode = true;
+  return out;
+}
+function parseCodexModelListResponse(response) {
+  const data = Array.isArray(response.data) ? response.data : [];
+  const out = [];
+  for (const model of data) {
+    const slug = typeof model.model === "string" ? model.model : null;
+    if (!slug) continue;
+    if (model.hidden === true) continue;
+    if (!isCodexCompatibleSlug(slug)) continue;
+    const displayName = typeof model.displayName === "string" ? model.displayName : slug;
+    const description = typeof model.description === "string" ? model.description : void 0;
+    const capabilities = extractCodexCapabilities(model);
+    const entry = {
+      slug,
+      name: prettifyCodexDisplayName(displayName),
+      ...description ? { description } : {},
+      ...capabilities ? { capabilities } : {}
+    };
+    out.push(entry);
+  }
+  const defaultSlug = data.find((m) => m.isDefault === true && typeof m.model === "string")?.model;
+  if (defaultSlug) {
+    const idx = out.findIndex((m) => m.slug === defaultSlug);
+    if (idx > 0) {
+      const [item] = out.splice(idx, 1);
+      if (item) out.unshift(item);
+    }
+  }
+  return out;
+}
+function prettifyCodexDisplayName(name) {
+  return name.replace(/^gpt/i, "GPT").replace(/-([a-z])/g, (_, c) => "-" + c.toUpperCase());
+}
+async function defaultProbeCodexModels(binaryPath, opts = {}) {
+  const timeoutMs = opts.timeoutMs ?? CODEX_PROBE_TIMEOUT_MS;
+  let timer = null;
+  let child = null;
+  try {
+    child = spawn5(binaryPath, ["app-server"], { stdio: ["pipe", "pipe", "pipe"] });
+    const spawnedChild = child;
+    if (!spawnedChild.stdin || !spawnedChild.stdout) return null;
+    spawnedChild.stderr?.on("data", () => void 0);
+    const spawnFailure = await Promise.race([
+      once3(spawnedChild, "spawn").then(() => null),
+      once3(spawnedChild, "error").then(([err]) => err),
+      once3(spawnedChild, "exit").then(
+        ([code, signal]) => new Error(`codex app-server exited during spawn (code=${code}, signal=${signal})`)
+      )
+    ]);
+    if (spawnFailure) return null;
+    const endpoint = makeJsonRpcEndpoint2({
+      input: spawnedChild.stdout,
+      output: spawnedChild.stdin
+    });
+    const work = (async () => {
+      await endpoint.request(AGENT_METHODS2.initialize, defaultInitializeRequest());
+      const accumulated = [];
+      let cursor = void 0;
+      for (let page = 0; page < 16; page += 1) {
+        const params = cursor ? { cursor } : {};
+        const response = await endpoint.request(
+          CODEX_METHODS.model_list,
+          params
+        );
+        accumulated.push(...parseCodexModelListResponse(response));
+        cursor = response.nextCursor ?? null;
+        if (!cursor) break;
+      }
+      return accumulated;
+    })();
+    const timeout = new Promise((resolve34) => {
+      timer = setTimeout(() => resolve34(null), timeoutMs);
+    });
+    const result = await Promise.race([work, timeout]);
+    if (result === null) return null;
+    return result.length > 0 ? result : null;
+  } catch {
+    return null;
+  } finally {
+    if (timer) clearTimeout(timer);
+    if (child && !child.killed) {
+      try {
+        child.kill("SIGTERM");
+      } catch {
+      }
+    }
+  }
+}
+async function getCodexModelsCached(binaryPath, version, now, probe) {
+  if (codexModelsCache && codexModelsCache.binaryPath === binaryPath && codexModelsCache.version === version && codexModelsCache.expiresAt > now) {
+    return codexModelsCache.models;
+  }
+  const probed = await probe(binaryPath, { timeoutMs: CODEX_PROBE_TIMEOUT_MS }).catch(() => null);
+  const models = probed ?? CODEX_MODELS;
+  codexModelsCache = {
+    binaryPath,
+    version,
+    expiresAt: now + CODEX_MODELS_CACHE_TTL_MS,
+    models
+  };
+  return models;
+}
+async function isExecutable(path4) {
+  try {
+    await access(path4, constants3.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+async function resolveFromPath3(binary) {
+  if (isAbsolute3(binary)) return await isExecutable(binary) ? binary : null;
+  if (binary.includes("/")) return await isExecutable(binary) ? binary : null;
+  for (const dir of (process.env.PATH ?? "").split(delimiter)) {
+    if (!dir) continue;
+    const candidate = join19(dir, binary);
+    if (await isExecutable(candidate)) return candidate;
+  }
+  return null;
+}
+async function defaultExec(cmd, args, opts = {}) {
+  return await new Promise((resolve34) => {
+    execFile2(cmd, args, { timeout: opts.timeoutMs }, (err, stdout, stderr) => {
+      const exitCode = err && typeof err.code === "number" ? err.code : err ? null : 0;
+      resolve34({ stdout, stderr, code: exitCode });
+    });
+  });
+}
+function firstStdoutLine(result) {
+  return result.code === 0 ? result.stdout.split(/\r?\n/).find((line) => line.trim())?.trim() : void 0;
+}
+async function bestEffortVersion(exec, binary) {
+  try {
+    return firstStdoutLine(await exec(binary, ["--version"], { timeoutMs: VERSION_TIMEOUT_MS }));
+  } catch {
+    return void 0;
+  }
+}
+async function discoverClaudeCode(pathLookup, exec) {
+  const direct = await pathLookup("claude-code-acp");
+  if (direct) {
+    const version = await bestEffortVersion(exec, direct);
+    return {
+      kind: "claude-code",
+      name: "Claude Code",
+      description: "Claude Code via claude-code-acp",
+      available: true,
+      binary: direct,
+      ...version ? { version } : {},
+      models: CLAUDE_CODE_MODELS
+    };
+  }
+  const npx = await pathLookup("npx");
+  if (npx) {
+    return {
+      kind: "claude-code",
+      name: "Claude Code",
+      description: "Claude Code via npx",
+      available: true,
+      binary: npx,
+      models: CLAUDE_CODE_MODELS
+    };
+  }
+  return {
+    kind: "claude-code",
+    name: "Claude Code",
+    description: "Claude Code via claude-code-acp",
+    available: false,
+    error: "neither claude-code-acp nor npx on PATH",
+    models: []
+  };
+}
+async function discoverCodex(pathLookup, exec, probe, now) {
+  const binary = await pathLookup("codex");
+  if (!binary) {
+    return {
+      kind: "codex",
+      name: "Codex",
+      description: "Codex app-server proxy",
+      available: false,
+      error: "codex not on PATH",
+      models: []
+    };
+  }
+  const version = await bestEffortVersion(exec, binary);
+  const models = await getCodexModelsCached(binary, version, now, probe);
+  return {
+    kind: "codex",
+    name: "Codex",
+    description: "Codex app-server proxy",
+    available: true,
+    binary,
+    ...version ? { version } : {},
+    models
+  };
+}
+async function discoverProviders(opts = {}) {
+  const pathLookup = opts.pathLookup ?? resolveFromPath3;
+  const exec = opts.exec ?? defaultExec;
+  const probe = opts.probeCodexModels ?? defaultProbeCodexModels;
+  const now = opts.now?.() ?? Date.now();
+  return [
+    await discoverClaudeCode(pathLookup, exec),
+    await discoverCodex(pathLookup, exec, probe, now)
+  ];
+}
+var MODEL_SLUG_ALIASES_BY_KIND, CLAUDE_CODE_MODELS, CODEX_STATIC_DEFAULT_REASONING, CODEX_STATIC_REASONING_EFFORTS, CODEX_MODELS, VERSION_TIMEOUT_MS, CODEX_PROBE_TIMEOUT_MS, CODEX_MODELS_CACHE_TTL_MS, codexModelsCache;
+var init_provider_discovery = __esm({
+  "packages/daemon/src/chat/provider-discovery.ts"() {
+    "use strict";
+    init_protocol2();
+    init_methods2();
+    init_schema2();
+    MODEL_SLUG_ALIASES_BY_KIND = {
+      codex: {
+        "gpt-5-codex": "gpt-5.4",
+        "5.4": "gpt-5.4",
+        "5.3": "gpt-5.3-codex",
+        "gpt-5.3": "gpt-5.3-codex",
+        "5.3-spark": "gpt-5.3-codex-spark",
+        "gpt-5.3-spark": "gpt-5.3-codex-spark"
+      },
+      "claude-code": {
+        opus: "claude-opus-4-7",
+        "opus-4.7": "claude-opus-4-7",
+        "claude-opus-4.7": "claude-opus-4-7",
+        sonnet: "claude-sonnet-4-6",
+        "sonnet-4.6": "claude-sonnet-4-6",
+        "claude-sonnet-4.6": "claude-sonnet-4-6",
+        haiku: "claude-haiku-4-5",
+        "haiku-4.5": "claude-haiku-4-5",
+        "claude-haiku-4-5-20251001": "claude-haiku-4-5"
+      }
+    };
+    CLAUDE_CODE_MODELS = [
+      {
+        slug: "claude-opus-4-7",
+        name: "Claude Opus 4.7",
+        description: "1M context \xB7 highest capability"
+      },
+      {
+        slug: "claude-sonnet-4-6",
+        name: "Claude Sonnet 4.6",
+        description: "Balanced speed + quality"
+      },
+      {
+        slug: "claude-haiku-4-5",
+        name: "Claude Haiku 4.5",
+        description: "Fastest \xB7 low cost"
+      }
+    ];
+    CODEX_STATIC_DEFAULT_REASONING = "medium";
+    CODEX_STATIC_REASONING_EFFORTS = ["minimal", "low", "medium", "high", "xhigh"];
+    CODEX_MODELS = [
+      {
+        slug: "gpt-5.4",
+        name: "GPT-5.4",
+        description: "Current default \xB7 reasoning + fast mode",
+        capabilities: {
+          reasoningEfforts: CODEX_STATIC_REASONING_EFFORTS,
+          defaultReasoningEffort: CODEX_STATIC_DEFAULT_REASONING,
+          supportsFastMode: true
+        }
+      },
+      {
+        slug: "gpt-5.3-codex",
+        name: "GPT-5.3 Codex",
+        description: "Newer code-tuned",
+        capabilities: {
+          reasoningEfforts: CODEX_STATIC_REASONING_EFFORTS,
+          defaultReasoningEffort: CODEX_STATIC_DEFAULT_REASONING,
+          supportsFastMode: true
+        }
+      },
+      {
+        slug: "gpt-5.3-codex-spark",
+        name: "GPT-5.3 Codex Spark",
+        description: "Faster code-tuned",
+        capabilities: {
+          reasoningEfforts: CODEX_STATIC_REASONING_EFFORTS,
+          defaultReasoningEffort: CODEX_STATIC_DEFAULT_REASONING,
+          supportsFastMode: true
+        }
+      },
+      {
+        slug: "gpt-5-codex",
+        name: "GPT-5 Codex",
+        description: "Code-tuned (legacy)"
+      }
+    ];
+    VERSION_TIMEOUT_MS = 1500;
+    CODEX_PROBE_TIMEOUT_MS = 5e3;
+    CODEX_MODELS_CACHE_TTL_MS = 6e4;
+    codexModelsCache = null;
   }
 });
 
 // packages/daemon/src/chat/thread-manager.ts
 import { randomUUID as randomUUID6 } from "node:crypto";
+function extractKnownOptions(options) {
+  if (!options) return {};
+  const out = {};
+  for (const sel of options) {
+    if (sel.id === "reasoningEffort" && typeof sel.value === "string") {
+      out.reasoningEffort = sel.value;
+    } else if (sel.id === "fastMode" && typeof sel.value === "boolean") {
+      out.fastMode = sel.value;
+    }
+  }
+  return out;
+}
+function aliasModelSlug(kind, slug) {
+  if (kind !== "claude-code" && kind !== "codex") return slug;
+  return MODEL_SLUG_ALIASES_BY_KIND[kind]?.[slug] ?? slug;
+}
 function initialSeq(messages) {
   return messages.filter((msg) => msg._tag === "AgentUpdate").length;
 }
@@ -13284,6 +14154,7 @@ function resolveCodexPrompt(liveThread, stopReason, turnId) {
 function makeThreadManager(opts) {
   const live = /* @__PURE__ */ new Map();
   const starting = /* @__PURE__ */ new Map();
+  const lastProviderOptions = /* @__PURE__ */ new Map();
   const logger2 = opts.logger ?? (() => void 0);
   const permissionTimeoutMs = opts.permissionTimeoutMs ?? DEFAULT_PERMISSION_TIMEOUT_MS;
   const persistDebounceMs = opts.persistDebounceMs ?? DEFAULT_PERSIST_DEBOUNCE_MS;
@@ -13301,11 +14172,12 @@ function makeThreadManager(opts) {
       if (liveThread) await liveThread.pipe.forceFlush();
     }
   });
-  function makePipeFor(threadId, initialUsage, seq) {
+  function makePipeFor(threadId, initialUsage, seq, initialMessages) {
     return makeMessagePipe({
       threadId,
       initialSeq: seq,
       ...initialUsage ? { initialUsage } : {},
+      initialMessages,
       store: opts.store,
       busEmit: opts.busEmit,
       persistDebounceMs,
@@ -13314,14 +14186,15 @@ function makeThreadManager(opts) {
       logger: logger2
     });
   }
-  async function spawnCodexLive(threadId) {
+  async function spawnCodexLive(threadId, effectiveProvider) {
     const thread = await opts.store.get(threadId);
     if (!thread) throw new ThreadNotFoundError(threadId);
-    if (thread.provider.kind !== "codex") {
+    const provider = effectiveProvider ?? thread.provider;
+    if (provider.kind !== "codex") {
       throw new Error(`Expected codex provider on thread ${threadId}`);
     }
-    const pipe = makePipeFor(threadId, thread.usage, initialSeq(thread.messages));
-    const client = await spawnCodexClient2(thread.provider, {
+    const pipe = makePipeFor(threadId, thread.usage, initialSeq(thread.messages), thread.messages);
+    const client = await spawnCodexClient2(provider, {
       cwd: thread.projectDir,
       logger: createCodexDebugLogger(threadId)
     });
@@ -13367,7 +14240,8 @@ function makeThreadManager(opts) {
     live.set(threadId, liveThread);
     try {
       const conversation = await client.newConversation({
-        cwd: thread.projectDir ?? process.cwd()
+        cwd: thread.projectDir ?? process.cwd(),
+        ...provider.model ? { model: provider.model } : {}
       });
       liveThread.threadId = conversation.thread.id;
       return liveThread;
@@ -13378,11 +14252,12 @@ function makeThreadManager(opts) {
       throw err;
     }
   }
-  async function spawnAcpLive(threadId) {
+  async function spawnAcpLive(threadId, effectiveProvider) {
     const thread = await opts.store.get(threadId);
     if (!thread) throw new ThreadNotFoundError(threadId);
-    const pipe = makePipeFor(threadId, thread.usage, initialSeq(thread.messages));
-    const client = await opts.spawnClient(thread.provider, { cwd: thread.projectDir });
+    const provider = effectiveProvider ?? thread.provider;
+    const pipe = makePipeFor(threadId, thread.usage, initialSeq(thread.messages), thread.messages);
+    const client = await opts.spawnClient(provider, { cwd: thread.projectDir });
     await client.initialize();
     const session = await client.newSession({
       cwd: thread.projectDir ?? process.cwd(),
@@ -13410,16 +14285,38 @@ function makeThreadManager(opts) {
     live.set(threadId, liveThread);
     return liveThread;
   }
-  async function ensureLive(threadId) {
+  async function disposeLiveImmediate(threadId) {
     const existing = live.get(threadId);
-    if (existing) return existing;
-    const existingStart = starting.get(threadId);
-    if (existingStart) return existingStart;
-    const start2 = (async () => {
+    if (!existing) return;
+    permissions.cancelForThread(threadId);
+    await existing.pipe.forceFlush();
+    live.delete(threadId);
+    lastProviderOptions.delete(threadId);
+    for (const unsub of existing.unsubs.splice(0)) {
+      try {
+        unsub();
+      } catch {
+      }
+    }
+    await existing.client.close().catch(() => void 0);
+  }
+  async function ensureLive(threadId, effectiveProvider) {
+    let target = effectiveProvider;
+    if (!target) {
       const thread = await opts.store.get(threadId);
       if (!thread) throw new ThreadNotFoundError(threadId);
-      return thread.provider.kind === "codex" ? spawnCodexLive(threadId) : spawnAcpLive(threadId);
-    })();
+      target = thread.provider;
+    }
+    const targetIsCodex = target.kind === "codex";
+    const existing = live.get(threadId);
+    if (existing) {
+      const existingIsCodex = existing.kind === "codex";
+      if (existingIsCodex === targetIsCodex) return existing;
+      await disposeLiveImmediate(threadId);
+    }
+    const existingStart = starting.get(threadId);
+    if (existingStart) return existingStart;
+    const start2 = (async () => targetIsCodex ? spawnCodexLive(threadId, target) : spawnAcpLive(threadId, target))();
     starting.set(threadId, start2);
     try {
       return await start2;
@@ -13429,7 +14326,24 @@ function makeThreadManager(opts) {
   }
   return {
     async send(input) {
-      const liveThread = await ensureLive(input.threadId);
+      const stored = await opts.store.get(input.threadId);
+      if (!stored) throw new ThreadNotFoundError(input.threadId);
+      const overrideKind = input.providerKind;
+      const persistedKind = stored.provider.kind;
+      const sameKind = !overrideKind || overrideKind === persistedKind;
+      const aliasKind = overrideKind ?? persistedKind;
+      const normalizedInputModel = input.model ? aliasModelSlug(aliasKind, input.model) : void 0;
+      if (normalizedInputModel && sameKind && stored.provider.model !== normalizedInputModel) {
+        await opts.store.setProvider(input.threadId, {
+          ...stored.provider,
+          model: normalizedInputModel
+        });
+      }
+      const thread = await opts.store.get(input.threadId) ?? stored;
+      const effectiveKind = overrideKind ?? thread.provider.kind;
+      const effectiveModel = normalizedInputModel ?? thread.provider.model;
+      const effectiveProvider = effectiveKind === thread.provider.kind ? { ...thread.provider, ...effectiveModel ? { model: effectiveModel } : {} } : effectiveKind === "custom" ? thread.provider : { kind: effectiveKind, ...effectiveModel ? { model: effectiveModel } : {} };
+      const liveThread = await ensureLive(input.threadId, effectiveProvider);
       const promptId = randomUUID6();
       await opts.store.appendMessage(input.threadId, {
         _tag: "UserPrompt",
@@ -13437,6 +14351,14 @@ function makeThreadManager(opts) {
         createdAt: (/* @__PURE__ */ new Date()).toISOString(),
         content: input.content
       });
+      const persisted = await opts.store.get(input.threadId);
+      const dispatchModel = effectiveModel;
+      const effectiveOptions = input.providerOptions ?? lastProviderOptions.get(input.threadId);
+      if (input.providerOptions) {
+        lastProviderOptions.set(input.threadId, [...input.providerOptions]);
+      }
+      const known = extractKnownOptions(effectiveOptions);
+      liveThread.pipe.resyncTimeline(persisted?.messages ?? [], promptId);
       if (liveThread.kind === "codex") {
         void dispatchCodexPrompt({
           threadId: input.threadId,
@@ -13451,7 +14373,10 @@ function makeThreadManager(opts) {
           },
           readActivePrompt: () => liveThread.activePrompt,
           promptId,
-          content: input.content
+          content: input.content,
+          ...dispatchModel ? { model: dispatchModel } : {},
+          ...known.reasoningEffort ? { reasoningEffort: known.reasoningEffort } : {},
+          ...known.fastMode ? { fastMode: known.fastMode } : {}
         });
       } else {
         void dispatchAcpPrompt({
@@ -13462,6 +14387,9 @@ function makeThreadManager(opts) {
           busEmit: opts.busEmit,
           store: opts.store,
           logger: logger2,
+          ...dispatchModel ? { model: dispatchModel } : {},
+          ...known.reasoningEffort ? { reasoningEffort: known.reasoningEffort } : {},
+          ...known.fastMode ? { fastMode: known.fastMode } : {},
           promptId,
           content: input.content
         });
@@ -13527,18 +14455,7 @@ function makeThreadManager(opts) {
       return opts.providerStore.get(id);
     },
     async disposeLive(threadId) {
-      const liveThread = live.get(threadId);
-      if (!liveThread) return;
-      permissions.cancelForThread(threadId);
-      await liveThread.pipe.forceFlush();
-      live.delete(threadId);
-      for (const unsub of liveThread.unsubs.splice(0)) {
-        try {
-          unsub();
-        } catch {
-        }
-      }
-      await liveThread.client.close().catch(() => void 0);
+      await disposeLiveImmediate(threadId);
     },
     async shutdown() {
       const closing = [...live.entries()].map(async ([threadId, liveThread]) => {
@@ -13572,9 +14489,10 @@ var init_thread_manager = __esm({
     init_permission_coordinator();
     init_message_pipe();
     init_dispatch_prompt();
+    init_provider_discovery();
     DEFAULT_PERMISSION_TIMEOUT_MS = 6e4;
     DEFAULT_PERSIST_DEBOUNCE_MS = 750;
-    DEFAULT_TEXT_COALESCE_WINDOW_MS = 30;
+    DEFAULT_TEXT_COALESCE_WINDOW_MS = 16;
     ThreadNotFoundError = class extends Error {
       threadId;
       constructor(threadId) {
@@ -13589,8 +14507,8 @@ var init_thread_manager = __esm({
 // packages/daemon/src/chat/thread-store.ts
 import { randomUUID as randomUUID7 } from "node:crypto";
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
-import { dirname as dirname9, join as join19 } from "node:path";
-function clone(value) {
+import { dirname as dirname9, join as join20 } from "node:path";
+function clone2(value) {
   return structuredClone(value);
 }
 function cleanTitle(title) {
@@ -13605,10 +14523,10 @@ function titleFromFirstPrompt(msg) {
   return text ? cleanTitle(text.text) : null;
 }
 function threadPath(rootDir, id) {
-  return join19(rootDir, "threads", `${id}.json`);
+  return join20(rootDir, "threads", `${id}.json`);
 }
 function indexPath(rootDir) {
-  return join19(rootDir, "threads.json");
+  return join20(rootDir, "threads.json");
 }
 async function readJson2(path4) {
   try {
@@ -13633,7 +14551,7 @@ function makeThreadStore(opts) {
   const now = opts.now ?? (() => /* @__PURE__ */ new Date());
   const randomId = opts.randomId ?? randomUUID7;
   const rootDir = opts.rootDir;
-  const threadsDir = join19(rootDir, "threads");
+  const threadsDir = join20(rootDir, "threads");
   let hydrated = false;
   let index = [];
   const states = /* @__PURE__ */ new Map();
@@ -13694,7 +14612,7 @@ function makeThreadStore(opts) {
           nextState.title = firstPromptTitle;
           nextEntry.title = firstPromptTitle;
         }
-        nextState.messages.push(...messages.map(clone));
+        nextState.messages.push(...messages.map(clone2));
         nextState.updatedAt = updatedAt;
         nextEntry.updatedAt = updatedAt;
         nextEntry.messageCount = nextState.messages.length;
@@ -13716,12 +14634,12 @@ function makeThreadStore(opts) {
   return {
     async list() {
       await hydrate();
-      return clone(index);
+      return clone2(index);
     },
     async get(id) {
       await hydrate();
       const state = states.get(id);
-      return state ? clone(state) : null;
+      return state ? clone2(state) : null;
     },
     create(input) {
       return enqueue(async () => {
@@ -13733,7 +14651,7 @@ function makeThreadStore(opts) {
           title: cleanTitle(input.title),
           createdAt,
           updatedAt: createdAt,
-          provider: clone(input.provider),
+          provider: clone2(input.provider),
           ...input.providerInstanceId ? { providerInstanceId: input.providerInstanceId } : {},
           ...input.projectDir ? { projectDir: input.projectDir } : {},
           messages: []
@@ -13743,7 +14661,7 @@ function makeThreadStore(opts) {
         index = [entry, ...index];
         await persistState(state);
         await persistIndex();
-        return clone(state);
+        return clone2(state);
       });
     },
     rename(id, title) {
@@ -13756,21 +14674,21 @@ function makeThreadStore(opts) {
           nextEntry.updatedAt = updatedAt;
         });
         states.set(id, state);
-        return clone(entry);
+        return clone2(entry);
       });
     },
     setProvider(id, provider) {
       return enqueue(async () => {
         const { state, entry } = await updateThread(id, (nextState, nextEntry) => {
           const updatedAt = now().toISOString();
-          nextState.provider = clone(provider);
+          nextState.provider = clone2(provider);
           nextState.acpSessionId = void 0;
           nextState.updatedAt = updatedAt;
           nextEntry.providerKind = provider.kind;
           nextEntry.updatedAt = updatedAt;
         });
         states.set(id, state);
-        return clone(entry);
+        return clone2(entry);
       });
     },
     delete(id) {
@@ -13828,7 +14746,7 @@ function makeThreadStore(opts) {
       return enqueue(async () => {
         const { state } = await updateThread(id, (nextState, nextEntry) => {
           const updatedAt = now().toISOString();
-          nextState.usage = clone(usage);
+          nextState.usage = clone2(usage);
           nextState.updatedAt = updatedAt;
           nextEntry.updatedAt = updatedAt;
         });
@@ -14111,7 +15029,7 @@ __export(defaults_exports, {
   shutdownDefaultChatRuntime: () => shutdownDefaultChatRuntime
 });
 import { mkdirSync as mkdirSync17 } from "node:fs";
-import { join as join20 } from "node:path";
+import { join as join21 } from "node:path";
 import { homedir as homedir7 } from "node:os";
 import { randomUUID as randomUUID8 } from "node:crypto";
 function isChatThreadEvent(event) {
@@ -14136,13 +15054,13 @@ function inferActorKind(event) {
   }
 }
 function defaultChatRootDir() {
-  return process.env.TMUX_IDE_CHATS_DIR ?? join20(homedir7(), ".tmux-ide", "chats");
+  return process.env.TMUX_IDE_CHATS_DIR ?? join21(homedir7(), ".tmux-ide", "chats");
 }
 function getDefaultEventDb() {
   if (defaultEventDb) return defaultEventDb;
   const dir = defaultChatRootDir();
   mkdirSync17(dir, { recursive: true });
-  const path4 = process.env.TMUX_IDE_CHAT_EVENTS_DB ?? join20(dir, "events.sqlite");
+  const path4 = process.env.TMUX_IDE_CHAT_EVENTS_DB ?? join21(dir, "events.sqlite");
   defaultEventDb = openDatabase(path4);
   return defaultEventDb;
 }
@@ -14329,112 +15247,6 @@ var init_defaults = __esm({
   }
 });
 
-// packages/daemon/src/chat/provider-discovery.ts
-import { execFile as execFile2 } from "node:child_process";
-import { constants as constants3 } from "node:fs";
-import { access } from "node:fs/promises";
-import { delimiter, isAbsolute as isAbsolute3, join as join21 } from "node:path";
-async function isExecutable(path4) {
-  try {
-    await access(path4, constants3.X_OK);
-    return true;
-  } catch {
-    return false;
-  }
-}
-async function resolveFromPath3(binary) {
-  if (isAbsolute3(binary)) return await isExecutable(binary) ? binary : null;
-  if (binary.includes("/")) return await isExecutable(binary) ? binary : null;
-  for (const dir of (process.env.PATH ?? "").split(delimiter)) {
-    if (!dir) continue;
-    const candidate = join21(dir, binary);
-    if (await isExecutable(candidate)) return candidate;
-  }
-  return null;
-}
-async function defaultExec(cmd, args, opts = {}) {
-  return await new Promise((resolve34) => {
-    execFile2(cmd, args, { timeout: opts.timeoutMs }, (err, stdout, stderr) => {
-      const exitCode = err && typeof err.code === "number" ? err.code : err ? null : 0;
-      resolve34({ stdout, stderr, code: exitCode });
-    });
-  });
-}
-function firstStdoutLine(result) {
-  return result.code === 0 ? result.stdout.split(/\r?\n/).find((line) => line.trim())?.trim() : void 0;
-}
-async function bestEffortVersion(exec, binary) {
-  try {
-    return firstStdoutLine(await exec(binary, ["--version"], { timeoutMs: VERSION_TIMEOUT_MS }));
-  } catch {
-    return void 0;
-  }
-}
-async function discoverClaudeCode(pathLookup, exec) {
-  const direct = await pathLookup("claude-code-acp");
-  if (direct) {
-    const version = await bestEffortVersion(exec, direct);
-    return {
-      kind: "claude-code",
-      name: "Claude Code",
-      description: "Claude Code via claude-code-acp",
-      available: true,
-      binary: direct,
-      ...version ? { version } : {}
-    };
-  }
-  const npx = await pathLookup("npx");
-  if (npx) {
-    return {
-      kind: "claude-code",
-      name: "Claude Code",
-      description: "Claude Code via npx",
-      available: true,
-      binary: npx
-    };
-  }
-  return {
-    kind: "claude-code",
-    name: "Claude Code",
-    description: "Claude Code via claude-code-acp",
-    available: false,
-    error: "neither claude-code-acp nor npx on PATH"
-  };
-}
-async function discoverCodex(pathLookup, exec) {
-  const binary = await pathLookup("codex");
-  if (!binary) {
-    return {
-      kind: "codex",
-      name: "Codex",
-      description: "Codex app-server proxy",
-      available: false,
-      error: "codex not on PATH"
-    };
-  }
-  const version = await bestEffortVersion(exec, binary);
-  return {
-    kind: "codex",
-    name: "Codex",
-    description: "Codex app-server proxy",
-    available: true,
-    binary,
-    ...version ? { version } : {}
-  };
-}
-async function discoverProviders(opts = {}) {
-  const pathLookup = opts.pathLookup ?? resolveFromPath3;
-  const exec = opts.exec ?? defaultExec;
-  return [await discoverClaudeCode(pathLookup, exec), await discoverCodex(pathLookup, exec)];
-}
-var VERSION_TIMEOUT_MS;
-var init_provider_discovery = __esm({
-  "packages/daemon/src/chat/provider-discovery.ts"() {
-    "use strict";
-    VERSION_TIMEOUT_MS = 1500;
-  }
-});
-
 // packages/daemon/src/command-center/actions/handlers/chat-actions.ts
 import { isAbsolute as isAbsolute4 } from "node:path";
 function resetChatProvidersListCache() {
@@ -14560,7 +15372,8 @@ async function chatThreadSetProviderHandler(input, deps2 = {}) {
   return { thread };
 }
 async function chatThreadGetHandler(input, deps2 = {}) {
-  return { thread: await requireThread(storeFrom(deps2), input.id) };
+  const thread = await requireThread(storeFrom(deps2), input.id);
+  return { thread, timeline: materializeRows(thread.messages) };
 }
 async function chatThreadUsageHandler(input, deps2 = {}) {
   const thread = await requireThread(storeFrom(deps2), input.id);
@@ -14570,7 +15383,10 @@ async function chatSessionSendHandler(input, deps2 = {}) {
   await requireThread(storeFrom(deps2), input.threadId);
   const { promptId } = await managerFrom(deps2).send({
     threadId: input.threadId,
-    content: input.content
+    content: input.content,
+    ...input.model ? { model: input.model } : {},
+    ...input.provider?.kind ? { providerKind: input.provider.kind } : {},
+    ...input.providerOptions ? { providerOptions: input.providerOptions } : {}
   });
   return { accepted: true, promptId };
 }
@@ -14629,6 +15445,7 @@ var init_chat_actions = __esm({
     init_defaults();
     init_provider_discovery();
     init_thread_manager();
+    init_materialize();
     init_ws_events();
     init_errors3();
     PROVIDER_CACHE_TTL_MS = 5e3;
@@ -15691,74 +16508,74 @@ var init_workflow_store = __esm({
 });
 
 // packages/daemon/src/command-center/schemas.ts
-import { z as z19 } from "zod";
+import { z as z20 } from "zod";
 var updateTaskSchema, createTaskSchema, savePlanSchema, savePlanContentSchema, sendCommandSchema, createMilestoneSchema, updateMilestoneSchema, updateAssertionSchema, triggerResearchSchema, launchSchema, stopSchema, skillNameRegex, createSkillSchema, updateSkillSchema;
 var init_schemas = __esm({
   "packages/daemon/src/command-center/schemas.ts"() {
     "use strict";
-    updateTaskSchema = z19.object({
-      status: z19.enum(["todo", "in-progress", "review", "done"]).optional(),
-      assignee: z19.string().optional(),
-      title: z19.string().optional(),
-      description: z19.string().optional(),
-      priority: z19.number().optional()
+    updateTaskSchema = z20.object({
+      status: z20.enum(["todo", "in-progress", "review", "done"]).optional(),
+      assignee: z20.string().optional(),
+      title: z20.string().optional(),
+      description: z20.string().optional(),
+      priority: z20.number().optional()
     });
-    createTaskSchema = z19.object({
-      title: z19.string().trim().min(1, "Title is required"),
-      description: z19.string().optional(),
-      priority: z19.number().optional(),
-      goal: z19.string().optional(),
-      tags: z19.array(z19.string()).optional()
+    createTaskSchema = z20.object({
+      title: z20.string().trim().min(1, "Title is required"),
+      description: z20.string().optional(),
+      priority: z20.number().optional(),
+      goal: z20.string().optional(),
+      tags: z20.array(z20.string()).optional()
     });
-    savePlanSchema = z19.object({
-      content: z19.string().max(1e6, "Plan content is too large")
+    savePlanSchema = z20.object({
+      content: z20.string().max(1e6, "Plan content is too large")
     });
-    savePlanContentSchema = z19.object({
-      content: z19.string().max(1e6, "Plan content is too large")
+    savePlanContentSchema = z20.object({
+      content: z20.string().max(1e6, "Plan content is too large")
     });
-    sendCommandSchema = z19.object({
-      target: z19.string().min(1, "Target pane is required"),
-      message: z19.string().min(1, "Message is required"),
-      noEnter: z19.boolean().optional()
+    sendCommandSchema = z20.object({
+      target: z20.string().min(1, "Target pane is required"),
+      message: z20.string().min(1, "Message is required"),
+      noEnter: z20.boolean().optional()
     });
-    createMilestoneSchema = z19.object({
-      title: z19.string().trim().min(1, "Title is required"),
-      sequence: z19.number().int().positive(),
-      description: z19.string().optional()
+    createMilestoneSchema = z20.object({
+      title: z20.string().trim().min(1, "Title is required"),
+      sequence: z20.number().int().positive(),
+      description: z20.string().optional()
     });
-    updateMilestoneSchema = z19.object({
-      status: z19.enum(["locked", "active", "done", "validating"]).optional(),
-      title: z19.string().optional(),
-      description: z19.string().optional()
+    updateMilestoneSchema = z20.object({
+      status: z20.enum(["locked", "active", "done", "validating"]).optional(),
+      title: z20.string().optional(),
+      description: z20.string().optional()
     });
-    updateAssertionSchema = z19.object({
-      status: z19.enum(["pending", "passing", "failing", "blocked"]),
-      evidence: z19.string().optional(),
-      verifiedBy: z19.string().optional()
+    updateAssertionSchema = z20.object({
+      status: z20.enum(["pending", "passing", "failing", "blocked"]),
+      evidence: z20.string().optional(),
+      verifiedBy: z20.string().optional()
     });
-    triggerResearchSchema = z19.object({
-      type: z19.string().trim().min(1, "Research type is required")
+    triggerResearchSchema = z20.object({
+      type: z20.string().trim().min(1, "Research type is required")
     });
-    launchSchema = z19.object({
-      attach: z19.boolean().optional()
+    launchSchema = z20.object({
+      attach: z20.boolean().optional()
     }).optional();
-    stopSchema = z19.object({}).optional();
+    stopSchema = z20.object({}).optional();
     skillNameRegex = /^[A-Za-z0-9._ -]+$/;
-    createSkillSchema = z19.object({
-      name: z19.string().trim().min(1, "Skill name is required").regex(
+    createSkillSchema = z20.object({
+      name: z20.string().trim().min(1, "Skill name is required").regex(
         skillNameRegex,
         "Skill name may only contain letters, digits, dot, dash, underscore, or space"
       ),
-      role: z19.string().trim().optional(),
-      description: z19.string().optional(),
-      specialties: z19.array(z19.string()).optional(),
-      body: z19.string().optional()
+      role: z20.string().trim().optional(),
+      description: z20.string().optional(),
+      specialties: z20.array(z20.string()).optional(),
+      body: z20.string().optional()
     });
-    updateSkillSchema = z19.object({
-      role: z19.string().trim().optional(),
-      description: z19.string().optional(),
-      specialties: z19.array(z19.string()).optional(),
-      body: z19.string().optional()
+    updateSkillSchema = z20.object({
+      role: z20.string().trim().optional(),
+      description: z20.string().optional(),
+      specialties: z20.array(z20.string()).optional(),
+      body: z20.string().optional()
     });
   }
 });
@@ -16223,13 +17040,131 @@ function push(cwd, opts = {}) {
     return { remote, branch };
   });
 }
-var GIT_MAX_BUFFER;
+function parseNumstat(out) {
+  return out.split("\n").map((l) => l.trim()).filter(Boolean).map((line) => {
+    const [added, removed, ...rest] = line.split("	");
+    const file = rest.join("	");
+    return {
+      file,
+      // Binary files report "-" for both columns — coerce to 0.
+      additions: Number.parseInt(added ?? "", 10) || 0,
+      deletions: Number.parseInt(removed ?? "", 10) || 0
+    };
+  }).filter((f) => f.file.length > 0);
+}
+function revParse(cwd, ref) {
+  return run(cwd, ["rev-parse", "--verify", "--quiet", `${ref}^{commit}`]).pipe(
+    Effect.map((r) => r.stdout.trim())
+  );
+}
+function commits(cwd, opts = {}) {
+  return Effect.gen(function* () {
+    yield* ensureRepo(cwd);
+    const limit = Math.min(Math.max(opts.limit ?? 100, 1), 1e3);
+    const headSha = (yield* run(cwd, ["rev-parse", "HEAD"])).stdout.trim();
+    let base = opts.base?.trim() || null;
+    let baseSha = null;
+    let aheadShas = /* @__PURE__ */ new Set();
+    let aheadCount = 0;
+    if (base) {
+      const baseResolved = yield* Effect.either(revParse(cwd, base));
+      if (baseResolved._tag === "Right") {
+        const mb = yield* Effect.either(run(cwd, ["merge-base", baseResolved.right, "HEAD"]));
+        baseSha = mb._tag === "Right" ? mb.right.stdout.trim() || baseResolved.right : baseResolved.right;
+        const aheadOut = yield* Effect.either(run(cwd, ["rev-list", `${baseSha}..HEAD`]));
+        if (aheadOut._tag === "Right") {
+          const shas = aheadOut.right.stdout.split("\n").map((s) => s.trim()).filter(Boolean);
+          aheadShas = new Set(shas);
+          aheadCount = shas.length;
+        }
+      } else {
+        base = null;
+      }
+    }
+    const fmt = ["%H", "%h", "%s", "%an", "%ae", "%cI", "%P"].join(LOG_FIELD_SEP);
+    const logOut = yield* run(cwd, [
+      "log",
+      `--max-count=${limit}`,
+      `--format=${fmt}${LOG_RECORD_SEP}`,
+      "HEAD"
+    ]);
+    const commitList = logOut.stdout.split(LOG_RECORD_SEP).map((r) => r.replace(/^\n+/, "")).filter(Boolean).map((record) => {
+      const [sha, shortSha, subject, author, authorEmail, date, parents] = record.split(LOG_FIELD_SEP);
+      return {
+        sha: sha ?? "",
+        shortSha: shortSha ?? "",
+        subject: subject ?? "",
+        author: author ?? "",
+        authorEmail: authorEmail ?? "",
+        date: date ?? "",
+        parents: (parents ?? "").split(" ").map((s) => s.trim()).filter(Boolean),
+        ahead: aheadShas.has((sha ?? "").trim())
+      };
+    }).filter((c) => c.sha.length > 0);
+    return { commits: commitList, base, baseSha, headSha, aheadCount };
+  });
+}
+function commitDiff(cwd, sha) {
+  return Effect.gen(function* () {
+    yield* ensureRepo(cwd);
+    if (!/^[A-Za-z0-9_./-]+$/.test(sha)) {
+      return yield* Effect.fail(new GitError({ message: `invalid commit ref: ${sha}` }));
+    }
+    const fullSha = yield* revParse(cwd, sha);
+    const meta = yield* run(cwd, [
+      "show",
+      "--no-patch",
+      `--format=%H${LOG_FIELD_SEP}%h${LOG_FIELD_SEP}%s${LOG_FIELD_SEP}%an${LOG_FIELD_SEP}%cI${LOG_FIELD_SEP}%P`,
+      fullSha
+    ]);
+    const [, shortSha, subject, author, date, parentsRaw] = meta.stdout.trim().split(LOG_FIELD_SEP);
+    const parents = (parentsRaw ?? "").split(" ").map((s) => s.trim()).filter(Boolean);
+    const parent = parents[0] ?? null;
+    const beforeRef = parent ?? EMPTY_TREE_SHA;
+    const diff = (yield* run(cwd, ["diff", beforeRef, fullSha])).stdout;
+    const files = parseNumstat((yield* run(cwd, ["diff", "--numstat", beforeRef, fullSha])).stdout);
+    return {
+      sha: fullSha,
+      shortSha: shortSha ?? fullSha.slice(0, 7),
+      parent,
+      subject: subject ?? "",
+      author: author ?? "",
+      date: date ?? "",
+      diff,
+      files
+    };
+  });
+}
+function rangeDiff(cwd, base) {
+  return Effect.gen(function* () {
+    yield* ensureRepo(cwd);
+    const trimmed = base.trim();
+    if (!/^[A-Za-z0-9_./-]+$/.test(trimmed)) {
+      return yield* Effect.fail(new GitError({ message: `invalid base ref: ${base}` }));
+    }
+    const headSha = (yield* run(cwd, ["rev-parse", "HEAD"])).stdout.trim();
+    const baseResolved = yield* revParse(cwd, trimmed);
+    const mb = yield* Effect.either(run(cwd, ["merge-base", baseResolved, "HEAD"]));
+    const baseSha = mb._tag === "Right" ? mb.right.stdout.trim() || baseResolved : baseResolved;
+    const diff = (yield* run(cwd, ["diff", `${baseSha}...HEAD`])).stdout;
+    const files = parseNumstat(
+      (yield* run(cwd, ["diff", "--numstat", `${baseSha}...HEAD`])).stdout
+    );
+    const aheadOut = yield* Effect.either(run(cwd, ["rev-list", "--count", `${baseSha}..HEAD`]));
+    const aheadCount = aheadOut._tag === "Right" ? Number.parseInt(aheadOut.right.stdout.trim(), 10) || 0 : 0;
+    return { base: trimmed, baseSha, headSha, diff, files, aheadCount };
+  });
+}
+var GIT_MAX_BUFFER, EMPTY_TREE_SHA, LOG_FIELD_SEP, LOG_RECORD_SEP;
 var init_git_service = __esm({
   "packages/daemon/src/git/git-service.ts"() {
     "use strict";
     init_status_parser();
     init_errors6();
     GIT_MAX_BUFFER = 32 * 1024 * 1024;
+    EMPTY_TREE_SHA = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
+    LOG_FIELD_SEP = "";
+    LOG_RECORD_SEP = "";
   }
 });
 
@@ -16912,9 +17847,9 @@ var init_types2 = __esm({
 });
 
 // packages/daemon/src/command-center/search.ts
-import { spawn as spawn5 } from "node:child_process";
+import { spawn as spawn6 } from "node:child_process";
 import { createInterface } from "node:readline";
-import { z as z20 } from "zod";
+import { z as z21 } from "zod";
 async function resolveRipgrepPath() {
   const override = process.env["TMUX_IDE_RIPGREP_PATH"]?.trim();
   if (override) return override;
@@ -17058,7 +17993,7 @@ function relativizePath(absolute, searchRoot) {
 }
 async function* runSearch(opts) {
   const args = buildRgArgs(opts.query, opts.searchRoot);
-  const spawnFn = opts.spawn ?? spawn5;
+  const spawnFn = opts.spawn ?? spawn6;
   const startedAt = Date.now();
   let child;
   try {
@@ -17153,15 +18088,15 @@ var init_search = __esm({
     DEFAULT_MAX_FILESIZE_BYTES = 5 * 1024 * 1024;
     DEFAULT_CONTEXT = 0;
     PER_FILE_MAX_COUNT = 50;
-    CaseModeZ = z20.enum(["smart", "sensitive", "insensitive"]).default("smart");
-    BoolFlagZ = z20.string().optional().transform((v) => v === "true" || v === "1");
+    CaseModeZ = z21.enum(["smart", "sensitive", "insensitive"]).default("smart");
+    BoolFlagZ = z21.string().optional().transform((v) => v === "true" || v === "1");
   }
 });
 
 // packages/daemon/src/command-center/search-replace.ts
 import { readFileSync as readFileSync21, renameSync as renameSync15, rmSync as rmSync4, statSync as statSync5, writeFileSync as writeFileSync20 } from "node:fs";
 import { dirname as dirname11, resolve as pathResolve } from "node:path";
-import { z as z21 } from "zod";
+import { z as z22 } from "zod";
 function resolveSandboxedPath(sessionDir, relPath) {
   if (!relPath) return null;
   if (relPath.startsWith("/")) return null;
@@ -17272,22 +18207,22 @@ var ReplacementZ, FileTargetZ, ReplaceRequestZ, DEFAULT_MTIME_TOLERANCE_MS;
 var init_search_replace = __esm({
   "packages/daemon/src/command-center/search-replace.ts"() {
     "use strict";
-    ReplacementZ = z21.object({
-      line: z21.number().int().min(1),
-      column: z21.number().int().min(0),
-      length: z21.number().int().min(0)
+    ReplacementZ = z22.object({
+      line: z22.number().int().min(1),
+      column: z22.number().int().min(0),
+      length: z22.number().int().min(0)
     }).strict();
-    FileTargetZ = z21.object({
-      path: z21.string().min(1),
-      expectedMtimeMs: z21.number().int().nonnegative().optional(),
-      replacements: z21.array(ReplacementZ).min(1)
+    FileTargetZ = z22.object({
+      path: z22.string().min(1),
+      expectedMtimeMs: z22.number().int().nonnegative().optional(),
+      replacements: z22.array(ReplacementZ).min(1)
     }).strict();
-    ReplaceRequestZ = z21.object({
-      query: z21.string(),
-      regex: z21.boolean().default(false),
-      caseMode: z21.enum(["smart", "sensitive", "insensitive"]).default("smart"),
-      replacement: z21.string(),
-      files: z21.array(FileTargetZ).min(1)
+    ReplaceRequestZ = z22.object({
+      query: z22.string(),
+      regex: z22.boolean().default(false),
+      caseMode: z22.enum(["smart", "sensitive", "insensitive"]).default("smart"),
+      replacement: z22.string(),
+      files: z22.array(FileTargetZ).min(1)
     }).strict();
     DEFAULT_MTIME_TOLERANCE_MS = 10;
   }
@@ -17571,10 +18506,19 @@ var init_project_activate = __esm({
 });
 
 // packages/daemon/src/command-center/actions/handlers/project-launch.ts
+function ensureWorkspaceRegistered(name, sessionName, dir) {
+  const reg = getDefaultWorkspaceRegistry();
+  if (reg.has(name)) return;
+  try {
+    reg.add({ name, sessionName, projectDir: dir });
+  } catch {
+  }
+}
 async function projectLaunchHandler(input, deps2 = {}) {
   const project = resolveProject(input.name, deps2);
   const hasSession2 = deps2.hasSession ?? hasSession;
   if (hasSession2(project.sessionName)) {
+    ensureWorkspaceRegistered(project.name, project.sessionName, project.dir);
     return { sessionName: project.sessionName, started: false };
   }
   const launch2 = deps2.launch ?? launch;
@@ -17588,6 +18532,7 @@ async function projectLaunchHandler(input, deps2 = {}) {
       cause: err
     });
   }
+  ensureWorkspaceRegistered(project.name, project.sessionName, project.dir);
   return { sessionName: project.sessionName, started: true };
 }
 var init_project_launch = __esm({
@@ -17597,6 +18542,7 @@ var init_project_launch = __esm({
     init_launch();
     init_errors3();
     init_resolve_project();
+    init_workspace_registry();
   }
 });
 
@@ -18638,7 +19584,7 @@ var init_dispatcher = __esm({
 });
 
 // packages/daemon/src/lib/project-init-runner.ts
-import { spawn as spawn6 } from "node:child_process";
+import { spawn as spawn7 } from "node:child_process";
 function lineStreamer(onChunk) {
   let pending = "";
   return {
@@ -18660,7 +19606,7 @@ function lineStreamer(onChunk) {
   };
 }
 async function runInit(options) {
-  const spawnFn = options.spawnFn ?? spawn6;
+  const spawnFn = options.spawnFn ?? spawn7;
   const command2 = options.command ?? "tmux-ide";
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const args = ["init"];
@@ -18737,56 +19683,56 @@ var init_project_init_runner = __esm({
 });
 
 // packages/daemon/src/schemas/inspect.ts
-import { z as z22 } from "zod";
+import { z as z23 } from "zod";
 var ProjectInspectDetectedSchemaZ, ProjectInspectSchemaZ, InspectFilesystemRequestSchemaZ, OnboardProjectRequestSchemaZ;
 var init_inspect = __esm({
   "packages/daemon/src/schemas/inspect.ts"() {
     "use strict";
-    ProjectInspectDetectedSchemaZ = z22.object({
+    ProjectInspectDetectedSchemaZ = z23.object({
       /** Detected package manager from lockfile, or `null`. */
-      packageManager: z22.enum(["pnpm", "npm", "yarn", "bun"]).nullable(),
+      packageManager: z23.enum(["pnpm", "npm", "yarn", "bun"]).nullable(),
       /** Detected frameworks (e.g. `["next", "convex"]`). Empty array when none. */
-      frameworks: z22.array(z22.string()),
+      frameworks: z23.array(z23.string()),
       /** Suggested dev command (e.g. `pnpm dev`). `null` if no dev script found. */
-      devCommand: z22.string().nullable(),
+      devCommand: z23.string().nullable(),
       /** Suggested test command (e.g. `pnpm test`). `null` if no test script found. */
-      testCommand: z22.string().nullable()
+      testCommand: z23.string().nullable()
     });
-    ProjectInspectSchemaZ = z22.object({
+    ProjectInspectSchemaZ = z23.object({
       /** Sanitized basename of the directory — safe to use as a tmux session name. */
-      name: z22.string(),
+      name: z23.string(),
       /** Absolute, canonical path to the directory. */
-      dir: z22.string(),
+      dir: z23.string(),
       /** Whether `<dir>/ide.yml` exists. */
-      hasIdeYml: z22.boolean(),
+      hasIdeYml: z23.boolean(),
       /** Git remote origin URL, or `null` if not a git repo / no origin / probe failed. */
-      gitOrigin: z22.string().nullable(),
+      gitOrigin: z23.string().nullable(),
       /** Current git branch, or `null` if not a git repo / detached HEAD / probe failed. */
-      gitBranch: z22.string().nullable(),
+      gitBranch: z23.string().nullable(),
       /** Detected stack signals (reuses `tmux-ide detect` logic). */
       detected: ProjectInspectDetectedSchemaZ
     });
-    InspectFilesystemRequestSchemaZ = z22.object({
-      dir: z22.string().min(1)
+    InspectFilesystemRequestSchemaZ = z23.object({
+      dir: z23.string().min(1)
     });
-    OnboardProjectRequestSchemaZ = z22.object({
-      dir: z22.string().min(1),
+    OnboardProjectRequestSchemaZ = z23.object({
+      dir: z23.string().min(1),
       /** Optional override for the project name — defaults to inspect.name. */
-      name: z22.string().min(1).optional(),
+      name: z23.string().min(1).optional(),
       /** 1, 2, or 3 — how many Claude panes to scaffold in the top row. */
-      agents: z22.number().int().min(1).max(3),
+      agents: z23.number().int().min(1).max(3),
       /**
        * Optional per-agent pane titles. When provided, length must equal
        * `agents`; the server uses these as `title:` for the Claude panes
        * instead of the canonical `Lead`/`Teammate N`/`Claude N` defaults.
        */
-      agentNames: z22.array(z22.string().min(1)).optional(),
+      agentNames: z23.array(z23.string().min(1)).optional(),
       /** Dev server command (e.g. `pnpm dev`). Omit / null to skip the dev pane. */
-      devCommand: z22.string().min(1).nullable().optional(),
+      devCommand: z23.string().min(1).nullable().optional(),
       /** Test command (e.g. `pnpm test`). Currently informational; stored for later. */
-      testCommand: z22.string().min(1).nullable().optional(),
+      testCommand: z23.string().min(1).nullable().optional(),
       /** Lint command (e.g. `pnpm lint`). Currently informational; stored for later. */
-      lintCommand: z22.string().min(1).nullable().optional()
+      lintCommand: z23.string().min(1).nullable().optional()
     });
   }
 });
@@ -19112,7 +20058,7 @@ var init_project_onboard = __esm({
 });
 
 // packages/daemon/src/lsp/launch.ts
-import { spawn as spawn7 } from "node:child_process";
+import { spawn as spawn8 } from "node:child_process";
 import { existsSync as existsSync32 } from "node:fs";
 import { delimiter as delimiter2, extname as extname2, join as join33 } from "node:path";
 function findOnPath(binary) {
@@ -19147,7 +20093,7 @@ function launchLanguageServer(language, workspaceRoot) {
   const config2 = languageServerConfig(language);
   const resolved2 = resolveBinary(config2, workspaceRoot);
   if (!resolved2) return null;
-  const proc = spawn7(resolved2, [...config2.args], {
+  const proc = spawn8(resolved2, [...config2.args], {
     cwd: workspaceRoot,
     stdio: ["pipe", "pipe", "pipe"],
     env: { ...process.env }
@@ -20138,29 +21084,29 @@ var types_exports2 = {};
 __export(types_exports2, {
   tunnelConfigSchema: () => tunnelConfigSchema
 });
-import { z as z23 } from "zod";
+import { z as z24 } from "zod";
 var tunnelConfigSchema;
 var init_types3 = __esm({
   "packages/daemon/src/lib/tunnels/types.ts"() {
     "use strict";
-    tunnelConfigSchema = z23.discriminatedUnion("provider", [
-      z23.object({
-        provider: z23.literal("tailscale"),
-        port: z23.number().int().positive(),
-        enableFunnel: z23.boolean().optional()
+    tunnelConfigSchema = z24.discriminatedUnion("provider", [
+      z24.object({
+        provider: z24.literal("tailscale"),
+        port: z24.number().int().positive(),
+        enableFunnel: z24.boolean().optional()
       }),
-      z23.object({
-        provider: z23.literal("ngrok"),
-        port: z23.number().int().positive(),
-        authToken: z23.string().optional(),
-        domain: z23.string().optional(),
-        region: z23.string().optional(),
-        startupTimeoutMs: z23.number().positive().optional()
+      z24.object({
+        provider: z24.literal("ngrok"),
+        port: z24.number().int().positive(),
+        authToken: z24.string().optional(),
+        domain: z24.string().optional(),
+        region: z24.string().optional(),
+        startupTimeoutMs: z24.number().positive().optional()
       }),
-      z23.object({
-        provider: z23.literal("cloudflare"),
-        port: z23.number().int().positive(),
-        startupTimeoutMs: z23.number().positive().optional()
+      z24.object({
+        provider: z24.literal("cloudflare"),
+        port: z24.number().int().positive(),
+        startupTimeoutMs: z24.number().positive().optional()
       })
     ]);
   }
@@ -21188,7 +22134,7 @@ function createApp(options = {}) {
         return null;
       }
     }
-    function parseNumstat(out) {
+    function parseNumstat2(out) {
       if (!out) return [];
       return out.split("\n").filter(Boolean).map((line) => {
         const [added, removed, file] = line.split("	");
@@ -21233,7 +22179,7 @@ function createApp(options = {}) {
     let baseBranch = null;
     if (source === "staged") {
       diff = runGit(["diff", "--cached", "HEAD"]) ?? runGit(["diff", "--cached"]) ?? "";
-      files = parseNumstat(
+      files = parseNumstat2(
         runGit(["diff", "--cached", "--numstat", "HEAD"]) ?? runGit(["diff", "--cached", "--numstat"])
       );
       modifiedRef = "STAGED";
@@ -21242,16 +22188,16 @@ function createApp(options = {}) {
       baseBranch = base;
       if (mergeBase) {
         diff = runGit(["diff", `${mergeBase}...HEAD`]) ?? "";
-        files = parseNumstat(runGit(["diff", "--numstat", `${mergeBase}...HEAD`]));
+        files = parseNumstat2(runGit(["diff", "--numstat", `${mergeBase}...HEAD`]));
         originalRef = mergeBase;
       } else {
         diff = runGit(["diff", "HEAD"]) ?? "";
-        files = parseNumstat(runGit(["diff", "--numstat", "HEAD"]));
+        files = parseNumstat2(runGit(["diff", "--numstat", "HEAD"]));
       }
       modifiedRef = "HEAD";
     } else {
       diff = runGit(["diff", "HEAD"]) ?? runGit(["diff"]) ?? "";
-      files = parseNumstat(runGit(["diff", "--numstat", "HEAD"]) ?? runGit(["diff", "--numstat"]));
+      files = parseNumstat2(runGit(["diff", "--numstat", "HEAD"]) ?? runGit(["diff", "--numstat"]));
       modifiedRef = "WORKING";
     }
     return c.json({ diff, files, source, originalRef, modifiedRef, baseBranch });
@@ -21866,6 +22812,56 @@ function createApp(options = {}) {
     if (!session) return c.json({ error: "Session not found" }, 404);
     return Effect3.runPromise(
       branches(session.dir).pipe(
+        Effect3.match({
+          onFailure: (err) => c.json({ error: toPayload(err) }, 400),
+          onSuccess: (payload) => c.json(payload)
+        })
+      )
+    );
+  });
+  app.get("/api/project/:name/git/commits", async (c) => {
+    const name = c.req.param("name");
+    const sessions = discoverSessions();
+    const session = sessions.find((s) => s.name === name);
+    if (!session) return c.json({ error: "Session not found" }, 404);
+    const base = c.req.query("base")?.trim() || void 0;
+    const limitRaw = c.req.query("limit");
+    const limit = limitRaw ? Number.parseInt(limitRaw, 10) : void 0;
+    return Effect3.runPromise(
+      commits(session.dir, {
+        ...base ? { base } : {},
+        ...limit && Number.isFinite(limit) ? { limit } : {}
+      }).pipe(
+        Effect3.match({
+          onFailure: (err) => c.json({ error: toPayload(err) }, 400),
+          onSuccess: (payload) => c.json(payload)
+        })
+      )
+    );
+  });
+  app.get("/api/project/:name/git/commit/:sha/diff", async (c) => {
+    const name = c.req.param("name");
+    const sha = c.req.param("sha");
+    const sessions = discoverSessions();
+    const session = sessions.find((s) => s.name === name);
+    if (!session) return c.json({ error: "Session not found" }, 404);
+    return Effect3.runPromise(
+      commitDiff(session.dir, sha).pipe(
+        Effect3.match({
+          onFailure: (err) => c.json({ error: toPayload(err) }, 400),
+          onSuccess: (payload) => c.json(payload)
+        })
+      )
+    );
+  });
+  app.get("/api/project/:name/git/range-diff", async (c) => {
+    const name = c.req.param("name");
+    const sessions = discoverSessions();
+    const session = sessions.find((s) => s.name === name);
+    if (!session) return c.json({ error: "Session not found" }, 404);
+    const base = c.req.query("base")?.trim() || "main";
+    return Effect3.runPromise(
+      rangeDiff(session.dir, base).pipe(
         Effect3.match({
           onFailure: (err) => c.json({ error: toPayload(err) }, 400),
           onSuccess: (payload) => c.json(payload)
@@ -25726,7 +26722,7 @@ var init_daemon_embed = __esm({
 
 // packages/daemon/src/lib/cli-action-bridge.ts
 import { createRequire as createRequire4 } from "node:module";
-import { z as z24 } from "zod";
+import { z as z25 } from "zod";
 function timeoutSignal3(ms) {
   const controller = new AbortController();
   setTimeout(() => controller.abort(), ms).unref?.();
@@ -25829,7 +26825,7 @@ async function tryDispatchAction(name, input, options = {}) {
       details: failure.data.error.details
     });
   }
-  const success = z24.object({ ok: z24.literal(true), result: contract.result }).safeParse(body);
+  const success = z25.object({ ok: z25.literal(true), result: contract.result }).safeParse(body);
   if (!success.success) return null;
   return success.data.result;
 }
@@ -25840,12 +26836,12 @@ var init_cli_action_bridge = __esm({
     init_contract();
     init_canonical_daemon();
     init_daemon_embed();
-    FailureEnvelopeZ = z24.object({
-      ok: z24.literal(false),
-      error: z24.object({
-        code: z24.string(),
-        message: z24.string(),
-        details: z24.unknown().optional()
+    FailureEnvelopeZ = z25.object({
+      ok: z25.literal(false),
+      error: z25.object({
+        code: z25.string(),
+        message: z25.string(),
+        details: z25.unknown().optional()
       })
     });
     deps = {
@@ -26351,6 +27347,7 @@ var require_package = __commonJS({
         dev: "node bin/cli.js",
         test: "vitest run",
         "test:unit": "vitest run",
+        "test:chat-e2e": "pnpm --filter @tmux-ide/daemon exec vitest run src/chat/__tests__/chat-pipeline.e2e.test.ts",
         lint: "eslint bin scripts packages/contracts/src packages/tmux-bridge/src packages/daemon/src packages/v2-solid-widgets/src packages/chat-solid/src && pnpm run check:silo-mounts",
         "lint:workspace": "turbo run lint && pnpm run check:silo-mounts",
         "check:silo-mounts": "bash scripts/check-silo-mounts.sh",
@@ -26361,7 +27358,7 @@ var require_package = __commonJS({
         "docs:build": "turbo run build --filter=@tmux-ide/docs",
         "pack:check": "npm pack --dry-run --cache /tmp/tmux-ide-npm-cache > /dev/null",
         "check:native-deps": "node packages/daemon/scripts/check-native-deps.mjs",
-        check: "pnpm run lint:workspace && pnpm run format:check && pnpm run typecheck:workspace && bun test src/cli.test.ts && pnpm run docs:build && pnpm run pack:check && pnpm run check:native-deps",
+        check: "pnpm run lint:workspace && pnpm run format:check && pnpm run typecheck:workspace && vitest run --dir src src/cli.test.ts && pnpm run docs:build && pnpm run pack:check && pnpm run check:native-deps",
         postinstall: "node scripts/postinstall.js",
         "test:dashboard": "cd dashboard && pnpm test",
         "test:e2e": "playwright test",
@@ -28038,48 +29035,48 @@ import { fileURLToPath as fileURLToPath7 } from "node:url";
 init_detect();
 init_output();
 import {
-  existsSync as existsSync3,
-  readFileSync as readFileSync4,
-  writeFileSync as writeFileSync3,
-  renameSync,
-  mkdirSync as mkdirSync2,
+  existsSync as existsSync4,
+  readFileSync as readFileSync5,
+  writeFileSync as writeFileSync4,
+  renameSync as renameSync2,
+  mkdirSync as mkdirSync3,
   readdirSync,
   copyFileSync
 } from "node:fs";
-import { resolve as resolve7, join as join2, basename as basename3, dirname as dirname2 } from "node:path";
+import { resolve as resolve7, join as join3, basename as basename3, dirname as dirname3 } from "node:path";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
-var __dirname2 = dirname2(fileURLToPath2(import.meta.url));
+var __dirname2 = dirname3(fileURLToPath2(import.meta.url));
 function copyTemplateSkills(targetDir) {
   const created = [];
   const templateSkillsDir = resolve7(__dirname2, "..", "..", "..", "templates", "skills");
-  if (!existsSync3(templateSkillsDir)) return created;
-  mkdirSync2(targetDir, { recursive: true });
+  if (!existsSync4(templateSkillsDir)) return created;
+  mkdirSync3(targetDir, { recursive: true });
   for (const file of readdirSync(templateSkillsDir)) {
     if (!file.endsWith(".md")) continue;
-    const destination = join2(targetDir, file);
-    copyFileSync(join2(templateSkillsDir, file), destination);
+    const destination = join3(targetDir, file);
+    copyFileSync(join3(templateSkillsDir, file), destination);
     created.push(destination);
   }
   return created;
 }
 function scaffoldLibraryStubs(dir) {
   const created = [];
-  const libraryDir = join2(dir, ".tmux-ide", "library");
-  if (!existsSync3(libraryDir)) {
-    mkdirSync2(libraryDir, { recursive: true });
+  const libraryDir = join3(dir, ".tmux-ide", "library");
+  if (!existsSync4(libraryDir)) {
+    mkdirSync3(libraryDir, { recursive: true });
     created.push(libraryDir);
   }
-  const archPath = join2(libraryDir, "architecture.md");
-  if (!existsSync3(archPath)) {
-    writeFileSync3(
+  const archPath = join3(libraryDir, "architecture.md");
+  if (!existsSync4(archPath)) {
+    writeFileSync4(
       archPath,
       "# Architecture\n\n<!-- Describe your project's architecture here. This context is injected into agent dispatch prompts. -->\n"
     );
     created.push(archPath);
   }
-  const learningsPath = join2(libraryDir, "learnings.md");
-  if (!existsSync3(learningsPath)) {
-    writeFileSync3(
+  const learningsPath = join3(libraryDir, "learnings.md");
+  if (!existsSync4(learningsPath)) {
+    writeFileSync4(
       learningsPath,
       "# Learnings\n\n<!-- Task summaries are automatically appended here by the orchestrator. -->\n"
     );
@@ -28089,13 +29086,13 @@ function scaffoldLibraryStubs(dir) {
 }
 function scaffoldValidationContract(dir) {
   const created = [];
-  const tasksDir = join2(dir, ".tasks");
-  if (!existsSync3(tasksDir)) {
-    mkdirSync2(tasksDir, { recursive: true });
+  const tasksDir = join3(dir, ".tasks");
+  if (!existsSync4(tasksDir)) {
+    mkdirSync3(tasksDir, { recursive: true });
   }
-  const contractPath = join2(tasksDir, "validation-contract.md");
-  if (!existsSync3(contractPath)) {
-    writeFileSync3(
+  const contractPath = join3(tasksDir, "validation-contract.md");
+  if (!existsSync4(contractPath)) {
+    writeFileSync4(
       contractPath,
       "# Validation Contract\n\n<!-- Define assertions that the validator agent will verify. Example: -->\n<!-- - VAL-001: All tests pass -->\n<!-- - VAL-002: No TypeScript errors -->\n<!-- - VAL-003: Lint passes with zero warnings -->\n"
     );
@@ -28106,11 +29103,11 @@ function scaffoldValidationContract(dir) {
 function scaffoldAgentsMd(dir, name) {
   const created = [];
   const agentsTemplatePath = resolve7(__dirname2, "..", "..", "..", "templates", "AGENTS.md");
-  if (existsSync3(agentsTemplatePath)) {
-    const agentsPath = join2(dir, "AGENTS.md");
-    if (!existsSync3(agentsPath)) {
-      const content = readFileSync4(agentsTemplatePath, "utf-8").replace(/{{name}}/g, name);
-      writeFileSync3(agentsPath, content);
+  if (existsSync4(agentsTemplatePath)) {
+    const agentsPath = join3(dir, "AGENTS.md");
+    if (!existsSync4(agentsPath)) {
+      const content = readFileSync5(agentsTemplatePath, "utf-8").replace(/{{name}}/g, name);
+      writeFileSync4(agentsPath, content);
       created.push(agentsPath);
     }
   }
@@ -28128,7 +29125,7 @@ function scaffoldTeamWorkspace(dir, name) {
 }
 function scaffoldMissionsWorkspace(dir, name) {
   const created = [];
-  const skillsDir = join2(dir, ".tmux-ide", "skills");
+  const skillsDir = join3(dir, ".tmux-ide", "skills");
   created.push(...copyTemplateSkills(skillsDir));
   created.push(...scaffoldTeamWorkspace(dir, name));
   return created;
@@ -28139,30 +29136,30 @@ async function init({
 } = {}) {
   const dir = process.cwd();
   const configPath = resolve7(dir, "ide.yml");
-  if (existsSync3(configPath)) {
+  if (existsSync4(configPath)) {
     outputError("ide.yml already exists in this directory", "EXISTS");
   }
   if (template) {
     const templatePath = resolve7(__dirname2, "..", "..", "..", "templates", `${template}.yml`);
-    if (!existsSync3(templatePath)) {
+    if (!existsSync4(templatePath)) {
       outputError(`Template "${template}" not found`, "NOT_FOUND");
     }
-    let content = readFileSync4(templatePath, "utf-8");
+    let content = readFileSync5(templatePath, "utf-8");
     const name2 = basename3(dir);
     content = content.replace(/^name: .+/m, `name: ${name2}`);
     const tmpPath = configPath + ".tmp";
-    writeFileSync3(tmpPath, content);
-    renameSync(tmpPath, configPath);
+    writeFileSync4(tmpPath, content);
+    renameSync2(tmpPath, configPath);
     let created;
     if (template === "missions") {
       created = scaffoldMissionsWorkspace(dir, name2);
     } else if (isTeamTemplate(template)) {
       created = [
-        ...copyTemplateSkills(join2(dir, ".tmux-ide", "skills")),
+        ...copyTemplateSkills(join3(dir, ".tmux-ide", "skills")),
         ...scaffoldTeamWorkspace(dir, name2)
       ];
     } else {
-      created = copyTemplateSkills(join2(dir, ".tmux-ide", "skills"));
+      created = copyTemplateSkills(join3(dir, ".tmux-ide", "skills"));
     }
     if (json2) {
       console.log(JSON.stringify({ created: true, template, name: name2, paths: created }));
@@ -28182,8 +29179,8 @@ async function init({
     const config2 = suggestConfig(dir, detected);
     const yaml5 = (await import("js-yaml")).default;
     const tmpPath2 = configPath + ".tmp";
-    writeFileSync3(tmpPath2, yaml5.dump(config2, { lineWidth: -1, noRefs: true, quotingType: '"' }));
-    renameSync(tmpPath2, configPath);
+    writeFileSync4(tmpPath2, yaml5.dump(config2, { lineWidth: -1, noRefs: true, quotingType: '"' }));
+    renameSync2(tmpPath2, configPath);
     const desc = detected.frameworks.join(" + ");
     if (json2) {
       console.log(JSON.stringify({ created: true, detected: detected.frameworks, name }));
@@ -28194,11 +29191,11 @@ async function init({
     }
   } else {
     const templatePath = resolve7(__dirname2, "..", "..", "..", "templates", "default.yml");
-    let content = readFileSync4(templatePath, "utf-8");
+    let content = readFileSync5(templatePath, "utf-8");
     content = content.replace(/^name: .+/m, `name: ${name}`);
     const tmpPath3 = configPath + ".tmp";
-    writeFileSync3(tmpPath3, content);
-    renameSync(tmpPath3, configPath);
+    writeFileSync4(tmpPath3, content);
+    renameSync2(tmpPath3, configPath);
     if (json2) {
       console.log(JSON.stringify({ created: true, template: "default", name }));
     } else {
@@ -28208,8 +29205,8 @@ async function init({
       console.log("Edit it to configure your workspace, then run: tmux-ide");
     }
   }
-  const skillsDir = join2(dir, ".tmux-ide", "skills");
-  if (!existsSync3(skillsDir)) {
+  const skillsDir = join3(dir, ".tmux-ide", "skills");
+  if (!existsSync4(skillsDir)) {
     const created = copyTemplateSkills(skillsDir);
     if (created.length > 0 && !json2) {
       console.log("Copied built-in skill templates to .tmux-ide/skills/");
@@ -28296,7 +29293,7 @@ init_yaml_io();
 init_skill_registry();
 init_task_store();
 import { execSync as execSync3 } from "node:child_process";
-import { existsSync as existsSync6 } from "node:fs";
+import { existsSync as existsSync7 } from "node:fs";
 import { resolve as resolve11 } from "node:path";
 function check(label, fn, { optional = false } = {}) {
   try {
@@ -28349,7 +29346,7 @@ async function doctor({
   checks.push(
     check("ide.yml exists", () => {
       const path4 = resolve11(".", "ide.yml");
-      if (!existsSync6(path4)) throw new Error("not found in current directory");
+      if (!existsSync7(path4)) throw new Error("not found in current directory");
       return "found";
     })
   );
@@ -29762,6 +30759,41 @@ Run: tmux-ide task help`, "USAGE");
 
 // bin/cli.ts
 init_send();
+
+// packages/daemon/src/dashboard.ts
+init_canonical_daemon();
+init_errors2();
+import { spawn as spawn9 } from "node:child_process";
+function openInBrowser(url) {
+  const platform = process.platform;
+  const cmd = platform === "darwin" ? "open" : platform === "win32" ? "start" : "xdg-open";
+  try {
+    const child = spawn9(cmd, [url], { stdio: "ignore", detached: true });
+    child.unref();
+  } catch {
+  }
+}
+async function dashboard(opts = {}) {
+  const info = readCanonicalDaemonInfo();
+  if (!info) {
+    throw new IdeError(
+      "No tmux-ide daemon is running.\nStart one by running `tmux-ide` inside a project directory, then re-run this command.",
+      { code: "DAEMON_NOT_RUNNING", exitCode: 1 }
+    );
+  }
+  const url = `http://${info.bindHostname}:${info.port}/`;
+  if (opts.json) {
+    process.stdout.write(JSON.stringify({ url, port: info.port, pid: info.pid }) + "\n");
+  } else {
+    process.stdout.write(`Dashboard: ${url}
+`);
+  }
+  if (opts.open !== false) {
+    openInBrowser(url);
+  }
+}
+
+// bin/cli.ts
 init_errors2();
 init_output();
 var __dirname5 = dirname17(fileURLToPath7(import.meta.url));
@@ -29814,6 +30846,9 @@ var { positionals, values } = parseArgs({
     // send command flags
     to: { type: "string" },
     "no-enter": { type: "boolean" },
+    // dashboard command flags
+    open: { type: "boolean" },
+    "no-open": { type: "boolean" },
     // chat command flags (T078)
     role: { type: "string" }
   }
@@ -29846,6 +30881,7 @@ var knownCommands = /* @__PURE__ */ new Set([
   "orchestrator",
   "settings",
   "command-center",
+  "dashboard",
   "server",
   "tunnel",
   "remote",
@@ -30247,6 +31283,11 @@ try {
     case "command-center": {
       const { startCommandCenter: startCommandCenter2 } = await Promise.resolve().then(() => (init_command_center(), command_center_exports));
       await startCommandCenter2({ port: parseInt(values.port ?? "4000") });
+      break;
+    }
+    case "dashboard": {
+      const noOpen = values["no-open"] === true || values.open === false;
+      await dashboard({ json, open: !noOpen });
       break;
     }
     case "server": {
