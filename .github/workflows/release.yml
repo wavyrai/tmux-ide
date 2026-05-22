@@ -82,16 +82,14 @@ jobs:
           pnpm run check
 
       - name: Build dashboard
-        # The dashboard build also lands inside `@tmux-ide/daemon` via
-        # the daemon's `prepack` hook (`build-dashboard.mjs` copies
-        # `dashboard/dist/` into `packages/daemon/dist/dashboard/dist/`),
-        # so the single build feeds both publishes below.
         run: pnpm --filter @tmux-ide/dashboard build
 
-      - name: Publish @tmux-ide/daemon
-        run: pnpm --filter @tmux-ide/daemon publish --access public --no-git-checks
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: Build daemon
+        # Compile packages/daemon/src → packages/daemon/dist so the
+        # root `tmux-ide` tarball (files: ["packages/daemon/dist"]) ships
+        # the daemon without needing a separate @tmux-ide/daemon publish.
+        working-directory: packages/daemon
+        run: pnpm exec tsc -p tsconfig.json
 
       - name: Publish tmux-ide
         run: pnpm publish --access public --no-git-checks

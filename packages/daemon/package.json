@@ -1,6 +1,7 @@
 {
   "name": "@tmux-ide/daemon",
   "version": "0.0.1",
+  "private": true,
   "description": "Singleton background daemon for tmux-ide — embeddable workspace registry, command-center API, and chat/codex orchestration.",
   "type": "module",
   "license": "MIT",

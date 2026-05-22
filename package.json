@@ -11,7 +11,8 @@
     "scripts",
     "skill",
     "templates",
-    "dashboard/dist"
+    "dashboard/dist",
+    "packages/daemon/dist"
   ],
   "scripts": {
     "build": "pnpm build:cli",
