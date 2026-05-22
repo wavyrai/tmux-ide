@@ -161,7 +161,7 @@ export function V2ActivityBar(props: V2ActivityBarProps) {
       label: "widgets",
       tooltip: "widgets gallery",
       onClick: () => {
-        if (typeof window !== "undefined") window.location.assign("/v2/widgets");
+        if (typeof window !== "undefined") window.location.assign("/widgets");
       },
     },
   ];
@@ -180,7 +180,7 @@ export function V2ActivityBar(props: V2ActivityBarProps) {
       label: "settings",
       tooltip: "settings · theme · keybinds",
       onClick: () => {
-        if (typeof window !== "undefined") window.location.assign("/v2/settings");
+        if (typeof window !== "undefined") window.location.assign("/settings");
       },
     },
   ];
@@ -232,7 +232,7 @@ function AccountPopover(props: { onClose: () => void }) {
       <ul class="m-0 list-none p-1">
         <li>
           <A
-            href="/v2/settings"
+            href="/settings"
             data-testid="v2-account-popover-settings"
             onClick={() => props.onClose()}
             class="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-base text-[var(--fg)] hover:bg-[var(--surface-hover)]"

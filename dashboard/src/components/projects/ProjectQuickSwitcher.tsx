@@ -5,7 +5,7 @@
  * Combines registered projects (`/api/projects`) with running tmux
  * sessions (`/api/sessions`), deduped by name. Last-used selections
  * are tracked in localStorage so the most recently opened projects
- * float to the top. Selecting a row navigates to `/v2/project/<name>`.
+ * float to the top. Selecting a row navigates to `/project/<name>`.
  *
  * Owns its own keydown handler so it's reachable from any route when
  * mounted once at the app root.
@@ -235,7 +235,7 @@ export function ProjectQuickSwitcher(): JSX.Element {
     setOpen(false);
     recordProjectOpened(row.name);
     setLastUsed(readLastUsed());
-    navigate(`/v2/project/${encodeURIComponent(row.name)}`);
+    navigate(`/project/${encodeURIComponent(row.name)}`);
   }
 
   function onInputKey(event: KeyboardEvent): void {

@@ -7,12 +7,12 @@
  * server still appears. The rail re-renders on `projects.changed` /
  * `sessions.changed` WS frames via `projectsBusTick`.
  *
- * Click → Solid Router push to `/v2/project/<name>` (no full reload).
+ * Click → Solid Router push to `/project/<name>` (no full reload).
  * The "+" entry at the bottom navigates to `/` (the welcome route owns
  * the add-project flow shipped in PROJECT-SWITCHER-1/2/3).
  *
  * The matching in-project ActivityBar (Files/Search/Diffs/Plans/...)
- * stays as the SECOND column — see `routes/v2/project/[name].tsx`.
+ * stays as the SECOND column — see `routes/project/[name].tsx`.
  */
 
 import { createMemo, createResource, For, Show, type JSX } from "solid-js";
@@ -78,7 +78,7 @@ export function ProjectRail(props: ProjectRailProps): JSX.Element {
 
   function onActivate(row: RailRow): void {
     recordProjectOpened(row.name);
-    navigate(`/v2/project/${encodeURIComponent(row.name)}`);
+    navigate(`/project/${encodeURIComponent(row.name)}`);
   }
 
   return (

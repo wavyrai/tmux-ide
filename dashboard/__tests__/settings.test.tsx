@@ -1,5 +1,5 @@
 /**
- * /v2/settings — Solid parity tests.
+ * /settings — Solid parity tests.
  *
  * The Settings page is a thin view over the shared `settings` signal,
  * so the tests focus on: tabs switch the body, theme tiles flip the
@@ -11,15 +11,15 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { cleanup, fireEvent, render } from "@solidjs/testing-library";
 import { MemoryRouter, Route, createMemoryHistory } from "@solidjs/router";
 
-import SettingsRoute from "@/routes/v2/settings";
+import SettingsRoute from "@/routes/settings";
 import { __resetSettingsForTests, setKeybindOverride, settings } from "@/lib/settings";
 
 function renderRoute() {
   const history = createMemoryHistory();
-  history.set({ value: "/v2/settings" });
+  history.set({ value: "/settings" });
   return render(() => (
     <MemoryRouter history={history}>
-      <Route path="/v2/settings" component={SettingsRoute} />
+      <Route path="/settings" component={SettingsRoute} />
     </MemoryRouter>
   ));
 }
@@ -38,7 +38,7 @@ beforeEach(() => {
 });
 afterEach(() => cleanup());
 
-describe("/v2/settings", () => {
+describe("/settings", () => {
   it("renders the 5-tab layout with Theme as the default panel", () => {
     const { getByTestId } = renderRoute();
     expect(getByTestId("settings-page")).toBeInTheDocument();

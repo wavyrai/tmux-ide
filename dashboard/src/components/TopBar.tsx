@@ -3,7 +3,7 @@
  * Cmd+P quick-switcher. Sits above the IDE shell content so users can
  * see which project they're in without scanning the bottom status bar.
  *
- * Mounted from `/v2/project/:name`. The Cmd+P keybind is already
+ * Mounted from `/project/:name`. The Cmd+P keybind is already
  * installed at app mount in `ProjectQuickSwitcher`; this bar just
  * supplies a click affordance.
  */

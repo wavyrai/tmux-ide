@@ -1,5 +1,5 @@
 /**
- * /v2/terminal/:id — Solid port of the standalone terminal route.
+ * /terminal/:id — Solid port of the standalone terminal route.
  *
  * Renders a single full-window xterm bound to the daemon's PTY at
  * `/ws/pty/:id`. The Solid Terminal host (G16-P2) handles the
@@ -20,7 +20,7 @@ export default function TerminalRoute() {
     >
       <header class="flex h-7 shrink-0 items-center border-b border-[var(--border)] bg-[var(--bg-strong)] px-3 text-sm tabular-nums">
         <A
-          href="/v2"
+          href="/"
           class="mr-2 inline-flex items-center gap-1 text-[var(--dim)] hover:text-[var(--fg)]"
         >
           <span aria-hidden="true">◇</span>
@@ -34,7 +34,7 @@ export default function TerminalRoute() {
         <span class="mx-2 text-[var(--dimmer)]">·</span>
         <span class="text-[var(--dim)]">{id()}</span>
         <span class="flex-1" />
-        <A href="/v2" class="text-[var(--dim)] hover:text-[var(--fg)]">
+        <A href="/" class="text-[var(--dim)] hover:text-[var(--fg)]">
           ← back
         </A>
       </header>

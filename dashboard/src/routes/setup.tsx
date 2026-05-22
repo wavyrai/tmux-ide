@@ -1,5 +1,5 @@
 /**
- * /v2/setup — Solid port of `dashboard/app/v2/setup/page.tsx`.
+ * /setup — Solid port of `dashboard/app/setup/page.tsx`.
  *
  * Four-step wizard: detect → layout → naming → review. Same daemon
  * endpoints as the React version (`/api/filesystem/inspect`,
@@ -206,7 +206,7 @@ export default function SetupRoute() {
       try {
         await Effect.runPromise(dispatchAction("project.launch", { name: project.name }));
         set({ launching: false });
-        navigate(`/v2/project/${encodeURIComponent(project.name)}`);
+        navigate(`/project/${encodeURIComponent(project.name)}`);
       } catch (err) {
         set({
           launching: false,
@@ -242,7 +242,7 @@ export default function SetupRoute() {
       try {
         await Effect.runPromise(dispatchAction("project.launch", { name: project.name }));
         set({ launching: false });
-        navigate(`/v2/project/${encodeURIComponent(project.name)}`);
+        navigate(`/project/${encodeURIComponent(project.name)}`);
       } catch (err) {
         set({
           launching: false,
@@ -265,7 +265,7 @@ export default function SetupRoute() {
     <div class="font-sans flex h-screen flex-col bg-[var(--bg)] text-[var(--fg)]">
       <header class="flex h-9 shrink-0 items-center border-b border-[var(--border)] bg-[var(--bg-strong)] px-4 text-xs tabular-nums">
         <A
-          href="/v2"
+          href="/"
           class="mr-2 inline-flex items-center gap-1 text-[var(--dim)] hover:text-[var(--fg)]"
         >
           <span aria-hidden="true">◇</span>

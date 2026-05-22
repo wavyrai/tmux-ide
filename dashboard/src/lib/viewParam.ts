@@ -1,9 +1,9 @@
 /**
- * Solid port of `dashboard/app/v2/project/[name]/useViewParam.ts`.
+ * Solid port of `dashboard/app/project/[name]/useViewParam.ts`.
  *
  * Reads `?view=<id>` from the current URL and writes it back when the
  * caller updates the view. The default view is dropped from the URL so
- * the canonical link stays `/v2/project/:name`.
+ * the canonical link stays `/project/:name`.
  *
  * Built on @solidjs/router's `useSearchParams` so route changes are
  * reactive. The `isViewId` predicate guards against drift between the

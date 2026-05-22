@@ -1,5 +1,5 @@
 /**
- * /v2/project/:name — Solid port of the React IDE shell.
+ * /project/:name — Solid port of the React IDE shell.
  *
  * Layout (5 regions, mirrors VSCode):
  *

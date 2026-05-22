@@ -4,7 +4,7 @@
  * Validates that the rail renders one row per project from the
  * (mocked) `/api/sessions` + `/api/projects` resources, the active
  * project (matching the route param) gets a highlighted state, and a
- * click navigates to `/v2/project/<name>` via the Solid Router.
+ * click navigates to `/project/<name>` via the Solid Router.
  *
  * `projectsBus` is stubbed out so the rail doesn't try to open a real
  * WebSocket inside happy-dom.
@@ -37,10 +37,7 @@ function renderRail(initialPath: string, rows: { name: string; dir: string; runn
     history,
     ...render(() => (
       <MemoryRouter history={history}>
-        <Route
-          path="/v2/project/:name"
-          component={() => <ProjectRail rowsOverride={() => rows} />}
-        />
+        <Route path="/project/:name" component={() => <ProjectRail rowsOverride={() => rows} />} />
         <Route path="/" component={() => <ProjectRail rowsOverride={() => rows} />} />
       </MemoryRouter>
     )),
@@ -57,7 +54,7 @@ describe("ProjectRail", () => {
   ];
 
   it("renders a row per project from the registry", () => {
-    const { getByTestId } = renderRail("/v2/project/alpha", sampleRows);
+    const { getByTestId } = renderRail("/project/alpha", sampleRows);
     expect(getByTestId("v2-project-rail")).toBeInTheDocument();
     expect(getByTestId("v2-project-rail-row-alpha")).toBeInTheDocument();
     expect(getByTestId("v2-project-rail-row-beta")).toBeInTheDocument();
@@ -65,14 +62,14 @@ describe("ProjectRail", () => {
   });
 
   it("highlights the row matching the route param", () => {
-    const { getByTestId } = renderRail("/v2/project/beta", sampleRows);
+    const { getByTestId } = renderRail("/project/beta", sampleRows);
     expect(getByTestId("v2-project-rail-row-beta").getAttribute("data-active")).toBe("true");
     expect(getByTestId("v2-project-rail-row-alpha").getAttribute("data-active")).toBeNull();
     expect(getByTestId("v2-project-rail-row-gamma").getAttribute("data-active")).toBeNull();
   });
 
-  it("navigates to /v2/project/<name> on click", async () => {
-    const { getByTestId, findByTestId } = renderRail("/v2/project/alpha", sampleRows);
+  it("navigates to /project/<name> on click", async () => {
+    const { getByTestId, findByTestId } = renderRail("/project/alpha", sampleRows);
     expect(getByTestId("v2-project-rail-row-alpha").getAttribute("data-active")).toBe("true");
     fireEvent.click(getByTestId("v2-project-rail-row-gamma"));
     // The router push reactively re-renders the rail under the new
@@ -85,7 +82,7 @@ describe("ProjectRail", () => {
   });
 
   it("exposes a + add-project entry pointing at /", () => {
-    const { getByTestId } = renderRail("/v2/project/alpha", sampleRows);
+    const { getByTestId } = renderRail("/project/alpha", sampleRows);
     const add = getByTestId("v2-project-rail-add");
     expect(add).toBeInTheDocument();
     expect(add.getAttribute("href")).toBe("/");

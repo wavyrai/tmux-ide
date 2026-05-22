@@ -1,5 +1,5 @@
 /**
- * /v2/settings — Solid port of `dashboard/app/v2/settings/page.tsx`.
+ * /settings — Solid port of `dashboard/app/settings/page.tsx`.
  *
  * Five-tab layout (Theme / Terminal / Sounds / General / Keybinds).
  * Active tab is persisted to localStorage so reloads land on the same
@@ -77,7 +77,7 @@ export default function SettingsRoute() {
         <h1 class="text-md font-medium text-[var(--fg)]">Settings</h1>
         <span class="flex-1" />
         <A
-          href="/v2"
+          href="/"
           class="rounded-md border border-[var(--border)] bg-[var(--surface)] px-2 py-1 text-sm text-[var(--fg-secondary)] hover:border-[var(--accent)] hover:text-[var(--accent)]"
         >
           ← Back to v2

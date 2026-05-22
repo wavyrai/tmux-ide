@@ -376,7 +376,7 @@ export function SearchView(props: SearchViewProps): JSX.Element {
     search.set("view", "files");
     search.set("path", path);
     search.set("line", String(line));
-    navigate(`/v2/project/${encodeURIComponent(props.projectName)}?${search.toString()}`);
+    navigate(`/project/${encodeURIComponent(props.projectName)}?${search.toString()}`);
   }
 
   /**

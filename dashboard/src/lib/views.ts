@@ -1,5 +1,5 @@
 /**
- * Central registry of view ids for the `/v2/project/[name]` shell.
+ * Central registry of view ids for the `/project/[name]` shell.
  *
  * Per WN11 (audit), the React app had three places defining this set
  * (ViewId union, VIEWS array, palette items). The Solid port unifies

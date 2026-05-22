@@ -360,7 +360,7 @@ export function mountPlansPanel(
 
 /**
  * Mount the Tasks view — production replacement for the React TasksView
- * at dashboard/app/v2/project/[name]/ProjectV2Page.tsx (case "tasks").
+ * at dashboard/app/project/[name]/ProjectV2Page.tsx (case "tasks").
  *
  * Composite dashboard surface mirroring MissionControlDashboard's prop-
  * driven pattern: the React host owns the canonical task list (sourced
@@ -422,7 +422,7 @@ export function mountKanbanBoard(
 }
 
 /**
- * Mount the SkillsView — restores the /v2 "Skills" surface that the U5
+ * Mount the SkillsView — restores the / "Skills" surface that the U5
  * orphan sweep retired. Two-pane composite: a left rail listing project
  * skills + a right detail panel rendering the selected skill's markdown
  * body (rendered inside `.chat-markdown`).

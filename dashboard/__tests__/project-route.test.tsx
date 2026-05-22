@@ -43,15 +43,15 @@ vi.mock("@/lib/monaco/code-pool", () => ({
   },
 }));
 
-import ProjectV2Route from "@/routes/v2/project/[name]";
+import ProjectV2Route from "@/routes/project/[name]";
 import { __resetChromeForTests, toggleLeftSidebar } from "@/lib/chrome";
 
-function renderRoute(initial = "/v2/project/smoke-project") {
+function renderRoute(initial = "/project/smoke-project") {
   const history = createMemoryHistory();
   history.set({ value: initial });
   return render(() => (
     <MemoryRouter history={history}>
-      <Route path="/v2/project/:name" component={ProjectV2Route} />
+      <Route path="/project/:name" component={ProjectV2Route} />
     </MemoryRouter>
   ));
 }
@@ -61,7 +61,7 @@ beforeEach(() => {
 });
 afterEach(() => cleanup());
 
-describe("/v2/project/:name shell", () => {
+describe("/project/:name shell", () => {
   it("renders the activity bar, sidebar, editor, inspector, bottom panel, and status bar", () => {
     const { getByTestId } = renderRoute();
     expect(getByTestId("v2-activity-bar")).toBeInTheDocument();
@@ -129,7 +129,7 @@ describe("/v2/project/:name shell", () => {
   });
 
   it("renders the project name into the sidebar header", () => {
-    const { getByTestId } = renderRoute("/v2/project/my-cool-project");
+    const { getByTestId } = renderRoute("/project/my-cool-project");
     const sidebar = getByTestId("v2-project-sidebar");
     expect(sidebar.textContent).toContain("my-cool-project");
   });

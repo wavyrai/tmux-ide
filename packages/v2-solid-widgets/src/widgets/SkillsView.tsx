@@ -1,6 +1,6 @@
 /**
  * SkillsView — Solid port of dashboard/components/skills/SkillsView.tsx
- * (retired in the U5 orphan sweep). Restores the /v2 "Skills" surface.
+ * (retired in the U5 orphan sweep). Restores the / "Skills" surface.
  *
  * Two-pane composite: a left rail listing project skills + a right
  * detail panel rendering the selected skill's markdown body. Skills

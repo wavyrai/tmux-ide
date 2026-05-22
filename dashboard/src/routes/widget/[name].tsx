@@ -1,7 +1,7 @@
 /**
- * /v2/widget/:name — single-widget xterm mirror.
+ * /widget/:name — single-widget xterm mirror.
  *
- * Solid port of `dashboard/app/v2/widget/[name]/page.tsx`. Calls
+ * Solid port of `dashboard/app/widget/[name]/page.tsx`. Calls
  * `fetchWidgetSpawn` to ask the daemon for the widget binary's cwd +
  * argv, then mounts a Terminal pinned to those values. The same PTY
  * WebSocket protocol drives both the in-app Terminal panes and this
@@ -96,7 +96,7 @@ export default function WidgetRoute(): JSX.Element {
     >
       <header class="flex h-7 shrink-0 items-center border-b border-[var(--border)] bg-[var(--bg-strong)] px-3 text-sm tabular-nums">
         <A
-          href="/v2"
+          href="/"
           class="mr-2 inline-flex items-center gap-1 text-[var(--dim)] hover:text-[var(--fg)]"
         >
           <span aria-hidden="true">◇</span>

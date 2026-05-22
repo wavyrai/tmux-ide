@@ -6,7 +6,7 @@
  *
  *   • Projects        — registered workspaces (/api/projects) and
  *                       running tmux sessions (/api/sessions); selecting
- *                       navigates to /v2/project/<name>.
+ *                       navigates to /project/<name>.
  *   • Chat threads    — scoped to the current project's dir (via
  *                       chat.thread.list({projectDir})); selecting
  *                       navigates to ?view=chat and persists the
@@ -244,8 +244,8 @@ export function CommandPalette(): JSX.Element {
     if (!name) return;
     const target =
       view === "files"
-        ? `/v2/project/${encodeURIComponent(name)}`
-        : `/v2/project/${encodeURIComponent(name)}?view=${view}`;
+        ? `/project/${encodeURIComponent(name)}`
+        : `/project/${encodeURIComponent(name)}?view=${view}`;
     navigate(target);
   }
 
@@ -292,7 +292,7 @@ export function CommandPalette(): JSX.Element {
       glyph: "⚙",
       activate: () => {
         closeCommandPalette();
-        navigate("/v2/settings");
+        navigate("/settings");
       },
       searchText: "settings preferences",
     });
@@ -334,7 +334,7 @@ export function CommandPalette(): JSX.Element {
         glyph: "▣",
         activate: () => {
           closeCommandPalette();
-          navigate(`/v2/project/${encodeURIComponent(p.name)}`);
+          navigate(`/project/${encodeURIComponent(p.name)}`);
         },
         searchText: `${p.name} ${p.dir} ${p.branch ?? ""}`.toLowerCase(),
       });

@@ -1,5 +1,5 @@
 /**
- * /v2/setup — Solid parity tests.
+ * /setup — Solid parity tests.
  *
  * Focused on the wizard flow plumbing: step tabs render, Next is gated
  * on inspect completion, layout selection switches active style.
@@ -12,21 +12,21 @@ import { afterEach, describe, expect, it } from "vitest";
 import { cleanup, fireEvent, render } from "@solidjs/testing-library";
 import { MemoryRouter, Route, createMemoryHistory } from "@solidjs/router";
 
-import SetupRoute from "@/routes/v2/setup";
+import SetupRoute from "@/routes/setup";
 
 function renderRoute() {
   const history = createMemoryHistory();
-  history.set({ value: "/v2/setup" });
+  history.set({ value: "/setup" });
   return render(() => (
     <MemoryRouter history={history}>
-      <Route path="/v2/setup" component={SetupRoute} />
+      <Route path="/setup" component={SetupRoute} />
     </MemoryRouter>
   ));
 }
 
 afterEach(() => cleanup());
 
-describe("/v2/setup", () => {
+describe("/setup", () => {
   it("renders the 4 step tabs starting on detect", () => {
     const { getByTestId } = renderRoute();
     expect(getByTestId("setup-step-tabs")).toBeInTheDocument();

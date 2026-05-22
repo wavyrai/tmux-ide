@@ -1,5 +1,5 @@
 /**
- * /v2/widgets — Solid port of `dashboard/app/v2/widgets/page.tsx`.
+ * /widgets — Solid port of `dashboard/app/widgets/page.tsx`.
  *
  * Parity goals:
  *   - Same WIDGETS catalog (24 entries: 8 TUI + 16 Solid), ordered to
@@ -87,7 +87,7 @@ const WIDGETS: WidgetEntry[] = [
     name: "changes",
     kind: "tui",
     description: "Git diff viewer for the working tree.",
-    href: "/v2/widget/changes",
+    href: "/widget/changes",
     Icon: GitCompare,
   },
   {
@@ -95,7 +95,7 @@ const WIDGETS: WidgetEntry[] = [
     name: "config",
     kind: "tui",
     description: "Interactive ide.yml editor (config tree TUI).",
-    href: "/v2/widget/config",
+    href: "/widget/config",
     Icon: Settings,
   },
   {
@@ -103,7 +103,7 @@ const WIDGETS: WidgetEntry[] = [
     name: "costs",
     kind: "tui",
     description: "Token + cost tracking per agent and per thread.",
-    href: "/v2/widget/costs",
+    href: "/widget/costs",
     Icon: DollarSign,
   },
   {
@@ -111,7 +111,7 @@ const WIDGETS: WidgetEntry[] = [
     name: "explorer",
     kind: "tui",
     description: "File tree navigator inside a tmux pane.",
-    href: "/v2/widget/explorer",
+    href: "/widget/explorer",
     Icon: Folder,
   },
   {
@@ -119,7 +119,7 @@ const WIDGETS: WidgetEntry[] = [
     name: "mission-control",
     kind: "tui",
     description: "Agent + task + event dashboard for the active session.",
-    href: "/v2/widget/mission-control",
+    href: "/widget/mission-control",
     Icon: Compass,
     composite: true,
   },
@@ -128,7 +128,7 @@ const WIDGETS: WidgetEntry[] = [
     name: "preview",
     kind: "tui",
     description: "Read-only file content preview.",
-    href: "/v2/widget/preview",
+    href: "/widget/preview",
     Icon: Eye,
   },
   {
@@ -136,7 +136,7 @@ const WIDGETS: WidgetEntry[] = [
     name: "setup",
     kind: "tui",
     description: "Project setup wizard — detect stack, write ide.yml.",
-    href: "/v2/widget/setup",
+    href: "/widget/setup",
     Icon: Wrench,
   },
   {
@@ -144,7 +144,7 @@ const WIDGETS: WidgetEntry[] = [
     name: "tasks",
     kind: "tui",
     description: "Task list / detail / form (TUI flavor).",
-    href: "/v2/widget/tasks",
+    href: "/widget/tasks",
     Icon: ListChecks,
   },
   // ─── Solid DOM widgets (16) ─────────────────────────────────────────
@@ -153,7 +153,7 @@ const WIDGETS: WidgetEntry[] = [
     name: "Activity",
     kind: "solid",
     description: "Event timeline grouped by day with KPI strip + filters.",
-    href: "/v2",
+    href: "/",
     Icon: Activity,
   },
   {
@@ -161,7 +161,7 @@ const WIDGETS: WidgetEntry[] = [
     name: "Changes",
     kind: "solid",
     description: "Compact diff stats summary panel.",
-    href: "/v2",
+    href: "/",
     Icon: GitCompare,
   },
   {
@@ -169,7 +169,7 @@ const WIDGETS: WidgetEntry[] = [
     name: "CommandPalette",
     kind: "solid",
     description: "Cmd+K unified search across providers, skills, tasks, threads.",
-    href: "/v2",
+    href: "/",
     Icon: Search,
   },
   {
@@ -177,7 +177,7 @@ const WIDGETS: WidgetEntry[] = [
     name: "Costs",
     kind: "solid",
     description: "Token + cost metrics. KPI cards + per-agent breakdown.",
-    href: "/v2",
+    href: "/",
     Icon: BarChart3,
   },
   {
@@ -185,7 +185,7 @@ const WIDGETS: WidgetEntry[] = [
     name: "CostsDashboard",
     kind: "solid",
     description: "Richer cost composite — multi-pane layout. May be unwired.",
-    href: "/v2",
+    href: "/",
     Icon: BarChart3,
     composite: true,
     status: "orphan",
@@ -195,7 +195,7 @@ const WIDGETS: WidgetEntry[] = [
     name: "DiffsViewer",
     kind: "solid",
     description: "File diffs with hunk navigation + side-by-side toggle.",
-    href: "/v2",
+    href: "/",
     Icon: Code,
   },
   {
@@ -203,7 +203,7 @@ const WIDGETS: WidgetEntry[] = [
     name: "Explorer",
     kind: "solid",
     description: "Browser-side file tree with virtualized rows.",
-    href: "/v2",
+    href: "/",
     Icon: Files,
   },
   {
@@ -211,7 +211,7 @@ const WIDGETS: WidgetEntry[] = [
     name: "ExplorerDashboard",
     kind: "solid",
     description: "Richer explorer composite with detail pane. May be unwired.",
-    href: "/v2",
+    href: "/",
     Icon: PanelsTopLeft,
     composite: true,
     status: "orphan",
@@ -221,7 +221,7 @@ const WIDGETS: WidgetEntry[] = [
     name: "Inspector",
     kind: "solid",
     description: "Right-rail event stream scoped to the current view.",
-    href: "/v2",
+    href: "/",
     Icon: Inspect,
   },
   {
@@ -229,7 +229,7 @@ const WIDGETS: WidgetEntry[] = [
     name: "KanbanBoard",
     kind: "solid",
     description: "Task kanban with status columns and drag-to-cycle.",
-    href: "/v2",
+    href: "/",
     Icon: KanbanSquare,
   },
   {
@@ -237,7 +237,7 @@ const WIDGETS: WidgetEntry[] = [
     name: "MissionControl",
     kind: "solid",
     description: "Agents + tasks + events composite for the active session.",
-    href: "/v2",
+    href: "/",
     Icon: Map,
     composite: true,
   },
@@ -246,7 +246,7 @@ const WIDGETS: WidgetEntry[] = [
     name: "MissionControlDashboard",
     kind: "solid",
     description: "Richer mission composite with KPI lanes. May be unwired.",
-    href: "/v2",
+    href: "/",
     Icon: Map,
     composite: true,
     status: "orphan",
@@ -256,7 +256,7 @@ const WIDGETS: WidgetEntry[] = [
     name: "PlansPanel",
     kind: "solid",
     description: "Plan body editor with per-section authorship borders.",
-    href: "/v2",
+    href: "/",
     Icon: FileEdit,
   },
   {
@@ -264,7 +264,7 @@ const WIDGETS: WidgetEntry[] = [
     name: "PlansRail",
     kind: "solid",
     description: "Left rail listing plans by status with search + sort.",
-    href: "/v2",
+    href: "/",
     Icon: ListTodo,
   },
   {
@@ -272,7 +272,7 @@ const WIDGETS: WidgetEntry[] = [
     name: "SkillsView",
     kind: "solid",
     description: "Project skills rail + body — renders skill markdown.",
-    href: "/v2",
+    href: "/",
     Icon: Sparkles,
   },
   {
@@ -280,7 +280,7 @@ const WIDGETS: WidgetEntry[] = [
     name: "TasksView",
     kind: "solid",
     description: "Filterable task list — composite dashboard surface.",
-    href: "/v2",
+    href: "/",
     Icon: CheckSquare,
   },
 ];
@@ -322,7 +322,7 @@ export function WidgetsRoute() {
   const [activeSession, setActiveSession] = createSignal<SessionOverview | null>(null);
 
   // TUI tiles need a real session+dir to render. Pick the first
-  // registered workspace; `null` falls back to a /v2 redirect.
+  // registered workspace; `null` falls back to a / redirect.
   onMount(() => {
     let cancelled = false;
     const run = Effect.runPromise(fetchSessions());
@@ -360,7 +360,7 @@ export function WidgetsRoute() {
         </span>
         <span class="flex-1" />
         <A
-          href="/v2"
+          href="/"
           class="rounded-md border border-[var(--border)] bg-[var(--surface)] px-2 py-1 text-sm text-[var(--fg-secondary)] hover:border-[var(--accent)] hover:text-[var(--accent)]"
         >
           ← Back to v2
@@ -427,15 +427,15 @@ export function WidgetsRoute() {
 }
 
 function WidgetTile(props: { entry: WidgetEntry; activeSession: SessionOverview | null }) {
-  // TUI widget tiles deep-link to /v2/widget/<name> which requires
+  // TUI widget tiles deep-link to /widget/<name> which requires
   // ?session=NAME&dir=PATH. Without those params the target page errors
   // "WIDGET UNAVAILABLE — missing widget name, session, or dir query
   // params". Append them from the first registered workspace; if no
-  // workspace exists yet, fall back to a friendly /v2 redirect.
+  // workspace exists yet, fall back to a friendly / redirect.
   const href = () => {
     if (props.entry.kind !== "tui") return props.entry.href;
     const s = props.activeSession;
-    if (!s) return "/v2";
+    if (!s) return "/";
     return `${props.entry.href}?session=${encodeURIComponent(s.name)}&dir=${encodeURIComponent(s.dir)}`;
   };
 

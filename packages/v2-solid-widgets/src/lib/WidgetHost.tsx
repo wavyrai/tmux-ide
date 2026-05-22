@@ -1,5 +1,5 @@
 /**
- * Generic Solid wrapper around the @tmux-ide/v2-solid-widgets `mount*`
+ * Generic Solid wrapper around the -ide/v2-solid-widgets `mount*`
  * factories. Each widget exposes a `mount(container, opts)` that calls
  * Solid's `render()` internally and returns a `{ unmount, setOptions }`
  * handle. Hosting them from inside another Solid app means a second

@@ -70,7 +70,7 @@ function request<T>(path: string, init?: RequestInit): Effect.Effect<T, ApiError
 /**
  * GET /api/sessions — list registered tmux-ide sessions. Widgets gallery
  * uses the first session's name + dir to pin TUI tile deep-links so
- * `/v2/widget/:name?session=&dir=` resolves to something real.
+ * `/widget/:name?session=&dir=` resolves to something real.
  */
 export function fetchSessions(): Effect.Effect<readonly SessionOverview[], ApiError> {
   return request<{ sessions: SessionOverview[] }>("/api/sessions").pipe(
@@ -389,7 +389,7 @@ export function fetchProjectFileDiff(
 }
 
 // ---------------------------------------------------------------------
-// Widget spawn — used by /v2/widget/[name] to ask the daemon where the
+// Widget spawn — used by /widget/[name] to ask the daemon where the
 // widget binary lives + how to invoke it, then drive a Terminal via the
 // same WS protocol the tmux panes use.
 // ---------------------------------------------------------------------

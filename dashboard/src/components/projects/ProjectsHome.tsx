@@ -1,9 +1,9 @@
 /**
  * Welcome screen at `/`. Two-column layout: recently active on the
  * left, full registered list on the right. Per-row "Open" navigates
- * into `/v2/project/:name`; per-row "Remove" calls `DELETE
+ * into `/project/:name`; per-row "Remove" calls `DELETE
  * /api/projects/:name` after a confirm. The "New project" button
- * pushes the existing /v2/setup wizard.
+ * pushes the existing /setup wizard.
  */
 
 import { createMemo, createResource, createSignal, For, Show, type JSX } from "solid-js";
@@ -137,7 +137,7 @@ export function ProjectsHome(): JSX.Element {
 
   function open(name: string): void {
     recordProjectOpened(name);
-    navigate(`/v2/project/${encodeURIComponent(name)}`);
+    navigate(`/project/${encodeURIComponent(name)}`);
   }
 
   async function remove(name: string): Promise<void> {
@@ -192,7 +192,7 @@ export function ProjectsHome(): JSX.Element {
         </div>
         <div class="flex items-center gap-2">
           <A
-            href="/v2/widgets"
+            href="/widgets"
             class="rounded border border-[var(--border)] px-3 py-1 text-base text-[var(--fg)] hover:bg-[var(--surface-hover)]"
             data-testid="projects-home-widgets-link"
           >
@@ -210,7 +210,7 @@ export function ProjectsHome(): JSX.Element {
             Add existing folder
           </button>
           <A
-            href="/v2/setup"
+            href="/setup"
             class="rounded bg-[var(--accent)] px-3 py-1 text-base font-medium text-[var(--accent-fg,var(--bg))] hover:opacity-90"
             data-testid="projects-home-new"
           >
@@ -333,7 +333,7 @@ export function ProjectsHome(): JSX.Element {
               <div class="rounded border border-dashed border-[var(--border)] px-6 py-12 text-center text-base text-[var(--dim)]">
                 <p class="mb-3">No projects registered yet.</p>
                 <A
-                  href="/v2/setup"
+                  href="/setup"
                   class="inline-block rounded bg-[var(--accent)] px-3 py-1 text-base font-medium text-[var(--accent-fg,var(--bg))]"
                 >
                   Create your first project

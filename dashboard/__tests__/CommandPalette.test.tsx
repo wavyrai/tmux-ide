@@ -110,12 +110,12 @@ afterEach(() => {
 
 function renderPalette() {
   const history = createMemoryHistory();
-  history.set({ value: "/v2/project/alpha" });
+  history.set({ value: "/project/alpha" });
   return {
     history,
     ...render(() => (
       <MemoryRouter history={history}>
-        <Route path="/v2/project/:name" component={CommandPalette} />
+        <Route path="/project/:name" component={CommandPalette} />
       </MemoryRouter>
     )),
   };

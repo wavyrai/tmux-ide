@@ -1,5 +1,5 @@
 /**
- * /v2/terminal/:id and /v2/widget/:name — Solid parity tests.
+ * /terminal/:id and /widget/:name — Solid parity tests.
  *
  * Both routes mount the xterm Terminal host (G16-P2 port). happy-dom
  * doesn't ship WebGL or a real WebSocket, so the Terminal component
@@ -23,17 +23,17 @@ vi.mock("@/components/Terminal", () => ({
   ),
 }));
 
-import TerminalRoute from "@/routes/v2/terminal/[id]";
-import WidgetRoute from "@/routes/v2/widget/[name]";
+import TerminalRoute from "@/routes/terminal/[id]";
+import WidgetRoute from "@/routes/widget/[name]";
 
 afterEach(() => cleanup());
 
 function renderTerminal(id: string) {
   const history = createMemoryHistory();
-  history.set({ value: `/v2/terminal/${encodeURIComponent(id)}` });
+  history.set({ value: `/terminal/${encodeURIComponent(id)}` });
   return render(() => (
     <MemoryRouter history={history}>
-      <Route path="/v2/terminal/:id" component={TerminalRoute} />
+      <Route path="/terminal/:id" component={TerminalRoute} />
     </MemoryRouter>
   ));
 }
@@ -43,12 +43,12 @@ function renderWidget(path: string) {
   history.set({ value: path });
   return render(() => (
     <MemoryRouter history={history}>
-      <Route path="/v2/widget/:name" component={WidgetRoute} />
+      <Route path="/widget/:name" component={WidgetRoute} />
     </MemoryRouter>
   ));
 }
 
-describe("/v2/terminal/:id", () => {
+describe("/terminal/:id", () => {
   it("renders the chrome + Terminal pinned to the id from the URL", () => {
     const { getByTestId } = renderTerminal("my-shell");
     expect(getByTestId("v2-terminal-route")).toBeInTheDocument();
@@ -56,9 +56,9 @@ describe("/v2/terminal/:id", () => {
   });
 });
 
-describe("/v2/widget/:name", () => {
+describe("/widget/:name", () => {
   it("renders the error state when session + dir query params are missing", async () => {
-    const { findByTestId } = renderWidget("/v2/widget/changes");
+    const { findByTestId } = renderWidget("/widget/changes");
     const err = await findByTestId("v2-widget-error");
     expect(err.textContent).toContain("missing widget name, session, or dir query params");
   });

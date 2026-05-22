@@ -20,7 +20,7 @@ vi.mock("@/lib/api", () => ({
   API_BASE: "",
 }));
 
-import { WidgetsRoute } from "@/routes/v2/widgets";
+import { WidgetsRoute } from "@/routes/widgets";
 
 function renderRoute() {
   return render(() => (
@@ -32,7 +32,7 @@ function renderRoute() {
 
 beforeEach(() => cleanup());
 
-describe("/v2/widgets", () => {
+describe("/widgets", () => {
   it("renders the full catalog (8 TUI + 16 Solid = 24 tiles)", () => {
     const { getAllByTestId, getByTestId } = renderRoute();
     expect(getByTestId("widgets-gallery-page")).toBeInTheDocument();
