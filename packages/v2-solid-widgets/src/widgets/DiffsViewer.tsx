@@ -233,12 +233,12 @@ export function DiffsViewerView(props: DiffsViewerViewProps) {
             style={{
               display: "flex",
               "align-items": "center",
-              height: "28px",
-              padding: "0 12px",
+              height: "var(--chrome-h)",
+              padding: "0 var(--space-3)",
               "background-color": "var(--surface)",
               "border-bottom": "1px solid var(--border)",
               "flex-shrink": "0",
-              gap: "8px",
+              gap: "var(--space-2)",
             }}
           >
             <span style={{ color: "var(--dim)" }}>
@@ -267,7 +267,7 @@ export function DiffsViewerView(props: DiffsViewerViewProps) {
                     onClick={() => setDiffStyle(style)}
                     aria-pressed={diffStyle() === style}
                     style={{
-                      padding: "0 8px",
+                      padding: "0 var(--space-2)",
                       height: "20px",
                       "font-size": "var(--text-sm)",
                       background: diffStyle() === style ? "var(--surface-active)" : "transparent",
@@ -314,7 +314,7 @@ export function DiffsViewerView(props: DiffsViewerViewProps) {
                   display: "flex",
                   "align-items": "center",
                   height: "24px",
-                  padding: "0 8px",
+                  padding: "0 var(--space-2)",
                   "text-align": "left",
                   border: "none",
                   background: selectedFile() === null ? "var(--surface-active)" : "transparent",
@@ -346,7 +346,7 @@ export function DiffsViewerView(props: DiffsViewerViewProps) {
                         display: "flex",
                         "align-items": "center",
                         height: "24px",
-                        padding: "0 8px",
+                        padding: "0 var(--space-2)",
                         "text-align": "left",
                         border: "none",
                         background: isSelected() ? "var(--surface-active)" : "transparent",
@@ -380,7 +380,7 @@ export function DiffsViewerView(props: DiffsViewerViewProps) {
                         style={{
                           "flex-shrink": "0",
                           display: "flex",
-                          gap: "6px",
+                          gap: "var(--space-2)",
                           "margin-left": "8px",
                         }}
                       >
@@ -412,7 +412,7 @@ export function DiffsViewerView(props: DiffsViewerViewProps) {
               <Show when={error()}>
                 <div
                   style={{
-                    padding: "4px 12px",
+                    padding: "var(--space-1) var(--space-3)",
                     color: "var(--red)",
                     "background-color": "var(--bg-strong)",
                     "border-bottom": "1px solid var(--red)",
@@ -425,7 +425,7 @@ export function DiffsViewerView(props: DiffsViewerViewProps) {
               <Show when={truncated()}>
                 <div
                   style={{
-                    padding: "6px 12px",
+                    padding: "var(--space-2) var(--space-3)",
                     background: "var(--surface)",
                     "border-bottom": "1px solid var(--border)",
                     display: "flex",
@@ -519,7 +519,7 @@ export function DiffsViewerView(props: DiffsViewerViewProps) {
                                 width: "100%",
                                 height: `${vItem.size}px`,
                                 transform: `translateY(${vItem.start}px)`,
-                                padding: "0 12px",
+                                padding: "0 var(--space-3)",
                                 "box-sizing": "border-box",
                                 "white-space": "pre",
                                 "line-height": "1.5",

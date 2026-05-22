@@ -140,7 +140,12 @@ export function CostsDashboardView(props: CostsDashboardViewProps) {
       >
         {(s) => (
           <div
-            style={{ padding: "16px", display: "flex", "flex-direction": "column", gap: "20px" }}
+            style={{
+              padding: "var(--space-4)",
+              display: "flex",
+              "flex-direction": "column",
+              gap: "var(--space-5)",
+            }}
           >
             {/* KPI grid */}
             <section
@@ -148,7 +153,7 @@ export function CostsDashboardView(props: CostsDashboardViewProps) {
               style={{
                 display: "grid",
                 "grid-template-columns": "repeat(auto-fit, minmax(140px, 1fr))",
-                gap: "8px",
+                gap: "var(--space-2)",
               }}
             >
               <Kpi
@@ -242,10 +247,10 @@ export function CostsDashboardView(props: CostsDashboardViewProps) {
                           style={{
                             display: "flex",
                             "align-items": "center",
-                            gap: "8px",
+                            gap: "var(--space-2)",
                             "border-radius": "4px",
                             background: "var(--surface)",
-                            padding: "2px 8px",
+                            padding: "var(--space-1) var(--space-2)",
                           }}
                         >
                           <span
@@ -276,7 +281,7 @@ export function CostsDashboardView(props: CostsDashboardViewProps) {
                               "font-size": "var(--text-xs)",
                               "text-transform": "uppercase",
                               "letter-spacing": "0.05em",
-                              padding: "1px 6px",
+                              padding: "var(--space-1) var(--space-2)",
                               "border-radius": "9999px",
                               border: `1px solid ${milestoneColor(m.status)}`,
                               color: milestoneColor(m.status),
@@ -348,10 +353,10 @@ export function CostsDashboardView(props: CostsDashboardViewProps) {
                         style={{
                           display: "flex",
                           "align-items": "center",
-                          gap: "8px",
+                          gap: "var(--space-2)",
                           "border-radius": "4px",
                           background: "var(--surface)",
-                          padding: "2px 8px",
+                          padding: "var(--space-1) var(--space-2)",
                           "font-size": "var(--text-base)",
                         }}
                       >
@@ -439,7 +444,7 @@ export function CostsDashboardView(props: CostsDashboardViewProps) {
                   "border-radius": "6px",
                   background: "var(--surface)",
                   border: "1px solid var(--border)",
-                  padding: "10px 12px",
+                  padding: "var(--space-2) var(--space-3)",
                   display: "flex",
                   "flex-wrap": "wrap",
                   gap: "4px 12px",
@@ -512,10 +517,10 @@ export function CostsDashboardView(props: CostsDashboardViewProps) {
                               transform: `translateY(${vItem.start}px)`,
                               display: "flex",
                               "align-items": "center",
-                              gap: "12px",
+                              gap: "var(--space-3)",
                               "border-radius": "4px",
                               background: "var(--surface)",
-                              padding: "2px 8px",
+                              padding: "var(--space-1) var(--space-2)",
                               "font-size": "var(--text-sm)",
                               "font-variant-numeric": "tabular-nums",
                               color: "var(--dim)",
@@ -593,7 +598,7 @@ function Kpi(props: { label: string; value: string; color?: string }) {
         "border-radius": "6px",
         border: "1px solid var(--border)",
         background: "var(--surface)",
-        padding: "10px 12px",
+        padding: "var(--space-2) var(--space-3)",
       }}
     >
       <div

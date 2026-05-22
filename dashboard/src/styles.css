@@ -49,6 +49,23 @@
   --text-2xl: 18px;
   --text-2xl--line-height: 24px;
 
+  /* Spacing scale — 4px grid, anchored on the same unit Tailwind's
+     p-1/p-2/p-3 defaults use. Inline consumers in v2-solid-widgets
+     reference these as `var(--space-2)` instead of raw "8px" so the
+     widget chrome stays in sync with utility-class chrome. */
+  --space-0: 0;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+
+  /* Chrome bar height — every bordered header/footer/toolbar/tabstrip
+     resolves to this. h-7 was already the dominant value; this token
+     captures the rule. */
+  --chrome-h: 28px;
+
   /* Radius scale — 7 stops, anchored on 0.625rem = 10px. */
   --radius: 0.625rem;
   --radius-sm: calc(var(--radius) - 4px); /* 6px  — inline chips, code */

@@ -261,7 +261,7 @@ export function MissionControlDashboardView(props: MissionControlDashboardViewPr
                       display: "inline-flex",
                       "border-radius": "4px",
                       background: "var(--surface)",
-                      padding: "4px 8px",
+                      padding: "var(--space-1) var(--space-2)",
                       "font-size": "var(--text-sm)",
                       color: "var(--fg-secondary)",
                     }}
@@ -312,7 +312,7 @@ export function MissionControlDashboardView(props: MissionControlDashboardViewPr
                     display: "inline-flex",
                     "border-radius": "4px",
                     background: "var(--surface)",
-                    padding: "4px 8px",
+                    padding: "var(--space-1) var(--space-2)",
                     "font-size": "var(--text-sm)",
                     color: "var(--fg-secondary)",
                   }}
@@ -325,7 +325,12 @@ export function MissionControlDashboardView(props: MissionControlDashboardViewPr
         >
           {(m) => (
             <div
-              style={{ padding: "16px", display: "flex", "flex-direction": "column", gap: "16px" }}
+              style={{
+                padding: "var(--space-4)",
+                display: "flex",
+                "flex-direction": "column",
+                gap: "16px",
+              }}
             >
               {/* HeroStrip */}
               <section
@@ -334,14 +339,14 @@ export function MissionControlDashboardView(props: MissionControlDashboardViewPr
                   "border-radius": "8px",
                   border: "1px solid var(--border)",
                   background: "var(--surface-elevated, var(--surface))",
-                  padding: "16px",
+                  padding: "var(--space-4)",
                 }}
               >
                 <div
                   style={{
                     display: "flex",
                     "align-items": "center",
-                    gap: "12px",
+                    gap: "var(--space-3)",
                     "margin-bottom": "8px",
                     "flex-wrap": "wrap",
                   }}
@@ -363,7 +368,7 @@ export function MissionControlDashboardView(props: MissionControlDashboardViewPr
                         "font-size": "var(--text-xs)",
                         "text-transform": "uppercase",
                         "letter-spacing": "0.05em",
-                        padding: "2px 8px",
+                        padding: "var(--space-1) var(--space-2)",
                         "border-radius": "9999px",
                         border: `1px solid ${statusColor(m().status)}`,
                         color: statusColor(m().status),
@@ -399,7 +404,7 @@ export function MissionControlDashboardView(props: MissionControlDashboardViewPr
                 style={{
                   display: "grid",
                   "grid-template-columns": "repeat(auto-fit, minmax(140px, 1fr))",
-                  gap: "8px",
+                  gap: "var(--space-2)",
                 }}
               >
                 <Kpi
@@ -474,14 +479,14 @@ export function MissionControlDashboardView(props: MissionControlDashboardViewPr
                                   "border-radius": "6px",
                                   border: "1px solid var(--border)",
                                   background: "var(--surface)",
-                                  padding: "10px 12px",
+                                  padding: "var(--space-2) var(--space-3)",
                                 }}
                               >
                                 <div
                                   style={{
                                     display: "flex",
                                     "align-items": "center",
-                                    gap: "8px",
+                                    gap: "var(--space-2)",
                                     "margin-bottom": "6px",
                                   }}
                                 >
@@ -555,8 +560,8 @@ export function MissionControlDashboardView(props: MissionControlDashboardViewPr
                                           style={{
                                             display: "flex",
                                             "align-items": "center",
-                                            gap: "6px",
-                                            padding: "2px 6px",
+                                            gap: "var(--space-2)",
+                                            padding: "var(--space-1) var(--space-2)",
                                             background: "transparent",
                                             border: "none",
                                             color: "var(--fg-secondary)",
@@ -660,8 +665,8 @@ export function MissionControlDashboardView(props: MissionControlDashboardViewPr
                                 style={{
                                   display: "flex",
                                   "flex-direction": "column",
-                                  gap: "4px",
-                                  padding: "10px 12px",
+                                  gap: "var(--space-1)",
+                                  padding: "var(--space-2) var(--space-3)",
                                   "border-radius": "6px",
                                   border: "1px solid var(--border)",
                                   background: "var(--surface)",
@@ -683,7 +688,7 @@ export function MissionControlDashboardView(props: MissionControlDashboardViewPr
                                   style={{
                                     display: "flex",
                                     "align-items": "center",
-                                    gap: "6px",
+                                    gap: "var(--space-2)",
                                   }}
                                 >
                                   <span
@@ -813,8 +818,8 @@ export function MissionControlDashboardView(props: MissionControlDashboardViewPr
                                 transform: `translateY(${vItem.start}px)`,
                                 display: "flex",
                                 "align-items": "baseline",
-                                gap: "8px",
-                                padding: "4px 12px",
+                                gap: "var(--space-2)",
+                                padding: "var(--space-1) var(--space-3)",
                                 "border-bottom": "1px solid var(--border-weak, var(--border))",
                                 "font-size": "var(--text-sm)",
                                 "box-sizing": "border-box",
@@ -831,7 +836,7 @@ export function MissionControlDashboardView(props: MissionControlDashboardViewPr
                               </span>
                               <span
                                 style={{
-                                  padding: "0 6px",
+                                  padding: "0 var(--space-2)",
                                   "border-radius": "3px",
                                   background: "color-mix(in srgb, var(--bg) 80%, var(--accent))",
                                   color: "var(--accent)",
@@ -881,7 +886,7 @@ function Kpi(props: { label: string; value: string; hint?: string }) {
         "border-radius": "6px",
         border: "1px solid var(--border)",
         background: "var(--surface)",
-        padding: "10px 12px",
+        padding: "var(--space-2) var(--space-3)",
       }}
     >
       <div

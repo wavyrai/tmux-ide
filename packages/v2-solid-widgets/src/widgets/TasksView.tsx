@@ -217,8 +217,8 @@ export function TasksViewView(props: TasksViewProps) {
           display: "flex",
           "flex-wrap": "wrap",
           "align-items": "center",
-          gap: "8px",
-          padding: "8px 10px",
+          gap: "var(--space-2)",
+          padding: "var(--space-2)",
           "border-bottom": "1px solid var(--border)",
           "background-color": "var(--bg-strong, var(--bg))",
         }}
@@ -277,7 +277,7 @@ export function TasksViewView(props: TasksViewProps) {
           style={{
             "flex-grow": "1",
             "min-width": "120px",
-            padding: "3px 8px",
+            padding: "var(--space-1) var(--space-2)",
             "border-radius": "4px",
             border: "1px solid var(--border)",
             "background-color": "var(--bg)",
@@ -300,7 +300,7 @@ export function TasksViewView(props: TasksViewProps) {
             data-testid="tasks-clear-filters"
             onClick={clearAllFilters}
             style={{
-              padding: "3px 8px",
+              padding: "var(--space-1) var(--space-2)",
               "border-radius": "4px",
               border: "1px solid var(--border)",
               "background-color": "transparent",
@@ -319,7 +319,7 @@ export function TasksViewView(props: TasksViewProps) {
             data-testid="tasks-create"
             onClick={() => props.options().onCreateTask?.()}
             style={{
-              padding: "3px 10px",
+              padding: "var(--space-1) var(--space-2)",
               "border-radius": "4px",
               border: "1px solid var(--accent)",
               "background-color": "color-mix(in oklab, var(--accent) 14%, transparent)",
@@ -361,7 +361,7 @@ export function TasksViewView(props: TasksViewProps) {
                   display: "flex",
                   "align-items": "center",
                   "justify-content": "center",
-                  padding: "40px 12px",
+                  padding: "40px var(--space-3)",
                   color: "var(--dim)",
                   "font-size": "var(--text-base)",
                 }}
@@ -390,14 +390,18 @@ export function TasksViewView(props: TasksViewProps) {
                     "letter-spacing": "0.05em",
                   }}
                 >
-                  <th style={{ width: "24px", padding: "4px 8px" }} />
-                  <th style={{ width: "16px", padding: "4px 0" }} />
-                  <th style={{ width: "44px", padding: "4px 6px" }}>ID</th>
-                  <th style={{ padding: "4px 6px" }}>Title</th>
-                  <th style={{ width: "92px", padding: "4px 6px" }}>Status</th>
-                  <th style={{ width: "94px", padding: "4px 6px" }}>Assignee</th>
-                  <th style={{ width: "60px", padding: "4px 6px" }}>Goal</th>
-                  <th style={{ width: "44px", padding: "4px 6px" }}>Deps</th>
+                  <th style={{ width: "24px", padding: "var(--space-1) var(--space-2)" }} />
+                  <th style={{ width: "16px", padding: "var(--space-1) 0" }} />
+                  <th style={{ width: "44px", padding: "var(--space-1) var(--space-2)" }}>ID</th>
+                  <th style={{ padding: "var(--space-1) var(--space-2)" }}>Title</th>
+                  <th style={{ width: "92px", padding: "var(--space-1) var(--space-2)" }}>
+                    Status
+                  </th>
+                  <th style={{ width: "94px", padding: "var(--space-1) var(--space-2)" }}>
+                    Assignee
+                  </th>
+                  <th style={{ width: "60px", padding: "var(--space-1) var(--space-2)" }}>Goal</th>
+                  <th style={{ width: "44px", padding: "var(--space-1) var(--space-2)" }}>Deps</th>
                 </tr>
               </thead>
               <tbody data-testid="tasks-tbody">
@@ -545,13 +549,13 @@ export function TasksViewView(props: TasksViewProps) {
                 "border-left": "1px solid var(--border)",
                 "background-color": "var(--surface, var(--bg-strong, var(--bg)))",
                 "overflow-y": "auto",
-                padding: "10px 12px",
+                padding: "var(--space-2) var(--space-3)",
                 display: "flex",
                 "flex-direction": "column",
-                gap: "10px",
+                gap: "var(--space-2)",
               }}
             >
-              <header style={{ display: "flex", "align-items": "baseline", gap: "8px" }}>
+              <header style={{ display: "flex", "align-items": "baseline", gap: "var(--space-2)" }}>
                 <span style={{ color: "var(--fg-soft)", "font-size": "var(--text-xs)" }}>
                   {taskAccessor().id}
                 </span>
@@ -606,12 +610,12 @@ export function TasksViewView(props: TasksViewProps) {
                 <DetailField label="Updated" value={fmtDate(taskAccessor().updated)} />
               </div>
               <Show when={taskAccessor().tags && taskAccessor().tags!.length > 0}>
-                <div style={{ display: "flex", "flex-wrap": "wrap", gap: "4px" }}>
+                <div style={{ display: "flex", "flex-wrap": "wrap", gap: "var(--space-1)" }}>
                   <For each={taskAccessor().tags!}>
                     {(tag) => (
                       <span
                         style={{
-                          padding: "1px 6px",
+                          padding: "var(--space-1) var(--space-2)",
                           "border-radius": "10px",
                           "background-color": "color-mix(in oklab, var(--accent) 14%, transparent)",
                           color: "var(--accent)",
@@ -665,7 +669,7 @@ function ChipGroup(props: {
   return (
     <div
       data-filter-group={props.dataKey}
-      style={{ display: "flex", "align-items": "center", gap: "4px" }}
+      style={{ display: "flex", "align-items": "center", gap: "var(--space-1)" }}
     >
       <span
         style={{
@@ -687,7 +691,7 @@ function ChipGroup(props: {
               data-filter-selected={isSelected() ? "true" : "false"}
               onClick={() => props.onToggle(item.key)}
               style={{
-                padding: "2px 8px",
+                padding: "var(--space-1) var(--space-2)",
                 "border-radius": "10px",
                 border: "1px solid var(--border)",
                 "background-color": isSelected()

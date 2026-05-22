@@ -261,10 +261,10 @@ export function ActivityView(props: ActivityViewProps) {
     >
       <div
         style={{
-          padding: "16px 16px 12px",
+          padding: "var(--space-4) var(--space-4) var(--space-3)",
           display: "flex",
           "flex-direction": "column",
-          gap: "20px",
+          gap: "var(--space-5)",
           "flex-shrink": "0",
         }}
       >
@@ -274,7 +274,7 @@ export function ActivityView(props: ActivityViewProps) {
           style={{
             display: "grid",
             "grid-template-columns": "repeat(auto-fit, minmax(140px, 1fr))",
-            gap: "8px",
+            gap: "var(--space-2)",
           }}
         >
           <KpiButton
@@ -325,7 +325,7 @@ export function ActivityView(props: ActivityViewProps) {
             display: "flex",
             "flex-wrap": "wrap",
             "align-items": "center",
-            gap: "8px",
+            gap: "var(--space-2)",
           }}
         >
           <input
@@ -340,7 +340,7 @@ export function ActivityView(props: ActivityViewProps) {
               "border-radius": "6px",
               border: "1px solid var(--border-weak, var(--border))",
               background: "var(--bg-strong, var(--surface))",
-              padding: "0 12px",
+              padding: "0 var(--space-3)",
               color: "var(--fg)",
               "font-family": "inherit",
               "font-size": "var(--text-base)",
@@ -354,7 +354,7 @@ export function ActivityView(props: ActivityViewProps) {
             onClick={() => setLive((v) => !v)}
             style={{
               height: "32px",
-              padding: "0 12px",
+              padding: "0 var(--space-3)",
               "border-radius": "6px",
               border: `1px solid ${live() ? "var(--green)" : "var(--border-weak, var(--border))"}`,
               background: live() ? pillTint("var(--green)") : "var(--bg-strong, var(--surface))",
@@ -379,8 +379,8 @@ export function ActivityView(props: ActivityViewProps) {
                   data-activity-filter-active={active() ? "true" : "false"}
                   onClick={() => toggleType(type)}
                   style={{
-                    height: "28px",
-                    padding: "0 8px",
+                    height: "var(--chrome-h)",
+                    padding: "0 var(--space-2)",
                     "border-radius": "6px",
                     border: `1px solid ${active() ? "var(--accent)" : "var(--border-weak, var(--border))"}`,
                     background: active()
@@ -403,8 +403,8 @@ export function ActivityView(props: ActivityViewProps) {
               data-testid="activity-clear"
               onClick={clearAll}
               style={{
-                height: "28px",
-                padding: "0 8px",
+                height: "var(--chrome-h)",
+                padding: "0 var(--space-2)",
                 "border-radius": "6px",
                 border: "1px solid var(--border-weak, var(--border))",
                 background: "transparent",
@@ -508,7 +508,7 @@ function TimelineRow(props: TimelineRowProps) {
               "align-items": "center",
               "justify-content": "space-between",
               background: "var(--bg)",
-              padding: "8px 0 4px",
+              padding: "var(--space-2) 0 var(--space-1)",
               "font-size": "var(--text-xs)",
               "text-transform": "uppercase",
               "letter-spacing": "0.08em",
@@ -541,8 +541,8 @@ function EventRow(props: { event: ActivityEvent; isFirstInGroup: boolean }) {
                 display: "grid",
                 "grid-template-columns": "10px minmax(0, 1fr) auto",
                 "align-items": "center",
-                gap: "12px",
-                padding: "8px 12px",
+                gap: "var(--space-3)",
+                padding: "var(--space-2) var(--space-3)",
                 "border-radius": "6px",
                 border: "1px solid var(--border-weak, var(--border))",
                 "border-top": props.isFirstInGroup
@@ -573,7 +573,7 @@ function EventRow(props: { event: ActivityEvent; isFirstInGroup: boolean }) {
                   style={{
                     display: "flex",
                     "align-items": "center",
-                    gap: "8px",
+                    gap: "var(--space-2)",
                     "min-width": "0",
                   }}
                 >
@@ -581,7 +581,7 @@ function EventRow(props: { event: ActivityEvent; isFirstInGroup: boolean }) {
                     data-activity-pill
                     style={{
                       "flex-shrink": "0",
-                      padding: "1px 6px",
+                      padding: "var(--space-1) var(--space-2)",
                       "border-radius": "9999px",
                       background: pillTint(meta.color),
                       color: meta.color,
@@ -610,7 +610,7 @@ function EventRow(props: { event: ActivityEvent; isFirstInGroup: boolean }) {
                       "margin-top": "4px",
                       display: "flex",
                       "align-items": "center",
-                      gap: "8px",
+                      gap: "var(--space-2)",
                       "min-width": "0",
                       "font-size": "var(--text-xs)",
                       color: "var(--dim)",
@@ -621,7 +621,7 @@ function EventRow(props: { event: ActivityEvent; isFirstInGroup: boolean }) {
                         style={{
                           "border-radius": "4px",
                           background: "var(--surface)",
-                          padding: "1px 6px",
+                          padding: "var(--space-1) var(--space-2)",
                           color: "var(--cyan, var(--accent))",
                         }}
                       >
@@ -679,7 +679,7 @@ function KpiButton(props: {
         "border-radius": "6px",
         border: `1px solid ${props.active ? "var(--accent)" : "var(--border)"}`,
         background: props.active ? "var(--surface-active, var(--surface))" : "var(--surface)",
-        padding: "10px 12px",
+        padding: "var(--space-2) var(--space-3)",
         cursor: "pointer",
         "text-align": "left",
         "font-family": "inherit",

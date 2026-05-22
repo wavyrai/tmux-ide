@@ -156,11 +156,11 @@ export function PlansPanelView(props: PlansPanelViewProps) {
             style={{
               display: "flex",
               "align-items": "center",
-              gap: "8px",
-              height: "28px",
+              gap: "var(--space-2)",
+              height: "var(--chrome-h)",
               "flex-shrink": "0",
               "border-bottom": "1px solid var(--border)",
-              padding: "0 12px",
+              padding: "0 var(--space-3)",
               "background-color": "var(--bg-strong)",
               "font-size": "var(--text-sm)",
             }}
@@ -181,7 +181,7 @@ export function PlansPanelView(props: PlansPanelViewProps) {
               data-testid="plans-panel-status-pill"
               style={{
                 "border-radius": "9999px",
-                padding: "1px 6px",
+                padding: "var(--space-1) var(--space-2)",
                 "font-size": "var(--text-xs)",
                 background: STATUS_PILL_BG[p().status] ?? "var(--surface)",
                 color: STATUS_PILL_FG[p().status] ?? "var(--fg-secondary)",
@@ -340,7 +340,7 @@ export function PlansPanelView(props: PlansPanelViewProps) {
                           style={{
                             display: "flex",
                             "align-items": "center",
-                            gap: "8px",
+                            gap: "var(--space-2)",
                             "margin-bottom": "4px",
                           }}
                         >
@@ -348,7 +348,7 @@ export function PlansPanelView(props: PlansPanelViewProps) {
                             data-testid="plans-panel-author-badge"
                             style={{
                               "font-size": "9px",
-                              padding: "1px 4px",
+                              padding: "var(--space-1)",
                               "border-radius": "2px",
                               color: ai() ? "var(--ai-color)" : "var(--human-color)",
                               background: ai() ? "var(--ai-badge)" : "var(--human-badge)",

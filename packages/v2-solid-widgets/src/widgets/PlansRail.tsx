@@ -207,7 +207,7 @@ export function PlansRailView(props: PlansRailViewProps) {
       {/* Header — label, count, search, sort */}
       <div
         style={{
-          padding: "12px",
+          padding: "var(--space-3)",
           "border-bottom": "1px solid var(--border)",
           "flex-shrink": "0",
         }}
@@ -216,7 +216,7 @@ export function PlansRailView(props: PlansRailViewProps) {
           style={{
             display: "flex",
             "align-items": "center",
-            gap: "8px",
+            gap: "var(--space-2)",
             "margin-bottom": "8px",
             "font-size": "var(--text-sm)",
             color: "var(--dim)",
@@ -240,7 +240,7 @@ export function PlansRailView(props: PlansRailViewProps) {
             "border-radius": "6px",
             border: "1px solid var(--border)",
             "background-color": "var(--bg-strong)",
-            padding: "0 8px",
+            padding: "0 var(--space-2)",
             "font-size": "var(--text-base)",
             color: "var(--fg)",
             outline: "none",
@@ -257,7 +257,7 @@ export function PlansRailView(props: PlansRailViewProps) {
             "border-radius": "6px",
             border: "1px solid var(--border)",
             "background-color": "var(--bg-strong)",
-            padding: "0 8px",
+            padding: "0 var(--space-2)",
             "font-size": "var(--text-base)",
             color: "var(--fg-secondary)",
             outline: "none",
@@ -283,8 +283,8 @@ export function PlansRailView(props: PlansRailViewProps) {
             "flex-direction": "column",
             "align-items": "center",
             "justify-content": "center",
-            gap: "6px",
-            padding: "24px 16px",
+            gap: "var(--space-2)",
+            padding: "var(--space-6) var(--space-4)",
             "text-align": "center",
             color: "var(--dim)",
           }}
@@ -344,10 +344,10 @@ export function PlansRailView(props: PlansRailViewProps) {
                             style={{
                               display: "flex",
                               "align-items": "center",
-                              gap: "8px",
+                              gap: "var(--space-2)",
                               height: "32px",
                               width: "100%",
-                              padding: "0 12px",
+                              padding: "0 var(--space-3)",
                               "text-align": "left",
                               "font-size": "var(--text-xs)",
                               "text-transform": "uppercase",
@@ -390,7 +390,7 @@ export function PlansRailView(props: PlansRailViewProps) {
                             style={{
                               display: "block",
                               width: "100%",
-                              padding: "8px 12px",
+                              padding: "var(--space-2) var(--space-3)",
                               "text-align": "left",
                               border: "none",
                               background: isSelected() ? "var(--surface-active)" : "transparent",
@@ -415,7 +415,7 @@ export function PlansRailView(props: PlansRailViewProps) {
                               style={{
                                 display: "flex",
                                 "align-items": "center",
-                                gap: "8px",
+                                gap: "var(--space-2)",
                               }}
                             >
                               <span
@@ -445,7 +445,7 @@ export function PlansRailView(props: PlansRailViewProps) {
                                 style={{
                                   "flex-shrink": "0",
                                   "border-radius": "9999px",
-                                  padding: "1px 6px",
+                                  padding: "var(--space-1) var(--space-2)",
                                   "font-size": "var(--text-xs)",
                                   background: STATUS_PILL_BG[plan.status],
                                   color: STATUS_PILL_FG[plan.status],
@@ -460,7 +460,7 @@ export function PlansRailView(props: PlansRailViewProps) {
                                 display: "flex",
                                 "min-width": "0",
                                 "align-items": "center",
-                                gap: "6px",
+                                gap: "var(--space-2)",
                                 "font-size": "var(--text-xs)",
                                 color: "var(--dimmer)",
                               }}
@@ -518,7 +518,7 @@ export function PlansRailView(props: PlansRailViewProps) {
       {/* Footer — New plan */}
       <div
         style={{
-          padding: "12px",
+          padding: "var(--space-3)",
           "border-top": "1px solid var(--border)",
           "flex-shrink": "0",
         }}

@@ -231,8 +231,8 @@ export function KanbanBoardView(props: KanbanBoardProps) {
           display: "flex",
           "flex-wrap": "wrap",
           "align-items": "center",
-          gap: "8px",
-          padding: "8px 10px",
+          gap: "var(--space-2)",
+          padding: "var(--space-2)",
           "border-bottom": "1px solid var(--border)",
           "background-color": "var(--bg-strong, var(--bg))",
         }}
@@ -279,7 +279,7 @@ export function KanbanBoardView(props: KanbanBoardProps) {
           style={{
             "flex-grow": "1",
             "min-width": "120px",
-            padding: "3px 8px",
+            padding: "var(--space-1) var(--space-2)",
             "border-radius": "4px",
             border: "1px solid var(--border)",
             "background-color": "var(--bg)",
@@ -294,7 +294,7 @@ export function KanbanBoardView(props: KanbanBoardProps) {
             data-testid="kanban-filter-clear"
             onClick={clearFilters}
             style={{
-              padding: "3px 8px",
+              padding: "var(--space-1) var(--space-2)",
               "border-radius": "4px",
               border: "1px solid var(--border)",
               "background-color": "transparent",
@@ -313,7 +313,7 @@ export function KanbanBoardView(props: KanbanBoardProps) {
             data-testid="kanban-add-task"
             onClick={() => props.options().onCreateTask?.()}
             style={{
-              padding: "3px 10px",
+              padding: "var(--space-1) var(--space-2)",
               "border-radius": "4px",
               border: "1px solid var(--accent)",
               "background-color": "color-mix(in oklab, var(--accent) 14%, transparent)",
@@ -335,7 +335,7 @@ export function KanbanBoardView(props: KanbanBoardProps) {
           display: "flex",
           "flex-grow": "1",
           "min-height": "0",
-          gap: "8px",
+          gap: "var(--space-2)",
           padding: "10px",
           "overflow-x": "auto",
           "overflow-y": "hidden",
@@ -362,8 +362,8 @@ export function KanbanBoardView(props: KanbanBoardProps) {
                 style={{
                   display: "flex",
                   "align-items": "center",
-                  gap: "6px",
-                  padding: "8px 10px",
+                  gap: "var(--space-2)",
+                  padding: "var(--space-2)",
                   "border-bottom": "1px solid var(--border-weak, var(--border))",
                 }}
               >
@@ -455,7 +455,7 @@ function KanbanColumnBody(props: KanbanColumnBodyProps): JSX.Element {
         flex: "1 1 0%",
         "min-height": "0",
         "overflow-y": "auto",
-        padding: "6px",
+        padding: "var(--space-2)",
         position: "relative",
       }}
     >
@@ -521,7 +521,9 @@ function KanbanColumnBody(props: KanbanColumnBodyProps): JSX.Element {
                       gap: "3px",
                     }}
                   >
-                    <header style={{ display: "flex", "align-items": "center", gap: "6px" }}>
+                    <header
+                      style={{ display: "flex", "align-items": "center", gap: "var(--space-2)" }}
+                    >
                       <button
                         type="button"
                         data-testid={`task-card-status-${task().id}`}
@@ -585,7 +587,7 @@ function KanbanColumnBody(props: KanbanColumnBodyProps): JSX.Element {
                         style={{
                           display: "flex",
                           "align-items": "center",
-                          gap: "6px",
+                          gap: "var(--space-2)",
                           color: "var(--fg-soft)",
                           "font-size": "var(--text-xs)",
                         }}
@@ -631,7 +633,7 @@ function ChipGroup(props: {
   return (
     <div
       data-filter-group={props.dataKey}
-      style={{ display: "flex", "align-items": "center", gap: "4px" }}
+      style={{ display: "flex", "align-items": "center", gap: "var(--space-1)" }}
     >
       <span
         style={{
@@ -655,7 +657,7 @@ function ChipGroup(props: {
               data-filter-selected={isSelected() ? "true" : "false"}
               onClick={() => props.onToggle(item.key)}
               style={{
-                padding: "2px 8px",
+                padding: "var(--space-1) var(--space-2)",
                 "border-radius": "10px",
                 border: "1px solid var(--border)",
                 "background-color": isSelected()

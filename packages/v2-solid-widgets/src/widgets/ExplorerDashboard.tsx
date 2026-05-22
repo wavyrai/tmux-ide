@@ -182,7 +182,7 @@ export function ExplorerDashboardView(props: ExplorerDashboardViewProps) {
           <div
             data-testid="explorer-dashboard-empty"
             style={{
-              padding: "16px",
+              padding: "var(--space-4)",
               color: "var(--dim)",
               "font-size": "var(--text-sm)",
             }}
@@ -262,7 +262,7 @@ function ExplorerRow(props: ExplorerRowProps) {
       style={{
         display: "flex",
         "align-items": "center",
-        gap: "4px",
+        gap: "var(--space-1)",
         height: "22px",
         "padding-left": indentPx(),
         "padding-right": "8px",

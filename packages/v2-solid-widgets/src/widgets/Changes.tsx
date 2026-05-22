@@ -164,8 +164,8 @@ export function ChangesView(props: ChangesViewProps) {
         style={{
           display: "flex",
           "align-items": "center",
-          gap: "12px",
-          padding: "6px 12px",
+          gap: "var(--space-3)",
+          padding: "var(--space-2) var(--space-3)",
           "border-bottom": "1px solid var(--theme-border, var(--border))",
           "flex-shrink": "0",
           "font-size": "var(--text-sm)",
@@ -196,7 +196,7 @@ export function ChangesView(props: ChangesViewProps) {
             data-testid="v2-changes-style-unified"
             onClick={() => setDiffStyle("unified")}
             style={{
-              padding: "1px 8px",
+              padding: "var(--space-1) var(--space-2)",
               "font-size": "var(--text-sm)",
               "font-family": "inherit",
               cursor: "pointer",
@@ -215,7 +215,7 @@ export function ChangesView(props: ChangesViewProps) {
             data-testid="v2-changes-style-split"
             onClick={() => setDiffStyle("split")}
             style={{
-              padding: "1px 8px",
+              padding: "var(--space-1) var(--space-2)",
               "font-size": "var(--text-sm)",
               "font-family": "inherit",
               cursor: "pointer",
@@ -235,7 +235,7 @@ export function ChangesView(props: ChangesViewProps) {
       <Show when={error()}>
         <div
           style={{
-            padding: "4px 12px",
+            padding: "var(--space-1) var(--space-3)",
             color: "var(--red)",
             "background-color": "var(--bg-strong)",
             "border-bottom": "1px solid var(--red)",
@@ -264,7 +264,7 @@ export function ChangesView(props: ChangesViewProps) {
             fallback={
               <div
                 style={{
-                  padding: "12px",
+                  padding: "var(--space-3)",
                   color: "var(--theme-focused-foreground-subdued, var(--dim))",
                 }}
               >
@@ -284,8 +284,8 @@ export function ChangesView(props: ChangesViewProps) {
                     style={{
                       display: "flex",
                       "align-items": "center",
-                      gap: "6px",
-                      padding: "2px 8px",
+                      gap: "var(--space-2)",
+                      padding: "var(--space-1) var(--space-2)",
                       "border-left": isSel() ? "2px solid var(--accent)" : "2px solid transparent",
                       "background-color": isSel() ? "var(--surface-hover)" : "transparent",
                       cursor: "pointer",
@@ -348,7 +348,7 @@ export function ChangesView(props: ChangesViewProps) {
             fallback={
               <div
                 style={{
-                  padding: "12px",
+                  padding: "var(--space-3)",
                   color: "var(--theme-focused-foreground-subdued, var(--dim))",
                 }}
               >
@@ -370,7 +370,7 @@ export function ChangesView(props: ChangesViewProps) {
 
       <footer
         style={{
-          padding: "4px 12px",
+          padding: "var(--space-1) var(--space-3)",
           "border-top": "1px solid var(--theme-border-subdued, var(--border-weak))",
           color: "var(--theme-focused-foreground-subdued, var(--dim))",
           "font-size": "var(--text-xs)",

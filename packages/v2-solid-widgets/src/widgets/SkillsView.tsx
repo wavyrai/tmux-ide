@@ -250,8 +250,8 @@ export function SkillsViewView(props: SkillsViewProps) {
           style={{
             display: "flex",
             "align-items": "center",
-            gap: "6px",
-            padding: "8px 10px",
+            gap: "var(--space-2)",
+            padding: "var(--space-2)",
             "border-bottom": "1px solid var(--border-weak, var(--border))",
           }}
         >
@@ -283,7 +283,7 @@ export function SkillsViewView(props: SkillsViewProps) {
               onClick={() => openCreate()}
               style={{
                 "margin-left": "6px",
-                padding: "2px 8px",
+                padding: "var(--space-1) var(--space-2)",
                 "border-radius": "4px",
                 border: "1px solid var(--border)",
                 "background-color": "transparent",
@@ -297,7 +297,7 @@ export function SkillsViewView(props: SkillsViewProps) {
             </button>
           </Show>
         </header>
-        <div style={{ padding: "6px 8px" }}>
+        <div style={{ padding: "var(--space-2)" }}>
           <input
             data-testid="skills-search"
             type="search"
@@ -306,7 +306,7 @@ export function SkillsViewView(props: SkillsViewProps) {
             onInput={(e) => setQuery(e.currentTarget.value)}
             style={{
               width: "100%",
-              padding: "4px 8px",
+              padding: "var(--space-1) var(--space-2)",
               "border-radius": "4px",
               border: "1px solid var(--border)",
               "background-color": "var(--bg)",
@@ -334,7 +334,7 @@ export function SkillsViewView(props: SkillsViewProps) {
                 style={{
                   color: "var(--dim)",
                   "font-size": "var(--text-sm)",
-                  padding: "16px 8px",
+                  padding: "var(--space-4) var(--space-2)",
                   "text-align": "center",
                 }}
               >
@@ -377,9 +377,9 @@ export function SkillsViewView(props: SkillsViewProps) {
                         style={{
                           display: "flex",
                           "align-items": "center",
-                          gap: "6px",
+                          gap: "var(--space-2)",
                           width: "100%",
-                          padding: "6px 8px",
+                          padding: "var(--space-2)",
                           "border-radius": "4px",
                           border: "none",
                           "background-color": isActive()
@@ -457,7 +457,7 @@ export function SkillsViewView(props: SkillsViewProps) {
                 "justify-content": "center",
                 color: "var(--dim)",
                 "font-size": "var(--text-base)",
-                padding: "40px 12px",
+                padding: "40px var(--space-3)",
               }}
             >
               <Show when={allSkills().length === 0} fallback="Select a skill from the rail.">
@@ -473,8 +473,8 @@ export function SkillsViewView(props: SkillsViewProps) {
                   display: "flex",
                   "flex-wrap": "wrap",
                   "align-items": "baseline",
-                  gap: "10px",
-                  padding: "10px 14px",
+                  gap: "var(--space-2)",
+                  padding: "var(--space-2) var(--space-4)",
                   "border-bottom": "1px solid var(--border)",
                   "background-color": "var(--bg-weak, var(--bg))",
                 }}
@@ -493,7 +493,7 @@ export function SkillsViewView(props: SkillsViewProps) {
                 <span
                   data-testid="skill-detail-role"
                   style={{
-                    padding: "1px 6px",
+                    padding: "var(--space-1) var(--space-2)",
                     "border-radius": "10px",
                     "background-color": "color-mix(in oklab, var(--accent) 14%, transparent)",
                     color: "var(--accent)",
@@ -507,13 +507,13 @@ export function SkillsViewView(props: SkillsViewProps) {
                 <Show when={skillAccessor().specialties && skillAccessor().specialties!.length > 0}>
                   <div
                     data-testid="skill-detail-specialties"
-                    style={{ display: "flex", gap: "4px", "flex-wrap": "wrap" }}
+                    style={{ display: "flex", gap: "var(--space-1)", "flex-wrap": "wrap" }}
                   >
                     <For each={skillAccessor().specialties!}>
                       {(s) => (
                         <span
                           style={{
-                            padding: "1px 6px",
+                            padding: "var(--space-1) var(--space-2)",
                             "border-radius": "10px",
                             border: "1px solid var(--border-weak, var(--border))",
                             color: "var(--fg-muted, var(--fg-soft))",
@@ -531,7 +531,7 @@ export function SkillsViewView(props: SkillsViewProps) {
                     style={{
                       "margin-left": "auto",
                       display: "flex",
-                      gap: "6px",
+                      gap: "var(--space-2)",
                     }}
                   >
                     <Show when={canUpdate()}>
@@ -540,7 +540,7 @@ export function SkillsViewView(props: SkillsViewProps) {
                         data-testid="skill-edit-button"
                         onClick={() => openEdit(skillAccessor())}
                         style={{
-                          padding: "2px 8px",
+                          padding: "var(--space-1) var(--space-2)",
                           "border-radius": "4px",
                           border: "1px solid var(--border)",
                           "background-color": "transparent",
@@ -562,7 +562,7 @@ export function SkillsViewView(props: SkillsViewProps) {
                           setPendingDelete(skillAccessor().name);
                         }}
                         style={{
-                          padding: "2px 8px",
+                          padding: "var(--space-1) var(--space-2)",
                           "border-radius": "4px",
                           border: "1px solid var(--border)",
                           "background-color": "transparent",
@@ -583,7 +583,7 @@ export function SkillsViewView(props: SkillsViewProps) {
                   data-testid="skill-detail-description"
                   style={{
                     margin: "0",
-                    padding: "10px 14px",
+                    padding: "var(--space-2) var(--space-4)",
                     "border-bottom": "1px solid var(--border-weak, var(--border))",
                     color: "var(--fg-muted, var(--fg-soft))",
                     "font-size": "var(--text-base)",
@@ -663,7 +663,7 @@ export function SkillsViewView(props: SkillsViewProps) {
             >
               <header
                 style={{
-                  padding: "10px 14px",
+                  padding: "var(--space-2) var(--space-4)",
                   "border-bottom": "1px solid var(--border-weak, var(--border))",
                   "font-size": "var(--text-md)",
                   "font-weight": "600",
@@ -678,13 +678,15 @@ export function SkillsViewView(props: SkillsViewProps) {
                   padding: "12px 14px",
                   display: "flex",
                   "flex-direction": "column",
-                  gap: "10px",
+                  gap: "var(--space-2)",
                   "overflow-y": "auto",
                   flex: "1 1 0%",
                   "min-height": "0",
                 }}
               >
-                <label style={{ display: "flex", "flex-direction": "column", gap: "4px" }}>
+                <label
+                  style={{ display: "flex", "flex-direction": "column", gap: "var(--space-1)" }}
+                >
                   <span
                     style={{
                       "font-size": "var(--text-xs)",
@@ -702,7 +704,7 @@ export function SkillsViewView(props: SkillsViewProps) {
                     disabled={mode().kind === "edit"}
                     onInput={(e) => setForm((f) => ({ ...f, name: e.currentTarget.value }))}
                     style={{
-                      padding: "6px 8px",
+                      padding: "var(--space-2)",
                       border: "1px solid var(--border)",
                       "border-radius": "4px",
                       "background-color": "var(--bg-weak, var(--bg))",
@@ -712,7 +714,9 @@ export function SkillsViewView(props: SkillsViewProps) {
                     }}
                   />
                 </label>
-                <label style={{ display: "flex", "flex-direction": "column", gap: "4px" }}>
+                <label
+                  style={{ display: "flex", "flex-direction": "column", gap: "var(--space-1)" }}
+                >
                   <span
                     style={{
                       "font-size": "var(--text-xs)",
@@ -729,7 +733,7 @@ export function SkillsViewView(props: SkillsViewProps) {
                     value={form().role}
                     onInput={(e) => setForm((f) => ({ ...f, role: e.currentTarget.value }))}
                     style={{
-                      padding: "6px 8px",
+                      padding: "var(--space-2)",
                       border: "1px solid var(--border)",
                       "border-radius": "4px",
                       "background-color": "var(--bg-weak, var(--bg))",
@@ -739,7 +743,9 @@ export function SkillsViewView(props: SkillsViewProps) {
                     }}
                   />
                 </label>
-                <label style={{ display: "flex", "flex-direction": "column", gap: "4px" }}>
+                <label
+                  style={{ display: "flex", "flex-direction": "column", gap: "var(--space-1)" }}
+                >
                   <span
                     style={{
                       "font-size": "var(--text-xs)",
@@ -756,7 +762,7 @@ export function SkillsViewView(props: SkillsViewProps) {
                     value={form().specialties}
                     onInput={(e) => setForm((f) => ({ ...f, specialties: e.currentTarget.value }))}
                     style={{
-                      padding: "6px 8px",
+                      padding: "var(--space-2)",
                       border: "1px solid var(--border)",
                       "border-radius": "4px",
                       "background-color": "var(--bg-weak, var(--bg))",
@@ -766,7 +772,9 @@ export function SkillsViewView(props: SkillsViewProps) {
                     }}
                   />
                 </label>
-                <label style={{ display: "flex", "flex-direction": "column", gap: "4px" }}>
+                <label
+                  style={{ display: "flex", "flex-direction": "column", gap: "var(--space-1)" }}
+                >
                   <span
                     style={{
                       "font-size": "var(--text-xs)",
@@ -783,7 +791,7 @@ export function SkillsViewView(props: SkillsViewProps) {
                     value={form().description}
                     onInput={(e) => setForm((f) => ({ ...f, description: e.currentTarget.value }))}
                     style={{
-                      padding: "6px 8px",
+                      padding: "var(--space-2)",
                       border: "1px solid var(--border)",
                       "border-radius": "4px",
                       "background-color": "var(--bg-weak, var(--bg))",
@@ -797,7 +805,7 @@ export function SkillsViewView(props: SkillsViewProps) {
                   style={{
                     display: "flex",
                     "flex-direction": "column",
-                    gap: "4px",
+                    gap: "var(--space-1)",
                     flex: "1 1 0%",
                     "min-height": "0",
                   }}
@@ -817,7 +825,7 @@ export function SkillsViewView(props: SkillsViewProps) {
                     value={form().body}
                     onInput={(e) => setForm((f) => ({ ...f, body: e.currentTarget.value }))}
                     style={{
-                      padding: "6px 8px",
+                      padding: "var(--space-2)",
                       border: "1px solid var(--border)",
                       "border-radius": "4px",
                       "background-color": "var(--bg-weak, var(--bg))",
@@ -842,8 +850,8 @@ export function SkillsViewView(props: SkillsViewProps) {
                 style={{
                   display: "flex",
                   "justify-content": "flex-end",
-                  gap: "8px",
-                  padding: "10px 14px",
+                  gap: "var(--space-2)",
+                  padding: "var(--space-2) var(--space-4)",
                   "border-top": "1px solid var(--border-weak, var(--border))",
                 }}
               >
@@ -853,7 +861,7 @@ export function SkillsViewView(props: SkillsViewProps) {
                   onClick={() => closeEditor()}
                   disabled={submitting()}
                   style={{
-                    padding: "4px 10px",
+                    padding: "var(--space-1) var(--space-2)",
                     "border-radius": "4px",
                     border: "1px solid var(--border)",
                     "background-color": "transparent",
@@ -871,7 +879,7 @@ export function SkillsViewView(props: SkillsViewProps) {
                   onClick={() => void submit()}
                   disabled={submitting()}
                   style={{
-                    padding: "4px 10px",
+                    padding: "var(--space-1) var(--space-2)",
                     "border-radius": "4px",
                     border: "1px solid var(--accent)",
                     "background-color": "var(--accent)",
@@ -915,7 +923,7 @@ export function SkillsViewView(props: SkillsViewProps) {
                 color: "var(--fg)",
                 border: "1px solid var(--border)",
                 "border-radius": "6px",
-                padding: "16px 18px",
+                padding: "var(--space-4)",
                 "box-shadow": "0 12px 32px rgba(0,0,0,0.4)",
               }}
             >
@@ -941,14 +949,16 @@ export function SkillsViewView(props: SkillsViewProps) {
                   {errorMsg()}
                 </div>
               </Show>
-              <div style={{ display: "flex", "justify-content": "flex-end", gap: "8px" }}>
+              <div
+                style={{ display: "flex", "justify-content": "flex-end", gap: "var(--space-2)" }}
+              >
                 <button
                   type="button"
                   data-testid="skill-delete-cancel"
                   onClick={() => setPendingDelete(null)}
                   disabled={submitting()}
                   style={{
-                    padding: "4px 10px",
+                    padding: "var(--space-1) var(--space-2)",
                     "border-radius": "4px",
                     border: "1px solid var(--border)",
                     "background-color": "transparent",
@@ -966,7 +976,7 @@ export function SkillsViewView(props: SkillsViewProps) {
                   onClick={() => void confirmDelete()}
                   disabled={submitting()}
                   style={{
-                    padding: "4px 10px",
+                    padding: "var(--space-1) var(--space-2)",
                     "border-radius": "4px",
                     border: "1px solid var(--danger, #d34)",
                     "background-color": "var(--danger, #d34)",

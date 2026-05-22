@@ -176,11 +176,11 @@ export function ExplorerView(props: ExplorerViewProps) {
     >
       <header
         style={{
-          padding: "6px 12px",
+          padding: "var(--space-2) var(--space-3)",
           "border-bottom": "1px solid var(--theme-border, var(--border))",
           "flex-shrink": "0",
           display: "flex",
-          gap: "12px",
+          gap: "var(--space-3)",
           "align-items": "center",
           "font-size": "var(--text-sm)",
           "font-variant-numeric": "tabular-nums",
@@ -201,7 +201,7 @@ export function ExplorerView(props: ExplorerViewProps) {
       <Show when={error()}>
         <div
           style={{
-            padding: "4px 12px",
+            padding: "var(--space-1) var(--space-3)",
             color: "var(--red)",
             "background-color": "var(--bg-strong)",
             "border-bottom": "1px solid var(--red)",
@@ -226,7 +226,7 @@ export function ExplorerView(props: ExplorerViewProps) {
         <Show when={!loading() && rows().length === 0 && !error()}>
           <div
             style={{
-              padding: "12px",
+              padding: "var(--space-3)",
               color: "var(--theme-focused-foreground-subdued, var(--dim))",
             }}
           >
@@ -236,7 +236,7 @@ export function ExplorerView(props: ExplorerViewProps) {
         <Show when={loading() && rows().length === 0}>
           <div
             style={{
-              padding: "12px",
+              padding: "var(--space-3)",
               color: "var(--theme-focused-foreground-subdued, var(--dim))",
             }}
           >
@@ -271,8 +271,8 @@ export function ExplorerView(props: ExplorerViewProps) {
                     transform: `translateY(${vItem.start}px)`,
                     display: "flex",
                     "align-items": "center",
-                    gap: "6px",
-                    padding: "2px 12px 2px 6px",
+                    gap: "var(--space-2)",
+                    padding: "var(--space-1) var(--space-3) var(--space-1) var(--space-2)",
                     "box-sizing": "border-box",
                     "border-left": isSel() ? "2px solid var(--accent)" : "2px solid transparent",
                     "background-color": isSel() ? "var(--surface-hover)" : "transparent",
@@ -328,7 +328,7 @@ export function ExplorerView(props: ExplorerViewProps) {
 
       <footer
         style={{
-          padding: "4px 12px",
+          padding: "var(--space-1) var(--space-3)",
           "border-top": "1px solid var(--theme-border-subdued, var(--border-weak))",
           color: "var(--theme-focused-foreground-subdued, var(--dim))",
           "font-size": "var(--text-xs)",
