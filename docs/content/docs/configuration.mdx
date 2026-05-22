@@ -265,6 +265,89 @@ description: Frontend component specialist
 You are a frontend developer. Focus on React components and CSS.
 ```
 
+## Chat providers
+
+The dashboard chat panel speaks to both **Claude Code** and **Codex** through the same daemon. Nothing has to be declared in `ide.yml` — providers are discovered at daemon startup.
+
+```yaml
+# No config needed. The daemon probes PATH for `claude` and `codex`
+# at startup and exposes whichever ones it finds.
+name: my-app
+rows:
+  - panes:
+      - title: Shell
+```
+
+### Auto-discovery
+
+On boot, the daemon runs a `provider-discovery` probe for each supported provider binary on `PATH`:
+
+- `claude-code` — looks for the `claude` CLI
+- `codex` — looks for the `codex` CLI
+
+For each binary it finds, the daemon records the version and queries the live model list. Results are cached and served to the dashboard, so the chat header shows real availability — not a hard-coded list.
+
+### Per-turn model selection
+
+Every chat turn carries its own provider/model selection. The dashboard composer surfaces a picker; under the hood it sets these fields on `chat.session.send`:
+
+| Field             | Type                  | Description                                                                       |
+| ----------------- | --------------------- | --------------------------------------------------------------------------------- |
+| `provider.kind`   | `"claude-code"` / `"codex"` | Which driver dispatches this turn. The thread's stored provider updates lazily.   |
+| `model`           | string                | Provider model slug (e.g. `claude-sonnet-4-5`, `gpt-5-codex`).                    |
+| `providerOptions` | `Array<{id, value}>`  | Per-turn knobs. Currently `reasoningEffort` (string) and `fastMode` (boolean).    |
+
+Switching model or provider mid-thread takes effect on the next turn — no session teardown required.
+
+### Codex-specific options
+
+When the active model advertises Codex capabilities, the picker exposes two extra controls:
+
+| Option            | Values                                        | Effect                                                              |
+| ----------------- | --------------------------------------------- | ------------------------------------------------------------------- |
+| `reasoningEffort` | `minimal`, `low`, `medium`, `high`, `xhigh`   | How much hidden reasoning Codex burns before responding.            |
+| `fastMode`        | boolean                                       | Forwarded as `serviceTier: "fast"` — trades depth for latency.      |
+
+The daemon also recognizes shorthand **slug aliases** in the model list (e.g. `gpt-5-codex-high` resolves to `gpt-5-codex` with `reasoningEffort: high`) so the picker can present pre-configured presets alongside the base models.
+
+### Provider status
+
+Provider state is exposed two ways:
+
+- **REST**: `GET /api/chat/providers` returns the discovery snapshot — `{kind, name, available, binary, version, error, models[]}` per provider.
+- **Dashboard**: the chat header renders a `ProviderStatusBanner` driven by the same snapshot. Unavailable providers show an inline error with the missing-binary path.
+
+## Per-pane skills
+
+Any pane can declare a `skill:` referencing a file in `.tmux-ide/skills/`. When the orchestrator dispatches a task to that pane, the skill body is injected into the prompt — so the agent gets the same context every run without you re-pasting instructions.
+
+```yaml
+panes:
+  - title: Lead
+    command: claude
+    role: lead
+    focus: true
+  - title: Frontend
+    command: claude
+    role: teammate
+    specialty: frontend
+    skill: frontend # loads .tmux-ide/skills/frontend.md
+    task: "Work on components"
+  - title: Validator
+    command: claude
+    role: validator
+    skill: reviewer
+  - title: Researcher
+    command: claude
+    role: researcher
+    specialty: researcher
+    skill: researcher
+```
+
+Skill files live in `.tmux-ide/skills/<name>.md` and use the YAML-frontmatter format documented in [`.tmux-ide/` Directory](#tmux-ide-directory). Manage them with `tmux-ide skill create|list|show|validate`.
+
+`skill:` is purely additive — panes without one still receive the base dispatch prompt.
+
 ## Validation Contract
 
 When you run `tmux-ide init --template missions`, the `.tasks/validation-contract.md` stub and `.tmux-ide/library/` directory are auto-scaffolded for you.
