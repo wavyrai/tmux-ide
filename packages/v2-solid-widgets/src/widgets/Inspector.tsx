@@ -158,7 +158,7 @@ export function InspectorView(props: InspectorViewProps) {
         "background-color": "var(--bg-weak, var(--bg))",
         "border-left": "1px solid var(--border)",
         color: "var(--fg)",
-        "font-family": "var(--font-mono)",
+        "font-family": "var(--font-sans)",
         "font-size": "var(--text-base)",
       }}
     >

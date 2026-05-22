@@ -111,7 +111,7 @@ function renderUnderline<Id extends string>(
       data-variant="underline"
       onKeyDown={onKeyDown}
       class={
-        "flex h-7 shrink-0 items-center gap-2 border-b border-[var(--border)] bg-[var(--bg-strong)] px-3 text-sm " +
+        "flex h-7 shrink-0 items-center gap-2 border-b border-[var(--border)] bg-[var(--bg-strong)] px-3 font-sans text-sm " +
         (props.class ?? "")
       }
     >
@@ -159,7 +159,7 @@ function renderPill<Id extends string>(
       data-variant="pill"
       onKeyDown={onKeyDown}
       class={
-        "inline-flex items-center gap-1 rounded-md border border-[var(--border)] bg-[var(--surface)] p-0.5 text-sm " +
+        "inline-flex items-center gap-1 rounded-md border border-[var(--border)] bg-[var(--surface)] p-0.5 font-sans text-sm " +
         (props.class ?? "")
       }
     >
