@@ -382,7 +382,7 @@ export function ChatView(props: ChatViewProps) {
         wsUrl: withWsBase("/ws/events"),
         bearerToken: resolveAuthToken(),
         highlightCodeFences: highlightFences,
-        onDelete: (threadId) => setConfirmDeleteId(threadId),
+        onDelete: (threadId: string) => setConfirmDeleteId(threadId),
       });
     }),
   );
