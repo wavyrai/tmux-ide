@@ -5,7 +5,15 @@ import { Router, Route, Navigate } from "@solidjs/router";
 import { App } from "./App";
 import { WidgetsRoute } from "./routes/widgets";
 import ProjectsHomeRoute from "./routes/index";
+import { isDemoMode, installDemoFetch } from "./lib/demo/install";
 import "./styles.css";
+
+// Demo mode short-circuits every /api/* fetch to canned responses so the
+// landing page can iframe the full IDE without a running daemon.
+// Activated via ?demo=1 (persisted), localStorage flag, or demo.* hostname.
+if (isDemoMode()) {
+  installDemoFetch();
+}
 
 const root = document.getElementById("root");
 if (!root) throw new Error("#root not found in index.html");
