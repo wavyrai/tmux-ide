@@ -1,0 +1,38 @@
+{
+  "name": "@tmux-ide/v2-solid-widgets",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/v2-solid-widgets.js",
+  "module": "dist/v2-solid-widgets.js",
+  "types": "dist/v2-solid-widgets.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/v2-solid-widgets.d.ts",
+      "import": "./dist/v2-solid-widgets.js"
+    }
+  },
+  "scripts": {
+    "build": "vite build && tsc -p tsconfig.json --emitDeclarationOnly",
+    "dev": "vite build --watch",
+    "lint": "eslint src",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@tanstack/solid-virtual": "^3.13.24",
+    "@tmux-ide/contracts": "workspace:*",
+    "marked": "^18.0.3",
+    "solid-js": "^1.9.11"
+  },
+  "devDependencies": {
+    "@testing-library/jest-dom": "^6.6.3",
+    "@types/node": "^25.5.0",
+    "happy-dom": "^20.8.4",
+    "typescript": "^5.9.3",
+    "vite": "^8.0.1",
+    "vite-plugin-css-injected-by-js": "^5.0.1",
+    "vite-plugin-solid": "^2.11.8",
+    "vitest": "^4.1.0"
+  }
+}

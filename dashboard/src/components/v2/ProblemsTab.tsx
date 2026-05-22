@@ -1,0 +1,212 @@
+/**
+ * Problems tab body — lists every LSP diagnostic the editor wiring
+ * has observed across all open buffers. Clicking a row jumps the
+ * editor to the diagnostic's line/column via `openFileAt`.
+ *
+ * Pure consumer of `diagnosticsState`; the wiring (CodeEditor's LSP
+ * integration) is the producer.
+ */
+
+import { For, Show, createMemo, createSignal, type JSX } from "solid-js";
+import { createVirtualizer } from "@tanstack/solid-virtual";
+import { diagnosticsState } from "@/lib/lsp/diagnostics-store";
+import { openFileAt } from "@/lib/editorOpen";
+import type { LspDiagnostic } from "@/lib/lsp/api";
+
+interface FlatDiagnostic {
+  bufferUri: string;
+  sessionName: string;
+  rootPath: string;
+  filePath: string;
+  language: string;
+  diagnostic: LspDiagnostic;
+}
+
+function severityLabel(s: LspDiagnostic["severity"]): string {
+  switch (s) {
+    case 2:
+      return "warning";
+    case 3:
+      return "info";
+    case 4:
+      return "hint";
+    case 1:
+    default:
+      return "error";
+  }
+}
+
+function severityGlyph(s: LspDiagnostic["severity"]): string {
+  switch (s) {
+    case 2:
+      return "⚠";
+    case 3:
+      return "i";
+    case 4:
+      return "•";
+    case 1:
+    default:
+      return "✕";
+  }
+}
+
+function severityClass(s: LspDiagnostic["severity"]): string {
+  switch (s) {
+    case 2:
+      return "text-[var(--yellow,#d6a44b)]";
+    case 3:
+      return "text-[var(--blue,#5b8ee0)]";
+    case 4:
+      return "text-[var(--dim)]";
+    case 1:
+    default:
+      return "text-[var(--red,#cc6666)]";
+  }
+}
+
+function severityRank(s: LspDiagnostic["severity"]): number {
+  return s ?? 1;
+}
+
+export function ProblemsTab(): JSX.Element {
+  const flat = createMemo<FlatDiagnostic[]>(() => {
+    const entries = Object.values(diagnosticsState.byBuffer).filter(Boolean);
+    const rows: FlatDiagnostic[] = [];
+    for (const entry of entries) {
+      for (const diagnostic of entry.diagnostics) {
+        rows.push({
+          bufferUri: entry.bufferUri,
+          sessionName: entry.sessionName,
+          rootPath: entry.rootPath,
+          filePath: entry.filePath,
+          language: entry.language,
+          diagnostic,
+        });
+      }
+    }
+    rows.sort((a, b) => {
+      const sev = severityRank(a.diagnostic.severity) - severityRank(b.diagnostic.severity);
+      if (sev !== 0) return sev;
+      if (a.filePath !== b.filePath) return a.filePath.localeCompare(b.filePath);
+      return a.diagnostic.range.start.line - b.diagnostic.range.start.line;
+    });
+    return rows;
+  });
+
+  // Virtualized list — a multi-file LSP run can emit thousands of
+  // diagnostics. createMemo wrappers per 9b139e5 keep the For/spacer
+  // subscribed to the virtualizer's signal.
+  const [scrollEl, setScrollEl] = createSignal<HTMLUListElement | null>(null);
+  const virtualizer = createVirtualizer({
+    get count() {
+      return flat().length;
+    },
+    getScrollElement: () => scrollEl(),
+    estimateSize: () => 44,
+    overscan: 8,
+    getItemKey: (i) => {
+      const r = flat()[i];
+      return r
+        ? `${r.bufferUri}:${r.diagnostic.range.start.line}:${r.diagnostic.range.start.character}:${i}`
+        : i;
+    },
+  });
+  const virtualItems = createMemo(() => virtualizer.getVirtualItems());
+  const virtualTotalSize = createMemo(() => virtualizer.getTotalSize());
+
+  return (
+    <div
+      data-testid="v2-problems-tab"
+      class="flex h-full min-h-0 w-full flex-col overflow-hidden bg-[var(--bg)] text-base"
+    >
+      <Show
+        when={flat().length > 0}
+        fallback={
+          <div
+            data-testid="v2-problems-empty"
+            class="flex flex-1 items-center justify-center text-sm text-[var(--dim)]"
+          >
+            No problems detected in open files.
+          </div>
+        }
+      >
+        <ul
+          ref={setScrollEl}
+          class="relative min-h-0 flex-1 overflow-y-auto"
+          data-testid="v2-problems-scroll"
+          style={{ position: "relative" }}
+        >
+          <div
+            data-testid="v2-problems-spacer"
+            style={{
+              height: `${virtualTotalSize()}px`,
+              width: "100%",
+              position: "relative",
+            }}
+          >
+            <For each={virtualItems()}>
+              {(vItem) => {
+                const row = () => flat()[vItem.index]!;
+                const line = () => row().diagnostic.range.start.line + 1;
+                const column = () => row().diagnostic.range.start.character;
+                return (
+                  <li
+                    data-index={vItem.index}
+                    ref={(el) => virtualizer.measureElement(el)}
+                    style={{
+                      position: "absolute",
+                      top: "0",
+                      left: "0",
+                      width: "100%",
+                      transform: `translateY(${vItem.start}px)`,
+                    }}
+                  >
+                    <button
+                      type="button"
+                      data-testid="v2-problem-row"
+                      data-severity={severityLabel(row().diagnostic.severity)}
+                      onClick={() =>
+                        openFileAt({
+                          sessionName: row().sessionName,
+                          rootPath: row().rootPath,
+                          filePath: row().filePath,
+                          language: row().language,
+                          line: line(),
+                          column: column(),
+                        })
+                      }
+                      class="flex w-full items-start gap-2 border-b border-[var(--border-weak)] px-3 py-1.5 text-left hover:bg-[var(--surface-hover)]"
+                    >
+                      <span
+                        aria-hidden="true"
+                        class={
+                          "mt-0.5 w-3 shrink-0 text-center " +
+                          severityClass(row().diagnostic.severity)
+                        }
+                      >
+                        {severityGlyph(row().diagnostic.severity)}
+                      </span>
+                      <div class="min-w-0 flex-1">
+                        <div class="truncate text-[var(--fg)]">{row().diagnostic.message}</div>
+                        <div class="truncate text-xs text-[var(--dim)]">
+                          <span class="font-mono">{row().filePath}</span>
+                          <span>
+                            {" "}
+                            · {line()}:{column() + 1}
+                          </span>
+                          <Show when={row().diagnostic.source}>
+                            {(src) => <span> · {src()}</span>}
+                          </Show>
+                        </div>
+                      </div>
+                    </button>
+                  </li>
+                );
+              }}
+            </For>
+          </div>
+        </ul>
+      </Show>
+    </div>
+  );
+}

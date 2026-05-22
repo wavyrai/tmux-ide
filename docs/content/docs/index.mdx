@@ -1,11 +1,26 @@
 ---
 title: tmux-ide
-description: Autonomous multi-agent development with mission-driven orchestration
+description: A multi-agent IDE in your browser, powered by tmux
 ---
 
 # tmux-ide
 
-Turn any project into an autonomous multi-agent development environment. One config file, multiple AI agents, mission-driven orchestration.
+A web-based multi-agent IDE that runs locally. `tmux-ide` opens a tmux session for terminal work + a browser dashboard at `localhost:6060` for files, multi-thread chat (Claude + Codex), diffs, plans, search, and full LSP. One config file, no Electron, no signup.
+
+Quick start:
+
+```bash
+npm i -g tmux-ide
+cd ~/Developer/my-project
+tmux-ide              # tmux session + daemon (prints dashboard URL)
+tmux-ide dashboard    # opens the web IDE
+```
+
+See [Getting Started](/docs/getting-started) for a walkthrough, [Dashboard](/docs/dashboard) for the IDE surfaces, [What's New in 2.5](/docs/release-2-5-0) for the v2.5 feature list.
+
+---
+
+The orchestrator story is still here, layered under the IDE — one config file, multiple AI agents, mission-driven autonomous execution:
 
 ```
 ┌─────────────┬─────────────┬─────────────┐

@@ -297,6 +297,54 @@ tmux-ide init --template agent-team
 └─────────────────┴─────────────────┘
 ```
 
+## Multichat — dashboard threads alongside tmux panes
+
+New in v2.5: the dashboard ships a multichat surface that runs **in parallel** with your tmux agent panes. You can have five Claude / Codex chat threads open in the browser at the same time as three orchestrated tmux agents — they don't share state, they don't compete for slots, and neither one replaces the other.
+
+```bash
+tmux-ide              # tmux panes boot as usual
+tmux-ide dashboard    # open the browser IDE — chat threads live here
+```
+
+Open the chat activity, click **+ New chat**, and you have a fresh thread. Switch threads in the rail, double-click a title to rename, right-click to delete. Threads are scoped per project — switching projects in the rail (Cmd+P) swaps the entire thread list along with the tmux session.
+
+### Panes vs. threads
+
+The two surfaces solve different problems:
+
+| Surface                          | Best for                                                                                                                                                                                   |
+| -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **tmux agent pane** (v2.0)       | Persistent role on the team: has a `role`, `specialty`, `skill`, and `task`. Receives orchestrator dispatches for the active milestone. Stays alive across sessions.                       |
+| **Dashboard chat thread** (v2.5) | Ad-hoc conversation: one-off question, throwaway experiment, "explain this file", or a quick patch you don't want to burn an agent slot on. No role, no skill injection, no auto-dispatch. |
+
+Rule of thumb: if it's something you'd staff a teammate on for the rest of the mission, make it a pane. If it's a question or a one-shot task, make it a thread.
+
+### Per-turn provider, model, and effort
+
+Every thread has a header strip (`ChatHeader` + `ProviderModelPicker`) where you pick — per turn — the provider, model, and provider-specific options. The selection is sent on `chat.thread.send` (see `ChatSessionSendInputZ` in `packages/contracts/src/actions-contract.ts`) and applied for that turn only, so you can flip between Claude Code and Codex mid-thread without losing context.
+
+| Selector          | Values                           | Notes                                                                                                                  |
+| ----------------- | -------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `provider`        | `claude-code`, `codex`           | Switching providers keeps the thread; the daemon updates the persisted `thread.provider` lazily.                       |
+| `model`           | Dynamically discovered           | The daemon's `provider-discovery` populates the model list from each provider's live `model/list`; no hardcoded slugs. |
+| `reasoningEffort` | `low`, `medium`, `high`, `xhigh` | Codex-only. Models that don't advertise effort just hide the control.                                                  |
+| `fastMode`        | standard / fast                  | Codex-only. Forwarded as `serviceTier: "fast"` on the turn.                                                            |
+
+### Creating, switching, renaming, deleting
+
+- **Create**: `+ New chat` in the chat activity, or Cmd+K → `New chat`.
+- **Switch**: click the thread in the rail, or Cmd+K → `<thread title>`.
+- **Rename**: double-click the thread title, or right-click → Rename.
+- **Delete**: right-click the thread → Delete (the message log is removed from the project's store).
+
+Threads live on disk under the project's daemon state, so closing the browser and re-launching the dashboard restores every thread exactly where you left it.
+
+### When to use which
+
+- Mission-critical, milestone-gated work → **agent pane** with `role`, `specialty`, `skill`, and `task`. Let the orchestrator dispatch.
+- "Sketch a function", "what does this error mean", "draft a migration" → **dashboard thread**. Pick the provider that fits the moment (Codex `xhigh` for a deep reasoning pass, Claude Code for tool-heavy refactors).
+- Mixing both is the intended workflow. The lead pane drives the mission; the dashboard threads stay open as a scratchpad you can pivot between without disturbing the orchestrator.
+
 ## Best Practices
 
 - Start with `tmux-ide init --template missions` for new multi-agent projects

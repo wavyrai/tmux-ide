@@ -1,39 +1,42 @@
 {
   "name": "tmux-ide",
-  "version": "2.1.5",
+  "version": "2.5.0",
   "description": "Turn any project into a tmux-powered terminal IDE with a simple ide.yml",
   "type": "module",
   "bin": {
-    "tmux-ide": "bin/cli.ts"
+    "tmux-ide": "bin/cli.js"
   },
   "files": [
     "bin",
-    "src",
     "scripts",
     "skill",
     "templates",
-    "dashboard/out"
+    "dashboard/dist"
   ],
   "scripts": {
-    "build": "tsc --noEmit",
-    "build:dashboard": "cd dashboard && npx next build",
-    "prepublishOnly": "npm run build:dashboard",
-    "typecheck": "tsc --noEmit",
-    "dev": "bun bin/cli.ts",
-    "test": "bun test",
-    "test:unit": "bun test src/ --ignore 'src/integration.test.ts'",
-    "test:integration": "bun test src/integration.test.ts",
-    "lint": "eslint bin scripts src",
-    "lint:workspace": "turbo run lint",
+    "build": "pnpm build:cli",
+    "build:cli": "node scripts/build-cli.mjs",
+    "build:dashboard": "cd dashboard && pnpm build",
+    "prepublishOnly": "pnpm build:cli && pnpm check && pnpm --filter @tmux-ide/dashboard build && node scripts/prepublish-check.mjs",
+    "typecheck": "echo \"root typecheck deferred to per-package turbo run\"",
+    "dev": "node bin/cli.js",
+    "test": "vitest run --dir src src/cli.test.ts",
+    "test:unit": "vitest run --dir src src/cli.test.ts",
+    "test:chat-e2e": "pnpm --filter @tmux-ide/daemon exec vitest run src/chat/__tests__/chat-pipeline.e2e.test.ts",
+    "lint": "eslint bin scripts packages/contracts/src packages/tmux-bridge/src packages/daemon/src packages/v2-solid-widgets/src packages/chat-solid/src && pnpm run check:silo-mounts",
+    "lint:workspace": "turbo run lint && pnpm run check:silo-mounts",
+    "check:silo-mounts": "bash scripts/check-silo-mounts.sh",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "build:workspace": "turbo run build",
     "typecheck:workspace": "turbo run typecheck",
     "docs:build": "turbo run build --filter=@tmux-ide/docs",
     "pack:check": "npm pack --dry-run --cache /tmp/tmux-ide-npm-cache > /dev/null",
-    "check": "pnpm run lint:workspace && pnpm run format:check && pnpm run typecheck && pnpm run test:unit && pnpm run docs:build && pnpm run pack:check",
+    "check:native-deps": "node packages/daemon/scripts/check-native-deps.mjs",
+    "check": "pnpm run lint:workspace && pnpm run format:check && pnpm run typecheck:workspace && vitest run --dir src src/cli.test.ts && pnpm run docs:build && pnpm run pack:check && pnpm run check:native-deps",
     "postinstall": "node scripts/postinstall.js",
     "test:dashboard": "cd dashboard && pnpm test",
+    "test:e2e": "playwright test",
     "docs": "turbo run dev --filter=@tmux-ide/docs"
   },
   "keywords": [
@@ -44,7 +47,7 @@
     "developer-tools"
   ],
   "engines": {
-    "bun": ">=1.0"
+    "node": ">=20"
   },
   "repository": {
     "type": "git",
@@ -64,24 +67,43 @@
     "@opentui/solid": "^0.1.88",
     "@parcel/watcher": "^2.5.6",
     "@types/ws": "^8.18.1",
+    "@vscode/ripgrep": "^1.15.11",
+    "better-sqlite3": "^12.4.1",
+    "chokidar": "^5.0.0",
+    "effect": "^3.21.2",
     "hono": "^4.12.8",
     "ignore": "^7.0.5",
     "js-yaml": "^4.1.1",
     "node-pty": "1.2.0-beta.12",
     "solid-js": "^1.9.11",
+    "vscode-jsonrpc": "^8.2.1",
+    "vscode-languageserver-protocol": "^3.17.5",
     "ws": "^8.20.0",
     "zod": "^4.3.6"
   },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "@parcel/watcher",
+      "better-sqlite3",
+      "esbuild",
+      "node-pty"
+    ]
+  },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@playwright/test": "^1.59.1",
     "@tsconfig/bun": "^1.0.10",
     "@types/node": "^25.5.0",
     "@typescript-eslint/eslint-plugin": "^8.57.1",
     "@typescript-eslint/parser": "^8.57.1",
+    "@vitest/coverage-v8": "^4.1.6",
+    "esbuild": "0.27.4",
     "eslint": "^10.0.3",
+    "eslint-plugin-solid": "^0.14.5",
     "globals": "^17.4.0",
     "prettier": "^3.8.1",
     "turbo": "^2.3.3",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.0"
   }
 }

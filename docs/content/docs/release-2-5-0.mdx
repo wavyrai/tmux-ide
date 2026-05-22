@@ -1,0 +1,106 @@
+---
+title: What's New in 2.5
+description: tmux-ide 2.5 — A full multi-agent IDE in your browser
+---
+
+# tmux-ide 2.5
+
+tmux-ide 2.5 ships a full web-based IDE that runs alongside the tmux session. Same daemon, same `ide.yml`, but now with a browser-based file editor, multi-thread chat with Claude + Codex, diff viewer with git history, terminal with project-cwd, plans editor, and search — all served by the daemon at `localhost:6060`.
+
+## The Web IDE
+
+Run `tmux-ide` in any project, then open the dashboard:
+
+```bash
+tmux-ide              # launches tmux + daemon
+tmux-ide dashboard    # opens the web IDE in your browser
+```
+
+The launch output also prints the dashboard URL so you can copy-paste it.
+
+### What's in the IDE
+
+The dashboard is a single-page Solid app served by the daemon. Layout:
+
+```
+┌──┬───┬──────────┬───────────────────┬─────┐
+│PR│ AB│ Sidebar  │ Editor / Chat     │ Insp│  ← upper
+├──┴───┴──────────┴───────────────────┴─────┤
+│ Terminal / Problems / Output              │  ← lower
+├───────────────────────────────────────────┤
+│ StatusBar (branch · ahead · agents)       │
+└───────────────────────────────────────────┘
+```
+
+- **Project rail (PR)** — switch between all your registered projects without leaving the window. Each project keeps its own tmux session, chat threads, and editor state.
+- **Activity bar (AB)** — files, search, diffs, plans, tasks, skills, notes, mission, chat, terminal.
+- **Editor** — multi-file tabs, Shiki syntax highlighting, autosave, Cmd+W to close, full LSP (hover, go-to-def, rename, diagnostics) for TypeScript / Python / Rust / Go.
+- **Diffs** — working / staged / branch-vs-main, with commit history. Per-hunk apply.
+- **Search** — Cmd+Shift+F across the workspace, glob includes/excludes, F3 to navigate matches, jump to file at line.
+- **Chat** — multichat threads per project, Claude Code + Codex providers, per-turn model + reasoning-effort + fast-mode, inline image preview, plan follow-up cards.
+- **Terminal** — vertical-rail tab strip, spawned with the project's cwd, kept-alive on switch.
+- **Plans** — Shiki-rendered markdown with inline edit (Cmd+E enter, Cmd+S save, Esc cancel).
+- **Cmd+K palette** — jump to any project, thread, terminal, or command. Cmd+/ shows every keybind.
+
+## New since 2.0
+
+### Multichat Threads
+
+Run as many Claude or Codex threads as you want per project. They stay isolated per workspace — opening `/project/A` shows A's threads, `/project/B` shows B's.
+
+```bash
+tmux-ide              # launch project
+tmux-ide dashboard    # open browser
+# In the chat panel: "+ New chat" creates a new thread; rail switches between them.
+```
+
+### Multi-Project Rail
+
+Register multiple projects through the onboarding wizard or the in-app project switcher (Cmd+P), then switch between them in one window. Each project boots its own tmux session automatically on first open.
+
+### Codex First-Class
+
+Codex (the OpenAI CLI) is now a first-class provider alongside Claude Code:
+
+- Dynamic model discovery via the Codex app-server (no hardcoded model list).
+- Per-turn reasoning-effort + fast-mode selectors.
+- Slug aliases for deprecated model names.
+- Switcher in the chat header swaps providers without losing thread context.
+
+### LSP-as-Tool
+
+The daemon runs Language Servers for TypeScript, Python, Rust, and Go. Both the IDE (for hover / go-to-def / rename / diagnostics) and chat agents (as a tool) talk to the same LSP service.
+
+### Onboarding Wizard
+
+The CLI gains a 4-step in-app wizard for setting up new projects:
+
+```bash
+tmux-ide dashboard
+# In the browser, click "Add project" → wizard walks through:
+#   1. Detect (pick a directory with the new file picker)
+#   2. Layout
+#   3. Agents
+#   4. Review → Save & Launch
+```
+
+If a project already has an `ide.yml`, the wizard shows an "Open project" CTA that skips the rest of the steps.
+
+### Cmd+K Command Palette
+
+One keystroke jumps to any project, chat thread, terminal, or registered action. Cmd+/ shows every keybind in the app.
+
+## Distribution
+
+- `npm i -g tmux-ide` ships the daemon + the prebuilt dashboard in one tarball
+- `tmux-ide dashboard` reads `~/.tmux-ide/daemon.json` for the daemon's URL and opens the browser
+- No Electron, no separate install, no auth setup — everything runs locally on `localhost:6060`
+
+## Upgrading from 2.0
+
+No breaking changes. Existing `ide.yml` files keep working unchanged. New flags in the config (chat providers, per-pane skills) are optional.
+
+```bash
+npm i -g tmux-ide@latest
+tmux-ide dashboard
+```

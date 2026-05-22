@@ -1,31 +1,22 @@
-name: tmux-ide
-
+name: new-name
 orchestrator:
   enabled: true
   master_pane: Master
-  auto_dispatch: true
+  auto_dispatch: false
   stall_timeout: 300000
   poll_interval: 5000
   worktree_root: .worktrees/
-
-team:
-  name: tmux-ide
-
 rows:
   - size: 70%
     panes:
-      - title: Master
+      - title: Editor
         command: claude --dangerously-skip-permissions
-        role: lead
         focus: true
         size: 40%
-      - title: Agent 1
-        command: claude --dangerously-skip-permissions
-        role: teammate
+      - title: Tests
+        command: pnpm test
         size: 30%
-      - title: Agent 2
-        command: claude --dangerously-skip-permissions
-        role: teammate
+      - title: Wide
         size: 30%
   - size: 30%
     panes:
@@ -35,7 +26,6 @@ rows:
       - title: Explorer
         type: explorer
         size: 30%
-        target: Preview
       - title: Preview
         type: preview
         size: 30%

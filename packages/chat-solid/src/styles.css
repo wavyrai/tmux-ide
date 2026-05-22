@@ -1,0 +1,196 @@
+@import "tailwindcss";
+
+/*
+ * The chat-solid bundle is consumed by the host dashboard's Tailwind-aware
+ * pages. We import Tailwind v4 so utility classes inside this bundle's
+ * components compile, and `vite-plugin-css-injected-by-js` ships the
+ * compiled CSS inside the bundle's JS so the consumer just imports
+ * `chat-solid.js` and styles take effect automatically.
+ *
+ * CSS custom properties (--bg, --fg, --surface, --border, --accent,
+ * etc.) are inherited from the host page's `:root` rules in
+ * dashboard/app/globals.css.
+ */
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-fg: var(--fg);
+  --color-fg-secondary: var(--fg-secondary);
+  --color-dim: var(--dim);
+  /*
+   * IMPORTANT: --surface is a near-transparent tint (rgba(255,255,255,0.031))
+   * used for inline subtle surfaces. It is NOT suitable for popovers,
+   * dialogs, or anything that floats above other content. Use
+   * --surface-elevated (#161616, fully opaque) for those.
+   */
+  --color-surface: var(--surface);
+  --color-surface-hover: var(--surface-hover);
+  --color-surface-elevated: var(--surface-elevated);
+  --color-border: var(--border);
+  --color-border-weak: var(--border-weak);
+  --color-accent: var(--accent);
+  --color-green: var(--green);
+  --color-red: var(--red);
+  --color-yellow: var(--yellow);
+}
+
+@keyframes chat-solid-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.2;
+  }
+}
+
+.chat-solid-caret {
+  display: inline-block;
+  width: 4px;
+  height: 16px;
+  margin-left: 2px;
+  transform: translateY(3px);
+  border-radius: 2px;
+  background: var(--accent);
+  animation: chat-solid-pulse 1s infinite;
+}
+
+.chat-solid-markdown {
+  word-break: break-word;
+}
+
+.chat-solid-markdown p {
+  margin: 0 0 8px 0;
+}
+
+.chat-solid-markdown p:last-child {
+  margin-bottom: 0;
+}
+
+.chat-solid-markdown ul,
+.chat-solid-markdown ol {
+  margin: 0 0 8px 18px;
+  padding: 0;
+}
+
+.chat-solid-markdown ul {
+  list-style: disc;
+}
+
+.chat-solid-markdown ol {
+  list-style: decimal;
+}
+
+.chat-solid-markdown li {
+  margin-bottom: 2px;
+}
+
+.chat-solid-markdown code {
+  font-family: var(--font-mono);
+  font-size: var(--text-base);
+  background: var(--bg);
+  border: 1px solid var(--border-weak);
+  border-radius: 4px;
+  padding: 1px 4px;
+}
+
+.chat-solid-markdown pre {
+  margin: 8px 0;
+  padding: 10px 12px;
+  background: var(--bg);
+  border: 1px solid var(--border-weak);
+  border-radius: 6px;
+  overflow: auto;
+}
+
+.chat-solid-markdown pre code {
+  background: transparent;
+  border: 0;
+  padding: 0;
+  font-size: var(--text-base);
+  line-height: 1.5;
+}
+
+.chat-solid-markdown h1,
+.chat-solid-markdown h2,
+.chat-solid-markdown h3 {
+  margin: 12px 0 6px 0;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.chat-solid-markdown h1 {
+  font-size: var(--text-xl);
+}
+
+.chat-solid-markdown h2 {
+  font-size: var(--text-lg);
+}
+
+.chat-solid-markdown h3 {
+  font-size: var(--text-base);
+}
+
+.chat-solid-markdown a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.chat-solid-markdown a:hover {
+  text-decoration: underline;
+}
+
+.chat-solid-markdown a.chat-file-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 6px;
+  height: 18px;
+  border: 1px solid var(--border-weak, var(--border));
+  border-radius: 4px;
+  background: var(--surface);
+  color: var(--accent);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  vertical-align: baseline;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.chat-solid-markdown a.chat-file-link::before {
+  content: "▤";
+  color: var(--dim);
+  font-size: var(--text-xs);
+}
+
+.chat-solid-markdown a.chat-file-link:hover {
+  border-color: var(--accent);
+  background: var(--surface-hover, var(--surface));
+  text-decoration: none;
+}
+
+.chat-solid-markdown blockquote {
+  margin: 6px 0;
+  padding-left: 10px;
+  border-left: 3px solid var(--border);
+  color: var(--fg-secondary);
+}
+
+.chat-solid-markdown table {
+  border-collapse: collapse;
+  margin: 8px 0;
+  font-size: var(--text-base);
+}
+
+.chat-solid-markdown th,
+.chat-solid-markdown td {
+  border: 1px solid var(--border-weak);
+  padding: 4px 8px;
+  text-align: left;
+}
+
+.chat-solid-markdown hr {
+  border: 0;
+  border-top: 1px solid var(--border-weak);
+  margin: 12px 0;
+}

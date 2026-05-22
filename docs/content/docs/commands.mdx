@@ -69,6 +69,22 @@ tmux-ide attach
 
 If the session isn't running, it will suggest starting it with `tmux-ide`.
 
+## `tmux-ide dashboard`
+
+Open the web IDE in your default browser. Reads the canonical daemon
+info file (`~/.tmux-ide/daemon.json`) to find the URL, so the daemon
+must be running (start one with `tmux-ide` first).
+
+```bash
+tmux-ide dashboard                 # prints URL + opens browser
+tmux-ide dashboard --no-open       # prints URL only
+tmux-ide dashboard --json          # {"url","port","pid"} for scripts
+```
+
+The `tmux-ide` launch command also prints the dashboard URL alongside
+the `Starting <session>` line, so first-time users see it without
+running this subcommand.
+
 ## `tmux-ide ls`
 
 List all running tmux sessions.

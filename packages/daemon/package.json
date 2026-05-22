@@ -1,0 +1,84 @@
+{
+  "name": "@tmux-ide/daemon",
+  "version": "0.0.1",
+  "description": "Singleton background daemon for tmux-ide — embeddable workspace registry, command-center API, and chat/codex orchestration.",
+  "type": "module",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/wavyrai/tmux-ide.git",
+    "directory": "packages/daemon"
+  },
+  "homepage": "https://github.com/wavyrai/tmux-ide/tree/main/packages/daemon#readme",
+  "bugs": {
+    "url": "https://github.com/wavyrai/tmux-ide/issues"
+  },
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./contract": {
+      "types": "./dist/command-center/actions/contract.d.ts",
+      "default": "./dist/command-center/actions/contract.js"
+    },
+    "./errors": {
+      "types": "./dist/command-center/actions/errors.d.ts",
+      "default": "./dist/command-center/actions/errors.js"
+    },
+    "./codex": {
+      "types": "./dist/codex/index.d.ts",
+      "default": "./dist/codex/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "dist/dashboard/dist",
+    "README.md"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json && node scripts/build-dashboard.mjs",
+    "build:tsc": "tsc -p tsconfig.json",
+    "build:dashboard": "node scripts/build-dashboard.mjs",
+    "prepack": "pnpm run build",
+    "dev": "tsx --watch src/lib/daemon.ts",
+    "start": "node dist/lib/daemon.js",
+    "lint": "eslint src",
+    "test": "bun test src/chat/thread-store.test.ts src/chat/thread-manager.test.ts src/chat/provider-discovery.test.ts src/chat/context-actions.test.ts src/chat/__tests__/codex-stop-reliability.test.ts src/chat/tools/tmux.test.ts src/chat/reactors/reactor.test.ts src/command-center/actions/handlers/chat-actions.test.ts src/codex/protocol.test.ts src/codex/client.test.ts src/codex/schema.test.ts",
+    "test:vitest": "vitest run"
+  },
+  "dependencies": {
+    "@hono/node-server": "^1.19.11",
+    "@hono/zod-validator": "^0.7.6",
+    "@opentui/core": "^0.1.88",
+    "@opentui/solid": "^0.1.88",
+    "@parcel/watcher": "^2.5.6",
+    "@tmux-ide/contracts": "workspace:*",
+    "@tmux-ide/tmux-bridge": "workspace:*",
+    "@vscode/ripgrep": "^1.15.11",
+    "better-sqlite3": "^12.4.1",
+    "effect": "^3.21.2",
+    "hono": "^4.12.8",
+    "ignore": "^7.0.5",
+    "js-yaml": "^4.1.1",
+    "node-pty": "1.2.0-beta.12",
+    "solid-js": "^1.9.11",
+    "vscode-jsonrpc": "^8.2.1",
+    "vscode-languageserver-protocol": "^3.17.5",
+    "ws": "^8.20.0",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^25.5.0",
+    "@types/ws": "^8.18.1",
+    "tsx": "^4.20.7",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.0"
+  }
+}

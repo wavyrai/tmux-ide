@@ -2,29 +2,57 @@ import Link from "next/link";
 import type { Metadata } from "next";
 import { CopyButton } from "./copy-button";
 import { AsciiLogo } from "./ascii-logo";
+import { MockIde } from "./MockIde";
+import { DotAvatar } from "@/components/dot-avatar";
 import TerminalDemo from "@/components/terminal-demo";
 
 export const metadata: Metadata = {
-  title: "tmux-ide — Autonomous Multi-Agent Missions",
+  title: "tmux-ide — Autonomous multi-agent missions",
   description:
-    "Turn any project into a mission-driven development environment. One config file, multiple AI agents, fully autonomous orchestration.",
+    "Define a mission. Agents plan, execute, validate. You watch from a browser-based IDE that runs Claude + Codex side-by-side, all powered by a local tmux daemon.",
   openGraph: {
-    title: "tmux-ide 2.0 — Autonomous Multi-Agent Missions",
+    title: "tmux-ide 2.5 — Autonomous multi-agent missions",
     description:
-      "Mission-driven orchestration with milestones, validation contracts, skill-based dispatch, and live metrics.",
-    images: [{ url: "/og-image.png", width: 1200, height: 630, alt: "tmux-ide 2.0" }],
+      "Mission-driven orchestration with milestones, validation contracts, and skill-based dispatch — now with a web IDE cockpit (multichat, files, diffs, LSP).",
+    images: [{ url: "/og-image.png", width: 1200, height: 630, alt: "tmux-ide 2.5" }],
   },
   twitter: {
     card: "summary_large_image",
-    title: "tmux-ide 2.0 — Autonomous Multi-Agent Missions",
+    title: "tmux-ide 2.5 — Autonomous multi-agent missions",
     description:
-      "Mission-driven orchestration with milestones, validation contracts, and skill-based dispatch.",
+      "Mission-driven orchestration with milestones, validation, skill-based dispatch — and a web IDE to watch it run.",
     images: ["/og-image.png"],
   },
   alternates: { canonical: "/" },
 };
 
 const installCommand = "npm i -g tmux-ide";
+const openCommand = "tmux-ide dashboard";
+
+/**
+ * Server-side fetch of the GitHub star count. Cached for an hour via
+ * Next's revalidate so we don't burn the API rate limit on every render.
+ * Falls back to `null` on failure (rate-limited, network down) — the
+ * button degrades to plain "GitHub" without a counter.
+ */
+async function fetchStarCount(): Promise<number | null> {
+  try {
+    const res = await fetch("https://api.github.com/repos/wavyrai/tmux-ide", {
+      next: { revalidate: 3600 },
+      headers: { Accept: "application/vnd.github+json" },
+    });
+    if (!res.ok) return null;
+    const data = (await res.json()) as { stargazers_count?: number };
+    return typeof data.stargazers_count === "number" ? data.stargazers_count : null;
+  } catch {
+    return null;
+  }
+}
+
+function formatStars(n: number): string {
+  if (n >= 1000) return `${(n / 1000).toFixed(1).replace(/\.0$/, "")}k`;
+  return String(n);
+}
 
 const STRIPE_BG =
   "repeating-linear-gradient(-60deg, transparent, transparent 4px, var(--fd-border) 4px, var(--fd-border) 5px)";
@@ -79,7 +107,27 @@ const features = [
   {
     title: "Knowledge Library",
     description:
-      "Shared learnings that persist across tasks. Architecture docs and tag-matched references inject into prompts.",
+      "Shared learnings persist across tasks. Architecture docs + tag-matched references inject into prompts.",
+  },
+  {
+    title: "Web IDE Cockpit",
+    description:
+      "Watch agents work from your browser at localhost:6060. File editor, diff viewer, terminal, plans, search, LSP — all live.",
+  },
+  {
+    title: "Multichat Threads",
+    description:
+      "Claude + Codex side-by-side, as many threads as you want per project. Threads stay isolated per workspace.",
+  },
+  {
+    title: "Multi-Project Rail",
+    description:
+      "Open all your projects in one window. Leftmost rail switches between them; each keeps its own tmux session + state.",
+  },
+  {
+    title: "Cmd+K Palette",
+    description:
+      "One keystroke jumps to any project, thread, terminal, or command. Cmd+/ shows every keybind in the app.",
   },
   {
     title: "Researcher Agent",
@@ -90,11 +138,6 @@ const features = [
     title: "Live Metrics",
     description:
       "Session duration, agent utilization, completion rates, retry rates. All computed in real-time.",
-  },
-  {
-    title: "Web Dashboard",
-    description:
-      "Real-time KPIs, milestone timeline, agent performance table, validation status. Auto-refreshes.",
   },
   {
     title: "Coverage Invariant",
@@ -123,21 +166,36 @@ const features = [
   },
 ];
 
-export default function HomePage() {
+export default async function HomePage() {
+  const stars = await fetchStarCount();
   return (
     <div className="font-mono">
-      {/* HERO ROW 1 — full-width ASCII logo + subtitle */}
-      <section className="max-w-screen-xl mx-auto pt-16 md:pt-28 px-6 text-center">
+      {/* HERO ROW 1 — full-width ASCII logo + subtitle + floating agent ghosts */}
+      <section className="relative max-w-screen-xl mx-auto pt-16 md:pt-28 px-6 text-center">
+        {/* Floating agent ghosts framing the logo — same visual language
+            as the Prototyper canvas (orange = claude code, purple = codex). */}
+        <div className="pointer-events-none absolute left-4 top-12 hidden md:flex items-center gap-1.5">
+          <DotAvatar theme="ember" face="happy" size={44} glow title="claude code" />
+          <span className="rounded-full bg-orange-500 px-2 py-0.5 text-[10px] text-white">
+            ● claude code
+          </span>
+        </div>
+        <div className="pointer-events-none absolute right-4 top-20 hidden md:flex items-center gap-1.5">
+          <span className="rounded-full bg-purple-500 px-2 py-0.5 text-[10px] text-white">
+            ● codex
+          </span>
+          <DotAvatar theme="phantom" face="sparkle" size={44} glow title="codex" />
+        </div>
         <AsciiLogo />
         <div className="mt-4 flex items-center justify-center gap-3">
           <h1 className="font-sans text-3xl md:text-4xl lg:text-5xl leading-[1.1] tracking-tight text-fd-foreground">
             Autonomous multi-agent missions.
           </h1>
           <Link
-            href="/docs/release-2-0-0"
+            href="/docs/release-2-5-0"
             className="inline-flex items-center border border-fd-border px-2 py-0.5 text-[10px] font-mono uppercase tracking-[0.18em] text-fd-muted-foreground transition-colors hover:bg-fd-accent hover:text-fd-foreground shrink-0"
           >
-            2.0
+            2.5
           </Link>
         </div>
       </section>
@@ -146,11 +204,12 @@ export default function HomePage() {
       <section className="max-w-screen-xl mx-auto pb-12 md:pb-28 pt-8 md:pt-12 flex flex-col lg:flex-row gap-12 justify-between items-center px-6">
         <div className="lg:max-w-[480px] space-y-8 w-full">
           <p className="text-fd-muted-foreground text-base leading-normal">
-            Turn any project into a mission-driven development environment. One config file,
-            multiple AI agents, fully autonomous orchestration.
+            Define a mission. Agents self-organize through milestones, dispatch to skill-matched
+            workers, and validate against assertions you can audit. You watch from a browser-based
+            IDE that runs Claude + Codex side-by-side — local tmux daemon, no signup.
           </p>
 
-          <div className="max-w-[480px]">
+          <div className="max-w-[480px] space-y-2">
             <CopyButton
               text={installCommand}
               className="group flex items-center gap-3 w-full border border-fd-border p-2 px-4 text-sm transition-colors hover:bg-fd-accent cursor-pointer relative bg-fd-muted/10"
@@ -171,6 +230,13 @@ export default function HomePage() {
                 <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
               </svg>
             </CopyButton>
+            <CopyButton
+              text={openCommand}
+              className="group flex items-center gap-3 w-full border border-fd-border p-2 px-4 text-sm transition-colors hover:bg-fd-accent cursor-pointer relative bg-fd-muted/10"
+            >
+              <span className="text-fd-foreground">$ {openCommand}</span>
+              <span className="ml-auto text-fd-muted-foreground text-xs">opens browser</span>
+            </CopyButton>
           </div>
 
           <div className="flex items-center gap-4">
@@ -184,9 +250,15 @@ export default function HomePage() {
               href="https://github.com/wavyrai/tmux-ide"
               target="_blank"
               rel="noopener noreferrer"
-              className="border border-fd-border px-6 py-2.5 text-sm font-mono text-fd-foreground hover:bg-fd-accent transition-colors"
+              className="inline-flex items-center gap-2 border border-fd-border px-6 py-2.5 text-sm font-mono text-fd-foreground hover:bg-fd-accent transition-colors"
             >
-              GitHub
+              <span>GitHub</span>
+              {stars !== null && (
+                <span className="inline-flex items-center gap-1 text-fd-muted-foreground">
+                  <span aria-hidden="true">★</span>
+                  <span>{formatStars(stars)}</span>
+                </span>
+              )}
             </a>
           </div>
         </div>
@@ -195,6 +267,22 @@ export default function HomePage() {
       </section>
 
       <div className="space-y-16 max-w-screen-lg mx-auto px-6">
+        {/* INTERACTIVE MOCKUP — clickable IDE layout, hand-built React.
+            Not the real dashboard SPA; swaps canned content on tab clicks.
+            See ./MockIde.tsx for the data + structure. */}
+        <div>
+          <h2 className="font-sans text-2xl text-fd-foreground">Click around the IDE</h2>
+          <p className="text-fd-muted-foreground text-sm mt-1">
+            A taste of the layout — click projects, views, files, threads, commits. For the real
+            thing, run <code className="font-mono">tmux-ide dashboard</code> locally.
+          </p>
+          <div className="mt-4">
+            <MockIde />
+          </div>
+        </div>
+
+        <SectionDivider />
+
         {/* FEATURES */}
         <div>
           <h2 className="font-sans text-2xl text-fd-foreground">Features</h2>
@@ -472,10 +560,10 @@ export default function HomePage() {
                 Get started
               </Link>
               <Link
-                href="/docs/release-2-0-0"
+                href="/docs/release-2-5-0"
                 className="border border-fd-border px-6 py-2.5 text-sm font-mono text-fd-foreground hover:bg-fd-accent transition-colors"
               >
-                What&apos;s new in 2.0
+                What&apos;s new in 2.5
               </Link>
             </div>
           </div>
@@ -507,6 +595,14 @@ export default function HomePage() {
               rel="noopener noreferrer"
             >
               GitHub
+            </a>
+            <a
+              href="https://prototyper.co"
+              className="hover:text-fd-foreground transition-colors"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              prototyper.co
             </a>
           </div>
         </div>

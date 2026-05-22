@@ -112,6 +112,14 @@ pnpm pack:check
 
 `pnpm check` is the intended local pre-push command and matches the default release checklist. `npm publish` is still guarded by `prepublishOnly`, so publishing runs the same full check path automatically.
 
+Reliability stress coverage is available outside normal CI:
+
+```bash
+pnpm test:stress
+```
+
+By default it runs concurrent task-store writers for 60 seconds and validates WAL recovery plus JSON integrity. Set `TMUX_IDE_STRESS_MS` for a shorter local run, or `TMUX_IDE_STRESS_DAEMON_CMD` to start a daemon process that the harness will periodically `SIGKILL` and restart.
+
 ## CI
 
 GitHub Actions validates:

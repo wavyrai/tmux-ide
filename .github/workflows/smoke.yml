@@ -1,0 +1,120 @@
+name: Smoke
+
+# Smoke spec targets the old /v2/* routes + React testids that were
+# removed in the G16 Solid cutover. Disabled until the spec is ported
+# to the new Solid surface; trigger manually from the Actions tab.
+on:
+  workflow_dispatch:
+
+jobs:
+  v2-smoke:
+    name: /v2 dev-server smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      CI: "true"
+      # Pin the dashboard's daemon URL so client-side fetches resolve to
+      # the in-job command-center process, not localhost defaults that
+      # depend on the runner's IPv6 behaviour.
+      NEXT_PUBLIC_API_URL: "http://127.0.0.1:6060"
+      NEXT_PUBLIC_API_PORT: "6060"
+      NEXT_PUBLIC_TMUX_IDE_SERVER_PORT: "6060"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build CLI (dashboard + daemon depend on dist/)
+        run: pnpm build
+
+      - name: Install Playwright browsers
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Build dashboard
+        working-directory: dashboard
+        run: pnpm build
+
+      - name: Start daemon (command-center)
+        run: |
+          mkdir -p .smoke-logs
+          nohup node packages/daemon/bin/cli.js command-center --port 6060 \
+            > .smoke-logs/daemon.log 2>&1 &
+          echo $! > .smoke-logs/daemon.pid
+
+      - name: Start dashboard (Vite preview)
+        working-directory: dashboard
+        run: |
+          mkdir -p ../.smoke-logs
+          nohup pnpm preview --port 3000 \
+            > ../.smoke-logs/dashboard.log 2>&1 &
+          echo $! > ../.smoke-logs/dashboard.pid
+
+      - name: Wait for daemon + dashboard
+        run: |
+          set -euo pipefail
+          wait_for() {
+            local url="$1"
+            local label="$2"
+            local timeout="${3:-90}"
+            local elapsed=0
+            until curl -fsS --max-time 2 "$url" >/dev/null 2>&1; do
+              if [ "$elapsed" -ge "$timeout" ]; then
+                echo "::error::$label did not respond at $url within ${timeout}s"
+                return 1
+              fi
+              sleep 2
+              elapsed=$((elapsed + 2))
+            done
+            echo "$label is up at $url (after ${elapsed}s)"
+          }
+          wait_for http://127.0.0.1:6060/api/sessions daemon 90
+          wait_for http://127.0.0.1:3000/v2 dashboard 120
+
+      - name: Run smoke spec
+        run: pnpm exec playwright test --config=playwright.smoke.config.ts
+
+      - name: Stop services
+        if: always()
+        run: |
+          for pidfile in .smoke-logs/daemon.pid .smoke-logs/dashboard.pid; do
+            [ -f "$pidfile" ] || continue
+            pid=$(cat "$pidfile")
+            if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+              kill "$pid" || true
+            fi
+          done
+
+      - name: Upload server logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-server-logs
+          path: .smoke-logs/*.log
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-playwright-report
+          path: |
+            playwright-report
+            test-results
+          if-no-files-found: ignore
+          retention-days: 7

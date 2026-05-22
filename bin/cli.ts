@@ -1,32 +1,39 @@
-#!/usr/bin/env bun
+// No shebang in source. The published bin is the compiled `bin/cli.js`
+// (see scripts/build-cli.mjs) which adds `#!/usr/bin/env node` via the
+// esbuild banner. Dev iteration uses `bun bin/cli.ts` directly, which
+// doesn't need a shebang.
 import { parseArgs } from "node:util";
 import { resolve, dirname } from "node:path";
 import { execFileSync } from "node:child_process";
+import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-import { launch } from "../src/launch.ts";
-import { init } from "../src/init.ts";
-import { stop } from "../src/stop.ts";
-import { attach } from "../src/attach.ts";
-import { ls } from "../src/ls.ts";
-import { doctor } from "../src/doctor.ts";
-import { status } from "../src/status.ts";
-import { inspect } from "../src/inspect.ts";
-import { validate } from "../src/validate.ts";
-import { detect } from "../src/detect.ts";
-import { config } from "../src/config.ts";
-import { restart } from "../src/restart.ts";
-import { taskCommand } from "../src/task.ts";
-import { send } from "../src/send.ts";
-import { IdeError } from "../src/lib/errors.ts";
-import { printCommandError } from "../src/lib/output.ts";
+import { launch } from "../packages/daemon/src/launch.ts";
+import { init } from "../packages/daemon/src/init.ts";
+import { stop } from "../packages/daemon/src/stop.ts";
+import { attach } from "../packages/daemon/src/attach.ts";
+import { ls } from "../packages/daemon/src/ls.ts";
+import { doctor } from "../packages/daemon/src/doctor.ts";
+import { status } from "../packages/daemon/src/status.ts";
+import { inspect } from "../packages/daemon/src/inspect.ts";
+import { validate } from "../packages/daemon/src/validate.ts";
+import { detect } from "../packages/daemon/src/detect.ts";
+import { config } from "../packages/daemon/src/config.ts";
+import { restart } from "../packages/daemon/src/restart.ts";
+import { taskCommand } from "../packages/daemon/src/task.ts";
+import { send } from "../packages/daemon/src/send.ts";
+import { dashboard } from "../packages/daemon/src/dashboard.ts";
+import { IdeError } from "../packages/daemon/src/lib/errors.ts";
+import { printCommandError } from "../packages/daemon/src/lib/output.ts";
 
 const { positionals, values } = parseArgs({
   allowPositionals: true,
   strict: false,
   options: {
     json: { type: "boolean" },
+    tasks: { type: "boolean" },
+    fix: { type: "boolean" },
     row: { type: "string" },
     pane: { type: "string" },
     title: { type: "string" },
@@ -69,6 +76,11 @@ const { positionals, values } = parseArgs({
     // send command flags
     to: { type: "string" },
     "no-enter": { type: "boolean" },
+    // dashboard command flags
+    open: { type: "boolean" },
+    "no-open": { type: "boolean" },
+    // chat command flags (T078)
+    role: { type: "string" },
   },
 });
 
@@ -100,8 +112,12 @@ const knownCommands = new Set([
   "orchestrator",
   "settings",
   "command-center",
+  "dashboard",
+  "server",
   "tunnel",
   "remote",
+  "checkpoint",
+  "chat",
   "help",
 ]);
 
@@ -182,6 +198,11 @@ ${bold("Dispatch:")}
 ${bold("Orchestrator:")}
   ${cyan("tmux-ide orchestrator")} [--json]         ${dim("Show orchestrator status")}
   ${cyan("tmux-ide orch")}                          ${dim("Alias for orchestrator")}
+  ${cyan("tmux-ide server")} [--port N]             ${dim("Start v2.5 HTTP + PTY WebSocket server")}
+
+${bold("Multi-agent Chat:")}
+  ${cyan("tmux-ide chat session add")} <thread-id> --provider <name> [--role <role>]
+                                  ${dim("Register a Session on a Thread (lead|teammate|planner|validator|researcher)")}
 
 ${bold("Task Management:")}
   ${cyan("tmux-ide mission set")} "title"              ${dim("Set the project mission")}
@@ -204,6 +225,34 @@ ${bold("Flags:")}
   ${cyan("--verbose")}                   ${dim("Log all tmux commands (or set TMUX_IDE_DEBUG=1)")}
   ${cyan("-h, --help")}                  ${dim("Show usage")}
   ${cyan("-v, --version")}               ${dim("Show version number")}`);
+}
+
+// The TUI widgets are `.tsx` files that ship only in a dev checkout and
+// require the `bun` runtime. On a clean `npm i -g tmux-ide` neither is
+// present, so execFileSync("bun", ...) would throw a raw ENOENT. Guard
+// first and surface an actionable IdeError instead.
+function execBunWidget(scriptPath: string, args: string[], commandLabel: string): void {
+  const widgetMissing = !existsSync(scriptPath);
+  let bunMissing = false;
+  try {
+    execFileSync("bun", ["--version"], { stdio: "ignore" });
+  } catch {
+    bunMissing = true;
+  }
+  if (widgetMissing || bunMissing) {
+    const reasons: string[] = [];
+    if (bunMissing) reasons.push("the `bun` runtime is not installed (https://bun.sh)");
+    if (widgetMissing)
+      reasons.push(
+        "the TUI widget sources are absent (they ship only in a cloned tmux-ide checkout, not the npm package)",
+      );
+    throw new IdeError(
+      `\`tmux-ide ${commandLabel}\` is unavailable because ${reasons.join(" and ")}.\n` +
+        `Run it from a cloned tmux-ide checkout with bun installed.`,
+      { code: "USAGE", exitCode: 1 },
+    );
+  }
+  execFileSync("bun", [scriptPath, ...args], { stdio: "inherit" });
 }
 
 try {
@@ -233,7 +282,7 @@ try {
       break;
 
     case "doctor":
-      await doctor({ json });
+      await doctor({ json, tasks: values.tasks, fix: values.fix });
       break;
 
     case "status":
@@ -306,10 +355,12 @@ try {
         action = "disable-team";
         configArgs = [];
       } else if (sub === "edit") {
-        const scriptPath = resolve(__dirname, "../src/widgets/setup/index.tsx");
-        execFileSync("bun", [scriptPath, "--dir=" + resolve(startTargetDir || "."), "--edit"], {
-          stdio: "inherit",
-        });
+        const scriptPath = resolve(__dirname, "../packages/daemon/src/widgets/setup/index.tsx");
+        execBunWidget(
+          scriptPath,
+          ["--dir=" + resolve(startTargetDir || "."), "--edit"],
+          "config edit",
+        );
         break;
       }
 
@@ -403,7 +454,7 @@ try {
     }
 
     case "plan": {
-      const { planCommand } = await import("../src/plan.ts");
+      const { planCommand } = await import("../packages/daemon/src/plan.ts");
       await planCommand(null, {
         json,
         sub: positionals[1],
@@ -414,7 +465,7 @@ try {
     }
 
     case "skill": {
-      const { skillCommand } = await import("../src/skill.ts");
+      const { skillCommand } = await import("../packages/daemon/src/skill.ts");
       await skillCommand(null, {
         json,
         sub: positionals[1],
@@ -424,7 +475,7 @@ try {
     }
 
     case "metrics": {
-      const { metricsCommand } = await import("../src/metrics-cli.ts");
+      const { metricsCommand } = await import("../packages/daemon/src/metrics-cli.ts");
       await metricsCommand(null, {
         json,
         sub: positionals[1],
@@ -433,11 +484,11 @@ try {
     }
 
     case "setup": {
-      const scriptPath = resolve(__dirname, "../src/widgets/setup/index.tsx");
-      const setupArgs = [scriptPath, "--dir=" + resolve(startTargetDir || ".")];
+      const scriptPath = resolve(__dirname, "../packages/daemon/src/widgets/setup/index.tsx");
+      const setupArgs = ["--dir=" + resolve(startTargetDir || ".")];
       if (positionals[1] === "--edit" || values.edit) setupArgs.push("--edit");
       if (positionals[1] === "--wizard" || values.wizard) setupArgs.push("--wizard");
-      execFileSync("bun", setupArgs, { stdio: "inherit" });
+      execBunWidget(scriptPath, setupArgs, "setup");
       break;
     }
 
@@ -454,35 +505,33 @@ try {
     }
 
     case "dispatch": {
-      const { dispatch: dispatchCmd } = await import("../src/dispatch.ts");
+      const { dispatch: dispatchCmd } = await import("../packages/daemon/src/dispatch.ts");
       const taskId = positionals[1];
       await dispatchCmd(null, { taskId, json });
       break;
     }
 
     case "notify": {
-      const { notify: notifyCmd } = await import("../src/notify.ts");
+      const { notify: notifyCmd } = await import("../packages/daemon/src/notify.ts");
       const notifyMessage = positionals.slice(1).join(" ");
       await notifyCmd(null, { message: notifyMessage || undefined, json });
       break;
     }
 
     case "orchestrator": {
-      const { orchestratorStatus } = await import("../src/orchestrator-status.ts");
+      const { orchestratorStatus } = await import("../packages/daemon/src/orchestrator-status.ts");
       await orchestratorStatus(positionals[1], { json });
       break;
     }
 
     case "settings": {
-      const scriptPath = resolve(__dirname, "../src/widgets/config/index.tsx");
-      execFileSync("bun", [scriptPath, "--dir=" + resolve(startTargetDir || ".")], {
-        stdio: "inherit",
-      });
+      const scriptPath = resolve(__dirname, "../packages/daemon/src/widgets/config/index.tsx");
+      execBunWidget(scriptPath, ["--dir=" + resolve(startTargetDir || ".")], "settings");
       break;
     }
 
     case "tunnel": {
-      const { tunnelCommand } = await import("../src/tunnel.ts");
+      const { tunnelCommand } = await import("../packages/daemon/src/tunnel.ts");
       await tunnelCommand(null, {
         json,
         sub: positionals[1],
@@ -498,7 +547,7 @@ try {
     }
 
     case "remote": {
-      const { remoteCommand } = await import("../src/remote.ts");
+      const { remoteCommand } = await import("../packages/daemon/src/remote.ts");
       await remoteCommand(null, {
         json,
         sub: positionals[1],
@@ -512,8 +561,54 @@ try {
     }
 
     case "command-center": {
-      const { startCommandCenter } = await import("../src/command-center/index.ts");
+      const { startCommandCenter } = await import("../packages/daemon/src/command-center/index.ts");
       await startCommandCenter({ port: parseInt(values.port ?? "4000") });
+      break;
+    }
+
+    case "dashboard": {
+      // `tmux-ide dashboard` — print the daemon's dashboard URL and open it.
+      // Pass --no-open to skip the browser open and just print the URL.
+      const noOpen = values["no-open"] === true || values.open === false;
+      await dashboard({ json, open: !noOpen });
+      break;
+    }
+
+    case "server": {
+      if ("bun" in process.versions) {
+        const scriptPath = resolve(__dirname, "../packages/daemon/src/server/standalone.ts");
+        const serverArgs = ["--experimental-strip-types", scriptPath];
+        if (values.port) serverArgs.push("--port", values.port);
+        execFileSync("node", serverArgs, { stdio: "inherit" });
+      } else {
+        const { start } = await import("../packages/daemon/src/server/index.ts");
+        await start(values.port ? parseInt(values.port, 10) : undefined);
+      }
+      break;
+    }
+
+    case "chat": {
+      const { chatCommand } = await import("../packages/daemon/src/chat.ts");
+      await chatCommand({
+        sub: positionals[1],
+        args: positionals.slice(2),
+        json,
+        provider: values.provider,
+        role: values.role,
+        name: values.name,
+      });
+      break;
+    }
+
+    case "checkpoint": {
+      // Reuse the canonical command in packages/daemon to avoid duplicating
+      // the engine alongside the unfinished src/ → packages/daemon fold.
+      const { checkpointCommand } = await import("../packages/daemon/src/checkpoint.ts");
+      await checkpointCommand({
+        sub: positionals[1],
+        args: positionals.slice(2),
+        json,
+      });
       break;
     }
 

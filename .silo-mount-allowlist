@@ -1,0 +1,20 @@
+# G14-T01 Rule 4 allowlist — files that call a silo `mount(...)` but don't
+# yet match the `*Bridge.tsx` / `*Island.tsx` convention. New entries require
+# a tracking note; pre-existing entries should be renamed in a follow-up.
+#
+# Format: one workspace-relative path per line. Comments allowed.
+
+# Chat silo bridge — predates the naming convention. Rename to
+# ChatTabBridgePanel.tsx (or extract the mount into a separate
+# ChatSiloBridge.tsx) in a follow-up so this allowlist entry can drop.
+dashboard/components/chat/ChatTabPanel.tsx
+
+# V2 chat island — same story; rename to V2ChatIsland.tsx in a follow-up.
+dashboard/app/v2/_lib/V2ChatView.tsx
+
+# Generic widget mount wrapper — accepts an arbitrary silo `mount` as a
+# prop and re-renders on options change. It's the single central call site
+# for every silo's mount() (not a per-silo bridge), so the `*Bridge.tsx`
+# naming doesn't quite apply. Rename to WidgetHostBridge.tsx in a follow-up
+# so this allowlist entry can drop.
+dashboard/src/components/v2/widgetHost.tsx

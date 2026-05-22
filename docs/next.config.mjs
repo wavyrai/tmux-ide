@@ -19,6 +19,16 @@ const config = {
         source: "/docs/:path*.mdx",
         destination: "/llms.mdx/docs/:path*",
       },
+      // The Solid dashboard SPA is built into /public/demo/. Next serves
+      // its assets fine but doesn't know about client-side routes like
+      // /demo/project/<name>. Rewrite any sub-path (that isn't an asset)
+      // to /demo/index.html so the SPA's router picks it up.
+      { source: "/demo", destination: "/demo/index.html" },
+      { source: "/demo/", destination: "/demo/index.html" },
+      {
+        source: "/demo/:path((?!assets/|fonts/|.*\\..+$).*)",
+        destination: "/demo/index.html",
+      },
     ];
   },
 };

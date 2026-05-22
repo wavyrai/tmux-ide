@@ -454,6 +454,280 @@ tmux-ide validate coverage --json
 
 Run this before `tmux-ide mission plan-complete` to catch gaps early.
 
+## Worked Examples
+
+The three patterns below cover the three engineering scenarios where validation contracts pay for themselves the fastest: shipping a new subsystem, evolving an existing API, and refactoring without regressions. Each example is a real-feeling `.tasks/validation-contract.md` plus the CLI flow that drives it.
+
+### Pattern 1 — Auth System Contract
+
+Auth is the canonical case for validation contracts. The behavior is high-stakes, easy to get subtly wrong, and trivial to verify with concrete request/response checks. Define the contract before writing the first route handler.
+
+`.tasks/validation-contract.md`:
+
+```md
+# Validation Contract — Auth System
+
+## Login & Tokens
+
+**VAL-AUTH-001**: POST /auth/login with valid credentials returns 200 and a signed JWT in the response body
+**VAL-AUTH-002**: JWT refresh rotates the refresh token; the previous refresh token is rejected on reuse
+**VAL-AUTH-003**: Expired access token returns 401 with `{"code":"token_expired"}`, never 500
+**VAL-AUTH-004**: POST /auth/login with wrong password returns 401 and does NOT leak whether the email exists
+
+## Session Hygiene
+
+**VAL-AUTH-005**: POST /auth/logout invalidates the refresh token server-side; subsequent refresh returns 401
+**VAL-AUTH-006**: Concurrent refresh from two devices does not cause both to be logged out (single-rotation race)
+```
+
+Two tasks fulfill this contract. Note that `VAL-AUTH-001` and `VAL-AUTH-002` are claimed by the same task because they are tightly coupled — you cannot ship rotation without first issuing tokens:
+
+```bash
+tmux-ide task create "Implement login + refresh rotation" \
+  --milestone M1 --specialty backend \
+  --fulfills "VAL-AUTH-001,VAL-AUTH-002,VAL-AUTH-005"
+
+tmux-ide task create "Error handling for expired and invalid tokens" \
+  --milestone M1 --specialty backend \
+  --fulfills "VAL-AUTH-003,VAL-AUTH-004"
+
+tmux-ide task create "Refresh race-condition handling" \
+  --milestone M1 --specialty backend \
+  --depends "001" \
+  --fulfills "VAL-AUTH-006"
+
+tmux-ide validate coverage
+```
+
+Once all three tasks reach `done`, the orchestrator transitions M1 to `validating` and dispatches the validator pane:
+
+```bash
+tmux-ide validate show
+```
+
+```
+Validation Contract — 6 assertions
+
+  VAL-AUTH-001  pending   POST /auth/login returns 200 and signed JWT
+  VAL-AUTH-002  pending   JWT refresh rotates the refresh token
+  VAL-AUTH-003  pending   Expired access token returns 401, not 500
+  VAL-AUTH-004  pending   Wrong password returns 401 without email enumeration
+  VAL-AUTH-005  pending   Logout invalidates refresh token server-side
+  VAL-AUTH-006  pending   Concurrent refresh handles single-rotation race
+```
+
+The validator agent runs the integration suite, then records evidence for each assertion:
+
+```bash
+tmux-ide validate assert VAL-AUTH-001 \
+  --status passing \
+  --evidence "auth.login.test.ts: 4/4 passed; curl POST /auth/login returns {access,refresh} tokens"
+
+tmux-ide validate assert VAL-AUTH-002 \
+  --status passing \
+  --evidence "auth.refresh.rotation.test.ts: replay of old refresh token returns 401"
+
+tmux-ide validate assert VAL-AUTH-003 \
+  --status failing \
+  --evidence "Expired token returns 500 with stack trace — middleware swallows JWT decode error"
+```
+
+The failure on `VAL-AUTH-003` triggers the remediation flow described above:
+
+1. The orchestrator creates a `Remediate: assertion VAL-AUTH-003 failing` task tagged `remediation` and resets the assertion to `pending`.
+2. M1 transitions back to `active`, blocking M2 from starting.
+3. After the fix lands and the assertion is re-asserted as `passing`, M1 completes and M2 unblocks.
+
+```bash
+tmux-ide validate report
+```
+
+```
+Validation Report
+  Total:    6 assertions
+  Passing:  5
+  Failing:  0
+  Blocked:  0
+  Pending:  1
+
+  Pending assertions:
+    VAL-AUTH-003  Expired access token returns 401 with token_expired code (remediation in progress)
+```
+
+### Pattern 2 — API Migration Contract
+
+Migrations are the case where multiple tasks legitimately claim the same assertion. Backwards compatibility is the product of work on both the legacy adapter and the new handlers, and you want either side of that pair to be able to break the assertion independently.
+
+`.tasks/validation-contract.md`:
+
+```md
+# Validation Contract — v1 → v2 API Migration
+
+## Backwards Compatibility
+
+**VAL-MIG-001**: v1 routes still respond 200 with the original deprecated shape (no breaking field renames, no removed keys)
+**VAL-MIG-002**: v2 routes accept v1 client payloads via the request adapter (old clients keep working without redeploy)
+**VAL-MIG-003**: v1 routes emit a `Deprecation` and `Sunset` header pointing at the v2 equivalent
+
+## v2 Surface
+
+**VAL-MIG-004**: v2 routes return the new canonical shape with snake_case → camelCase migration applied
+**VAL-MIG-005**: v2 error envelope conforms to RFC 7807 (problem+json) with `type`, `title`, `status`, `detail`
+
+## Cutover Safety
+
+**VAL-MIG-006**: A request to a v1 route and the equivalent v2 route, with the same input, produces the same observable side effects (same row written, same event emitted)
+```
+
+Multiple tasks per assertion is the right call here — `VAL-MIG-006` is the bridge invariant, and three different tasks each contribute a slice of the proof:
+
+```bash
+# Adapter team
+tmux-ide task create "v1→v2 request adapter" \
+  --milestone M1 --specialty backend \
+  --fulfills "VAL-MIG-002,VAL-MIG-006"
+
+tmux-ide task create "v2→v1 response shape mapper" \
+  --milestone M1 --specialty backend \
+  --fulfills "VAL-MIG-001,VAL-MIG-006"
+
+# v2 surface team (parallel)
+tmux-ide task create "v2 canonical shape + RFC 7807 errors" \
+  --milestone M1 --specialty backend \
+  --fulfills "VAL-MIG-004,VAL-MIG-005"
+
+# Deprecation headers
+tmux-ide task create "Emit Deprecation/Sunset headers on v1" \
+  --milestone M1 --specialty backend \
+  --fulfills "VAL-MIG-003"
+
+# Side-effect parity test harness (also fulfills the bridge invariant)
+tmux-ide task create "Side-effect parity test: v1 vs v2 for all mutating routes" \
+  --milestone M1 --specialty backend \
+  --depends "001,002,003" \
+  --fulfills "VAL-MIG-006"
+```
+
+Because three tasks all claim `VAL-MIG-006`, the assertion stays `pending` until the validator actually exercises the parity harness — finishing the individual feature tasks is not enough on its own. The validator runs the parity suite last:
+
+```bash
+tmux-ide validate assert VAL-MIG-006 \
+  --status passing \
+  --evidence "parity-suite.test.ts: 24/24 routes produce identical DB writes and event payloads (v1 vs v2)"
+```
+
+If `VAL-MIG-001` fails because a v1 response key got renamed, the orchestrator will create a remediation task but will NOT roll back the v2 work — only assertions tied to failing milestones gate progress. Use `validate coverage --json` in CI to make sure every new v1 deprecation has a fulfilling task before merge:
+
+```bash
+tmux-ide validate coverage --json | jq '.uncovered'
+```
+
+```json
+[]
+```
+
+### Pattern 3 — Refactor Contract
+
+Refactors are the smallest-scope contracts and the easiest to skip — which is exactly why they bite. The trick is to frame assertions as **invariants**: things that must remain true after the refactor lands. Don't describe the new architecture, describe what must NOT change.
+
+`.tasks/validation-contract.md`:
+
+```md
+# Validation Contract — Extract Pricing Engine
+
+## Behavioral Invariants
+
+**VAL-REF-001**: All existing snapshot tests still pass unchanged (no `--update-snapshots`)
+**VAL-REF-002**: No new TypeScript errors in changed files (`pnpm tsc --noEmit` exit 0)
+**VAL-REF-003**: Public exports from `@app/pricing` are identical pre- and post-refactor (`api-extractor` diff is empty)
+
+## Performance Floor
+
+**VAL-REF-004**: The `pricing.calculate.bench.ts` benchmark stays within ±5% of the pre-refactor baseline
+```
+
+Refactor contracts are usually fulfilled by a single task:
+
+```bash
+tmux-ide task create "Extract pricing engine to @app/pricing package" \
+  --milestone M1 --specialty backend \
+  --fulfills "VAL-REF-001,VAL-REF-002,VAL-REF-003,VAL-REF-004"
+
+tmux-ide validate coverage
+```
+
+The validator runs each check directly:
+
+```bash
+tmux-ide validate assert VAL-REF-001 \
+  --status passing \
+  --evidence "pnpm vitest run: 412/412 passed, 0 snapshots updated"
+
+tmux-ide validate assert VAL-REF-002 \
+  --status passing \
+  --evidence "pnpm tsc --noEmit: exit 0, 0 new errors in 14 changed files"
+
+tmux-ide validate assert VAL-REF-003 \
+  --status passing \
+  --evidence "api-extractor diff: 0 changes to .api.md"
+
+tmux-ide validate assert VAL-REF-004 \
+  --status failing \
+  --evidence "pricing.calculate.bench.ts: 312ms vs baseline 240ms (+30%), regression in tier resolution"
+```
+
+The `VAL-REF-004` failure does exactly what you want — it blocks M1 from completing, surfaces a remediation task with the benchmark evidence attached, and prevents the refactor from being declared "done" with a silent 30% perf regression. Re-assert after fixing:
+
+```bash
+tmux-ide validate report --json
+```
+
+```json
+{
+  "total": 4,
+  "passing": 4,
+  "failing": 0,
+  "blocked": 0,
+  "pending": 0
+}
+```
+
+## Anti-patterns
+
+These four assertion shapes look reasonable in a planning doc but make the validator's job impossible. Each one should be rewritten before `mission plan-complete`.
+
+### Too vague
+
+```md
+**VAL-AUTH-001**: Auth works correctly
+```
+
+There is no observable behavior here. The validator cannot tell you whether this assertion holds — and worse, neither can a human reviewer. **Fix:** name the endpoint, the input, the expected status code, and the expected response shape.
+
+### Untestable
+
+```md
+**VAL-CODE-001**: The code is clean and maintainable
+```
+
+"Clean" is a taste judgment, not a check. The validator has no script to run. **Fix:** translate the intent into something measurable — `Cyclomatic complexity of all new functions in src/pricing/ is ≤ 10 (eslint-plugin-sonarjs)`.
+
+### Tautological
+
+```md
+**VAL-TEST-001**: All tests pass
+```
+
+This is always either trivially true (because you ran the suite) or trivially false (because something broke unrelated to the work). It does not constrain the change. **Fix:** specify the behavior the new tests must cover — `Login flow has integration tests for valid credentials, wrong password, and expired token cases`.
+
+### Implementation-detail-coupled
+
+```md
+**VAL-IMPL-001**: The PricingEngine class uses the Strategy pattern with a TierResolver injected via DI
+```
+
+This locks in a specific design before the work starts and makes the assertion fail the moment someone finds a better factoring. The validator is now policing your architecture instead of your behavior. **Fix:** assert the observable contract — `pricing.calculate(input) returns the same output for tiers A/B/C as the legacy implementation across the 200-case fixture`.
+
 ## Best Practices
 
 - Write the contract during planning, before any code exists

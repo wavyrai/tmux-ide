@@ -14,7 +14,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        node: [18, 20, 22]
+        node: [20, 22]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -43,16 +43,11 @@ jobs:
       - name: Build
         run: pnpm build
 
-      # Tests require Bun runtime; exclude integration tests (need tmux)
+      # test:unit is scoped to src/cli.test.ts only (integration.test.ts
+      # needs a real tmux session and is excluded by path).
       - name: Run test suite
         if: matrix.node >= 22
-        run: |
-          mv src/integration.test.ts src/integration.test.ts.skip 2>/dev/null || true
-          pnpm test:unit
-
-      - name: Smoke test (Node < 22 — verify package contents)
-        if: matrix.node < 22
-        run: pnpm pack:check
+        run: pnpm test:unit
 
       - name: Validate package contents
         run: pnpm pack:check
@@ -82,12 +77,80 @@ jobs:
       - name: Build CLI (dashboard may depend on dist/)
         run: pnpm build
 
-      - name: Build dashboard
+      - name: Build dashboard (Vite SPA)
         working-directory: dashboard
-        run: npx next build
+        run: pnpm build
 
       - name: Run dashboard tests
         run: cd dashboard && pnpm test
+
+  # E2E job removed: every spec in e2e/ is in playwright.config.ts
+  # testIgnore (parked since the G16 Solid cutover), so the job collected
+  # zero tests and only spent CI minutes booting a webServer that nothing
+  # exercised. smoke.yml owns the live smoke gate; restore this job when
+  # specs are ported back to the Solid surface.
+
+  coverage:
+    name: Vitest coverage (per package)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build CLI (workspace deps may need dist/)
+        run: pnpm build
+
+      # Each call enforces that package's `coverage.thresholds` — a
+      # regression below the floor fails the step. `continue-on-error`
+      # is intentionally off; the floors are pinned just below current
+      # numbers so a green main stays green.
+      - name: Coverage — daemon
+        working-directory: packages/daemon
+        run: pnpm exec vitest run --coverage
+
+      - name: Coverage — chat-solid
+        working-directory: packages/chat-solid
+        run: pnpm exec vitest run --coverage
+
+      - name: Coverage — v2-solid-widgets
+        working-directory: packages/v2-solid-widgets
+        run: pnpm exec vitest run --coverage
+
+      - name: Coverage — dashboard
+        working-directory: dashboard
+        run: pnpm exec vitest run --coverage
+
+      - name: Summarize coverage for PR
+        if: always()
+        run: node scripts/coverage-summary.mjs >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload HTML coverage reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-html
+          path: |
+            packages/daemon/coverage
+            packages/chat-solid/coverage
+            packages/v2-solid-widgets/coverage
+            dashboard/coverage
+          if-no-files-found: ignore
+          retention-days: 14
 
   docs:
     name: Docs build

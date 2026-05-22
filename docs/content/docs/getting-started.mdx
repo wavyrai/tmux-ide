@@ -53,7 +53,17 @@ rows:
 tmux-ide
 ```
 
-That's it. You'll get a tmux session with labeled panes, split exactly as configured.
+That's it. You'll get a tmux session with labeled panes, split exactly as configured. The launch output also prints the URL of the web dashboard.
+
+## Open the dashboard
+
+tmux-ide 2.5+ ships a full web IDE alongside the tmux session — file editor, chat, diffs, terminal, plans, search, LSP. Open it in your browser:
+
+```bash
+tmux-ide dashboard
+```
+
+That command opens `http://localhost:6060/` in your default browser. Pass `--no-open` to just print the URL, or `--json` for scripting. See the [Dashboard](/docs/dashboard) page for the full IDE walkthrough.
 
 ## Stop
 
