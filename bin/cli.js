@@ -336,6 +336,11 @@ function sendLiteral(targetPane, text) {
   runTmux(["send-keys", "-t", targetPane, "-l", "--", text], { stdio: "inherit" });
   runTmux(["send-keys", "-t", targetPane, "Enter"], { stdio: "inherit" });
 }
+function getPaneCurrentCommand(targetPane) {
+  return runTmux(["display-message", "-p", "-t", targetPane, "#{pane_current_command}"], {
+    encoding: "utf-8"
+  }).trim();
+}
 function selectPane(targetPane) {
   runTmux(["select-pane", "-t", targetPane], { stdio: "inherit" });
 }
@@ -3203,6 +3208,14 @@ var init_canonical_daemon = __esm({
 });
 
 // packages/daemon/src/launch.ts
+var launch_exports = {};
+__export(launch_exports, {
+  buildMasterAgentPrompt: () => buildMasterAgentPrompt,
+  buildPaneMap: () => buildPaneMap,
+  ensureTaskDocs: () => ensureTaskDocs,
+  launch: () => launch,
+  waitForPaneCommand: () => waitForPaneCommand
+});
 import { resolve as resolve5, join as join2 } from "node:path";
 import { execSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -3213,8 +3226,30 @@ function stripWidgetPanes(rows) {
     panes: row.panes.filter((p) => !p.type)
   })).filter((row) => row.panes.length > 0);
 }
+function sleepMs(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
 function configHash(config2) {
   return createHash("sha256").update(JSON.stringify(config2)).digest("hex").slice(0, 12);
+}
+function waitForPaneCommand(targetPane, expectedCommands, {
+  attempts = 20,
+  delayMs = 100,
+  getCurrentCommand = getPaneCurrentCommand,
+  sleep = sleepMs
+} = {}) {
+  const allowed = new Set(expectedCommands.map((command2) => command2.toLowerCase()));
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    try {
+      const current = getCurrentCommand(targetPane)?.trim().toLowerCase();
+      if (current && allowed.has(current)) return true;
+    } catch {
+    }
+    if (attempt < attempts - 1) {
+      sleep(delayMs);
+    }
+  }
+  return false;
 }
 function buildPaneMap(rows, dir, rootPaneId, splitPaneFn) {
   const rowSizes = computeSizes(rows);
@@ -6013,7 +6048,7 @@ function sendLiteralToPane(_session, paneId, text) {
 function sendEnterToPane(_session, paneId) {
   tmux("send-keys", "-t", paneId, "Enter");
 }
-function sleepMs(ms) {
+function sleepMs2(ms) {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 function sendCommand(session, paneId, command2) {
@@ -6025,11 +6060,11 @@ function sendCommand(session, paneId, command2) {
   }
   if (status4 === "agent") {
     if (command2.length < 200) {
-      sleepMs(150);
+      sleepMs2(150);
     } else {
-      sleepMs(5e3);
+      sleepMs2(5e3);
       tmux("send-keys", "-t", paneId, "Enter");
-      sleepMs(2e3);
+      sleepMs2(2e3);
     }
     tmux("send-keys", "-t", paneId, "Enter");
     return true;
@@ -10551,8 +10586,8 @@ function makeJsonRpcEndpoint(opts) {
   let resolveClosed;
   const pending = /* @__PURE__ */ new Map();
   const notificationHandlers = /* @__PURE__ */ new Set();
-  const closed = new Promise((resolve34) => {
-    resolveClosed = resolve34;
+  const closed = new Promise((resolve35) => {
+    resolveClosed = resolve35;
   });
   function log2(direction, payload) {
     opts.logger?.({ direction, payload });
@@ -10646,8 +10681,8 @@ function makeJsonRpcEndpoint(opts) {
       const id = nextId++;
       const envelope = { jsonrpc: "2.0", id, method };
       if (params !== void 0) envelope.params = params;
-      const promise = new Promise((resolve34, reject) => {
-        pending.set(id, { resolve: resolve34, reject });
+      const promise = new Promise((resolve35, reject) => {
+        pending.set(id, { resolve: resolve35, reject });
       });
       write(envelope);
       return promise;
@@ -12240,8 +12275,8 @@ function makeJsonRpcEndpoint2(opts) {
   let resolveClosed;
   const pending = /* @__PURE__ */ new Map();
   const notificationHandlers = /* @__PURE__ */ new Set();
-  const closed = new Promise((resolve34) => {
-    resolveClosed = resolve34;
+  const closed = new Promise((resolve35) => {
+    resolveClosed = resolve35;
   });
   function log2(direction, payload) {
     opts.logger?.({ direction, payload });
@@ -12344,8 +12379,8 @@ function makeJsonRpcEndpoint2(opts) {
       const id = nextId++;
       const envelope = { id, method };
       if (params !== void 0) envelope.params = params;
-      const promise = new Promise((resolve34, reject) => {
-        pending.set(id, { resolve: resolve34, reject });
+      const promise = new Promise((resolve35, reject) => {
+        pending.set(id, { resolve: resolve35, reject });
       });
       write(envelope);
       return promise;
@@ -13210,12 +13245,12 @@ function makePermissionCoordinator(opts) {
     async request(threadId, req) {
       await opts.beforeEmit?.(threadId);
       const requestId = randomUUID4();
-      return new Promise((resolve34) => {
+      return new Promise((resolve35) => {
         const timer = setTimeout(() => {
           remove(requestId)?.resolve(autoRejectResponse(req.options));
         }, opts.permissionTimeoutMs);
         timer.unref?.();
-        pending.set(requestId, { threadId, options: req.options, resolve: resolve34, timer });
+        pending.set(requestId, { threadId, options: req.options, resolve: resolve35, timer });
         opts.busEmit({
           type: "chat.permission.request",
           threadId,
@@ -13706,8 +13741,8 @@ function asReasoningEffort(value) {
   return KNOWN_REASONING_EFFORTS.includes(value) ? value : null;
 }
 async function dispatchCodexPrompt(input) {
-  const completed = new Promise((resolve34) => {
-    input.bindActivePrompt({ promptId: input.promptId, turnId: null, resolve: resolve34 });
+  const completed = new Promise((resolve35) => {
+    input.bindActivePrompt({ promptId: input.promptId, turnId: null, resolve: resolve35 });
   });
   try {
     const effortLevel = input.reasoningEffort ? asReasoningEffort(input.reasoningEffort) : null;
@@ -13896,8 +13931,8 @@ async function defaultProbeCodexModels(binaryPath, opts = {}) {
       }
       return accumulated;
     })();
-    const timeout = new Promise((resolve34) => {
-      timer = setTimeout(() => resolve34(null), timeoutMs);
+    const timeout = new Promise((resolve35) => {
+      timer = setTimeout(() => resolve35(null), timeoutMs);
     });
     const result = await Promise.race([work, timeout]);
     if (result === null) return null;
@@ -13947,10 +13982,10 @@ async function resolveFromPath3(binary) {
   return null;
 }
 async function defaultExec(cmd, args, opts = {}) {
-  return await new Promise((resolve34) => {
+  return await new Promise((resolve35) => {
     execFile2(cmd, args, { timeout: opts.timeoutMs }, (err, stdout, stderr) => {
       const exitCode = err && typeof err.code === "number" ? err.code : err ? null : 0;
-      resolve34({ stdout, stderr, code: exitCode });
+      resolve35({ stdout, stderr, code: exitCode });
     });
   });
 }
@@ -16894,7 +16929,7 @@ var init_errors6 = __esm({
 import { execFile as execFile3 } from "node:child_process";
 import { Effect } from "effect";
 function runRaw(cwd, args) {
-  return new Promise((resolve34, reject) => {
+  return new Promise((resolve35, reject) => {
     execFile3(
       "git",
       args,
@@ -16916,7 +16951,7 @@ function runRaw(cwd, args) {
           reject(failure);
           return;
         }
-        resolve34({ stdout: out, stderr: errOut });
+        resolve35({ stdout: out, stderr: errOut });
       }
     );
   });
@@ -17192,7 +17227,7 @@ function toPayload2(err) {
   }
 }
 function runCli(cmd, args, cwd) {
-  return new Promise((resolve34, reject) => {
+  return new Promise((resolve35, reject) => {
     execFile4(
       cmd,
       args,
@@ -17218,7 +17253,7 @@ function runCli(cmd, args, cwd) {
           });
           return;
         }
-        resolve34({ stdout: out, stderr: errOut });
+        resolve35({ stdout: out, stderr: errOut });
       }
     );
   });
@@ -18052,12 +18087,12 @@ async function* runSearch(opts) {
     rl.close();
   }
   const exit = await new Promise(
-    (resolve34) => {
+    (resolve35) => {
       if (child.exitCode !== null || child.signalCode !== null) {
-        resolve34({ code: child.exitCode, signal: child.signalCode });
+        resolve35({ code: child.exitCode, signal: child.signalCode });
         return;
       }
-      child.once("exit", (code, sig) => resolve34({ code, signal: sig }));
+      child.once("exit", (code, sig) => resolve35({ code, signal: sig }));
     }
   );
   const aborted = opts.signal.aborted;
@@ -20363,7 +20398,7 @@ async function createLspClient(input) {
     async waitForDiagnostics(file, timeoutMs) {
       const existing = diagnosticsByFile.get(file);
       if (existing) return existing;
-      return new Promise((resolve34) => {
+      return new Promise((resolve35) => {
         const timer = setTimeout(() => {
           const waiters2 = diagnosticsWaiters.get(file);
           if (waiters2) {
@@ -20371,11 +20406,11 @@ async function createLspClient(input) {
             if (idx >= 0) waiters2.splice(idx, 1);
             if (waiters2.length === 0) diagnosticsWaiters.delete(file);
           }
-          resolve34(diagnosticsByFile.get(file) ?? []);
+          resolve35(diagnosticsByFile.get(file) ?? []);
         }, timeoutMs);
         const done = () => {
           clearTimeout(timer);
-          resolve34(diagnosticsByFile.get(file) ?? []);
+          resolve35(diagnosticsByFile.get(file) ?? []);
         };
         const waiters = diagnosticsWaiters.get(file) ?? [];
         waiters.push(done);
@@ -23739,14 +23774,14 @@ function createApp(options = {}) {
       return c.json({ error: "Failed to write ide.yml", detail: message }, 500);
     }
   });
-  const execFileAsync3 = promisify2(execFile6);
+  const execFileAsync4 = promisify2(execFile6);
   app.post("/api/project/:name/restart", async (c) => {
     const name = c.req.param("name");
     const sessions = discoverSessions();
     const session = sessions.find((s) => s.name === name);
     if (!session) return c.json({ error: "Session not found" }, 404);
     try {
-      await execFileAsync3("tmux-ide", ["restart", "--json"], {
+      await execFileAsync4("tmux-ide", ["restart", "--json"], {
         cwd: session.dir,
         timeout: 3e4,
         env: { ...process.env, TMUX: "" }
@@ -23769,7 +23804,7 @@ function createApp(options = {}) {
       return c.json({ ok: true, session: name, status: "already_running" });
     }
     try {
-      await execFileAsync3("tmux-ide", ["--json"], {
+      await execFileAsync4("tmux-ide", ["--json"], {
         cwd: session.dir,
         timeout: 3e4,
         env: { ...process.env, TMUX: "" }
@@ -24462,10 +24497,10 @@ var init_tailscale = __esm({
             const resetProcess = spawnImpl(this.tailscaleExecutable, ["serve", "reset"], {
               stdio: ["ignore", "pipe", "pipe"]
             });
-            await new Promise((resolve34) => {
-              resetProcess.on("exit", () => resolve34());
-              resetProcess.on("error", () => resolve34());
-              setTimeout(resolve34, 1e3);
+            await new Promise((resolve35) => {
+              resetProcess.on("exit", () => resolve35());
+              resetProcess.on("error", () => resolve35());
+              setTimeout(resolve35, 1e3);
             });
           } catch {
             log.debug("Failed to reset serve config (this is normal if none exists)");
@@ -24517,7 +24552,7 @@ var init_tailscale = __esm({
               }
             });
           }
-          await new Promise((resolve34, reject) => {
+          await new Promise((resolve35, reject) => {
             let settled = false;
             const settlePromise = (isSuccess, error) => {
               if (settled) return;
@@ -24526,7 +24561,7 @@ var init_tailscale = __esm({
               if (isSuccess) {
                 log.info("Tailscale Serve started successfully");
                 this.startTime = /* @__PURE__ */ new Date();
-                resolve34();
+                resolve35();
               } else {
                 const errorMessage2 = error instanceof Error ? error.message : error || "Tailscale Serve failed to start";
                 this.lastError = errorMessage2;
@@ -24600,10 +24635,10 @@ var init_tailscale = __esm({
           const resetProcess = spawnImpl(this.tailscaleExecutable, ["funnel", "reset"], {
             stdio: ["ignore", "pipe", "pipe"]
           });
-          await new Promise((resolve34) => {
-            resetProcess.on("exit", () => resolve34());
-            resetProcess.on("error", () => resolve34());
-            setTimeout(resolve34, 2e3);
+          await new Promise((resolve35) => {
+            resetProcess.on("exit", () => resolve35());
+            resetProcess.on("error", () => resolve35());
+            setTimeout(resolve35, 2e3);
           });
           log.debug("Funnel configuration reset completed");
         } catch {
@@ -24635,7 +24670,7 @@ var init_tailscale = __esm({
               log.debug(`\u{1F4E5} Funnel stderr: ${data.toString().trim()}`);
             });
           }
-          await new Promise((resolve34, reject) => {
+          await new Promise((resolve35, reject) => {
             const timeout = setTimeout(() => {
               reject(new Error("Funnel start timeout"));
             }, 1e4);
@@ -24653,7 +24688,7 @@ var init_tailscale = __esm({
                 this.funnelEnabled = true;
                 this.funnelError = void 0;
                 this.funnelStartTime = /* @__PURE__ */ new Date();
-                resolve34();
+                resolve35();
               } else {
                 log.info(`\u274C Funnel failed with exit code ${code}: ${stderr || "No error message"}`);
                 reject(new Error(`Funnel failed with exit code ${code}: ${stderr}`));
@@ -24682,17 +24717,17 @@ var init_tailscale = __esm({
           const resetProcess = spawnImpl(this.tailscaleExecutable, ["funnel", "reset"], {
             stdio: ["ignore", "pipe", "pipe"]
           });
-          await new Promise((resolve34) => {
+          await new Promise((resolve35) => {
             resetProcess.on("exit", (code) => {
               if (code === 0) {
                 log.info("\u2705 Tailscale Funnel stopped successfully");
               } else {
                 log.warn(`Funnel reset exited with code ${code}`);
               }
-              resolve34();
+              resolve35();
             });
-            resetProcess.on("error", () => resolve34());
-            setTimeout(resolve34, 3e3);
+            resetProcess.on("error", () => resolve35());
+            setTimeout(resolve35, 3e3);
           });
           this.funnelEnabled = false;
           this.funnelStartTime = void 0;
@@ -24715,15 +24750,15 @@ var init_tailscale = __esm({
           const resetProcess = spawnImpl(this.tailscaleExecutable, ["serve", "reset"], {
             stdio: ["ignore", "pipe", "pipe"]
           });
-          await new Promise((resolve34) => {
+          await new Promise((resolve35) => {
             resetProcess.on("exit", (code) => {
               if (code === 0) {
                 log.debug("Tailscale Serve configuration reset successfully");
               }
-              resolve34();
+              resolve35();
             });
-            resetProcess.on("error", () => resolve34());
-            setTimeout(resolve34, 2e3);
+            resetProcess.on("error", () => resolve35());
+            setTimeout(resolve35, 2e3);
           });
         } catch {
           log.debug("Failed to reset serve config during stop");
@@ -24733,14 +24768,14 @@ var init_tailscale = __esm({
           return;
         }
         log.info("Stopping Tailscale Serve process...");
-        return new Promise((resolve34) => {
+        return new Promise((resolve35) => {
           if (!this.serveProcess) {
-            resolve34();
+            resolve35();
             return;
           }
           const cleanup = () => {
             this.cleanup();
-            resolve34();
+            resolve35();
           };
           const forceKillTimeout = setTimeout(() => {
             if (this.serveProcess && !this.serveProcess.killed) {
@@ -24928,7 +24963,7 @@ var init_tailscale = __esm({
        * Check if Tailscale Serve is available on this tailnet
        */
       async checkServeAvailability() {
-        return new Promise((resolve34) => {
+        return new Promise((resolve35) => {
           const statusProcess = spawnImpl(this.tailscaleExecutable, ["serve", "status", "--json"], {
             stdio: ["ignore", "pipe", "pipe"]
           });
@@ -24946,25 +24981,25 @@ var init_tailscale = __esm({
           }
           statusProcess.on("exit", (code) => {
             if (stderr) {
-              resolve34(stderr);
+              resolve35(stderr);
             } else if (code === 0) {
               try {
                 JSON.parse(stdout);
-                resolve34(stdout);
+                resolve35(stdout);
               } catch {
-                resolve34(stdout);
+                resolve35(stdout);
               }
             } else {
-              resolve34(stdout || "Tailscale Serve status check failed");
+              resolve35(stdout || "Tailscale Serve status check failed");
             }
           });
           statusProcess.on("error", (error) => {
-            resolve34(error.message);
+            resolve35(error.message);
           });
           setTimeout(() => {
             if (!statusProcess.killed) {
               statusProcess.kill("SIGTERM");
-              resolve34("Timeout checking Tailscale Serve availability");
+              resolve35("Timeout checking Tailscale Serve availability");
             }
           }, 3e3);
         });
@@ -24973,7 +25008,7 @@ var init_tailscale = __esm({
        * Verify that Tailscale Serve is actually configured for the given port
        */
       async verifyServeConfiguration(port) {
-        return new Promise((resolve34) => {
+        return new Promise((resolve35) => {
           const statusProcess = spawnImpl(this.tailscaleExecutable, ["serve", "status", "--json"], {
             stdio: ["ignore", "pipe", "pipe"]
           });
@@ -24997,28 +25032,28 @@ var init_tailscale = __esm({
                 log.debug(
                   `Tailscale Serve JSON status check: port ${port} configured = ${isConfigured}`
                 );
-                resolve34(isConfigured);
+                resolve35(isConfigured);
               } catch {
                 log.debug("JSON parsing failed, trying text parsing as fallback");
                 const isConfigured = this.parseServeStatus(stdout, port);
                 log.debug(
                   `Tailscale Serve text status check: port ${port} configured = ${isConfigured}`
                 );
-                resolve34(isConfigured);
+                resolve35(isConfigured);
               }
             } else {
               log.debug(`Tailscale serve status failed with code ${code}: ${stderr}`);
-              resolve34(false);
+              resolve35(false);
             }
           });
           statusProcess.on("error", (error) => {
             log.debug(`Failed to run tailscale serve status: ${error.message}`);
-            resolve34(false);
+            resolve35(false);
           });
           setTimeout(() => {
             if (!statusProcess.killed) {
               statusProcess.kill("SIGTERM");
-              resolve34(false);
+              resolve35(false);
             }
           }, 3e3);
         });
@@ -25171,13 +25206,13 @@ var init_tailscale = __esm({
             }
           }
         }
-        return new Promise((resolve34, reject) => {
+        return new Promise((resolve35, reject) => {
           const checkProcess = spawnImpl("which", ["tailscale"], {
             stdio: ["ignore", "pipe", "pipe"]
           });
           checkProcess.on("exit", (code) => {
             if (code === 0) {
-              resolve34();
+              resolve35();
             } else {
               reject(new Error("Tailscale command not found. Please install Tailscale first."));
             }
@@ -25226,13 +25261,13 @@ var init_ngrok = __esm({
         ];
         for (const ngrokPath of possiblePaths) {
           try {
-            const result = await new Promise((resolve34) => {
+            const result = await new Promise((resolve35) => {
               const proc = spawnImpl2(ngrokPath, ["version"], { stdio: "ignore" });
-              proc.on("close", (code) => resolve34(code === 0));
-              proc.on("error", () => resolve34(false));
+              proc.on("close", (code) => resolve35(code === 0));
+              proc.on("error", () => resolve35(false));
               setTimeout(() => {
                 proc.kill();
-                resolve34(false);
+                resolve35(false);
               }, 2e3);
             });
             if (result) {
@@ -25269,7 +25304,7 @@ var init_ngrok = __esm({
           args.push("--region", this.config.region);
         }
         log.log(`Starting ngrok tunnel on port ${this.config.port}...`);
-        return new Promise((resolve34, reject) => {
+        return new Promise((resolve35, reject) => {
           this.ngrokProcess = spawnImpl2(ngrokPath, args, {
             stdio: ["ignore", "pipe", "pipe"]
           });
@@ -25294,7 +25329,7 @@ var init_ngrok = __esm({
                   this.isRunning = true;
                   cleanup();
                   log.log(`Ngrok tunnel started: ${record.url}`);
-                  resolve34(this.currentTunnel);
+                  resolve35(this.currentTunnel);
                 }
                 if (record.lvl === "error" || record.err) {
                   log.error("Ngrok error:", record.err || record.msg);
@@ -25341,9 +25376,9 @@ var init_ngrok = __esm({
           return;
         }
         log.log("Stopping ngrok tunnel...");
-        return new Promise((resolve34) => {
+        return new Promise((resolve35) => {
           if (!this.ngrokProcess) {
-            resolve34();
+            resolve35();
             return;
           }
           const killTimeout = setTimeout(() => {
@@ -25351,7 +25386,7 @@ var init_ngrok = __esm({
               log.warn("Ngrok process did not exit gracefully, forcing kill");
               this.ngrokProcess.kill("SIGKILL");
             }
-            resolve34();
+            resolve35();
           }, 5e3);
           this.ngrokProcess.on("close", () => {
             clearTimeout(killTimeout);
@@ -25359,7 +25394,7 @@ var init_ngrok = __esm({
             this.currentTunnel = null;
             this.isRunning = false;
             log.log("Ngrok tunnel stopped");
-            resolve34();
+            resolve35();
           });
           this.ngrokProcess.kill("SIGTERM");
         });
@@ -25434,13 +25469,13 @@ var init_cloudflare = __esm({
       async checkCloudflaredBinary() {
         for (const cloudflaredPath of _CloudflareService.cloudflaredPaths) {
           try {
-            const result = await new Promise((resolve34) => {
+            const result = await new Promise((resolve35) => {
               const proc = spawnImpl3(cloudflaredPath, ["--version"], { stdio: "ignore" });
-              proc.on("close", (code) => resolve34(code === 0));
-              proc.on("error", () => resolve34(false));
+              proc.on("close", (code) => resolve35(code === 0));
+              proc.on("error", () => resolve35(false));
               setTimeout(() => {
                 proc.kill();
-                resolve34(false);
+                resolve35(false);
               }, 2e3);
             });
             if (result) {
@@ -25476,7 +25511,7 @@ var init_cloudflare = __esm({
             "cloudflared binary not found. Please install cloudflared: https://developers.cloudflare.com/cloudflare-one/connections/connect-apps/install-and-setup/installation/"
           );
         }
-        return new Promise((resolve34, reject) => {
+        return new Promise((resolve35, reject) => {
           this.cloudflaredProcess = spawnImpl3(cloudflaredPath, args, {
             stdio: ["ignore", "pipe", "pipe"]
           });
@@ -25501,7 +25536,7 @@ var init_cloudflare = __esm({
               this.isRunning = true;
               cleanup();
               log.log(`Cloudflare tunnel started: ${publicUrl}`);
-              resolve34(this.currentTunnel);
+              resolve35(this.currentTunnel);
             }
             if (output.toLowerCase().includes("error") && !resolved2) {
               log.error("Cloudflare error:", output);
@@ -25542,9 +25577,9 @@ var init_cloudflare = __esm({
           return;
         }
         log.log("Stopping Cloudflare tunnel...");
-        return new Promise((resolve34) => {
+        return new Promise((resolve35) => {
           if (!this.cloudflaredProcess) {
-            resolve34();
+            resolve35();
             return;
           }
           const killTimeout = setTimeout(() => {
@@ -25552,7 +25587,7 @@ var init_cloudflare = __esm({
               log.warn("Cloudflared process did not exit gracefully, forcing kill");
               this.cloudflaredProcess.kill("SIGKILL");
             }
-            resolve34();
+            resolve35();
           }, 5e3);
           this.cloudflaredProcess.on("close", () => {
             clearTimeout(killTimeout);
@@ -25560,7 +25595,7 @@ var init_cloudflare = __esm({
             this.currentTunnel = null;
             this.isRunning = false;
             log.log("Cloudflare tunnel stopped");
-            resolve34();
+            resolve35();
           });
           this.cloudflaredProcess.kill("SIGTERM");
         });
@@ -25974,6 +26009,10 @@ var init_client5 = __esm({
 });
 
 // packages/daemon/src/lib/daemon-embed.ts
+var daemon_embed_exports = {};
+__export(daemon_embed_exports, {
+  startEmbeddedDaemon: () => startEmbeddedDaemon
+});
 import { execFileSync as execFileSync8 } from "node:child_process";
 import { randomBytes as randomBytes5 } from "node:crypto";
 import { createServer } from "node:http";
@@ -26017,13 +26056,13 @@ function validatePort(port) {
 }
 async function pickFreePort(hostname2) {
   const probe = createServer();
-  return await new Promise((resolve34, reject) => {
+  return await new Promise((resolve35, reject) => {
     probe.once("error", reject);
     probe.listen(0, hostname2, () => {
       const address = probe.address();
       const port = typeof address === "object" && address ? address.port : null;
       probe.close(() => {
-        if (port) resolve34(port);
+        if (port) resolve35(port);
         else reject(new DaemonStartupError("Could not allocate daemon port", "bind_failed"));
       });
     });
@@ -26208,21 +26247,21 @@ function attachWebSockets(server, opts = {}) {
           ws.terminate();
         }
       }
-      const closeWss = (wss) => Promise.race([new Promise((resolve34) => wss.close(() => resolve34())), delay(100)]);
+      const closeWss = (wss) => Promise.race([new Promise((resolve35) => wss.close(() => resolve35())), delay(100)]);
       await Promise.all([closeWss(eventsWss), closeWss(ptyWss)]);
     }
   };
 }
 function waitForServerClose(server) {
-  return new Promise((resolve34, reject) => {
+  return new Promise((resolve35, reject) => {
     server.close((err) => {
       if (err) reject(err);
-      else resolve34();
+      else resolve35();
     });
   });
 }
 function delay(ms) {
-  return new Promise((resolve34) => setTimeout(resolve34, ms));
+  return new Promise((resolve35) => setTimeout(resolve35, ms));
 }
 function generateLocalBypassToken() {
   return randomBytes5(32).toString("base64url");
@@ -26350,7 +26389,7 @@ async function startHttpServer({
     localBypassToken,
     bindHostname
   });
-  await new Promise((resolve34, reject) => {
+  await new Promise((resolve35, reject) => {
     const onError = (err) => {
       server.off("listening", onListening);
       if (err.code === "EADDRINUSE") {
@@ -26374,7 +26413,7 @@ async function startHttpServer({
           `[daemon] Command Center on http://${bindHostname}:${requestedPort} (session: ${sessionName})`
         );
       }
-      resolve34();
+      resolve35();
     };
     server.once("error", onError);
     server.once("listening", onListening);
@@ -27345,8 +27384,8 @@ var require_package = __commonJS({
         prepublishOnly: "pnpm build:cli && pnpm check && pnpm --filter @tmux-ide/dashboard build && node scripts/prepublish-check.mjs",
         typecheck: 'echo "root typecheck deferred to per-package turbo run"',
         dev: "node bin/cli.js",
-        test: "vitest run",
-        "test:unit": "vitest run",
+        test: "vitest run --dir src src/cli.test.ts",
+        "test:unit": "vitest run --dir src src/cli.test.ts",
         "test:chat-e2e": "pnpm --filter @tmux-ide/daemon exec vitest run src/chat/__tests__/chat-pipeline.e2e.test.ts",
         lint: "eslint bin scripts packages/contracts/src packages/tmux-bridge/src packages/daemon/src packages/v2-solid-widgets/src packages/chat-solid/src && pnpm run check:silo-mounts",
         "lint:workspace": "turbo run lint && pnpm run check:silo-mounts",
@@ -27428,7 +27467,8 @@ var require_package = __commonJS({
         globals: "^17.4.0",
         prettier: "^3.8.1",
         turbo: "^2.3.3",
-        typescript: "^5.9.3"
+        typescript: "^5.9.3",
+        vitest: "^4.1.0"
       }
     };
   }
@@ -28384,12 +28424,460 @@ var init_tunnel = __esm({
   }
 });
 
+// packages/daemon/src/ssh-remote.ts
+var ssh_remote_exports = {};
+__export(ssh_remote_exports, {
+  buildRemoteServeScript: () => buildRemoteServeScript,
+  buildSshForwardArgs: () => buildSshForwardArgs,
+  parseSshConfigHosts: () => parseSshConfigHosts,
+  remoteServeCommand: () => remoteServeCommand,
+  shellQuote: () => shellQuote,
+  sshRemoteCommand: () => sshRemoteCommand,
+  validateRemoteName: () => validateRemoteName,
+  validateRemotePath: () => validateRemotePath,
+  validateSshAlias: () => validateSshAlias
+});
+import { spawn as spawn10, execFile as execFile7 } from "node:child_process";
+import { mkdir as mkdir2, readFile as readFile3, writeFile as writeFile2, chmod } from "node:fs/promises";
+import { existsSync as existsSync40 } from "node:fs";
+import { homedir as homedir14 } from "node:os";
+import { dirname as dirname17, join as join43, resolve as resolve31 } from "node:path";
+import { promisify as promisify3 } from "node:util";
+import { createServer as createServer2 } from "node:net";
+function remotesFilePath() {
+  return process.env.TMUX_IDE_SSH_REMOTES_FILE ?? join43(homedir14(), ".tmux-ide", "ssh-remotes.json");
+}
+function sshConfigPath() {
+  return process.env.TMUX_IDE_SSH_CONFIG ?? join43(homedir14(), ".ssh", "config");
+}
+function emptyStore() {
+  return { version: 1, remotes: [] };
+}
+async function readStore() {
+  const file = remotesFilePath();
+  if (!existsSync40(file)) return emptyStore();
+  try {
+    const parsed = JSON.parse(await readFile3(file, "utf-8"));
+    if (parsed.version !== 1 || !Array.isArray(parsed.remotes)) return emptyStore();
+    return {
+      version: 1,
+      remotes: parsed.remotes.filter(isSshRemote)
+    };
+  } catch {
+    return emptyStore();
+  }
+}
+async function writeStore(store) {
+  const file = remotesFilePath();
+  await mkdir2(dirname17(file), { recursive: true, mode: 448 });
+  const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
+  await writeFile2(tmp, JSON.stringify(store, null, 2) + "\n", { encoding: "utf-8", mode: 384 });
+  await chmod(tmp, 384);
+  await import("node:fs/promises").then(({ rename: rename2 }) => rename2(tmp, file));
+}
+function isSshRemote(value) {
+  if (!value || typeof value !== "object") return false;
+  const remote = value;
+  if (typeof remote.name !== "string") return false;
+  if (typeof remote.host !== "string") return false;
+  if (typeof remote.path !== "string") return false;
+  if (typeof remote.addedAt !== "string") return false;
+  if (remote.localPort !== void 0 && !isValidPort(remote.localPort)) return false;
+  if (remote.remotePort !== void 0 && !isValidPort(remote.remotePort)) return false;
+  return true;
+}
+function isValidPort(port) {
+  return Number.isInteger(port) && port >= 1 && port <= 65535;
+}
+function parsePort(value, label) {
+  if (value === void 0 || value === false) return void 0;
+  if (value === true || value.trim() === "") {
+    throw new IdeError(`${label} requires a numeric value`, { code: "USAGE" });
+  }
+  const port = Number(value);
+  if (!isValidPort(port)) {
+    throw new IdeError(`${label} must be an integer from 1 to 65535`, { code: "USAGE" });
+  }
+  return port;
+}
+function parseSshConfigHosts(contents) {
+  const hosts = /* @__PURE__ */ new Set();
+  for (const rawLine of contents.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith("#")) continue;
+    const match = line.match(/^Host\s+(.+)$/i);
+    if (!match) continue;
+    for (const host of match[1].split(/\s+/)) {
+      if (!host || host.includes("*") || host.includes("?") || host.startsWith("!")) continue;
+      hosts.add(host);
+    }
+  }
+  return [...hosts].sort((a, b) => a.localeCompare(b));
+}
+function validateRemoteName(name) {
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(name)) {
+    throw new IdeError(
+      "Remote name must start with a letter or number and contain only letters, numbers, dot, underscore, or dash.",
+      { code: "USAGE" }
+    );
+  }
+}
+function validateSshAlias(host) {
+  if (!/^[A-Za-z0-9][A-Za-z0-9._:@+-]{0,127}$/.test(host)) {
+    throw new IdeError(
+      "SSH host must be a config alias or host string without whitespace or shell metacharacters.",
+      { code: "USAGE" }
+    );
+  }
+  if (host.startsWith("-")) {
+    throw new IdeError("SSH host cannot start with '-'", { code: "USAGE" });
+  }
+}
+function validateRemotePath(path4) {
+  if (!path4 || /[\0\r\n]/.test(path4)) {
+    throw new IdeError("Remote path must be a single non-empty path.", { code: "USAGE" });
+  }
+}
+function shellQuote(value) {
+  return `'${value.replace(/'/g, `'\\''`)}'`;
+}
+function buildRemoteServeScript(remotePath, remotePort) {
+  validateRemotePath(remotePath);
+  if (!isValidPort(remotePort)) {
+    throw new IdeError("Remote port must be an integer from 1 to 65535", { code: "USAGE" });
+  }
+  const quotedPath = shellQuote(remotePath);
+  return [
+    `cd ${quotedPath}`,
+    "mkdir -p .tmux-ide",
+    'if ! command -v tmux-ide >/dev/null 2>&1; then echo "tmux-ide not found on remote PATH" >&2; exit 127; fi',
+    `nohup tmux-ide __remote-serve --port ${remotePort} > .tmux-ide/remote-daemon.log 2>&1 < /dev/null &`
+  ].join(" && ");
+}
+function buildSshForwardArgs(opts) {
+  validateSshAlias(opts.host);
+  if (!isValidPort(opts.localPort) || !isValidPort(opts.remotePort)) {
+    throw new IdeError("SSH tunnel ports must be integers from 1 to 65535", { code: "USAGE" });
+  }
+  return [
+    "-N",
+    "-L",
+    `${DEFAULT_LOCAL_HOST}:${opts.localPort}:127.0.0.1:${opts.remotePort}`,
+    "-o",
+    "ExitOnForwardFailure=yes",
+    "-o",
+    "ServerAliveInterval=15",
+    opts.host
+  ];
+}
+async function pickFreeLocalPort() {
+  const server = createServer2();
+  return await new Promise((resolvePort2, reject) => {
+    server.once("error", reject);
+    server.listen(0, DEFAULT_LOCAL_HOST, () => {
+      const address = server.address();
+      const port = typeof address === "object" && address ? address.port : null;
+      server.close(() => {
+        if (port) resolvePort2(port);
+        else reject(new IdeError("Could not allocate a local tunnel port", { code: "PORT_ERROR" }));
+      });
+    });
+  });
+}
+async function assertLocalPortFree(port) {
+  const server = createServer2();
+  await new Promise((resolvePort2, reject) => {
+    server.once(
+      "error",
+      () => reject(new IdeError(`Local port ${port} is already in use`, { code: "PORT_IN_USE" }))
+    );
+    server.listen(port, DEFAULT_LOCAL_HOST, () => {
+      server.close(() => resolvePort2());
+    });
+  });
+}
+function openInBrowser2(url) {
+  const cmd = process.platform === "darwin" ? "open" : process.platform === "win32" ? "start" : "xdg-open";
+  try {
+    const child = spawn10(cmd, [url], { detached: true, stdio: "ignore" });
+    child.unref();
+  } catch {
+  }
+}
+async function waitForHealth(url, timeoutMs = 15e3) {
+  const deadline = Date.now() + timeoutMs;
+  let lastError = "";
+  while (Date.now() < deadline) {
+    try {
+      const controller = new AbortController();
+      setTimeout(() => controller.abort(), 750).unref?.();
+      const res = await fetch(`${url}healthz`, { signal: controller.signal });
+      if (res.ok) return;
+      lastError = `HTTP ${res.status}`;
+    } catch (err) {
+      lastError = err instanceof Error ? err.message : String(err);
+    }
+    await new Promise((resolveTimer) => setTimeout(resolveTimer, 250));
+  }
+  throw new IdeError(
+    `Remote dashboard did not become healthy through the SSH tunnel: ${lastError}`,
+    {
+      code: "REMOTE_UNHEALTHY"
+    }
+  );
+}
+async function runRemoteServe(remote, remotePort) {
+  const script = buildRemoteServeScript(remote.path, remotePort);
+  try {
+    await execFileAsync2("ssh", [remote.host, script], { timeout: 1e4 });
+  } catch (err) {
+    const stderr = err instanceof Error && "stderr" in err && typeof err.stderr === "string" ? err.stderr.trim() : "";
+    throw new IdeError(`Failed to start tmux-ide on ${remote.host}${stderr ? `: ${stderr}` : ""}`, {
+      code: "SSH_REMOTE_START_FAILED"
+    });
+  }
+}
+async function startTunnel(remote, localPort, remotePort) {
+  const args = buildSshForwardArgs({ host: remote.host, localPort, remotePort });
+  const child = spawn10("ssh", args, { detached: true, stdio: "ignore" });
+  child.unref();
+  await new Promise((resolveStart, reject) => {
+    const timer = setTimeout(resolveStart, 500);
+    child.once("exit", (code, signal) => {
+      clearTimeout(timer);
+      reject(
+        new IdeError(
+          `SSH tunnel exited before it was ready (${signal ?? `code ${code ?? "unknown"}`})`,
+          { code: "SSH_TUNNEL_FAILED" }
+        )
+      );
+    });
+    child.once("error", (err) => {
+      clearTimeout(timer);
+      reject(
+        new IdeError(`Failed to start ssh tunnel: ${err.message}`, { code: "SSH_TUNNEL_FAILED" })
+      );
+    });
+  });
+  return {
+    pid: child.pid ?? 0,
+    stop: () => {
+      if (!child.pid) return;
+      try {
+        process.kill(-child.pid, "SIGTERM");
+      } catch {
+        try {
+          child.kill("SIGTERM");
+        } catch {
+        }
+      }
+    }
+  };
+}
+function printRemotes(remotes) {
+  if (remotes.length === 0) {
+    console.log("No SSH remotes configured");
+    return;
+  }
+  for (const remote of remotes) {
+    const local = remote.localPort ? ` local:${remote.localPort}` : "";
+    const remotePort = remote.remotePort ? ` remote:${remote.remotePort}` : "";
+    console.log(`  ${remote.name} \u2014 ${remote.host}:${remote.path}${local}${remotePort}`);
+  }
+}
+async function listHosts(json2) {
+  const file = sshConfigPath();
+  const hosts = existsSync40(file) ? parseSshConfigHosts(await readFile3(file, "utf-8")) : [];
+  if (json2) {
+    console.log(JSON.stringify({ hosts }));
+  } else if (hosts.length === 0) {
+    console.log("No concrete SSH hosts found");
+  } else {
+    for (const host of hosts) console.log(host);
+  }
+}
+async function addRemote(opts) {
+  const name = opts.args?.[0];
+  const host = opts.values?.host;
+  const path4 = opts.values?.path;
+  if (!name || typeof host !== "string" || typeof path4 !== "string") {
+    throw new IdeError(
+      "Usage: tmux-ide remote ssh add <name> --host <ssh-host> --path <remote-project-dir> [--local-port N] [--remote-port N]",
+      { code: "USAGE" }
+    );
+  }
+  validateRemoteName(name);
+  validateSshAlias(host);
+  validateRemotePath(path4);
+  const localPort = parsePort(opts.values?.["local-port"], "--local-port");
+  const remotePort = parsePort(opts.values?.["remote-port"], "--remote-port");
+  const store = await readStore();
+  const next = {
+    name,
+    host,
+    path: path4,
+    localPort,
+    remotePort,
+    addedAt: (/* @__PURE__ */ new Date()).toISOString()
+  };
+  const index = store.remotes.findIndex((remote) => remote.name === name);
+  if (index >= 0) store.remotes[index] = next;
+  else store.remotes.push(next);
+  await writeStore(store);
+  if (opts.json) console.log(JSON.stringify({ ok: true, remote: next }));
+  else console.log(`Saved SSH remote ${name} (${host}:${path4})`);
+}
+async function removeRemote(opts) {
+  const name = opts.args?.[0];
+  if (!name) {
+    throw new IdeError("Usage: tmux-ide remote ssh remove <name>", { code: "USAGE" });
+  }
+  const store = await readStore();
+  const before = store.remotes.length;
+  store.remotes = store.remotes.filter((remote) => remote.name !== name);
+  await writeStore(store);
+  const removed = store.remotes.length !== before;
+  if (opts.json) console.log(JSON.stringify({ ok: true, removed }));
+  else
+    console.log(removed ? `Removed SSH remote ${name}` : `SSH remote ${name} was not configured`);
+}
+async function getConfiguredRemote(name) {
+  if (!name) {
+    throw new IdeError("Usage: tmux-ide remote ssh launch <name>", { code: "USAGE" });
+  }
+  validateRemoteName(name);
+  const store = await readStore();
+  const remote = store.remotes.find((candidate) => candidate.name === name);
+  if (!remote) {
+    throw new IdeError(`SSH remote ${name} is not configured`, { code: "REMOTE_NOT_FOUND" });
+  }
+  return remote;
+}
+async function launchRemote(opts) {
+  const remote = await getConfiguredRemote(opts.args?.[0]);
+  const remotePort = remote.remotePort ?? DEFAULT_REMOTE_PORT;
+  const localPort = remote.localPort ?? await pickFreeLocalPort();
+  if (remote.localPort) await assertLocalPortFree(localPort);
+  await runRemoteServe(remote, remotePort);
+  const tunnel = await startTunnel(remote, localPort, remotePort);
+  const url = `http://${DEFAULT_LOCAL_HOST}:${localPort}/`;
+  try {
+    await waitForHealth(url);
+  } catch (err) {
+    tunnel.stop();
+    throw err;
+  }
+  if (opts.json) {
+    console.log(
+      JSON.stringify({ ok: true, url, localPort, remotePort, tunnelPid: tunnel.pid, remote })
+    );
+  } else {
+    console.log(`Dashboard: ${url}`);
+    console.log(`Tunnel: ${remote.host} 127.0.0.1:${localPort} -> 127.0.0.1:${remotePort}`);
+  }
+  if (opts.values?.["no-open"] !== true) openInBrowser2(url);
+}
+async function statusRemote(opts) {
+  const remote = await getConfiguredRemote(opts.args?.[0]);
+  const localPort = remote.localPort;
+  const url = localPort ? `http://${DEFAULT_LOCAL_HOST}:${localPort}/` : null;
+  let healthy = false;
+  if (url) {
+    try {
+      const res = await fetch(`${url}healthz`);
+      healthy = res.ok;
+    } catch {
+      healthy = false;
+    }
+  }
+  if (opts.json) {
+    console.log(JSON.stringify({ remote, url, healthy }));
+  } else {
+    console.log(`Remote: ${remote.name}`);
+    console.log(`SSH host: ${remote.host}`);
+    console.log(`Path: ${remote.path}`);
+    console.log(`Remote daemon bind: 127.0.0.1:${remote.remotePort ?? DEFAULT_REMOTE_PORT}`);
+    if (url) console.log(`Local URL: ${url} (${healthy ? "healthy" : "not reachable"})`);
+    else console.log("Local URL: dynamic; run launch to allocate a tunnel port");
+  }
+}
+async function sshRemoteCommand(opts) {
+  const sub = opts.args?.[0];
+  const args = opts.args?.slice(1) ?? [];
+  switch (sub) {
+    case "hosts":
+      await listHosts(opts.json);
+      break;
+    case "list": {
+      const store = await readStore();
+      if (opts.json) console.log(JSON.stringify({ remotes: store.remotes }));
+      else printRemotes(store.remotes);
+      break;
+    }
+    case "add":
+      await addRemote({ ...opts, args });
+      break;
+    case "remove":
+      await removeRemote({ ...opts, args });
+      break;
+    case "launch":
+    case "dashboard":
+      await launchRemote({ ...opts, args });
+      break;
+    case "status":
+      await statusRemote({ ...opts, args });
+      break;
+    default:
+      throw new IdeError(
+        "Usage: tmux-ide remote ssh hosts|list|add|remove|launch|dashboard|status",
+        { code: "USAGE" }
+      );
+  }
+}
+async function remoteServeCommand(opts) {
+  const port = parsePort(opts.port, "--port") ?? DEFAULT_REMOTE_PORT;
+  const dir = resolve31(".");
+  const { readConfig: readConfig2, getSessionName: getSessionName2 } = await Promise.resolve().then(() => (init_yaml_io(), yaml_io_exports));
+  const { launch: launch2 } = await Promise.resolve().then(() => (init_launch(), launch_exports));
+  const { startEmbeddedDaemon: startEmbeddedDaemon2 } = await Promise.resolve().then(() => (init_daemon_embed(), daemon_embed_exports));
+  const { readCanonicalDaemonInfo: readCanonicalDaemonInfo2, isCanonicalDaemonAlive: isCanonicalDaemonAlive2 } = await Promise.resolve().then(() => (init_canonical_daemon(), canonical_daemon_exports));
+  const existing = readCanonicalDaemonInfo2();
+  if (existing && existing.port === port && existing.bindHostname === "127.0.0.1") {
+    if (await isCanonicalDaemonAlive2(existing)) return;
+  }
+  const { config: config2 } = readConfig2(dir);
+  const { name: fallbackName } = getSessionName2(dir);
+  const sessionName = config2.name ?? fallbackName;
+  await launch2(dir, { attach: false });
+  const handle = await startEmbeddedDaemon2({
+    sessionName,
+    port,
+    bindHostname: "127.0.0.1"
+  });
+  const stop2 = async () => {
+    await handle.stop({ gracefulMs: 500 });
+  };
+  process.once("SIGINT", () => void stop2().finally(() => process.exit(0)));
+  process.once("SIGTERM", () => void stop2().finally(() => process.exit(0)));
+  await new Promise(() => void 0);
+}
+var execFileAsync2, DEFAULT_REMOTE_PORT, DEFAULT_LOCAL_HOST;
+var init_ssh_remote = __esm({
+  "packages/daemon/src/ssh-remote.ts"() {
+    "use strict";
+    init_errors2();
+    execFileAsync2 = promisify3(execFile7);
+    DEFAULT_REMOTE_PORT = 6060;
+    DEFAULT_LOCAL_HOST = "127.0.0.1";
+  }
+});
+
 // packages/daemon/src/remote.ts
 var remote_exports = {};
 __export(remote_exports, {
   remoteCommand: () => remoteCommand
 });
-import { resolve as resolve31 } from "node:path";
+import { resolve as resolve32 } from "node:path";
 async function loadHQConfig(dir) {
   try {
     const { readConfig: readConfig2 } = await Promise.resolve().then(() => (init_yaml_io(), yaml_io_exports));
@@ -28402,9 +28890,14 @@ async function loadHQConfig(dir) {
   return null;
 }
 async function remoteCommand(targetDir, opts) {
-  const dir = resolve31(targetDir ?? ".");
+  const dir = resolve32(targetDir ?? ".");
   const { json: json2, sub } = opts;
   switch (sub) {
+    case "ssh": {
+      const { sshRemoteCommand: sshRemoteCommand2 } = await Promise.resolve().then(() => (init_ssh_remote(), ssh_remote_exports));
+      await sshRemoteCommand2({ ...opts, args: opts.args ?? [] });
+      break;
+    }
     case "register": {
       const hqConfig = await loadHQConfig(dir);
       if (!hqConfig || hqConfig.role !== "remote") {
@@ -28439,10 +28932,10 @@ async function remoteCommand(targetDir, opts) {
       } else {
         console.log(`Registered with HQ as ${client.getName()} (${client.getRemoteId()})`);
       }
-      await new Promise((resolve34) => {
+      await new Promise((resolve35) => {
         const shutdown = async () => {
           await client.destroy();
-          resolve34();
+          resolve35();
         };
         process.once("SIGINT", () => void shutdown());
         process.once("SIGTERM", () => void shutdown());
@@ -28503,7 +28996,7 @@ async function remoteCommand(targetDir, opts) {
     default:
       throw new IdeError(
         `Unknown remote subcommand: ${sub ?? "(none)"}
-Usage: tmux-ide remote register|machines|status`,
+Usage: tmux-ide remote register|machines|status|ssh`,
         { code: "USAGE" }
       );
   }
@@ -28522,7 +29015,7 @@ var command_center_exports = {};
 __export(command_center_exports, {
   startCommandCenter: () => startCommandCenter
 });
-import { createServer as createServer2 } from "node:http";
+import { createServer as createServer3 } from "node:http";
 import { getRequestListener } from "@hono/node-server";
 async function startCommandCenter(options = {}) {
   const port = options.port ?? 6060;
@@ -28532,11 +29025,11 @@ async function startCommandCenter(options = {}) {
   if (options.authConfig) appOpts.authConfig = options.authConfig;
   const app = createApp(appOpts);
   const listener = getRequestListener(app.fetch);
-  const server = createServer2(listener);
-  return new Promise((resolve34) => {
+  const server = createServer3(listener);
+  return new Promise((resolve35) => {
     server.listen(port, hostname2, () => {
       console.log(`Command Center API on http://${hostname2}:${port}`);
-      resolve34(server);
+      resolve35(server);
     });
   });
 }
@@ -28554,7 +29047,7 @@ __export(server_exports2, {
   resolvePort: () => resolvePort,
   start: () => start
 });
-import { createServer as createServer3 } from "node:http";
+import { createServer as createServer4 } from "node:http";
 import { parse } from "node:url";
 import { Hono as Hono2 } from "hono";
 import { getRequestListener as getRequestListener2 } from "@hono/node-server";
@@ -28575,7 +29068,7 @@ function createApp2() {
 async function start(port) {
   const resolvedPort = resolvePort(port);
   const app = createApp2();
-  const server = createServer3(getRequestListener2(app.fetch));
+  const server = createServer4(getRequestListener2(app.fetch));
   const ptyWss = new WebSocketServer3({ noServer: true });
   server.on("upgrade", (req, socket, head) => {
     const { pathname } = parse(req.url ?? "/", true);
@@ -28589,21 +29082,21 @@ async function start(port) {
       handlePtyWebSocket(ws, id);
     });
   });
-  await new Promise((resolve34, reject) => {
+  await new Promise((resolve35, reject) => {
     server.once("error", reject);
     server.listen(resolvedPort, "0.0.0.0", () => {
       server.off("error", reject);
-      resolve34();
+      resolve35();
     });
   });
   console.log(`tmux-ide server listening on http://0.0.0.0:${resolvedPort}`);
   return {
     port: resolvedPort,
     server,
-    close: () => new Promise((resolve34, reject) => {
+    close: () => new Promise((resolve35, reject) => {
       shutdownPtyBridges();
       ptyWss.close();
-      server.close((err) => err ? reject(err) : resolve34());
+      server.close((err) => err ? reject(err) : resolve35());
     })
   };
 }
@@ -28739,8 +29232,8 @@ var init_chat = __esm({
 });
 
 // packages/daemon/src/chat/checkpoint-engine.ts
-import { execFile as execFile7 } from "node:child_process";
-import { promisify as promisify3 } from "node:util";
+import { execFile as execFile8 } from "node:child_process";
+import { promisify as promisify4 } from "node:util";
 function makeCheckpointEngine(opts = {}) {
   const exec = opts.exec ?? defaultExec2;
   function buildRefName(threadId, turnId) {
@@ -28844,7 +29337,7 @@ function makeCheckpointEngine(opts = {}) {
 }
 async function defaultExec2(args, cwd) {
   try {
-    const { stdout } = await execFileAsync2("git", args, {
+    const { stdout } = await execFileAsync3("git", args, {
       cwd,
       encoding: "utf8",
       maxBuffer: 32 * 1024 * 1024
@@ -28913,11 +29406,11 @@ async function detectDirtyConflicts(cwd, checkpointRef, exec) {
   );
   return refPaths.filter((p) => dirtyPaths.has(p));
 }
-var execFileAsync2, REF_PREFIX, NAME_STATUS_KIND_MAP, CheckpointEngineError, SAFE_REF_SEGMENT;
+var execFileAsync3, REF_PREFIX, NAME_STATUS_KIND_MAP, CheckpointEngineError, SAFE_REF_SEGMENT;
 var init_checkpoint_engine = __esm({
   "packages/daemon/src/chat/checkpoint-engine.ts"() {
     "use strict";
-    execFileAsync2 = promisify3(execFile7);
+    execFileAsync3 = promisify4(execFile8);
     REF_PREFIX = "refs/tmux-ide/checkpoints";
     NAME_STATUS_KIND_MAP = {
       M: "modified",
@@ -28946,7 +29439,7 @@ var checkpoint_exports = {};
 __export(checkpoint_exports, {
   checkpointCommand: () => checkpointCommand
 });
-import { resolve as resolve32 } from "node:path";
+import { resolve as resolve33 } from "node:path";
 function fail(message, code, json2) {
   if (json2) {
     process.stderr.write(`${JSON.stringify({ ok: false, code, message })}
@@ -28962,7 +29455,7 @@ async function checkpointCommand(opts) {
   if (!sub) {
     fail("Missing subcommand. Usage: tmux-ide checkpoint <list|revert> ...", "USAGE", opts.json);
   }
-  const workspaceDir = resolve32(opts.workspaceDir ?? ".");
+  const workspaceDir = resolve33(opts.workspaceDir ?? ".");
   const engine = makeCheckpointEngine();
   switch (sub) {
     case "list": {
@@ -29034,9 +29527,9 @@ var init_checkpoint = __esm({
 // bin/cli.ts
 init_launch();
 import { parseArgs } from "node:util";
-import { resolve as resolve33, dirname as dirname17 } from "node:path";
+import { resolve as resolve34, dirname as dirname18 } from "node:path";
 import { execFileSync as execFileSync9 } from "node:child_process";
-import { existsSync as existsSync40 } from "node:fs";
+import { existsSync as existsSync41 } from "node:fs";
 import { fileURLToPath as fileURLToPath7 } from "node:url";
 
 // packages/daemon/src/init.ts
@@ -30804,7 +31297,7 @@ async function dashboard(opts = {}) {
 // bin/cli.ts
 init_errors2();
 init_output();
-var __dirname5 = dirname17(fileURLToPath7(import.meta.url));
+var __dirname5 = dirname18(fileURLToPath7(import.meta.url));
 var { positionals, values } = parseArgs({
   allowPositionals: true,
   strict: false,
@@ -30851,6 +31344,10 @@ var { positionals, values } = parseArgs({
     // remote command flags
     url: { type: "string" },
     "hq-url": { type: "string" },
+    host: { type: "string" },
+    path: { type: "string" },
+    "local-port": { type: "string" },
+    "remote-port": { type: "string" },
     // send command flags
     to: { type: "string" },
     "no-enter": { type: "boolean" },
@@ -30895,6 +31392,7 @@ var knownCommands = /* @__PURE__ */ new Set([
   "remote",
   "checkpoint",
   "chat",
+  "__remote-serve",
   "help"
 ]);
 if (values.version) {
@@ -30974,6 +31472,13 @@ ${bold("Multi-agent Chat:")}
   ${cyan("tmux-ide chat session add")} <thread-id> --provider <name> [--role <role>]
                                   ${dim("Register a Session on a Thread (lead|teammate|planner|validator|researcher)")}
 
+${bold("SSH Remotes:")}
+  ${cyan("tmux-ide remote ssh hosts")} [--json]       ${dim("List concrete Host aliases from ~/.ssh/config")}
+  ${cyan("tmux-ide remote ssh add")} <name> --host <ssh-host> --path <dir>
+                                  ${dim("Save a tunnel-only remote project")}
+  ${cyan("tmux-ide remote ssh launch")} <name> [--no-open]
+                                  ${dim("Open a local SSH tunnel to a remote tmux-ide dashboard")}
+
 ${bold("Task Management:")}
   ${cyan("tmux-ide mission set")} "title"              ${dim("Set the project mission")}
   ${cyan("tmux-ide mission show")}                     ${dim("Show current mission")}
@@ -30997,7 +31502,7 @@ ${bold("Flags:")}
   ${cyan("-v, --version")}               ${dim("Show version number")}`);
 }
 function execBunWidget(scriptPath, args, commandLabel) {
-  const widgetMissing = !existsSync40(scriptPath);
+  const widgetMissing = !existsSync41(scriptPath);
   let bunMissing = false;
   try {
     execFileSync9("bun", ["--version"], { stdio: "ignore" });
@@ -31101,10 +31606,10 @@ try {
         action = "disable-team";
         configArgs = [];
       } else if (sub === "edit") {
-        const scriptPath = resolve33(__dirname5, "../packages/daemon/src/widgets/setup/index.tsx");
+        const scriptPath = resolve34(__dirname5, "../packages/daemon/src/widgets/setup/index.tsx");
         execBunWidget(
           scriptPath,
-          ["--dir=" + resolve33(startTargetDir || "."), "--edit"],
+          ["--dir=" + resolve34(startTargetDir || "."), "--edit"],
           "config edit"
         );
         break;
@@ -31220,8 +31725,8 @@ try {
       break;
     }
     case "setup": {
-      const scriptPath = resolve33(__dirname5, "../packages/daemon/src/widgets/setup/index.tsx");
-      const setupArgs = ["--dir=" + resolve33(startTargetDir || ".")];
+      const scriptPath = resolve34(__dirname5, "../packages/daemon/src/widgets/setup/index.tsx");
+      const setupArgs = ["--dir=" + resolve34(startTargetDir || ".")];
       if (positionals[1] === "--edit" || values.edit) setupArgs.push("--edit");
       if (positionals[1] === "--wizard" || values.wizard) setupArgs.push("--wizard");
       execBunWidget(scriptPath, setupArgs, "setup");
@@ -31256,8 +31761,8 @@ try {
       break;
     }
     case "settings": {
-      const scriptPath = resolve33(__dirname5, "../packages/daemon/src/widgets/config/index.tsx");
-      execBunWidget(scriptPath, ["--dir=" + resolve33(startTargetDir || ".")], "settings");
+      const scriptPath = resolve34(__dirname5, "../packages/daemon/src/widgets/config/index.tsx");
+      execBunWidget(scriptPath, ["--dir=" + resolve34(startTargetDir || ".")], "settings");
       break;
     }
     case "tunnel": {
@@ -31283,9 +31788,19 @@ try {
         args: positionals.slice(2),
         values: {
           url: values.url,
-          "hq-url": values["hq-url"]
+          "hq-url": values["hq-url"],
+          host: values.host,
+          path: values.path,
+          "local-port": values["local-port"],
+          "remote-port": values["remote-port"],
+          "no-open": values["no-open"]
         }
       });
+      break;
+    }
+    case "__remote-serve": {
+      const { remoteServeCommand: remoteServeCommand2 } = await Promise.resolve().then(() => (init_ssh_remote(), ssh_remote_exports));
+      await remoteServeCommand2({ port: values.port });
       break;
     }
     case "command-center": {
@@ -31300,7 +31815,7 @@ try {
     }
     case "server": {
       if ("bun" in process.versions) {
-        const scriptPath = resolve33(__dirname5, "../packages/daemon/src/server/standalone.ts");
+        const scriptPath = resolve34(__dirname5, "../packages/daemon/src/server/standalone.ts");
         const serverArgs = ["--experimental-strip-types", scriptPath];
         if (values.port) serverArgs.push("--port", values.port);
         execFileSync9("node", serverArgs, { stdio: "inherit" });

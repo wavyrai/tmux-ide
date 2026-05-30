@@ -73,6 +73,10 @@ const { positionals, values } = parseArgs({
     // remote command flags
     url: { type: "string" },
     "hq-url": { type: "string" },
+    host: { type: "string" },
+    path: { type: "string" },
+    "local-port": { type: "string" },
+    "remote-port": { type: "string" },
     // send command flags
     to: { type: "string" },
     "no-enter": { type: "boolean" },
@@ -118,6 +122,7 @@ const knownCommands = new Set([
   "remote",
   "checkpoint",
   "chat",
+  "__remote-serve",
   "help",
 ]);
 
@@ -203,6 +208,13 @@ ${bold("Orchestrator:")}
 ${bold("Multi-agent Chat:")}
   ${cyan("tmux-ide chat session add")} <thread-id> --provider <name> [--role <role>]
                                   ${dim("Register a Session on a Thread (lead|teammate|planner|validator|researcher)")}
+
+${bold("SSH Remotes:")}
+  ${cyan("tmux-ide remote ssh hosts")} [--json]       ${dim("List concrete Host aliases from ~/.ssh/config")}
+  ${cyan("tmux-ide remote ssh add")} <name> --host <ssh-host> --path <dir>
+                                  ${dim("Save a tunnel-only remote project")}
+  ${cyan("tmux-ide remote ssh launch")} <name> [--no-open]
+                                  ${dim("Open a local SSH tunnel to a remote tmux-ide dashboard")}
 
 ${bold("Task Management:")}
   ${cyan("tmux-ide mission set")} "title"              ${dim("Set the project mission")}
@@ -555,8 +567,19 @@ try {
         values: {
           url: values.url,
           "hq-url": values["hq-url"],
+          host: values.host,
+          path: values.path,
+          "local-port": values["local-port"],
+          "remote-port": values["remote-port"],
+          "no-open": values["no-open"],
         },
       });
+      break;
+    }
+
+    case "__remote-serve": {
+      const { remoteServeCommand } = await import("../packages/daemon/src/ssh-remote.ts");
+      await remoteServeCommand({ port: values.port });
       break;
     }
 
