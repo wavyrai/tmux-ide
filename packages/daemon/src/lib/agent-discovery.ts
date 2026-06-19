@@ -2,35 +2,13 @@
 // not just the panes tmux-ide spawned. Panes living in a managed session are
 // reported as `managed` (we can control them); panes in any other session are
 // `tmux-unmanaged` (observe + best-effort send-keys).
-import { execFileSync } from "node:child_process";
 import type { AgentRecord, AgentTool, PaneInfo } from "@tmux-ide/contracts";
 import { isAgentPane, isAgentBusy, agentIdentifier } from "./orchestrator.ts";
+import { tmux, _setExecutor } from "./tmux-exec.ts";
 
-type TmuxExecutor = (cmd: string, args: string[], options?: object) => string;
-
-let _executor: TmuxExecutor = (cmd, args, options) =>
-  execFileSync(cmd, args, { encoding: "utf-8", ...options }).toString();
-
-/** Swap the tmux executor (tests). Returns a restore function. */
-export function _setExecutor(fn: TmuxExecutor): () => void {
-  const prev = _executor;
-  _executor = fn;
-  return () => {
-    _executor = prev;
-  };
-}
-
-function tmux(...args: string[]): string {
-  try {
-    return _executor("tmux", args, { stdio: ["pipe", "pipe", "pipe"] }).trim();
-  } catch (error) {
-    const stderr = (error as { stderr?: Buffer | string })?.stderr?.toString() ?? "";
-    if (stderr.includes("no server running") || stderr.includes("can't find session")) {
-      return "";
-    }
-    throw error;
-  }
-}
+// Re-exported so existing tests/callers can keep importing the executor seam
+// from here.
+export { _setExecutor };
 
 export interface TmuxPane extends PaneInfo {
   session: string;
@@ -38,11 +16,13 @@ export interface TmuxPane extends PaneInfo {
   pid: number | null;
 }
 
+// pane_title is free-text and can contain tabs, so it goes LAST — any overflow
+// from the tab split is rejoined back into the title rather than corrupting the
+// fields after it.
 const FIELDS = [
   "#{session_name}",
   "#{pane_id}",
   "#{pane_index}",
-  "#{pane_title}",
   "#{pane_current_command}",
   "#{pane_current_path}",
   "#{pane_pid}",
@@ -52,34 +32,39 @@ const FIELDS = [
   "#{@ide_role}",
   "#{@ide_name}",
   "#{@ide_type}",
+  "#{pane_title}",
 ];
+const FIXED_FIELDS = FIELDS.length - 1; // everything before the trailing title
 
 /** List panes across every session on the tmux server (`list-panes -a`). */
 export function listAllTmuxPanes(): TmuxPane[] {
   const output = tmux("list-panes", "-a", "-F", FIELDS.join("\t"));
   if (!output) return [];
-  return output
-    .split("\n")
-    .filter(Boolean)
-    .map((line) => {
-      const [session, id, index, title, cmd, cwd, pid, width, height, active, role, name, type] =
-        line.split("\t");
-      return {
-        session: session!,
-        id: id!,
-        index: parseInt(index!, 10),
-        title: title!,
-        currentCommand: cmd!,
-        cwd: cwd || null,
-        pid: pid ? parseInt(pid, 10) : null,
-        width: parseInt(width!, 10),
-        height: parseInt(height!, 10),
-        active: active === "1",
-        role: (role || null) as PaneInfo["role"],
-        name: name || null,
-        type: type || null,
-      } satisfies TmuxPane;
-    });
+  const panes: TmuxPane[] = [];
+  for (const line of output.split("\n")) {
+    if (!line) continue;
+    const parts = line.split("\t");
+    // Skip malformed rows (a tmux format glitch shouldn't crash discovery).
+    if (parts.length < FIXED_FIELDS) continue;
+    const [session, id, index, cmd, cwd, pid, width, height, active, role, name, type] = parts;
+    if (!session || !id) continue;
+    panes.push({
+      session,
+      id,
+      index: parseInt(index!, 10) || 0,
+      title: parts.slice(FIXED_FIELDS).join("\t"),
+      currentCommand: cmd ?? "",
+      cwd: cwd || null,
+      pid: pid ? parseInt(pid, 10) || null : null,
+      width: parseInt(width!, 10) || 0,
+      height: parseInt(height!, 10) || 0,
+      active: active === "1",
+      role: (role || null) as PaneInfo["role"],
+      name: name || null,
+      type: type || null,
+    } satisfies TmuxPane);
+  }
+  return panes;
 }
 
 /** Infer which CLI an agent pane is running from its command name. */

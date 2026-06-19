@@ -30,6 +30,7 @@ export default defineConfig({
       "src/git/__tests__/*.test.ts",
       "src/lib/__tests__/*.test.ts",
       "src/lsp/__tests__/*.test.ts",
+      "src/agent-hook.test.ts",
     ],
     coverage: {
       provider: "v8",

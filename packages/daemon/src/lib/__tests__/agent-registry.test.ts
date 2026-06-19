@@ -135,9 +135,19 @@ describe("aggregateHqAgents", () => {
       cwd: `/x${del}/y`,
     };
     const out = aggregateHqAgents([], "laptop", [
-      { machineId: "m1", machineName: "box-a", agents: [hostile] },
+      { machineId: "m1", machineName: `box${esc}a`, agents: [hostile] },
     ]);
     expect(out[0]!.name).toBe("evil[2Jname");
     expect(out[0]!.cwd).toBe("/x/y");
+    // machineName/machineId come from the (untrusted) registration record too
+    expect(out[0]!.machineName).toBe("boxa");
+  });
+
+  it("re-stamps a remote agent that already carries a machineId (no double-stamp)", () => {
+    const preStamped: AgentRecord = { ...remoteAgent, machineId: "old", machineName: "stale" };
+    const out = aggregateHqAgents([], "laptop", [
+      { machineId: "m2", machineName: "box-b", agents: [preStamped] },
+    ]);
+    expect(out[0]).toMatchObject({ machineId: "m2", machineName: "box-b", id: "m2:proj:%1" });
   });
 });

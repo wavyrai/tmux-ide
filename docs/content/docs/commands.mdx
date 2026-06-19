@@ -132,7 +132,7 @@ tmux-ide agent hook install
 tmux-ide agent hook install --print   # print the snippet instead of writing
 ```
 
-The installer wires four Claude Code lifecycle events to
+The installer wires the Claude Code lifecycle events to
 `tmux-ide agent report`:
 
 ```json
@@ -144,7 +144,10 @@ The installer wires four Claude Code lifecycle events to
     "UserPromptSubmit": [
       { "hooks": [{ "type": "command", "command": "tmux-ide agent report activity" }] }
     ],
-    "Stop": [{ "hooks": [{ "type": "command", "command": "tmux-ide agent report stop" }] }],
+    "PreToolUse": [
+      { "hooks": [{ "type": "command", "command": "tmux-ide agent report activity" }] }
+    ],
+    "Stop": [{ "hooks": [{ "type": "command", "command": "tmux-ide agent report idle" }] }],
     "SessionEnd": [{ "hooks": [{ "type": "command", "command": "tmux-ide agent report stop" }] }]
   }
 }
@@ -157,15 +160,21 @@ Restart your Claude Code sessions after installing so the hooks load.
 Invoked by the hooks above — you rarely run this by hand. It reads the
 hook JSON payload from **stdin** and POSTs to the local daemon:
 
-| Event      | Claude Code hook     | Daemon action      | Status |
-| ---------- | -------------------- | ------------------ | ------ |
-| `start`    | `SessionStart`       | `agent.register`   | busy   |
-| `activity` | `UserPromptSubmit`   | `agent.heartbeat`  | busy   |
-| `stop`     | `Stop`, `SessionEnd` | `agent.unregister` | —      |
+| Event      | Claude Code hook                 | Daemon action      | Status |
+| ---------- | -------------------------------- | ------------------ | ------ |
+| `start`    | `SessionStart`                   | `agent.register`   | busy   |
+| `activity` | `UserPromptSubmit`, `PreToolUse` | `agent.register`   | busy   |
+| `idle`     | `Stop` (end of a turn)           | `agent.heartbeat`  | idle   |
+| `stop`     | `SessionEnd` (session exit)      | `agent.unregister` | —      |
+
+`Stop` fires at the end of **every turn**, not on session exit — so it maps to
+`idle` (the agent stays on the roster between turns) while `SessionEnd` is the
+real teardown. `PreToolUse` keeps a long-running turn marked live.
 
 The agent `id` is the Claude Code `session_id`; the display name is
-derived as `claude@<basename(cwd)>`. The daemon URL and auth token are
-discovered from `~/.tmux-ide/daemon.json`; an `Authorization: Bearer`
+derived as `<tool>@<basename(cwd)>` (`tool` is `claude` by default, or
+`codex` when `TMUX_IDE_AGENT_TOOL=codex`). The daemon URL and auth token
+are discovered from `~/.tmux-ide/daemon.json`; an `Authorization: Bearer`
 header is sent when a token is present.
 
 `agent report` is best-effort and defensive: if no daemon is running, or

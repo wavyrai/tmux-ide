@@ -40,7 +40,9 @@ export class ExternalAgentRegistry {
   private readonly maxEntries: number;
 
   constructor(opts?: ExternalAgentRegistryOptions) {
-    this.offlineAfterMs = opts?.offlineAfterMs ?? 90_000;
+    // 5min: hooks only refresh lastSeen on prompt/tool-use/turn-end, so the
+    // window must tolerate a long turn that makes no tool calls.
+    this.offlineAfterMs = opts?.offlineAfterMs ?? 5 * 60_000;
     this.evictAfterMs = opts?.evictAfterMs ?? 30 * 60_000;
     this.maxEntries = opts?.maxEntries ?? 1000;
   }
@@ -155,23 +157,28 @@ function sanitizeDisplay(value: string): string {
   let out = "";
   for (const ch of value) {
     const code = ch.codePointAt(0)!;
-    // Drop C0 controls (0x00-0x1F) and DEL (0x7F).
-    if (code >= 0x20 && code !== 0x7f) out += ch;
+    // Drop C0 controls (0x00-0x1F), DEL (0x7F), and C1 controls (0x80-0x9F) —
+    // xterm-class terminals can interpret C1 bytes (e.g. 0x9B = CSI).
+    if (code < 0x20 || code === 0x7f || (code >= 0x80 && code <= 0x9f)) continue;
+    out += ch;
   }
   return out.slice(0, 512);
 }
 
 function sanitizeRemoteAgent(a: AgentRecord, remote: RemoteAgentSource): AgentRecord {
+  // machineId/machineName come from the remote's registration record, which is
+  // also attacker-influenceable — sanitize them too, not just the agent fields.
+  const machineId = sanitizeDisplay(remote.machineId);
   return {
     ...a,
-    id: `${remote.machineId}:${sanitizeDisplay(a.id)}`,
+    id: `${machineId}:${sanitizeDisplay(a.id)}`,
     name: sanitizeDisplay(a.name),
     session: a.session === null ? null : sanitizeDisplay(a.session),
     paneTitle: a.paneTitle === null ? null : sanitizeDisplay(a.paneTitle),
     cwd: a.cwd === null ? null : sanitizeDisplay(a.cwd),
     taskTitle: a.taskTitle === null ? null : sanitizeDisplay(a.taskTitle),
-    machineId: remote.machineId,
-    machineName: remote.machineName,
+    machineId,
+    machineName: sanitizeDisplay(remote.machineName),
   };
 }
 
@@ -186,10 +193,11 @@ export function aggregateHqAgents(
   selfMachineName: string,
   remotes: RemoteAgentSource[],
 ): AgentRecord[] {
+  const selfName = sanitizeDisplay(selfMachineName);
   const out: AgentRecord[] = localAgents.map((a) => ({
     ...a,
     machineId: null,
-    machineName: selfMachineName,
+    machineName: selfName,
   }));
   for (const remote of remotes) {
     for (const a of remote.agents) {

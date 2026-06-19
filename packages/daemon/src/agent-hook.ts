@@ -14,15 +14,20 @@ import { readCanonicalDaemonInfo } from "./lib/canonical-daemon.ts";
  * session — it cannot control a plain-terminal agent.
  */
 
-type HookEvent = "start" | "activity" | "stop";
+type HookEvent = "start" | "activity" | "idle" | "stop";
 
-const EVENT_TO_ACTION: Record<HookEvent, "agent.register" | "agent.unregister"> = {
-  // `activity` re-registers (register is an idempotent upsert) so a session that
-  // idled long enough to be evicted reappears on its next prompt — a bare
-  // heartbeat would return known:false and the agent would stay gone until the
-  // session restarts.
+const EVENT_TO_ACTION: Record<
+  HookEvent,
+  "agent.register" | "agent.heartbeat" | "agent.unregister"
+> = {
+  // start/activity re-register (register is an idempotent upsert) so a session
+  // evicted after a long idle reappears on its next prompt or tool call.
+  // idle is a lightweight status-only heartbeat fired when a turn ends — the
+  // agent stays on the roster (just not "busy"), instead of vanishing between
+  // turns. stop is the real teardown (session exit).
   start: "agent.register",
   activity: "agent.register",
+  idle: "agent.heartbeat",
   stop: "agent.unregister",
 };
 
@@ -46,12 +51,19 @@ interface RegisterPayload {
   taskTitle?: string;
 }
 
+/** heartbeat: { id, status?, taskTitle? } */
+interface HeartbeatPayload {
+  id: string;
+  status?: "busy" | "idle" | "offline";
+  taskTitle?: string;
+}
+
 /** unregister: { id } */
 interface UnregisterPayload {
   id: string;
 }
 
-type ActionPayload = RegisterPayload | UnregisterPayload;
+type ActionPayload = RegisterPayload | HeartbeatPayload | UnregisterPayload;
 
 function parseStdin(raw: string): HookStdin {
   if (!raw.trim()) return {};
@@ -65,13 +77,22 @@ function parseStdin(raw: string): HookStdin {
 }
 
 /**
+ * The reporting tool. Defaults to "claude" (this is a Claude Code hook), but a
+ * codex (or other) integration can set TMUX_IDE_AGENT_TOOL so the unified view
+ * labels it correctly rather than always showing "claude".
+ */
+function reportingTool(): "claude" | "codex" {
+  return process.env.TMUX_IDE_AGENT_TOOL === "codex" ? "codex" : "claude";
+}
+
+/**
  * Map a hook event + the Claude Code stdin payload onto an agent action body.
  *
- *  - start / activity (SessionStart, UserPromptSubmit) → an idempotent register
- *    with status "busy" — the user just handed the agent work. Plain-terminal
- *    sessions can't be observed at rest, so there is no "idle" external state;
- *    an agent is busy until it's unregistered.
- *  - stop (Stop, SessionEnd) → unregister (id only).
+ *  - start / activity (SessionStart, UserPromptSubmit, PreToolUse) → an
+ *    idempotent register with status "busy" — work is in flight.
+ *  - idle (Stop) → a status-only heartbeat marking the agent idle at the end of
+ *    a turn, so it stays on the roster between turns instead of disappearing.
+ *  - stop (SessionEnd) → unregister (id only).
  *
  * `name` is derived as "<tool>@<basename(cwd)>" (e.g. "claude@my-project") so
  * the central view can show a human-friendly label.
@@ -84,12 +105,17 @@ export function buildPayload(event: HookEvent, stdin: HookStdin): ActionPayload 
     return { id } satisfies UnregisterPayload;
   }
 
+  if (event === "idle") {
+    return { id, status: "idle" } satisfies HeartbeatPayload;
+  }
+
   // start or activity → register (upsert).
+  const tool = reportingTool();
   const cwd = typeof stdin.cwd === "string" && stdin.cwd ? stdin.cwd : undefined;
-  const name = cwd ? `claude@${basename(cwd)}` : "claude";
+  const name = cwd ? `${tool}@${basename(cwd)}` : tool;
   return {
     id,
-    tool: "claude",
+    tool,
     name,
     cwd,
     session: id,
@@ -104,8 +130,25 @@ function timeoutSignal(ms: number): AbortSignal {
   return controller.signal;
 }
 
-function hostnameForClient(bindHostname: string): string {
+export function hostnameForClient(bindHostname: string): string {
   return bindHostname === "0.0.0.0" ? "127.0.0.1" : bindHostname;
+}
+
+interface DaemonInfoLike {
+  bindHostname: string;
+  port: number;
+  authToken?: string | null;
+}
+
+/** Build the daemon request (url + headers) for an action. Testable seam. */
+export function buildReportRequest(
+  info: DaemonInfoLike,
+  action: string,
+): { url: string; headers: Record<string, string> } {
+  const baseUrl = `http://${hostnameForClient(info.bindHostname)}:${info.port}`;
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (info.authToken) headers.Authorization = `Bearer ${info.authToken}`;
+  return { url: `${baseUrl}/api/v2/action/${action}`, headers };
 }
 
 /**
@@ -135,13 +178,10 @@ async function report(event: HookEvent): Promise<void> {
   const info = readCanonicalDaemonInfo();
   if (!info) return;
 
-  const action = EVENT_TO_ACTION[event];
-  const baseUrl = `http://${hostnameForClient(info.bindHostname)}:${info.port}`;
-  const headers: Record<string, string> = { "Content-Type": "application/json" };
-  if (info.authToken) headers.Authorization = `Bearer ${info.authToken}`;
+  const { url, headers } = buildReportRequest(info, EVENT_TO_ACTION[event]);
 
   try {
-    await fetch(`${baseUrl}/api/v2/action/${action}`, {
+    await fetch(url, {
       method: "POST",
       headers,
       body: JSON.stringify(payload),
@@ -152,11 +192,18 @@ async function report(event: HookEvent): Promise<void> {
   }
 }
 
-/** Claude Code lifecycle hook → reported event. Single source of truth. */
+/**
+ * Claude Code lifecycle hook → reported event. Single source of truth.
+ *
+ * Stop fires at the END OF EVERY TURN (not session exit), so it maps to `idle`
+ * — the agent stays on the roster between turns. PreToolUse refreshes liveness
+ * during long turns. SessionEnd is the real teardown.
+ */
 const HOOK_EVENTS = {
   SessionStart: "start",
   UserPromptSubmit: "activity",
-  Stop: "stop",
+  PreToolUse: "activity",
+  Stop: "idle",
   SessionEnd: "stop",
 } as const satisfies Record<string, HookEvent>;
 
@@ -179,7 +226,7 @@ interface HookMatcher {
 type HooksConfig = Record<string, HookMatcher[]>;
 
 /**
- * Build the `hooks` snippet that wires the four lifecycle events to
+ * Build the `hooks` snippet that wires the Claude Code lifecycle events to
  * `tmux-ide agent report <event>`.
  */
 export function buildHookSnippet(): HooksConfig {
@@ -277,7 +324,7 @@ export async function agentCommand(opts: AgentCommandOptions): Promise<void> {
 
   if (sub === "report") {
     const event = opts.args?.[0];
-    if (event === "start" || event === "activity" || event === "stop") {
+    if (event === "start" || event === "activity" || event === "idle" || event === "stop") {
       try {
         await report(event);
       } catch {

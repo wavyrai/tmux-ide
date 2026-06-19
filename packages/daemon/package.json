@@ -50,7 +50,7 @@
     "dev": "tsx --watch src/lib/daemon.ts",
     "start": "node dist/lib/daemon.js",
     "lint": "eslint src",
-    "test": "bun test src/chat/thread-store.test.ts src/chat/thread-manager.test.ts src/chat/provider-discovery.test.ts src/chat/context-actions.test.ts src/chat/__tests__/codex-stop-reliability.test.ts src/chat/tools/tmux.test.ts src/chat/reactors/reactor.test.ts src/command-center/actions/handlers/chat-actions.test.ts src/codex/protocol.test.ts src/codex/client.test.ts src/codex/schema.test.ts src/agent-hook.test.ts",
+    "test": "bun test src/chat/thread-store.test.ts src/chat/thread-manager.test.ts src/chat/provider-discovery.test.ts src/chat/context-actions.test.ts src/chat/__tests__/codex-stop-reliability.test.ts src/chat/tools/tmux.test.ts src/chat/reactors/reactor.test.ts src/command-center/actions/handlers/chat-actions.test.ts src/codex/protocol.test.ts src/codex/client.test.ts src/codex/schema.test.ts",
     "test:vitest": "vitest run"
   },
   "dependencies": {

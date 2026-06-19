@@ -1,13 +1,18 @@
 import { describe, it, expect, afterEach } from "vitest";
-import { _setExecutor, discoverTmuxAgents, inferAgentTool, listAllTmuxPanes } from "../agent-discovery.ts";
+import {
+  _setExecutor,
+  discoverTmuxAgents,
+  inferAgentTool,
+  listAllTmuxPanes,
+} from "../agent-discovery.ts";
 
-// session, pane_id, index, title, command, cwd, pid, w, h, active, role, name, type
+// session, pane_id, index, command, cwd, pid, w, h, active, role, name, type, title
+// (title is LAST so a tab inside it doesn't corrupt the other fields)
 function row(fields: Partial<Record<string, string>>): string {
   return [
     fields.session ?? "proj",
     fields.id ?? "%1",
     fields.index ?? "0",
-    fields.title ?? "Claude Code",
     fields.cmd ?? "claude",
     fields.cwd ?? "/work/proj",
     fields.pid ?? "1234",
@@ -17,6 +22,7 @@ function row(fields: Partial<Record<string, string>>): string {
     fields.role ?? "",
     fields.name ?? "",
     fields.type ?? "",
+    fields.title ?? "Claude Code",
   ].join("\t");
 }
 
@@ -49,6 +55,20 @@ describe("listAllTmuxPanes", () => {
   it("returns [] when no tmux server is running", () => {
     restore = _setExecutor(() => "");
     expect(listAllTmuxPanes()).toEqual([]);
+  });
+
+  it("recovers a tab embedded in the pane title (title is last field)", () => {
+    restore = _setExecutor(() => row({ title: "Claude\tCode\twork" }));
+    const panes = listAllTmuxPanes();
+    expect(panes).toHaveLength(1);
+    expect(panes[0]).toMatchObject({ session: "proj", id: "%1", title: "Claude\tCode\twork" });
+  });
+
+  it("skips malformed short rows instead of emitting NaN garbage", () => {
+    restore = _setExecutor(() => ["proj\t%1", row({ id: "%2" })].join("\n"));
+    const panes = listAllTmuxPanes();
+    expect(panes).toHaveLength(1);
+    expect(panes[0]!.id).toBe("%2");
   });
 });
 
