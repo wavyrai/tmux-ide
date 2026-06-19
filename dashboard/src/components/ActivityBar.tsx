@@ -16,6 +16,7 @@
 import { createSignal, For, onCleanup, onMount, Show, type Component } from "solid-js";
 import {
   BookOpen,
+  Bot,
   CheckSquare,
   Files,
   GitCompare,
@@ -44,6 +45,7 @@ export type ActivityBarViewId =
   | "skills"
   | "notes"
   | "mission"
+  | "agents"
   | "chat"
   | "terminal"
   | "widgets";
@@ -140,6 +142,14 @@ export function V2ActivityBar(props: V2ActivityBarProps) {
       Icon: Target,
       label: "mission",
       onClick: () => props.onView("mission"),
+    },
+    {
+      id: "agents",
+      view: "agents",
+      Icon: Bot,
+      label: "agents",
+      tooltip: "agents · fleet roster",
+      onClick: () => props.onView("agents"),
     },
     {
       id: "chat",
