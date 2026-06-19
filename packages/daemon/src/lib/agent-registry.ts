@@ -1,0 +1,118 @@
+// In-memory registry of externally-reported Claude/codex agents — sessions
+// running in plain terminals (no tmux) that self-report via a hook. Entries go
+// `offline` after a missed-heartbeat window and are evicted once long stale.
+import type {
+  AgentHeartbeatPayload,
+  AgentRecord,
+  AgentRegisterPayload,
+  AgentStatus,
+  AgentTool,
+} from "@tmux-ide/contracts";
+
+interface ExternalAgentEntry {
+  id: string;
+  tool: AgentTool;
+  name: string;
+  cwd: string | null;
+  session: string | null;
+  pid: number | null;
+  status: AgentStatus;
+  taskTitle: string | null;
+  registeredAt: number;
+  lastSeen: number;
+}
+
+export interface ExternalAgentRegistryOptions {
+  // Window without a heartbeat before an agent is reported `offline`.
+  offlineAfterMs?: number;
+  // Window without a heartbeat before an agent is dropped entirely.
+  evictAfterMs?: number;
+}
+
+export class ExternalAgentRegistry {
+  private agents = new Map<string, ExternalAgentEntry>();
+  private readonly offlineAfterMs: number;
+  private readonly evictAfterMs: number;
+
+  constructor(opts?: ExternalAgentRegistryOptions) {
+    this.offlineAfterMs = opts?.offlineAfterMs ?? 90_000;
+    this.evictAfterMs = opts?.evictAfterMs ?? 30 * 60_000;
+  }
+
+  register(payload: AgentRegisterPayload, now = Date.now()): void {
+    const existing = this.agents.get(payload.id);
+    this.agents.set(payload.id, {
+      id: payload.id,
+      tool: payload.tool,
+      name: payload.name ?? existing?.name ?? payload.id.slice(0, 12),
+      cwd: payload.cwd ?? existing?.cwd ?? null,
+      session: payload.session ?? existing?.session ?? null,
+      pid: payload.pid ?? existing?.pid ?? null,
+      status: payload.status ?? existing?.status ?? "idle",
+      taskTitle: payload.taskTitle ?? existing?.taskTitle ?? null,
+      registeredAt: existing?.registeredAt ?? now,
+      lastSeen: now,
+    });
+  }
+
+  heartbeat(payload: AgentHeartbeatPayload, now = Date.now()): boolean {
+    const entry = this.agents.get(payload.id);
+    if (!entry) return false;
+    entry.lastSeen = now;
+    if (payload.status) entry.status = payload.status;
+    if (payload.taskTitle !== undefined) entry.taskTitle = payload.taskTitle;
+    return true;
+  }
+
+  unregister(id: string): boolean {
+    return this.agents.delete(id);
+  }
+
+  /** Drop entries that have been silent past the eviction window. */
+  prune(now = Date.now()): void {
+    for (const [id, entry] of this.agents) {
+      if (now - entry.lastSeen > this.evictAfterMs) this.agents.delete(id);
+    }
+  }
+
+  /** Snapshot as unified AgentRecords; stale entries surface as `offline`. */
+  list(now = Date.now()): AgentRecord[] {
+    this.prune(now);
+    return Array.from(this.agents.values()).map((entry) => {
+      const stale = now - entry.lastSeen > this.offlineAfterMs;
+      return {
+        id: entry.id,
+        kind: "external",
+        tool: entry.tool,
+        name: entry.name,
+        status: stale ? "offline" : entry.status,
+        session: entry.session,
+        paneId: null,
+        paneTitle: null,
+        cwd: entry.cwd,
+        taskId: null,
+        taskTitle: entry.taskTitle,
+        pid: entry.pid,
+        lastActivity: new Date(entry.lastSeen).toISOString(),
+        machineId: null,
+        machineName: null,
+      } satisfies AgentRecord;
+    });
+  }
+}
+
+/**
+ * Merge tmux-discovered agents with externally-reported ones, de-duplicating
+ * by pid (a hook-registered agent that's also visible in a tmux pane shows up
+ * once, preferring the richer live tmux record).
+ */
+export function mergeLocalAgents(
+  tmuxAgents: AgentRecord[],
+  externalAgents: AgentRecord[],
+): AgentRecord[] {
+  const tmuxPids = new Set(
+    tmuxAgents.map((a) => a.pid).filter((pid): pid is number => pid !== null),
+  );
+  const externalOnly = externalAgents.filter((a) => a.pid === null || !tmuxPids.has(a.pid));
+  return [...tmuxAgents, ...externalOnly];
+}
