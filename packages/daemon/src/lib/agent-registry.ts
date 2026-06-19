@@ -154,15 +154,17 @@ export interface RemoteAgentSource {
 // (terminal escape sequences, NULs) from display strings so a remote can't
 // inject into the local UI/terminal when its records are rendered.
 function sanitizeDisplay(value: string): string {
-  let out = "";
+  const chars: string[] = [];
   for (const ch of value) {
     const code = ch.codePointAt(0)!;
     // Drop C0 controls (0x00-0x1F), DEL (0x7F), and C1 controls (0x80-0x9F) —
     // xterm-class terminals can interpret C1 bytes (e.g. 0x9B = CSI).
     if (code < 0x20 || code === 0x7f || (code >= 0x80 && code <= 0x9f)) continue;
-    out += ch;
+    chars.push(ch);
+    // Cap by code point (not UTF-16 unit) so we never split an astral pair.
+    if (chars.length >= 512) break;
   }
-  return out.slice(0, 512);
+  return chars.join("");
 }
 
 function sanitizeRemoteAgent(a: AgentRecord, remote: RemoteAgentSource): AgentRecord {

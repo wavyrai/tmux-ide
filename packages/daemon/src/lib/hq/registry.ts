@@ -35,6 +35,9 @@ export class RemoteRegistry {
     // If same ID already registered, update it (heartbeat / re-registration)
     const existing = this.machines.get(remote.id);
     if (existing) {
+      // Drop the stale name→machine index entry on rename so machinesByName
+      // doesn't grow unbounded under repeated same-id renames.
+      if (existing.name !== remote.name) this.machinesByName.delete(existing.name);
       existing.name = remote.name;
       existing.url = remote.url;
       existing.token = remote.token;

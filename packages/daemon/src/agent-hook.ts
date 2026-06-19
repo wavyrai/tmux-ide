@@ -314,8 +314,8 @@ interface AgentCommandOptions {
 /**
  * Entry point for `tmux-ide agent ...`.
  *
- * - `agent report <start|activity|stop>` — invoked by Claude Code hooks. Always
- *   exits 0; never throws to the parent process.
+ * - `agent report <start|activity|idle|stop>` — invoked by Claude Code hooks.
+ *   Always exits 0; never throws to the parent process.
  * - `agent hook install [--print]` — merge the hook config into
  *   ~/.claude/settings.json (or print the snippet with `--print`).
  */
@@ -346,7 +346,7 @@ export async function agentCommand(opts: AgentCommandOptions): Promise<void> {
 
   throw new Error(
     "Usage:\n" +
-      "  tmux-ide agent report <start|activity|stop>\n" +
+      "  tmux-ide agent report <start|activity|idle|stop>\n" +
       "  tmux-ide agent hook install [--print]",
   );
 }
