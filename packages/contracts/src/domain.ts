@@ -436,25 +436,27 @@ export const AgentKindSchemaZ = z.enum(["managed", "tmux-unmanaged", "external"]
 export const AgentStatusSchemaZ = z.enum(["busy", "idle", "offline"]);
 
 export const AgentRecordSchemaZ = z.object({
-  // Stable id. tmux agents: `${machineName}:${session}:${paneId}`.
-  // external agents: the hook-supplied id (typically the Claude session id).
-  id: z.string(),
+  // Stable id. tmux agents (local): `${session}:${paneId}`; HQ namespaces
+  // remote ids with `${machineId}:` during aggregation. external agents: the
+  // hook-supplied id (typically the Claude session id). Bounds matter because
+  // HQ validates untrusted remote responses against this same schema.
+  id: z.string().max(512),
   kind: AgentKindSchemaZ,
   tool: AgentToolSchemaZ,
-  name: z.string(),
+  name: z.string().max(256),
   status: AgentStatusSchemaZ,
-  session: z.string().nullable(),
-  paneId: z.string().nullable(),
-  paneTitle: z.string().nullable(),
-  cwd: z.string().nullable(),
-  taskId: z.string().nullable(),
-  taskTitle: z.string().nullable(),
+  session: z.string().max(256).nullable(),
+  paneId: z.string().max(64).nullable(),
+  paneTitle: z.string().max(512).nullable(),
+  cwd: z.string().max(4096).nullable(),
+  taskId: z.string().max(128).nullable(),
+  taskTitle: z.string().max(512).nullable(),
   pid: z.number().nullable(),
   // ISO timestamp of last observed activity / heartbeat.
-  lastActivity: z.string(),
+  lastActivity: z.string().max(64),
   // null = this (local) machine; set by HQ when aggregating remotes.
-  machineId: z.string().nullable(),
-  machineName: z.string().nullable(),
+  machineId: z.string().max(256).nullable(),
+  machineName: z.string().max(256).nullable(),
 });
 
 // Payload a Claude/codex SessionStart hook POSTs to register itself.

@@ -27,20 +27,39 @@ export interface ExternalAgentRegistryOptions {
   offlineAfterMs?: number;
   // Window without a heartbeat before an agent is dropped entirely.
   evictAfterMs?: number;
+  // Hard cap on tracked agents; protects the long-lived daemon from a flood of
+  // unique-id registrations. On overflow the least-recently-seen entry is
+  // evicted so growth is bounded regardless of how often the list is read.
+  maxEntries?: number;
 }
 
 export class ExternalAgentRegistry {
   private agents = new Map<string, ExternalAgentEntry>();
   private readonly offlineAfterMs: number;
   private readonly evictAfterMs: number;
+  private readonly maxEntries: number;
 
   constructor(opts?: ExternalAgentRegistryOptions) {
     this.offlineAfterMs = opts?.offlineAfterMs ?? 90_000;
     this.evictAfterMs = opts?.evictAfterMs ?? 30 * 60_000;
+    this.maxEntries = opts?.maxEntries ?? 1000;
+  }
+
+  private evictOldest(): void {
+    let oldestId: string | null = null;
+    let oldestSeen = Infinity;
+    for (const [id, entry] of this.agents) {
+      if (entry.lastSeen < oldestSeen) {
+        oldestSeen = entry.lastSeen;
+        oldestId = id;
+      }
+    }
+    if (oldestId !== null) this.agents.delete(oldestId);
   }
 
   register(payload: AgentRegisterPayload, now = Date.now()): void {
     const existing = this.agents.get(payload.id);
+    if (!existing && this.agents.size >= this.maxEntries) this.evictOldest();
     this.agents.set(payload.id, {
       id: payload.id,
       tool: payload.tool,
@@ -128,11 +147,39 @@ export interface RemoteAgentSource {
   agents: AgentRecord[];
 }
 
+// Remote agents come from a possibly-hostile/compromised machine. The response
+// is already Zod-bounded for length; here we additionally strip control chars
+// (terminal escape sequences, NULs) from display strings so a remote can't
+// inject into the local UI/terminal when its records are rendered.
+function sanitizeDisplay(value: string): string {
+  let out = "";
+  for (const ch of value) {
+    const code = ch.codePointAt(0)!;
+    // Drop C0 controls (0x00-0x1F) and DEL (0x7F).
+    if (code >= 0x20 && code !== 0x7f) out += ch;
+  }
+  return out.slice(0, 512);
+}
+
+function sanitizeRemoteAgent(a: AgentRecord, remote: RemoteAgentSource): AgentRecord {
+  return {
+    ...a,
+    id: `${remote.machineId}:${sanitizeDisplay(a.id)}`,
+    name: sanitizeDisplay(a.name),
+    session: a.session === null ? null : sanitizeDisplay(a.session),
+    paneTitle: a.paneTitle === null ? null : sanitizeDisplay(a.paneTitle),
+    cwd: a.cwd === null ? null : sanitizeDisplay(a.cwd),
+    taskTitle: a.taskTitle === null ? null : sanitizeDisplay(a.taskTitle),
+    machineId: remote.machineId,
+    machineName: remote.machineName,
+  };
+}
+
 /**
  * Build the aggregated HQ view: this host's local agents (stamped with the
  * self machine name, machineId null) followed by every reachable remote's
- * agents (stamped with the remote's id/name, ids namespaced by `${id}:` so
- * they stay globally unique). Pure — the caller owns fetch/timeout/skip.
+ * agents (stamped + sanitized, ids namespaced by `${machineId}:` so they stay
+ * globally unique). Pure — the caller owns fetch/timeout/skip/self-exclusion.
  */
 export function aggregateHqAgents(
   localAgents: AgentRecord[],
@@ -146,12 +193,7 @@ export function aggregateHqAgents(
   }));
   for (const remote of remotes) {
     for (const a of remote.agents) {
-      out.push({
-        ...a,
-        id: `${remote.machineId}:${a.id}`,
-        machineId: remote.machineId,
-        machineName: remote.machineName,
-      });
+      out.push(sanitizeRemoteAgent(a, remote));
     }
   }
   return out;

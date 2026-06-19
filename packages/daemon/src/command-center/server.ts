@@ -54,7 +54,7 @@ import {
   TaskActionError,
 } from "../lib/task-actions.ts";
 import { readEvents, appendEvent, eventLogEmitter } from "../lib/event-log.ts";
-import { getLogBuffer, subscribeLogs, type LogEntry } from "../lib/log.ts";
+import { getLogBuffer, subscribeLogs, logger, type LogEntry } from "../lib/log.ts";
 import { extractMarks, calculateStats, tagContent } from "../lib/authorship.ts";
 import {
   loadValidationState,
@@ -3829,6 +3829,17 @@ export function createApp(options: CreateAppOptions = {}): Hono {
     return c.json(payload);
   });
 
+  const MAX_HQ_MACHINES = 50;
+  const MAX_HQ_AGENTS = 2000;
+  const isHttpUrl = (u: string): boolean => {
+    try {
+      const proto = new URL(u).protocol;
+      return proto === "http:" || proto === "https:";
+    } catch {
+      return false;
+    }
+  };
+
   // Aggregated view across HQ-registered machines. Always includes this
   // host's local agents (stamped with this host's machine name). When acting
   // as HQ, fans out to each remote's /api/agents and namespaces ids by
@@ -3838,8 +3849,22 @@ export function createApp(options: CreateAppOptions = {}): Hono {
     let remotes: RemoteAgentSource[] = [];
 
     if (remoteRegistry) {
-      const fanout = remoteRegistry
+      // Bound the fan-out: skip self (a host that also registered itself would
+      // otherwise double-count its agents), reject non-http(s) urls (the url is
+      // only validated as a generic URL at registration), and cap the machine
+      // count so a flood of registrations can't make this call arbitrarily
+      // expensive.
+      const candidates = remoteRegistry
         .getMachines()
+        .filter((m) => m.name !== selfName && isHttpUrl(m.url));
+      if (candidates.length > MAX_HQ_MACHINES) {
+        logger.warn(
+          "hq-agents",
+          `fan-out capped: ${candidates.length} machines, querying first ${MAX_HQ_MACHINES}`,
+        );
+      }
+      const fanout = candidates
+        .slice(0, MAX_HQ_MACHINES)
         .map(async (machine): Promise<RemoteAgentSource | null> => {
           try {
             const controller = new AbortController();
@@ -3847,6 +3872,9 @@ export function createApp(options: CreateAppOptions = {}): Hono {
             const res = await fetch(`${machine.url}/api/agents`, {
               headers: { Authorization: `Bearer ${machine.token}` },
               signal: controller.signal,
+              // Don't chase redirects from a (possibly hostile) remote with the
+              // machine's bearer attached — treat a 3xx as a failed fetch.
+              redirect: "manual",
             });
             clearTimeout(tid);
             if (!res.ok) return null;
@@ -3861,7 +3889,14 @@ export function createApp(options: CreateAppOptions = {}): Hono {
       remotes = (await Promise.all(fanout)).filter((r): r is RemoteAgentSource => r !== null);
     }
 
-    const agents = aggregateHqAgents(localAgents(), selfName, remotes);
+    let agents = aggregateHqAgents(localAgents(), selfName, remotes);
+    if (agents.length > MAX_HQ_AGENTS) {
+      logger.warn(
+        "hq-agents",
+        `response capped: ${agents.length} agents, returning first ${MAX_HQ_AGENTS} (local first)`,
+      );
+      agents = agents.slice(0, MAX_HQ_AGENTS);
+    }
     return c.json(AgentListSchemaZ.parse({ agents }));
   });
 

@@ -16,12 +16,13 @@ import { readCanonicalDaemonInfo } from "./lib/canonical-daemon.ts";
 
 type HookEvent = "start" | "activity" | "stop";
 
-const EVENT_TO_ACTION: Record<
-  HookEvent,
-  "agent.register" | "agent.heartbeat" | "agent.unregister"
-> = {
+const EVENT_TO_ACTION: Record<HookEvent, "agent.register" | "agent.unregister"> = {
+  // `activity` re-registers (register is an idempotent upsert) so a session that
+  // idled long enough to be evicted reappears on its next prompt — a bare
+  // heartbeat would return known:false and the agent would stay gone until the
+  // session restarts.
   start: "agent.register",
-  activity: "agent.heartbeat",
+  activity: "agent.register",
   stop: "agent.unregister",
 };
 
@@ -45,19 +46,12 @@ interface RegisterPayload {
   taskTitle?: string;
 }
 
-/** heartbeat: { id, status?, taskTitle? } */
-interface HeartbeatPayload {
-  id: string;
-  status?: "busy" | "idle" | "offline";
-  taskTitle?: string;
-}
-
 /** unregister: { id } */
 interface UnregisterPayload {
   id: string;
 }
 
-type ActionPayload = RegisterPayload | HeartbeatPayload | UnregisterPayload;
+type ActionPayload = RegisterPayload | UnregisterPayload;
 
 function parseStdin(raw: string): HookStdin {
   if (!raw.trim()) return {};
@@ -73,11 +67,11 @@ function parseStdin(raw: string): HookStdin {
 /**
  * Map a hook event + the Claude Code stdin payload onto an agent action body.
  *
- * Status mapping:
- *  - start / activity (UserPromptSubmit, SessionStart) → "busy" — the user just
- *    handed the agent work.
- *  - stop (Stop, SessionEnd) → "idle" for the heartbeat-style stop. The actual
- *    teardown is the `agent.unregister` action which only needs the id.
+ *  - start / activity (SessionStart, UserPromptSubmit) → an idempotent register
+ *    with status "busy" — the user just handed the agent work. Plain-terminal
+ *    sessions can't be observed at rest, so there is no "idle" external state;
+ *    an agent is busy until it's unregistered.
+ *  - stop (Stop, SessionEnd) → unregister (id only).
  *
  * `name` is derived as "<tool>@<basename(cwd)>" (e.g. "claude@my-project") so
  * the central view can show a human-friendly label.
@@ -90,14 +84,8 @@ export function buildPayload(event: HookEvent, stdin: HookStdin): ActionPayload 
     return { id } satisfies UnregisterPayload;
   }
 
+  // start or activity → register (upsert).
   const cwd = typeof stdin.cwd === "string" && stdin.cwd ? stdin.cwd : undefined;
-  const status: "busy" | "idle" = "busy";
-
-  if (event === "activity") {
-    return { id, status } satisfies HeartbeatPayload;
-  }
-
-  // event === "start" → register
   const name = cwd ? `claude@${basename(cwd)}` : "claude";
   return {
     id,
@@ -106,7 +94,7 @@ export function buildPayload(event: HookEvent, stdin: HookStdin): ActionPayload 
     cwd,
     session: id,
     pid: typeof process.ppid === "number" ? process.ppid : undefined,
-    status,
+    status: "busy",
   } satisfies RegisterPayload;
 }
 
@@ -125,6 +113,10 @@ function hostnameForClient(bindHostname: string): string {
  * always resolves. If no daemon is running, returns silently.
  */
 async function report(event: HookEvent): Promise<void> {
+  // Sessions running inside tmux are already discovered by the daemon's
+  // tmux-wide scan; reporting here too would double-count them.
+  if (process.env.TMUX) return;
+
   let raw: string;
   try {
     raw = readFileSync(0, "utf-8");
@@ -132,6 +124,9 @@ async function report(event: HookEvent): Promise<void> {
     // No stdin (e.g. a TTY) — nothing to report.
     return;
   }
+
+  // Bound the parse: a hook payload is tiny; anything huge is malformed.
+  if (raw.length > 256 * 1024) return;
 
   const stdin = parseStdin(raw);
   const payload = buildPayload(event, stdin);

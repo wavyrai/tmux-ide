@@ -24,13 +24,20 @@ describe("buildPayload", () => {
     expect((payload as { cwd?: string }).cwd).toBeUndefined();
   });
 
-  it("maps a UserPromptSubmit (activity) event to a heartbeat payload", () => {
+  it("maps a UserPromptSubmit (activity) event to an idempotent register payload", () => {
     const payload = buildPayload("activity", {
       session_id: "sess-2",
       cwd: "/x/y",
       hook_event_name: "UserPromptSubmit",
     });
-    expect(payload).toEqual({ id: "sess-2", status: "busy" });
+    expect(payload).toMatchObject({
+      id: "sess-2",
+      tool: "claude",
+      name: "claude@y",
+      cwd: "/x/y",
+      session: "sess-2",
+      status: "busy",
+    });
   });
 
   it("maps a stop event to an unregister payload (id only)", () => {
