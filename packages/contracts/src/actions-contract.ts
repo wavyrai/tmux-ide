@@ -20,6 +20,8 @@
 import { z } from "zod";
 import { TimelineRowZ } from "./chat-timeline.ts";
 import {
+  AgentHeartbeatPayloadSchemaZ,
+  AgentRegisterPayloadSchemaZ,
   GoalSchemaZ,
   MilestoneSchemaZ,
   MissionSchemaZ,
@@ -461,6 +463,33 @@ export const DaemonShutdownInputZ = z.object({
 });
 export const DaemonShutdownResultZ = z.object({
   stopping: z.literal(true),
+});
+
+// ---------------------------------------------------------------------------
+// agent.* — host-level (NOT project-scoped). A Claude/codex SessionStart hook
+// running in a plain terminal POSTs `agent.register` to self-report, then
+// `agent.heartbeat` on activity and `agent.unregister` on exit. These mutate
+// the daemon's ExternalAgentRegistry; the unified view is read at GET
+// /api/agents (this host) and GET /api/hq/agents (aggregated).
+// ---------------------------------------------------------------------------
+
+export const AgentRegisterInputZ = AgentRegisterPayloadSchemaZ;
+export const AgentRegisterResultZ = z.object({ ok: z.literal(true) });
+
+export const AgentHeartbeatInputZ = AgentHeartbeatPayloadSchemaZ;
+export const AgentHeartbeatResultZ = z.object({
+  ok: z.literal(true),
+  // `false` when no agent with that id was registered (the hook should
+  // re-register). The action still succeeds at the transport level.
+  known: z.boolean(),
+});
+
+export const AgentUnregisterInputZ = z.object({
+  id: z.string().min(1).max(256),
+});
+export const AgentUnregisterResultZ = z.object({
+  ok: z.literal(true),
+  removed: z.boolean(),
 });
 
 // ---------------------------------------------------------------------------
@@ -972,6 +1001,18 @@ export const ActionContractsZ = {
   "daemon.shutdown": {
     input: DaemonShutdownInputZ,
     result: DaemonShutdownResultZ,
+  },
+  "agent.register": {
+    input: AgentRegisterInputZ,
+    result: AgentRegisterResultZ,
+  },
+  "agent.heartbeat": {
+    input: AgentHeartbeatInputZ,
+    result: AgentHeartbeatResultZ,
+  },
+  "agent.unregister": {
+    input: AgentUnregisterInputZ,
+    result: AgentUnregisterResultZ,
   },
   "chat.thread.list": {
     input: ChatThreadListInputZ,

@@ -545,11 +545,13 @@ async function startHttpServer({
         })
       : undefined;
 
+  const { hostname: osHostname } = await import("node:os");
   const app = createApp({
     authService,
     authConfig,
     tunnelManager,
     remoteRegistry,
+    hqMachineName: hqConfig?.machine_name ?? osHostname(),
     remoteAccess: {
       bindHostname,
       token: authToken ?? null,

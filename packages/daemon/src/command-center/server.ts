@@ -94,6 +94,14 @@ import {
   WorkspaceAlreadyExistsError,
   WorkspaceNotFoundError,
 } from "../lib/workspace-registry.ts";
+import { discoverTmuxAgents } from "../lib/agent-discovery.ts";
+import {
+  aggregateHqAgents,
+  getDefaultExternalAgentRegistry,
+  mergeLocalAgents,
+  type RemoteAgentSource,
+} from "../lib/agent-registry.ts";
+import { AgentListSchemaZ, type AgentRecord } from "@tmux-ide/contracts";
 import { AddWorkspaceRequestSchemaZ } from "@tmux-ide/contracts";
 import {
   updateTaskSchema,
@@ -203,7 +211,7 @@ import {
   OnboardInvalidInputError,
 } from "../lib/project-onboard.ts";
 import { realpathSync } from "node:fs";
-import { homedir } from "node:os";
+import { homedir, hostname } from "node:os";
 import { isAbsolute, resolve as pathResolve } from "node:path";
 import { getLspClient, getLspClientForFile } from "../lsp/registry.ts";
 import { randomUUID } from "node:crypto";
@@ -239,6 +247,12 @@ export interface CreateAppOptions {
   authConfig?: AuthConfig;
   tunnelManager?: TunnelManager;
   remoteRegistry?: RemoteRegistry;
+  /**
+   * This host's HQ machine name (the name it registers under when acting as
+   * an HQ remote). Used to stamp local agents in GET /api/hq/agents so the
+   * aggregated view labels them by machine. Falls back to os.hostname().
+   */
+  hqMachineName?: string;
   remoteAccess?: {
     bindHostname?: string;
     token?: string | null;
@@ -3792,6 +3806,63 @@ export function createApp(options: CreateAppOptions = {}): Hono {
     const removed = remoteRegistry.unregister(c.req.param("id"));
     if (!removed) return c.json({ error: "Machine not found" }, 404);
     return c.json({ ok: true });
+  });
+
+  // --- Unified agent view ---
+
+  // Every Claude/codex agent on THIS host: tmux-discovered panes (managed +
+  // unmanaged) merged with hook-registered external sessions. machineId/Name
+  // stay null here — HQ stamps them when aggregating across hosts.
+  function localAgents(): AgentRecord[] {
+    const managed = new Set(
+      getDefaultWorkspaceRegistry()
+        .list()
+        .map((w) => w.sessionName),
+    );
+    const tmuxAgents = discoverTmuxAgents(managed);
+    const external = getDefaultExternalAgentRegistry().list();
+    return mergeLocalAgents(tmuxAgents, external);
+  }
+
+  app.get("/api/agents", (c) => {
+    const payload = AgentListSchemaZ.parse({ agents: localAgents() });
+    return c.json(payload);
+  });
+
+  // Aggregated view across HQ-registered machines. Always includes this
+  // host's local agents (stamped with this host's machine name). When acting
+  // as HQ, fans out to each remote's /api/agents and namespaces ids by
+  // machine id. Machines that error or time out are skipped.
+  app.get("/api/hq/agents", async (c) => {
+    const selfName = options.hqMachineName ?? hostname();
+    let remotes: RemoteAgentSource[] = [];
+
+    if (remoteRegistry) {
+      const fanout = remoteRegistry
+        .getMachines()
+        .map(async (machine): Promise<RemoteAgentSource | null> => {
+          try {
+            const controller = new AbortController();
+            const tid = setTimeout(() => controller.abort(), 5_000);
+            const res = await fetch(`${machine.url}/api/agents`, {
+              headers: { Authorization: `Bearer ${machine.token}` },
+              signal: controller.signal,
+            });
+            clearTimeout(tid);
+            if (!res.ok) return null;
+            const parsed = AgentListSchemaZ.safeParse(await res.json());
+            if (!parsed.success) return null;
+            return { machineId: machine.id, machineName: machine.name, agents: parsed.data.agents };
+          } catch {
+            // Skip unreachable / slow machines — don't fail the whole response.
+            return null;
+          }
+        });
+      remotes = (await Promise.all(fanout)).filter((r): r is RemoteAgentSource => r !== null);
+    }
+
+    const agents = aggregateHqAgents(localAgents(), selfName, remotes);
+    return c.json(AgentListSchemaZ.parse({ agents }));
   });
 
   // --- Tunnel endpoints ---

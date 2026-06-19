@@ -101,6 +101,62 @@ export class ExternalAgentRegistry {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Default singleton — the daemon process holds one registry so both the v2
+// action handlers (agent.register / heartbeat / unregister) and the
+// GET /api/agents route observe the same external-agent state.
+// ---------------------------------------------------------------------------
+
+let _default: ExternalAgentRegistry | null = null;
+
+export function getDefaultExternalAgentRegistry(): ExternalAgentRegistry {
+  if (!_default) _default = new ExternalAgentRegistry();
+  return _default;
+}
+
+/** @internal Test hook: replace the singleton. */
+export function _setDefaultExternalAgentRegistryForTests(
+  registry: ExternalAgentRegistry | null,
+): void {
+  _default = registry;
+}
+
+/** A remote machine's agents as fetched by HQ during fan-out. */
+export interface RemoteAgentSource {
+  machineId: string;
+  machineName: string;
+  agents: AgentRecord[];
+}
+
+/**
+ * Build the aggregated HQ view: this host's local agents (stamped with the
+ * self machine name, machineId null) followed by every reachable remote's
+ * agents (stamped with the remote's id/name, ids namespaced by `${id}:` so
+ * they stay globally unique). Pure — the caller owns fetch/timeout/skip.
+ */
+export function aggregateHqAgents(
+  localAgents: AgentRecord[],
+  selfMachineName: string,
+  remotes: RemoteAgentSource[],
+): AgentRecord[] {
+  const out: AgentRecord[] = localAgents.map((a) => ({
+    ...a,
+    machineId: null,
+    machineName: selfMachineName,
+  }));
+  for (const remote of remotes) {
+    for (const a of remote.agents) {
+      out.push({
+        ...a,
+        id: `${remote.machineId}:${a.id}`,
+        machineId: remote.machineId,
+        machineName: remote.machineName,
+      });
+    }
+  }
+  return out;
+}
+
 /**
  * Merge tmux-discovered agents with externally-reported ones, de-duplicating
  * by pid (a hook-registered agent that's also visible in a tmux pane shows up
