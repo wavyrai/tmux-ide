@@ -847,307 +847,10 @@ var init_ide_config = __esm({
 
 // packages/contracts/src/domain.ts
 import { z as z4 } from "zod";
-var ProofSchemaZ, MilestoneSchemaZ, MissionSchemaZ, GoalSchemaZ, TaskSchemaZ, EventTypeSchemaZ, OrchestratorEventSchemaZ, DispatchEventZ, CompletionEventZ, StallEventZ, RetryEventZ, ReconcileEventZ, ErrorEventZ, TaskCreatedEventZ, StatusChangeEventZ, SendEventZ, NotifyEventZ, MilestoneValidatingEventZ, MilestoneCompleteEventZ, ValidationDispatchEventZ, RemediationEventZ, ValidationFailedEventZ, PlanningEventZ, MissionCompleteEventZ, DiscoveredIssueEventZ, ResearchDispatchEventZ, ResearchFindingEventZ, WebhookTestEventZ, StructuredEventSchemaZ, MarkRangeSchemaZ, MarkSchemaZ, AuthorshipStatsSchemaZ, PlanStatusSchemaZ, PlanMetaSchemaZ, PaneInfoSchemaZ, AgentDetailSchemaZ, SessionStatsSchemaZ, SessionOverviewSchemaZ, ProjectDetailSchemaZ;
+var PaneInfoSchemaZ, SessionOverviewSchemaZ;
 var init_domain = __esm({
   "packages/contracts/src/domain.ts"() {
     "use strict";
-    ProofSchemaZ = z4.object({
-      tests: z4.object({ passed: z4.number(), total: z4.number() }).optional(),
-      pr: z4.object({
-        number: z4.number(),
-        url: z4.string().optional(),
-        status: z4.string().optional()
-      }).optional(),
-      ci: z4.object({ status: z4.string(), url: z4.string().optional() }).optional(),
-      notes: z4.string().optional()
-    });
-    MilestoneSchemaZ = z4.object({
-      id: z4.string(),
-      title: z4.string(),
-      description: z4.string(),
-      status: z4.enum(["locked", "active", "done", "validating"]),
-      order: z4.number(),
-      created: z4.string(),
-      updated: z4.string()
-    });
-    MissionSchemaZ = z4.object({
-      title: z4.string(),
-      description: z4.string(),
-      status: z4.enum(["planning", "active", "validating", "complete"]),
-      branch: z4.string().nullable(),
-      milestones: z4.array(MilestoneSchemaZ),
-      created: z4.string(),
-      updated: z4.string()
-    });
-    GoalSchemaZ = z4.object({
-      id: z4.string(),
-      title: z4.string(),
-      description: z4.string(),
-      status: z4.enum(["todo", "in-progress", "done"]),
-      acceptance: z4.string(),
-      priority: z4.number(),
-      created: z4.string(),
-      updated: z4.string(),
-      assignee: z4.string().nullable(),
-      specialty: z4.string().nullable(),
-      milestone: z4.string().nullable()
-    });
-    TaskSchemaZ = z4.object({
-      id: z4.string(),
-      title: z4.string(),
-      description: z4.string(),
-      goal: z4.string().nullable(),
-      status: z4.enum(["todo", "in-progress", "review", "done"]),
-      assignee: z4.string().nullable(),
-      priority: z4.number(),
-      created: z4.string(),
-      updated: z4.string(),
-      tags: z4.array(z4.string()),
-      proof: ProofSchemaZ.nullable(),
-      retryCount: z4.number(),
-      maxRetries: z4.number(),
-      lastError: z4.string().nullable(),
-      nextRetryAt: z4.string().nullable(),
-      depends_on: z4.array(z4.string()),
-      milestone: z4.string().nullable(),
-      specialty: z4.string().nullable(),
-      fulfills: z4.array(z4.string()),
-      discoveredIssues: z4.array(z4.string()),
-      salientSummary: z4.string().nullable()
-    });
-    EventTypeSchemaZ = z4.enum([
-      "dispatch",
-      "stall",
-      "completion",
-      "retry",
-      "reconcile",
-      "task.dispatched",
-      "task.claimed",
-      "task.completed",
-      "task.failed",
-      "task.retried",
-      "agent.stalled",
-      "agent.recovered",
-      "orchestrator.reconciled",
-      "error",
-      "task_created",
-      "status_change",
-      "send",
-      "notify",
-      "milestone_validating",
-      "milestone_complete",
-      "validation_dispatch",
-      "remediation",
-      "validation_failed",
-      "planning",
-      "mission_complete",
-      "discovered_issue",
-      "research_dispatch",
-      "research_finding",
-      "agent_heartbeat",
-      "session_start",
-      "session_end",
-      "webhook.test"
-    ]);
-    OrchestratorEventSchemaZ = z4.object({
-      timestamp: z4.string(),
-      type: EventTypeSchemaZ,
-      taskId: z4.string().optional(),
-      agent: z4.string().optional(),
-      message: z4.string()
-    });
-    DispatchEventZ = z4.object({
-      timestamp: z4.string(),
-      type: z4.literal("dispatch"),
-      taskId: z4.string(),
-      agent: z4.string()
-    });
-    CompletionEventZ = z4.object({
-      timestamp: z4.string(),
-      type: z4.literal("completion"),
-      taskId: z4.string(),
-      agent: z4.string(),
-      durationMs: z4.number().optional()
-    });
-    StallEventZ = z4.object({
-      timestamp: z4.string(),
-      type: z4.literal("stall"),
-      taskId: z4.string(),
-      agent: z4.string(),
-      elapsedMs: z4.number()
-    });
-    RetryEventZ = z4.object({
-      timestamp: z4.string(),
-      type: z4.literal("retry"),
-      taskId: z4.string(),
-      attempt: z4.number(),
-      maxRetries: z4.number(),
-      reason: z4.string()
-    });
-    ReconcileEventZ = z4.object({
-      timestamp: z4.string(),
-      type: z4.literal("reconcile"),
-      taskId: z4.string(),
-      previousAgent: z4.string(),
-      action: z4.string()
-    });
-    ErrorEventZ = z4.object({
-      timestamp: z4.string(),
-      type: z4.literal("error"),
-      taskId: z4.string().optional(),
-      agent: z4.string().optional(),
-      message: z4.string(),
-      code: z4.string().optional()
-    });
-    TaskCreatedEventZ = z4.object({
-      timestamp: z4.string(),
-      type: z4.literal("task_created"),
-      taskId: z4.string(),
-      title: z4.string()
-    });
-    StatusChangeEventZ = z4.object({
-      timestamp: z4.string(),
-      type: z4.literal("status_change"),
-      taskId: z4.string(),
-      from: z4.string(),
-      to: z4.string()
-    });
-    SendEventZ = z4.object({
-      timestamp: z4.string(),
-      type: z4.literal("send"),
-      target: z4.string(),
-      paneId: z4.string(),
-      message: z4.string()
-    });
-    NotifyEventZ = z4.object({
-      timestamp: z4.string(),
-      type: z4.literal("notify"),
-      target: z4.string(),
-      paneId: z4.string(),
-      message: z4.string()
-    });
-    MilestoneValidatingEventZ = z4.object({
-      timestamp: z4.string(),
-      type: z4.literal("milestone_validating"),
-      milestoneId: z4.string().optional(),
-      title: z4.string().optional()
-    });
-    MilestoneCompleteEventZ = z4.object({
-      timestamp: z4.string(),
-      type: z4.literal("milestone_complete"),
-      milestoneId: z4.string().optional(),
-      title: z4.string().optional()
-    });
-    ValidationDispatchEventZ = z4.object({
-      timestamp: z4.string(),
-      type: z4.literal("validation_dispatch"),
-      milestoneId: z4.string().optional(),
-      title: z4.string().optional(),
-      target: z4.string().optional()
-    });
-    RemediationEventZ = z4.object({
-      timestamp: z4.string(),
-      type: z4.literal("remediation"),
-      taskId: z4.string(),
-      assertionId: z4.string().optional()
-    });
-    ValidationFailedEventZ = z4.object({
-      timestamp: z4.string(),
-      type: z4.literal("validation_failed"),
-      milestoneId: z4.string().optional(),
-      title: z4.string().optional(),
-      failedCount: z4.number().optional()
-    });
-    PlanningEventZ = z4.object({
-      timestamp: z4.string(),
-      type: z4.literal("planning"),
-      target: z4.string().optional()
-    });
-    MissionCompleteEventZ = z4.object({
-      timestamp: z4.string(),
-      type: z4.literal("mission_complete"),
-      title: z4.string().optional(),
-      milestoneCount: z4.number().optional(),
-      taskCount: z4.number().optional(),
-      prNumber: z4.number().optional()
-    });
-    DiscoveredIssueEventZ = z4.object({
-      timestamp: z4.string(),
-      type: z4.literal("discovered_issue"),
-      taskId: z4.string(),
-      sourceTaskId: z4.string().optional(),
-      issue: z4.string().optional()
-    });
-    ResearchDispatchEventZ = z4.object({
-      timestamp: z4.string(),
-      type: z4.literal("research_dispatch"),
-      taskId: z4.string(),
-      target: z4.string().optional(),
-      researchType: z4.string().optional()
-    });
-    ResearchFindingEventZ = z4.object({
-      timestamp: z4.string(),
-      type: z4.literal("research_finding"),
-      taskId: z4.string(),
-      researchType: z4.string().optional(),
-      summary: z4.string().optional()
-    });
-    WebhookTestEventZ = z4.object({
-      timestamp: z4.string(),
-      type: z4.literal("webhook.test"),
-      message: z4.string()
-    });
-    StructuredEventSchemaZ = z4.union([
-      DispatchEventZ,
-      CompletionEventZ,
-      StallEventZ,
-      RetryEventZ,
-      ReconcileEventZ,
-      ErrorEventZ,
-      TaskCreatedEventZ,
-      StatusChangeEventZ,
-      SendEventZ,
-      NotifyEventZ,
-      MilestoneValidatingEventZ,
-      MilestoneCompleteEventZ,
-      ValidationDispatchEventZ,
-      RemediationEventZ,
-      ValidationFailedEventZ,
-      PlanningEventZ,
-      MissionCompleteEventZ,
-      DiscoveredIssueEventZ,
-      ResearchDispatchEventZ,
-      ResearchFindingEventZ,
-      WebhookTestEventZ
-    ]);
-    MarkRangeSchemaZ = z4.object({
-      from: z4.number(),
-      to: z4.number()
-    });
-    MarkSchemaZ = z4.object({
-      id: z4.string(),
-      kind: z4.enum(["authored", "approved", "flagged", "comment", "insert", "delete", "replace"]),
-      by: z4.string(),
-      at: z4.string(),
-      range: MarkRangeSchemaZ,
-      quote: z4.string(),
-      orphaned: z4.boolean().optional()
-    });
-    AuthorshipStatsSchemaZ = z4.object({
-      aiPercent: z4.number(),
-      humanPercent: z4.number(),
-      totalChars: z4.number()
-    });
-    PlanStatusSchemaZ = z4.enum(["pending", "in-progress", "done", "archived"]);
-    PlanMetaSchemaZ = z4.object({
-      name: z4.string(),
-      path: z4.string(),
-      title: z4.string(),
-      status: PlanStatusSchemaZ,
-      effort: z4.string().optional(),
-      gate: z4.string().optional(),
-      completed: z4.string().optional()
-    });
     PaneInfoSchemaZ = z4.object({
       id: z4.string(),
       index: z4.number(),
@@ -1160,31 +863,9 @@ var init_domain = __esm({
       name: z4.string().nullable(),
       type: z4.string().nullable()
     });
-    AgentDetailSchemaZ = z4.object({
-      paneTitle: z4.string(),
-      paneId: z4.string(),
-      isBusy: z4.boolean(),
-      taskTitle: z4.string().nullable(),
-      taskId: z4.string().nullable(),
-      elapsed: z4.string()
-    });
-    SessionStatsSchemaZ = z4.object({
-      totalTasks: z4.number(),
-      doneTasks: z4.number(),
-      agents: z4.number(),
-      activeAgents: z4.number()
-    });
     SessionOverviewSchemaZ = z4.object({
       name: z4.string(),
       dir: z4.string()
-    });
-    ProjectDetailSchemaZ = z4.object({
-      session: z4.string(),
-      dir: z4.string(),
-      mission: MissionSchemaZ.nullable(),
-      goals: z4.array(GoalSchemaZ),
-      tasks: z4.array(TaskSchemaZ),
-      agents: z4.array(AgentDetailSchemaZ)
     });
   }
 });
@@ -1274,1177 +955,133 @@ var init_workspace = __esm({
   }
 });
 
-// packages/contracts/src/chat-thread.ts
-import { z as z7 } from "zod";
-var ThreadIdZ, TurnIdZ, CheckpointRefZ, MessageIdZ, EventIdZ, SessionIdZ, ProjectIdZ, IsoDateTimeZ, NonNegativeIntZ, TrimmedNonEmptyStringZ, ProposedPlanIdZ, SessionStatusZ, CheckpointStatusZ, ThreadActivityToneZ, LatestTurnStateZ, MessageRoleZ, RuntimeModeZ, DEFAULT_RUNTIME_MODE, InteractionModeZ, DEFAULT_INTERACTION_MODE, SessionRoleZ, ModelSelectionZ, CHAT_ATTACHMENT_ID_MAX_CHARS, PROVIDER_SEND_TURN_MAX_IMAGE_BYTES, ChatImageAttachmentZ, ChatAttachmentZ, MessageZ, ProposedPlanRejectionZ, ProposedPlanZ, SourceProposedPlanReferenceZ, SessionZ, CheckpointFileZ, CheckpointSummaryZ, ThreadActivityZ, LatestTurnZ, ThreadZ, TurnAbortReasonZ, ThreadActivityAppendedEventZ, TurnStartedEventZ, TurnCompletedEventZ, TurnAbortedEventZ, PlanUpsertedEventZ, CheckpointCreatedEventZ, ThreadRevertedEventZ, SessionAddedEventZ, SessionRemovedEventZ, SessionStatusChangedEventZ, ChatThreadEventZ, ProviderKindZ, ProviderInstanceIdZ, NonEmptyTokenZ, AnthropicProviderConfigZ, OpenAIProviderConfigZ, LocalOllamaProviderConfigZ, LocalLmStudioProviderConfigZ, GenericAcpProviderConfigZ, ProviderConfigZ, ProviderInstanceZ, ProvidersFileZ, ProviderInstanceSummaryZ, ProviderTokenUsageZ;
-var init_chat_thread = __esm({
-  "packages/contracts/src/chat-thread.ts"() {
-    "use strict";
-    ThreadIdZ = z7.string();
-    TurnIdZ = z7.string();
-    CheckpointRefZ = z7.string();
-    MessageIdZ = z7.string();
-    EventIdZ = z7.string();
-    SessionIdZ = z7.string();
-    ProjectIdZ = z7.string();
-    IsoDateTimeZ = z7.string();
-    NonNegativeIntZ = z7.number().int().nonnegative();
-    TrimmedNonEmptyStringZ = z7.string().trim().min(1);
-    ProposedPlanIdZ = TrimmedNonEmptyStringZ;
-    SessionStatusZ = z7.enum([
-      "idle",
-      "starting",
-      "running",
-      "ready",
-      "interrupted",
-      "stopped",
-      "error"
-    ]);
-    CheckpointStatusZ = z7.enum(["ready", "missing", "error"]);
-    ThreadActivityToneZ = z7.enum(["info", "tool", "approval", "error"]);
-    LatestTurnStateZ = z7.enum(["running", "interrupted", "completed", "error"]);
-    MessageRoleZ = z7.enum(["user", "assistant", "system"]);
-    RuntimeModeZ = z7.enum(["approval-required", "auto-accept-edits", "full-access"]);
-    DEFAULT_RUNTIME_MODE = "full-access";
-    InteractionModeZ = z7.enum(["default", "plan"]);
-    DEFAULT_INTERACTION_MODE = "default";
-    SessionRoleZ = z7.enum(["lead", "teammate", "planner", "validator", "researcher"]);
-    ModelSelectionZ = z7.object({
-      instanceId: TrimmedNonEmptyStringZ,
-      model: TrimmedNonEmptyStringZ,
-      options: z7.record(z7.string(), z7.unknown()).optional()
-    });
-    CHAT_ATTACHMENT_ID_MAX_CHARS = 128;
-    PROVIDER_SEND_TURN_MAX_IMAGE_BYTES = 10 * 1024 * 1024;
-    ChatImageAttachmentZ = z7.object({
-      type: z7.literal("image"),
-      id: TrimmedNonEmptyStringZ.max(CHAT_ATTACHMENT_ID_MAX_CHARS).regex(/^[a-z0-9_-]+$/i),
-      name: TrimmedNonEmptyStringZ.max(255),
-      mimeType: TrimmedNonEmptyStringZ.max(100).regex(/^image\//i),
-      sizeBytes: NonNegativeIntZ.max(PROVIDER_SEND_TURN_MAX_IMAGE_BYTES)
-    });
-    ChatAttachmentZ = z7.discriminatedUnion("type", [ChatImageAttachmentZ]);
-    MessageZ = z7.object({
-      id: MessageIdZ,
-      role: MessageRoleZ,
-      text: z7.string(),
-      attachments: z7.array(ChatAttachmentZ).optional(),
-      turnId: TurnIdZ.nullable(),
-      streaming: z7.boolean(),
-      createdAt: IsoDateTimeZ,
-      updatedAt: IsoDateTimeZ
-    });
-    ProposedPlanRejectionZ = z7.object({
-      at: IsoDateTimeZ,
-      reason: z7.string().optional()
-    });
-    ProposedPlanZ = z7.object({
-      id: ProposedPlanIdZ,
-      turnId: TurnIdZ.nullable(),
-      planMarkdown: TrimmedNonEmptyStringZ,
-      implementedAt: IsoDateTimeZ.nullable().default(null),
-      implementationThreadId: ThreadIdZ.nullable().default(null),
-      rejected: ProposedPlanRejectionZ.optional(),
-      createdAt: IsoDateTimeZ,
-      updatedAt: IsoDateTimeZ
-    });
-    SourceProposedPlanReferenceZ = z7.object({
-      threadId: ThreadIdZ,
-      planId: ProposedPlanIdZ
-    });
-    SessionZ = z7.object({
-      id: SessionIdZ.optional(),
-      threadId: ThreadIdZ,
-      status: SessionStatusZ,
-      providerName: TrimmedNonEmptyStringZ.nullable(),
-      providerInstanceId: TrimmedNonEmptyStringZ.optional(),
-      runtimeMode: RuntimeModeZ.default(DEFAULT_RUNTIME_MODE),
-      role: SessionRoleZ.optional(),
-      displayName: TrimmedNonEmptyStringZ.optional(),
-      activeTurnId: TurnIdZ.nullable(),
-      lastError: TrimmedNonEmptyStringZ.nullable(),
-      updatedAt: IsoDateTimeZ
-    });
-    CheckpointFileZ = z7.object({
-      path: TrimmedNonEmptyStringZ,
-      kind: TrimmedNonEmptyStringZ,
-      additions: NonNegativeIntZ,
-      deletions: NonNegativeIntZ
-    });
-    CheckpointSummaryZ = z7.object({
-      turnId: TurnIdZ,
-      checkpointTurnCount: NonNegativeIntZ,
-      checkpointRef: CheckpointRefZ,
-      status: CheckpointStatusZ,
-      files: z7.array(CheckpointFileZ),
-      assistantMessageId: MessageIdZ.nullable(),
-      completedAt: IsoDateTimeZ
-    });
-    ThreadActivityZ = z7.object({
-      id: EventIdZ,
-      tone: ThreadActivityToneZ,
-      kind: TrimmedNonEmptyStringZ,
-      summary: TrimmedNonEmptyStringZ,
-      payload: z7.unknown(),
-      turnId: TurnIdZ.nullable(),
-      /**
-       * Multi-agent attribution: when a Thread hosts multiple Sessions, the
-       * activity stream is interleaved by `sequence` but each entry carries
-       * the Session that produced it so the dashboard can render lanes /
-       * color-coded chips per agent. Optional for back-compat with single
-       * session threads from before T078.
-       */
-      sessionId: SessionIdZ.optional(),
-      sequence: NonNegativeIntZ.optional(),
-      createdAt: IsoDateTimeZ
-    });
-    LatestTurnZ = z7.object({
-      turnId: TurnIdZ,
-      state: LatestTurnStateZ,
-      requestedAt: IsoDateTimeZ,
-      startedAt: IsoDateTimeZ.nullable(),
-      completedAt: IsoDateTimeZ.nullable(),
-      assistantMessageId: MessageIdZ.nullable(),
-      /** Owning session when the Thread has multi-agent sessions (T078). */
-      sessionId: SessionIdZ.optional(),
-      sourceProposedPlan: SourceProposedPlanReferenceZ.optional()
-    });
-    ThreadZ = z7.object({
-      id: ThreadIdZ,
-      projectId: ProjectIdZ,
-      title: TrimmedNonEmptyStringZ,
-      modelSelection: ModelSelectionZ,
-      runtimeMode: RuntimeModeZ,
-      interactionMode: InteractionModeZ.default(DEFAULT_INTERACTION_MODE),
-      branch: TrimmedNonEmptyStringZ.nullable(),
-      worktreePath: TrimmedNonEmptyStringZ.nullable(),
-      latestTurn: LatestTurnZ.nullable(),
-      createdAt: IsoDateTimeZ,
-      updatedAt: IsoDateTimeZ,
-      archivedAt: IsoDateTimeZ.nullable().default(null),
-      deletedAt: IsoDateTimeZ.nullable(),
-      messages: z7.array(MessageZ),
-      proposedPlans: z7.array(ProposedPlanZ).default([]),
-      activities: z7.array(ThreadActivityZ),
-      checkpoints: z7.array(CheckpointSummaryZ),
-      /**
-       * @deprecated since T078 — prefer `sessions[]`. Retained so legacy
-       * single-session wire shapes still parse; the canonical multi-agent
-       * representation is the `sessions` array below. Consumers that only
-       * need a single session can read `sessions[0]` (the compat shim).
-       */
-      session: SessionZ.nullable(),
-      /**
-       * Multi-agent (T078): a Thread can host multiple concurrent Sessions,
-       * each backed by its own provider/runtimeMode/activeTurnId. Default is
-       * empty so previously-persisted Threads continue to round-trip; new
-       * Threads should always populate at least one Session.
-       */
-      sessions: z7.array(SessionZ).default([])
-    });
-    TurnAbortReasonZ = z7.enum(["cancelled", "interrupted", "error"]);
-    ThreadActivityAppendedEventZ = z7.object({
-      type: z7.literal("chat.activity.appended"),
-      threadId: ThreadIdZ,
-      activity: ThreadActivityZ,
-      seq: NonNegativeIntZ
-    });
-    TurnStartedEventZ = z7.object({
-      type: z7.literal("chat.turn.started"),
-      threadId: ThreadIdZ,
-      turnId: TurnIdZ,
-      requestedAt: IsoDateTimeZ,
-      sourceProposedPlanRef: SourceProposedPlanReferenceZ.optional()
-    });
-    TurnCompletedEventZ = z7.object({
-      type: z7.literal("chat.turn.completed"),
-      threadId: ThreadIdZ,
-      turnId: TurnIdZ,
-      state: LatestTurnStateZ,
-      completedAt: IsoDateTimeZ,
-      assistantMessageId: MessageIdZ.optional()
-    });
-    TurnAbortedEventZ = z7.object({
-      type: z7.literal("chat.turn.aborted"),
-      threadId: ThreadIdZ,
-      turnId: TurnIdZ,
-      reason: TurnAbortReasonZ
-    });
-    PlanUpsertedEventZ = z7.object({
-      type: z7.literal("chat.plan.upserted"),
-      threadId: ThreadIdZ,
-      plan: ProposedPlanZ
-    });
-    CheckpointCreatedEventZ = z7.object({
-      type: z7.literal("chat.checkpoint.created"),
-      threadId: ThreadIdZ,
-      checkpoint: CheckpointSummaryZ
-    });
-    ThreadRevertedEventZ = z7.object({
-      type: z7.literal("chat.thread.reverted"),
-      threadId: ThreadIdZ,
-      toCheckpointRef: CheckpointRefZ
-    });
-    SessionAddedEventZ = z7.object({
-      type: z7.literal("chat.session.added"),
-      threadId: ThreadIdZ,
-      session: SessionZ
-    });
-    SessionRemovedEventZ = z7.object({
-      type: z7.literal("chat.session.removed"),
-      threadId: ThreadIdZ,
-      sessionId: SessionIdZ
-    });
-    SessionStatusChangedEventZ = z7.object({
-      type: z7.literal("chat.session.status-changed"),
-      threadId: ThreadIdZ,
-      sessionId: SessionIdZ,
-      status: SessionStatusZ,
-      lastError: TrimmedNonEmptyStringZ.nullable().optional(),
-      activeTurnId: TurnIdZ.nullable().optional()
-    });
-    ChatThreadEventZ = z7.discriminatedUnion("type", [
-      ThreadActivityAppendedEventZ,
-      TurnStartedEventZ,
-      TurnCompletedEventZ,
-      TurnAbortedEventZ,
-      PlanUpsertedEventZ,
-      CheckpointCreatedEventZ,
-      ThreadRevertedEventZ,
-      SessionAddedEventZ,
-      SessionRemovedEventZ,
-      SessionStatusChangedEventZ
-    ]);
-    ProviderKindZ = z7.enum([
-      "anthropic",
-      "openai",
-      "local-ollama",
-      "local-lmstudio",
-      "generic-acp"
-    ]);
-    ProviderInstanceIdZ = TrimmedNonEmptyStringZ.regex(/^[a-z0-9_-]+$/i);
-    NonEmptyTokenZ = TrimmedNonEmptyStringZ;
-    AnthropicProviderConfigZ = z7.object({
-      kind: z7.literal("anthropic"),
-      apiKey: NonEmptyTokenZ,
-      model: NonEmptyTokenZ,
-      baseUrl: NonEmptyTokenZ.optional()
-    });
-    OpenAIProviderConfigZ = z7.object({
-      kind: z7.literal("openai"),
-      apiKey: NonEmptyTokenZ,
-      model: NonEmptyTokenZ,
-      baseUrl: NonEmptyTokenZ.optional(),
-      organization: NonEmptyTokenZ.optional()
-    });
-    LocalOllamaProviderConfigZ = z7.object({
-      kind: z7.literal("local-ollama"),
-      baseUrl: NonEmptyTokenZ.default("http://127.0.0.1:11434"),
-      model: NonEmptyTokenZ
-    });
-    LocalLmStudioProviderConfigZ = z7.object({
-      kind: z7.literal("local-lmstudio"),
-      baseUrl: NonEmptyTokenZ.default("http://127.0.0.1:1234/v1"),
-      model: NonEmptyTokenZ,
-      apiKey: NonEmptyTokenZ.optional()
-      // LM Studio accepts any value but the field is required for some clients.
-    });
-    GenericAcpProviderConfigZ = z7.object({
-      kind: z7.literal("generic-acp"),
-      /** Path to the ACP-speaking binary. */
-      binary: NonEmptyTokenZ,
-      /** Extra args appended to the binary on spawn. */
-      args: z7.array(NonEmptyTokenZ).default([])
-    });
-    ProviderConfigZ = z7.discriminatedUnion("kind", [
-      AnthropicProviderConfigZ,
-      OpenAIProviderConfigZ,
-      LocalOllamaProviderConfigZ,
-      LocalLmStudioProviderConfigZ,
-      GenericAcpProviderConfigZ
-    ]);
-    ProviderInstanceZ = z7.object({
-      id: ProviderInstanceIdZ,
-      kind: ProviderKindZ,
-      displayName: TrimmedNonEmptyStringZ,
-      config: ProviderConfigZ,
-      createdAt: IsoDateTimeZ.optional()
-    });
-    ProvidersFileZ = z7.object({
-      version: z7.literal(1),
-      providers: z7.array(ProviderInstanceZ)
-    });
-    ProviderInstanceSummaryZ = z7.object({
-      id: ProviderInstanceIdZ,
-      kind: ProviderKindZ,
-      displayName: TrimmedNonEmptyStringZ,
-      model: TrimmedNonEmptyStringZ.optional(),
-      baseUrl: TrimmedNonEmptyStringZ.optional(),
-      hasApiKey: z7.boolean(),
-      createdAt: IsoDateTimeZ.optional()
-    });
-    ProviderTokenUsageZ = z7.object({
-      providerInstanceId: ProviderInstanceIdZ,
-      inputTokens: NonNegativeIntZ.default(0),
-      outputTokens: NonNegativeIntZ.default(0),
-      totalCostUsd: z7.number().nonnegative().optional()
-    });
-  }
-});
-
-// packages/contracts/src/routes.ts
-import { z as z8 } from "zod";
-var ValidationSummarySchemaZ, MissionResponseSchemaZ, ProjectFileNodeSchemaZ, ProjectFilesResponseSchemaZ, DiffFileEntrySchemaZ, DiffDataSchemaZ, FileDiffResponseSchemaZ, WidgetSpawnSpecSchemaZ, SessionsListResponseSchemaZ, ProjectEventSchemaZ, ProjectEventsResponseSchemaZ, RawMetricsAgentSchemaZ, RawMetricsResponseSchemaZ, ProjectNameParamsZ, ProjectFileParamsZ, WidgetSpawnQueryZ, WidgetSpawnParamsZ, ThreadIdParamsZ, ThreadPlanParamsZ, PlanListResponseZ, PlanApproveBodyZ, PlanApproveResponseZ, PlanRejectBodyZ, PlanRejectResponseZ, routes;
-var init_routes = __esm({
-  "packages/contracts/src/routes.ts"() {
-    "use strict";
-    init_domain();
-    init_chat_thread();
-    ValidationSummarySchemaZ = z8.object({
-      total: z8.number(),
-      passing: z8.number(),
-      failing: z8.number(),
-      pending: z8.number(),
-      blocked: z8.number()
-    });
-    MissionResponseSchemaZ = z8.object({
-      mission: MissionSchemaZ.passthrough(),
-      validationSummary: ValidationSummarySchemaZ
-    });
-    ProjectFileNodeSchemaZ = z8.lazy(
-      () => z8.object({
-        path: z8.string(),
-        name: z8.string(),
-        isDirectory: z8.boolean(),
-        children: z8.array(ProjectFileNodeSchemaZ).optional(),
-        truncated: z8.literal(true).optional()
-      })
-    );
-    ProjectFilesResponseSchemaZ = z8.object({
-      tree: z8.array(ProjectFileNodeSchemaZ),
-      maxDepth: z8.number(),
-      truncated: z8.boolean()
-    });
-    DiffFileEntrySchemaZ = z8.object({
-      file: z8.string(),
-      additions: z8.number(),
-      deletions: z8.number()
-    });
-    DiffDataSchemaZ = z8.object({
-      diff: z8.string(),
-      files: z8.array(DiffFileEntrySchemaZ)
-    });
-    FileDiffResponseSchemaZ = z8.object({
-      file: z8.string(),
-      diff: z8.string()
-    });
-    WidgetSpawnSpecSchemaZ = z8.object({
-      cwd: z8.string(),
-      cmd: z8.array(z8.string())
-    });
-    SessionsListResponseSchemaZ = z8.object({
-      sessions: z8.array(SessionOverviewSchemaZ)
-    });
-    ProjectEventSchemaZ = z8.object({
-      type: z8.string(),
-      timestamp: z8.string(),
-      relative: z8.string().optional(),
-      message: z8.string().optional(),
-      agent: z8.string().nullable().optional()
-    });
-    ProjectEventsResponseSchemaZ = z8.union([
-      z8.array(ProjectEventSchemaZ),
-      z8.object({ events: z8.array(ProjectEventSchemaZ) })
-    ]);
-    RawMetricsAgentSchemaZ = z8.object({
-      name: z8.string(),
-      totalTimeMs: z8.number(),
-      activeTimeMs: z8.number(),
-      taskCount: z8.number(),
-      utilization: z8.number()
-    });
-    RawMetricsResponseSchemaZ = z8.object({
-      session: z8.object({ startedAt: z8.string(), durationMs: z8.number() }),
-      tasks: z8.object({ total: z8.number() }),
-      agents: z8.array(RawMetricsAgentSchemaZ)
-    });
-    ProjectNameParamsZ = z8.object({ name: z8.string() });
-    ProjectFileParamsZ = z8.object({
-      name: z8.string(),
-      file: z8.string()
-    });
-    WidgetSpawnQueryZ = z8.object({
-      session: z8.string(),
-      dir: z8.string(),
-      target: z8.string().optional(),
-      /** JSON-encoded theme blob — server JSON.parses if present. */
-      theme: z8.string().optional()
-    });
-    WidgetSpawnParamsZ = z8.object({ name: z8.string() });
-    ThreadIdParamsZ = z8.object({ threadId: z8.string().trim().min(1) });
-    ThreadPlanParamsZ = z8.object({
-      threadId: z8.string().trim().min(1),
-      planId: z8.string().trim().min(1)
-    });
-    PlanListResponseZ = z8.object({
-      plans: z8.array(ProposedPlanZ)
-    });
-    PlanApproveBodyZ = z8.object({
-      runtimeMode: RuntimeModeZ.optional()
-    });
-    PlanApproveResponseZ = z8.object({
-      plan: ProposedPlanZ,
-      turnId: z8.string()
-    });
-    PlanRejectBodyZ = z8.object({
-      reason: z8.string().trim().min(1).max(2e3).optional()
-    });
-    PlanRejectResponseZ = z8.object({
-      plan: ProposedPlanZ
-    });
-    routes = {
-      "sessions.list": {
-        method: "GET",
-        path: "/api/sessions",
-        res: SessionsListResponseSchemaZ
-      },
-      "project.detail": {
-        method: "GET",
-        path: "/api/project/:name",
-        params: ProjectNameParamsZ,
-        res: ProjectDetailSchemaZ.passthrough(),
-        nullableOn404: true
-      },
-      "project.mission": {
-        method: "GET",
-        path: "/api/project/:name/mission",
-        params: ProjectNameParamsZ,
-        res: MissionResponseSchemaZ,
-        nullableOn404: true
-      },
-      "project.events": {
-        method: "GET",
-        path: "/api/project/:name/events",
-        params: ProjectNameParamsZ,
-        res: ProjectEventsResponseSchemaZ,
-        nullableOn404: true
-      },
-      "project.files": {
-        method: "GET",
-        path: "/api/project/:name/files",
-        params: ProjectNameParamsZ,
-        res: ProjectFilesResponseSchemaZ,
-        nullableOn404: true
-      },
-      "project.diff": {
-        method: "GET",
-        path: "/api/project/:name/diff",
-        params: ProjectNameParamsZ,
-        res: DiffDataSchemaZ,
-        nullableOn404: true
-      },
-      "project.fileDiff": {
-        method: "GET",
-        path: "/api/project/:name/diff/:file",
-        params: ProjectFileParamsZ,
-        res: FileDiffResponseSchemaZ,
-        nullableOn404: true
-      },
-      "project.metrics": {
-        method: "GET",
-        path: "/api/project/:name/metrics",
-        params: ProjectNameParamsZ,
-        res: RawMetricsResponseSchemaZ
-      },
-      "widget.spawn": {
-        method: "GET",
-        path: "/api/widget/:name/spawn",
-        params: WidgetSpawnParamsZ,
-        query: WidgetSpawnQueryZ,
-        res: WidgetSpawnSpecSchemaZ
-      },
-      "threads.plans.list": {
-        method: "GET",
-        path: "/api/threads/:threadId/plans",
-        params: ThreadIdParamsZ,
-        res: PlanListResponseZ
-      },
-      "threads.plans.approve": {
-        method: "POST",
-        path: "/api/threads/:threadId/plans/:planId/approve",
-        params: ThreadPlanParamsZ,
-        body: PlanApproveBodyZ,
-        res: PlanApproveResponseZ
-      },
-      "threads.plans.reject": {
-        method: "POST",
-        path: "/api/threads/:threadId/plans/:planId/reject",
-        params: ThreadPlanParamsZ,
-        body: PlanRejectBodyZ,
-        res: PlanRejectResponseZ
-      }
-    };
-  }
-});
-
-// packages/contracts/src/client.ts
-var init_client = __esm({
-  "packages/contracts/src/client.ts"() {
-    "use strict";
-    init_routes();
-  }
-});
-
-// packages/contracts/src/ws-v3-protocol.ts
-var init_ws_v3_protocol = __esm({
-  "packages/contracts/src/ws-v3-protocol.ts"() {
-    "use strict";
-  }
-});
-
-// packages/contracts/src/chat-timeline.ts
-import { z as z9 } from "zod";
-var IsoDateTimeZ2, OpaqueBlockZ, TimelineToolCallZ, TimelinePlanEntryZ, TimelineUserMessageZ, TimelineAssistantMessageZ, TimelineMessageZ, TimelineRowZ, ChatResumeSubscribeZ;
-var init_chat_timeline = __esm({
-  "packages/contracts/src/chat-timeline.ts"() {
-    "use strict";
-    IsoDateTimeZ2 = z9.string().min(1);
-    OpaqueBlockZ = z9.unknown();
-    TimelineToolCallZ = z9.object({
-      toolCallId: z9.string(),
-      title: z9.string(),
-      kind: z9.string().optional(),
-      status: z9.enum(["pending", "in_progress", "completed", "failed"]),
-      content: z9.array(OpaqueBlockZ),
-      rawInput: z9.unknown().optional(),
-      rawOutput: z9.unknown().optional()
-    });
-    TimelinePlanEntryZ = z9.object({
-      content: z9.string(),
-      status: z9.enum(["pending", "in_progress", "completed"]).optional(),
-      priority: z9.enum(["low", "medium", "high"]).optional()
-    });
-    TimelineUserMessageZ = z9.object({
-      id: z9.string(),
-      role: z9.literal("user"),
-      createdAt: IsoDateTimeZ2,
-      content: z9.array(OpaqueBlockZ)
-    });
-    TimelineAssistantMessageZ = z9.object({
-      id: z9.string(),
-      role: z9.literal("assistant"),
-      createdAt: IsoDateTimeZ2,
-      completedAt: IsoDateTimeZ2.optional(),
-      streaming: z9.boolean(),
-      text: z9.string(),
-      thoughtText: z9.string().optional(),
-      toolCalls: z9.array(TimelineToolCallZ),
-      // Loose: passes through ACP stop reasons verbatim.
-      stopReason: z9.string().optional()
-    });
-    TimelineMessageZ = z9.discriminatedUnion("role", [
-      TimelineUserMessageZ,
-      TimelineAssistantMessageZ
-    ]);
-    TimelineRowZ = z9.discriminatedUnion("kind", [
-      z9.object({
-        kind: z9.literal("message"),
-        id: z9.string(),
-        createdAt: IsoDateTimeZ2,
-        message: TimelineMessageZ,
-        revertTurnCount: z9.number().int().nonnegative().optional()
-      }),
-      z9.object({
-        kind: z9.literal("plan"),
-        id: z9.string(),
-        createdAt: IsoDateTimeZ2,
-        entries: z9.array(TimelinePlanEntryZ)
-      }),
-      z9.object({
-        kind: z9.literal("working"),
-        id: z9.string(),
-        createdAt: IsoDateTimeZ2
-      })
-    ]);
-    ChatResumeSubscribeZ = z9.object({
-      type: z9.literal("chat.subscribe"),
-      threadId: z9.string().min(1),
-      lastSeq: z9.number().int().nonnegative().optional()
-    }).strict();
-  }
-});
-
 // packages/contracts/src/actions-contract.ts
-import { z as z10 } from "zod";
+import { z as z7 } from "zod";
 function isActionName(name) {
   return name in ActionContractsZ;
 }
-var ProjectScopeInputZ, ProofInputZ, SkillSchemaZ, ProjectOpenTerminalInputZ, ProjectOpenTerminalResultZ, ProjectLaunchInputZ, ProjectLaunchResultZ, ProjectStopInputZ, ProjectStopResultZ, ProjectRestartInputZ, ProjectRestartResultZ, ProjectActivateInputZ, ProjectActivateResultZ, TerminalRespawnInputZ, TerminalRespawnResultZ, TerminalStopInputZ, TerminalStopResultZ, TaskCreateInputZ, TaskCreateResultZ, TaskUpdateInputZ, TaskUpdateResultZ, TaskClaimInputZ, TaskClaimResultZ, TaskDoneInputZ, TaskDoneResultZ, TaskDeleteInputZ, TaskDeleteResultZ, GoalCreateInputZ, GoalCreateResultZ, GoalUpdateInputZ, GoalUpdateResultZ, GoalDoneInputZ, GoalDoneResultZ, GoalDeleteInputZ, GoalDeleteResultZ, MilestoneCreateInputZ, MilestoneCreateResultZ, MilestoneUpdateInputZ, MilestoneUpdateResultZ, MissionSetInputZ, MissionSetResultZ, MissionPlanCompleteResultZ, MissionClearResultZ, SkillCreateInputZ, SkillCreateResultZ, SkillDeleteInputZ, SkillDeleteResultZ, ConfigSetInputZ, ConfigResultZ, ConfigAddPaneInputZ, ConfigAddPaneResultZ, ConfigRemovePaneInputZ, ConfigRemovePaneResultZ, ConfigAddRowInputZ, ConfigAddRowResultZ, ConfigEnableTeamInputZ, ConfigEnableTeamResultZ, ConfigDisableTeamInputZ, ConfigDisableTeamResultZ, AssertionEntryZ, ValidationReportZ, ValidationAssertInputZ, ValidationAssertResultZ, ValidationReportInputZ, ValidationReportResultZ, WebhookAddInputZ, WebhookAddResultZ, WebhookRemoveInputZ, WebhookRemoveResultZ, WebhookTestResultZ, AppSetRemoteAccessInputZ, AppSetRemoteAccessResultZ, DaemonShutdownInputZ, DaemonShutdownResultZ, StopReasonZ, AgentProviderZ, ContentBlockZ, SessionUpdateZ, ChatThreadUsageSummaryZ, ThreadMessageZ, ThreadIndexEntryZ, ThreadStateZ, ChatThreadListInputZ, ChatThreadListResultZ, ProviderOptionSelectionZ, ProviderModelInfoZ, ChatProvidersListInputZ, ChatProvidersListResultZ, ChatThreadCreateInputZ, ChatThreadCreateResultZ, ChatThreadDeleteInputZ, ChatThreadDeleteResultZ, ChatThreadRenameInputZ, ChatThreadRenameResultZ, ChatThreadSetProviderInputZ, ChatThreadSetProviderResultZ, ChatThreadGetInputZ, ChatThreadGetResultZ, ChatThreadUsageInputZ, ChatThreadUsageResultZ, ChatSessionSendInputZ, ChatSessionSendResultZ, ChatSessionCancelInputZ, ChatSessionCancelResultZ, ChatSessionEditFromTurnInputZ, ChatSessionEditFromTurnResultZ, ChatPermissionRespondInputZ, ChatPermissionRespondResultZ, ChatContextCaptureTerminalInputZ, ChatContextCaptureTerminalResultZ, ActionContractsZ, ACTION_NAMES;
+var ProjectOpenTerminalInputZ, ProjectOpenTerminalResultZ, ProjectLaunchInputZ, ProjectLaunchResultZ, ProjectStopInputZ, ProjectStopResultZ, ProjectRestartInputZ, ProjectRestartResultZ, ProjectActivateInputZ, ProjectActivateResultZ, TerminalRespawnInputZ, TerminalRespawnResultZ, TerminalStopInputZ, TerminalStopResultZ, ConfigSetInputZ, ConfigResultZ, ConfigAddPaneInputZ, ConfigAddPaneResultZ, ConfigRemovePaneInputZ, ConfigRemovePaneResultZ, ConfigAddRowInputZ, ConfigAddRowResultZ, ConfigEnableTeamInputZ, ConfigEnableTeamResultZ, ConfigDisableTeamInputZ, ConfigDisableTeamResultZ, AppSetRemoteAccessInputZ, AppSetRemoteAccessResultZ, DaemonShutdownInputZ, DaemonShutdownResultZ, ActionContractsZ, ACTION_NAMES;
 var init_actions_contract = __esm({
   "packages/contracts/src/actions-contract.ts"() {
     "use strict";
-    init_chat_timeline();
-    init_domain();
     init_ide_config();
-    ProjectScopeInputZ = z10.object({
-      /**
-       * Optional project/session scope. Dashboard calls include this so task
-       * mutations target the selected project; CLI-style callers may omit it
-       * to use the command-center process cwd.
-       */
-      name: z10.string().min(1).optional(),
-      sessionName: z10.string().min(1).optional()
+    ProjectOpenTerminalInputZ = z7.object({
+      name: z7.string().min(1)
     });
-    ProofInputZ = z10.union([ProofSchemaZ, z10.string()]);
-    SkillSchemaZ = z10.object({
-      name: z10.string(),
-      specialties: z10.array(z10.string()),
-      role: z10.string(),
-      description: z10.string(),
-      body: z10.string()
-    });
-    ProjectOpenTerminalInputZ = z10.object({
-      name: z10.string().min(1)
-    });
-    ProjectOpenTerminalResultZ = z10.object({
-      sessionName: z10.string(),
-      cwd: z10.string().min(1),
-      terminalTabId: z10.string(),
+    ProjectOpenTerminalResultZ = z7.object({
+      sessionName: z7.string(),
+      cwd: z7.string().min(1),
+      terminalTabId: z7.string(),
       /**
        * `true` when the dispatcher had to launch the tmux session as part of
        * resolving the terminal. `false` when the session was already running.
        */
-      launched: z10.boolean()
+      launched: z7.boolean()
     });
-    ProjectLaunchInputZ = z10.object({
-      name: z10.string().min(1)
+    ProjectLaunchInputZ = z7.object({
+      name: z7.string().min(1)
     });
-    ProjectLaunchResultZ = z10.object({
-      sessionName: z10.string(),
+    ProjectLaunchResultZ = z7.object({
+      sessionName: z7.string(),
       /**
        * `false` when the session was already running (idempotent no-op),
        * `true` when this call started a fresh session.
        */
-      started: z10.boolean()
+      started: z7.boolean()
     });
-    ProjectStopInputZ = z10.object({
-      name: z10.string().min(1)
+    ProjectStopInputZ = z7.object({
+      name: z7.string().min(1)
     });
-    ProjectStopResultZ = z10.object({
-      sessionName: z10.string(),
+    ProjectStopResultZ = z7.object({
+      sessionName: z7.string(),
       /**
        * `false` when no session was running (idempotent no-op),
        * `true` when this call killed a session.
        */
-      stopped: z10.boolean()
+      stopped: z7.boolean()
     });
-    ProjectRestartInputZ = z10.object({
-      name: z10.string().min(1)
+    ProjectRestartInputZ = z7.object({
+      name: z7.string().min(1)
     });
-    ProjectRestartResultZ = z10.object({
-      sessionName: z10.string(),
-      restarted: z10.literal(true)
+    ProjectRestartResultZ = z7.object({
+      sessionName: z7.string(),
+      restarted: z7.literal(true)
     });
-    ProjectActivateInputZ = z10.object({
-      name: z10.string().min(1),
-      orchestrate: z10.boolean().optional()
+    ProjectActivateInputZ = z7.object({
+      name: z7.string().min(1)
     });
-    ProjectActivateResultZ = z10.object({
-      active: z10.boolean(),
-      projectName: z10.string()
+    ProjectActivateResultZ = z7.object({
+      active: z7.boolean(),
+      projectName: z7.string()
     });
-    TerminalRespawnInputZ = z10.object({
-      sessionName: z10.string().min(1),
-      terminalId: z10.string().min(1),
+    TerminalRespawnInputZ = z7.object({
+      sessionName: z7.string().min(1),
+      terminalId: z7.string().min(1),
       /**
        * Optional cwd override. Omit to respawn at the bridge's current cwd
        * (re-using the `lastCwd` recorded by the PTY bridge).
        */
-      cwd: z10.string().min(1).optional()
+      cwd: z7.string().min(1).optional()
     });
-    TerminalRespawnResultZ = z10.object({
-      respawned: z10.literal(true),
-      cwd: z10.string().min(1)
+    TerminalRespawnResultZ = z7.object({
+      respawned: z7.literal(true),
+      cwd: z7.string().min(1)
     });
-    TerminalStopInputZ = z10.object({
-      sessionName: z10.string().min(1),
-      terminalId: z10.string().min(1)
+    TerminalStopInputZ = z7.object({
+      sessionName: z7.string().min(1),
+      terminalId: z7.string().min(1)
     });
-    TerminalStopResultZ = z10.object({
-      stopped: z10.literal(true)
+    TerminalStopResultZ = z7.object({
+      stopped: z7.literal(true)
     });
-    TaskCreateInputZ = ProjectScopeInputZ.extend({
-      title: z10.string().min(1),
-      goalId: z10.string().min(1).optional(),
-      priority: z10.number().int().positive().optional(),
-      assign: z10.string().min(1).optional(),
-      tags: z10.array(z10.string()).optional(),
-      depends: z10.array(z10.string()).optional(),
-      description: z10.string().optional(),
-      milestone: z10.string().nullable().optional(),
-      specialty: z10.string().nullable().optional(),
-      fulfills: z10.array(z10.string()).optional()
+    ConfigSetInputZ = z7.object({
+      projectName: z7.string().min(1).optional(),
+      path: z7.string().min(1),
+      value: z7.unknown()
     });
-    TaskCreateResultZ = z10.object({
-      taskId: z10.string(),
-      task: TaskSchemaZ
-    });
-    TaskUpdateInputZ = ProjectScopeInputZ.extend({
-      taskId: z10.string().min(1),
-      status: z10.enum(["todo", "in-progress", "review", "done"]).optional(),
-      proof: ProofInputZ.optional(),
-      title: z10.string().optional(),
-      description: z10.string().optional(),
-      priority: z10.number().int().positive().optional(),
-      assign: z10.string().nullable().optional(),
-      assignee: z10.string().nullable().optional(),
-      goalId: z10.string().nullable().optional(),
-      tags: z10.array(z10.string()).optional(),
-      depends: z10.array(z10.string()).optional(),
-      milestone: z10.string().nullable().optional(),
-      specialty: z10.string().nullable().optional(),
-      fulfills: z10.array(z10.string()).optional(),
-      summary: z10.string().nullable().optional()
-    });
-    TaskUpdateResultZ = z10.object({
-      task: TaskSchemaZ
-    });
-    TaskClaimInputZ = ProjectScopeInputZ.extend({
-      taskId: z10.string().min(1),
-      assign: z10.string().min(1)
-    });
-    TaskClaimResultZ = z10.object({
-      task: TaskSchemaZ
-    });
-    TaskDoneInputZ = ProjectScopeInputZ.extend({
-      taskId: z10.string().min(1),
-      proof: ProofInputZ.optional()
-    });
-    TaskDoneResultZ = z10.object({
-      task: TaskSchemaZ
-    });
-    TaskDeleteInputZ = ProjectScopeInputZ.extend({
-      taskId: z10.string().min(1)
-    });
-    TaskDeleteResultZ = z10.object({
-      deleted: z10.literal(true)
-    });
-    GoalCreateInputZ = ProjectScopeInputZ.extend({
-      title: z10.string().min(1),
-      priority: z10.number().int().positive().optional(),
-      acceptance: z10.string().optional(),
-      description: z10.string().optional(),
-      milestone: z10.string().nullable().optional(),
-      specialty: z10.string().nullable().optional()
-    });
-    GoalCreateResultZ = z10.object({
-      goalId: z10.string(),
-      goal: GoalSchemaZ
-    });
-    GoalUpdateInputZ = ProjectScopeInputZ.extend({
-      goalId: z10.string().min(1),
-      status: z10.enum(["todo", "in-progress", "done"]).optional(),
-      title: z10.string().optional(),
-      description: z10.string().optional(),
-      acceptance: z10.string().optional(),
-      priority: z10.number().int().positive().optional(),
-      milestone: z10.string().nullable().optional(),
-      specialty: z10.string().nullable().optional(),
-      assign: z10.string().nullable().optional()
-    });
-    GoalUpdateResultZ = z10.object({
-      goal: GoalSchemaZ
-    });
-    GoalDoneInputZ = ProjectScopeInputZ.extend({
-      goalId: z10.string().min(1)
-    });
-    GoalDoneResultZ = z10.object({
-      goal: GoalSchemaZ
-    });
-    GoalDeleteInputZ = ProjectScopeInputZ.extend({
-      goalId: z10.string().min(1)
-    });
-    GoalDeleteResultZ = z10.object({
-      deleted: z10.literal(true)
-    });
-    MilestoneCreateInputZ = ProjectScopeInputZ.extend({
-      title: z10.string().min(1),
-      sequence: z10.number().int().positive().optional(),
-      description: z10.string().optional()
-    });
-    MilestoneCreateResultZ = z10.object({
-      milestoneId: z10.string(),
-      milestone: MilestoneSchemaZ
-    });
-    MilestoneUpdateInputZ = ProjectScopeInputZ.extend({
-      milestoneId: z10.string().min(1),
-      status: z10.enum(["locked", "active", "done", "validating"]).optional()
-    });
-    MilestoneUpdateResultZ = z10.object({
-      milestone: MilestoneSchemaZ
-    });
-    MissionSetInputZ = ProjectScopeInputZ.extend({
-      title: z10.string().min(1),
-      description: z10.string().optional()
-    });
-    MissionSetResultZ = z10.object({
-      mission: MissionSchemaZ
-    });
-    MissionPlanCompleteResultZ = z10.object({
-      mission: MissionSchemaZ
-    });
-    MissionClearResultZ = z10.object({
-      cleared: z10.literal(true)
-    });
-    SkillCreateInputZ = z10.object({
-      projectName: z10.string().min(1).optional(),
-      name: z10.string().min(1),
-      content: z10.string().min(1)
-    });
-    SkillCreateResultZ = z10.object({
-      skill: SkillSchemaZ
-    });
-    SkillDeleteInputZ = z10.object({
-      projectName: z10.string().min(1).optional(),
-      name: z10.string().min(1)
-    });
-    SkillDeleteResultZ = z10.object({
-      deleted: z10.literal(true)
-    });
-    ConfigSetInputZ = z10.object({
-      projectName: z10.string().min(1).optional(),
-      path: z10.string().min(1),
-      value: z10.unknown()
-    });
-    ConfigResultZ = z10.object({
+    ConfigResultZ = z7.object({
       config: IdeConfigSchema
     });
     ConfigAddPaneInputZ = PaneSchema.partial().extend({
-      projectName: z10.string().min(1).optional(),
-      rowIndex: z10.number().int().min(0)
+      projectName: z7.string().min(1).optional(),
+      rowIndex: z7.number().int().min(0)
     });
     ConfigAddPaneResultZ = ConfigResultZ;
-    ConfigRemovePaneInputZ = z10.object({
-      projectName: z10.string().min(1).optional(),
-      rowIndex: z10.number().int().min(0),
-      paneIndex: z10.number().int().min(0)
+    ConfigRemovePaneInputZ = z7.object({
+      projectName: z7.string().min(1).optional(),
+      rowIndex: z7.number().int().min(0),
+      paneIndex: z7.number().int().min(0)
     });
     ConfigRemovePaneResultZ = ConfigResultZ;
-    ConfigAddRowInputZ = z10.object({
-      projectName: z10.string().min(1).optional(),
-      size: z10.string().optional()
+    ConfigAddRowInputZ = z7.object({
+      projectName: z7.string().min(1).optional(),
+      size: z7.string().optional()
     });
     ConfigAddRowResultZ = ConfigResultZ;
-    ConfigEnableTeamInputZ = z10.object({
-      projectName: z10.string().min(1).optional(),
-      name: z10.string().min(1).optional()
+    ConfigEnableTeamInputZ = z7.object({
+      projectName: z7.string().min(1).optional(),
+      name: z7.string().min(1).optional()
     });
     ConfigEnableTeamResultZ = ConfigResultZ;
-    ConfigDisableTeamInputZ = z10.object({
-      projectName: z10.string().min(1).optional()
+    ConfigDisableTeamInputZ = z7.object({
+      projectName: z7.string().min(1).optional()
     });
     ConfigDisableTeamResultZ = ConfigResultZ;
-    AssertionEntryZ = z10.object({
-      id: z10.string(),
-      status: z10.enum(["pending", "passing", "failing", "blocked"]),
-      verifiedBy: z10.string().nullable(),
-      verifiedAt: z10.string().nullable(),
-      evidence: z10.string().nullable(),
-      blockedBy: z10.string().nullable()
+    AppSetRemoteAccessInputZ = z7.object({
+      enabled: z7.boolean()
     });
-    ValidationReportZ = z10.object({
-      total: z10.number(),
-      passing: z10.number(),
-      failing: z10.number(),
-      pending: z10.number(),
-      blocked: z10.number()
+    AppSetRemoteAccessResultZ = z7.object({
+      enabled: z7.boolean(),
+      url: z7.string().nullable(),
+      token: z7.string().nullable(),
+      qrPayload: z7.string().nullable()
     });
-    ValidationAssertInputZ = z10.object({
-      projectName: z10.string().min(1).optional(),
-      assertId: z10.string().min(1),
-      status: z10.enum(["pending", "passing", "failing", "blocked"]),
-      evidence: z10.string().optional()
+    DaemonShutdownInputZ = z7.object({
+      reason: z7.string().optional()
     });
-    ValidationAssertResultZ = z10.object({
-      assertion: AssertionEntryZ
+    DaemonShutdownResultZ = z7.object({
+      stopping: z7.literal(true)
     });
-    ValidationReportInputZ = z10.object({
-      projectName: z10.string().min(1).optional()
-    });
-    ValidationReportResultZ = z10.object({
-      report: ValidationReportZ
-    });
-    WebhookAddInputZ = WebhookConfigSchema.extend({
-      projectName: z10.string().min(1).optional()
-    });
-    WebhookAddResultZ = z10.object({
-      webhookId: z10.string(),
-      webhook: WebhookConfigSchema
-    });
-    WebhookRemoveInputZ = z10.object({
-      projectName: z10.string().min(1).optional(),
-      webhookId: z10.string().min(1)
-    });
-    WebhookRemoveResultZ = z10.object({
-      deleted: z10.literal(true)
-    });
-    WebhookTestResultZ = z10.object({
-      status: z10.number(),
-      ok: z10.literal(true)
-    });
-    AppSetRemoteAccessInputZ = z10.object({
-      enabled: z10.boolean()
-    });
-    AppSetRemoteAccessResultZ = z10.object({
-      enabled: z10.boolean(),
-      url: z10.string().nullable(),
-      token: z10.string().nullable(),
-      qrPayload: z10.string().nullable()
-    });
-    DaemonShutdownInputZ = z10.object({
-      reason: z10.string().optional()
-    });
-    DaemonShutdownResultZ = z10.object({
-      stopping: z10.literal(true)
-    });
-    StopReasonZ = z10.enum([
-      "end_turn",
-      "max_tokens",
-      "max_turn_requests",
-      "refusal",
-      "cancelled"
-    ]);
-    AgentProviderZ = z10.discriminatedUnion("kind", [
-      z10.object({
-        kind: z10.literal("claude-code"),
-        binary: z10.string().optional(),
-        model: z10.string().min(1).optional()
-      }).strict(),
-      z10.object({
-        kind: z10.literal("codex"),
-        binary: z10.string().optional(),
-        model: z10.string().min(1).optional()
-      }).strict(),
-      z10.object({
-        kind: z10.literal("gemini"),
-        binary: z10.string().optional(),
-        model: z10.string().min(1).optional()
-      }).strict(),
-      z10.object({
-        kind: z10.literal("custom"),
-        command: z10.string().min(1),
-        args: z10.array(z10.string()),
-        env: z10.record(z10.string(), z10.string()).optional(),
-        model: z10.string().min(1).optional()
-      }).strict()
-    ]);
-    ContentBlockZ = z10.discriminatedUnion("type", [
-      z10.object({ type: z10.literal("text"), text: z10.string() }).passthrough(),
-      z10.object({ type: z10.literal("image") }).passthrough(),
-      z10.object({ type: z10.literal("audio") }).passthrough(),
-      z10.object({ type: z10.literal("resource") }).passthrough(),
-      z10.object({ type: z10.literal("resource_link") }).passthrough()
-    ]);
-    SessionUpdateZ = z10.object({ sessionUpdate: z10.string().min(1) }).passthrough();
-    ChatThreadUsageSummaryZ = z10.object({
-      inputTokens: z10.number().int().min(0),
-      outputTokens: z10.number().int().min(0),
-      cacheReadTokens: z10.number().int().min(0).optional(),
-      cacheWriteTokens: z10.number().int().min(0).optional(),
-      totalCostUsd: z10.number().min(0).optional(),
-      contextWindowMaxTokens: z10.number().int().min(0).optional(),
-      contextWindowUsedTokens: z10.number().int().min(0).optional()
-    }).strict();
-    ThreadMessageZ = z10.discriminatedUnion("_tag", [
-      z10.object({
-        _tag: z10.literal("UserPrompt"),
-        id: z10.string().min(1),
-        createdAt: z10.string().min(1),
-        content: z10.array(ContentBlockZ)
-      }),
-      z10.object({
-        _tag: z10.literal("AgentUpdate"),
-        id: z10.string().min(1),
-        createdAt: z10.string().min(1),
-        update: SessionUpdateZ
-      })
-    ]);
-    ThreadIndexEntryZ = z10.object({
-      id: z10.string().min(1),
-      title: z10.string(),
-      createdAt: z10.string().min(1),
-      updatedAt: z10.string().min(1),
-      providerKind: z10.enum(["claude-code", "codex", "gemini", "custom"]),
-      projectDir: z10.string().optional(),
-      messageCount: z10.number().int().min(0),
-      lastStopReason: StopReasonZ.optional()
-    }).strict();
-    ThreadStateZ = z10.object({
-      id: z10.string().min(1),
-      title: z10.string(),
-      createdAt: z10.string().min(1),
-      updatedAt: z10.string().min(1),
-      provider: AgentProviderZ,
-      projectDir: z10.string().optional(),
-      acpSessionId: z10.string().optional(),
-      usage: ChatThreadUsageSummaryZ.optional(),
-      messages: z10.array(ThreadMessageZ)
-    }).strict();
-    ChatThreadListInputZ = z10.object({
-      /**
-       * Filter to threads whose `projectDir` matches. Pass the workspace
-       * absolute path. Omit for the legacy global view (returns every
-       * thread across every project).
-       */
-      projectDir: z10.string().optional()
-    }).strict();
-    ChatThreadListResultZ = z10.object({
-      threads: z10.array(ThreadIndexEntryZ)
-    }).strict();
-    ProviderOptionSelectionZ = z10.object({
-      id: z10.string().min(1),
-      value: z10.union([z10.string().min(1), z10.boolean()])
-    }).strict();
-    ProviderModelInfoZ = z10.object({
-      slug: z10.string().min(1),
-      name: z10.string().min(1),
-      description: z10.string().optional(),
-      /**
-       * Codex-style per-model capabilities mirroring t3's
-       * `mapCodexModelCapabilities`
-       * (`context/t3code/apps/server/src/provider/Layers/CodexProvider.ts:96`).
-       * Picker renders the reasoning-effort select + fast-mode toggle
-       * straight from this — present only when the daemon's
-       * `provider-discovery` parses non-empty values from the live
-       * `model/list` response.
-       */
-      capabilities: z10.object({
-        reasoningEfforts: z10.array(z10.string().min(1)).optional(),
-        defaultReasoningEffort: z10.string().min(1).optional(),
-        supportsFastMode: z10.boolean().optional()
-      }).strict().optional()
-    }).strict();
-    ChatProvidersListInputZ = z10.object({}).strict();
-    ChatProvidersListResultZ = z10.object({
-      providers: z10.array(
-        z10.object({
-          kind: z10.enum(["claude-code", "codex"]),
-          name: z10.string().min(1),
-          description: z10.string().min(1),
-          available: z10.boolean(),
-          binary: z10.string().optional(),
-          version: z10.string().optional(),
-          error: z10.string().optional(),
-          /**
-           * Real per-provider model list, surfaced by the daemon's
-           * `provider-discovery`. Empty when the provider binary is
-           * unavailable or when the discovery probe returned nothing
-           * usable. The first entry is the recommended default.
-           */
-          models: z10.array(ProviderModelInfoZ).default([])
-        }).strict()
-      )
-    }).strict();
-    ChatThreadCreateInputZ = z10.object({
-      provider: AgentProviderZ,
-      projectDir: z10.string().optional(),
-      title: z10.string().optional()
-    }).strict();
-    ChatThreadCreateResultZ = z10.object({
-      thread: ThreadIndexEntryZ
-    }).strict();
-    ChatThreadDeleteInputZ = z10.object({ id: z10.string().min(1) }).strict();
-    ChatThreadDeleteResultZ = z10.object({ deleted: z10.literal(true) }).strict();
-    ChatThreadRenameInputZ = z10.object({
-      id: z10.string().min(1),
-      title: z10.string().min(1)
-    }).strict();
-    ChatThreadRenameResultZ = z10.object({ thread: ThreadIndexEntryZ }).strict();
-    ChatThreadSetProviderInputZ = z10.object({
-      id: z10.string().min(1),
-      provider: AgentProviderZ
-    }).strict();
-    ChatThreadSetProviderResultZ = z10.object({ thread: ThreadIndexEntryZ }).strict();
-    ChatThreadGetInputZ = z10.object({ id: z10.string().min(1) }).strict();
-    ChatThreadGetResultZ = z10.object({ thread: ThreadStateZ, timeline: z10.array(TimelineRowZ) }).strict();
-    ChatThreadUsageInputZ = z10.object({ id: z10.string().min(1) }).strict();
-    ChatThreadUsageResultZ = z10.object({ usage: ChatThreadUsageSummaryZ.nullable() }).strict();
-    ChatSessionSendInputZ = z10.object({
-      threadId: z10.string().min(1),
-      content: z10.array(ContentBlockZ).min(1),
-      /**
-       * Per-turn model override (superset-pattern flat `provider/model`,
-       * see docs/learn-from-superset.md §2). The daemon writes this onto
-       * the thread's provider record BEFORE dispatch, so picking a
-       * different Codex / Claude Code model takes effect on the next
-       * turn without any client-side reduction or session teardown.
-       * Omit to use the thread's currently-stored selection.
-       */
-      model: z10.string().min(1).optional(),
-      /**
-       * Accepted for forward-compat with multi-instance providers; not
-       * yet acted on. Today the daemon resolves the live client from
-       * `thread.provider.kind` alone — instance routing is a future
-       * additive change.
-       */
-      providerInstanceId: z10.string().min(1).optional(),
-      /**
-       * Per-turn driver kind (Step 3b — t3-mirror). When supplied, the
-       * daemon dispatches THIS turn through this provider regardless of
-       * `thread.provider.kind`. Lets the client own the "currently
-       * visible" provider without waiting on a `chat.thread.setProvider`
-       * round-trip (the persisted thread.provider is updated lazily,
-       * fire-and-forget, for reload memory only).
-       *
-       * If the live client for this thread is bound to a different
-       * kind, the daemon disposes it and respawns the right one before
-       * dispatching.
-       */
-      provider: z10.object({ kind: z10.enum(["claude-code", "codex", "gemini", "custom"]) }).strict().optional(),
-      /**
-       * Per-turn provider options (Codex reasoning effort + fast-mode).
-       * Canonical t3 array shape (`Array<{id, value}>`) so future
-       * multi-option models migrate additively. Recognized keys today:
-       *   - `reasoningEffort` (string: minimal | low | medium | high | xhigh)
-       *   - `fastMode` (boolean — forwarded as `serviceTier: "fast"`)
-       * Unknown ids are accepted but ignored by the daemon.
-       */
-      providerOptions: z10.array(ProviderOptionSelectionZ).optional()
-    }).strict();
-    ChatSessionSendResultZ = z10.object({
-      accepted: z10.literal(true),
-      promptId: z10.string().min(1)
-    }).strict();
-    ChatSessionCancelInputZ = z10.object({ threadId: z10.string().min(1) }).strict();
-    ChatSessionCancelResultZ = z10.object({ cancelled: z10.literal(true) }).strict();
-    ChatSessionEditFromTurnInputZ = z10.object({
-      threadId: z10.string().min(1),
-      userMessageId: z10.string().min(1),
-      content: z10.array(ContentBlockZ).min(1)
-    }).strict();
-    ChatSessionEditFromTurnResultZ = z10.object({
-      accepted: z10.literal(true),
-      promptId: z10.string().min(1),
-      truncatedCount: z10.number().int().nonnegative()
-    }).strict();
-    ChatPermissionRespondInputZ = z10.object({
-      threadId: z10.string().min(1),
-      requestId: z10.string().min(1),
-      optionId: z10.string().min(1)
-    }).strict();
-    ChatPermissionRespondResultZ = z10.object({ responded: z10.literal(true) }).strict();
-    ChatContextCaptureTerminalInputZ = z10.object({
-      sessionName: z10.string().min(1),
-      paneId: z10.string().min(1)
-    }).strict();
-    ChatContextCaptureTerminalResultZ = z10.object({
-      pane: z10.object({
-        id: z10.string().min(1),
-        title: z10.string()
-      }).strict(),
-      content: z10.string(),
-      capturedAt: z10.string().min(1)
-    }).strict();
     ActionContractsZ = {
       "project.openTerminal": {
         input: ProjectOpenTerminalInputZ,
@@ -2518,56 +1155,8 @@ var init_actions_errors = __esm({
   }
 });
 
-// packages/contracts/src/git.ts
-import { z as z11 } from "zod";
-var checkoutRequestSchema, commitRequestSchema, stageRequestSchema, pushRequestSchema;
-var init_git = __esm({
-  "packages/contracts/src/git.ts"() {
-    "use strict";
-    checkoutRequestSchema = z11.object({
-      branch: z11.string().trim().min(1, "branch is required").max(255, "branch name is too long").refine((s) => !/[\x00-\x1f\x7f \\~^:?*[]/.test(s), "invalid branch name").refine((s) => !s.startsWith("-"), "branch name cannot start with '-'").refine((s) => !s.includes(".."), "branch name cannot contain '..'"),
-      create: z11.boolean().optional()
-    });
-    commitRequestSchema = z11.object({
-      message: z11.string().trim().min(1, "commit message is required"),
-      /** When true: `git commit -a -m <msg>` (stages tracked changes). */
-      all: z11.boolean().optional()
-    });
-    stageRequestSchema = z11.object({
-      paths: z11.array(z11.string().trim().min(1)).min(1, "paths is required")
-    });
-    pushRequestSchema = z11.object({
-      /** When omitted: push the current branch to its upstream. */
-      remote: z11.string().trim().min(1).optional(),
-      branch: z11.string().trim().min(1).optional(),
-      setUpstream: z11.boolean().optional()
-    });
-  }
-});
-
-// packages/contracts/src/github.ts
-import { z as z12 } from "zod";
-var createPrRequestSchema;
-var init_github = __esm({
-  "packages/contracts/src/github.ts"() {
-    "use strict";
-    createPrRequestSchema = z12.object({
-      title: z12.string().trim().min(1, "title is required").max(256),
-      /** Body is markdown. Empty string is OK — GitHub renders the diff
-       *  alone — but we strip whitespace so the daemon sees real intent. */
-      body: z12.string().optional(),
-      /** Target branch. Required because PRs need a base. */
-      base: z12.string().trim().min(1, "base branch is required").max(255),
-      /** Source branch. Defaults to the current branch when omitted. */
-      head: z12.string().trim().min(1).max(255).optional(),
-      /** Open as a draft PR. */
-      draft: z12.boolean().optional()
-    });
-  }
-});
-
 // packages/contracts/src/terminals.ts
-import { z as z13 } from "zod";
+import { z as z8 } from "zod";
 async function createScriptTerminalId(args) {
   const scope = args.scopeId ?? args.taskId;
   if (!scope) {
@@ -2582,45 +1171,22 @@ var terminalKindSchema, terminalCreateRequestSchema, terminalRenameRequestSchema
 var init_terminals = __esm({
   "packages/contracts/src/terminals.ts"() {
     "use strict";
-    terminalKindSchema = z13.enum(["shell", "setup", "run", "teardown"]);
-    terminalCreateRequestSchema = z13.object({
-      scopeId: z13.string().trim().min(1).max(256),
-      name: z13.string().trim().min(1).max(120),
+    terminalKindSchema = z8.enum(["shell", "setup", "run", "teardown"]);
+    terminalCreateRequestSchema = z8.object({
+      scopeId: z8.string().trim().min(1).max(256),
+      name: z8.string().trim().min(1).max(120),
       kind: terminalKindSchema.optional(),
       /** Provide for script tabs to opt into deterministic id collapse. */
-      script: z13.string().max(2048).optional(),
+      script: z8.string().max(2048).optional(),
       /** Explicit id wins. Used by the dashboard to reserve a known id
        *  (e.g. the default shell tab derived from session.dir). */
-      id: z13.string().trim().min(8).max(64).regex(/^[A-Za-z0-9_-]+$/u, "id may only contain alphanumerics, '-', '_'").optional()
+      id: z8.string().trim().min(8).max(64).regex(/^[A-Za-z0-9_-]+$/u, "id may only contain alphanumerics, '-', '_'").optional()
     }).refine((v) => v.kind !== void 0 || v.script === void 0, {
       message: "script requires kind",
       path: ["script"]
     });
-    terminalRenameRequestSchema = z13.object({
-      name: z13.string().trim().min(1).max(120)
-    });
-  }
-});
-
-// packages/contracts/src/notes-contract.ts
-import { z as z14 } from "zod";
-var NoteSchemaZ, NoteResponseSchemaZ, UpdateNoteRequestSchemaZ;
-var init_notes_contract = __esm({
-  "packages/contracts/src/notes-contract.ts"() {
-    "use strict";
-    NoteSchemaZ = z14.object({
-      /** Session name the note belongs to (matches a tmux-ide project). */
-      sessionName: z14.string(),
-      /** Markdown body. Empty string when the project has no notes yet. */
-      content: z14.string(),
-      /** ISO-8601 timestamp of the last write, or null if no note exists. */
-      updatedAt: z14.string().nullable()
-    });
-    NoteResponseSchemaZ = z14.object({
-      note: NoteSchemaZ
-    });
-    UpdateNoteRequestSchemaZ = z14.object({
-      content: z14.string().max(1e6, "Note exceeds 1 MB")
+    terminalRenameRequestSchema = z8.object({
+      name: z8.string().trim().min(1).max(120)
     });
   }
 });
@@ -2635,17 +1201,9 @@ var init_src2 = __esm({
     init_domain();
     init_tmux();
     init_workspace();
-    init_routes();
-    init_client();
-    init_ws_v3_protocol();
     init_actions_contract();
     init_actions_errors();
-    init_chat_thread();
-    init_chat_timeline();
-    init_git();
-    init_github();
     init_terminals();
-    init_notes_contract();
   }
 });
 
@@ -2972,10 +1530,9 @@ var init_canonical_daemon = __esm({
 });
 
 // packages/daemon/src/launch.ts
-import { resolve as resolve5, join as join2 } from "node:path";
+import { resolve as resolve5 } from "node:path";
 import { execSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { readFileSync as readFileSync3, writeFileSync as writeFileSync3, existsSync as existsSync2, mkdirSync as mkdirSync2 } from "node:fs";
 function stripWidgetPanes(rows) {
   return rows.map((row) => ({
     ...row,
@@ -3127,19 +1684,6 @@ async function launch(targetDir, { json: json2 = false, attach: attach2 = true }
     runSessionCommand(command2);
   }
   setSessionVariable(session, "@config_hash", configHash(config2));
-  if (config2.orchestrator?.enabled) {
-    ensureTaskDocs(dir);
-    const masterPaneTitle = config2.orchestrator.master_pane;
-    if (masterPaneTitle) {
-      const masterAction = paneActions.find((a) => a.title === masterPaneTitle);
-      if (masterAction) {
-        const masterPrompt = buildMasterAgentPrompt(config2);
-        setTimeout(() => {
-          sendLiteral(masterAction.targetPane, masterPrompt);
-        }, 5e3);
-      }
-    }
-  }
   selectPane(focusPane);
   const totalPanes = rows.reduce((sum, r) => sum + (r.panes?.length ?? 0), 0);
   console.log(
@@ -3149,7 +1693,7 @@ async function launch(targetDir, { json: json2 = false, attach: attach2 = true }
     const { readCanonicalDaemonInfo: readCanonicalDaemonInfo2 } = await Promise.resolve().then(() => (init_canonical_daemon(), canonical_daemon_exports));
     const info = readCanonicalDaemonInfo2();
     if (info) {
-      console.log(`Dashboard: http://${info.bindHostname}:${info.port}/`);
+      console.log(`Command center: http://${info.bindHostname}:${info.port}/`);
     }
   } catch {
   }
@@ -3157,108 +1701,6 @@ async function launch(targetDir, { json: json2 = false, attach: attach2 = true }
     attachSession(session);
   }
 }
-function buildMasterAgentPrompt(config2) {
-  const teammatePanes = config2.rows.flatMap((r) => r.panes ?? []).filter((p) => p.role === "teammate" && p.command === "claude").map((p) => p.title).filter(Boolean);
-  const isMissionsMode = config2.orchestrator?.dispatch_mode === "missions";
-  const milestonesSection = isMissionsMode ? `
-## Milestones
-Milestones gate execution \u2014 tasks in M2 won't dispatch until M1 is validated.
-- tmux-ide milestone create "title" --sequence N
-- tmux-ide milestone list --json
-- tmux-ide mission plan-complete  (activates milestones, starts dispatch)
-` : "";
-  return `You are the Lead Agent for this tmux-ide session.
-
-## Your role
-You coordinate a team of coding agents. The human gives you high-level goals, and you break them into structured tasks that your teammates execute. You plan, delegate, and review \u2014 you do not implement.
-
-## Your teammates
-${teammatePanes.map((t) => `- ${t}`).join("\n")}
-
-## Task management commands
-- tmux-ide mission set "title" --description "..."
-- tmux-ide goal create "title" --priority N --acceptance "criteria"
-- tmux-ide goal list --json
-- tmux-ide task create "title" --goal NN --priority N --specialty "type" --fulfills "VAL-001,VAL-002"
-- tmux-ide task list --json
-- tmux-ide task show NNN --json (shows full mission\u2192goal\u2192task context)
-- tmux-ide task done NNN --proof "what was accomplished"
-- tmux-ide goal done NN
-
-## How it works
-1. Set the mission: tmux-ide mission set "title" --description "..."
-2. Create goals with acceptance criteria
-3. Create tasks under goals \u2014 use --specialty to hint agent type, --fulfills to link validation assertions
-4. The orchestrator automatically dispatches unassigned tasks to idle teammates
-5. Teammates work in the project directory
-6. When teammates finish, they run tmux-ide task done
-7. You get notified and review their work
-8. You report progress to the human
-${milestonesSection}
-## Validation contracts
-Define acceptance criteria in .tasks/validation-contract.md using assertion IDs:
-  **VAL-001**: All tests pass
-  **VAL-002**: No TypeScript errors
-Link tasks to assertions: tmux-ide task create "title" --fulfills "VAL-001,VAL-002"
-After a milestone's tasks complete, the Validator agent automatically verifies assertions.
-
-## Knowledge library
-- .tmux-ide/library/architecture.md \u2014 project context injected into agent prompts
-- .tmux-ide/library/learnings.md \u2014 auto-appended by orchestrator after task completion
-- AGENTS.md \u2014 project boundaries injected into all agent prompts
-Update architecture.md when the project structure changes significantly.
-
-## Important
-- Do NOT use --assign when creating tasks \u2014 the orchestrator handles dispatch automatically
-- Use --specialty to hint which agent type should pick it up
-- Focus on PLANNING and REVIEWING, not implementing
-- Break work into small, clear tasks (one per teammate)
-- Each task should be completable independently
-- Set clear acceptance criteria in goals
-- Check progress: tmux-ide task list --json`;
-}
-function ensureTaskDocs(dir) {
-  const claudeMdPath = join2(dir, "CLAUDE.md");
-  if (existsSync2(claudeMdPath)) {
-    const content = readFileSync3(claudeMdPath, "utf-8");
-    if (!content.includes(TASK_DOCS_MARKER)) {
-      writeFileSync3(claudeMdPath, content + TASK_DOCS_SECTION);
-    }
-  } else {
-    writeFileSync3(claudeMdPath, `# Project
-${TASK_DOCS_SECTION}`);
-  }
-  const libraryDir = join2(dir, ".tmux-ide", "library");
-  if (!existsSync2(libraryDir)) {
-    mkdirSync2(libraryDir, { recursive: true });
-  }
-  const archPath = join2(libraryDir, "architecture.md");
-  if (!existsSync2(archPath)) {
-    writeFileSync3(
-      archPath,
-      "# Architecture\n\n<!-- Describe your project architecture here. This is injected into agent dispatch prompts. -->\n"
-    );
-  }
-  const learningsPath = join2(libraryDir, "learnings.md");
-  if (!existsSync2(learningsPath)) {
-    writeFileSync3(
-      learningsPath,
-      "# Learnings\n\n<!-- Task summaries are automatically appended here by the orchestrator. -->\n"
-    );
-  }
-  const tasksDir = join2(dir, ".tasks");
-  if (!existsSync2(tasksDir)) {
-    mkdirSync2(tasksDir, { recursive: true });
-  }
-  const contractPath = join2(tasksDir, "validation-contract.md");
-  if (!existsSync2(contractPath)) {
-    writeFileSync3(
-      contractPath,
-      "# Validation Contract\n\n<!-- Define assertions for the validator agent. Example: -->\n<!-- - VAL-001: All tests pass -->\n<!-- - VAL-002: No TypeScript errors -->\n"
-    );
-  }
-}
-var TASK_DOCS_MARKER, TASK_DOCS_SECTION;
 var init_launch = __esm({
   "packages/daemon/src/launch.ts"() {
     "use strict";
@@ -3271,84 +1713,18 @@ var init_launch = __esm({
     init_validate();
     init_resolve();
     init_shell();
-    TASK_DOCS_MARKER = "## Task Management";
-    TASK_DOCS_SECTION = `
-## Task Management
-
-tmux-ide provides structured task management for coordinated multi-agent work.
-
-### Mission & Goals
-
-\`\`\`bash
-tmux-ide mission set "title" --description "..."   # Set the project mission
-tmux-ide mission show                               # Show current mission
-tmux-ide mission clear                              # Clear the mission
-
-tmux-ide goal create "title" --priority N --acceptance "criteria"
-tmux-ide goal list [--json]                         # List all goals
-tmux-ide goal show <id> [--json]                    # Show goal with tasks
-tmux-ide goal update <id> --status done
-tmux-ide goal done <id>                             # Mark goal complete
-tmux-ide goal delete <id>
-\`\`\`
-
-### Tasks
-
-\`\`\`bash
-tmux-ide task create "title" --goal NN --priority N --assign "Agent" --tags "a,b" --depends "001,002"
-tmux-ide task list [--status todo --goal NN] [--json]
-tmux-ide task show <id> [--json]                    # Full mission\u2192goal\u2192task context
-tmux-ide task update <id> --status review --proof '{"tests":{"passed":10,"total":10}}'
-tmux-ide task claim <id> --assign "Agent Name"      # Claim and start a task
-tmux-ide task done <id> --proof "description"       # Mark task complete with proof
-tmux-ide task delete <id>
-\`\`\`
-
-### Proof Format
-
-The \`--proof\` flag accepts either a plain string (stored as \`notes\`) or a JSON object:
-
-\`\`\`json
-{
-  "tests": { "passed": 10, "total": 10 },
-  "pr": { "number": 42, "url": "https://...", "status": "merged" },
-  "ci": { "status": "passing", "url": "https://..." },
-  "notes": "Additional context"
-}
-\`\`\`
-
-### Task Dependencies
-
-Use \`--depends "001,002"\` to declare that a task depends on other tasks. The orchestrator will not dispatch a task until all its dependencies are complete.
-
-### Milestones
-
-\`\`\`bash
-tmux-ide milestone create "title" --sequence N
-tmux-ide milestone list [--json]
-tmux-ide mission plan-complete  # activate milestones and start dispatch
-\`\`\`
-
-### Validation
-
-\`\`\`bash
-tmux-ide validate show [--json]
-tmux-ide validate assert VAL-001 --status passing --evidence "what you verified"
-tmux-ide validate coverage [--json]
-\`\`\`
-`;
   }
 });
 
 // packages/daemon/src/detect.ts
 import { resolve as resolve6, basename as basename2 } from "node:path";
-import { readFileSync as readFileSync4, existsSync as existsSync3 } from "node:fs";
+import { readFileSync as readFileSync3, existsSync as existsSync2 } from "node:fs";
 function fileExists(dir, name) {
-  return existsSync3(resolve6(dir, name));
+  return existsSync2(resolve6(dir, name));
 }
 function readJson(dir, name) {
   try {
-    return JSON.parse(readFileSync4(resolve6(dir, name), "utf-8"));
+    return JSON.parse(readFileSync3(resolve6(dir, name), "utf-8"));
   } catch {
     return null;
   }
@@ -3410,7 +1786,7 @@ function detectStack(dir) {
     detected.language = detected.language ?? "python";
     detected.reasons.push('Detected Python from "pyproject.toml" or "requirements.txt".');
     try {
-      const pyproject = readFileSync4(resolve6(dir, "pyproject.toml"), "utf-8");
+      const pyproject = readFileSync3(resolve6(dir, "pyproject.toml"), "utf-8");
       if (pyproject.includes("fastapi"))
         pushFramework(detected, "fastapi", 'Found "fastapi" in pyproject.toml.');
       else if (pyproject.includes("django"))
@@ -3676,8 +2052,8 @@ var init_PtyAdapter = __esm({
 });
 
 // packages/daemon/src/terminal/NodePtyAdapter.ts
-import { chmodSync, existsSync as existsSync7, statSync } from "node:fs";
-import { dirname as dirname4, join as join4 } from "node:path";
+import { chmodSync, existsSync as existsSync6, statSync } from "node:fs";
+import { dirname as dirname4, join as join3 } from "node:path";
 import { createRequire } from "node:module";
 import * as pty from "node-pty";
 function candidateSpawnHelperPaths() {
@@ -3690,9 +2066,9 @@ function candidateSpawnHelperPaths() {
   }
   const pkgDir = dirname4(pkgJsonPath);
   return [
-    join4(pkgDir, "build", "Release", "spawn-helper"),
-    join4(pkgDir, "build", "Debug", "spawn-helper"),
-    join4(pkgDir, "prebuilds", `${process.platform}-${process.arch}`, "spawn-helper")
+    join3(pkgDir, "build", "Release", "spawn-helper"),
+    join3(pkgDir, "build", "Debug", "spawn-helper"),
+    join3(pkgDir, "prebuilds", `${process.platform}-${process.arch}`, "spawn-helper")
   ];
 }
 function ensureNodePtySpawnHelperExecutable(options = {}) {
@@ -3700,7 +2076,7 @@ function ensureNodePtySpawnHelperExecutable(options = {}) {
   if (!options.force && !options.explicitPath && helperEnsured) return;
   const candidates = options.explicitPath ? [options.explicitPath] : candidateSpawnHelperPaths();
   for (const candidate of candidates) {
-    if (!existsSync7(candidate)) continue;
+    if (!existsSync6(candidate)) continue;
     try {
       chmodSync(candidate, 493);
     } catch {
@@ -4689,10 +3065,10 @@ var init_pane_comms = __esm({
 
 // packages/daemon/src/lib/workspace-registry.ts
 import { EventEmitter as EventEmitter2 } from "node:events";
-import { existsSync as existsSync8, mkdirSync as mkdirSync4, readFileSync as readFileSync6, renameSync as renameSync3, writeFileSync as writeFileSync5 } from "node:fs";
+import { existsSync as existsSync7, mkdirSync as mkdirSync3, readFileSync as readFileSync5, renameSync as renameSync3, writeFileSync as writeFileSync4 } from "node:fs";
 import { homedir as homedir2 } from "node:os";
-import { dirname as dirname5, join as join5 } from "node:path";
-import { z as z15 } from "zod";
+import { dirname as dirname5, join as join4 } from "node:path";
+import { z as z9 } from "zod";
 function getDefaultWorkspaceRegistry() {
   if (!_default) _default = new WorkspaceRegistry();
   return _default;
@@ -4715,9 +3091,9 @@ var init_workspace_registry = __esm({
     "use strict";
     init_src2();
     REGISTRY_DIR_ENV2 = "TMUX_IDE_REGISTRY_DIR";
-    RegistryFileSchemaZ = z15.object({
-      version: z15.literal(1),
-      workspaces: z15.array(WorkspaceSchemaZ)
+    RegistryFileSchemaZ = z9.object({
+      version: z9.literal(1),
+      workspaces: z9.array(WorkspaceSchemaZ)
     });
     WorkspaceAlreadyExistsError = class extends Error {
       code = "ALREADY_EXISTS";
@@ -4740,7 +3116,7 @@ var init_workspace_registry = __esm({
       workspaces = [];
       loaded = false;
       constructor(options = {}) {
-        this.dir = options.dir ?? process.env[REGISTRY_DIR_ENV2] ?? join5(homedir2(), ".tmux-ide");
+        this.dir = options.dir ?? process.env[REGISTRY_DIR_ENV2] ?? join4(homedir2(), ".tmux-ide");
         this.listSessions = options.listSessions ?? defaultListSessions;
         this.emitter.setMaxListeners(0);
       }
@@ -4807,14 +3183,14 @@ var init_workspace_registry = __esm({
       }
       // ----------------- io -----------------
       filePath() {
-        return join5(this.dir, "workspaces.json");
+        return join4(this.dir, "workspaces.json");
       }
       readDisk() {
         const path2 = this.filePath();
-        if (!existsSync8(path2)) return [];
+        if (!existsSync7(path2)) return [];
         let parsed;
         try {
-          parsed = JSON.parse(readFileSync6(path2, "utf-8"));
+          parsed = JSON.parse(readFileSync5(path2, "utf-8"));
         } catch {
           return [];
         }
@@ -4824,10 +3200,10 @@ var init_workspace_registry = __esm({
       }
       writeDisk() {
         const path2 = this.filePath();
-        mkdirSync4(dirname5(path2), { recursive: true });
+        mkdirSync3(dirname5(path2), { recursive: true });
         const file = { version: 1, workspaces: this.workspaces };
         const tmp = `${path2}.tmp`;
-        writeFileSync5(tmp, JSON.stringify(file, null, 2) + "\n");
+        writeFileSync4(tmp, JSON.stringify(file, null, 2) + "\n");
         renameSync3(tmp, path2);
       }
       /** @internal Test-only: assert the registry is loaded. */
@@ -4898,44 +3274,44 @@ var init_discovery = __esm({
 });
 
 // packages/daemon/src/schemas/registry.ts
-import { z as z16 } from "zod";
+import { z as z10 } from "zod";
 var RegisteredProjectSchemaZ, RegisterProjectRequestSchemaZ, InitProjectRequestSchemaZ, ProjectTemplateSchemaZ;
 var init_registry = __esm({
   "packages/daemon/src/schemas/registry.ts"() {
     "use strict";
-    RegisteredProjectSchemaZ = z16.object({
+    RegisteredProjectSchemaZ = z10.object({
       /** Unique registry key. Defaults to `basename(dir)`; collisions resolved by appending `-2`, `-3`, … */
-      name: z16.string(),
+      name: z10.string(),
       /** Absolute path to the project directory. */
-      dir: z16.string(),
+      dir: z10.string(),
       /** Whether `<dir>/ide.yml` exists; refreshed on register and on `probe()`. */
-      hasIdeYml: z16.boolean(),
+      hasIdeYml: z10.boolean(),
       /** Git remote origin URL, or `null` if not a git repo / no origin / probe failed. */
-      gitOrigin: z16.string().nullable(),
+      gitOrigin: z10.string().nullable(),
       /** Current git branch, or `null` if not a git repo / detached HEAD / probe failed. */
-      gitBranch: z16.string().nullable(),
+      gitBranch: z10.string().nullable(),
       /** ISO-8601 timestamp the project was first registered. */
-      registeredAt: z16.string()
+      registeredAt: z10.string()
     });
-    RegisterProjectRequestSchemaZ = z16.object({
-      dir: z16.string().min(1),
-      name: z16.string().min(1).optional()
+    RegisterProjectRequestSchemaZ = z10.object({
+      dir: z10.string().min(1),
+      name: z10.string().min(1).optional()
     });
-    InitProjectRequestSchemaZ = z16.object({
-      dir: z16.string().min(1),
-      template: z16.string().min(1).optional()
+    InitProjectRequestSchemaZ = z10.object({
+      dir: z10.string().min(1),
+      template: z10.string().min(1).optional()
     });
-    ProjectTemplateSchemaZ = z16.object({
-      id: z16.string(),
-      label: z16.string(),
-      description: z16.string()
+    ProjectTemplateSchemaZ = z10.object({
+      id: z10.string(),
+      label: z10.string(),
+      description: z10.string()
     });
   }
 });
 
 // packages/daemon/src/lib/project-probe.ts
 import { execFile } from "node:child_process";
-import { existsSync as existsSync9 } from "node:fs";
+import { existsSync as existsSync8 } from "node:fs";
 import { basename as basename5, isAbsolute, resolve as resolve13 } from "node:path";
 function sanitizeName(raw) {
   return raw.trim().replace(/\s+/g, "-").replace(/[^A-Za-z0-9._-]/g, "").replace(/^-+|-+$/g, "");
@@ -4966,7 +3342,7 @@ var init_project_probe = __esm({
     "use strict";
     GIT_TIMEOUT_MS = 2e3;
     realIo = {
-      exists: existsSync9,
+      exists: existsSync8,
       runGit: (args, cwd) => new Promise((resolveResult) => {
         execFile(
           "git",
@@ -4987,10 +3363,10 @@ var init_project_probe = __esm({
 
 // packages/daemon/src/lib/project-registry.ts
 import { EventEmitter as EventEmitter3 } from "node:events";
-import { existsSync as existsSync10, mkdirSync as mkdirSync5, readFileSync as readFileSync7, renameSync as renameSync4, writeFileSync as writeFileSync6 } from "node:fs";
+import { existsSync as existsSync9, mkdirSync as mkdirSync4, readFileSync as readFileSync6, renameSync as renameSync4, writeFileSync as writeFileSync5 } from "node:fs";
 import { homedir as homedir3 } from "node:os";
-import { dirname as dirname6, isAbsolute as isAbsolute2, join as join6, resolve as resolve14 } from "node:path";
-import { z as z17 } from "zod";
+import { dirname as dirname6, isAbsolute as isAbsolute2, join as join5, resolve as resolve14 } from "node:path";
+import { z as z11 } from "zod";
 function applyAction(state, action) {
   switch (action.type) {
     case "register":
@@ -5021,15 +3397,15 @@ function buildRegisteredProject(probe, name, registeredAt) {
 function registryDir() {
   const override = process.env[REGISTRY_DIR_ENV3];
   if (override && override.length > 0) return override;
-  return join6(homedir3(), ".tmux-ide");
+  return join5(homedir3(), ".tmux-ide");
 }
 function registryPath() {
-  return join6(registryDir(), "projects.json");
+  return join5(registryDir(), "projects.json");
 }
 function readDisk() {
   const path2 = registryPath();
-  if (!existsSync10(path2)) return [];
-  const raw = readFileSync7(path2, "utf-8");
+  if (!existsSync9(path2)) return [];
+  const raw = readFileSync6(path2, "utf-8");
   if (raw.trim().length === 0) return [];
   let parsed;
   try {
@@ -5052,10 +3428,10 @@ function readDisk() {
 function writeDisk(projects) {
   const path2 = registryPath();
   const dir = dirname6(path2);
-  mkdirSync5(dir, { recursive: true });
+  mkdirSync4(dir, { recursive: true });
   const file = { version: 1, projects };
   const tmpPath = `${path2}.tmp`;
-  writeFileSync6(tmpPath, JSON.stringify(file, null, 2) + "\n");
+  writeFileSync5(tmpPath, JSON.stringify(file, null, 2) + "\n");
   renameSync4(tmpPath, path2);
 }
 function ensureCache() {
@@ -5075,7 +3451,7 @@ function getProject(name) {
   return ensureCache().find((p) => p.name === name) ?? null;
 }
 async function registerProject(input) {
-  const exists = input.exists ?? existsSync10;
+  const exists = input.exists ?? existsSync9;
   const absoluteDir = isAbsolute2(input.dir) ? input.dir : resolve14(input.dir);
   if (!exists(absoluteDir)) {
     throw new ProjectDirNotFoundError(absoluteDir);
@@ -5125,9 +3501,9 @@ var init_project_registry = __esm({
     init_registry();
     init_project_probe();
     REGISTRY_DIR_ENV3 = "TMUX_IDE_REGISTRY_DIR";
-    RegistryFileSchemaZ2 = z17.object({
-      version: z17.literal(1),
-      projects: z17.array(RegisteredProjectSchemaZ)
+    RegistryFileSchemaZ2 = z11.object({
+      version: z11.literal(1),
+      projects: z11.array(RegisteredProjectSchemaZ)
     });
     ProjectRegistryError = class extends Error {
       code;
@@ -5375,14 +3751,14 @@ var init_auth_token = __esm({
 });
 
 // packages/daemon/src/lib/app-settings.ts
-import { existsSync as existsSync11, mkdirSync as mkdirSync6, readFileSync as readFileSync8, renameSync as renameSync5, writeFileSync as writeFileSync7 } from "node:fs";
-import { dirname as dirname7, join as join7 } from "node:path";
+import { existsSync as existsSync10, mkdirSync as mkdirSync5, readFileSync as readFileSync7, renameSync as renameSync5, writeFileSync as writeFileSync6 } from "node:fs";
+import { dirname as dirname7, join as join6 } from "node:path";
 import { homedir as homedir4 } from "node:os";
 function settingsDir() {
-  return process.env.TMUX_IDE_SETTINGS_DIR ?? join7(homedir4(), ".tmux-ide");
+  return process.env.TMUX_IDE_SETTINGS_DIR ?? join6(homedir4(), ".tmux-ide");
 }
 function appSettingsPath() {
-  return join7(settingsDir(), "app-settings.json");
+  return join6(settingsDir(), "app-settings.json");
 }
 function normalizeSettings(value) {
   if (!value || typeof value !== "object") return structuredClone(DEFAULT_SETTINGS);
@@ -5395,18 +3771,18 @@ function normalizeSettings(value) {
 }
 function readAppSettings() {
   const path2 = appSettingsPath();
-  if (!existsSync11(path2)) return structuredClone(DEFAULT_SETTINGS);
+  if (!existsSync10(path2)) return structuredClone(DEFAULT_SETTINGS);
   try {
-    return normalizeSettings(JSON.parse(readFileSync8(path2, "utf-8")));
+    return normalizeSettings(JSON.parse(readFileSync7(path2, "utf-8")));
   } catch {
     return structuredClone(DEFAULT_SETTINGS);
   }
 }
 function writeAppSettings(next) {
   const path2 = appSettingsPath();
-  mkdirSync6(dirname7(path2), { recursive: true });
+  mkdirSync5(dirname7(path2), { recursive: true });
   const tmp = `${path2}.${process.pid}.${Date.now()}.tmp`;
-  writeFileSync7(tmp, `${JSON.stringify(normalizeSettings(next), null, 2)}
+  writeFileSync6(tmp, `${JSON.stringify(normalizeSettings(next), null, 2)}
 `, "utf-8");
   renameSync5(tmp, path2);
 }
@@ -5596,16 +3972,16 @@ var init_active_projects = __esm({
 
 // packages/daemon/src/send.ts
 import { randomUUID } from "node:crypto";
-import { resolve as resolve15, join as join8 } from "node:path";
-import { existsSync as existsSync12, mkdirSync as mkdirSync7, writeFileSync as writeFileSync8 } from "node:fs";
+import { resolve as resolve15, join as join7 } from "node:path";
+import { existsSync as existsSync11, mkdirSync as mkdirSync6, writeFileSync as writeFileSync7 } from "node:fs";
 function writeDispatchFile(dir, paneId, message) {
   if (message.length <= LONG_MESSAGE_THRESHOLD) return null;
-  const dispatchDir = join8(dir, ".tasks", "dispatch");
-  if (!existsSync12(dispatchDir)) mkdirSync7(dispatchDir, { recursive: true });
+  const dispatchDir = join7(dir, ".tasks", "dispatch");
+  if (!existsSync11(dispatchDir)) mkdirSync6(dispatchDir, { recursive: true });
   const paneSlug = paneId.replace("%", "");
   const filename = `send-${paneSlug}-${Date.now()}-${randomUUID().slice(0, 8)}.md`;
-  const filePath = join8(dispatchDir, filename);
-  writeFileSync8(filePath, message);
+  const filePath = join7(dispatchDir, filename);
+  writeFileSync7(filePath, message);
   return { filePath, triggerCmd: `Read and execute: .tasks/dispatch/${filename}` };
 }
 function resolvePane(panes, target) {
@@ -5776,92 +4152,92 @@ var init_log = __esm({
 });
 
 // packages/daemon/src/command-center/schemas.ts
-import { z as z18 } from "zod";
+import { z as z12 } from "zod";
 var updateTaskSchema, createTaskSchema, savePlanSchema, savePlanContentSchema, sendCommandSchema, createMilestoneSchema, updateMilestoneSchema, updateAssertionSchema, triggerResearchSchema, launchSchema, stopSchema, skillNameRegex, createSkillSchema, updateSkillSchema;
 var init_schemas = __esm({
   "packages/daemon/src/command-center/schemas.ts"() {
     "use strict";
-    updateTaskSchema = z18.object({
-      status: z18.enum(["todo", "in-progress", "review", "done"]).optional(),
-      assignee: z18.string().optional(),
-      title: z18.string().optional(),
-      description: z18.string().optional(),
-      priority: z18.number().optional()
+    updateTaskSchema = z12.object({
+      status: z12.enum(["todo", "in-progress", "review", "done"]).optional(),
+      assignee: z12.string().optional(),
+      title: z12.string().optional(),
+      description: z12.string().optional(),
+      priority: z12.number().optional()
     });
-    createTaskSchema = z18.object({
-      title: z18.string().trim().min(1, "Title is required"),
-      description: z18.string().optional(),
-      priority: z18.number().optional(),
-      goal: z18.string().optional(),
-      tags: z18.array(z18.string()).optional()
+    createTaskSchema = z12.object({
+      title: z12.string().trim().min(1, "Title is required"),
+      description: z12.string().optional(),
+      priority: z12.number().optional(),
+      goal: z12.string().optional(),
+      tags: z12.array(z12.string()).optional()
     });
-    savePlanSchema = z18.object({
-      content: z18.string().max(1e6, "Plan content is too large")
+    savePlanSchema = z12.object({
+      content: z12.string().max(1e6, "Plan content is too large")
     });
-    savePlanContentSchema = z18.object({
-      content: z18.string().max(1e6, "Plan content is too large")
+    savePlanContentSchema = z12.object({
+      content: z12.string().max(1e6, "Plan content is too large")
     });
-    sendCommandSchema = z18.object({
-      target: z18.string().min(1, "Target pane is required"),
-      message: z18.string().min(1, "Message is required"),
-      noEnter: z18.boolean().optional()
+    sendCommandSchema = z12.object({
+      target: z12.string().min(1, "Target pane is required"),
+      message: z12.string().min(1, "Message is required"),
+      noEnter: z12.boolean().optional()
     });
-    createMilestoneSchema = z18.object({
-      title: z18.string().trim().min(1, "Title is required"),
-      sequence: z18.number().int().positive(),
-      description: z18.string().optional()
+    createMilestoneSchema = z12.object({
+      title: z12.string().trim().min(1, "Title is required"),
+      sequence: z12.number().int().positive(),
+      description: z12.string().optional()
     });
-    updateMilestoneSchema = z18.object({
-      status: z18.enum(["locked", "active", "done", "validating"]).optional(),
-      title: z18.string().optional(),
-      description: z18.string().optional()
+    updateMilestoneSchema = z12.object({
+      status: z12.enum(["locked", "active", "done", "validating"]).optional(),
+      title: z12.string().optional(),
+      description: z12.string().optional()
     });
-    updateAssertionSchema = z18.object({
-      status: z18.enum(["pending", "passing", "failing", "blocked"]),
-      evidence: z18.string().optional(),
-      verifiedBy: z18.string().optional()
+    updateAssertionSchema = z12.object({
+      status: z12.enum(["pending", "passing", "failing", "blocked"]),
+      evidence: z12.string().optional(),
+      verifiedBy: z12.string().optional()
     });
-    triggerResearchSchema = z18.object({
-      type: z18.string().trim().min(1, "Research type is required")
+    triggerResearchSchema = z12.object({
+      type: z12.string().trim().min(1, "Research type is required")
     });
-    launchSchema = z18.object({
-      attach: z18.boolean().optional()
+    launchSchema = z12.object({
+      attach: z12.boolean().optional()
     }).optional();
-    stopSchema = z18.object({}).optional();
+    stopSchema = z12.object({}).optional();
     skillNameRegex = /^[A-Za-z0-9._ -]+$/;
-    createSkillSchema = z18.object({
-      name: z18.string().trim().min(1, "Skill name is required").regex(
+    createSkillSchema = z12.object({
+      name: z12.string().trim().min(1, "Skill name is required").regex(
         skillNameRegex,
         "Skill name may only contain letters, digits, dot, dash, underscore, or space"
       ),
-      role: z18.string().trim().optional(),
-      description: z18.string().optional(),
-      specialties: z18.array(z18.string()).optional(),
-      body: z18.string().optional()
+      role: z12.string().trim().optional(),
+      description: z12.string().optional(),
+      specialties: z12.array(z12.string()).optional(),
+      body: z12.string().optional()
     });
-    updateSkillSchema = z18.object({
-      role: z18.string().trim().optional(),
-      description: z18.string().optional(),
-      specialties: z18.array(z18.string()).optional(),
-      body: z18.string().optional()
+    updateSkillSchema = z12.object({
+      role: z12.string().trim().optional(),
+      description: z12.string().optional(),
+      specialties: z12.array(z12.string()).optional(),
+      body: z12.string().optional()
     });
   }
 });
 
 // packages/daemon/src/lib/terminals-store.ts
-import { existsSync as existsSync13, mkdirSync as mkdirSync8, readFileSync as readFileSync9, renameSync as renameSync6, writeFileSync as writeFileSync9 } from "node:fs";
-import { dirname as dirname8, join as join9 } from "node:path";
+import { existsSync as existsSync12, mkdirSync as mkdirSync7, readFileSync as readFileSync8, renameSync as renameSync6, writeFileSync as writeFileSync8 } from "node:fs";
+import { dirname as dirname8, join as join8 } from "node:path";
 function path(dir) {
-  return join9(dir, TERMINALS_FILE);
+  return join8(dir, TERMINALS_FILE);
 }
 function ensureDir(dir) {
-  mkdirSync8(dirname8(path(dir)), { recursive: true });
+  mkdirSync7(dirname8(path(dir)), { recursive: true });
 }
 function loadTerminals(dir) {
   const file = path(dir);
-  if (!existsSync13(file)) return [];
+  if (!existsSync12(file)) return [];
   try {
-    const body = readFileSync9(file, "utf-8");
+    const body = readFileSync8(file, "utf-8");
     const parsed = JSON.parse(body);
     if (!parsed.terminals || !Array.isArray(parsed.terminals)) return [];
     return parsed.terminals.filter((t) => isTerminal(t)).map((t) => ({ ...t }));
@@ -5878,7 +4254,7 @@ function writeAtomic(dir, terminals) {
   ensureDir(dir);
   const file = path(dir);
   const tmp = `${file}.tmp`;
-  writeFileSync9(tmp, JSON.stringify({ terminals }, null, 2) + "\n");
+  writeFileSync8(tmp, JSON.stringify({ terminals }, null, 2) + "\n");
   renameSync6(tmp, file);
 }
 function upsertTerminal(dir, input) {
@@ -5940,8 +4316,8 @@ __export(auth_service_exports, {
   AuthService: () => AuthService
 });
 import * as crypto2 from "node:crypto";
-import { readFileSync as readFileSync10, existsSync as existsSync14 } from "node:fs";
-import { join as join10 } from "node:path";
+import { readFileSync as readFileSync9, existsSync as existsSync13 } from "node:fs";
+import { join as join9 } from "node:path";
 import { homedir as homedir5 } from "node:os";
 function base64url(buf) {
   const b = typeof buf === "string" ? Buffer.from(buf) : buf;
@@ -6085,9 +4461,9 @@ var init_auth_service = __esm({
       checkSSHKeyAuthorization(userId, publicKey) {
         try {
           const home = userId === process.env.USER ? homedir5() : `/home/${userId}`;
-          const authKeysPath = join10(home, ".ssh", "authorized_keys");
-          if (!existsSync14(authKeysPath)) return false;
-          const authorizedKeys = readFileSync10(authKeysPath, "utf-8");
+          const authKeysPath = join9(home, ".ssh", "authorized_keys");
+          if (!existsSync13(authKeysPath)) return false;
+          const authorizedKeys = readFileSync9(authKeysPath, "utf-8");
           const parts = publicKey.trim().split(" ");
           const keyData = parts.length > 1 ? parts[1] : parts[0];
           return authorizedKeys.includes(keyData);
@@ -6224,7 +4600,7 @@ async function projectActivateHandler(input, deps2 = {}) {
   const project = resolveProject(input.name, deps2);
   const activateProject2 = deps2.activateProject ?? activateProject;
   try {
-    await activateProject2(project.name, { orchestrate: input.orchestrate ?? false });
+    await activateProject2(project.name);
   } catch (err) {
     throw new ActionError({
       code: "internal",
@@ -6485,11 +4861,11 @@ var init_project_context = __esm({
 });
 
 // packages/daemon/src/command-center/actions/handlers/config-actions.ts
-import { existsSync as existsSync15 } from "node:fs";
-import { join as join11 } from "node:path";
+import { existsSync as existsSync14 } from "node:fs";
+import { join as join10 } from "node:path";
 function mutateConfigAction(input, deps2, fn) {
   const context = resolveProjectContext(input, deps2);
-  if (!existsSync15(join11(context.dir, "ide.yml"))) {
+  if (!existsSync14(join10(context.dir, "ide.yml"))) {
     throw new ActionError({
       code: "ide_yml_missing",
       message: "ide.yml was not found",
@@ -6856,56 +5232,56 @@ var init_project_init_runner = __esm({
 });
 
 // packages/daemon/src/schemas/inspect.ts
-import { z as z19 } from "zod";
+import { z as z13 } from "zod";
 var ProjectInspectDetectedSchemaZ, ProjectInspectSchemaZ, InspectFilesystemRequestSchemaZ, OnboardProjectRequestSchemaZ;
 var init_inspect = __esm({
   "packages/daemon/src/schemas/inspect.ts"() {
     "use strict";
-    ProjectInspectDetectedSchemaZ = z19.object({
+    ProjectInspectDetectedSchemaZ = z13.object({
       /** Detected package manager from lockfile, or `null`. */
-      packageManager: z19.enum(["pnpm", "npm", "yarn", "bun"]).nullable(),
+      packageManager: z13.enum(["pnpm", "npm", "yarn", "bun"]).nullable(),
       /** Detected frameworks (e.g. `["next", "convex"]`). Empty array when none. */
-      frameworks: z19.array(z19.string()),
+      frameworks: z13.array(z13.string()),
       /** Suggested dev command (e.g. `pnpm dev`). `null` if no dev script found. */
-      devCommand: z19.string().nullable(),
+      devCommand: z13.string().nullable(),
       /** Suggested test command (e.g. `pnpm test`). `null` if no test script found. */
-      testCommand: z19.string().nullable()
+      testCommand: z13.string().nullable()
     });
-    ProjectInspectSchemaZ = z19.object({
+    ProjectInspectSchemaZ = z13.object({
       /** Sanitized basename of the directory — safe to use as a tmux session name. */
-      name: z19.string(),
+      name: z13.string(),
       /** Absolute, canonical path to the directory. */
-      dir: z19.string(),
+      dir: z13.string(),
       /** Whether `<dir>/ide.yml` exists. */
-      hasIdeYml: z19.boolean(),
+      hasIdeYml: z13.boolean(),
       /** Git remote origin URL, or `null` if not a git repo / no origin / probe failed. */
-      gitOrigin: z19.string().nullable(),
+      gitOrigin: z13.string().nullable(),
       /** Current git branch, or `null` if not a git repo / detached HEAD / probe failed. */
-      gitBranch: z19.string().nullable(),
+      gitBranch: z13.string().nullable(),
       /** Detected stack signals (reuses `tmux-ide detect` logic). */
       detected: ProjectInspectDetectedSchemaZ
     });
-    InspectFilesystemRequestSchemaZ = z19.object({
-      dir: z19.string().min(1)
+    InspectFilesystemRequestSchemaZ = z13.object({
+      dir: z13.string().min(1)
     });
-    OnboardProjectRequestSchemaZ = z19.object({
-      dir: z19.string().min(1),
+    OnboardProjectRequestSchemaZ = z13.object({
+      dir: z13.string().min(1),
       /** Optional override for the project name — defaults to inspect.name. */
-      name: z19.string().min(1).optional(),
+      name: z13.string().min(1).optional(),
       /** 1, 2, or 3 — how many Claude panes to scaffold in the top row. */
-      agents: z19.number().int().min(1).max(3),
+      agents: z13.number().int().min(1).max(3),
       /**
        * Optional per-agent pane titles. When provided, length must equal
        * `agents`; the server uses these as `title:` for the Claude panes
        * instead of the canonical `Lead`/`Teammate N`/`Claude N` defaults.
        */
-      agentNames: z19.array(z19.string().min(1)).optional(),
+      agentNames: z13.array(z13.string().min(1)).optional(),
       /** Dev server command (e.g. `pnpm dev`). Omit / null to skip the dev pane. */
-      devCommand: z19.string().min(1).nullable().optional(),
+      devCommand: z13.string().min(1).nullable().optional(),
       /** Test command (e.g. `pnpm test`). Currently informational; stored for later. */
-      testCommand: z19.string().min(1).nullable().optional(),
+      testCommand: z13.string().min(1).nullable().optional(),
       /** Lint command (e.g. `pnpm lint`). Currently informational; stored for later. */
-      lintCommand: z19.string().min(1).nullable().optional()
+      lintCommand: z13.string().min(1).nullable().optional()
     });
   }
 });
@@ -6913,7 +5289,7 @@ var init_inspect = __esm({
 // packages/daemon/src/lib/filesystem-browser.ts
 import { realpathSync, readdirSync as readdirSync2, statSync as statSync3 } from "node:fs";
 import { homedir as homedir6 } from "node:os";
-import { isAbsolute as isAbsolute3, join as join12, resolve as resolve17, sep } from "node:path";
+import { isAbsolute as isAbsolute3, join as join11, resolve as resolve17, sep } from "node:path";
 function isUnderRoot(canonical, root) {
   if (canonical === root) return true;
   const prefix = root.endsWith(sep) ? root : root + sep;
@@ -6942,7 +5318,7 @@ var init_filesystem_browser = __esm({
 });
 
 // packages/daemon/src/lib/project-inspect.ts
-import { existsSync as existsSync16 } from "node:fs";
+import { existsSync as existsSync15 } from "node:fs";
 import { isAbsolute as isAbsolute4, resolve as resolve18 } from "node:path";
 function narrowPackageManager(raw) {
   if (!raw) return null;
@@ -6953,7 +5329,7 @@ function inferTestCommand(packageManager) {
   return packageManager === "npm" ? "npm test" : `${packageManager} test`;
 }
 async function inspectProject(dir, io = {}) {
-  const exists = io.exists ?? existsSync16;
+  const exists = io.exists ?? existsSync15;
   const absoluteDir = isAbsolute4(dir) ? dir : resolve18(dir);
   if (!exists(absoluteDir)) {
     throw new InspectDirNotFoundError(absoluteDir);
@@ -6994,8 +5370,8 @@ var init_project_inspect = __esm({
 
 // packages/daemon/src/lib/project-onboard.ts
 import yaml2 from "js-yaml";
-import { existsSync as existsSync17 } from "node:fs";
-import { join as join13 } from "node:path";
+import { existsSync as existsSync16 } from "node:fs";
+import { join as join12 } from "node:path";
 function composeIdeYmlConfig(input) {
   if (!Number.isInteger(input.agents) || input.agents < 1 || input.agents > 3) {
     throw new OnboardInvalidInputError(
@@ -7053,8 +5429,8 @@ function composeIdeYmlConfig(input) {
   }
   return config2;
 }
-function assertNoExistingIdeYml(dir, exists = existsSync17) {
-  const path2 = join13(dir, "ide.yml");
+function assertNoExistingIdeYml(dir, exists = existsSync16) {
+  const path2 = join12(dir, "ide.yml");
   if (exists(path2)) {
     throw new OnboardConflictError(path2);
   }
@@ -7089,8 +5465,8 @@ __export(server_exports, {
 });
 import { execFile as execFile2 } from "node:child_process";
 import { promisify } from "node:util";
-import { existsSync as existsSync18, readFileSync as readFileSync11, readdirSync as readdirSync3 } from "node:fs";
-import { join as join14, dirname as dirname9, basename as basename7 } from "node:path";
+import { existsSync as existsSync17, readFileSync as readFileSync10, readdirSync as readdirSync3 } from "node:fs";
+import { join as join13, dirname as dirname9, basename as basename7 } from "node:path";
 import { fileURLToPath as fileURLToPath3 } from "node:url";
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
@@ -7102,10 +5478,10 @@ import { isAbsolute as isAbsolute5, resolve as pathResolve } from "node:path";
 import { randomUUID as randomUUID3 } from "node:crypto";
 import { WebSocketServer } from "ws";
 function resolvePackageVersion() {
-  const candidates = [join14(__dirname3, "../../package.json"), join14(__dirname3, "../package.json")];
+  const candidates = [join13(__dirname3, "../../package.json"), join13(__dirname3, "../package.json")];
   for (const candidate of candidates) {
     try {
-      const parsed = JSON.parse(readFileSync11(candidate, "utf-8"));
+      const parsed = JSON.parse(readFileSync10(candidate, "utf-8"));
       if (typeof parsed.version === "string") return parsed.version;
     } catch {
     }
@@ -7839,7 +6215,7 @@ function createApp(options = {}) {
     if (!parsed.success) {
       return c.json({ error: "Invalid request", details: parsed.error.issues }, 400);
     }
-    if (!existsSync18(parsed.data.dir)) {
+    if (!existsSync17(parsed.data.dir)) {
       return c.json({ error: `Directory "${parsed.data.dir}" does not exist` }, 400);
     }
     const jobId = randomUUID3();
@@ -7946,8 +6322,8 @@ function createApp(options = {}) {
 function listAvailableTemplates() {
   const __filename = fileURLToPath3(import.meta.url);
   const __dir = dirname9(__filename);
-  const templatesDir = join14(__dir, "..", "..", "..", "..", "templates");
-  if (!existsSync18(templatesDir)) return [];
+  const templatesDir = join13(__dir, "..", "..", "..", "..", "templates");
+  if (!existsSync17(templatesDir)) return [];
   const labels = {
     default: { label: "Default", description: "Single Claude pane + dev/shell row" },
     nextjs: {
@@ -8636,7 +7012,7 @@ var init_daemon_embed = __esm({
 
 // packages/daemon/src/lib/cli-action-bridge.ts
 import { createRequire as createRequire3 } from "node:module";
-import { z as z20 } from "zod";
+import { z as z14 } from "zod";
 function timeoutSignal3(ms) {
   const controller = new AbortController();
   setTimeout(() => controller.abort(), ms).unref?.();
@@ -8739,7 +7115,7 @@ async function tryDispatchAction(name, input, options = {}) {
       details: failure.data.error.details
     });
   }
-  const success = z20.object({ ok: z20.literal(true), result: contract.result }).safeParse(body);
+  const success = z14.object({ ok: z14.literal(true), result: contract.result }).safeParse(body);
   if (!success.success) return null;
   return success.data.result;
 }
@@ -8750,12 +7126,12 @@ var init_cli_action_bridge = __esm({
     init_contract();
     init_canonical_daemon();
     init_daemon_embed();
-    FailureEnvelopeZ = z20.object({
-      ok: z20.literal(false),
-      error: z20.object({
-        code: z20.string(),
-        message: z20.string(),
-        details: z20.unknown().optional()
+    FailureEnvelopeZ = z14.object({
+      ok: z14.literal(false),
+      error: z14.object({
+        code: z14.string(),
+        message: z14.string(),
+        details: z14.unknown().optional()
       })
     });
     deps = {
@@ -9439,55 +7815,55 @@ init_launch();
 import { parseArgs } from "node:util";
 import { resolve as resolve20, dirname as dirname10 } from "node:path";
 import { execFileSync as execFileSync6 } from "node:child_process";
-import { existsSync as existsSync19 } from "node:fs";
+import { existsSync as existsSync18 } from "node:fs";
 import { fileURLToPath as fileURLToPath4 } from "node:url";
 
 // packages/daemon/src/init.ts
 init_detect();
 init_output();
 import {
-  existsSync as existsSync4,
-  readFileSync as readFileSync5,
-  writeFileSync as writeFileSync4,
+  existsSync as existsSync3,
+  readFileSync as readFileSync4,
+  writeFileSync as writeFileSync3,
   renameSync as renameSync2,
-  mkdirSync as mkdirSync3,
+  mkdirSync as mkdirSync2,
   readdirSync,
   copyFileSync
 } from "node:fs";
-import { resolve as resolve7, join as join3, basename as basename3, dirname as dirname3 } from "node:path";
+import { resolve as resolve7, join as join2, basename as basename3, dirname as dirname3 } from "node:path";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
 var __dirname2 = dirname3(fileURLToPath2(import.meta.url));
 function copyTemplateSkills(targetDir) {
   const created = [];
   const templateSkillsDir = resolve7(__dirname2, "..", "..", "..", "templates", "skills");
-  if (!existsSync4(templateSkillsDir)) return created;
-  mkdirSync3(targetDir, { recursive: true });
+  if (!existsSync3(templateSkillsDir)) return created;
+  mkdirSync2(targetDir, { recursive: true });
   for (const file of readdirSync(templateSkillsDir)) {
     if (!file.endsWith(".md")) continue;
-    const destination = join3(targetDir, file);
-    copyFileSync(join3(templateSkillsDir, file), destination);
+    const destination = join2(targetDir, file);
+    copyFileSync(join2(templateSkillsDir, file), destination);
     created.push(destination);
   }
   return created;
 }
 function scaffoldLibraryStubs(dir) {
   const created = [];
-  const libraryDir = join3(dir, ".tmux-ide", "library");
-  if (!existsSync4(libraryDir)) {
-    mkdirSync3(libraryDir, { recursive: true });
+  const libraryDir = join2(dir, ".tmux-ide", "library");
+  if (!existsSync3(libraryDir)) {
+    mkdirSync2(libraryDir, { recursive: true });
     created.push(libraryDir);
   }
-  const archPath = join3(libraryDir, "architecture.md");
-  if (!existsSync4(archPath)) {
-    writeFileSync4(
+  const archPath = join2(libraryDir, "architecture.md");
+  if (!existsSync3(archPath)) {
+    writeFileSync3(
       archPath,
       "# Architecture\n\n<!-- Describe your project's architecture here. This context is injected into agent dispatch prompts. -->\n"
     );
     created.push(archPath);
   }
-  const learningsPath = join3(libraryDir, "learnings.md");
-  if (!existsSync4(learningsPath)) {
-    writeFileSync4(
+  const learningsPath = join2(libraryDir, "learnings.md");
+  if (!existsSync3(learningsPath)) {
+    writeFileSync3(
       learningsPath,
       "# Learnings\n\n<!-- Task summaries are automatically appended here by the orchestrator. -->\n"
     );
@@ -9497,13 +7873,13 @@ function scaffoldLibraryStubs(dir) {
 }
 function scaffoldValidationContract(dir) {
   const created = [];
-  const tasksDir = join3(dir, ".tasks");
-  if (!existsSync4(tasksDir)) {
-    mkdirSync3(tasksDir, { recursive: true });
+  const tasksDir = join2(dir, ".tasks");
+  if (!existsSync3(tasksDir)) {
+    mkdirSync2(tasksDir, { recursive: true });
   }
-  const contractPath = join3(tasksDir, "validation-contract.md");
-  if (!existsSync4(contractPath)) {
-    writeFileSync4(
+  const contractPath = join2(tasksDir, "validation-contract.md");
+  if (!existsSync3(contractPath)) {
+    writeFileSync3(
       contractPath,
       "# Validation Contract\n\n<!-- Define assertions that the validator agent will verify. Example: -->\n<!-- - VAL-001: All tests pass -->\n<!-- - VAL-002: No TypeScript errors -->\n<!-- - VAL-003: Lint passes with zero warnings -->\n"
     );
@@ -9514,11 +7890,11 @@ function scaffoldValidationContract(dir) {
 function scaffoldAgentsMd(dir, name) {
   const created = [];
   const agentsTemplatePath = resolve7(__dirname2, "..", "..", "..", "templates", "AGENTS.md");
-  if (existsSync4(agentsTemplatePath)) {
-    const agentsPath = join3(dir, "AGENTS.md");
-    if (!existsSync4(agentsPath)) {
-      const content = readFileSync5(agentsTemplatePath, "utf-8").replace(/{{name}}/g, name);
-      writeFileSync4(agentsPath, content);
+  if (existsSync3(agentsTemplatePath)) {
+    const agentsPath = join2(dir, "AGENTS.md");
+    if (!existsSync3(agentsPath)) {
+      const content = readFileSync4(agentsTemplatePath, "utf-8").replace(/{{name}}/g, name);
+      writeFileSync3(agentsPath, content);
       created.push(agentsPath);
     }
   }
@@ -9536,7 +7912,7 @@ function scaffoldTeamWorkspace(dir, name) {
 }
 function scaffoldMissionsWorkspace(dir, name) {
   const created = [];
-  const skillsDir = join3(dir, ".tmux-ide", "skills");
+  const skillsDir = join2(dir, ".tmux-ide", "skills");
   created.push(...copyTemplateSkills(skillsDir));
   created.push(...scaffoldTeamWorkspace(dir, name));
   return created;
@@ -9547,30 +7923,30 @@ async function init({
 } = {}) {
   const dir = process.cwd();
   const configPath = resolve7(dir, "ide.yml");
-  if (existsSync4(configPath)) {
+  if (existsSync3(configPath)) {
     outputError("ide.yml already exists in this directory", "EXISTS");
   }
   if (template) {
     const templatePath = resolve7(__dirname2, "..", "..", "..", "templates", `${template}.yml`);
-    if (!existsSync4(templatePath)) {
+    if (!existsSync3(templatePath)) {
       outputError(`Template "${template}" not found`, "NOT_FOUND");
     }
-    let content = readFileSync5(templatePath, "utf-8");
+    let content = readFileSync4(templatePath, "utf-8");
     const name2 = basename3(dir);
     content = content.replace(/^name: .+/m, `name: ${name2}`);
     const tmpPath = configPath + ".tmp";
-    writeFileSync4(tmpPath, content);
+    writeFileSync3(tmpPath, content);
     renameSync2(tmpPath, configPath);
     let created;
     if (template === "missions") {
       created = scaffoldMissionsWorkspace(dir, name2);
     } else if (isTeamTemplate(template)) {
       created = [
-        ...copyTemplateSkills(join3(dir, ".tmux-ide", "skills")),
+        ...copyTemplateSkills(join2(dir, ".tmux-ide", "skills")),
         ...scaffoldTeamWorkspace(dir, name2)
       ];
     } else {
-      created = copyTemplateSkills(join3(dir, ".tmux-ide", "skills"));
+      created = copyTemplateSkills(join2(dir, ".tmux-ide", "skills"));
     }
     if (json2) {
       console.log(JSON.stringify({ created: true, template, name: name2, paths: created }));
@@ -9590,7 +7966,7 @@ async function init({
     const config2 = suggestConfig(dir, detected);
     const yaml3 = (await import("js-yaml")).default;
     const tmpPath2 = configPath + ".tmp";
-    writeFileSync4(tmpPath2, yaml3.dump(config2, { lineWidth: -1, noRefs: true, quotingType: '"' }));
+    writeFileSync3(tmpPath2, yaml3.dump(config2, { lineWidth: -1, noRefs: true, quotingType: '"' }));
     renameSync2(tmpPath2, configPath);
     const desc = detected.frameworks.join(" + ");
     if (json2) {
@@ -9602,10 +7978,10 @@ async function init({
     }
   } else {
     const templatePath = resolve7(__dirname2, "..", "..", "..", "templates", "default.yml");
-    let content = readFileSync5(templatePath, "utf-8");
+    let content = readFileSync4(templatePath, "utf-8");
     content = content.replace(/^name: .+/m, `name: ${name}`);
     const tmpPath3 = configPath + ".tmp";
-    writeFileSync4(tmpPath3, content);
+    writeFileSync3(tmpPath3, content);
     renameSync2(tmpPath3, configPath);
     if (json2) {
       console.log(JSON.stringify({ created: true, template: "default", name }));
@@ -9616,8 +7992,8 @@ async function init({
       console.log("Edit it to configure your workspace, then run: tmux-ide");
     }
   }
-  const skillsDir = join3(dir, ".tmux-ide", "skills");
-  if (!existsSync4(skillsDir)) {
+  const skillsDir = join2(dir, ".tmux-ide", "skills");
+  if (!existsSync3(skillsDir)) {
     const created = copyTemplateSkills(skillsDir);
     if (created.length > 0 && !json2) {
       console.log("Copied built-in skill templates to .tmux-ide/skills/");
@@ -9701,7 +8077,7 @@ async function ls({ json: json2 } = {}) {
 
 // packages/daemon/src/doctor.ts
 import { execSync as execSync3 } from "node:child_process";
-import { existsSync as existsSync5 } from "node:fs";
+import { existsSync as existsSync4 } from "node:fs";
 import { resolve as resolve10 } from "node:path";
 function check(label, fn, { optional = false } = {}) {
   try {
@@ -9752,7 +8128,7 @@ async function doctor({
   checks.push(
     check("ide.yml exists", () => {
       const path2 = resolve10(".", "ide.yml");
-      if (!existsSync5(path2)) throw new Error("not found in current directory");
+      if (!existsSync4(path2)) throw new Error("not found in current directory");
       return "found";
     })
   );
@@ -9816,11 +8192,11 @@ init_yaml_io();
 init_src();
 init_canonical_daemon();
 import { resolve as resolve11 } from "node:path";
-import { existsSync as existsSync6 } from "node:fs";
+import { existsSync as existsSync5 } from "node:fs";
 async function status(targetDir, { json: json2 } = {}) {
   const dir = resolve11(targetDir ?? ".");
   const { name: session } = getSessionName(dir);
-  const configExists = existsSync6(resolve11(dir, "ide.yml"));
+  const configExists = existsSync5(resolve11(dir, "ide.yml"));
   const state = getSessionState(session);
   const running = state.running;
   let panes = [];
@@ -10100,7 +8476,7 @@ ${bold("Flags:")}
   ${cyan("-v, --version")}               ${dim("Show version number")}`);
 }
 function execBunWidget(scriptPath, args, commandLabel) {
-  const widgetMissing = !existsSync19(scriptPath);
+  const widgetMissing = !existsSync18(scriptPath);
   let bunMissing = false;
   try {
     execFileSync6("bun", ["--version"], { stdio: "ignore" });
@@ -10212,8 +8588,8 @@ try {
       const messageStart = values.to ? 1 : 2;
       let message = positionals.slice(messageStart).join(" ");
       if (!message && !process.stdin.isTTY) {
-        const { readFileSync: readFileSync12 } = await import("node:fs");
-        message = readFileSync12(0, "utf-8").trim();
+        const { readFileSync: readFileSync11 } = await import("node:fs");
+        message = readFileSync11(0, "utf-8").trim();
       }
       await send(null, { json, to: target, message, noEnter: values["no-enter"] });
       break;

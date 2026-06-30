@@ -16,7 +16,7 @@ export async function projectActivateHandler(
   const activateProject = deps.activateProject ?? activateProjectDefault;
 
   try {
-    await activateProject(project.name, { orchestrate: input.orchestrate ?? false });
+    await activateProject(project.name);
   } catch (err) {
     throw new ActionError({
       code: "internal",
