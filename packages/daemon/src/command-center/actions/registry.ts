@@ -25,27 +25,6 @@ import { projectRestartHandler } from "./handlers/project-restart.ts";
 import { terminalRespawnHandler } from "./handlers/terminal-respawn.ts";
 import { terminalStopHandler } from "./handlers/terminal-stop.ts";
 import {
-  goalCreateHandler,
-  goalDeleteHandler,
-  goalDoneHandler,
-  goalUpdateHandler,
-  milestoneCreateHandler,
-  milestoneUpdateHandler,
-  missionClearHandler,
-  missionPlanCompleteHandler,
-  missionSetHandler,
-  taskClaimHandler,
-  taskCreateHandler,
-  taskDeleteHandler,
-  taskDoneHandler,
-  taskUpdateHandler,
-} from "./handlers/task-system.ts";
-import {
-  skillCreateHandler,
-  skillDeleteHandler,
-  skillUpdateHandler,
-} from "./handlers/skill-actions.ts";
-import {
   configAddPaneHandler,
   configAddRowHandler,
   configDisableTeamHandler,
@@ -53,29 +32,8 @@ import {
   configRemovePaneHandler,
   configSetHandler,
 } from "./handlers/config-actions.ts";
-import { validationAssertHandler, validationReportHandler } from "./handlers/validation-actions.ts";
-import {
-  webhookAddHandler,
-  webhookRemoveHandler,
-  webhookTestHandler,
-} from "./handlers/webhook-actions.ts";
 import { appSetRemoteAccessHandler } from "./handlers/app-set-remote-access.ts";
 import { daemonShutdownHandler } from "./handlers/daemon-shutdown.ts";
-import { chatContextCaptureTerminalHandler } from "../../chat/context-actions.ts";
-import {
-  chatPermissionRespondHandler,
-  chatProvidersListHandler,
-  chatSessionCancelHandler,
-  chatSessionEditFromTurnHandler,
-  chatSessionSendHandler,
-  chatThreadCreateHandler,
-  chatThreadDeleteHandler,
-  chatThreadGetHandler,
-  chatThreadListHandler,
-  chatThreadRenameHandler,
-  chatThreadSetProviderHandler,
-  chatThreadUsageHandler,
-} from "./handlers/chat-actions.ts";
 
 export type ActionHandler<N extends ActionName> = (
   input: ActionInput<N>,
@@ -127,91 +85,6 @@ export const actionRegistry: RegistryShape = {
     resultSchema: ActionContractsZ["terminal.stop"].result,
     handler: terminalStopHandler,
   },
-  "task.create": {
-    inputSchema: ActionContractsZ["task.create"].input,
-    resultSchema: ActionContractsZ["task.create"].result,
-    handler: taskCreateHandler,
-  },
-  "task.update": {
-    inputSchema: ActionContractsZ["task.update"].input,
-    resultSchema: ActionContractsZ["task.update"].result,
-    handler: taskUpdateHandler,
-  },
-  "task.claim": {
-    inputSchema: ActionContractsZ["task.claim"].input,
-    resultSchema: ActionContractsZ["task.claim"].result,
-    handler: taskClaimHandler,
-  },
-  "task.done": {
-    inputSchema: ActionContractsZ["task.done"].input,
-    resultSchema: ActionContractsZ["task.done"].result,
-    handler: taskDoneHandler,
-  },
-  "task.delete": {
-    inputSchema: ActionContractsZ["task.delete"].input,
-    resultSchema: ActionContractsZ["task.delete"].result,
-    handler: taskDeleteHandler,
-  },
-  "goal.create": {
-    inputSchema: ActionContractsZ["goal.create"].input,
-    resultSchema: ActionContractsZ["goal.create"].result,
-    handler: goalCreateHandler,
-  },
-  "goal.update": {
-    inputSchema: ActionContractsZ["goal.update"].input,
-    resultSchema: ActionContractsZ["goal.update"].result,
-    handler: goalUpdateHandler,
-  },
-  "goal.done": {
-    inputSchema: ActionContractsZ["goal.done"].input,
-    resultSchema: ActionContractsZ["goal.done"].result,
-    handler: goalDoneHandler,
-  },
-  "goal.delete": {
-    inputSchema: ActionContractsZ["goal.delete"].input,
-    resultSchema: ActionContractsZ["goal.delete"].result,
-    handler: goalDeleteHandler,
-  },
-  "milestone.create": {
-    inputSchema: ActionContractsZ["milestone.create"].input,
-    resultSchema: ActionContractsZ["milestone.create"].result,
-    handler: milestoneCreateHandler,
-  },
-  "milestone.update": {
-    inputSchema: ActionContractsZ["milestone.update"].input,
-    resultSchema: ActionContractsZ["milestone.update"].result,
-    handler: milestoneUpdateHandler,
-  },
-  "mission.set": {
-    inputSchema: ActionContractsZ["mission.set"].input,
-    resultSchema: ActionContractsZ["mission.set"].result,
-    handler: missionSetHandler,
-  },
-  "mission.planComplete": {
-    inputSchema: ActionContractsZ["mission.planComplete"].input,
-    resultSchema: ActionContractsZ["mission.planComplete"].result,
-    handler: missionPlanCompleteHandler,
-  },
-  "mission.clear": {
-    inputSchema: ActionContractsZ["mission.clear"].input,
-    resultSchema: ActionContractsZ["mission.clear"].result,
-    handler: missionClearHandler,
-  },
-  "skill.create": {
-    inputSchema: ActionContractsZ["skill.create"].input,
-    resultSchema: ActionContractsZ["skill.create"].result,
-    handler: skillCreateHandler,
-  },
-  "skill.update": {
-    inputSchema: ActionContractsZ["skill.update"].input,
-    resultSchema: ActionContractsZ["skill.update"].result,
-    handler: skillUpdateHandler,
-  },
-  "skill.delete": {
-    inputSchema: ActionContractsZ["skill.delete"].input,
-    resultSchema: ActionContractsZ["skill.delete"].result,
-    handler: skillDeleteHandler,
-  },
   "config.set": {
     inputSchema: ActionContractsZ["config.set"].input,
     resultSchema: ActionContractsZ["config.set"].result,
@@ -242,31 +115,6 @@ export const actionRegistry: RegistryShape = {
     resultSchema: ActionContractsZ["config.disableTeam"].result,
     handler: configDisableTeamHandler,
   },
-  "validation.assert": {
-    inputSchema: ActionContractsZ["validation.assert"].input,
-    resultSchema: ActionContractsZ["validation.assert"].result,
-    handler: validationAssertHandler,
-  },
-  "validation.report": {
-    inputSchema: ActionContractsZ["validation.report"].input,
-    resultSchema: ActionContractsZ["validation.report"].result,
-    handler: validationReportHandler,
-  },
-  "webhook.add": {
-    inputSchema: ActionContractsZ["webhook.add"].input,
-    resultSchema: ActionContractsZ["webhook.add"].result,
-    handler: webhookAddHandler,
-  },
-  "webhook.remove": {
-    inputSchema: ActionContractsZ["webhook.remove"].input,
-    resultSchema: ActionContractsZ["webhook.remove"].result,
-    handler: webhookRemoveHandler,
-  },
-  "webhook.test": {
-    inputSchema: ActionContractsZ["webhook.test"].input,
-    resultSchema: ActionContractsZ["webhook.test"].result,
-    handler: webhookTestHandler,
-  },
   "app.setRemoteAccess": {
     inputSchema: ActionContractsZ["app.setRemoteAccess"].input,
     resultSchema: ActionContractsZ["app.setRemoteAccess"].result,
@@ -276,71 +124,6 @@ export const actionRegistry: RegistryShape = {
     inputSchema: ActionContractsZ["daemon.shutdown"].input,
     resultSchema: ActionContractsZ["daemon.shutdown"].result,
     handler: daemonShutdownHandler,
-  },
-  "chat.thread.list": {
-    inputSchema: ActionContractsZ["chat.thread.list"].input,
-    resultSchema: ActionContractsZ["chat.thread.list"].result,
-    handler: chatThreadListHandler,
-  },
-  "chat.providers.list": {
-    inputSchema: ActionContractsZ["chat.providers.list"].input,
-    resultSchema: ActionContractsZ["chat.providers.list"].result,
-    handler: chatProvidersListHandler,
-  },
-  "chat.thread.create": {
-    inputSchema: ActionContractsZ["chat.thread.create"].input,
-    resultSchema: ActionContractsZ["chat.thread.create"].result,
-    handler: chatThreadCreateHandler,
-  },
-  "chat.thread.delete": {
-    inputSchema: ActionContractsZ["chat.thread.delete"].input,
-    resultSchema: ActionContractsZ["chat.thread.delete"].result,
-    handler: chatThreadDeleteHandler,
-  },
-  "chat.thread.rename": {
-    inputSchema: ActionContractsZ["chat.thread.rename"].input,
-    resultSchema: ActionContractsZ["chat.thread.rename"].result,
-    handler: chatThreadRenameHandler,
-  },
-  "chat.thread.setProvider": {
-    inputSchema: ActionContractsZ["chat.thread.setProvider"].input,
-    resultSchema: ActionContractsZ["chat.thread.setProvider"].result,
-    handler: chatThreadSetProviderHandler,
-  },
-  "chat.thread.get": {
-    inputSchema: ActionContractsZ["chat.thread.get"].input,
-    resultSchema: ActionContractsZ["chat.thread.get"].result,
-    handler: chatThreadGetHandler,
-  },
-  "chat.thread.usage": {
-    inputSchema: ActionContractsZ["chat.thread.usage"].input,
-    resultSchema: ActionContractsZ["chat.thread.usage"].result,
-    handler: chatThreadUsageHandler,
-  },
-  "chat.session.send": {
-    inputSchema: ActionContractsZ["chat.session.send"].input,
-    resultSchema: ActionContractsZ["chat.session.send"].result,
-    handler: chatSessionSendHandler,
-  },
-  "chat.session.cancel": {
-    inputSchema: ActionContractsZ["chat.session.cancel"].input,
-    resultSchema: ActionContractsZ["chat.session.cancel"].result,
-    handler: chatSessionCancelHandler,
-  },
-  "chat.session.editFromTurn": {
-    inputSchema: ActionContractsZ["chat.session.editFromTurn"].input,
-    resultSchema: ActionContractsZ["chat.session.editFromTurn"].result,
-    handler: chatSessionEditFromTurnHandler,
-  },
-  "chat.permission.respond": {
-    inputSchema: ActionContractsZ["chat.permission.respond"].input,
-    resultSchema: ActionContractsZ["chat.permission.respond"].result,
-    handler: chatPermissionRespondHandler,
-  },
-  "chat.context.captureTerminal": {
-    inputSchema: ActionContractsZ["chat.context.captureTerminal"].input,
-    resultSchema: ActionContractsZ["chat.context.captureTerminal"].result,
-    handler: chatContextCaptureTerminalHandler,
   },
 };
 

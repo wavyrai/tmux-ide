@@ -1,6 +1,5 @@
 import { ActionError } from "../errors.ts";
 import type { ActionInput, ActionResult } from "../contract.ts";
-import { resetChatProvidersListCache } from "./chat-actions.ts";
 
 export interface DaemonShutdownDeps {
   shutdown?: (reason: string | null) => Promise<void> | void;
@@ -28,7 +27,6 @@ export function daemonShutdownHandler(
   }
 
   shutdownInProgress = true;
-  resetChatProvidersListCache();
   const shutdown = deps.shutdown ?? shutdownBackend;
   process.nextTick(() => {
     void Promise.resolve(shutdown?.(input.reason ?? null)).catch((err) => {

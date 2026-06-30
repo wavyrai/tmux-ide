@@ -3,7 +3,6 @@ import { readConfig } from "./lib/yaml-io.ts";
 import { validateConfig } from "./validate.ts";
 import { outputError } from "./lib/output.ts";
 import { getSessionState, listPanes } from "@tmux-ide/tmux-bridge";
-import { loadSkills } from "./lib/skill-registry.ts";
 import type { IdeConfig } from "./types.ts";
 
 interface ResolvedPane {
@@ -24,17 +23,6 @@ interface ResolvedRow {
   panes: ResolvedPane[];
 }
 
-interface SkillInfo {
-  name: string;
-  specialties: string[];
-}
-
-interface PaneSkillMapping {
-  pane: string;
-  skill: string;
-  resolved: boolean;
-}
-
 interface Inspection {
   dir: string;
   configPath: string;
@@ -49,8 +37,6 @@ interface Inspection {
   rows: ResolvedRow[];
   rawConfig: IdeConfig;
   tmux: { running: boolean; panes: ReturnType<typeof listPanes> };
-  skills: SkillInfo[];
-  paneSkillMap: PaneSkillMapping[];
 }
 
 export function buildInspection(
@@ -91,24 +77,6 @@ export function buildInspection(
       .find(({ pane }) => pane.focus) ?? null;
   const session = config?.name ?? basename(dir);
 
-  // Skills
-  const allSkills = loadSkills(dir);
-  const skillNames = new Set(allSkills.map((s) => s.name));
-  const skills: SkillInfo[] = allSkills.map((s) => ({ name: s.name, specialties: s.specialties }));
-
-  const paneSkillMap: PaneSkillMapping[] = [];
-  for (const row of rows) {
-    for (const pane of row.panes ?? []) {
-      if (pane.skill) {
-        paneSkillMap.push({
-          pane: pane.title ?? "untitled",
-          skill: pane.skill,
-          resolved: skillNames.has(pane.skill),
-        });
-      }
-    }
-  }
-
   return {
     dir,
     configPath,
@@ -136,8 +104,6 @@ export function buildInspection(
       running,
       panes,
     },
-    skills,
-    paneSkillMap,
   };
 }
 

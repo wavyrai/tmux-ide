@@ -48,7 +48,7 @@
     "dev": "tsx --watch src/lib/daemon.ts",
     "start": "node dist/lib/daemon.js",
     "lint": "eslint src",
-    "test": "bun test src/chat/thread-store.test.ts src/chat/thread-manager.test.ts src/chat/provider-discovery.test.ts src/chat/context-actions.test.ts src/chat/__tests__/codex-stop-reliability.test.ts src/chat/tools/tmux.test.ts src/chat/reactors/reactor.test.ts src/command-center/actions/handlers/chat-actions.test.ts src/codex/protocol.test.ts src/codex/client.test.ts src/codex/schema.test.ts",
+    "test": "vitest run",
     "test:vitest": "vitest run"
   },
   "dependencies": {
@@ -59,21 +59,15 @@
     "@parcel/watcher": "^2.5.6",
     "@tmux-ide/contracts": "workspace:*",
     "@tmux-ide/tmux-bridge": "workspace:*",
-    "@vscode/ripgrep": "^1.15.11",
-    "better-sqlite3": "^12.4.1",
-    "effect": "^3.21.2",
     "hono": "^4.12.8",
     "ignore": "^7.0.5",
     "js-yaml": "^4.1.1",
     "node-pty": "1.2.0-beta.12",
     "solid-js": "^1.9.11",
-    "vscode-jsonrpc": "^8.2.1",
-    "vscode-languageserver-protocol": "^3.17.5",
     "ws": "^8.20.0",
     "zod": "^4.3.6"
   },
   "devDependencies": {
-    "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^25.5.0",
     "@types/ws": "^8.18.1",
     "tsx": "^4.20.7",

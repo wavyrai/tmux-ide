@@ -853,74 +853,6 @@ export const ActionContractsZ = {
     input: TerminalStopInputZ,
     result: TerminalStopResultZ,
   },
-  "task.create": {
-    input: TaskCreateInputZ,
-    result: TaskCreateResultZ,
-  },
-  "task.update": {
-    input: TaskUpdateInputZ,
-    result: TaskUpdateResultZ,
-  },
-  "task.claim": {
-    input: TaskClaimInputZ,
-    result: TaskClaimResultZ,
-  },
-  "task.done": {
-    input: TaskDoneInputZ,
-    result: TaskDoneResultZ,
-  },
-  "task.delete": {
-    input: TaskDeleteInputZ,
-    result: TaskDeleteResultZ,
-  },
-  "goal.create": {
-    input: GoalCreateInputZ,
-    result: GoalCreateResultZ,
-  },
-  "goal.update": {
-    input: GoalUpdateInputZ,
-    result: GoalUpdateResultZ,
-  },
-  "goal.done": {
-    input: GoalDoneInputZ,
-    result: GoalDoneResultZ,
-  },
-  "goal.delete": {
-    input: GoalDeleteInputZ,
-    result: GoalDeleteResultZ,
-  },
-  "milestone.create": {
-    input: MilestoneCreateInputZ,
-    result: MilestoneCreateResultZ,
-  },
-  "milestone.update": {
-    input: MilestoneUpdateInputZ,
-    result: MilestoneUpdateResultZ,
-  },
-  "mission.set": {
-    input: MissionSetInputZ,
-    result: MissionSetResultZ,
-  },
-  "mission.planComplete": {
-    input: MissionPlanCompleteInputZ,
-    result: MissionPlanCompleteResultZ,
-  },
-  "mission.clear": {
-    input: MissionClearInputZ,
-    result: MissionClearResultZ,
-  },
-  "skill.create": {
-    input: SkillCreateInputZ,
-    result: SkillCreateResultZ,
-  },
-  "skill.update": {
-    input: SkillUpdateInputZ,
-    result: SkillUpdateResultZ,
-  },
-  "skill.delete": {
-    input: SkillDeleteInputZ,
-    result: SkillDeleteResultZ,
-  },
   "config.set": {
     input: ConfigSetInputZ,
     result: ConfigResultZ,
@@ -945,26 +877,6 @@ export const ActionContractsZ = {
     input: ConfigDisableTeamInputZ,
     result: ConfigDisableTeamResultZ,
   },
-  "validation.assert": {
-    input: ValidationAssertInputZ,
-    result: ValidationAssertResultZ,
-  },
-  "validation.report": {
-    input: ValidationReportInputZ,
-    result: ValidationReportResultZ,
-  },
-  "webhook.add": {
-    input: WebhookAddInputZ,
-    result: WebhookAddResultZ,
-  },
-  "webhook.remove": {
-    input: WebhookRemoveInputZ,
-    result: WebhookRemoveResultZ,
-  },
-  "webhook.test": {
-    input: WebhookTestInputZ,
-    result: WebhookTestResultZ,
-  },
   "app.setRemoteAccess": {
     input: AppSetRemoteAccessInputZ,
     result: AppSetRemoteAccessResultZ,
@@ -972,58 +884,6 @@ export const ActionContractsZ = {
   "daemon.shutdown": {
     input: DaemonShutdownInputZ,
     result: DaemonShutdownResultZ,
-  },
-  "chat.thread.list": {
-    input: ChatThreadListInputZ,
-    result: ChatThreadListResultZ,
-  },
-  "chat.providers.list": {
-    input: ChatProvidersListInputZ,
-    result: ChatProvidersListResultZ,
-  },
-  "chat.thread.create": {
-    input: ChatThreadCreateInputZ,
-    result: ChatThreadCreateResultZ,
-  },
-  "chat.thread.delete": {
-    input: ChatThreadDeleteInputZ,
-    result: ChatThreadDeleteResultZ,
-  },
-  "chat.thread.rename": {
-    input: ChatThreadRenameInputZ,
-    result: ChatThreadRenameResultZ,
-  },
-  "chat.thread.setProvider": {
-    input: ChatThreadSetProviderInputZ,
-    result: ChatThreadSetProviderResultZ,
-  },
-  "chat.thread.get": {
-    input: ChatThreadGetInputZ,
-    result: ChatThreadGetResultZ,
-  },
-  "chat.thread.usage": {
-    input: ChatThreadUsageInputZ,
-    result: ChatThreadUsageResultZ,
-  },
-  "chat.session.send": {
-    input: ChatSessionSendInputZ,
-    result: ChatSessionSendResultZ,
-  },
-  "chat.session.cancel": {
-    input: ChatSessionCancelInputZ,
-    result: ChatSessionCancelResultZ,
-  },
-  "chat.session.editFromTurn": {
-    input: ChatSessionEditFromTurnInputZ,
-    result: ChatSessionEditFromTurnResultZ,
-  },
-  "chat.permission.respond": {
-    input: ChatPermissionRespondInputZ,
-    result: ChatPermissionRespondResultZ,
-  },
-  "chat.context.captureTerminal": {
-    input: ChatContextCaptureTerminalInputZ,
-    result: ChatContextCaptureTerminalResultZ,
   },
 } as const;
 

@@ -402,15 +402,6 @@ export const SessionStatsSchemaZ = z.object({
 export const SessionOverviewSchemaZ = z.object({
   name: z.string(),
   dir: z.string(),
-  mission: MissionSchemaZ.nullable(),
-  stats: SessionStatsSchemaZ,
-  goals: z.array(
-    z.object({
-      id: z.string(),
-      title: z.string(),
-      progress: z.number(),
-    }),
-  ),
 });
 
 export const ProjectDetailSchemaZ = z.object({

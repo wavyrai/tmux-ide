@@ -1,13 +1,6 @@
 import { execSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
-import { readConfig } from "./lib/yaml-io.ts";
-import { loadSkills } from "./lib/skill-registry.ts";
-import {
-  validateTasksTree,
-  type TaskStoreIntegrityReport,
-  type TaskStoreIssue,
-} from "./lib/task-store.ts";
 
 interface CheckResult {
   label: string;
@@ -31,12 +24,8 @@ function check(
 
 export async function doctor({
   json,
-  tasks,
-  fix,
 }: {
   json?: boolean;
-  tasks?: boolean;
-  fix?: boolean;
 } = {}): Promise<void> {
   const checks: CheckResult[] = [];
 
@@ -106,32 +95,6 @@ export async function doctor({
 
   checks.push(
     check(
-      "pane skill references",
-      () => {
-        const dir = resolve(".");
-        const { config } = readConfig(dir);
-        const skills = loadSkills(dir);
-        const skillNames = new Set(skills.map((s) => s.name));
-        const unresolved: string[] = [];
-        for (const row of config.rows) {
-          for (const pane of row.panes) {
-            if (pane.skill && !skillNames.has(pane.skill)) {
-              unresolved.push(`${pane.title ?? "untitled"} → ${pane.skill}`);
-            }
-          }
-        }
-        if (unresolved.length > 0) {
-          throw new Error(`${unresolved.length} unresolved: ${unresolved.join(", ")}`);
-        }
-        const count = config.rows.flatMap((r) => r.panes).filter((p) => p.skill).length;
-        return count > 0 ? `${count} reference(s), all resolved` : "no skill references";
-      },
-      { optional: true },
-    ),
-  );
-
-  checks.push(
-    check(
       "tailscale CLI",
       () => {
         const version = execSync("tailscale version", { encoding: "utf-8" }).trim().split("\n")[0]!;
@@ -163,24 +126,10 @@ export async function doctor({
     ),
   );
 
-  let taskReport: TaskStoreIntegrityReport | null = null;
-  if (tasks) {
-    taskReport = validateTasksTree(resolve("."), { fix });
-    checks.push({
-      label: "task integrity",
-      pass: taskReport.ok,
-      detail:
-        taskReport.issues.length === 0
-          ? "clean"
-          : `${taskReport.issues.length} issue(s)${fix ? ", safe fixes applied where possible" : ""}`,
-      optional: false,
-    });
-  }
-
   const allPass = checks.every((c) => c.pass || c.optional);
 
   if (json) {
-    console.log(JSON.stringify({ ok: allPass, checks, tasks: taskReport }, null, 2));
+    console.log(JSON.stringify({ ok: allPass, checks }, null, 2));
     return;
   }
 
@@ -190,19 +139,5 @@ export async function doctor({
     console.log(`${color}${icon}\x1b[0m ${c.label} — ${c.detail}`);
   }
 
-  if (taskReport && taskReport.issues.length > 0) {
-    console.log("");
-    console.log("Task integrity issues:");
-    for (const issue of taskReport.issues) {
-      console.log(formatTaskIssue(issue));
-    }
-  }
-
   if (!allPass) process.exitCode = 1;
-}
-
-function formatTaskIssue(issue: TaskStoreIssue): string {
-  const file = issue.file ? `${issue.file}: ` : "";
-  const fixed = issue.fixed ? " (fixed)" : "";
-  return `  - ${file}${issue.message}${fixed}`;
 }

@@ -11,7 +11,6 @@ import {
   type PaneInfo,
   type PaneBusyStatus,
 } from "./widgets/lib/pane-comms.ts";
-import { appendEvent } from "./lib/event-log.ts";
 import { IdeError } from "./lib/errors.ts";
 
 export const LONG_MESSAGE_THRESHOLD = 150;
@@ -141,15 +140,6 @@ export async function send(targetDir: string | undefined, opts: SendOptions): Pr
       sendCommand(session, pane.id, message);
     }
   }
-
-  // Log send event
-  appendEvent(dir, {
-    timestamp: new Date().toISOString(),
-    type: "send",
-    target: pane.name ?? pane.title,
-    paneId: pane.id,
-    message: message.length > 100 ? message.slice(0, 100) + "..." : message,
-  });
 
   const result = {
     ok: true,

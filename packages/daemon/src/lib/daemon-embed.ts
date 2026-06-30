@@ -9,26 +9,15 @@ import { execFileSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { createServer, type Server } from "node:http";
 import { createRequire } from "node:module";
-import { existsSync, readdirSync, statSync, unlinkSync } from "node:fs";
-import { join } from "node:path";
 import type { Socket } from "node:net";
 import { WebSocket, WebSocketServer } from "ws";
 import { computeAgentStates, computePortPanes } from "./session-monitor.ts";
-import {
-  flushPendingTaskStore,
-  getTaskStoreHealth,
-  reconcileTaskStore,
-  replayTaskStoreWal,
-  startTaskStoreWatcher,
-} from "./task-store.ts";
 import { DaemonShutdownError, DaemonStartupError } from "./errors.ts";
 import { handlePtyWebSocket, shutdownPtyBridges } from "../server/ws-route.ts";
 import { handleWsEventsConnection } from "../command-center/ws-events.ts";
 import { setRemoteAccessRestartBackend } from "../command-center/actions/handlers/app-set-remote-access.ts";
 import { setDaemonShutdownBackend } from "../command-center/actions/handlers/daemon-shutdown.ts";
-import { shutdownDefaultChatRuntime } from "../chat/defaults.ts";
 import { readAppSettings } from "./app-settings.ts";
-import { getProject } from "./project-registry.ts";
 import { getDefaultWorkspaceRegistry } from "./workspace-registry.ts";
 import { setActivationBackend, type ProjectActivationOptions } from "./active-projects.ts";
 import {
@@ -42,7 +31,6 @@ const requireFromHere = createRequire(import.meta.url);
 const DEFAULT_HOSTNAME = "127.0.0.1";
 const DEFAULT_GRACEFUL_MS = 2000;
 const MONITOR_INTERVAL_MS = 1000;
-const RECONCILE_INTERVAL_MS = 30_000;
 const EMBEDDED_SESSION_NAME = "__embedded__";
 
 export interface EmbeddedDaemonOptions {
@@ -55,7 +43,6 @@ export interface EmbeddedDaemonOptions {
   silent?: boolean;
   /** @deprecated Use bindHostname. */
   hostname?: string;
-  orchestratorStarter?: (sessionName: string, dir: string) => Promise<() => void>;
 }
 
 export interface EmbeddedDaemonHandle {
@@ -184,77 +171,6 @@ function listPanes(sessionName: string): MonitorPane[] {
       name: name || undefined,
     };
   });
-}
-
-function cleanupDispatchFiles(dir: string): void {
-  const dispatchDir = join(dir, ".tasks", "dispatch");
-  if (!existsSync(dispatchDir)) return;
-  const cutoff = Date.now() - 24 * 60 * 60 * 1000;
-  try {
-    for (const file of readdirSync(dispatchDir)) {
-      const filePath = join(dispatchDir, file);
-      try {
-        const mtime = statSync(filePath).mtimeMs;
-        if (mtime < cutoff) unlinkSync(filePath);
-      } catch {
-        // skip files we can't stat/delete
-      }
-    }
-  } catch {
-    // dispatch dir unreadable — skip
-  }
-}
-
-async function startOrchestrator(sessionName: string, dir: string): Promise<() => void> {
-  try {
-    const { readConfig } = await import("./yaml-io.ts");
-    const { config } = readConfig(dir);
-    if (!config.orchestrator?.enabled) return () => undefined;
-
-    const { createOrchestrator } = await import("./orchestrator.ts");
-
-    if (config.orchestrator.webhooks?.length) {
-      const { setWebhookConfig } = await import("./event-log.ts");
-      setWebhookConfig(config.orchestrator.webhooks);
-    }
-
-    const paneSpecialties = new Map<string, string[]>();
-    for (const row of config.rows) {
-      for (const pane of row.panes) {
-        if (pane.specialty && pane.title) {
-          paneSpecialties.set(
-            pane.title,
-            pane.specialty.split(",").map((s: string) => s.trim().toLowerCase()),
-          );
-        }
-      }
-    }
-
-    cleanupDispatchFiles(dir);
-    const orch = config.orchestrator;
-    return createOrchestrator({
-      session: sessionName,
-      dir,
-      autoDispatch: orch.auto_dispatch ?? true,
-      stallTimeout: orch.stall_timeout ?? 300000,
-      pollInterval: orch.poll_interval ?? 5000,
-      masterPane: orch.master_pane ?? null,
-      beforeRun: orch.before_run ?? null,
-      afterRun: orch.after_run ?? null,
-      maxConcurrentAgents: orch.max_concurrent_agents ?? 10,
-      dispatchMode: orch.dispatch_mode ?? "tasks",
-      paneSpecialties,
-      services:
-        (orch.services as Record<
-          string,
-          { command: string; port?: number; healthcheck?: string }
-        >) ?? {},
-      research: orch.research,
-    });
-  } catch (err) {
-    console.error("[daemon] Orchestrator failed to start:", err);
-    return () => undefined;
-  }
 }
 
 function bearerToken(authHeader: string | string[] | undefined): string | null {
@@ -517,39 +433,21 @@ async function startHttpServer({
   const { getRequestListener } = await import(requireFromHere.resolve("@hono/node-server"));
   const { AuthService } = await import("./auth/auth-service.ts");
   const { AuthConfigSchema } = await import("./auth/types.ts");
-  const { TunnelManager } = await import("./tunnels/manager.ts");
-  const { RemoteRegistry } = await import("./hq/registry.ts");
-  const { HQConfigSchema } = await import("./hq/types.ts");
 
   let authConfig = AuthConfigSchema.parse({});
-  let tunnelConfig: Record<string, unknown> | undefined;
-  let hqConfig: ReturnType<typeof HQConfigSchema.parse> | undefined;
   try {
     const { readConfig } = await import("./yaml-io.ts");
     const { config } = readConfig(dir);
     if (config.auth) authConfig = AuthConfigSchema.parse(config.auth);
-    if (config.tunnel) tunnelConfig = config.tunnel as Record<string, unknown>;
-    if (config.hq) hqConfig = HQConfigSchema.parse(config.hq);
   } catch {
     // Config not readable — use defaults.
   }
 
   const authService = new AuthService(authConfig.secret);
-  const tunnelManager = new TunnelManager({ session: sessionName, dir });
-  let registryShuttingDown = false;
-  const remoteRegistry =
-    hqConfig?.enabled && hqConfig.role === "hq"
-      ? new RemoteRegistry({
-          healthInterval: hqConfig.heartbeat_interval,
-          isShuttingDown: () => registryShuttingDown,
-        })
-      : undefined;
 
   const app = createApp({
     authService,
     authConfig,
-    tunnelManager,
-    remoteRegistry,
     remoteAccess: {
       bindHostname,
       token: authToken ?? null,
@@ -557,8 +455,7 @@ async function startHttpServer({
     },
   });
   app.get("/api/daemon/health", (c: { json: (body: unknown, status?: number) => Response }) => {
-    const health = getTaskStoreHealth();
-    return c.json({ ...health, ok: health.ok, session: sessionName });
+    return c.json({ ok: true, session: sessionName });
   });
 
   const server = createServer(getRequestListener(app.fetch));
@@ -605,57 +502,11 @@ async function startHttpServer({
     server.listen(requestedPort, bindHostname);
   });
 
-  if (remoteRegistry) {
-    console.log("[daemon] HQ registry started");
-  }
-
-  if (tunnelConfig?.auto_start) {
-    try {
-      const { tunnelConfigSchema } = await import("./tunnels/types.ts");
-      const parsed = tunnelConfigSchema.parse({
-        ...tunnelConfig,
-        port: tunnelConfig.port ?? requestedPort,
-      });
-      await tunnelManager.start(parsed);
-      console.log("[daemon] Tunnel auto-started");
-    } catch (err) {
-      console.error("[daemon] Tunnel auto-start failed:", err);
-    }
-  }
-
-  let hqClient:
-    | { register: () => Promise<void>; destroy: () => Promise<void>; getName: () => string }
-    | undefined;
-  if (hqConfig?.enabled && hqConfig.role === "remote" && hqConfig.hq_url) {
-    try {
-      const { HQClient } = await import("./hq/client.ts");
-      const os = await import("node:os");
-      hqClient = new HQClient({
-        hqUrl: hqConfig.hq_url,
-        secret: hqConfig.secret ?? "",
-        machineName: hqConfig.machine_name ?? os.hostname(),
-        remoteUrl: `http://${bindHostname}:${requestedPort}`,
-        heartbeatInterval: hqConfig.heartbeat_interval,
-      });
-      await hqClient.register();
-      console.log(`[daemon] Registered with HQ as ${hqClient.getName()}`);
-    } catch (err) {
-      console.error("[daemon] HQ client registration failed:", err);
-    }
-  }
-
-  const originalCloseClients = closeClients;
-  const originalCloseWsServers = closeWsServers;
   return {
     server,
     sockets,
-    closeClients: originalCloseClients,
-    closeWsServers: async () => {
-      registryShuttingDown = true;
-      remoteRegistry?.destroy();
-      if (hqClient) await hqClient.destroy();
-      await originalCloseWsServers();
-    },
+    closeClients,
+    closeWsServers,
   };
 }
 
@@ -731,8 +582,6 @@ export async function startEmbeddedDaemon(
       // Already added or persistence failed; non-fatal.
     }
   }
-  const orchestratorStarter = opts.orchestratorStarter ?? startOrchestrator;
-
   const { server, sockets, closeClients, closeWsServers } = await startHttpServer({
     sessionName,
     requestedPort: port,
@@ -752,82 +601,27 @@ export async function startEmbeddedDaemon(
     authToken,
   });
 
-  let stopRootTaskStoreWatcher: (() => Promise<void>) | null = null;
-  let rootReconcileInterval: ReturnType<typeof setInterval> | null = null;
-  let stopRootOrchestrator: (() => void) | null = null;
-
-  if (!sessionless) {
-    replayTaskStoreWal(dir);
-    stopRootOrchestrator = await orchestratorStarter(sessionName, dir);
-    stopRootTaskStoreWatcher = startTaskStoreWatcher(dir);
-    rootReconcileInterval = setInterval(() => {
-      reconcileTaskStore(dir);
-    }, RECONCILE_INTERVAL_MS);
-    reconcileTaskStore(dir);
-  }
-
   let lastState = "";
   let stopped = false;
   let stopping: Promise<void> | null = null;
   let stopSelf: (() => void) | null = null;
-  const activeProjectStops = new Map<string, { stop: () => void; orchestrated: boolean }>();
+  const activeProjectStops = new Map<string, { stop: () => void }>();
 
+  // Track active projects so the session-control surface can open/close
+  // them. Orchestration moved out of tmux-ide (agent coordination lives in
+  // sfora.ai), so activation is now bookkeeping only.
   const activateProjectOnDaemon = async (
     projectName: string,
-    options: ProjectActivationOptions = {},
+    _options: ProjectActivationOptions = {},
   ): Promise<{ stop: () => Promise<void> }> => {
-    const existing = activeProjectStops.get(projectName);
-    if (existing) {
-      if (options.orchestrate && !existing.orchestrated) {
-        const project = getProject(projectName);
-        if (project && existsSync(join(project.dir, "ide.yml"))) {
-          existing.stop = await orchestratorStarter(project.name, project.dir);
-          existing.orchestrated = true;
-        }
-      }
-      return {
-        stop: async () => {
-          existing.stop();
-        },
-      };
+    if (!activeProjectStops.has(projectName)) {
+      activeProjectStops.set(projectName, { stop: () => undefined });
     }
-
-    const project = getProject(projectName);
-    if (!project) {
-      // Live-session-only projects (e.g. tmux sessions the user spawned
-      // outside the registry) don't have an ide.yml and can't be
-      // orchestrated, but they MUST still be openable from the
-      // dashboard's Terminal leaf. Treat activation as a no-op for
-      // unregistered names rather than throwing — `resolveProject`
-      // already accepted them, so `project.openTerminal` and friends
-      // can proceed. The orchestrator only runs for registered
-      // projects with an ide.yml.
-      activeProjectStops.set(projectName, { stop: () => undefined, orchestrated: false });
-      return {
-        stop: async () => {
-          const current = activeProjectStops.get(projectName);
-          if (!current) return;
-          activeProjectStops.delete(projectName);
-          current.stop();
-        },
-      };
-    }
-
-    const shouldOrchestrate =
-      options.orchestrate === true && existsSync(join(project.dir, "ide.yml"));
-    const stopOrchestrator = shouldOrchestrate
-      ? await orchestratorStarter(project.name, project.dir)
-      : () => undefined;
-    activeProjectStops.set(project.name, {
-      stop: stopOrchestrator,
-      orchestrated: shouldOrchestrate,
-    });
-
     return {
       stop: async () => {
-        const current = activeProjectStops.get(project.name);
+        const current = activeProjectStops.get(projectName);
         if (!current) return;
-        activeProjectStops.delete(project.name);
+        activeProjectStops.delete(projectName);
         current.stop();
       },
     };
@@ -907,7 +701,6 @@ export async function startEmbeddedDaemon(
           stopped = true;
           setActivationBackend(null);
           clearInterval(monitorInterval);
-          if (rootReconcileInterval) clearInterval(rootReconcileInterval);
 
           const closePromise = waitForServerClose(server);
           closeClients();
@@ -915,15 +708,11 @@ export async function startEmbeddedDaemon(
             stop.stop();
           }
           activeProjectStops.clear();
-          stopRootOrchestrator?.();
-          await shutdownDefaultChatRuntime();
           shutdownPtyBridges();
           await Promise.race([closePromise, delay(gracefulMs)]);
           for (const socket of sockets) socket.destroy();
           await Promise.race([closePromise.catch(() => undefined), delay(100)]);
           await closeWsServers();
-          if (stopRootTaskStoreWatcher) await stopRootTaskStoreWatcher();
-          flushPendingTaskStore();
           setRemoteAccessRestartBackend(null);
           setDaemonShutdownBackend(null);
         } catch (err) {
@@ -959,7 +748,6 @@ export async function startEmbeddedDaemon(
               bindHostname: request.bindHostname,
               authToken: request.token,
               localBypassToken,
-              orchestratorStarter,
             });
             const mutableHandle = handle as {
               stop: EmbeddedDaemonHandle["stop"];
