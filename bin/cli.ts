@@ -10,7 +10,6 @@ import { fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 import { launch } from "../packages/daemon/src/launch.ts";
-import { readConfig } from "../packages/daemon/src/lib/yaml-io.ts";
 import { shouldOpenCockpit } from "../packages/daemon/src/tui/team/entry.ts";
 import { init } from "../packages/daemon/src/init.ts";
 import { stop } from "../packages/daemon/src/stop.ts";
@@ -24,6 +23,7 @@ import { detect } from "../packages/daemon/src/detect.ts";
 import { config } from "../packages/daemon/src/config.ts";
 import { restart } from "../packages/daemon/src/restart.ts";
 import { send } from "../packages/daemon/src/send.ts";
+import { launchHostShell } from "../packages/daemon/src/tui/team/host.ts";
 import { IdeError } from "../packages/daemon/src/lib/errors.ts";
 import { printCommandError } from "../packages/daemon/src/lib/output.ts";
 
@@ -162,7 +162,7 @@ ${bold("Flags:")}
 // require the `bun` runtime. On a clean `npm i -g tmux-ide` neither is
 // present, so execFileSync("bun", ...) would throw a raw ENOENT. Guard
 // first and surface an actionable IdeError instead.
-function execBunWidget(scriptPath: string, args: string[], commandLabel: string): void {
+function assertBunWidgetAvailable(scriptPath: string, commandLabel: string): void {
   const widgetMissing = !existsSync(scriptPath);
   let bunMissing = false;
   try {
@@ -183,6 +183,10 @@ function execBunWidget(scriptPath: string, args: string[], commandLabel: string)
       { code: "USAGE", exitCode: 1 },
     );
   }
+}
+
+function execBunWidget(scriptPath: string, args: string[], commandLabel: string): void {
+  assertBunWidgetAvailable(scriptPath, commandLabel);
   // Spawn from the repo root so bun finds `bunfig.toml` (the @opentui/solid
   // JSX preload). Without this, running from any other cwd — e.g. bare
   // `tmux-ide` in a project dir — falls back to the React JSX runtime and the
@@ -208,20 +212,19 @@ async function printFleetJson(): Promise<void> {
   console.log(JSON.stringify(toFleetJson(listTeamProjects(createStatusTracker())), null, 2));
 }
 
-// Best-effort `--theme=<json>` args for a widget from a project's ide.yml.
-// Never throws — a missing config or absent `theme` yields no args, so a bad
-// or heavy config read never blocks opening the cockpit.
-function readThemeArgs(dir: string): string[] {
-  try {
-    const { config } = readConfig(dir);
-    if (config.theme) return [`--theme=${JSON.stringify(config.theme)}`];
-  } catch {
-    // no ide.yml, unreadable, or malformed — fall through to no theme.
-  }
-  return [];
-}
-
 const teamScriptPath = resolve(__dirname, "../packages/daemon/src/tui/team/index.tsx");
+
+// `tmux-ide team` HOSTS tmux: it opens a dedicated `[ switcher | main ]`
+// session with the OpenTUI switcher on the left. Guard bun/widget availability
+// just like a bun widget (the switcher pane runs bun), then create-or-attach.
+function launchTeamHost(): void {
+  assertBunWidgetAvailable(teamScriptPath, "team");
+  launchHostShell({
+    repoRoot: resolve(__dirname, ".."),
+    switcherScript: teamScriptPath,
+    userCwd: process.cwd(),
+  });
+}
 
 try {
   switch (command) {
@@ -234,7 +237,7 @@ try {
           await printFleetJson();
           break;
         }
-        execBunWidget(teamScriptPath, readThemeArgs(targetDir), "team");
+        launchTeamHost();
         break;
       }
       await launch(startTargetDir, { json });
@@ -360,7 +363,7 @@ try {
         await printFleetJson();
         break;
       }
-      execBunWidget(teamScriptPath, readThemeArgs(resolve(startTargetDir || ".")), "team");
+      launchTeamHost();
       break;
     }
 

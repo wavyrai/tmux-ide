@@ -7622,6 +7622,58 @@ var init_config = __esm({
   }
 });
 
+// packages/daemon/src/tui/team/host.ts
+function switcherPaneCommand(repoRoot, switcherScript, userCwd) {
+  return `cd ${shellEscape(repoRoot)} && TMUX_IDE_CWD=${shellEscape(userCwd)} bun ${shellEscape(switcherScript)}`;
+}
+function hostLayoutCommands(opts) {
+  const { session, repoRoot, switcherScript, userCwd, switcherWidth } = opts;
+  const switcher = `${session}:0.0`;
+  const switcherCmd = switcherPaneCommand(repoRoot, switcherScript, userCwd);
+  return [
+    ["new-session", "-d", "-s", session, "-c", repoRoot, switcherCmd],
+    ["split-window", "-h", "-t", switcher, "-c", userCwd],
+    ["resize-pane", "-t", switcher, "-x", String(switcherWidth)],
+    ["select-pane", "-t", switcher]
+  ];
+}
+function launchHostShell(opts) {
+  if (hasSession(HOST_SESSION)) {
+    attachSession(HOST_SESSION);
+    return;
+  }
+  const commands = hostLayoutCommands({
+    session: HOST_SESSION,
+    repoRoot: opts.repoRoot,
+    switcherScript: opts.switcherScript,
+    userCwd: opts.userCwd,
+    switcherWidth: opts.switcherWidth ?? DEFAULT_SWITCHER_WIDTH
+  });
+  try {
+    for (const argv of commands) {
+      runTmux(argv);
+    }
+  } catch (error) {
+    killSession(HOST_SESSION);
+    throw new IdeError(
+      `Could not start the tmux-ide host shell: ${error.message}`,
+      { code: "HOST_SHELL_FAILED", cause: error }
+    );
+  }
+  attachSession(HOST_SESSION);
+}
+var HOST_SESSION, DEFAULT_SWITCHER_WIDTH;
+var init_host = __esm({
+  "packages/daemon/src/tui/team/host.ts"() {
+    "use strict";
+    init_src();
+    init_shell();
+    init_errors2();
+    HOST_SESSION = "_tmux-ide";
+    DEFAULT_SWITCHER_WIDTH = 34;
+  }
+});
+
 // package.json
 var require_package = __commonJS({
   "package.json"(exports, module) {
@@ -7984,10 +8036,14 @@ var init_snapshot = __esm({
 // packages/daemon/src/tui/team/sessions.ts
 var sessions_exports = {};
 __export(sessions_exports, {
+  isListableSession: () => isListableSession,
   listTeamSessions: () => listTeamSessions,
   rollupStatus: () => rollupStatus
 });
 import { execFileSync as execFileSync6 } from "node:child_process";
+function isListableSession(name) {
+  return name !== HOST_SESSION;
+}
 function tmux3(args) {
   try {
     return execFileSync6("tmux", args, {
@@ -8006,7 +8062,7 @@ function listTeamSessions(tracker, opts = {}) {
   ]);
   if (!raw) return [];
   const panesBySession = collectPanes();
-  return raw.split("\n").filter(Boolean).map((line) => {
+  return raw.split("\n").filter(Boolean).filter((line) => isListableSession(line.split("	")[0] ?? "")).map((line) => {
     const [name = "", attached = "", windows = "0"] = line.split("	");
     const panes = panesBySession.get(name) ?? [];
     const seen = opts.viewed === name;
@@ -8057,6 +8113,7 @@ var init_sessions2 = __esm({
     init_manifest();
     init_manifests();
     init_snapshot();
+    init_host();
     SEVERITY = ["blocked", "working", "done", "idle", "unknown"];
   }
 });
@@ -8292,7 +8349,6 @@ var init_server2 = __esm({
 
 // bin/cli.ts
 init_launch();
-init_yaml_io();
 import { parseArgs } from "node:util";
 import { resolve as resolve20, dirname as dirname10, join as join14 } from "node:path";
 import { execFileSync as execFileSync7 } from "node:child_process";
@@ -8846,6 +8902,7 @@ init_detect();
 init_config();
 init_restart();
 init_send();
+init_host();
 init_errors2();
 init_output();
 var __dirname4 = dirname10(fileURLToPath4(import.meta.url));
@@ -8971,7 +9028,7 @@ ${bold("Flags:")}
   ${cyan("-h, --help")}                  ${dim("Show usage")}
   ${cyan("-v, --version")}               ${dim("Show version number")}`);
 }
-function execBunWidget(scriptPath, args, commandLabel) {
+function assertBunWidgetAvailable(scriptPath, commandLabel) {
   const widgetMissing = !existsSync18(scriptPath);
   let bunMissing = false;
   try {
@@ -8992,6 +9049,9 @@ Run it from a cloned tmux-ide checkout with bun installed.`,
       { code: "USAGE", exitCode: 1 }
     );
   }
+}
+function execBunWidget(scriptPath, args, commandLabel) {
+  assertBunWidgetAvailable(scriptPath, commandLabel);
   const bunfigRoot = resolve20(__dirname4, "..");
   execFileSync7("bun", [scriptPath, ...args], {
     stdio: "inherit",
@@ -9005,15 +9065,15 @@ async function printFleetJson() {
   const { toFleetJson: toFleetJson2 } = await Promise.resolve().then(() => (init_report(), report_exports));
   console.log(JSON.stringify(toFleetJson2(listTeamProjects2(createStatusTracker2())), null, 2));
 }
-function readThemeArgs(dir) {
-  try {
-    const { config: config2 } = readConfig(dir);
-    if (config2.theme) return [`--theme=${JSON.stringify(config2.theme)}`];
-  } catch {
-  }
-  return [];
-}
 var teamScriptPath = resolve20(__dirname4, "../packages/daemon/src/tui/team/index.tsx");
+function launchTeamHost() {
+  assertBunWidgetAvailable(teamScriptPath, "team");
+  launchHostShell({
+    repoRoot: resolve20(__dirname4, ".."),
+    switcherScript: teamScriptPath,
+    userCwd: process.cwd()
+  });
+}
 try {
   switch (command) {
     case "start": {
@@ -9024,7 +9084,7 @@ try {
           await printFleetJson();
           break;
         }
-        execBunWidget(teamScriptPath, readThemeArgs(targetDir), "team");
+        launchTeamHost();
         break;
       }
       await launch(startTargetDir, { json });
@@ -9131,7 +9191,7 @@ try {
         await printFleetJson();
         break;
       }
-      execBunWidget(teamScriptPath, readThemeArgs(resolve20(startTargetDir || ".")), "team");
+      launchTeamHost();
       break;
     }
     case "wait": {

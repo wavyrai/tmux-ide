@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { rollupStatus } from "./sessions.ts";
+import { isListableSession, rollupStatus } from "./sessions.ts";
+import { HOST_SESSION } from "./host.ts";
 
 describe("rollupStatus", () => {
   it("blocked wins over everything else", () => {
@@ -24,5 +25,16 @@ describe("rollupStatus", () => {
 
   it("unknown only wins when nothing else is present — idle beats unknown", () => {
     expect(rollupStatus(["unknown", "idle"])).toBe("idle");
+  });
+});
+
+describe("isListableSession", () => {
+  it("hides the host session from the switcher", () => {
+    expect(isListableSession(HOST_SESSION)).toBe(false);
+  });
+
+  it("keeps every other session", () => {
+    expect(isListableSession("my-project")).toBe(true);
+    expect(isListableSession("tmux-ide")).toBe(true);
   });
 });

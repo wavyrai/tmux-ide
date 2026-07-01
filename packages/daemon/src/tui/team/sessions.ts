@@ -14,6 +14,7 @@ import { classifyInstant, type AgentStatus, type StatusTracker } from "../detect
 import { pickManifest } from "../detect/manifest.ts";
 import { BUNDLED_MANIFESTS } from "../detect/manifests.ts";
 import { readPaneSnapshot } from "../detect/snapshot.ts";
+import { HOST_SESSION } from "./host.ts";
 
 export interface TeamSession {
   name: string;
@@ -34,6 +35,15 @@ interface PaneRecord {
 
 /** Severity order — highest present status wins in a rollup. */
 const SEVERITY: AgentStatus[] = ["blocked", "working", "done", "idle", "unknown"];
+
+/**
+ * Whether a session should appear in the switcher. The host session (the
+ * outer `[ switcher | main ]` shell that hosts tmux-ide itself) is filtered
+ * out so the cockpit never lists — or navigates into — its own container.
+ */
+export function isListableSession(name: string): boolean {
+  return name !== HOST_SESSION;
+}
 
 function tmux(args: string[]): string {
   try {
@@ -70,6 +80,7 @@ export function listTeamSessions(
   return raw
     .split("\n")
     .filter(Boolean)
+    .filter((line) => isListableSession(line.split("\t")[0] ?? ""))
     .map((line) => {
       const [name = "", attached = "", windows = "0"] = line.split("\t");
       const panes = panesBySession.get(name) ?? [];
