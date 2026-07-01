@@ -7,7 +7,11 @@ import { defineConfig } from "vitest/config";
  */
 export default defineConfig({
   test: {
-    include: ["src/terminal/__tests__/*.test.ts", "src/lib/__tests__/*.test.ts"],
+    include: [
+      "src/terminal/__tests__/*.test.ts",
+      "src/lib/__tests__/*.test.ts",
+      "src/tui/detect/*.test.ts",
+    ],
     coverage: {
       provider: "v8",
       reporter: ["text", "html", "json-summary"],
