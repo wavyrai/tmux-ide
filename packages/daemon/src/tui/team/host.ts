@@ -10,7 +10,7 @@
  * The command builders here are PURE (they return tmux argv arrays / a shell
  * string) so the layout can be asserted in tests without shelling out.
  */
-import { attachSession, hasSession, killSession, runTmux } from "@tmux-ide/tmux-bridge";
+import { runTmux } from "@tmux-ide/tmux-bridge";
 import { shellEscape } from "../../lib/shell.ts";
 import { IdeError } from "../../lib/errors.ts";
 
@@ -20,6 +20,29 @@ import { IdeError } from "../../lib/errors.ts";
  * switcher filters this exact name out of its session list.
  */
 export const HOST_SESSION = "_tmux-ide";
+
+/**
+ * The DEDICATED tmux socket the host shell runs on (`tmux -L tmux-ide ...`).
+ *
+ * This is the whole point of the nested-tmux ergonomics: the host shell
+ * (`[ switcher | main ]`) nests tmux inside tmux, and if it shared the user's
+ * DEFAULT tmux server the two servers would fight over the global key tables
+ * and prefix. So the host lives on its OWN server (this socket) with its own
+ * prefix (C-a) and root focus keys, while the user's PROJECTS stay on the
+ * DEFAULT socket, untouched. Every host CONTROL command goes through
+ * `hostTmux()`; the nested `tmux attach` inside the main pane clears `$TMUX`
+ * so it lands on the DEFAULT socket (the project), not this one.
+ */
+export const HOST_SOCKET = "tmux-ide";
+
+/**
+ * Prefix the given tmux argv with `-L <HOST_SOCKET>` so it runs against the
+ * host server rather than the user's default one. All host-control commands
+ * (layout, config, attach, kill) route through here.
+ */
+export function hostTmux(argv: string[]): string[] {
+  return ["-L", HOST_SOCKET, ...argv];
+}
 
 /**
  * The two panes of the host layout, addressed by index within the session's
@@ -53,16 +76,20 @@ export function switcherPaneCommand(
 /**
  * tmux argv to make the MAIN pane show `target` LIVE via a nested `tmux attach`.
  *
- * `respawn-pane -k` kills whatever the main pane is running and starts a fresh
- * command in it: `TMUX= tmux attach -t <target>`. The `TMUX=` prefix clears the
- * inherited `$TMUX` so tmux allows the nested attach instead of refusing with
- * "sessions should be nested with care". `-c <dir>` sets the pane's working
- * directory so a later detach lands in a sensible place.
+ * The OUTER command runs on the HOST socket (`-L tmux-ide` via `hostTmux`) —
+ * it respawns a pane that belongs to the host server. `respawn-pane -k` kills
+ * whatever the main pane is running and starts a fresh command in it:
+ * `TMUX= tmux attach -t <target>`. That INNER command clears the inherited
+ * `$TMUX` so tmux (a) allows the nested attach instead of refusing with
+ * "sessions should be nested with care" and (b) uses the DEFAULT socket — the
+ * target is a PROJECT session, which lives on the default server, not the host
+ * one. `-c <dir>` sets the pane's working directory so a later detach lands in
+ * a sensible place.
  *
  * PURE (returns argv) so the incantation can be asserted without shelling out.
  */
 export function mainRespawnCommand(mainPane: string, target: string, dir: string): string[] {
-  return [
+  return hostTmux([
     "respawn-pane",
     "-k",
     "-t",
@@ -70,18 +97,36 @@ export function mainRespawnCommand(mainPane: string, target: string, dir: string
     "-c",
     dir,
     `TMUX= tmux attach -t ${shellEscape(target)}`,
-  ];
+  ]);
 }
 
 /**
- * Ordered tmux argv arrays that build the host layout from scratch:
+ * Ordered tmux argv arrays that build AND configure the host layout from
+ * scratch. Every argv runs on the host socket (`-L tmux-ide`, via `hostTmux`).
  *
+ * Layout:
  *   1. new-session -d — the session, its first pane running the switcher,
  *      started in the repo root.
  *   2. split-window -h — the main pane (a shell) started in the user's cwd,
  *      to the RIGHT of the switcher.
  *   3. resize-pane -x — pin the switcher pane to `switcherWidth` columns.
  *   4. select-pane — focus back on the switcher.
+ *
+ * Config (host server only — safe because it's a SEPARATE server from the one
+ * hosting the user's projects):
+ *   5. prefix = C-a. The host server's prefix is C-a; project sessions on the
+ *      default socket keep the stock C-b, so there's no prefix war. prefix2 is
+ *      cleared to None so C-b is NOT swallowed by the host — it passes straight
+ *      through to the nested project session attached in the main pane.
+ *   6. Root (no-prefix) focus keys, bound ONLY on the host server so they can't
+ *      shadow app keys in the user's real sessions: M-h → switcher (pane 0),
+ *      M-l → main (pane 1). Alt+h/Alt+l are directional and rarely used by
+ *      terminal apps, so they're safe to grab at the root.
+ *   7. Pane-border labels (status top + a format showing each pane's title),
+ *      then the switcher/main pane titles, so the border reads "switcher" /
+ *      "main". Setting a title via `select-pane -T` also focuses that pane, so
+ *      a final select-pane restores focus to the switcher.
+ *   8. A short status-left so the host bar reads "tmux-ide".
  *
  * Panes are addressed by index within the session's first window (switcher = 0,
  * main = 1), matching tmux's default base indices.
@@ -95,23 +140,57 @@ export function hostLayoutCommands(opts: {
 }): string[][] {
   const { session, repoRoot, switcherScript, userCwd, switcherWidth } = opts;
   const switcher = `${session}:0.0`;
+  const main = `${session}:0.1`;
   const switcherCmd = switcherPaneCommand(repoRoot, switcherScript, userCwd);
 
   return [
+    // layout
     ["new-session", "-d", "-s", session, "-c", repoRoot, switcherCmd],
     ["split-window", "-h", "-t", switcher, "-c", userCwd],
     ["resize-pane", "-t", switcher, "-x", String(switcherWidth)],
     ["select-pane", "-t", switcher],
-  ];
+    // prefix — C-a on the host, C-b passes through to nested projects
+    ["set-option", "-g", "prefix", "C-a"],
+    ["set-option", "-g", "prefix2", "None"],
+    // root focus toggle — Alt+h/Alt+l, host server only
+    ["bind-key", "-n", "M-h", "select-pane", "-t", "0.0"],
+    ["bind-key", "-n", "M-l", "select-pane", "-t", "0.1"],
+    // pane border labels
+    ["set-option", "-g", "pane-border-status", "top"],
+    ["set-option", "-g", "pane-border-format", " #{pane_title} "],
+    ["select-pane", "-t", switcher, "-T", "switcher"],
+    ["select-pane", "-t", main, "-T", "main"],
+    ["select-pane", "-t", switcher],
+    // status bar identity
+    ["set-option", "-g", "status-left", " tmux-ide "],
+  ].map(hostTmux);
 }
 
 /**
- * Create-or-attach the host shell.
+ * Whether the host session exists on the HOST socket.
+ *
+ * The tmux-bridge `hasSession` helper always targets the default socket, so
+ * host existence is checked with raw `-L tmux-ide has-session` argv instead;
+ * any error (no server yet, or session absent) means "not there".
+ */
+function hostSessionExists(): boolean {
+  try {
+    runTmux(hostTmux(["has-session", "-t", HOST_SESSION]));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Create-or-attach the host shell — on its OWN tmux socket (`-L tmux-ide`).
  *
  * If the host session already exists we simply re-attach to it. Otherwise we
- * build the layout command-by-command and then attach. A build failure kills
- * the half-built session and surfaces a clear error rather than leaving a
- * broken session behind or failing silently.
+ * build and configure the layout command-by-command and then attach. A build
+ * failure kills the half-built session and surfaces a clear error rather than
+ * leaving a broken session behind or failing silently. All operations here run
+ * against the host server; the user's default-socket projects are never
+ * touched.
  */
 export function launchHostShell(opts: {
   repoRoot: string;
@@ -119,8 +198,8 @@ export function launchHostShell(opts: {
   userCwd: string;
   switcherWidth?: number;
 }): void {
-  if (hasSession(HOST_SESSION)) {
-    attachSession(HOST_SESSION);
+  if (hostSessionExists()) {
+    runTmux(hostTmux(["attach", "-t", HOST_SESSION]), { stdio: "inherit" });
     return;
   }
 
@@ -139,12 +218,16 @@ export function launchHostShell(opts: {
   } catch (error) {
     // Don't strand a partially-built session — tear it down so a retry starts
     // clean, then surface why the shell couldn't start.
-    killSession(HOST_SESSION);
+    try {
+      runTmux(hostTmux(["kill-session", "-t", HOST_SESSION]));
+    } catch {
+      // best-effort cleanup — the session may never have come up
+    }
     throw new IdeError(
       `Could not start the tmux-ide host shell: ${(error as Error).message}`,
       { code: "HOST_SHELL_FAILED", cause: error as Error },
     );
   }
 
-  attachSession(HOST_SESSION);
+  runTmux(hostTmux(["attach", "-t", HOST_SESSION]), { stdio: "inherit" });
 }

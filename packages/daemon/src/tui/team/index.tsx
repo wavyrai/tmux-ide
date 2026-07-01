@@ -96,6 +96,14 @@ render(() => {
   // main pane" — the switcher stays put in pane 0 and only pane 1 changes.
   const mainPane = process.env.TMUX_IDE_MAIN_PANE ?? null;
   const hostMode = mainPane !== null;
+  // Socket discipline in host mode: the switcher runs inside a host-socket pane,
+  // so its inherited `$TMUX` points at the HOST server (`-L tmux-ide`). But it
+  // must LIST and manage the user's PROJECTS, which live on the DEFAULT socket.
+  // Clearing `$TMUX` makes every tmux-bridge query (listTeamProjects,
+  // getSessionCwd, createDetachedSession, …) hit the default server — without
+  // this the cockpit would list the host server's own sessions. Host CONTROL
+  // commands stay correct regardless: they carry an explicit `-L tmux-ide`.
+  if (hostMode) delete process.env.TMUX;
   const statusColor: Record<AgentStatus, RGBA> = {
     blocked: RGBA.fromInts(240, 90, 90, 255), // red
     working: RGBA.fromInts(240, 200, 90, 255), // amber

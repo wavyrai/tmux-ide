@@ -7623,23 +7623,50 @@ var init_config = __esm({
 });
 
 // packages/daemon/src/tui/team/host.ts
+function hostTmux(argv) {
+  return ["-L", HOST_SOCKET, ...argv];
+}
 function switcherPaneCommand(repoRoot, switcherScript, userCwd) {
   return `cd ${shellEscape(repoRoot)} && TMUX_IDE_CWD=${shellEscape(userCwd)} TMUX_IDE_MAIN_PANE=${shellEscape(MAIN_PANE)} bun ${shellEscape(switcherScript)}`;
 }
 function hostLayoutCommands(opts) {
   const { session, repoRoot, switcherScript, userCwd, switcherWidth } = opts;
   const switcher = `${session}:0.0`;
+  const main = `${session}:0.1`;
   const switcherCmd = switcherPaneCommand(repoRoot, switcherScript, userCwd);
   return [
+    // layout
     ["new-session", "-d", "-s", session, "-c", repoRoot, switcherCmd],
     ["split-window", "-h", "-t", switcher, "-c", userCwd],
     ["resize-pane", "-t", switcher, "-x", String(switcherWidth)],
-    ["select-pane", "-t", switcher]
-  ];
+    ["select-pane", "-t", switcher],
+    // prefix — C-a on the host, C-b passes through to nested projects
+    ["set-option", "-g", "prefix", "C-a"],
+    ["set-option", "-g", "prefix2", "None"],
+    // root focus toggle — Alt+h/Alt+l, host server only
+    ["bind-key", "-n", "M-h", "select-pane", "-t", "0.0"],
+    ["bind-key", "-n", "M-l", "select-pane", "-t", "0.1"],
+    // pane border labels
+    ["set-option", "-g", "pane-border-status", "top"],
+    ["set-option", "-g", "pane-border-format", " #{pane_title} "],
+    ["select-pane", "-t", switcher, "-T", "switcher"],
+    ["select-pane", "-t", main, "-T", "main"],
+    ["select-pane", "-t", switcher],
+    // status bar identity
+    ["set-option", "-g", "status-left", " tmux-ide "]
+  ].map(hostTmux);
+}
+function hostSessionExists() {
+  try {
+    runTmux(hostTmux(["has-session", "-t", HOST_SESSION]));
+    return true;
+  } catch {
+    return false;
+  }
 }
 function launchHostShell(opts) {
-  if (hasSession(HOST_SESSION)) {
-    attachSession(HOST_SESSION);
+  if (hostSessionExists()) {
+    runTmux(hostTmux(["attach", "-t", HOST_SESSION]), { stdio: "inherit" });
     return;
   }
   const commands = hostLayoutCommands({
@@ -7654,15 +7681,18 @@ function launchHostShell(opts) {
       runTmux(argv);
     }
   } catch (error) {
-    killSession(HOST_SESSION);
+    try {
+      runTmux(hostTmux(["kill-session", "-t", HOST_SESSION]));
+    } catch {
+    }
     throw new IdeError(
       `Could not start the tmux-ide host shell: ${error.message}`,
       { code: "HOST_SHELL_FAILED", cause: error }
     );
   }
-  attachSession(HOST_SESSION);
+  runTmux(hostTmux(["attach", "-t", HOST_SESSION]), { stdio: "inherit" });
 }
-var HOST_SESSION, SWITCHER_PANE, MAIN_PANE, DEFAULT_SWITCHER_WIDTH;
+var HOST_SESSION, HOST_SOCKET, SWITCHER_PANE, MAIN_PANE, DEFAULT_SWITCHER_WIDTH;
 var init_host = __esm({
   "packages/daemon/src/tui/team/host.ts"() {
     "use strict";
@@ -7670,6 +7700,7 @@ var init_host = __esm({
     init_shell();
     init_errors2();
     HOST_SESSION = "_tmux-ide";
+    HOST_SOCKET = "tmux-ide";
     SWITCHER_PANE = `${HOST_SESSION}:0.0`;
     MAIN_PANE = `${HOST_SESSION}:0.1`;
     DEFAULT_SWITCHER_WIDTH = 34;
