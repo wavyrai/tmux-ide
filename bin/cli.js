@@ -8404,6 +8404,7 @@ var knownCommands = /* @__PURE__ */ new Set([
   "setup",
   "send",
   "settings",
+  "team",
   "command-center",
   "server",
   "help"
@@ -8443,6 +8444,7 @@ ${bold("Usage:")}
   ${cyan("tmux-ide stop")}               ${dim("Kill the current IDE session")}
   ${cyan("tmux-ide restart")}            ${dim("Stop and relaunch the IDE session")}
   ${cyan("tmux-ide attach")}             ${dim("Reattach to a running session")}
+  ${cyan("tmux-ide team")}               ${dim("TUI over all tmux sessions (jump / attach / kill)")}
   ${cyan("tmux-ide ls")}                 ${dim("List all tmux sessions")}
   ${cyan("tmux-ide status")} [--json]    ${dim("Show session status")}
   ${cyan("tmux-ide inspect")} [--json]   ${dim("Show effective config and runtime state")}
@@ -8597,6 +8599,11 @@ try {
     case "settings": {
       const scriptPath = resolve20(__dirname4, "../packages/daemon/src/widgets/config/index.tsx");
       execBunWidget(scriptPath, ["--dir=" + resolve20(startTargetDir || ".")], "settings");
+      break;
+    }
+    case "team": {
+      const scriptPath = resolve20(__dirname4, "../packages/daemon/src/tui/team/index.tsx");
+      execBunWidget(scriptPath, [], "team");
       break;
     }
     case "command-center": {
