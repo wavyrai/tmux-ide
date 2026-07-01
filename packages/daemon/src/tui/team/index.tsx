@@ -9,7 +9,7 @@
  */
 import { execFileSync } from "node:child_process";
 import { render, useKeyboard, useRenderer, useTerminalDimensions } from "@opentui/solid";
-import { RGBA, TextAttributes } from "@opentui/core";
+import { RGBA, TextAttributes, type MouseEvent } from "@opentui/core";
 import { createSignal, createEffect, onMount, onCleanup, For, Show } from "solid-js";
 import {
   capturePane,
@@ -28,6 +28,7 @@ import { createStatusTracker, type AgentStatus } from "../detect/classify.ts";
 import { nextInput, suggestSessionName } from "./input.ts";
 import { fuzzyFilter } from "./fuzzy.ts";
 import { ACTION_ORDER, loadKeymap, resolveAction } from "./keymap.ts";
+import { isDoubleClick, type ClickRecord } from "./mouse.ts";
 
 function toRGBA(c: { r: number; g: number; b: number; a: number }): RGBA {
   return RGBA.fromInts(c.r, c.g, c.b, c.a);
@@ -244,6 +245,36 @@ render(() => {
       setMessage(String((e as { message?: string })?.message ?? e));
     }
     refresh();
+  }
+
+  // Last mouse click, tracked so a second click on the same row within the
+  // double-click window activates it (mirrors keyboard Enter). A closure var —
+  // it needs no reactivity, it only feeds the next click.
+  let lastClick: ClickRecord | null = null;
+
+  /**
+   * A row's mousedown: select it, and on a same-row double-click within the
+   * window, activate it via `enter()` (attach / launch). Keyboard and mouse
+   * share the one `selected()` signal, so the preview updates either way.
+   */
+  function clickRow(index: number) {
+    const now = Date.now();
+    setSelected(index);
+    if (isDoubleClick(lastClick, index, now)) {
+      lastClick = null;
+      enter();
+      return;
+    }
+    lastClick = { index, at: now };
+  }
+
+  /** Wheel over the list moves the selection one row, wrapping like the arrows. */
+  function scrollSelection(evt: MouseEvent) {
+    const dir = evt.scroll?.direction;
+    if (dir !== "up" && dir !== "down") return;
+    const n = visibleRows().length;
+    if (n === 0) return;
+    setSelected((s) => (dir === "up" ? (s - 1 + n) % n : (s + 1) % n));
   }
 
   /** Enter: attach on a session row; launch (or attach-first) on a project row. */
@@ -558,7 +589,14 @@ render(() => {
           </Show>
 
           {/* list */}
-          <box flexDirection="column" flexGrow={1} paddingLeft={1} paddingRight={1} paddingTop={1}>
+          <box
+            flexDirection="column"
+            flexGrow={1}
+            paddingLeft={1}
+            paddingRight={1}
+            paddingTop={1}
+            onMouseScroll={scrollSelection}
+          >
             <Show
               when={visibleRows().length > 0}
               fallback={
@@ -582,6 +620,7 @@ render(() => {
                           paddingLeft={3}
                           paddingRight={1}
                           backgroundColor={isSel() ? toRGBA(theme.border) : undefined}
+                          onMouseDown={() => clickRow(i())}
                         >
                           <text fg={isSel() ? toRGBA(theme.accent) : toRGBA(theme.fgMuted)}>
                             {isSel() ? "▸" : " "}
@@ -617,6 +656,7 @@ render(() => {
                             paddingLeft={1}
                             paddingRight={1}
                             backgroundColor={isSel() ? toRGBA(theme.border) : undefined}
+                            onMouseDown={() => clickRow(i())}
                           >
                             <text fg={isSel() ? toRGBA(theme.accent) : toRGBA(theme.fgMuted)}>
                               {isSel() ? "▸" : " "}
