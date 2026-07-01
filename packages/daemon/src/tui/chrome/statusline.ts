@@ -14,6 +14,7 @@
 import { runTmux } from "@tmux-ide/tmux-bridge";
 import type { AgentStatus } from "../detect/classify.ts";
 import type { TeamProject } from "../team/projects.ts";
+import { cheatsheetBindCommand, cheatsheetUnbindCommand } from "./cheatsheet.ts";
 
 /** tmux style markup per status — chrome-row colors for the state glyphs. */
 const STATUS_STYLE: Record<AgentStatus, string> = {
@@ -83,18 +84,19 @@ export function buildStatusline(
     // Only running projects are clickable — wrap them in a session-keyed range.
     const session = project.sessions[0]?.name;
     segments.push(
-      project.running && session
-        ? `#[range=user|sw${session}]${label}#[norange]`
-        : label,
+      project.running && session ? `#[range=user|sw${session}]${label}#[norange]` : label,
     );
   }
   if (visible.length > maxItems) {
     segments.push(`#[fg=colour240]+${visible.length - maxItems}#[default]`);
   }
   const body = segments.join("  ");
-  // A button-like, right-aligned trigger that opens the switcher popup.
+  // Two button-like, right-aligned triggers. `keys` (muted) floats the cheat
+  // sheet; `switcher` (primary) opens the picker popup — switch stays visually
+  // dominant, the sheet is the quieter companion just to its left.
+  const keysTrigger = `#[range=user|keys]#[fg=colour244][ ? keys ]#[default]#[norange]`;
   const trigger = `#[range=user|switcher]#[fg=colour75,bold][ ⧉ switch ⌥p ]#[default]#[norange]`;
-  return `#[fg=colour75,bold] tmux-ide #[default] ${body}#[align=right]${trigger} `;
+  return `#[fg=colour75,bold] tmux-ide #[default] ${body}#[align=right]${keysTrigger} ${trigger} `;
 }
 
 /**
@@ -150,11 +152,23 @@ export function popupUnbindCommand(): string[] {
 export const STATUS_CLICK_KEY = "MouseDown1Status";
 
 /**
+ * Wrap a tmux command string as a double-quoted argument for embedding ONE
+ * level deeper: escape backslashes first, then double quotes. Composable — the
+ * innermost command can be `dq`'d once per nesting level and each layer's
+ * dequote peels exactly one level off (verified live), which is what lets the
+ * dispatch chain nest `keys → sw*` without hand-counting escapes.
+ */
+function dq(cmd: string): string {
+  return `"${cmd.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+}
+
+/**
  * PURE — the tmux argv that binds status-bar clicks (server-wide, root table).
  *
  * Dispatch is on `#{mouse_status_range}` (the `#[range=user|<name>]` under the
- * click, surfaced as `<name>`):
+ * click, surfaced as `<name>`), a nested if-shell chain:
  *   - `switcher`      → the SAME `display-popup` the M-p key runs.
+ *   - `keys`          → the cheat-sheet `display-popup` the M-k key runs.
  *   - `sw<session>`   → switch the clicking client to `<session>`.
  *   - anything else   → tmux's default `select-window -t =` (window-list clicks
  *                       on the primary status line keep working).
@@ -168,23 +182,28 @@ export const STATUS_CLICK_KEY = "MouseDown1Status";
  *     `#{s/^sw//:mouse_status_range}` and the clicking client from
  *     `#{client_name}`.
  *
- * The popup branch stays tmux-native (identical to {@link popupBindCommand}),
- * so it behaves exactly like M-p.
+ * The two popup branches stay tmux-native (identical to {@link popupBindCommand}
+ * / {@link cheatsheetBindCommand}), so a click behaves exactly like M-p / M-k.
+ * The `sw*` branch nests one level under `keys`, so its inner commands are
+ * `dq`'d twice — the chain stays balanced (see {@link dq}).
  *
  * SERVER-wide bind — tmux has no per-session key table — so this replaces the
  * global `MouseDown1Status` for every client (same caveat as the M-p popup key;
  * see {@link unadoptSession}). Idempotent: re-binding overwrites.
  */
-export function statusClickBindCommand(switcherCmd = "tmux-ide switcher"): string[] {
+export function statusClickBindCommand(
+  switcherCmd = "tmux-ide switcher",
+  cheatsheetCmd = "tmux-ide cheatsheet",
+): string[] {
   const popup = `display-popup -E -w 80% -h 60% "${switcherCmd}"`;
+  const cheatsheet = `display-popup -E -w 90% -h 80% "${cheatsheetCmd}"`;
   // run-shell re-enters tmux with the name/client already format-expanded.
   const switchClient = `run-shell "tmux switch-client -c '#{client_name}' -t '#{s/^sw//:mouse_status_range}'"`;
-  // The switch command is nested as a double-quoted arg to the inner if-shell,
-  // so its own double quotes are backslash-escaped for tmux's parser.
-  const swBranch = `if-shell -F "#{m:sw*,#{mouse_status_range}}" "${switchClient.replace(
-    /"/g,
-    '\\"',
-  )}" "select-window -t ="`;
+  // `sw*` → switch, else window-list default. Its args are one level deep here.
+  const swBranch = `if-shell -F "#{m:sw*,#{mouse_status_range}}" ${dq(switchClient)} "select-window -t ="`;
+  // `keys` → cheat sheet, else the sw branch. Both args nest one level deeper,
+  // so they're `dq`'d again — dequoting peels the layers off in order.
+  const keysBranch = `if-shell -F "#{==:#{mouse_status_range},keys}" ${dq(cheatsheet)} ${dq(swBranch)}`;
   return [
     "bind-key",
     "-n",
@@ -193,7 +212,7 @@ export function statusClickBindCommand(switcherCmd = "tmux-ide switcher"): strin
     "-F",
     "#{==:#{mouse_status_range},switcher}",
     popup,
-    swBranch,
+    keysBranch,
   ];
 }
 
@@ -224,8 +243,9 @@ export function adoptSession(
   // Per-session (`-t`) so only adopted sessions are affected.
   runTmux(["set-option", "-t", session, "mouse", "on"]);
   // Server-wide binds, idempotent (re-binding the same key just overwrites it):
-  // the M-p popup and the status-bar click router.
+  // the M-p popup, the M-k cheat sheet, and the status-bar click router.
   runTmux(popupBindCommand(switcherCmd));
+  runTmux(cheatsheetBindCommand());
   runTmux(statusClickBindCommand(switcherCmd));
 }
 
@@ -241,6 +261,11 @@ export function unadoptSession(session: string): void {
   // unadopted) doesn't throw.
   try {
     runTmux(popupUnbindCommand());
+  } catch {
+    // no such key bound — nothing to undo
+  }
+  try {
+    runTmux(cheatsheetUnbindCommand());
   } catch {
     // no such key bound — nothing to undo
   }

@@ -6379,11 +6379,11 @@ function listAvailableTemplates() {
 }
 function attachWsEvents(server) {
   const wss = new WebSocketServer({ noServer: true });
-  const upgradeListener = (req, socket, head) => {
+  const upgradeListener = (req, socket, head2) => {
     const url = req.url ?? "/";
     const pathname = url.split("?")[0];
     if (pathname !== "/ws/events") return;
-    wss.handleUpgrade(req, socket, head, (ws) => {
+    wss.handleUpgrade(req, socket, head2, (ws) => {
       handleWsEventsConnection(ws);
     });
   };
@@ -6567,8 +6567,8 @@ function isUpgradeAuthorized(req, token, localBypassToken, bindHostname) {
   const supplied = requestToken(req);
   return supplied === token || localBypassToken != null && supplied === localBypassToken;
 }
-function rejectUpgradeWithPolicy(wss, req, socket, head) {
-  wss.handleUpgrade(req, socket, head, (ws) => {
+function rejectUpgradeWithPolicy(wss, req, socket, head2) {
+  wss.handleUpgrade(req, socket, head2, (ws) => {
     ws.close(1008, "Remote access token required");
   });
 }
@@ -6581,14 +6581,14 @@ function attachWebSockets(server, opts = {}) {
     ws.on("close", () => clients.delete(ws));
     ws.on("error", () => clients.delete(ws));
   };
-  const upgradeListener = (req, socket, head) => {
+  const upgradeListener = (req, socket, head2) => {
     const pathname = (req.url ?? "/").split("?")[0] ?? "/";
     if ((pathname === "/ws/events" || pathname.startsWith("/ws/pty/")) && !isUpgradeAuthorized(req, opts.authToken, opts.localBypassToken, opts.bindHostname)) {
-      rejectUpgradeWithPolicy(pathname === "/ws/events" ? eventsWss : ptyWss, req, socket, head);
+      rejectUpgradeWithPolicy(pathname === "/ws/events" ? eventsWss : ptyWss, req, socket, head2);
       return;
     }
     if (pathname === "/ws/events") {
-      eventsWss.handleUpgrade(req, socket, head, (ws) => {
+      eventsWss.handleUpgrade(req, socket, head2, (ws) => {
         track(ws);
         handleWsEventsConnection(ws);
       });
@@ -6597,7 +6597,7 @@ function attachWebSockets(server, opts = {}) {
     const ptyMatch = pathname.match(/^\/ws\/pty\/([^/]+)$/);
     if (ptyMatch) {
       const id = decodeURIComponent(ptyMatch[1]);
-      ptyWss.handleUpgrade(req, socket, head, (ws) => {
+      ptyWss.handleUpgrade(req, socket, head2, (ws) => {
         track(ws);
         handlePtyWebSocket(ws, id);
       });
@@ -8283,6 +8283,185 @@ var init_report = __esm({
   }
 });
 
+// packages/daemon/src/tui/team/keymap.ts
+import { existsSync as existsSync18, readFileSync as readFileSync11 } from "node:fs";
+import { homedir as homedir8 } from "node:os";
+import { join as join14 } from "node:path";
+var ACTION_ORDER, DEFAULT_KEYMAP;
+var init_keymap = __esm({
+  "packages/daemon/src/tui/team/keymap.ts"() {
+    "use strict";
+    ACTION_ORDER = [
+      "up",
+      "down",
+      "enter",
+      "launch",
+      "new",
+      "rename",
+      "split",
+      "register",
+      "unregister",
+      "kill",
+      "filter",
+      "refresh",
+      "help",
+      "quit"
+    ];
+    DEFAULT_KEYMAP = {
+      up: { keys: ["up", "k"], description: "move up" },
+      down: { keys: ["down", "j"], description: "move down" },
+      enter: { keys: ["return"], description: "launch / attach" },
+      launch: { keys: ["l"], description: "launch project" },
+      new: { keys: ["n"], description: "new session" },
+      rename: { keys: ["R"], description: "rename session" },
+      split: { keys: ["s"], description: "split pane" },
+      register: { keys: ["a"], description: "add project" },
+      unregister: { keys: ["d"], description: "unregister project" },
+      kill: { keys: ["x"], description: "kill (confirm)" },
+      filter: { keys: ["/"], description: "fuzzy filter" },
+      refresh: { keys: ["r"], description: "refresh" },
+      help: { keys: ["?"], description: "toggle help" },
+      quit: { keys: ["q"], description: "quit" }
+    };
+  }
+});
+
+// packages/daemon/src/tui/chrome/cheatsheet.ts
+var cheatsheet_exports = {};
+__export(cheatsheet_exports, {
+  CHEATSHEET_KEY: () => CHEATSHEET_KEY,
+  buildCheatsheet: () => buildCheatsheet,
+  cheatsheetBindCommand: () => cheatsheetBindCommand,
+  cheatsheetUnbindCommand: () => cheatsheetUnbindCommand
+});
+function renderKey(tmuxKey) {
+  return tmuxKey.replace(/M-/g, "\u2325").replace(/C-/g, "^").replace(/S-/g, "\u21E7");
+}
+function clip(line, width) {
+  let out = "";
+  let visible = 0;
+  let i = 0;
+  while (i < line.length) {
+    if (line[i] === "\x1B") {
+      const m = /^\x1b\[[0-9;]*m/.exec(line.slice(i));
+      if (m) {
+        out += m[0];
+        i += m[0].length;
+        continue;
+      }
+    }
+    if (visible >= width) break;
+    out += line[i];
+    visible++;
+    i++;
+  }
+  return `${out}\x1B[0m`;
+}
+function visibleWidth(s) {
+  return s.replace(/\x1b\[[0-9;]*m/g, "").length;
+}
+function buildCheatsheet(opts) {
+  const width = Math.max(20, opts.width);
+  const lines = [];
+  const pad = (s) => `  ${s}`;
+  lines.push(`${head(" tmux-ide")}  ${dim("cheat sheet \u2014 press any key to close")}`);
+  lines.push("");
+  lines.push(head("dock"));
+  lines.push(
+    pad(
+      `${bold(renderKey(POPUP_KEY))} switcher popup   ${bold(renderKey(CHEATSHEET_KEY))} this sheet`
+    )
+  );
+  lines.push(
+    pad(
+      dim(
+        `bar: click a project tab = switch there \xB7 click [ \u29C9 switch ${renderKey(POPUP_KEY)} ] = switcher`
+      )
+    )
+  );
+  const legend = `${color(203, "\u25CF")} blocked  ${color(221, "\u25CF")} working  ${color(111, "\u25CF")} done  ${color(114, "\u25CF")} idle  ${dim("\xB7")} unknown  ${dim("\u25CB")} stopped`;
+  lines.push(pad(legend));
+  lines.push("");
+  lines.push(head(`picker  ${dim(`(inside the ${renderKey(POPUP_KEY)} popup)`)}`));
+  lines.push(
+    pad(`${bold("\u21B5")} switch   ${bold("l")} launch   ${bold("/")} find   ${bold("esc")} close`)
+  );
+  lines.push("");
+  lines.push(head("team app"));
+  const cells = ACTION_ORDER.map((action) => {
+    const binding = DEFAULT_KEYMAP[action];
+    return { keys: binding.keys.join("/"), desc: binding.description };
+  });
+  const keyW = Math.max(...cells.map((c) => c.keys.length));
+  const descW = Math.max(...cells.map((c) => c.desc.length));
+  const cellW = keyW + 2 + descW;
+  const renderCell = (c) => {
+    const text = `${bold(c.keys.padEnd(keyW))}  ${dim(c.desc)}`;
+    return text + " ".repeat(Math.max(0, cellW - visibleWidth(text)));
+  };
+  const twoCols = width >= cellW * 2 + 4;
+  if (twoCols) {
+    const half = Math.ceil(cells.length / 2);
+    for (let i = 0; i < half; i++) {
+      const left = cells[i];
+      const right = cells[i + half];
+      const rendered = left ? renderCell(left) : "";
+      lines.push(pad(right ? `${rendered}  ${renderCell(right)}` : rendered));
+    }
+  } else {
+    for (const c of cells) lines.push(pad(renderCell(c)));
+  }
+  lines.push("");
+  lines.push(head("tmux essentials"));
+  lines.push(
+    pad(
+      `${bold("prefix d")} detach   ${bold("prefix z")} zoom pane   ${bold("prefix [")} copy mode`
+    )
+  );
+  lines.push(
+    pad(
+      `${bold("prefix c")} new window   ${bold("prefix n/p")} next/prev   ${bold('prefix % / "')} splits`
+    )
+  );
+  lines.push("");
+  lines.push(head("cli"));
+  lines.push(pad(cyan("tmux-ide team --json")));
+  lines.push(pad(cyan("tmux-ide wait agent-status <s> --status done")));
+  lines.push(pad(cyan("tmux-ide adopt/unadopt <session>")));
+  return lines.map((line) => clip(line, width)).join("\n");
+}
+function cheatsheetBindCommand(cheatsheetCmd = "tmux-ide cheatsheet") {
+  return [
+    "bind-key",
+    "-n",
+    CHEATSHEET_KEY,
+    "display-popup",
+    "-E",
+    "-w",
+    "90%",
+    "-h",
+    "80%",
+    cheatsheetCmd
+  ];
+}
+function cheatsheetUnbindCommand() {
+  return ["unbind-key", "-n", CHEATSHEET_KEY];
+}
+var CHEATSHEET_KEY, bold, dim, cyan, head, color;
+var init_cheatsheet = __esm({
+  "packages/daemon/src/tui/chrome/cheatsheet.ts"() {
+    "use strict";
+    init_statusline();
+    init_keymap();
+    CHEATSHEET_KEY = "M-k";
+    bold = (s) => `\x1B[1m${s}\x1B[22m`;
+    dim = (s) => `\x1B[2m${s}\x1B[22m`;
+    cyan = (s) => `\x1B[36m${s}\x1B[39m`;
+    head = (s) => `\x1B[1;36m${s}\x1B[0m`;
+    color = (code, s) => `\x1B[38;5;${code}m${s}\x1B[39m`;
+  }
+});
+
 // packages/daemon/src/tui/chrome/statusline.ts
 var statusline_exports = {};
 __export(statusline_exports, {
@@ -8317,8 +8496,9 @@ function buildStatusline(projects, active2, maxItems = 12) {
     segments.push(`#[fg=colour240]+${visible.length - maxItems}#[default]`);
   }
   const body = segments.join("  ");
+  const keysTrigger = `#[range=user|keys]#[fg=colour244][ ? keys ]#[default]#[norange]`;
   const trigger = `#[range=user|switcher]#[fg=colour75,bold][ \u29C9 switch \u2325p ]#[default]#[norange]`;
-  return `#[fg=colour75,bold] tmux-ide #[default] ${body}#[align=right]${trigger} `;
+  return `#[fg=colour75,bold] tmux-ide #[default] ${body}#[align=right]${keysTrigger} ${trigger} `;
 }
 function popupBindCommand(switcherCmd = "tmux-ide switcher") {
   return [
@@ -8337,13 +8517,15 @@ function popupBindCommand(switcherCmd = "tmux-ide switcher") {
 function popupUnbindCommand() {
   return ["unbind-key", "-n", POPUP_KEY];
 }
-function statusClickBindCommand(switcherCmd = "tmux-ide switcher") {
+function dq(cmd) {
+  return `"${cmd.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+}
+function statusClickBindCommand(switcherCmd = "tmux-ide switcher", cheatsheetCmd = "tmux-ide cheatsheet") {
   const popup = `display-popup -E -w 80% -h 60% "${switcherCmd}"`;
+  const cheatsheet = `display-popup -E -w 90% -h 80% "${cheatsheetCmd}"`;
   const switchClient = `run-shell "tmux switch-client -c '#{client_name}' -t '#{s/^sw//:mouse_status_range}'"`;
-  const swBranch = `if-shell -F "#{m:sw*,#{mouse_status_range}}" "${switchClient.replace(
-    /"/g,
-    '\\"'
-  )}" "select-window -t ="`;
+  const swBranch = `if-shell -F "#{m:sw*,#{mouse_status_range}}" ${dq(switchClient)} "select-window -t ="`;
+  const keysBranch = `if-shell -F "#{==:#{mouse_status_range},keys}" ${dq(cheatsheet)} ${dq(swBranch)}`;
   return [
     "bind-key",
     "-n",
@@ -8352,7 +8534,7 @@ function statusClickBindCommand(switcherCmd = "tmux-ide switcher") {
     "-F",
     "#{==:#{mouse_status_range},switcher}",
     popup,
-    swBranch
+    keysBranch
   ];
 }
 function statusClickUnbindCommand() {
@@ -8365,6 +8547,7 @@ function adoptSession(session, statuslineCmd = "tmux-ide statusline", switcherCm
   runTmux(["set-option", "-t", session, "status-format[1]", format]);
   runTmux(["set-option", "-t", session, "mouse", "on"]);
   runTmux(popupBindCommand(switcherCmd));
+  runTmux(cheatsheetBindCommand());
   runTmux(statusClickBindCommand(switcherCmd));
 }
 function unadoptSession(session) {
@@ -8377,6 +8560,10 @@ function unadoptSession(session) {
   } catch {
   }
   try {
+    runTmux(cheatsheetUnbindCommand());
+  } catch {
+  }
+  try {
     runTmux(statusClickUnbindCommand());
   } catch {
   }
@@ -8386,6 +8573,7 @@ var init_statusline = __esm({
   "packages/daemon/src/tui/chrome/statusline.ts"() {
     "use strict";
     init_src();
+    init_cheatsheet();
     STATUS_STYLE = {
       blocked: "#[fg=colour203,bold]",
       working: "#[fg=colour221]",
@@ -8465,7 +8653,7 @@ async function start(port) {
   const app = createApp2();
   const server = createServer3(getRequestListener2(app.fetch));
   const ptyWss = new WebSocketServer3({ noServer: true });
-  server.on("upgrade", (req, socket, head) => {
+  server.on("upgrade", (req, socket, head2) => {
     const { pathname } = parse(req.url ?? "/", true);
     const match = pathname?.match(/^\/ws\/pty\/([^/]+)$/);
     if (!match) {
@@ -8473,7 +8661,7 @@ async function start(port) {
       return;
     }
     const id = decodeURIComponent(match[1] ?? "");
-    ptyWss.handleUpgrade(req, socket, head, (ws) => {
+    ptyWss.handleUpgrade(req, socket, head2, (ws) => {
       handlePtyWebSocket(ws, id);
     });
   });
@@ -8507,9 +8695,9 @@ var init_server2 = __esm({
 // bin/cli.ts
 init_launch();
 import { parseArgs } from "node:util";
-import { resolve as resolve20, dirname as dirname10, join as join14 } from "node:path";
+import { resolve as resolve20, dirname as dirname10, join as join15 } from "node:path";
 import { execFileSync as execFileSync7 } from "node:child_process";
-import { existsSync as existsSync18 } from "node:fs";
+import { existsSync as existsSync19 } from "node:fs";
 import { fileURLToPath as fileURLToPath4 } from "node:url";
 
 // packages/daemon/src/tui/team/entry.ts
@@ -8880,8 +9068,8 @@ async function doctor({
   }
   for (const c of checks) {
     const icon = c.pass ? "\u2713" : c.optional ? "\u25CB" : "\u2717";
-    const color = c.pass ? "\x1B[32m" : c.optional ? "\x1B[33m" : "\x1B[31m";
-    console.log(`${color}${icon}\x1B[0m ${c.label} \u2014 ${c.detail}`);
+    const color2 = c.pass ? "\x1B[32m" : c.optional ? "\x1B[33m" : "\x1B[31m";
+    console.log(`${color2}${icon}\x1B[0m ${c.label} \u2014 ${c.detail}`);
   }
   if (!allPass) process.exitCode = 1;
 }
@@ -9119,6 +9307,7 @@ var knownCommands = /* @__PURE__ */ new Set([
   "statusline",
   "adopt",
   "unadopt",
+  "cheatsheet",
   "command-center",
   "server",
   "help"
@@ -9138,66 +9327,67 @@ var command = hasKnownCommand ? resolved : "start";
 var startTargetDir = hasKnownCommand ? positionals[1] : firstPositional;
 var json = values.json ?? false;
 var noColor = "NO_COLOR" in process.env;
-var bold = (s) => noColor ? s : `\x1B[1m${s}\x1B[22m`;
-var cyan = (s) => noColor ? s : `\x1B[36m${s}\x1B[39m`;
-var dim = (s) => noColor ? s : `\x1B[2m${s}\x1B[22m`;
+var bold2 = (s) => noColor ? s : `\x1B[1m${s}\x1B[22m`;
+var cyan2 = (s) => noColor ? s : `\x1B[36m${s}\x1B[39m`;
+var dim2 = (s) => noColor ? s : `\x1B[2m${s}\x1B[22m`;
 if (values.help) {
   printHelp();
   process.exit(0);
 }
 function printHelp() {
-  console.log(`${bold("tmux-ide")} \u2014 Terminal IDE powered by tmux
+  console.log(`${bold2("tmux-ide")} \u2014 Terminal IDE powered by tmux
 
-${bold("Usage:")}
-  ${cyan("tmux-ide")}                    ${dim("Launch ide.yml, or open the team cockpit if none")}
-  ${cyan("tmux-ide <path>")}             ${dim("Launch from a specific directory (cockpit if no ide.yml)")}
-  ${cyan("tmux-ide setup")}              ${dim("Interactive TUI setup wizard")}
-  ${cyan("tmux-ide setup --edit")}       ${dim("Open config tree editor")}
-  ${cyan("tmux-ide settings")}           ${dim("Interactive TUI config manager")}
-  ${cyan("tmux-ide init")} [--template]  ${dim("Scaffold a new ide.yml (auto-detects stack)")}
-  ${cyan("tmux-ide stop")}               ${dim("Kill the current IDE session")}
-  ${cyan("tmux-ide restart")}            ${dim("Stop and relaunch the IDE session")}
-  ${cyan("tmux-ide attach")}             ${dim("Reattach to a running session")}
-  ${cyan("tmux-ide team")} [--json]      ${dim("TUI over all tmux sessions (--json prints fleet state)")}
-  ${cyan("tmux-ide switcher")}           ${dim("Compact session picker (opens in the M-p popup on adopted sessions)")}
-  ${cyan("tmux-ide wait agent-status")} <session> --status <s> [--timeout <ms>]
-                              ${dim("Block until a session reaches a status (exit 0 match / 1 timeout)")}
-  ${cyan("tmux-ide adopt")} <session>    ${dim("Add the live tmux-ide status bar to a session")}
-  ${cyan("tmux-ide unadopt")} <session>  ${dim("Remove the status bar")}
-  ${cyan("tmux-ide ls")}                 ${dim("List all tmux sessions")}
-  ${cyan("tmux-ide status")} [--json]    ${dim("Show session status")}
-  ${cyan("tmux-ide inspect")} [--json]   ${dim("Show effective config and runtime state")}
-  ${cyan("tmux-ide doctor")}             ${dim("Check system requirements")}
-  ${cyan("tmux-ide validate")} [--json]  ${dim("Validate ide.yml")}
-  ${cyan("tmux-ide detect")} [--json]    ${dim("Detect project stack")}
-  ${cyan("tmux-ide detect --write")}     ${dim("Detect and write ide.yml")}
-  ${cyan("tmux-ide config")} [--json]    ${dim("Dump config as JSON")}
-  ${cyan("tmux-ide config set")} <path> <value>
-  ${cyan("tmux-ide config add-pane")} --row <N> --title <T> [--command <C>]
-  ${cyan("tmux-ide config remove-pane")} --row <N> --pane <M>
-  ${cyan("tmux-ide config add-row")} [--size <percent>]
-  ${cyan("tmux-ide config enable-team")} [--name <N>]   ${dim("Enable agent teams")}
-  ${cyan("tmux-ide config disable-team")}               ${dim("Disable agent teams")}
+${bold2("Usage:")}
+  ${cyan2("tmux-ide")}                    ${dim2("Launch ide.yml, or open the team cockpit if none")}
+  ${cyan2("tmux-ide <path>")}             ${dim2("Launch from a specific directory (cockpit if no ide.yml)")}
+  ${cyan2("tmux-ide setup")}              ${dim2("Interactive TUI setup wizard")}
+  ${cyan2("tmux-ide setup --edit")}       ${dim2("Open config tree editor")}
+  ${cyan2("tmux-ide settings")}           ${dim2("Interactive TUI config manager")}
+  ${cyan2("tmux-ide init")} [--template]  ${dim2("Scaffold a new ide.yml (auto-detects stack)")}
+  ${cyan2("tmux-ide stop")}               ${dim2("Kill the current IDE session")}
+  ${cyan2("tmux-ide restart")}            ${dim2("Stop and relaunch the IDE session")}
+  ${cyan2("tmux-ide attach")}             ${dim2("Reattach to a running session")}
+  ${cyan2("tmux-ide team")} [--json]      ${dim2("TUI over all tmux sessions (--json prints fleet state)")}
+  ${cyan2("tmux-ide switcher")}           ${dim2("Compact session picker (opens in the M-p popup on adopted sessions)")}
+  ${cyan2("tmux-ide wait agent-status")} <session> --status <s> [--timeout <ms>]
+                              ${dim2("Block until a session reaches a status (exit 0 match / 1 timeout)")}
+  ${cyan2("tmux-ide adopt")} <session>    ${dim2("Add the live tmux-ide status bar to a session")}
+  ${cyan2("tmux-ide unadopt")} <session>  ${dim2("Remove the status bar")}
+  ${cyan2("tmux-ide cheatsheet")}         ${dim2("Print the key cheat sheet (\u2325k / [ ? keys ] popup)")}
+  ${cyan2("tmux-ide ls")}                 ${dim2("List all tmux sessions")}
+  ${cyan2("tmux-ide status")} [--json]    ${dim2("Show session status")}
+  ${cyan2("tmux-ide inspect")} [--json]   ${dim2("Show effective config and runtime state")}
+  ${cyan2("tmux-ide doctor")}             ${dim2("Check system requirements")}
+  ${cyan2("tmux-ide validate")} [--json]  ${dim2("Validate ide.yml")}
+  ${cyan2("tmux-ide detect")} [--json]    ${dim2("Detect project stack")}
+  ${cyan2("tmux-ide detect --write")}     ${dim2("Detect and write ide.yml")}
+  ${cyan2("tmux-ide config")} [--json]    ${dim2("Dump config as JSON")}
+  ${cyan2("tmux-ide config set")} <path> <value>
+  ${cyan2("tmux-ide config add-pane")} --row <N> --title <T> [--command <C>]
+  ${cyan2("tmux-ide config remove-pane")} --row <N> --pane <M>
+  ${cyan2("tmux-ide config add-row")} [--size <percent>]
+  ${cyan2("tmux-ide config enable-team")} [--name <N>]   ${dim2("Enable agent teams")}
+  ${cyan2("tmux-ide config disable-team")}               ${dim2("Disable agent teams")}
 
-${bold("Pane Messaging:")}
-  ${cyan("tmux-ide send")} <target> <message>     ${dim("Send message to a pane")}
-  ${cyan("tmux-ide send")} --to <name> <message>   ${dim("Target by name, title, role, or ID")}
-  ${cyan("tmux-ide send")} <target> --no-enter msg  ${dim("Send text without pressing Enter")}
+${bold2("Pane Messaging:")}
+  ${cyan2("tmux-ide send")} <target> <message>     ${dim2("Send message to a pane")}
+  ${cyan2("tmux-ide send")} --to <name> <message>   ${dim2("Target by name, title, role, or ID")}
+  ${cyan2("tmux-ide send")} <target> --no-enter msg  ${dim2("Send text without pressing Enter")}
 
-${bold("Server:")}
-  ${cyan("tmux-ide command-center")} [--port N]    ${dim("Start the command-center HTTP API")}
-  ${cyan("tmux-ide server")} [--port N]            ${dim("Start HTTP + PTY WebSocket server")}
+${bold2("Server:")}
+  ${cyan2("tmux-ide command-center")} [--port N]    ${dim2("Start the command-center HTTP API")}
+  ${cyan2("tmux-ide server")} [--port N]            ${dim2("Start HTTP + PTY WebSocket server")}
 
-${bold("Flags:")}
-  ${cyan("--json")}                      ${dim("Output as JSON (all commands)")}
-  ${cyan("--template <name>")}           ${dim("Use specific template for init")}
-  ${cyan("--write")}                     ${dim("Write detected config to ide.yml")}
-  ${cyan("--verbose")}                   ${dim("Log all tmux commands (or set TMUX_IDE_DEBUG=1)")}
-  ${cyan("-h, --help")}                  ${dim("Show usage")}
-  ${cyan("-v, --version")}               ${dim("Show version number")}`);
+${bold2("Flags:")}
+  ${cyan2("--json")}                      ${dim2("Output as JSON (all commands)")}
+  ${cyan2("--template <name>")}           ${dim2("Use specific template for init")}
+  ${cyan2("--write")}                     ${dim2("Write detected config to ide.yml")}
+  ${cyan2("--verbose")}                   ${dim2("Log all tmux commands (or set TMUX_IDE_DEBUG=1)")}
+  ${cyan2("-h, --help")}                  ${dim2("Show usage")}
+  ${cyan2("-v, --version")}               ${dim2("Show version number")}`);
 }
 function assertBunWidgetAvailable(scriptPath, commandLabel) {
-  const widgetMissing = !existsSync18(scriptPath);
+  const widgetMissing = !existsSync19(scriptPath);
   let bunMissing = false;
   try {
     execFileSync7("bun", ["--version"], { stdio: "ignore" });
@@ -9246,7 +9436,7 @@ try {
   switch (command) {
     case "start": {
       const targetDir = resolve20(startTargetDir || ".");
-      const hasIdeYml = existsSync18(join14(targetDir, "ide.yml"));
+      const hasIdeYml = existsSync19(join15(targetDir, "ide.yml"));
       if (shouldOpenCockpit(hasIdeYml, values.team === true)) {
         if (json) {
           await printFleetJson();
@@ -9343,8 +9533,8 @@ try {
       const messageStart = values.to ? 1 : 2;
       let message = positionals.slice(messageStart).join(" ");
       if (!message && !process.stdin.isTTY) {
-        const { readFileSync: readFileSync11 } = await import("node:fs");
-        message = readFileSync11(0, "utf-8").trim();
+        const { readFileSync: readFileSync12 } = await import("node:fs");
+        message = readFileSync12(0, "utf-8").trim();
       }
       await send(null, { json, to: target, message, noEnter: values["no-enter"] });
       break;
@@ -9437,6 +9627,26 @@ try {
       }
       unadoptSession2(target);
       console.log(`unadopted ${target}`);
+      break;
+    }
+    case "cheatsheet": {
+      try {
+        const { buildCheatsheet: buildCheatsheet2 } = await Promise.resolve().then(() => (init_cheatsheet(), cheatsheet_exports));
+        console.log(buildCheatsheet2({ width: process.stdout.columns ?? 100 }));
+      } catch {
+        console.log("tmux-ide \u2014 press \u2325p for the switcher, \u2325k for this sheet. Any key closes.");
+      }
+      const close = () => process.exit(0);
+      const timer = setTimeout(close, 6e4);
+      timer.unref?.();
+      try {
+        process.stdin.setRawMode?.(true);
+        process.stdin.resume();
+        process.stdin.once("data", close);
+        process.stdin.once("end", close);
+      } catch {
+        close();
+      }
       break;
     }
     case "command-center": {

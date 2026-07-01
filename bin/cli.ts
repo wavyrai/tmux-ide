@@ -84,6 +84,7 @@ const knownCommands = new Set([
   "statusline",
   "adopt",
   "unadopt",
+  "cheatsheet",
   "command-center",
   "server",
   "help",
@@ -136,6 +137,7 @@ ${bold("Usage:")}
                               ${dim("Block until a session reaches a status (exit 0 match / 1 timeout)")}
   ${cyan("tmux-ide adopt")} <session>    ${dim("Add the live tmux-ide status bar to a session")}
   ${cyan("tmux-ide unadopt")} <session>  ${dim("Remove the status bar")}
+  ${cyan("tmux-ide cheatsheet")}         ${dim("Print the key cheat sheet (⌥k / [ ? keys ] popup)")}
   ${cyan("tmux-ide ls")}                 ${dim("List all tmux sessions")}
   ${cyan("tmux-ide status")} [--json]    ${dim("Show session status")}
   ${cyan("tmux-ide inspect")} [--json]   ${dim("Show effective config and runtime state")}
@@ -477,6 +479,35 @@ try {
       }
       unadoptSession(target);
       console.log(`unadopted ${target}`);
+      break;
+    }
+
+    case "cheatsheet": {
+      // Renders the static key cheat sheet, then blocks until ANY key closes it
+      // (the popup exits). Runs inside a tmux `display-popup` (bound to M-k on
+      // adopt / the `[ ? keys ]` bar trigger), so it must never throw — a broken
+      // render should still print something and still close on a keypress.
+      try {
+        const { buildCheatsheet } = await import("../packages/daemon/src/tui/chrome/cheatsheet.ts");
+        console.log(buildCheatsheet({ width: process.stdout.columns ?? 100 }));
+      } catch {
+        console.log("tmux-ide — press ⌥p for the switcher, ⌥k for this sheet. Any key closes.");
+      }
+      // Wait for a single keypress, then exit 0 so the popup closes. Fall back to
+      // an auto-close after 60s if stdin never delivers (e.g. no raw mode).
+      const close = () => process.exit(0);
+      const timer = setTimeout(close, 60_000);
+      timer.unref?.();
+      try {
+        process.stdin.setRawMode?.(true);
+        process.stdin.resume();
+        process.stdin.once("data", close);
+        // A closed/redirected stdin (`</dev/null`, piped) hits EOF instead of
+        // ever delivering a key — close on that too so the command can't hang.
+        process.stdin.once("end", close);
+      } catch {
+        close();
+      }
       break;
     }
 

@@ -92,10 +92,7 @@ describe("buildStatusline", () => {
   });
 
   it("wraps each running project in a session-keyed click range", () => {
-    const bar = buildStatusline(
-      [project("web", { sessions: [session("web-dev", "idle")] })],
-      null,
-    );
+    const bar = buildStatusline([project("web", { sessions: [session("web-dev", "idle")] })], null);
     expect(bar).toContain("#[range=user|swweb-dev]");
     expect(bar).toContain("#[norange]");
   });
@@ -114,6 +111,14 @@ describe("buildStatusline", () => {
     expect(bar).toContain("#[align=right]");
     // the trigger's range sits after the project ranges (right side of the row)
     expect(bar.indexOf("range=user|switcher")).toBeGreaterThan(bar.indexOf("range=user|sw"));
+  });
+
+  it("carries a muted `[ ? keys ]` trigger just left of the switch trigger", () => {
+    const bar = buildStatusline([project("web")], null);
+    expect(bar).toContain("#[range=user|keys]");
+    expect(bar).toContain("[ ? keys ]");
+    // the keys trigger sits before (left of) the primary switch trigger
+    expect(bar.indexOf("range=user|keys")).toBeLessThan(bar.indexOf("range=user|switcher"));
   });
 });
 
@@ -157,6 +162,20 @@ describe("statusClickBindCommand", () => {
   it("passes a custom switcher command into the popup branch", () => {
     const cmd = statusClickBindCommand("bun run switcher");
     expect(cmd.some((a) => a.includes(`"bun run switcher"`))).toBe(true);
+  });
+
+  it("dispatches the `keys` range to the cheat-sheet display-popup", () => {
+    const branch = statusClickBindCommand().at(-1)!;
+    expect(branch).toContain("#{==:#{mouse_status_range},keys}");
+    expect(branch).toContain("tmux-ide cheatsheet");
+    // the sw* switch stays nested inside the keys branch (not lost)
+    expect(branch).toContain("#{m:sw*,#{mouse_status_range}}");
+    expect(branch).toContain("switch-client -c '#{client_name}'");
+  });
+
+  it("passes a custom cheatsheet command into the keys branch", () => {
+    const branch = statusClickBindCommand("tmux-ide switcher", "bun run cheatsheet").at(-1)!;
+    expect(branch).toContain("bun run cheatsheet");
   });
 });
 
