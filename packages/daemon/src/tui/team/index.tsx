@@ -27,6 +27,7 @@ import { registerProject, unregisterProject } from "../../lib/project-registry.t
 import { createStatusTracker, type AgentStatus } from "../detect/classify.ts";
 import { nextInput, suggestSessionName } from "./input.ts";
 import { fuzzyFilter } from "./fuzzy.ts";
+import { ACTION_ORDER, loadKeymap, resolveAction } from "./keymap.ts";
 
 function toRGBA(c: { r: number; g: number; b: number; a: number }): RGBA {
   return RGBA.fromInts(c.r, c.g, c.b, c.a);
@@ -85,8 +86,14 @@ render(() => {
     unknown: toRGBA(theme.fgMuted),
   };
 
+  // Central keymap (defaults + optional ~/.tmux-ide/team-keys.json overrides),
+  // resolved once at startup — the key handler routes through it.
+  const keymap = loadKeymap();
+
   const [projects, setProjects] = createSignal<TeamProject[]>(listTeamProjects(tracker));
   const [selected, setSelected] = createSignal(0);
+  // Whether the `?` keybindings overlay is showing.
+  const [helpOpen, setHelpOpen] = createSignal(false);
   // The single inline text prompt (register dir / new session / rename). null =
   // no prompt open. Its submit action switches on `kind`.
   const [prompt, setPrompt] = createSignal<{ kind: PromptKind; value: string } | null>(null);
@@ -406,39 +413,74 @@ render(() => {
       return;
     }
 
-    const n = visibleRows().length;
-    if (evt.name === "q" || (evt.ctrl && evt.name === "c")) {
+    // The help overlay swallows keys: escape / ? / q close it.
+    if (helpOpen()) {
+      if (evt.name === "escape" || evt.name === "?" || evt.name === "q") {
+        setHelpOpen(false);
+      }
+      return;
+    }
+
+    // ctrl+c always quits, independent of the (rebindable) quit key.
+    if (evt.ctrl && evt.name === "c") {
       process.exit(0);
-    } else if (evt.name === "up" || evt.name === "k") {
-      if (n > 0) setSelected((s) => (s - 1 + n) % n);
-    } else if (evt.name === "down" || evt.name === "j") {
-      if (n > 0) setSelected((s) => (s + 1) % n);
-    } else if (evt.name === "return") {
-      enter();
-    } else if (evt.name === "l") {
-      const row = current();
-      if (row && row.kind === "project") launchProject(row.project);
-    } else if (evt.name === "n") {
-      openNewSession();
-    } else if (evt.name === "r" && evt.shift) {
-      // Shift+R renames the selected session (single-char keys arrive lowercase
-      // with shift as a modifier, per the @opentui convention).
-      openRename();
-    } else if (evt.name === "s") {
-      splitSelected();
-    } else if (evt.name === "a") {
-      openRegister();
-    } else if (evt.name === "/") {
-      setMessage("");
-      setFilterQuery("");
-      setFilterMode(true);
-      setSelected(0);
-    } else if (evt.name === "d") {
-      unregister();
-    } else if (evt.name === "r") {
-      refresh();
-    } else if (evt.name === "x") {
-      requestKill();
+    }
+
+    const n = visibleRows().length;
+    // The rename default is Shift+R; single-char keys arrive lowercase with
+    // shift as a modifier (per the @opentui convention), so map it explicitly.
+    const keyName = evt.name === "r" && evt.shift ? "R" : evt.name;
+    const action = resolveAction(keymap, keyName);
+    switch (action) {
+      case "up":
+        if (n > 0) setSelected((s) => (s - 1 + n) % n);
+        break;
+      case "down":
+        if (n > 0) setSelected((s) => (s + 1) % n);
+        break;
+      case "enter":
+        enter();
+        break;
+      case "launch": {
+        const row = current();
+        if (row && row.kind === "project") launchProject(row.project);
+        break;
+      }
+      case "new":
+        openNewSession();
+        break;
+      case "rename":
+        openRename();
+        break;
+      case "split":
+        splitSelected();
+        break;
+      case "register":
+        openRegister();
+        break;
+      case "unregister":
+        unregister();
+        break;
+      case "kill":
+        requestKill();
+        break;
+      case "filter":
+        setMessage("");
+        setFilterQuery("");
+        setFilterMode(true);
+        setSelected(0);
+        break;
+      case "refresh":
+        refresh();
+        break;
+      case "help":
+        setHelpOpen(true);
+        break;
+      case "quit":
+        process.exit(0);
+        break;
+      case null:
+        break;
     }
   });
 
@@ -452,8 +494,11 @@ render(() => {
         <text fg={toRGBA(theme.fgMuted)}>{`${projects().length} projects`}</text>
       </box>
 
-      {/* middle: list (left) + live preview (right) */}
-      <box flexDirection="row" flexGrow={1}>
+      {/* middle: keybindings overlay, or the list (left) + live preview (right) */}
+      <Show
+        when={helpOpen()}
+        fallback={
+          <box flexDirection="row" flexGrow={1}>
         <box flexDirection="column" width="45%">
           {/* inline text prompt (register dir / new session / rename) */}
           <Show when={prompt()}>
@@ -596,7 +641,42 @@ render(() => {
             <For each={preview()}>{(line) => <text fg={toRGBA(theme.fgMuted)}>{line}</text>}</For>
           </box>
         </box>
-      </box>
+          </box>
+        }
+      >
+        {/* keybindings help overlay — replaces the body while `?` is open */}
+        <box flexDirection="column" flexGrow={1} alignItems="center" paddingTop={2}>
+          <box
+            flexDirection="column"
+            border
+            borderColor={toRGBA(theme.accent)}
+            backgroundColor={toRGBA(theme.selected)}
+            paddingLeft={2}
+            paddingRight={2}
+            paddingTop={1}
+            paddingBottom={1}
+          >
+            <text fg={toRGBA(theme.accent)} attributes={TextAttributes.BOLD}>
+              keybindings
+            </text>
+            <box flexDirection="column" paddingTop={1}>
+              <For each={ACTION_ORDER}>
+                {(action) => (
+                  <box flexDirection="row" gap={1}>
+                    <text fg={toRGBA(theme.accent)}>
+                      {keymap[action].keys.join("/").padEnd(10)}
+                    </text>
+                    <text fg={toRGBA(theme.fg)}>{keymap[action].description}</text>
+                  </box>
+                )}
+              </For>
+            </box>
+            <box paddingTop={1}>
+              <text fg={toRGBA(theme.fgMuted)}>esc / ? / q to close</text>
+            </box>
+          </box>
+        </box>
+      </Show>
 
       {/* footer */}
       <box paddingLeft={1} paddingRight={1} flexDirection="row" gap={2}>
@@ -610,6 +690,7 @@ render(() => {
         <text fg={toRGBA(theme.fgMuted)}>x kill</text>
         <text fg={toRGBA(theme.fgMuted)}>/ filter</text>
         <text fg={toRGBA(theme.fgMuted)}>r refresh</text>
+        <text fg={toRGBA(theme.fgMuted)}>? help</text>
         <text fg={toRGBA(theme.fgMuted)}>q quit</text>
       </box>
     </box>
