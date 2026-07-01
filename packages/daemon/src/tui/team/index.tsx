@@ -8,6 +8,7 @@
  * preload) and is spawned by `tmux-ide team`.
  */
 import { execFileSync } from "node:child_process";
+import { parseArgs } from "node:util";
 import { render, useKeyboard, useRenderer, useTerminalDimensions } from "@opentui/solid";
 import { RGBA, TextAttributes, type MouseEvent } from "@opentui/core";
 import { createSignal, createEffect, onMount, onCleanup, For, Show } from "solid-js";
@@ -30,6 +31,20 @@ import { nextInput, suggestSessionName } from "./input.ts";
 import { fuzzyFilter } from "./fuzzy.ts";
 import { ACTION_ORDER, loadKeymap, resolveAction } from "./keymap.ts";
 import { isDoubleClick, type ClickRecord } from "./mouse.ts";
+
+// Theme pass-through: `bin/cli.ts` forwards the project's ide.yml `theme` as
+// `--theme=<json>`. A malformed value must never crash the cockpit, so the
+// parse is guarded and falls back to the default theme.
+const { values: argv } = parseArgs({ options: { theme: { type: "string" } } });
+function parseThemeArg(raw: string | undefined): Record<string, string> | undefined {
+  if (!raw) return undefined;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return undefined;
+  }
+}
+const themeConfig = parseThemeArg(argv.theme);
 
 function toRGBA(c: { r: number; g: number; b: number; a: number }): RGBA {
   return RGBA.fromInts(c.r, c.g, c.b, c.a);
@@ -76,10 +91,14 @@ function promptLabel(kind: PromptKind): string {
 }
 
 render(() => {
-  const theme = createTheme();
+  const theme = createTheme(themeConfig);
   // One tracker persists across refreshes so the cross-tick `done` state
   // (working→idle without being viewed) can be inferred.
   const tracker = createStatusTracker();
+  // The dir the user actually ran `tmux-ide` from. The CLI spawns this widget
+  // with cwd set to the repo root (for the bun JSX preload), so it forwards the
+  // real cwd via env; fall back to process.cwd() when run directly.
+  const invokeCwd = process.env.TMUX_IDE_CWD ?? process.cwd();
   const statusColor: Record<AgentStatus, RGBA> = {
     blocked: RGBA.fromInts(240, 90, 90, 255), // red
     working: RGBA.fromInts(240, 200, 90, 255), // amber
@@ -105,7 +124,7 @@ render(() => {
   const [prompt, setPrompt] = createSignal<{ kind: PromptKind; value: string } | null>(null);
   // Target captured when the new-session / rename prompt opens, so the async
   // submit stays correct even if the 2s refresh moves the selection.
-  const [newSessionDir, setNewSessionDir] = createSignal(process.cwd());
+  const [newSessionDir, setNewSessionDir] = createSignal(invokeCwd);
   const [renameTarget, setRenameTarget] = createSignal("");
   // Pending destructive-action confirmation (e.g. kill); intercepts y/n.
   const [confirm, setConfirm] = createSignal<{ message: string; onYes: () => void } | null>(null);
@@ -344,14 +363,14 @@ render(() => {
   /** Open the register-dir prompt seeded with the current working directory. */
   function openRegister() {
     setMessage("");
-    setPrompt({ kind: "register", value: process.cwd() });
+    setPrompt({ kind: "register", value: invokeCwd });
   }
 
   /** Open the new-session prompt, seeded with a unique name for the selection. */
   function openNewSession() {
     const row = current();
     const base = row ? row.project.name : "session";
-    const dir = (row ? row.project.dir : null) ?? process.cwd();
+    const dir = (row ? row.project.dir : null) ?? invokeCwd;
     setNewSessionDir(dir);
     setMessage("");
     setPrompt({ kind: "newSession", value: suggestSessionName(base, hasSession) });
@@ -370,7 +389,7 @@ render(() => {
   function splitSelected() {
     const target = previewTarget();
     if (!target) return;
-    const dir = current()?.project.dir ?? process.cwd();
+    const dir = current()?.project.dir ?? invokeCwd;
     try {
       splitPane(target, "horizontal", dir, 50);
       setMessage(`split ${target}`);

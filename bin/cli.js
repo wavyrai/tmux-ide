@@ -8292,11 +8292,17 @@ var init_server2 = __esm({
 
 // bin/cli.ts
 init_launch();
+init_yaml_io();
 import { parseArgs } from "node:util";
-import { resolve as resolve20, dirname as dirname10 } from "node:path";
+import { resolve as resolve20, dirname as dirname10, join as join14 } from "node:path";
 import { execFileSync as execFileSync7 } from "node:child_process";
 import { existsSync as existsSync18 } from "node:fs";
 import { fileURLToPath as fileURLToPath4 } from "node:url";
+
+// packages/daemon/src/tui/team/entry.ts
+function shouldOpenCockpit(hasIdeYml, teamFlag) {
+  return teamFlag || !hasIdeYml;
+}
 
 // packages/daemon/src/init.ts
 init_detect();
@@ -8868,7 +8874,9 @@ var { positionals, values } = parseArgs({
     "no-enter": { type: "boolean" },
     // wait command flags
     status: { type: "string" },
-    timeout: { type: "string" }
+    timeout: { type: "string" },
+    // force the team cockpit instead of launching a project
+    team: { type: "boolean" }
   }
 });
 var knownCommands = /* @__PURE__ */ new Set([
@@ -8919,8 +8927,8 @@ function printHelp() {
   console.log(`${bold("tmux-ide")} \u2014 Terminal IDE powered by tmux
 
 ${bold("Usage:")}
-  ${cyan("tmux-ide")}                    ${dim("Launch IDE from ide.yml")}
-  ${cyan("tmux-ide <path>")}             ${dim("Launch from a specific directory")}
+  ${cyan("tmux-ide")}                    ${dim("Launch ide.yml, or open the team cockpit if none")}
+  ${cyan("tmux-ide <path>")}             ${dim("Launch from a specific directory (cockpit if no ide.yml)")}
   ${cyan("tmux-ide setup")}              ${dim("Interactive TUI setup wizard")}
   ${cyan("tmux-ide setup --edit")}       ${dim("Open config tree editor")}
   ${cyan("tmux-ide settings")}           ${dim("Interactive TUI config manager")}
@@ -8984,13 +8992,44 @@ Run it from a cloned tmux-ide checkout with bun installed.`,
       { code: "USAGE", exitCode: 1 }
     );
   }
-  execFileSync7("bun", [scriptPath, ...args], { stdio: "inherit" });
+  const bunfigRoot = resolve20(__dirname4, "..");
+  execFileSync7("bun", [scriptPath, ...args], {
+    stdio: "inherit",
+    cwd: bunfigRoot,
+    env: { ...process.env, TMUX_IDE_CWD: process.cwd() }
+  });
 }
+async function printFleetJson() {
+  const { createStatusTracker: createStatusTracker2 } = await Promise.resolve().then(() => (init_classify(), classify_exports));
+  const { listTeamProjects: listTeamProjects2 } = await Promise.resolve().then(() => (init_projects(), projects_exports));
+  const { toFleetJson: toFleetJson2 } = await Promise.resolve().then(() => (init_report(), report_exports));
+  console.log(JSON.stringify(toFleetJson2(listTeamProjects2(createStatusTracker2())), null, 2));
+}
+function readThemeArgs(dir) {
+  try {
+    const { config: config2 } = readConfig(dir);
+    if (config2.theme) return [`--theme=${JSON.stringify(config2.theme)}`];
+  } catch {
+  }
+  return [];
+}
+var teamScriptPath = resolve20(__dirname4, "../packages/daemon/src/tui/team/index.tsx");
 try {
   switch (command) {
-    case "start":
+    case "start": {
+      const targetDir = resolve20(startTargetDir || ".");
+      const hasIdeYml = existsSync18(join14(targetDir, "ide.yml"));
+      if (shouldOpenCockpit(hasIdeYml, values.team === true)) {
+        if (json) {
+          await printFleetJson();
+          break;
+        }
+        execBunWidget(teamScriptPath, readThemeArgs(targetDir), "team");
+        break;
+      }
       await launch(startTargetDir, { json });
       break;
+    }
     case "init":
       await init({ template: values.template, json });
       break;
@@ -9089,16 +9128,10 @@ try {
     }
     case "team": {
       if (json) {
-        const { createStatusTracker: createStatusTracker2 } = await Promise.resolve().then(() => (init_classify(), classify_exports));
-        const { listTeamProjects: listTeamProjects2 } = await Promise.resolve().then(() => (init_projects(), projects_exports));
-        const { toFleetJson: toFleetJson2 } = await Promise.resolve().then(() => (init_report(), report_exports));
-        console.log(
-          JSON.stringify(toFleetJson2(listTeamProjects2(createStatusTracker2())), null, 2)
-        );
+        await printFleetJson();
         break;
       }
-      const scriptPath = resolve20(__dirname4, "../packages/daemon/src/tui/team/index.tsx");
-      execBunWidget(scriptPath, [], "team");
+      execBunWidget(teamScriptPath, readThemeArgs(resolve20(startTargetDir || ".")), "team");
       break;
     }
     case "wait": {

@@ -3,13 +3,15 @@
 // esbuild banner. Dev iteration uses `bun bin/cli.ts` directly, which
 // doesn't need a shebang.
 import { parseArgs } from "node:util";
-import { resolve, dirname } from "node:path";
+import { resolve, dirname, join } from "node:path";
 import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 import { launch } from "../packages/daemon/src/launch.ts";
+import { readConfig } from "../packages/daemon/src/lib/yaml-io.ts";
+import { shouldOpenCockpit } from "../packages/daemon/src/tui/team/entry.ts";
 import { init } from "../packages/daemon/src/init.ts";
 import { stop } from "../packages/daemon/src/stop.ts";
 import { attach } from "../packages/daemon/src/attach.ts";
@@ -51,6 +53,8 @@ const { positionals, values } = parseArgs({
     // wait command flags
     status: { type: "string" },
     timeout: { type: "string" },
+    // force the team cockpit instead of launching a project
+    team: { type: "boolean" },
   },
 });
 
@@ -109,8 +113,8 @@ function printHelp() {
   console.log(`${bold("tmux-ide")} — Terminal IDE powered by tmux
 
 ${bold("Usage:")}
-  ${cyan("tmux-ide")}                    ${dim("Launch IDE from ide.yml")}
-  ${cyan("tmux-ide <path>")}             ${dim("Launch from a specific directory")}
+  ${cyan("tmux-ide")}                    ${dim("Launch ide.yml, or open the team cockpit if none")}
+  ${cyan("tmux-ide <path>")}             ${dim("Launch from a specific directory (cockpit if no ide.yml)")}
   ${cyan("tmux-ide setup")}              ${dim("Interactive TUI setup wizard")}
   ${cyan("tmux-ide setup --edit")}       ${dim("Open config tree editor")}
   ${cyan("tmux-ide settings")}           ${dim("Interactive TUI config manager")}
@@ -179,14 +183,63 @@ function execBunWidget(scriptPath: string, args: string[], commandLabel: string)
       { code: "USAGE", exitCode: 1 },
     );
   }
-  execFileSync("bun", [scriptPath, ...args], { stdio: "inherit" });
+  // Spawn from the repo root so bun finds `bunfig.toml` (the @opentui/solid
+  // JSX preload). Without this, running from any other cwd — e.g. bare
+  // `tmux-ide` in a project dir — falls back to the React JSX runtime and the
+  // widget fails to load. The real invocation dir is forwarded via env so
+  // in-widget prompts (register / new session) still default to where the user
+  // actually is.
+  const bunfigRoot = resolve(__dirname, "..");
+  execFileSync("bun", [scriptPath, ...args], {
+    stdio: "inherit",
+    cwd: bunfigRoot,
+    env: { ...process.env, TMUX_IDE_CWD: process.cwd() },
+  });
 }
+
+// The scriptable control surface for the cockpit: print the fleet state as JSON
+// and exit without spawning the (bun/OpenTUI) TUI. Shared by `tmux-ide team
+// --json` and bare `tmux-ide --json` when there's no ide.yml to launch. Dynamic
+// imports keep the interactive path free of the data-layer modules.
+async function printFleetJson(): Promise<void> {
+  const { createStatusTracker } = await import("../packages/daemon/src/tui/detect/classify.ts");
+  const { listTeamProjects } = await import("../packages/daemon/src/tui/team/projects.ts");
+  const { toFleetJson } = await import("../packages/daemon/src/tui/team/report.ts");
+  console.log(JSON.stringify(toFleetJson(listTeamProjects(createStatusTracker())), null, 2));
+}
+
+// Best-effort `--theme=<json>` args for a widget from a project's ide.yml.
+// Never throws — a missing config or absent `theme` yields no args, so a bad
+// or heavy config read never blocks opening the cockpit.
+function readThemeArgs(dir: string): string[] {
+  try {
+    const { config } = readConfig(dir);
+    if (config.theme) return [`--theme=${JSON.stringify(config.theme)}`];
+  } catch {
+    // no ide.yml, unreadable, or malformed — fall through to no theme.
+  }
+  return [];
+}
+
+const teamScriptPath = resolve(__dirname, "../packages/daemon/src/tui/team/index.tsx");
 
 try {
   switch (command) {
-    case "start":
+    case "start": {
+      const targetDir = resolve(startTargetDir || ".");
+      const hasIdeYml = existsSync(join(targetDir, "ide.yml"));
+      if (shouldOpenCockpit(hasIdeYml, values.team === true)) {
+        // No project here (or --team): the cockpit is the front door.
+        if (json) {
+          await printFleetJson();
+          break;
+        }
+        execBunWidget(teamScriptPath, readThemeArgs(targetDir), "team");
+        break;
+      }
       await launch(startTargetDir, { json });
       break;
+    }
 
     case "init":
       await init({ template: values.template, json });
@@ -302,21 +355,12 @@ try {
 
     case "team": {
       // `--json` is the scriptable control surface: print the fleet state and
-      // exit without spawning the (bun/OpenTUI) TUI. Dynamic imports keep the
-      // interactive path free of the data-layer modules until it's needed.
+      // exit without spawning the (bun/OpenTUI) TUI.
       if (json) {
-        const { createStatusTracker } = await import(
-          "../packages/daemon/src/tui/detect/classify.ts"
-        );
-        const { listTeamProjects } = await import("../packages/daemon/src/tui/team/projects.ts");
-        const { toFleetJson } = await import("../packages/daemon/src/tui/team/report.ts");
-        console.log(
-          JSON.stringify(toFleetJson(listTeamProjects(createStatusTracker())), null, 2),
-        );
+        await printFleetJson();
         break;
       }
-      const scriptPath = resolve(__dirname, "../packages/daemon/src/tui/team/index.tsx");
-      execBunWidget(scriptPath, [], "team");
+      execBunWidget(teamScriptPath, readThemeArgs(resolve(startTargetDir || ".")), "team");
       break;
     }
 
