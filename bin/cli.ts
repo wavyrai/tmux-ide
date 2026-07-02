@@ -264,7 +264,7 @@ function execBunWidget(
   if (launch.mode === "unavailable") {
     throw new IdeError(
       `\`tmux-ide ${commandLabel}\` is unavailable because ${launch.reasons.join(" and ")}.\n` +
-        `Run it from a cloned tmux-ide checkout with bun installed, or install a release that ships the compiled binary.`,
+        `Install bun (https://bun.sh) — the TUI surfaces run on it. Sources ship with the npm package since v2.6.1.`,
       { code: "USAGE", exitCode: 1 },
     );
   }
