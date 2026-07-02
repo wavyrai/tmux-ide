@@ -142,6 +142,18 @@ export function buildCheatsheet(opts: { width: number; keys?: AppKeys; theme?: A
   lines.push(pad(legend));
   lines.push("");
 
+  // 1a. prefix twins — the RELIABLE bindings (the tmux prefix survives every
+  // keyboard protocol; Alt keys don't always). Letters pinned against
+  // prefixKeyBinds by a statusline test so they can't drift.
+  lines.push(head("prefix keys (always work)"));
+  lines.push(
+    pad(
+      `${bold("prefix h")} home  ${bold("prefix j")} switcher  ${bold("prefix k")} keys  ${bold("prefix u")} menu  ${bold("prefix b")} sidebar  ${bold("prefix e")} files  ${bold("prefix g")} changes  ${bold("prefix v")} config`,
+    ),
+  );
+  lines.push(pad(dim(`prefix = your tmux prefix (usually C-b) — use these when Alt keys don't reach tmux`)));
+  lines.push("");
+
   // 1b. panels — every widget floats as a popup, one key away, esc to close.
   lines.push(head("panels"));
   const panelHints = PANEL_POPUPS.map(

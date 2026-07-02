@@ -508,11 +508,13 @@ render(() => {
    * Otherwise spin up a bare detached session so it appears in place.
    */
   function launchProject(project: TeamProject) {
-    if (!project.dir) return;
+    // const-capture so the non-null narrowing survives into the closure below
+    const dir = project.dir;
+    if (!dir) return;
     if (project.hasIdeYml) {
       withSuspendedTerminal(() => {
         try {
-          execFileSync("tmux-ide", [], { cwd: project.dir, stdio: "inherit" });
+          execFileSync("tmux-ide", [], { cwd: dir, stdio: "inherit" });
         } catch {
           // launch failed or user detached — fall through to refresh
         }

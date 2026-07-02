@@ -531,3 +531,21 @@ describe("adoptSession key binds", () => {
     });
   });
 });
+
+describe("prefixKeyBinds", () => {
+  it("derives prefix twins for every Alt action, remapping tmux-default letters", async () => {
+    const { prefixKeyBinds } = await import("./statusline.ts");
+    const { DEFAULT_KEYS } = await import("../../lib/app-config.ts");
+    const pkeys = prefixKeyBinds(DEFAULT_KEYS).map((b) => b.pkey);
+    // pinned set — the cheat sheet's "prefix keys" section lists exactly these
+    expect(pkeys.sort()).toEqual(["b", "e", "g", "h", "j", "k", "u", "v"].sort());
+  });
+  it("binds into the prefix table with the same action argv", async () => {
+    const { prefixKeyBinds } = await import("./statusline.ts");
+    const { DEFAULT_KEYS } = await import("../../lib/app-config.ts");
+    for (const { bind } of prefixKeyBinds(DEFAULT_KEYS)) {
+      expect(bind.slice(0, 3)).toEqual(["bind-key", "-T", "prefix"]);
+      expect(bind.length).toBeGreaterThan(4);
+    }
+  });
+});

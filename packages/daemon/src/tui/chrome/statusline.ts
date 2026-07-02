@@ -440,8 +440,63 @@ export function altKeyBinds(
   ];
 }
 
+/**
+ * Lowercase letters tmux binds by DEFAULT in the prefix table — deriving a
+ * prefix twin must never clobber these (c/n/p window ops, m mark, s/w choosers,
+ * o pane rotate, l last, d detach, x kill, z zoom, f find, i info, q display,
+ * r refresh, t clock).
+ */
+const PREFIX_TAKEN = new Set([..."cdfilmnopqrstwxz"]);
+
+/** Alt keys whose letter is taken get an explicit, documented prefix home. */
+const PREFIX_REMAP: Record<string, string> = {
+  "M-m": "u", // menu — m is mark-pane
+  "M-p": "j", // switcher — p is previous-window; j = "jump"
+  "M-,": "v", // config panel — , is rename-window
+};
+
+/**
+ * PURE — the `prefix + <letter>` twins of every Alt-key action. The tmux PREFIX
+ * survives every keyboard-protocol flavor (it's how you use tmux at all), so
+ * these are the RELIABLE bindings — the Alt forms are the bonus for terminals
+ * that deliver them. Same letter as the Alt key where tmux's defaults allow,
+ * {@link PREFIX_REMAP} where they don't; anything unmappable is skipped.
+ */
+export function prefixKeyBinds(
+  keys: AppKeys,
+  switcherCmd = "tmux-ide switcher",
+): Array<{ pkey: string; bind: string[] }> {
+  const out: Array<{ pkey: string; bind: string[] }> = [];
+  for (const { key, bind } of altKeyBinds(keys, switcherCmd)) {
+    const remapped = PREFIX_REMAP[key];
+    const letter = remapped ?? /^M-([a-z])$/.exec(key)?.[1];
+    if (!letter || (!remapped && PREFIX_TAKEN.has(letter))) continue;
+    out.push({ pkey: letter, bind: ["bind-key", "-T", "prefix", letter, ...bind.slice(3)] });
+  }
+  return out;
+}
+
+/**
+ * Binds retired by newer chrome generations — adopt clears them so a server
+ * that lived through an upgrade doesn't keep firing the old behavior alongside
+ * the new (the menu moved from MouseDown3 to MouseUp3: with both bound, the
+ * press opened a menu the release instantly killed).
+ */
+const LEGACY_BINDS: string[][] = [
+  ["unbind-key", "-n", "MouseDown3Status"],
+  ["unbind-key", "-n", "MouseDown3Pane"],
+];
+
 export function adoptSession(session: string, switcherCmd = "tmux-ide switcher"): void {
   for (const argv of adoptOptionCommands(session)) runTmux(argv);
+  // Clear binds retired by newer chrome generations (best-effort).
+  for (const legacy of LEGACY_BINDS) {
+    try {
+      runTmux(legacy);
+    } catch {
+      // nothing stale bound — fine
+    }
+  }
   // Key binds are configurable via ~/.tmux-ide/config.json (keys.*); re-adopting
   // after a config change rebinds them. Server-wide + idempotent (re-binding a
   // key just overwrites it).
@@ -464,6 +519,9 @@ export function adoptSession(session: string, switcherCmd = "tmux-ide switcher")
     runTmux(["set-option", "-s", `user-keys[${idx}]`, escape]);
     runTmux(["bind-key", "-n", kittyUserKeyName(i), ...bind.slice(3)]);
   });
+  // The RELIABLE twins: prefix + letter for every action (the prefix survives
+  // kitty/CSI-u keyboard protocols; Alt keys don't always).
+  for (const { bind } of prefixKeyBinds(keys, switcherCmd)) runTmux(bind);
   // Seed the bar now so it's never blank, then make sure the loop that keeps it
   // fresh is up.
   seedSessionStatus(session);
@@ -521,6 +579,13 @@ export function unadoptSession(session: string): void {
       // no such user-keys slot set — nothing to undo
     }
   });
+  for (const { pkey } of prefixKeyBinds(keys, "tmux-ide switcher")) {
+    try {
+      runTmux(["unbind-key", "-T", "prefix", pkey]);
+    } catch {
+      // not bound — nothing to undo
+    }
+  }
   // The updater only needs to run while something is adopted.
   if (listAdoptedSessions().length === 0) stopUpdater();
 }
