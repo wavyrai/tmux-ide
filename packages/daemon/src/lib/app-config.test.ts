@@ -43,10 +43,32 @@ describe("parseAppConfig — deep partial merge", () => {
     // untouched siblings stay default
     expect(cfg.keys.cheatsheet).toBe("M-k");
     expect(cfg.keys.menu).toBe("M-m");
+    expect(cfg.keys.panels).toEqual(DEFAULT_APP_CONFIG.keys.panels);
     expect(cfg.theme.muted).toBe("colour240");
     expect(cfg.theme.status.working).toBe("colour221");
     expect(cfg.theme.glyphs).toEqual(DEFAULT_APP_CONFIG.theme.glyphs);
     expect(cfg.updater).toEqual(DEFAULT_APP_CONFIG.updater);
+  });
+
+  it("defaults the panel keys to M-e / M-g / M-,", () => {
+    expect(DEFAULT_APP_CONFIG.keys.panels).toEqual({
+      explorer: "M-e",
+      changes: "M-g",
+      config: "M-,",
+    });
+  });
+
+  it("overrides one panel key while keeping the other panels + chrome keys default", () => {
+    const cfg = parseAppConfig({ keys: { panels: { explorer: "M-1" } } });
+    expect(cfg.keys.panels.explorer).toBe("M-1");
+    expect(cfg.keys.panels.changes).toBe("M-g");
+    expect(cfg.keys.panels.config).toBe("M-,");
+    expect(cfg.keys.popup).toBe("M-p"); // chrome keys untouched
+  });
+
+  it("falls back to the default panel keys on mistyped / missing values", () => {
+    const cfg = parseAppConfig({ keys: { panels: { explorer: 5, changes: "", config: null } } });
+    expect(cfg.keys.panels).toEqual(DEFAULT_APP_CONFIG.keys.panels);
   });
 });
 

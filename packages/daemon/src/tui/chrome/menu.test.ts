@@ -17,6 +17,7 @@ import {
 } from "./menu.ts";
 import { switcherPopupCommand } from "./statusline.ts";
 import { cheatsheetPopupCommand } from "./cheatsheet.ts";
+import { PANEL_POPUPS, panelPopupCommand } from "./panels.ts";
 import { DEFAULT_THEME, type AppTheme } from "../../lib/app-config.ts";
 import type { AgentStatus } from "../detect/classify.ts";
 
@@ -117,17 +118,35 @@ describe("buildMenu", () => {
   });
 
   it("separates the groups with empty-name separator items", () => {
-    // With sessions: header · sep · sessions · sep · footer → exactly 2 separators.
-    expect(buildMenu([sess("web", "idle")]).filter((a) => a === "")).toHaveLength(2);
+    // With sessions: header · sep · panels · sep · sessions · sep · footer →
+    // exactly 3 separators.
+    expect(buildMenu([sess("web", "idle")]).filter((a) => a === "")).toHaveLength(3);
   });
 
   it("collapses the separator when there are no sessions (no stacked dividers)", () => {
-    // header · sep · footer → exactly 1 separator, never two in a row.
+    // header · sep · panels · sep · footer → exactly 2 separators, never two in a row.
     const args = buildMenu([]);
-    expect(args.filter((a) => a === "")).toHaveLength(1);
+    expect(args.filter((a) => a === "")).toHaveLength(2);
     for (let i = 1; i < args.length; i++) {
       expect(args[i] === "" && args[i - 1] === "").toBe(false);
     }
+  });
+
+  it("lists each widget panel with a mnemonic key and its floating popup command", () => {
+    const args = buildMenu([]);
+    for (const panel of PANEL_POPUPS) {
+      const i = args.indexOf(panel.label);
+      expect(i).toBeGreaterThanOrEqual(0);
+      // command opens the same display-popup the panel's root-table key does,
+      // on the pane's cwd.
+      expect(args[i + 2]).toBe(panelPopupCommand(panel));
+      expect(args[i + 2]).toContain(`tmux-ide popup ${panel.widget}`);
+      expect(args[i + 2]).toContain("-d '#{pane_current_path}'");
+    }
+    // mnemonics: Files e, Changes g, Config ,
+    expect(args[args.indexOf("⊞ Files") + 1]).toBe("e");
+    expect(args[args.indexOf("± Changes") + 1]).toBe("g");
+    expect(args[args.indexOf("⚙ Config") + 1]).toBe(",");
   });
 
   it("quotes odd session names so shell/tmux metachars can't leak as tokens", () => {

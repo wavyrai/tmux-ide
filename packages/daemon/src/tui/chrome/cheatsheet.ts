@@ -17,6 +17,7 @@
  */
 import { DEFAULT_KEYS, DEFAULT_THEME, type AppKeys, type AppTheme } from "../../lib/app-config.ts";
 import { ACTION_ORDER, DEFAULT_KEYMAP } from "../team/keymap.ts";
+import { PANEL_POPUPS, panelKey } from "./panels.ts";
 
 /**
  * The root-table key that floats this sheet: `M-k` (Alt+k). Like the switcher's
@@ -138,6 +139,14 @@ export function buildCheatsheet(opts: { width: number; keys?: AppKeys; theme?: A
     `${legendMark(theme.status.done, active)} done  ${legendMark(theme.status.idle, active)} idle  ` +
     `${dim("·")} unknown  ${dim(theme.glyphs.inactive)} stopped`;
   lines.push(pad(legend));
+  lines.push("");
+
+  // 1b. panels — every widget floats as a popup, one key away, esc to close.
+  lines.push(head("panels"));
+  const panelHints = PANEL_POPUPS.map(
+    (p) => `${bold(renderKey(panelKey(p, keys.panels)))} ${p.label}`,
+  ).join("   ");
+  lines.push(pad(`${panelHints}   ${dim("esc/q closes any panel")}`));
   lines.push("");
 
   // 2. picker — keys inside the switcher popup.

@@ -18,8 +18,9 @@ import {
   unadoptOptionCommands,
 } from "./statusline.ts";
 import { menuBindCommand, menuPaneBindCommand, menuStatusBindCommand } from "./menu.ts";
+import { PANEL_POPUPS, panelKey, panelPopupBindCommand } from "./panels.ts";
 import { ADOPTED_OPTION, STATUS_OPTION } from "./updater.ts";
-import { DEFAULT_THEME, _resetForTests, type AppTheme } from "../../lib/app-config.ts";
+import { DEFAULT_KEYS, DEFAULT_THEME, _resetForTests, type AppTheme } from "../../lib/app-config.ts";
 import type { TeamProject } from "../team/projects.ts";
 import type { TeamSession } from "../team/sessions.ts";
 
@@ -381,5 +382,21 @@ describe("adoptSession key binds", () => {
     // and the pre-existing binds are still applied (no regression)
     expect(calls).toContainEqual(popupBindCommand("tmux-ide switcher"));
     expect(calls).toContainEqual(statusClickBindCommand("tmux-ide switcher"));
+  });
+
+  it("binds one display-popup panel key per widget (explorer/changes/config)", () => {
+    adoptSession("web");
+    const calls = runTmux.mock.calls.map((c) => c[0] as string[]);
+    for (const panel of PANEL_POPUPS) {
+      const key = panelKey(panel, DEFAULT_KEYS.panels);
+      expect(calls).toContainEqual(panelPopupBindCommand(panel, key));
+    }
+    // the three panels are the explorer/changes/config widgets on M-e/M-g/M-,
+    expect(PANEL_POPUPS.map((p) => p.widget)).toEqual(["explorer", "changes", "config"]);
+    expect([
+      DEFAULT_KEYS.panels.explorer,
+      DEFAULT_KEYS.panels.changes,
+      DEFAULT_KEYS.panels.config,
+    ]).toEqual(["M-e", "M-g", "M-,"]);
   });
 });

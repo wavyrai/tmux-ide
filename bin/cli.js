@@ -1609,6 +1609,7 @@ function parseAppConfig(input) {
   const D = DEFAULT_APP_CONFIG;
   const root = asObject(input);
   const keys = asObject(root.keys);
+  const panels = asObject(keys.panels);
   const theme = asObject(root.theme);
   const status2 = asObject(theme.status);
   const glyphs = asObject(theme.glyphs);
@@ -1620,7 +1621,12 @@ function parseAppConfig(input) {
     keys: {
       popup: pickString(keys.popup, D.keys.popup),
       cheatsheet: pickString(keys.cheatsheet, D.keys.cheatsheet),
-      menu: pickString(keys.menu, D.keys.menu)
+      menu: pickString(keys.menu, D.keys.menu),
+      panels: {
+        explorer: pickString(panels.explorer, D.keys.panels.explorer),
+        changes: pickString(panels.changes, D.keys.panels.changes),
+        config: pickString(panels.config, D.keys.panels.config)
+      }
     },
     theme: {
       accent: pickString(theme.accent, D.theme.accent),
@@ -1674,7 +1680,12 @@ var init_app_config = __esm({
   "packages/daemon/src/lib/app-config.ts"() {
     "use strict";
     DEFAULT_APP_CONFIG = {
-      keys: { popup: "M-p", cheatsheet: "M-k", menu: "M-m" },
+      keys: {
+        popup: "M-p",
+        cheatsheet: "M-k",
+        menu: "M-m",
+        panels: { explorer: "M-e", changes: "M-g", config: "M-," }
+      },
       theme: {
         accent: "colour75",
         muted: "colour240",
@@ -1739,6 +1750,58 @@ var init_keymap = __esm({
       help: { keys: ["?"], description: "toggle help" },
       quit: { keys: ["q"], description: "quit" }
     };
+  }
+});
+
+// packages/daemon/src/tui/chrome/panels.ts
+var panels_exports = {};
+__export(panels_exports, {
+  PANEL_POPUPS: () => PANEL_POPUPS,
+  POPUP_WIDGETS: () => POPUP_WIDGETS,
+  panelKey: () => panelKey,
+  panelPopupBindCommand: () => panelPopupBindCommand,
+  panelPopupCli: () => panelPopupCli,
+  panelPopupCommand: () => panelPopupCommand,
+  panelPopupUnbindCommand: () => panelPopupUnbindCommand
+});
+function panelPopupCli(widget) {
+  return `tmux-ide popup ${widget}`;
+}
+function panelKey(panel, keys) {
+  return keys[panel.widget];
+}
+function panelPopupCommand(panel, cli = panelPopupCli(panel.widget)) {
+  return `display-popup -E -d '#{pane_current_path}' -w ${panel.width} -h ${panel.height} "${cli}"`;
+}
+function panelPopupBindCommand(panel, key, cli = panelPopupCli(panel.widget)) {
+  return [
+    "bind-key",
+    "-n",
+    key,
+    "display-popup",
+    "-E",
+    "-d",
+    "#{pane_current_path}",
+    "-w",
+    panel.width,
+    "-h",
+    panel.height,
+    cli
+  ];
+}
+function panelPopupUnbindCommand(key) {
+  return ["unbind-key", "-n", key];
+}
+var PANEL_POPUPS, POPUP_WIDGETS;
+var init_panels = __esm({
+  "packages/daemon/src/tui/chrome/panels.ts"() {
+    "use strict";
+    PANEL_POPUPS = [
+      { widget: "explorer", label: "\u229E Files", width: "60%", height: "85%" },
+      { widget: "changes", label: "\xB1 Changes", width: "85%", height: "90%" },
+      { widget: "config", label: "\u2699 Config", width: "80%", height: "85%" }
+    ];
+    POPUP_WIDGETS = PANEL_POPUPS.map((p) => p.widget);
   }
 });
 
@@ -1812,6 +1875,12 @@ function buildCheatsheet(opts) {
   const legend = `${legendMark(theme.status.blocked, active2)} blocked  ${legendMark(theme.status.working, active2)} working  ${legendMark(theme.status.done, active2)} done  ${legendMark(theme.status.idle, active2)} idle  ${dim("\xB7")} unknown  ${dim(theme.glyphs.inactive)} stopped`;
   lines.push(pad(legend));
   lines.push("");
+  lines.push(head("panels"));
+  const panelHints = PANEL_POPUPS.map(
+    (p) => `${bold(renderKey(panelKey(p, keys.panels)))} ${p.label}`
+  ).join("   ");
+  lines.push(pad(`${panelHints}   ${dim("esc/q closes any panel")}`));
+  lines.push("");
   lines.push(head(`picker  ${dim(`(inside the ${renderKey(keys.popup)} popup)`)}`));
   lines.push(
     pad(`${bold("\u21B5")} switch   ${bold("l")} launch   ${bold("/")} find   ${bold("esc")} close`)
@@ -1875,6 +1944,7 @@ var init_cheatsheet = __esm({
     "use strict";
     init_app_config();
     init_keymap();
+    init_panels();
     CHEATSHEET_KEY = "M-k";
     bold = (s) => `\x1B[1m${s}\x1B[22m`;
     dim = (s) => `\x1B[2m${s}\x1B[22m`;
@@ -1919,6 +1989,10 @@ function buildMenu(sessions, theme = DEFAULT_THEME) {
     "k",
     cheatsheetPopupCommand()
   ];
+  const panelItems = [];
+  PANEL_POPUPS.forEach((panel, i) => {
+    panelItems.push(panel.label, PANEL_MENU_KEYS[i] ?? "", panelPopupCommand(panel));
+  });
   const sessionItems = [];
   sessions.slice(0, MAX_SESSION_ITEMS).forEach((session, i) => {
     sessionItems.push(
@@ -1936,7 +2010,7 @@ function buildMenu(sessions, theme = DEFAULT_THEME) {
     `confirm-before -p "kill session #S? (y/n)" kill-session`
   ];
   const items = [];
-  for (const group of [header, sessionItems, footer]) {
+  for (const group of [header, panelItems, sessionItems, footer]) {
     if (group.length === 0) continue;
     if (items.length > 0) items.push("");
     items.push(...group);
@@ -1964,13 +2038,15 @@ function menuStatusUnbindCommand() {
 function menuPaneUnbindCommand() {
   return ["unbind-key", "-n", MENU_PANE_KEY];
 }
-var MAX_SESSION_ITEMS;
+var PANEL_MENU_KEYS, MAX_SESSION_ITEMS;
 var init_menu = __esm({
   "packages/daemon/src/tui/chrome/menu.ts"() {
     "use strict";
     init_app_config();
     init_statusline();
     init_cheatsheet();
+    init_panels();
+    PANEL_MENU_KEYS = ["e", "g", ","];
     MAX_SESSION_ITEMS = 8;
   }
 });
@@ -3829,6 +3905,9 @@ function adoptSession(session, switcherCmd = "tmux-ide switcher") {
   runTmux(menuBindCommand("tmux-ide menu", keys.menu));
   runTmux(menuStatusBindCommand());
   runTmux(menuPaneBindCommand());
+  for (const panel of PANEL_POPUPS) {
+    runTmux(panelPopupBindCommand(panel, panelKey(panel, keys.panels)));
+  }
   seedSessionStatus(session);
   startUpdaterIfNeeded();
 }
@@ -3859,6 +3938,12 @@ function unadoptSession(session) {
     runTmux(menuPaneUnbindCommand());
   } catch {
   }
+  for (const panel of PANEL_POPUPS) {
+    try {
+      runTmux(panelPopupUnbindCommand(panelKey(panel, keys.panels)));
+    } catch {
+    }
+  }
   if (listAdoptedSessions().length === 0) stopUpdater();
 }
 var POPUP_KEY, MENU_KEY, MENU_STATUS_KEY, MENU_PANE_KEY, STATUS_CLICK_KEY;
@@ -3869,6 +3954,7 @@ var init_statusline = __esm({
     init_app_config();
     init_cheatsheet();
     init_menu();
+    init_panels();
     init_updater();
     POPUP_KEY = "M-p";
     MENU_KEY = "M-m";
@@ -11298,6 +11384,7 @@ var knownCommands = /* @__PURE__ */ new Set([
   "chrome-updater",
   "cheatsheet",
   "menu",
+  "popup",
   "command-center",
   "server",
   "help"
@@ -11354,6 +11441,7 @@ ${bold2("Usage:")}
   ${cyan2("tmux-ide agent explain")} <pane> [--json]  ${dim2("Debug how a pane's agent state is detected")}
   ${cyan2("tmux-ide cheatsheet")}         ${dim2("Print the key cheat sheet (\u2325k / [ ? keys ] popup)")}
   ${cyan2("tmux-ide menu")} [--client N]  ${dim2("Open the right-click actions menu (\u2325m / right-click any pane or the bar)")}
+  ${cyan2("tmux-ide popup")} <widget>     ${dim2("Open a widget as a floating panel (explorer/changes/config; \u2325e/\u2325g/\u2325,)")}
   ${cyan2("tmux-ide ls")}                 ${dim2("List all tmux sessions")}
   ${cyan2("tmux-ide status")} [--json]    ${dim2("Show session status")}
   ${cyan2("tmux-ide inspect")} [--json]   ${dim2("Show effective config and runtime state")}
@@ -11869,6 +11957,36 @@ try {
         execFileSync10("tmux", args, { stdio: "ignore", timeout: 2e3 });
       } catch {
       }
+      break;
+    }
+    case "popup": {
+      const { POPUP_WIDGETS: POPUP_WIDGETS2 } = await Promise.resolve().then(() => (init_panels(), panels_exports));
+      const widget = positionals[1];
+      if (!widget || !POPUP_WIDGETS2.includes(widget)) {
+        throw new IdeError(
+          `Usage: tmux-ide popup <widget>
+Known panels: ${POPUP_WIDGETS2.join(", ")}.`,
+          { code: "USAGE", exitCode: 1 }
+        );
+      }
+      const scriptPath = resolve20(
+        __dirname4,
+        "../packages/daemon/src/widgets",
+        widget,
+        "index.tsx"
+      );
+      let popupSession = "";
+      try {
+        popupSession = execFileSync10("tmux", ["display-message", "-p", "#{session_name}"], {
+          encoding: "utf8",
+          stdio: ["ignore", "pipe", "ignore"],
+          timeout: 2e3
+        }).trim();
+      } catch {
+      }
+      const popupArgs = [`--dir=${process.cwd()}`];
+      if (popupSession) popupArgs.push(`--session=${popupSession}`);
+      execBunWidget(scriptPath, popupArgs, `popup ${widget}`);
       break;
     }
     case "command-center": {

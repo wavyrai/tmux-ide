@@ -167,7 +167,9 @@ render(
         const idx = tabs.indexOf(activeTab());
         setActiveTab(tabs[(idx + 1) % tabs.length]!);
         evt.preventDefault();
-      } else if (evt.name === "q") {
+      } else if (evt.name === "q" || evt.name === "escape") {
+        // esc/q close the panel popup; the dirty guard blocks a lossy close
+        // (the `-E` popup exits when this process does).
         if (dirty()) {
           setStatusMsg("Unsaved changes! Ctrl+S to save, then q to quit.");
           setTimeout(() => setStatusMsg(null), 3000);

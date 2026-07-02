@@ -20,6 +20,10 @@ import { DEFAULT_THEME, type AppTheme } from "../../lib/app-config.ts";
 import type { AgentStatus } from "../detect/classify.ts";
 import { switcherPopupCommand, MENU_KEY, MENU_PANE_KEY, MENU_STATUS_KEY } from "./statusline.ts";
 import { cheatsheetPopupCommand } from "./cheatsheet.ts";
+import { PANEL_POPUPS, panelPopupCommand } from "./panels.ts";
+
+/** Single-char menu mnemonics for the panel rows (parallel to PANEL_POPUPS). */
+const PANEL_MENU_KEYS = ["e", "g", ","];
 
 /**
  * PURE — glyph + tmux colour per status for the menu's session rows, from the
@@ -57,16 +61,18 @@ function sessionLabel(session: { name: string; status: AgentStatus }, theme: App
 /**
  * PURE — the `display-menu` argument vector (everything AFTER `display-menu`,
  * minus the runtime `-c <client>`/placement flags the CLI prepends): a
- * `tmux-ide` title, then three groups joined by separator lines —
+ * `tmux-ide` title, then four groups joined by separator lines —
  *
  *   1. `⧉ Switch session…` (s) → the same switcher popup M-p / the bar trigger
  *      opens; `? Cheat sheet` (k) → the same cheat-sheet popup M-k opens. Both
  *      reuse the exact popup command strings so a menu pick behaves identically.
- *   2. up to 8 live sessions, each `«glyph» <name>` keyed 1..8 →
+ *   2. the widget PANELS (Files e / Changes g / Config ,) → the same floating
+ *      `display-popup` each panel's root-table key opens (see ./panels.ts).
+ *   3. up to 8 live sessions, each `«glyph» <name>` keyed 1..8 →
  *      `switch-client -t <name>` (the name quoted so odd names stay inert). The
  *      menu commands run in the client that opened the menu, so the switch lands
  *      on the right client.
- *   3. `＋ New session…` (n) → a `command-prompt` that creates + switches to a
+ *   4. `＋ New session…` (n) → a `command-prompt` that creates + switches to a
  *      named session; `✕ Kill this session` (x) → a confirmed `kill-session`.
  *
  * A separator is a single empty-string argument (tmux's display-menu convention).
@@ -84,6 +90,14 @@ export function buildMenu(
     "k",
     cheatsheetPopupCommand(),
   ];
+
+  // The widget panels — each row opens the same floating popup its root-table
+  // key does (esc/q closes). Menu commands run in the opening client, so the
+  // popup lands on its pane's cwd.
+  const panelItems: string[] = [];
+  PANEL_POPUPS.forEach((panel, i) => {
+    panelItems.push(panel.label, PANEL_MENU_KEYS[i] ?? "", panelPopupCommand(panel));
+  });
 
   const sessionItems: string[] = [];
   sessions.slice(0, MAX_SESSION_ITEMS).forEach((session, i) => {
@@ -105,7 +119,7 @@ export function buildMenu(
 
   // Join non-empty groups with a single separator line between them.
   const items: string[] = [];
-  for (const group of [header, sessionItems, footer]) {
+  for (const group of [header, panelItems, sessionItems, footer]) {
     if (group.length === 0) continue;
     if (items.length > 0) items.push(""); // separator
     items.push(...group);

@@ -102,6 +102,7 @@ const knownCommands = new Set([
   "chrome-updater",
   "cheatsheet",
   "menu",
+  "popup",
   "command-center",
   "server",
   "help",
@@ -165,6 +166,7 @@ ${bold("Usage:")}
   ${cyan("tmux-ide agent explain")} <pane> [--json]  ${dim("Debug how a pane's agent state is detected")}
   ${cyan("tmux-ide cheatsheet")}         ${dim("Print the key cheat sheet (⌥k / [ ? keys ] popup)")}
   ${cyan("tmux-ide menu")} [--client N]  ${dim("Open the right-click actions menu (⌥m / right-click any pane or the bar)")}
+  ${cyan("tmux-ide popup")} <widget>     ${dim("Open a widget as a floating panel (explorer/changes/config; ⌥e/⌥g/⌥,)")}
   ${cyan("tmux-ide ls")}                 ${dim("List all tmux sessions")}
   ${cyan("tmux-ide status")} [--json]    ${dim("Show session status")}
   ${cyan("tmux-ide inspect")} [--json]   ${dim("Show effective config and runtime state")}
@@ -831,6 +833,49 @@ try {
       } catch {
         // no client / tmux unavailable / a call timed out — nothing to show
       }
+      break;
+    }
+
+    case "popup": {
+      // Open a widget as a floating panel. This CLI invocation IS the popup
+      // process (a root-table key or a menu row ran `display-popup -E "tmux-ide
+      // popup <widget>"`), so we exec the bun widget SYNCHRONOUSLY into the
+      // popup's PTY; when the widget exits (esc/q) the popup closes.
+      const { POPUP_WIDGETS } = await import("../packages/daemon/src/tui/chrome/panels.ts");
+      const widget = positionals[1];
+      if (!widget || !POPUP_WIDGETS.includes(widget)) {
+        throw new IdeError(
+          `Usage: tmux-ide popup <widget>\nKnown panels: ${POPUP_WIDGETS.join(", ")}.`,
+          { code: "USAGE", exitCode: 1 },
+        );
+      }
+      // Resolve the widget entry from THIS file's dir (bin/), mirroring the
+      // setup/config cases — the bundler rewrites `import.meta.url` to the bin/
+      // bundle, so a `resolve.ts`-relative path would miss the sources.
+      const scriptPath = resolve(
+        __dirname,
+        "../packages/daemon/src/widgets",
+        widget,
+        "index.tsx",
+      );
+      // The popup opened with `-d '#{pane_current_path}'`, so our cwd IS the
+      // pane's project dir — forward it as `--dir`. Resolve the session so the
+      // widget's tmux side-channels (preview file, "send to claude") target it;
+      // best-effort — an empty session just disables those (the widget still
+      // renders and browses).
+      let popupSession = "";
+      try {
+        popupSession = execFileSync("tmux", ["display-message", "-p", "#{session_name}"], {
+          encoding: "utf8",
+          stdio: ["ignore", "pipe", "ignore"],
+          timeout: 2000,
+        }).trim();
+      } catch {
+        // not inside a tmux client — leave session empty
+      }
+      const popupArgs = [`--dir=${process.cwd()}`];
+      if (popupSession) popupArgs.push(`--session=${popupSession}`);
+      execBunWidget(scriptPath, popupArgs, `popup ${widget}`);
       break;
     }
 

@@ -30,6 +30,12 @@ import {
   menuUnbindCommand,
 } from "./menu.ts";
 import {
+  PANEL_POPUPS,
+  panelKey,
+  panelPopupBindCommand,
+  panelPopupUnbindCommand,
+} from "./panels.ts";
+import {
   ADOPTED_OPTION,
   CHIP_OPTION,
   listAdoptedSessions,
@@ -364,6 +370,12 @@ export function adoptSession(session: string, switcherCmd = "tmux-ide switcher")
   runTmux(menuBindCommand("tmux-ide menu", keys.menu));
   runTmux(menuStatusBindCommand());
   runTmux(menuPaneBindCommand());
+  // The widget PANELS: one root-table key per panel opens the widget as a
+  // floating `display-popup` on the pane's cwd (the one-app milestone). Keys are
+  // configurable via keys.panels.*; sizing is per-widget (see ./panels.ts).
+  for (const panel of PANEL_POPUPS) {
+    runTmux(panelPopupBindCommand(panel, panelKey(panel, keys.panels)));
+  }
   // Seed the bar now so it's never blank, then make sure the loop that keeps it
   // fresh is up.
   seedSessionStatus(session);
@@ -411,6 +423,15 @@ export function unadoptSession(session: string): void {
     runTmux(menuPaneUnbindCommand());
   } catch {
     // no such key bound — nothing to undo
+  }
+  // Drop the widget panel binds (same configured keys adopt bound). Best-effort
+  // so an already-removed bind doesn't throw.
+  for (const panel of PANEL_POPUPS) {
+    try {
+      runTmux(panelPopupUnbindCommand(panelKey(panel, keys.panels)));
+    } catch {
+      // no such key bound — nothing to undo
+    }
   }
   // The updater only needs to run while something is adopted.
   if (listAdoptedSessions().length === 0) stopUpdater();

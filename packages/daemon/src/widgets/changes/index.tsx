@@ -321,7 +321,8 @@ render(
       } else if (evt.shift && evt.name === "g") {
         setSelected(files.length - 1);
         evt.preventDefault();
-      } else if (evt.name === "q") {
+      } else if (evt.name === "q" || evt.name === "escape") {
+        // esc/q close the panel popup (the `-E` popup exits with this process).
         process.exit(0);
       }
     });

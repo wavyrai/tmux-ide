@@ -9,7 +9,8 @@ import {
   CHEATSHEET_KEY,
 } from "./cheatsheet.ts";
 import { POPUP_KEY } from "./statusline.ts";
-import { DEFAULT_THEME } from "../../lib/app-config.ts";
+import { PANEL_POPUPS, panelKey } from "./panels.ts";
+import { DEFAULT_KEYS, DEFAULT_THEME } from "../../lib/app-config.ts";
 import { DEFAULT_KEYMAP } from "../team/keymap.ts";
 
 /** Strip ANSI SGR escapes so we can assert on visible content and width. */
@@ -26,9 +27,18 @@ function pretty(tmuxKey: string): string {
 describe("buildCheatsheet", () => {
   it("renders every group heading", () => {
     const sheet = stripAnsi(buildCheatsheet({ width: 100 }));
-    for (const heading of ["dock", "picker", "team app", "tmux essentials", "cli"]) {
+    for (const heading of ["dock", "panels", "picker", "team app", "tmux essentials", "cli"]) {
       expect(sheet).toContain(heading);
     }
+  });
+
+  it("lists each widget panel with its rendered key and label", () => {
+    const sheet = stripAnsi(buildCheatsheet({ width: 100 }));
+    for (const panel of PANEL_POPUPS) {
+      expect(sheet).toContain(pretty(panelKey(panel, DEFAULT_KEYS.panels)));
+      expect(sheet).toContain(panel.label);
+    }
+    expect(sheet).toContain("esc/q closes any panel");
   });
 
   it("sources the switcher key hint from POPUP_KEY", () => {
@@ -73,7 +83,12 @@ describe("buildCheatsheet", () => {
     const sheet = stripAnsi(
       buildCheatsheet({
         width: 100,
-        keys: { popup: "M-o", cheatsheet: "M-j", menu: "M-u" },
+        keys: {
+          popup: "M-o",
+          cheatsheet: "M-j",
+          menu: "M-u",
+          panels: { explorer: "M-x", changes: "M-y", config: "M-z" },
+        },
         theme: {
           ...DEFAULT_THEME,
           glyphs: { active: "▲", inactive: "△" },
@@ -84,6 +99,10 @@ describe("buildCheatsheet", () => {
     expect(sheet).toContain("⌥o");
     expect(sheet).toContain("⌥j");
     expect(sheet).toContain("⌥u");
+    // and the panels group renders the configured panel keys (⌥x / ⌥y / ⌥z)
+    expect(sheet).toContain("⌥x");
+    expect(sheet).toContain("⌥y");
+    expect(sheet).toContain("⌥z");
     // the default M-p hint is gone
     expect(sheet).not.toContain("⌥p");
     // the legend uses the custom glyphs

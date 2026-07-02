@@ -29,7 +29,23 @@ import type { AgentStatus } from "../tui/detect/classify.ts";
 // Shape
 // ---------------------------------------------------------------------------
 
-/** Root-table key binds (tmux key names) for the three chrome popups. */
+/**
+ * Root-table key binds (tmux key names) for the per-widget PANEL popups —
+ * every widget is a floating app dialog one keystroke away, esc to close (the
+ * "one-app" milestone). Only widgets that exist AND stand alone are here:
+ * `preview` is a companion that renders the explorer's selection (nothing to
+ * show on its own) and `setup` is the onboarding wizard, so neither gets a key.
+ */
+export interface AppPanelKeys {
+  /** File explorer panel (default `M-e`). */
+  explorer: string;
+  /** Git changes panel (default `M-g`). */
+  changes: string;
+  /** Config editor panel (default `M-,`). */
+  config: string;
+}
+
+/** Root-table key binds (tmux key names) for the chrome popups + widget panels. */
 export interface AppKeys {
   /** Switcher popup (default `M-p`). */
   popup: string;
@@ -37,6 +53,8 @@ export interface AppKeys {
   cheatsheet: string;
   /** Actions menu (default `M-m`). */
   menu: string;
+  /** Per-widget panel popups (default `M-e`/`M-g`/`M-,`). */
+  panels: AppPanelKeys;
 }
 
 /** Per-agent-status color token (tmux `colourN` / `#rrggbb`). */
@@ -106,7 +124,12 @@ export interface AppConfig {
 
 /** The built-in config — every field's fallback. */
 export const DEFAULT_APP_CONFIG: AppConfig = {
-  keys: { popup: "M-p", cheatsheet: "M-k", menu: "M-m" },
+  keys: {
+    popup: "M-p",
+    cheatsheet: "M-k",
+    menu: "M-m",
+    panels: { explorer: "M-e", changes: "M-g", config: "M-," },
+  },
   theme: {
     accent: "colour75",
     muted: "colour240",
@@ -168,6 +191,7 @@ export function parseAppConfig(input: unknown): AppConfig {
   const D = DEFAULT_APP_CONFIG;
   const root = asObject(input);
   const keys = asObject(root.keys);
+  const panels = asObject(keys.panels);
   const theme = asObject(root.theme);
   const status = asObject(theme.status);
   const glyphs = asObject(theme.glyphs);
@@ -180,6 +204,11 @@ export function parseAppConfig(input: unknown): AppConfig {
       popup: pickString(keys.popup, D.keys.popup),
       cheatsheet: pickString(keys.cheatsheet, D.keys.cheatsheet),
       menu: pickString(keys.menu, D.keys.menu),
+      panels: {
+        explorer: pickString(panels.explorer, D.keys.panels.explorer),
+        changes: pickString(panels.changes, D.keys.panels.changes),
+        config: pickString(panels.config, D.keys.panels.config),
+      },
     },
     theme: {
       accent: pickString(theme.accent, D.theme.accent),
