@@ -95,6 +95,7 @@ import {
   WorkspaceNotFoundError,
 } from "../lib/workspace-registry.ts";
 import { discoverTmuxAgents } from "../lib/agent-discovery.ts";
+import { listSshAgentSources, resolveSshMachineUrl } from "../lib/agent-remotes.ts";
 import {
   aggregateHqAgents,
   getDefaultExternalAgentRegistry,
@@ -109,6 +110,7 @@ import {
   savePlanSchema,
   savePlanContentSchema,
   sendCommandSchema,
+  agentSendSchema,
   createMilestoneSchema,
   updateMilestoneSchema,
   updateAssertionSchema,
@@ -3840,12 +3842,14 @@ export function createApp(options: CreateAppOptions = {}): Hono {
     }
   };
 
-  // Aggregated view across HQ-registered machines. Always includes this
-  // host's local agents (stamped with this host's machine name). When acting
-  // as HQ, fans out to each remote's /api/agents and namespaces ids by
-  // machine id. Machines that error or time out are skipped.
+  // Aggregated view across HQ-registered machines AND SSH-tunneled remotes.
+  // Always includes this host's local agents (stamped with this host's machine
+  // name). HQ machines register themselves inbound; SSH remotes are outbound
+  // tunnels this machine opened (`remote ssh launch`), probed via their
+  // recorded local tunnel port. Machines that error or time out are skipped.
   app.get("/api/hq/agents", async (c) => {
     const selfName = options.hqMachineName ?? hostname();
+    const sshSourcesPromise = listSshAgentSources();
     let remotes: RemoteAgentSource[] = [];
 
     if (remoteRegistry) {
@@ -3889,6 +3893,10 @@ export function createApp(options: CreateAppOptions = {}): Hono {
       remotes = (await Promise.all(fanout)).filter((r): r is RemoteAgentSource => r !== null);
     }
 
+    // SSH tunnel sources ride alongside HQ machines; `ssh:` machine ids can't
+    // collide with HQ's uuid machine ids.
+    remotes = [...remotes, ...(await sshSourcesPromise)];
+
     let agents = aggregateHqAgents(localAgents(), selfName, remotes);
     if (agents.length > MAX_HQ_AGENTS) {
       logger.warn(
@@ -3898,6 +3906,74 @@ export function createApp(options: CreateAppOptions = {}): Hono {
       agents = agents.slice(0, MAX_HQ_AGENTS);
     }
     return c.json(AgentListSchemaZ.parse({ agents }));
+  });
+
+  // Send input to any agent in the unified view — the control half of the
+  // central pane. Local tmux agents get send-keys directly; agents on another
+  // machine are proxied one hop to that machine's daemon (which then treats
+  // the send as local). External (plain-terminal) agents have no pane to
+  // drive and are observe-only.
+  app.post("/api/agents/send", zValidator("json", agentSendSchema), async (c) => {
+    const { id, machineId, message, noEnter } = c.req.valid("json");
+
+    if (machineId) {
+      // Remote hop: resolve the machine's daemon URL, strip the namespace we
+      // stamped during aggregation, and forward WITHOUT machineId (one hop max).
+      const sshUrl = await resolveSshMachineUrl(machineId);
+      const hqMachine = sshUrl ? null : remoteRegistry?.getMachine(machineId);
+      const baseUrl = sshUrl ?? hqMachine?.url;
+      if (!baseUrl || !isHttpUrl(baseUrl)) {
+        return c.json({ error: `Unknown machine: ${machineId}` }, 404);
+      }
+      const prefix = `${machineId}:`;
+      if (!id.startsWith(prefix)) {
+        return c.json({ error: "Agent id does not belong to that machine" }, 400);
+      }
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (hqMachine) headers.Authorization = `Bearer ${hqMachine.token}`;
+      try {
+        const controller = new AbortController();
+        const tid = setTimeout(() => controller.abort(), 5_000);
+        const res = await fetch(`${baseUrl}/api/agents/send`, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({ id: id.slice(prefix.length), message, noEnter }),
+          signal: controller.signal,
+          redirect: "manual",
+        });
+        clearTimeout(tid);
+        const body = (await res.json().catch(() => ({ error: `HTTP ${res.status}` }))) as Record<
+          string,
+          unknown
+        >;
+        if (res.ok) return c.json(body);
+        return c.json({ ...body, remoteStatus: res.status }, 502);
+      } catch {
+        return c.json({ error: `Machine ${machineId} is unreachable` }, 502);
+      }
+    }
+
+    // Local: the agent must be a tmux pane on this host.
+    const agent = localAgents().find((candidate) => candidate.id === id);
+    if (!agent) {
+      return c.json({ error: `Agent not found: ${id}` }, 404);
+    }
+    if (agent.kind === "external" || !agent.session || !agent.paneId) {
+      return c.json({ error: "External agents are observe-only (no pane to drive)" }, 409);
+    }
+
+    const busyStatus = getPaneBusyStatus(agent.session, agent.paneId);
+    // Collapse multiline for agent panes (same semantics as project send).
+    const prepared = busyStatus === "agent" ? message.replace(/\n+/g, " ").trim() : message;
+    if (noEnter) {
+      sendText(agent.session, agent.paneId, prepared);
+    } else {
+      sendCommand(agent.session, agent.paneId, prepared);
+    }
+    return c.json({
+      ok: true,
+      agent: { id: agent.id, session: agent.session, paneId: agent.paneId },
+    });
   });
 
   // --- Tunnel endpoints ---

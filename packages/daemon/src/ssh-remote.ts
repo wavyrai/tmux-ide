@@ -18,6 +18,11 @@ export interface SshRemote {
   localPort?: number;
   remotePort?: number;
   addedAt: string;
+  // Where the most recent `launch` tunnel landed locally. The daemon uses this
+  // to fold tunneled remotes into the central agents view and to proxy control
+  // traffic through the tunnel.
+  lastLocalPort?: number;
+  lastLaunchedAt?: string;
 }
 
 interface SshRemoteStore {
@@ -37,8 +42,13 @@ interface SshTunnel {
   stop(): void;
 }
 
-function remotesFilePath(): string {
+export function remotesFilePath(): string {
   return process.env.TMUX_IDE_SSH_REMOTES_FILE ?? join(homedir(), ".tmux-ide", "ssh-remotes.json");
+}
+
+/** Read the configured SSH remotes (validated; empty on missing/corrupt file). */
+export async function readSshRemotes(): Promise<SshRemote[]> {
+  return (await readStore()).remotes;
 }
 
 function sshConfigPath(): string {
@@ -82,6 +92,9 @@ function isSshRemote(value: unknown): value is SshRemote {
   if (typeof remote.addedAt !== "string") return false;
   if (remote.localPort !== undefined && !isValidPort(remote.localPort)) return false;
   if (remote.remotePort !== undefined && !isValidPort(remote.remotePort)) return false;
+  if (remote.lastLocalPort !== undefined && !isValidPort(remote.lastLocalPort)) return false;
+  if (remote.lastLaunchedAt !== undefined && typeof remote.lastLaunchedAt !== "string")
+    return false;
   return true;
 }
 
@@ -398,6 +411,15 @@ async function launchRemote(opts: SshRemoteOptions): Promise<void> {
   } catch (err) {
     tunnel.stop();
     throw err;
+  }
+  // Record where the tunnel landed so the local daemon can aggregate this
+  // remote's agents and proxy control traffic through the tunnel.
+  const store = await readStore();
+  const stored = store.remotes.find((candidate) => candidate.name === remote.name);
+  if (stored) {
+    stored.lastLocalPort = localPort;
+    stored.lastLaunchedAt = new Date().toISOString();
+    await writeStore(store);
   }
   if (opts.json) {
     console.log(
