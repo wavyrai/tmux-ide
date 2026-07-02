@@ -28,84 +28,74 @@ const DEFAULT_OUTPUT_DELAY = 280;
 
 const SCENARIOS: Scenario[] = [
   {
-    label: "Init",
-    subtitle: "Scaffold a mission-ready workspace",
+    label: "Adopt",
+    subtitle: "Add the chrome to a session you already have",
     steps: [
       {
         kind: "command",
-        text: "tmux-ide init --template missions",
+        text: "tmux-ide adopt work",
       },
       {
         kind: "output",
-        text: `Created ide.yml from "missions" template
-  +-----------+-----------+-----------+
-  |   Lead    | Frontend  |  Backend  |  70%
-  +-----------+-----------+-----------+
-  | Validator | Researcher|   Shell   |  30%
-  +-----------+-----------+-----------+
-Scaffolded .tmux-ide/skills/ (5 skills)
-Created AGENTS.md`,
+        text: `Adopted session "work"
+  + status bar   fleet tabs with live agent glyphs
+  + [ ⌂ home ]  [ ⧉ switch ]  [ ? keys ]
+  + border chips  claude · working
+Nothing else changed. tmux-ide unadopt work reverts it.`,
       },
     ],
   },
   {
-    label: "Mission",
-    subtitle: "Plan and activate the mission",
+    label: "Status",
+    subtitle: "Ground-truth agent status, from Claude's own hooks",
     steps: [
       {
         kind: "command",
-        text: `tmux-ide mission create "Build a todo API"`,
+        text: "tmux-ide integration install claude",
       },
       {
         kind: "output",
-        text: "Mission created (planning): Build a todo API",
-      },
-      {
-        kind: "command",
-        text: "tmux-ide mission plan-complete",
-      },
-      {
-        kind: "output",
-        text: `Mission activated. Milestones: 3
-  M1 [active]  Foundation
-  M2 [locked]  Implementation
-  M3 [locked]  Testing
-Coverage: 6/6 assertions claimed`,
+        text: `Installed Claude Code lifecycle hooks
+  ~/.claude/settings.json  (backup written)
+  working / blocked / done are now ground truth
+Any agent can self-report:
+  tmux set-option -p @agent_state working:$(date +%s)`,
       },
     ],
   },
   {
-    label: "Running",
-    subtitle: "Watch the orchestrator drive the team",
+    label: "Notify",
+    subtitle: "Know the moment an agent needs you",
     steps: [
       {
+        kind: "command",
+        text: "tmux-ide events --follow",
+      },
+      {
         kind: "output",
-        text: `[orchestrator] Dispatching task 001 to Backend (specialty: backend)
-[orchestrator] Dispatching task 002 to Frontend (specialty: frontend)
-[Backend]      Completed: Setup Express server
-[Frontend]     Completed: Build React components
-[orchestrator] M1 complete -> dispatching validation
-[validator]    4/4 assertions passing
-[orchestrator] M1 validated -> activating M2`,
-        delay: 420,
+        text: `web:2      claude   working  -> blocked   (needs input)
+api:1      claude   working  -> done
+web:3      claude   idle     -> working
+` + "› toast fires on every client attached to the session",
+        delay: 460,
       },
     ],
   },
   {
-    label: "Metrics",
-    subtitle: "Summarize the finished run",
+    label: "Restore",
+    subtitle: "Survive a tmux server death",
     steps: [
       {
         kind: "command",
-        text: "tmux-ide metrics",
+        text: "tmux-ide restore --resume-agents",
       },
       {
         kind: "output",
-        text: `Session: 2h 15m (complete)
-Tasks: 12/12 done | Completion: 100% | Retries: 8%
-Agents: Backend 82% util | Frontend 71% | Validator 45%
-Mission: "Build a todo API" [complete]
-  Milestones: 3/3 | Validation: 100% pass`,
+        text: `Rebuilding fleet from the last snapshot
+  work    3 windows  layouts + cwds + titles restored
+  api     2 windows  restored
+  + resuming 4 claude conversations (claude --resume)
+Fleet is back. Nothing was lost.`,
       },
     ],
   },
@@ -249,7 +239,7 @@ export default function TerminalDemo() {
           </div>
           <div className="min-w-0 flex-1 text-center">
             <div className="truncate font-mono text-[10px] uppercase tracking-[0.24em] text-gray-500">
-              tmux-ide mission demo
+              tmux-ide
             </div>
           </div>
           <div className="hidden min-w-0 flex-1 text-right sm:block">

@@ -1,100 +1,61 @@
 ---
 title: tmux-ide
-description: A multi-agent IDE in your browser, powered by tmux
+description: The terminal that understands your agents — a native cockpit built around tmux
 ---
 
 # tmux-ide
 
-A web-based multi-agent IDE that runs locally. `tmux-ide` opens a tmux session for terminal work + a browser dashboard at `localhost:6060` for files, multi-thread chat (Claude + Codex), diffs, plans, search, and full LSP. One config file, no Electron, no signup.
+Other tools rebuild the terminal to understand agents. **tmux-ide teaches the terminal you already use to understand them.**
 
-Quick start:
-
-```bash
-npm i -g tmux-ide
-cd ~/Developer/my-project
-tmux-ide              # tmux session + daemon (prints dashboard URL)
-tmux-ide dashboard    # opens the web IDE
-```
-
-See [Getting Started](/docs/getting-started) for a walkthrough, [Dashboard](/docs/dashboard) for the IDE surfaces, [What's New in 2.5](/docs/release-2-5-0) for the v2.5 feature list.
-
----
-
-The orchestrator story is still here, layered under the IDE — one config file, multiple AI agents, mission-driven autonomous execution:
-
-```
-┌─────────────┬─────────────┬─────────────┐
-│             │             │             │
-│  Lead       │  Frontend   │  Backend    │  ← skill-matched agents
-│  (Planner)  │  (React)    │  (API)      │
-│             │             │             │
-├──────┬──────┴─────────────┴──────┬──────┤
-│      │                           │      │
-│ Dev  │      Mission Control      │ Shell │
-│ Srv  │      (TUI dashboard)      │      │
-└──────┴───────────────────────────┴──────┘
-```
-
-## Two Modes
-
-**Classic Mode** -- Define panes in `ide.yml`, run `tmux-ide`, get a terminal IDE with labeled panes and dev servers.
-
-**Missions Mode** -- Autonomous multi-agent orchestration. Define a mission, and agents self-organize through milestones, validation contracts, and skill-based dispatch.
-
-```
-Mission → Milestones → Tasks → Agents (skill-matched)
-                                 ↓
-                           Validation → Remediation
-                                 ↓
-                           Mission Complete → PR
-```
-
-## Quick Start
+One command adds a native chrome to any tmux session: a fleet of tabs with live agent-status glyphs, ground-truth working/blocked/done detection, notifications when an agent needs you, and a crash-proof restore that rebuilds your whole fleet — including your Claude conversations. It's built _around_ tmux, not on top of a reinvented terminal, so there's nothing to migrate and nothing to lock into.
 
 ```bash
 npm i -g tmux-ide
-
-# Classic mode
-tmux-ide init           # scaffold ide.yml
-tmux-ide                # launch
-
-# Missions mode
-tmux-ide init --template missions
-tmux-ide mission create "Build auth system" -d "JWT + refresh tokens"
-tmux-ide                # → agents, dashboard at localhost:6060, autonomous
+tmux-ide adopt work    # add the chrome to a session you already have
 ```
 
-## Feature Highlights
+`adopt` is just tmux options. `tmux-ide unadopt work` reverts it, and if tmux-ide ever dies, your sessions are untouched plain tmux.
+
+## The three-beat story
+
+**1 — Adopt in place.** `tmux-ide adopt <session>` drops a status bar onto any existing session: clickable fleet tabs, per-agent glyphs, and `[ ⌂ home ] [ ⧉ switch ] [ ? keys ]` triggers. Because the chrome lives server-side, it renders from any client — including SSH from a laptop or a phone. See [The dock & keys](/docs/the-dock).
+
+**2 — Know your fleet.** Install the Claude Code integration and working/blocked/done come straight from the agent's own lifecycle. A toast fires on every attached client the moment an agent goes blocked or done; per-pane border chips read `claude · working`. See [Agent detection](/docs/agent-detection) and [Notifications & events](/docs/notifications-events).
+
+**3 — Survive anything.** Continuous snapshots mean a tmux server death isn't a lost afternoon. `tmux-ide restore` rebuilds every session, window, layout, cwd, and title; `--resume-agents` revives your Claude conversations from their recorded session ids. See [Restore & resume](/docs/restore-resume).
+
+## One app, one keystroke away
+
+Once a session is adopted, the whole UI is a modifier key away — one interaction grammar (`j`/`k` move, `enter` opens, `/` filters, `esc` backs out, `?` asks) and one theme file.
+
+| Key | Surface |
+| --- | --- |
+| `⌥h` | Home cockpit — fleet tree, detail, live preview, rollup header |
+| `⌥b` | Sidebar — a fleet nav column in any session |
+| `⌥e` `⌥g` `⌥,` | Floating panels — file explorer, git changes, config editor |
+| `⌥m` | Actions menu — native tmux menu at the pointer (or right-click) |
+| `⌥p` | Switch session |
+| `⌥k` | Cheat sheet — every key on one page |
+
+See [Home, sidebar & panels](/docs/app-surfaces).
+
+## Start here
 
 <Cards>
-  <Card title="What's New in 2.0" href="/docs/release-2-0-0" />
-  <Card title="Getting Started" href="/docs/getting-started" />
-  <Card title="Configuration" href="/docs/configuration" />
-  <Card title="Templates" href="/docs/templates" />
-  <Card title="Agent Teams" href="/docs/agent-teams" />
-  <Card title="Contributing" href="/docs/contributing" />
+  <Card title="Getting started" href="/docs/getting-started" />
+  <Card title="The dock & keys" href="/docs/the-dock" />
+  <Card title="Agent detection" href="/docs/agent-detection" />
+  <Card title="Notifications & events" href="/docs/notifications-events" />
+  <Card title="Restore & resume" href="/docs/restore-resume" />
+  <Card title="Worktrees" href="/docs/worktrees" />
+  <Card title="Theming & config" href="/docs/theming" />
+  <Card title="CLI reference" href="/docs/commands" />
 </Cards>
 
-### Milestone Gating
+## Requirements
 
-Sequential execution phases. Tasks only dispatch when their milestone is active and all predecessors are done. Auto-progression when a milestone's tasks complete.
+- **tmux** — 3.2+ recommended (`doctor` requires ≥ 3.0; some chrome features assume newer builds; 3.6 is the smoothest)
+- **Node.js** — ≥ 20
+- **Bun** — only for the TUI surfaces (home, sidebar, and the floating widget panels)
 
-### Validation Contracts
-
-Assertion-based verification. Define testable claims in a contract. A validator agent independently checks work. Failed assertions auto-create remediation tasks.
-
-### Skill-Based Dispatch
-
-Match task specialty to agent capabilities. Specialist agents get specialist tasks. Generalists pick up unspecialized work. Tasks wait for the right agent instead of dispatching to the wrong one.
-
-### Knowledge Library
-
-Shared learnings auto-append as agents complete tasks. Architecture docs, service registries, and tag-matched references are injected into dispatch prompts.
-
-### Live Dashboard
-
-Web dashboard with KPIs, milestone timeline, agent utilization, validation status, and activity timeline. Auto-refreshes every 5 seconds.
-
-### Researcher Agent
-
-Continuous internal auditing. Triggers on mission start, milestone progress, stalls, retry clusters, and discovered issues. Writes findings to the knowledge library.
+Run `tmux-ide doctor` to check your machine.

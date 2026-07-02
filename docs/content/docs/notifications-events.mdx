@@ -1,0 +1,81 @@
+---
+title: Notifications & Events
+description: The who-needs-me loop — toasts, the JSONL event stream, and wait primitives for coordinating agents
+---
+
+# Notifications & events
+
+The reason to know your fleet's status is to act on it. tmux-ide surfaces every
+agent-status transition three ways: **toasts** for humans, an **event stream**
+for scripts, and **wait** primitives for coordination.
+
+## Toasts — the who-needs-me loop
+
+When an agent anywhere in the fleet goes **blocked** or **done**, tmux-ide fires
+a toast. Because the chrome lives server-side, the toast appears on **every
+client attached to the session** — the laptop and the phone both light up.
+
+Notifications are configured in `~/.tmux-ide/config.json`:
+
+```json
+{
+  "notifications": {
+    "toast": true,
+    "macos": false
+  }
+}
+```
+
+- `toast` (default `true`) — the in-tmux toast.
+- `macos` (default `false`) — also post a native macOS notification.
+
+See [Theming & config](/docs/theming) for the full file.
+
+## Per-pane chips
+
+Beyond fleet-wide toasts, each pane's border chip continuously reflects that
+pane's agent, e.g. `claude · working`. It's the ambient version of the same
+signal — no interruption, always visible.
+
+## The event stream
+
+Every status transition is also an append-only JSONL event. Follow it live or
+snapshot it:
+
+```bash
+tmux-ide events --follow        # stream transitions as they happen
+tmux-ide events --json          # print recent events as JSON
+```
+
+`events` needs an adopted session (that's where the status tracking runs). Pipe
+the stream anywhere — a log, a webhook relay, a status bar of your own.
+
+## Coordination primitives
+
+Two `wait` commands block until a condition is met, so you can script the fleet.
+Both exit `0` on match and `1` on timeout.
+
+### Wait for a status
+
+```bash
+tmux-ide wait agent-status work --status blocked --timeout 300000
+```
+
+Blocks until the `work` session reaches the given agent status
+(`blocked` | `working` | `done` | `idle` | `unknown`). Handy for "notify me when
+this run needs input" or gating a script on an agent finishing.
+
+### Wait for output
+
+```bash
+tmux-ide wait output %2 --match "Listening on" --timeout 60000
+tmux-ide wait output web --match "\berror\b"
+```
+
+Blocks until a pane's (or session's) visible output matches a regex — a portable
+way to wait on a dev server booting, a build finishing, or an error appearing.
+
+## See also
+
+- [Agent detection](/docs/agent-detection) — where the transitions come from
+- [The dock & keys](/docs/the-dock) — the always-on status surface

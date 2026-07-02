@@ -1,0 +1,136 @@
+---
+title: Theming & Config
+description: The one config file — ~/.tmux-ide/config.json — that colors every surface and binds every key
+---
+
+# Theming & config
+
+tmux-ide has **one** global config file: `~/.tmux-ide/config.json` (override the
+path with the `TMUX_IDE_CONFIG` environment variable). It holds the keymap, the
+theme, and the behavior toggles for notifications, restore, updates, and
+worktrees.
+
+The theme tokens are **semantic**, not per-surface: a single `theme` block
+colors the tmux chrome (status bar, pane chips, actions menu, cheat sheet) **and**
+the TUI widgets. Re-theming the whole product is a one-file edit plus a re-adopt.
+
+Every field is optional. A missing or malformed file falls back to the built-in
+defaults, and any individual field that's missing or mistyped falls back to its
+own default — the parser never throws. Config is read once per process, so
+changes take effect on the next launch (a re-adopt spawns fresh processes).
+
+You can edit it interactively with the config panel (`⌥,`) or
+`tmux-ide popup config`.
+
+## Full default
+
+```json
+{
+  "keys": {
+    "popup": "M-p",
+    "home": "M-h",
+    "cheatsheet": "M-k",
+    "menu": "M-m",
+    "sidebar": "M-b",
+    "panels": { "explorer": "M-e", "changes": "M-g", "config": "M-," }
+  },
+  "theme": {
+    "accent": "colour75",
+    "muted": "colour240",
+    "fg": "colour250",
+    "status": {
+      "blocked": "colour203",
+      "working": "colour221",
+      "done": "colour111",
+      "idle": "colour114",
+      "unknown": "colour244"
+    },
+    "glyphs": { "active": "●", "inactive": "○" }
+  },
+  "updater": { "tickMs": 2000, "snapshotEvery": 15 },
+  "notifications": { "toast": true, "macos": false },
+  "restore": { "resumeAgents": false },
+  "updates": { "check": true },
+  "welcome": { "show": true },
+  "worktrees": { "dir": "" }
+}
+```
+
+## `keys`
+
+tmux key names (`M-` is Meta/⌥). Bind the chrome popups and widget panels:
+
+| Field | Default | Opens |
+| --- | --- | --- |
+| `popup` | `M-p` | Session switcher |
+| `home` | `M-h` | Home cockpit from anywhere |
+| `cheatsheet` | `M-k` | Cheat sheet |
+| `menu` | `M-m` | Actions menu |
+| `sidebar` | `M-b` | Sidebar nav column |
+| `panels.explorer` | `M-e` | File explorer panel |
+| `panels.changes` | `M-g` | Git changes panel |
+| `panels.config` | `M-,` | Config editor panel |
+
+## `theme`
+
+Semantic tokens, applied to both the tmux chrome and the widgets. Values are
+tmux colors (`colourN` or `#rrggbb`).
+
+| Field | Default | Meaning |
+| --- | --- | --- |
+| `accent` | `colour75` | Primary / brand accent |
+| `muted` | `colour240` | Dim / secondary text |
+| `fg` | `colour250` | Default foreground |
+| `status.blocked` | `colour203` | Blocked agent |
+| `status.working` | `colour221` | Working agent |
+| `status.done` | `colour111` | Done agent |
+| `status.idle` | `colour114` | Idle agent |
+| `status.unknown` | `colour244` | No signal |
+| `glyphs.active` | `●` | Filled state glyph |
+| `glyphs.inactive` | `○` | Hollow state glyph |
+
+## `updater`
+
+The chrome tick loop and snapshot cadence.
+
+| Field | Default | Meaning |
+| --- | --- | --- |
+| `tickMs` | `2000` | Milliseconds between ticks |
+| `snapshotEvery` | `15` | Write a restore snapshot every N ticks |
+
+## `notifications`
+
+| Field | Default | Meaning |
+| --- | --- | --- |
+| `toast` | `true` | In-tmux toast on blocked / done |
+| `macos` | `false` | Also post a native macOS notification |
+
+See [Notifications & events](/docs/notifications-events).
+
+## `restore`
+
+| Field | Default | Meaning |
+| --- | --- | --- |
+| `resumeAgents` | `false` | Revive Claude conversations on restore (`--resume-agents`) |
+
+See [Restore & resume](/docs/restore-resume).
+
+## `updates`
+
+| Field | Default | Meaning |
+| --- | --- | --- |
+| `check` | `true` | Check for a newer tmux-ide version |
+
+## `welcome`
+
+| Field | Default | Meaning |
+| --- | --- | --- |
+| `show` | `true` | Allow the first-run welcome card. Set `false` to suppress it |
+
+## `worktrees`
+
+| Field | Default | Meaning |
+| --- | --- | --- |
+| `dir` | `""` | Base dir for worktree checkouts. Empty → sibling `<repo>-worktrees`; a relative path resolves against the repo |
+
+See [Worktrees](/docs/worktrees).

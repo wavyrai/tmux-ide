@@ -1,360 +1,136 @@
 ---
-title: Commands
-description: CLI commands reference
+title: CLI Reference
+description: Every tmux-ide command — the current surface, straight from tmux-ide --help
 ---
 
-## `tmux-ide`
-
-Launch the IDE from the current directory. Reads `ide.yml` and creates a tmux session.
-
-```bash
-tmux-ide
-```
-
-You can also point it at a different directory:
-
-```bash
-tmux-ide ~/Developer/other-project
-```
-
-If a session with the same name already exists, it will reattach to it instead of recreating it. To force a fresh session, run `tmux-ide stop` first.
-
-## `tmux-ide init`
-
-Scaffold a new `ide.yml` in the current directory. Auto-detects your project stack and picks the right template.
-
-```bash
-cd ~/Developer/my-project
-tmux-ide init
-# → Detected next + convex. Created ide.yml for "my-project".
-```
-
-Force a specific template:
-
-```bash
-tmux-ide init --template nextjs
-```
-
-Available templates: `default`, `nextjs`, `convex`, `vite`, `python`, `go`, `agent-team`, `agent-team-nextjs`, `agent-team-monorepo`
-
-Will refuse to overwrite an existing `ide.yml`.
-
-## `tmux-ide stop`
-
-Kill the tmux session for the current project.
-
-```bash
-tmux-ide stop
-```
-
-Reads the session name from `ide.yml`. If no config is found, uses the directory name as the session name.
-
-## `tmux-ide restart`
-
-Stop the current session and immediately relaunch it. Equivalent to running `tmux-ide stop` followed by `tmux-ide`.
-
-```bash
-tmux-ide restart
-```
-
-Useful when you've changed your `ide.yml` and want to apply the new layout.
-
-## `tmux-ide attach`
-
-Reattach to a running tmux-ide session.
-
-```bash
-tmux-ide attach
-```
-
-If the session isn't running, it will suggest starting it with `tmux-ide`.
-
-## `tmux-ide dashboard`
-
-Open the web IDE in your default browser. Reads the canonical daemon
-info file (`~/.tmux-ide/daemon.json`) to find the URL, so the daemon
-must be running (start one with `tmux-ide` first).
-
-```bash
-tmux-ide dashboard                 # prints URL + opens browser
-tmux-ide dashboard --no-open       # prints URL only
-tmux-ide dashboard --json          # {"url","port","pid"} for scripts
-```
-
-The `tmux-ide` launch command also prints the dashboard URL alongside
-the `Starting <session>` line, so first-time users see it without
-running this subcommand.
-
-## `tmux-ide ls`
-
-List all running tmux sessions.
-
-```bash
-tmux-ide ls
-```
-
-Shows session name, creation time, and whether it's currently attached.
-
-## `tmux-ide doctor`
-
-Check that your system meets all requirements.
-
-```bash
-tmux-ide doctor
-```
-
-Checks:
-
-- tmux installed
-- tmux version ≥ 3.0
-- Node.js ≥ 18
-- 256-color terminal
-- `ide.yml` exists in current directory
-
-## `tmux-ide status`
-
-Show the status of the current IDE session.
-
-```bash
-tmux-ide status
-tmux-ide status --json
-```
-
-Returns session name, running state, config existence, and pane details.
-
-## `tmux-ide inspect`
-
-Show the effective project config and current runtime state in one place.
-
-```bash
-tmux-ide inspect
-tmux-ide inspect --json
-```
-
-Returns:
-
-- resolved config path and session name
-- validation status and errors
-- row and pane counts
-- focus target
-- team and theme config
-- live tmux pane state when the session is running
-
-## `tmux-ide validate`
-
-Validate your `ide.yml` config file.
-
-```bash
-tmux-ide validate
-tmux-ide validate --json
-```
-
-Checks structure and types: config is an object, `rows` is a non-empty array, each row has panes, all pane fields have correct types (`title`/`command`/`dir` are strings, `focus` is boolean, `env` is an object with string/number values), `theme` fields are strings, and sizes require a `%` suffix with values between 1–100%.
-
-## `tmux-ide detect`
-
-Analyze the current project and suggest an `ide.yml` config.
-
-```bash
-tmux-ide detect            # show what was detected
-tmux-ide detect --json     # structured output
-tmux-ide detect --write    # write suggested config to ide.yml
-```
-
-Detects: package manager (npm/pnpm/yarn/bun), frameworks (Next.js, Vite, Convex, Remix, Nuxt, FastAPI, Django, Flask, Go, Rust), and dev commands.
-
-`detect` also explains why it reached those conclusions. Human output includes a `Reasoning:` section, and JSON output includes a `reasons` array under `detected`.
-
-## `tmux-ide config`
-
-Read and modify your `ide.yml` programmatically.
-
-### Dump config
-
-```bash
-tmux-ide config            # print config
-tmux-ide config --json     # as JSON
-```
-
-### Set a value
-
-```bash
-tmux-ide config set name "my-app"
-tmux-ide config set rows.0.size "70%"
-tmux-ide config set rows.1.panes.0.command "npm run dev"
-```
-
-### Add a pane
-
-```bash
-tmux-ide config add-pane --row 1 --title "Tests" --command "pnpm test"
-```
-
-### Remove a pane
-
-```bash
-tmux-ide config remove-pane --row 1 --pane 2
-```
-
-### Add a row
-
-```bash
-tmux-ide config add-row --size "30%"
-```
-
-### Enable agent teams
-
-```bash
-tmux-ide config enable-team --name "my-team"
-```
-
-Finds all `command: claude` panes and assigns the first as `lead`, the rest as `teammate`. Adds a `team` block to the config. See [Agent Teams](/docs/agent-teams) for details.
-
-### Disable agent teams
-
-```bash
-tmux-ide config disable-team
-```
-
-Removes the `team` config and all `role`/`task` fields from panes.
-
-## `tmux-ide mission`
-
-Manage the project mission for autonomous orchestration.
-
-```bash
-tmux-ide mission create "Build auth system" -d "JWT + refresh tokens"
-tmux-ide mission plan-complete          # transition planning → active
-tmux-ide mission status [--json]        # show progress: milestones, tasks, validation
-tmux-ide mission show [--json]          # full mission detail
-tmux-ide mission set "title" [-d "..."] # set mission (status: active)
-tmux-ide mission clear                  # clear the mission
-```
-
-`create` sets the mission status to `planning`, which triggers the orchestrator to dispatch planning to the lead pane. `plan-complete` activates the first milestone and starts autonomous dispatch.
-
-## `tmux-ide milestone`
-
-Manage sequential execution phases within a mission.
-
-```bash
-tmux-ide milestone create "Foundation" --sequence 1 [-d "description"]
-tmux-ide milestone list [--json]
-tmux-ide milestone show <id> [--json]
-tmux-ide milestone update <id> --status active|done|locked
-```
-
-Milestones gate task dispatch — tasks with a milestone only dispatch when that milestone is `active` and all predecessors are `done`.
-
-## `tmux-ide task`
-
-Create and manage tasks within a mission.
-
-```bash
-tmux-ide task create "title" [--goal NN] [--priority N] [--milestone M1] [--assign "Agent"]
-tmux-ide task list [--status todo] [--json]
-tmux-ide task show <id> [--json]
-tmux-ide task update <id> --status review
-tmux-ide task claim <id> --assign "Agent Name"
-tmux-ide task done <id> --proof "description"
-tmux-ide task delete <id>
-```
-
-### Task creation flags
-
-Link a task to validation assertions with `--fulfills`:
-
-```bash
-tmux-ide task create "Implement login endpoint" --fulfills "VAL-AUTH-001,VAL-AUTH-002"
-```
-
-Route a task to a specialist agent with `--specialty`:
-
-```bash
-tmux-ide task create "Build login page" --specialty frontend
-```
-
-The `--proof` flag accepts plain text or a JSON object:
-
-```bash
-tmux-ide task done 003 --proof "All tests passing"
-tmux-ide task done 003 --proof '{"tests":{"passed":10,"total":10},"notes":"CI green"}'
-```
-
-## `tmux-ide validate`
-
-Manage validation contracts and assertion verification. Also validates `ide.yml` config when called without a subcommand.
-
-```bash
-tmux-ide validate                      # validate ide.yml config
-tmux-ide validate show [--json]        # show contract + assertion state
-tmux-ide validate assert <ID> --status passing|failing|blocked [--evidence "..."]
-tmux-ide validate report [--json]      # summary: passing/failing/pending/blocked counts
-tmux-ide validate coverage [--json]    # check assertion coverage gaps
-```
-
-The `coverage` subcommand checks that every assertion ID in `.tasks/validation-contract.md` is claimed by at least one task's `--fulfills`.
-
-## `tmux-ide skill`
-
-Manage agent skill definitions.
-
-```bash
-tmux-ide skill list [--json]           # list all loaded skills (project + personal)
-tmux-ide skill show <name> [--json]    # show full skill detail with body
-tmux-ide skill create <name>           # scaffold new skill from template
-tmux-ide skill validate                # check pane skill: references resolve
-```
-
-Skills are loaded from `.tmux-ide/skills/` (project) and `~/.tmux-ide/skills/` (personal). Project skills take precedence.
-
-## `tmux-ide research`
-
-Manage the researcher agent for continuous internal auditing.
-
-```bash
-tmux-ide research status [--json]      # current research state
-tmux-ide research trigger <type>       # manually trigger an audit
-```
-
-## `tmux-ide metrics`
-
-Session, task, agent, and mission telemetry.
-
-```bash
-tmux-ide metrics [--json]              # session summary
-tmux-ide metrics agents [--json]       # per-agent utilization table
-tmux-ide metrics timeline [--json]     # activity timeline (5-min samples)
-tmux-ide metrics eval [--json]         # bottleneck milestones, high-retry agents
-tmux-ide metrics history [--json]      # cross-mission comparison
-```
-
-## `tmux-ide orchestrator`
-
-Show the current orchestrator state.
-
-```bash
-tmux-ide orchestrator [--json]
-tmux-ide orch                          # alias
-```
-
-## `tmux-ide send`
-
-Send a message to a pane by name, title, role, or ID.
-
-```bash
-tmux-ide send <target> <message>
-tmux-ide send --to "Agent 1" <message>
-tmux-ide send <target> --no-enter msg  # send text without pressing Enter
-echo "msg" | tmux-ide send <target>    # pipe from stdin
-```
-
-Messages longer than 150 characters are automatically written to a dispatch file to avoid paste-mode issues in agent TUIs.
-
-## Global Flags
-
-| Flag                | Description                              |
-| ------------------- | ---------------------------------------- |
-| `--json`            | Output as structured JSON (all commands) |
-| `--template <name>` | Use a specific template for `init`       |
-| `--write`           | Write detected config for `detect`       |
+# CLI reference
+
+Every command accepts `--json` for structured output. Run `tmux-ide --help` for
+the built-in version of this list.
+
+## Sessions
+
+| Command | Description |
+| --- | --- |
+| `tmux-ide` | Launch `ide.yml`, or open the home cockpit if there is none |
+| `tmux-ide <path>` | Launch from a specific directory (cockpit if no `ide.yml`) |
+| `tmux-ide init [--template <name>]` | Scaffold a new `ide.yml` (auto-detects stack) |
+| `tmux-ide stop` | Kill the current IDE session |
+| `tmux-ide restart` | Stop and relaunch the session |
+| `tmux-ide attach` | Reattach to a running session |
+| `tmux-ide ls` | List all tmux sessions |
+| `tmux-ide status [--json]` | Show session status |
+
+## The dock
+
+| Command | Description |
+| --- | --- |
+| `tmux-ide adopt <session>` | Add the live status bar (dock) to a session |
+| `tmux-ide adopt --all` | Adopt every live (non-internal) session |
+| `tmux-ide unadopt <session>` | Remove the status bar |
+| `tmux-ide team [--json]` | TUI over all sessions (`--json` prints fleet state) |
+| `tmux-ide switcher` | Compact session picker (the `⌥p` popup) |
+| `tmux-ide cheatsheet` | Print the key cheat sheet (`⌥k`) |
+| `tmux-ide menu [--client N]` | Open the actions menu (`⌥m` / right-click) |
+| `tmux-ide popup <widget>` | Open a widget panel (`explorer` / `changes` / `config`) |
+| `tmux-ide sidebar-toggle [--session S]` | Toggle the nav column (`⌥b`) |
+
+## Agent status
+
+| Command | Description |
+| --- | --- |
+| `tmux-ide integration install claude` | Authoritative agent status via Claude Code hooks |
+| `tmux-ide agent explain <pane> [--json]` | Debug how a pane's agent state is detected |
+| `tmux-ide events [--follow] [--json]` | Stream agent-status transitions (needs an adopted session) |
+| `tmux-ide wait agent-status <session> --status <s> [--timeout <ms>]` | Block until a session reaches a status (exit 0 match / 1 timeout) |
+| `tmux-ide wait output <pane\|session> --match <regex> [--timeout <ms>]` | Block until a pane's output matches a regex |
+
+See [Agent detection](/docs/agent-detection) and
+[Notifications & events](/docs/notifications-events).
+
+## Restore
+
+| Command | Description |
+| --- | --- |
+| `tmux-ide restore [--dry-run] [--run-commands] [--resume-agents] [--json]` | Rebuild the fleet from the last snapshot after a tmux crash |
+
+`--resume-agents` revives Claude conversations via `claude --resume`. See
+[Restore & resume](/docs/restore-resume).
+
+## Worktrees
+
+| Command | Description |
+| --- | --- |
+| `tmux-ide worktree create <branch> [--from <ref>] [--dir <path>] [--no-session]` | Add a git worktree (new branch) + open a session in it |
+| `tmux-ide worktree open <branch>` | Open (or switch to) the session for an existing worktree |
+| `tmux-ide worktree list [--json]` | List worktrees joined with their session status |
+| `tmux-ide worktree remove <branch> [--force]` | Kill the worktree's session + remove the worktree |
+
+See [Worktrees](/docs/worktrees).
+
+## Config & inspection
+
+| Command | Description |
+| --- | --- |
+| `tmux-ide inspect [--json]` | Show effective config and runtime state |
+| `tmux-ide doctor` | Check system requirements |
+| `tmux-ide validate [--json]` | Validate `ide.yml` |
+| `tmux-ide detect [--json]` | Detect project stack |
+| `tmux-ide detect --write` | Detect and write `ide.yml` |
+| `tmux-ide config [--json]` | Dump config as JSON |
+| `tmux-ide config set <path> <value>` | Set a config value by dot path |
+| `tmux-ide config add-pane --row <N> --title <T> [--command <C>]` | Add a pane |
+| `tmux-ide config remove-pane --row <N> --pane <M>` | Remove a pane |
+| `tmux-ide config add-row [--size <percent>]` | Add a row |
+| `tmux-ide config enable-team [--name <N>]` | Enable agent teams |
+| `tmux-ide config disable-team` | Disable agent teams |
+
+## Setup & settings
+
+| Command | Description |
+| --- | --- |
+| `tmux-ide setup` | Interactive TUI setup wizard |
+| `tmux-ide setup --edit` | Open the config tree editor |
+| `tmux-ide settings` | Interactive TUI config manager |
+
+## Pane messaging
+
+| Command | Description |
+| --- | --- |
+| `tmux-ide send <target> <message>` | Send a message to a pane |
+| `tmux-ide send --to <name> <message>` | Target by name, title, role, or ID |
+| `tmux-ide send <target> --no-enter <msg>` | Send text without pressing Enter |
+
+`send` also reads from stdin: `echo "msg" | tmux-ide send <target>`.
+
+## Server
+
+| Command | Description |
+| --- | --- |
+| `tmux-ide command-center [--port N]` | Start the command-center HTTP API |
+| `tmux-ide server [--port N]` | Start HTTP + PTY WebSocket server |
+
+## Flags
+
+| Flag | Description |
+| --- | --- |
+| `--json` | Output as JSON (all commands) |
+| `--template <name>` | Use a specific template for `init` |
+| `--write` | Write detected config to `ide.yml` |
+| `--verbose` | Log all tmux commands (or set `TMUX_IDE_DEBUG=1`) |
+
+## Key discovery
+
+Once a session is adopted, the whole UI is a keystroke away:
+
+| Key | Opens |
+| --- | --- |
+| `⌥h` | Home cockpit from anywhere |
+| `⌥p` | Switch session |
+| `⌥k` | Cheat sheet (all keys) |
+| `⌥m` | Actions menu (or right-click any pane / the bar) |
+| `⌥e` `⌥g` `⌥,` | File / changes / config panels |
+| `⌥b` | Sidebar |
+
+Rebind any of them in `~/.tmux-ide/config.json` — see
+[Theming & config](/docs/theming).

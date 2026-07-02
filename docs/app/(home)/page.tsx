@@ -2,32 +2,30 @@ import Link from "next/link";
 import type { Metadata } from "next";
 import { CopyButton } from "./copy-button";
 import { AsciiLogo } from "./ascii-logo";
-import { MockIde } from "./MockIde";
-import { DotAvatar } from "@/components/dot-avatar";
 import TerminalDemo from "@/components/terminal-demo";
 
 export const metadata: Metadata = {
-  title: "tmux-ide — Autonomous multi-agent missions",
+  title: "tmux-ide — teach the terminal you already use to understand agents",
   description:
-    "Define a mission. Agents plan, execute, validate. You watch from a browser-based IDE that runs Claude + Codex side-by-side, all powered by a local tmux daemon.",
+    "tmux-ide adds a native chrome to any tmux session: ground-truth agent status, notifications, and crash-proof restore. One command on the terminal you already run — zero lock-in.",
   openGraph: {
-    title: "tmux-ide 2.5 — Autonomous multi-agent missions",
+    title: "tmux-ide — the terminal that understands your agents",
     description:
-      "Mission-driven orchestration with milestones, validation contracts, and skill-based dispatch — now with a web IDE cockpit (multichat, files, diffs, LSP).",
-    images: [{ url: "/og-image.png", width: 1200, height: 630, alt: "tmux-ide 2.5" }],
+      "Adopt in place, know your fleet at a glance, survive anything. A terminal-native agent cockpit built around tmux.",
+    images: [{ url: "/og-image.png", width: 1200, height: 630, alt: "tmux-ide" }],
   },
   twitter: {
     card: "summary_large_image",
-    title: "tmux-ide 2.5 — Autonomous multi-agent missions",
+    title: "tmux-ide — the terminal that understands your agents",
     description:
-      "Mission-driven orchestration with milestones, validation, skill-based dispatch — and a web IDE to watch it run.",
+      "Ground-truth agent status, notifications, and crash-proof restore — layered onto the tmux you already use.",
     images: ["/og-image.png"],
   },
   alternates: { canonical: "/" },
 };
 
 const installCommand = "npm i -g tmux-ide";
-const openCommand = "tmux-ide dashboard";
+const adoptCommand = "tmux-ide adopt <session>";
 
 /**
  * Server-side fetch of the GitHub star count. Cached for an hour via
@@ -68,101 +66,118 @@ function SectionDivider() {
   );
 }
 
-function Node({ children, highlight }: { children: string; highlight?: boolean }) {
-  return (
-    <div
-      className={`border border-fd-border px-3 py-1.5 text-xs font-mono shrink-0 ${
-        highlight ? "text-fd-primary" : "text-fd-foreground"
-      }`}
-    >
-      {children}
-    </div>
-  );
-}
+/** The three-beat story — the spine of the pitch. */
+const beats = [
+  {
+    kicker: "Adopt in place",
+    title: "One command on the tmux you already run",
+    body: "tmux-ide adopt <session> drops a native chrome row onto any existing session — fleet tabs, live agent glyphs, home / switch / keys triggers. It's just tmux options: unadopt reverts it, and if tmux-ide ever dies your sessions are untouched plain tmux. No new terminal to learn, no lock-in.",
+  },
+  {
+    kicker: "Know your fleet",
+    title: "Ground-truth agent status, at a glance",
+    body: "Install the Claude Code integration and working / blocked / done come straight from the agent's own lifecycle — not a guess. Border chips show claude · working per pane; a toast fires on every attached client the moment an agent goes blocked or done. One glance tells you who needs you.",
+  },
+  {
+    kicker: "Survive anything",
+    title: "Rebuild the whole fleet after a crash",
+    body: "Continuous snapshots mean a tmux server death isn't a lost afternoon. tmux-ide restore rebuilds every session, window, layout, cwd, and title — and --resume-agents revives your Claude conversations from their recorded session ids. Nothing was lost.",
+  },
+];
 
-function Arrow() {
-  return <div className="w-6 border-t border-fd-border shrink-0" />;
-}
-
-function VLine() {
-  return <div className="h-4 border-l border-fd-border" />;
-}
+const surfaces = [
+  {
+    key: "⌥h",
+    title: "Home cockpit",
+    body: "Bare tmux-ide is the home screen — a fleet tree, detail pane, live preview, and rollup header. ⌥h opens it as a popup over any session.",
+  },
+  {
+    key: "⌥b",
+    title: "Sidebar",
+    body: "A nav column you toggle in any session. The fleet, one keystroke away, without leaving your work.",
+  },
+  {
+    key: "⌥e ⌥g ⌥,",
+    title: "Floating panels",
+    body: "File explorer, git changes, and the config editor as popups over whatever you're doing. esc to close.",
+  },
+  {
+    key: "⌥m",
+    title: "Actions menu",
+    body: "Right-click any pane or the status bar for a native tmux menu at the pointer — the same actions, wherever you are.",
+  },
+  {
+    key: "⌥k",
+    title: "Cheat sheet",
+    body: "Every key on one iPadOS-style sheet. One interaction grammar everywhere: j/k move, enter opens, / filters, esc backs out, ? asks.",
+  },
+  {
+    key: "~/.tmux-ide/config.json",
+    title: "One theme",
+    body: "A single palette of semantic tokens colors the tmux chrome AND the TUI widgets. Re-theme the whole product in one file.",
+  },
+];
 
 const features = [
   {
-    title: "Milestone Gating",
+    title: "The dock",
     description:
-      "Sequential execution phases, each gating the next. Tasks only dispatch when their milestone is active.",
+      "A native tmux chrome row on any session: clickable fleet tabs with blocked / working / done / idle glyphs, plus home, switch, and keys triggers.",
   },
   {
-    title: "Validation Contracts",
+    title: "Two-layer detection",
     description:
-      "Assertion-based verification with independent validation. Failed assertions auto-create remediation tasks.",
+      "Authoritative status from Claude Code hooks; process-tree + evidence-tuned screen manifests as the fallback. User-overridable, debuggable with agent explain.",
   },
   {
-    title: "Skill-Based Dispatch",
+    title: "Self-report contract",
     description:
-      "Match task specialty to agent capabilities. Specialists get specialist work. Tasks wait for the right agent.",
+      "Any agent can join the authority layer by writing one pane option: tmux set-option -p @agent_state working:$(date +%s). No integration required.",
   },
   {
-    title: "Knowledge Library",
+    title: "The who-needs-me loop",
     description:
-      "Shared learnings persist across tasks. Architecture docs + tag-matched references inject into prompts.",
+      "Toasts on any client when an agent goes blocked or done anywhere, optional macOS notifications, and per-pane border chips.",
   },
   {
-    title: "Web IDE Cockpit",
+    title: "Event stream",
     description:
-      "Watch agents work from your browser at localhost:6060. File editor, diff viewer, terminal, plans, search, LSP — all live.",
+      "tmux-ide events --follow is a JSONL stream of every agent-status transition — pipe it anywhere.",
   },
   {
-    title: "Multichat Threads",
+    title: "Coordination primitives",
     description:
-      "Claude + Codex side-by-side, as many threads as you want per project. Threads stay isolated per workspace.",
+      "wait agent-status and wait output --match block until a session hits a status or a pane matches a regex. Scriptable synchronization.",
   },
   {
-    title: "Multi-Project Rail",
+    title: "Crash-proof restore",
     description:
-      "Open all your projects in one window. Leftmost rail switches between them; each keeps its own tmux session + state.",
+      "Continuous snapshots; tmux-ide restore rebuilds sessions, windows, layouts, cwds, and titles after a tmux server death.",
   },
   {
-    title: "Cmd+K Palette",
+    title: "Conversation revival",
     description:
-      "One keystroke jumps to any project, thread, terminal, or command. Cmd+/ shows every keybind in the app.",
+      "restore --resume-agents brings Claude conversations back via their recorded session ids (claude --resume).",
   },
   {
-    title: "Researcher Agent",
+    title: "Worktree flow",
     description:
-      "Continuous internal auditing triggered by mission events. Writes findings to the library for future agents.",
+      "tmux-ide worktree create <branch> = a git worktree plus an adopted session inside it. Parallel agents on parallel branches.",
   },
   {
-    title: "Live Metrics",
+    title: "Works over SSH",
     description:
-      "Session duration, agent utilization, completion rates, retry rates. All computed in real-time.",
+      "The chrome lives server-side, so it renders from any client — including SSH from a laptop or a phone.",
   },
   {
-    title: "Coverage Invariant",
+    title: "ide.yml layouts",
     description:
-      "Every assertion in the contract must be claimed by at least one task before dispatch begins.",
+      "Optional: describe rows, panes, commands, and a sidebar in one file. tmux-ide init scaffolds it from your detected stack.",
   },
   {
-    title: "Multi-Agent",
+    title: "Programmatic CLI",
     description:
-      "Claude Code, Codex, or any CLI agent. Prefix-matched detection works with platform-specific binaries.",
-  },
-  {
-    title: "Built-in Skills",
-    description:
-      "5 templates: general-worker, frontend, backend, reviewer, researcher. Scaffold custom skills in seconds.",
-  },
-  {
-    title: "Services Registry",
-    description:
-      "Centralized commands, ports, healthchecks in ide.yml. Injected into dispatch prompts for agent awareness.",
-  },
-  {
-    title: "File-Based Send",
-    description:
-      "Long messages auto-route through dispatch files. No paste-mode issues with any agent TUI.",
+      "--json on every command. status, inspect, events, and agent explain all speak structured output for scripting.",
   },
 ];
 
@@ -170,32 +185,18 @@ export default async function HomePage() {
   const stars = await fetchStarCount();
   return (
     <div className="font-mono">
-      {/* HERO ROW 1 — full-width ASCII logo + subtitle + floating agent ghosts */}
+      {/* HERO ROW 1 — full-width ASCII logo + positioning line */}
       <section className="relative max-w-screen-xl mx-auto pt-16 md:pt-28 px-6 text-center">
-        {/* Floating agent ghosts framing the logo — same visual language
-            as the Prototyper canvas (orange = claude code, purple = codex). */}
-        <div className="pointer-events-none absolute left-4 top-12 hidden md:flex items-center gap-1.5">
-          <DotAvatar theme="ember" face="happy" size={44} glow title="claude code" />
-          <span className="rounded-full bg-orange-500 px-2 py-0.5 text-[10px] text-white">
-            ● claude code
-          </span>
-        </div>
-        <div className="pointer-events-none absolute right-4 top-20 hidden md:flex items-center gap-1.5">
-          <span className="rounded-full bg-purple-500 px-2 py-0.5 text-[10px] text-white">
-            ● codex
-          </span>
-          <DotAvatar theme="phantom" face="sparkle" size={44} glow title="codex" />
-        </div>
         <AsciiLogo />
         <div className="mt-4 flex items-center justify-center gap-3">
           <h1 className="font-sans text-3xl md:text-4xl lg:text-5xl leading-[1.1] tracking-tight text-fd-foreground">
-            Autonomous multi-agent missions.
+            The terminal that understands your agents.
           </h1>
           <Link
-            href="/docs/release-2-5-0"
+            href="/docs/release-2-6-0"
             className="inline-flex items-center border border-fd-border px-2 py-0.5 text-[10px] font-mono uppercase tracking-[0.18em] text-fd-muted-foreground transition-colors hover:bg-fd-accent hover:text-fd-foreground shrink-0"
           >
-            2.5
+            2.6
           </Link>
         </div>
       </section>
@@ -204,9 +205,9 @@ export default async function HomePage() {
       <section className="max-w-screen-xl mx-auto pb-12 md:pb-28 pt-8 md:pt-12 flex flex-col lg:flex-row gap-12 justify-between items-center px-6">
         <div className="lg:max-w-[480px] space-y-8 w-full">
           <p className="text-fd-muted-foreground text-base leading-normal">
-            Define a mission. Agents self-organize through milestones, dispatch to skill-matched
-            workers, and validate against assertions you can audit. You watch from a browser-based
-            IDE that runs Claude + Codex side-by-side — local tmux daemon, no signup.
+            Other tools rebuild the terminal to understand agents. tmux-ide teaches the terminal you
+            already use to understand them. One command adds a native chrome to any tmux session —
+            ground-truth agent status, notifications, and crash-proof restore. Zero lock-in.
           </p>
 
           <div className="max-w-[480px] space-y-2">
@@ -231,11 +232,11 @@ export default async function HomePage() {
               </svg>
             </CopyButton>
             <CopyButton
-              text={openCommand}
+              text={adoptCommand}
               className="group flex items-center gap-3 w-full border border-fd-border p-2 px-4 text-sm transition-colors hover:bg-fd-accent cursor-pointer relative bg-fd-muted/10"
             >
-              <span className="text-fd-foreground">$ {openCommand}</span>
-              <span className="ml-auto text-fd-muted-foreground text-xs">opens browser</span>
+              <span className="text-fd-foreground">$ {adoptCommand}</span>
+              <span className="ml-auto text-fd-muted-foreground text-xs">on any session</span>
             </CopyButton>
           </div>
 
@@ -267,17 +268,44 @@ export default async function HomePage() {
       </section>
 
       <div className="space-y-16 max-w-screen-lg mx-auto px-6">
-        {/* INTERACTIVE MOCKUP — clickable IDE layout, hand-built React.
-            Not the real dashboard SPA; swaps canned content on tab clicks.
-            See ./MockIde.tsx for the data + structure. */}
+        {/* THREE-BEAT STORY */}
+        <div className="space-y-px bg-fd-border border border-fd-border">
+          {beats.map((beat, i) => (
+            <div key={beat.kicker} className="bg-fd-background p-6 md:p-8">
+              <div className="flex flex-col md:flex-row md:items-start gap-4 md:gap-8">
+                <div className="md:w-40 shrink-0">
+                  <span className="text-xs text-fd-muted-foreground uppercase tracking-widest">
+                    {String(i + 1).padStart(2, "0")}
+                  </span>
+                  <div className="text-sm text-fd-primary mt-1">{beat.kicker}</div>
+                </div>
+                <div className="space-y-2">
+                  <h3 className="font-sans text-lg text-fd-foreground">{beat.title}</h3>
+                  <p className="text-fd-muted-foreground text-sm leading-normal">{beat.body}</p>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <SectionDivider />
+
+        {/* SURFACE TOUR */}
         <div>
-          <h2 className="font-sans text-2xl text-fd-foreground">Click around the IDE</h2>
+          <h2 className="font-sans text-2xl text-fd-foreground">One app, one keystroke away</h2>
           <p className="text-fd-muted-foreground text-sm mt-1">
-            A taste of the layout — click projects, views, files, threads, commits. For the real
-            thing, run <code className="font-mono">tmux-ide dashboard</code> locally.
+            Once a session is adopted, the whole UI is a modifier key away — one grammar, one theme.
           </p>
-          <div className="mt-4">
-            <MockIde />
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 mt-4">
+            {surfaces.map((s) => (
+              <div className="border border-fd-border p-1 -mt-[1px] -ml-[1px]" key={s.title}>
+                <div className="p-4 space-y-3">
+                  <code className="text-xs text-fd-primary font-mono">{s.key}</code>
+                  <h3 className="text-sm text-fd-foreground">{s.title}</h3>
+                  <p className="text-fd-muted-foreground text-sm">{s.body}</p>
+                </div>
+              </div>
+            ))}
           </div>
         </div>
 
@@ -300,147 +328,42 @@ export default async function HomePage() {
 
         <SectionDivider />
 
-        {/* DASHBOARD SHOWCASE */}
-        <div>
-          <h2 className="font-sans text-2xl text-fd-foreground">Live Dashboard</h2>
-          <p className="text-fd-muted-foreground text-sm mt-1">
-            Real-time mission monitoring at localhost:6060
-          </p>
-          <div className="mt-4 border border-fd-border overflow-hidden">
-            {/* Browser chrome */}
-            <div className="flex items-center gap-2 border-b border-fd-border bg-fd-muted/30 px-3 py-1.5">
-              <div className="flex gap-1.5">
-                <span className="h-2 w-2 rounded-full bg-red-400/60" />
-                <span className="h-2 w-2 rounded-full bg-yellow-400/60" />
-                <span className="h-2 w-2 rounded-full bg-green-400/60" />
-              </div>
-              <div className="flex-1 mx-2">
-                <div className="border border-fd-border bg-fd-background px-2 py-0.5 text-[10px] text-fd-muted-foreground font-mono">
-                  localhost:6060/project/my-app
-                </div>
-              </div>
-            </div>
-            {/* Dashboard content */}
-            <div className="bg-fd-background p-3 space-y-3 text-[11px]">
-              {/* KPI row */}
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-px bg-fd-border">
-                {[
-                  { label: "session", value: "2h 15m" },
-                  { label: "tasks", value: "12/12 done" },
-                  { label: "agents", value: "4 active" },
-                  { label: "validation", value: "100%" },
-                ].map((kpi) => (
-                  <div key={kpi.label} className="bg-fd-background p-2">
-                    <div className="text-fd-muted-foreground text-[9px] uppercase tracking-wider">
-                      {kpi.label}
-                    </div>
-                    <div className="text-fd-foreground font-mono text-sm mt-0.5">{kpi.value}</div>
-                  </div>
-                ))}
-              </div>
-              {/* Milestone bar */}
-              <div className="border border-fd-border p-2">
-                <div className="text-fd-muted-foreground text-[9px] uppercase tracking-wider mb-1.5">
-                  milestones
-                </div>
-                <div className="flex gap-px">
-                  <div className="flex-1 bg-green-500/20 border border-green-500/30 px-2 py-1">
-                    <span className="text-green-500">M1</span>{" "}
-                    <span className="text-fd-muted-foreground">done</span>
-                  </div>
-                  <div className="flex-1 bg-fd-primary/10 border border-fd-primary/30 px-2 py-1">
-                    <span className="text-fd-primary">M2</span>{" "}
-                    <span className="text-fd-muted-foreground">active 3/5</span>
-                  </div>
-                  <div className="flex-1 bg-fd-muted/20 border border-fd-border px-2 py-1">
-                    <span className="text-fd-muted-foreground">M3 locked</span>
-                  </div>
-                </div>
-              </div>
-              {/* Bottom panels */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-px bg-fd-border">
-                {/* Agent table */}
-                <div className="bg-fd-background p-2">
-                  <div className="text-fd-muted-foreground text-[9px] uppercase tracking-wider mb-1.5">
-                    agents
-                  </div>
-                  <div className="space-y-px">
-                    {[
-                      { name: "Backend", util: "82%", tasks: 5 },
-                      { name: "Frontend", util: "71%", tasks: 4 },
-                      { name: "Validator", util: "45%", tasks: 3 },
-                    ].map((a) => (
-                      <div key={a.name} className="flex items-center gap-3 font-mono">
-                        <span className="text-fd-foreground w-16">{a.name}</span>
-                        <span className="text-green-500 w-8">{a.util}</span>
-                        <span className="text-fd-muted-foreground">{a.tasks} tasks</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-                {/* Events */}
-                <div className="bg-fd-background p-2">
-                  <div className="text-fd-muted-foreground text-[9px] uppercase tracking-wider mb-1.5">
-                    recent events
-                  </div>
-                  <div className="space-y-0.5 font-mono text-fd-muted-foreground">
-                    <div>
-                      <span className="text-green-500">2m</span> task 007 completed by Backend
-                    </div>
-                    <div>
-                      <span className="text-fd-primary">3m</span> M2 activated
-                    </div>
-                    <div>
-                      <span className="text-green-500">5m</span> M1 validation passed
-                    </div>
-                    <div>
-                      <span className="text-yellow-500">6m</span> dispatched 008 to Frontend
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <SectionDivider />
-
         {/* HOW IT WORKS */}
         <div>
-          <h2 className="font-sans text-2xl text-fd-foreground">How it works</h2>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 mt-4">
+          <h2 className="font-sans text-2xl text-fd-foreground">From zero to fleet in three commands</h2>
+          <div className="grid grid-cols-1 md:grid-cols-3 mt-4">
             {[
               {
                 phase: "01",
-                title: "Planning",
+                title: "Adopt",
+                cmd: "tmux-ide adopt work",
                 description:
-                  "The lead agent analyzes your mission, creates milestones, tasks, and a validation contract with testable assertions.",
+                  "Add the chrome to a session you already have. Fleet tabs, agent glyphs, and triggers appear. Nothing else changes.",
               },
               {
                 phase: "02",
-                title: "Execution",
+                title: "Integrate",
+                cmd: "tmux-ide integration install claude",
                 description:
-                  "Tasks dispatch to skill-matched agents. Milestone gating ensures sequential phases. Knowledge accumulates as agents work.",
+                  "Hook Claude Code's lifecycle so working / blocked / done are ground truth. Any agent can self-report the same way.",
               },
               {
                 phase: "03",
-                title: "Validation",
+                title: "Work",
+                cmd: "tmux-ide events --follow",
                 description:
-                  "An independent validator checks each assertion. Failed checks auto-create remediation tasks. The milestone loops until all pass.",
-              },
-              {
-                phase: "04",
-                title: "Complete",
-                description:
-                  "All milestones validated. Mission marked complete. PR auto-created. Metrics and learnings persisted for next time.",
+                  "Glance at the dock, get toasts when an agent needs you, and restore the whole fleet if the server ever dies.",
               },
             ].map((item) => (
               <div className="border border-fd-border p-1 -mt-[1px] -ml-[1px]" key={item.phase}>
                 <div className="p-4 space-y-3">
                   <span className="text-xs text-fd-muted-foreground uppercase tracking-widest">
-                    Phase {item.phase}
+                    Step {item.phase}
                   </span>
                   <h3 className="text-sm text-fd-foreground">{item.title}</h3>
+                  <code className="block text-xs text-fd-primary font-mono break-all">
+                    $ {item.cmd}
+                  </code>
                   <p className="text-fd-muted-foreground text-sm">{item.description}</p>
                 </div>
               </div>
@@ -450,75 +373,29 @@ export default async function HomePage() {
 
         <SectionDivider />
 
-        {/* ARCHITECTURE — HTML/CSS flowchart */}
-        <div className="hidden md:block">
-          <h2 className="font-sans text-2xl text-fd-foreground text-center">Architecture</h2>
-          <p className="text-fd-muted-foreground text-base leading-normal mt-4 max-w-md mx-auto text-center">
-            From mission creation to PR — fully autonomous.
-          </p>
-          <div className="mt-8 flex flex-col items-center gap-0 font-mono text-xs">
-            {/* Row 1: Mission → Planning → Milestones → Tasks */}
-            <div className="flex items-center gap-0">
-              <Node>Mission</Node>
-              <Arrow />
-              <Node>Planning</Node>
-              <Arrow />
-              <Node>Milestones</Node>
-              <Arrow />
-              <Node>Tasks</Node>
-            </div>
-            <VLine />
-            <Node>Skill Match</Node>
-            <VLine />
-            <Node>Agent Dispatch</Node>
-            <VLine />
-            {/* Split: Completion | Validation */}
-            <div className="flex items-start gap-0">
-              <div className="flex flex-col items-center">
-                <Node highlight>Completion</Node>
-                <VLine />
-                <Node>Knowledge</Node>
-              </div>
-              <div className="w-16 border-t border-fd-border mt-[13px]" />
-              <div className="flex flex-col items-center">
-                <Node highlight>Validation</Node>
-                <VLine />
-                <Node>Remediation</Node>
-                <div className="text-[10px] text-fd-muted-foreground mt-1">↻ loops back</div>
-              </div>
-            </div>
-            <VLine />
-            <Node highlight>Mission Complete</Node>
-            <Arrow />
-            <Node>PR</Node>
-          </div>
-        </div>
-
-        <SectionDivider />
-
-        {/* SURFACE AREAS — 3-column like midday CLI/MCP/DX */}
+        {/* SURFACE AREAS — 3-column */}
         <div className="grid grid-cols-1 md:grid-cols-3">
           <div className="border border-fd-border p-1 -mt-[1px] -ml-[1px]">
             <div className="p-4 space-y-4">
-              <h3 className="text-sm text-fd-foreground">Orchestrator</h3>
+              <h3 className="text-sm text-fd-foreground">Trust</h3>
               <ul className="text-fd-muted-foreground space-y-2">
-                <li className="text-sm">{"◇"} Mission lifecycle: planning → complete</li>
-                <li className="text-sm">{"◇"} Milestone gating with auto-progression</li>
-                <li className="text-sm">{"◇"} Skill-matched dispatch</li>
-                <li className="text-sm">{"◇"} Stall detection and retry with backoff</li>
-                <li className="text-sm">{"◇"} Agent heartbeat telemetry</li>
+                <li className="text-sm">{"◇"} Adopt is just tmux options — reversible</li>
+                <li className="text-sm">{"◇"} If tmux-ide dies, plain tmux remains</li>
+                <li className="text-sm">{"◇"} Ground-truth status from agent hooks</li>
+                <li className="text-sm">{"◇"} agent explain shows exactly why</li>
+                <li className="text-sm">{"◇"} User-overridable detection</li>
               </ul>
             </div>
           </div>
           <div className="border border-fd-border p-1 -mt-[1px] -ml-[1px]">
             <div className="p-4 space-y-4">
-              <h3 className="text-sm text-fd-foreground">Validation</h3>
+              <h3 className="text-sm text-fd-foreground">Resilience</h3>
               <ul className="text-fd-muted-foreground space-y-2">
-                <li className="text-sm">{"◇"} Assertion-based contracts</li>
-                <li className="text-sm">{"◇"} Independent validator dispatch</li>
-                <li className="text-sm">{"◇"} Auto-remediation on failure</li>
-                <li className="text-sm">{"◇"} Coverage invariant enforcement</li>
-                <li className="text-sm">{"◇"} Blocked assertion tracking</li>
+                <li className="text-sm">{"◇"} Continuous fleet snapshots</li>
+                <li className="text-sm">{"◇"} Restore sessions, windows, layouts</li>
+                <li className="text-sm">{"◇"} Cwds and titles come back too</li>
+                <li className="text-sm">{"◇"} Revive Claude conversations on resume</li>
+                <li className="text-sm">{"◇"} Worktree-per-branch isolation</li>
               </ul>
             </div>
           </div>
@@ -526,11 +403,11 @@ export default async function HomePage() {
             <div className="p-4 space-y-4">
               <h3 className="text-sm text-fd-foreground">Developer experience</h3>
               <ul className="text-fd-muted-foreground space-y-2">
-                <li className="text-sm">{"◇"} Single command to start</li>
-                <li className="text-sm">{"◇"} Web dashboard at localhost:6060</li>
-                <li className="text-sm">{"◇"} REST API + SSE events</li>
-                <li className="text-sm">{"◇"} TUI widgets in tmux</li>
-                <li className="text-sm">{"◇"} Open source</li>
+                <li className="text-sm">{"◇"} One command to adopt</li>
+                <li className="text-sm">{"◇"} One grammar: j/k · enter · / · esc · ?</li>
+                <li className="text-sm">{"◇"} One theme file for everything</li>
+                <li className="text-sm">{"◇"} Renders over SSH, any client</li>
+                <li className="text-sm">{"◇"} --json everywhere, open source</li>
               </ul>
             </div>
           </div>
@@ -550,7 +427,7 @@ export default async function HomePage() {
           <div className="relative z-10">
             <h2 className="font-sans text-2xl sm:text-3xl text-fd-foreground mb-4">Get started</h2>
             <p className="font-sans text-base text-fd-muted-foreground mb-6 max-w-lg mx-auto">
-              One config. Multiple agents. Fully autonomous.
+              Keep your terminal. Add the chrome. Adopt a session in seconds.
             </p>
             <div className="flex flex-wrap justify-center gap-4">
               <Link
@@ -560,10 +437,10 @@ export default async function HomePage() {
                 Get started
               </Link>
               <Link
-                href="/docs/release-2-5-0"
+                href="/docs/release-2-6-0"
                 className="border border-fd-border px-6 py-2.5 text-sm font-mono text-fd-foreground hover:bg-fd-accent transition-colors"
               >
-                What&apos;s new in 2.5
+                What&apos;s new in 2.6
               </Link>
             </div>
           </div>
@@ -595,14 +472,6 @@ export default async function HomePage() {
               rel="noopener noreferrer"
             >
               GitHub
-            </a>
-            <a
-              href="https://prototyper.co"
-              className="hover:text-fd-foreground transition-colors"
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              prototyper.co
             </a>
           </div>
         </div>

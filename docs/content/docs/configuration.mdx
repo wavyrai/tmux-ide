@@ -1,41 +1,110 @@
 ---
-title: Configuration
-description: The ide.yml config file reference
+title: ide.yml Layouts
+description: The optional ide.yml file for describing tmux layouts that tmux-ide builds and adopts for you
 ---
 
 ## Overview
 
-tmux-ide is configured with an `ide.yml` file in your project root. It defines the session name, layout rows, panes, and optional theming.
+`ide.yml` is **optional**. `tmux-ide adopt` works on any session you launch
+however you like — but if you want tmux-ide to build the layout, describe it in
+`ide.yml` and run `tmux-ide`. Sessions launched from a config are adopted
+automatically, so the dock and agent detection are on from the start.
 
-## Full Example
+Scaffold one from your detected stack:
+
+```bash
+tmux-ide init          # or: tmux-ide detect --write
+```
+
+## Minimal example
 
 ```yaml
-name: my-app
-
-before: pnpm install
+name: my-app # tmux session name
+sidebar: true # ⌥b nav column, injected at launch
 
 rows:
-  - size: 70%
+  - size: 70% # row height
     panes:
-      - title: Claude 1 — feature
+      - title: Claude
         command: claude
-        size: 40%
-      - title: Claude 2 — review
-        command: claude
-      - title: Claude 3 — explore
-        command: claude
-
-  - panes:
-      - title: Next.js
-        command: pnpm dev
-        dir: apps/web
-        env:
-          PORT: 3000
-      - title: Convex
-        command: npx convex dev
-      - title: Shell
         focus: true
+      - title: Shell
+  - panes:
+      - title: Dev Server
+        command: pnpm dev
+      - title: Tests
+        command: pnpm test
+```
 
+## Fields
+
+### Top level
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `name` | string | tmux session name |
+| `before` | string | Optional pre-launch shell hook |
+| `rows` | array | Row definitions (at least one) |
+| `sidebar` | `true` \| `{ width }` | Inject the ⌥b nav column at launch |
+| `theme` | object | Per-session color overrides (see below) |
+| `team` | object | Enable Claude Code agent teams (see [Task system](/docs/task-system)) |
+
+### Rows
+
+```yaml
+rows:
+  - size: 70% # optional row height (percent); rows split evenly if omitted
+    panes: [...] # at least one pane
+```
+
+### Panes
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `title` | string | Pane border label |
+| `command` | string | Command to run in the pane |
+| `size` | percent | Pane width (e.g. `50%`) |
+| `dir` | string | Per-pane working directory |
+| `focus` | boolean | Initial focus |
+| `env` | map | Environment variables |
+| `type` | string | Render a widget instead of a shell (see below) |
+| `target` | string | Target path for a widget pane |
+| `role`, `specialty`, `skill`, `task` | string | Agent-team metadata |
+
+### Widget panes
+
+Set `type` to render a built-in TUI widget in a pane instead of a shell:
+
+```yaml
+panes:
+  - title: Explorer
+    type: explorer
+    target: src/
+  - title: Changes
+    type: changes
+```
+
+Available types include `explorer`, `changes`, `preview`, `config`, `tasks`, and
+`costs`. The same widgets are available as floating panels (`⌥e` / `⌥g` / `⌥,`)
+from any adopted session — see [Home, sidebar & panels](/docs/app-surfaces).
+
+### Sidebar sugar
+
+```yaml
+sidebar: true # default width
+# or
+sidebar:
+  width: "30" # tmux columns
+```
+
+`sidebar: true` injects a full-height left nav column at launch. Omit it (or set
+`false`) for no sidebar. You can also toggle it at runtime with `⌥b`.
+
+### Per-session theme
+
+The `theme` block sets colors for **this session's** panes:
+
+```yaml
 theme:
   accent: colour75
   border: colour238
@@ -43,331 +112,24 @@ theme:
   fg: colour248
 ```
 
-## Fields
+For the product-wide palette that colors the dock, chips, panels, and widgets,
+use `~/.tmux-ide/config.json` instead — see [Theming & config](/docs/theming).
 
-### `name`
+## Editing config programmatically
 
-The tmux session name. Used to identify the session for `tmux attach` and `tmux-ide stop`.
-
-```yaml
-name: my-app
-```
-
-### `before`
-
-Optional shell command to run before creating the tmux session. Useful for installing dependencies or running setup scripts.
-
-```yaml
-before: pnpm install
-```
-
-### `rows`
-
-An array of horizontal rows. Each row contains panes that are split side-by-side within it.
-
-```yaml
-rows:
-  - size: 70% # this row gets 70% of screen height
-    panes: [...]
-  - panes: [...] # remaining 30%
-```
-
-#### `rows[].size`
-
-Optional. The percentage of screen height this row should occupy. If omitted, remaining space is divided evenly among rows without a `size`.
-
-#### `rows[].panes`
-
-An array of panes within the row. Panes are split horizontally (side-by-side).
-
-### Pane Options
-
-```yaml
-panes:
-  - title: My Pane
-    command: pnpm dev
-    size: 60%
-    dir: apps/web
-    focus: true
-    env:
-      PORT: 3000
-      NODE_ENV: development
-```
-
-| Field     | Required | Description                                                                             |
-| --------- | -------- | --------------------------------------------------------------------------------------- |
-| `title`   | No       | Label displayed in the pane border                                                      |
-| `command` | No       | Shell command to execute when the pane opens. If omitted, you get an interactive shell. |
-| `size`    | No       | Width percentage within its row. If omitted, panes share equal width.                   |
-| `dir`     | No       | Working directory for this pane, relative to the project root.                          |
-| `focus`   | No       | Set to `true` to give this pane initial focus when the session starts.                  |
-| `env`     | No       | Key-value pairs of environment variables to set before running the command.             |
-
-### `team`
-
-Optional. Enables [Agent Teams](/docs/agent-teams) — coordinated Claude Code instances with a lead and teammates.
-
-```yaml
-team:
-  name: my-team
-```
-
-| Field              | Required | Description                                     |
-| ------------------ | -------- | ----------------------------------------------- |
-| `team.name`        | Yes      | Team name to reference in Claude prompts        |
-| `team.model`       | No       | Optional metadata for your own team conventions |
-| `team.permissions` | No       | Optional metadata for your own team conventions |
-
-When `team` is set, tmux-ide enables `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1` for the tmux session. See [Agent Teams](/docs/agent-teams) for the recommended lead/teammate pane pattern.
-
-### Pane Team Fields
-
-When using agent teams or missions mode, panes can have additional fields:
-
-| Field       | Description                                                              |
-| ----------- | ------------------------------------------------------------------------ |
-| `role`      | `"lead"`, `"teammate"`, `"planner"`, `"validator"`, or `"researcher"`    |
-| `task`      | Suggested task description for a teammate pane                           |
-| `skill`     | References a skill file in `.tmux-ide/skills/` (e.g., `frontend`)        |
-| `specialty` | Comma-separated capability tags for dispatch matching (e.g., `"api,db"`) |
-
-```yaml
-panes:
-  - title: Lead
-    command: claude
-    role: lead
-  - title: Frontend
-    command: claude
-    role: teammate
-    skill: frontend
-    specialty: react,css,typescript
-  - title: Validator
-    command: claude
-    role: validator
-    skill: reviewer
-```
-
-### `theme`
-
-Optional color overrides for the tmux styling.
-
-```yaml
-theme:
-  accent: colour75 # Active pane border + status bar accent
-  border: colour238 # Inactive pane border
-  bg: colour235 # Status bar background
-  fg: colour248 # Status bar text
-```
-
-Colors use tmux color names: `colour0`–`colour255`, or standard names like `red`, `green`, `blue`.
-
-## Layout Logic
-
-The layout is built as a grid:
-
-1. **Rows** stack vertically — the first row is at the top
-2. **Panes** within a row split horizontally — evenly distributed by default
-3. The first row with `size: 70%` takes 70% of the terminal height
-4. Rows without a `size` share the remaining space equally
-5. Panes with `size` set control their width within the row
-6. The pane with `focus: true` gets initial focus (defaults to pane 0)
-
-```
-Row 1 (size: 70%):  [ Pane A | Pane B | Pane C ]
-Row 2 (remaining):  [ Pane D | Pane E ]
-```
-
-## Orchestrator Config
-
-The orchestrator manages autonomous task dispatch, stall detection, and mission lifecycle. Add an `orchestrator` block to enable it:
-
-```yaml
-orchestrator:
-  enabled: true
-  auto_dispatch: true
-  dispatch_mode: missions # "tasks" | "goals" | "missions"
-  poll_interval: 5000 # ms between ticks
-  stall_timeout: 300000 # ms before nudging idle agent
-  max_concurrent_agents: 10
-  master_pane: Lead # pane excluded from dispatch
-  before_run: pnpm install # hook before task dispatch
-  after_run: pnpm lint # hook after task completion
-  services:
-    dev:
-      command: pnpm dev
-      port: 3000
-      healthcheck: "curl -sf http://localhost:3000/health"
-    test:
-      command: pnpm test
-  research:
-    enabled: true
-    triggers:
-      mission_start: true
-      milestone_progress: 3 # trigger every N completed tasks
-      milestone_complete: true
-      periodic_minutes: 15
-      retry_cluster: true
-      stall_detected: true
-      discovered_issue: true
-  webhooks:
-    - url: https://example.com/hook
-      events: [completion, dispatch]
-      secret: my-signing-key
-```
-
-### Dispatch Modes
-
-| Mode       | Description                                                               |
-| ---------- | ------------------------------------------------------------------------- |
-| `tasks`    | Simple task dispatch — assign todo tasks to idle agents                   |
-| `goals`    | Goal-level dispatch — assign goals to planner agents                      |
-| `missions` | Full mission lifecycle — planning, milestones, validation, skill matching |
-
-### Services Registry
-
-Services defined under `orchestrator.services` are injected into dispatch prompts so agents know how to run and check services:
-
-```yaml
-services:
-  dev:
-    command: pnpm dev # how to start it
-    port: 3000 # what port it runs on
-    healthcheck: "curl ..." # how to verify it's up
-```
-
-## `.tmux-ide/` Directory
-
-The `.tmux-ide/` directory in your project root contains skills and the knowledge library:
-
-```
-.tmux-ide/
-  skills/
-    frontend.md          # skill definition (YAML frontmatter + body)
-    backend.md
-    reviewer.md
-    researcher.md
-    general-worker.md
-  library/
-    architecture.md      # design decisions (populated during missions)
-    learnings.md         # auto-appended from completed tasks
-```
-
-Skill files use YAML frontmatter:
-
-```markdown
----
-name: frontend
-specialties: [react, css, typescript]
-role: teammate
-description: Frontend component specialist
----
-
-You are a frontend developer. Focus on React components and CSS.
-```
-
-## Chat providers
-
-The dashboard chat panel speaks to both **Claude Code** and **Codex** through the same daemon. Nothing has to be declared in `ide.yml` — providers are discovered at daemon startup.
-
-```yaml
-# No config needed. The daemon probes PATH for `claude` and `codex`
-# at startup and exposes whichever ones it finds.
-name: my-app
-rows:
-  - panes:
-      - title: Shell
-```
-
-### Auto-discovery
-
-On boot, the daemon runs a `provider-discovery` probe for each supported provider binary on `PATH`:
-
-- `claude-code` — looks for the `claude` CLI
-- `codex` — looks for the `codex` CLI
-
-For each binary it finds, the daemon records the version and queries the live model list. Results are cached and served to the dashboard, so the chat header shows real availability — not a hard-coded list.
-
-### Per-turn model selection
-
-Every chat turn carries its own provider/model selection. The dashboard composer surfaces a picker; under the hood it sets these fields on `chat.session.send`:
-
-| Field             | Type                        | Description                                                                     |
-| ----------------- | --------------------------- | ------------------------------------------------------------------------------- |
-| `provider.kind`   | `"claude-code"` / `"codex"` | Which driver dispatches this turn. The thread's stored provider updates lazily. |
-| `model`           | string                      | Provider model slug (e.g. `claude-sonnet-4-5`, `gpt-5-codex`).                  |
-| `providerOptions` | `Array<{id, value}>`        | Per-turn knobs. Currently `reasoningEffort` (string) and `fastMode` (boolean).  |
-
-Switching model or provider mid-thread takes effect on the next turn — no session teardown required.
-
-### Codex-specific options
-
-When the active model advertises Codex capabilities, the picker exposes two extra controls:
-
-| Option            | Values                                      | Effect                                                         |
-| ----------------- | ------------------------------------------- | -------------------------------------------------------------- |
-| `reasoningEffort` | `minimal`, `low`, `medium`, `high`, `xhigh` | How much hidden reasoning Codex burns before responding.       |
-| `fastMode`        | boolean                                     | Forwarded as `serviceTier: "fast"` — trades depth for latency. |
-
-The daemon also recognizes shorthand **slug aliases** in the model list (e.g. `gpt-5-codex-high` resolves to `gpt-5-codex` with `reasoningEffort: high`) so the picker can present pre-configured presets alongside the base models.
-
-### Provider status
-
-Provider state is exposed two ways:
-
-- **REST**: `GET /api/chat/providers` returns the discovery snapshot — `{kind, name, available, binary, version, error, models[]}` per provider.
-- **Dashboard**: the chat header renders a `ProviderStatusBanner` driven by the same snapshot. Unavailable providers show an inline error with the missing-binary path.
-
-## Per-pane skills
-
-Any pane can declare a `skill:` referencing a file in `.tmux-ide/skills/`. When the orchestrator dispatches a task to that pane, the skill body is injected into the prompt — so the agent gets the same context every run without you re-pasting instructions.
-
-```yaml
-panes:
-  - title: Lead
-    command: claude
-    role: lead
-    focus: true
-  - title: Frontend
-    command: claude
-    role: teammate
-    specialty: frontend
-    skill: frontend # loads .tmux-ide/skills/frontend.md
-    task: "Work on components"
-  - title: Validator
-    command: claude
-    role: validator
-    skill: reviewer
-  - title: Researcher
-    command: claude
-    role: researcher
-    specialty: researcher
-    skill: researcher
-```
-
-Skill files live in `.tmux-ide/skills/<name>.md` and use the YAML-frontmatter format documented in [`.tmux-ide/` Directory](#tmux-ide-directory). Manage them with `tmux-ide skill create|list|show|validate`.
-
-`skill:` is purely additive — panes without one still receive the base dispatch prompt.
-
-## Validation Contract
-
-When you run `tmux-ide init --template missions`, the `.tasks/validation-contract.md` stub and `.tmux-ide/library/` directory are auto-scaffolded for you.
-
-For missions mode, populate `.tasks/validation-contract.md` with assertion IDs that tasks link to via `--fulfills`:
-
-```markdown
-# Validation Contract
-
-**VAL-AUTH-001**: Auth endpoint returns 200 with valid JWT
-**VAL-AUTH-002**: Refresh token rotation works correctly
-**VAL-DB-001**: User data persists across server restarts
-```
-
-Tasks claim assertions:
+Every field is reachable from the CLI with `--json` output, e.g.:
 
 ```bash
-tmux-ide task create "Implement JWT" --milestone M1 --fulfills "VAL-AUTH-001,VAL-AUTH-002"
+tmux-ide config set name "my-app"
+tmux-ide config add-pane --row 0 --title "Claude" --command "claude"
+tmux-ide validate --json
 ```
 
-The coverage invariant warns if any assertion ID is not claimed by at least one task. Run `tmux-ide validate coverage` to check.
+See the [CLI reference](/docs/commands) for the full `config` surface, and
+[Templates](/docs/templates) for ready-made starting points.
 
-For the full contract format, assertion lifecycle, and validator workflow, see [Validation Contracts](/docs/validation-contracts).
+## Agent teams & orchestration
+
+tmux-ide can also enable Claude Code agent teams and run a task/mission
+orchestrator from `ide.yml`. That's a deliberately secondary surface now — see
+[Task system](/docs/task-system).

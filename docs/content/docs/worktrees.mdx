@@ -1,0 +1,61 @@
+---
+title: Worktrees
+description: Parallel agents on parallel branches — a git worktree plus an adopted session, in one command
+---
+
+# Worktrees
+
+When you want two agents working two branches at once without stepping on each
+other, `tmux-ide worktree` gives each its own git worktree **and** its own
+adopted session inside it. One command, isolated checkouts, no branch-switching
+churn.
+
+## Create
+
+```bash
+tmux-ide worktree create fix/login
+```
+
+This adds a git worktree on a new `fix/login` branch and opens a session inside
+it — already adopted, so the dock and agent detection are on from the first
+keystroke.
+
+Options:
+
+| Flag | Effect |
+| --- | --- |
+| `--from <ref>` | Base the new branch on `<ref>` instead of the current head |
+| `--dir <path>` | Override where the worktree is checked out |
+| `--no-session` | Create the worktree only; don't open a session |
+
+## Open, list, remove
+
+```bash
+tmux-ide worktree open fix/login            # open (or switch to) its session
+tmux-ide worktree list [--json]             # worktrees joined with session status
+tmux-ide worktree remove fix/login [--force]  # kill the session + remove the worktree
+```
+
+`remove` refuses to discard a dirty worktree unless you pass `--force`.
+
+## Where worktrees live
+
+By default each worktree is checked out into a sibling `<repo>-worktrees`
+directory next to the repo. Override the base globally in
+`~/.tmux-ide/config.json`:
+
+```json
+{
+  "worktrees": {
+    "dir": "~/wt"
+  }
+}
+```
+
+An empty value keeps the sibling-directory default; a relative path is resolved
+against the repo. See [Theming & config](/docs/theming).
+
+## See also
+
+- [Restore & resume](/docs/restore-resume) — worktree sessions are snapshotted too
+- [The dock & keys](/docs/the-dock) — worktree sessions arrive pre-adopted

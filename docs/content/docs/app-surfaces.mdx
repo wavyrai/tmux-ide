@@ -1,0 +1,82 @@
+---
+title: Home, Sidebar & Panels
+description: The floating surfaces the dock triggers — the home cockpit, the sidebar nav column, and the widget panels
+---
+
+# Home, sidebar & panels
+
+The dock is always on. Everything else is a keystroke away and floats over
+whatever you're doing — one interaction grammar (`j`/`k` · `enter` · `/` · `esc`
+· `?`), one theme. These surfaces share the same TUI, so the fleet looks and
+behaves identically whether you open it as the home screen or as a popup.
+
+## The home cockpit — `⌥h`
+
+Running `tmux-ide` bare, with no `ide.yml`, opens the **home cockpit** — the
+fleet home screen and the product's first surface:
+
+- a **fleet tree** of every session and its panes,
+- a **detail** pane for the selection,
+- a **live preview** of the selected pane, and
+- a **rollup header** summarizing fleet-wide status.
+
+From inside any adopted session, `⌥h` opens the same cockpit as a popup over your
+work — or use the dock's `[ ⌂ home ]` trigger. `esc` closes it.
+
+## The sidebar — `⌥b`
+
+The **sidebar** is a fleet nav column you toggle in place, without leaving your
+session. It's the persistent version of the cockpit: keep the fleet in view down
+the side while you work in the main panes.
+
+```bash
+tmux-ide sidebar-toggle --session work
+```
+
+## The switcher — `⌥p`
+
+A compact session picker. Type to filter, `enter` to switch. It's the fast path
+between sessions and opens from the dock's `[ ⧉ switch ]` trigger too.
+
+## Floating panels
+
+Three widgets open as floating app dialogs — one keystroke to open, `esc` to
+close:
+
+| Key | Panel | What it is |
+| --- | --- | --- |
+| `⌥e` | Explorer | A file-tree navigator for the session's directory |
+| `⌥g` | Changes | A git changes / diff view |
+| `⌥,` | Config | An interactive editor for `~/.tmux-ide/config.json` |
+
+You can also open them explicitly:
+
+```bash
+tmux-ide popup explorer
+tmux-ide popup changes
+tmux-ide popup config
+```
+
+The panel keybinds are rebindable under `keys.panels` in the config — see
+[Theming & config](/docs/theming).
+
+## The actions menu — `⌥m`
+
+Right-click any pane or the status bar, or press `⌥m`, for a native tmux menu
+**at the pointer**. Same actions everywhere, so there's nothing to memorize about
+which surface owns which command.
+
+## The cheat sheet — `⌥k`
+
+Every key on one iPadOS-style sheet. On a fresh install a first-run welcome card
+names the core keys once; press `⌥k` (or the dock's `[ ? keys ]`) any time to see
+the full sheet, or print it:
+
+```bash
+tmux-ide cheatsheet
+```
+
+## See also
+
+- [The dock & keys](/docs/the-dock) — the triggers that open these surfaces
+- [Theming & config](/docs/theming) — rebind every key

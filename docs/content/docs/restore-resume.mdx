@@ -1,0 +1,89 @@
+---
+title: Restore & Resume
+description: Rebuild your whole fleet after a tmux server death — sessions, windows, layouts, cwds, titles, and Claude conversations
+---
+
+# Restore & resume
+
+A tmux server death shouldn't cost you an afternoon. While tmux-ide is running,
+the chrome updater continuously writes a snapshot of your fleet to
+`~/.tmux-ide/snapshot.json`. If the server dies, `tmux-ide restore` rebuilds
+everything it recorded.
+
+## What comes back
+
+```bash
+tmux-ide restore
+```
+
+For each session in the last snapshot, restore rebuilds:
+
+- every **window**,
+- the **split layout** of each window,
+- per-pane **working directories**,
+- per-pane **titles**, and
+- **re-adopts** the sessions that were adopted (the dock returns).
+
+If a session already maps to a registry project **with an `ide.yml`**, restore
+relaunches from that config instead of a raw rebuild — the config is the source
+of truth.
+
+## Safety first
+
+Restore never clobbers work in progress:
+
+- An **already-live session** with the same name is skipped, never overwritten.
+- Recorded pane **commands are not auto-run**. By default a rebuilt agent pane is
+  a plain shell in the right directory with its title restored — you decide what
+  to relaunch. Pass `--run-commands` to replay the recorded commands.
+
+Preview the plan without touching tmux:
+
+```bash
+tmux-ide restore --dry-run
+tmux-ide restore --dry-run --json
+```
+
+## Resume Claude conversations
+
+The strongest form of recovery brings the **conversations** back, not just the
+panes. When the Claude Code integration is installed, each agent pane carries a
+recorded `@agent_session_id`. With `--resume-agents`, a rebuilt Claude pane that
+has one relaunches as `claude --resume <id>` — reviving the actual conversation
+instead of opening a fresh shell.
+
+```bash
+tmux-ide restore --resume-agents
+```
+
+You can make this the default in `~/.tmux-ide/config.json`:
+
+```json
+{
+  "restore": {
+    "resumeAgents": true
+  }
+}
+```
+
+## Snapshot cadence
+
+How often the snapshot is written is part of the updater config in
+`~/.tmux-ide/config.json`:
+
+```json
+{
+  "updater": {
+    "tickMs": 2000,
+    "snapshotEvery": 15
+  }
+}
+```
+
+A snapshot is written every `snapshotEvery` ticks (default: every 15 ticks of
+2s ≈ every 30 seconds). See [Theming & config](/docs/theming).
+
+## See also
+
+- [Agent detection](/docs/agent-detection) — how `@agent_session_id` is recorded
+- [Worktrees](/docs/worktrees) — isolated sessions per branch, restored too

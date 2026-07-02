@@ -1,0 +1,105 @@
+---
+title: Agent Detection
+description: Two layers of agent-status detection — authoritative hooks and an evidence-tuned fallback — plus the self-report contract and overrides
+---
+
+# Agent detection
+
+The glyphs on the dock and the border chips on each pane come from a
+**two-layer** detector. The whole point is trust: when an agent can tell you the
+truth, tmux-ide believes it; when it can't, tmux-ide reasons transparently and
+lets you correct it.
+
+The four states are **blocked**, **working**, **done**, and **idle** (plus
+**unknown** when there's no signal at all).
+
+## Layer 1 — authoritative
+
+The authority layer is ground truth: an agent stamps its own pane with a tmux
+option and the detector trusts it.
+
+### The Claude Code integration
+
+```bash
+tmux-ide integration install claude
+```
+
+Claude Code has a first-class hooks system. This command writes a small POSIX
+hook script and registers it in `~/.claude/settings.json` for the lifecycle
+events that map to agent states:
+
+| Claude event | Reported state |
+| --- | --- |
+| `UserPromptSubmit`, `PreToolUse` | working |
+| `Notification` | blocked |
+| `Stop` | done |
+| `SessionEnd` | idle |
+
+Each hook invocation stamps the current pane:
+
+```
+@agent_state       "<working|blocked|done|idle>:<unix epoch>"
+@agent_session_id  the Claude session id (used by restore --resume-agents)
+```
+
+The merge is surgical and reversible: entries are tagged by the hook-script
+path, a one-time backup is written next to `settings.json`, and uninstall
+removes exactly the tmux-ide entries. Hooks are read at session start, so the
+integration takes effect for **new** Claude Code sessions.
+
+### The self-report contract
+
+You don't need the integration to join the authority layer. **Any** agent — or
+any script — can report status by writing the same pane option:
+
+```bash
+tmux set-option -p @agent_state "working:$(date +%s)"
+```
+
+The value is `<state>:<unix epoch>`. A `working` or `blocked` report older than
+10 minutes is treated as stale and the detector falls back to Layer 2, so keep
+long-running agents stamping periodically.
+
+## Layer 2 — the evidence-tuned fallback
+
+When there's no fresh authority option, the detector resolves the agent from the
+**process tree** (which command is actually running in the pane) and then reads
+the pane's visible screen against **evidence-tuned manifests** — per-agent rule
+sets that recognize the tells of working, blocked, and done from the last lines
+of output.
+
+This layer is deterministic and inspectable, not a black box — and you can
+override it.
+
+## Debug it: `agent explain`
+
+To see exactly how a pane was classified, ask:
+
+```bash
+tmux-ide agent explain %3          # a pane id
+tmux-ide agent explain %3 --json
+```
+
+It's read-only — it captures and inspects, never sends keys — and prints
+everything the detector reasoned over:
+
+- the pane's command and pid;
+- the `@agent_state` authority option (raw value, parsed verdict, staleness);
+- the `@agent_hint` override option;
+- which manifest resolved and by which path (hint / fast / tree);
+- each state's rule and whether it matched;
+- the winning classification;
+- the bottom screen lines it judged.
+
+## Overrides
+
+If the fallback ever guesses wrong for a particular tool, pin the manifest with
+the `@agent_hint` pane option — `agent explain` reports whether a hint is
+applied and which manifest it forced. For authoritative control, prefer the
+[self-report contract](#the-self-report-contract) above: a fresh `@agent_state`
+always wins.
+
+## See also
+
+- [The dock & keys](/docs/the-dock) — where the glyphs and chips appear
+- [Notifications & events](/docs/notifications-events) — reacting to state transitions

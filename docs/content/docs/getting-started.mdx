@@ -1,12 +1,19 @@
 ---
 title: Getting Started
-description: Set up tmux-ide in your project in under a minute
+description: Install tmux-ide and adopt your first session in under a minute
 ---
 
 ## Prerequisites
 
-- [tmux](https://github.com/tmux/tmux) installed (`brew install tmux` on macOS)
-- Node.js 18+
+- **tmux** — 3.2+ recommended (`doctor` requires ≥ 3.0; 3.6 is the smoothest)
+- **Node.js** — ≥ 20
+- **Bun** — only needed for the TUI surfaces (home cockpit, sidebar, floating panels)
+
+Check everything at once:
+
+```bash
+tmux-ide doctor
+```
 
 ## Install
 
@@ -14,164 +21,82 @@ description: Set up tmux-ide in your project in under a minute
 npm i -g tmux-ide
 ```
 
-Or use it directly with `npx` — no install needed:
+Global install also registers the bundled Claude Code skill and enables
+`CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1` in `~/.claude/settings.json` if Claude
+Code is installed locally.
+
+## Adopt a session you already have
+
+The fastest way to see tmux-ide is to point it at a tmux session you're already
+running. `adopt` adds a native chrome row — fleet tabs, live agent glyphs, and
+`[ ⌂ home ] [ ⧉ switch ] [ ? keys ]` triggers — and changes nothing else.
 
 ```bash
-npx tmux-ide
+tmux-ide adopt work        # adopt the session named "work"
+tmux-ide adopt --all       # adopt every live (non-internal) session
 ```
 
-## Create your first workspace
-
-Navigate to your project and scaffold a config:
+It's zero-risk by construction: adopt only sets tmux options. To reverse it:
 
 ```bash
-cd ~/Developer/my-project
-tmux-ide init
+tmux-ide unadopt work
 ```
 
-This creates an `ide.yml` in your project root:
+If tmux-ide ever crashes or is uninstalled, your sessions keep running as plain
+tmux — the chrome is decoration, not a dependency. And because the chrome lives
+server-side, it renders from any client, including over SSH.
+
+## Turn on ground-truth agent status
+
+By default tmux-ide infers agent state from the process tree and screen
+contents. For authoritative status, hook Claude Code's lifecycle so
+working/blocked/done come straight from the agent:
+
+```bash
+tmux-ide integration install claude
+```
+
+This writes a small POSIX hook script and registers it in
+`~/.claude/settings.json` (a one-time backup is written next to it, and
+uninstall removes exactly the tmux-ide entries). It takes effect for **new**
+Claude Code sessions. See [Agent detection](/docs/agent-detection) for the two
+detection layers and the self-report contract any agent can use.
+
+## Optional: describe a layout with ide.yml
+
+Adopt works on sessions you launch however you like. If you'd rather have
+tmux-ide build the layout, scaffold an `ide.yml`:
+
+```bash
+tmux-ide init          # auto-detects your stack and writes ide.yml
+tmux-ide               # launch the session from ide.yml
+```
+
+A minimal config:
 
 ```yaml
-name: my-project
+name: my-app
+sidebar: true # sugar for the ⌥b nav column
 
 rows:
   - size: 70%
     panes:
-      - title: Claude 1
+      - title: Claude
         command: claude
-      - title: Claude 2
-        command: claude
-
+        focus: true
+      - title: Shell
   - panes:
       - title: Dev Server
-      - title: Shell
+        command: pnpm dev
 ```
 
-## Launch
+Sessions launched from `ide.yml` are adopted automatically. See
+[Configuration](/docs/configuration) for the full format.
 
-```bash
-tmux-ide
-```
+## Where to go next
 
-That's it. You'll get a tmux session with labeled panes, split exactly as configured. The launch output also prints the URL of the web dashboard.
-
-## Open the dashboard
-
-tmux-ide 2.5+ ships a full web IDE alongside the tmux session — file editor, chat, diffs, terminal, plans, search, LSP. Open it in your browser:
-
-```bash
-tmux-ide dashboard
-```
-
-That command opens `http://localhost:6060/` in your default browser. Pass `--no-open` to just print the URL, or `--json` for scripting. See the [Dashboard](/docs/dashboard) page for the full IDE walkthrough.
-
-## Stop
-
-Detach with `Ctrl-b d` to leave it running in the background, or kill it:
-
-```bash
-tmux-ide stop
-```
-
-## Restart
-
-If you've changed your `ide.yml`, restart to apply the new layout:
-
-```bash
-tmux-ide restart
-```
-
-## Reconnect
-
-If you detach or close your terminal, just run `tmux-ide` again — it will reattach to the existing session:
-
-```bash
-tmux-ide
-```
-
-Or use tmux directly:
-
-```bash
-tmux attach -t my-project
-```
-
-## Missions Mode (Autonomous)
-
-For fully autonomous multi-agent orchestration, use missions mode:
-
-```bash
-tmux-ide init --template missions
-tmux-ide mission create "Build auth system" -d "JWT + refresh tokens"
-tmux-ide
-```
-
-### What `tmux-ide init --template missions` scaffolds
-
-```
-.tmux-ide/skills/    — agent role definitions
-.tmux-ide/library/   — architecture.md, learnings.md stubs
-.tasks/              — validation-contract.md stub
-AGENTS.md            — project boundaries
-ide.yml              — session config with orchestrator
-```
-
-This gives you:
-
-- **6 agent panes** (lead, frontend, backend, validator, researcher, shell)
-- **Web dashboard** at `http://localhost:6060`
-- **Fully autonomous orchestration** — the lead plans, agents execute, validators verify
-
-The orchestrator dispatches planning to the lead pane, which creates milestones, tasks, and a validation contract. Once planning completes (`tmux-ide mission plan-complete`), the orchestrator manages everything: skill-matched dispatch, milestone gating, validation, remediation, and mission completion.
-
-Monitor progress:
-
-```bash
-tmux-ide mission status       # milestone + task + validation progress
-tmux-ide metrics              # session duration, agent utilization, completion rates
-tmux-ide validate coverage    # check assertion coverage
-```
-
-See [Configuration](/docs/configuration#orchestrator-config) for all orchestrator options and [What's New in 2.0](/docs/release-2-0-0) for the full feature list.
-
-### Missions Mode Quick Start
-
-For the full mission lifecycle walkthrough, see [Missions Workflow](/docs/missions-workflow). That guide covers planning, execution, validation, and completion end-to-end. For details on validation contracts and the knowledge library, see [Validation Contracts](/docs/validation-contracts) and [Knowledge Library](/docs/knowledge-library).
-
-## Claude Code Skill
-
-tmux-ide ships with a built-in [Claude Code](https://docs.anthropic.com/en/docs/claude-code) skill. When you install tmux-ide, the skill is automatically registered so Claude Code knows how to configure and manage your workspace.
-
-**What the skill enables:**
-
-- Ask Claude to "set up a tmux IDE" and it will auto-detect your stack, present layout options with ASCII diagrams, and write the config for you
-- Ask Claude to "add a pane" or "prepare an agent-team layout" and it will use the programmatic CLI to modify your `ide.yml`
-- The team lead agent can self-configure — spawning new teammates, assigning tasks, and restarting the layout
-
-**How it works:**
-
-If Claude Code is already set up on the machine, the global install hook copies `SKILL.md` into `~/.claude/skills/tmux-ide/` and sets `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1` in `~/.claude/settings.json`. That keeps the npm install side effects limited to existing Claude Code setups.
-
-If you installed via `npx` (without a global install), you can manually register the skill:
-
-```bash
-mkdir -p ~/.claude/skills/tmux-ide
-cp "$(npm root -g)/tmux-ide/skill/SKILL.md" ~/.claude/skills/tmux-ide/
-```
-
-If Claude Code is not installed yet, create `~/.claude/` first or complete Claude Code setup before using the automatic registration path.
-
-And if you want agent teams enabled for Claude Code outside tmux-ide-launched sessions, add this to `~/.claude/settings.json`:
-
-```json
-{
-  "env": {
-    "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1"
-  }
-}
-```
-
-Once installed, just ask Claude Code something like:
-
-> "Set up a tmux IDE for this project"
-
-and it will handle the rest.
+- [The dock & keys](/docs/the-dock) — the status bar and every keystroke
+- [Notifications & events](/docs/notifications-events) — the who-needs-me loop
+- [Restore & resume](/docs/restore-resume) — survive a tmux server death
+- [Worktrees](/docs/worktrees) — parallel agents on parallel branches
+- [CLI reference](/docs/commands) — every command

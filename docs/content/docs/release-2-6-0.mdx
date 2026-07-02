@@ -1,0 +1,73 @@
+---
+title: What's New in 2.6
+description: tmux-ide 2.6 — the terminal that understands your agents
+---
+
+# tmux-ide 2.6
+
+2.6 is a reinvention. tmux-ide is no longer a web dashboard with a terminal
+attached — it's a **terminal-native cockpit built around tmux**. Other tools
+rebuild the terminal to understand agents; tmux-ide teaches the terminal you
+already use to understand them.
+
+## The dock — adopt in place
+
+`tmux-ide adopt <session>` adds a native tmux chrome row to **any** existing
+session: fleet tabs with live agent-status glyphs (blocked / working / done /
+idle), clickable, plus `[ ⌂ home ] [ ⧉ switch ] [ ? keys ]` triggers. It's just
+tmux options — `unadopt` reverts it, and if tmux-ide dies your sessions are
+untouched plain tmux. Because the chrome lives server-side, it renders from any
+client, including over SSH. → [The dock & keys](/docs/the-dock)
+
+## Trustworthy agent detection, two layers
+
+1. **Authoritative** — `tmux-ide integration install claude` hooks Claude Code's
+   lifecycle so working / blocked / done is ground truth. Any agent can
+   self-report with one pane option:
+   `tmux set-option -p @agent_state working:$(date +%s)`.
+2. **Fallback** — process-tree resolution plus evidence-tuned screen manifests,
+   user-overridable and debuggable with `tmux-ide agent explain <pane>`.
+
+→ [Agent detection](/docs/agent-detection)
+
+## The who-needs-me loop
+
+Toasts on any client when an agent goes blocked or done anywhere (optional macOS
+notifications), per-pane border chips (`claude · working`), a
+`tmux-ide events --follow` JSONL stream, and `wait agent-status` /
+`wait output --match` coordination primitives. →
+[Notifications & events](/docs/notifications-events)
+
+## Crash-proof fleet
+
+Continuous snapshots; `tmux-ide restore` rebuilds sessions, windows, layouts,
+cwds, and titles after a tmux server death, and `--resume-agents` revives Claude
+conversations via their recorded session ids. →
+[Restore & resume](/docs/restore-resume)
+
+## One app
+
+- **Home cockpit** (`⌥h`) — bare `tmux-ide` is the fleet home screen; a popup
+  over any session.
+- **Sidebar** (`⌥b`) — a fleet nav column in any session.
+- **Floating panels** — explorer (`⌥e`), git changes (`⌥g`), config (`⌥,`).
+- **Actions menu** (`⌥m`) — native menu at the pointer, or right-click.
+- **Cheat sheet** (`⌥k`) — every key on one page.
+- **One grammar** (`j`/`k` · `enter` · `/` · `esc` · `?`) and **one theme**
+  (`~/.tmux-ide/config.json`) across chrome and widgets.
+
+→ [Home, sidebar & panels](/docs/app-surfaces)
+
+## Worktree flow
+
+`tmux-ide worktree create <branch>` = a git worktree plus an adopted session
+inside it — parallel agents on parallel branches. →
+[Worktrees](/docs/worktrees)
+
+## What moved to the background
+
+The heavyweight orchestrator, missions, validation contracts, and the web
+dashboard are no longer the story. The task system still exists as an optional,
+secondary surface for coordinated multi-agent work — see
+[Task system](/docs/task-system) — but the product's center of gravity is now
+the terminal you already use.
