@@ -39,6 +39,22 @@ import {
 } from "./canonical-daemon.ts";
 
 const requireFromHere = createRequire(import.meta.url);
+
+// Version lookup must survive both layouts: dev (this file at
+// packages/daemon/src/lib/ -> ../../package.json) and the esbuild-bundled
+// bin/cli.js (../package.json is the repo/package root). Never crash the
+// daemon over a missing version string.
+function resolveOwnVersion(): string {
+  for (const candidate of ["../../package.json", "../package.json"]) {
+    try {
+      const pkg = requireFromHere(candidate) as { version?: string };
+      if (typeof pkg.version === "string") return pkg.version;
+    } catch {
+      // try the next candidate
+    }
+  }
+  return "0.0.0";
+}
 const DEFAULT_HOSTNAME = "127.0.0.1";
 const DEFAULT_GRACEFUL_MS = 2000;
 const MONITOR_INTERVAL_MS = 1000;
@@ -545,11 +561,13 @@ async function startHttpServer({
         })
       : undefined;
 
+  const { hostname: osHostname } = await import("node:os");
   const app = createApp({
     authService,
     authConfig,
     tunnelManager,
     remoteRegistry,
+    hqMachineName: hqConfig?.machine_name ?? osHostname(),
     remoteAccess: {
       bindHostname,
       token: authToken ?? null,
@@ -742,11 +760,10 @@ export async function startEmbeddedDaemon(
     localBypassToken,
     silent: opts.silent,
   });
-  const pkg = requireFromHere("../../package.json") as { version?: string };
   writeCanonicalDaemonInfo({
     pid: process.pid,
     port,
-    version: pkg.version ?? "0.0.0",
+    version: resolveOwnVersion(),
     startedAt: new Date().toISOString(),
     bindHostname,
     authToken,

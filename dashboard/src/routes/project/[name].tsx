@@ -54,6 +54,7 @@ import {
   TasksDashboardView,
 } from "@/components/v2/views";
 import { MissionStatementView } from "@/components/v2/MissionStatementView";
+import { AgentsView } from "@/components/v2/AgentsView";
 import { chrome, useChromeShortcuts } from "@/lib/chrome";
 import { useViewParam } from "@/lib/viewParam";
 import { DEFAULT_VIEW, isViewId, VIEWS, type ViewId } from "@/lib/views";
@@ -69,6 +70,7 @@ const ACTIVITY_BAR_VIEWS = new Set<ActivityBarViewId>([
   "skills",
   "notes",
   "mission",
+  "agents",
   "chat",
   "terminal",
 ]);
@@ -417,6 +419,9 @@ function MainContent(props: { projectName: string; view: ViewId }) {
       </Show>
       <Show when={props.view === "mission-control"}>
         <MissionControlView projectName={props.projectName} />
+      </Show>
+      <Show when={props.view === "agents"}>
+        <AgentsView projectName={props.projectName} />
       </Show>
       <Show when={props.view === "kanban"}>
         <KanbanBoardView projectName={props.projectName} />

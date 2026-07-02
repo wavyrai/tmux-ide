@@ -71,6 +71,7 @@ interface CliFlags {
   "hq-url"?: string;
   to?: string;
   "no-enter"?: boolean;
+  print?: boolean;
 }
 
 export async function main(): Promise<void> {
@@ -124,6 +125,8 @@ export async function main(): Promise<void> {
       // send command flags
       to: { type: "string" },
       "no-enter": { type: "boolean" },
+      // agent command flags
+      print: { type: "boolean" },
     },
   });
   const values = rawValues as CliFlags;
@@ -151,6 +154,8 @@ export async function main(): Promise<void> {
     "metrics",
     "setup",
     "send",
+    "agent",
+    "agents",
     "dispatch",
     "notify",
     "orchestrator",
@@ -237,6 +242,15 @@ ${bold("Pane Messaging:")}
   ${cyan("tmux-ide send")} <target> <message>     ${dim("Send message to a pane")}
   ${cyan("tmux-ide send")} --to <name> <message>   ${dim("Target by name, title, role, or ID")}
   ${cyan("tmux-ide send")} <target> --no-enter msg  ${dim("Send text without pressing Enter")}
+
+${bold("Agent Reporting:")}
+  ${cyan("tmux-ide agent hook install")}              ${dim("Install Claude Code hooks (~/.claude/settings.json)")}
+  ${cyan("tmux-ide agent hook install --print")}      ${dim("Print the hook snippet for manual install")}
+  ${cyan("tmux-ide agent report")} <event>            ${dim("Report start|activity|stop (called by hooks; fleet view: agents)")}
+
+${bold("Agent Fleet:")}
+  ${cyan("tmux-ide agents")} [list] [--json]          ${dim("List agents across all machines (hook reporter: agent)")}
+  ${cyan("tmux-ide agents send")} <id> <message>      ${dim("Send a message to any agent by id [--no-enter]")}
 
 ${bold("Dispatch:")}
   ${cyan("tmux-ide dispatch")} <id> [--json]        ${dim("Print task context to stdout")}
@@ -636,6 +650,28 @@ ${bold("Flags:")}
             message = readFileSync(0, "utf-8").trim();
           }
           await send(undefined, { json, to: target, message, noEnter: values["no-enter"] });
+          break;
+        }
+
+        case "agent": {
+          const { agentCommand } = await import("./agent-hook.ts");
+          await agentCommand({
+            sub: positionals[1],
+            args: positionals.slice(2),
+            json,
+            print: values.print,
+          });
+          break;
+        }
+
+        case "agents": {
+          const { agentsCommand } = await import("./agents-cli.ts");
+          await agentsCommand({
+            sub: positionals[1],
+            args: positionals.slice(2),
+            json,
+            noEnter: values["no-enter"],
+          });
           break;
         }
 

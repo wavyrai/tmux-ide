@@ -11,15 +11,20 @@ export class RemoteRegistry {
   private healthCheckTimer: ReturnType<typeof setInterval> | null = null;
   private readonly healthInterval: number;
   private readonly healthTimeout: number;
+  private readonly maxMachines: number;
   private isShuttingDown: () => boolean;
 
   constructor(opts?: {
     healthInterval?: number;
     healthTimeout?: number;
+    maxMachines?: number;
     isShuttingDown?: () => boolean;
   }) {
     this.healthInterval = opts?.healthInterval ?? 15_000;
     this.healthTimeout = opts?.healthTimeout ?? 5_000;
+    // Bound registry size — each entry also drives a periodic health-check
+    // fetch, so unbounded registration would be a resource amplifier.
+    this.maxMachines = opts?.maxMachines ?? 256;
     this.isShuttingDown = opts?.isShuttingDown ?? (() => false);
     this.startHealthChecker();
   }
@@ -30,6 +35,9 @@ export class RemoteRegistry {
     // If same ID already registered, update it (heartbeat / re-registration)
     const existing = this.machines.get(remote.id);
     if (existing) {
+      // Drop the stale name→machine index entry on rename so machinesByName
+      // doesn't grow unbounded under repeated same-id renames.
+      if (existing.name !== remote.name) this.machinesByName.delete(existing.name);
       existing.name = remote.name;
       existing.url = remote.url;
       existing.token = remote.token;
@@ -42,6 +50,12 @@ export class RemoteRegistry {
     // Block duplicate names (different ID)
     if (this.machinesByName.has(remote.name)) {
       throw new Error(`Machine with name '${remote.name}' is already registered`);
+    }
+
+    // Reject new registrations past the cap (existing machines re-register via
+    // the early-return above, so liveness isn't affected).
+    if (this.machines.size >= this.maxMachines) {
+      throw new Error(`HQ registry full (${this.maxMachines} machines)`);
     }
 
     const now = new Date();

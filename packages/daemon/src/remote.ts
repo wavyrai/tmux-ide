@@ -31,6 +31,12 @@ export async function remoteCommand(
   const { json, sub } = opts;
 
   switch (sub) {
+    case "ssh": {
+      const { sshRemoteCommand } = await import("./ssh-remote.ts");
+      await sshRemoteCommand({ ...opts, args: opts.args ?? [] });
+      break;
+    }
+
     case "register": {
       const hqConfig = await loadHQConfig(dir);
       if (!hqConfig || hqConfig.role !== "remote") {
@@ -141,7 +147,7 @@ export async function remoteCommand(
 
     default:
       throw new IdeError(
-        `Unknown remote subcommand: ${sub ?? "(none)"}\nUsage: tmux-ide remote register|machines|status`,
+        `Unknown remote subcommand: ${sub ?? "(none)"}\nUsage: tmux-ide remote register|machines|status|ssh`,
         { code: "USAGE" },
       );
   }

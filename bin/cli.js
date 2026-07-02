@@ -326,8 +326,10 @@ function splitPane(targetPane, direction, cwd, percent) {
       direction === "vertical" ? "-v" : "-h",
       "-c",
       cwd,
-      "-p",
-      String(percent)
+      // `-l N%` (tmux ≥3.1) — the old `-p N` percentage flag is gone from
+      // some builds (e.g. 3.4 fails with "size missing").
+      "-l",
+      `${percent}%`
     ],
     { encoding: "utf-8" }
   ).trim();
@@ -335,6 +337,11 @@ function splitPane(targetPane, direction, cwd, percent) {
 function sendLiteral(targetPane, text) {
   runTmux(["send-keys", "-t", targetPane, "-l", "--", text], { stdio: "inherit" });
   runTmux(["send-keys", "-t", targetPane, "Enter"], { stdio: "inherit" });
+}
+function getPaneCurrentCommand(targetPane) {
+  return runTmux(["display-message", "-p", "-t", targetPane, "#{pane_current_command}"], {
+    encoding: "utf-8"
+  }).trim();
 }
 function selectPane(targetPane) {
   runTmux(["select-pane", "-t", targetPane], { stdio: "inherit" });
@@ -708,10 +715,10 @@ var init_hq = __esm({
   "packages/contracts/src/lib-internal/hq.ts"() {
     "use strict";
     RegistrationPayloadSchema = z2.object({
-      id: z2.string().min(1),
-      name: z2.string().min(1),
-      url: z2.string().url(),
-      token: z2.string().min(1)
+      id: z2.string().min(1).max(256),
+      name: z2.string().min(1).max(256),
+      url: z2.string().url().max(2048),
+      token: z2.string().min(1).max(512)
     });
     HQConfigSchema = z2.object({
       enabled: z2.boolean().default(false),
@@ -847,7 +854,7 @@ var init_ide_config = __esm({
 
 // packages/contracts/src/domain.ts
 import { z as z4 } from "zod";
-var ProofSchemaZ, MilestoneSchemaZ, MissionSchemaZ, GoalSchemaZ, TaskSchemaZ, EventTypeSchemaZ, OrchestratorEventSchemaZ, DispatchEventZ, CompletionEventZ, StallEventZ, RetryEventZ, ReconcileEventZ, ErrorEventZ, TaskCreatedEventZ, StatusChangeEventZ, SendEventZ, NotifyEventZ, MilestoneValidatingEventZ, MilestoneCompleteEventZ, ValidationDispatchEventZ, RemediationEventZ, ValidationFailedEventZ, PlanningEventZ, MissionCompleteEventZ, DiscoveredIssueEventZ, ResearchDispatchEventZ, ResearchFindingEventZ, WebhookTestEventZ, StructuredEventSchemaZ, MarkRangeSchemaZ, MarkSchemaZ, AuthorshipStatsSchemaZ, PlanStatusSchemaZ, PlanMetaSchemaZ, PaneInfoSchemaZ, AgentDetailSchemaZ, SessionStatsSchemaZ, SessionOverviewSchemaZ, ProjectDetailSchemaZ;
+var ProofSchemaZ, MilestoneSchemaZ, MissionSchemaZ, GoalSchemaZ, TaskSchemaZ, EventTypeSchemaZ, OrchestratorEventSchemaZ, DispatchEventZ, CompletionEventZ, StallEventZ, RetryEventZ, ReconcileEventZ, ErrorEventZ, TaskCreatedEventZ, StatusChangeEventZ, SendEventZ, NotifyEventZ, MilestoneValidatingEventZ, MilestoneCompleteEventZ, ValidationDispatchEventZ, RemediationEventZ, ValidationFailedEventZ, PlanningEventZ, MissionCompleteEventZ, DiscoveredIssueEventZ, ResearchDispatchEventZ, ResearchFindingEventZ, WebhookTestEventZ, StructuredEventSchemaZ, MarkRangeSchemaZ, MarkSchemaZ, AuthorshipStatsSchemaZ, PlanStatusSchemaZ, PlanMetaSchemaZ, PaneInfoSchemaZ, AgentDetailSchemaZ, SessionStatsSchemaZ, SessionOverviewSchemaZ, ProjectDetailSchemaZ, AgentToolSchemaZ, AgentKindSchemaZ, AgentStatusSchemaZ, AgentRecordSchemaZ, AgentRegisterPayloadSchemaZ, AgentHeartbeatPayloadSchemaZ, AgentListSchemaZ;
 var init_domain = __esm({
   "packages/contracts/src/domain.ts"() {
     "use strict";
@@ -1194,6 +1201,50 @@ var init_domain = __esm({
       goals: z4.array(GoalSchemaZ),
       tasks: z4.array(TaskSchemaZ),
       agents: z4.array(AgentDetailSchemaZ)
+    });
+    AgentToolSchemaZ = z4.enum(["claude", "codex", "unknown"]);
+    AgentKindSchemaZ = z4.enum(["managed", "tmux-unmanaged", "external"]);
+    AgentStatusSchemaZ = z4.enum(["busy", "idle", "offline"]);
+    AgentRecordSchemaZ = z4.object({
+      // Stable id. tmux agents (local): `${session}:${paneId}`; HQ namespaces
+      // remote ids with `${machineId}:` during aggregation. external agents: the
+      // hook-supplied id (typically the Claude session id). Bounds matter because
+      // HQ validates untrusted remote responses against this same schema.
+      id: z4.string().max(512),
+      kind: AgentKindSchemaZ,
+      tool: AgentToolSchemaZ,
+      name: z4.string().max(256),
+      status: AgentStatusSchemaZ,
+      session: z4.string().max(256).nullable(),
+      paneId: z4.string().max(64).nullable(),
+      paneTitle: z4.string().max(512).nullable(),
+      cwd: z4.string().max(4096).nullable(),
+      taskId: z4.string().max(128).nullable(),
+      taskTitle: z4.string().max(512).nullable(),
+      pid: z4.number().nullable(),
+      // ISO timestamp of last observed activity / heartbeat.
+      lastActivity: z4.string().max(64),
+      // null = this (local) machine; set by HQ when aggregating remotes.
+      machineId: z4.string().max(256).nullable(),
+      machineName: z4.string().max(256).nullable()
+    });
+    AgentRegisterPayloadSchemaZ = z4.object({
+      id: z4.string().min(1).max(256),
+      tool: AgentToolSchemaZ.default("claude"),
+      name: z4.string().max(256).optional(),
+      cwd: z4.string().max(4096).optional(),
+      session: z4.string().max(256).optional(),
+      pid: z4.number().int().positive().optional(),
+      status: AgentStatusSchemaZ.optional(),
+      taskTitle: z4.string().max(512).optional()
+    });
+    AgentHeartbeatPayloadSchemaZ = z4.object({
+      id: z4.string().min(1).max(256),
+      status: AgentStatusSchemaZ.optional(),
+      taskTitle: z4.string().max(512).optional()
+    });
+    AgentListSchemaZ = z4.object({
+      agents: z4.array(AgentRecordSchemaZ)
     });
   }
 });
@@ -1900,7 +1951,7 @@ import { z as z10 } from "zod";
 function isActionName(name) {
   return name in ActionContractsZ;
 }
-var ProjectScopeInputZ, ProofInputZ, SkillSchemaZ, ProjectOpenTerminalInputZ, ProjectOpenTerminalResultZ, ProjectLaunchInputZ, ProjectLaunchResultZ, ProjectStopInputZ, ProjectStopResultZ, ProjectRestartInputZ, ProjectRestartResultZ, ProjectActivateInputZ, ProjectActivateResultZ, TerminalRespawnInputZ, TerminalRespawnResultZ, TerminalStopInputZ, TerminalStopResultZ, TaskCreateInputZ, TaskCreateResultZ, TaskUpdateInputZ, TaskUpdateResultZ, TaskClaimInputZ, TaskClaimResultZ, TaskDoneInputZ, TaskDoneResultZ, TaskDeleteInputZ, TaskDeleteResultZ, GoalCreateInputZ, GoalCreateResultZ, GoalUpdateInputZ, GoalUpdateResultZ, GoalDoneInputZ, GoalDoneResultZ, GoalDeleteInputZ, GoalDeleteResultZ, MilestoneCreateInputZ, MilestoneCreateResultZ, MilestoneUpdateInputZ, MilestoneUpdateResultZ, MissionSetInputZ, MissionSetResultZ, MissionPlanCompleteInputZ, MissionPlanCompleteResultZ, MissionClearInputZ, MissionClearResultZ, SkillCreateInputZ, SkillCreateResultZ, SkillUpdateInputZ, SkillUpdateResultZ, SkillDeleteInputZ, SkillDeleteResultZ, ConfigSetInputZ, ConfigResultZ, ConfigAddPaneInputZ, ConfigAddPaneResultZ, ConfigRemovePaneInputZ, ConfigRemovePaneResultZ, ConfigAddRowInputZ, ConfigAddRowResultZ, ConfigEnableTeamInputZ, ConfigEnableTeamResultZ, ConfigDisableTeamInputZ, ConfigDisableTeamResultZ, AssertionEntryZ, ValidationReportZ, ValidationAssertInputZ, ValidationAssertResultZ, ValidationReportInputZ, ValidationReportResultZ, WebhookAddInputZ, WebhookAddResultZ, WebhookRemoveInputZ, WebhookRemoveResultZ, WebhookTestInputZ, WebhookTestResultZ, AppSetRemoteAccessInputZ, AppSetRemoteAccessResultZ, DaemonShutdownInputZ, DaemonShutdownResultZ, StopReasonZ, AgentProviderZ, ContentBlockZ, SessionUpdateZ, ChatThreadUsageSummaryZ, ThreadMessageZ, ThreadIndexEntryZ, ThreadStateZ, ChatThreadListInputZ, ChatThreadListResultZ, ProviderOptionSelectionZ, ProviderModelInfoZ, ChatProvidersListInputZ, ChatProvidersListResultZ, ChatThreadCreateInputZ, ChatThreadCreateResultZ, ChatThreadDeleteInputZ, ChatThreadDeleteResultZ, ChatThreadRenameInputZ, ChatThreadRenameResultZ, ChatThreadSetProviderInputZ, ChatThreadSetProviderResultZ, ChatThreadGetInputZ, ChatThreadGetResultZ, ChatThreadUsageInputZ, ChatThreadUsageResultZ, ChatSessionSendInputZ, ChatSessionSendResultZ, ChatSessionCancelInputZ, ChatSessionCancelResultZ, ChatSessionEditFromTurnInputZ, ChatSessionEditFromTurnResultZ, ChatPermissionRespondInputZ, ChatPermissionRespondResultZ, ChatContextCaptureTerminalInputZ, ChatContextCaptureTerminalResultZ, ActionContractsZ, ACTION_NAMES;
+var ProjectScopeInputZ, ProofInputZ, SkillSchemaZ, ProjectOpenTerminalInputZ, ProjectOpenTerminalResultZ, ProjectLaunchInputZ, ProjectLaunchResultZ, ProjectStopInputZ, ProjectStopResultZ, ProjectRestartInputZ, ProjectRestartResultZ, ProjectActivateInputZ, ProjectActivateResultZ, TerminalRespawnInputZ, TerminalRespawnResultZ, TerminalStopInputZ, TerminalStopResultZ, TaskCreateInputZ, TaskCreateResultZ, TaskUpdateInputZ, TaskUpdateResultZ, TaskClaimInputZ, TaskClaimResultZ, TaskDoneInputZ, TaskDoneResultZ, TaskDeleteInputZ, TaskDeleteResultZ, GoalCreateInputZ, GoalCreateResultZ, GoalUpdateInputZ, GoalUpdateResultZ, GoalDoneInputZ, GoalDoneResultZ, GoalDeleteInputZ, GoalDeleteResultZ, MilestoneCreateInputZ, MilestoneCreateResultZ, MilestoneUpdateInputZ, MilestoneUpdateResultZ, MissionSetInputZ, MissionSetResultZ, MissionPlanCompleteInputZ, MissionPlanCompleteResultZ, MissionClearInputZ, MissionClearResultZ, SkillCreateInputZ, SkillCreateResultZ, SkillUpdateInputZ, SkillUpdateResultZ, SkillDeleteInputZ, SkillDeleteResultZ, ConfigSetInputZ, ConfigResultZ, ConfigAddPaneInputZ, ConfigAddPaneResultZ, ConfigRemovePaneInputZ, ConfigRemovePaneResultZ, ConfigAddRowInputZ, ConfigAddRowResultZ, ConfigEnableTeamInputZ, ConfigEnableTeamResultZ, ConfigDisableTeamInputZ, ConfigDisableTeamResultZ, AssertionEntryZ, ValidationReportZ, ValidationAssertInputZ, ValidationAssertResultZ, ValidationReportInputZ, ValidationReportResultZ, WebhookAddInputZ, WebhookAddResultZ, WebhookRemoveInputZ, WebhookRemoveResultZ, WebhookTestInputZ, WebhookTestResultZ, AppSetRemoteAccessInputZ, AppSetRemoteAccessResultZ, DaemonShutdownInputZ, DaemonShutdownResultZ, AgentRegisterInputZ, AgentRegisterResultZ, AgentHeartbeatInputZ, AgentHeartbeatResultZ, AgentUnregisterInputZ, AgentUnregisterResultZ, StopReasonZ, AgentProviderZ, ContentBlockZ, SessionUpdateZ, ChatThreadUsageSummaryZ, ThreadMessageZ, ThreadIndexEntryZ, ThreadStateZ, ChatThreadListInputZ, ChatThreadListResultZ, ProviderOptionSelectionZ, ProviderModelInfoZ, ChatProvidersListInputZ, ChatProvidersListResultZ, ChatThreadCreateInputZ, ChatThreadCreateResultZ, ChatThreadDeleteInputZ, ChatThreadDeleteResultZ, ChatThreadRenameInputZ, ChatThreadRenameResultZ, ChatThreadSetProviderInputZ, ChatThreadSetProviderResultZ, ChatThreadGetInputZ, ChatThreadGetResultZ, ChatThreadUsageInputZ, ChatThreadUsageResultZ, ChatSessionSendInputZ, ChatSessionSendResultZ, ChatSessionCancelInputZ, ChatSessionCancelResultZ, ChatSessionEditFromTurnInputZ, ChatSessionEditFromTurnResultZ, ChatPermissionRespondInputZ, ChatPermissionRespondResultZ, ChatContextCaptureTerminalInputZ, ChatContextCaptureTerminalResultZ, ActionContractsZ, ACTION_NAMES;
 var init_actions_contract = __esm({
   "packages/contracts/src/actions-contract.ts"() {
     "use strict";
@@ -2232,6 +2283,22 @@ var init_actions_contract = __esm({
     });
     DaemonShutdownResultZ = z10.object({
       stopping: z10.literal(true)
+    });
+    AgentRegisterInputZ = AgentRegisterPayloadSchemaZ;
+    AgentRegisterResultZ = z10.object({ ok: z10.literal(true) });
+    AgentHeartbeatInputZ = AgentHeartbeatPayloadSchemaZ;
+    AgentHeartbeatResultZ = z10.object({
+      ok: z10.literal(true),
+      // `false` when no agent with that id was registered (the hook should
+      // re-register). The action still succeeds at the transport level.
+      known: z10.boolean()
+    });
+    AgentUnregisterInputZ = z10.object({
+      id: z10.string().min(1).max(256)
+    });
+    AgentUnregisterResultZ = z10.object({
+      ok: z10.literal(true),
+      removed: z10.boolean()
     });
     StopReasonZ = z10.enum([
       "end_turn",
@@ -2619,6 +2686,18 @@ var init_actions_contract = __esm({
       "daemon.shutdown": {
         input: DaemonShutdownInputZ,
         result: DaemonShutdownResultZ
+      },
+      "agent.register": {
+        input: AgentRegisterInputZ,
+        result: AgentRegisterResultZ
+      },
+      "agent.heartbeat": {
+        input: AgentHeartbeatInputZ,
+        result: AgentHeartbeatResultZ
+      },
+      "agent.unregister": {
+        input: AgentUnregisterInputZ,
+        result: AgentUnregisterResultZ
       },
       "chat.thread.list": {
         input: ChatThreadListInputZ,
@@ -3203,6 +3282,14 @@ var init_canonical_daemon = __esm({
 });
 
 // packages/daemon/src/launch.ts
+var launch_exports = {};
+__export(launch_exports, {
+  buildMasterAgentPrompt: () => buildMasterAgentPrompt,
+  buildPaneMap: () => buildPaneMap,
+  ensureTaskDocs: () => ensureTaskDocs,
+  launch: () => launch,
+  waitForPaneCommand: () => waitForPaneCommand
+});
 import { resolve as resolve5, join as join2 } from "node:path";
 import { execSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -3213,8 +3300,30 @@ function stripWidgetPanes(rows) {
     panes: row.panes.filter((p) => !p.type)
   })).filter((row) => row.panes.length > 0);
 }
+function sleepMs(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
 function configHash(config2) {
   return createHash("sha256").update(JSON.stringify(config2)).digest("hex").slice(0, 12);
+}
+function waitForPaneCommand(targetPane, expectedCommands, {
+  attempts = 20,
+  delayMs = 100,
+  getCurrentCommand = getPaneCurrentCommand,
+  sleep = sleepMs
+} = {}) {
+  const allowed = new Set(expectedCommands.map((command2) => command2.toLowerCase()));
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    try {
+      const current = getCurrentCommand(targetPane)?.trim().toLowerCase();
+      if (current && allowed.has(current)) return true;
+    } catch {
+    }
+    if (attempt < attempts - 1) {
+      sleep(delayMs);
+    }
+  }
+  return false;
 }
 function buildPaneMap(rows, dir, rootPaneId, splitPaneFn) {
   const rowSizes = computeSizes(rows);
@@ -5949,13 +6058,14 @@ var init_ws_route = __esm({
   }
 });
 
-// packages/daemon/src/widgets/lib/pane-comms.ts
+// packages/daemon/src/lib/tmux-exec.ts
 import { execFileSync as execFileSync3 } from "node:child_process";
+function runTmux2(args, options) {
+  return _executor2("tmux", args, options);
+}
 function tmux(...args) {
   try {
-    return _executor2("tmux", args, {
-      stdio: ["pipe", "pipe", "pipe"]
-    }).trim();
+    return _executor2("tmux", args, { stdio: ["pipe", "pipe", "pipe"] }).trim();
   } catch (error) {
     const stderr = error?.stderr?.toString() ?? "";
     if (stderr.includes("no server running") || stderr.includes("can't find session")) {
@@ -5964,6 +6074,15 @@ function tmux(...args) {
     throw error;
   }
 }
+var _executor2;
+var init_tmux_exec = __esm({
+  "packages/daemon/src/lib/tmux-exec.ts"() {
+    "use strict";
+    _executor2 = (cmd, args, options) => execFileSync3(cmd, args, { encoding: "utf-8", ...options }).toString();
+  }
+});
+
+// packages/daemon/src/widgets/lib/pane-comms.ts
 function listSessionPanes(session) {
   const format = [
     "#{pane_id}",
@@ -6013,7 +6132,7 @@ function sendLiteralToPane(_session, paneId, text) {
 function sendEnterToPane(_session, paneId) {
   tmux("send-keys", "-t", paneId, "Enter");
 }
-function sleepMs(ms) {
+function sleepMs2(ms) {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 function sendCommand(session, paneId, command2) {
@@ -6025,11 +6144,11 @@ function sendCommand(session, paneId, command2) {
   }
   if (status4 === "agent") {
     if (command2.length < 200) {
-      sleepMs(150);
+      sleepMs2(150);
     } else {
-      sleepMs(5e3);
+      sleepMs2(5e3);
       tmux("send-keys", "-t", paneId, "Enter");
-      sleepMs(2e3);
+      sleepMs2(2e3);
     }
     tmux("send-keys", "-t", paneId, "Enter");
     return true;
@@ -6039,7 +6158,7 @@ function sendCommand(session, paneId, command2) {
 }
 function captureLastLine(paneId) {
   try {
-    return _executor2("tmux", ["capture-pane", "-t", paneId, "-p", "-S", "-1"], {
+    return runTmux2(["capture-pane", "-t", paneId, "-p", "-S", "-1"], {
       encoding: "utf-8",
       stdio: ["ignore", "pipe", "ignore"]
     }).trim();
@@ -6047,11 +6166,11 @@ function captureLastLine(paneId) {
     return "";
   }
 }
-var _executor2, SHELL_COMMANDS;
+var SHELL_COMMANDS;
 var init_pane_comms = __esm({
   "packages/daemon/src/widgets/lib/pane-comms.ts"() {
     "use strict";
-    _executor2 = (cmd, args, options) => execFileSync3(cmd, args, { encoding: "utf-8", ...options }).toString();
+    init_tmux_exec();
     SHELL_COMMANDS = /* @__PURE__ */ new Set(["zsh", "bash", "sh", "fish"]);
   }
 });
@@ -10551,8 +10670,8 @@ function makeJsonRpcEndpoint(opts) {
   let resolveClosed;
   const pending = /* @__PURE__ */ new Map();
   const notificationHandlers = /* @__PURE__ */ new Set();
-  const closed = new Promise((resolve34) => {
-    resolveClosed = resolve34;
+  const closed = new Promise((resolve35) => {
+    resolveClosed = resolve35;
   });
   function log2(direction, payload) {
     opts.logger?.({ direction, payload });
@@ -10646,8 +10765,8 @@ function makeJsonRpcEndpoint(opts) {
       const id = nextId++;
       const envelope = { jsonrpc: "2.0", id, method };
       if (params !== void 0) envelope.params = params;
-      const promise = new Promise((resolve34, reject) => {
-        pending.set(id, { resolve: resolve34, reject });
+      const promise = new Promise((resolve35, reject) => {
+        pending.set(id, { resolve: resolve35, reject });
       });
       write(envelope);
       return promise;
@@ -12240,8 +12359,8 @@ function makeJsonRpcEndpoint2(opts) {
   let resolveClosed;
   const pending = /* @__PURE__ */ new Map();
   const notificationHandlers = /* @__PURE__ */ new Set();
-  const closed = new Promise((resolve34) => {
-    resolveClosed = resolve34;
+  const closed = new Promise((resolve35) => {
+    resolveClosed = resolve35;
   });
   function log2(direction, payload) {
     opts.logger?.({ direction, payload });
@@ -12344,8 +12463,8 @@ function makeJsonRpcEndpoint2(opts) {
       const id = nextId++;
       const envelope = { id, method };
       if (params !== void 0) envelope.params = params;
-      const promise = new Promise((resolve34, reject) => {
-        pending.set(id, { resolve: resolve34, reject });
+      const promise = new Promise((resolve35, reject) => {
+        pending.set(id, { resolve: resolve35, reject });
       });
       write(envelope);
       return promise;
@@ -13210,12 +13329,12 @@ function makePermissionCoordinator(opts) {
     async request(threadId, req) {
       await opts.beforeEmit?.(threadId);
       const requestId = randomUUID4();
-      return new Promise((resolve34) => {
+      return new Promise((resolve35) => {
         const timer = setTimeout(() => {
           remove(requestId)?.resolve(autoRejectResponse(req.options));
         }, opts.permissionTimeoutMs);
         timer.unref?.();
-        pending.set(requestId, { threadId, options: req.options, resolve: resolve34, timer });
+        pending.set(requestId, { threadId, options: req.options, resolve: resolve35, timer });
         opts.busEmit({
           type: "chat.permission.request",
           threadId,
@@ -13706,8 +13825,8 @@ function asReasoningEffort(value) {
   return KNOWN_REASONING_EFFORTS.includes(value) ? value : null;
 }
 async function dispatchCodexPrompt(input) {
-  const completed = new Promise((resolve34) => {
-    input.bindActivePrompt({ promptId: input.promptId, turnId: null, resolve: resolve34 });
+  const completed = new Promise((resolve35) => {
+    input.bindActivePrompt({ promptId: input.promptId, turnId: null, resolve: resolve35 });
   });
   try {
     const effortLevel = input.reasoningEffort ? asReasoningEffort(input.reasoningEffort) : null;
@@ -13896,8 +14015,8 @@ async function defaultProbeCodexModels(binaryPath, opts = {}) {
       }
       return accumulated;
     })();
-    const timeout = new Promise((resolve34) => {
-      timer = setTimeout(() => resolve34(null), timeoutMs);
+    const timeout = new Promise((resolve35) => {
+      timer = setTimeout(() => resolve35(null), timeoutMs);
     });
     const result = await Promise.race([work, timeout]);
     if (result === null) return null;
@@ -13947,10 +14066,10 @@ async function resolveFromPath3(binary) {
   return null;
 }
 async function defaultExec(cmd, args, opts = {}) {
-  return await new Promise((resolve34) => {
+  return await new Promise((resolve35) => {
     execFile2(cmd, args, { timeout: opts.timeoutMs }, (err, stdout, stderr) => {
       const exitCode = err && typeof err.code === "number" ? err.code : err ? null : 0;
-      resolve34({ stdout, stderr, code: exitCode });
+      resolve35({ stdout, stderr, code: exitCode });
     });
   });
 }
@@ -16507,9 +16626,753 @@ var init_workflow_store = __esm({
   }
 });
 
+// packages/daemon/src/lib/agent-discovery.ts
+function listAllTmuxPanes() {
+  const output = tmux("list-panes", "-a", "-F", FIELDS.join("	"));
+  if (!output) return [];
+  const panes = [];
+  for (const line of output.split("\n")) {
+    if (!line) continue;
+    const parts = line.split("	");
+    if (parts.length < FIXED_FIELDS) continue;
+    const [session, id, index, cmd, cwd, pid, width, height, active2, role, name, type] = parts;
+    if (!session || !id) continue;
+    panes.push({
+      session,
+      id,
+      index: parseInt(index, 10) || 0,
+      title: parts.slice(FIXED_FIELDS).join("	"),
+      currentCommand: cmd ?? "",
+      cwd: cwd || null,
+      pid: pid ? parseInt(pid, 10) || null : null,
+      width: parseInt(width, 10) || 0,
+      height: parseInt(height, 10) || 0,
+      active: active2 === "1",
+      role: role || null,
+      name: name || null,
+      type: type || null
+    });
+  }
+  return panes;
+}
+function inferAgentTool(currentCommand) {
+  const cmd = currentCommand.toLowerCase();
+  if (cmd.startsWith("codex")) return "codex";
+  if (cmd.startsWith("claude")) return "claude";
+  if (/^\d+\.\d+/.test(cmd)) return "claude";
+  return "unknown";
+}
+function discoverTmuxAgents(managedSessions) {
+  return listAllTmuxPanes().filter((pane) => isAgentPane(pane)).map((pane) => {
+    const managed = managedSessions.has(pane.session);
+    return {
+      id: `${pane.session}:${pane.id}`,
+      kind: managed ? "managed" : "tmux-unmanaged",
+      tool: inferAgentTool(pane.currentCommand),
+      name: agentIdentifier(pane),
+      status: isAgentBusy(pane) ? "busy" : "idle",
+      session: pane.session,
+      paneId: pane.id,
+      paneTitle: pane.title,
+      cwd: pane.cwd,
+      taskId: null,
+      taskTitle: null,
+      pid: pane.pid,
+      lastActivity: (/* @__PURE__ */ new Date()).toISOString(),
+      machineId: null,
+      machineName: null
+    };
+  });
+}
+var FIELDS, FIXED_FIELDS;
+var init_agent_discovery = __esm({
+  "packages/daemon/src/lib/agent-discovery.ts"() {
+    "use strict";
+    init_orchestrator();
+    init_tmux_exec();
+    FIELDS = [
+      "#{session_name}",
+      "#{pane_id}",
+      "#{pane_index}",
+      "#{pane_current_command}",
+      "#{pane_current_path}",
+      "#{pane_pid}",
+      "#{pane_width}",
+      "#{pane_height}",
+      "#{pane_active}",
+      "#{@ide_role}",
+      "#{@ide_name}",
+      "#{@ide_type}",
+      "#{pane_title}"
+    ];
+    FIXED_FIELDS = FIELDS.length - 1;
+  }
+});
+
+// packages/daemon/src/ssh-remote.ts
+var ssh_remote_exports = {};
+__export(ssh_remote_exports, {
+  buildRemoteServeScript: () => buildRemoteServeScript,
+  buildSshForwardArgs: () => buildSshForwardArgs,
+  parseSshConfigHosts: () => parseSshConfigHosts,
+  readSshRemotes: () => readSshRemotes,
+  remoteServeCommand: () => remoteServeCommand,
+  remotesFilePath: () => remotesFilePath,
+  shellQuote: () => shellQuote,
+  sshRemoteCommand: () => sshRemoteCommand,
+  validateRemoteName: () => validateRemoteName,
+  validateRemotePath: () => validateRemotePath,
+  validateSshAlias: () => validateSshAlias
+});
+import { spawn as spawn6, execFile as execFile3 } from "node:child_process";
+import { mkdir as mkdir2, readFile as readFile2, writeFile as writeFile2, chmod } from "node:fs/promises";
+import { existsSync as existsSync24 } from "node:fs";
+import { homedir as homedir8 } from "node:os";
+import { dirname as dirname10, join as join25, resolve as resolve17 } from "node:path";
+import { promisify } from "node:util";
+import { createServer } from "node:net";
+function remotesFilePath() {
+  return process.env.TMUX_IDE_SSH_REMOTES_FILE ?? join25(homedir8(), ".tmux-ide", "ssh-remotes.json");
+}
+async function readSshRemotes() {
+  return (await readStore()).remotes;
+}
+function sshConfigPath() {
+  return process.env.TMUX_IDE_SSH_CONFIG ?? join25(homedir8(), ".ssh", "config");
+}
+function emptyStore() {
+  return { version: 1, remotes: [] };
+}
+async function readStore() {
+  const file = remotesFilePath();
+  if (!existsSync24(file)) return emptyStore();
+  try {
+    const parsed = JSON.parse(await readFile2(file, "utf-8"));
+    if (parsed.version !== 1 || !Array.isArray(parsed.remotes)) return emptyStore();
+    return {
+      version: 1,
+      remotes: parsed.remotes.filter(isSshRemote)
+    };
+  } catch {
+    return emptyStore();
+  }
+}
+async function writeStore(store) {
+  const file = remotesFilePath();
+  await mkdir2(dirname10(file), { recursive: true, mode: 448 });
+  const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
+  await writeFile2(tmp, JSON.stringify(store, null, 2) + "\n", { encoding: "utf-8", mode: 384 });
+  await chmod(tmp, 384);
+  await import("node:fs/promises").then(({ rename: rename2 }) => rename2(tmp, file));
+}
+function isSshRemote(value) {
+  if (!value || typeof value !== "object") return false;
+  const remote = value;
+  if (typeof remote.name !== "string") return false;
+  if (typeof remote.host !== "string") return false;
+  if (typeof remote.path !== "string") return false;
+  if (typeof remote.addedAt !== "string") return false;
+  if (remote.localPort !== void 0 && !isValidPort(remote.localPort)) return false;
+  if (remote.remotePort !== void 0 && !isValidPort(remote.remotePort)) return false;
+  if (remote.lastLocalPort !== void 0 && !isValidPort(remote.lastLocalPort)) return false;
+  if (remote.lastLaunchedAt !== void 0 && typeof remote.lastLaunchedAt !== "string")
+    return false;
+  return true;
+}
+function isValidPort(port) {
+  return Number.isInteger(port) && port >= 1 && port <= 65535;
+}
+function parsePort(value, label) {
+  if (value === void 0 || value === false) return void 0;
+  if (value === true || value.trim() === "") {
+    throw new IdeError(`${label} requires a numeric value`, { code: "USAGE" });
+  }
+  const port = Number(value);
+  if (!isValidPort(port)) {
+    throw new IdeError(`${label} must be an integer from 1 to 65535`, { code: "USAGE" });
+  }
+  return port;
+}
+function parseSshConfigHosts(contents) {
+  const hosts = /* @__PURE__ */ new Set();
+  for (const rawLine of contents.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith("#")) continue;
+    const match = line.match(/^Host\s+(.+)$/i);
+    if (!match) continue;
+    for (const host of match[1].split(/\s+/)) {
+      if (!host || host.includes("*") || host.includes("?") || host.startsWith("!")) continue;
+      hosts.add(host);
+    }
+  }
+  return [...hosts].sort((a, b) => a.localeCompare(b));
+}
+function validateRemoteName(name) {
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(name)) {
+    throw new IdeError(
+      "Remote name must start with a letter or number and contain only letters, numbers, dot, underscore, or dash.",
+      { code: "USAGE" }
+    );
+  }
+}
+function validateSshAlias(host) {
+  if (!/^[A-Za-z0-9][A-Za-z0-9._:@+-]{0,127}$/.test(host)) {
+    throw new IdeError(
+      "SSH host must be a config alias or host string without whitespace or shell metacharacters.",
+      { code: "USAGE" }
+    );
+  }
+  if (host.startsWith("-")) {
+    throw new IdeError("SSH host cannot start with '-'", { code: "USAGE" });
+  }
+}
+function validateRemotePath(path4) {
+  if (!path4 || /[\0\r\n]/.test(path4)) {
+    throw new IdeError("Remote path must be a single non-empty path.", { code: "USAGE" });
+  }
+}
+function shellQuote(value) {
+  return `'${value.replace(/'/g, `'\\''`)}'`;
+}
+function buildRemoteServeScript(remotePath, remotePort) {
+  validateRemotePath(remotePath);
+  if (!isValidPort(remotePort)) {
+    throw new IdeError("Remote port must be an integer from 1 to 65535", { code: "USAGE" });
+  }
+  const quotedPath = shellQuote(remotePath);
+  return [
+    `cd ${quotedPath}`,
+    "mkdir -p .tmux-ide",
+    'if ! command -v tmux-ide >/dev/null 2>&1; then echo "tmux-ide not found on remote PATH" >&2; exit 127; fi',
+    `nohup tmux-ide __remote-serve --port ${remotePort} > .tmux-ide/remote-daemon.log 2>&1 < /dev/null &`
+  ].join(" && ");
+}
+function buildSshForwardArgs(opts) {
+  validateSshAlias(opts.host);
+  if (!isValidPort(opts.localPort) || !isValidPort(opts.remotePort)) {
+    throw new IdeError("SSH tunnel ports must be integers from 1 to 65535", { code: "USAGE" });
+  }
+  return [
+    "-N",
+    "-L",
+    `${DEFAULT_LOCAL_HOST}:${opts.localPort}:127.0.0.1:${opts.remotePort}`,
+    "-o",
+    "ExitOnForwardFailure=yes",
+    "-o",
+    "ServerAliveInterval=15",
+    // The tunnel must be a dedicated connection we own. Under ControlMaster
+    // multiplexing (common with SSM ProxyCommand setups) the `-N` client can
+    // exit immediately after handing off to the persistent master, taking its
+    // forward down with it. Disable mux for this one connection.
+    "-o",
+    "ControlMaster=no",
+    "-o",
+    "ControlPath=none",
+    opts.host
+  ];
+}
+async function pickFreeLocalPort() {
+  const server = createServer();
+  return await new Promise((resolvePort2, reject) => {
+    server.once("error", reject);
+    server.listen(0, DEFAULT_LOCAL_HOST, () => {
+      const address = server.address();
+      const port = typeof address === "object" && address ? address.port : null;
+      server.close(() => {
+        if (port) resolvePort2(port);
+        else reject(new IdeError("Could not allocate a local tunnel port", { code: "PORT_ERROR" }));
+      });
+    });
+  });
+}
+async function assertLocalPortFree(port) {
+  const server = createServer();
+  await new Promise((resolvePort2, reject) => {
+    server.once(
+      "error",
+      () => reject(new IdeError(`Local port ${port} is already in use`, { code: "PORT_IN_USE" }))
+    );
+    server.listen(port, DEFAULT_LOCAL_HOST, () => {
+      server.close(() => resolvePort2());
+    });
+  });
+}
+function openInBrowser(url) {
+  const cmd = process.platform === "darwin" ? "open" : process.platform === "win32" ? "start" : "xdg-open";
+  try {
+    const child = spawn6(cmd, [url], { detached: true, stdio: "ignore" });
+    child.unref();
+  } catch {
+  }
+}
+async function waitForHealth(url, timeoutMs = 15e3) {
+  const deadline = Date.now() + timeoutMs;
+  let lastError = "";
+  while (Date.now() < deadline) {
+    try {
+      const controller = new AbortController();
+      setTimeout(() => controller.abort(), 750).unref?.();
+      const res = await fetch(`${url}healthz`, { signal: controller.signal });
+      if (res.ok) return;
+      lastError = `HTTP ${res.status}`;
+    } catch (err) {
+      lastError = err instanceof Error ? err.message : String(err);
+    }
+    await new Promise((resolveTimer) => setTimeout(resolveTimer, 250));
+  }
+  throw new IdeError(
+    `Remote dashboard did not become healthy through the SSH tunnel: ${lastError}`,
+    {
+      code: "REMOTE_UNHEALTHY"
+    }
+  );
+}
+async function runRemoteServe(remote, remotePort) {
+  const script = buildRemoteServeScript(remote.path, remotePort);
+  try {
+    await execFileAsync("ssh", [remote.host, script], { timeout: 1e4 });
+  } catch (err) {
+    const stderr = err instanceof Error && "stderr" in err && typeof err.stderr === "string" ? err.stderr.trim() : "";
+    throw new IdeError(`Failed to start tmux-ide on ${remote.host}${stderr ? `: ${stderr}` : ""}`, {
+      code: "SSH_REMOTE_START_FAILED"
+    });
+  }
+}
+async function startTunnel(remote, localPort, remotePort) {
+  const args = buildSshForwardArgs({ host: remote.host, localPort, remotePort });
+  const child = spawn6("ssh", args, { detached: true, stdio: "ignore" });
+  child.unref();
+  await new Promise((resolveStart, reject) => {
+    const timer = setTimeout(resolveStart, 500);
+    child.once("exit", (code, signal) => {
+      clearTimeout(timer);
+      reject(
+        new IdeError(
+          `SSH tunnel exited before it was ready (${signal ?? `code ${code ?? "unknown"}`})`,
+          { code: "SSH_TUNNEL_FAILED" }
+        )
+      );
+    });
+    child.once("error", (err) => {
+      clearTimeout(timer);
+      reject(
+        new IdeError(`Failed to start ssh tunnel: ${err.message}`, { code: "SSH_TUNNEL_FAILED" })
+      );
+    });
+  });
+  return {
+    pid: child.pid ?? 0,
+    stop: () => {
+      if (!child.pid) return;
+      try {
+        process.kill(-child.pid, "SIGTERM");
+      } catch {
+        try {
+          child.kill("SIGTERM");
+        } catch {
+        }
+      }
+    }
+  };
+}
+function printRemotes(remotes) {
+  if (remotes.length === 0) {
+    console.log("No SSH remotes configured");
+    return;
+  }
+  for (const remote of remotes) {
+    const local = remote.localPort ? ` local:${remote.localPort}` : "";
+    const remotePort = remote.remotePort ? ` remote:${remote.remotePort}` : "";
+    console.log(`  ${remote.name} \u2014 ${remote.host}:${remote.path}${local}${remotePort}`);
+  }
+}
+async function listHosts(json2) {
+  const file = sshConfigPath();
+  const hosts = existsSync24(file) ? parseSshConfigHosts(await readFile2(file, "utf-8")) : [];
+  if (json2) {
+    console.log(JSON.stringify({ hosts }));
+  } else if (hosts.length === 0) {
+    console.log("No concrete SSH hosts found");
+  } else {
+    for (const host of hosts) console.log(host);
+  }
+}
+async function addRemote(opts) {
+  const name = opts.args?.[0];
+  const host = opts.values?.host;
+  const path4 = opts.values?.path;
+  if (!name || typeof host !== "string" || typeof path4 !== "string") {
+    throw new IdeError(
+      "Usage: tmux-ide remote ssh add <name> --host <ssh-host> --path <remote-project-dir> [--local-port N] [--remote-port N]",
+      { code: "USAGE" }
+    );
+  }
+  validateRemoteName(name);
+  validateSshAlias(host);
+  validateRemotePath(path4);
+  const localPort = parsePort(opts.values?.["local-port"], "--local-port");
+  const remotePort = parsePort(opts.values?.["remote-port"], "--remote-port");
+  const store = await readStore();
+  const next = {
+    name,
+    host,
+    path: path4,
+    localPort,
+    remotePort,
+    addedAt: (/* @__PURE__ */ new Date()).toISOString()
+  };
+  const index = store.remotes.findIndex((remote) => remote.name === name);
+  if (index >= 0) store.remotes[index] = next;
+  else store.remotes.push(next);
+  await writeStore(store);
+  if (opts.json) console.log(JSON.stringify({ ok: true, remote: next }));
+  else console.log(`Saved SSH remote ${name} (${host}:${path4})`);
+}
+async function removeRemote(opts) {
+  const name = opts.args?.[0];
+  if (!name) {
+    throw new IdeError("Usage: tmux-ide remote ssh remove <name>", { code: "USAGE" });
+  }
+  const store = await readStore();
+  const before = store.remotes.length;
+  store.remotes = store.remotes.filter((remote) => remote.name !== name);
+  await writeStore(store);
+  const removed = store.remotes.length !== before;
+  if (opts.json) console.log(JSON.stringify({ ok: true, removed }));
+  else
+    console.log(removed ? `Removed SSH remote ${name}` : `SSH remote ${name} was not configured`);
+}
+async function getConfiguredRemote(name) {
+  if (!name) {
+    throw new IdeError("Usage: tmux-ide remote ssh launch <name>", { code: "USAGE" });
+  }
+  validateRemoteName(name);
+  const store = await readStore();
+  const remote = store.remotes.find((candidate) => candidate.name === name);
+  if (!remote) {
+    throw new IdeError(`SSH remote ${name} is not configured`, { code: "REMOTE_NOT_FOUND" });
+  }
+  return remote;
+}
+async function launchRemote(opts) {
+  const remote = await getConfiguredRemote(opts.args?.[0]);
+  const remotePort = remote.remotePort ?? DEFAULT_REMOTE_PORT;
+  const localPort = remote.localPort ?? await pickFreeLocalPort();
+  if (remote.localPort) await assertLocalPortFree(localPort);
+  await runRemoteServe(remote, remotePort);
+  const tunnel = await startTunnel(remote, localPort, remotePort);
+  const url = `http://${DEFAULT_LOCAL_HOST}:${localPort}/`;
+  try {
+    await waitForHealth(url);
+  } catch (err) {
+    tunnel.stop();
+    throw err;
+  }
+  const store = await readStore();
+  const stored = store.remotes.find((candidate) => candidate.name === remote.name);
+  if (stored) {
+    stored.lastLocalPort = localPort;
+    stored.lastLaunchedAt = (/* @__PURE__ */ new Date()).toISOString();
+    await writeStore(store);
+  }
+  if (opts.json) {
+    console.log(
+      JSON.stringify({ ok: true, url, localPort, remotePort, tunnelPid: tunnel.pid, remote })
+    );
+  } else {
+    console.log(`Dashboard: ${url}`);
+    console.log(`Tunnel: ${remote.host} 127.0.0.1:${localPort} -> 127.0.0.1:${remotePort}`);
+  }
+  if (opts.values?.["no-open"] !== true) openInBrowser(url);
+}
+async function statusRemote(opts) {
+  const remote = await getConfiguredRemote(opts.args?.[0]);
+  const localPort = remote.localPort;
+  const url = localPort ? `http://${DEFAULT_LOCAL_HOST}:${localPort}/` : null;
+  let healthy = false;
+  if (url) {
+    try {
+      const res = await fetch(`${url}healthz`);
+      healthy = res.ok;
+    } catch {
+      healthy = false;
+    }
+  }
+  if (opts.json) {
+    console.log(JSON.stringify({ remote, url, healthy }));
+  } else {
+    console.log(`Remote: ${remote.name}`);
+    console.log(`SSH host: ${remote.host}`);
+    console.log(`Path: ${remote.path}`);
+    console.log(`Remote daemon bind: 127.0.0.1:${remote.remotePort ?? DEFAULT_REMOTE_PORT}`);
+    if (url) console.log(`Local URL: ${url} (${healthy ? "healthy" : "not reachable"})`);
+    else console.log("Local URL: dynamic; run launch to allocate a tunnel port");
+  }
+}
+async function sshRemoteCommand(opts) {
+  const sub = opts.args?.[0];
+  const args = opts.args?.slice(1) ?? [];
+  switch (sub) {
+    case "hosts":
+      await listHosts(opts.json);
+      break;
+    case "list": {
+      const store = await readStore();
+      if (opts.json) console.log(JSON.stringify({ remotes: store.remotes }));
+      else printRemotes(store.remotes);
+      break;
+    }
+    case "add":
+      await addRemote({ ...opts, args });
+      break;
+    case "remove":
+      await removeRemote({ ...opts, args });
+      break;
+    case "launch":
+    case "dashboard":
+      await launchRemote({ ...opts, args });
+      break;
+    case "status":
+      await statusRemote({ ...opts, args });
+      break;
+    default:
+      throw new IdeError(
+        "Usage: tmux-ide remote ssh hosts|list|add|remove|launch|dashboard|status",
+        { code: "USAGE" }
+      );
+  }
+}
+async function remoteServeCommand(opts) {
+  const port = parsePort(opts.port, "--port") ?? DEFAULT_REMOTE_PORT;
+  const dir = resolve17(".");
+  const { readConfig: readConfig2, getSessionName: getSessionName2 } = await Promise.resolve().then(() => (init_yaml_io(), yaml_io_exports));
+  const { launch: launch2 } = await Promise.resolve().then(() => (init_launch(), launch_exports));
+  const { startEmbeddedDaemon: startEmbeddedDaemon2 } = await Promise.resolve().then(() => (init_daemon_embed(), daemon_embed_exports));
+  const { readCanonicalDaemonInfo: readCanonicalDaemonInfo2, isCanonicalDaemonAlive: isCanonicalDaemonAlive2 } = await Promise.resolve().then(() => (init_canonical_daemon(), canonical_daemon_exports));
+  const existing = readCanonicalDaemonInfo2();
+  if (existing && existing.port === port && existing.bindHostname === "127.0.0.1") {
+    if (await isCanonicalDaemonAlive2(existing)) return;
+  }
+  const { config: config2 } = readConfig2(dir);
+  const { name: fallbackName } = getSessionName2(dir);
+  const sessionName = config2.name ?? fallbackName;
+  await launch2(dir, { attach: false });
+  const handle = await startEmbeddedDaemon2({
+    sessionName,
+    port,
+    bindHostname: "127.0.0.1"
+  });
+  const stop2 = async () => {
+    await handle.stop({ gracefulMs: 500 });
+  };
+  process.once("SIGINT", () => void stop2().finally(() => process.exit(0)));
+  process.once("SIGTERM", () => void stop2().finally(() => process.exit(0)));
+  await new Promise(() => void 0);
+}
+var execFileAsync, DEFAULT_REMOTE_PORT, DEFAULT_LOCAL_HOST;
+var init_ssh_remote = __esm({
+  "packages/daemon/src/ssh-remote.ts"() {
+    "use strict";
+    init_errors2();
+    execFileAsync = promisify(execFile3);
+    DEFAULT_REMOTE_PORT = 6060;
+    DEFAULT_LOCAL_HOST = "127.0.0.1";
+  }
+});
+
+// packages/daemon/src/lib/agent-remotes.ts
+function sshMachineId(remoteName) {
+  return `${SSH_MACHINE_PREFIX}${remoteName}`;
+}
+function tunnelPort(remote) {
+  return remote.localPort ?? remote.lastLocalPort ?? null;
+}
+function tunnelBaseUrl(remote) {
+  const port = tunnelPort(remote);
+  return port ? `http://127.0.0.1:${port}` : null;
+}
+async function resolveSshMachineUrl(machineId) {
+  if (!machineId.startsWith(SSH_MACHINE_PREFIX)) return null;
+  const name = machineId.slice(SSH_MACHINE_PREFIX.length);
+  const remote = (await readSshRemotes()).find((candidate) => candidate.name === name);
+  return remote ? tunnelBaseUrl(remote) : null;
+}
+async function fetchAgents(baseUrl) {
+  try {
+    const controller = new AbortController();
+    const tid = setTimeout(() => controller.abort(), PROBE_TIMEOUT_MS);
+    const res = await fetch(`${baseUrl}/api/agents`, {
+      signal: controller.signal,
+      redirect: "manual"
+    });
+    clearTimeout(tid);
+    if (!res.ok) return null;
+    const parsed = AgentListSchemaZ.safeParse(await res.json());
+    return parsed.success ? parsed.data.agents : null;
+  } catch {
+    return null;
+  }
+}
+async function listSshAgentSources() {
+  const remotes = (await readSshRemotes()).filter((remote) => tunnelPort(remote) !== null);
+  const probes = remotes.map(async (remote) => {
+    const agents = await fetchAgents(tunnelBaseUrl(remote));
+    if (!agents) return null;
+    return { machineId: sshMachineId(remote.name), machineName: remote.name, agents };
+  });
+  return (await Promise.all(probes)).filter((source) => !!source);
+}
+var SSH_MACHINE_PREFIX, PROBE_TIMEOUT_MS;
+var init_agent_remotes = __esm({
+  "packages/daemon/src/lib/agent-remotes.ts"() {
+    "use strict";
+    init_src2();
+    init_ssh_remote();
+    SSH_MACHINE_PREFIX = "ssh:";
+    PROBE_TIMEOUT_MS = 2500;
+  }
+});
+
+// packages/daemon/src/lib/agent-registry.ts
+function getDefaultExternalAgentRegistry() {
+  if (!_default2) _default2 = new ExternalAgentRegistry();
+  return _default2;
+}
+function sanitizeDisplay(value) {
+  const chars = [];
+  for (const ch of value) {
+    const code = ch.codePointAt(0);
+    if (code < 32 || code === 127 || code >= 128 && code <= 159) continue;
+    chars.push(ch);
+    if (chars.length >= 512) break;
+  }
+  return chars.join("");
+}
+function sanitizeRemoteAgent(a, remote) {
+  const machineId = sanitizeDisplay(remote.machineId);
+  return {
+    ...a,
+    id: `${machineId}:${sanitizeDisplay(a.id)}`,
+    name: sanitizeDisplay(a.name),
+    session: a.session === null ? null : sanitizeDisplay(a.session),
+    paneTitle: a.paneTitle === null ? null : sanitizeDisplay(a.paneTitle),
+    cwd: a.cwd === null ? null : sanitizeDisplay(a.cwd),
+    taskTitle: a.taskTitle === null ? null : sanitizeDisplay(a.taskTitle),
+    machineId,
+    machineName: sanitizeDisplay(remote.machineName)
+  };
+}
+function aggregateHqAgents(localAgents, selfMachineName, remotes) {
+  const selfName = sanitizeDisplay(selfMachineName);
+  const out = localAgents.map((a) => ({
+    ...a,
+    machineId: null,
+    machineName: selfName
+  }));
+  for (const remote of remotes) {
+    for (const a of remote.agents) {
+      out.push(sanitizeRemoteAgent(a, remote));
+    }
+  }
+  return out;
+}
+function mergeLocalAgents(tmuxAgents, externalAgents) {
+  const tmuxPids = new Set(
+    tmuxAgents.map((a) => a.pid).filter((pid) => pid !== null)
+  );
+  const externalOnly = externalAgents.filter((a) => a.pid === null || !tmuxPids.has(a.pid));
+  return [...tmuxAgents, ...externalOnly];
+}
+var ExternalAgentRegistry, _default2;
+var init_agent_registry = __esm({
+  "packages/daemon/src/lib/agent-registry.ts"() {
+    "use strict";
+    ExternalAgentRegistry = class {
+      agents = /* @__PURE__ */ new Map();
+      offlineAfterMs;
+      evictAfterMs;
+      maxEntries;
+      constructor(opts) {
+        this.offlineAfterMs = opts?.offlineAfterMs ?? 5 * 6e4;
+        this.evictAfterMs = opts?.evictAfterMs ?? 30 * 6e4;
+        this.maxEntries = opts?.maxEntries ?? 1e3;
+      }
+      evictOldest() {
+        let oldestId = null;
+        let oldestSeen = Infinity;
+        for (const [id, entry] of this.agents) {
+          if (entry.lastSeen < oldestSeen) {
+            oldestSeen = entry.lastSeen;
+            oldestId = id;
+          }
+        }
+        if (oldestId !== null) this.agents.delete(oldestId);
+      }
+      register(payload, now = Date.now()) {
+        const existing = this.agents.get(payload.id);
+        if (!existing && this.agents.size >= this.maxEntries) this.evictOldest();
+        this.agents.set(payload.id, {
+          id: payload.id,
+          tool: payload.tool,
+          name: payload.name ?? existing?.name ?? payload.id.slice(0, 12),
+          cwd: payload.cwd ?? existing?.cwd ?? null,
+          session: payload.session ?? existing?.session ?? null,
+          pid: payload.pid ?? existing?.pid ?? null,
+          status: payload.status ?? existing?.status ?? "idle",
+          taskTitle: payload.taskTitle ?? existing?.taskTitle ?? null,
+          registeredAt: existing?.registeredAt ?? now,
+          lastSeen: now
+        });
+      }
+      heartbeat(payload, now = Date.now()) {
+        const entry = this.agents.get(payload.id);
+        if (!entry) return false;
+        entry.lastSeen = now;
+        if (payload.status) entry.status = payload.status;
+        if (payload.taskTitle !== void 0) entry.taskTitle = payload.taskTitle;
+        return true;
+      }
+      unregister(id) {
+        return this.agents.delete(id);
+      }
+      /** Drop entries that have been silent past the eviction window. */
+      prune(now = Date.now()) {
+        for (const [id, entry] of this.agents) {
+          if (now - entry.lastSeen > this.evictAfterMs) this.agents.delete(id);
+        }
+      }
+      /** Snapshot as unified AgentRecords; stale entries surface as `offline`. */
+      list(now = Date.now()) {
+        this.prune(now);
+        return Array.from(this.agents.values()).map((entry) => {
+          const stale = now - entry.lastSeen > this.offlineAfterMs;
+          return {
+            id: entry.id,
+            kind: "external",
+            tool: entry.tool,
+            name: entry.name,
+            status: stale ? "offline" : entry.status,
+            session: entry.session,
+            paneId: null,
+            paneTitle: null,
+            cwd: entry.cwd,
+            taskId: null,
+            taskTitle: entry.taskTitle,
+            pid: entry.pid,
+            lastActivity: new Date(entry.lastSeen).toISOString(),
+            machineId: null,
+            machineName: null
+          };
+        });
+      }
+    };
+    _default2 = null;
+  }
+});
+
 // packages/daemon/src/command-center/schemas.ts
 import { z as z20 } from "zod";
-var updateTaskSchema, createTaskSchema, savePlanSchema, savePlanContentSchema, sendCommandSchema, createMilestoneSchema, updateMilestoneSchema, updateAssertionSchema, triggerResearchSchema, launchSchema, stopSchema, skillNameRegex, createSkillSchema, updateSkillSchema;
+var updateTaskSchema, createTaskSchema, savePlanSchema, savePlanContentSchema, sendCommandSchema, agentSendSchema, createMilestoneSchema, updateMilestoneSchema, updateAssertionSchema, triggerResearchSchema, launchSchema, stopSchema, skillNameRegex, createSkillSchema, updateSkillSchema;
 var init_schemas = __esm({
   "packages/daemon/src/command-center/schemas.ts"() {
     "use strict";
@@ -16536,6 +17399,12 @@ var init_schemas = __esm({
     sendCommandSchema = z20.object({
       target: z20.string().min(1, "Target pane is required"),
       message: z20.string().min(1, "Message is required"),
+      noEnter: z20.boolean().optional()
+    });
+    agentSendSchema = z20.object({
+      id: z20.string().min(1).max(512),
+      machineId: z20.string().min(1).max(256).nullish(),
+      message: z20.string().min(1, "Message is required").max(1e4),
       noEnter: z20.boolean().optional()
     });
     createMilestoneSchema = z20.object({
@@ -16891,11 +17760,11 @@ var init_errors6 = __esm({
 });
 
 // packages/daemon/src/git/git-service.ts
-import { execFile as execFile3 } from "node:child_process";
+import { execFile as execFile4 } from "node:child_process";
 import { Effect } from "effect";
 function runRaw(cwd, args) {
-  return new Promise((resolve34, reject) => {
-    execFile3(
+  return new Promise((resolve35, reject) => {
+    execFile4(
       "git",
       args,
       {
@@ -16916,7 +17785,7 @@ function runRaw(cwd, args) {
           reject(failure);
           return;
         }
-        resolve34({ stdout: out, stderr: errOut });
+        resolve35({ stdout: out, stderr: errOut });
       }
     );
   });
@@ -17169,7 +18038,7 @@ var init_git_service = __esm({
 });
 
 // packages/daemon/src/git/github-service.ts
-import { execFile as execFile4 } from "node:child_process";
+import { execFile as execFile5 } from "node:child_process";
 import { Effect as Effect2, Data as Data2 } from "effect";
 function toPayload2(err) {
   switch (err._tag) {
@@ -17192,8 +18061,8 @@ function toPayload2(err) {
   }
 }
 function runCli(cmd, args, cwd) {
-  return new Promise((resolve34, reject) => {
-    execFile4(
+  return new Promise((resolve35, reject) => {
+    execFile5(
       cmd,
       args,
       {
@@ -17218,7 +18087,7 @@ function runCli(cmd, args, cwd) {
           });
           return;
         }
-        resolve34({ stdout: out, stderr: errOut });
+        resolve35({ stdout: out, stderr: errOut });
       }
     );
   });
@@ -17551,17 +18420,17 @@ var init_github_service = __esm({
 });
 
 // packages/daemon/src/lib/terminals-store.ts
-import { existsSync as existsSync24, mkdirSync as mkdirSync20, readFileSync as readFileSync19, renameSync as renameSync14, writeFileSync as writeFileSync19 } from "node:fs";
-import { dirname as dirname10, join as join25 } from "node:path";
+import { existsSync as existsSync25, mkdirSync as mkdirSync20, readFileSync as readFileSync19, renameSync as renameSync14, writeFileSync as writeFileSync19 } from "node:fs";
+import { dirname as dirname11, join as join26 } from "node:path";
 function path(dir) {
-  return join25(dir, TERMINALS_FILE);
+  return join26(dir, TERMINALS_FILE);
 }
 function ensureDir(dir) {
-  mkdirSync20(dirname10(path(dir)), { recursive: true });
+  mkdirSync20(dirname11(path(dir)), { recursive: true });
 }
 function loadTerminals(dir) {
   const file = path(dir);
-  if (!existsSync24(file)) return [];
+  if (!existsSync25(file)) return [];
   try {
     const body = readFileSync19(file, "utf-8");
     const parsed = JSON.parse(body);
@@ -17642,9 +18511,9 @@ __export(auth_service_exports, {
   AuthService: () => AuthService
 });
 import * as crypto2 from "node:crypto";
-import { readFileSync as readFileSync20, existsSync as existsSync25 } from "node:fs";
-import { join as join26 } from "node:path";
-import { homedir as homedir8 } from "node:os";
+import { readFileSync as readFileSync20, existsSync as existsSync26 } from "node:fs";
+import { join as join27 } from "node:path";
+import { homedir as homedir9 } from "node:os";
 function base64url(buf) {
   const b = typeof buf === "string" ? Buffer.from(buf) : buf;
   return b.toString("base64url");
@@ -17786,9 +18655,9 @@ var init_auth_service = __esm({
       }
       checkSSHKeyAuthorization(userId, publicKey) {
         try {
-          const home = userId === process.env.USER ? homedir8() : `/home/${userId}`;
-          const authKeysPath = join26(home, ".ssh", "authorized_keys");
-          if (!existsSync25(authKeysPath)) return false;
+          const home = userId === process.env.USER ? homedir9() : `/home/${userId}`;
+          const authKeysPath = join27(home, ".ssh", "authorized_keys");
+          if (!existsSync26(authKeysPath)) return false;
           const authorizedKeys = readFileSync20(authKeysPath, "utf-8");
           const parts = publicKey.trim().split(" ");
           const keyData = parts.length > 1 ? parts[1] : parts[0];
@@ -17847,7 +18716,7 @@ var init_types2 = __esm({
 });
 
 // packages/daemon/src/command-center/search.ts
-import { spawn as spawn6 } from "node:child_process";
+import { spawn as spawn7 } from "node:child_process";
 import { createInterface } from "node:readline";
 import { z as z21 } from "zod";
 async function resolveRipgrepPath() {
@@ -17993,7 +18862,7 @@ function relativizePath(absolute, searchRoot) {
 }
 async function* runSearch(opts) {
   const args = buildRgArgs(opts.query, opts.searchRoot);
-  const spawnFn = opts.spawn ?? spawn6;
+  const spawnFn = opts.spawn ?? spawn7;
   const startedAt = Date.now();
   let child;
   try {
@@ -18052,12 +18921,12 @@ async function* runSearch(opts) {
     rl.close();
   }
   const exit = await new Promise(
-    (resolve34) => {
+    (resolve35) => {
       if (child.exitCode !== null || child.signalCode !== null) {
-        resolve34({ code: child.exitCode, signal: child.signalCode });
+        resolve35({ code: child.exitCode, signal: child.signalCode });
         return;
       }
-      child.once("exit", (code, sig) => resolve34({ code, signal: sig }));
+      child.once("exit", (code, sig) => resolve35({ code, signal: sig }));
     }
   );
   const aborted = opts.signal.aborted;
@@ -18095,7 +18964,7 @@ var init_search = __esm({
 
 // packages/daemon/src/command-center/search-replace.ts
 import { readFileSync as readFileSync21, renameSync as renameSync15, rmSync as rmSync4, statSync as statSync5, writeFileSync as writeFileSync20 } from "node:fs";
-import { dirname as dirname11, resolve as pathResolve } from "node:path";
+import { dirname as dirname12, resolve as pathResolve } from "node:path";
 import { z as z22 } from "zod";
 function resolveSandboxedPath(sessionDir, relPath) {
   if (!relPath) return null;
@@ -18184,7 +19053,7 @@ function executeReplace(sessionDir, body, deps2 = {}) {
       continue;
     }
     try {
-      const parent = dirname11(target);
+      const parent = dirname12(target);
       if (!parent) {
         skipped.push({ path: file.path, reason: "write_failed" });
         continue;
@@ -18229,26 +19098,26 @@ var init_search_replace = __esm({
 });
 
 // packages/daemon/src/command-center/static.ts
-import { existsSync as existsSync26, readFileSync as readFileSync22, statSync as statSync6 } from "node:fs";
-import { resolve as resolve17, dirname as dirname12, join as join27, extname } from "node:path";
+import { existsSync as existsSync27, readFileSync as readFileSync22, statSync as statSync6 } from "node:fs";
+import { resolve as resolve18, dirname as dirname13, join as join28, extname } from "node:path";
 import { fileURLToPath as fileURLToPath3 } from "node:url";
 function resolveDashboardOut() {
   const override = process.env.TMUX_IDE_DASHBOARD_OUT;
-  if (override) return existsSync26(override) ? override : null;
-  const here = dirname12(fileURLToPath3(import.meta.url));
+  if (override) return existsSync27(override) ? override : null;
+  const here = dirname13(fileURLToPath3(import.meta.url));
   let current = here;
   let workspaceMatch = null;
   let firstMatch = null;
   for (let i = 0; i < 10; i += 1) {
-    const candidate = join27(current, "dashboard", "dist");
-    if (existsSync26(candidate)) {
+    const candidate = join28(current, "dashboard", "dist");
+    if (existsSync27(candidate)) {
       if (firstMatch === null) firstMatch = candidate;
-      if (existsSync26(join27(current, "pnpm-workspace.yaml"))) {
+      if (existsSync27(join28(current, "pnpm-workspace.yaml"))) {
         workspaceMatch = candidate;
         break;
       }
     }
-    const parent = resolve17(current, "..");
+    const parent = resolve18(current, "..");
     if (parent === current) break;
     current = parent;
   }
@@ -18257,7 +19126,7 @@ function resolveDashboardOut() {
 function readCached(filePath) {
   const cached = fileCache.get(filePath);
   if (cached) return cached;
-  if (!existsSync26(filePath) || !statSync6(filePath).isFile()) return null;
+  if (!existsSync27(filePath) || !statSync6(filePath).isFile()) return null;
   const ext = extname(filePath);
   const mimeType = MIME_TYPES[ext] ?? "application/octet-stream";
   const content = new Uint8Array(readFileSync22(filePath));
@@ -18292,10 +19161,10 @@ function serveDashboard() {
         "Cache-Control": cacheControl(path4, file.mimeType)
       }
     });
-    const exactPath = join27(outDir, normalized);
+    const exactPath = join28(outDir, normalized);
     const exactFile = readCached(exactPath);
     if (exactFile) return serve(exactFile);
-    const rootIndex = join27(outDir, "index.html");
+    const rootIndex = join28(outDir, "index.html");
     const rootFile = readCached(rootIndex);
     if (rootFile) return serve(rootFile);
     await next();
@@ -18321,14 +19190,14 @@ var init_static = __esm({
 });
 
 // packages/daemon/src/notes/service.ts
-import { existsSync as existsSync27, mkdirSync as mkdirSync21, readFileSync as readFileSync23, renameSync as renameSync16, statSync as statSync7, writeFileSync as writeFileSync21 } from "node:fs";
-import { dirname as dirname13, join as join28 } from "node:path";
+import { existsSync as existsSync28, mkdirSync as mkdirSync21, readFileSync as readFileSync23, renameSync as renameSync16, statSync as statSync7, writeFileSync as writeFileSync21 } from "node:fs";
+import { dirname as dirname14, join as join29 } from "node:path";
 function notePath(sessionDir) {
-  return join28(sessionDir, NOTES_REL_PATH);
+  return join29(sessionDir, NOTES_REL_PATH);
 }
 function readNote(sessionDir) {
   const path4 = notePath(sessionDir);
-  if (!existsSync27(path4)) return { content: "", updatedAt: null };
+  if (!existsSync28(path4)) return { content: "", updatedAt: null };
   try {
     const content = readFileSync23(path4, "utf8");
     const stat = statSync7(path4);
@@ -18339,7 +19208,7 @@ function readNote(sessionDir) {
 }
 function writeNote(sessionDir, content) {
   const path4 = notePath(sessionDir);
-  mkdirSync21(dirname13(path4), { recursive: true });
+  mkdirSync21(dirname14(path4), { recursive: true });
   const tmp = `${path4}.${process.pid}.${Date.now()}.tmp`;
   writeFileSync21(tmp, content, "utf8");
   renameSync16(tmp, path4);
@@ -18582,9 +19451,9 @@ var init_project_stop = __esm({
 });
 
 // packages/daemon/src/restart.ts
-import { resolve as resolve18 } from "node:path";
+import { resolve as resolve19 } from "node:path";
 async function restart(targetDir, { json: json2, attach: attach2 } = {}) {
-  const dir = resolve18(targetDir ?? ".");
+  const dir = resolve19(targetDir ?? ".");
   const { name: session } = getSessionName(dir);
   stopSessionMonitor(session);
   const result = killSession(session);
@@ -18727,11 +19596,11 @@ var init_terminal_stop = __esm({
 });
 
 // packages/daemon/src/command-center/actions/handlers/task-system.ts
-import { resolve as resolve19 } from "node:path";
+import { resolve as resolve20 } from "node:path";
 function resolveActionDir(input, deps2 = {}) {
   if (deps2.dir) return deps2.dir;
   const name = input.name ?? input.sessionName;
-  if (!name) return resolve19(".");
+  if (!name) return resolve20(".");
   const sessions = (deps2.discoverSessions ?? discoverSessions)();
   const session = sessions.find((candidate) => candidate.name === name);
   if (!session) {
@@ -18972,11 +19841,11 @@ var init_skill_actions = __esm({
 });
 
 // packages/daemon/src/command-center/actions/handlers/config-actions.ts
-import { existsSync as existsSync28 } from "node:fs";
-import { join as join29 } from "node:path";
+import { existsSync as existsSync29 } from "node:fs";
+import { join as join30 } from "node:path";
 function mutateConfigAction(input, deps2, fn) {
   const context = resolveProjectContext(input, deps2);
-  if (!existsSync28(join29(context.dir, "ide.yml"))) {
+  if (!existsSync29(join30(context.dir, "ide.yml"))) {
     throw new ActionError({
       code: "ide_yml_missing",
       message: "ide.yml was not found",
@@ -19088,10 +19957,10 @@ var init_validation_actions = __esm({
 });
 
 // packages/daemon/src/command-center/actions/handlers/webhook-actions.ts
-import { existsSync as existsSync29 } from "node:fs";
-import { join as join30 } from "node:path";
+import { existsSync as existsSync30 } from "node:fs";
+import { join as join31 } from "node:path";
 function assertIdeYml(dir) {
-  if (!existsSync29(join30(dir, "ide.yml"))) {
+  if (!existsSync30(join31(dir, "ide.yml"))) {
     throw new ActionError({
       code: "ide_yml_missing",
       message: "ide.yml was not found",
@@ -19164,14 +20033,37 @@ var init_webhook_actions = __esm({
   }
 });
 
+// packages/daemon/src/command-center/actions/handlers/agent-actions.ts
+function registryFrom(deps2) {
+  return deps2.registry ?? getDefaultExternalAgentRegistry();
+}
+function agentRegisterHandler(input, deps2 = {}) {
+  registryFrom(deps2).register(input);
+  return { ok: true };
+}
+function agentHeartbeatHandler(input, deps2 = {}) {
+  const known = registryFrom(deps2).heartbeat(input);
+  return { ok: true, known };
+}
+function agentUnregisterHandler(input, deps2 = {}) {
+  const removed = registryFrom(deps2).unregister(input.id);
+  return { ok: true, removed };
+}
+var init_agent_actions = __esm({
+  "packages/daemon/src/command-center/actions/handlers/agent-actions.ts"() {
+    "use strict";
+    init_agent_registry();
+  }
+});
+
 // packages/daemon/src/chat/context-actions.ts
-import { execFile as execFile5 } from "node:child_process";
-import { promisify } from "node:util";
+import { execFile as execFile6 } from "node:child_process";
+import { promisify as promisify2 } from "node:util";
 function badRequest2(message, details) {
   return new ActionError({ code: "bad_request", message, details });
 }
 async function tmux2(args, deps2, input) {
-  const exec = deps2.execFile ?? execFileAsync;
+  const exec = deps2.execFile ?? execFileAsync2;
   try {
     const result = await exec("tmux", args, {
       encoding: "utf8",
@@ -19201,12 +20093,12 @@ async function chatContextCaptureTerminalHandler(input, deps2 = {}) {
     capturedAt: (deps2.now?.() ?? /* @__PURE__ */ new Date()).toISOString()
   };
 }
-var execFileAsync, CAPTURE_MAX_BUFFER;
+var execFileAsync2, CAPTURE_MAX_BUFFER;
 var init_context_actions = __esm({
   "packages/daemon/src/chat/context-actions.ts"() {
     "use strict";
     init_errors3();
-    execFileAsync = promisify(execFile5);
+    execFileAsync2 = promisify2(execFile6);
     CAPTURE_MAX_BUFFER = 10 * 1024 * 1024;
   }
 });
@@ -19234,6 +20126,7 @@ var init_registry2 = __esm({
     init_webhook_actions();
     init_app_set_remote_access();
     init_daemon_shutdown();
+    init_agent_actions();
     init_context_actions();
     init_chat_actions();
     actionRegistry = {
@@ -19422,6 +20315,21 @@ var init_registry2 = __esm({
         resultSchema: ActionContractsZ["daemon.shutdown"].result,
         handler: daemonShutdownHandler
       },
+      "agent.register": {
+        inputSchema: ActionContractsZ["agent.register"].input,
+        resultSchema: ActionContractsZ["agent.register"].result,
+        handler: agentRegisterHandler
+      },
+      "agent.heartbeat": {
+        inputSchema: ActionContractsZ["agent.heartbeat"].input,
+        resultSchema: ActionContractsZ["agent.heartbeat"].result,
+        handler: agentHeartbeatHandler
+      },
+      "agent.unregister": {
+        inputSchema: ActionContractsZ["agent.unregister"].input,
+        resultSchema: ActionContractsZ["agent.unregister"].result,
+        handler: agentUnregisterHandler
+      },
       "chat.thread.list": {
         inputSchema: ActionContractsZ["chat.thread.list"].input,
         resultSchema: ActionContractsZ["chat.thread.list"].result,
@@ -19584,7 +20492,7 @@ var init_dispatcher = __esm({
 });
 
 // packages/daemon/src/lib/project-init-runner.ts
-import { spawn as spawn7 } from "node:child_process";
+import { spawn as spawn8 } from "node:child_process";
 function lineStreamer(onChunk) {
   let pending = "";
   return {
@@ -19606,7 +20514,7 @@ function lineStreamer(onChunk) {
   };
 }
 async function runInit(options) {
-  const spawnFn = options.spawnFn ?? spawn7;
+  const spawnFn = options.spawnFn ?? spawn8;
   const command2 = options.command ?? "tmux-ide";
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const args = ["init"];
@@ -19739,12 +20647,12 @@ var init_inspect = __esm({
 
 // packages/daemon/src/lib/filesystem-browser.ts
 import { realpathSync as realpathSync3, readdirSync as readdirSync8, statSync as statSync8 } from "node:fs";
-import { homedir as homedir9 } from "node:os";
-import { isAbsolute as isAbsolute5, join as join31, resolve as resolve20, sep } from "node:path";
+import { homedir as homedir10 } from "node:os";
+import { isAbsolute as isAbsolute5, join as join32, resolve as resolve21, sep } from "node:path";
 function resolveHome() {
   const override = process.env.TMUX_IDE_HOME_OVERRIDE;
   if (override && override.trim().length > 0) return override;
-  return homedir9();
+  return homedir10();
 }
 function preflight(rawPath, io) {
   const trimmed = rawPath.trim();
@@ -19758,12 +20666,12 @@ function preflight(rawPath, io) {
   if (candidate === "~") {
     candidate = io.home();
   } else if (candidate.startsWith("~/")) {
-    candidate = join31(io.home(), candidate.slice(2));
+    candidate = join32(io.home(), candidate.slice(2));
   }
   if (!isAbsolute5(candidate)) {
     throw new InvalidPathError("Path must be absolute");
   }
-  return resolve20(candidate);
+  return resolve21(candidate);
 }
 function isUnderRoot(canonical, root) {
   if (canonical === root) return true;
@@ -19779,7 +20687,7 @@ function assertInsideSandbox(canonical, home) {
 }
 function computeParentPath(canonical, home) {
   if (canonical === "/" || canonical === sep) return null;
-  const parent = resolve20(canonical, "..");
+  const parent = resolve21(canonical, "..");
   if (parent === canonical) return null;
   try {
     assertInsideSandbox(parent, home);
@@ -19871,7 +20779,7 @@ function browseDirectory(input, io = realIo2) {
   const entries = [];
   for (const dirent of dirents) {
     if (!showHidden && dirent.name.startsWith(".")) continue;
-    const fullPath = join31(canonical, dirent.name);
+    const fullPath = join32(canonical, dirent.name);
     const { entry } = classifyDirent(dirent, fullPath, io);
     if (entry !== null) entries.push(entry);
   }
@@ -19919,8 +20827,8 @@ var init_filesystem_browser = __esm({
 });
 
 // packages/daemon/src/lib/project-inspect.ts
-import { existsSync as existsSync30 } from "node:fs";
-import { isAbsolute as isAbsolute6, resolve as resolve21 } from "node:path";
+import { existsSync as existsSync31 } from "node:fs";
+import { isAbsolute as isAbsolute6, resolve as resolve22 } from "node:path";
 function narrowPackageManager(raw) {
   if (!raw) return null;
   return KNOWN_PACKAGE_MANAGERS.has(raw) ? raw : null;
@@ -19930,8 +20838,8 @@ function inferTestCommand(packageManager) {
   return packageManager === "npm" ? "npm test" : `${packageManager} test`;
 }
 async function inspectProject(dir, io = {}) {
-  const exists = io.exists ?? existsSync30;
-  const absoluteDir = isAbsolute6(dir) ? dir : resolve21(dir);
+  const exists = io.exists ?? existsSync31;
+  const absoluteDir = isAbsolute6(dir) ? dir : resolve22(dir);
   if (!exists(absoluteDir)) {
     throw new InspectDirNotFoundError(absoluteDir);
   }
@@ -19971,8 +20879,8 @@ var init_project_inspect = __esm({
 
 // packages/daemon/src/lib/project-onboard.ts
 import yaml4 from "js-yaml";
-import { existsSync as existsSync31 } from "node:fs";
-import { join as join32 } from "node:path";
+import { existsSync as existsSync32 } from "node:fs";
+import { join as join33 } from "node:path";
 function composeIdeYmlConfig(input) {
   if (!Number.isInteger(input.agents) || input.agents < 1 || input.agents > 3) {
     throw new OnboardInvalidInputError(
@@ -20030,8 +20938,8 @@ function composeIdeYmlConfig(input) {
   }
   return config2;
 }
-function assertNoExistingIdeYml(dir, exists = existsSync31) {
-  const path4 = join32(dir, "ide.yml");
+function assertNoExistingIdeYml(dir, exists = existsSync32) {
+  const path4 = join33(dir, "ide.yml");
   if (exists(path4)) {
     throw new OnboardConflictError(path4);
   }
@@ -20058,15 +20966,15 @@ var init_project_onboard = __esm({
 });
 
 // packages/daemon/src/lsp/launch.ts
-import { spawn as spawn8 } from "node:child_process";
-import { existsSync as existsSync32 } from "node:fs";
-import { delimiter as delimiter2, extname as extname2, join as join33 } from "node:path";
+import { spawn as spawn9 } from "node:child_process";
+import { existsSync as existsSync33 } from "node:fs";
+import { delimiter as delimiter2, extname as extname2, join as join34 } from "node:path";
 function findOnPath(binary) {
   const envPath = process.env.PATH ?? "";
   for (const dir of envPath.split(PATH_DELIM)) {
     if (!dir) continue;
-    const candidate = join33(dir, binary);
-    if (existsSync32(candidate)) return candidate;
+    const candidate = join34(dir, binary);
+    if (existsSync33(candidate)) return candidate;
   }
   return null;
 }
@@ -20076,8 +20984,8 @@ function resolveBinary(config2, workspaceRoot) {
     return override;
   }
   for (const rel of config2.workspaceLookups ?? []) {
-    const candidate = join33(workspaceRoot, rel);
-    if (existsSync32(candidate)) return candidate;
+    const candidate = join34(workspaceRoot, rel);
+    if (existsSync33(candidate)) return candidate;
   }
   return findOnPath(config2.defaultBinary);
 }
@@ -20093,7 +21001,7 @@ function launchLanguageServer(language, workspaceRoot) {
   const config2 = languageServerConfig(language);
   const resolved2 = resolveBinary(config2, workspaceRoot);
   if (!resolved2) return null;
-  const proc = spawn8(resolved2, [...config2.args], {
+  const proc = spawn9(resolved2, [...config2.args], {
     cwd: workspaceRoot,
     stdio: ["pipe", "pipe", "pipe"],
     env: { ...process.env }
@@ -20130,7 +21038,7 @@ var init_launch2 = __esm({
         defaultBinary: "typescript-language-server",
         binaryEnvVar: "TMUX_IDE_LSP_TYPESCRIPT",
         args: ["--stdio"],
-        workspaceLookups: [join33("node_modules", ".bin", "typescript-language-server")]
+        workspaceLookups: [join34("node_modules", ".bin", "typescript-language-server")]
       },
       {
         language: "python",
@@ -20174,7 +21082,7 @@ var init_launch2 = __esm({
 
 // packages/daemon/src/lsp/client.ts
 import { pathToFileURL, fileURLToPath as fileURLToPath4 } from "node:url";
-import { readFile as readFile2 } from "node:fs/promises";
+import { readFile as readFile3 } from "node:fs/promises";
 import {
   createProtocolConnection,
   StreamMessageReader,
@@ -20281,7 +21189,7 @@ async function createLspClient(input) {
   await connection.sendNotification(InitializedNotification.type, {});
   async function ensureOpen(file) {
     if (openDocs.has(file)) return;
-    const text = await readFile2(file, "utf-8").catch(() => "");
+    const text = await readFile3(file, "utf-8").catch(() => "");
     openDocs.set(file, { version: 0, text });
     await connection.sendNotification(DidOpenTextDocumentNotification.type, {
       textDocument: {
@@ -20298,7 +21206,7 @@ async function createLspClient(input) {
       await ensureOpen(file);
       return;
     }
-    const text = await readFile2(file, "utf-8").catch(() => current.text);
+    const text = await readFile3(file, "utf-8").catch(() => current.text);
     if (text === current.text) return;
     const nextVersion = current.version + 1;
     openDocs.set(file, { version: nextVersion, text });
@@ -20363,7 +21271,7 @@ async function createLspClient(input) {
     async waitForDiagnostics(file, timeoutMs) {
       const existing = diagnosticsByFile.get(file);
       if (existing) return existing;
-      return new Promise((resolve34) => {
+      return new Promise((resolve35) => {
         const timer = setTimeout(() => {
           const waiters2 = diagnosticsWaiters.get(file);
           if (waiters2) {
@@ -20371,11 +21279,11 @@ async function createLspClient(input) {
             if (idx >= 0) waiters2.splice(idx, 1);
             if (waiters2.length === 0) diagnosticsWaiters.delete(file);
           }
-          resolve34(diagnosticsByFile.get(file) ?? []);
+          resolve35(diagnosticsByFile.get(file) ?? []);
         }, timeoutMs);
         const done = () => {
           clearTimeout(timer);
-          resolve34(diagnosticsByFile.get(file) ?? []);
+          resolve35(diagnosticsByFile.get(file) ?? []);
         };
         const waiters = diagnosticsWaiters.get(file) ?? [];
         waiters.push(done);
@@ -20827,9 +21735,9 @@ var init_provider_registry = __esm({
 });
 
 // packages/daemon/src/chat/provider-store.ts
-import { existsSync as existsSync33, mkdirSync as mkdirSync22, readFileSync as readFileSync24, renameSync as renameSync17, writeFileSync as writeFileSync22 } from "node:fs";
-import { dirname as dirname14, join as join34 } from "node:path";
-import { homedir as homedir10 } from "node:os";
+import { existsSync as existsSync34, mkdirSync as mkdirSync22, readFileSync as readFileSync24, renameSync as renameSync17, writeFileSync as writeFileSync22 } from "node:fs";
+import { dirname as dirname15, join as join35 } from "node:path";
+import { homedir as homedir11 } from "node:os";
 import { randomBytes as randomBytes3 } from "node:crypto";
 function toSummary(instance) {
   const cfg = instance.config;
@@ -20846,10 +21754,10 @@ function toSummary(instance) {
   return summary;
 }
 function defaultProvidersFilePath() {
-  return process.env.TMUX_IDE_PROVIDERS_FILE ?? join34(homedir10(), ".tmux-ide", "providers.json");
+  return process.env.TMUX_IDE_PROVIDERS_FILE ?? join35(homedir11(), ".tmux-ide", "providers.json");
 }
 function readProvidersFile(filePath) {
-  if (!existsSync33(filePath)) {
+  if (!existsSync34(filePath)) {
     return { version: 1, providers: [] };
   }
   let raw;
@@ -20880,8 +21788,8 @@ function readProvidersFile(filePath) {
   return validated.data;
 }
 function writeProvidersFile(filePath, data) {
-  const dir = dirname14(filePath);
-  if (!existsSync33(dir)) {
+  const dir = dirname15(filePath);
+  if (!existsSync34(dir)) {
     mkdirSync22(dir, { recursive: true });
   }
   const tmp = `${filePath}.${randomBytes3(4).toString("hex")}.tmp`;
@@ -21007,13 +21915,13 @@ __export(files_exports, {
   createIgnoreFilter: () => createIgnoreFilter,
   readDirectory: () => readDirectory
 });
-import { readdirSync as readdirSync9, readFileSync as readFileSync25, existsSync as existsSync34 } from "node:fs";
-import { join as join35, relative as relative3 } from "node:path";
+import { readdirSync as readdirSync9, readFileSync as readFileSync25, existsSync as existsSync35 } from "node:fs";
+import { join as join36, relative as relative3 } from "node:path";
 import ignore from "ignore";
 function createIgnoreFilter(rootDir) {
   const ig = ignore();
-  const gitignorePath = join35(rootDir, ".gitignore");
-  if (existsSync34(gitignorePath)) {
+  const gitignorePath = join36(rootDir, ".gitignore");
+  if (existsSync35(gitignorePath)) {
     ig.add(readFileSync25(gitignorePath, "utf-8"));
   }
   return ig;
@@ -21029,14 +21937,14 @@ function readDirectory(dir, rootDir, ig, showHidden, showIgnored = false) {
     if (ALWAYS_IGNORE.has(e.name)) return false;
     if (!showHidden && e.name.startsWith(".")) return false;
     if (showIgnored) return true;
-    const rel = relative3(rootDir, join35(dir, e.name));
+    const rel = relative3(rootDir, join36(dir, e.name));
     try {
       return !ig.ignores(e.isDirectory() ? rel + "/" : rel);
     } catch {
       return true;
     }
   }).map((e) => {
-    const rel = relative3(rootDir, join35(dir, e.name));
+    const rel = relative3(rootDir, join36(dir, e.name));
     let isIgnored = false;
     try {
       isIgnored = ig.ignores(e.isDirectory() ? rel + "/" : rel);
@@ -21045,7 +21953,7 @@ function readDirectory(dir, rootDir, ig, showHidden, showIgnored = false) {
     return {
       name: e.name,
       path: rel,
-      absolutePath: join35(dir, e.name),
+      absolutePath: join36(dir, e.name),
       isDir: e.isDirectory(),
       ignored: isIgnored
     };
@@ -21119,10 +22027,10 @@ __export(server_exports, {
   createApp: () => createApp,
   getSseMetrics: () => getSseMetrics
 });
-import { execFileSync as execFileSync6, execFile as execFile6 } from "node:child_process";
-import { promisify as promisify2 } from "node:util";
+import { execFileSync as execFileSync6, execFile as execFile7 } from "node:child_process";
+import { promisify as promisify3 } from "node:util";
 import {
-  existsSync as existsSync35,
+  existsSync as existsSync36,
   readFileSync as readFileSync26,
   writeFileSync as writeFileSync23,
   mkdirSync as mkdirSync23,
@@ -21134,7 +22042,7 @@ import {
   readSync,
   closeSync
 } from "node:fs";
-import { join as join36, dirname as dirname15, basename as basename9 } from "node:path";
+import { join as join37, dirname as dirname16, basename as basename9 } from "node:path";
 import { fileURLToPath as fileURLToPath5 } from "node:url";
 import { Hono } from "hono";
 import { streamSSE, stream as streamResponse } from "hono/streaming";
@@ -21142,12 +22050,12 @@ import { cors } from "hono/cors";
 import { zValidator as zValidator2 } from "@hono/zod-validator";
 import { Effect as Effect3 } from "effect";
 import { realpathSync as realpathSync4 } from "node:fs";
-import { homedir as homedir11 } from "node:os";
+import { homedir as homedir12, hostname as hostname2 } from "node:os";
 import { isAbsolute as isAbsolute7, resolve as pathResolve2 } from "node:path";
 import { randomUUID as randomUUID11 } from "node:crypto";
 import { WebSocketServer } from "ws";
 function resolvePackageVersion() {
-  const candidates = [join36(__dirname3, "../../package.json"), join36(__dirname3, "../package.json")];
+  const candidates = [join37(__dirname3, "../../package.json"), join37(__dirname3, "../package.json")];
   for (const candidate of candidates) {
     try {
       const parsed = JSON.parse(readFileSync26(candidate, "utf-8"));
@@ -21212,17 +22120,17 @@ function safePlanName(filename) {
 }
 function planFilePath(projectDir, filename) {
   const safeName = safePlanName(filename);
-  return join36(projectDir, "plans", safeName.endsWith(".md") ? safeName : `${safeName}.md`);
+  return join37(projectDir, "plans", safeName.endsWith(".md") ? safeName : `${safeName}.md`);
 }
 function writePlanAtomic(filePath, content) {
-  const dir = dirname15(filePath);
+  const dir = dirname16(filePath);
   mkdirSync23(dir, { recursive: true });
-  const tmpPath = join36(dir, `.${Date.now()}-${Math.random().toString(36).slice(2)}.tmp`);
+  const tmpPath = join37(dir, `.${Date.now()}-${Math.random().toString(36).slice(2)}.tmp`);
   try {
     writeFileSync23(tmpPath, content);
     renameSync18(tmpPath, filePath);
   } finally {
-    if (existsSync35(tmpPath)) {
+    if (existsSync36(tmpPath)) {
       try {
         unlinkSync4(tmpPath);
       } catch {
@@ -21314,7 +22222,7 @@ function sandboxResolveDir(rawDir) {
   if (trimmed.includes("\0")) {
     return { error: "invalid-path", message: "Path contains a null byte", status: 400 };
   }
-  const home = process.env.TMUX_IDE_HOME_OVERRIDE && process.env.TMUX_IDE_HOME_OVERRIDE.trim().length > 0 ? process.env.TMUX_IDE_HOME_OVERRIDE : homedir11();
+  const home = process.env.TMUX_IDE_HOME_OVERRIDE && process.env.TMUX_IDE_HOME_OVERRIDE.trim().length > 0 ? process.env.TMUX_IDE_HOME_OVERRIDE : homedir12();
   let candidate = trimmed;
   if (candidate === "~") {
     candidate = home;
@@ -21718,8 +22626,8 @@ function createApp(options = {}) {
       return c.json({ error: "Session not found" }, 404);
     }
     const plans = loadPlans(session.dir).map((p) => {
-      const filePath = join36(session.dir, "plans", `${p.name}.md`);
-      const raw = existsSync35(filePath) ? readFileSync26(filePath, "utf-8") : "";
+      const filePath = join37(session.dir, "plans", `${p.name}.md`);
+      const raw = existsSync36(filePath) ? readFileSync26(filePath, "utf-8") : "";
       const frontmatter = parsePlanFrontmatterSummary(raw);
       return {
         name: p.name,
@@ -21728,7 +22636,7 @@ function createApp(options = {}) {
         status: frontmatter.status ?? p.status,
         effort: p.effort ?? null,
         owner: frontmatter.owner,
-        updated: existsSync35(filePath) ? statSync9(filePath).mtime.toISOString() : null,
+        updated: existsSync36(filePath) ? statSync9(filePath).mtime.toISOString() : null,
         completed: p.completed ?? null
       };
     });
@@ -21744,7 +22652,7 @@ function createApp(options = {}) {
     }
     const safeName = safePlanName(filename);
     const filePath = planFilePath(session.dir, filename);
-    if (!existsSync35(filePath)) {
+    if (!existsSync36(filePath)) {
       return c.json({ error: "Plan not found" }, 404);
     }
     const raw = readFileSync26(filePath, "utf-8");
@@ -21784,7 +22692,7 @@ function createApp(options = {}) {
         return c.json({ error: "Session not found" }, 404);
       }
       const filePath = planFilePath(session.dir, filename);
-      if (!existsSync35(filePath)) {
+      if (!existsSync36(filePath)) {
         return c.json({ error: "Plan not found" }, 404);
       }
       const body = c.req.valid("json");
@@ -21802,7 +22710,7 @@ function createApp(options = {}) {
     }
     const safeName = safePlanName(filename);
     const filePath = planFilePath(session.dir, filename);
-    if (!existsSync35(filePath)) {
+    if (!existsSync36(filePath)) {
       return c.json({ error: "Plan not found" }, 404);
     }
     unlinkSync4(filePath);
@@ -21848,7 +22756,7 @@ function createApp(options = {}) {
       return c.json({ ok: true, plan: result });
     }
     const filePath = planFilePath(session.dir, filename);
-    if (!existsSync35(filePath)) {
+    if (!existsSync36(filePath)) {
       return c.json({ error: "Plan not found" }, 404);
     }
     const patched = patchPlanStatus(readFileSync26(filePath, "utf-8"), status4);
@@ -23189,7 +24097,7 @@ function createApp(options = {}) {
       let previousMissionHash = "";
       let eventCursor = 0;
       let lastPing = Date.now();
-      const tasksRoot = join36(session.dir, ".tasks");
+      const tasksRoot = join37(session.dir, ".tasks");
       function writeSse(event, payload) {
         sseMetrics.messagesSent += 1;
         void stream.writeSSE({ event, data: JSON.stringify(freezePayload(payload)) });
@@ -23739,14 +24647,14 @@ function createApp(options = {}) {
       return c.json({ error: "Failed to write ide.yml", detail: message }, 500);
     }
   });
-  const execFileAsync3 = promisify2(execFile6);
+  const execFileAsync4 = promisify3(execFile7);
   app.post("/api/project/:name/restart", async (c) => {
     const name = c.req.param("name");
     const sessions = discoverSessions();
     const session = sessions.find((s) => s.name === name);
     if (!session) return c.json({ error: "Session not found" }, 404);
     try {
-      await execFileAsync3("tmux-ide", ["restart", "--json"], {
+      await execFileAsync4("tmux-ide", ["restart", "--json"], {
         cwd: session.dir,
         timeout: 3e4,
         env: { ...process.env, TMUX: "" }
@@ -23769,7 +24677,7 @@ function createApp(options = {}) {
       return c.json({ ok: true, session: name, status: "already_running" });
     }
     try {
-      await execFileAsync3("tmux-ide", ["--json"], {
+      await execFileAsync4("tmux-ide", ["--json"], {
         cwd: session.dir,
         timeout: 3e4,
         env: { ...process.env, TMUX: "" }
@@ -23998,6 +24906,125 @@ function createApp(options = {}) {
     if (!removed) return c.json({ error: "Machine not found" }, 404);
     return c.json({ ok: true });
   });
+  function localAgents() {
+    const managed = new Set(
+      getDefaultWorkspaceRegistry().list().map((w) => w.sessionName)
+    );
+    const tmuxAgents = discoverTmuxAgents(managed);
+    const external = getDefaultExternalAgentRegistry().list();
+    return mergeLocalAgents(tmuxAgents, external);
+  }
+  app.get("/api/agents", (c) => {
+    const payload = AgentListSchemaZ.parse({ agents: localAgents() });
+    return c.json(payload);
+  });
+  const MAX_HQ_MACHINES = 50;
+  const MAX_HQ_AGENTS = 2e3;
+  const isHttpUrl = (u) => {
+    try {
+      const proto = new URL(u).protocol;
+      return proto === "http:" || proto === "https:";
+    } catch {
+      return false;
+    }
+  };
+  app.get("/api/hq/agents", async (c) => {
+    const selfName = options.hqMachineName ?? hostname2();
+    const sshSourcesPromise = listSshAgentSources();
+    let remotes = [];
+    if (remoteRegistry) {
+      const candidates = remoteRegistry.getMachines().filter((m) => m.name !== selfName && isHttpUrl(m.url));
+      if (candidates.length > MAX_HQ_MACHINES) {
+        logger.warn(
+          "hq-agents",
+          `fan-out capped: ${candidates.length} machines, querying first ${MAX_HQ_MACHINES}`
+        );
+      }
+      const fanout = candidates.slice(0, MAX_HQ_MACHINES).map(async (machine) => {
+        try {
+          const controller = new AbortController();
+          const tid = setTimeout(() => controller.abort(), 5e3);
+          const res = await fetch(`${machine.url}/api/agents`, {
+            headers: { Authorization: `Bearer ${machine.token}` },
+            signal: controller.signal,
+            // Don't chase redirects from a (possibly hostile) remote with the
+            // machine's bearer attached — treat a 3xx as a failed fetch.
+            redirect: "manual"
+          });
+          clearTimeout(tid);
+          if (!res.ok) return null;
+          const parsed = AgentListSchemaZ.safeParse(await res.json());
+          if (!parsed.success) return null;
+          return { machineId: machine.id, machineName: machine.name, agents: parsed.data.agents };
+        } catch {
+          return null;
+        }
+      });
+      remotes = (await Promise.all(fanout)).filter((r) => r !== null);
+    }
+    remotes = [...remotes, ...await sshSourcesPromise];
+    let agents = aggregateHqAgents(localAgents(), selfName, remotes);
+    if (agents.length > MAX_HQ_AGENTS) {
+      logger.warn(
+        "hq-agents",
+        `response capped: ${agents.length} agents, returning first ${MAX_HQ_AGENTS} (local first)`
+      );
+      agents = agents.slice(0, MAX_HQ_AGENTS);
+    }
+    return c.json(AgentListSchemaZ.parse({ agents }));
+  });
+  app.post("/api/agents/send", zValidator2("json", agentSendSchema), async (c) => {
+    const { id, machineId, message, noEnter } = c.req.valid("json");
+    if (machineId) {
+      const sshUrl = await resolveSshMachineUrl(machineId);
+      const hqMachine = sshUrl ? null : remoteRegistry?.getMachine(machineId);
+      const baseUrl = sshUrl ?? hqMachine?.url;
+      if (!baseUrl || !isHttpUrl(baseUrl)) {
+        return c.json({ error: `Unknown machine: ${machineId}` }, 404);
+      }
+      const prefix = `${machineId}:`;
+      if (!id.startsWith(prefix)) {
+        return c.json({ error: "Agent id does not belong to that machine" }, 400);
+      }
+      const headers = { "Content-Type": "application/json" };
+      if (hqMachine) headers.Authorization = `Bearer ${hqMachine.token}`;
+      try {
+        const controller = new AbortController();
+        const tid = setTimeout(() => controller.abort(), 5e3);
+        const res = await fetch(`${baseUrl}/api/agents/send`, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({ id: id.slice(prefix.length), message, noEnter }),
+          signal: controller.signal,
+          redirect: "manual"
+        });
+        clearTimeout(tid);
+        const body = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+        if (res.ok) return c.json(body);
+        return c.json({ ...body, remoteStatus: res.status }, 502);
+      } catch {
+        return c.json({ error: `Machine ${machineId} is unreachable` }, 502);
+      }
+    }
+    const agent = localAgents().find((candidate) => candidate.id === id);
+    if (!agent) {
+      return c.json({ error: `Agent not found: ${id}` }, 404);
+    }
+    if (agent.kind === "external" || !agent.session || !agent.paneId) {
+      return c.json({ error: "External agents are observe-only (no pane to drive)" }, 409);
+    }
+    const busyStatus = getPaneBusyStatus(agent.session, agent.paneId);
+    const prepared = busyStatus === "agent" ? message.replace(/\n+/g, " ").trim() : message;
+    if (noEnter) {
+      sendText(agent.session, agent.paneId, prepared);
+    } else {
+      sendCommand(agent.session, agent.paneId, prepared);
+    }
+    return c.json({
+      ok: true,
+      agent: { id: agent.id, session: agent.session, paneId: agent.paneId }
+    });
+  });
   const tunnelManager = options.tunnelManager ?? null;
   app.get("/api/tunnel", async (c) => {
     if (!tunnelManager) return c.json({ running: false, provider: null });
@@ -24120,7 +25147,7 @@ function createApp(options = {}) {
     if (!parsed.success) {
       return c.json({ error: "Invalid request", details: parsed.error.issues }, 400);
     }
-    if (!existsSync35(parsed.data.dir)) {
+    if (!existsSync36(parsed.data.dir)) {
       return c.json({ error: `Directory "${parsed.data.dir}" does not exist` }, 400);
     }
     const jobId = randomUUID11();
@@ -24260,9 +25287,9 @@ function createApp(options = {}) {
 }
 function listAvailableTemplates() {
   const __filename = fileURLToPath5(import.meta.url);
-  const __dir = dirname15(__filename);
-  const templatesDir = join36(__dir, "..", "..", "..", "..", "templates");
-  if (!existsSync35(templatesDir)) return [];
+  const __dir = dirname16(__filename);
+  const templatesDir = join37(__dir, "..", "..", "..", "..", "templates");
+  if (!existsSync36(templatesDir)) return [];
   const labels = {
     default: { label: "Default", description: "Single Claude pane + dev/shell row" },
     nextjs: {
@@ -24343,6 +25370,10 @@ var init_server = __esm({
     init_plan_store2();
     init_workflow_store();
     init_workspace_registry();
+    init_agent_discovery();
+    init_agent_remotes();
+    init_agent_registry();
+    init_src2();
     init_src2();
     init_schemas();
     init_git_service();
@@ -24378,7 +25409,7 @@ var init_server = __esm({
     init_src2();
     init_provider_store();
     init_src2();
-    __dirname3 = dirname15(fileURLToPath5(import.meta.url));
+    __dirname3 = dirname16(fileURLToPath5(import.meta.url));
     pkgVersion = resolvePackageVersion();
     projectStreamConnections = 0;
     ALLOWED_MILESTONE_TRANSITIONS = /* @__PURE__ */ new Map([
@@ -24462,10 +25493,10 @@ var init_tailscale = __esm({
             const resetProcess = spawnImpl(this.tailscaleExecutable, ["serve", "reset"], {
               stdio: ["ignore", "pipe", "pipe"]
             });
-            await new Promise((resolve34) => {
-              resetProcess.on("exit", () => resolve34());
-              resetProcess.on("error", () => resolve34());
-              setTimeout(resolve34, 1e3);
+            await new Promise((resolve35) => {
+              resetProcess.on("exit", () => resolve35());
+              resetProcess.on("error", () => resolve35());
+              setTimeout(resolve35, 1e3);
             });
           } catch {
             log.debug("Failed to reset serve config (this is normal if none exists)");
@@ -24517,7 +25548,7 @@ var init_tailscale = __esm({
               }
             });
           }
-          await new Promise((resolve34, reject) => {
+          await new Promise((resolve35, reject) => {
             let settled = false;
             const settlePromise = (isSuccess, error) => {
               if (settled) return;
@@ -24526,7 +25557,7 @@ var init_tailscale = __esm({
               if (isSuccess) {
                 log.info("Tailscale Serve started successfully");
                 this.startTime = /* @__PURE__ */ new Date();
-                resolve34();
+                resolve35();
               } else {
                 const errorMessage2 = error instanceof Error ? error.message : error || "Tailscale Serve failed to start";
                 this.lastError = errorMessage2;
@@ -24600,10 +25631,10 @@ var init_tailscale = __esm({
           const resetProcess = spawnImpl(this.tailscaleExecutable, ["funnel", "reset"], {
             stdio: ["ignore", "pipe", "pipe"]
           });
-          await new Promise((resolve34) => {
-            resetProcess.on("exit", () => resolve34());
-            resetProcess.on("error", () => resolve34());
-            setTimeout(resolve34, 2e3);
+          await new Promise((resolve35) => {
+            resetProcess.on("exit", () => resolve35());
+            resetProcess.on("error", () => resolve35());
+            setTimeout(resolve35, 2e3);
           });
           log.debug("Funnel configuration reset completed");
         } catch {
@@ -24635,7 +25666,7 @@ var init_tailscale = __esm({
               log.debug(`\u{1F4E5} Funnel stderr: ${data.toString().trim()}`);
             });
           }
-          await new Promise((resolve34, reject) => {
+          await new Promise((resolve35, reject) => {
             const timeout = setTimeout(() => {
               reject(new Error("Funnel start timeout"));
             }, 1e4);
@@ -24653,7 +25684,7 @@ var init_tailscale = __esm({
                 this.funnelEnabled = true;
                 this.funnelError = void 0;
                 this.funnelStartTime = /* @__PURE__ */ new Date();
-                resolve34();
+                resolve35();
               } else {
                 log.info(`\u274C Funnel failed with exit code ${code}: ${stderr || "No error message"}`);
                 reject(new Error(`Funnel failed with exit code ${code}: ${stderr}`));
@@ -24682,17 +25713,17 @@ var init_tailscale = __esm({
           const resetProcess = spawnImpl(this.tailscaleExecutable, ["funnel", "reset"], {
             stdio: ["ignore", "pipe", "pipe"]
           });
-          await new Promise((resolve34) => {
+          await new Promise((resolve35) => {
             resetProcess.on("exit", (code) => {
               if (code === 0) {
                 log.info("\u2705 Tailscale Funnel stopped successfully");
               } else {
                 log.warn(`Funnel reset exited with code ${code}`);
               }
-              resolve34();
+              resolve35();
             });
-            resetProcess.on("error", () => resolve34());
-            setTimeout(resolve34, 3e3);
+            resetProcess.on("error", () => resolve35());
+            setTimeout(resolve35, 3e3);
           });
           this.funnelEnabled = false;
           this.funnelStartTime = void 0;
@@ -24715,15 +25746,15 @@ var init_tailscale = __esm({
           const resetProcess = spawnImpl(this.tailscaleExecutable, ["serve", "reset"], {
             stdio: ["ignore", "pipe", "pipe"]
           });
-          await new Promise((resolve34) => {
+          await new Promise((resolve35) => {
             resetProcess.on("exit", (code) => {
               if (code === 0) {
                 log.debug("Tailscale Serve configuration reset successfully");
               }
-              resolve34();
+              resolve35();
             });
-            resetProcess.on("error", () => resolve34());
-            setTimeout(resolve34, 2e3);
+            resetProcess.on("error", () => resolve35());
+            setTimeout(resolve35, 2e3);
           });
         } catch {
           log.debug("Failed to reset serve config during stop");
@@ -24733,14 +25764,14 @@ var init_tailscale = __esm({
           return;
         }
         log.info("Stopping Tailscale Serve process...");
-        return new Promise((resolve34) => {
+        return new Promise((resolve35) => {
           if (!this.serveProcess) {
-            resolve34();
+            resolve35();
             return;
           }
           const cleanup = () => {
             this.cleanup();
-            resolve34();
+            resolve35();
           };
           const forceKillTimeout = setTimeout(() => {
             if (this.serveProcess && !this.serveProcess.killed) {
@@ -24928,7 +25959,7 @@ var init_tailscale = __esm({
        * Check if Tailscale Serve is available on this tailnet
        */
       async checkServeAvailability() {
-        return new Promise((resolve34) => {
+        return new Promise((resolve35) => {
           const statusProcess = spawnImpl(this.tailscaleExecutable, ["serve", "status", "--json"], {
             stdio: ["ignore", "pipe", "pipe"]
           });
@@ -24946,25 +25977,25 @@ var init_tailscale = __esm({
           }
           statusProcess.on("exit", (code) => {
             if (stderr) {
-              resolve34(stderr);
+              resolve35(stderr);
             } else if (code === 0) {
               try {
                 JSON.parse(stdout);
-                resolve34(stdout);
+                resolve35(stdout);
               } catch {
-                resolve34(stdout);
+                resolve35(stdout);
               }
             } else {
-              resolve34(stdout || "Tailscale Serve status check failed");
+              resolve35(stdout || "Tailscale Serve status check failed");
             }
           });
           statusProcess.on("error", (error) => {
-            resolve34(error.message);
+            resolve35(error.message);
           });
           setTimeout(() => {
             if (!statusProcess.killed) {
               statusProcess.kill("SIGTERM");
-              resolve34("Timeout checking Tailscale Serve availability");
+              resolve35("Timeout checking Tailscale Serve availability");
             }
           }, 3e3);
         });
@@ -24973,7 +26004,7 @@ var init_tailscale = __esm({
        * Verify that Tailscale Serve is actually configured for the given port
        */
       async verifyServeConfiguration(port) {
-        return new Promise((resolve34) => {
+        return new Promise((resolve35) => {
           const statusProcess = spawnImpl(this.tailscaleExecutable, ["serve", "status", "--json"], {
             stdio: ["ignore", "pipe", "pipe"]
           });
@@ -24997,28 +26028,28 @@ var init_tailscale = __esm({
                 log.debug(
                   `Tailscale Serve JSON status check: port ${port} configured = ${isConfigured}`
                 );
-                resolve34(isConfigured);
+                resolve35(isConfigured);
               } catch {
                 log.debug("JSON parsing failed, trying text parsing as fallback");
                 const isConfigured = this.parseServeStatus(stdout, port);
                 log.debug(
                   `Tailscale Serve text status check: port ${port} configured = ${isConfigured}`
                 );
-                resolve34(isConfigured);
+                resolve35(isConfigured);
               }
             } else {
               log.debug(`Tailscale serve status failed with code ${code}: ${stderr}`);
-              resolve34(false);
+              resolve35(false);
             }
           });
           statusProcess.on("error", (error) => {
             log.debug(`Failed to run tailscale serve status: ${error.message}`);
-            resolve34(false);
+            resolve35(false);
           });
           setTimeout(() => {
             if (!statusProcess.killed) {
               statusProcess.kill("SIGTERM");
-              resolve34(false);
+              resolve35(false);
             }
           }, 3e3);
         });
@@ -25171,13 +26202,13 @@ var init_tailscale = __esm({
             }
           }
         }
-        return new Promise((resolve34, reject) => {
+        return new Promise((resolve35, reject) => {
           const checkProcess = spawnImpl("which", ["tailscale"], {
             stdio: ["ignore", "pipe", "pipe"]
           });
           checkProcess.on("exit", (code) => {
             if (code === 0) {
-              resolve34();
+              resolve35();
             } else {
               reject(new Error("Tailscale command not found. Please install Tailscale first."));
             }
@@ -25226,13 +26257,13 @@ var init_ngrok = __esm({
         ];
         for (const ngrokPath of possiblePaths) {
           try {
-            const result = await new Promise((resolve34) => {
+            const result = await new Promise((resolve35) => {
               const proc = spawnImpl2(ngrokPath, ["version"], { stdio: "ignore" });
-              proc.on("close", (code) => resolve34(code === 0));
-              proc.on("error", () => resolve34(false));
+              proc.on("close", (code) => resolve35(code === 0));
+              proc.on("error", () => resolve35(false));
               setTimeout(() => {
                 proc.kill();
-                resolve34(false);
+                resolve35(false);
               }, 2e3);
             });
             if (result) {
@@ -25269,7 +26300,7 @@ var init_ngrok = __esm({
           args.push("--region", this.config.region);
         }
         log.log(`Starting ngrok tunnel on port ${this.config.port}...`);
-        return new Promise((resolve34, reject) => {
+        return new Promise((resolve35, reject) => {
           this.ngrokProcess = spawnImpl2(ngrokPath, args, {
             stdio: ["ignore", "pipe", "pipe"]
           });
@@ -25294,7 +26325,7 @@ var init_ngrok = __esm({
                   this.isRunning = true;
                   cleanup();
                   log.log(`Ngrok tunnel started: ${record.url}`);
-                  resolve34(this.currentTunnel);
+                  resolve35(this.currentTunnel);
                 }
                 if (record.lvl === "error" || record.err) {
                   log.error("Ngrok error:", record.err || record.msg);
@@ -25341,9 +26372,9 @@ var init_ngrok = __esm({
           return;
         }
         log.log("Stopping ngrok tunnel...");
-        return new Promise((resolve34) => {
+        return new Promise((resolve35) => {
           if (!this.ngrokProcess) {
-            resolve34();
+            resolve35();
             return;
           }
           const killTimeout = setTimeout(() => {
@@ -25351,7 +26382,7 @@ var init_ngrok = __esm({
               log.warn("Ngrok process did not exit gracefully, forcing kill");
               this.ngrokProcess.kill("SIGKILL");
             }
-            resolve34();
+            resolve35();
           }, 5e3);
           this.ngrokProcess.on("close", () => {
             clearTimeout(killTimeout);
@@ -25359,7 +26390,7 @@ var init_ngrok = __esm({
             this.currentTunnel = null;
             this.isRunning = false;
             log.log("Ngrok tunnel stopped");
-            resolve34();
+            resolve35();
           });
           this.ngrokProcess.kill("SIGTERM");
         });
@@ -25434,13 +26465,13 @@ var init_cloudflare = __esm({
       async checkCloudflaredBinary() {
         for (const cloudflaredPath of _CloudflareService.cloudflaredPaths) {
           try {
-            const result = await new Promise((resolve34) => {
+            const result = await new Promise((resolve35) => {
               const proc = spawnImpl3(cloudflaredPath, ["--version"], { stdio: "ignore" });
-              proc.on("close", (code) => resolve34(code === 0));
-              proc.on("error", () => resolve34(false));
+              proc.on("close", (code) => resolve35(code === 0));
+              proc.on("error", () => resolve35(false));
               setTimeout(() => {
                 proc.kill();
-                resolve34(false);
+                resolve35(false);
               }, 2e3);
             });
             if (result) {
@@ -25476,7 +26507,7 @@ var init_cloudflare = __esm({
             "cloudflared binary not found. Please install cloudflared: https://developers.cloudflare.com/cloudflare-one/connections/connect-apps/install-and-setup/installation/"
           );
         }
-        return new Promise((resolve34, reject) => {
+        return new Promise((resolve35, reject) => {
           this.cloudflaredProcess = spawnImpl3(cloudflaredPath, args, {
             stdio: ["ignore", "pipe", "pipe"]
           });
@@ -25501,7 +26532,7 @@ var init_cloudflare = __esm({
               this.isRunning = true;
               cleanup();
               log.log(`Cloudflare tunnel started: ${publicUrl}`);
-              resolve34(this.currentTunnel);
+              resolve35(this.currentTunnel);
             }
             if (output.toLowerCase().includes("error") && !resolved2) {
               log.error("Cloudflare error:", output);
@@ -25542,9 +26573,9 @@ var init_cloudflare = __esm({
           return;
         }
         log.log("Stopping Cloudflare tunnel...");
-        return new Promise((resolve34) => {
+        return new Promise((resolve35) => {
           if (!this.cloudflaredProcess) {
-            resolve34();
+            resolve35();
             return;
           }
           const killTimeout = setTimeout(() => {
@@ -25552,7 +26583,7 @@ var init_cloudflare = __esm({
               log.warn("Cloudflared process did not exit gracefully, forcing kill");
               this.cloudflaredProcess.kill("SIGKILL");
             }
-            resolve34();
+            resolve35();
           }, 5e3);
           this.cloudflaredProcess.on("close", () => {
             clearTimeout(killTimeout);
@@ -25560,7 +26591,7 @@ var init_cloudflare = __esm({
             this.currentTunnel = null;
             this.isRunning = false;
             log.log("Cloudflare tunnel stopped");
-            resolve34();
+            resolve35();
           });
           this.cloudflaredProcess.kill("SIGTERM");
         });
@@ -25739,16 +26770,19 @@ var init_registry4 = __esm({
       healthCheckTimer = null;
       healthInterval;
       healthTimeout;
+      maxMachines;
       isShuttingDown;
       constructor(opts) {
         this.healthInterval = opts?.healthInterval ?? 15e3;
         this.healthTimeout = opts?.healthTimeout ?? 5e3;
+        this.maxMachines = opts?.maxMachines ?? 256;
         this.isShuttingDown = opts?.isShuttingDown ?? (() => false);
         this.startHealthChecker();
       }
       register(remote) {
         const existing = this.machines.get(remote.id);
         if (existing) {
+          if (existing.name !== remote.name) this.machinesByName.delete(existing.name);
           existing.name = remote.name;
           existing.url = remote.url;
           existing.token = remote.token;
@@ -25759,6 +26793,9 @@ var init_registry4 = __esm({
         }
         if (this.machinesByName.has(remote.name)) {
           throw new Error(`Machine with name '${remote.name}' is already registered`);
+        }
+        if (this.machines.size >= this.maxMachines) {
+          throw new Error(`HQ registry full (${this.maxMachines} machines)`);
         }
         const now = /* @__PURE__ */ new Date();
         const machine = {
@@ -25974,13 +27011,27 @@ var init_client5 = __esm({
 });
 
 // packages/daemon/src/lib/daemon-embed.ts
+var daemon_embed_exports = {};
+__export(daemon_embed_exports, {
+  startEmbeddedDaemon: () => startEmbeddedDaemon
+});
 import { execFileSync as execFileSync8 } from "node:child_process";
 import { randomBytes as randomBytes5 } from "node:crypto";
-import { createServer } from "node:http";
+import { createServer as createServer2 } from "node:http";
 import { createRequire as createRequire3 } from "node:module";
-import { existsSync as existsSync36, readdirSync as readdirSync11, statSync as statSync10, unlinkSync as unlinkSync5 } from "node:fs";
-import { join as join39 } from "node:path";
+import { existsSync as existsSync37, readdirSync as readdirSync11, statSync as statSync10, unlinkSync as unlinkSync5 } from "node:fs";
+import { join as join40 } from "node:path";
 import { WebSocket, WebSocketServer as WebSocketServer2 } from "ws";
+function resolveOwnVersion() {
+  for (const candidate of ["../../package.json", "../package.json"]) {
+    try {
+      const pkg = requireFromHere(candidate);
+      if (typeof pkg.version === "string") return pkg.version;
+    } catch {
+    }
+  }
+  return "0.0.0";
+}
 function tmux3(...args) {
   return execFileSync8("tmux", args, {
     encoding: "utf-8",
@@ -26015,15 +27066,15 @@ function validatePort(port) {
     throw new DaemonStartupError(`Invalid daemon port: ${port}`, "port_invalid");
   }
 }
-async function pickFreePort(hostname2) {
-  const probe = createServer();
-  return await new Promise((resolve34, reject) => {
+async function pickFreePort(hostname3) {
+  const probe = createServer2();
+  return await new Promise((resolve35, reject) => {
     probe.once("error", reject);
-    probe.listen(0, hostname2, () => {
+    probe.listen(0, hostname3, () => {
       const address = probe.address();
       const port = typeof address === "object" && address ? address.port : null;
       probe.close(() => {
-        if (port) resolve34(port);
+        if (port) resolve35(port);
         else reject(new DaemonStartupError("Could not allocate daemon port", "bind_failed"));
       });
     });
@@ -26069,12 +27120,12 @@ function listPanes2(sessionName) {
   });
 }
 function cleanupDispatchFiles(dir) {
-  const dispatchDir = join39(dir, ".tasks", "dispatch");
-  if (!existsSync36(dispatchDir)) return;
+  const dispatchDir = join40(dir, ".tasks", "dispatch");
+  if (!existsSync37(dispatchDir)) return;
   const cutoff = Date.now() - 24 * 60 * 60 * 1e3;
   try {
     for (const file of readdirSync11(dispatchDir)) {
-      const filePath = join39(dispatchDir, file);
+      const filePath = join40(dispatchDir, file);
       try {
         const mtime = statSync10(filePath).mtimeMs;
         if (mtime < cutoff) unlinkSync5(filePath);
@@ -26208,21 +27259,21 @@ function attachWebSockets(server, opts = {}) {
           ws.terminate();
         }
       }
-      const closeWss = (wss) => Promise.race([new Promise((resolve34) => wss.close(() => resolve34())), delay(100)]);
+      const closeWss = (wss) => Promise.race([new Promise((resolve35) => wss.close(() => resolve35())), delay(100)]);
       await Promise.all([closeWss(eventsWss), closeWss(ptyWss)]);
     }
   };
 }
 function waitForServerClose(server) {
-  return new Promise((resolve34, reject) => {
+  return new Promise((resolve35, reject) => {
     server.close((err) => {
       if (err) reject(err);
-      else resolve34();
+      else resolve35();
     });
   });
 }
 function delay(ms) {
-  return new Promise((resolve34) => setTimeout(resolve34, ms));
+  return new Promise((resolve35) => setTimeout(resolve35, ms));
 }
 function generateLocalBypassToken() {
   return randomBytes5(32).toString("base64url");
@@ -26324,11 +27375,13 @@ async function startHttpServer({
     healthInterval: hqConfig.heartbeat_interval,
     isShuttingDown: () => registryShuttingDown
   }) : void 0;
+  const { hostname: osHostname } = await import("node:os");
   const app = createApp3({
     authService,
     authConfig,
     tunnelManager,
     remoteRegistry,
+    hqMachineName: hqConfig?.machine_name ?? osHostname(),
     remoteAccess: {
       bindHostname,
       token: authToken ?? null,
@@ -26339,7 +27392,7 @@ async function startHttpServer({
     const health = getTaskStoreHealth();
     return c.json({ ...health, ok: health.ok, session: sessionName });
   });
-  const server = createServer(getRequestListener3(app.fetch));
+  const server = createServer2(getRequestListener3(app.fetch));
   const sockets = /* @__PURE__ */ new Set();
   server.on("connection", (socket) => {
     sockets.add(socket);
@@ -26350,7 +27403,7 @@ async function startHttpServer({
     localBypassToken,
     bindHostname
   });
-  await new Promise((resolve34, reject) => {
+  await new Promise((resolve35, reject) => {
     const onError = (err) => {
       server.off("listening", onListening);
       if (err.code === "EADDRINUSE") {
@@ -26374,7 +27427,7 @@ async function startHttpServer({
           `[daemon] Command Center on http://${bindHostname}:${requestedPort} (session: ${sessionName})`
         );
       }
-      resolve34();
+      resolve35();
     };
     server.once("error", onError);
     server.once("listening", onListening);
@@ -26488,11 +27541,10 @@ async function startEmbeddedDaemon(opts) {
     localBypassToken,
     silent: opts.silent
   });
-  const pkg = requireFromHere("../../package.json");
   writeCanonicalDaemonInfo({
     pid: process.pid,
     port,
-    version: pkg.version ?? "0.0.0",
+    version: resolveOwnVersion(),
     startedAt: (/* @__PURE__ */ new Date()).toISOString(),
     bindHostname,
     authToken
@@ -26519,7 +27571,7 @@ async function startEmbeddedDaemon(opts) {
     if (existing) {
       if (options.orchestrate && !existing.orchestrated) {
         const project2 = getProject(projectName);
-        if (project2 && existsSync36(join39(project2.dir, "ide.yml"))) {
+        if (project2 && existsSync37(join40(project2.dir, "ide.yml"))) {
           existing.stop = await orchestratorStarter(project2.name, project2.dir);
           existing.orchestrated = true;
         }
@@ -26542,7 +27594,7 @@ async function startEmbeddedDaemon(opts) {
         }
       };
     }
-    const shouldOrchestrate = options.orchestrate === true && existsSync36(join39(project.dir, "ide.yml"));
+    const shouldOrchestrate = options.orchestrate === true && existsSync37(join40(project.dir, "ide.yml"));
     const stopOrchestrator = shouldOrchestrate ? await orchestratorStarter(project.name, project.dir) : () => void 0;
     activeProjectStops.set(project.name, {
       stop: stopOrchestrator,
@@ -26746,8 +27798,14 @@ function daemonBaseUrl(info) {
 }
 function expectedDaemonVersion() {
   try {
-    const pkg = requireFromHere2("../../package.json");
-    return pkg.version ?? "0.0.0";
+    for (const candidate of ["../../package.json", "../package.json"]) {
+      try {
+        const pkg = requireFromHere2(candidate);
+        if (typeof pkg.version === "string") return pkg.version;
+      } catch {
+      }
+    }
+    return "0.0.0";
   } catch {
     return "0.0.0";
   }
@@ -26867,7 +27925,7 @@ var init_cli_action_bridge = __esm({
 });
 
 // packages/daemon/src/config.ts
-import { resolve as resolve22 } from "node:path";
+import { resolve as resolve23 } from "node:path";
 function readConfigSafe(dir) {
   let cfg;
   try {
@@ -27001,7 +28059,7 @@ function configDisableTeam(dir) {
   }).config;
 }
 async function config(targetDir, { json: json2, action, args } = {}) {
-  const dir = resolve22(targetDir ?? ".");
+  const dir = resolve23(targetDir ?? ".");
   if (await tryDispatchConfigAction(dir, { json: json2, action, args: args ?? [] })) return;
   switch (action) {
     case "dump":
@@ -27336,7 +28394,8 @@ var require_package = __commonJS({
         "scripts",
         "skill",
         "templates",
-        "dashboard/dist"
+        "dashboard/dist",
+        "packages/daemon/dist"
       ],
       scripts: {
         build: "pnpm build:cli",
@@ -27345,8 +28404,8 @@ var require_package = __commonJS({
         prepublishOnly: "pnpm build:cli && pnpm check && pnpm --filter @tmux-ide/dashboard build && node scripts/prepublish-check.mjs",
         typecheck: 'echo "root typecheck deferred to per-package turbo run"',
         dev: "node bin/cli.js",
-        test: "vitest run",
-        "test:unit": "vitest run",
+        test: "vitest run --dir src src/cli.test.ts",
+        "test:unit": "vitest run --dir src src/cli.test.ts",
         "test:chat-e2e": "pnpm --filter @tmux-ide/daemon exec vitest run src/chat/__tests__/chat-pipeline.e2e.test.ts",
         lint: "eslint bin scripts packages/contracts/src packages/tmux-bridge/src packages/daemon/src packages/v2-solid-widgets/src packages/chat-solid/src && pnpm run check:silo-mounts",
         "lint:workspace": "turbo run lint && pnpm run check:silo-mounts",
@@ -27428,7 +28487,8 @@ var require_package = __commonJS({
         globals: "^17.4.0",
         prettier: "^3.8.1",
         turbo: "^2.3.3",
-        typescript: "^5.9.3"
+        typescript: "^5.9.3",
+        vitest: "^4.1.0"
       }
     };
   }
@@ -27439,14 +28499,14 @@ var plan_exports = {};
 __export(plan_exports, {
   planCommand: () => planCommand
 });
-import { resolve as resolve24 } from "node:path";
+import { resolve as resolve25 } from "node:path";
 async function planCommand(targetDir, {
   json: json2 = false,
   sub,
   args = [],
   values: values2 = {}
 }) {
-  const dir = resolve24(targetDir ?? ".");
+  const dir = resolve25(targetDir ?? ".");
   switch (sub) {
     case "list":
     case void 0: {
@@ -27549,11 +28609,11 @@ var skill_exports = {};
 __export(skill_exports, {
   skillCommand: () => skillCommand
 });
-import { resolve as resolve25, join as join40, dirname as dirname16 } from "node:path";
-import { existsSync as existsSync37, mkdirSync as mkdirSync24, readFileSync as readFileSync27, rmSync as rmSync5, writeFileSync as writeFileSync24 } from "node:fs";
+import { resolve as resolve26, join as join41, dirname as dirname17 } from "node:path";
+import { existsSync as existsSync38, mkdirSync as mkdirSync24, readFileSync as readFileSync27, rmSync as rmSync5, writeFileSync as writeFileSync24 } from "node:fs";
 import { fileURLToPath as fileURLToPath6 } from "node:url";
 function scaffoldSkillContent(name) {
-  const templatePath = resolve25(
+  const templatePath = resolve26(
     __dirname4,
     "..",
     "..",
@@ -27562,7 +28622,7 @@ function scaffoldSkillContent(name) {
     "skills",
     "general-worker.md"
   );
-  if (existsSync37(templatePath)) {
+  if (existsSync38(templatePath)) {
     return readFileSync27(templatePath, "utf-8").replace(/^name: .+/m, `name: ${name}`);
   }
   return `---
@@ -27587,17 +28647,17 @@ async function tryDispatchSkillAction(dir, { json: json2, sub, args }) {
       const content = scaffoldSkillContent(name);
       const result = await tryDispatchAction("skill.create", { name, content }, { cwd: dir });
       if (!result) return false;
-      const filePath = join40(dir, ".tmux-ide", "skills", `${name}.md`);
+      const filePath = join41(dir, ".tmux-ide", "skills", `${name}.md`);
       if (json2) console.log(JSON.stringify({ created: true, path: filePath }));
       else console.log(`Created skill "${result.skill.name}" at ${filePath}`);
       return true;
     }
     if (sub === "update" && args[0] && args[1]) {
       const name = args[0];
-      const content = readFileSync27(resolve25(dir, args[1]), "utf-8");
+      const content = readFileSync27(resolve26(dir, args[1]), "utf-8");
       const result = await tryDispatchAction("skill.update", { name, content }, { cwd: dir });
       if (!result) return false;
-      const filePath = join40(dir, ".tmux-ide", "skills", `${name}.md`);
+      const filePath = join41(dir, ".tmux-ide", "skills", `${name}.md`);
       if (json2) console.log(JSON.stringify({ updated: true, path: filePath }));
       else console.log(`Updated skill "${result.skill.name}" at ${filePath}`);
       return true;
@@ -27620,7 +28680,7 @@ async function skillCommand(targetDir, {
   sub,
   args = []
 }) {
-  const dir = resolve25(targetDir ?? ".");
+  const dir = resolve26(targetDir ?? ".");
   if (await tryDispatchSkillAction(dir, { json: json2, sub, args })) return;
   switch (sub) {
     case "list": {
@@ -27670,13 +28730,13 @@ ${skill.body}`);
     case "create": {
       const name = args[0];
       if (!name) outputError("Usage: tmux-ide skill create <name>", "USAGE");
-      const skillsDir = join40(dir, ".tmux-ide", "skills");
-      const filePath = join40(skillsDir, `${name}.md`);
-      if (existsSync37(filePath)) {
+      const skillsDir = join41(dir, ".tmux-ide", "skills");
+      const filePath = join41(skillsDir, `${name}.md`);
+      if (existsSync38(filePath)) {
         outputError(`Skill "${name}" already exists at ${filePath}`, "EXISTS");
       }
       const content = scaffoldSkillContent(name);
-      if (!existsSync37(skillsDir)) mkdirSync24(skillsDir, { recursive: true });
+      if (!existsSync38(skillsDir)) mkdirSync24(skillsDir, { recursive: true });
       writeFileSync24(filePath, content);
       if (json2) {
         console.log(JSON.stringify({ created: true, path: filePath }));
@@ -27689,10 +28749,10 @@ ${skill.body}`);
       const name = args[0];
       const contentPath = args[1];
       if (!name || !contentPath) outputError("Usage: tmux-ide skill update <name> <file>", "USAGE");
-      const content = readFileSync27(resolve25(dir, contentPath), "utf-8");
-      const skillsDir = join40(dir, ".tmux-ide", "skills");
-      const filePath = join40(skillsDir, `${name}.md`);
-      if (!existsSync37(skillsDir)) mkdirSync24(skillsDir, { recursive: true });
+      const content = readFileSync27(resolve26(dir, contentPath), "utf-8");
+      const skillsDir = join41(dir, ".tmux-ide", "skills");
+      const filePath = join41(skillsDir, `${name}.md`);
+      if (!existsSync38(skillsDir)) mkdirSync24(skillsDir, { recursive: true });
       writeFileSync24(filePath, content.endsWith("\n") ? content : `${content}
 `);
       if (json2) {
@@ -27705,8 +28765,8 @@ ${skill.body}`);
     case "delete": {
       const name = args[0];
       if (!name) outputError("Usage: tmux-ide skill delete <name>", "USAGE");
-      const filePath = join40(dir, ".tmux-ide", "skills", `${name}.md`);
-      if (!existsSync37(filePath)) outputError(`Skill "${name}" not found`, "NOT_FOUND");
+      const filePath = join41(dir, ".tmux-ide", "skills", `${name}.md`);
+      if (!existsSync38(filePath)) outputError(`Skill "${name}" not found`, "NOT_FOUND");
       rmSync5(filePath);
       if (json2) {
         console.log(JSON.stringify({ deleted: true }));
@@ -27771,7 +28831,7 @@ var init_skill = __esm({
     init_skill_registry();
     init_yaml_io();
     init_cli_action_bridge();
-    __dirname4 = dirname16(fileURLToPath6(import.meta.url));
+    __dirname4 = dirname17(fileURLToPath6(import.meta.url));
   }
 });
 
@@ -27780,7 +28840,7 @@ var metrics_cli_exports = {};
 __export(metrics_cli_exports, {
   metricsCommand: () => metricsCommand
 });
-import { resolve as resolve26 } from "node:path";
+import { resolve as resolve27 } from "node:path";
 function fmtDuration(ms) {
   if (ms < 6e4) return `${Math.round(ms / 1e3)}s`;
   if (ms < 36e5) return `${Math.round(ms / 6e4)}m`;
@@ -27795,7 +28855,7 @@ async function metricsCommand(targetDir, {
   json: json2 = false,
   sub
 }) {
-  const dir = resolve26(targetDir ?? ".");
+  const dir = resolve27(targetDir ?? ".");
   switch (sub) {
     case "agents": {
       const metrics = computeMetrics(dir);
@@ -27948,18 +29008,18 @@ var dispatch_exports = {};
 __export(dispatch_exports, {
   dispatch: () => dispatch2
 });
-import { resolve as resolve27, join as join41 } from "node:path";
-import { existsSync as existsSync38, readFileSync as readFileSync28 } from "node:fs";
+import { resolve as resolve28, join as join42 } from "node:path";
+import { existsSync as existsSync39, readFileSync as readFileSync28 } from "node:fs";
 async function dispatch2(targetDir, opts) {
-  const dir = resolve27(targetDir ?? ".");
+  const dir = resolve28(targetDir ?? ".");
   const { taskId, json: json2 } = opts;
   if (!taskId) {
     throw new IdeError("Missing task ID. Usage: tmux-ide dispatch <id>", {
       code: "USAGE"
     });
   }
-  const dispatchFile = join41(dir, ".tasks", "dispatch", `${taskId}.md`);
-  const hasDispatchFile = existsSync38(dispatchFile);
+  const dispatchFile = join42(dir, ".tasks", "dispatch", `${taskId}.md`);
+  const hasDispatchFile = existsSync39(dispatchFile);
   const task = loadTask(dir, taskId);
   if (!task && !hasDispatchFile) {
     throw new IdeError(`Task "${taskId}" not found and no dispatch file exists`, {
@@ -28032,9 +29092,9 @@ var notify_exports = {};
 __export(notify_exports, {
   notify: () => notify
 });
-import { resolve as resolve28 } from "node:path";
+import { resolve as resolve29 } from "node:path";
 async function notify(targetDir, opts) {
-  const dir = resolve28(targetDir ?? ".");
+  const dir = resolve29(targetDir ?? ".");
   const { message, json: json2 } = opts;
   const { name: session } = getSessionName(dir);
   if (!message) {
@@ -28099,9 +29159,9 @@ var orchestrator_status_exports = {};
 __export(orchestrator_status_exports, {
   orchestratorStatus: () => orchestratorStatus
 });
-import { resolve as resolve29 } from "node:path";
-import { existsSync as existsSync39, readFileSync as readFileSync29 } from "node:fs";
-import { join as join42 } from "node:path";
+import { resolve as resolve30 } from "node:path";
+import { existsSync as existsSync40, readFileSync as readFileSync29 } from "node:fs";
+import { join as join43 } from "node:path";
 function formatElapsed2(ms) {
   if (ms < 6e4) return `${Math.round(ms / 1e3)}s`;
   if (ms < 36e5) return `${Math.round(ms / 6e4)}m`;
@@ -28114,7 +29174,7 @@ function formatRelative(iso) {
   return `${(ms / 36e5).toFixed(1)}h ago`;
 }
 async function orchestratorStatus(targetDir, { json: json2 } = {}) {
-  const dir = resolve29(targetDir ?? ".");
+  const dir = resolve30(targetDir ?? ".");
   const { name: session } = getSessionName(dir);
   let orchConfig = null;
   try {
@@ -28134,10 +29194,10 @@ async function orchestratorStatus(targetDir, { json: json2 } = {}) {
   }
   const state = getSessionState(session);
   const running = state.running && orchConfig?.autoDispatch !== void 0;
-  const statePath = join42(dir, ".tasks", "orchestrator-state.json");
+  const statePath = join43(dir, ".tasks", "orchestrator-state.json");
   let claimedTasks = [];
   let taskClaimTimes = {};
-  if (existsSync39(statePath)) {
+  if (existsSync40(statePath)) {
     try {
       const data2 = JSON.parse(readFileSync29(statePath, "utf-8"));
       claimedTasks = data2.claimedTasks ?? [];
@@ -28271,7 +29331,7 @@ var tunnel_exports = {};
 __export(tunnel_exports, {
   tunnelCommand: () => tunnelCommand
 });
-import { resolve as resolve30 } from "node:path";
+import { resolve as resolve31 } from "node:path";
 function getManager(dir, session) {
   if (!manager) {
     manager = new TunnelManager({ session, dir });
@@ -28306,7 +29366,7 @@ async function resolveTunnelConfig(dir, overrides) {
   );
 }
 async function tunnelCommand(targetDir, opts) {
-  const dir = resolve30(targetDir ?? ".");
+  const dir = resolve31(targetDir ?? ".");
   const { json: json2, sub } = opts;
   const session = await resolveSession();
   const mgr = getManager(dir, session);
@@ -28389,7 +29449,7 @@ var remote_exports = {};
 __export(remote_exports, {
   remoteCommand: () => remoteCommand
 });
-import { resolve as resolve31 } from "node:path";
+import { resolve as resolve32 } from "node:path";
 async function loadHQConfig(dir) {
   try {
     const { readConfig: readConfig2 } = await Promise.resolve().then(() => (init_yaml_io(), yaml_io_exports));
@@ -28402,9 +29462,14 @@ async function loadHQConfig(dir) {
   return null;
 }
 async function remoteCommand(targetDir, opts) {
-  const dir = resolve31(targetDir ?? ".");
+  const dir = resolve32(targetDir ?? ".");
   const { json: json2, sub } = opts;
   switch (sub) {
+    case "ssh": {
+      const { sshRemoteCommand: sshRemoteCommand2 } = await Promise.resolve().then(() => (init_ssh_remote(), ssh_remote_exports));
+      await sshRemoteCommand2({ ...opts, args: opts.args ?? [] });
+      break;
+    }
     case "register": {
       const hqConfig = await loadHQConfig(dir);
       if (!hqConfig || hqConfig.role !== "remote") {
@@ -28439,10 +29504,10 @@ async function remoteCommand(targetDir, opts) {
       } else {
         console.log(`Registered with HQ as ${client.getName()} (${client.getRemoteId()})`);
       }
-      await new Promise((resolve34) => {
+      await new Promise((resolve35) => {
         const shutdown = async () => {
           await client.destroy();
-          resolve34();
+          resolve35();
         };
         process.once("SIGINT", () => void shutdown());
         process.once("SIGTERM", () => void shutdown());
@@ -28503,7 +29568,7 @@ async function remoteCommand(targetDir, opts) {
     default:
       throw new IdeError(
         `Unknown remote subcommand: ${sub ?? "(none)"}
-Usage: tmux-ide remote register|machines|status`,
+Usage: tmux-ide remote register|machines|status|ssh`,
         { code: "USAGE" }
       );
   }
@@ -28517,26 +29582,405 @@ var init_remote = __esm({
   }
 });
 
+// packages/daemon/src/agent-hook.ts
+var agent_hook_exports = {};
+__export(agent_hook_exports, {
+  agentCommand: () => agentCommand,
+  buildHookSnippet: () => buildHookSnippet,
+  buildPayload: () => buildPayload,
+  buildReportRequest: () => buildReportRequest,
+  hostnameForClient: () => hostnameForClient2,
+  mergeHooks: () => mergeHooks
+});
+import { readFileSync as readFileSync30, mkdirSync as mkdirSync25, renameSync as renameSync19, existsSync as existsSync41, writeFileSync as writeFileSync25 } from "node:fs";
+import { homedir as homedir15 } from "node:os";
+import { basename as basename10, dirname as dirname18, join as join44 } from "node:path";
+function parseStdin(raw) {
+  if (!raw.trim()) return {};
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === "object") return parsed;
+  } catch {
+  }
+  return {};
+}
+function reportingTool() {
+  return process.env.TMUX_IDE_AGENT_TOOL === "codex" ? "codex" : "claude";
+}
+function buildPayload(event, stdin) {
+  const id = typeof stdin.session_id === "string" ? stdin.session_id.trim() : "";
+  if (!id) return null;
+  if (event === "stop") {
+    return { id };
+  }
+  if (event === "idle") {
+    return { id, status: "idle" };
+  }
+  const tool = reportingTool();
+  const cwd = typeof stdin.cwd === "string" && stdin.cwd ? stdin.cwd : void 0;
+  const name = cwd ? `${tool}@${basename10(cwd)}` : tool;
+  return {
+    id,
+    tool,
+    name,
+    cwd,
+    session: id,
+    pid: typeof process.ppid === "number" ? process.ppid : void 0,
+    status: "busy"
+  };
+}
+function timeoutSignal4(ms) {
+  const controller = new AbortController();
+  setTimeout(() => controller.abort(), ms).unref?.();
+  return controller.signal;
+}
+function hostnameForClient2(bindHostname) {
+  return bindHostname === "0.0.0.0" ? "127.0.0.1" : bindHostname;
+}
+function buildReportRequest(info, action) {
+  const baseUrl = `http://${hostnameForClient2(info.bindHostname)}:${info.port}`;
+  const headers = { "Content-Type": "application/json" };
+  if (info.authToken) headers.Authorization = `Bearer ${info.authToken}`;
+  return { url: `${baseUrl}/api/v2/action/${action}`, headers };
+}
+async function report(event) {
+  if (process.env.TMUX) return;
+  let raw;
+  try {
+    raw = readFileSync30(0, "utf-8");
+  } catch {
+    return;
+  }
+  if (raw.length > 256 * 1024) return;
+  const stdin = parseStdin(raw);
+  const payload = buildPayload(event, stdin);
+  if (!payload) return;
+  const info = readCanonicalDaemonInfo();
+  if (!info) return;
+  const { url, headers } = buildReportRequest(info, EVENT_TO_ACTION[event]);
+  try {
+    await fetch(url, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(payload),
+      signal: timeoutSignal4(1500)
+    });
+  } catch {
+  }
+}
+function settingsPath() {
+  return process.env.CLAUDE_CONFIG_DIR ? join44(process.env.CLAUDE_CONFIG_DIR, "settings.json") : join44(homedir15(), ".claude", "settings.json");
+}
+function buildHookSnippet() {
+  const snippet = {};
+  for (const [hookName, event] of Object.entries(HOOK_EVENTS)) {
+    snippet[hookName] = [
+      { hooks: [{ type: "command", command: `tmux-ide agent report ${event}` }] }
+    ];
+  }
+  return snippet;
+}
+function isOurHookEntry(entry) {
+  return entry.type === "command" && /\btmux-ide agent report\b/.test(entry.command);
+}
+function mergeHooks(existing, snippet) {
+  const merged = { ...existing ?? {} };
+  for (const [hookName, matchers] of Object.entries(snippet)) {
+    const current = Array.isArray(merged[hookName]) ? merged[hookName] : [];
+    const cleaned = current.map((matcher) => ({
+      ...matcher,
+      hooks: (matcher.hooks ?? []).filter((entry) => !isOurHookEntry(entry))
+    })).filter((matcher) => matcher.hooks.length > 0);
+    merged[hookName] = [...cleaned, ...matchers];
+  }
+  return merged;
+}
+async function installHooks(opts) {
+  const snippet = buildHookSnippet();
+  if (opts.print) {
+    console.log(JSON.stringify({ hooks: snippet }, null, 2));
+    return;
+  }
+  const path4 = settingsPath();
+  let settings = {};
+  if (existsSync41(path4)) {
+    try {
+      settings = JSON.parse(readFileSync30(path4, "utf-8"));
+    } catch {
+      throw new Error(
+        `Could not parse ${path4}. Fix the JSON or run "tmux-ide agent hook install --print" and merge manually.`
+      );
+    }
+  }
+  const existingHooks = settings.hooks && typeof settings.hooks === "object" ? settings.hooks : void 0;
+  settings.hooks = mergeHooks(existingHooks, snippet);
+  mkdirSync25(dirname18(path4), { recursive: true });
+  const tmp = `${path4}.${process.pid}.${Date.now()}.tmp`;
+  writeFileSync25(tmp, JSON.stringify(settings, null, 2) + "\n", "utf-8");
+  renameSync19(tmp, path4);
+  if (opts.json) {
+    console.log(JSON.stringify({ ok: true, path: path4, events: Object.keys(snippet) }));
+  } else {
+    console.log(`Installed tmux-ide agent hooks into ${path4}`);
+    console.log(`Events: ${Object.keys(snippet).join(", ")}`);
+    console.log("Restart your Claude Code sessions for the hooks to take effect.");
+  }
+}
+async function agentCommand(opts) {
+  const sub = opts.sub;
+  if (sub === "report") {
+    const event = opts.args?.[0];
+    if (event === "start" || event === "activity" || event === "idle" || event === "stop") {
+      try {
+        await report(event);
+      } catch {
+      }
+    }
+    process.exit(0);
+  }
+  if (sub === "hook") {
+    const hookSub = opts.args?.[0];
+    if (hookSub === "install") {
+      await installHooks({ print: opts.print, json: opts.json });
+      return;
+    }
+    throw new Error("Usage: tmux-ide agent hook install [--print]");
+  }
+  throw new Error(
+    "Usage:\n  tmux-ide agent report <start|activity|idle|stop>\n  tmux-ide agent hook install [--print]"
+  );
+}
+var EVENT_TO_ACTION, HOOK_EVENTS;
+var init_agent_hook = __esm({
+  "packages/daemon/src/agent-hook.ts"() {
+    "use strict";
+    init_canonical_daemon();
+    EVENT_TO_ACTION = {
+      // start/activity re-register (register is an idempotent upsert) so a session
+      // evicted after a long idle reappears on its next prompt or tool call.
+      // idle is a lightweight status-only heartbeat fired when a turn ends — the
+      // agent stays on the roster (just not "busy"), instead of vanishing between
+      // turns. stop is the real teardown (session exit).
+      start: "agent.register",
+      activity: "agent.register",
+      idle: "agent.heartbeat",
+      stop: "agent.unregister"
+    };
+    HOOK_EVENTS = {
+      SessionStart: "start",
+      UserPromptSubmit: "activity",
+      PreToolUse: "activity",
+      Stop: "idle",
+      SessionEnd: "stop"
+    };
+  }
+});
+
+// packages/daemon/src/agents-cli.ts
+var agents_cli_exports = {};
+__export(agents_cli_exports, {
+  agentsCommand: () => agentsCommand,
+  findAgentById: () => findAgentById,
+  formatAgentLine: () => formatAgentLine,
+  formatAgentList: () => formatAgentList,
+  groupAgentsByMachine: () => groupAgentsByMachine,
+  resolveSendTarget: () => resolveSendTarget
+});
+function findAgentById(agents, id) {
+  return agents.find((agent) => agent.id === id);
+}
+function resolveSendTarget(agents, id) {
+  const agent = findAgentById(agents, id);
+  if (!agent) {
+    throw new IdeError(`Agent not found: ${id}. Run \`tmux-ide agents\` to list agent ids.`, {
+      code: "AGENT_NOT_FOUND",
+      exitCode: 1
+    });
+  }
+  return { agent, machineId: agent.machineId };
+}
+function groupAgentsByMachine(agents) {
+  const groups = /* @__PURE__ */ new Map();
+  for (const agent of agents) {
+    const key = agent.machineId ?? "";
+    let group = groups.get(key);
+    if (!group) {
+      group = { machineId: agent.machineId, machineName: agent.machineName, agents: [] };
+      groups.set(key, group);
+    }
+    group.agents.push(agent);
+  }
+  const ordered = [...groups.values()];
+  ordered.sort((a, b) => Number(a.machineId !== null) - Number(b.machineId !== null));
+  return ordered;
+}
+function formatAgentLine(agent) {
+  const location = agent.session && agent.paneId ? `${agent.session}\xB7${agent.paneId}` : agent.cwd ?? "";
+  const parts = [`${STATUS_GLYPHS[agent.status]} ${agent.name}`, agent.tool, agent.kind];
+  if (location) parts.push(location);
+  if (agent.taskTitle) parts.push(`\u2014 ${agent.taskTitle}`);
+  parts.push(`[${agent.id}]`);
+  return `  ${parts.join("  ")}`;
+}
+function formatAgentList(agents) {
+  if (agents.length === 0) {
+    return "No agents found.";
+  }
+  const lines = [];
+  for (const group of groupAgentsByMachine(agents)) {
+    const label = group.machineId === null ? group.machineName ? `${group.machineName} (this machine)` : "this machine" : group.machineName ?? group.machineId;
+    lines.push(label);
+    for (const agent of group.agents) {
+      lines.push(formatAgentLine(agent));
+    }
+  }
+  return lines.join("\n");
+}
+function requireDaemonInfo() {
+  const info = readCanonicalDaemonInfo();
+  if (!info) {
+    throw new IdeError(NO_DAEMON_MESSAGE, { code: "DAEMON_UNAVAILABLE", exitCode: 1 });
+  }
+  return info;
+}
+function daemonRequest(info, path4) {
+  const url = `http://${hostnameForClient2(info.bindHostname)}:${info.port}${path4}`;
+  const headers = { "Content-Type": "application/json" };
+  if (info.authToken) headers.Authorization = `Bearer ${info.authToken}`;
+  return { url, headers };
+}
+function timeoutSignal5(ms) {
+  const controller = new AbortController();
+  setTimeout(() => controller.abort(), ms).unref?.();
+  return controller.signal;
+}
+async function fetchAgentList(info) {
+  const { url, headers } = daemonRequest(info, "/api/hq/agents");
+  let res;
+  try {
+    res = await fetch(url, { headers, signal: timeoutSignal5(15e3) });
+  } catch {
+    throw new IdeError(NO_DAEMON_MESSAGE, { code: "DAEMON_UNAVAILABLE", exitCode: 1 });
+  }
+  if (!res.ok) {
+    throw new IdeError(`Daemon replied ${res.status} to GET /api/hq/agents`, {
+      code: "DAEMON_ERROR",
+      exitCode: 1
+    });
+  }
+  const raw = await res.json();
+  const parsed = AgentListSchemaZ.safeParse(raw);
+  if (!parsed.success) {
+    throw new IdeError("Daemon returned an unexpected /api/hq/agents payload", {
+      code: "DAEMON_ERROR",
+      exitCode: 1
+    });
+  }
+  return { agents: parsed.data.agents, raw };
+}
+async function listAgents(opts) {
+  const info = requireDaemonInfo();
+  const { agents, raw } = await fetchAgentList(info);
+  if (opts.json) {
+    console.log(JSON.stringify(raw));
+    return;
+  }
+  console.log(formatAgentList(agents));
+}
+async function sendToAgent(opts) {
+  const info = requireDaemonInfo();
+  const { agents } = await fetchAgentList(info);
+  const { agent, machineId } = resolveSendTarget(agents, opts.id);
+  const { url, headers } = daemonRequest(info, "/api/agents/send");
+  let res;
+  try {
+    res = await fetch(url, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        id: opts.id,
+        machineId,
+        message: opts.message,
+        noEnter: opts.noEnter ? true : void 0
+      }),
+      signal: timeoutSignal5(15e3)
+    });
+  } catch {
+    throw new IdeError(NO_DAEMON_MESSAGE, { code: "DAEMON_UNAVAILABLE", exitCode: 1 });
+  }
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const detail = typeof body.error === "string" ? body.error : `HTTP ${res.status}`;
+    const code = res.status === 409 ? "AGENT_OBSERVE_ONLY" : "SEND_FAILED";
+    throw new IdeError(`Send failed: ${detail}`, { code, exitCode: 1 });
+  }
+  if (opts.json) {
+    console.log(JSON.stringify(body));
+    return;
+  }
+  const where = machineId === null ? "this machine" : agent.machineName ?? machineId;
+  console.log(`Sent to ${agent.name} [${agent.id}] on ${where}.`);
+}
+async function agentsCommand(opts) {
+  const sub = opts.sub;
+  if (sub === void 0 || sub === "list") {
+    await listAgents({ json: opts.json });
+    return;
+  }
+  if (sub === "send") {
+    const [id, ...messageParts] = opts.args ?? [];
+    const message = messageParts.join(" ");
+    if (!id || !message) {
+      throw new IdeError(
+        "Usage: tmux-ide agents send <agent-id> <message...> [--no-enter]\nRun `tmux-ide agents` to list agent ids.",
+        { code: "USAGE", exitCode: 1 }
+      );
+    }
+    await sendToAgent({ id, message, noEnter: opts.noEnter, json: opts.json });
+    return;
+  }
+  throw new IdeError(
+    "Usage:\n  tmux-ide agents [list] [--json]\n  tmux-ide agents send <agent-id> <message...> [--no-enter] [--json]\n(For the plain-terminal hook reporter, see `tmux-ide agent`.)",
+    { code: "USAGE", exitCode: 1 }
+  );
+}
+var NO_DAEMON_MESSAGE, STATUS_GLYPHS;
+var init_agents_cli = __esm({
+  "packages/daemon/src/agents-cli.ts"() {
+    "use strict";
+    init_src2();
+    init_agent_hook();
+    init_canonical_daemon();
+    init_errors2();
+    NO_DAEMON_MESSAGE = "No tmux-ide daemon running \u2014 start one with `tmux-ide`";
+    STATUS_GLYPHS = {
+      busy: "\u25CF",
+      idle: "\u25CB",
+      offline: "\u25CC"
+    };
+  }
+});
+
 // packages/daemon/src/command-center/index.ts
 var command_center_exports = {};
 __export(command_center_exports, {
   startCommandCenter: () => startCommandCenter
 });
-import { createServer as createServer2 } from "node:http";
+import { createServer as createServer3 } from "node:http";
 import { getRequestListener } from "@hono/node-server";
 async function startCommandCenter(options = {}) {
   const port = options.port ?? 6060;
-  const hostname2 = options.hostname ?? "0.0.0.0";
+  const hostname3 = options.hostname ?? "0.0.0.0";
   const appOpts = {};
   if (options.authService) appOpts.authService = options.authService;
   if (options.authConfig) appOpts.authConfig = options.authConfig;
   const app = createApp(appOpts);
   const listener = getRequestListener(app.fetch);
-  const server = createServer2(listener);
-  return new Promise((resolve34) => {
-    server.listen(port, hostname2, () => {
-      console.log(`Command Center API on http://${hostname2}:${port}`);
-      resolve34(server);
+  const server = createServer3(listener);
+  return new Promise((resolve35) => {
+    server.listen(port, hostname3, () => {
+      console.log(`Command Center API on http://${hostname3}:${port}`);
+      resolve35(server);
     });
   });
 }
@@ -28554,7 +29998,7 @@ __export(server_exports2, {
   resolvePort: () => resolvePort,
   start: () => start
 });
-import { createServer as createServer3 } from "node:http";
+import { createServer as createServer4 } from "node:http";
 import { parse } from "node:url";
 import { Hono as Hono2 } from "hono";
 import { getRequestListener as getRequestListener2 } from "@hono/node-server";
@@ -28575,7 +30019,7 @@ function createApp2() {
 async function start(port) {
   const resolvedPort = resolvePort(port);
   const app = createApp2();
-  const server = createServer3(getRequestListener2(app.fetch));
+  const server = createServer4(getRequestListener2(app.fetch));
   const ptyWss = new WebSocketServer3({ noServer: true });
   server.on("upgrade", (req, socket, head) => {
     const { pathname } = parse(req.url ?? "/", true);
@@ -28589,21 +30033,21 @@ async function start(port) {
       handlePtyWebSocket(ws, id);
     });
   });
-  await new Promise((resolve34, reject) => {
+  await new Promise((resolve35, reject) => {
     server.once("error", reject);
     server.listen(resolvedPort, "0.0.0.0", () => {
       server.off("error", reject);
-      resolve34();
+      resolve35();
     });
   });
   console.log(`tmux-ide server listening on http://0.0.0.0:${resolvedPort}`);
   return {
     port: resolvedPort,
     server,
-    close: () => new Promise((resolve34, reject) => {
+    close: () => new Promise((resolve35, reject) => {
       shutdownPtyBridges();
       ptyWss.close();
-      server.close((err) => err ? reject(err) : resolve34());
+      server.close((err) => err ? reject(err) : resolve35());
     })
   };
 }
@@ -28739,8 +30183,8 @@ var init_chat = __esm({
 });
 
 // packages/daemon/src/chat/checkpoint-engine.ts
-import { execFile as execFile7 } from "node:child_process";
-import { promisify as promisify3 } from "node:util";
+import { execFile as execFile8 } from "node:child_process";
+import { promisify as promisify4 } from "node:util";
 function makeCheckpointEngine(opts = {}) {
   const exec = opts.exec ?? defaultExec2;
   function buildRefName(threadId, turnId) {
@@ -28844,7 +30288,7 @@ function makeCheckpointEngine(opts = {}) {
 }
 async function defaultExec2(args, cwd) {
   try {
-    const { stdout } = await execFileAsync2("git", args, {
+    const { stdout } = await execFileAsync3("git", args, {
       cwd,
       encoding: "utf8",
       maxBuffer: 32 * 1024 * 1024
@@ -28913,11 +30357,11 @@ async function detectDirtyConflicts(cwd, checkpointRef, exec) {
   );
   return refPaths.filter((p) => dirtyPaths.has(p));
 }
-var execFileAsync2, REF_PREFIX, NAME_STATUS_KIND_MAP, CheckpointEngineError, SAFE_REF_SEGMENT;
+var execFileAsync3, REF_PREFIX, NAME_STATUS_KIND_MAP, CheckpointEngineError, SAFE_REF_SEGMENT;
 var init_checkpoint_engine = __esm({
   "packages/daemon/src/chat/checkpoint-engine.ts"() {
     "use strict";
-    execFileAsync2 = promisify3(execFile7);
+    execFileAsync3 = promisify4(execFile8);
     REF_PREFIX = "refs/tmux-ide/checkpoints";
     NAME_STATUS_KIND_MAP = {
       M: "modified",
@@ -28946,7 +30390,7 @@ var checkpoint_exports = {};
 __export(checkpoint_exports, {
   checkpointCommand: () => checkpointCommand
 });
-import { resolve as resolve32 } from "node:path";
+import { resolve as resolve33 } from "node:path";
 function fail(message, code, json2) {
   if (json2) {
     process.stderr.write(`${JSON.stringify({ ok: false, code, message })}
@@ -28962,7 +30406,7 @@ async function checkpointCommand(opts) {
   if (!sub) {
     fail("Missing subcommand. Usage: tmux-ide checkpoint <list|revert> ...", "USAGE", opts.json);
   }
-  const workspaceDir = resolve32(opts.workspaceDir ?? ".");
+  const workspaceDir = resolve33(opts.workspaceDir ?? ".");
   const engine = makeCheckpointEngine();
   switch (sub) {
     case "list": {
@@ -29034,9 +30478,9 @@ var init_checkpoint = __esm({
 // bin/cli.ts
 init_launch();
 import { parseArgs } from "node:util";
-import { resolve as resolve33, dirname as dirname17 } from "node:path";
+import { resolve as resolve34, dirname as dirname19 } from "node:path";
 import { execFileSync as execFileSync9 } from "node:child_process";
-import { existsSync as existsSync40 } from "node:fs";
+import { existsSync as existsSync42 } from "node:fs";
 import { fileURLToPath as fileURLToPath7 } from "node:url";
 
 // packages/daemon/src/init.ts
@@ -29662,7 +31106,7 @@ init_src();
 init_pane_comms();
 init_research();
 init_cli_action_bridge();
-import { resolve as resolve23 } from "node:path";
+import { resolve as resolve24 } from "node:path";
 function splitList(raw) {
   return raw?.split(",").map((value) => value.trim()).filter(Boolean);
 }
@@ -29903,7 +31347,7 @@ async function taskCommand(targetDir, {
   args = [],
   values: values2 = {}
 }) {
-  const dir = resolve23(targetDir ?? ".");
+  const dir = resolve24(targetDir ?? ".");
   if (await tryDispatchTaskAction(dir, { json: json2, action, sub, args, values: values2 })) return;
   switch (action) {
     case "mission":
@@ -30329,7 +31773,7 @@ function handleValidation(dir, sub, args, values2, json2) {
         break;
       }
       const entries = Object.values(state.assertions);
-      const report = {
+      const report2 = {
         total: entries.length,
         passing: entries.filter((e) => e.status === "passing").length,
         failing: entries.filter((e) => e.status === "failing").length,
@@ -30337,13 +31781,13 @@ function handleValidation(dir, sub, args, values2, json2) {
         blocked: entries.filter((e) => e.status === "blocked").length
       };
       if (json2) {
-        console.log(JSON.stringify(report, null, 2));
+        console.log(JSON.stringify(report2, null, 2));
       } else {
-        console.log(`Validation Report: ${report.total} assertions`);
-        console.log(`  Passing: ${report.passing}`);
-        console.log(`  Failing: ${report.failing}`);
-        console.log(`  Pending: ${report.pending}`);
-        if (report.blocked > 0) console.log(`  Blocked: ${report.blocked}`);
+        console.log(`Validation Report: ${report2.total} assertions`);
+        console.log(`  Passing: ${report2.passing}`);
+        console.log(`  Failing: ${report2.failing}`);
+        console.log(`  Pending: ${report2.pending}`);
+        if (report2.blocked > 0) console.log(`  Blocked: ${report2.blocked}`);
       }
       break;
     }
@@ -30771,12 +32215,12 @@ init_send();
 // packages/daemon/src/dashboard.ts
 init_canonical_daemon();
 init_errors2();
-import { spawn as spawn9 } from "node:child_process";
-function openInBrowser(url) {
+import { spawn as spawn10 } from "node:child_process";
+function openInBrowser2(url) {
   const platform = process.platform;
   const cmd = platform === "darwin" ? "open" : platform === "win32" ? "start" : "xdg-open";
   try {
-    const child = spawn9(cmd, [url], { stdio: "ignore", detached: true });
+    const child = spawn10(cmd, [url], { stdio: "ignore", detached: true });
     child.unref();
   } catch {
   }
@@ -30797,14 +32241,14 @@ async function dashboard(opts = {}) {
 `);
   }
   if (opts.open !== false) {
-    openInBrowser(url);
+    openInBrowser2(url);
   }
 }
 
 // bin/cli.ts
 init_errors2();
 init_output();
-var __dirname5 = dirname17(fileURLToPath7(import.meta.url));
+var __dirname5 = dirname19(fileURLToPath7(import.meta.url));
 var { positionals, values } = parseArgs({
   allowPositionals: true,
   strict: false,
@@ -30851,12 +32295,18 @@ var { positionals, values } = parseArgs({
     // remote command flags
     url: { type: "string" },
     "hq-url": { type: "string" },
+    host: { type: "string" },
+    path: { type: "string" },
+    "local-port": { type: "string" },
+    "remote-port": { type: "string" },
     // send command flags
     to: { type: "string" },
     "no-enter": { type: "boolean" },
     // dashboard command flags
     open: { type: "boolean" },
     "no-open": { type: "boolean" },
+    // agent hook command flags
+    print: { type: "boolean" },
     // chat command flags (T078)
     role: { type: "string" }
   }
@@ -30895,6 +32345,9 @@ var knownCommands = /* @__PURE__ */ new Set([
   "remote",
   "checkpoint",
   "chat",
+  "agent",
+  "agents",
+  "__remote-serve",
   "help"
 ]);
 if (values.version) {
@@ -30974,6 +32427,19 @@ ${bold("Multi-agent Chat:")}
   ${cyan("tmux-ide chat session add")} <thread-id> --provider <name> [--role <role>]
                                   ${dim("Register a Session on a Thread (lead|teammate|planner|validator|researcher)")}
 
+${bold("SSH Remotes:")}
+  ${cyan("tmux-ide remote ssh hosts")} [--json]       ${dim("List concrete Host aliases from ~/.ssh/config")}
+  ${cyan("tmux-ide remote ssh add")} <name> --host <ssh-host> --path <dir>
+                                  ${dim("Save a tunnel-only remote project")}
+  ${cyan("tmux-ide remote ssh launch")} <name> [--no-open]
+                                  ${dim("Open a local SSH tunnel to a remote tmux-ide dashboard")}
+
+${bold("Agent Fleet:")}
+  ${cyan("tmux-ide agents")} [list] [--json]          ${dim("Every agent across machines (see also: agent)")}
+  ${cyan("tmux-ide agents send")} <agent-id> <msg...> ${dim("Send input to any agent, local or remote")}
+  ${cyan("tmux-ide agent hook install")} [--print]    ${dim("Self-report hooks for plain-terminal sessions")}
+  ${cyan("tmux-ide agent report")} <event>            ${dim("Invoked by Claude Code hooks (see also: agents)")}
+
 ${bold("Task Management:")}
   ${cyan("tmux-ide mission set")} "title"              ${dim("Set the project mission")}
   ${cyan("tmux-ide mission show")}                     ${dim("Show current mission")}
@@ -30997,7 +32463,7 @@ ${bold("Flags:")}
   ${cyan("-v, --version")}               ${dim("Show version number")}`);
 }
 function execBunWidget(scriptPath, args, commandLabel) {
-  const widgetMissing = !existsSync40(scriptPath);
+  const widgetMissing = !existsSync42(scriptPath);
   let bunMissing = false;
   try {
     execFileSync9("bun", ["--version"], { stdio: "ignore" });
@@ -31101,10 +32567,10 @@ try {
         action = "disable-team";
         configArgs = [];
       } else if (sub === "edit") {
-        const scriptPath = resolve33(__dirname5, "../packages/daemon/src/widgets/setup/index.tsx");
+        const scriptPath = resolve34(__dirname5, "../packages/daemon/src/widgets/setup/index.tsx");
         execBunWidget(
           scriptPath,
-          ["--dir=" + resolve33(startTargetDir || "."), "--edit"],
+          ["--dir=" + resolve34(startTargetDir || "."), "--edit"],
           "config edit"
         );
         break;
@@ -31220,8 +32686,8 @@ try {
       break;
     }
     case "setup": {
-      const scriptPath = resolve33(__dirname5, "../packages/daemon/src/widgets/setup/index.tsx");
-      const setupArgs = ["--dir=" + resolve33(startTargetDir || ".")];
+      const scriptPath = resolve34(__dirname5, "../packages/daemon/src/widgets/setup/index.tsx");
+      const setupArgs = ["--dir=" + resolve34(startTargetDir || ".")];
       if (positionals[1] === "--edit" || values.edit) setupArgs.push("--edit");
       if (positionals[1] === "--wizard" || values.wizard) setupArgs.push("--wizard");
       execBunWidget(scriptPath, setupArgs, "setup");
@@ -31232,8 +32698,8 @@ try {
       const messageStart = values.to ? 1 : 2;
       let message = positionals.slice(messageStart).join(" ");
       if (!message && !process.stdin.isTTY) {
-        const { readFileSync: readFileSync30 } = await import("node:fs");
-        message = readFileSync30(0, "utf-8").trim();
+        const { readFileSync: readFileSync31 } = await import("node:fs");
+        message = readFileSync31(0, "utf-8").trim();
       }
       await send(null, { json, to: target, message, noEnter: values["no-enter"] });
       break;
@@ -31256,8 +32722,8 @@ try {
       break;
     }
     case "settings": {
-      const scriptPath = resolve33(__dirname5, "../packages/daemon/src/widgets/config/index.tsx");
-      execBunWidget(scriptPath, ["--dir=" + resolve33(startTargetDir || ".")], "settings");
+      const scriptPath = resolve34(__dirname5, "../packages/daemon/src/widgets/config/index.tsx");
+      execBunWidget(scriptPath, ["--dir=" + resolve34(startTargetDir || ".")], "settings");
       break;
     }
     case "tunnel": {
@@ -31283,9 +32749,39 @@ try {
         args: positionals.slice(2),
         values: {
           url: values.url,
-          "hq-url": values["hq-url"]
+          "hq-url": values["hq-url"],
+          host: values.host,
+          path: values.path,
+          "local-port": values["local-port"],
+          "remote-port": values["remote-port"],
+          "no-open": values["no-open"]
         }
       });
+      break;
+    }
+    case "agent": {
+      const { agentCommand: agentCommand2 } = await Promise.resolve().then(() => (init_agent_hook(), agent_hook_exports));
+      await agentCommand2({
+        sub: positionals[1],
+        args: positionals.slice(2),
+        json,
+        print: values.print === true
+      });
+      break;
+    }
+    case "agents": {
+      const { agentsCommand: agentsCommand2 } = await Promise.resolve().then(() => (init_agents_cli(), agents_cli_exports));
+      await agentsCommand2({
+        sub: positionals[1],
+        args: positionals.slice(2),
+        json,
+        noEnter: values["no-enter"] === true
+      });
+      break;
+    }
+    case "__remote-serve": {
+      const { remoteServeCommand: remoteServeCommand2 } = await Promise.resolve().then(() => (init_ssh_remote(), ssh_remote_exports));
+      await remoteServeCommand2({ port: values.port });
       break;
     }
     case "command-center": {
@@ -31300,7 +32796,7 @@ try {
     }
     case "server": {
       if ("bun" in process.versions) {
-        const scriptPath = resolve33(__dirname5, "../packages/daemon/src/server/standalone.ts");
+        const scriptPath = resolve34(__dirname5, "../packages/daemon/src/server/standalone.ts");
         const serverArgs = ["--experimental-strip-types", scriptPath];
         if (values.port) serverArgs.push("--port", values.port);
         execFileSync9("node", serverArgs, { stdio: "inherit" });

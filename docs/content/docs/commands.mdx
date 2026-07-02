@@ -85,6 +85,167 @@ The `tmux-ide` launch command also prints the dashboard URL alongside
 the `Starting <session>` line, so first-time users see it without
 running this subcommand.
 
+## `tmux-ide remote ssh`
+
+Control a tmux-ide project on another machine through SSH without opening
+any public port on the remote host. The remote daemon binds to
+`127.0.0.1` on the remote machine, and the local CLI opens an SSH tunnel
+from `127.0.0.1:<local-port>` to that remote loopback port.
+
+```bash
+tmux-ide remote ssh hosts
+tmux-ide remote ssh add atlas --host atlas-evg --path ~/Documents/code/project-atlas
+tmux-ide remote ssh launch atlas
+tmux-ide remote ssh launch atlas --no-open
+tmux-ide remote ssh status atlas
+tmux-ide remote ssh remove atlas
+```
+
+Use `--local-port` when you want a stable local URL, and `--remote-port`
+when the remote machine already uses the default remote daemon port:
+
+```bash
+tmux-ide remote ssh add atlas \
+  --host atlas-evg \
+  --path ~/Documents/code/project-atlas \
+  --local-port 6061 \
+  --remote-port 6060
+```
+
+The saved config lives in `~/.tmux-ide/ssh-remotes.json` and stores only
+the remote name, SSH host alias, project path, and optional ports.
+
+## `tmux-ide agent`
+
+Let a Claude Code session running in a **plain terminal** — one you did
+not start through tmux-ide — report itself to the local canonical daemon
+so it appears in the central agent view alongside orchestrated agents.
+
+### `tmux-ide agent hook install`
+
+Merge the reporting hooks into `~/.claude/settings.json` (respecting
+`CLAUDE_CONFIG_DIR` when set). Existing hooks are preserved, and
+re-running the installer is idempotent.
+
+```bash
+tmux-ide agent hook install
+tmux-ide agent hook install --print   # print the snippet instead of writing
+```
+
+The installer wires the Claude Code lifecycle events to
+`tmux-ide agent report`:
+
+```json
+{
+  "hooks": {
+    "SessionStart": [
+      { "hooks": [{ "type": "command", "command": "tmux-ide agent report start" }] }
+    ],
+    "UserPromptSubmit": [
+      { "hooks": [{ "type": "command", "command": "tmux-ide agent report activity" }] }
+    ],
+    "PreToolUse": [
+      { "hooks": [{ "type": "command", "command": "tmux-ide agent report activity" }] }
+    ],
+    "Stop": [{ "hooks": [{ "type": "command", "command": "tmux-ide agent report idle" }] }],
+    "SessionEnd": [{ "hooks": [{ "type": "command", "command": "tmux-ide agent report stop" }] }]
+  }
+}
+```
+
+Restart your Claude Code sessions after installing so the hooks load.
+
+### `tmux-ide agent report`
+
+Invoked by the hooks above — you rarely run this by hand. It reads the
+hook JSON payload from **stdin** and POSTs to the local daemon:
+
+| Event      | Claude Code hook                 | Daemon action      | Status |
+| ---------- | -------------------------------- | ------------------ | ------ |
+| `start`    | `SessionStart`                   | `agent.register`   | busy   |
+| `activity` | `UserPromptSubmit`, `PreToolUse` | `agent.register`   | busy   |
+| `idle`     | `Stop` (end of a turn)           | `agent.heartbeat`  | idle   |
+| `stop`     | `SessionEnd` (session exit)      | `agent.unregister` | —      |
+
+`Stop` fires at the end of **every turn**, not on session exit — so it maps to
+`idle` (the agent stays on the roster between turns) while `SessionEnd` is the
+real teardown. `PreToolUse` keeps a long-running turn marked live.
+
+The agent `id` is the Claude Code `session_id`; the display name is
+derived as `<tool>@<basename(cwd)>` (`tool` is `claude` by default, or
+`codex` when `TMUX_IDE_AGENT_TOOL=codex`). The daemon URL and auth token
+are discovered from `~/.tmux-ide/daemon.json`; an `Authorization: Bearer`
+header is sent when a token is present.
+
+`agent report` is best-effort and defensive: if no daemon is running, or
+the request fails or times out, it exits 0 silently so it can never break
+your Claude session.
+
+> **Read-only observation.** This feature only _observes_ a plain-terminal
+> agent — it reports the session's existence and lifecycle. It cannot send
+> input to or otherwise control an agent that tmux-ide did not start; there
+> is no pane to drive. Only agents launched inside a tmux-ide session can
+> be dispatched to or messaged.
+
+## `tmux-ide agents`
+
+The central fleet surface — list every agent the local canonical daemon
+can see (this machine, HQ-registered machines, and SSH-tunneled remotes)
+and send a message to any of them from here. Not to be confused with
+`tmux-ide agent` (singular), the hook reporter above.
+
+### `tmux-ide agents list`
+
+`tmux-ide agents` (or `tmux-ide agents list`) fetches `/api/hq/agents`
+from the local daemon and prints the fleet grouped by machine, with this
+machine first:
+
+```bash
+tmux-ide agents
+tmux-ide agents list --json   # raw { agents: [...] } response
+```
+
+```
+mac-studio (this machine)
+  ● Lead  claude  managed  dev·%1  — Fix login flow  [dev:%1]
+  ○ claude@side-project  claude  external  /Users/me/side-project  [sess-4f2a]
+boxa
+  ○ Agent 1  claude  managed  project·%1  [ssh:boxa:project:%1]
+```
+
+Each line shows a status glyph (`●` busy, `○` idle, `◌` offline), the
+agent's name, tool, kind, its `session·paneId` (or `cwd` for external
+agents), the current task title when set, and the agent id in brackets —
+you need that id for `agents send`.
+
+If no daemon is running, the command exits non-zero with
+`No tmux-ide daemon running — start one with \`tmux-ide\``.
+
+### `tmux-ide agents send`
+
+Send a message to any agent in the fleet by id. The CLI fetches the
+agent list first and resolves the target machine from the matching
+record, so remote ids work as printed — no manual machine flags:
+
+```bash
+# Local agent (id = session:paneId)
+tmux-ide agents send "dev:%1" "run the tests again"
+
+# SSH-remote agent — works while the `remote ssh launch` tunnel is up
+tmux-ide agents send "ssh:boxa:project:%1" "rebase onto main and rerun CI"
+
+# Send text without pressing Enter
+tmux-ide agents send "dev:%1" --no-enter "draft reply"
+```
+
+Failure modes are surfaced clearly:
+
+- unknown id → error suggesting `tmux-ide agents` to list ids
+- `external` agents (plain-terminal, hook-reported) are **observe-only**
+  — there is no pane to drive, so the daemon replies 409
+- machine unreachable (e.g. the SSH tunnel is down) → the daemon replies
+  502 and the CLI prints the error text
+
 ## `tmux-ide ls`
 
 List all running tmux sessions.

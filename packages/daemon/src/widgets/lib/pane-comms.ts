@@ -1,34 +1,9 @@
-import { execFileSync } from "node:child_process";
 import type { PaneInfo } from "@tmux-ide/contracts";
+import { tmux, runTmux, _setExecutor } from "../../lib/tmux-exec.ts";
 
 export type { PaneInfo };
-
-type TmuxExecutor = (cmd: string, args: string[], options?: object) => string;
-
-let _executor: TmuxExecutor = (cmd, args, options) =>
-  execFileSync(cmd, args, { encoding: "utf-8", ...options }).toString();
-
-export function _setExecutor(fn: TmuxExecutor): () => void {
-  const prev = _executor;
-  _executor = fn;
-  return () => {
-    _executor = prev;
-  };
-}
-
-function tmux(...args: string[]): string {
-  try {
-    return _executor("tmux", args, {
-      stdio: ["pipe", "pipe", "pipe"],
-    }).trim();
-  } catch (error) {
-    const stderr = (error as { stderr?: Buffer | string })?.stderr?.toString() ?? "";
-    if (stderr.includes("no server running") || stderr.includes("can't find session")) {
-      return "";
-    }
-    throw error;
-  }
-}
+// Re-exported so existing callers/tests keep importing the executor seam here.
+export { _setExecutor };
 
 export function listSessionPanes(session: string): PaneInfo[] {
   const format = [
@@ -199,7 +174,7 @@ export function resolveTarget(session: string, opts: TargetOptions): string | nu
  */
 export function captureLastLine(paneId: string): string {
   try {
-    return _executor("tmux", ["capture-pane", "-t", paneId, "-p", "-S", "-1"], {
+    return runTmux(["capture-pane", "-t", paneId, "-p", "-S", "-1"], {
       encoding: "utf-8",
       stdio: ["ignore", "pipe", "ignore"],
     }).trim();

@@ -423,6 +423,66 @@ export const ProjectDetailSchemaZ = z.object({
 });
 
 // ---------------------------------------------------------------------------
+// Agents — a unified, location-agnostic view of every Claude/codex CLI agent,
+// whether spawned by tmux-ide (managed), discovered in another tmux session
+// (tmux-unmanaged), or self-reported from a plain terminal via a hook
+// (external). HQ stamps machineId/machineName when aggregating across hosts.
+// ---------------------------------------------------------------------------
+
+export const AgentToolSchemaZ = z.enum(["claude", "codex", "unknown"]);
+
+export const AgentKindSchemaZ = z.enum(["managed", "tmux-unmanaged", "external"]);
+
+export const AgentStatusSchemaZ = z.enum(["busy", "idle", "offline"]);
+
+export const AgentRecordSchemaZ = z.object({
+  // Stable id. tmux agents (local): `${session}:${paneId}`; HQ namespaces
+  // remote ids with `${machineId}:` during aggregation. external agents: the
+  // hook-supplied id (typically the Claude session id). Bounds matter because
+  // HQ validates untrusted remote responses against this same schema.
+  id: z.string().max(512),
+  kind: AgentKindSchemaZ,
+  tool: AgentToolSchemaZ,
+  name: z.string().max(256),
+  status: AgentStatusSchemaZ,
+  session: z.string().max(256).nullable(),
+  paneId: z.string().max(64).nullable(),
+  paneTitle: z.string().max(512).nullable(),
+  cwd: z.string().max(4096).nullable(),
+  taskId: z.string().max(128).nullable(),
+  taskTitle: z.string().max(512).nullable(),
+  pid: z.number().nullable(),
+  // ISO timestamp of last observed activity / heartbeat.
+  lastActivity: z.string().max(64),
+  // null = this (local) machine; set by HQ when aggregating remotes.
+  machineId: z.string().max(256).nullable(),
+  machineName: z.string().max(256).nullable(),
+});
+
+// Payload a Claude/codex SessionStart hook POSTs to register itself.
+export const AgentRegisterPayloadSchemaZ = z.object({
+  id: z.string().min(1).max(256),
+  tool: AgentToolSchemaZ.default("claude"),
+  name: z.string().max(256).optional(),
+  cwd: z.string().max(4096).optional(),
+  session: z.string().max(256).optional(),
+  pid: z.number().int().positive().optional(),
+  status: AgentStatusSchemaZ.optional(),
+  taskTitle: z.string().max(512).optional(),
+});
+
+// Payload a hook POSTs on activity (UserPromptSubmit / Stop / Notification).
+export const AgentHeartbeatPayloadSchemaZ = z.object({
+  id: z.string().min(1).max(256),
+  status: AgentStatusSchemaZ.optional(),
+  taskTitle: z.string().max(512).optional(),
+});
+
+export const AgentListSchemaZ = z.object({
+  agents: z.array(AgentRecordSchemaZ),
+});
+
+// ---------------------------------------------------------------------------
 // Inferred types
 // ---------------------------------------------------------------------------
 
@@ -437,3 +497,9 @@ export type AgentDetail = z.infer<typeof AgentDetailSchemaZ>;
 export type PaneInfo = z.infer<typeof PaneInfoSchemaZ>;
 export type SessionOverview = z.infer<typeof SessionOverviewSchemaZ>;
 export type ProjectDetail = z.infer<typeof ProjectDetailSchemaZ>;
+export type AgentTool = z.infer<typeof AgentToolSchemaZ>;
+export type AgentKind = z.infer<typeof AgentKindSchemaZ>;
+export type AgentStatus = z.infer<typeof AgentStatusSchemaZ>;
+export type AgentRecord = z.infer<typeof AgentRecordSchemaZ>;
+export type AgentRegisterPayload = z.infer<typeof AgentRegisterPayloadSchemaZ>;
+export type AgentHeartbeatPayload = z.infer<typeof AgentHeartbeatPayloadSchemaZ>;

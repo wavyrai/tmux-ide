@@ -18,6 +18,7 @@ import {
   KanbanSquare,
   Search,
   Terminal as TerminalIcon,
+  Bot,
   BarChart3,
   DollarSign,
   Sparkles,
@@ -28,6 +29,7 @@ import {
 export const VIEWS = [
   { id: "mission", label: "Mission", glyph: "◆", Icon: Target },
   { id: "mission-control", label: "Mission Control", glyph: "✦", Icon: Compass },
+  { id: "agents", label: "Agents", glyph: "✲", Icon: Bot },
   { id: "kanban", label: "Kanban", glyph: "⊟", Icon: KanbanSquare },
   { id: "tasks", label: "Tasks", glyph: "≡", Icon: CheckSquare },
   { id: "plans", label: "Plans", glyph: "▦", Icon: ListTodo },

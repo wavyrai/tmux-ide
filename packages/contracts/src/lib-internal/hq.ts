@@ -22,10 +22,10 @@ export interface RegistrationPayload {
 }
 
 export const RegistrationPayloadSchema = z.object({
-  id: z.string().min(1),
-  name: z.string().min(1),
-  url: z.string().url(),
-  token: z.string().min(1),
+  id: z.string().min(1).max(256),
+  name: z.string().min(1).max(256),
+  url: z.string().url().max(2048),
+  token: z.string().min(1).max(512),
 });
 
 export const HQConfigSchema = z.object({

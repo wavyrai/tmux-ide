@@ -54,8 +54,10 @@ export function splitPane(
         direction === "vertical" ? "-v" : "-h",
         "-c",
         cwd,
-        "-p",
-        String(percent),
+        // `-l N%` (tmux ≥3.1) — the old `-p N` percentage flag is gone from
+        // some builds (e.g. 3.4 fails with "size missing").
+        "-l",
+        `${percent}%`,
       ],
       { encoding: "utf-8" },
     ) as string

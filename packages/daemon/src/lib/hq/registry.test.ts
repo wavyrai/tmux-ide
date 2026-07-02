@@ -234,4 +234,28 @@ describe("RemoteRegistry", () => {
       expect(registry.getMachine("unknown")).toBeUndefined();
     });
   });
+
+  describe("maxMachines cap", () => {
+    it("rejects new registrations past the cap but allows re-registration", () => {
+      const capped = new RemoteRegistry({
+        healthInterval: 60_000,
+        maxMachines: 2,
+        isShuttingDown: () => shuttingDown,
+      });
+      try {
+        capped.register({ id: "a", name: "a", url: "https://a.example.com", token: "t" });
+        capped.register({ id: "b", name: "b", url: "https://b.example.com", token: "t" });
+        expect(() =>
+          capped.register({ id: "c", name: "c", url: "https://c.example.com", token: "t" }),
+        ).toThrow(/full/);
+        // existing machine re-registers (heartbeat) even at capacity
+        expect(() =>
+          capped.register({ id: "a", name: "a", url: "https://a.example.com", token: "t2" }),
+        ).not.toThrow();
+        expect(capped.getMachines().length).toBe(2);
+      } finally {
+        capped.destroy();
+      }
+    });
+  });
 });

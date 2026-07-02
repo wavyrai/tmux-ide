@@ -61,6 +61,11 @@ import {
 } from "./handlers/webhook-actions.ts";
 import { appSetRemoteAccessHandler } from "./handlers/app-set-remote-access.ts";
 import { daemonShutdownHandler } from "./handlers/daemon-shutdown.ts";
+import {
+  agentHeartbeatHandler,
+  agentRegisterHandler,
+  agentUnregisterHandler,
+} from "./handlers/agent-actions.ts";
 import { chatContextCaptureTerminalHandler } from "../../chat/context-actions.ts";
 import {
   chatPermissionRespondHandler,
@@ -276,6 +281,21 @@ export const actionRegistry: RegistryShape = {
     inputSchema: ActionContractsZ["daemon.shutdown"].input,
     resultSchema: ActionContractsZ["daemon.shutdown"].result,
     handler: daemonShutdownHandler,
+  },
+  "agent.register": {
+    inputSchema: ActionContractsZ["agent.register"].input,
+    resultSchema: ActionContractsZ["agent.register"].result,
+    handler: agentRegisterHandler,
+  },
+  "agent.heartbeat": {
+    inputSchema: ActionContractsZ["agent.heartbeat"].input,
+    resultSchema: ActionContractsZ["agent.heartbeat"].result,
+    handler: agentHeartbeatHandler,
+  },
+  "agent.unregister": {
+    inputSchema: ActionContractsZ["agent.unregister"].input,
+    resultSchema: ActionContractsZ["agent.unregister"].result,
+    handler: agentUnregisterHandler,
   },
   "chat.thread.list": {
     inputSchema: ActionContractsZ["chat.thread.list"].input,

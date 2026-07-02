@@ -30,6 +30,17 @@ export const sendCommandSchema = z.object({
   noEnter: z.boolean().optional(),
 });
 
+// Send input to an agent from the unified agents view. `machineId` routes the
+// send: null/absent = an agent on this host; `ssh:<name>` or an HQ machine id
+// = proxy one hop to that machine's daemon (the forwarded request carries no
+// machineId, so it cannot loop).
+export const agentSendSchema = z.object({
+  id: z.string().min(1).max(512),
+  machineId: z.string().min(1).max(256).nullish(),
+  message: z.string().min(1, "Message is required").max(10_000),
+  noEnter: z.boolean().optional(),
+});
+
 export const createMilestoneSchema = z.object({
   title: z.string().trim().min(1, "Title is required"),
   sequence: z.number().int().positive(),

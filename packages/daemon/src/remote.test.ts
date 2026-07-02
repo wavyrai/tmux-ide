@@ -1,5 +1,12 @@
 import { describe, it, expect } from "bun:test";
 import { HQConfigSchema, RegistrationPayloadSchema } from "./lib/hq/types.ts";
+import {
+  buildRemoteServeScript,
+  buildSshForwardArgs,
+  parseSshConfigHosts,
+  shellQuote,
+  validateSshAlias,
+} from "./ssh-remote.ts";
 
 describe("remote CLI contracts", () => {
   describe("HQConfigSchema", () => {
@@ -110,6 +117,62 @@ describe("remote CLI contracts", () => {
         rows: [{ panes: [{ title: "Shell" }] }],
       });
       expect(result.success).toBe(true);
+    });
+  });
+
+  describe("SSH remotes", () => {
+    it("parses concrete SSH config hosts and skips wildcard entries", () => {
+      expect(
+        parseSshConfigHosts(`
+          Host atlas-evg atlas-linux-box
+            User evg
+
+          Host *
+            ServerAliveInterval 15
+
+          Host !blocked *.example.com
+            User ignored
+        `),
+      ).toEqual(["atlas-evg", "atlas-linux-box"]);
+    });
+
+    it("rejects SSH aliases with shell metacharacters", () => {
+      expect(() => validateSshAlias("atlas-evg")).not.toThrow();
+      expect(() => validateSshAlias("atlas-evg;touch /tmp/pwned")).toThrow();
+      expect(() => validateSshAlias("-oProxyCommand=evil")).toThrow();
+    });
+
+    it("quotes remote paths before passing them to the remote shell", () => {
+      expect(shellQuote("/home/evg/project atlas")).toBe("'/home/evg/project atlas'");
+      expect(shellQuote("/home/evg/it's-here")).toBe("'/home/evg/it'\\''s-here'");
+    });
+
+    it("builds a remote serve script that binds only through localhost tunnel inputs", () => {
+      const script = buildRemoteServeScript("/home/evg/project atlas", 6060);
+      expect(script).toContain("cd '/home/evg/project atlas'");
+      expect(script).toContain("tmux-ide __remote-serve --port 6060");
+      expect(script).not.toContain("0.0.0.0");
+    });
+
+    it("builds SSH forwarding args without invoking a local shell", () => {
+      expect(
+        buildSshForwardArgs({ host: "atlas-evg", localPort: 49152, remotePort: 6060 }),
+      ).toEqual([
+        "-N",
+        "-L",
+        "127.0.0.1:49152:127.0.0.1:6060",
+        "-o",
+        "ExitOnForwardFailure=yes",
+        "-o",
+        "ServerAliveInterval=15",
+        // Dedicated connection: mux hand-off would drop the forward when the
+        // -N client exits (ControlMaster + SSM setups).
+        "-o",
+        "ControlMaster=no",
+        "-o",
+        "ControlPath=none",
+        "atlas-evg",
+      ]);
     });
   });
 });

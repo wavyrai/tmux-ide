@@ -73,12 +73,18 @@ const { positionals, values } = parseArgs({
     // remote command flags
     url: { type: "string" },
     "hq-url": { type: "string" },
+    host: { type: "string" },
+    path: { type: "string" },
+    "local-port": { type: "string" },
+    "remote-port": { type: "string" },
     // send command flags
     to: { type: "string" },
     "no-enter": { type: "boolean" },
     // dashboard command flags
     open: { type: "boolean" },
     "no-open": { type: "boolean" },
+    // agent hook command flags
+    print: { type: "boolean" },
     // chat command flags (T078)
     role: { type: "string" },
   },
@@ -118,6 +124,9 @@ const knownCommands = new Set([
   "remote",
   "checkpoint",
   "chat",
+  "agent",
+  "agents",
+  "__remote-serve",
   "help",
 ]);
 
@@ -203,6 +212,19 @@ ${bold("Orchestrator:")}
 ${bold("Multi-agent Chat:")}
   ${cyan("tmux-ide chat session add")} <thread-id> --provider <name> [--role <role>]
                                   ${dim("Register a Session on a Thread (lead|teammate|planner|validator|researcher)")}
+
+${bold("SSH Remotes:")}
+  ${cyan("tmux-ide remote ssh hosts")} [--json]       ${dim("List concrete Host aliases from ~/.ssh/config")}
+  ${cyan("tmux-ide remote ssh add")} <name> --host <ssh-host> --path <dir>
+                                  ${dim("Save a tunnel-only remote project")}
+  ${cyan("tmux-ide remote ssh launch")} <name> [--no-open]
+                                  ${dim("Open a local SSH tunnel to a remote tmux-ide dashboard")}
+
+${bold("Agent Fleet:")}
+  ${cyan("tmux-ide agents")} [list] [--json]          ${dim("Every agent across machines (see also: agent)")}
+  ${cyan("tmux-ide agents send")} <agent-id> <msg...> ${dim("Send input to any agent, local or remote")}
+  ${cyan("tmux-ide agent hook install")} [--print]    ${dim("Self-report hooks for plain-terminal sessions")}
+  ${cyan("tmux-ide agent report")} <event>            ${dim("Invoked by Claude Code hooks (see also: agents)")}
 
 ${bold("Task Management:")}
   ${cyan("tmux-ide mission set")} "title"              ${dim("Set the project mission")}
@@ -555,8 +577,41 @@ try {
         values: {
           url: values.url,
           "hq-url": values["hq-url"],
+          host: values.host,
+          path: values.path,
+          "local-port": values["local-port"],
+          "remote-port": values["remote-port"],
+          "no-open": values["no-open"],
         },
       });
+      break;
+    }
+
+    case "agent": {
+      const { agentCommand } = await import("../packages/daemon/src/agent-hook.ts");
+      await agentCommand({
+        sub: positionals[1],
+        args: positionals.slice(2),
+        json,
+        print: values.print === true,
+      });
+      break;
+    }
+
+    case "agents": {
+      const { agentsCommand } = await import("../packages/daemon/src/agents-cli.ts");
+      await agentsCommand({
+        sub: positionals[1],
+        args: positionals.slice(2),
+        json,
+        noEnter: values["no-enter"] === true,
+      });
+      break;
+    }
+
+    case "__remote-serve": {
+      const { remoteServeCommand } = await import("../packages/daemon/src/ssh-remote.ts");
+      await remoteServeCommand({ port: values.port });
       break;
     }
 
