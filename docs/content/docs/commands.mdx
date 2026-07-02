@@ -187,6 +187,65 @@ your Claude session.
 > is no pane to drive. Only agents launched inside a tmux-ide session can
 > be dispatched to or messaged.
 
+## `tmux-ide agents`
+
+The central fleet surface — list every agent the local canonical daemon
+can see (this machine, HQ-registered machines, and SSH-tunneled remotes)
+and send a message to any of them from here. Not to be confused with
+`tmux-ide agent` (singular), the hook reporter above.
+
+### `tmux-ide agents list`
+
+`tmux-ide agents` (or `tmux-ide agents list`) fetches `/api/hq/agents`
+from the local daemon and prints the fleet grouped by machine, with this
+machine first:
+
+```bash
+tmux-ide agents
+tmux-ide agents list --json   # raw { agents: [...] } response
+```
+
+```
+mac-studio (this machine)
+  ● Lead  claude  managed  dev·%1  — Fix login flow  [dev:%1]
+  ○ claude@side-project  claude  external  /Users/me/side-project  [sess-4f2a]
+boxa
+  ○ Agent 1  claude  managed  project·%1  [ssh:boxa:project:%1]
+```
+
+Each line shows a status glyph (`●` busy, `○` idle, `◌` offline), the
+agent's name, tool, kind, its `session·paneId` (or `cwd` for external
+agents), the current task title when set, and the agent id in brackets —
+you need that id for `agents send`.
+
+If no daemon is running, the command exits non-zero with
+`No tmux-ide daemon running — start one with \`tmux-ide\``.
+
+### `tmux-ide agents send`
+
+Send a message to any agent in the fleet by id. The CLI fetches the
+agent list first and resolves the target machine from the matching
+record, so remote ids work as printed — no manual machine flags:
+
+```bash
+# Local agent (id = session:paneId)
+tmux-ide agents send "dev:%1" "run the tests again"
+
+# SSH-remote agent — works while the `remote ssh launch` tunnel is up
+tmux-ide agents send "ssh:boxa:project:%1" "rebase onto main and rerun CI"
+
+# Send text without pressing Enter
+tmux-ide agents send "dev:%1" --no-enter "draft reply"
+```
+
+Failure modes are surfaced clearly:
+
+- unknown id → error suggesting `tmux-ide agents` to list ids
+- `external` agents (plain-terminal, hook-reported) are **observe-only**
+  — there is no pane to drive, so the daemon replies 409
+- machine unreachable (e.g. the SSH tunnel is down) → the daemon replies
+  502 and the CLI prints the error text
+
 ## `tmux-ide ls`
 
 List all running tmux sessions.
