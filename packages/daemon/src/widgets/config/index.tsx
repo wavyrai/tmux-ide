@@ -4,6 +4,7 @@ import { render, useKeyboard, useTerminalDimensions } from "@opentui/solid";
 import { RGBA, TextAttributes } from "@opentui/core";
 import { createSignal, createMemo, Show } from "solid-js";
 import { createTheme, type RGBA as RGBAType, type WidgetTheme } from "../lib/theme.ts";
+import { getAppConfig } from "../../lib/app-config.ts";
 import {
   flattenConfigTree,
   updateConfigAtPath,
@@ -94,7 +95,7 @@ function getValueAtPath(config: IdeConfig, path: string[]): string {
 
 render(
   () => {
-    const theme = createTheme(themeConfig);
+    const theme = createTheme(themeConfig, getAppConfig().theme);
     const dimensions = useTerminalDimensions();
 
     // Load config

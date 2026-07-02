@@ -15,10 +15,8 @@
  * updater loop.
  */
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { join } from "node:path";
 import { runTmux } from "@tmux-ide/tmux-bridge";
+import { appConfigPath, loadAppConfig, parseAppConfig } from "../../lib/app-config.ts";
 import type { AgentStatus } from "../detect/classify.ts";
 
 /** A fleet transition this tick — the shape {@link ./events.ts diffFleet} emits. */
@@ -167,22 +165,11 @@ export const DEFAULT_NOTIFICATION_PREFS: NotificationPrefs = { toast: true, maco
 /**
  * PURE — read `{ notifications: { toast, macos } }` out of a parsed config,
  * falling back to {@link DEFAULT_NOTIFICATION_PREFS} for anything missing or of
- * the wrong type.
+ * the wrong type. Delegates to the shared {@link parseAppConfig} so notification
+ * parsing can't drift from the rest of the config.
  */
 export function notificationPrefs(parsedConfig: unknown): NotificationPrefs {
-  const notifications =
-    parsedConfig && typeof parsedConfig === "object"
-      ? (parsedConfig as { notifications?: unknown }).notifications
-      : undefined;
-  if (!notifications || typeof notifications !== "object") {
-    return { ...DEFAULT_NOTIFICATION_PREFS };
-  }
-  const toast = (notifications as { toast?: unknown }).toast;
-  const macos = (notifications as { macos?: unknown }).macos;
-  return {
-    toast: typeof toast === "boolean" ? toast : DEFAULT_NOTIFICATION_PREFS.toast,
-    macos: typeof macos === "boolean" ? macos : DEFAULT_NOTIFICATION_PREFS.macos,
-  };
+  return parseAppConfig(parsedConfig).notifications;
 }
 
 /** PURE — the `TMUX_IDE_NOTIFY=0` kill-switch: disables both channels. */
@@ -193,26 +180,16 @@ export function applyKillSwitch(
   return envValue === "0" ? { toast: false, macos: false } : prefs;
 }
 
-/** Absolute path to the minimal notification config. */
+/** Absolute path to the shared config (honors `TMUX_IDE_CONFIG`). */
 export function notifyConfigPath(): string {
-  return join(homedir(), ".tmux-ide", "config.json");
+  return appConfigPath();
 }
 
 /**
- * io — resolve effective prefs: defaults, overlaid with `~/.tmux-ide/config.json`
- * if present and valid, then the `TMUX_IDE_NOTIFY=0` kill-switch. Missing/invalid
- * config falls back to defaults.
+ * io — resolve effective prefs from the shared app config (defaults for a
+ * missing/invalid file), then apply the `TMUX_IDE_NOTIFY=0` kill-switch. Reads
+ * fresh so the env kill-switch is honored each call.
  */
 export function readNotificationPrefs(): NotificationPrefs {
-  const env = process.env.TMUX_IDE_NOTIFY;
-  const path = notifyConfigPath();
-  let prefs = { ...DEFAULT_NOTIFICATION_PREFS };
-  if (existsSync(path)) {
-    try {
-      prefs = notificationPrefs(JSON.parse(readFileSync(path, "utf-8")));
-    } catch {
-      // malformed config — keep defaults
-    }
-  }
-  return applyKillSwitch(prefs, env);
+  return applyKillSwitch(loadAppConfig().notifications, process.env.TMUX_IDE_NOTIFY);
 }

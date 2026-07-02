@@ -164,7 +164,7 @@ ${bold("Usage:")}
   ${cyan("tmux-ide integration install claude")}  ${dim("Authoritative agent status via Claude Code hooks")}
   ${cyan("tmux-ide agent explain")} <pane> [--json]  ${dim("Debug how a pane's agent state is detected")}
   ${cyan("tmux-ide cheatsheet")}         ${dim("Print the key cheat sheet (⌥k / [ ? keys ] popup)")}
-  ${cyan("tmux-ide menu")} [--client N]  ${dim("Open the right-click actions menu (⌥m / right-click the bar)")}
+  ${cyan("tmux-ide menu")} [--client N]  ${dim("Open the right-click actions menu (⌥m / right-click any pane or the bar)")}
   ${cyan("tmux-ide ls")}                 ${dim("List all tmux sessions")}
   ${cyan("tmux-ide status")} [--json]    ${dim("Show session status")}
   ${cyan("tmux-ide inspect")} [--json]   ${dim("Show effective config and runtime state")}
@@ -624,8 +624,9 @@ try {
           await import("../packages/daemon/src/tui/detect/classify.ts");
         const { listTeamProjects } = await import("../packages/daemon/src/tui/team/projects.ts");
         const { buildStatusline } = await import("../packages/daemon/src/tui/chrome/statusline.ts");
+        const { getAppConfig } = await import("../packages/daemon/src/lib/app-config.ts");
         const projects = listTeamProjects(createStatusTracker());
-        console.log(buildStatusline(projects, values.active ?? null));
+        console.log(buildStatusline(projects, values.active ?? null, 12, getAppConfig().theme));
       } catch {
         console.log("#[fg=colour75,bold] tmux-ide #[default]");
       }
@@ -744,7 +745,15 @@ try {
       // render should still print something and still close on a keypress.
       try {
         const { buildCheatsheet } = await import("../packages/daemon/src/tui/chrome/cheatsheet.ts");
-        console.log(buildCheatsheet({ width: process.stdout.columns ?? 100 }));
+        const { getAppConfig } = await import("../packages/daemon/src/lib/app-config.ts");
+        const cfg = getAppConfig();
+        console.log(
+          buildCheatsheet({
+            width: process.stdout.columns ?? 100,
+            keys: cfg.keys,
+            theme: cfg.theme,
+          }),
+        );
       } catch {
         console.log("tmux-ide — press ⌥p for the switcher, ⌥k for this sheet. Any key closes.");
       }
@@ -769,33 +778,58 @@ try {
     case "menu": {
       // Build the native tmux actions menu at CLICK TIME (the session list is
       // live) and display it on the invoking client. Bound via `run-shell -b` so
-      // `#{client_name}` format-expands into `--client`; when that's empty we
-      // resolve the client ourselves like the switcher does. Runs inside tmux's
-      // key/mouse dispatch, so it must never throw — a broken menu is a no-op.
+      // `#{client_name}` format-expands into `--client` (verified live on tmux
+      // 3.6 — it resolves to the triggering / most-recently-active client). Runs
+      // inside tmux's key/mouse dispatch, so it must never throw or HANG — every
+      // tmux call below is capped at 2s and a missing client degrades to a no-op.
       try {
-        const clientArg = typeof values.client === "string" ? values.client : "";
-        const client =
-          clientArg.length > 0
-            ? clientArg
-            : execFileSync("tmux", ["display-message", "-p", "#{client_name}"], {
-                encoding: "utf8",
-                stdio: ["ignore", "pipe", "ignore"],
-              }).trim();
+        // Every tmux shell-out gets a hard 2s cap: the old fallback
+        // (`display-message -p '#{client_name}'` from outside a client) could
+        // block indefinitely and wedge the bind. `timeout` throws on expiry,
+        // caught below → silent no-op.
+        const tmuxCap = {
+          encoding: "utf8" as const,
+          stdio: ["ignore", "pipe", "ignore"] as const,
+          timeout: 2000,
+        };
+        // Resolve the target client. Prefer the `--client` the bind expanded; if
+        // it's empty or an unexpanded `#{…}` literal, fall back to the
+        // most-recently-active attached client (list-clients sorted by
+        // client_activity desc). No clients at all → exit 0 silently (fired from
+        // tmux dispatch, a no-op beats an error).
+        const rawClient = typeof values.client === "string" ? values.client : "";
+        let client = rawClient && !rawClient.includes("#{") ? rawClient : "";
+        if (!client) {
+          const raw = execFileSync(
+            "tmux",
+            ["list-clients", "-F", "#{client_activity} #{client_name}"],
+            tmuxCap,
+          ).trim();
+          const newest = raw
+            .split("\n")
+            .filter(Boolean)
+            .map((line) => {
+              const sp = line.indexOf(" ");
+              return { activity: Number(line.slice(0, sp)), name: line.slice(sp + 1) };
+            })
+            .sort((a, b) => b.activity - a.activity)[0];
+          client = newest?.name ?? "";
+        }
+        if (!client) break; // no attached clients — nothing to show
         const { createStatusTracker } =
           await import("../packages/daemon/src/tui/detect/classify.ts");
         const { listTeamSessions } = await import("../packages/daemon/src/tui/team/sessions.ts");
         const { buildMenu } = await import("../packages/daemon/src/tui/chrome/menu.ts");
+        const { getAppConfig } = await import("../packages/daemon/src/lib/app-config.ts");
         // listTeamSessions already drops internal `_`-prefixed plumbing.
         const sessions = listTeamSessions(createStatusTracker()).map((s) => ({
           name: s.name,
           status: s.status,
         }));
-        const args = ["display-menu"];
-        if (client.length > 0) args.push("-c", client);
-        args.push(...buildMenu(sessions));
-        execFileSync("tmux", args, { stdio: "ignore" });
+        const args = ["display-menu", "-c", client, ...buildMenu(sessions, getAppConfig().theme)];
+        execFileSync("tmux", args, { stdio: "ignore", timeout: 2000 });
       } catch {
-        // no client / tmux unavailable — nothing to show
+        // no client / tmux unavailable / a call timed out — nothing to show
       }
       break;
     }

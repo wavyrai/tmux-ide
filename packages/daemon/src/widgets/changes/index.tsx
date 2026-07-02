@@ -15,6 +15,7 @@ import {
   For,
 } from "solid-js";
 import { createTheme } from "../lib/theme.ts";
+import { getAppConfig } from "../../lib/app-config.ts";
 import { getGitBranch } from "../lib/git.ts";
 import { watchDirectory } from "../lib/watcher.ts";
 import { findPaneByTitle, sendCommand, findPaneByPattern } from "../lib/pane-comms.ts";
@@ -206,7 +207,7 @@ function buildListItems(changes: ChangesState): { items: ListItem[]; fileCount: 
 
 render(
   () => {
-    const theme = createTheme(themeConfig);
+    const theme = createTheme(themeConfig, getAppConfig().theme);
     const dimensions = useTerminalDimensions();
 
     const [changes, setChanges] = createSignal<ChangesState>(getChanges());

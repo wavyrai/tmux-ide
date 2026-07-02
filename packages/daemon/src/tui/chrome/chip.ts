@@ -9,29 +9,22 @@
  * pane title when empty). `paneChip` is pure (tested); the io lives in the
  * updater.
  */
+import { DEFAULT_THEME, type AppTheme } from "../../lib/app-config.ts";
 import type { AgentStatus } from "../detect/classify.ts";
-
-/**
- * tmux style markup per status — mirrors the bar's state colors
- * ({@link ./statusline.ts} STATUS_STYLE) so a pane chip reads the same as its
- * session's rollup glyph. Kept inline (not imported) so this module stays pure
- * and dependency-free for testing.
- */
-const CHIP_STYLE: Record<AgentStatus, string> = {
-  blocked: "#[fg=colour203,bold]",
-  working: "#[fg=colour221]",
-  done: "#[fg=colour111]",
-  idle: "#[fg=colour114]",
-  unknown: "#[fg=colour244]",
-};
+import { statusStyle } from "./statusline.ts";
 
 /**
  * PURE — build a pane's chip string with tmux `#[...]` markup, or `""` for a
  * non-agent pane (`agent === null`, e.g. a raw shell). An empty chip clears the
  * pane option so the border format falls back to the pane title. The chip is
- * `<agent> · <status>` styled to match the bar's state color.
+ * `<agent> · <status>` styled via the shared {@link statusStyle} so it reads the
+ * same as its session's rollup glyph — one palette across the bar and the chips.
  */
-export function paneChip(agent: string | null, status: AgentStatus): string {
+export function paneChip(
+  agent: string | null,
+  status: AgentStatus,
+  theme: AppTheme = DEFAULT_THEME,
+): string {
   if (!agent) return "";
-  return `${CHIP_STYLE[status]}${agent} · ${status}#[default]`;
+  return `${statusStyle(status, theme)}${agent} · ${status}#[default]`;
 }

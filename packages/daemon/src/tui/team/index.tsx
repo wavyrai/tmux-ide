@@ -24,6 +24,7 @@ import {
   splitPane,
 } from "@tmux-ide/tmux-bridge";
 import { createTheme } from "../../widgets/lib/theme.ts";
+import { getAppConfig } from "../../lib/app-config.ts";
 import { adoptSession } from "../chrome/statusline.ts";
 import { previewLines } from "./preview.ts";
 import { type TeamSession, type TeamWindow } from "./sessions.ts";
@@ -101,7 +102,7 @@ function promptLabel(kind: PromptKind): string {
 }
 
 render(() => {
-  const theme = createTheme(themeConfig);
+  const theme = createTheme(themeConfig, getAppConfig().theme);
   // One tracker persists across refreshes so the cross-tick `done` state
   // (working→idle without being viewed) can be inferred.
   const tracker = createStatusTracker();
@@ -129,12 +130,14 @@ render(() => {
   }
   // Picker mode renders the compact single-column switcher (the popup layout).
   const compactMode = pickerMode;
+  // Shared with the tmux chrome via the app theme tokens (blocked red, working
+  // amber, done blue, idle green) so the cockpit matches the status bar palette.
   const statusColor: Record<AgentStatus, RGBA> = {
-    blocked: RGBA.fromInts(240, 90, 90, 255), // red
-    working: RGBA.fromInts(240, 200, 90, 255), // amber
-    done: RGBA.fromInts(110, 170, 240, 255), // blue
-    idle: RGBA.fromInts(120, 200, 130, 255), // green
-    unknown: toRGBA(theme.fgMuted),
+    blocked: toRGBA(theme.statusBlocked),
+    working: toRGBA(theme.statusWorking),
+    done: toRGBA(theme.statusDone),
+    idle: toRGBA(theme.statusIdle),
+    unknown: toRGBA(theme.statusUnknown),
   };
 
   // Central keymap (defaults + optional ~/.tmux-ide/team-keys.json overrides),
@@ -1075,7 +1078,9 @@ render(() => {
                                               {`${win.index}:${win.name}${win.active ? " *" : ""}`}
                                             </text>
                                             <box flexGrow={1} />
-                                            <text fg={toRGBA(theme.fgMuted)}>{`${win.panes}p`}</text>
+                                            <text
+                                              fg={toRGBA(theme.fgMuted)}
+                                            >{`${win.panes}p`}</text>
                                           </box>
                                         );
                                       }}

@@ -6,6 +6,7 @@ import { render, useKeyboard, useTerminalDimensions } from "@opentui/solid";
 import { RGBA, TextAttributes } from "@opentui/core";
 import { createSignal, createMemo, onCleanup, Show, For } from "solid-js";
 import { createTheme, type WidgetTheme } from "../lib/theme.ts";
+import { getAppConfig } from "../../lib/app-config.ts";
 import { getFileDiff } from "../lib/git.ts";
 
 const { values } = parseArgs({
@@ -185,7 +186,7 @@ function loadFile(filePath: string): FileData | null {
 
 render(
   () => {
-    const theme = createTheme(themeConfig);
+    const theme = createTheme(themeConfig, getAppConfig().theme);
     const dimensions = useTerminalDimensions();
     const [filePath, setFilePath] = createSignal<string | null>(null);
     const [fileContent, setFileContent] = createSignal<string | null>(null);

@@ -21,6 +21,7 @@
  * without a live tmux; `adoptedSessionsFrom` is a pure parser.
  */
 import { hasSession, isProcessAlive, runTmux } from "@tmux-ide/tmux-bridge";
+import { DEFAULT_THEME, getAppConfig, type AppTheme } from "../../lib/app-config.ts";
 import { createStatusTracker, type AgentStatus } from "../detect/classify.ts";
 import { listTeamProjects, type TeamProject } from "../team/projects.ts";
 import type { PaneDetail } from "../team/sessions.ts";
@@ -41,7 +42,6 @@ import {
   collectFleetSnapshot,
   createSnapshotter,
   readSnapshot,
-  snapshotEvery,
   writeSnapshot,
 } from "./snapshot.ts";
 import { buildStatusline } from "./statusline.ts";
@@ -56,7 +56,7 @@ export const ADOPTED_OPTION = "@tmux_ide_adopted";
 export const UPDATER_SESSION = "_tmux-ide-chrome";
 /** Server option holding the running updater's pid (a lightweight single-owner guard). */
 export const UPDATER_PID_OPTION = "@tmux_ide_updater_pid";
-/** How often the loop recomputes the fleet and rewrites each bar. */
+/** Default tick cadence — overridable via `updater.tickMs` in the app config. */
 export const TICK_MS = 2000;
 
 /**
@@ -109,6 +109,12 @@ export interface UpdaterTickDeps {
   computeProjects: (onPane: (pane: PaneDetail) => void) => TeamProject[];
   writeStatus: (session: string, value: string) => void;
   /**
+   * The shared palette threaded into {@link buildStatusline} / {@link paneChip}
+   * (default {@link DEFAULT_THEME}). The loop resolves it once from the app
+   * config so a re-theme applies on the next updater start.
+   */
+  theme?: AppTheme;
+  /**
    * Per-pane chip write (optional). When wired, the tick writes each ADOPTED
    * session's panes a `@tmux_ide_chip` pane option (`agent · status`, or empty
    * for a non-agent pane). Only CHANGED chips are written — `chipCache` holds
@@ -159,13 +165,14 @@ function fleetStatuses(projects: TeamProject[]): Array<{ name: string; status: A
 export function runUpdaterTick(deps: UpdaterTickDeps): void {
   const adopted = deps.listAdopted();
   if (adopted.length === 0) return;
+  const theme = deps.theme ?? DEFAULT_THEME;
   // Collect per-pane detail during the fleet scan so chips need no second pass.
   const panes: PaneDetail[] = [];
   const projects = deps.computeProjects((pane) => panes.push(pane));
   for (const session of adopted) {
-    deps.writeStatus(session, buildStatusline(projects, session));
+    deps.writeStatus(session, buildStatusline(projects, session, 12, theme));
   }
-  writeChips(deps, adopted, panes);
+  writeChips(deps, adopted, panes, theme);
   if (deps.prevState && deps.appendEvents) {
     const { events, state } = diffFleet(deps.prevState, fleetStatuses(projects));
     deps.prevState.clear();
@@ -184,13 +191,18 @@ export function runUpdaterTick(deps: UpdaterTickDeps): void {
  * non-adopted (user, un-adopted) sessions are skipped: we only paint borders on
  * sessions we've adopted.
  */
-function writeChips(deps: UpdaterTickDeps, adopted: string[], panes: PaneDetail[]): void {
+function writeChips(
+  deps: UpdaterTickDeps,
+  adopted: string[],
+  panes: PaneDetail[],
+  theme: AppTheme,
+): void {
   const { writeChip, chipCache } = deps;
   if (!writeChip || !chipCache) return;
   const adoptedSet = new Set(adopted);
   for (const pane of panes) {
     if (!adoptedSet.has(pane.sessionName)) continue;
-    const chip = paneChip(pane.agent, pane.status);
+    const chip = paneChip(pane.agent, pane.status, theme);
     if (chipCache.get(pane.paneId) === chip) continue;
     chipCache.set(pane.paneId, chip);
     writeChip(pane.paneId, chip);
@@ -223,7 +235,7 @@ function dispatchNotifications(deps: UpdaterTickDeps, events: NotifyEvent[]): vo
 export function seedSessionStatus(session: string): void {
   try {
     const projects = listTeamProjects(createStatusTracker());
-    writeSessionStatus(session, buildStatusline(projects, session));
+    writeSessionStatus(session, buildStatusline(projects, session, 12, getAppConfig().theme));
   } catch {
     // leave it to the updater's next tick
   }
@@ -308,6 +320,10 @@ function releaseUpdater(): void {
  */
 export function runUpdaterLoop(): void {
   if (!claimUpdater()) return;
+  // Resolve the config once for the loop's lifetime — cadence + palette. A
+  // config change (theme/keys/cadence) takes effect on the next updater start
+  // (which a re-adopt triggers).
+  const config = getAppConfig();
   const tracker = createStatusTracker();
   // Persistent across ticks so `diffFleet` can spot working→done etc.
   const prevState = new Map<string, AgentStatus>();
@@ -321,7 +337,7 @@ export function runUpdaterLoop(): void {
     collect: () => collectFleetSnapshot(),
     read: readSnapshot,
     write: writeSnapshot,
-    every: snapshotEvery(),
+    every: config.updater.snapshotEvery,
   });
   const tick = () => {
     try {
@@ -329,6 +345,7 @@ export function runUpdaterLoop(): void {
         listAdopted: listAdoptedSessions,
         computeProjects: (onPane) => listTeamProjects(tracker, { onPane }),
         writeStatus: writeSessionStatus,
+        theme: config.theme,
         writeChip: writePaneChip,
         chipCache,
         prevState,
@@ -350,7 +367,7 @@ export function runUpdaterLoop(): void {
     }
   };
   tick();
-  const timer = setInterval(tick, TICK_MS);
+  const timer = setInterval(tick, config.updater.tickMs);
   const shutdown = () => {
     clearInterval(timer);
     releaseUpdater();

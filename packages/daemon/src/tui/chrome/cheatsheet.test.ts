@@ -9,6 +9,7 @@ import {
   CHEATSHEET_KEY,
 } from "./cheatsheet.ts";
 import { POPUP_KEY } from "./statusline.ts";
+import { DEFAULT_THEME } from "../../lib/app-config.ts";
 import { DEFAULT_KEYMAP } from "../team/keymap.ts";
 
 /** Strip ANSI SGR escapes so we can assert on visible content and width. */
@@ -66,6 +67,28 @@ describe("buildCheatsheet", () => {
         expect(stripAnsi(line).length).toBeLessThanOrEqual(width);
       }
     }
+  });
+
+  it("renders custom key binds and a custom legend glyph", () => {
+    const sheet = stripAnsi(
+      buildCheatsheet({
+        width: 100,
+        keys: { popup: "M-o", cheatsheet: "M-j", menu: "M-u" },
+        theme: {
+          ...DEFAULT_THEME,
+          glyphs: { active: "▲", inactive: "△" },
+        },
+      }),
+    );
+    // configured keys drive the dock hints (rendered ⌥o / ⌥j / ⌥u)
+    expect(sheet).toContain("⌥o");
+    expect(sheet).toContain("⌥j");
+    expect(sheet).toContain("⌥u");
+    // the default M-p hint is gone
+    expect(sheet).not.toContain("⌥p");
+    // the legend uses the custom glyphs
+    expect(sheet).toContain("▲");
+    expect(sheet).toContain("△");
   });
 });
 

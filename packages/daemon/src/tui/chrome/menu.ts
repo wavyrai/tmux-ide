@@ -16,23 +16,23 @@
  * `buildMenu` and the bind/unbind command builders are PURE (tested); the CLI
  * `menu` command wires the io (resolve the client, run display-menu).
  */
+import { DEFAULT_THEME, type AppTheme } from "../../lib/app-config.ts";
 import type { AgentStatus } from "../detect/classify.ts";
-import { switcherPopupCommand, MENU_KEY, MENU_STATUS_KEY } from "./statusline.ts";
+import { switcherPopupCommand, MENU_KEY, MENU_PANE_KEY, MENU_STATUS_KEY } from "./statusline.ts";
 import { cheatsheetPopupCommand } from "./cheatsheet.ts";
 
 /**
- * Glyph + tmux colour per status for the menu's session rows. Mirrors the bar's
- * palette (see STATUS_STYLE in statusline.ts): working amber, blocked red, done
- * blue, idle green. Idle uses a hollow glyph here so a quiet session reads as
- * "nothing running" at a glance in the menu list.
+ * PURE — glyph + tmux colour per status for the menu's session rows, from the
+ * shared theme tokens. Colours are `theme.status.*` (working amber, blocked red,
+ * done blue, idle green). `idle` uses the hollow `inactive` glyph so a quiet
+ * session reads as "nothing running" at a glance; `unknown` uses the `·` "no
+ * signal" marker; everything else the filled `active` glyph.
  */
-const MENU_GLYPH: Record<AgentStatus, { glyph: string; colour: string }> = {
-  working: { glyph: "●", colour: "colour221" },
-  blocked: { glyph: "●", colour: "colour203" },
-  done: { glyph: "●", colour: "colour111" },
-  idle: { glyph: "○", colour: "colour114" },
-  unknown: { glyph: "·", colour: "colour244" },
-};
+function menuGlyph(status: AgentStatus, theme: AppTheme): { glyph: string; colour: string } {
+  const glyph =
+    status === "idle" ? theme.glyphs.inactive : status === "unknown" ? "·" : theme.glyphs.active;
+  return { glyph, colour: theme.status[status] };
+}
 
 /** Max session rows the menu lists (keys 1..8). Extra sessions are dropped. */
 const MAX_SESSION_ITEMS = 8;
@@ -49,8 +49,8 @@ export function menuQuoteName(name: string): string {
 }
 
 /** The styled `#[fg=…]glyph#[default] name` label for a session row. */
-function sessionLabel(session: { name: string; status: AgentStatus }): string {
-  const g = MENU_GLYPH[session.status];
+function sessionLabel(session: { name: string; status: AgentStatus }, theme: AppTheme): string {
+  const g = menuGlyph(session.status, theme);
   return `#[fg=${g.colour}]${g.glyph}#[default] ${session.name}`;
 }
 
@@ -72,7 +72,10 @@ function sessionLabel(session: { name: string; status: AgentStatus }): string {
  * A separator is a single empty-string argument (tmux's display-menu convention).
  * Empty groups (no sessions) collapse so two separators never stack.
  */
-export function buildMenu(sessions: Array<{ name: string; status: AgentStatus }>): string[] {
+export function buildMenu(
+  sessions: Array<{ name: string; status: AgentStatus }>,
+  theme: AppTheme = DEFAULT_THEME,
+): string[] {
   const header: string[] = [
     "⧉ Switch session…",
     "s",
@@ -84,7 +87,11 @@ export function buildMenu(sessions: Array<{ name: string; status: AgentStatus }>
 
   const sessionItems: string[] = [];
   sessions.slice(0, MAX_SESSION_ITEMS).forEach((session, i) => {
-    sessionItems.push(sessionLabel(session), String(i + 1), `switch-client -t ${menuQuoteName(session.name)}`);
+    sessionItems.push(
+      sessionLabel(session, theme),
+      String(i + 1),
+      `switch-client -t ${menuQuoteName(session.name)}`,
+    );
   });
 
   const footer: string[] = [
@@ -109,14 +116,16 @@ export function buildMenu(sessions: Array<{ name: string; status: AgentStatus }>
 // Re-export the key constants (defined in statusline.ts alongside POPUP_KEY so
 // the cheat sheet can list them without importing this module) for callers that
 // reach for them via the menu module.
-export { MENU_KEY, MENU_STATUS_KEY };
+export { MENU_KEY, MENU_PANE_KEY, MENU_STATUS_KEY };
 
 /**
- * The tmux command run by both menu binds: invoke our CLI to (re)build and show
+ * The tmux command run by every menu bind: invoke our CLI to (re)build and show
  * the menu. `run-shell` format-expands `#{client_name}` into `--client` (bind
- * args themselves do NOT expand), and `-b` detaches so tmux's key/mouse dispatch
- * isn't blocked while the menu is open. The CLI resolves the client from
- * `--client` (falling back to `display-message` if empty) and runs display-menu.
+ * args themselves do NOT expand; run-shell DOES — verified live on tmux 3.6), and
+ * `-b` detaches so tmux's key/mouse dispatch isn't blocked while the menu is open.
+ * The CLI resolves the client from `--client`, falling back to the
+ * most-recently-active attached client, and runs display-menu (all tmux calls
+ * time-capped so the bind can never hang).
  */
 function menuRunShellArgs(menuCmd: string): string[] {
   return ["run-shell", "-b", `${menuCmd} --client '#{client_name}'`];
@@ -127,8 +136,8 @@ function menuRunShellArgs(menuCmd: string): string[] {
  * the actions menu. Server-wide bind, mirroring the switcher's M-p — see the note
  * on `unadoptSession`.
  */
-export function menuBindCommand(menuCmd = "tmux-ide menu"): string[] {
-  return ["bind-key", "-n", MENU_KEY, ...menuRunShellArgs(menuCmd)];
+export function menuBindCommand(menuCmd = "tmux-ide menu", key = MENU_KEY): string[] {
+  return ["bind-key", "-n", key, ...menuRunShellArgs(menuCmd)];
 }
 
 /**
@@ -141,12 +150,28 @@ export function menuStatusBindCommand(menuCmd = "tmux-ide menu"): string[] {
   return ["bind-key", "-n", MENU_STATUS_KEY, ...menuRunShellArgs(menuCmd)];
 }
 
+/**
+ * PURE — the tmux argv that binds a RIGHT-click on ANY pane body
+ * ({@link MENU_PANE_KEY}) to open the same actions menu, so the menu is reachable
+ * everywhere, not only from the dock row. Same `run-shell` command as the other
+ * menu binds. Panes whose app captures the mouse (vim, agent TUIs) eat the event
+ * — graceful degradation, `M-m` still works there.
+ */
+export function menuPaneBindCommand(menuCmd = "tmux-ide menu"): string[] {
+  return ["bind-key", "-n", MENU_PANE_KEY, ...menuRunShellArgs(menuCmd)];
+}
+
 /** PURE — the tmux argv that removes the {@link MENU_KEY} binding. */
-export function menuUnbindCommand(): string[] {
-  return ["unbind-key", "-n", MENU_KEY];
+export function menuUnbindCommand(key = MENU_KEY): string[] {
+  return ["unbind-key", "-n", key];
 }
 
 /** PURE — the tmux argv that removes the {@link MENU_STATUS_KEY} binding. */
 export function menuStatusUnbindCommand(): string[] {
   return ["unbind-key", "-n", MENU_STATUS_KEY];
+}
+
+/** PURE — the tmux argv that removes the {@link MENU_PANE_KEY} binding. */
+export function menuPaneUnbindCommand(): string[] {
+  return ["unbind-key", "-n", MENU_PANE_KEY];
 }

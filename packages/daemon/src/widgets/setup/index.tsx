@@ -7,6 +7,7 @@ import { render, useTerminalDimensions } from "@opentui/solid";
 import { RGBA } from "@opentui/core";
 import { createSignal, Switch, Match } from "solid-js";
 import { createTheme, type RGBA as RGBAType } from "../lib/theme.ts";
+import { getAppConfig } from "../../lib/app-config.ts";
 import { detectStack } from "../../detect.ts";
 import { readConfig, writeConfig } from "../../lib/yaml-io.ts";
 import {
@@ -86,7 +87,7 @@ type View =
 
 render(
   () => {
-    const theme = createTheme(themeConfig);
+    const theme = createTheme(themeConfig, getAppConfig().theme);
     const dimensions = useTerminalDimensions();
 
     // Detect project stack once

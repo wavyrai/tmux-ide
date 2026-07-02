@@ -13,6 +13,7 @@
  * `buildStatusline` is pure (tested); the io wrappers are thin.
  */
 import { runTmux } from "@tmux-ide/tmux-bridge";
+import { DEFAULT_THEME, getAppConfig, type AppTheme } from "../../lib/app-config.ts";
 import type { AgentStatus } from "../detect/classify.ts";
 import type { TeamProject } from "../team/projects.ts";
 import {
@@ -22,6 +23,8 @@ import {
 } from "./cheatsheet.ts";
 import {
   menuBindCommand,
+  menuPaneBindCommand,
+  menuPaneUnbindCommand,
   menuStatusBindCommand,
   menuStatusUnbindCommand,
   menuUnbindCommand,
@@ -36,22 +39,25 @@ import {
   stopUpdater,
 } from "./updater.ts";
 
-/** tmux style markup per status — chrome-row colors for the state glyphs. */
-const STATUS_STYLE: Record<AgentStatus, string> = {
-  blocked: "#[fg=colour203,bold]",
-  working: "#[fg=colour221]",
-  done: "#[fg=colour111]",
-  idle: "#[fg=colour114]",
-  unknown: "#[fg=colour244]",
-};
+/**
+ * PURE — tmux style markup for a status color token. `blocked` reads bold (an
+ * urgency cue kept from the original STATUS_STYLE); every other state is a plain
+ * `#[fg=…]`. Shared with the pane chip ({@link ./chip.ts}) so a chip matches its
+ * session's rollup glyph.
+ */
+export function statusStyle(status: AgentStatus, theme: AppTheme): string {
+  const color = theme.status[status];
+  return status === "blocked" ? `#[fg=${color},bold]` : `#[fg=${color}]`;
+}
 
-const GLYPH: Record<AgentStatus, string> = {
-  blocked: "●",
-  working: "●",
-  done: "●",
-  idle: "●",
-  unknown: "·",
-};
+/**
+ * PURE — the glyph character for a running project's state: the filled `active`
+ * token for a known state, but `·` for `unknown` (a "no signal" marker with no
+ * token of its own).
+ */
+export function statusGlyph(status: AgentStatus, theme: AppTheme): string {
+  return status === "unknown" ? "·" : theme.glyphs.active;
+}
 
 /**
  * Whether a name is INTERNAL — the host shell (`_tmux-ide`) and any
@@ -93,6 +99,8 @@ export function buildStatusline(
   projects: TeamProject[],
   active: string | null,
   maxItems = 12,
+  theme: AppTheme = DEFAULT_THEME,
+  extraSegment = "",
 ): string {
   const visible = projects.filter((p) => !isInternalName(p.name));
   const segments: string[] = [];
@@ -101,13 +109,13 @@ export function buildStatusline(
       active !== null &&
       (project.name === active || project.sessions.some((s) => s.name === active));
     const glyph = project.running
-      ? `${STATUS_STYLE[project.status]}${GLYPH[project.status]}#[default]`
-      : "#[fg=colour240]○#[default]";
+      ? `${statusStyle(project.status, theme)}${statusGlyph(project.status, theme)}#[default]`
+      : `#[fg=${theme.muted}]${theme.glyphs.inactive}#[default]`;
     const name = isActive
       ? `#[fg=colour231,bold,underscore]${project.name}#[default]`
       : project.running
-        ? `#[fg=colour250]${project.name}#[default]`
-        : `#[fg=colour240]${project.name}#[default]`;
+        ? `#[fg=${theme.fg}]${project.name}#[default]`
+        : `#[fg=${theme.muted}]${project.name}#[default]`;
     const label = `${glyph} ${name}`;
     // Only running projects are clickable — wrap them in a session-keyed range.
     const session = project.sessions[0]?.name;
@@ -116,15 +124,18 @@ export function buildStatusline(
     );
   }
   if (visible.length > maxItems) {
-    segments.push(`#[fg=colour240]+${visible.length - maxItems}#[default]`);
+    segments.push(`#[fg=${theme.muted}]+${visible.length - maxItems}#[default]`);
   }
   const body = segments.join("  ");
+  // A reserved right-side slot the update-flow card (0047) feeds "⬆ vX.Y.Z"
+  // through; empty by default so it takes no space. Sits before the triggers.
+  const extra = extraSegment ? `${extraSegment} ` : "";
   // Two button-like, right-aligned triggers. `keys` (muted) floats the cheat
   // sheet; `switcher` (primary) opens the picker popup — switch stays visually
   // dominant, the sheet is the quieter companion just to its left.
   const keysTrigger = `#[range=user|keys]#[fg=colour244][ ? keys ]#[default]#[norange]`;
-  const trigger = `#[range=user|switcher]#[fg=colour75,bold][ ⧉ switch ⌥p ]#[default]#[norange]`;
-  return `#[fg=colour75,bold] tmux-ide #[default] ${body}#[align=right]${keysTrigger} ${trigger} `;
+  const trigger = `#[range=user|switcher]#[fg=${theme.accent},bold][ ⧉ switch ⌥p ]#[default]#[norange]`;
+  return `#[fg=${theme.accent},bold] tmux-ide #[default] ${body}#[align=right]${extra}${keysTrigger} ${trigger} `;
 }
 
 /**
@@ -153,6 +164,17 @@ export const MENU_KEY = "M-m";
 export const MENU_STATUS_KEY = "MouseDown3Status";
 
 /**
+ * The root-table mouse key for a RIGHT-click on ANY pane body (not just the
+ * chrome row): `MouseDown3Pane`. tmux fires this for a right-click landing inside
+ * a pane, so the actions menu is reachable from anywhere — any pane, any session
+ * — not only the dock row. Like {@link MENU_STATUS_KEY} it opens the same
+ * `display-menu`. NOTE: a pane whose app grabs the mouse (vim, an agent TUI, …)
+ * consumes the event before tmux sees it — graceful degradation, the `M-m` key
+ * still opens the menu there.
+ */
+export const MENU_PANE_KEY = "MouseDown3Pane";
+
+/**
  * PURE — the `display-popup` command STRING that floats the switcher (shared by
  * the M-p bind, the bar's left-click router, and the actions menu's "Switch
  * session…" item, so all three open an identical popup). Mirror of the sizing in
@@ -178,24 +200,13 @@ export function switcherPopupCommand(switcherCmd = "tmux-ide switcher"): string 
  * Bindings are SERVER-wide (there is no per-session `bind-key`), so this is a
  * global root-table bind — see the note on {@link unadoptSession}.
  */
-export function popupBindCommand(switcherCmd = "tmux-ide switcher"): string[] {
-  return [
-    "bind-key",
-    "-n",
-    POPUP_KEY,
-    "display-popup",
-    "-E",
-    "-w",
-    "80%",
-    "-h",
-    "60%",
-    switcherCmd,
-  ];
+export function popupBindCommand(switcherCmd = "tmux-ide switcher", key = POPUP_KEY): string[] {
+  return ["bind-key", "-n", key, "display-popup", "-E", "-w", "80%", "-h", "60%", switcherCmd];
 }
 
 /** PURE — the tmux argv that removes the popup key binding. */
-export function popupUnbindCommand(): string[] {
-  return ["unbind-key", "-n", POPUP_KEY];
+export function popupUnbindCommand(key = POPUP_KEY): string[] {
+  return ["unbind-key", "-n", key];
 }
 
 /**
@@ -339,15 +350,20 @@ export function unadoptOptionCommands(session: string): string[][] {
 
 export function adoptSession(session: string, switcherCmd = "tmux-ide switcher"): void {
   for (const argv of adoptOptionCommands(session)) runTmux(argv);
-  // Server-wide binds, idempotent (re-binding the same key just overwrites it):
-  // the M-p popup, the M-k cheat sheet, and the status-bar click router.
-  runTmux(popupBindCommand(switcherCmd));
-  runTmux(cheatsheetBindCommand());
+  // Key binds are configurable via ~/.tmux-ide/config.json (keys.*); re-adopting
+  // after a config change rebinds them. Server-wide + idempotent (re-binding a
+  // key just overwrites it): the popup, the cheat sheet, and the click router.
+  const keys = getAppConfig().keys;
+  runTmux(popupBindCommand(switcherCmd, keys.popup));
+  runTmux(cheatsheetBindCommand("tmux-ide cheatsheet", keys.cheatsheet));
   runTmux(statusClickBindCommand(switcherCmd));
-  // The actions menu: M-m and a right-click (MouseDown3Status) on the chrome row
-  // both open tmux's native display-menu, rebuilt live by the `menu` CLI command.
-  runTmux(menuBindCommand());
+  // The actions menu: the configured menu key, a right-click on the chrome row
+  // (MouseDown3Status), and a right-click on ANY pane body (MouseDown3Pane) all
+  // open tmux's native display-menu, rebuilt live by the `menu` CLI command — so
+  // the menu is reachable from anywhere, not just the dock row.
+  runTmux(menuBindCommand("tmux-ide menu", keys.menu));
   runTmux(menuStatusBindCommand());
+  runTmux(menuPaneBindCommand());
   // Seed the bar now so it's never blank, then make sure the loop that keeps it
   // fresh is up.
   seedSessionStatus(session);
@@ -364,14 +380,15 @@ export function unadoptSession(session: string): void {
   // KNOWN SIMPLIFICATION: the popup key AND the status-click router are
   // SERVER-wide binds, so unadopting one session removes them for ALL adopted
   // sessions. Acceptable for now — best-effort so a missing bind (already
-  // unadopted) doesn't throw.
+  // unadopted) doesn't throw. Unbind the SAME configured keys adopt bound.
+  const keys = getAppConfig().keys;
   try {
-    runTmux(popupUnbindCommand());
+    runTmux(popupUnbindCommand(keys.popup));
   } catch {
     // no such key bound — nothing to undo
   }
   try {
-    runTmux(cheatsheetUnbindCommand());
+    runTmux(cheatsheetUnbindCommand(keys.cheatsheet));
   } catch {
     // no such key bound — nothing to undo
   }
@@ -381,12 +398,17 @@ export function unadoptSession(session: string): void {
     // no such key bound — nothing to undo
   }
   try {
-    runTmux(menuUnbindCommand());
+    runTmux(menuUnbindCommand(keys.menu));
   } catch {
     // no such key bound — nothing to undo
   }
   try {
     runTmux(menuStatusUnbindCommand());
+  } catch {
+    // no such key bound — nothing to undo
+  }
+  try {
+    runTmux(menuPaneUnbindCommand());
   } catch {
     // no such key bound — nothing to undo
   }

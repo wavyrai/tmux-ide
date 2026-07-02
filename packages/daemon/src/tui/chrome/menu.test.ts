@@ -5,15 +5,19 @@ import { describe, expect, it } from "vitest";
 import {
   buildMenu,
   menuBindCommand,
+  menuPaneBindCommand,
+  menuPaneUnbindCommand,
   menuQuoteName,
   menuStatusBindCommand,
   menuStatusUnbindCommand,
   menuUnbindCommand,
   MENU_KEY,
+  MENU_PANE_KEY,
   MENU_STATUS_KEY,
 } from "./menu.ts";
 import { switcherPopupCommand } from "./statusline.ts";
 import { cheatsheetPopupCommand } from "./cheatsheet.ts";
+import { DEFAULT_THEME, type AppTheme } from "../../lib/app-config.ts";
 import type { AgentStatus } from "../detect/classify.ts";
 
 function sess(name: string, status: AgentStatus) {
@@ -69,6 +73,21 @@ describe("buildMenu", () => {
     expect(args.some((a) => a.includes("#[fg=colour111]●#[default] d"))).toBe(true);
     expect(args.some((a) => a.includes("#[fg=colour114]○#[default] i"))).toBe(true);
     expect(args.some((a) => a.includes("#[fg=colour244]·#[default] u"))).toBe(true);
+  });
+
+  it("uses a custom theme's status colors + glyphs for the session rows", () => {
+    const theme: AppTheme = {
+      ...DEFAULT_THEME,
+      status: { ...DEFAULT_THEME.status, working: "colour45" },
+      glyphs: { active: "▲", inactive: "△" },
+    };
+    const args = buildMenu([sess("web", "working"), sess("api", "idle")], theme);
+    // working → custom color + custom active glyph
+    expect(args.some((a) => a.includes("#[fg=colour45]▲#[default] web"))).toBe(true);
+    // idle → its status color + the custom inactive (hollow) glyph
+    expect(args.some((a) => a.includes("#[fg=colour114]△#[default] api"))).toBe(true);
+    // no default working color / glyph leaks through
+    expect(args.some((a) => a.includes("#[fg=colour221]"))).toBe(false);
   });
 
   it("caps the session list at 8 rows (keys 1..8)", () => {
@@ -152,9 +171,25 @@ describe("menuStatusBindCommand", () => {
   });
 });
 
+describe("menuPaneBindCommand", () => {
+  it("binds a right-click on ANY pane body (MouseDown3Pane) to the same menu", () => {
+    const cmd = menuPaneBindCommand();
+    expect(cmd.slice(0, 4)).toEqual(["bind-key", "-n", MENU_PANE_KEY, "run-shell"]);
+    expect(cmd).toContain("-b");
+    expect(cmd[cmd.length - 1]).toBe(`tmux-ide menu --client '#{client_name}'`);
+    expect(MENU_PANE_KEY).toBe("MouseDown3Pane");
+  });
+
+  it("passes a custom menu command through", () => {
+    const cmd = menuPaneBindCommand("bun run menu");
+    expect(cmd[cmd.length - 1]).toBe(`bun run menu --client '#{client_name}'`);
+  });
+});
+
 describe("menu unbind commands", () => {
-  it("unbind M-m and the right-click from the root table", () => {
+  it("unbind M-m and both right-click binds from the root table", () => {
     expect(menuUnbindCommand()).toEqual(["unbind-key", "-n", MENU_KEY]);
     expect(menuStatusUnbindCommand()).toEqual(["unbind-key", "-n", MENU_STATUS_KEY]);
+    expect(menuPaneUnbindCommand()).toEqual(["unbind-key", "-n", MENU_PANE_KEY]);
   });
 });

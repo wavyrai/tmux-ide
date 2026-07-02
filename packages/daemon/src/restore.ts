@@ -21,10 +21,8 @@
  * are PURE (unit-tested); {@link restore} is the thin io wrapper that reads the
  * snapshot + registry + live tmux + config, then executes the plan.
  */
-import { existsSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { join } from "node:path";
 import { runTmux } from "@tmux-ide/tmux-bridge";
+import { appConfigPath, loadAppConfig, parseAppConfig } from "./lib/app-config.ts";
 import { IdeError } from "./lib/errors.ts";
 import { listProjects } from "./lib/project-registry.ts";
 import { adoptSession } from "./tui/chrome/statusline.ts";
@@ -149,38 +147,21 @@ export const DEFAULT_RESTORE_PREFS: RestorePrefs = { resumeAgents: false };
 /**
  * PURE — read `{ restore: { resumeAgents } }` out of a parsed config, falling
  * back to {@link DEFAULT_RESTORE_PREFS} for anything missing or mistyped.
+ * Delegates to the shared {@link parseAppConfig} so restore parsing can't drift
+ * from the rest of the config.
  */
 export function restorePrefs(parsedConfig: unknown): RestorePrefs {
-  const restore =
-    parsedConfig && typeof parsedConfig === "object"
-      ? (parsedConfig as { restore?: unknown }).restore
-      : undefined;
-  if (!restore || typeof restore !== "object") {
-    return { ...DEFAULT_RESTORE_PREFS };
-  }
-  const resumeAgents = (restore as { resumeAgents?: unknown }).resumeAgents;
-  return {
-    resumeAgents:
-      typeof resumeAgents === "boolean" ? resumeAgents : DEFAULT_RESTORE_PREFS.resumeAgents,
-  };
+  return parseAppConfig(parsedConfig).restore;
 }
 
-/** Absolute path to the shared minimal config (same file the notifier reads). */
+/** Absolute path to the shared config (honors `TMUX_IDE_CONFIG`). */
 export function restoreConfigPath(): string {
-  return join(homedir(), ".tmux-ide", "config.json");
+  return appConfigPath();
 }
 
-/** io — resolve restore prefs from `~/.tmux-ide/config.json`; missing/invalid → defaults. */
+/** io — resolve restore prefs from the shared app config; missing/invalid → defaults. */
 export function readRestorePrefs(): RestorePrefs {
-  const path = restoreConfigPath();
-  if (existsSync(path)) {
-    try {
-      return restorePrefs(JSON.parse(readFileSync(path, "utf-8")));
-    } catch {
-      // malformed config — keep defaults
-    }
-  }
-  return { ...DEFAULT_RESTORE_PREFS };
+  return loadAppConfig().restore;
 }
 
 // ---------------------------------------------------------------------------

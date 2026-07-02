@@ -17,6 +17,7 @@ import { createIgnoreFilter } from "../lib/files.ts";
 import { getGitStatusMap, getGitBranch, isGitRepo } from "../lib/git.ts";
 import { watchDirectory, watchGitHead } from "../lib/watcher.ts";
 import { createTheme } from "../lib/theme.ts";
+import { getAppConfig } from "../../lib/app-config.ts";
 import {
   findPaneByTitle,
   sendCommand,
@@ -82,7 +83,7 @@ function setPreviewFile(filePath: string | null): void {
 
 render(
   () => {
-    const theme = createTheme(themeConfig);
+    const theme = createTheme(themeConfig, getAppConfig().theme);
     const dimensions = useTerminalDimensions();
     const ig = createIgnoreFilter(dir);
     const hasGit = isGitRepo(dir);

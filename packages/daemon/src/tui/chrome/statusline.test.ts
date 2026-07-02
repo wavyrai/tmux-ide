@@ -1,7 +1,7 @@
 /**
  * Unit tests for the pure status-bar builder.
  */
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   adoptableSessionNames,
   adoptOptionCommands,
@@ -17,10 +17,21 @@ import {
   switcherPopupCommand,
   unadoptOptionCommands,
 } from "./statusline.ts";
-import { menuBindCommand, menuStatusBindCommand } from "./menu.ts";
+import { menuBindCommand, menuPaneBindCommand, menuStatusBindCommand } from "./menu.ts";
 import { ADOPTED_OPTION, STATUS_OPTION } from "./updater.ts";
+import { DEFAULT_THEME, _resetForTests, type AppTheme } from "../../lib/app-config.ts";
 import type { TeamProject } from "../team/projects.ts";
 import type { TeamSession } from "../team/sessions.ts";
+
+/** A theme that differs from the defaults in every surface it touches. */
+const CUSTOM_THEME: AppTheme = {
+  ...DEFAULT_THEME,
+  accent: "colour200",
+  fg: "colour15",
+  muted: "colour238",
+  status: { ...DEFAULT_THEME.status, blocked: "colour99", working: "colour45" },
+  glyphs: { active: "▲", inactive: "△" },
+};
 
 // adoptSession funnels every tmux mutation through runTmux; spy on it and stub
 // the updater's io so we can assert the exact key binds adopt applies without
@@ -139,6 +150,46 @@ describe("buildStatusline", () => {
     expect(bar).toContain("[ ? keys ]");
     // the keys trigger sits before (left of) the primary switch trigger
     expect(bar.indexOf("range=user|keys")).toBeLessThan(bar.indexOf("range=user|switcher"));
+  });
+
+  it("applies a custom theme's tokens to the brand, glyph, and colors", () => {
+    const bar = buildStatusline([project("hot", { status: "blocked" })], null, 12, CUSTOM_THEME);
+    // brand + switch trigger use the custom accent
+    expect(bar).toContain("#[fg=colour200,bold] tmux-ide #[default]");
+    expect(bar).toContain("#[fg=colour200,bold][ ⧉ switch ⌥p ]");
+    // blocked keeps its bold, but with the custom status color + active glyph
+    expect(bar).toContain("#[fg=colour99,bold]▲#[default]");
+    // running name uses the custom fg
+    expect(bar).toContain("#[fg=colour15]hot#[default]");
+    // and none of the default tokens leak through for those surfaces
+    expect(bar).not.toContain("colour75");
+    expect(bar).not.toContain("#[fg=colour203,bold]");
+  });
+
+  it("renders a stopped project with the custom muted color + inactive glyph", () => {
+    const bar = buildStatusline(
+      [project("api", { running: false, sessions: [] })],
+      null,
+      12,
+      CUSTOM_THEME,
+    );
+    expect(bar).toContain("#[fg=colour238]△#[default]");
+    expect(bar).toContain("#[fg=colour238]api#[default]");
+  });
+
+  it("renders the reserved extraSegment on the right before the triggers (empty by default)", () => {
+    const plain = buildStatusline([project("web")], null);
+    // empty by default — no stray content before the keys trigger
+    expect(plain).toContain(`#[align=right]#[range=user|keys]`);
+
+    const withExtra = buildStatusline([project("web")], null, 12, DEFAULT_THEME, "⬆ v9.9.9");
+    expect(withExtra).toContain("⬆ v9.9.9");
+    // it sits after the align=right marker and before the keys trigger
+    const alignAt = withExtra.indexOf("#[align=right]");
+    const extraAt = withExtra.indexOf("⬆ v9.9.9");
+    const keysAt = withExtra.indexOf("#[range=user|keys]");
+    expect(alignAt).toBeLessThan(extraAt);
+    expect(extraAt).toBeLessThan(keysAt);
   });
 });
 
@@ -305,14 +356,28 @@ describe("switcherPopupCommand", () => {
 });
 
 describe("adoptSession key binds", () => {
-  afterEach(() => runTmux.mockClear());
+  // adoptSession resolves keys from the app config; pin it to the defaults by
+  // pointing TMUX_IDE_CONFIG at a missing file (so a real ~/.tmux-ide/config.json
+  // on the dev/CI box can't change which keys it binds).
+  const savedConfig = process.env.TMUX_IDE_CONFIG;
+  beforeEach(() => {
+    process.env.TMUX_IDE_CONFIG = "/tmp/zz-statusline-test-missing.json";
+    _resetForTests();
+  });
+  afterEach(() => {
+    runTmux.mockClear();
+    if (savedConfig === undefined) delete process.env.TMUX_IDE_CONFIG;
+    else process.env.TMUX_IDE_CONFIG = savedConfig;
+    _resetForTests();
+  });
 
-  it("binds M-m and the right-click menu (MouseDown3Status) alongside the popup/click binds", () => {
+  it("binds M-m and the right-click menu (MouseDown3Status + MouseDown3Pane) alongside the popup/click binds", () => {
     adoptSession("web");
     const calls = runTmux.mock.calls.map((c) => c[0] as string[]);
-    // the two new menu binds are applied
+    // the menu binds are applied — key, chrome-row right-click, AND any-pane right-click
     expect(calls).toContainEqual(menuBindCommand());
     expect(calls).toContainEqual(menuStatusBindCommand());
+    expect(calls).toContainEqual(menuPaneBindCommand());
     // and the pre-existing binds are still applied (no regression)
     expect(calls).toContainEqual(popupBindCommand("tmux-ide switcher"));
     expect(calls).toContainEqual(statusClickBindCommand("tmux-ide switcher"));

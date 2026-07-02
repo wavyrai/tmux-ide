@@ -1,3 +1,5 @@
+import { DEFAULT_THEME, type AppTheme } from "../../lib/app-config.ts";
+
 export type RGBA = { r: number; g: number; b: number; a: number };
 
 export interface WidgetTheme {
@@ -6,6 +8,12 @@ export interface WidgetTheme {
   fgMuted: RGBA;
   accent: RGBA;
   border: RGBA;
+  /** Per-agent-status colors, shared with the tmux chrome via the app theme. */
+  statusBlocked: RGBA;
+  statusWorking: RGBA;
+  statusDone: RGBA;
+  statusIdle: RGBA;
+  statusUnknown: RGBA;
   selected: RGBA;
   selectedText: RGBA;
   dirName: RGBA;
@@ -36,6 +44,11 @@ const DEFAULTS: WidgetTheme = {
   fgMuted: rgba(120, 120, 140),
   accent: rgba(130, 170, 255),
   border: rgba(60, 60, 80),
+  statusBlocked: rgba(255, 95, 95),
+  statusWorking: rgba(255, 215, 95),
+  statusDone: rgba(135, 175, 255),
+  statusIdle: rgba(135, 215, 135),
+  statusUnknown: rgba(128, 128, 128),
   selected: rgba(50, 50, 70),
   selectedText: rgba(255, 255, 255),
   dirName: rgba(100, 160, 255),
@@ -131,9 +144,39 @@ function parseColor(color: string): RGBA | null {
   return null;
 }
 
-export function createTheme(config?: Record<string, string>): WidgetTheme {
-  if (!config) return DEFAULTS;
+/**
+ * Map the shared app-theme tokens ({@link AppTheme}) onto a {@link WidgetTheme}
+ * base: accent, muted→fgMuted, fg, and the per-status colors. This is the layer
+ * that makes the OpenTUI widgets share the tmux chrome's palette. Unmappable
+ * tokens (e.g. a hex the parser rejects) keep their default.
+ */
+function applyAppTheme(base: WidgetTheme, appTheme: AppTheme): void {
+  const assign = (prop: keyof WidgetTheme, token: string) => {
+    const parsed = parseColor(token);
+    if (parsed) base[prop] = parsed;
+  };
+  assign("accent", appTheme.accent);
+  assign("fgMuted", appTheme.muted);
+  assign("fg", appTheme.fg);
+  assign("statusBlocked", appTheme.status.blocked);
+  assign("statusWorking", appTheme.status.working);
+  assign("statusDone", appTheme.status.done);
+  assign("statusIdle", appTheme.status.idle);
+  assign("statusUnknown", appTheme.status.unknown);
+}
+
+/**
+ * Build a widget theme. The shared app-theme tokens (`appTheme`, defaulting to
+ * {@link DEFAULT_THEME}) form the base palette so widgets and chrome match; the
+ * per-project ide.yml `theme` (`config`: accent/border/bg/fg) overrides on top.
+ */
+export function createTheme(
+  config?: Record<string, string>,
+  appTheme: AppTheme = DEFAULT_THEME,
+): WidgetTheme {
   const theme = { ...DEFAULTS };
+  applyAppTheme(theme, appTheme);
+  if (!config) return theme;
   const MAP: Record<string, keyof WidgetTheme> = {
     accent: "accent",
     border: "border",

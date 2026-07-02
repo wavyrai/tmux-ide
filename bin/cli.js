@@ -1578,10 +1578,131 @@ var init_resolve = __esm({
   }
 });
 
-// packages/daemon/src/tui/team/keymap.ts
+// packages/daemon/src/lib/app-config.ts
+var app_config_exports = {};
+__export(app_config_exports, {
+  DEFAULT_APP_CONFIG: () => DEFAULT_APP_CONFIG,
+  DEFAULT_KEYS: () => DEFAULT_KEYS,
+  DEFAULT_THEME: () => DEFAULT_THEME,
+  _resetForTests: () => _resetForTests,
+  appConfigPath: () => appConfigPath,
+  getAppConfig: () => getAppConfig,
+  loadAppConfig: () => loadAppConfig,
+  parseAppConfig: () => parseAppConfig
+});
 import { existsSync, readFileSync as readFileSync2 } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+function asObject(value) {
+  return value && typeof value === "object" && !Array.isArray(value) ? value : {};
+}
+function pickString(value, fallback) {
+  return typeof value === "string" && value.length > 0 ? value : fallback;
+}
+function pickBool(value, fallback) {
+  return typeof value === "boolean" ? value : fallback;
+}
+function pickPosInt(value, fallback) {
+  return typeof value === "number" && Number.isInteger(value) && value > 0 ? value : fallback;
+}
+function parseAppConfig(input) {
+  const D = DEFAULT_APP_CONFIG;
+  const root = asObject(input);
+  const keys = asObject(root.keys);
+  const theme = asObject(root.theme);
+  const status2 = asObject(theme.status);
+  const glyphs = asObject(theme.glyphs);
+  const updater = asObject(root.updater);
+  const notifications = asObject(root.notifications);
+  const restore2 = asObject(root.restore);
+  const updates = asObject(root.updates);
+  return {
+    keys: {
+      popup: pickString(keys.popup, D.keys.popup),
+      cheatsheet: pickString(keys.cheatsheet, D.keys.cheatsheet),
+      menu: pickString(keys.menu, D.keys.menu)
+    },
+    theme: {
+      accent: pickString(theme.accent, D.theme.accent),
+      muted: pickString(theme.muted, D.theme.muted),
+      fg: pickString(theme.fg, D.theme.fg),
+      status: {
+        blocked: pickString(status2.blocked, D.theme.status.blocked),
+        working: pickString(status2.working, D.theme.status.working),
+        done: pickString(status2.done, D.theme.status.done),
+        idle: pickString(status2.idle, D.theme.status.idle),
+        unknown: pickString(status2.unknown, D.theme.status.unknown)
+      },
+      glyphs: {
+        active: pickString(glyphs.active, D.theme.glyphs.active),
+        inactive: pickString(glyphs.inactive, D.theme.glyphs.inactive)
+      }
+    },
+    updater: {
+      tickMs: pickPosInt(updater.tickMs, D.updater.tickMs),
+      snapshotEvery: pickPosInt(updater.snapshotEvery, D.updater.snapshotEvery)
+    },
+    notifications: {
+      toast: pickBool(notifications.toast, D.notifications.toast),
+      macos: pickBool(notifications.macos, D.notifications.macos)
+    },
+    restore: { resumeAgents: pickBool(restore2.resumeAgents, D.restore.resumeAgents) },
+    updates: { check: pickBool(updates.check, D.updates.check) }
+  };
+}
+function appConfigPath() {
+  return process.env.TMUX_IDE_CONFIG ?? join(homedir(), ".tmux-ide", "config.json");
+}
+function loadAppConfig() {
+  const path2 = appConfigPath();
+  if (!existsSync(path2)) return parseAppConfig(void 0);
+  try {
+    return parseAppConfig(JSON.parse(readFileSync2(path2, "utf-8")));
+  } catch {
+    return parseAppConfig(void 0);
+  }
+}
+function getAppConfig() {
+  if (!cached) cached = loadAppConfig();
+  return cached;
+}
+function _resetForTests() {
+  cached = null;
+}
+var DEFAULT_APP_CONFIG, DEFAULT_THEME, DEFAULT_KEYS, cached;
+var init_app_config = __esm({
+  "packages/daemon/src/lib/app-config.ts"() {
+    "use strict";
+    DEFAULT_APP_CONFIG = {
+      keys: { popup: "M-p", cheatsheet: "M-k", menu: "M-m" },
+      theme: {
+        accent: "colour75",
+        muted: "colour240",
+        fg: "colour250",
+        status: {
+          blocked: "colour203",
+          working: "colour221",
+          done: "colour111",
+          idle: "colour114",
+          unknown: "colour244"
+        },
+        glyphs: { active: "\u25CF", inactive: "\u25CB" }
+      },
+      updater: { tickMs: 2e3, snapshotEvery: 15 },
+      notifications: { toast: true, macos: false },
+      restore: { resumeAgents: false },
+      updates: { check: true }
+    };
+    DEFAULT_THEME = DEFAULT_APP_CONFIG.theme;
+    DEFAULT_KEYS = DEFAULT_APP_CONFIG.keys;
+    cached = null;
+  }
+});
+
+// packages/daemon/src/tui/team/keymap.ts
+import { existsSync as existsSync2, readFileSync as readFileSync3 } from "node:fs";
+import { homedir as homedir2 } from "node:os";
+import { join as join2 } from "node:path";
 var ACTION_ORDER, DEFAULT_KEYMAP;
 var init_keymap = __esm({
   "packages/daemon/src/tui/team/keymap.ts"() {
@@ -1630,6 +1751,16 @@ __export(cheatsheet_exports, {
   cheatsheetPopupCommand: () => cheatsheetPopupCommand,
   cheatsheetUnbindCommand: () => cheatsheetUnbindCommand
 });
+function tokenCode(token) {
+  const m = /^colou?r(\d+)$/.exec(token);
+  if (!m) return null;
+  const n = Number(m[1]);
+  return Number.isInteger(n) && n >= 0 && n <= 255 ? n : null;
+}
+function legendMark(token, glyph) {
+  const code = tokenCode(token);
+  return code === null ? dim(glyph) : color(code, glyph);
+}
 function renderKey(tmuxKey) {
   return tmuxKey.replace(/M-/g, "\u2325").replace(/C-/g, "^").replace(/S-/g, "\u21E7");
 }
@@ -1658,6 +1789,8 @@ function visibleWidth(s) {
 }
 function buildCheatsheet(opts) {
   const width = Math.max(20, opts.width);
+  const keys = opts.keys ?? DEFAULT_KEYS;
+  const theme = opts.theme ?? DEFAULT_THEME;
   const lines = [];
   const pad = (s) => `  ${s}`;
   lines.push(`${head(" tmux-ide")}  ${dim("cheat sheet \u2014 press any key to close")}`);
@@ -1665,20 +1798,21 @@ function buildCheatsheet(opts) {
   lines.push(head("dock"));
   lines.push(
     pad(
-      `${bold(renderKey(POPUP_KEY))} switcher popup   ${bold(renderKey(CHEATSHEET_KEY))} this sheet   ${bold(renderKey(MENU_KEY))} actions menu`
+      `${bold(renderKey(keys.popup))} switcher popup   ${bold(renderKey(keys.cheatsheet))} this sheet   ${bold(renderKey(keys.menu))} actions menu`
     )
   );
   lines.push(
     pad(
       dim(
-        `bar: click a project tab = switch there \xB7 click [ \u29C9 switch ${renderKey(POPUP_KEY)} ] = switcher \xB7 right-click = menu`
+        `bar: click a project tab = switch there \xB7 click [ \u29C9 switch ${renderKey(keys.popup)} ] = switcher \xB7 right-click anywhere = menu`
       )
     )
   );
-  const legend = `${color(203, "\u25CF")} blocked  ${color(221, "\u25CF")} working  ${color(111, "\u25CF")} done  ${color(114, "\u25CF")} idle  ${dim("\xB7")} unknown  ${dim("\u25CB")} stopped`;
+  const active2 = theme.glyphs.active;
+  const legend = `${legendMark(theme.status.blocked, active2)} blocked  ${legendMark(theme.status.working, active2)} working  ${legendMark(theme.status.done, active2)} done  ${legendMark(theme.status.idle, active2)} idle  ${dim("\xB7")} unknown  ${dim(theme.glyphs.inactive)} stopped`;
   lines.push(pad(legend));
   lines.push("");
-  lines.push(head(`picker  ${dim(`(inside the ${renderKey(POPUP_KEY)} popup)`)}`));
+  lines.push(head(`picker  ${dim(`(inside the ${renderKey(keys.popup)} popup)`)}`));
   lines.push(
     pad(`${bold("\u21B5")} switch   ${bold("l")} launch   ${bold("/")} find   ${bold("esc")} close`)
   );
@@ -1729,28 +1863,17 @@ function buildCheatsheet(opts) {
 function cheatsheetPopupCommand(cheatsheetCmd = "tmux-ide cheatsheet") {
   return `display-popup -E -w 90% -h 80% "${cheatsheetCmd}"`;
 }
-function cheatsheetBindCommand(cheatsheetCmd = "tmux-ide cheatsheet") {
-  return [
-    "bind-key",
-    "-n",
-    CHEATSHEET_KEY,
-    "display-popup",
-    "-E",
-    "-w",
-    "90%",
-    "-h",
-    "80%",
-    cheatsheetCmd
-  ];
+function cheatsheetBindCommand(cheatsheetCmd = "tmux-ide cheatsheet", key = CHEATSHEET_KEY) {
+  return ["bind-key", "-n", key, "display-popup", "-E", "-w", "90%", "-h", "80%", cheatsheetCmd];
 }
-function cheatsheetUnbindCommand() {
-  return ["unbind-key", "-n", CHEATSHEET_KEY];
+function cheatsheetUnbindCommand(key = CHEATSHEET_KEY) {
+  return ["unbind-key", "-n", key];
 }
 var CHEATSHEET_KEY, bold, dim, cyan, head, color;
 var init_cheatsheet = __esm({
   "packages/daemon/src/tui/chrome/cheatsheet.ts"() {
     "use strict";
-    init_statusline();
+    init_app_config();
     init_keymap();
     CHEATSHEET_KEY = "M-k";
     bold = (s) => `\x1B[1m${s}\x1B[22m`;
@@ -1765,22 +1888,29 @@ var init_cheatsheet = __esm({
 var menu_exports = {};
 __export(menu_exports, {
   MENU_KEY: () => MENU_KEY,
+  MENU_PANE_KEY: () => MENU_PANE_KEY,
   MENU_STATUS_KEY: () => MENU_STATUS_KEY,
   buildMenu: () => buildMenu,
   menuBindCommand: () => menuBindCommand,
+  menuPaneBindCommand: () => menuPaneBindCommand,
+  menuPaneUnbindCommand: () => menuPaneUnbindCommand,
   menuQuoteName: () => menuQuoteName,
   menuStatusBindCommand: () => menuStatusBindCommand,
   menuStatusUnbindCommand: () => menuStatusUnbindCommand,
   menuUnbindCommand: () => menuUnbindCommand
 });
+function menuGlyph(status2, theme) {
+  const glyph = status2 === "idle" ? theme.glyphs.inactive : status2 === "unknown" ? "\xB7" : theme.glyphs.active;
+  return { glyph, colour: theme.status[status2] };
+}
 function menuQuoteName(name) {
   return `'${name.replace(/'/g, `'\\''`)}'`;
 }
-function sessionLabel(session) {
-  const g = MENU_GLYPH[session.status];
+function sessionLabel(session, theme) {
+  const g = menuGlyph(session.status, theme);
   return `#[fg=${g.colour}]${g.glyph}#[default] ${session.name}`;
 }
-function buildMenu(sessions) {
+function buildMenu(sessions, theme = DEFAULT_THEME) {
   const header = [
     "\u29C9 Switch session\u2026",
     "s",
@@ -1791,7 +1921,11 @@ function buildMenu(sessions) {
   ];
   const sessionItems = [];
   sessions.slice(0, MAX_SESSION_ITEMS).forEach((session, i) => {
-    sessionItems.push(sessionLabel(session), String(i + 1), `switch-client -t ${menuQuoteName(session.name)}`);
+    sessionItems.push(
+      sessionLabel(session, theme),
+      String(i + 1),
+      `switch-client -t ${menuQuoteName(session.name)}`
+    );
   });
   const footer = [
     "\uFF0B New session\u2026",
@@ -1812,31 +1946,31 @@ function buildMenu(sessions) {
 function menuRunShellArgs(menuCmd) {
   return ["run-shell", "-b", `${menuCmd} --client '#{client_name}'`];
 }
-function menuBindCommand(menuCmd = "tmux-ide menu") {
-  return ["bind-key", "-n", MENU_KEY, ...menuRunShellArgs(menuCmd)];
+function menuBindCommand(menuCmd = "tmux-ide menu", key = MENU_KEY) {
+  return ["bind-key", "-n", key, ...menuRunShellArgs(menuCmd)];
 }
 function menuStatusBindCommand(menuCmd = "tmux-ide menu") {
   return ["bind-key", "-n", MENU_STATUS_KEY, ...menuRunShellArgs(menuCmd)];
 }
-function menuUnbindCommand() {
-  return ["unbind-key", "-n", MENU_KEY];
+function menuPaneBindCommand(menuCmd = "tmux-ide menu") {
+  return ["bind-key", "-n", MENU_PANE_KEY, ...menuRunShellArgs(menuCmd)];
+}
+function menuUnbindCommand(key = MENU_KEY) {
+  return ["unbind-key", "-n", key];
 }
 function menuStatusUnbindCommand() {
   return ["unbind-key", "-n", MENU_STATUS_KEY];
 }
-var MENU_GLYPH, MAX_SESSION_ITEMS;
+function menuPaneUnbindCommand() {
+  return ["unbind-key", "-n", MENU_PANE_KEY];
+}
+var MAX_SESSION_ITEMS;
 var init_menu = __esm({
   "packages/daemon/src/tui/chrome/menu.ts"() {
     "use strict";
+    init_app_config();
     init_statusline();
     init_cheatsheet();
-    MENU_GLYPH = {
-      working: { glyph: "\u25CF", colour: "colour221" },
-      blocked: { glyph: "\u25CF", colour: "colour203" },
-      done: { glyph: "\u25CF", colour: "colour111" },
-      idle: { glyph: "\u25CB", colour: "colour114" },
-      unknown: { glyph: "\xB7", colour: "colour244" }
-    };
     MAX_SESSION_ITEMS = 8;
   }
 });
@@ -2253,7 +2387,7 @@ var init_registry = __esm({
 
 // packages/daemon/src/lib/project-probe.ts
 import { execFile } from "node:child_process";
-import { existsSync as existsSync2 } from "node:fs";
+import { existsSync as existsSync3 } from "node:fs";
 import { basename as basename2, isAbsolute, resolve as resolve5 } from "node:path";
 function sanitizeName(raw) {
   return raw.trim().replace(/\s+/g, "-").replace(/[^A-Za-z0-9._-]/g, "").replace(/^-+|-+$/g, "");
@@ -2284,7 +2418,7 @@ var init_project_probe = __esm({
     "use strict";
     GIT_TIMEOUT_MS = 2e3;
     realIo = {
-      exists: existsSync2,
+      exists: existsSync3,
       runGit: (args, cwd) => new Promise((resolveResult) => {
         execFile(
           "git",
@@ -2305,9 +2439,9 @@ var init_project_probe = __esm({
 
 // packages/daemon/src/lib/project-registry.ts
 import { EventEmitter } from "node:events";
-import { existsSync as existsSync3, mkdirSync, readFileSync as readFileSync3, renameSync, writeFileSync as writeFileSync2 } from "node:fs";
-import { homedir as homedir2 } from "node:os";
-import { dirname as dirname2, isAbsolute as isAbsolute2, join as join2, resolve as resolve6 } from "node:path";
+import { existsSync as existsSync4, mkdirSync, readFileSync as readFileSync4, renameSync, writeFileSync as writeFileSync2 } from "node:fs";
+import { homedir as homedir3 } from "node:os";
+import { dirname as dirname2, isAbsolute as isAbsolute2, join as join3, resolve as resolve6 } from "node:path";
 import { z as z10 } from "zod";
 function applyAction(state, action) {
   switch (action.type) {
@@ -2339,15 +2473,15 @@ function buildRegisteredProject(probe, name, registeredAt) {
 function registryDir() {
   const override = process.env[REGISTRY_DIR_ENV];
   if (override && override.length > 0) return override;
-  return join2(homedir2(), ".tmux-ide");
+  return join3(homedir3(), ".tmux-ide");
 }
 function registryPath() {
-  return join2(registryDir(), "projects.json");
+  return join3(registryDir(), "projects.json");
 }
 function readDisk() {
   const path2 = registryPath();
-  if (!existsSync3(path2)) return [];
-  const raw = readFileSync3(path2, "utf-8");
+  if (!existsSync4(path2)) return [];
+  const raw = readFileSync4(path2, "utf-8");
   if (raw.trim().length === 0) return [];
   let parsed;
   try {
@@ -2393,7 +2527,7 @@ function getProject(name) {
   return ensureCache().find((p) => p.name === name) ?? null;
 }
 async function registerProject(input) {
-  const exists = input.exists ?? existsSync3;
+  const exists = input.exists ?? existsSync4;
   const absoluteDir = isAbsolute2(input.dir) ? input.dir : resolve6(input.dir);
   if (!exists(absoluteDir)) {
     throw new ProjectDirNotFoundError(absoluteDir);
@@ -2482,11 +2616,11 @@ var init_project_registry = __esm({
 });
 
 // packages/daemon/src/tui/detect/manifest-loader.ts
-import { readdirSync, readFileSync as readFileSync4 } from "node:fs";
-import { homedir as homedir3 } from "node:os";
-import { join as join3 } from "node:path";
+import { readdirSync, readFileSync as readFileSync5 } from "node:fs";
+import { homedir as homedir4 } from "node:os";
+import { join as join4 } from "node:path";
 function overrideDir() {
-  return join3(homedir3(), ".tmux-ide", "agent-detection");
+  return join4(homedir4(), ".tmux-ide", "agent-detection");
 }
 function validateManifestShape(value) {
   if (typeof value !== "object" || value === null) return false;
@@ -2548,9 +2682,9 @@ function readOverrideManifests(dir = overrideDir()) {
   }
   const overrides = [];
   for (const file of files.sort()) {
-    const path2 = join3(dir, file);
+    const path2 = join4(dir, file);
     try {
-      const parsed = JSON.parse(readFileSync4(path2, "utf8"));
+      const parsed = JSON.parse(readFileSync5(path2, "utf8"));
       if (validateManifestShape(parsed)) {
         overrides.push(normalizeStates(parsed));
       } else {
@@ -2980,21 +3114,15 @@ var init_projects = __esm({
 });
 
 // packages/daemon/src/tui/chrome/chip.ts
-function paneChip(agent, status2) {
+function paneChip(agent, status2, theme = DEFAULT_THEME) {
   if (!agent) return "";
-  return `${CHIP_STYLE[status2]}${agent} \xB7 ${status2}#[default]`;
+  return `${statusStyle(status2, theme)}${agent} \xB7 ${status2}#[default]`;
 }
-var CHIP_STYLE;
 var init_chip = __esm({
   "packages/daemon/src/tui/chrome/chip.ts"() {
     "use strict";
-    CHIP_STYLE = {
-      blocked: "#[fg=colour203,bold]",
-      working: "#[fg=colour221]",
-      done: "#[fg=colour111]",
-      idle: "#[fg=colour114]",
-      unknown: "#[fg=colour244]"
-    };
+    init_app_config();
+    init_statusline();
   }
 });
 
@@ -3008,9 +3136,9 @@ __export(events_exports, {
   formatEventLine: () => formatEventLine,
   shouldRotate: () => shouldRotate
 });
-import { appendFileSync, existsSync as existsSync4, mkdirSync as mkdirSync2, renameSync as renameSync2, statSync } from "node:fs";
-import { homedir as homedir4 } from "node:os";
-import { join as join4 } from "node:path";
+import { appendFileSync, existsSync as existsSync5, mkdirSync as mkdirSync2, renameSync as renameSync2, statSync } from "node:fs";
+import { homedir as homedir5 } from "node:os";
+import { join as join5 } from "node:path";
 function diffFleet(prev, next) {
   const state = /* @__PURE__ */ new Map();
   const events = [];
@@ -3037,14 +3165,14 @@ function formatEventLine(ev, paint = (_s, t) => t) {
   return `${isoTime(ev.ts)} ${ev.session} ${from} \u2192 ${paint(ev.to, ev.to)}`;
 }
 function eventsPath() {
-  return join4(homedir4(), ".tmux-ide", "events.jsonl");
+  return join5(homedir5(), ".tmux-ide", "events.jsonl");
 }
 function appendEvents(events, now = () => (/* @__PURE__ */ new Date()).toISOString()) {
   if (events.length === 0) return;
   const path2 = eventsPath();
   try {
-    mkdirSync2(join4(homedir4(), ".tmux-ide"), { recursive: true });
-    if (existsSync4(path2) && shouldRotate(statSync(path2).size)) {
+    mkdirSync2(join5(homedir5(), ".tmux-ide"), { recursive: true });
+    if (existsSync5(path2) && shouldRotate(statSync(path2).size)) {
       renameSync2(path2, `${path2}.1`);
     }
     const ts = now();
@@ -3064,9 +3192,6 @@ var init_events = __esm({
 
 // packages/daemon/src/tui/chrome/notify.ts
 import { execFileSync as execFileSync4 } from "node:child_process";
-import { existsSync as existsSync5, readFileSync as readFileSync5 } from "node:fs";
-import { homedir as homedir5 } from "node:os";
-import { join as join5 } from "node:path";
 function notifyMessage(session, to) {
   return to === "blocked" ? `\u26A0 ${session} needs you (blocked)` : `\u2713 ${session} finished (done)`;
 }
@@ -3123,44 +3248,20 @@ function sendSystemNotification(message) {
   } catch {
   }
 }
-function notificationPrefs(parsedConfig) {
-  const notifications = parsedConfig && typeof parsedConfig === "object" ? parsedConfig.notifications : void 0;
-  if (!notifications || typeof notifications !== "object") {
-    return { ...DEFAULT_NOTIFICATION_PREFS };
-  }
-  const toast = notifications.toast;
-  const macos = notifications.macos;
-  return {
-    toast: typeof toast === "boolean" ? toast : DEFAULT_NOTIFICATION_PREFS.toast,
-    macos: typeof macos === "boolean" ? macos : DEFAULT_NOTIFICATION_PREFS.macos
-  };
-}
 function applyKillSwitch(prefs, envValue) {
   return envValue === "0" ? { toast: false, macos: false } : prefs;
 }
-function notifyConfigPath() {
-  return join5(homedir5(), ".tmux-ide", "config.json");
-}
 function readNotificationPrefs() {
-  const env = process.env.TMUX_IDE_NOTIFY;
-  const path2 = notifyConfigPath();
-  let prefs = { ...DEFAULT_NOTIFICATION_PREFS };
-  if (existsSync5(path2)) {
-    try {
-      prefs = notificationPrefs(JSON.parse(readFileSync5(path2, "utf-8")));
-    } catch {
-    }
-  }
-  return applyKillSwitch(prefs, env);
+  return applyKillSwitch(loadAppConfig().notifications, process.env.TMUX_IDE_NOTIFY);
 }
-var NOTIFY_STATES, NOTIFY_DEBOUNCE_MS, DEFAULT_NOTIFICATION_PREFS;
+var NOTIFY_STATES, NOTIFY_DEBOUNCE_MS;
 var init_notify = __esm({
   "packages/daemon/src/tui/chrome/notify.ts"() {
     "use strict";
     init_src();
+    init_app_config();
     NOTIFY_STATES = /* @__PURE__ */ new Set(["blocked", "done"]);
     NOTIFY_DEBOUNCE_MS = 3e4;
-    DEFAULT_NOTIFICATION_PREFS = { toast: true, macos: false };
   }
 });
 
@@ -3312,11 +3413,6 @@ function readSnapshot() {
     return null;
   }
 }
-function snapshotEvery() {
-  const raw = process.env.TMUX_IDE_SNAPSHOT_EVERY;
-  const n = raw ? Number(raw) : NaN;
-  return Number.isInteger(n) && n > 0 ? n : SNAPSHOT_EVERY;
-}
 function createSnapshotter(deps2) {
   let ticks = 0;
   let seeded = false;
@@ -3338,7 +3434,7 @@ function createSnapshotter(deps2) {
     }
   };
 }
-var PaneSnapshotSchemaZ, WindowSnapshotSchemaZ, SessionSnapshotSchemaZ, FleetSnapshotSchemaZ, SNAPSHOT_PANE_FORMAT, SNAPSHOT_SESSION_FORMAT, defaultIo, SNAPSHOT_EVERY;
+var PaneSnapshotSchemaZ, WindowSnapshotSchemaZ, SessionSnapshotSchemaZ, FleetSnapshotSchemaZ, SNAPSHOT_PANE_FORMAT, SNAPSHOT_SESSION_FORMAT, defaultIo;
 var init_snapshot2 = __esm({
   "packages/daemon/src/tui/chrome/snapshot.ts"() {
     "use strict";
@@ -3393,7 +3489,6 @@ var init_snapshot2 = __esm({
       listSessions: () => runTmux(["list-sessions", "-F", SNAPSHOT_SESSION_FORMAT]).toString(),
       processTable: () => readProcessTable()
     };
-    SNAPSHOT_EVERY = 15;
   }
 });
 
@@ -3443,12 +3538,13 @@ function fleetStatuses(projects) {
 function runUpdaterTick(deps2) {
   const adopted = deps2.listAdopted();
   if (adopted.length === 0) return;
+  const theme = deps2.theme ?? DEFAULT_THEME;
   const panes = [];
   const projects = deps2.computeProjects((pane) => panes.push(pane));
   for (const session of adopted) {
-    deps2.writeStatus(session, buildStatusline(projects, session));
+    deps2.writeStatus(session, buildStatusline(projects, session, 12, theme));
   }
-  writeChips(deps2, adopted, panes);
+  writeChips(deps2, adopted, panes, theme);
   if (deps2.prevState && deps2.appendEvents) {
     const { events, state } = diffFleet(deps2.prevState, fleetStatuses(projects));
     deps2.prevState.clear();
@@ -3459,13 +3555,13 @@ function runUpdaterTick(deps2) {
     }
   }
 }
-function writeChips(deps2, adopted, panes) {
+function writeChips(deps2, adopted, panes, theme) {
   const { writeChip, chipCache } = deps2;
   if (!writeChip || !chipCache) return;
   const adoptedSet = new Set(adopted);
   for (const pane of panes) {
     if (!adoptedSet.has(pane.sessionName)) continue;
-    const chip = paneChip(pane.agent, pane.status);
+    const chip = paneChip(pane.agent, pane.status, theme);
     if (chipCache.get(pane.paneId) === chip) continue;
     chipCache.set(pane.paneId, chip);
     writeChip(pane.paneId, chip);
@@ -3486,7 +3582,7 @@ function dispatchNotifications(deps2, events) {
 function seedSessionStatus(session) {
   try {
     const projects = listTeamProjects(createStatusTracker());
-    writeSessionStatus(session, buildStatusline(projects, session));
+    writeSessionStatus(session, buildStatusline(projects, session, 12, getAppConfig().theme));
   } catch {
   }
 }
@@ -3536,6 +3632,7 @@ function releaseUpdater() {
 }
 function runUpdaterLoop() {
   if (!claimUpdater()) return;
+  const config2 = getAppConfig();
   const tracker = createStatusTracker();
   const prevState = /* @__PURE__ */ new Map();
   const lastNotified = /* @__PURE__ */ new Map();
@@ -3544,7 +3641,7 @@ function runUpdaterLoop() {
     collect: () => collectFleetSnapshot(),
     read: readSnapshot,
     write: writeSnapshot,
-    every: snapshotEvery()
+    every: config2.updater.snapshotEvery
   });
   const tick = () => {
     try {
@@ -3552,6 +3649,7 @@ function runUpdaterLoop() {
         listAdopted: listAdoptedSessions,
         computeProjects: (onPane) => listTeamProjects(tracker, { onPane }),
         writeStatus: writeSessionStatus,
+        theme: config2.theme,
         writeChip: writePaneChip,
         chipCache,
         prevState,
@@ -3571,7 +3669,7 @@ function runUpdaterLoop() {
     }
   };
   tick();
-  const timer = setInterval(tick, TICK_MS);
+  const timer = setInterval(tick, config2.updater.tickMs);
   const shutdown = () => {
     clearInterval(timer);
     releaseUpdater();
@@ -3585,6 +3683,7 @@ var init_updater = __esm({
   "packages/daemon/src/tui/chrome/updater.ts"() {
     "use strict";
     init_src();
+    init_app_config();
     init_classify();
     init_projects();
     init_chip();
@@ -3605,6 +3704,7 @@ var init_updater = __esm({
 var statusline_exports = {};
 __export(statusline_exports, {
   MENU_KEY: () => MENU_KEY,
+  MENU_PANE_KEY: () => MENU_PANE_KEY,
   MENU_STATUS_KEY: () => MENU_STATUS_KEY,
   POPUP_KEY: () => POPUP_KEY,
   STATUS_CLICK_KEY: () => STATUS_CLICK_KEY,
@@ -3617,23 +3717,32 @@ __export(statusline_exports, {
   popupUnbindCommand: () => popupUnbindCommand,
   statusClickBindCommand: () => statusClickBindCommand,
   statusClickUnbindCommand: () => statusClickUnbindCommand,
+  statusGlyph: () => statusGlyph,
+  statusStyle: () => statusStyle,
   switcherPopupCommand: () => switcherPopupCommand,
   unadoptOptionCommands: () => unadoptOptionCommands,
   unadoptSession: () => unadoptSession
 });
+function statusStyle(status2, theme) {
+  const color2 = theme.status[status2];
+  return status2 === "blocked" ? `#[fg=${color2},bold]` : `#[fg=${color2}]`;
+}
+function statusGlyph(status2, theme) {
+  return status2 === "unknown" ? "\xB7" : theme.glyphs.active;
+}
 function isInternalName(name) {
   return name.startsWith("_");
 }
 function adoptableSessionNames(names) {
   return names.filter((name) => name.length > 0 && !isInternalName(name));
 }
-function buildStatusline(projects, active2, maxItems = 12) {
+function buildStatusline(projects, active2, maxItems = 12, theme = DEFAULT_THEME, extraSegment = "") {
   const visible = projects.filter((p) => !isInternalName(p.name));
   const segments = [];
   for (const project of visible.slice(0, maxItems)) {
     const isActive = active2 !== null && (project.name === active2 || project.sessions.some((s) => s.name === active2));
-    const glyph = project.running ? `${STATUS_STYLE[project.status]}${GLYPH[project.status]}#[default]` : "#[fg=colour240]\u25CB#[default]";
-    const name = isActive ? `#[fg=colour231,bold,underscore]${project.name}#[default]` : project.running ? `#[fg=colour250]${project.name}#[default]` : `#[fg=colour240]${project.name}#[default]`;
+    const glyph = project.running ? `${statusStyle(project.status, theme)}${statusGlyph(project.status, theme)}#[default]` : `#[fg=${theme.muted}]${theme.glyphs.inactive}#[default]`;
+    const name = isActive ? `#[fg=colour231,bold,underscore]${project.name}#[default]` : project.running ? `#[fg=${theme.fg}]${project.name}#[default]` : `#[fg=${theme.muted}]${project.name}#[default]`;
     const label = `${glyph} ${name}`;
     const session = project.sessions[0]?.name;
     segments.push(
@@ -3641,32 +3750,22 @@ function buildStatusline(projects, active2, maxItems = 12) {
     );
   }
   if (visible.length > maxItems) {
-    segments.push(`#[fg=colour240]+${visible.length - maxItems}#[default]`);
+    segments.push(`#[fg=${theme.muted}]+${visible.length - maxItems}#[default]`);
   }
   const body = segments.join("  ");
+  const extra = extraSegment ? `${extraSegment} ` : "";
   const keysTrigger = `#[range=user|keys]#[fg=colour244][ ? keys ]#[default]#[norange]`;
-  const trigger = `#[range=user|switcher]#[fg=colour75,bold][ \u29C9 switch \u2325p ]#[default]#[norange]`;
-  return `#[fg=colour75,bold] tmux-ide #[default] ${body}#[align=right]${keysTrigger} ${trigger} `;
+  const trigger = `#[range=user|switcher]#[fg=${theme.accent},bold][ \u29C9 switch \u2325p ]#[default]#[norange]`;
+  return `#[fg=${theme.accent},bold] tmux-ide #[default] ${body}#[align=right]${extra}${keysTrigger} ${trigger} `;
 }
 function switcherPopupCommand(switcherCmd = "tmux-ide switcher") {
   return `display-popup -E -w 80% -h 60% "${switcherCmd}"`;
 }
-function popupBindCommand(switcherCmd = "tmux-ide switcher") {
-  return [
-    "bind-key",
-    "-n",
-    POPUP_KEY,
-    "display-popup",
-    "-E",
-    "-w",
-    "80%",
-    "-h",
-    "60%",
-    switcherCmd
-  ];
+function popupBindCommand(switcherCmd = "tmux-ide switcher", key = POPUP_KEY) {
+  return ["bind-key", "-n", key, "display-popup", "-E", "-w", "80%", "-h", "60%", switcherCmd];
 }
-function popupUnbindCommand() {
-  return ["unbind-key", "-n", POPUP_KEY];
+function popupUnbindCommand(key = POPUP_KEY) {
+  return ["unbind-key", "-n", key];
 }
 function dq(cmd) {
   return `"${cmd.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
@@ -3723,22 +3822,25 @@ function unadoptOptionCommands(session) {
 }
 function adoptSession(session, switcherCmd = "tmux-ide switcher") {
   for (const argv of adoptOptionCommands(session)) runTmux(argv);
-  runTmux(popupBindCommand(switcherCmd));
-  runTmux(cheatsheetBindCommand());
+  const keys = getAppConfig().keys;
+  runTmux(popupBindCommand(switcherCmd, keys.popup));
+  runTmux(cheatsheetBindCommand("tmux-ide cheatsheet", keys.cheatsheet));
   runTmux(statusClickBindCommand(switcherCmd));
-  runTmux(menuBindCommand());
+  runTmux(menuBindCommand("tmux-ide menu", keys.menu));
   runTmux(menuStatusBindCommand());
+  runTmux(menuPaneBindCommand());
   seedSessionStatus(session);
   startUpdaterIfNeeded();
 }
 function unadoptSession(session) {
   for (const argv of unadoptOptionCommands(session)) runTmux(argv);
+  const keys = getAppConfig().keys;
   try {
-    runTmux(popupUnbindCommand());
+    runTmux(popupUnbindCommand(keys.popup));
   } catch {
   }
   try {
-    runTmux(cheatsheetUnbindCommand());
+    runTmux(cheatsheetUnbindCommand(keys.cheatsheet));
   } catch {
   }
   try {
@@ -3746,40 +3848,32 @@ function unadoptSession(session) {
   } catch {
   }
   try {
-    runTmux(menuUnbindCommand());
+    runTmux(menuUnbindCommand(keys.menu));
   } catch {
   }
   try {
     runTmux(menuStatusUnbindCommand());
   } catch {
   }
+  try {
+    runTmux(menuPaneUnbindCommand());
+  } catch {
+  }
   if (listAdoptedSessions().length === 0) stopUpdater();
 }
-var STATUS_STYLE, GLYPH, POPUP_KEY, MENU_KEY, MENU_STATUS_KEY, STATUS_CLICK_KEY;
+var POPUP_KEY, MENU_KEY, MENU_STATUS_KEY, MENU_PANE_KEY, STATUS_CLICK_KEY;
 var init_statusline = __esm({
   "packages/daemon/src/tui/chrome/statusline.ts"() {
     "use strict";
     init_src();
+    init_app_config();
     init_cheatsheet();
     init_menu();
     init_updater();
-    STATUS_STYLE = {
-      blocked: "#[fg=colour203,bold]",
-      working: "#[fg=colour221]",
-      done: "#[fg=colour111]",
-      idle: "#[fg=colour114]",
-      unknown: "#[fg=colour244]"
-    };
-    GLYPH = {
-      blocked: "\u25CF",
-      working: "\u25CF",
-      done: "\u25CF",
-      idle: "\u25CF",
-      unknown: "\xB7"
-    };
     POPUP_KEY = "M-p";
     MENU_KEY = "M-m";
     MENU_STATUS_KEY = "MouseDown3Status";
+    MENU_PANE_KEY = "MouseDown3Pane";
     STATUS_CLICK_KEY = "MouseDown1Status";
   }
 });
@@ -10084,14 +10178,14 @@ __export(claude_exports, {
   removeHooks: () => removeHooks,
   uninstallClaudeIntegration: () => uninstallClaudeIntegration
 });
-import { chmodSync as chmodSync2, copyFileSync as copyFileSync2, existsSync as existsSync23, mkdirSync as mkdirSync10, readFileSync as readFileSync16, writeFileSync as writeFileSync10 } from "node:fs";
-import { homedir as homedir14 } from "node:os";
-import { dirname as dirname11, join as join20 } from "node:path";
+import { chmodSync as chmodSync2, copyFileSync as copyFileSync2, existsSync as existsSync22, mkdirSync as mkdirSync10, readFileSync as readFileSync15, writeFileSync as writeFileSync10 } from "node:fs";
+import { homedir as homedir13 } from "node:os";
+import { dirname as dirname11, join as join19 } from "node:path";
 function hookScriptPath() {
-  return join20(homedir14(), HOOK_SCRIPT_RELPATH);
+  return join19(homedir13(), HOOK_SCRIPT_RELPATH);
 }
 function claudeSettingsPath() {
-  return join20(homedir14(), ".claude", "settings.json");
+  return join19(homedir13(), ".claude", "settings.json");
 }
 function isOurs(group) {
   return group.hooks?.some((h) => h.command?.includes(HOOK_SCRIPT_RELPATH)) ?? false;
@@ -10124,9 +10218,9 @@ function isInstalled(settings) {
   return Object.values(settings.hooks ?? {}).some((groups) => groups.some(isOurs));
 }
 function readSettings(path2) {
-  if (!existsSync23(path2)) return {};
+  if (!existsSync22(path2)) return {};
   try {
-    return JSON.parse(readFileSync16(path2, "utf8"));
+    return JSON.parse(readFileSync15(path2, "utf8"));
   } catch {
     throw new Error(`${path2} is not valid JSON \u2014 fix or move it, then retry`);
   }
@@ -10140,7 +10234,7 @@ function installClaudeIntegration() {
   mkdirSync10(dirname11(settingsPath), { recursive: true });
   const settings = readSettings(settingsPath);
   const backup = `${settingsPath}.tmux-ide.bak`;
-  if (existsSync23(settingsPath) && !existsSync23(backup)) copyFileSync2(settingsPath, backup);
+  if (existsSync22(settingsPath) && !existsSync22(backup)) copyFileSync2(settingsPath, backup);
   writeFileSync10(settingsPath, `${JSON.stringify(mergeHooks(settings, script), null, 2)}
 `, "utf8");
   return { scriptPath: script, settingsPath };
@@ -10158,7 +10252,7 @@ function uninstallClaudeIntegration() {
 function claudeIntegrationStatus() {
   return {
     installed: isInstalled(readSettings(claudeSettingsPath())),
-    scriptExists: existsSync23(hookScriptPath())
+    scriptExists: existsSync22(hookScriptPath())
   };
 }
 var HOOK_SCRIPT_RELPATH, HOOK_SCRIPT, EVENT_STATES;
@@ -10289,9 +10383,9 @@ var init_server2 = __esm({
 // bin/cli.ts
 init_launch();
 import { parseArgs } from "node:util";
-import { resolve as resolve20, dirname as dirname12, join as join21 } from "node:path";
+import { resolve as resolve20, dirname as dirname12, join as join20 } from "node:path";
 import { execFileSync as execFileSync10 } from "node:child_process";
-import { existsSync as existsSync24 } from "node:fs";
+import { existsSync as existsSync23 } from "node:fs";
 import { fileURLToPath as fileURLToPath4 } from "node:url";
 
 // packages/daemon/src/tui/team/entry.ts
@@ -10843,13 +10937,11 @@ init_restart();
 
 // packages/daemon/src/restore.ts
 init_src();
+init_app_config();
 init_errors2();
 init_project_registry();
 init_statusline();
 init_snapshot2();
-import { existsSync as existsSync22, readFileSync as readFileSync15 } from "node:fs";
-import { homedir as homedir13 } from "node:os";
-import { join as join19 } from "node:path";
 function buildRestorePlan(snapshot, liveSessionNames, ideProjects = /* @__PURE__ */ new Map()) {
   const live = new Set(liveSessionNames);
   const actions = [];
@@ -10886,29 +10978,8 @@ function countResumableAgents(session, resumeAgents) {
   }
   return n;
 }
-var DEFAULT_RESTORE_PREFS = { resumeAgents: false };
-function restorePrefs(parsedConfig) {
-  const restore2 = parsedConfig && typeof parsedConfig === "object" ? parsedConfig.restore : void 0;
-  if (!restore2 || typeof restore2 !== "object") {
-    return { ...DEFAULT_RESTORE_PREFS };
-  }
-  const resumeAgents = restore2.resumeAgents;
-  return {
-    resumeAgents: typeof resumeAgents === "boolean" ? resumeAgents : DEFAULT_RESTORE_PREFS.resumeAgents
-  };
-}
-function restoreConfigPath() {
-  return join19(homedir13(), ".tmux-ide", "config.json");
-}
 function readRestorePrefs() {
-  const path2 = restoreConfigPath();
-  if (existsSync22(path2)) {
-    try {
-      return restorePrefs(JSON.parse(readFileSync15(path2, "utf-8")));
-    } catch {
-    }
-  }
-  return { ...DEFAULT_RESTORE_PREFS };
+  return loadAppConfig().restore;
 }
 function tmuxCapture(args) {
   return runTmux(args, { encoding: "utf-8" }).toString().trim();
@@ -11282,7 +11353,7 @@ ${bold2("Usage:")}
   ${cyan2("tmux-ide integration install claude")}  ${dim2("Authoritative agent status via Claude Code hooks")}
   ${cyan2("tmux-ide agent explain")} <pane> [--json]  ${dim2("Debug how a pane's agent state is detected")}
   ${cyan2("tmux-ide cheatsheet")}         ${dim2("Print the key cheat sheet (\u2325k / [ ? keys ] popup)")}
-  ${cyan2("tmux-ide menu")} [--client N]  ${dim2("Open the right-click actions menu (\u2325m / right-click the bar)")}
+  ${cyan2("tmux-ide menu")} [--client N]  ${dim2("Open the right-click actions menu (\u2325m / right-click any pane or the bar)")}
   ${cyan2("tmux-ide ls")}                 ${dim2("List all tmux sessions")}
   ${cyan2("tmux-ide status")} [--json]    ${dim2("Show session status")}
   ${cyan2("tmux-ide inspect")} [--json]   ${dim2("Show effective config and runtime state")}
@@ -11316,7 +11387,7 @@ ${bold2("Flags:")}
   ${cyan2("-v, --version")}               ${dim2("Show version number")}`);
 }
 function assertBunWidgetAvailable(scriptPath, commandLabel) {
-  const widgetMissing = !existsSync24(scriptPath);
+  const widgetMissing = !existsSync23(scriptPath);
   let bunMissing = false;
   try {
     execFileSync10("bun", ["--version"], { stdio: "ignore" });
@@ -11360,7 +11431,7 @@ try {
   switch (command) {
     case "start": {
       const targetDir = resolve20(startTargetDir || ".");
-      const hasIdeYml = existsSync24(join21(targetDir, "ide.yml"));
+      const hasIdeYml = existsSync23(join20(targetDir, "ide.yml"));
       if (shouldOpenCockpit(hasIdeYml, values.team === true)) {
         if (json) {
           await printFleetJson();
@@ -11465,8 +11536,8 @@ try {
       const messageStart = values.to ? 1 : 2;
       let message = positionals.slice(messageStart).join(" ");
       if (!message && !process.stdin.isTTY) {
-        const { readFileSync: readFileSync17 } = await import("node:fs");
-        message = readFileSync17(0, "utf-8").trim();
+        const { readFileSync: readFileSync16 } = await import("node:fs");
+        message = readFileSync16(0, "utf-8").trim();
       }
       await send(null, { json, to: target, message, noEnter: values["no-enter"] });
       break;
@@ -11576,10 +11647,10 @@ try {
       }
     }
     case "events": {
-      const { readFileSync: readFileSync17, existsSync: existsSync25, statSync: statSync5, openSync, readSync, closeSync } = await import("node:fs");
+      const { readFileSync: readFileSync16, existsSync: existsSync24, statSync: statSync5, openSync, readSync, closeSync } = await import("node:fs");
       const { eventsPath: eventsPath2, formatEventLine: formatEventLine2 } = await Promise.resolve().then(() => (init_events(), events_exports));
       const path2 = eventsPath2();
-      if (!existsSync25(path2)) {
+      if (!existsSync24(path2)) {
         console.log("no events yet \u2014 is a session adopted? (the chrome updater writes events)");
         break;
       }
@@ -11599,7 +11670,7 @@ try {
         } catch {
         }
       };
-      const allLines = readFileSync17(path2, "utf8").split("\n").filter((l) => l.trim().length > 0);
+      const allLines = readFileSync16(path2, "utf8").split("\n").filter((l) => l.trim().length > 0);
       for (const line of allLines.slice(-50)) printLine(line);
       if (!values.follow) break;
       let offset = statSync5(path2).size;
@@ -11641,8 +11712,9 @@ try {
         const { createStatusTracker: createStatusTracker2 } = await Promise.resolve().then(() => (init_classify(), classify_exports));
         const { listTeamProjects: listTeamProjects2 } = await Promise.resolve().then(() => (init_projects(), projects_exports));
         const { buildStatusline: buildStatusline2 } = await Promise.resolve().then(() => (init_statusline(), statusline_exports));
+        const { getAppConfig: getAppConfig2 } = await Promise.resolve().then(() => (init_app_config(), app_config_exports));
         const projects = listTeamProjects2(createStatusTracker2());
-        console.log(buildStatusline2(projects, values.active ?? null));
+        console.log(buildStatusline2(projects, values.active ?? null, 12, getAppConfig2().theme));
       } catch {
         console.log("#[fg=colour75,bold] tmux-ide #[default]");
       }
@@ -11738,7 +11810,15 @@ try {
     case "cheatsheet": {
       try {
         const { buildCheatsheet: buildCheatsheet2 } = await Promise.resolve().then(() => (init_cheatsheet(), cheatsheet_exports));
-        console.log(buildCheatsheet2({ width: process.stdout.columns ?? 100 }));
+        const { getAppConfig: getAppConfig2 } = await Promise.resolve().then(() => (init_app_config(), app_config_exports));
+        const cfg = getAppConfig2();
+        console.log(
+          buildCheatsheet2({
+            width: process.stdout.columns ?? 100,
+            keys: cfg.keys,
+            theme: cfg.theme
+          })
+        );
       } catch {
         console.log("tmux-ide \u2014 press \u2325p for the switcher, \u2325k for this sheet. Any key closes.");
       }
@@ -11757,22 +11837,36 @@ try {
     }
     case "menu": {
       try {
-        const clientArg = typeof values.client === "string" ? values.client : "";
-        const client = clientArg.length > 0 ? clientArg : execFileSync10("tmux", ["display-message", "-p", "#{client_name}"], {
+        const tmuxCap = {
           encoding: "utf8",
-          stdio: ["ignore", "pipe", "ignore"]
-        }).trim();
+          stdio: ["ignore", "pipe", "ignore"],
+          timeout: 2e3
+        };
+        const rawClient = typeof values.client === "string" ? values.client : "";
+        let client = rawClient && !rawClient.includes("#{") ? rawClient : "";
+        if (!client) {
+          const raw = execFileSync10(
+            "tmux",
+            ["list-clients", "-F", "#{client_activity} #{client_name}"],
+            tmuxCap
+          ).trim();
+          const newest = raw.split("\n").filter(Boolean).map((line) => {
+            const sp = line.indexOf(" ");
+            return { activity: Number(line.slice(0, sp)), name: line.slice(sp + 1) };
+          }).sort((a, b) => b.activity - a.activity)[0];
+          client = newest?.name ?? "";
+        }
+        if (!client) break;
         const { createStatusTracker: createStatusTracker2 } = await Promise.resolve().then(() => (init_classify(), classify_exports));
         const { listTeamSessions: listTeamSessions2 } = await Promise.resolve().then(() => (init_sessions2(), sessions_exports));
         const { buildMenu: buildMenu2 } = await Promise.resolve().then(() => (init_menu(), menu_exports));
+        const { getAppConfig: getAppConfig2 } = await Promise.resolve().then(() => (init_app_config(), app_config_exports));
         const sessions = listTeamSessions2(createStatusTracker2()).map((s) => ({
           name: s.name,
           status: s.status
         }));
-        const args = ["display-menu"];
-        if (client.length > 0) args.push("-c", client);
-        args.push(...buildMenu2(sessions));
-        execFileSync10("tmux", args, { stdio: "ignore" });
+        const args = ["display-menu", "-c", client, ...buildMenu2(sessions, getAppConfig2().theme)];
+        execFileSync10("tmux", args, { stdio: "ignore", timeout: 2e3 });
       } catch {
       }
       break;

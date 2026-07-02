@@ -7,20 +7,20 @@
  *
  * The sheet is STATIC content, so it renders as a plain ANSI CLI print — no
  * OpenTUI/bun boot — which keeps the popup instant. To stop the sheet drifting
- * from reality, its dynamic groups are SOURCED from the real constants:
- * `POPUP_KEY` (the switcher key), the local `CHEATSHEET_KEY`, and the team
- * app's `DEFAULT_KEYMAP`/`ACTION_ORDER`. Only the inherently-static tmux
- * essentials group is hardcoded.
+ * from reality, its dynamic groups are SOURCED from live inputs: the configured
+ * key binds + theme tokens (`keys`/`theme`, defaulting to the app-config
+ * defaults) and the team app's `DEFAULT_KEYMAP`/`ACTION_ORDER`. Only the
+ * inherently-static tmux essentials group is hardcoded.
  *
  * `buildCheatsheet` and the bind/unbind command builders are PURE (tested); the
  * CLI `cheatsheet` command wires the io (print + wait-for-key).
  */
-import { MENU_KEY, POPUP_KEY } from "./statusline.ts";
+import { DEFAULT_KEYS, DEFAULT_THEME, type AppKeys, type AppTheme } from "../../lib/app-config.ts";
 import { ACTION_ORDER, DEFAULT_KEYMAP } from "../team/keymap.ts";
 
 /**
- * The root-table key that floats this sheet: `M-k` (Alt+k). Like {@link POPUP_KEY}
- * it lives in the ROOT table so it fires without the prefix from any adopted
+ * The root-table key that floats this sheet: `M-k` (Alt+k). Like the switcher's
+ * popup key it lives in the ROOT table so it fires without the prefix from any adopted
  * session, and Alt-letter keys are low-collision in terminal apps. Chosen to sit
  * next to `M-p` (switcher) so the two chrome popups share an ergonomic home.
  */
@@ -32,6 +32,24 @@ const dim = (s: string) => `\x1b[2m${s}\x1b[22m`;
 const cyan = (s: string) => `\x1b[36m${s}\x1b[39m`;
 const head = (s: string) => `\x1b[1;36m${s}\x1b[0m`;
 const color = (code: number, s: string) => `\x1b[38;5;${code}m${s}\x1b[39m`;
+
+/**
+ * The 256-color index of a `colourN` theme token for the ANSI legend, or null
+ * for a non-`colourN` token (e.g. a hex color) — the caller then renders it dim
+ * rather than mis-mapping the code.
+ */
+function tokenCode(token: string): number | null {
+  const m = /^colou?r(\d+)$/.exec(token);
+  if (!m) return null;
+  const n = Number(m[1]);
+  return Number.isInteger(n) && n >= 0 && n <= 255 ? n : null;
+}
+
+/** Render a glyph in a theme status token's color for the legend (dim fallback). */
+function legendMark(token: string, glyph: string): string {
+  const code = tokenCode(token);
+  return code === null ? dim(glyph) : color(code, glyph);
+}
 
 /**
  * Render a tmux key name for humans: `M-` → `⌥`, `C-` → `^`, `S-` → `⇧`. Keeps
@@ -89,8 +107,10 @@ function visibleWidth(s: string): number {
  *
  * Every line is clipped to `width` so nothing overflows a narrow popup.
  */
-export function buildCheatsheet(opts: { width: number }): string {
+export function buildCheatsheet(opts: { width: number; keys?: AppKeys; theme?: AppTheme }): string {
   const width = Math.max(20, opts.width);
+  const keys = opts.keys ?? DEFAULT_KEYS;
+  const theme = opts.theme ?? DEFAULT_THEME;
   const lines: string[] = [];
   const pad = (s: string) => `  ${s}`; // two-space indent under each heading
 
@@ -98,28 +118,30 @@ export function buildCheatsheet(opts: { width: number }): string {
   lines.push(`${head(" tmux-ide")}  ${dim("cheat sheet — press any key to close")}`);
   lines.push("");
 
-  // 1. dock — sourced key hints from POPUP_KEY / CHEATSHEET_KEY.
+  // 1. dock — sourced key hints from the configured keys.
   lines.push(head("dock"));
   lines.push(
     pad(
-      `${bold(renderKey(POPUP_KEY))} switcher popup   ${bold(renderKey(CHEATSHEET_KEY))} this sheet   ${bold(renderKey(MENU_KEY))} actions menu`,
+      `${bold(renderKey(keys.popup))} switcher popup   ${bold(renderKey(keys.cheatsheet))} this sheet   ${bold(renderKey(keys.menu))} actions menu`,
     ),
   );
   lines.push(
     pad(
       dim(
-        `bar: click a project tab = switch there · click [ ⧉ switch ${renderKey(POPUP_KEY)} ] = switcher · right-click = menu`,
+        `bar: click a project tab = switch there · click [ ⧉ switch ${renderKey(keys.popup)} ] = switcher · right-click anywhere = menu`,
       ),
     ),
   );
+  const active = theme.glyphs.active;
   const legend =
-    `${color(203, "●")} blocked  ${color(221, "●")} working  ${color(111, "●")} done  ` +
-    `${color(114, "●")} idle  ${dim("·")} unknown  ${dim("○")} stopped`;
+    `${legendMark(theme.status.blocked, active)} blocked  ${legendMark(theme.status.working, active)} working  ` +
+    `${legendMark(theme.status.done, active)} done  ${legendMark(theme.status.idle, active)} idle  ` +
+    `${dim("·")} unknown  ${dim(theme.glyphs.inactive)} stopped`;
   lines.push(pad(legend));
   lines.push("");
 
-  // 2. picker — keys inside the ⌥p popup.
-  lines.push(head(`picker  ${dim(`(inside the ${renderKey(POPUP_KEY)} popup)`)}`));
+  // 2. picker — keys inside the switcher popup.
+  lines.push(head(`picker  ${dim(`(inside the ${renderKey(keys.popup)} popup)`)}`));
   lines.push(
     pad(`${bold("↵")} switch   ${bold("l")} launch   ${bold("/")} find   ${bold("esc")} close`),
   );
@@ -189,24 +211,16 @@ export function cheatsheetPopupCommand(cheatsheetCmd = "tmux-ide cheatsheet"): s
  * PURE — the tmux argv that binds {@link CHEATSHEET_KEY}: `M-k` opens a
  * `display-popup` running the cheat sheet (which waits for any key, then exits,
  * closing the popup). Server-wide root-table bind, mirroring the switcher's
- * {@link POPUP_KEY} — see the note on `unadoptSession`.
+ * popup key — see the note on `unadoptSession`.
  */
-export function cheatsheetBindCommand(cheatsheetCmd = "tmux-ide cheatsheet"): string[] {
-  return [
-    "bind-key",
-    "-n",
-    CHEATSHEET_KEY,
-    "display-popup",
-    "-E",
-    "-w",
-    "90%",
-    "-h",
-    "80%",
-    cheatsheetCmd,
-  ];
+export function cheatsheetBindCommand(
+  cheatsheetCmd = "tmux-ide cheatsheet",
+  key = CHEATSHEET_KEY,
+): string[] {
+  return ["bind-key", "-n", key, "display-popup", "-E", "-w", "90%", "-h", "80%", cheatsheetCmd];
 }
 
 /** PURE — the tmux argv that removes the cheat-sheet key binding. */
-export function cheatsheetUnbindCommand(): string[] {
-  return ["unbind-key", "-n", CHEATSHEET_KEY];
+export function cheatsheetUnbindCommand(key = CHEATSHEET_KEY): string[] {
+  return ["unbind-key", "-n", key];
 }
