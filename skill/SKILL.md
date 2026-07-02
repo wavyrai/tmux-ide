@@ -51,6 +51,26 @@ agent from the pane's process tree and reads the visible screen against
 evidence-tuned per-agent manifests to infer working/blocked/done. Run
 `tmux-ide agent explain <pane>` to see exactly which layer fired for a pane and why.
 
+### Coordinating with other agents
+
+The status bus is shared, so you can work as part of a team — and the teammates
+don't have to be Claude Code. As an agent, you can:
+
+```bash
+tmux-ide team --json                     # fleet rollup: each session's + window's agent status
+tmux-ide agent explain %2 --json         # one specific pane's status + why (per-pane read)
+tmux-ide send %2 "do X, then run tests"  # task another pane's agent (by %id, title, role, or @ide_name)
+tmux-ide wait output %2 --match "done"   # block until that pane prints something (exit 0 match / 1 timeout)
+tmux-ide wait agent-status api --status done   # block until a whole session finishes
+tmux-ide events --follow                 # subscribe to the live session-status transition stream
+```
+
+`send` types straight into the target agent's prompt (use `--no-enter` to stage
+text; pipe stdin for long input — messages over ~150 chars auto-route through a
+`.tasks/dispatch/` file). Report your own status with the `@agent_state` contract
+above so teammates coordinating on you see the truth. This works across
+Claude Code, codex, cursor-agent, aider, or any CLI agent in a pane.
+
 ## Fleet control from the CLI
 
 Every command takes `--json` for structured output.

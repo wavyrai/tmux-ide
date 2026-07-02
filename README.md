@@ -37,6 +37,19 @@ tmux set-option -p @agent_state "working:$(date +%s)"
 
 **Survive anything.** Continuous snapshots mean a tmux server death isn't a lost afternoon. `tmux-ide restore` rebuilds every session, window, layout, cwd, and title; `--resume-agents` revives your Claude conversations from their recorded session ids.
 
+## Teams of any agents
+
+Run a heterogeneous fleet — Claude Code, codex, cursor-agent, aider, anything — in one set of sessions, and let them coordinate. Every agent's status is on a shared bus every other agent can read; one agent can task another by typing into its prompt; and any agent can block until a teammate finishes. It's agent-agnostic by design: Claude Code reports automatically, everyone else self-reports with a one-line pane option.
+
+```bash
+tmux-ide team --json                                   # read the fleet's status
+tmux-ide send %2 "implement /login, then run the tests" # task another agent
+tmux-ide wait output %2 --match "tests passed"          # block until it finishes
+tmux-ide wait agent-status api --status done            # or wait on a whole session
+```
+
+`send` types straight into another agent's prompt (target by pane ID, title, role, or name; long messages auto-route through a dispatch file). `wait` exits `0` on match, `1` on timeout, so it scripts cleanly. See the multi-agent teams docs for a worked lead-dispatches-to-codex example.
+
 ## One app, a keystroke away
 
 Once a session is adopted, the whole UI is a keystroke or two away — one interaction grammar (`j`/`k` move, `enter` opens, `/` filters, `esc` backs out, `?` asks) and one theme file (`~/.tmux-ide/config.json`).

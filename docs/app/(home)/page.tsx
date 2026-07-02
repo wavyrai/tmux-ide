@@ -290,6 +290,43 @@ export default async function HomePage() {
 
         <SectionDivider />
 
+        {/* TEAMS OF ANY AGENTS */}
+        <div>
+          <h2 className="font-sans text-2xl text-fd-foreground">Teams of any agents</h2>
+          <p className="text-fd-muted-foreground text-base leading-normal mt-2 max-w-2xl">
+            Run a heterogeneous fleet — Claude Code, codex, cursor-agent, aider, anything — in one
+            set of sessions, and let them coordinate. Every agent&apos;s status is on a shared bus
+            every other agent can read; one agent can task another by typing into its prompt; and any
+            agent can block until a teammate finishes. It&apos;s agent-agnostic by design: Claude Code
+            reports automatically, everyone else self-reports with a one-line pane option.
+          </p>
+          <div className="mt-5 border border-fd-border bg-fd-muted/10 p-4 font-mono text-xs text-fd-muted-foreground overflow-x-auto">
+            <div>
+              <span className="text-fd-foreground">tmux-ide team --json</span>{" "}
+              <span># read the fleet&apos;s status</span>
+            </div>
+            <div>
+              <span className="text-fd-foreground">
+                tmux-ide send %2 &quot;implement /login, then run the tests&quot;
+              </span>{" "}
+              <span># task another agent</span>
+            </div>
+            <div>
+              <span className="text-fd-foreground">
+                tmux-ide wait output %2 --match &quot;tests passed&quot;
+              </span>{" "}
+              <span># block until it finishes</span>
+            </div>
+          </div>
+          <p className="text-fd-muted-foreground text-sm mt-3">
+            <Link href="/docs/multi-agent-teams" className="text-fd-primary hover:underline">
+              How multi-agent teams work →
+            </Link>
+          </p>
+        </div>
+
+        <SectionDivider />
+
         {/* SURFACE TOUR */}
         <div>
           <h2 className="font-sans text-2xl text-fd-foreground">One app, a keystroke away</h2>

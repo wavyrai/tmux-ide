@@ -1,0 +1,144 @@
+---
+title: Multi-Agent Teams
+description: Run heterogeneous agent fleets — Claude Code, codex, cursor-agent, anything — that coordinate through tmux-ide's shared status bus, direct messaging, and synchronization primitives
+---
+
+# Multi-agent teams
+
+tmux-ide doesn't just watch one agent — it lets a **team of agents work together**,
+and they don't have to be the same tool. A Claude Code lead, a codex pane, a
+cursor-agent pane, and an `aider` pane can share one fleet and coordinate through
+tmux-ide's primitives. Nothing here is aspirational: it's the same `send`, `wait`,
+`events`, and `team` commands documented elsewhere, pointed at each other.
+
+Because every agent is just a process in a tmux pane, the coordination layer is
+**agent-agnostic**. Claude Code reports its status automatically (via the
+integration hooks); any other agent either self-reports with a one-line pane
+option or is recognized by the fallback detector.
+
+## A mixed fleet
+
+```
+ mixed-fleet   ●working                          [ ⌂ home ^b h ]  [ ⧉ switch ^b j ]
+┌──────────────────────────────┬──────────────────────────────┐
+│ Lead (claude)          %0    │ API (codex)            %2    │
+│ claude · working   ●working  │ codex  · done      ●done     │
+├──────────────────────────────┼──────────────────────────────┤
+│ UI (cursor-agent)      %3    │ Shell                  %4    │
+│ cursor · blocked   ●blocked  │ $                            │
+└──────────────────────────────┴──────────────────────────────┘
+```
+
+One glance at the dock tells the lead (human or agent): the API worker is `done`,
+the UI worker is `blocked` and needs attention. That glyph is the handoff signal.
+
+## The primitives
+
+### 1. A shared status bus
+
+Every agent publishes its state, and the whole fleet can read it. The fleet
+rollup is one JSON call, transitions stream as they happen, and any single pane's
+verdict is one command:
+
+```bash
+tmux-ide team --json               # fleet rollup: each session's + window's agent status
+tmux-ide events --follow           # live stream of session-status transitions (JSONL)
+tmux-ide agent explain %2 --json   # one pane's status (+ exactly why it was classified that way)
+```
+
+(`team --json` and `events` report at session/window granularity; use
+`agent explain <pane>` — or the per-pane border chips — for an individual pane.)
+
+Any agent joins the bus by self-reporting — no integration required:
+
+```bash
+tmux set-option -p @agent_state "working:$(date +%s)"   # working | blocked | done | idle
+```
+
+Claude Code does this automatically once you run
+`tmux-ide integration install claude`. For codex, cursor-agent, or any other
+tool, either drop that one line into the agent's own lifecycle or rely on the
+fallback detector (process-tree + screen manifests). See
+[Agent detection](/docs/agent-detection).
+
+### 2. Direct messaging
+
+`tmux-ide send` types a message straight into another agent's prompt — so agent A
+can literally hand agent B a task. Target a pane by ID (`%2`), title, role, or
+`@ide_name`:
+
+```bash
+tmux-ide send %2 "Implement POST /login per the spec in docs/auth.md, then run the tests"
+tmux-ide send API --no-enter "draft: "        # stage text without submitting
+echo "long instructions…" | tmux-ide send %2  # pipe from stdin
+```
+
+Long messages (over ~150 characters) are automatically written to a dispatch
+file and the target is told to read it — no paste-mode issues in any agent TUI.
+
+### 3. Synchronization
+
+Block until a teammate reaches a state or produces output. Exit codes make it
+scriptable (`0` = matched, `1` = timed out):
+
+```bash
+tmux-ide wait output %2 --match "tests passed" --timeout 300000   # wait on a pane
+tmux-ide wait agent-status api --status done --timeout 600000     # wait on a session
+```
+
+### 4. Observation & isolation
+
+```bash
+tmux-ide agent explain %3     # why is the UI pane blocked? see exactly how it was classified
+tmux-ide worktree create feature/login   # give a teammate an isolated checkout + session
+```
+
+## Worked example: a Claude Code lead dispatching to codex
+
+Picture a Claude Code agent running as the **lead** in pane `%0`, with a codex
+worker in `%2`. The lead can drive the whole loop from its own shell:
+
+```bash
+# 1. Read the fleet rollup, then check the codex pane specifically
+tmux-ide team --json | jq '.projects[].sessions[] | {name, status}'
+tmux-ide agent explain %2 --json | jq -r .classification
+
+# 2. Hand the codex pane a task
+tmux-ide send %2 "Add a /health endpoint returning {ok:true}, then run: npm test"
+
+# 3. Block until codex reports the tests passing
+tmux-ide wait output %2 --match "Tests:.*passed" --timeout 300000 \
+  && echo "codex finished — reviewing its diff"
+
+# 4. Re-read that pane's verdict before assigning the next task
+tmux-ide agent explain %2 --json | jq -r .classification
+```
+
+Step 2 puts text into codex's prompt exactly as if the lead had typed it. Step 3
+watches codex's own output. Steps 1 and 4 read the shared bus. None of it is
+Claude-specific — swap `%2` for a cursor-agent or `aider` pane and the same
+commands hold. When the unit you're waiting on is a whole session — say a worktree
+running one agent — `tmux-ide wait agent-status <session> --status done` is the
+session-level twin of the pane-level `wait output`.
+
+## The lead-agent pattern
+
+The pattern that ties it together:
+
+- A **lead** — a human watching the dock, or a lead agent — assigns work with
+  `send` and worktrees.
+- **Teammates** report status (automatically for Claude Code, via the pane option
+  for anything else).
+- The **`done`/`blocked` glyph and the toast** are the handoff signal: the lead
+  reacts the moment a teammate finishes or gets stuck, instead of polling.
+
+Because the status bus, messaging, and waits are all plain CLI with `--json` and
+exit codes, you can wire the same pattern into scripts, a lead agent's tool
+calls, or a Makefile — whatever is driving the fleet.
+
+## See also
+
+- [Agent detection](/docs/agent-detection) — the status every teammate publishes
+- [Notifications & events](/docs/notifications-events) — the toast/stream side of the handoff
+- [Worktrees](/docs/worktrees) — an isolated checkout per teammate
+- [CLI reference](/docs/commands) — `send`, `wait`, `team`, `events` in full

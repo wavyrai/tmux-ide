@@ -74,9 +74,9 @@ Any agent can self-report:
       {
         kind: "output",
         text:
-          `web:2      claude   working  -> blocked   (needs input)
-api:1      claude   working  -> done
-web:3      claude   idle     -> working
+          `14:22:07  web     working → blocked   (needs input)
+14:22:19  api     working → done
+14:22:31  web     idle → working
 ` + "› toast fires on every client attached to the session",
         delay: 460,
       },
