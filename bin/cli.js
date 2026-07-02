@@ -1669,6 +1669,14 @@ function firstMatchingMatcher(snapshot, rule) {
   const matchers = [...rule.all ?? [], ...rule.any ?? []];
   return matchers.find((m) => matchMatcher(snapshot, m));
 }
+function explain(snapshot, manifest) {
+  const checked = PRECEDENCE.map((state) => {
+    const rule = manifest.states[state];
+    return { state, matched: rule ? matchRule(snapshot, rule) : false };
+  });
+  const winner = checked.find((c) => c.matched);
+  return { state: winner ? winner.state : null, checked };
+}
 function pickManifest(command2, manifests) {
   const cmd = command2.trim().toLowerCase();
   if (cmd.length === 0) return void 0;
@@ -1690,7 +1698,7 @@ var init_manifest = __esm({
 });
 
 // packages/daemon/src/tui/detect/manifests.ts
-var BRAILLE_SPINNER, CLAUDE, CODEX, SHELL, BUNDLED_MANIFESTS;
+var BRAILLE_SPINNER, CLAUDE, CODEX, OPENCODE, GEMINI, AIDER, COPILOT, SHELL, BUNDLED_MANIFESTS;
 var init_manifests = __esm({
   "packages/daemon/src/tui/detect/manifests.ts"() {
     "use strict";
@@ -1700,25 +1708,46 @@ var init_manifests = __esm({
       commands: ["claude"],
       states: {
         // Approval / confirmation prompts — Claude is waiting on the user.
+        // Claude's approval UI is a bordered box asking a "Do you want …?" question
+        // with a numbered arrow menu ("❯ 1. Yes" / "3. No, and tell Claude …").
+        // These phrases are approval-specific and never appear in the idle chrome
+        // (a bare "❯ " input box) or the "How is Claude doing this session?" survey
+        // (which uses "1: Bad" colon-style options, not "❯ 1.").
         blocked: {
           any: [
+            // seen (approval dialogs): "Do you want to proceed?" / "Do you want to
+            // make this edit to …"
             { region: "bottom", contains: "Do you want" },
+            // seen: the highlighted first option of the numbered approval menu.
             { region: "bottom", contains: "\u276F 1." },
-            { region: "bottom", contains: "(y/n)", caseInsensitive: true },
-            { region: "bottom", contains: "Yes, and" }
+            // seen: "2. Yes, and don't ask again this session"
+            { region: "bottom", contains: "Yes, and" },
+            // seen: "3. No, and tell Claude what to do differently"
+            { region: "bottom", contains: "No, and tell Claude" }
           ]
         },
-        // Streaming / thinking indicators.
+        // Streaming / thinking indicators. While Claude works the bottom line shows
+        // a spinner + gerund + the interrupt hint, e.g.
+        //   "✳ Cerebrating… (esc to interrupt · ctrl+t to hide todos)".
         working: {
           any: [
+            // seen: the interrupt hint is present for the entire duration of a turn
+            // — the single most reliable "working" invariant.
             { region: "bottom", contains: "esc to interrupt", caseInsensitive: true },
+            // seen: the animated status verb ("Thinking…", "Cerebrating…").
             { region: "bottom", contains: "Thinking" },
             { region: "bottom", contains: "Cerebrating" },
+            // The leading braille spinner glyph, in the body or (rarely) the title.
             { region: "bottom", regex: BRAILLE_SPINNER },
             { region: "title", regex: BRAILLE_SPINNER }
           ]
         }
         // done: intentionally omitted — inferred by the classifier's seen-tracking.
+        // NOTE (seen, NOT used): idle Claude shows a bordered "❯ " input box with a
+        // "⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents" or
+        // "? for shortcuts · ← for agents" footer, and finished turns leave a
+        // "✻ Brewed for 9s" summary — none of these are working/blocked evidence,
+        // so they are deliberately absent and fall through to idle.
       }
     };
     CODEX = {
@@ -1727,17 +1756,110 @@ var init_manifests = __esm({
       states: {
         blocked: {
           any: [
-            { region: "bottom", contains: "Do you want" },
+            // untuned — needs real captures. Codex approval prompts (docs/common
+            // knowledge): a command-approval question before running a shell
+            // command. Kept high-precision so it can't fire on the idle "›" box.
             { region: "bottom", contains: "Allow command", caseInsensitive: true },
+            { region: "bottom", contains: "Do you want" },
             { region: "bottom", contains: "approve", caseInsensitive: true },
             { region: "bottom", contains: "(y/n)", caseInsensitive: true }
           ]
         },
         working: {
           any: [
+            // untuned for the exact string — Codex shows an elapsed-time working
+            // line with an interrupt hint while a turn runs. "esc to interrupt" is
+            // the shared CLI-TUI invariant; the spinner is the fallback.
             { region: "bottom", contains: "esc to interrupt", caseInsensitive: true },
-            { region: "bottom", contains: "Working", caseInsensitive: true },
-            { region: "bottom", contains: "Running", caseInsensitive: true },
+            { region: "bottom", regex: BRAILLE_SPINNER },
+            { region: "title", regex: BRAILLE_SPINNER }
+          ]
+        }
+        // done: omitted. NOTE (seen, NOT used): idle Codex shows a "›" input prompt
+        // and a "gpt-5.5 high · <cwd>            Goal achieved (5m)" status line —
+        // "Goal achieved" is a finished/idle marker, not "working", so it is left
+        // out (a done rule would collapse to idle in the instant classifier anyway).
+      }
+    };
+    OPENCODE = {
+      id: "opencode",
+      commands: ["opencode"],
+      states: {
+        // untuned — needs real captures. High-precision only.
+        blocked: {
+          any: [
+            { region: "bottom", contains: "(y/n)", caseInsensitive: true },
+            { region: "bottom", contains: "[y/n]", caseInsensitive: true },
+            { region: "bottom", contains: "Do you want" }
+          ]
+        },
+        working: {
+          any: [
+            { region: "bottom", contains: "esc to interrupt", caseInsensitive: true },
+            { region: "bottom", regex: BRAILLE_SPINNER },
+            { region: "title", regex: BRAILLE_SPINNER }
+          ]
+        }
+      }
+    };
+    GEMINI = {
+      id: "gemini",
+      commands: ["gemini"],
+      states: {
+        // untuned — needs real captures. gemini-cli. High-precision only.
+        blocked: {
+          any: [
+            { region: "bottom", contains: "(y/n)", caseInsensitive: true },
+            { region: "bottom", contains: "Apply this change", caseInsensitive: true },
+            { region: "bottom", contains: "Allow execution", caseInsensitive: true }
+          ]
+        },
+        working: {
+          any: [
+            // gemini-cli shows an "(esc to cancel)" hint during a turn.
+            { region: "bottom", contains: "esc to cancel", caseInsensitive: true },
+            { region: "bottom", contains: "esc to interrupt", caseInsensitive: true },
+            { region: "bottom", regex: BRAILLE_SPINNER },
+            { region: "title", regex: BRAILLE_SPINNER }
+          ]
+        }
+      }
+    };
+    AIDER = {
+      id: "aider",
+      commands: ["aider"],
+      states: {
+        // untuned — needs real captures. aider uses "(Y)es/(N)o" confirmation
+        // prompts, which are its most reliable blocked signal.
+        blocked: {
+          any: [
+            { region: "bottom", contains: "(Y)es/(N)o", caseInsensitive: true },
+            { region: "bottom", contains: "? [Yes]", caseInsensitive: true },
+            { region: "bottom", contains: "Add file to the chat", caseInsensitive: true }
+          ]
+        },
+        // working: aider streams tokens without a stable status line, so we leave
+        // it to idle-by-default rather than risk a false positive.
+        working: {
+          any: [{ region: "bottom", regex: BRAILLE_SPINNER }]
+        }
+      }
+    };
+    COPILOT = {
+      id: "copilot",
+      commands: ["copilot", "github-copilot", "github-copilot-cli"],
+      states: {
+        // untuned — needs real captures. github-copilot-cli. High-precision only.
+        blocked: {
+          any: [
+            { region: "bottom", contains: "(y/n)", caseInsensitive: true },
+            { region: "bottom", contains: "Select an option", caseInsensitive: true },
+            { region: "bottom", contains: "Allow", caseInsensitive: false }
+          ]
+        },
+        working: {
+          any: [
+            { region: "bottom", contains: "esc to interrupt", caseInsensitive: true },
             { region: "bottom", regex: BRAILLE_SPINNER },
             { region: "title", regex: BRAILLE_SPINNER }
           ]
@@ -1759,7 +1881,15 @@ var init_manifests = __esm({
         }
       }
     };
-    BUNDLED_MANIFESTS = [CLAUDE, CODEX, SHELL];
+    BUNDLED_MANIFESTS = [
+      CLAUDE,
+      CODEX,
+      OPENCODE,
+      GEMINI,
+      AIDER,
+      COPILOT,
+      SHELL
+    ];
   }
 });
 
@@ -2124,6 +2254,116 @@ var init_project_registry = __esm({
   }
 });
 
+// packages/daemon/src/tui/detect/manifest-loader.ts
+import { readdirSync, readFileSync as readFileSync4 } from "node:fs";
+import { homedir as homedir3 } from "node:os";
+import { join as join3 } from "node:path";
+function overrideDir() {
+  return join3(homedir3(), ".tmux-ide", "agent-detection");
+}
+function validateManifestShape(value) {
+  if (typeof value !== "object" || value === null) return false;
+  const m = value;
+  if (typeof m.id !== "string" || m.id.trim().length === 0) return false;
+  if (!Array.isArray(m.commands) || m.commands.length === 0) return false;
+  if (!m.commands.every((c) => typeof c === "string" && c.length > 0)) return false;
+  if (typeof m.states !== "object" || m.states === null) return false;
+  const states = m.states;
+  for (const key of ["blocked", "working", "done"]) {
+    if (!(key in states)) continue;
+    if (!isRuleShape(states[key])) return false;
+  }
+  return true;
+}
+function isRuleShape(value) {
+  if (typeof value !== "object" || value === null) return false;
+  const r = value;
+  for (const key of ["all", "any"]) {
+    if (!(key in r)) continue;
+    const arr = r[key];
+    if (!Array.isArray(arr) || !arr.every(isMatcherShape)) return false;
+  }
+  return true;
+}
+function isMatcherShape(value) {
+  if (typeof value !== "object" || value === null) return false;
+  const m = value;
+  return typeof m.contains === "string" || typeof m.regex === "string";
+}
+function mergeManifests(bundled, overrides) {
+  const byId = /* @__PURE__ */ new Map();
+  for (const o of overrides) byId.set(o.id, o);
+  const result = [];
+  const consumed = /* @__PURE__ */ new Set();
+  for (const b of bundled) {
+    const override = byId.get(b.id);
+    if (override) {
+      result.push(override);
+      consumed.add(b.id);
+    } else {
+      result.push(b);
+    }
+  }
+  for (const o of overrides) {
+    if (!consumed.has(o.id)) {
+      result.push(byId.get(o.id));
+      consumed.add(o.id);
+    }
+  }
+  return result;
+}
+function readOverrideManifests(dir = overrideDir()) {
+  let files;
+  try {
+    files = readdirSync(dir).filter((f) => f.endsWith(".json"));
+  } catch {
+    return [];
+  }
+  const overrides = [];
+  for (const file of files.sort()) {
+    const path2 = join3(dir, file);
+    try {
+      const parsed = JSON.parse(readFileSync4(path2, "utf8"));
+      if (validateManifestShape(parsed)) {
+        overrides.push(normalizeStates(parsed));
+      } else {
+        warnOnce(path2, "not a valid AgentManifest (need id, commands[], states)");
+      }
+    } catch (err) {
+      warnOnce(path2, err instanceof Error ? err.message : String(err));
+    }
+  }
+  return overrides;
+}
+function normalizeStates(m) {
+  const states = {};
+  if (m.states.blocked) states.blocked = m.states.blocked;
+  if (m.states.working) states.working = m.states.working;
+  if (m.states.done) states.done = m.states.done;
+  return { id: m.id, commands: m.commands, states };
+}
+function warnOnce(path2, reason) {
+  if (warned.has(path2)) return;
+  warned.add(path2);
+  process.stderr.write(`tmux-ide: skipping agent-detection override ${path2}: ${reason}
+`);
+}
+function loadManifests() {
+  return mergeManifests(BUNDLED_MANIFESTS, readOverrideManifests());
+}
+function getManifests() {
+  if (!cache2) cache2 = loadManifests();
+  return cache2;
+}
+var warned, cache2;
+var init_manifest_loader = __esm({
+  "packages/daemon/src/tui/detect/manifest-loader.ts"() {
+    "use strict";
+    init_manifests();
+    warned = /* @__PURE__ */ new Set();
+  }
+});
+
 // packages/daemon/src/tui/detect/process-tree.ts
 import { execFileSync as execFileSync2 } from "node:child_process";
 function parsePsOutput(raw) {
@@ -2191,9 +2431,15 @@ function basename3(pathLike) {
   const segments = pathLike.split("/");
   return segments[segments.length - 1] ?? pathLike;
 }
-function resolveAgentCommand(paneCmd, panePid, table, manifests = BUNDLED_MANIFESTS) {
+function resolveAgentCommand(paneCmd, panePid, table, opts = {}) {
+  const manifests = opts.manifests ?? getManifests();
+  const hint = opts.hint?.trim();
+  if (hint) {
+    const hinted = pickManifest(hint, manifests);
+    if (hinted) return { manifest: hinted, matchedCommand: hint, source: "hint" };
+  }
   const fast = pickManifest(paneCmd, manifests);
-  if (fast) return { manifest: fast, matchedCommand: paneCmd };
+  if (fast) return { manifest: fast, matchedCommand: paneCmd, source: "fast" };
   let best;
   for (const command2 of subtreeCommands(table, panePid)) {
     for (const token of commandTokens(command2)) {
@@ -2201,16 +2447,17 @@ function resolveAgentCommand(paneCmd, panePid, table, manifests = BUNDLED_MANIFE
       if (!hit) continue;
       const rank = manifests.indexOf(hit);
       if (!best || rank < best.rank) best = { manifest: hit, matchedCommand: token, rank };
-      if (best.rank === 0) return { manifest: best.manifest, matchedCommand: best.matchedCommand };
+      if (best.rank === 0)
+        return { manifest: best.manifest, matchedCommand: best.matchedCommand, source: "tree" };
     }
   }
-  return best ? { manifest: best.manifest, matchedCommand: best.matchedCommand } : { manifest: void 0, matchedCommand: "" };
+  return best ? { manifest: best.manifest, matchedCommand: best.matchedCommand, source: "tree" } : { manifest: void 0, matchedCommand: "", source: "none" };
 }
 var init_process_tree = __esm({
   "packages/daemon/src/tui/detect/process-tree.ts"() {
     "use strict";
     init_manifest();
-    init_manifests();
+    init_manifest_loader();
   }
 });
 
@@ -2288,7 +2535,9 @@ function listTeamSessions(tracker, opts = {}) {
         }
         return authority;
       }
-      const manifest = resolveAgentCommand(pane.cmd, pane.pid, processTable).manifest;
+      const manifest = resolveAgentCommand(pane.cmd, pane.pid, processTable, {
+        hint: pane.hint
+      }).manifest;
       const instant = manifest ? classifyInstant({ ...readPaneSnapshot(pane.id), title: pane.title }, manifest) : "unknown";
       return tracker.update(pane.id, instant, { seen });
     });
@@ -2306,14 +2555,14 @@ function collectPanes() {
     "list-panes",
     "-a",
     "-F",
-    "#{session_name}	#{pane_id}	#{pane_pid}	#{pane_current_command}	#{@agent_state}	#{pane_title}"
+    "#{session_name}	#{pane_id}	#{pane_pid}	#{pane_current_command}	#{@agent_state}	#{@agent_hint}	#{pane_title}"
   ]);
   const bySession = /* @__PURE__ */ new Map();
   for (const line of raw.split("\n").filter(Boolean)) {
-    const [session = "", id = "", pid = "", cmd = "", authority = "", ...titleParts] = line.split("	");
+    const [session = "", id = "", pid = "", cmd = "", authority = "", hint = "", ...titleParts] = line.split("	");
     if (!session) continue;
     const list = bySession.get(session) ?? [];
-    list.push({ id, pid: Number(pid) || 0, cmd, authority, title: titleParts.join("	") });
+    list.push({ id, pid: Number(pid) || 0, cmd, authority, hint, title: titleParts.join("	") });
     bySession.set(session, list);
   }
   return bySession;
@@ -2741,12 +2990,12 @@ __export(canonical_daemon_exports, {
   warnOnDaemonVersionSkew: () => warnOnDaemonVersionSkew,
   writeCanonicalDaemonInfo: () => writeCanonicalDaemonInfo
 });
-import { existsSync as existsSync4, mkdirSync as mkdirSync2, readFileSync as readFileSync4, renameSync as renameSync2, rmSync, writeFileSync as writeFileSync3 } from "node:fs";
-import { homedir as homedir3 } from "node:os";
-import { dirname as dirname3, join as join3 } from "node:path";
+import { existsSync as existsSync4, mkdirSync as mkdirSync2, readFileSync as readFileSync5, renameSync as renameSync2, rmSync, writeFileSync as writeFileSync3 } from "node:fs";
+import { homedir as homedir4 } from "node:os";
+import { dirname as dirname3, join as join4 } from "node:path";
 function getCanonicalDaemonInfoPath() {
-  const dir = process.env[DAEMON_INFO_DIR_ENV] ?? process.env[REGISTRY_DIR_ENV2] ?? join3(homedir3(), ".tmux-ide");
-  return join3(dir, DAEMON_INFO_FILE);
+  const dir = process.env[DAEMON_INFO_DIR_ENV] ?? process.env[REGISTRY_DIR_ENV2] ?? join4(homedir4(), ".tmux-ide");
+  return join4(dir, DAEMON_INFO_FILE);
 }
 function parseCanonicalDaemonInfo(raw) {
   if (!raw || typeof raw !== "object") return null;
@@ -2786,7 +3035,7 @@ function readCanonicalDaemonInfo() {
   const path2 = getCanonicalDaemonInfoPath();
   if (!existsSync4(path2)) return null;
   try {
-    return parseCanonicalDaemonInfo(JSON.parse(readFileSync4(path2, "utf-8")));
+    return parseCanonicalDaemonInfo(JSON.parse(readFileSync5(path2, "utf-8")));
   } catch {
     return null;
   }
@@ -3035,13 +3284,13 @@ var init_launch = __esm({
 
 // packages/daemon/src/detect.ts
 import { resolve as resolve8, basename as basename4 } from "node:path";
-import { readFileSync as readFileSync5, existsSync as existsSync5 } from "node:fs";
+import { readFileSync as readFileSync6, existsSync as existsSync5 } from "node:fs";
 function fileExists(dir, name) {
   return existsSync5(resolve8(dir, name));
 }
 function readJson(dir, name) {
   try {
-    return JSON.parse(readFileSync5(resolve8(dir, name), "utf-8"));
+    return JSON.parse(readFileSync6(resolve8(dir, name), "utf-8"));
   } catch {
     return null;
   }
@@ -3103,7 +3352,7 @@ function detectStack(dir) {
     detected.language = detected.language ?? "python";
     detected.reasons.push('Detected Python from "pyproject.toml" or "requirements.txt".');
     try {
-      const pyproject = readFileSync5(resolve8(dir, "pyproject.toml"), "utf-8");
+      const pyproject = readFileSync6(resolve8(dir, "pyproject.toml"), "utf-8");
       if (pyproject.includes("fastapi"))
         pushFramework(detected, "fastapi", 'Found "fastapi" in pyproject.toml.');
       else if (pyproject.includes("django"))
@@ -3370,7 +3619,7 @@ var init_PtyAdapter = __esm({
 
 // packages/daemon/src/terminal/NodePtyAdapter.ts
 import { chmodSync, existsSync as existsSync9, statSync } from "node:fs";
-import { dirname as dirname5, join as join5 } from "node:path";
+import { dirname as dirname5, join as join6 } from "node:path";
 import { createRequire } from "node:module";
 import * as pty from "node-pty";
 function candidateSpawnHelperPaths() {
@@ -3383,9 +3632,9 @@ function candidateSpawnHelperPaths() {
   }
   const pkgDir = dirname5(pkgJsonPath);
   return [
-    join5(pkgDir, "build", "Release", "spawn-helper"),
-    join5(pkgDir, "build", "Debug", "spawn-helper"),
-    join5(pkgDir, "prebuilds", `${process.platform}-${process.arch}`, "spawn-helper")
+    join6(pkgDir, "build", "Release", "spawn-helper"),
+    join6(pkgDir, "build", "Debug", "spawn-helper"),
+    join6(pkgDir, "prebuilds", `${process.platform}-${process.arch}`, "spawn-helper")
   ];
 }
 function ensureNodePtySpawnHelperExecutable(options = {}) {
@@ -4382,18 +4631,18 @@ var init_pane_comms = __esm({
 
 // packages/daemon/src/lib/workspace-registry.ts
 import { EventEmitter as EventEmitter3 } from "node:events";
-import { existsSync as existsSync10, mkdirSync as mkdirSync4, readFileSync as readFileSync7, renameSync as renameSync4, writeFileSync as writeFileSync5 } from "node:fs";
-import { homedir as homedir4 } from "node:os";
-import { dirname as dirname6, join as join6 } from "node:path";
+import { existsSync as existsSync10, mkdirSync as mkdirSync4, readFileSync as readFileSync8, renameSync as renameSync4, writeFileSync as writeFileSync5 } from "node:fs";
+import { homedir as homedir5 } from "node:os";
+import { dirname as dirname6, join as join7 } from "node:path";
 import { z as z11 } from "zod";
 function getDefaultWorkspaceRegistry() {
   if (!_default) _default = new WorkspaceRegistry();
   return _default;
 }
 function defaultListSessions() {
-  const { execFileSync: execFileSync9 } = __require("node:child_process");
+  const { execFileSync: execFileSync10 } = __require("node:child_process");
   try {
-    const raw = execFileSync9("tmux", ["list-sessions", "-F", "#{session_name}"], {
+    const raw = execFileSync10("tmux", ["list-sessions", "-F", "#{session_name}"], {
       encoding: "utf-8",
       stdio: ["ignore", "pipe", "pipe"]
     });
@@ -4433,7 +4682,7 @@ var init_workspace_registry = __esm({
       workspaces = [];
       loaded = false;
       constructor(options = {}) {
-        this.dir = options.dir ?? process.env[REGISTRY_DIR_ENV3] ?? join6(homedir4(), ".tmux-ide");
+        this.dir = options.dir ?? process.env[REGISTRY_DIR_ENV3] ?? join7(homedir5(), ".tmux-ide");
         this.listSessions = options.listSessions ?? defaultListSessions;
         this.emitter.setMaxListeners(0);
       }
@@ -4500,14 +4749,14 @@ var init_workspace_registry = __esm({
       }
       // ----------------- io -----------------
       filePath() {
-        return join6(this.dir, "workspaces.json");
+        return join7(this.dir, "workspaces.json");
       }
       readDisk() {
         const path2 = this.filePath();
         if (!existsSync10(path2)) return [];
         let parsed;
         try {
-          parsed = JSON.parse(readFileSync7(path2, "utf-8"));
+          parsed = JSON.parse(readFileSync8(path2, "utf-8"));
         } catch {
           return [];
         }
@@ -4802,14 +5051,14 @@ var init_auth_token = __esm({
 });
 
 // packages/daemon/src/lib/app-settings.ts
-import { existsSync as existsSync11, mkdirSync as mkdirSync5, readFileSync as readFileSync8, renameSync as renameSync5, writeFileSync as writeFileSync6 } from "node:fs";
-import { dirname as dirname7, join as join7 } from "node:path";
-import { homedir as homedir5 } from "node:os";
+import { existsSync as existsSync11, mkdirSync as mkdirSync5, readFileSync as readFileSync9, renameSync as renameSync5, writeFileSync as writeFileSync6 } from "node:fs";
+import { dirname as dirname7, join as join8 } from "node:path";
+import { homedir as homedir6 } from "node:os";
 function settingsDir() {
-  return process.env.TMUX_IDE_SETTINGS_DIR ?? join7(homedir5(), ".tmux-ide");
+  return process.env.TMUX_IDE_SETTINGS_DIR ?? join8(homedir6(), ".tmux-ide");
 }
 function appSettingsPath() {
-  return join7(settingsDir(), "app-settings.json");
+  return join8(settingsDir(), "app-settings.json");
 }
 function normalizeSettings(value) {
   if (!value || typeof value !== "object") return structuredClone(DEFAULT_SETTINGS);
@@ -4824,7 +5073,7 @@ function readAppSettings() {
   const path2 = appSettingsPath();
   if (!existsSync11(path2)) return structuredClone(DEFAULT_SETTINGS);
   try {
-    return normalizeSettings(JSON.parse(readFileSync8(path2, "utf-8")));
+    return normalizeSettings(JSON.parse(readFileSync9(path2, "utf-8")));
   } catch {
     return structuredClone(DEFAULT_SETTINGS);
   }
@@ -5023,15 +5272,15 @@ var init_active_projects = __esm({
 
 // packages/daemon/src/send.ts
 import { randomUUID } from "node:crypto";
-import { resolve as resolve15, join as join8 } from "node:path";
+import { resolve as resolve15, join as join9 } from "node:path";
 import { existsSync as existsSync12, mkdirSync as mkdirSync6, writeFileSync as writeFileSync7 } from "node:fs";
 function writeDispatchFile(dir, paneId, message) {
   if (message.length <= LONG_MESSAGE_THRESHOLD) return null;
-  const dispatchDir = join8(dir, ".tasks", "dispatch");
+  const dispatchDir = join9(dir, ".tasks", "dispatch");
   if (!existsSync12(dispatchDir)) mkdirSync6(dispatchDir, { recursive: true });
   const paneSlug = paneId.replace("%", "");
   const filename = `send-${paneSlug}-${Date.now()}-${randomUUID().slice(0, 8)}.md`;
-  const filePath = join8(dispatchDir, filename);
+  const filePath = join9(dispatchDir, filename);
   writeFileSync7(filePath, message);
   return { filePath, triggerCmd: `Read and execute: .tasks/dispatch/${filename}` };
 }
@@ -5276,10 +5525,10 @@ var init_schemas = __esm({
 });
 
 // packages/daemon/src/lib/terminals-store.ts
-import { existsSync as existsSync13, mkdirSync as mkdirSync7, readFileSync as readFileSync9, renameSync as renameSync6, writeFileSync as writeFileSync8 } from "node:fs";
-import { dirname as dirname8, join as join9 } from "node:path";
+import { existsSync as existsSync13, mkdirSync as mkdirSync7, readFileSync as readFileSync10, renameSync as renameSync6, writeFileSync as writeFileSync8 } from "node:fs";
+import { dirname as dirname8, join as join10 } from "node:path";
 function path(dir) {
-  return join9(dir, TERMINALS_FILE);
+  return join10(dir, TERMINALS_FILE);
 }
 function ensureDir(dir) {
   mkdirSync7(dirname8(path(dir)), { recursive: true });
@@ -5288,7 +5537,7 @@ function loadTerminals(dir) {
   const file = path(dir);
   if (!existsSync13(file)) return [];
   try {
-    const body = readFileSync9(file, "utf-8");
+    const body = readFileSync10(file, "utf-8");
     const parsed = JSON.parse(body);
     if (!parsed.terminals || !Array.isArray(parsed.terminals)) return [];
     return parsed.terminals.filter((t) => isTerminal(t)).map((t) => ({ ...t }));
@@ -5367,9 +5616,9 @@ __export(auth_service_exports, {
   AuthService: () => AuthService
 });
 import * as crypto2 from "node:crypto";
-import { readFileSync as readFileSync10, existsSync as existsSync14 } from "node:fs";
-import { join as join10 } from "node:path";
-import { homedir as homedir6 } from "node:os";
+import { readFileSync as readFileSync11, existsSync as existsSync14 } from "node:fs";
+import { join as join11 } from "node:path";
+import { homedir as homedir7 } from "node:os";
 function base64url(buf) {
   const b = typeof buf === "string" ? Buffer.from(buf) : buf;
   return b.toString("base64url");
@@ -5511,10 +5760,10 @@ var init_auth_service = __esm({
       }
       checkSSHKeyAuthorization(userId, publicKey) {
         try {
-          const home = userId === process.env.USER ? homedir6() : `/home/${userId}`;
-          const authKeysPath = join10(home, ".ssh", "authorized_keys");
+          const home = userId === process.env.USER ? homedir7() : `/home/${userId}`;
+          const authKeysPath = join11(home, ".ssh", "authorized_keys");
           if (!existsSync14(authKeysPath)) return false;
-          const authorizedKeys = readFileSync10(authKeysPath, "utf-8");
+          const authorizedKeys = readFileSync11(authKeysPath, "utf-8");
           const parts = publicKey.trim().split(" ");
           const keyData = parts.length > 1 ? parts[1] : parts[0];
           return authorizedKeys.includes(keyData);
@@ -5913,10 +6162,10 @@ var init_project_context = __esm({
 
 // packages/daemon/src/command-center/actions/handlers/config-actions.ts
 import { existsSync as existsSync15 } from "node:fs";
-import { join as join11 } from "node:path";
+import { join as join12 } from "node:path";
 function mutateConfigAction(input, deps2, fn) {
   const context = resolveProjectContext(input, deps2);
-  if (!existsSync15(join11(context.dir, "ide.yml"))) {
+  if (!existsSync15(join12(context.dir, "ide.yml"))) {
     throw new ActionError({
       code: "ide_yml_missing",
       message: "ide.yml was not found",
@@ -6338,9 +6587,9 @@ var init_inspect = __esm({
 });
 
 // packages/daemon/src/lib/filesystem-browser.ts
-import { realpathSync, readdirSync as readdirSync2, statSync as statSync3 } from "node:fs";
-import { homedir as homedir7 } from "node:os";
-import { isAbsolute as isAbsolute3, join as join12, resolve as resolve17, sep } from "node:path";
+import { realpathSync, readdirSync as readdirSync3, statSync as statSync3 } from "node:fs";
+import { homedir as homedir8 } from "node:os";
+import { isAbsolute as isAbsolute3, join as join13, resolve as resolve17, sep } from "node:path";
 function isUnderRoot(canonical, root) {
   if (canonical === root) return true;
   const prefix = root.endsWith(sep) ? root : root + sep;
@@ -6422,7 +6671,7 @@ var init_project_inspect = __esm({
 // packages/daemon/src/lib/project-onboard.ts
 import yaml2 from "js-yaml";
 import { existsSync as existsSync17 } from "node:fs";
-import { join as join13 } from "node:path";
+import { join as join14 } from "node:path";
 function composeIdeYmlConfig(input) {
   if (!Number.isInteger(input.agents) || input.agents < 1 || input.agents > 3) {
     throw new OnboardInvalidInputError(
@@ -6481,7 +6730,7 @@ function composeIdeYmlConfig(input) {
   return config2;
 }
 function assertNoExistingIdeYml(dir, exists = existsSync17) {
-  const path2 = join13(dir, "ide.yml");
+  const path2 = join14(dir, "ide.yml");
   if (exists(path2)) {
     throw new OnboardConflictError(path2);
   }
@@ -6516,23 +6765,23 @@ __export(server_exports, {
 });
 import { execFile as execFile2 } from "node:child_process";
 import { promisify } from "node:util";
-import { existsSync as existsSync18, readFileSync as readFileSync11, readdirSync as readdirSync3 } from "node:fs";
-import { join as join14, dirname as dirname9, basename as basename8 } from "node:path";
+import { existsSync as existsSync18, readFileSync as readFileSync12, readdirSync as readdirSync4 } from "node:fs";
+import { join as join15, dirname as dirname9, basename as basename8 } from "node:path";
 import { fileURLToPath as fileURLToPath3 } from "node:url";
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
 import { cors } from "hono/cors";
 import { zValidator } from "@hono/zod-validator";
 import { realpathSync as realpathSync2 } from "node:fs";
-import { homedir as homedir8 } from "node:os";
+import { homedir as homedir9 } from "node:os";
 import { isAbsolute as isAbsolute5, resolve as pathResolve } from "node:path";
 import { randomUUID as randomUUID3 } from "node:crypto";
 import { WebSocketServer } from "ws";
 function resolvePackageVersion() {
-  const candidates = [join14(__dirname3, "../../package.json"), join14(__dirname3, "../package.json")];
+  const candidates = [join15(__dirname3, "../../package.json"), join15(__dirname3, "../package.json")];
   for (const candidate of candidates) {
     try {
-      const parsed = JSON.parse(readFileSync11(candidate, "utf-8"));
+      const parsed = JSON.parse(readFileSync12(candidate, "utf-8"));
       if (typeof parsed.version === "string") return parsed.version;
     } catch {
     }
@@ -6596,7 +6845,7 @@ function sandboxResolveDir(rawDir) {
   if (trimmed.includes("\0")) {
     return { error: "invalid-path", message: "Path contains a null byte", status: 400 };
   }
-  const home = process.env.TMUX_IDE_HOME_OVERRIDE && process.env.TMUX_IDE_HOME_OVERRIDE.trim().length > 0 ? process.env.TMUX_IDE_HOME_OVERRIDE : homedir8();
+  const home = process.env.TMUX_IDE_HOME_OVERRIDE && process.env.TMUX_IDE_HOME_OVERRIDE.trim().length > 0 ? process.env.TMUX_IDE_HOME_OVERRIDE : homedir9();
   let candidate = trimmed;
   if (candidate === "~") {
     candidate = home;
@@ -7373,7 +7622,7 @@ function createApp(options = {}) {
 function listAvailableTemplates() {
   const __filename = fileURLToPath3(import.meta.url);
   const __dir = dirname9(__filename);
-  const templatesDir = join14(__dir, "..", "..", "..", "..", "templates");
+  const templatesDir = join15(__dir, "..", "..", "..", "..", "templates");
   if (!existsSync18(templatesDir)) return [];
   const labels = {
     default: { label: "Default", description: "Single Claude pane + dev/shell row" },
@@ -7405,7 +7654,7 @@ function listAvailableTemplates() {
       description: "Mission-driven layout with planner, validator, and researcher"
     }
   };
-  const entries = readdirSync3(templatesDir).filter((f) => f.endsWith(".yml"));
+  const entries = readdirSync4(templatesDir).filter((f) => f.endsWith(".yml"));
   return entries.map((file) => {
     const id = file.replace(/\.yml$/, "");
     const meta = labels[id];
@@ -8795,6 +9044,192 @@ var init_report = __esm({
   }
 });
 
+// packages/daemon/src/agent-explain.ts
+var agent_explain_exports = {};
+__export(agent_explain_exports, {
+  agentExplain: () => agentExplain,
+  buildReport: () => buildReport,
+  renderReport: () => renderReport
+});
+import { execFileSync as execFileSync8 } from "node:child_process";
+function tmux4(args) {
+  try {
+    return execFileSync8("tmux", args, {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"]
+    }).trim();
+  } catch {
+    return "";
+  }
+}
+function readPaneInfo(target) {
+  const fmt = "#{pane_id}	#{pane_pid}	#{pane_current_command}	#{@agent_state}	#{@agent_hint}	#{pane_title}";
+  const raw = tmux4(["display-message", "-p", "-t", target, "-F", fmt]);
+  if (!raw) return null;
+  const [id = "", pid = "", cmd = "", authorityRaw = "", hintRaw = "", ...titleParts] = raw.split("	");
+  if (!id) return null;
+  return {
+    id,
+    pid: Number(pid) || 0,
+    cmd,
+    authorityRaw,
+    hintRaw,
+    title: titleParts.join("	")
+  };
+}
+function buildReport(target) {
+  const info = readPaneInfo(target);
+  if (!info) {
+    throw new IdeError(
+      `No pane found for "${target}". Pass a pane id (%N) or a live session name.`,
+      { code: "USAGE", exitCode: 1 }
+    );
+  }
+  const nowSec = Math.floor(Date.now() / 1e3);
+  const authRaw = info.authorityRaw || null;
+  let authState = null;
+  let authEpoch = null;
+  let ageSeconds = null;
+  let stale = false;
+  if (authRaw) {
+    const sep2 = authRaw.lastIndexOf(":");
+    if (sep2 !== -1) {
+      authState = authRaw.slice(0, sep2);
+      const epoch = Number(authRaw.slice(sep2 + 1));
+      if (Number.isFinite(epoch)) {
+        authEpoch = epoch;
+        ageSeconds = nowSec - epoch;
+        stale = (authState === "working" || authState === "blocked") && ageSeconds > AUTHORITY_STALE_SECONDS2;
+      }
+    }
+  }
+  const verdict = parseAuthority(info.authorityRaw, nowSec);
+  const manifests = getManifests();
+  const table = readProcessTable();
+  const resolved2 = resolveAgentCommand(info.cmd, info.pid, table, {
+    manifests,
+    hint: info.hintRaw
+  });
+  const manifest = resolved2.manifest;
+  const snapshot = { ...readPaneSnapshot(info.id), title: info.title };
+  const explained = manifest ? explain(snapshot, manifest) : {
+    state: null,
+    checked: []
+  };
+  const instant = classifyInstant(snapshot, manifest);
+  const classification = verdict ?? instant;
+  return {
+    pane: { id: info.id, cmd: info.cmd, pid: info.pid, title: info.title },
+    authority: {
+      raw: authRaw,
+      state: authState,
+      epoch: authEpoch,
+      ageSeconds,
+      stale,
+      verdict
+    },
+    hint: { raw: info.hintRaw || null, applied: resolved2.source === "hint" },
+    resolution: {
+      manifestId: manifest?.id ?? null,
+      matchedCommand: resolved2.matchedCommand,
+      source: resolved2.source
+    },
+    states: explained.checked,
+    winner: explained.state,
+    instant,
+    classification,
+    bottomLines: snapshot.bottomNonEmpty.slice(-5)
+  };
+}
+function renderReport(r, opts = {}) {
+  const color2 = opts.color ?? !("NO_COLOR" in process.env);
+  const c = (code, s) => color2 ? `${code}${s}\x1B[0m` : s;
+  const bold3 = (s) => c("\x1B[1m", s);
+  const dim3 = (s) => c("\x1B[2m", s);
+  const label = (s) => c("\x1B[36m", s);
+  const status2 = (s) => c(STATUS_COLOR[s] ?? "", s);
+  const yesno = (v) => v ? c("\x1B[32m", "yes") : dim3("no");
+  const out = [];
+  out.push(bold3(`agent explain \u2014 ${r.pane.id}`));
+  out.push(`  ${label("command")}   ${r.pane.cmd}  ${dim3(`(pid ${r.pane.pid})`)}`);
+  if (r.pane.title) out.push(`  ${label("title")}     ${r.pane.title}`);
+  if (r.authority.raw) {
+    const age = r.authority.ageSeconds !== null ? ` ${dim3(`(${r.authority.ageSeconds}s ago)`)}` : "";
+    const staleTag = r.authority.stale ? " " + c("\x1B[31m", "[STALE \u2192 ignored]") : "";
+    const verdict = r.authority.verdict ? status2(r.authority.verdict) : dim3("none (stale/malformed)");
+    out.push(`  ${label("authority")} ${r.authority.raw}${age}${staleTag} \u2192 ${verdict}`);
+  } else {
+    out.push(`  ${label("authority")} ${dim3("(unset \u2014 falling back to scraping)")}`);
+  }
+  if (r.hint.raw) {
+    out.push(
+      `  ${label("hint")}      @agent_hint=${r.hint.raw} \u2192 ${yesno(r.hint.applied)} applied`
+    );
+  } else {
+    out.push(`  ${label("hint")}      ${dim3("(unset)")}`);
+  }
+  const mid = r.resolution.manifestId ?? dim3("none");
+  out.push(
+    `  ${label("manifest")}  ${mid}  ${dim3(`via ${r.resolution.source}` + (r.resolution.matchedCommand ? ` "${r.resolution.matchedCommand}"` : ""))}`
+  );
+  out.push("");
+  out.push(bold3("  state rules"));
+  if (r.states.length === 0) {
+    out.push(`    ${dim3("(no manifest resolved \u2014 nothing to evaluate)")}`);
+  } else {
+    for (const s of r.states) {
+      const mark = s.matched ? c("\x1B[32m", "\u2713 matched") : dim3("\xB7 no match");
+      const win = r.winner === s.state ? "  " + c("\x1B[1m", "\u2190 winner") : "";
+      out.push(`    ${s.state.padEnd(8)} ${mark}${win}`);
+    }
+  }
+  out.push("");
+  out.push(
+    `  ${bold3("classification")}  ${status2(r.classification)}  ${dim3(`(instant: ${r.instant})`)}`
+  );
+  out.push("");
+  out.push(bold3("  bottom 5 lines judged"));
+  if (r.bottomLines.length === 0) {
+    out.push(`    ${dim3("(empty capture)")}`);
+  } else {
+    for (const line of r.bottomLines) out.push(`    ${dim3("\u2502")} ${line}`);
+  }
+  return out.join("\n");
+}
+function agentExplain(target, opts = {}) {
+  const report = buildReport(target);
+  if (opts.json) {
+    console.log(JSON.stringify(report, null, 2));
+  } else {
+    console.log(renderReport(report));
+  }
+}
+var AUTHORITY_STALE_SECONDS2, STATUS_COLOR;
+var init_agent_explain = __esm({
+  "packages/daemon/src/agent-explain.ts"() {
+    "use strict";
+    init_manifest();
+    init_classify();
+    init_manifest_loader();
+    init_process_tree();
+    init_snapshot();
+    init_errors2();
+    AUTHORITY_STALE_SECONDS2 = 600;
+    STATUS_COLOR = {
+      blocked: "\x1B[31m",
+      // red
+      working: "\x1B[33m",
+      // yellow
+      done: "\x1B[32m",
+      // green
+      idle: "\x1B[36m",
+      // cyan
+      unknown: "\x1B[90m"
+      // grey
+    };
+  }
+});
+
 // packages/daemon/src/tui/integrations/claude.ts
 var claude_exports = {};
 __export(claude_exports, {
@@ -8810,14 +9245,14 @@ __export(claude_exports, {
   removeHooks: () => removeHooks,
   uninstallClaudeIntegration: () => uninstallClaudeIntegration
 });
-import { chmodSync as chmodSync2, copyFileSync as copyFileSync2, existsSync as existsSync19, mkdirSync as mkdirSync8, readFileSync as readFileSync12, writeFileSync as writeFileSync9 } from "node:fs";
-import { homedir as homedir9 } from "node:os";
-import { dirname as dirname10, join as join15 } from "node:path";
+import { chmodSync as chmodSync2, copyFileSync as copyFileSync2, existsSync as existsSync19, mkdirSync as mkdirSync8, readFileSync as readFileSync13, writeFileSync as writeFileSync9 } from "node:fs";
+import { homedir as homedir10 } from "node:os";
+import { dirname as dirname10, join as join16 } from "node:path";
 function hookScriptPath() {
-  return join15(homedir9(), HOOK_SCRIPT_RELPATH);
+  return join16(homedir10(), HOOK_SCRIPT_RELPATH);
 }
 function claudeSettingsPath() {
-  return join15(homedir9(), ".claude", "settings.json");
+  return join16(homedir10(), ".claude", "settings.json");
 }
 function isOurs(group) {
   return group.hooks?.some((h) => h.command?.includes(HOOK_SCRIPT_RELPATH)) ?? false;
@@ -8852,7 +9287,7 @@ function isInstalled(settings) {
 function readSettings(path2) {
   if (!existsSync19(path2)) return {};
   try {
-    return JSON.parse(readFileSync12(path2, "utf8"));
+    return JSON.parse(readFileSync13(path2, "utf8"));
   } catch {
     throw new Error(`${path2} is not valid JSON \u2014 fix or move it, then retry`);
   }
@@ -9015,8 +9450,8 @@ var init_server2 = __esm({
 // bin/cli.ts
 init_launch();
 import { parseArgs } from "node:util";
-import { resolve as resolve20, dirname as dirname11, join as join16 } from "node:path";
-import { execFileSync as execFileSync8 } from "node:child_process";
+import { resolve as resolve20, dirname as dirname11, join as join17 } from "node:path";
+import { execFileSync as execFileSync9 } from "node:child_process";
 import { existsSync as existsSync20 } from "node:fs";
 import { fileURLToPath as fileURLToPath4 } from "node:url";
 
@@ -9030,14 +9465,14 @@ init_detect();
 init_output();
 import {
   existsSync as existsSync6,
-  readFileSync as readFileSync6,
+  readFileSync as readFileSync7,
   writeFileSync as writeFileSync4,
   renameSync as renameSync3,
   mkdirSync as mkdirSync3,
-  readdirSync,
+  readdirSync as readdirSync2,
   copyFileSync
 } from "node:fs";
-import { resolve as resolve9, join as join4, basename as basename5, dirname as dirname4 } from "node:path";
+import { resolve as resolve9, join as join5, basename as basename5, dirname as dirname4 } from "node:path";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
 var __dirname2 = dirname4(fileURLToPath2(import.meta.url));
 function copyTemplateSkills(targetDir) {
@@ -9045,22 +9480,22 @@ function copyTemplateSkills(targetDir) {
   const templateSkillsDir = resolve9(__dirname2, "..", "..", "..", "templates", "skills");
   if (!existsSync6(templateSkillsDir)) return created;
   mkdirSync3(targetDir, { recursive: true });
-  for (const file of readdirSync(templateSkillsDir)) {
+  for (const file of readdirSync2(templateSkillsDir)) {
     if (!file.endsWith(".md")) continue;
-    const destination = join4(targetDir, file);
-    copyFileSync(join4(templateSkillsDir, file), destination);
+    const destination = join5(targetDir, file);
+    copyFileSync(join5(templateSkillsDir, file), destination);
     created.push(destination);
   }
   return created;
 }
 function scaffoldLibraryStubs(dir) {
   const created = [];
-  const libraryDir = join4(dir, ".tmux-ide", "library");
+  const libraryDir = join5(dir, ".tmux-ide", "library");
   if (!existsSync6(libraryDir)) {
     mkdirSync3(libraryDir, { recursive: true });
     created.push(libraryDir);
   }
-  const archPath = join4(libraryDir, "architecture.md");
+  const archPath = join5(libraryDir, "architecture.md");
   if (!existsSync6(archPath)) {
     writeFileSync4(
       archPath,
@@ -9068,7 +9503,7 @@ function scaffoldLibraryStubs(dir) {
     );
     created.push(archPath);
   }
-  const learningsPath = join4(libraryDir, "learnings.md");
+  const learningsPath = join5(libraryDir, "learnings.md");
   if (!existsSync6(learningsPath)) {
     writeFileSync4(
       learningsPath,
@@ -9080,11 +9515,11 @@ function scaffoldLibraryStubs(dir) {
 }
 function scaffoldValidationContract(dir) {
   const created = [];
-  const tasksDir = join4(dir, ".tasks");
+  const tasksDir = join5(dir, ".tasks");
   if (!existsSync6(tasksDir)) {
     mkdirSync3(tasksDir, { recursive: true });
   }
-  const contractPath = join4(tasksDir, "validation-contract.md");
+  const contractPath = join5(tasksDir, "validation-contract.md");
   if (!existsSync6(contractPath)) {
     writeFileSync4(
       contractPath,
@@ -9098,9 +9533,9 @@ function scaffoldAgentsMd(dir, name) {
   const created = [];
   const agentsTemplatePath = resolve9(__dirname2, "..", "..", "..", "templates", "AGENTS.md");
   if (existsSync6(agentsTemplatePath)) {
-    const agentsPath = join4(dir, "AGENTS.md");
+    const agentsPath = join5(dir, "AGENTS.md");
     if (!existsSync6(agentsPath)) {
-      const content = readFileSync6(agentsTemplatePath, "utf-8").replace(/{{name}}/g, name);
+      const content = readFileSync7(agentsTemplatePath, "utf-8").replace(/{{name}}/g, name);
       writeFileSync4(agentsPath, content);
       created.push(agentsPath);
     }
@@ -9119,7 +9554,7 @@ function scaffoldTeamWorkspace(dir, name) {
 }
 function scaffoldMissionsWorkspace(dir, name) {
   const created = [];
-  const skillsDir = join4(dir, ".tmux-ide", "skills");
+  const skillsDir = join5(dir, ".tmux-ide", "skills");
   created.push(...copyTemplateSkills(skillsDir));
   created.push(...scaffoldTeamWorkspace(dir, name));
   return created;
@@ -9138,7 +9573,7 @@ async function init({
     if (!existsSync6(templatePath)) {
       outputError(`Template "${template}" not found`, "NOT_FOUND");
     }
-    let content = readFileSync6(templatePath, "utf-8");
+    let content = readFileSync7(templatePath, "utf-8");
     const name2 = basename5(dir);
     content = content.replace(/^name: .+/m, `name: ${name2}`);
     const tmpPath = configPath + ".tmp";
@@ -9149,11 +9584,11 @@ async function init({
       created = scaffoldMissionsWorkspace(dir, name2);
     } else if (isTeamTemplate(template)) {
       created = [
-        ...copyTemplateSkills(join4(dir, ".tmux-ide", "skills")),
+        ...copyTemplateSkills(join5(dir, ".tmux-ide", "skills")),
         ...scaffoldTeamWorkspace(dir, name2)
       ];
     } else {
-      created = copyTemplateSkills(join4(dir, ".tmux-ide", "skills"));
+      created = copyTemplateSkills(join5(dir, ".tmux-ide", "skills"));
     }
     if (json2) {
       console.log(JSON.stringify({ created: true, template, name: name2, paths: created }));
@@ -9185,7 +9620,7 @@ async function init({
     }
   } else {
     const templatePath = resolve9(__dirname2, "..", "..", "..", "templates", "default.yml");
-    let content = readFileSync6(templatePath, "utf-8");
+    let content = readFileSync7(templatePath, "utf-8");
     content = content.replace(/^name: .+/m, `name: ${name}`);
     const tmpPath3 = configPath + ".tmp";
     writeFileSync4(tmpPath3, content);
@@ -9199,7 +9634,7 @@ async function init({
       console.log("Edit it to configure your workspace, then run: tmux-ide");
     }
   }
-  const skillsDir = join4(dir, ".tmux-ide", "skills");
+  const skillsDir = join5(dir, ".tmux-ide", "skills");
   if (!existsSync6(skillsDir)) {
     const created = copyTemplateSkills(skillsDir);
     if (created.length > 0 && !json2) {
@@ -9628,6 +10063,7 @@ var knownCommands = /* @__PURE__ */ new Set([
   "statusline",
   "adopt",
   "unadopt",
+  "agent",
   "integration",
   "chrome-updater",
   "cheatsheet",
@@ -9678,6 +10114,7 @@ ${bold2("Usage:")}
   ${cyan2("tmux-ide adopt --all")}        ${dim2("Adopt every live (non-internal) session")}
   ${cyan2("tmux-ide unadopt")} <session>  ${dim2("Remove the status bar")}
   ${cyan2("tmux-ide integration install claude")}  ${dim2("Authoritative agent status via Claude Code hooks")}
+  ${cyan2("tmux-ide agent explain")} <pane> [--json]  ${dim2("Debug how a pane's agent state is detected")}
   ${cyan2("tmux-ide cheatsheet")}         ${dim2("Print the key cheat sheet (\u2325k / [ ? keys ] popup)")}
   ${cyan2("tmux-ide ls")}                 ${dim2("List all tmux sessions")}
   ${cyan2("tmux-ide status")} [--json]    ${dim2("Show session status")}
@@ -9715,7 +10152,7 @@ function assertBunWidgetAvailable(scriptPath, commandLabel) {
   const widgetMissing = !existsSync20(scriptPath);
   let bunMissing = false;
   try {
-    execFileSync8("bun", ["--version"], { stdio: "ignore" });
+    execFileSync9("bun", ["--version"], { stdio: "ignore" });
   } catch {
     bunMissing = true;
   }
@@ -9736,7 +10173,7 @@ Run it from a cloned tmux-ide checkout with bun installed.`,
 function execBunWidget(scriptPath, args, commandLabel, extraEnv = {}) {
   assertBunWidgetAvailable(scriptPath, commandLabel);
   const bunfigRoot = resolve20(__dirname4, "..");
-  execFileSync8("bun", [scriptPath, ...args], {
+  execFileSync9("bun", [scriptPath, ...args], {
     stdio: "inherit",
     cwd: bunfigRoot,
     env: { ...process.env, TMUX_IDE_CWD: process.cwd(), ...extraEnv }
@@ -9756,7 +10193,7 @@ try {
   switch (command) {
     case "start": {
       const targetDir = resolve20(startTargetDir || ".");
-      const hasIdeYml = existsSync20(join16(targetDir, "ide.yml"));
+      const hasIdeYml = existsSync20(join17(targetDir, "ide.yml"));
       if (shouldOpenCockpit(hasIdeYml, values.team === true)) {
         if (json) {
           await printFleetJson();
@@ -9853,8 +10290,8 @@ try {
       const messageStart = values.to ? 1 : 2;
       let message = positionals.slice(messageStart).join(" ");
       if (!message && !process.stdin.isTTY) {
-        const { readFileSync: readFileSync13 } = await import("node:fs");
-        message = readFileSync13(0, "utf-8").trim();
+        const { readFileSync: readFileSync14 } = await import("node:fs");
+        message = readFileSync14(0, "utf-8").trim();
       }
       await send(null, { json, to: target, message, noEnter: values["no-enter"] });
       break;
@@ -9930,7 +10367,7 @@ try {
     case "adopt": {
       const { adoptSession: adoptSession2, adoptableSessionNames: adoptableSessionNames2 } = await Promise.resolve().then(() => (init_statusline(), statusline_exports));
       if (values.all) {
-        const raw = execFileSync8("tmux", ["list-sessions", "-F", "#{session_name}"], {
+        const raw = execFileSync9("tmux", ["list-sessions", "-F", "#{session_name}"], {
           encoding: "utf8",
           stdio: ["ignore", "pipe", "ignore"]
         }).trim();
@@ -9963,6 +10400,19 @@ try {
       }
       unadoptSession2(target);
       console.log(`unadopted ${target}`);
+      break;
+    }
+    case "agent": {
+      const sub = positionals[1];
+      const target = positionals[2];
+      if (sub !== "explain" || !target) {
+        console.error(
+          "Usage: tmux-ide agent explain <pane> [--json]\n  <pane>  a pane id (%N) or a session name (uses its active pane)\n  Prints how the fleet detector classifies the pane: authority,\n  hint, resolved manifest, per-state rule results, and the snapshot."
+        );
+        process.exit(1);
+      }
+      const { agentExplain: agentExplain2 } = await Promise.resolve().then(() => (init_agent_explain(), agent_explain_exports));
+      agentExplain2(target, { json });
       break;
     }
     case "integration": {
@@ -10031,7 +10481,7 @@ try {
         const scriptPath = resolve20(__dirname4, "../packages/daemon/src/server/standalone.ts");
         const serverArgs = ["--experimental-strip-types", scriptPath];
         if (values.port) serverArgs.push("--port", values.port);
-        execFileSync8("node", serverArgs, { stdio: "inherit" });
+        execFileSync9("node", serverArgs, { stdio: "inherit" });
       } else {
         const { start: start2 } = await Promise.resolve().then(() => (init_server2(), server_exports2));
         await start2(values.port ? parseInt(values.port, 10) : void 0);

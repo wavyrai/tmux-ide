@@ -85,6 +85,7 @@ const knownCommands = new Set([
   "statusline",
   "adopt",
   "unadopt",
+  "agent",
   "integration",
   "chrome-updater",
   "cheatsheet",
@@ -142,6 +143,7 @@ ${bold("Usage:")}
   ${cyan("tmux-ide adopt --all")}        ${dim("Adopt every live (non-internal) session")}
   ${cyan("tmux-ide unadopt")} <session>  ${dim("Remove the status bar")}
   ${cyan("tmux-ide integration install claude")}  ${dim("Authoritative agent status via Claude Code hooks")}
+  ${cyan("tmux-ide agent explain")} <pane> [--json]  ${dim("Debug how a pane's agent state is detected")}
   ${cyan("tmux-ide cheatsheet")}         ${dim("Print the key cheat sheet (⌥k / [ ? keys ] popup)")}
   ${cyan("tmux-ide ls")}                 ${dim("List all tmux sessions")}
   ${cyan("tmux-ide status")} [--json]    ${dim("Show session status")}
@@ -497,6 +499,23 @@ try {
       }
       unadoptSession(target);
       console.log(`unadopted ${target}`);
+      break;
+    }
+
+    case "agent": {
+      const sub = positionals[1];
+      const target = positionals[2];
+      if (sub !== "explain" || !target) {
+        console.error(
+          "Usage: tmux-ide agent explain <pane> [--json]\n" +
+            "  <pane>  a pane id (%N) or a session name (uses its active pane)\n" +
+            "  Prints how the fleet detector classifies the pane: authority,\n" +
+            "  hint, resolved manifest, per-state rule results, and the snapshot.",
+        );
+        process.exit(1);
+      }
+      const { agentExplain } = await import("../packages/daemon/src/agent-explain.ts");
+      agentExplain(target, { json });
       break;
     }
 

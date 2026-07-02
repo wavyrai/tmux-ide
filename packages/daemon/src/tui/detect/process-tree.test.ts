@@ -163,4 +163,43 @@ describe("resolveAgentCommand", () => {
     expect(resolveAgentCommand("node", 200, []).manifest).toBeUndefined();
     expect(resolveAgentCommand("claude", 200, []).manifest?.id).toBe("claude");
   });
+
+  it("reports the resolution source", () => {
+    expect(resolveAgentCommand("claude", 200, []).source).toBe("fast");
+    expect(resolveAgentCommand("emacs", 200, []).source).toBe("none");
+    const table: ProcEntry[] = [
+      { pid: 200, ppid: 1, command: "node" },
+      { pid: 300, ppid: 200, command: "node /usr/local/bin/claude" },
+    ];
+    expect(resolveAgentCommand("node", 200, table).source).toBe("tree");
+  });
+});
+
+describe("resolveAgentCommand — @agent_hint precedence", () => {
+  it("a hint wins over the pane command and process tree", () => {
+    // pane_current_command would resolve to shell; the hint forces claude.
+    const table: ProcEntry[] = [{ pid: 800, ppid: 1, command: "-zsh" }];
+    const result = resolveAgentCommand("zsh", 800, table, { hint: "claude" });
+    expect(result.manifest?.id).toBe("claude");
+    expect(result.matchedCommand).toBe("claude");
+    expect(result.source).toBe("hint");
+  });
+
+  it("a hint that names no manifest is ignored (falls back to normal resolution)", () => {
+    const result = resolveAgentCommand("zsh", 800, [{ pid: 800, ppid: 1, command: "-zsh" }], {
+      hint: "not-a-real-agent",
+    });
+    expect(result.manifest?.id).toBe("shell");
+    expect(result.source).toBe("fast");
+  });
+
+  it("an empty/blank hint is a no-op", () => {
+    expect(resolveAgentCommand("claude", 1, [], { hint: "   " }).source).toBe("fast");
+  });
+
+  it("resolution uses the manifests passed in opts", () => {
+    const only = [{ id: "codex", commands: ["codex"], states: {} }];
+    expect(resolveAgentCommand("claude", 1, [], { manifests: only }).manifest).toBeUndefined();
+    expect(resolveAgentCommand("codex", 1, [], { manifests: only }).manifest?.id).toBe("codex");
+  });
 });

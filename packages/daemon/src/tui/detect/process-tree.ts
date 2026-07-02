@@ -13,7 +13,7 @@
  */
 import { execFileSync } from "node:child_process";
 import { pickManifest, type AgentManifest } from "./manifest.ts";
-import { BUNDLED_MANIFESTS } from "./manifests.ts";
+import { getManifests } from "./manifest-loader.ts";
 
 /** One row of the process table. */
 export interface ProcEntry {
@@ -140,22 +140,42 @@ function basename(pathLike: string): string {
  *    false positives described above.
  *
  * The tree walk prefers the highest-PRIORITY manifest (its index in
- * `manifests`, which is preference-ordered: claude, codex, then the `shell`
+ * `manifests`, which is preference-ordered: claude, codex, …, then the `shell`
  * catch-all) over merely the deepest match — an agent that has spawned a
  * transient shell child (a Bash tool call) must still resolve to the agent, not
  * to `shell`. Depth (deepest first) only breaks ties within the same manifest.
  *
- * `matchedCommand` is the token/command that produced the hit — retained for a
- * future `agent explain`. Returns an undefined manifest when nothing matches.
+ * Resolution order:
+ *   0. HINT — `opts.hint` (the pane's `@agent_hint` option): if it names a
+ *      known manifest it WINS outright. This is the sandbox/wrapper escape
+ *      hatch, set with `tmux set-option -p @agent_hint claude`.
+ *   1. FAST — `pane_current_command` may already be the agent (a shim).
+ *   2. TREE — walk the process subtree and match extracted tokens.
+ *
+ * `manifests` defaults to the loaded set (bundled + user overrides).
+ * `matchedCommand` is the token/command that produced the hit and `source`
+ * records which path won — both surfaced by `agent explain`. Returns an
+ * undefined manifest when nothing matches.
  */
+export type ResolveSource = "hint" | "fast" | "tree" | "none";
+
 export function resolveAgentCommand(
   paneCmd: string,
   panePid: number,
   table: ProcEntry[],
-  manifests: AgentManifest[] = BUNDLED_MANIFESTS,
-): { manifest: AgentManifest | undefined; matchedCommand: string } {
+  opts: { manifests?: AgentManifest[]; hint?: string } = {},
+): { manifest: AgentManifest | undefined; matchedCommand: string; source: ResolveSource } {
+  const manifests = opts.manifests ?? getManifests();
+
+  // 0. Hint: a per-pane @agent_hint forces a manifest, bypassing resolution.
+  const hint = opts.hint?.trim();
+  if (hint) {
+    const hinted = pickManifest(hint, manifests);
+    if (hinted) return { manifest: hinted, matchedCommand: hint, source: "hint" };
+  }
+
   const fast = pickManifest(paneCmd, manifests);
-  if (fast) return { manifest: fast, matchedCommand: paneCmd };
+  if (fast) return { manifest: fast, matchedCommand: paneCmd, source: "fast" };
 
   let best: { manifest: AgentManifest; matchedCommand: string; rank: number } | undefined;
   for (const command of subtreeCommands(table, panePid)) {
@@ -166,11 +186,12 @@ export function resolveAgentCommand(
       // Keep the first (deepest) match at a given rank; only replace when a
       // strictly higher-priority manifest turns up.
       if (!best || rank < best.rank) best = { manifest: hit, matchedCommand: token, rank };
-      if (best.rank === 0) return { manifest: best.manifest, matchedCommand: best.matchedCommand };
+      if (best.rank === 0)
+        return { manifest: best.manifest, matchedCommand: best.matchedCommand, source: "tree" };
     }
   }
 
   return best
-    ? { manifest: best.manifest, matchedCommand: best.matchedCommand }
-    : { manifest: undefined, matchedCommand: "" };
+    ? { manifest: best.manifest, matchedCommand: best.matchedCommand, source: "tree" }
+    : { manifest: undefined, matchedCommand: "", source: "none" };
 }

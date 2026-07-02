@@ -39,6 +39,8 @@ interface PaneRecord {
   title: string;
   /** Raw `@agent_state` pane option (authority layer), if set. */
   authority: string;
+  /** Raw `@agent_hint` pane option — forces a manifest when set. */
+  hint: string;
 }
 
 /** Severity order — highest present status wins in a rollup. */
@@ -115,7 +117,9 @@ export function listTeamSessions(
         // process tree (pane_current_command alone is usually just node/bun/sh).
         // Only capture recognized agent panes; unknown commands stay "unknown"
         // without a capture-pane round-trip.
-        const manifest = resolveAgentCommand(pane.cmd, pane.pid, processTable).manifest;
+        const manifest = resolveAgentCommand(pane.cmd, pane.pid, processTable, {
+          hint: pane.hint,
+        }).manifest;
         const instant = manifest
           ? classifyInstant({ ...readPaneSnapshot(pane.id), title: pane.title }, manifest)
           : "unknown";
@@ -138,15 +142,15 @@ function collectPanes(): Map<string, PaneRecord[]> {
     "list-panes",
     "-a",
     "-F",
-    "#{session_name}\t#{pane_id}\t#{pane_pid}\t#{pane_current_command}\t#{@agent_state}\t#{pane_title}",
+    "#{session_name}\t#{pane_id}\t#{pane_pid}\t#{pane_current_command}\t#{@agent_state}\t#{@agent_hint}\t#{pane_title}",
   ]);
   const bySession = new Map<string, PaneRecord[]>();
   for (const line of raw.split("\n").filter(Boolean)) {
-    const [session = "", id = "", pid = "", cmd = "", authority = "", ...titleParts] =
+    const [session = "", id = "", pid = "", cmd = "", authority = "", hint = "", ...titleParts] =
       line.split("\t");
     if (!session) continue;
     const list = bySession.get(session) ?? [];
-    list.push({ id, pid: Number(pid) || 0, cmd, authority, title: titleParts.join("\t") });
+    list.push({ id, pid: Number(pid) || 0, cmd, authority, hint, title: titleParts.join("\t") });
     bySession.set(session, list);
   }
   return bySession;
