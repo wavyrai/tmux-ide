@@ -152,17 +152,37 @@ function menuRunShellArgs(menuCmd: string): string[] {
 }
 
 /**
- * Like {@link menuRunShellArgs} but for a MOUSE bind: also forwards the click
- * position via `#{mouse_x}` / `#{mouse_y}`, which ARE valid at fire time inside a
- * mouse binding (run-shell expands them). The CLI passes them to `display-menu
- * -x/-y` so the menu opens AT the pointer instead of dead-center. Keyboard binds
- * (M-m) deliberately stay coordless — centered is right when there's no pointer.
+ * Like {@link menuRunShellArgs} but for a PANE mouse bind: forwards the click
+ * position, only knowable at fire time inside the mouse binding.
+ *
+ * Coordinate model (measured live on tmux 3.6):
+ *  - `#{mouse_x}`/`#{mouse_y}` are PANE-RELATIVE for pane mouse events — the
+ *    screen position is `pane_left + mouse_x` / `pane_top + mouse_y`, computed
+ *    in the bind string itself with tmux format arithmetic (`#{e|+:…}`).
+ *  - `display-menu -y` is the menu's BOTTOM edge, so passing the pointer row
+ *    opens the menu upward from the click (tmux clamps/flips near edges).
+ * Keyboard binds (M-m) deliberately stay coordless — centered is right when
+ * there's no pointer.
  */
-function menuMouseRunShellArgs(menuCmd: string): string[] {
+function menuPaneMouseRunShellArgs(menuCmd: string): string[] {
   return [
     "run-shell",
     "-b",
-    `${menuCmd} --client '#{client_name}' --x '#{mouse_x}' --y '#{mouse_y}'`,
+    `${menuCmd} --client '#{client_name}' --x '#{e|+:#{pane_left},#{mouse_x}}' --y '#{e|+:#{pane_top},#{mouse_y}}'`,
+  ];
+}
+
+/**
+ * Status-line (dock) variant: status mouse events carry no pane and their
+ * `#{mouse_x}` is already the screen column. The dock sits at the bottom, so
+ * `#{client_height}` as the bottom edge opens the menu directly ABOVE the dock
+ * at the clicked column.
+ */
+function menuStatusMouseRunShellArgs(menuCmd: string): string[] {
+  return [
+    "run-shell",
+    "-b",
+    `${menuCmd} --client '#{client_name}' --x '#{mouse_x}' --y '#{client_height}'`,
   ];
 }
 
@@ -170,8 +190,8 @@ function menuMouseRunShellArgs(menuCmd: string): string[] {
  * PURE — the `display-menu` position flags (`-x <n> -y <n>`) for a click at
  * `(x, y)`, or `[]` when either coord is absent or non-numeric (the keyboard
  * path, or an unexpanded `#{mouse_*}` literal) so tmux falls back to centering.
- * `-x` is the menu's LEFT edge and `-y` measures from the TOP for plain numerics
- * on tmux 3.6, so the raw mouse coords place the menu's top-left at the pointer.
+ * `-x` is the menu's LEFT edge; `-y` is the menu's BOTTOM edge on tmux 3.6, so
+ * the pointer coords put the menu just above-right of the click.
  */
 export function menuPositionArgs(x: string | undefined, y: string | undefined): string[] {
   const nx = parseCoord(x);
@@ -203,19 +223,19 @@ export function menuBindCommand(menuCmd = "tmux-ide menu", key = MENU_KEY): stri
  * menu, so the session-list content is what matters, not the click target.
  */
 export function menuStatusBindCommand(menuCmd = "tmux-ide menu"): string[] {
-  return ["bind-key", "-n", MENU_STATUS_KEY, ...menuMouseRunShellArgs(menuCmd)];
+  return ["bind-key", "-n", MENU_STATUS_KEY, ...menuStatusMouseRunShellArgs(menuCmd)];
 }
 
 /**
  * PURE — the tmux argv that binds a RIGHT-click on ANY pane body
  * ({@link MENU_PANE_KEY}) to open the same actions menu, so the menu is reachable
  * everywhere, not only from the dock row. Forwards the click position (see
- * {@link menuMouseRunShellArgs}) so the menu opens at the pointer. Panes whose app
+ * {@link menuPaneMouseRunShellArgs}) so the menu opens at the pointer. Panes whose app
  * captures the mouse (vim, agent TUIs) eat the event — graceful degradation,
  * `M-m` still works there.
  */
 export function menuPaneBindCommand(menuCmd = "tmux-ide menu"): string[] {
-  return ["bind-key", "-n", MENU_PANE_KEY, ...menuMouseRunShellArgs(menuCmd)];
+  return ["bind-key", "-n", MENU_PANE_KEY, ...menuPaneMouseRunShellArgs(menuCmd)];
 }
 
 /** PURE — the tmux argv that removes the {@link MENU_KEY} binding. */

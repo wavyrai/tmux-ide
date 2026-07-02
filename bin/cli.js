@@ -2658,6 +2658,23 @@ var init_keymap = __esm({
   }
 });
 
+// packages/daemon/src/widgets/lib/grammar.ts
+var GRAMMAR_HELP;
+var init_grammar = __esm({
+  "packages/daemon/src/widgets/lib/grammar.ts"() {
+    "use strict";
+    GRAMMAR_HELP = [
+      { keys: "j / \u2193", label: "move down" },
+      { keys: "k / \u2191", label: "move up" },
+      { keys: "enter", label: "activate / open" },
+      { keys: "/", label: "filter list" },
+      { keys: "esc", label: "close filter \u2192 detail \u2192 widget" },
+      { keys: "q", label: "quit" },
+      { keys: "?", label: "toggle this help" }
+    ];
+  }
+});
+
 // packages/daemon/src/tui/chrome/panels.ts
 var panels_exports = {};
 __export(panels_exports, {
@@ -2786,6 +2803,12 @@ function buildCheatsheet(opts) {
   ).join("   ");
   lines.push(pad(`${panelHints}   ${dim("esc/q closes any panel")}`));
   lines.push("");
+  lines.push(head("in panels & sidebar"));
+  const gKeyW = Math.max(...GRAMMAR_HELP.map((r) => r.keys.length));
+  for (const row of GRAMMAR_HELP) {
+    lines.push(pad(`${bold(row.keys.padEnd(gKeyW))}  ${dim(row.label)}`));
+  }
+  lines.push("");
   lines.push(head(`picker  ${dim(`(inside the ${renderKey(keys.popup)} popup)`)}`));
   lines.push(
     pad(`${bold("\u21B5")} switch   ${bold("l")} launch   ${bold("/")} find   ${bold("esc")} close`)
@@ -2849,6 +2872,7 @@ var init_cheatsheet = __esm({
     "use strict";
     init_app_config();
     init_keymap();
+    init_grammar();
     init_panels();
     CHEATSHEET_KEY = "M-k";
     bold = (s) => `\x1B[1m${s}\x1B[22m`;
@@ -2932,11 +2956,18 @@ function buildMenu(sessions, theme = DEFAULT_THEME) {
 function menuRunShellArgs(menuCmd) {
   return ["run-shell", "-b", `${menuCmd} --client '#{client_name}'`];
 }
-function menuMouseRunShellArgs(menuCmd) {
+function menuPaneMouseRunShellArgs(menuCmd) {
   return [
     "run-shell",
     "-b",
-    `${menuCmd} --client '#{client_name}' --x '#{mouse_x}' --y '#{mouse_y}'`
+    `${menuCmd} --client '#{client_name}' --x '#{e|+:#{pane_left},#{mouse_x}}' --y '#{e|+:#{pane_top},#{mouse_y}}'`
+  ];
+}
+function menuStatusMouseRunShellArgs(menuCmd) {
+  return [
+    "run-shell",
+    "-b",
+    `${menuCmd} --client '#{client_name}' --x '#{mouse_x}' --y '#{client_height}'`
   ];
 }
 function menuPositionArgs(x, y) {
@@ -2954,10 +2985,10 @@ function menuBindCommand(menuCmd = "tmux-ide menu", key = MENU_KEY) {
   return ["bind-key", "-n", key, ...menuRunShellArgs(menuCmd)];
 }
 function menuStatusBindCommand(menuCmd = "tmux-ide menu") {
-  return ["bind-key", "-n", MENU_STATUS_KEY, ...menuMouseRunShellArgs(menuCmd)];
+  return ["bind-key", "-n", MENU_STATUS_KEY, ...menuStatusMouseRunShellArgs(menuCmd)];
 }
 function menuPaneBindCommand(menuCmd = "tmux-ide menu") {
-  return ["bind-key", "-n", MENU_PANE_KEY, ...menuMouseRunShellArgs(menuCmd)];
+  return ["bind-key", "-n", MENU_PANE_KEY, ...menuPaneMouseRunShellArgs(menuCmd)];
 }
 function menuUnbindCommand(key = MENU_KEY) {
   return ["unbind-key", "-n", key];

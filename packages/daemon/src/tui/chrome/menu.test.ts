@@ -186,9 +186,10 @@ describe("menuStatusBindCommand", () => {
   it("binds a right-click on the status bar (MouseDown3Status) to the same menu, at the pointer", () => {
     const cmd = menuStatusBindCommand();
     expect(cmd.slice(0, 4)).toEqual(["bind-key", "-n", MENU_STATUS_KEY, "run-shell"]);
-    // mouse binds forward the click position so the menu opens at the pointer
+    // status mouse_x is already a screen column; the dock is at the bottom, so
+    // client_height as the bottom edge opens the menu right above the bar.
     expect(cmd[cmd.length - 1]).toBe(
-      `tmux-ide menu --client '#{client_name}' --x '#{mouse_x}' --y '#{mouse_y}'`,
+      `tmux-ide menu --client '#{client_name}' --x '#{mouse_x}' --y '#{client_height}'`,
     );
     expect(MENU_STATUS_KEY).toBe("MouseDown3Status");
   });
@@ -199,8 +200,10 @@ describe("menuPaneBindCommand", () => {
     const cmd = menuPaneBindCommand();
     expect(cmd.slice(0, 4)).toEqual(["bind-key", "-n", MENU_PANE_KEY, "run-shell"]);
     expect(cmd).toContain("-b");
+    // pane mouse coords are PANE-relative — the bind adds the pane origin with
+    // tmux format arithmetic so display-menu gets SCREEN coords.
     expect(cmd[cmd.length - 1]).toBe(
-      `tmux-ide menu --client '#{client_name}' --x '#{mouse_x}' --y '#{mouse_y}'`,
+      `tmux-ide menu --client '#{client_name}' --x '#{e|+:#{pane_left},#{mouse_x}}' --y '#{e|+:#{pane_top},#{mouse_y}}'`,
     );
     expect(MENU_PANE_KEY).toBe("MouseDown3Pane");
   });
@@ -208,7 +211,7 @@ describe("menuPaneBindCommand", () => {
   it("passes a custom menu command through with the coord forwarding", () => {
     const cmd = menuPaneBindCommand("bun run menu");
     expect(cmd[cmd.length - 1]).toBe(
-      `bun run menu --client '#{client_name}' --x '#{mouse_x}' --y '#{mouse_y}'`,
+      `bun run menu --client '#{client_name}' --x '#{e|+:#{pane_left},#{mouse_x}}' --y '#{e|+:#{pane_top},#{mouse_y}}'`,
     );
   });
 });
