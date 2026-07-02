@@ -20,6 +20,18 @@ import { hasSession } from "@tmux-ide/tmux-bridge";
 import type { IdeConfig } from "../../schemas/ide-config.ts";
 import { ConfigTree } from "../setup/config-tree.tsx";
 import { FieldEditor, type FieldType } from "../setup/field-editor.tsx";
+import { matchGrammar } from "../lib/grammar.ts";
+import { HelpOverlay, type WidgetKey } from "../lib/help-overlay.tsx";
+
+/** Settings keys beyond the shared grammar — listed in the `?` overlay. The
+ *  layout tree adds its own j/k/enter (they follow the grammar). */
+const WIDGET_KEYS: WidgetKey[] = [
+  { key: "tab / 1–4", label: "switch tab" },
+  { key: "a", label: "add pane (layout)" },
+  { key: "d", label: "delete row/pane (layout)" },
+  { key: "^S", label: "save" },
+  { key: "^R", label: "save & restart" },
+];
 
 const { values } = parseArgs({
   options: {
@@ -113,6 +125,7 @@ render(
     const [activeTab, setActiveTab] = createSignal<Tab>("layout");
     const [editingField, setEditingField] = createSignal<string[] | null>(null);
     const [statusMsg, setStatusMsg] = createSignal<string | null>(null);
+    const [helpOpen, setHelpOpen] = createSignal(false);
 
     const dirty = createMemo(() => JSON.stringify(config()) !== savedConfig());
     const validation = createMemo(() => validateSetupConfig(config()));
@@ -158,16 +171,27 @@ render(
       setConfig(newConfig);
     }
 
-    // Tab-level keyboard handling (when not editing a field)
+    // Tab-level keyboard handling (when not editing a field). The layout tree
+    // (ConfigTree) owns j/k/enter itself — those already follow the grammar.
     useKeyboard((evt) => {
       if (editingField() !== null) return; // Let field editor handle keys
 
-      if (evt.name === "tab") {
-        const tabs = TABS.map((t) => t.id);
-        const idx = tabs.indexOf(activeTab());
-        setActiveTab(tabs[(idx + 1) % tabs.length]!);
+      // Help overlay swallows keys: esc / q / ? close it.
+      if (helpOpen()) {
+        const g = matchGrammar(evt);
+        if (g === "dismiss" || g === "quit" || g === "help") setHelpOpen(false);
         evt.preventDefault();
-      } else if (evt.name === "q" || evt.name === "escape") {
+        return;
+      }
+
+      // The shared grammar runs FIRST for help + quit; the dirty guard still
+      // gates a lossy close.
+      const grammar = matchGrammar(evt);
+      if (grammar === "help") {
+        setHelpOpen(true);
+        evt.preventDefault();
+        return;
+      } else if (grammar === "dismiss" || grammar === "quit") {
         // esc/q close the panel popup; the dirty guard blocks a lossy close
         // (the `-E` popup exits when this process does).
         if (dirty()) {
@@ -176,6 +200,14 @@ render(
         } else {
           process.exit(0);
         }
+        evt.preventDefault();
+        return;
+      }
+
+      if (evt.name === "tab") {
+        const tabs = TABS.map((t) => t.id);
+        const idx = tabs.indexOf(activeTab());
+        setActiveTab(tabs[(idx + 1) % tabs.length]!);
         evt.preventDefault();
       } else if (evt.ctrl && evt.name === "s") {
         handleSave();
@@ -329,108 +361,114 @@ render(
         backgroundColor={toRGBA(theme.bg)}
         flexDirection="column"
       >
-        {/* Title bar */}
-        <box
-          flexShrink={0}
-          flexDirection="row"
-          justifyContent="space-between"
-          paddingLeft={1}
-          paddingRight={1}
-        >
-          <text fg={toRGBA(theme.accent)} attributes={TextAttributes.BOLD}>
-            Settings
-          </text>
-          <box flexDirection="row" gap={2}>
-            {dirty() ? <text fg={toRGBA(theme.gitModified)}>unsaved</text> : null}
-            <text fg={toRGBA(theme.fgMuted)}>Ctrl+S:save</text>
-          </box>
-        </box>
-
-        {/* Main content */}
-        <box flexGrow={1} flexDirection="row">
-          {/* Tab sidebar */}
-          <box flexShrink={0} width={10} paddingLeft={1}>
-            {TABS.map((tab) => {
-              const isActive = () => activeTab() === tab.id;
-              return (
-                <box
-                  flexShrink={0}
-                  backgroundColor={isActive() ? toRGBA(theme.selected) : undefined}
-                  onMouseUp={() => setActiveTab(tab.id)}
-                >
-                  <text
-                    fg={toRGBA(isActive() ? theme.accent : theme.fgMuted)}
-                    attributes={isActive() ? TextAttributes.BOLD : 0}
-                  >
-                    {isActive() ? ">" : " "} {tab.label}
-                  </text>
-                </box>
-              );
-            })}
-          </box>
-
-          {/* Content area */}
-          <box flexGrow={1}>
-            <Show
-              when={editingField() !== null}
-              fallback={
-                <>
-                  <Show when={activeTab() === "layout"}>
-                    <ConfigTree
-                      config={config()}
-                      onEditField={handleEditField}
-                      onAddPane={handleAddPane}
-                      onDelete={handleDelete}
-                      onSave={handleSave}
-                      onConfigChange={handleConfigChange}
-                      theme={theme}
-                    />
-                  </Show>
-                  <Show when={activeTab() === "team"}>
-                    <TeamPanel />
-                  </Show>
-                  <Show when={activeTab() === "orchestrator"}>
-                    <OrchestratorPanel />
-                  </Show>
-                  <Show when={activeTab() === "theme"}>
-                    <ThemePanel />
-                  </Show>
-                </>
-              }
-            >
-              <FieldEditor
-                path={editingField()!}
-                value={getValueAtPath(config(), editingField()!)}
-                fieldType={inferFieldType(editingField()!).type}
-                enumValues={inferFieldType(editingField()!).enumValues}
-                onSave={handleFieldSave}
-                onCancel={() => setEditingField(null)}
-                theme={theme}
-              />
-            </Show>
-          </box>
-        </box>
-
-        {/* Status bar */}
-        <box flexShrink={0} paddingLeft={1} paddingRight={1}>
-          <box flexShrink={0} height={1}>
-            <text fg={toRGBA(theme.border)} wrapMode="none">
-              {"─".repeat(Math.max(1, dimensions().width - 2))}
+        <Show when={helpOpen()}>
+          <HelpOverlay theme={theme} title="settings" widgetKeys={WIDGET_KEYS} />
+        </Show>
+        <Show when={!helpOpen()}>
+          {/* Title bar */}
+          <box
+            flexShrink={0}
+            flexDirection="row"
+            justifyContent="space-between"
+            paddingLeft={1}
+            paddingRight={1}
+          >
+            <text fg={toRGBA(theme.accent)} attributes={TextAttributes.BOLD}>
+              Settings
             </text>
+            <box flexDirection="row" gap={2}>
+              {dirty() ? <text fg={toRGBA(theme.gitModified)}>unsaved</text> : null}
+              <text fg={toRGBA(theme.fgMuted)}>Ctrl+S:save</text>
+            </box>
           </box>
-          <box flexDirection="row" gap={2}>
-            {validation().valid ? (
-              <text fg={toRGBA(theme.gitAdded)}>Valid</text>
-            ) : (
-              <text fg={toRGBA(theme.gitDeleted)}>Invalid</text>
-            )}
-            {statusMsg() ? <text fg={toRGBA(theme.accent)}>{statusMsg()}</text> : null}
-            <text fg={toRGBA(theme.fgMuted)}>Tab:switch</text>
-            <text fg={toRGBA(theme.fgMuted)}>1-4:tabs</text>
-            <text fg={toRGBA(theme.fgMuted)}>Ctrl+R:restart</text>
-            <text fg={toRGBA(theme.fgMuted)}>q:quit</text>
+
+          {/* Main content */}
+          <box flexGrow={1} flexDirection="row">
+            {/* Tab sidebar */}
+            <box flexShrink={0} width={10} paddingLeft={1}>
+              {TABS.map((tab) => {
+                const isActive = () => activeTab() === tab.id;
+                return (
+                  <box
+                    flexShrink={0}
+                    backgroundColor={isActive() ? toRGBA(theme.selected) : undefined}
+                    onMouseUp={() => setActiveTab(tab.id)}
+                  >
+                    <text
+                      fg={toRGBA(isActive() ? theme.accent : theme.fgMuted)}
+                      attributes={isActive() ? TextAttributes.BOLD : 0}
+                    >
+                      {isActive() ? ">" : " "} {tab.label}
+                    </text>
+                  </box>
+                );
+              })}
+            </box>
+
+            {/* Content area */}
+            <box flexGrow={1}>
+              <Show
+                when={editingField() !== null}
+                fallback={
+                  <>
+                    <Show when={activeTab() === "layout"}>
+                      <ConfigTree
+                        config={config()}
+                        onEditField={handleEditField}
+                        onAddPane={handleAddPane}
+                        onDelete={handleDelete}
+                        onSave={handleSave}
+                        onConfigChange={handleConfigChange}
+                        theme={theme}
+                      />
+                    </Show>
+                    <Show when={activeTab() === "team"}>
+                      <TeamPanel />
+                    </Show>
+                    <Show when={activeTab() === "orchestrator"}>
+                      <OrchestratorPanel />
+                    </Show>
+                    <Show when={activeTab() === "theme"}>
+                      <ThemePanel />
+                    </Show>
+                  </>
+                }
+              >
+                <FieldEditor
+                  path={editingField()!}
+                  value={getValueAtPath(config(), editingField()!)}
+                  fieldType={inferFieldType(editingField()!).type}
+                  enumValues={inferFieldType(editingField()!).enumValues}
+                  onSave={handleFieldSave}
+                  onCancel={() => setEditingField(null)}
+                  theme={theme}
+                />
+              </Show>
+            </box>
           </box>
-        </box>
+
+          {/* Status bar */}
+          <box flexShrink={0} paddingLeft={1} paddingRight={1}>
+            <box flexShrink={0} height={1}>
+              <text fg={toRGBA(theme.border)} wrapMode="none">
+                {"─".repeat(Math.max(1, dimensions().width - 2))}
+              </text>
+            </box>
+            <box flexDirection="row" gap={2}>
+              {validation().valid ? (
+                <text fg={toRGBA(theme.gitAdded)}>Valid</text>
+              ) : (
+                <text fg={toRGBA(theme.gitDeleted)}>Invalid</text>
+              )}
+              {statusMsg() ? <text fg={toRGBA(theme.accent)}>{statusMsg()}</text> : null}
+              <text fg={toRGBA(theme.fgMuted)}>Tab:switch</text>
+              <text fg={toRGBA(theme.fgMuted)}>1-4:tabs</text>
+              <text fg={toRGBA(theme.fgMuted)}>Ctrl+R:restart</text>
+              <text fg={toRGBA(theme.fgMuted)}>?:help</text>
+              <text fg={toRGBA(theme.fgMuted)}>q:quit</text>
+            </box>
+          </box>
+        </Show>
       </box>
     );
   },

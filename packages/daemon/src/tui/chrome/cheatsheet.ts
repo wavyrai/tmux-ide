@@ -17,6 +17,7 @@
  */
 import { DEFAULT_KEYS, DEFAULT_THEME, type AppKeys, type AppTheme } from "../../lib/app-config.ts";
 import { ACTION_ORDER, DEFAULT_KEYMAP } from "../team/keymap.ts";
+import { GRAMMAR_HELP } from "../../widgets/lib/grammar.ts";
 import { PANEL_POPUPS, panelKey } from "./panels.ts";
 
 /**
@@ -147,6 +148,15 @@ export function buildCheatsheet(opts: { width: number; keys?: AppKeys; theme?: A
     (p) => `${bold(renderKey(panelKey(p, keys.panels)))} ${p.label}`,
   ).join("   ");
   lines.push(pad(`${panelHints}   ${dim("esc/q closes any panel")}`));
+  lines.push("");
+
+  // 1c. grammar — the ONE interaction grammar every panel + the sidebar share,
+  // sourced from GRAMMAR_HELP so it can never drift from the widgets.
+  lines.push(head("in panels & sidebar"));
+  const gKeyW = Math.max(...GRAMMAR_HELP.map((r) => r.keys.length));
+  for (const row of GRAMMAR_HELP) {
+    lines.push(pad(`${bold(row.keys.padEnd(gKeyW))}  ${dim(row.label)}`));
+  }
   lines.push("");
 
   // 2. picker — keys inside the switcher popup.

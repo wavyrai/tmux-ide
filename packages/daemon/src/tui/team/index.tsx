@@ -34,9 +34,28 @@ import { createStatusTracker, type AgentStatus } from "../detect/classify.ts";
 import { nextInput, suggestSessionName } from "./input.ts";
 import { fuzzyFilter } from "./fuzzy.ts";
 import { clampIndex, wrapIndex } from "./nav.ts";
-import { ACTION_ORDER, loadKeymap, resolveAction } from "./keymap.ts";
+import { type ActionId, loadKeymap, resolveAction } from "./keymap.ts";
+import { matchGrammar } from "../../widgets/lib/grammar.ts";
+import { HelpOverlay, type WidgetKey } from "../../widgets/lib/help-overlay.tsx";
 import { isDoubleClick, type ClickRecord } from "./mouse.ts";
 import { treeNodes, findCursor } from "./tree.ts";
+
+/**
+ * The team app's OWN keys, shown under the shared grammar in the `?` overlay —
+ * the configurable keymap actions minus the universal verbs (nav/enter/filter/
+ * help/quit) that the grammar already documents. Derived from the live keymap
+ * so a rebind in `~/.tmux-ide/team-keys.json` re-labels the overlay too.
+ */
+const TEAM_WIDGET_ACTIONS: ActionId[] = [
+  "launch",
+  "new",
+  "rename",
+  "split",
+  "register",
+  "unregister",
+  "kill",
+  "refresh",
+];
 
 // Theme pass-through: `bin/cli.ts` forwards the project's ide.yml `theme` as
 // `--theme=<json>`. A malformed value must never crash the cockpit, so the
@@ -749,11 +768,10 @@ render(() => {
       return;
     }
 
-    // The help overlay swallows keys: escape / ? / q close it.
+    // The help overlay swallows keys: esc / q / ? close it (grammar dismiss/quit/help).
     if (helpOpen()) {
-      if (evt.name === "escape" || evt.name === "?" || evt.name === "q") {
-        setHelpOpen(false);
-      }
+      const g = matchGrammar(evt);
+      if (g === "dismiss" || g === "quit" || g === "help") setHelpOpen(false);
       return;
     }
 
@@ -770,6 +788,52 @@ render(() => {
     }
 
     const n = visibleProjects().length;
+
+    // The shared interaction grammar takes PRECEDENCE over the configurable
+    // keymap: the universal verbs (nav/enter/filter/help/quit + esc) mean the
+    // same here as in every widget. Their default keys agree with DEFAULT_KEYMAP,
+    // so this only changes behaviour for a bare `esc` (now quits the cockpit,
+    // matching the widgets). Custom rebinds fall through to `resolveAction`.
+    const grammar = matchGrammar(evt);
+    if (grammar === "navUp") {
+      if (pickerMode) movePicker(-1);
+      else if (n > 0) {
+        setActiveProject((s) => wrapIndex(s, -1, n));
+        setActiveSession(0);
+        setActiveWindow(-1);
+      }
+      return;
+    }
+    if (grammar === "navDown") {
+      if (pickerMode) movePicker(1);
+      else if (n > 0) {
+        setActiveProject((s) => wrapIndex(s, 1, n));
+        setActiveSession(0);
+        setActiveWindow(-1);
+      }
+      return;
+    }
+    if (grammar === "activate") {
+      enter();
+      return;
+    }
+    if (grammar === "filter") {
+      setMessage("");
+      setFilterQuery("");
+      setFilterMode(true);
+      setActiveProject(0);
+      setActiveSession(0);
+      setActiveWindow(-1);
+      return;
+    }
+    if (grammar === "help") {
+      setHelpOpen(true);
+      return;
+    }
+    if (grammar === "dismiss" || grammar === "quit") {
+      process.exit(0);
+    }
+
     // The rename default is Shift+R; single-char keys arrive lowercase with
     // shift as a modifier (per the @opentui convention), so map it explicitly.
     const keyName = evt.name === "r" && evt.shift ? "R" : evt.name;
@@ -844,40 +908,16 @@ render(() => {
     }
   });
 
-  // The keybindings help overlay — shared by both layouts. Replaces the middle
-  // body while `?` is open.
+  // The keybindings help overlay — shared with every widget via the common
+  // HelpOverlay. Replaces the middle body while `?` is open. The universal verbs
+  // come from the grammar; the team's own (configurable) keys are listed below
+  // them, sourced from the live keymap so a rebind re-labels the overlay.
   function helpOverlay() {
-    return (
-      <box flexDirection="column" flexGrow={1} alignItems="center" paddingTop={2}>
-        <box
-          flexDirection="column"
-          border
-          borderColor={toRGBA(theme.accent)}
-          backgroundColor={toRGBA(theme.selected)}
-          paddingLeft={2}
-          paddingRight={2}
-          paddingTop={1}
-          paddingBottom={1}
-        >
-          <text fg={toRGBA(theme.accent)} attributes={TextAttributes.BOLD}>
-            keybindings
-          </text>
-          <box flexDirection="column" paddingTop={1}>
-            <For each={ACTION_ORDER}>
-              {(action) => (
-                <box flexDirection="row" gap={1}>
-                  <text fg={toRGBA(theme.accent)}>{keymap[action].keys.join("/").padEnd(10)}</text>
-                  <text fg={toRGBA(theme.fg)}>{keymap[action].description}</text>
-                </box>
-              )}
-            </For>
-          </box>
-          <box paddingTop={1}>
-            <text fg={toRGBA(theme.fgMuted)}>esc / ? / q to close</text>
-          </box>
-        </box>
-      </box>
-    );
+    const widgetKeys: WidgetKey[] = TEAM_WIDGET_ACTIONS.map((action) => ({
+      key: keymap[action].keys.join("/"),
+      label: keymap[action].description,
+    }));
+    return <HelpOverlay theme={theme} title="cockpit" widgetKeys={widgetKeys} />;
   }
 
   // The inline text prompt (register / new session / rename) and the fuzzy

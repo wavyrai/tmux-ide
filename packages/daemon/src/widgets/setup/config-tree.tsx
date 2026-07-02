@@ -4,6 +4,7 @@ import { useKeyboard } from "@opentui/solid";
 import { flattenConfigTree, validateSetupConfig, addPane, type TreeNode } from "./setup-model.ts";
 import type { IdeConfig } from "../../schemas/ide-config.ts";
 import type { WidgetTheme, RGBA as RGBAType } from "../lib/theme.ts";
+import { matchGrammar } from "../lib/grammar.ts";
 
 function toRGBA(c: RGBAType): RGBA {
   return RGBA.fromInts(c.r, c.g, c.b, c.a);
@@ -100,13 +101,17 @@ export function ConfigTree(props: ConfigTreeProps) {
 
     const nodes = visibleNodes();
 
-    if (evt.name === "k" || evt.name === "up") {
+    // The shared grammar runs FIRST; add/delete/save keys fall through below.
+    const grammar = matchGrammar(evt);
+    if (grammar === "navUp") {
       setSelectedIndex((i) => Math.max(0, i - 1));
       evt.preventDefault();
-    } else if (evt.name === "j" || evt.name === "down") {
+      return;
+    } else if (grammar === "navDown") {
       setSelectedIndex((i) => Math.min(nodes.length - 1, i + 1));
       evt.preventDefault();
-    } else if (evt.name === "return") {
+      return;
+    } else if (grammar === "activate") {
       const node = nodes[selectedIndex()];
       if (!node) return;
       if (node.expandable) {
@@ -115,7 +120,10 @@ export function ConfigTree(props: ConfigTreeProps) {
         props.onEditField(node.path);
       }
       evt.preventDefault();
-    } else if (evt.name === "a") {
+      return;
+    }
+
+    if (evt.name === "a") {
       const node = nodes[selectedIndex()];
       if (!node) return;
       const rowIdx = rowIndexFromPath(node.path);

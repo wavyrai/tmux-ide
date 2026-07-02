@@ -18,7 +18,18 @@ import { createTheme } from "../lib/theme.ts";
 import { getAppConfig } from "../../lib/app-config.ts";
 import { getGitBranch } from "../lib/git.ts";
 import { watchDirectory } from "../lib/watcher.ts";
+import { matchGrammar } from "../lib/grammar.ts";
+import { HelpOverlay, type WidgetKey } from "../lib/help-overlay.tsx";
 import { findPaneByTitle, sendCommand, findPaneByPattern } from "../lib/pane-comms.ts";
+
+/** Changes keys beyond the shared grammar — listed in the `?` overlay. */
+const WIDGET_KEYS: WidgetKey[] = [
+  { key: "s / u", label: "stage / unstage file" },
+  { key: "S / U", label: "stage / unstage all" },
+  { key: "c", label: "send to claude" },
+  { key: "r", label: "refresh" },
+  { key: "g / G", label: "top / bottom" },
+];
 
 const { values } = parseArgs({
   options: {
@@ -177,6 +188,19 @@ type ListItem =
   | { kind: "header"; label: string }
   | { kind: "file"; file: ChangedFile; globalIndex: number };
 
+/** Narrow every group of a {@link ChangesState} to files whose path matches the
+ *  (case-insensitive) query. An empty query returns the state unchanged. */
+function filterChanges(changes: ChangesState, query: string): ChangesState {
+  const q = query.trim().toLowerCase();
+  if (!q) return changes;
+  const match = (f: ChangedFile) => f.path.toLowerCase().includes(q);
+  return {
+    staged: changes.staged.filter(match),
+    unstaged: changes.unstaged.filter(match),
+    untracked: changes.untracked.filter(match),
+  };
+}
+
 function buildListItems(changes: ChangesState): { items: ListItem[]; fileCount: number } {
   const items: ListItem[] = [];
   let globalIndex = 0;
@@ -215,14 +239,23 @@ render(
     const [selected, setSelected] = createSignal(0);
     const [diffContent, setDiffContent] = createSignal<string | null>(null);
     const [inputMode, setInputMode] = createSignal<"keyboard" | "mouse">("keyboard");
+    const [filterMode, setFilterMode] = createSignal(false);
+    const [filterQuery, setFilterQuery] = createSignal("");
+    const [helpOpen, setHelpOpen] = createSignal(false);
+
+    // The visible file set narrows to the `/` filter query while filtering; the
+    // list, diff selection, and staging all read through it.
+    const visibleChanges = createMemo(() =>
+      filterMode() ? filterChanges(changes(), filterQuery()) : changes(),
+    );
 
     const allFiles = createMemo(() => [
-      ...changes().staged,
-      ...changes().unstaged,
-      ...changes().untracked,
+      ...visibleChanges().staged,
+      ...visibleChanges().unstaged,
+      ...visibleChanges().untracked,
     ]);
 
-    const listData = createMemo(() => buildListItems(changes()));
+    const listData = createMemo(() => buildListItems(visibleChanges()));
 
     const totalAdditions = createMemo(() => allFiles().reduce((s, f) => s + f.additions, 0));
     const totalDeletions = createMemo(() => allFiles().reduce((s, f) => s + f.deletions, 0));
@@ -272,15 +305,78 @@ render(
     // Keyboard
     useKeyboard((evt) => {
       setInputMode("keyboard");
+
+      // Help overlay swallows keys: esc / q / ? close it.
+      if (helpOpen()) {
+        const g = matchGrammar(evt);
+        if (g === "dismiss" || g === "quit" || g === "help") setHelpOpen(false);
+        evt.preventDefault();
+        return;
+      }
+
+      // The `/` filter narrows the file list. Per the grammar's escape
+      // precedence esc closes the FILTER first; arrows navigate, typing narrows.
+      if (filterMode()) {
+        if (evt.name === "escape" || evt.name === "return") {
+          setFilterMode(false);
+          setFilterQuery("");
+          setSelected(0);
+          evt.preventDefault();
+          return;
+        }
+        if (evt.name === "up") {
+          setSelected((i) => Math.max(0, i - 1));
+          evt.preventDefault();
+          return;
+        }
+        if (evt.name === "down") {
+          setSelected((i) => Math.min(allFiles().length - 1, i + 1));
+          evt.preventDefault();
+          return;
+        }
+        if (evt.name === "backspace") {
+          setFilterQuery((q) => q.slice(0, -1));
+          setSelected(0);
+          evt.preventDefault();
+          return;
+        }
+        if (evt.name.length === 1 && !evt.ctrl && !evt.alt && !evt.meta) {
+          setFilterQuery((q) => q + evt.name);
+          setSelected(0);
+          evt.preventDefault();
+          return;
+        }
+        return;
+      }
+
       const files = allFiles();
 
-      if (evt.name === "up" || evt.name === "k") {
+      // The shared grammar runs FIRST; git/staging keys fall through below.
+      const grammar = matchGrammar(evt);
+      if (grammar === "navUp") {
         setSelected((i) => Math.max(0, i - 1));
         evt.preventDefault();
-      } else if (evt.name === "down" || evt.name === "j") {
+        return;
+      } else if (grammar === "navDown") {
         setSelected((i) => Math.min(files.length - 1, i + 1));
         evt.preventDefault();
-      } else if (evt.name === "s" && !evt.shift) {
+        return;
+      } else if (grammar === "filter") {
+        setFilterMode(true);
+        setFilterQuery("");
+        setSelected(0);
+        evt.preventDefault();
+        return;
+      } else if (grammar === "help") {
+        setHelpOpen(true);
+        evt.preventDefault();
+        return;
+      } else if (grammar === "dismiss" || grammar === "quit") {
+        // Nothing is layered here, so esc/q close the panel popup.
+        process.exit(0);
+      }
+
+      if (evt.name === "s" && !evt.shift) {
         const file = files[selected()];
         if (file && !file.staged) {
           stageFile(file.path);
@@ -321,9 +417,6 @@ render(
       } else if (evt.shift && evt.name === "g") {
         setSelected(files.length - 1);
         evt.preventDefault();
-      } else if (evt.name === "q" || evt.name === "escape") {
-        // esc/q close the panel popup (the `-E` popup exits with this process).
-        process.exit(0);
       }
     });
 
@@ -341,231 +434,251 @@ render(
         height={dimensions().height}
         backgroundColor={toRGBA(theme.bg)}
       >
-        {/* Header */}
-        <box flexShrink={0} paddingLeft={1} paddingBottom={1} flexDirection="row" gap={2}>
-          <Show when={branch()}>
-            <text fg={toRGBA(theme.accent)} attributes={TextAttributes.BOLD}>
-              {"⎇ "}
-              {branch()}
+        <Show when={helpOpen()}>
+          <HelpOverlay theme={theme} title="changes" widgetKeys={WIDGET_KEYS} />
+        </Show>
+        <Show when={!helpOpen()}>
+          {/* Header */}
+          <box flexShrink={0} paddingLeft={1} paddingBottom={1} flexDirection="row" gap={2}>
+            <Show when={branch()}>
+              <text fg={toRGBA(theme.accent)} attributes={TextAttributes.BOLD}>
+                {"⎇ "}
+                {branch()}
+              </text>
+            </Show>
+            <text fg={toRGBA(theme.fg)} attributes={TextAttributes.BOLD}>
+              Changes
             </text>
-          </Show>
-          <text fg={toRGBA(theme.fg)} attributes={TextAttributes.BOLD}>
-            Changes
-          </text>
-          <Show when={totalAdditions() > 0}>
-            <text fg={toRGBA(theme.gitAdded)}>+{totalAdditions()}</text>
-          </Show>
-          <Show when={totalDeletions() > 0}>
-            <text fg={toRGBA(theme.gitDeleted)}>-{totalDeletions()}</text>
-          </Show>
-          <text fg={toRGBA(theme.fgMuted)}>{allFiles().length} files</text>
-        </box>
+            <Show when={totalAdditions() > 0}>
+              <text fg={toRGBA(theme.gitAdded)}>+{totalAdditions()}</text>
+            </Show>
+            <Show when={totalDeletions() > 0}>
+              <text fg={toRGBA(theme.gitDeleted)}>-{totalDeletions()}</text>
+            </Show>
+            <text fg={toRGBA(theme.fgMuted)}>{allFiles().length} files</text>
+          </box>
 
-        {/* File list */}
-        <scrollbox maxHeight={listHeight()} flexShrink={0}>
+          {/* Filter line */}
+          <Show when={filterMode()}>
+            <box flexShrink={0} paddingLeft={1} flexDirection="row" gap={1}>
+              <text fg={toRGBA(theme.accent)}>/</text>
+              <text fg={toRGBA(theme.fg)}>{filterQuery()}</text>
+              <text fg={toRGBA(theme.fgMuted)}>_</text>
+            </box>
+          </Show>
+
+          {/* File list */}
+          <scrollbox maxHeight={listHeight()} flexShrink={0}>
+            <Show
+              when={allFiles().length > 0}
+              fallback={
+                <box paddingLeft={2} paddingTop={1}>
+                  <text fg={toRGBA(theme.fgMuted)}>All clean ✓</text>
+                </box>
+              }
+            >
+              <For each={listData().items}>
+                {(item) => {
+                  if (item.kind === "header") {
+                    return (
+                      <box paddingTop={1}>
+                        <text fg={toRGBA(theme.accent)} attributes={TextAttributes.BOLD}>
+                          {"  "}
+                          {item.label}
+                        </text>
+                      </box>
+                    );
+                  }
+                  const isSelected = createMemo(() => item.globalIndex === selected());
+                  const statusColor = () => {
+                    if (item.file.staged) return theme.gitAdded;
+                    switch (item.file.status) {
+                      case "M":
+                        return theme.gitModified;
+                      case "D":
+                        return theme.gitDeleted;
+                      case "?":
+                        return theme.gitUntracked;
+                      default:
+                        return theme.fgMuted;
+                    }
+                  };
+                  return (
+                    <box
+                      flexDirection="row"
+                      paddingLeft={1}
+                      paddingRight={1}
+                      backgroundColor={isSelected() ? toRGBA(theme.selected) : TRANSPARENT}
+                      onMouseMove={() => setInputMode("mouse")}
+                      onMouseDown={() => setSelected(item.globalIndex)}
+                      onMouseOver={() => {
+                        if (inputMode() === "mouse") setSelected(item.globalIndex);
+                      }}
+                    >
+                      <text fg={toRGBA(statusColor())} wrapMode="none" flexShrink={0}>
+                        {"  "}
+                        {item.file.status}{" "}
+                      </text>
+                      <text
+                        fg={toRGBA(isSelected() ? theme.selectedText : theme.fg)}
+                        wrapMode="none"
+                        flexGrow={1}
+                      >
+                        {item.file.path}
+                      </text>
+                      <Show when={item.file.additions > 0}>
+                        <text fg={toRGBA(theme.gitAdded)} flexShrink={0} wrapMode="none">
+                          {" +"}
+                          {item.file.additions}
+                        </text>
+                      </Show>
+                      <Show when={item.file.deletions > 0}>
+                        <text fg={toRGBA(theme.gitDeleted)} flexShrink={0} wrapMode="none">
+                          {" -"}
+                          {item.file.deletions}
+                        </text>
+                      </Show>
+                      <Show when={isSelected()}>
+                        <text
+                          fg={toRGBA(theme.fgMuted)}
+                          flexShrink={0}
+                          wrapMode="none"
+                          onMouseUp={() => {
+                            if (item.file.staged) {
+                              unstageFile(item.file.path);
+                            } else {
+                              stageFile(item.file.path);
+                            }
+                            setChanges(getChanges());
+                          }}
+                        >
+                          {item.file.staged ? " u:unstage" : " s:stage"}
+                        </text>
+                      </Show>
+                    </box>
+                  );
+                }}
+              </For>
+            </Show>
+          </scrollbox>
+
+          {/* Separator */}
+          <box flexShrink={0} height={1}>
+            <text fg={toRGBA(theme.border)} wrapMode="none">
+              {"─".repeat(dimensions().width)}
+            </text>
+          </box>
+
+          {/* Diff preview */}
           <Show
-            when={allFiles().length > 0}
+            when={diffContent()}
             fallback={
-              <box paddingLeft={2} paddingTop={1}>
-                <text fg={toRGBA(theme.fgMuted)}>All clean ✓</text>
+              <box flexGrow={1} paddingLeft={2} paddingTop={1}>
+                <text fg={toRGBA(theme.fgMuted)}>Select a file to preview changes</text>
               </box>
             }
           >
-            <For each={listData().items}>
-              {(item) => {
-                if (item.kind === "header") {
+            <scrollbox flexGrow={1}>
+              <For each={diffLines()}>
+                {(line) => {
+                  const fg = line.startsWith("+")
+                    ? theme.diffAdded
+                    : line.startsWith("-")
+                      ? theme.diffRemoved
+                      : line.startsWith("@@")
+                        ? theme.diffHunk
+                        : theme.diffContext;
+                  const bg = line.startsWith("+")
+                    ? theme.diffAddedBg
+                    : line.startsWith("-")
+                      ? theme.diffRemovedBg
+                      : theme.diffContextBg;
                   return (
-                    <box paddingTop={1}>
-                      <text fg={toRGBA(theme.accent)} attributes={TextAttributes.BOLD}>
-                        {"  "}
-                        {item.label}
+                    <box backgroundColor={toRGBA(bg)}>
+                      <text fg={toRGBA(fg)} wrapMode="none">
+                        {line || " "}
                       </text>
                     </box>
                   );
-                }
-                const isSelected = createMemo(() => item.globalIndex === selected());
-                const statusColor = () => {
-                  if (item.file.staged) return theme.gitAdded;
-                  switch (item.file.status) {
-                    case "M":
-                      return theme.gitModified;
-                    case "D":
-                      return theme.gitDeleted;
-                    case "?":
-                      return theme.gitUntracked;
-                    default:
-                      return theme.fgMuted;
-                  }
-                };
-                return (
-                  <box
-                    flexDirection="row"
-                    paddingLeft={1}
-                    paddingRight={1}
-                    backgroundColor={isSelected() ? toRGBA(theme.selected) : TRANSPARENT}
-                    onMouseMove={() => setInputMode("mouse")}
-                    onMouseDown={() => setSelected(item.globalIndex)}
-                    onMouseOver={() => {
-                      if (inputMode() === "mouse") setSelected(item.globalIndex);
-                    }}
-                  >
-                    <text fg={toRGBA(statusColor())} wrapMode="none" flexShrink={0}>
-                      {"  "}
-                      {item.file.status}{" "}
-                    </text>
-                    <text
-                      fg={toRGBA(isSelected() ? theme.selectedText : theme.fg)}
-                      wrapMode="none"
-                      flexGrow={1}
-                    >
-                      {item.file.path}
-                    </text>
-                    <Show when={item.file.additions > 0}>
-                      <text fg={toRGBA(theme.gitAdded)} flexShrink={0} wrapMode="none">
-                        {" +"}
-                        {item.file.additions}
-                      </text>
-                    </Show>
-                    <Show when={item.file.deletions > 0}>
-                      <text fg={toRGBA(theme.gitDeleted)} flexShrink={0} wrapMode="none">
-                        {" -"}
-                        {item.file.deletions}
-                      </text>
-                    </Show>
-                    <Show when={isSelected()}>
-                      <text
-                        fg={toRGBA(theme.fgMuted)}
-                        flexShrink={0}
-                        wrapMode="none"
-                        onMouseUp={() => {
-                          if (item.file.staged) {
-                            unstageFile(item.file.path);
-                          } else {
-                            stageFile(item.file.path);
-                          }
-                          setChanges(getChanges());
-                        }}
-                      >
-                        {item.file.staged ? " u:unstage" : " s:stage"}
-                      </text>
-                    </Show>
-                  </box>
-                );
-              }}
-            </For>
+                }}
+              </For>
+            </scrollbox>
           </Show>
-        </scrollbox>
 
-        {/* Separator */}
-        <box flexShrink={0} height={1}>
-          <text fg={toRGBA(theme.border)} wrapMode="none">
-            {"─".repeat(dimensions().width)}
-          </text>
-        </box>
-
-        {/* Diff preview */}
-        <Show
-          when={diffContent()}
-          fallback={
-            <box flexGrow={1} paddingLeft={2} paddingTop={1}>
-              <text fg={toRGBA(theme.fgMuted)}>Select a file to preview changes</text>
-            </box>
-          }
-        >
-          <scrollbox flexGrow={1}>
-            <For each={diffLines()}>
-              {(line) => {
-                const fg = line.startsWith("+")
-                  ? theme.diffAdded
-                  : line.startsWith("-")
-                    ? theme.diffRemoved
-                    : line.startsWith("@@")
-                      ? theme.diffHunk
-                      : theme.diffContext;
-                const bg = line.startsWith("+")
-                  ? theme.diffAddedBg
-                  : line.startsWith("-")
-                    ? theme.diffRemovedBg
-                    : theme.diffContextBg;
-                return (
-                  <box backgroundColor={toRGBA(bg)}>
-                    <text fg={toRGBA(fg)} wrapMode="none">
-                      {line || " "}
-                    </text>
-                  </box>
-                );
+          {/* Footer */}
+          <box flexShrink={0} paddingLeft={1} paddingTop={1} flexDirection="row" gap={1}>
+            <text fg={toRGBA(theme.fgMuted)} wrapMode="none">
+              ↑↓:nav
+            </text>
+            <text
+              fg={toRGBA(theme.fgMuted)}
+              wrapMode="none"
+              onMouseUp={() => {
+                const file = allFiles()[selected()];
+                if (file && !file.staged) {
+                  stageFile(file.path);
+                  setChanges(getChanges());
+                }
               }}
-            </For>
-          </scrollbox>
+            >
+              s:stage
+            </text>
+            <text
+              fg={toRGBA(theme.fgMuted)}
+              wrapMode="none"
+              onMouseUp={() => {
+                const file = allFiles()[selected()];
+                if (file && file.staged) {
+                  unstageFile(file.path);
+                  setChanges(getChanges());
+                }
+              }}
+            >
+              u:unstage
+            </text>
+            <text
+              fg={toRGBA(theme.fgMuted)}
+              wrapMode="none"
+              onMouseUp={() => {
+                stageAll();
+                setChanges(getChanges());
+              }}
+            >
+              S:all
+            </text>
+            <text
+              fg={toRGBA(theme.fgMuted)}
+              wrapMode="none"
+              onMouseUp={() => {
+                unstageAll();
+                setChanges(getChanges());
+              }}
+            >
+              U:all
+            </text>
+            <text
+              fg={toRGBA(theme.fgMuted)}
+              wrapMode="none"
+              onMouseUp={() => {
+                batch(() => {
+                  setChanges(getChanges());
+                  setBranch(getGitBranch(dir));
+                });
+              }}
+            >
+              r:refresh
+            </text>
+            <text fg={toRGBA(theme.fgMuted)} wrapMode="none">
+              /:filter
+            </text>
+            <text fg={toRGBA(theme.fgMuted)} wrapMode="none">
+              ?:help
+            </text>
+            <text fg={toRGBA(theme.fgMuted)} wrapMode="none">
+              q:quit
+            </text>
+          </box>
         </Show>
-
-        {/* Footer */}
-        <box flexShrink={0} paddingLeft={1} paddingTop={1} flexDirection="row" gap={1}>
-          <text fg={toRGBA(theme.fgMuted)} wrapMode="none">
-            ↑↓:nav
-          </text>
-          <text
-            fg={toRGBA(theme.fgMuted)}
-            wrapMode="none"
-            onMouseUp={() => {
-              const file = allFiles()[selected()];
-              if (file && !file.staged) {
-                stageFile(file.path);
-                setChanges(getChanges());
-              }
-            }}
-          >
-            s:stage
-          </text>
-          <text
-            fg={toRGBA(theme.fgMuted)}
-            wrapMode="none"
-            onMouseUp={() => {
-              const file = allFiles()[selected()];
-              if (file && file.staged) {
-                unstageFile(file.path);
-                setChanges(getChanges());
-              }
-            }}
-          >
-            u:unstage
-          </text>
-          <text
-            fg={toRGBA(theme.fgMuted)}
-            wrapMode="none"
-            onMouseUp={() => {
-              stageAll();
-              setChanges(getChanges());
-            }}
-          >
-            S:all
-          </text>
-          <text
-            fg={toRGBA(theme.fgMuted)}
-            wrapMode="none"
-            onMouseUp={() => {
-              unstageAll();
-              setChanges(getChanges());
-            }}
-          >
-            U:all
-          </text>
-          <text
-            fg={toRGBA(theme.fgMuted)}
-            wrapMode="none"
-            onMouseUp={() => {
-              batch(() => {
-                setChanges(getChanges());
-                setBranch(getGitBranch(dir));
-              });
-            }}
-          >
-            r:refresh
-          </text>
-          <text fg={toRGBA(theme.fgMuted)} wrapMode="none">
-            q:quit
-          </text>
-        </box>
       </box>
     );
   },

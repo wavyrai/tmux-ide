@@ -27,6 +27,8 @@ import { createSignal, createEffect, onMount, onCleanup, For, Show } from "solid
 import { runTmux } from "@tmux-ide/tmux-bridge";
 import { createTheme } from "../lib/theme.ts";
 import { getAppConfig } from "../../lib/app-config.ts";
+import { matchGrammar } from "../lib/grammar.ts";
+import { HelpOverlay, type WidgetKey } from "../lib/help-overlay.tsx";
 import { createStatusTracker, type AgentStatus } from "../../tui/detect/classify.ts";
 import { listTeamProjects, type TeamProject } from "../../tui/team/projects.ts";
 import { type TeamSession, type TeamWindow } from "../../tui/team/sessions.ts";
@@ -124,6 +126,9 @@ function trunc(s: string, width: number): string {
   return `${s.slice(0, width - 1)}…`;
 }
 
+/** Sidebar keys beyond the shared grammar — listed in the `?` overlay. */
+const WIDGET_KEYS: WidgetKey[] = [{ key: "r", label: "refresh fleet" }];
+
 render(() => {
   const theme = createTheme(parseThemeArg(argv.theme), getAppConfig().theme);
   const statusColor: Record<AgentStatus, RGBA> = {
@@ -145,6 +150,7 @@ render(() => {
   const [activeWindow, setActiveWindow] = createSignal(-1);
   const [filterMode, setFilterMode] = createSignal(false);
   const [filterQuery, setFilterQuery] = createSignal("");
+  const [helpOpen, setHelpOpen] = createSignal(false);
   const [message, setMessage] = createSignal("");
   const dimensions = useTerminalDimensions();
 
@@ -271,7 +277,16 @@ render(() => {
   }
 
   useKeyboard((evt) => {
+    // Help overlay swallows keys: esc / q / ? close it (grammar dismiss/quit/help).
+    if (helpOpen()) {
+      const g = matchGrammar(evt);
+      if (g === "dismiss" || g === "quit" || g === "help") setHelpOpen(false);
+      return;
+    }
+
     // Filter prompt intercepts keys while open — it narrows the project list.
+    // Per the grammar's escape precedence, esc closes the FILTER before it
+    // would quit the widget; only ARROWS navigate here so j/k stay typeable.
     if (filterMode()) {
       if (evt.name === "escape") {
         setFilterMode(false);
@@ -303,32 +318,39 @@ render(() => {
 
     if (evt.ctrl && evt.name === "c") process.exit(0);
 
-    switch (evt.name) {
-      case "up":
-      case "k":
+    // The shared grammar runs FIRST; `r` (refresh) is the sole widget key.
+    const grammar = matchGrammar(evt);
+    switch (grammar) {
+      case "navUp":
         move(-1);
-        break;
-      case "down":
-      case "j":
+        return;
+      case "navDown":
         move(1);
-        break;
-      case "return":
+        return;
+      case "activate":
         activate();
-        break;
-      case "/":
+        return;
+      case "filter":
         setMessage("");
         setFilterQuery("");
         setFilterMode(true);
         setActiveProject(0);
         setActiveSession(-1);
         setActiveWindow(-1);
-        break;
-      case "r":
-        setProjects(listTeamProjects(tracker));
-        break;
+        return;
+      case "help":
+        setHelpOpen(true);
+        return;
+      case "dismiss":
+      case "quit":
+        // Nothing is layered here, so esc/q close the sidebar pane.
+        process.exit(0);
+        return;
       default:
         break;
     }
+
+    if (evt.name === "r") setProjects(listTeamProjects(tracker));
   });
 
   /** Column text width available for a row's name after its glyph + indent. */
@@ -336,158 +358,167 @@ render(() => {
 
   return (
     <box flexDirection="column" flexGrow={1} backgroundColor={toRGBA(theme.bg)}>
-      {/* header — one tight line */}
-      <box paddingLeft={1} paddingRight={1} flexDirection="row">
-        <text fg={toRGBA(theme.accent)} attributes={TextAttributes.BOLD}>
-          {trunc("tmux-ide", dimensions().width - 2)}
-        </text>
-      </box>
-
-      {/* filter line */}
-      <Show when={filterMode()}>
-        <box paddingLeft={1} paddingRight={1} flexDirection="row" gap={1}>
-          <text fg={toRGBA(theme.accent)}>/</text>
-          <text fg={toRGBA(theme.fg)}>{trunc(filterQuery(), dimensions().width - 4)}</text>
-        </box>
+      <Show when={helpOpen()}>
+        <HelpOverlay theme={theme} title="sidebar" widgetKeys={WIDGET_KEYS} />
       </Show>
+      <Show when={!helpOpen()}>
+        {/* header — one tight line */}
+        <box paddingLeft={1} paddingRight={1} flexDirection="row">
+          <text fg={toRGBA(theme.accent)} attributes={TextAttributes.BOLD}>
+            {trunc("tmux-ide", dimensions().width - 2)}
+          </text>
+        </box>
 
-      {/* the fleet tree */}
-      <box flexDirection="column" flexGrow={1} paddingTop={1} onMouseScroll={scroll}>
-        <Show
-          when={visibleProjects().length > 0}
-          fallback={
-            <box paddingLeft={1}>
-              <text fg={toRGBA(theme.fgMuted)}>{filterMode() ? "no match" : "no sessions"}</text>
-            </box>
-          }
-        >
-          <For each={visibleProjects()}>
-            {(project, pi) => {
-              const projCursor = () => pi() === activeProject() && activeSession() === -1;
-              return (
-                <box flexDirection="column">
-                  {/* project row */}
-                  <box
-                    flexDirection="row"
-                    gap={1}
-                    paddingLeft={1}
-                    backgroundColor={projCursor() ? toRGBA(theme.border) : undefined}
-                    onMouseDown={() => click(pi(), -1, -1)}
-                  >
-                    <text fg={projCursor() ? toRGBA(theme.accent) : toRGBA(theme.fgMuted)}>
-                      {projCursor() ? "▸" : " "}
-                    </text>
-                    <text
-                      fg={project.running ? statusColor[project.status] : toRGBA(theme.fgMuted)}
-                    >
-                      {project.running ? STATUS_GLYPH[project.status] : "○"}
-                    </text>
-                    <text
-                      fg={projCursor() ? toRGBA(theme.accent) : toRGBA(theme.fg)}
-                      attributes={projCursor() ? TextAttributes.BOLD : 0}
-                    >
-                      {trunc(project.name, nameWidth(4))}
-                    </text>
-                  </box>
-
-                  {/* sessions — always shown under every project */}
-                  <For each={project.sessions}>
-                    {(session, si) => {
-                      const sessCursor = () =>
-                        pi() === activeProject() &&
-                        si() === activeSession() &&
-                        activeWindow() === -1;
-                      const isCurrent = () => session.name === currentSession;
-                      const expanded = () => pi() === activeProject() && si() === activeSession();
-                      return (
-                        <box flexDirection="column">
-                          <box
-                            flexDirection="row"
-                            gap={1}
-                            paddingLeft={2}
-                            backgroundColor={sessCursor() ? toRGBA(theme.border) : undefined}
-                            onMouseDown={() => click(pi(), si(), -1)}
-                          >
-                            <text
-                              fg={
-                                isCurrent()
-                                  ? toRGBA(theme.accent)
-                                  : sessCursor()
-                                    ? toRGBA(theme.accent)
-                                    : toRGBA(theme.fgMuted)
-                              }
-                            >
-                              {isCurrent() ? "▸" : sessCursor() ? "›" : " "}
-                            </text>
-                            <text fg={statusColor[session.status]}>
-                              {STATUS_GLYPH[session.status]}
-                            </text>
-                            <text
-                              fg={isCurrent() ? toRGBA(theme.accent) : toRGBA(theme.fg)}
-                              attributes={isCurrent() ? TextAttributes.BOLD : 0}
-                            >
-                              {trunc(session.name, nameWidth(6))}
-                            </text>
-                          </box>
-                          {/* windows — expanded under the active/cursor session */}
-                          <Show when={expanded() && session.windowList.length > 0}>
-                            <For each={session.windowList}>
-                              {(win, wi) => {
-                                const winCursor = () =>
-                                  pi() === activeProject() &&
-                                  si() === activeSession() &&
-                                  wi() === activeWindow();
-                                return (
-                                  <box
-                                    flexDirection="row"
-                                    gap={1}
-                                    paddingLeft={4}
-                                    backgroundColor={winCursor() ? toRGBA(theme.border) : undefined}
-                                    onMouseDown={() => click(pi(), si(), wi())}
-                                  >
-                                    <text
-                                      fg={
-                                        winCursor() ? toRGBA(theme.accent) : toRGBA(theme.fgMuted)
-                                      }
-                                    >
-                                      {winCursor() ? "›" : " "}
-                                    </text>
-                                    <text fg={statusColor[win.status]}>
-                                      {STATUS_GLYPH[win.status]}
-                                    </text>
-                                    <text fg={toRGBA(theme.fg)}>
-                                      {trunc(
-                                        `${win.index}:${win.name}${win.active ? "*" : ""}`,
-                                        nameWidth(8),
-                                      )}
-                                    </text>
-                                  </box>
-                                );
-                              }}
-                            </For>
-                          </Show>
-                        </box>
-                      );
-                    }}
-                  </For>
-                </box>
-              );
-            }}
-          </For>
+        {/* filter line */}
+        <Show when={filterMode()}>
+          <box paddingLeft={1} paddingRight={1} flexDirection="row" gap={1}>
+            <text fg={toRGBA(theme.accent)}>/</text>
+            <text fg={toRGBA(theme.fg)}>{trunc(filterQuery(), dimensions().width - 4)}</text>
+          </box>
         </Show>
-      </box>
 
-      {/* transient status line */}
-      <Show when={message().length > 0}>
-        <box paddingLeft={1} paddingRight={1}>
-          <text fg={toRGBA(theme.fgMuted)}>{trunc(message(), dimensions().width - 2)}</text>
+        {/* the fleet tree */}
+        <box flexDirection="column" flexGrow={1} paddingTop={1} onMouseScroll={scroll}>
+          <Show
+            when={visibleProjects().length > 0}
+            fallback={
+              <box paddingLeft={1}>
+                <text fg={toRGBA(theme.fgMuted)}>{filterMode() ? "no match" : "no sessions"}</text>
+              </box>
+            }
+          >
+            <For each={visibleProjects()}>
+              {(project, pi) => {
+                const projCursor = () => pi() === activeProject() && activeSession() === -1;
+                return (
+                  <box flexDirection="column">
+                    {/* project row */}
+                    <box
+                      flexDirection="row"
+                      gap={1}
+                      paddingLeft={1}
+                      backgroundColor={projCursor() ? toRGBA(theme.border) : undefined}
+                      onMouseDown={() => click(pi(), -1, -1)}
+                    >
+                      <text fg={projCursor() ? toRGBA(theme.accent) : toRGBA(theme.fgMuted)}>
+                        {projCursor() ? "▸" : " "}
+                      </text>
+                      <text
+                        fg={project.running ? statusColor[project.status] : toRGBA(theme.fgMuted)}
+                      >
+                        {project.running ? STATUS_GLYPH[project.status] : "○"}
+                      </text>
+                      <text
+                        fg={projCursor() ? toRGBA(theme.accent) : toRGBA(theme.fg)}
+                        attributes={projCursor() ? TextAttributes.BOLD : 0}
+                      >
+                        {trunc(project.name, nameWidth(4))}
+                      </text>
+                    </box>
+
+                    {/* sessions — always shown under every project */}
+                    <For each={project.sessions}>
+                      {(session, si) => {
+                        const sessCursor = () =>
+                          pi() === activeProject() &&
+                          si() === activeSession() &&
+                          activeWindow() === -1;
+                        const isCurrent = () => session.name === currentSession;
+                        const expanded = () => pi() === activeProject() && si() === activeSession();
+                        return (
+                          <box flexDirection="column">
+                            <box
+                              flexDirection="row"
+                              gap={1}
+                              paddingLeft={2}
+                              backgroundColor={sessCursor() ? toRGBA(theme.border) : undefined}
+                              onMouseDown={() => click(pi(), si(), -1)}
+                            >
+                              <text
+                                fg={
+                                  isCurrent()
+                                    ? toRGBA(theme.accent)
+                                    : sessCursor()
+                                      ? toRGBA(theme.accent)
+                                      : toRGBA(theme.fgMuted)
+                                }
+                              >
+                                {isCurrent() ? "▸" : sessCursor() ? "›" : " "}
+                              </text>
+                              <text fg={statusColor[session.status]}>
+                                {STATUS_GLYPH[session.status]}
+                              </text>
+                              <text
+                                fg={isCurrent() ? toRGBA(theme.accent) : toRGBA(theme.fg)}
+                                attributes={isCurrent() ? TextAttributes.BOLD : 0}
+                              >
+                                {trunc(session.name, nameWidth(6))}
+                              </text>
+                            </box>
+                            {/* windows — expanded under the active/cursor session */}
+                            <Show when={expanded() && session.windowList.length > 0}>
+                              <For each={session.windowList}>
+                                {(win, wi) => {
+                                  const winCursor = () =>
+                                    pi() === activeProject() &&
+                                    si() === activeSession() &&
+                                    wi() === activeWindow();
+                                  return (
+                                    <box
+                                      flexDirection="row"
+                                      gap={1}
+                                      paddingLeft={4}
+                                      backgroundColor={
+                                        winCursor() ? toRGBA(theme.border) : undefined
+                                      }
+                                      onMouseDown={() => click(pi(), si(), wi())}
+                                    >
+                                      <text
+                                        fg={
+                                          winCursor() ? toRGBA(theme.accent) : toRGBA(theme.fgMuted)
+                                        }
+                                      >
+                                        {winCursor() ? "›" : " "}
+                                      </text>
+                                      <text fg={statusColor[win.status]}>
+                                        {STATUS_GLYPH[win.status]}
+                                      </text>
+                                      <text fg={toRGBA(theme.fg)}>
+                                        {trunc(
+                                          `${win.index}:${win.name}${win.active ? "*" : ""}`,
+                                          nameWidth(8),
+                                        )}
+                                      </text>
+                                    </box>
+                                  );
+                                }}
+                              </For>
+                            </Show>
+                          </box>
+                        );
+                      }}
+                    </For>
+                  </box>
+                );
+              }}
+            </For>
+          </Show>
+        </box>
+
+        {/* transient status line */}
+        <Show when={message().length > 0}>
+          <box paddingLeft={1} paddingRight={1}>
+            <text fg={toRGBA(theme.fgMuted)}>{trunc(message(), dimensions().width - 2)}</text>
+          </box>
+        </Show>
+
+        {/* footer — the verbs that fit a narrow column */}
+        <box paddingLeft={1} paddingRight={1} flexDirection="row" gap={1}>
+          <text fg={toRGBA(theme.fgMuted)}>
+            {trunc("↵ go  / find  ? help", dimensions().width - 2)}
+          </text>
         </box>
       </Show>
-
-      {/* footer — the two verbs that fit a narrow column */}
-      <box paddingLeft={1} paddingRight={1} flexDirection="row" gap={1}>
-        <text fg={toRGBA(theme.fgMuted)}>{trunc("↵ go  / find", dimensions().width - 2)}</text>
-      </box>
     </box>
   );
 });

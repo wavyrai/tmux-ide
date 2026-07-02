@@ -12,6 +12,7 @@ import { POPUP_KEY } from "./statusline.ts";
 import { PANEL_POPUPS, panelKey } from "./panels.ts";
 import { DEFAULT_KEYS, DEFAULT_THEME } from "../../lib/app-config.ts";
 import { DEFAULT_KEYMAP } from "../team/keymap.ts";
+import { GRAMMAR_HELP } from "../../widgets/lib/grammar.ts";
 
 /** Strip ANSI SGR escapes so we can assert on visible content and width. */
 function stripAnsi(s: string): string {
@@ -27,8 +28,24 @@ function pretty(tmuxKey: string): string {
 describe("buildCheatsheet", () => {
   it("renders every group heading", () => {
     const sheet = stripAnsi(buildCheatsheet({ width: 100 }));
-    for (const heading of ["dock", "panels", "picker", "team app", "tmux essentials", "cli"]) {
+    for (const heading of [
+      "dock",
+      "panels",
+      "in panels & sidebar",
+      "picker",
+      "team app",
+      "tmux essentials",
+      "cli",
+    ]) {
       expect(sheet).toContain(heading);
+    }
+  });
+
+  it("documents the shared interaction grammar from GRAMMAR_HELP (no duplication)", () => {
+    const sheet = stripAnsi(buildCheatsheet({ width: 100 }));
+    for (const row of GRAMMAR_HELP) {
+      expect(sheet).toContain(row.keys);
+      expect(sheet).toContain(row.label);
     }
   });
 

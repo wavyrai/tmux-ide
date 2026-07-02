@@ -18,12 +18,27 @@ import { getGitStatusMap, getGitBranch, isGitRepo } from "../lib/git.ts";
 import { watchDirectory, watchGitHead } from "../lib/watcher.ts";
 import { createTheme } from "../lib/theme.ts";
 import { getAppConfig } from "../../lib/app-config.ts";
+import { matchGrammar } from "../lib/grammar.ts";
+import { HelpOverlay, type WidgetKey } from "../lib/help-overlay.tsx";
 import {
   findPaneByTitle,
   sendCommand,
   openFileInEditor,
   findPaneByPattern,
 } from "../lib/pane-comms.ts";
+
+/** Explorer keys beyond the shared grammar — listed in the `?` overlay. */
+const WIDGET_KEYS: WidgetKey[] = [
+  { key: "l / → / ⏎", label: "open directory" },
+  { key: "h / ← / ⌫", label: "up a level" },
+  { key: "[ / ]", label: "prev / next change" },
+  { key: "c", label: "send to claude" },
+  { key: "o", label: "open in editor" },
+  { key: "H", label: "toggle hidden files" },
+  { key: "I", label: "toggle ignored files" },
+  { key: "r", label: "refresh" },
+  { key: "g / G", label: "top / bottom" },
+];
 
 const { values } = parseArgs({
   options: {
@@ -107,6 +122,7 @@ render(
     const [inputMode, setInputMode] = createSignal<"keyboard" | "mouse">("keyboard");
     const [searchMode, setSearchMode] = createSignal(false);
     const [searchQuery, setSearchQuery] = createSignal("");
+    const [helpOpen, setHelpOpen] = createSignal(false);
 
     const flatNodes = createMemo(() => flattenVisibleNodes(rootNodes()));
 
@@ -236,7 +252,16 @@ render(
     useKeyboard((evt) => {
       setInputMode("keyboard");
 
-      // Search mode handling
+      // Help overlay swallows keys: esc / q / ? close it (grammar dismiss/quit/help).
+      if (helpOpen()) {
+        const g = matchGrammar(evt);
+        if (g === "dismiss" || g === "quit" || g === "help") setHelpOpen(false);
+        evt.preventDefault();
+        return;
+      }
+
+      // Search mode handling — the `/` filter. Per the grammar's escape
+      // precedence, esc closes the FILTER before it would quit the widget.
       if (searchMode()) {
         if (evt.name === "escape") {
           setSearchMode(false);
@@ -265,13 +290,36 @@ render(
       const nodes = visibleNodes();
       const current = nodes[selected()];
 
-      if (evt.name === "up" || evt.name === "k") {
+      // The shared grammar runs FIRST; widget-specific keys fall through below.
+      const grammar = matchGrammar(evt);
+      if (grammar === "navUp") {
         setSelected((i) => Math.max(0, i - 1));
         evt.preventDefault();
-      } else if (evt.name === "down" || evt.name === "j") {
+        return;
+      } else if (grammar === "navDown") {
         setSelected((i) => Math.min(nodes.length - 1, i + 1));
         evt.preventDefault();
-      } else if (evt.name === "return" || evt.name === "l" || evt.name === "right") {
+        return;
+      } else if (grammar === "activate") {
+        if (current) activateNode(current);
+        evt.preventDefault();
+        return;
+      } else if (grammar === "filter") {
+        setSearchMode(true);
+        setSearchQuery("");
+        evt.preventDefault();
+        return;
+      } else if (grammar === "help") {
+        setHelpOpen(true);
+        evt.preventDefault();
+        return;
+      } else if (grammar === "dismiss" || grammar === "quit") {
+        // Nothing is layered here (help/filter handled above), so esc/q close
+        // the panel popup (the `-E` popup exits with this process).
+        process.exit(0);
+      }
+
+      if (evt.name === "l" || evt.name === "right") {
         if (current) activateNode(current);
         evt.preventDefault();
       } else if (
@@ -281,10 +329,6 @@ render(
         evt.name === "-"
       ) {
         navigateUp();
-        evt.preventDefault();
-      } else if (evt.name === "/") {
-        setSearchMode(true);
-        setSearchQuery("");
         evt.preventDefault();
       } else if (evt.name === "]") {
         // Jump to next changed file
@@ -362,9 +406,6 @@ render(
       } else if (evt.shift && evt.name === "g") {
         setSelected(nodes.length - 1);
         evt.preventDefault();
-      } else if (evt.name === "q" || evt.name === "escape") {
-        // esc/q close the panel popup (the `-E` popup exits with this process).
-        process.exit(0);
       }
     });
 
@@ -374,30 +415,35 @@ render(
         height={dimensions().height}
         backgroundColor={toRGBA(theme.bg)}
       >
-        <Breadcrumbs
-          projectRoot={dir}
-          currentDir={currentDir()}
-          branch={branch()}
-          theme={theme}
-          onNavigate={navigateTo}
-        />
-        <Show when={searchMode()}>
-          <box flexShrink={0} paddingLeft={1} flexDirection="row" gap={1}>
-            <text fg={toRGBA(theme.accent)}>/</text>
-            <text fg={toRGBA(theme.fg)}>{searchQuery()}</text>
-            <text fg={toRGBA(theme.fgMuted)}>_</text>
-          </box>
+        <Show
+          when={!helpOpen()}
+          fallback={<HelpOverlay theme={theme} title="explorer" widgetKeys={WIDGET_KEYS} />}
+        >
+          <Breadcrumbs
+            projectRoot={dir}
+            currentDir={currentDir()}
+            branch={branch()}
+            theme={theme}
+            onNavigate={navigateTo}
+          />
+          <Show when={searchMode()}>
+            <box flexShrink={0} paddingLeft={1} flexDirection="row" gap={1}>
+              <text fg={toRGBA(theme.accent)}>/</text>
+              <text fg={toRGBA(theme.fg)}>{searchQuery()}</text>
+              <text fg={toRGBA(theme.fgMuted)}>_</text>
+            </box>
+          </Show>
+          <FileTree
+            nodes={visibleNodes()}
+            selected={selected()}
+            theme={theme}
+            inputMode={inputMode()}
+            onSelect={setSelected}
+            onActivate={activateNode}
+            onInputModeChange={setInputMode}
+          />
+          <Footer theme={theme} />
         </Show>
-        <FileTree
-          nodes={visibleNodes()}
-          selected={selected()}
-          theme={theme}
-          inputMode={inputMode()}
-          onSelect={setSelected}
-          onActivate={activateNode}
-          onInputModeChange={setInputMode}
-        />
-        <Footer theme={theme} />
       </box>
     );
   },
