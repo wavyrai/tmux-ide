@@ -458,16 +458,18 @@ render(() => {
    * itself; a bare detached session is adopted here.
    */
   function pickerLaunchAndSwitch(project: TeamProject) {
-    if (!project.dir) return;
+    // const-capture so the non-null narrowing survives into the closure below
+    const dir = project.dir;
+    if (!dir) return;
     if (project.hasIdeYml) {
       import("../../launch.ts")
-        .then(({ launch }) => launch(project.dir!, { attach: false }))
+        .then(({ launch }) => launch(dir, { attach: false }))
         .then(() => pickerSwitch(project.name))
         .catch((e) => setMessage(String((e as { message?: string })?.message ?? e)));
       return;
     }
     try {
-      createDetachedSession(project.name, project.dir);
+      createDetachedSession(project.name, dir);
       // Flag cockpit-created sessions so agents inside can detect tmux-ide.
       try {
         setSessionEnvironment(project.name, "TMUX_IDE", "1");
@@ -523,7 +525,7 @@ render(() => {
       return;
     }
     try {
-      createDetachedSession(project.name, project.dir);
+      createDetachedSession(project.name, dir);
       // Flag cockpit-created sessions so agents inside can detect tmux-ide.
       try {
         setSessionEnvironment(project.name, "TMUX_IDE", "1");

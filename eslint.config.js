@@ -30,6 +30,8 @@ export default [
       sourceType: "module",
       globals: {
         ...globals.node,
+        // scripts/build-tui.mjs runs under `bun` and uses the Bun global.
+        Bun: "readonly",
       },
     },
     rules: {

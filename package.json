@@ -16,6 +16,7 @@
   "scripts": {
     "build": "pnpm build:cli",
     "build:cli": "node scripts/build-cli.mjs",
+    "build:tui": "bun scripts/build-tui.mjs",
     "prepublishOnly": "pnpm build:cli && pnpm check && node scripts/prepublish-check.mjs",
     "typecheck": "echo \"root typecheck deferred to per-package turbo run\"",
     "dev": "node bin/cli.js",

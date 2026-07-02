@@ -276,7 +276,7 @@ render(
           setSearchMode(false);
           evt.preventDefault();
           return;
-        } else if (evt.name.length === 1 && !evt.ctrl && !evt.alt && !evt.meta) {
+        } else if (evt.name.length === 1 && !evt.ctrl && !evt.meta) {
           const newQuery = searchQuery() + evt.name;
           setSearchQuery(newQuery);
           const q = newQuery.toLowerCase();

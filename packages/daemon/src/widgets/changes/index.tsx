@@ -340,7 +340,7 @@ render(
           evt.preventDefault();
           return;
         }
-        if (evt.name.length === 1 && !evt.ctrl && !evt.alt && !evt.meta) {
+        if (evt.name.length === 1 && !evt.ctrl && !evt.meta) {
           setFilterQuery((q) => q + evt.name);
           setSelected(0);
           evt.preventDefault();

@@ -23,6 +23,7 @@ import { runTmux } from "@tmux-ide/tmux-bridge";
 import type { ThemeConfig } from "../../types.ts";
 import { shellEscape } from "../../lib/shell.ts";
 import { SIDEBAR_PANE_OPTION } from "../team/sessions.ts";
+import { resolveTuiLaunch, findCompiledTui, isBunAvailable } from "../compiled.ts";
 
 export { SIDEBAR_PANE_OPTION };
 
@@ -59,8 +60,25 @@ export function sidebarWidgetCommand(
 ): string {
   const args = [`--session=${session}`, `--dir=${dir}`];
   if (theme) args.push(`--theme=${JSON.stringify(theme)}`);
-  const escaped = args.map(shellEscape).join(" ");
-  return `cd ${shellEscape(dir)} && bun ${shellEscape(scriptPath)} ${escaped}`;
+
+  const launch = resolveTuiLaunch({
+    surface: "sidebar",
+    scriptPath,
+    args,
+    checkoutExists: existsSync(scriptPath),
+    bunAvailable: isBunAvailable(),
+    compiledBinary: findCompiledTui(),
+  });
+  if (launch.mode === "unavailable") {
+    // Keep the pane command well-formed; the pane shows bun's own error. This
+    // path only trips on a broken install (no checkout, no bun, no binary).
+    return `cd ${shellEscape(dir)} && bun ${shellEscape(scriptPath)} ${args.map(shellEscape).join(" ")}`;
+  }
+
+  const escaped = launch.argv.map(shellEscape).join(" ");
+  // Both modes cd into the project dir first: bun needs a nearby bunfig only in
+  // a checkout (which sits above dir); the binary is self-contained.
+  return `cd ${shellEscape(dir)} && ${shellEscape(launch.bin)} ${escaped}`;
 }
 
 /**

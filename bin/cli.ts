@@ -11,6 +11,7 @@ import { fileURLToPath } from "node:url";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 import { launch } from "../packages/daemon/src/launch.ts";
 import { shouldOpenCockpit } from "../packages/daemon/src/tui/team/entry.ts";
+import { resolveTuiLaunch, findCompiledTui, isBunAvailable } from "../packages/daemon/src/tui/compiled.ts";
 import { init } from "../packages/daemon/src/init.ts";
 import { stop } from "../packages/daemon/src/stop.ts";
 import { attach } from "../packages/daemon/src/attach.ts";
@@ -233,53 +234,54 @@ ${bold("Flags:")}
   ${cyan("-v, --version")}               ${dim("Show version number")}`);
 }
 
-// The TUI widgets are `.tsx` files that ship only in a dev checkout and
-// require the `bun` runtime. On a clean `npm i -g tmux-ide` neither is
-// present, so execFileSync("bun", ...) would throw a raw ENOENT. Guard
-// first and surface an actionable IdeError instead.
-function assertBunWidgetAvailable(scriptPath: string, commandLabel: string): void {
-  const widgetMissing = !existsSync(scriptPath);
-  let bunMissing = false;
-  try {
-    execFileSync("bun", ["--version"], { stdio: "ignore" });
-  } catch {
-    bunMissing = true;
-  }
-  if (widgetMissing || bunMissing) {
-    const reasons: string[] = [];
-    if (bunMissing) reasons.push("the `bun` runtime is not installed (https://bun.sh)");
-    if (widgetMissing)
-      reasons.push(
-        "the TUI widget sources are absent (they ship only in a cloned tmux-ide checkout, not the npm package)",
-      );
-    throw new IdeError(
-      `\`tmux-ide ${commandLabel}\` is unavailable because ${reasons.join(" and ")}.\n` +
-        `Run it from a cloned tmux-ide checkout with bun installed.`,
-      { code: "USAGE", exitCode: 1 },
-    );
-  }
-}
-
+// The TUI surfaces are OpenTUI/Solid `.tsx` that need the `bun` runtime and the
+// checkout sources. On a clean `npm i -g tmux-ide` neither is present, so we
+// fall back to the compiled `tmux-ide-tui` binary (see scripts/build-tui.mjs).
+// `resolveTuiLaunch` encodes the "checkout first, binary second" order; when
+// nothing is available it hands back an actionable reason set for an IdeError.
 function execBunWidget(
+  surface: string,
   scriptPath: string,
   args: string[],
   commandLabel: string,
   extraEnv: Record<string, string> = {},
 ): void {
-  assertBunWidgetAvailable(scriptPath, commandLabel);
-  // Spawn from the repo root so bun finds `bunfig.toml` (the @opentui/solid
-  // JSX preload). Without this, running from any other cwd — e.g. bare
-  // `tmux-ide` in a project dir — falls back to the React JSX runtime and the
-  // widget fails to load. The real invocation dir is forwarded via env so
-  // in-widget prompts (register / new session) still default to where the user
-  // actually is. `extraEnv` layers on top for widget-specific flags (e.g. the
-  // switcher's picker-client hint).
-  const bunfigRoot = resolve(__dirname, "..");
-  execFileSync("bun", [scriptPath, ...args], {
-    stdio: "inherit",
-    cwd: bunfigRoot,
-    env: { ...process.env, TMUX_IDE_CWD: process.cwd(), ...extraEnv },
+  const launch = resolveTuiLaunch({
+    surface,
+    scriptPath,
+    args,
+    checkoutExists: existsSync(scriptPath),
+    bunAvailable: isBunAvailable(),
+    compiledBinary: findCompiledTui(),
   });
+
+  if (launch.mode === "unavailable") {
+    throw new IdeError(
+      `\`tmux-ide ${commandLabel}\` is unavailable because ${launch.reasons.join(" and ")}.\n` +
+        `Run it from a cloned tmux-ide checkout with bun installed, or install a release that ships the compiled binary.`,
+      { code: "USAGE", exitCode: 1 },
+    );
+  }
+
+  const env = { ...process.env, TMUX_IDE_CWD: process.cwd(), ...extraEnv };
+  if (launch.mode === "bun") {
+    // Spawn from the repo root so bun finds `bunfig.toml` (the @opentui/solid
+    // JSX preload). Without this, running from any other cwd — e.g. bare
+    // `tmux-ide` in a project dir — falls back to the React JSX runtime and the
+    // widget fails to load. The real invocation dir rides in env so in-widget
+    // prompts (register / new session) still default to where the user is.
+    execFileSync(launch.bin, launch.argv, {
+      stdio: "inherit",
+      cwd: resolve(__dirname, ".."),
+      env,
+    });
+    return;
+  }
+
+  // Compiled binary: the JSX transform and native dylib are already baked in,
+  // so there is no bunfig to find — run from the user's actual cwd (also avoids
+  // a stray repo-root bunfig.toml preload the standalone binary can't resolve).
+  execFileSync(launch.bin, launch.argv, { stdio: "inherit", env });
 }
 
 // The scriptable control surface for the cockpit: print the fleet state as JSON
@@ -299,7 +301,7 @@ const teamScriptPath = resolve(__dirname, "../packages/daemon/src/tui/team/index
 // the whole terminal). The floating switcher popup (M-p on adopted sessions)
 // supersedes the old nested `[ switcher | main ]` host shell.
 function launchTeamCockpit(): void {
-  execBunWidget(teamScriptPath, [], "team");
+  execBunWidget("team", teamScriptPath, [], "team");
 }
 
 try {
@@ -420,6 +422,7 @@ try {
       } else if (sub === "edit") {
         const scriptPath = resolve(__dirname, "../packages/daemon/src/widgets/setup/index.tsx");
         execBunWidget(
+          "setup",
           scriptPath,
           ["--dir=" + resolve(startTargetDir || "."), "--edit"],
           "config edit",
@@ -436,7 +439,7 @@ try {
       const setupArgs = ["--dir=" + resolve(startTargetDir || ".")];
       if (positionals[1] === "--edit" || values.edit) setupArgs.push("--edit");
       if (positionals[1] === "--wizard" || values.wizard) setupArgs.push("--wizard");
-      execBunWidget(scriptPath, setupArgs, "setup");
+      execBunWidget("setup", scriptPath, setupArgs, "setup");
       break;
     }
 
@@ -454,7 +457,7 @@ try {
 
     case "settings": {
       const scriptPath = resolve(__dirname, "../packages/daemon/src/widgets/config/index.tsx");
-      execBunWidget(scriptPath, ["--dir=" + resolve(startTargetDir || ".")], "settings");
+      execBunWidget("config", scriptPath, ["--dir=" + resolve(startTargetDir || ".")], "settings");
       break;
     }
 
@@ -473,7 +476,7 @@ try {
       // switcher it keeps the full two-column layout, not the compact picker.
       if (values.popup === true) {
         const clientArg = typeof values.client === "string" ? values.client : "";
-        execBunWidget(teamScriptPath, [], "team --popup", { TMUX_IDE_POPUP_CLIENT: clientArg });
+        execBunWidget("team", teamScriptPath, [], "team --popup", { TMUX_IDE_POPUP_CLIENT: clientArg });
         break;
       }
       launchTeamCockpit();
@@ -487,7 +490,7 @@ try {
       // both flips the app into picker mode and carries an optional explicit
       // client name; empty means "resolve it yourself from inside the popup".
       const clientArg = typeof values.client === "string" ? values.client : "";
-      execBunWidget(teamScriptPath, [], "switcher", { TMUX_IDE_PICKER_CLIENT: clientArg });
+      execBunWidget("team", teamScriptPath, [], "switcher", { TMUX_IDE_PICKER_CLIENT: clientArg });
       break;
     }
 
@@ -1038,7 +1041,7 @@ try {
       }
       const popupArgs = [`--dir=${process.cwd()}`];
       if (popupSession) popupArgs.push(`--session=${popupSession}`);
-      execBunWidget(scriptPath, popupArgs, `popup ${widget}`);
+      execBunWidget(widget, scriptPath, popupArgs, `popup ${widget}`);
       break;
     }
 

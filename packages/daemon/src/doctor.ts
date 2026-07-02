@@ -1,8 +1,10 @@
 import { execSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { resolve } from "node:path";
+import { resolve, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import { getCurrentVersion, getUpdateStatus } from "./lib/update-check.ts";
 import { discoverAgents, presentAgents, type DiscoveredAgent } from "./lib/agent-discovery.ts";
+import { findCompiledTui, isBunAvailable } from "./tui/compiled.ts";
 
 interface CheckResult {
   label: string;
@@ -111,6 +113,30 @@ export async function doctor({
       if (!existsSync(path)) throw new Error("not found in current directory");
       return "found";
     }),
+  );
+
+  checks.push(
+    check(
+      "TUI surfaces (cockpit / widgets)",
+      () => {
+        // The OpenTUI/Solid surfaces run either from a dev checkout (bun + the
+        // `.tsx` sources) or, when installed, from the compiled `tmux-ide-tui`
+        // binary. Report which path is live so a "nothing renders" install is
+        // diagnosable instead of silent. Mirrors resolveTuiLaunch's order.
+        const here = dirname(fileURLToPath(import.meta.url));
+        const checkoutEntry = [
+          resolve(here, "../packages/daemon/src/tui/team/index.tsx"),
+          resolve(here, "tui/team/index.tsx"),
+        ].find(existsSync);
+        const binary = findCompiledTui();
+        if (checkoutEntry && isBunAvailable()) return "dev checkout (bun)";
+        if (binary) return `compiled binary (${binary})`;
+        throw new Error(
+          "no dev checkout+bun and no compiled binary — build one with `pnpm build:tui` or install a release that ships it",
+        );
+      },
+      { optional: true },
+    ),
   );
 
   checks.push(

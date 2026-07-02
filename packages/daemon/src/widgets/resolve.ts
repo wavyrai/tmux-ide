@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import type { ThemeConfig } from "../types.ts";
 import { shellEscape } from "../lib/shell.ts";
+import { resolveTuiLaunch, findCompiledTui, isBunAvailable } from "../tui/compiled.ts";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -48,20 +49,40 @@ const REPO_ROOT = existsSync(resolve(__dirname, "explorer/index.tsx"))
   ? resolve(__dirname, "../../../..") // unbundled: src/widgets → repo root
   : resolve(__dirname, ".."); // bundled: bin → repo root
 
+function widgetArgs(opts: WidgetOptions): string[] {
+  const args = [`--session=${opts.session}`, `--dir=${opts.dir}`];
+  if (opts.target) args.push(`--target=${opts.target}`);
+  if (opts.theme) args.push(`--theme=${JSON.stringify(opts.theme)}`);
+  return args;
+}
+
 export function resolveWidgetCommand(type: string, opts: WidgetOptions): string {
   const entry = WIDGET_ENTRY_POINTS[type];
   if (!entry) throw new Error(`Unknown widget type: ${type}`);
 
   const scriptPath = widgetEntryPath(entry);
-  const args = [`--session=${opts.session}`, `--dir=${opts.dir}`];
-  if (opts.target) args.push(`--target=${opts.target}`);
-  if (opts.theme) args.push(`--theme=${JSON.stringify(opts.theme)}`);
+  const launch = resolveTuiLaunch({
+    surface: type,
+    scriptPath,
+    args: widgetArgs(opts),
+    checkoutExists: existsSync(scriptPath),
+    bunAvailable: isBunAvailable(),
+    compiledBinary: findCompiledTui(),
+  });
 
-  const escapedArgs = args.map(shellEscape).join(" ");
+  if (launch.mode === "unavailable") {
+    throw new Error(`Cannot launch ${type} widget: ${launch.reasons.join("; ")}`);
+  }
 
-  // cd to the tmux-ide REPO root (not the project) so bunfig.toml's JSX
-  // preload is found; the project dir rides in via --dir.
-  return `cd ${shellEscape(REPO_ROOT)} && bun ${shellEscape(scriptPath)} ${escapedArgs}`;
+  const escapedArgs = launch.argv.map(shellEscape).join(" ");
+  if (launch.mode === "bun") {
+    // cd to the tmux-ide REPO root (not the project) so bunfig.toml's JSX
+    // preload is found; the project dir rides in via --dir.
+    return `cd ${shellEscape(REPO_ROOT)} && bun ${escapedArgs}`;
+  }
+  // Compiled binary: no bunfig to find (JSX + native dylib are baked in). Run
+  // from the pane's dir so a stray repo-root bunfig can't hijack the preload.
+  return `cd ${shellEscape(opts.dir)} && ${shellEscape(launch.bin)} ${escapedArgs}`;
 }
 
 export interface WidgetSpawnSpec {
@@ -79,11 +100,22 @@ export function resolveWidgetSpawn(type: string, opts: WidgetOptions): WidgetSpa
   if (!entry) throw new Error(`Unknown widget type: ${type}`);
 
   const scriptPath = widgetEntryPath(entry);
-  const args = [`--session=${opts.session}`, `--dir=${opts.dir}`];
-  if (opts.target) args.push(`--target=${opts.target}`);
-  if (opts.theme) args.push(`--theme=${JSON.stringify(opts.theme)}`);
+  const launch = resolveTuiLaunch({
+    surface: type,
+    scriptPath,
+    args: widgetArgs(opts),
+    checkoutExists: existsSync(scriptPath),
+    bunAvailable: isBunAvailable(),
+    compiledBinary: findCompiledTui(),
+  });
 
-  return { cwd: REPO_ROOT, cmd: ["bun", scriptPath, ...args] };
+  if (launch.mode === "unavailable") {
+    throw new Error(`Cannot launch ${type} widget: ${launch.reasons.join("; ")}`);
+  }
+  // Bun spawns from the repo root (bunfig preload); the binary spawns from the
+  // pane's dir (self-contained, avoids a stray bunfig preload).
+  const cwd = launch.mode === "bun" ? REPO_ROOT : opts.dir;
+  return { cwd, cmd: [launch.bin, ...launch.argv] };
 }
 
 export const WIDGET_TYPES = Object.keys(WIDGET_ENTRY_POINTS);
