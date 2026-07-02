@@ -218,12 +218,13 @@ describe("splitPane", () => {
     expect(!args.includes("-v")).toBeTruthy();
   });
 
-  it("passes percent correctly", () => {
+  it("passes percent as -l N% (portable across tmux >=3.1)", () => {
     mockExec.mockImplementation(() => "%3\n");
     splitPane("%0", "vertical", "/workspace", 42);
     const args = mockExec.mock.calls[0][1];
-    const pIdx = args.indexOf("-p");
-    expect(args[pIdx + 1]).toBe("42");
+    const lIdx = args.indexOf("-l");
+    expect(args[lIdx + 1]).toBe("42%");
+    expect(args.includes("-p")).toBeFalsy();
   });
 
   it("returns trimmed pane ID", () => {

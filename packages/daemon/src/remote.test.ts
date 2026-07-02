@@ -165,6 +165,12 @@ describe("remote CLI contracts", () => {
         "ExitOnForwardFailure=yes",
         "-o",
         "ServerAliveInterval=15",
+        // Dedicated connection: mux hand-off would drop the forward when the
+        // -N client exits (ControlMaster + SSM setups).
+        "-o",
+        "ControlMaster=no",
+        "-o",
+        "ControlPath=none",
         "atlas-evg",
       ]);
     });

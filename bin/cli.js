@@ -326,8 +326,10 @@ function splitPane(targetPane, direction, cwd, percent) {
       direction === "vertical" ? "-v" : "-h",
       "-c",
       cwd,
-      "-p",
-      String(percent)
+      // `-l N%` (tmux ≥3.1) — the old `-p N` percentage flag is gone from
+      // some builds (e.g. 3.4 fails with "size missing").
+      "-l",
+      `${percent}%`
     ],
     { encoding: "utf-8" }
   ).trim();
@@ -16858,6 +16860,14 @@ function buildSshForwardArgs(opts) {
     "ExitOnForwardFailure=yes",
     "-o",
     "ServerAliveInterval=15",
+    // The tunnel must be a dedicated connection we own. Under ControlMaster
+    // multiplexing (common with SSM ProxyCommand setups) the `-N` client can
+    // exit immediately after handing off to the persistent master, taking its
+    // forward down with it. Disable mux for this one connection.
+    "-o",
+    "ControlMaster=no",
+    "-o",
+    "ControlPath=none",
     opts.host
   ];
 }

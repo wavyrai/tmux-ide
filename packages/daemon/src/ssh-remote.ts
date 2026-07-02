@@ -191,6 +191,14 @@ export function buildSshForwardArgs(opts: {
     "ExitOnForwardFailure=yes",
     "-o",
     "ServerAliveInterval=15",
+    // The tunnel must be a dedicated connection we own. Under ControlMaster
+    // multiplexing (common with SSM ProxyCommand setups) the `-N` client can
+    // exit immediately after handing off to the persistent master, taking its
+    // forward down with it. Disable mux for this one connection.
+    "-o",
+    "ControlMaster=no",
+    "-o",
+    "ControlPath=none",
     opts.host,
   ];
 }
