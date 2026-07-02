@@ -296,9 +296,10 @@ export default async function HomePage() {
           <p className="text-fd-muted-foreground text-base leading-normal mt-2 max-w-2xl">
             Run a heterogeneous fleet — Claude Code, codex, cursor-agent, aider, anything — in one
             set of sessions, and let them coordinate. Every agent&apos;s status is on a shared bus
-            every other agent can read; one agent can task another by typing into its prompt; and any
-            agent can block until a teammate finishes. It&apos;s agent-agnostic by design: Claude Code
-            reports automatically, everyone else self-reports with a one-line pane option.
+            every other agent can read; one agent can task another by typing into its prompt; and
+            any agent can block until a teammate finishes. It&apos;s agent-agnostic by design:
+            Claude Code reports automatically, everyone else self-reports with a one-line pane
+            option.
           </p>
           <div className="mt-5 border border-fd-border bg-fd-muted/10 p-4 font-mono text-xs text-fd-muted-foreground overflow-x-auto">
             <div>
