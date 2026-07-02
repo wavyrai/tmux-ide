@@ -22,6 +22,7 @@ import { validate } from "../packages/daemon/src/validate.ts";
 import { detect } from "../packages/daemon/src/detect.ts";
 import { config } from "../packages/daemon/src/config.ts";
 import { restart } from "../packages/daemon/src/restart.ts";
+import { restore } from "../packages/daemon/src/restore.ts";
 import { send } from "../packages/daemon/src/send.ts";
 import { IdeError } from "../packages/daemon/src/lib/errors.ts";
 import { printCommandError } from "../packages/daemon/src/lib/output.ts";
@@ -59,6 +60,10 @@ const { positionals, values } = parseArgs({
     team: { type: "boolean" },
     // adopt every live (non-internal) session at once
     all: { type: "boolean" },
+    // restore: print the plan without touching tmux
+    "dry-run": { type: "boolean" },
+    // restore: replay recorded pane commands (off by default for safety)
+    "run-commands": { type: "boolean" },
     // statusline: the session whose bar is being rendered
     active: { type: "string" },
     // switcher: the tmux client the popup was invoked on (see `switcher` case)
@@ -72,6 +77,7 @@ const knownCommands = new Set([
   "stop",
   "attach",
   "restart",
+  "restore",
   "ls",
   "doctor",
   "status",
@@ -138,6 +144,8 @@ ${bold("Usage:")}
   ${cyan("tmux-ide init")} [--template]  ${dim("Scaffold a new ide.yml (auto-detects stack)")}
   ${cyan("tmux-ide stop")}               ${dim("Kill the current IDE session")}
   ${cyan("tmux-ide restart")}            ${dim("Stop and relaunch the IDE session")}
+  ${cyan("tmux-ide restore")} [--dry-run] [--run-commands] [--json]
+                              ${dim("Rebuild the fleet from the last snapshot after a tmux crash")}
   ${cyan("tmux-ide attach")}             ${dim("Reattach to a running session")}
   ${cyan("tmux-ide team")} [--json]      ${dim("TUI over all tmux sessions (--json prints fleet state)")}
   ${cyan("tmux-ide switcher")}           ${dim("Compact session picker (opens in the M-p popup on adopted sessions)")}
@@ -286,6 +294,14 @@ try {
 
     case "restart":
       await restart(positionals[1], { json });
+      break;
+
+    case "restore":
+      await restore({
+        json,
+        dryRun: values["dry-run"] === true,
+        runCommands: values["run-commands"] === true,
+      });
       break;
 
     case "ls":

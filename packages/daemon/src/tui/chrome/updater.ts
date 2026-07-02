@@ -37,6 +37,13 @@ import {
   type NotifyEvent,
   type ToastTarget,
 } from "./notify.ts";
+import {
+  collectFleetSnapshot,
+  createSnapshotter,
+  readSnapshot,
+  snapshotEvery,
+  writeSnapshot,
+} from "./snapshot.ts";
 import { buildStatusline } from "./statusline.ts";
 
 /** Per-session user option holding the pre-rendered status-bar string. */
@@ -308,6 +315,14 @@ export function runUpdaterLoop(): void {
   const lastNotified = new Map<string, number>();
   // Persistent per-pane chip cache so we only rewrite a chip when it changed.
   const chipCache = new Map<string, string>();
+  // The fleet snapshotter — pulsed each tick, self-throttled, writes only on a
+  // structural change so the fleet can be rebuilt after a tmux-server death.
+  const snapshotter = createSnapshotter({
+    collect: () => collectFleetSnapshot(),
+    read: readSnapshot,
+    write: writeSnapshot,
+    every: snapshotEvery(),
+  });
   const tick = () => {
     try {
       runUpdaterTick({
@@ -327,6 +342,11 @@ export function runUpdaterLoop(): void {
       });
     } catch {
       // never let one bad tick kill the loop
+    }
+    try {
+      snapshotter.onTick();
+    } catch {
+      // a failed snapshot just means staler disaster-recovery state
     }
   };
   tick();
