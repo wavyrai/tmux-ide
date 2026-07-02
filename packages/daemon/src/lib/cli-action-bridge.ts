@@ -106,8 +106,17 @@ const requireFromHere = createRequire(import.meta.url);
  *  against the live daemon's advertised version on attach. */
 function expectedDaemonVersion(): string {
   try {
-    const pkg = requireFromHere("../../package.json") as { version?: string };
-    return pkg.version ?? "0.0.0";
+    // Survive both dev layout (../../package.json) and the esbuild-bundled
+    // bin/cli.js layout (../package.json).
+    for (const candidate of ["../../package.json", "../package.json"]) {
+      try {
+        const pkg = requireFromHere(candidate) as { version?: string };
+        if (typeof pkg.version === "string") return pkg.version;
+      } catch {
+        // try the next candidate
+      }
+    }
+    return "0.0.0";
   } catch {
     return "0.0.0";
   }

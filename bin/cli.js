@@ -27022,6 +27022,16 @@ import { createRequire as createRequire3 } from "node:module";
 import { existsSync as existsSync37, readdirSync as readdirSync11, statSync as statSync10, unlinkSync as unlinkSync5 } from "node:fs";
 import { join as join40 } from "node:path";
 import { WebSocket, WebSocketServer as WebSocketServer2 } from "ws";
+function resolveOwnVersion() {
+  for (const candidate of ["../../package.json", "../package.json"]) {
+    try {
+      const pkg = requireFromHere(candidate);
+      if (typeof pkg.version === "string") return pkg.version;
+    } catch {
+    }
+  }
+  return "0.0.0";
+}
 function tmux3(...args) {
   return execFileSync8("tmux", args, {
     encoding: "utf-8",
@@ -27531,11 +27541,10 @@ async function startEmbeddedDaemon(opts) {
     localBypassToken,
     silent: opts.silent
   });
-  const pkg = requireFromHere("../../package.json");
   writeCanonicalDaemonInfo({
     pid: process.pid,
     port,
-    version: pkg.version ?? "0.0.0",
+    version: resolveOwnVersion(),
     startedAt: (/* @__PURE__ */ new Date()).toISOString(),
     bindHostname,
     authToken
@@ -27789,8 +27798,14 @@ function daemonBaseUrl(info) {
 }
 function expectedDaemonVersion() {
   try {
-    const pkg = requireFromHere2("../../package.json");
-    return pkg.version ?? "0.0.0";
+    for (const candidate of ["../../package.json", "../package.json"]) {
+      try {
+        const pkg = requireFromHere2(candidate);
+        if (typeof pkg.version === "string") return pkg.version;
+      } catch {
+      }
+    }
+    return "0.0.0";
   } catch {
     return "0.0.0";
   }
