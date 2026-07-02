@@ -56,7 +56,7 @@ export function resolveTuiLaunch(input: TuiResolveInput): TuiLaunch {
   const reasons: string[] = [];
   if (!input.checkoutExists) {
     reasons.push(
-      "the TUI widget sources are absent (they ship only in a cloned tmux-ide checkout)",
+      "the TUI widget sources are absent (reinstall tmux-ide — releases since v2.6.1 ship them)",
     );
   }
   if (!input.bunAvailable) {

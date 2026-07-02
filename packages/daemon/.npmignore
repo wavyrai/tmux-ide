@@ -1,9 +1,10 @@
+src/**/__tests__
+src/**/*.test.ts
 # The `files` field in package.json is the authoritative tarball
 # allowlist; this .npmignore is a belt-and-suspenders safety net
 # in case `files` is ever loosened.
 
 # Sources + tooling — never in the published tarball.
-src/
 scripts/
 __tests__/
 *.test.ts

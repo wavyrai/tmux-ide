@@ -1,6 +1,6 @@
 {
   "name": "tmux-ide",
-  "version": "2.6.0",
+  "version": "2.6.1",
   "description": "Turn any project into a tmux-powered terminal IDE with a simple ide.yml",
   "type": "module",
   "bin": {
@@ -12,7 +12,13 @@
     "skill",
     "templates",
     "packages/daemon/dist",
-    "!packages/daemon/dist/tui"
+    "!packages/daemon/dist/tui",
+    "packages/daemon/src",
+    "bunfig.toml",
+    "packages/contracts/src",
+    "packages/tmux-bridge/src",
+    "packages/tmux-bridge/package.json",
+    "packages/contracts/package.json"
   ],
   "scripts": {
     "build": "pnpm build:cli",
@@ -60,7 +66,6 @@
     "@hono/node-server": "^1.19.11",
     "@hono/zod-validator": "^0.7.6",
     "@opentui/core": "^0.1.88",
-    "@opentui/core-darwin-arm64": "^0.1.88",
     "@opentui/solid": "^0.1.88",
     "@parcel/watcher": "^2.5.6",
     "@types/ws": "^8.18.1",
@@ -93,5 +98,8 @@
     "turbo": "^2.3.3",
     "typescript": "^5.9.3",
     "vitest": "^4.1.0"
+  },
+  "optionalDependencies": {
+    "@opentui/core-darwin-arm64": "^0.1.88"
   }
 }

@@ -1,6 +1,30 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { resolve, dirname } from "node:path";
+import { existsSync, mkdirSync, readFileSync, writeFileSync, symlinkSync } from "node:fs";
+import { resolve, dirname, relative } from "node:path";
 import { homedir } from "node:os";
+
+// ---------------------------------------------------------------------------
+// Workspace-package links — MUST run before the Claude gate below.
+//
+// The TUI sources (packages/daemon/src/**, run via bun) import the workspace
+// packages @tmux-ide/tmux-bridge and @tmux-ide/contracts. In a dev checkout
+// pnpm symlinks them into node_modules; an npm install has no such links, so
+// recreate them (their package.json mains point at shipped src/index.ts,
+// which bun runs directly). Best-effort: never fail an install.
+// ---------------------------------------------------------------------------
+try {
+  const pkgRoot = dirname(import.meta.dirname);
+  const scopeDir = resolve(pkgRoot, "node_modules", "@tmux-ide");
+  for (const name of ["tmux-bridge", "contracts"]) {
+    const target = resolve(pkgRoot, "packages", name);
+    const link = resolve(scopeDir, name);
+    if (!existsSync(target) || existsSync(link)) continue;
+    mkdirSync(scopeDir, { recursive: true });
+    // "junction" keeps Windows working without admin; ignored elsewhere.
+    symlinkSync(relative(scopeDir, target), link, "junction");
+  }
+} catch {
+  // linking is best-effort; the CLI's TUI fallback message covers the gap
+}
 
 const claudeDir = resolve(homedir(), ".claude");
 if (!shouldInstallClaudeIntegration() || !existsSync(claudeDir)) {

@@ -2340,7 +2340,7 @@ function resolveTuiLaunch(input) {
   const reasons = [];
   if (!input.checkoutExists) {
     reasons.push(
-      "the TUI widget sources are absent (they ship only in a cloned tmux-ide checkout)"
+      "the TUI widget sources are absent (reinstall tmux-ide \u2014 releases since v2.6.1 ship them)"
     );
   }
   if (!input.bunAvailable) {
@@ -2920,7 +2920,9 @@ function buildCheatsheet(opts) {
       `${bold("prefix h")} home  ${bold("prefix j")} switcher  ${bold("prefix k")} keys  ${bold("prefix u")} menu  ${bold("prefix b")} sidebar  ${bold("prefix e")} files  ${bold("prefix g")} changes  ${bold("prefix v")} config`
     )
   );
-  lines.push(pad(dim(`prefix = your tmux prefix (usually C-b) \u2014 use these when Alt keys don't reach tmux`)));
+  lines.push(
+    pad(dim(`prefix = your tmux prefix (usually C-b) \u2014 use these when Alt keys don't reach tmux`))
+  );
   lines.push("");
   lines.push(head("panels"));
   const panelHints = PANEL_POPUPS.map(
@@ -10973,7 +10975,7 @@ var require_package = __commonJS({
   "package.json"(exports, module) {
     module.exports = {
       name: "tmux-ide",
-      version: "2.6.0",
+      version: "2.6.1",
       description: "Turn any project into a tmux-powered terminal IDE with a simple ide.yml",
       type: "module",
       bin: {
@@ -10984,7 +10986,14 @@ var require_package = __commonJS({
         "scripts",
         "skill",
         "templates",
-        "packages/daemon/dist"
+        "packages/daemon/dist",
+        "!packages/daemon/dist/tui",
+        "packages/daemon/src",
+        "bunfig.toml",
+        "packages/contracts/src",
+        "packages/tmux-bridge/src",
+        "packages/tmux-bridge/package.json",
+        "packages/contracts/package.json"
       ],
       scripts: {
         build: "pnpm build:cli",
@@ -10993,8 +11002,8 @@ var require_package = __commonJS({
         prepublishOnly: "pnpm build:cli && pnpm check && node scripts/prepublish-check.mjs",
         typecheck: 'echo "root typecheck deferred to per-package turbo run"',
         dev: "node bin/cli.js",
-        test: "vitest run --dir src src/cli.test.ts",
-        "test:unit": "vitest run --dir src src/cli.test.ts",
+        test: "pnpm -r --filter @tmux-ide/daemon --filter @tmux-ide/contracts run test",
+        "test:unit": "pnpm -r --filter @tmux-ide/daemon --filter @tmux-ide/contracts run test",
         lint: "eslint bin scripts packages/contracts/src packages/tmux-bridge/src packages/daemon/src",
         "lint:workspace": "turbo run lint",
         format: "prettier --write .",
@@ -11004,7 +11013,7 @@ var require_package = __commonJS({
         "docs:build": "turbo run build --filter=@tmux-ide/docs",
         "pack:check": "npm pack --dry-run --cache /tmp/tmux-ide-npm-cache > /dev/null",
         "check:native-deps": "node packages/daemon/scripts/check-native-deps.mjs",
-        check: "pnpm run lint:workspace && pnpm run format:check && pnpm run typecheck:workspace && vitest run --dir src src/cli.test.ts && pnpm run docs:build && pnpm run pack:check && pnpm run check:native-deps",
+        check: "pnpm run lint:workspace && pnpm run format:check && pnpm run typecheck:workspace && pnpm run test:unit && pnpm run docs:build && pnpm run pack:check && pnpm run check:native-deps",
         postinstall: "node scripts/postinstall.js",
         docs: "turbo run dev --filter=@tmux-ide/docs"
       },
@@ -11032,7 +11041,6 @@ var require_package = __commonJS({
         "@hono/node-server": "^1.19.11",
         "@hono/zod-validator": "^0.7.6",
         "@opentui/core": "^0.1.88",
-        "@opentui/core-darwin-arm64": "^0.1.88",
         "@opentui/solid": "^0.1.88",
         "@parcel/watcher": "^2.5.6",
         "@types/ws": "^8.18.1",
@@ -11065,6 +11073,9 @@ var require_package = __commonJS({
         turbo: "^2.3.3",
         typescript: "^5.9.3",
         vitest: "^4.1.0"
+      },
+      optionalDependencies: {
+        "@opentui/core-darwin-arm64": "^0.1.88"
       }
     };
   }
@@ -12778,7 +12789,7 @@ function execBunWidget(surface, scriptPath, args, commandLabel, extraEnv = {}) {
   if (launch2.mode === "unavailable") {
     throw new IdeError(
       `\`tmux-ide ${commandLabel}\` is unavailable because ${launch2.reasons.join(" and ")}.
-Run it from a cloned tmux-ide checkout with bun installed, or install a release that ships the compiled binary.`,
+Install bun (https://bun.sh) \u2014 the TUI surfaces run on it. Sources ship with the npm package since v2.6.1.`,
       { code: "USAGE", exitCode: 1 }
     );
   }
@@ -12944,7 +12955,9 @@ try {
       }
       if (values.popup === true) {
         const clientArg = typeof values.client === "string" ? values.client : "";
-        execBunWidget("team", teamScriptPath, [], "team --popup", { TMUX_IDE_POPUP_CLIENT: clientArg });
+        execBunWidget("team", teamScriptPath, [], "team --popup", {
+          TMUX_IDE_POPUP_CLIENT: clientArg
+        });
         break;
       }
       launchTeamCockpit();
