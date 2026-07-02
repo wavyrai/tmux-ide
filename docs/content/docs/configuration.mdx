@@ -20,7 +20,7 @@ tmux-ide init          # or: tmux-ide detect --write
 
 ```yaml
 name: my-app # tmux session name
-sidebar: true # ⌥b nav column, injected at launch
+sidebar: true # nav column (prefix b / ⌥b), injected at launch
 
 rows:
   - size: 70% # row height
@@ -45,7 +45,7 @@ rows:
 | `name` | string | tmux session name |
 | `before` | string | Optional pre-launch shell hook |
 | `rows` | array | Row definitions (at least one) |
-| `sidebar` | `true` \| `{ width }` | Inject the ⌥b nav column at launch |
+| `sidebar` | `true` \| `{ width }` | Inject the nav column (`prefix b` / `⌥b`) at launch |
 | `theme` | object | Per-session color overrides (see below) |
 | `team` | object | Enable Claude Code agent teams (see [Task system](/docs/task-system)) |
 
@@ -85,8 +85,9 @@ panes:
 ```
 
 Available types include `explorer`, `changes`, `preview`, `config`, `tasks`, and
-`costs`. The same widgets are available as floating panels (`⌥e` / `⌥g` / `⌥,`)
-from any adopted session — see [Home, sidebar & panels](/docs/app-surfaces).
+`costs`. The same widgets are available as floating panels (`prefix e` / `g` /
+`v`, or `⌥e` / `⌥g` / `⌥,`) from any adopted session — see
+[Home, sidebar & panels](/docs/app-surfaces).
 
 ### Sidebar sugar
 
@@ -98,7 +99,7 @@ sidebar:
 ```
 
 `sidebar: true` injects a full-height left nav column at launch. Omit it (or set
-`false`) for no sidebar. You can also toggle it at runtime with `⌥b`.
+`false`) for no sidebar. You can also toggle it at runtime with `prefix b` (or `⌥b`).
 
 ### Per-session theme
 

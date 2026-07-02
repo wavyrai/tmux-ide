@@ -24,20 +24,22 @@ tmux-ide adopt work    # add the chrome to a session you already have
 
 **3 — Survive anything.** Continuous snapshots mean a tmux server death isn't a lost afternoon. `tmux-ide restore` rebuilds every session, window, layout, cwd, and title; `--resume-agents` revives your Claude conversations from their recorded session ids. See [Restore & resume](/docs/restore-resume).
 
-## One app, one keystroke away
+## One app, a keystroke away
 
-Once a session is adopted, the whole UI is a modifier key away — one interaction grammar (`j`/`k` move, `enter` opens, `/` filters, `esc` backs out, `?` asks) and one theme file.
+Once a session is adopted, the whole UI is a couple of keystrokes away — one interaction grammar (`j`/`k` move, `enter` opens, `/` filters, `esc` backs out, `?` asks) and one theme file.
 
-| Key | Surface |
-| --- | --- |
-| `⌥h` | Home cockpit — fleet tree, detail, live preview, rollup header |
-| `⌥b` | Sidebar — a fleet nav column in any session |
-| `⌥e` `⌥g` `⌥,` | Floating panels — file explorer, git changes, config editor |
-| `⌥m` | Actions menu — native tmux menu at the pointer (or right-click) |
-| `⌥p` | Switch session |
-| `⌥k` | Cheat sheet — every key on one page |
+Every surface has a **prefix twin** (`prefix` then a letter) that works under every keyboard protocol, plus an `⌥` fast-path for a single keystroke when your terminal allows it. Lead with the prefix — an agent pane can temporarily swallow root-table `Alt` binds, but the tmux prefix always reaches tmux.
 
-See [Home, sidebar & panels](/docs/app-surfaces).
+| Surface | Prefix (always works) | Alt fast-path |
+| --- | --- | --- |
+| Home cockpit — fleet tree, detail, preview | `prefix h` | `⌥h` |
+| Switch session | `prefix j` | `⌥p` |
+| Cheat sheet — every key on one page | `prefix k` | `⌥k` |
+| Actions menu — at the pointer (or right-click) | `prefix u` | `⌥m` |
+| Sidebar — a fleet nav column | `prefix b` | `⌥b` |
+| Panels — explorer / changes / config | `prefix e` `g` `v` | `⌥e` `⌥g` `⌥,` |
+
+See [Home, sidebar & panels](/docs/app-surfaces) and [The dock & keys](/docs/the-dock).
 
 ## Start here
 

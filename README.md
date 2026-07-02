@@ -37,18 +37,20 @@ tmux set-option -p @agent_state "working:$(date +%s)"
 
 **Survive anything.** Continuous snapshots mean a tmux server death isn't a lost afternoon. `tmux-ide restore` rebuilds every session, window, layout, cwd, and title; `--resume-agents` revives your Claude conversations from their recorded session ids.
 
-## One app, one keystroke away
+## One app, a keystroke away
 
-Once a session is adopted, the whole UI is a modifier key away — one interaction grammar (`j`/`k` move, `enter` opens, `/` filters, `esc` backs out, `?` asks) and one theme file (`~/.tmux-ide/config.json`).
+Once a session is adopted, the whole UI is a keystroke or two away — one interaction grammar (`j`/`k` move, `enter` opens, `/` filters, `esc` backs out, `?` asks) and one theme file (`~/.tmux-ide/config.json`).
 
-| Key | Surface |
-| --- | --- |
-| `⌥h` | Home cockpit — fleet tree, detail, live preview, rollup header |
-| `⌥b` | Sidebar — a fleet nav column in any session |
-| `⌥e` `⌥g` `⌥,` | Floating panels — file explorer, git changes, config editor |
-| `⌥m` | Actions menu — native tmux menu at the pointer (or right-click) |
-| `⌥p` | Switch session |
-| `⌥k` | Cheat sheet — every key on one page |
+Every surface has a **prefix twin** (`prefix` then a letter) that works under every keyboard protocol, plus an `⌥` fast-path for a single keystroke when your terminal allows it. Lead with the prefix — an agent pane can temporarily change how the terminal encodes keys and swallow a root-table `Alt` bind, but the tmux prefix always reaches tmux. Right-click anywhere opens the actions menu at the pointer.
+
+| Surface | Prefix (always works) | Alt fast-path |
+| --- | --- | --- |
+| Home cockpit — fleet tree, detail, preview | `prefix h` | `⌥h` |
+| Switch session | `prefix j` | `⌥p` |
+| Cheat sheet — every key on one page | `prefix k` | `⌥k` |
+| Actions menu — at the pointer (or right-click) | `prefix u` | `⌥m` |
+| Sidebar — a fleet nav column | `prefix b` | `⌥b` |
+| Panels — explorer / changes / config | `prefix e` `g` `v` | `⌥e` `⌥g` `⌥,` |
 
 ## Optional: describe a layout with ide.yml
 
@@ -61,7 +63,7 @@ tmux-ide               # launch (the session is adopted automatically)
 
 ```yaml
 name: my-app
-sidebar: true # ⌥b nav column
+sidebar: true # nav column (prefix b / ⌥b)
 
 rows:
   - size: 70%
@@ -86,9 +88,35 @@ tmux-ide also has a `worktree` flow (a git worktree plus an adopted session per 
 
 - **tmux** — 3.2+ recommended (`tmux-ide doctor` requires ≥ 3.0; 3.6 is the smoothest)
 - **Node.js** — ≥ 20
-- **Bun** — only for the TUI surfaces (home cockpit, sidebar, floating panels)
+- **Bun** — only needed for the TUI surfaces (home cockpit, sidebar, floating
+  panels) **when running from a dev checkout**. Installed releases ship a
+  compiled `tmux-ide-tui` binary instead, so no bun runtime is required.
 
-Run `tmux-ide doctor` to check your machine.
+Run `tmux-ide doctor` to check your machine — the "TUI surfaces" row reports
+whether they resolve via a dev checkout (bun) or the compiled binary.
+
+### TUI surfaces & the compiled binary
+
+The cockpit/sidebar/widget surfaces are OpenTUI/Solid (`.tsx`). In a dev checkout
+they run under `bun` (the bunfig preload supplies the JSX transform). For
+installed users there is no checkout and often no bun, so those surfaces run from
+a single self-contained executable built with `bun build --compile`:
+
+```bash
+pnpm build:tui   # → packages/daemon/dist/tui/tmux-ide-tui (requires bun to build)
+```
+
+It bundles every surface behind a `tmux-ide-tui <surface> [flags]` dispatcher,
+embeds the native OpenTUI dylib, and pre-transforms JSX at build time — so it
+needs no runtime. The CLI resolves surfaces checkout-first, binary-second; the
+binary is the installed fallback.
+
+**Note:** a compiled binary is platform-specific (built for the host
+OS/arch). Shipping it for every platform requires per-target builds
+(`--target bun-<os>-<arch>`); a single npm tarball carries only the build host's
+binary. Until per-platform artifacts are wired, installs on other platforms fall
+back to the "install bun + run from a checkout" path, which `tmux-ide doctor`
+spells out.
 
 ## Contributor workflow
 

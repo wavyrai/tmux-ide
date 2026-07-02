@@ -5,12 +5,28 @@ description: The floating surfaces the dock triggers — the home cockpit, the s
 
 # Home, sidebar & panels
 
-The dock is always on. Everything else is a keystroke away and floats over
+The dock is always on. Everything else is a keystroke or two away and floats over
 whatever you're doing — one interaction grammar (`j`/`k` · `enter` · `/` · `esc`
 · `?`), one theme. These surfaces share the same TUI, so the fleet looks and
 behaves identically whether you open it as the home screen or as a popup.
 
-## The home cockpit — `⌥h`
+Every surface has two bindings: a **prefix twin** (`prefix` then a letter) that
+works under every keyboard protocol, and an `⌥` fast-path for a single keystroke
+when your terminal allows it. Lead with the prefix; see
+[The dock & keys](/docs/the-dock#why-prefix-first) for why.
+
+| Surface | Prefix (always works) | Alt fast-path |
+| --- | --- | --- |
+| Home cockpit | `prefix h` | `⌥h` |
+| Switch session | `prefix j` | `⌥p` |
+| Sidebar | `prefix b` | `⌥b` |
+| File explorer | `prefix e` | `⌥e` |
+| Git changes | `prefix g` | `⌥g` |
+| Config editor | `prefix v` | `⌥,` |
+| Actions menu | `prefix u` | `⌥m` |
+| Cheat sheet | `prefix k` | `⌥k` |
+
+## The home cockpit — `prefix h` (or `⌥h`)
 
 Running `tmux-ide` bare, with no `ide.yml`, opens the **home cockpit** — the
 fleet home screen and the product's first surface:
@@ -20,10 +36,10 @@ fleet home screen and the product's first surface:
 - a **live preview** of the selected pane, and
 - a **rollup header** summarizing fleet-wide status.
 
-From inside any adopted session, `⌥h` opens the same cockpit as a popup over your
-work — or use the dock's `[ ⌂ home ]` trigger. `esc` closes it.
+From inside any adopted session, `prefix h` (or `⌥h`) opens the same cockpit as a
+popup over your work — or use the dock's `[ ⌂ home ]` trigger. `esc` closes it.
 
-## The sidebar — `⌥b`
+## The sidebar — `prefix b` (or `⌥b`)
 
 The **sidebar** is a fleet nav column you toggle in place, without leaving your
 session. It's the persistent version of the cockpit: keep the fleet in view down
@@ -33,21 +49,20 @@ the side while you work in the main panes.
 tmux-ide sidebar-toggle --session work
 ```
 
-## The switcher — `⌥p`
+## The switcher — `prefix j` (or `⌥p`)
 
 A compact session picker. Type to filter, `enter` to switch. It's the fast path
 between sessions and opens from the dock's `[ ⧉ switch ]` trigger too.
 
 ## Floating panels
 
-Three widgets open as floating app dialogs — one keystroke to open, `esc` to
-close:
+Three widgets open as floating app dialogs — a keystroke to open, `esc` to close:
 
-| Key | Panel | What it is |
-| --- | --- | --- |
-| `⌥e` | Explorer | A file-tree navigator for the session's directory |
-| `⌥g` | Changes | A git changes / diff view |
-| `⌥,` | Config | An interactive editor for `~/.tmux-ide/config.json` |
+| Prefix (always works) | Alt fast-path | Panel | What it is |
+| --- | --- | --- | --- |
+| `prefix e` | `⌥e` | Explorer | A file-tree navigator for the session's directory |
+| `prefix g` | `⌥g` | Changes | A git changes / diff view |
+| `prefix v` | `⌥,` | Config | An interactive editor for `~/.tmux-ide/config.json` |
 
 You can also open them explicitly:
 
@@ -58,19 +73,21 @@ tmux-ide popup config
 ```
 
 The panel keybinds are rebindable under `keys.panels` in the config — see
-[Theming & config](/docs/theming).
+[Theming & config](/docs/theming). Rebinding a fast-path key moves its prefix
+twin with it.
 
-## The actions menu — `⌥m`
+## The actions menu — `prefix u` (or `⌥m`)
 
-Right-click any pane or the status bar, or press `⌥m`, for a native tmux menu
-**at the pointer**. Same actions everywhere, so there's nothing to memorize about
-which surface owns which command.
+Right-click any pane or the status bar for a native tmux menu **at the pointer**
+(it opens on button _release_). The same menu is on `prefix u` (or `⌥m`). Same
+actions everywhere, so there's nothing to memorize about which surface owns which
+command.
 
-## The cheat sheet — `⌥k`
+## The cheat sheet — `prefix k` (or `⌥k`)
 
 Every key on one iPadOS-style sheet. On a fresh install a first-run welcome card
-names the core keys once; press `⌥k` (or the dock's `[ ? keys ]`) any time to see
-the full sheet, or print it:
+names the core keys once; press `prefix k` (or `⌥k`, or the dock's `[ ? keys ]`)
+any time to see the full sheet, or print it:
 
 ```bash
 tmux-ide cheatsheet

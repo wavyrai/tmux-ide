@@ -39,7 +39,7 @@ const SCENARIOS: Scenario[] = [
         kind: "output",
         text: `Adopted session "work"
   + status bar   fleet tabs with live agent glyphs
-  + [ ⌂ home ]  [ ⧉ switch ]  [ ? keys ]
+  + [ ⌂ home ^b h ]  [ ? keys ^b k ]  [ ⧉ switch ^b j ]
   + border chips  claude · working
 Nothing else changed. tmux-ide unadopt work reverts it.`,
       },

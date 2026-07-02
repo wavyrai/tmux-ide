@@ -87,34 +87,34 @@ const beats = [
 
 const surfaces = [
   {
-    key: "⌥h",
+    key: "prefix h · ⌥h",
     title: "Home cockpit",
-    body: "Bare tmux-ide is the home screen — a fleet tree, detail pane, live preview, and rollup header. ⌥h opens it as a popup over any session.",
+    body: "Bare tmux-ide is the home screen — a fleet tree, detail pane, live preview, and rollup header. prefix h opens it as a popup over any session.",
   },
   {
-    key: "⌥b",
+    key: "prefix b · ⌥b",
     title: "Sidebar",
-    body: "A nav column you toggle in any session. The fleet, one keystroke away, without leaving your work.",
+    body: "A nav column you toggle in any session. The fleet, a keystroke away, without leaving your work.",
   },
   {
-    key: "⌥e ⌥g ⌥,",
+    key: "prefix e g v",
     title: "Floating panels",
     body: "File explorer, git changes, and the config editor as popups over whatever you're doing. esc to close.",
   },
   {
-    key: "⌥m",
+    key: "prefix u · right-click",
     title: "Actions menu",
     body: "Right-click any pane or the status bar for a native tmux menu at the pointer — the same actions, wherever you are.",
   },
   {
-    key: "⌥k",
+    key: "prefix k · ⌥k",
     title: "Cheat sheet",
     body: "Every key on one iPadOS-style sheet. One interaction grammar everywhere: j/k move, enter opens, / filters, esc backs out, ? asks.",
   },
   {
-    key: "~/.tmux-ide/config.json",
-    title: "One theme",
-    body: "A single palette of semantic tokens colors the tmux chrome AND the TUI widgets. Re-theme the whole product in one file.",
+    key: "prefix + letter, always",
+    title: "Reliable keys",
+    body: "Prefix twins work under every keyboard protocol; the ⌥ fast-path is a one-key shortcut when your terminal allows it. One theme file colors chrome AND widgets.",
   },
 ];
 
@@ -292,9 +292,10 @@ export default async function HomePage() {
 
         {/* SURFACE TOUR */}
         <div>
-          <h2 className="font-sans text-2xl text-fd-foreground">One app, one keystroke away</h2>
+          <h2 className="font-sans text-2xl text-fd-foreground">One app, a keystroke away</h2>
           <p className="text-fd-muted-foreground text-sm mt-1">
-            Once a session is adopted, the whole UI is a modifier key away — one grammar, one theme.
+            Once a session is adopted, the whole UI is a prefix twin away — reliable under every
+            keyboard protocol, with an ⌥ fast-path on top. One grammar, one theme.
           </p>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 mt-4">
             {surfaces.map((s) => (

@@ -19,7 +19,7 @@ defaults, and any individual field that's missing or mistyped falls back to its
 own default — the parser never throws. Config is read once per process, so
 changes take effect on the next launch (a re-adopt spawns fresh processes).
 
-You can edit it interactively with the config panel (`⌥,`) or
+You can edit it interactively with the config panel (`prefix v` / `⌥,`) or
 `tmux-ide popup config`.
 
 ## Full default
@@ -58,18 +58,27 @@ You can edit it interactively with the config panel (`⌥,`) or
 
 ## `keys`
 
-tmux key names (`M-` is Meta/⌥). Bind the chrome popups and widget panels:
+Each entry is the **root-table `Alt` fast-path** for a surface, as a tmux key
+name (`M-` is Meta/⌥). tmux-ide also binds a **prefix twin** for every surface —
+the reliable path that works under every keyboard protocol — derived from these
+same entries, so you configure both by editing one value.
 
-| Field | Default | Opens |
-| --- | --- | --- |
-| `popup` | `M-p` | Session switcher |
-| `home` | `M-h` | Home cockpit from anywhere |
-| `cheatsheet` | `M-k` | Cheat sheet |
-| `menu` | `M-m` | Actions menu |
-| `sidebar` | `M-b` | Sidebar nav column |
-| `panels.explorer` | `M-e` | File explorer panel |
-| `panels.changes` | `M-g` | Git changes panel |
-| `panels.config` | `M-,` | Config editor panel |
+| Field | Alt default | Prefix twin | Opens |
+| --- | --- | --- | --- |
+| `home` | `M-h` | `prefix h` | Home cockpit from anywhere |
+| `popup` | `M-p` | `prefix j` | Session switcher |
+| `cheatsheet` | `M-k` | `prefix k` | Cheat sheet |
+| `menu` | `M-m` | `prefix u` | Actions menu |
+| `sidebar` | `M-b` | `prefix b` | Sidebar nav column |
+| `panels.explorer` | `M-e` | `prefix e` | File explorer panel |
+| `panels.changes` | `M-g` | `prefix g` | Git changes panel |
+| `panels.config` | `M-,` | `prefix v` | Config editor panel |
+
+The `Alt` binds can be swallowed while an agent pane has focus (agents may switch
+the terminal's key encoding via the kitty keyboard protocol); tmux-ide registers
+kitty-encoded fallbacks, but coverage varies by terminal. The prefix twins are
+immune by construction — see
+[The dock & keys](/docs/the-dock#why-prefix-first).
 
 ## `theme`
 

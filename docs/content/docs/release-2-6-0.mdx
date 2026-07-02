@@ -47,16 +47,38 @@ conversations via their recorded session ids. →
 
 ## One app
 
-- **Home cockpit** (`⌥h`) — bare `tmux-ide` is the fleet home screen; a popup
-  over any session.
-- **Sidebar** (`⌥b`) — a fleet nav column in any session.
-- **Floating panels** — explorer (`⌥e`), git changes (`⌥g`), config (`⌥,`).
-- **Actions menu** (`⌥m`) — native menu at the pointer, or right-click.
-- **Cheat sheet** (`⌥k`) — every key on one page.
+- **Home cockpit** (`prefix h` / `⌥h`) — bare `tmux-ide` is the fleet home
+  screen; a popup over any session.
+- **Sidebar** (`prefix b` / `⌥b`) — a fleet nav column in any session.
+- **Floating panels** — explorer (`prefix e`), git changes (`prefix g`), config
+  (`prefix v`), each with an `⌥` fast-path twin.
+- **Actions menu** (`prefix u` / `⌥m`) — native menu at the pointer (on
+  button release), or right-click anywhere.
+- **Cheat sheet** (`prefix k` / `⌥k`) — every key on one page.
 - **One grammar** (`j`/`k` · `enter` · `/` · `esc` · `?`) and **one theme**
   (`~/.tmux-ide/config.json`) across chrome and widgets.
 
 → [Home, sidebar & panels](/docs/app-surfaces)
+
+## The keyboard-protocol saga
+
+Early 2.6 builds bound the whole app to root-table `Alt` keys — one keystroke,
+no prefix. It worked beautifully until an agent pane had focus, and then the
+keys went dead. Root cause: Claude Code (and other modern TUIs) negotiate the
+**kitty keyboard protocol**, which re-encodes `Alt-<key>` into a CSI-u escape
+(`ESC[104;3:1u` for `⌥h`) that tmux's root-table `bind -n M-h` never matches.
+The bind wasn't broken — the keystroke tmux received simply wasn't the one it
+was listening for.
+
+The fix ships two layers. First, **prefix twins**: every surface also binds to
+`prefix` + a letter (`prefix h`, `prefix k`, …). The tmux prefix survives every
+keyboard protocol by construction, so these always work — they're now the
+primary, documented path, and the dock advertises them (`[ ⌂ home ^b h ]`).
+Second, **kitty user-key fallbacks**: for each `Alt` bind, tmux-ide teaches tmux
+the exact kitty escape as a `user-keys` entry and binds it to the same action,
+so the one-keystroke fast path keeps working under kitty-mode where the terminal
+supports it. Coverage of that fast path varies by terminal; the prefix twin is
+the guarantee.
 
 ## Worktree flow
 

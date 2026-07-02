@@ -14,15 +14,17 @@ and `unadopt` reverts it completely.
 ## What's on the bar
 
 ```
-┌ web ● ─┬ api ○ ─┬ infra ◍ ─┐        [ ⌂ home ⌥h ] [ ⧉ switch ⌥p ] [ ? keys ⌥k ]
+┌ web ● ─┬ api ○ ─┬ infra ◍ ─┐   [ ⌂ home ^b h ] [ ? keys ^b k ] [ ⧉ switch ^b j ]
 ```
 
 - **Fleet tabs** — one per session in your fleet. Click a tab to switch to it.
 - **Agent-status glyphs** — each tab carries a glyph tinted by the session's
   agent state: blocked, working, done, or idle. One glance across the bar tells
   you where the fleet stands. See [Agent detection](/docs/agent-detection).
-- **Triggers** — clickable `[ ⌂ home ]`, `[ ⧉ switch ]`, and `[ ? keys ]` open
-  the home cockpit, the session switcher, and the cheat sheet respectively.
+- **Triggers** — clickable `[ ⌂ home ]`, `[ ? keys ]`, and `[ ⧉ switch ]` open
+  the home cockpit, the cheat sheet, and the session switcher. Each advertises
+  its **prefix twin** (`^b h`, `^b k`, `^b j`) — the key form that works
+  everywhere (see below).
 
 Per-pane, the border chip reads the agent for that specific pane, e.g.
 `claude · working`.
@@ -54,24 +56,41 @@ Every surface tmux-ide draws speaks the same five keys:
 
 Learn it once; it works in the home cockpit, the sidebar, and every panel.
 
-## The modifier keys
+## The keys
 
-Once a session is adopted, the whole app is one keystroke away. The defaults
-(all rebindable in `~/.tmux-ide/config.json` — see [Theming & config](/docs/theming)):
+Once a session is adopted, the whole app is a couple of keystrokes away. Every
+surface has two bindings — reach for the **prefix twin** first; the `⌥` key is a
+faster shortcut when it's available.
 
-| Key | Opens |
-| --- | --- |
-| `⌥h` | Home cockpit from anywhere |
-| `⌥p` | Switch session (compact picker) |
-| `⌥b` | Sidebar (app nav column) |
-| `⌥e` | File explorer panel |
-| `⌥g` | Git changes panel |
-| `⌥,` | Config editor panel |
-| `⌥m` | Actions menu (or right-click any pane / the bar) |
-| `⌥k` | Cheat sheet (every key on one page) |
+| Action | Prefix (always works) | Alt fast-path |
+| --- | --- | --- |
+| Home cockpit | `prefix h` | `⌥h` |
+| Switch session | `prefix j` | `⌥p` |
+| Cheat sheet | `prefix k` | `⌥k` |
+| Actions menu | `prefix u` | `⌥m` |
+| Sidebar | `prefix b` | `⌥b` |
+| File explorer | `prefix e` | `⌥e` |
+| Git changes | `prefix g` | `⌥g` |
+| Config editor | `prefix v` | `⌥,` |
 
-On a fresh install, a first-run welcome card names these keys once. You can
-reprint the full sheet any time:
+`prefix` is your tmux prefix (`C-b` unless you've changed it), so `prefix h` means
+"press `C-b`, release, then `h`".
+
+### Why prefix-first
+
+The prefix twins are the **reliable** path: they work under every keyboard
+protocol. The `⌥` (root-table) binds are a genuine one-keystroke fast path, but an
+agent pane can temporarily switch how the terminal encodes keys (the kitty
+keyboard protocol), which can swallow a root-table `Alt` bind before tmux ever
+sees it. tmux-ide registers kitty-encoded fallbacks for the `⌥` keys, but coverage
+varies by terminal — the prefix is immune by construction, so lead with it.
+
+Both forms come from the same entries in `~/.tmux-ide/config.json` (`keys.*`):
+rebind the fast-path key and its prefix twin follows. See
+[Theming & config](/docs/theming).
+
+On a fresh install, a first-run welcome card names the core keys once. Reprint the
+full sheet any time:
 
 ```bash
 tmux-ide cheatsheet
@@ -79,9 +98,10 @@ tmux-ide cheatsheet
 
 ## The actions menu
 
-Right-click any pane or the status bar — or press `⌥m` — to open a native tmux
-menu **at the pointer**. It's the same set of actions wherever you invoke it, so
-you never have to remember which surface owns a command.
+Right-click any pane or the status bar to open a native tmux menu **at the
+pointer** — it opens on button _release_. The same menu is on `prefix u` (or
+`⌥m`). Either way the action set is identical wherever you invoke it, so you never
+have to remember which surface owns a command.
 
 ```bash
 tmux-ide menu [--client N]

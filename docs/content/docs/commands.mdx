@@ -29,11 +29,11 @@ the built-in version of this list.
 | `tmux-ide adopt --all` | Adopt every live (non-internal) session |
 | `tmux-ide unadopt <session>` | Remove the status bar |
 | `tmux-ide team [--json]` | TUI over all sessions (`--json` prints fleet state) |
-| `tmux-ide switcher` | Compact session picker (the `⌥p` popup) |
-| `tmux-ide cheatsheet` | Print the key cheat sheet (`⌥k`) |
-| `tmux-ide menu [--client N]` | Open the actions menu (`⌥m` / right-click) |
+| `tmux-ide switcher` | Compact session picker (`prefix j` / `⌥p`) |
+| `tmux-ide cheatsheet` | Print the key cheat sheet (`prefix k` / `⌥k`) |
+| `tmux-ide menu [--client N]` | Open the actions menu (`prefix u` / `⌥m` / right-click) |
 | `tmux-ide popup <widget>` | Open a widget panel (`explorer` / `changes` / `config`) |
-| `tmux-ide sidebar-toggle [--session S]` | Toggle the nav column (`⌥b`) |
+| `tmux-ide sidebar-toggle [--session S]` | Toggle the nav column (`prefix b` / `⌥b`) |
 
 ## Agent status
 
@@ -121,16 +121,19 @@ See [Worktrees](/docs/worktrees).
 
 ## Key discovery
 
-Once a session is adopted, the whole UI is a keystroke away:
+Once a session is adopted, the whole UI is a keystroke or two away. Each surface
+has a **prefix twin** (`prefix` then a letter) that works under every keyboard
+protocol, plus an `⌥` fast-path when your terminal allows it — lead with the
+prefix.
 
-| Key | Opens |
-| --- | --- |
-| `⌥h` | Home cockpit from anywhere |
-| `⌥p` | Switch session |
-| `⌥k` | Cheat sheet (all keys) |
-| `⌥m` | Actions menu (or right-click any pane / the bar) |
-| `⌥e` `⌥g` `⌥,` | File / changes / config panels |
-| `⌥b` | Sidebar |
+| Surface | Prefix (always works) | Alt fast-path |
+| --- | --- | --- |
+| Home cockpit from anywhere | `prefix h` | `⌥h` |
+| Switch session | `prefix j` | `⌥p` |
+| Cheat sheet (all keys) | `prefix k` | `⌥k` |
+| Actions menu (or right-click) | `prefix u` | `⌥m` |
+| Sidebar | `prefix b` | `⌥b` |
+| File / changes / config panels | `prefix e` `g` `v` | `⌥e` `⌥g` `⌥,` |
 
-Rebind any of them in `~/.tmux-ide/config.json` — see
-[Theming & config](/docs/theming).
+Rebind any of them in `~/.tmux-ide/config.json` (`keys.*`) — the prefix twin
+follows the fast-path key. See [Theming & config](/docs/theming).
