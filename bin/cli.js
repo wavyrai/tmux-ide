@@ -1627,6 +1627,7 @@ __export(cheatsheet_exports, {
   CHEATSHEET_KEY: () => CHEATSHEET_KEY,
   buildCheatsheet: () => buildCheatsheet,
   cheatsheetBindCommand: () => cheatsheetBindCommand,
+  cheatsheetPopupCommand: () => cheatsheetPopupCommand,
   cheatsheetUnbindCommand: () => cheatsheetUnbindCommand
 });
 function renderKey(tmuxKey) {
@@ -1664,13 +1665,13 @@ function buildCheatsheet(opts) {
   lines.push(head("dock"));
   lines.push(
     pad(
-      `${bold(renderKey(POPUP_KEY))} switcher popup   ${bold(renderKey(CHEATSHEET_KEY))} this sheet`
+      `${bold(renderKey(POPUP_KEY))} switcher popup   ${bold(renderKey(CHEATSHEET_KEY))} this sheet   ${bold(renderKey(MENU_KEY))} actions menu`
     )
   );
   lines.push(
     pad(
       dim(
-        `bar: click a project tab = switch there \xB7 click [ \u29C9 switch ${renderKey(POPUP_KEY)} ] = switcher`
+        `bar: click a project tab = switch there \xB7 click [ \u29C9 switch ${renderKey(POPUP_KEY)} ] = switcher \xB7 right-click = menu`
       )
     )
   );
@@ -1725,6 +1726,9 @@ function buildCheatsheet(opts) {
   lines.push(pad(cyan("tmux-ide adopt/unadopt <session>")));
   return lines.map((line) => clip(line, width)).join("\n");
 }
+function cheatsheetPopupCommand(cheatsheetCmd = "tmux-ide cheatsheet") {
+  return `display-popup -E -w 90% -h 80% "${cheatsheetCmd}"`;
+}
 function cheatsheetBindCommand(cheatsheetCmd = "tmux-ide cheatsheet") {
   return [
     "bind-key",
@@ -1754,6 +1758,86 @@ var init_cheatsheet = __esm({
     cyan = (s) => `\x1B[36m${s}\x1B[39m`;
     head = (s) => `\x1B[1;36m${s}\x1B[0m`;
     color = (code, s) => `\x1B[38;5;${code}m${s}\x1B[39m`;
+  }
+});
+
+// packages/daemon/src/tui/chrome/menu.ts
+var menu_exports = {};
+__export(menu_exports, {
+  MENU_KEY: () => MENU_KEY,
+  MENU_STATUS_KEY: () => MENU_STATUS_KEY,
+  buildMenu: () => buildMenu,
+  menuBindCommand: () => menuBindCommand,
+  menuQuoteName: () => menuQuoteName,
+  menuStatusBindCommand: () => menuStatusBindCommand,
+  menuStatusUnbindCommand: () => menuStatusUnbindCommand,
+  menuUnbindCommand: () => menuUnbindCommand
+});
+function menuQuoteName(name) {
+  return `'${name.replace(/'/g, `'\\''`)}'`;
+}
+function sessionLabel(session) {
+  const g = MENU_GLYPH[session.status];
+  return `#[fg=${g.colour}]${g.glyph}#[default] ${session.name}`;
+}
+function buildMenu(sessions) {
+  const header = [
+    "\u29C9 Switch session\u2026",
+    "s",
+    switcherPopupCommand(),
+    "? Cheat sheet",
+    "k",
+    cheatsheetPopupCommand()
+  ];
+  const sessionItems = [];
+  sessions.slice(0, MAX_SESSION_ITEMS).forEach((session, i) => {
+    sessionItems.push(sessionLabel(session), String(i + 1), `switch-client -t ${menuQuoteName(session.name)}`);
+  });
+  const footer = [
+    "\uFF0B New session\u2026",
+    "n",
+    `command-prompt -p "new session name:" "new-session -d -s '%%' ; switch-client -t '%%'"`,
+    "\u2715 Kill this session",
+    "x",
+    `confirm-before -p "kill session #S? (y/n)" kill-session`
+  ];
+  const items = [];
+  for (const group of [header, sessionItems, footer]) {
+    if (group.length === 0) continue;
+    if (items.length > 0) items.push("");
+    items.push(...group);
+  }
+  return ["-T", "tmux-ide", ...items];
+}
+function menuRunShellArgs(menuCmd) {
+  return ["run-shell", "-b", `${menuCmd} --client '#{client_name}'`];
+}
+function menuBindCommand(menuCmd = "tmux-ide menu") {
+  return ["bind-key", "-n", MENU_KEY, ...menuRunShellArgs(menuCmd)];
+}
+function menuStatusBindCommand(menuCmd = "tmux-ide menu") {
+  return ["bind-key", "-n", MENU_STATUS_KEY, ...menuRunShellArgs(menuCmd)];
+}
+function menuUnbindCommand() {
+  return ["unbind-key", "-n", MENU_KEY];
+}
+function menuStatusUnbindCommand() {
+  return ["unbind-key", "-n", MENU_STATUS_KEY];
+}
+var MENU_GLYPH, MAX_SESSION_ITEMS;
+var init_menu = __esm({
+  "packages/daemon/src/tui/chrome/menu.ts"() {
+    "use strict";
+    init_statusline();
+    init_cheatsheet();
+    MENU_GLYPH = {
+      working: { glyph: "\u25CF", colour: "colour221" },
+      blocked: { glyph: "\u25CF", colour: "colour203" },
+      done: { glyph: "\u25CF", colour: "colour111" },
+      idle: { glyph: "\u25CB", colour: "colour114" },
+      unknown: { glyph: "\xB7", colour: "colour244" }
+    };
+    MAX_SESSION_ITEMS = 8;
   }
 });
 
@@ -3520,6 +3604,8 @@ var init_updater = __esm({
 // packages/daemon/src/tui/chrome/statusline.ts
 var statusline_exports = {};
 __export(statusline_exports, {
+  MENU_KEY: () => MENU_KEY,
+  MENU_STATUS_KEY: () => MENU_STATUS_KEY,
   POPUP_KEY: () => POPUP_KEY,
   STATUS_CLICK_KEY: () => STATUS_CLICK_KEY,
   adoptOptionCommands: () => adoptOptionCommands,
@@ -3531,6 +3617,7 @@ __export(statusline_exports, {
   popupUnbindCommand: () => popupUnbindCommand,
   statusClickBindCommand: () => statusClickBindCommand,
   statusClickUnbindCommand: () => statusClickUnbindCommand,
+  switcherPopupCommand: () => switcherPopupCommand,
   unadoptOptionCommands: () => unadoptOptionCommands,
   unadoptSession: () => unadoptSession
 });
@@ -3561,6 +3648,9 @@ function buildStatusline(projects, active2, maxItems = 12) {
   const trigger = `#[range=user|switcher]#[fg=colour75,bold][ \u29C9 switch \u2325p ]#[default]#[norange]`;
   return `#[fg=colour75,bold] tmux-ide #[default] ${body}#[align=right]${keysTrigger} ${trigger} `;
 }
+function switcherPopupCommand(switcherCmd = "tmux-ide switcher") {
+  return `display-popup -E -w 80% -h 60% "${switcherCmd}"`;
+}
 function popupBindCommand(switcherCmd = "tmux-ide switcher") {
   return [
     "bind-key",
@@ -3582,8 +3672,8 @@ function dq(cmd) {
   return `"${cmd.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
 }
 function statusClickBindCommand(switcherCmd = "tmux-ide switcher", cheatsheetCmd = "tmux-ide cheatsheet") {
-  const popup = `display-popup -E -w 80% -h 60% "${switcherCmd}"`;
-  const cheatsheet = `display-popup -E -w 90% -h 80% "${cheatsheetCmd}"`;
+  const popup = switcherPopupCommand(switcherCmd);
+  const cheatsheet = cheatsheetPopupCommand(cheatsheetCmd);
   const switchClient = `run-shell "tmux switch-client -c '#{client_name}' -t '#{s/^sw//:mouse_status_range}'"`;
   const swBranch = `if-shell -F "#{m:sw*,#{mouse_status_range}}" ${dq(switchClient)} "select-window -t ="`;
   const keysBranch = `if-shell -F "#{==:#{mouse_status_range},keys}" ${dq(cheatsheet)} ${dq(swBranch)}`;
@@ -3636,6 +3726,8 @@ function adoptSession(session, switcherCmd = "tmux-ide switcher") {
   runTmux(popupBindCommand(switcherCmd));
   runTmux(cheatsheetBindCommand());
   runTmux(statusClickBindCommand(switcherCmd));
+  runTmux(menuBindCommand());
+  runTmux(menuStatusBindCommand());
   seedSessionStatus(session);
   startUpdaterIfNeeded();
 }
@@ -3653,14 +3745,23 @@ function unadoptSession(session) {
     runTmux(statusClickUnbindCommand());
   } catch {
   }
+  try {
+    runTmux(menuUnbindCommand());
+  } catch {
+  }
+  try {
+    runTmux(menuStatusUnbindCommand());
+  } catch {
+  }
   if (listAdoptedSessions().length === 0) stopUpdater();
 }
-var STATUS_STYLE, GLYPH, POPUP_KEY, STATUS_CLICK_KEY;
+var STATUS_STYLE, GLYPH, POPUP_KEY, MENU_KEY, MENU_STATUS_KEY, STATUS_CLICK_KEY;
 var init_statusline = __esm({
   "packages/daemon/src/tui/chrome/statusline.ts"() {
     "use strict";
     init_src();
     init_cheatsheet();
+    init_menu();
     init_updater();
     STATUS_STYLE = {
       blocked: "#[fg=colour203,bold]",
@@ -3677,6 +3778,8 @@ var init_statusline = __esm({
       unknown: "\xB7"
     };
     POPUP_KEY = "M-p";
+    MENU_KEY = "M-m";
+    MENU_STATUS_KEY = "MouseDown3Status";
     STATUS_CLICK_KEY = "MouseDown1Status";
   }
 });
@@ -11123,6 +11226,7 @@ var knownCommands = /* @__PURE__ */ new Set([
   "integration",
   "chrome-updater",
   "cheatsheet",
+  "menu",
   "command-center",
   "server",
   "help"
@@ -11178,6 +11282,7 @@ ${bold2("Usage:")}
   ${cyan2("tmux-ide integration install claude")}  ${dim2("Authoritative agent status via Claude Code hooks")}
   ${cyan2("tmux-ide agent explain")} <pane> [--json]  ${dim2("Debug how a pane's agent state is detected")}
   ${cyan2("tmux-ide cheatsheet")}         ${dim2("Print the key cheat sheet (\u2325k / [ ? keys ] popup)")}
+  ${cyan2("tmux-ide menu")} [--client N]  ${dim2("Open the right-click actions menu (\u2325m / right-click the bar)")}
   ${cyan2("tmux-ide ls")}                 ${dim2("List all tmux sessions")}
   ${cyan2("tmux-ide status")} [--json]    ${dim2("Show session status")}
   ${cyan2("tmux-ide inspect")} [--json]   ${dim2("Show effective config and runtime state")}
@@ -11647,6 +11752,28 @@ try {
         process.stdin.once("end", close);
       } catch {
         close();
+      }
+      break;
+    }
+    case "menu": {
+      try {
+        const clientArg = typeof values.client === "string" ? values.client : "";
+        const client = clientArg.length > 0 ? clientArg : execFileSync10("tmux", ["display-message", "-p", "#{client_name}"], {
+          encoding: "utf8",
+          stdio: ["ignore", "pipe", "ignore"]
+        }).trim();
+        const { createStatusTracker: createStatusTracker2 } = await Promise.resolve().then(() => (init_classify(), classify_exports));
+        const { listTeamSessions: listTeamSessions2 } = await Promise.resolve().then(() => (init_sessions2(), sessions_exports));
+        const { buildMenu: buildMenu2 } = await Promise.resolve().then(() => (init_menu(), menu_exports));
+        const sessions = listTeamSessions2(createStatusTracker2()).map((s) => ({
+          name: s.name,
+          status: s.status
+        }));
+        const args = ["display-menu"];
+        if (client.length > 0) args.push("-c", client);
+        args.push(...buildMenu2(sessions));
+        execFileSync10("tmux", args, { stdio: "ignore" });
+      } catch {
       }
       break;
     }

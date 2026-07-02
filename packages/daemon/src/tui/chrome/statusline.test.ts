@@ -1,10 +1,11 @@
 /**
  * Unit tests for the pure status-bar builder.
  */
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   adoptableSessionNames,
   adoptOptionCommands,
+  adoptSession,
   buildStatusline,
   isInternalName,
   popupBindCommand,
@@ -13,11 +14,26 @@ import {
   statusClickBindCommand,
   statusClickUnbindCommand,
   STATUS_CLICK_KEY,
+  switcherPopupCommand,
   unadoptOptionCommands,
 } from "./statusline.ts";
+import { menuBindCommand, menuStatusBindCommand } from "./menu.ts";
 import { ADOPTED_OPTION, STATUS_OPTION } from "./updater.ts";
 import type { TeamProject } from "../team/projects.ts";
 import type { TeamSession } from "../team/sessions.ts";
+
+// adoptSession funnels every tmux mutation through runTmux; spy on it and stub
+// the updater's io so we can assert the exact key binds adopt applies without
+// touching a real tmux server.
+const runTmux = vi.fn(() => "");
+vi.mock("@tmux-ide/tmux-bridge", () => ({
+  runTmux: (...args: unknown[]) => runTmux(...(args as [])),
+}));
+vi.mock("./updater.ts", async (importActual) => ({
+  ...(await importActual<typeof import("./updater.ts")>()),
+  seedSessionStatus: () => {},
+  startUpdaterIfNeeded: () => {},
+}));
 
 function session(name: string, status: TeamSession["status"]): TeamSession {
   return { name, attached: false, windows: 1, panes: 1, status, windowList: [] };
@@ -275,5 +291,30 @@ describe("popupBindCommand", () => {
 describe("popupUnbindCommand", () => {
   it("unbinds M-p from the root table", () => {
     expect(popupUnbindCommand()).toEqual(["unbind-key", "-n", POPUP_KEY]);
+  });
+});
+
+describe("switcherPopupCommand", () => {
+  it("is the display-popup command string the M-p bind runs", () => {
+    expect(switcherPopupCommand()).toBe(`display-popup -E -w 80% -h 60% "tmux-ide switcher"`);
+  });
+
+  it("is what statusClickBindCommand dispatches the `switcher` range to", () => {
+    expect(statusClickBindCommand()).toContain(switcherPopupCommand());
+  });
+});
+
+describe("adoptSession key binds", () => {
+  afterEach(() => runTmux.mockClear());
+
+  it("binds M-m and the right-click menu (MouseDown3Status) alongside the popup/click binds", () => {
+    adoptSession("web");
+    const calls = runTmux.mock.calls.map((c) => c[0] as string[]);
+    // the two new menu binds are applied
+    expect(calls).toContainEqual(menuBindCommand());
+    expect(calls).toContainEqual(menuStatusBindCommand());
+    // and the pre-existing binds are still applied (no regression)
+    expect(calls).toContainEqual(popupBindCommand("tmux-ide switcher"));
+    expect(calls).toContainEqual(statusClickBindCommand("tmux-ide switcher"));
   });
 });

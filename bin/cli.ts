@@ -101,6 +101,7 @@ const knownCommands = new Set([
   "integration",
   "chrome-updater",
   "cheatsheet",
+  "menu",
   "command-center",
   "server",
   "help",
@@ -163,6 +164,7 @@ ${bold("Usage:")}
   ${cyan("tmux-ide integration install claude")}  ${dim("Authoritative agent status via Claude Code hooks")}
   ${cyan("tmux-ide agent explain")} <pane> [--json]  ${dim("Debug how a pane's agent state is detected")}
   ${cyan("tmux-ide cheatsheet")}         ${dim("Print the key cheat sheet (⌥k / [ ? keys ] popup)")}
+  ${cyan("tmux-ide menu")} [--client N]  ${dim("Open the right-click actions menu (⌥m / right-click the bar)")}
   ${cyan("tmux-ide ls")}                 ${dim("List all tmux sessions")}
   ${cyan("tmux-ide status")} [--json]    ${dim("Show session status")}
   ${cyan("tmux-ide inspect")} [--json]   ${dim("Show effective config and runtime state")}
@@ -760,6 +762,40 @@ try {
         process.stdin.once("end", close);
       } catch {
         close();
+      }
+      break;
+    }
+
+    case "menu": {
+      // Build the native tmux actions menu at CLICK TIME (the session list is
+      // live) and display it on the invoking client. Bound via `run-shell -b` so
+      // `#{client_name}` format-expands into `--client`; when that's empty we
+      // resolve the client ourselves like the switcher does. Runs inside tmux's
+      // key/mouse dispatch, so it must never throw — a broken menu is a no-op.
+      try {
+        const clientArg = typeof values.client === "string" ? values.client : "";
+        const client =
+          clientArg.length > 0
+            ? clientArg
+            : execFileSync("tmux", ["display-message", "-p", "#{client_name}"], {
+                encoding: "utf8",
+                stdio: ["ignore", "pipe", "ignore"],
+              }).trim();
+        const { createStatusTracker } =
+          await import("../packages/daemon/src/tui/detect/classify.ts");
+        const { listTeamSessions } = await import("../packages/daemon/src/tui/team/sessions.ts");
+        const { buildMenu } = await import("../packages/daemon/src/tui/chrome/menu.ts");
+        // listTeamSessions already drops internal `_`-prefixed plumbing.
+        const sessions = listTeamSessions(createStatusTracker()).map((s) => ({
+          name: s.name,
+          status: s.status,
+        }));
+        const args = ["display-menu"];
+        if (client.length > 0) args.push("-c", client);
+        args.push(...buildMenu(sessions));
+        execFileSync("tmux", args, { stdio: "ignore" });
+      } catch {
+        // no client / tmux unavailable — nothing to show
       }
       break;
     }

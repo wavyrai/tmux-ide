@@ -15,7 +15,7 @@
  * `buildCheatsheet` and the bind/unbind command builders are PURE (tested); the
  * CLI `cheatsheet` command wires the io (print + wait-for-key).
  */
-import { POPUP_KEY } from "./statusline.ts";
+import { MENU_KEY, POPUP_KEY } from "./statusline.ts";
 import { ACTION_ORDER, DEFAULT_KEYMAP } from "../team/keymap.ts";
 
 /**
@@ -102,13 +102,13 @@ export function buildCheatsheet(opts: { width: number }): string {
   lines.push(head("dock"));
   lines.push(
     pad(
-      `${bold(renderKey(POPUP_KEY))} switcher popup   ${bold(renderKey(CHEATSHEET_KEY))} this sheet`,
+      `${bold(renderKey(POPUP_KEY))} switcher popup   ${bold(renderKey(CHEATSHEET_KEY))} this sheet   ${bold(renderKey(MENU_KEY))} actions menu`,
     ),
   );
   lines.push(
     pad(
       dim(
-        `bar: click a project tab = switch there · click [ ⧉ switch ${renderKey(POPUP_KEY)} ] = switcher`,
+        `bar: click a project tab = switch there · click [ ⧉ switch ${renderKey(POPUP_KEY)} ] = switcher · right-click = menu`,
       ),
     ),
   );
@@ -173,6 +173,16 @@ export function buildCheatsheet(opts: { width: number }): string {
   lines.push(pad(cyan("tmux-ide adopt/unadopt <session>")));
 
   return lines.map((line) => clip(line, width)).join("\n");
+}
+
+/**
+ * PURE — the `display-popup` command STRING that floats the cheat sheet (shared
+ * by the M-k bind, the bar's `[ ? keys ]` left-click router, and the actions
+ * menu's "Cheat sheet" item, so all three open an identical popup). Mirror of the
+ * sizing in {@link cheatsheetBindCommand}.
+ */
+export function cheatsheetPopupCommand(cheatsheetCmd = "tmux-ide cheatsheet"): string {
+  return `display-popup -E -w 90% -h 80% "${cheatsheetCmd}"`;
 }
 
 /**

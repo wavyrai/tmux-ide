@@ -15,7 +15,17 @@
 import { runTmux } from "@tmux-ide/tmux-bridge";
 import type { AgentStatus } from "../detect/classify.ts";
 import type { TeamProject } from "../team/projects.ts";
-import { cheatsheetBindCommand, cheatsheetUnbindCommand } from "./cheatsheet.ts";
+import {
+  cheatsheetBindCommand,
+  cheatsheetPopupCommand,
+  cheatsheetUnbindCommand,
+} from "./cheatsheet.ts";
+import {
+  menuBindCommand,
+  menuStatusBindCommand,
+  menuStatusUnbindCommand,
+  menuUnbindCommand,
+} from "./menu.ts";
 import {
   ADOPTED_OPTION,
   CHIP_OPTION,
@@ -127,6 +137,32 @@ export function buildStatusline(
 export const POPUP_KEY = "M-p";
 
 /**
+ * The root-table key that opens the right-click actions menu: `M-m` (Alt+m).
+ * Like {@link POPUP_KEY} it lives in the ROOT table so it fires without the
+ * prefix from any adopted session, and sits with `M-p`/`M-k` as the third chrome
+ * shortcut. The menu itself is drawn by tmux's `display-menu` (see ./menu.ts).
+ */
+export const MENU_KEY = "M-m";
+
+/**
+ * The root-table mouse key for a RIGHT-click on the status bar. tmux fires this
+ * for a right-click landing anywhere on a status line; the menu is
+ * range-independent (unlike the left-click router — see {@link STATUS_CLICK_KEY}),
+ * so it opens the same actions menu regardless of what's under the click.
+ */
+export const MENU_STATUS_KEY = "MouseDown3Status";
+
+/**
+ * PURE — the `display-popup` command STRING that floats the switcher (shared by
+ * the M-p bind, the bar's left-click router, and the actions menu's "Switch
+ * session…" item, so all three open an identical popup). Mirror of the sizing in
+ * {@link popupBindCommand}.
+ */
+export function switcherPopupCommand(switcherCmd = "tmux-ide switcher"): string {
+  return `display-popup -E -w 80% -h 60% "${switcherCmd}"`;
+}
+
+/**
  * PURE — the tmux argv that binds the popup key: `M-p` opens a `display-popup`
  * running the compact switcher, which `switch-client`s you to whatever you
  * pick and then exits (closing the popup).
@@ -213,8 +249,8 @@ export function statusClickBindCommand(
   switcherCmd = "tmux-ide switcher",
   cheatsheetCmd = "tmux-ide cheatsheet",
 ): string[] {
-  const popup = `display-popup -E -w 80% -h 60% "${switcherCmd}"`;
-  const cheatsheet = `display-popup -E -w 90% -h 80% "${cheatsheetCmd}"`;
+  const popup = switcherPopupCommand(switcherCmd);
+  const cheatsheet = cheatsheetPopupCommand(cheatsheetCmd);
   // run-shell re-enters tmux with the name/client already format-expanded.
   const switchClient = `run-shell "tmux switch-client -c '#{client_name}' -t '#{s/^sw//:mouse_status_range}'"`;
   // `sw*` → switch, else window-list default. Its args are one level deep here.
@@ -308,6 +344,10 @@ export function adoptSession(session: string, switcherCmd = "tmux-ide switcher")
   runTmux(popupBindCommand(switcherCmd));
   runTmux(cheatsheetBindCommand());
   runTmux(statusClickBindCommand(switcherCmd));
+  // The actions menu: M-m and a right-click (MouseDown3Status) on the chrome row
+  // both open tmux's native display-menu, rebuilt live by the `menu` CLI command.
+  runTmux(menuBindCommand());
+  runTmux(menuStatusBindCommand());
   // Seed the bar now so it's never blank, then make sure the loop that keeps it
   // fresh is up.
   seedSessionStatus(session);
@@ -337,6 +377,16 @@ export function unadoptSession(session: string): void {
   }
   try {
     runTmux(statusClickUnbindCommand());
+  } catch {
+    // no such key bound — nothing to undo
+  }
+  try {
+    runTmux(menuUnbindCommand());
+  } catch {
+    // no such key bound — nothing to undo
+  }
+  try {
+    runTmux(menuStatusUnbindCommand());
   } catch {
     // no such key bound — nothing to undo
   }
