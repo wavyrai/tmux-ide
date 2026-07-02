@@ -17,8 +17,7 @@ import {
   type AgentStatus,
   type StatusTracker,
 } from "../detect/classify.ts";
-import { pickManifest } from "../detect/manifest.ts";
-import { BUNDLED_MANIFESTS } from "../detect/manifests.ts";
+import { readProcessTable, resolveAgentCommand } from "../detect/process-tree.ts";
 import { readPaneSnapshot } from "../detect/snapshot.ts";
 
 export interface TeamSession {
@@ -32,6 +31,8 @@ export interface TeamSession {
 interface PaneRecord {
   /** tmux pane id, e.g. `%5`. */
   id: string;
+  /** `pane_pid` — the pane's immediate process, root of its process tree. */
+  pid: number;
   /** `pane_current_command`. */
   cmd: string;
   /** `pane_title`. */
@@ -83,6 +84,10 @@ export function listTeamSessions(
   if (!raw) return [];
 
   const panesBySession = collectPanes();
+  // One `ps` read per call — a single ~10-20ms syscall shared across every
+  // fallback pane, so the manifest lookup can walk each pane's process tree
+  // instead of matching on the (usually generic) pane_current_command.
+  const processTable = readProcessTable();
 
   return raw
     .split("\n")
@@ -106,9 +111,11 @@ export function listTeamSessions(
           }
           return authority;
         }
-        // FALLBACK: snapshot scraping. Only capture recognized agent panes;
-        // unknown commands stay "unknown" without a capture-pane round-trip.
-        const manifest = pickManifest(pane.cmd, BUNDLED_MANIFESTS);
+        // FALLBACK: snapshot scraping. Resolve the real agent from the pane's
+        // process tree (pane_current_command alone is usually just node/bun/sh).
+        // Only capture recognized agent panes; unknown commands stay "unknown"
+        // without a capture-pane round-trip.
+        const manifest = resolveAgentCommand(pane.cmd, pane.pid, processTable).manifest;
         const instant = manifest
           ? classifyInstant({ ...readPaneSnapshot(pane.id), title: pane.title }, manifest)
           : "unknown";
@@ -131,14 +138,15 @@ function collectPanes(): Map<string, PaneRecord[]> {
     "list-panes",
     "-a",
     "-F",
-    "#{session_name}\t#{pane_id}\t#{pane_current_command}\t#{@agent_state}\t#{pane_title}",
+    "#{session_name}\t#{pane_id}\t#{pane_pid}\t#{pane_current_command}\t#{@agent_state}\t#{pane_title}",
   ]);
   const bySession = new Map<string, PaneRecord[]>();
   for (const line of raw.split("\n").filter(Boolean)) {
-    const [session = "", id = "", cmd = "", authority = "", ...titleParts] = line.split("\t");
+    const [session = "", id = "", pid = "", cmd = "", authority = "", ...titleParts] =
+      line.split("\t");
     if (!session) continue;
     const list = bySession.get(session) ?? [];
-    list.push({ id, cmd, authority, title: titleParts.join("\t") });
+    list.push({ id, pid: Number(pid) || 0, cmd, authority, title: titleParts.join("\t") });
     bySession.set(session, list);
   }
   return bySession;
