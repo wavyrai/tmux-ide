@@ -43,14 +43,14 @@ Once a session is adopted, the whole UI is a keystroke or two away — one inter
 
 Every surface has a **prefix twin** (`prefix` then a letter) that works under every keyboard protocol, plus an `⌥` fast-path for a single keystroke when your terminal allows it. Lead with the prefix — an agent pane can temporarily change how the terminal encodes keys and swallow a root-table `Alt` bind, but the tmux prefix always reaches tmux. Right-click anywhere opens the actions menu at the pointer.
 
-| Surface | Prefix (always works) | Alt fast-path |
-| --- | --- | --- |
-| Home cockpit — fleet tree, detail, preview | `prefix h` | `⌥h` |
-| Switch session | `prefix j` | `⌥p` |
-| Cheat sheet — every key on one page | `prefix k` | `⌥k` |
-| Actions menu — at the pointer (or right-click) | `prefix u` | `⌥m` |
-| Sidebar — a fleet nav column | `prefix b` | `⌥b` |
-| Panels — explorer / changes / config | `prefix e` `g` `v` | `⌥e` `⌥g` `⌥,` |
+| Surface                                        | Prefix (always works) | Alt fast-path  |
+| ---------------------------------------------- | --------------------- | -------------- |
+| Home cockpit — fleet tree, detail, preview     | `prefix h`            | `⌥h`           |
+| Switch session                                 | `prefix j`            | `⌥p`           |
+| Cheat sheet — every key on one page            | `prefix k`            | `⌥k`           |
+| Actions menu — at the pointer (or right-click) | `prefix u`            | `⌥m`           |
+| Sidebar — a fleet nav column                   | `prefix b`            | `⌥b`           |
+| Panels — explorer / changes / config           | `prefix e` `g` `v`    | `⌥e` `⌥g` `⌥,` |
 
 ## Optional: describe a layout with ide.yml
 

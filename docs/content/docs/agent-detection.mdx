@@ -28,12 +28,12 @@ Claude Code has a first-class hooks system. This command writes a small POSIX
 hook script and registers it in `~/.claude/settings.json` for the lifecycle
 events that map to agent states:
 
-| Claude event | Reported state |
-| --- | --- |
-| `UserPromptSubmit`, `PreToolUse` | working |
-| `Notification` | blocked |
-| `Stop` | done |
-| `SessionEnd` | idle |
+| Claude event                     | Reported state |
+| -------------------------------- | -------------- |
+| `UserPromptSubmit`, `PreToolUse` | working        |
+| `Notification`                   | blocked        |
+| `Stop`                           | done           |
+| `SessionEnd`                     | idle           |
 
 Each hook invocation stamps the current pane:
 

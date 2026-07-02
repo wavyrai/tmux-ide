@@ -130,7 +130,10 @@ function trunc(s: string, width: number): string {
 const WIDGET_KEYS: WidgetKey[] = [{ key: "r", label: "refresh fleet" }];
 
 render(() => {
-  const theme = createTheme(parseThemeArg(typeof argv.theme === "string" ? argv.theme : undefined), getAppConfig().theme);
+  const theme = createTheme(
+    parseThemeArg(typeof argv.theme === "string" ? argv.theme : undefined),
+    getAppConfig().theme,
+  );
   const statusColor: Record<AgentStatus, RGBA> = {
     blocked: toRGBA(theme.statusBlocked),
     working: toRGBA(theme.statusWorking),

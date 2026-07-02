@@ -1,6 +1,6 @@
 # tmux-ide
 
-**The terminal that understands your agents.** tmux-ide is a terminal-native IDE and agent cockpit built *around* tmux: one command adds a native chrome (the dock) to any existing tmux session — fleet tabs with live agent-status glyphs, ground-truth working/blocked/done detection, notifications when an agent needs you, and crash-proof restore that revives whole fleets including Claude conversations. Nothing to migrate into, nothing to lock into: the chrome is tmux options; `unadopt` reverts; if tmux-ide dies your sessions are ordinary tmux.
+**The terminal that understands your agents.** tmux-ide is a terminal-native IDE and agent cockpit built _around_ tmux: one command adds a native chrome (the dock) to any existing tmux session — fleet tabs with live agent-status glyphs, ground-truth working/blocked/done detection, notifications when an agent needs you, and crash-proof restore that revives whole fleets including Claude conversations. Nothing to migrate into, nothing to lock into: the chrome is tmux options; `unadopt` reverts; if tmux-ide dies your sessions are ordinary tmux.
 
 Positioning: other tools rebuild the terminal to understand agents; tmux-ide teaches the terminal you already use to understand them. Never reference competitor projects by name in code, comments, commits, or docs.
 
@@ -17,14 +17,14 @@ tmux-ide restore --resume-agents    # after a tmux server death: rebuild everyth
 
 The PRIMARY key form is the tmux prefix + letter — it survives every keyboard protocol. The ⌥ twins are a fast path that dies while a focused app (e.g. Claude Code) switches the terminal's key encoding (kitty protocol); kitty-encoded user-keys fallbacks are registered but coverage varies by terminal.
 
-| Action | Reliable | Fast path |
-| --- | --- | --- |
-| Home cockpit (fleet tree + detail popup) | `prefix h` | `⌥h` |
-| Switcher popup | `prefix j` | `⌥p` |
-| Cheat sheet | `prefix k` | `⌥k` |
-| Actions menu (also: right-click anywhere — opens at the pointer, on button RELEASE) | `prefix u` | `⌥m` |
-| Sidebar (fleet nav column) | `prefix b` | `⌥b` |
-| Panels: explorer / git changes / config | `prefix e` / `g` / `v` | `⌥e` / `⌥g` / `⌥,` |
+| Action                                                                              | Reliable               | Fast path          |
+| ----------------------------------------------------------------------------------- | ---------------------- | ------------------ |
+| Home cockpit (fleet tree + detail popup)                                            | `prefix h`             | `⌥h`               |
+| Switcher popup                                                                      | `prefix j`             | `⌥p`               |
+| Cheat sheet                                                                         | `prefix k`             | `⌥k`               |
+| Actions menu (also: right-click anywhere — opens at the pointer, on button RELEASE) | `prefix u`             | `⌥m`               |
+| Sidebar (fleet nav column)                                                          | `prefix b`             | `⌥b`               |
+| Panels: explorer / git changes / config                                             | `prefix e` / `g` / `v` | `⌥e` / `⌥g` / `⌥,` |
 
 All keys configurable via `~/.tmux-ide/config.json` (`keys.*`); re-adopt applies changes. Letters were chosen to never clobber tmux prefix defaults (hence menu=u, switcher=j, config=v).
 
@@ -49,7 +49,7 @@ All keys configurable via `~/.tmux-ide/config.json` (`keys.*`); re-adopt applies
 
 ```yaml
 name: my-project
-sidebar: true            # inject the fleet nav column (or { width: "30" })
+sidebar: true # inject the fleet nav column (or { width: "30" })
 before: pnpm install
 rows:
   - size: 70%
@@ -57,7 +57,7 @@ rows:
       - { title: Editor, command: claude, focus: true, size: 50% }
       - { title: Shell }
   - panes:
-      - { title: Changes, type: changes }     # widget panes: explorer|changes|preview|config|sidebar
+      - { title: Changes, type: changes } # widget panes: explorer|changes|preview|config|sidebar
       - { title: Dev, command: pnpm dev, dir: apps/web, env: { PORT: "3000" } }
 ```
 

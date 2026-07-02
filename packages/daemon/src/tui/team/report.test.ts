@@ -4,7 +4,15 @@ import type { TeamProject } from "./projects.ts";
 import type { TeamSession } from "./sessions.ts";
 
 function session(over: Partial<TeamSession> = {}): TeamSession {
-  return { name: "s", attached: false, windows: 1, panes: 1, status: "idle", windowList: [], ...over };
+  return {
+    name: "s",
+    attached: false,
+    windows: 1,
+    panes: 1,
+    status: "idle",
+    windowList: [],
+    ...over,
+  };
 }
 
 function project(over: Partial<TeamProject> = {}): TeamProject {

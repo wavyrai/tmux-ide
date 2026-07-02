@@ -23,17 +23,39 @@ const target = values.target ?? "_spike-target";
 // The 16 base ANSI palette colors, mapped for OpenTUI. Higher palette
 // entries fall back to the default foreground — fine for a spike.
 const PALETTE: Array<[number, number, number]> = [
-  [40, 40, 48], [220, 90, 90], [110, 200, 130], [220, 200, 100],
-  [110, 150, 240], [190, 120, 220], [100, 200, 210], [200, 200, 210],
-  [120, 120, 140], [250, 120, 120], [140, 230, 160], [240, 220, 130],
-  [140, 180, 250], [220, 150, 250], [130, 230, 240], [240, 240, 250],
+  [40, 40, 48],
+  [220, 90, 90],
+  [110, 200, 130],
+  [220, 200, 100],
+  [110, 150, 240],
+  [190, 120, 220],
+  [100, 200, 210],
+  [200, 200, 210],
+  [120, 120, 140],
+  [250, 120, 120],
+  [140, 230, 160],
+  [240, 220, 130],
+  [140, 180, 250],
+  [220, 150, 250],
+  [130, 230, 240],
+  [240, 240, 250],
 ];
 
 /** Map named OpenTUI key events to tmux send-keys names. */
 const KEYMAP: Record<string, string> = {
-  return: "Enter", backspace: "BSpace", tab: "Tab", escape: "Escape",
-  up: "Up", down: "Down", left: "Left", right: "Right",
-  pageup: "PgUp", pagedown: "PgDn", home: "Home", end: "End", delete: "DC",
+  return: "Enter",
+  backspace: "BSpace",
+  tab: "Tab",
+  escape: "Escape",
+  up: "Up",
+  down: "Down",
+  left: "Left",
+  right: "Right",
+  pageup: "PgUp",
+  pagedown: "PgDn",
+  home: "Home",
+  end: "End",
+  delete: "DC",
   space: "Space",
 };
 

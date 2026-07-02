@@ -40,14 +40,14 @@ rows:
 
 ### Top level
 
-| Field | Type | Notes |
-| --- | --- | --- |
-| `name` | string | tmux session name |
-| `before` | string | Optional pre-launch shell hook |
-| `rows` | array | Row definitions (at least one) |
-| `sidebar` | `true` \| `{ width }` | Inject the nav column (`prefix b` / `⌥b`) at launch |
-| `theme` | object | Per-session color overrides (see below) |
-| `team` | object | Enable Claude Code agent teams (see [Task system](/docs/task-system)) |
+| Field     | Type                  | Notes                                                                 |
+| --------- | --------------------- | --------------------------------------------------------------------- |
+| `name`    | string                | tmux session name                                                     |
+| `before`  | string                | Optional pre-launch shell hook                                        |
+| `rows`    | array                 | Row definitions (at least one)                                        |
+| `sidebar` | `true` \| `{ width }` | Inject the nav column (`prefix b` / `⌥b`) at launch                   |
+| `theme`   | object                | Per-session color overrides (see below)                               |
+| `team`    | object                | Enable Claude Code agent teams (see [Task system](/docs/task-system)) |
 
 ### Rows
 
@@ -59,17 +59,17 @@ rows:
 
 ### Panes
 
-| Field | Type | Notes |
-| --- | --- | --- |
-| `title` | string | Pane border label |
-| `command` | string | Command to run in the pane |
-| `size` | percent | Pane width (e.g. `50%`) |
-| `dir` | string | Per-pane working directory |
-| `focus` | boolean | Initial focus |
-| `env` | map | Environment variables |
-| `type` | string | Render a widget instead of a shell (see below) |
-| `target` | string | Target path for a widget pane |
-| `role`, `specialty`, `skill`, `task` | string | Agent-team metadata |
+| Field                                | Type    | Notes                                          |
+| ------------------------------------ | ------- | ---------------------------------------------- |
+| `title`                              | string  | Pane border label                              |
+| `command`                            | string  | Command to run in the pane                     |
+| `size`                               | percent | Pane width (e.g. `50%`)                        |
+| `dir`                                | string  | Per-pane working directory                     |
+| `focus`                              | boolean | Initial focus                                  |
+| `env`                                | map     | Environment variables                          |
+| `type`                               | string  | Render a widget instead of a shell (see below) |
+| `target`                             | string  | Target path for a widget pane                  |
+| `role`, `specialty`, `skill`, `task` | string  | Agent-team metadata                            |
 
 ### Widget panes
 

@@ -331,7 +331,9 @@ export default async function HomePage() {
 
         {/* HOW IT WORKS */}
         <div>
-          <h2 className="font-sans text-2xl text-fd-foreground">From zero to fleet in three commands</h2>
+          <h2 className="font-sans text-2xl text-fd-foreground">
+            From zero to fleet in three commands
+          </h2>
           <div className="grid grid-cols-1 md:grid-cols-3 mt-4">
             {[
               {

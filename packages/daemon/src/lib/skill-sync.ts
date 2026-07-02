@@ -134,12 +134,10 @@ export interface SyncResult {
  * `updated`. Only ever writes inside {@link skillTargetDir}; nothing outside it
  * is read or touched.
  */
-export function syncSkill(
-  {
-    source = defaultSkillSource(),
-    version = getCurrentVersion(),
-  }: { source?: string; version?: string } = {},
-): SyncResult {
+export function syncSkill({
+  source = defaultSkillSource(),
+  version = getCurrentVersion(),
+}: { source?: string; version?: string } = {}): SyncResult {
   const rendered = rewriteVersionMarker(readFileSync(source, "utf-8"), version);
   const dir = skillTargetDir();
   const target = join(dir, "SKILL.md");

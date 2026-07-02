@@ -43,10 +43,7 @@ export function parseAuthority(raw: string | undefined, nowSec: number): AgentSt
   const state = raw.slice(0, sep);
   const epoch = Number(raw.slice(sep + 1));
   if (!AUTHORITY_STATES.has(state) || !Number.isFinite(epoch)) return null;
-  if (
-    (state === "working" || state === "blocked") &&
-    nowSec - epoch > AUTHORITY_STALE_SECONDS
-  ) {
+  if ((state === "working" || state === "blocked") && nowSec - epoch > AUTHORITY_STALE_SECONDS) {
     return null;
   }
   return state as AgentStatus;

@@ -1,10 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  excludeSidebarPanes,
-  isListableSession,
-  rollupStatus,
-  rollupWindows,
-} from "./sessions.ts";
+import { excludeSidebarPanes, isListableSession, rollupStatus, rollupWindows } from "./sessions.ts";
 import type { AgentStatus } from "../detect/classify.ts";
 
 describe("excludeSidebarPanes", () => {

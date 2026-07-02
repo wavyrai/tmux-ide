@@ -10,48 +10,48 @@ the built-in version of this list.
 
 ## Sessions
 
-| Command | Description |
-| --- | --- |
-| `tmux-ide` | Launch `ide.yml`, or open the home cockpit if there is none |
-| `tmux-ide <path>` | Launch from a specific directory (cockpit if no `ide.yml`) |
-| `tmux-ide init [--template <name>]` | Scaffold a new `ide.yml` (auto-detects stack) |
-| `tmux-ide stop` | Kill the current IDE session |
-| `tmux-ide restart` | Stop and relaunch the session |
-| `tmux-ide attach` | Reattach to a running session |
-| `tmux-ide ls` | List all tmux sessions |
-| `tmux-ide status [--json]` | Show session status |
+| Command                             | Description                                                 |
+| ----------------------------------- | ----------------------------------------------------------- |
+| `tmux-ide`                          | Launch `ide.yml`, or open the home cockpit if there is none |
+| `tmux-ide <path>`                   | Launch from a specific directory (cockpit if no `ide.yml`)  |
+| `tmux-ide init [--template <name>]` | Scaffold a new `ide.yml` (auto-detects stack)               |
+| `tmux-ide stop`                     | Kill the current IDE session                                |
+| `tmux-ide restart`                  | Stop and relaunch the session                               |
+| `tmux-ide attach`                   | Reattach to a running session                               |
+| `tmux-ide ls`                       | List all tmux sessions                                      |
+| `tmux-ide status [--json]`          | Show session status                                         |
 
 ## The dock
 
-| Command | Description |
-| --- | --- |
-| `tmux-ide adopt <session>` | Add the live status bar (dock) to a session |
-| `tmux-ide adopt --all` | Adopt every live (non-internal) session |
-| `tmux-ide unadopt <session>` | Remove the status bar |
-| `tmux-ide team [--json]` | TUI over all sessions (`--json` prints fleet state) |
-| `tmux-ide switcher` | Compact session picker (`prefix j` / `⌥p`) |
-| `tmux-ide cheatsheet` | Print the key cheat sheet (`prefix k` / `⌥k`) |
-| `tmux-ide menu [--client N]` | Open the actions menu (`prefix u` / `⌥m` / right-click) |
-| `tmux-ide popup <widget>` | Open a widget panel (`explorer` / `changes` / `config`) |
-| `tmux-ide sidebar-toggle [--session S]` | Toggle the nav column (`prefix b` / `⌥b`) |
+| Command                                 | Description                                             |
+| --------------------------------------- | ------------------------------------------------------- |
+| `tmux-ide adopt <session>`              | Add the live status bar (dock) to a session             |
+| `tmux-ide adopt --all`                  | Adopt every live (non-internal) session                 |
+| `tmux-ide unadopt <session>`            | Remove the status bar                                   |
+| `tmux-ide team [--json]`                | TUI over all sessions (`--json` prints fleet state)     |
+| `tmux-ide switcher`                     | Compact session picker (`prefix j` / `⌥p`)              |
+| `tmux-ide cheatsheet`                   | Print the key cheat sheet (`prefix k` / `⌥k`)           |
+| `tmux-ide menu [--client N]`            | Open the actions menu (`prefix u` / `⌥m` / right-click) |
+| `tmux-ide popup <widget>`               | Open a widget panel (`explorer` / `changes` / `config`) |
+| `tmux-ide sidebar-toggle [--session S]` | Toggle the nav column (`prefix b` / `⌥b`)               |
 
 ## Agent status
 
-| Command | Description |
-| --- | --- |
-| `tmux-ide integration install claude` | Authoritative agent status via Claude Code hooks |
-| `tmux-ide agent explain <pane> [--json]` | Debug how a pane's agent state is detected |
-| `tmux-ide events [--follow] [--json]` | Stream agent-status transitions (needs an adopted session) |
-| `tmux-ide wait agent-status <session> --status <s> [--timeout <ms>]` | Block until a session reaches a status (exit 0 match / 1 timeout) |
-| `tmux-ide wait output <pane\|session> --match <regex> [--timeout <ms>]` | Block until a pane's output matches a regex |
+| Command                                                                 | Description                                                       |
+| ----------------------------------------------------------------------- | ----------------------------------------------------------------- |
+| `tmux-ide integration install claude`                                   | Authoritative agent status via Claude Code hooks                  |
+| `tmux-ide agent explain <pane> [--json]`                                | Debug how a pane's agent state is detected                        |
+| `tmux-ide events [--follow] [--json]`                                   | Stream agent-status transitions (needs an adopted session)        |
+| `tmux-ide wait agent-status <session> --status <s> [--timeout <ms>]`    | Block until a session reaches a status (exit 0 match / 1 timeout) |
+| `tmux-ide wait output <pane\|session> --match <regex> [--timeout <ms>]` | Block until a pane's output matches a regex                       |
 
 See [Agent detection](/docs/agent-detection) and
 [Notifications & events](/docs/notifications-events).
 
 ## Restore
 
-| Command | Description |
-| --- | --- |
+| Command                                                                    | Description                                                 |
+| -------------------------------------------------------------------------- | ----------------------------------------------------------- |
 | `tmux-ide restore [--dry-run] [--run-commands] [--resume-agents] [--json]` | Rebuild the fleet from the last snapshot after a tmux crash |
 
 `--resume-agents` revives Claude conversations via `claude --resume`. See
@@ -59,65 +59,65 @@ See [Agent detection](/docs/agent-detection) and
 
 ## Worktrees
 
-| Command | Description |
-| --- | --- |
-| `tmux-ide worktree create <branch> [--from <ref>] [--dir <path>] [--no-session]` | Add a git worktree (new branch) + open a session in it |
-| `tmux-ide worktree open <branch>` | Open (or switch to) the session for an existing worktree |
-| `tmux-ide worktree list [--json]` | List worktrees joined with their session status |
-| `tmux-ide worktree remove <branch> [--force]` | Kill the worktree's session + remove the worktree |
+| Command                                                                          | Description                                              |
+| -------------------------------------------------------------------------------- | -------------------------------------------------------- |
+| `tmux-ide worktree create <branch> [--from <ref>] [--dir <path>] [--no-session]` | Add a git worktree (new branch) + open a session in it   |
+| `tmux-ide worktree open <branch>`                                                | Open (or switch to) the session for an existing worktree |
+| `tmux-ide worktree list [--json]`                                                | List worktrees joined with their session status          |
+| `tmux-ide worktree remove <branch> [--force]`                                    | Kill the worktree's session + remove the worktree        |
 
 See [Worktrees](/docs/worktrees).
 
 ## Config & inspection
 
-| Command | Description |
-| --- | --- |
-| `tmux-ide inspect [--json]` | Show effective config and runtime state |
-| `tmux-ide doctor` | Check system requirements |
-| `tmux-ide validate [--json]` | Validate `ide.yml` |
-| `tmux-ide detect [--json]` | Detect project stack |
-| `tmux-ide detect --write` | Detect and write `ide.yml` |
-| `tmux-ide config [--json]` | Dump config as JSON |
-| `tmux-ide config set <path> <value>` | Set a config value by dot path |
-| `tmux-ide config add-pane --row <N> --title <T> [--command <C>]` | Add a pane |
-| `tmux-ide config remove-pane --row <N> --pane <M>` | Remove a pane |
-| `tmux-ide config add-row [--size <percent>]` | Add a row |
-| `tmux-ide config enable-team [--name <N>]` | Enable agent teams |
-| `tmux-ide config disable-team` | Disable agent teams |
+| Command                                                          | Description                             |
+| ---------------------------------------------------------------- | --------------------------------------- |
+| `tmux-ide inspect [--json]`                                      | Show effective config and runtime state |
+| `tmux-ide doctor`                                                | Check system requirements               |
+| `tmux-ide validate [--json]`                                     | Validate `ide.yml`                      |
+| `tmux-ide detect [--json]`                                       | Detect project stack                    |
+| `tmux-ide detect --write`                                        | Detect and write `ide.yml`              |
+| `tmux-ide config [--json]`                                       | Dump config as JSON                     |
+| `tmux-ide config set <path> <value>`                             | Set a config value by dot path          |
+| `tmux-ide config add-pane --row <N> --title <T> [--command <C>]` | Add a pane                              |
+| `tmux-ide config remove-pane --row <N> --pane <M>`               | Remove a pane                           |
+| `tmux-ide config add-row [--size <percent>]`                     | Add a row                               |
+| `tmux-ide config enable-team [--name <N>]`                       | Enable agent teams                      |
+| `tmux-ide config disable-team`                                   | Disable agent teams                     |
 
 ## Setup & settings
 
-| Command | Description |
-| --- | --- |
-| `tmux-ide setup` | Interactive TUI setup wizard |
-| `tmux-ide setup --edit` | Open the config tree editor |
-| `tmux-ide settings` | Interactive TUI config manager |
+| Command                 | Description                    |
+| ----------------------- | ------------------------------ |
+| `tmux-ide setup`        | Interactive TUI setup wizard   |
+| `tmux-ide setup --edit` | Open the config tree editor    |
+| `tmux-ide settings`     | Interactive TUI config manager |
 
 ## Pane messaging
 
-| Command | Description |
-| --- | --- |
-| `tmux-ide send <target> <message>` | Send a message to a pane |
-| `tmux-ide send --to <name> <message>` | Target by name, title, role, or ID |
-| `tmux-ide send <target> --no-enter <msg>` | Send text without pressing Enter |
+| Command                                   | Description                        |
+| ----------------------------------------- | ---------------------------------- |
+| `tmux-ide send <target> <message>`        | Send a message to a pane           |
+| `tmux-ide send --to <name> <message>`     | Target by name, title, role, or ID |
+| `tmux-ide send <target> --no-enter <msg>` | Send text without pressing Enter   |
 
 `send` also reads from stdin: `echo "msg" | tmux-ide send <target>`.
 
 ## Server
 
-| Command | Description |
-| --- | --- |
+| Command                              | Description                       |
+| ------------------------------------ | --------------------------------- |
 | `tmux-ide command-center [--port N]` | Start the command-center HTTP API |
-| `tmux-ide server [--port N]` | Start HTTP + PTY WebSocket server |
+| `tmux-ide server [--port N]`         | Start HTTP + PTY WebSocket server |
 
 ## Flags
 
-| Flag | Description |
-| --- | --- |
-| `--json` | Output as JSON (all commands) |
-| `--template <name>` | Use a specific template for `init` |
-| `--write` | Write detected config to `ide.yml` |
-| `--verbose` | Log all tmux commands (or set `TMUX_IDE_DEBUG=1`) |
+| Flag                | Description                                       |
+| ------------------- | ------------------------------------------------- |
+| `--json`            | Output as JSON (all commands)                     |
+| `--template <name>` | Use a specific template for `init`                |
+| `--write`           | Write detected config to `ide.yml`                |
+| `--verbose`         | Log all tmux commands (or set `TMUX_IDE_DEBUG=1`) |
 
 ## Key discovery
 
@@ -126,14 +126,14 @@ has a **prefix twin** (`prefix` then a letter) that works under every keyboard
 protocol, plus an `⌥` fast-path when your terminal allows it — lead with the
 prefix.
 
-| Surface | Prefix (always works) | Alt fast-path |
-| --- | --- | --- |
-| Home cockpit from anywhere | `prefix h` | `⌥h` |
-| Switch session | `prefix j` | `⌥p` |
-| Cheat sheet (all keys) | `prefix k` | `⌥k` |
-| Actions menu (or right-click) | `prefix u` | `⌥m` |
-| Sidebar | `prefix b` | `⌥b` |
-| File / changes / config panels | `prefix e` `g` `v` | `⌥e` `⌥g` `⌥,` |
+| Surface                        | Prefix (always works) | Alt fast-path  |
+| ------------------------------ | --------------------- | -------------- |
+| Home cockpit from anywhere     | `prefix h`            | `⌥h`           |
+| Switch session                 | `prefix j`            | `⌥p`           |
+| Cheat sheet (all keys)         | `prefix k`            | `⌥k`           |
+| Actions menu (or right-click)  | `prefix u`            | `⌥m`           |
+| Sidebar                        | `prefix b`            | `⌥b`           |
+| File / changes / config panels | `prefix e` `g` `v`    | `⌥e` `⌥g` `⌥,` |
 
 Rebind any of them in `~/.tmux-ide/config.json` (`keys.*`) — the prefix twin
 follows the fast-path key. See [Theming & config](/docs/theming).

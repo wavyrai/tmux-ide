@@ -75,9 +75,6 @@ describe("fuzzyFilter", () => {
   it("filters a realistic project list by 'proto'", () => {
     const items = ["prototyper-ui", "wavyr-website", "new-name", "prototyper-platform"];
     const out = fuzzyFilter("proto", items, key);
-    expect(out.map((m) => m.item).sort()).toEqual([
-      "prototyper-platform",
-      "prototyper-ui",
-    ]);
+    expect(out.map((m) => m.item).sort()).toEqual(["prototyper-platform", "prototyper-ui"]);
   });
 });

@@ -11,7 +11,11 @@ import { fileURLToPath } from "node:url";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 import { launch } from "../packages/daemon/src/launch.ts";
 import { shouldOpenCockpit } from "../packages/daemon/src/tui/team/entry.ts";
-import { resolveTuiLaunch, findCompiledTui, isBunAvailable } from "../packages/daemon/src/tui/compiled.ts";
+import {
+  resolveTuiLaunch,
+  findCompiledTui,
+  isBunAvailable,
+} from "../packages/daemon/src/tui/compiled.ts";
 import { init } from "../packages/daemon/src/init.ts";
 import { stop } from "../packages/daemon/src/stop.ts";
 import { attach } from "../packages/daemon/src/attach.ts";
@@ -478,7 +482,9 @@ try {
       // switcher it keeps the full two-column layout, not the compact picker.
       if (values.popup === true) {
         const clientArg = typeof values.client === "string" ? values.client : "";
-        execBunWidget("team", teamScriptPath, [], "team --popup", { TMUX_IDE_POPUP_CLIENT: clientArg });
+        execBunWidget("team", teamScriptPath, [], "team --popup", {
+          TMUX_IDE_POPUP_CLIENT: clientArg,
+        });
         break;
       }
       launchTeamCockpit();

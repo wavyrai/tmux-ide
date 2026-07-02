@@ -35,7 +35,8 @@ if (!existsSync(entry)) {
 }
 
 const targetArg = process.argv.indexOf("--target");
-const target = targetArg !== -1 ? process.argv[targetArg + 1] : `bun-${process.platform}-${process.arch}`;
+const target =
+  targetArg !== -1 ? process.argv[targetArg + 1] : `bun-${process.platform}-${process.arch}`;
 
 mkdirSync(outDir, { recursive: true });
 

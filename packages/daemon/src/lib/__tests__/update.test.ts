@@ -108,19 +108,21 @@ describe("findGitCheckoutRoot", () => {
 describe("renderPlan version gating", () => {
   it("does not offer a downgrade when the registry lags the checkout", async () => {
     const { renderPlan } = await import("../update.ts");
-    const out = renderPlan(
-      { method: "dev", command: null, hint: "git pull" } as never,
-      { current: "2.6.0", latest: "2.1.5", dryRun: true },
-    );
+    const out = renderPlan({ method: "dev", command: null, hint: "git pull" } as never, {
+      current: "2.6.0",
+      latest: "2.1.5",
+      dryRun: true,
+    });
     expect(out).toContain("up to date (registry: v2.1.5)");
     expect(out).not.toContain("available");
   });
   it("offers a real newer version", async () => {
     const { renderPlan } = await import("../update.ts");
-    const out = renderPlan(
-      { method: "dev", command: null, hint: "git pull" } as never,
-      { current: "2.6.0", latest: "9.9.9", dryRun: true },
-    );
+    const out = renderPlan({ method: "dev", command: null, hint: "git pull" } as never, {
+      current: "2.6.0",
+      latest: "9.9.9",
+      dryRun: true,
+    });
     expect(out).toContain("v2.6.0 → v9.9.9 available");
   });
 });

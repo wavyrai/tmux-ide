@@ -63,16 +63,16 @@ name (`M-` is Meta/⌥). tmux-ide also binds a **prefix twin** for every surface
 the reliable path that works under every keyboard protocol — derived from these
 same entries, so you configure both by editing one value.
 
-| Field | Alt default | Prefix twin | Opens |
-| --- | --- | --- | --- |
-| `home` | `M-h` | `prefix h` | Home cockpit from anywhere |
-| `popup` | `M-p` | `prefix j` | Session switcher |
-| `cheatsheet` | `M-k` | `prefix k` | Cheat sheet |
-| `menu` | `M-m` | `prefix u` | Actions menu |
-| `sidebar` | `M-b` | `prefix b` | Sidebar nav column |
-| `panels.explorer` | `M-e` | `prefix e` | File explorer panel |
-| `panels.changes` | `M-g` | `prefix g` | Git changes panel |
-| `panels.config` | `M-,` | `prefix v` | Config editor panel |
+| Field             | Alt default | Prefix twin | Opens                      |
+| ----------------- | ----------- | ----------- | -------------------------- |
+| `home`            | `M-h`       | `prefix h`  | Home cockpit from anywhere |
+| `popup`           | `M-p`       | `prefix j`  | Session switcher           |
+| `cheatsheet`      | `M-k`       | `prefix k`  | Cheat sheet                |
+| `menu`            | `M-m`       | `prefix u`  | Actions menu               |
+| `sidebar`         | `M-b`       | `prefix b`  | Sidebar nav column         |
+| `panels.explorer` | `M-e`       | `prefix e`  | File explorer panel        |
+| `panels.changes`  | `M-g`       | `prefix g`  | Git changes panel          |
+| `panels.config`   | `M-,`       | `prefix v`  | Config editor panel        |
 
 The `Alt` binds can be swallowed while an agent pane has focus (agents may switch
 the terminal's key encoding via the kitty keyboard protocol); tmux-ide registers
@@ -85,61 +85,61 @@ immune by construction — see
 Semantic tokens, applied to both the tmux chrome and the widgets. Values are
 tmux colors (`colourN` or `#rrggbb`).
 
-| Field | Default | Meaning |
-| --- | --- | --- |
-| `accent` | `colour75` | Primary / brand accent |
-| `muted` | `colour240` | Dim / secondary text |
-| `fg` | `colour250` | Default foreground |
-| `status.blocked` | `colour203` | Blocked agent |
-| `status.working` | `colour221` | Working agent |
-| `status.done` | `colour111` | Done agent |
-| `status.idle` | `colour114` | Idle agent |
-| `status.unknown` | `colour244` | No signal |
-| `glyphs.active` | `●` | Filled state glyph |
-| `glyphs.inactive` | `○` | Hollow state glyph |
+| Field             | Default     | Meaning                |
+| ----------------- | ----------- | ---------------------- |
+| `accent`          | `colour75`  | Primary / brand accent |
+| `muted`           | `colour240` | Dim / secondary text   |
+| `fg`              | `colour250` | Default foreground     |
+| `status.blocked`  | `colour203` | Blocked agent          |
+| `status.working`  | `colour221` | Working agent          |
+| `status.done`     | `colour111` | Done agent             |
+| `status.idle`     | `colour114` | Idle agent             |
+| `status.unknown`  | `colour244` | No signal              |
+| `glyphs.active`   | `●`         | Filled state glyph     |
+| `glyphs.inactive` | `○`         | Hollow state glyph     |
 
 ## `updater`
 
 The chrome tick loop and snapshot cadence.
 
-| Field | Default | Meaning |
-| --- | --- | --- |
-| `tickMs` | `2000` | Milliseconds between ticks |
-| `snapshotEvery` | `15` | Write a restore snapshot every N ticks |
+| Field           | Default | Meaning                                |
+| --------------- | ------- | -------------------------------------- |
+| `tickMs`        | `2000`  | Milliseconds between ticks             |
+| `snapshotEvery` | `15`    | Write a restore snapshot every N ticks |
 
 ## `notifications`
 
-| Field | Default | Meaning |
-| --- | --- | --- |
-| `toast` | `true` | In-tmux toast on blocked / done |
+| Field   | Default | Meaning                               |
+| ------- | ------- | ------------------------------------- |
+| `toast` | `true`  | In-tmux toast on blocked / done       |
 | `macos` | `false` | Also post a native macOS notification |
 
 See [Notifications & events](/docs/notifications-events).
 
 ## `restore`
 
-| Field | Default | Meaning |
-| --- | --- | --- |
+| Field          | Default | Meaning                                                    |
+| -------------- | ------- | ---------------------------------------------------------- |
 | `resumeAgents` | `false` | Revive Claude conversations on restore (`--resume-agents`) |
 
 See [Restore & resume](/docs/restore-resume).
 
 ## `updates`
 
-| Field | Default | Meaning |
-| --- | --- | --- |
-| `check` | `true` | Check for a newer tmux-ide version |
+| Field   | Default | Meaning                            |
+| ------- | ------- | ---------------------------------- |
+| `check` | `true`  | Check for a newer tmux-ide version |
 
 ## `welcome`
 
-| Field | Default | Meaning |
-| --- | --- | --- |
-| `show` | `true` | Allow the first-run welcome card. Set `false` to suppress it |
+| Field  | Default | Meaning                                                      |
+| ------ | ------- | ------------------------------------------------------------ |
+| `show` | `true`  | Allow the first-run welcome card. Set `false` to suppress it |
 
 ## `worktrees`
 
-| Field | Default | Meaning |
-| --- | --- | --- |
-| `dir` | `""` | Base dir for worktree checkouts. Empty → sibling `<repo>-worktrees`; a relative path resolves against the repo |
+| Field | Default | Meaning                                                                                                        |
+| ----- | ------- | -------------------------------------------------------------------------------------------------------------- |
+| `dir` | `""`    | Base dir for worktree checkouts. Empty → sibling `<repo>-worktrees`; a relative path resolves against the repo |
 
 See [Worktrees](/docs/worktrees).

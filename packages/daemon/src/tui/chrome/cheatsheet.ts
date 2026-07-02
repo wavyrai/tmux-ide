@@ -151,7 +151,9 @@ export function buildCheatsheet(opts: { width: number; keys?: AppKeys; theme?: A
       `${bold("prefix h")} home  ${bold("prefix j")} switcher  ${bold("prefix k")} keys  ${bold("prefix u")} menu  ${bold("prefix b")} sidebar  ${bold("prefix e")} files  ${bold("prefix g")} changes  ${bold("prefix v")} config`,
     ),
   );
-  lines.push(pad(dim(`prefix = your tmux prefix (usually C-b) — use these when Alt keys don't reach tmux`)));
+  lines.push(
+    pad(dim(`prefix = your tmux prefix (usually C-b) — use these when Alt keys don't reach tmux`)),
+  );
   lines.push("");
 
   // 1b. panels — every widget floats as a popup, one key away, esc to close.

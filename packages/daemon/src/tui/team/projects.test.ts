@@ -85,11 +85,7 @@ describe("groupSessions", () => {
       { name: "outer", dir: "/repos" },
       { name: "inner", dir: "/repos/web" },
     ];
-    const result = groupSessions(
-      projects,
-      [session("s")],
-      cwdMap({ s: "/repos/web/src" }),
-    );
+    const result = groupSessions(projects, [session("s")], cwdMap({ s: "/repos/web/src" }));
 
     const inner = result.find((p) => p.name === "inner")!;
     const outer = result.find((p) => p.name === "outer")!;

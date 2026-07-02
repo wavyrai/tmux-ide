@@ -50,7 +50,9 @@ describe("matchMatcher", () => {
   });
 
   it("selects the title region and tolerates its absence", () => {
-    expect(matchMatcher(snap(["x"], { title: "spinner ⠋" }), { region: "title", contains: "spinner" })).toBe(true);
+    expect(
+      matchMatcher(snap(["x"], { title: "spinner ⠋" }), { region: "title", contains: "spinner" }),
+    ).toBe(true);
     expect(matchMatcher(snap(["x"]), { region: "title", contains: "spinner" })).toBe(false);
   });
 

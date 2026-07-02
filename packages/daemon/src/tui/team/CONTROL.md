@@ -16,9 +16,7 @@ Prints the whole fleet as JSON (no TUI). Shape:
       "registered": true,
       "running": true,
       "status": "working",
-      "sessions": [
-        { "name": "web", "status": "working", "panes": 3, "attached": true }
-      ]
+      "sessions": [{ "name": "web", "status": "working", "panes": 3, "attached": true }]
     }
   ]
 }

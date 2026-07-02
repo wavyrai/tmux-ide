@@ -27,7 +27,6 @@ describe("worktreeSessionName", () => {
     expect(worktreeSessionName("myapp", "feat/y-1")).toBe("myapp@feat-y-1");
     expect(worktreeSessionName("app", "hot fix")).toBe("app@hot-fix");
   });
-
 });
 
 describe("defaultWorktreeBaseDir", () => {

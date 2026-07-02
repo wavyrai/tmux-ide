@@ -1,4 +1,5 @@
 # tmux-ide — Claude Code Skill
+
 <!-- tmux-ide-skill-version: 2.6.0 -->
 
 tmux-ide is a **dock around tmux**: one command adds a native chrome to any tmux
@@ -89,14 +90,14 @@ root-table `Alt` bind, but the tmux prefix always reaches tmux. Every surface ha
 a prefix twin and an `⌥` fast-path (single keystroke when the terminal allows it).
 Right-click any pane or the bar opens the actions menu at the pointer.
 
-| Surface | Prefix (always works) | ⌥ fast-path |
-| --- | --- | --- |
-| Home cockpit — fleet tree, detail, preview | `prefix h` | `⌥h` |
-| Switch session | `prefix j` | `⌥p` |
-| Cheat sheet — every key on one page | `prefix k` | `⌥k` |
-| Actions menu (or right-click) | `prefix u` | `⌥m` |
-| Sidebar — fleet nav column | `prefix b` | `⌥b` |
-| Panels — explorer / changes / config | `prefix e` `g` `v` | `⌥e` `⌥g` `⌥,` |
+| Surface                                    | Prefix (always works) | ⌥ fast-path    |
+| ------------------------------------------ | --------------------- | -------------- |
+| Home cockpit — fleet tree, detail, preview | `prefix h`            | `⌥h`           |
+| Switch session                             | `prefix j`            | `⌥p`           |
+| Cheat sheet — every key on one page        | `prefix k`            | `⌥k`           |
+| Actions menu (or right-click)              | `prefix u`            | `⌥m`           |
+| Sidebar — fleet nav column                 | `prefix b`            | `⌥b`           |
+| Panels — explorer / changes / config       | `prefix e` `g` `v`    | `⌥e` `⌥g` `⌥,` |
 
 One interaction grammar everywhere: `j`/`k` move, `enter` opens, `/` filters,
 `esc` backs out, `?` asks. Bare `tmux-ide` with no `ide.yml` opens the **home
@@ -114,6 +115,7 @@ it in `ide.yml` (sessions launched from a config are adopted automatically).
 3. **Present 2-3 layout options as ASCII diagrams** before writing config:
 
    **Option A — Claude + Dev (recommended)**
+
    ```
    ┌─────────────────────────────────────┐
    │             Claude                  │  70%
@@ -123,6 +125,7 @@ it in `ide.yml` (sessions launched from a config are adopted automatically).
    ```
 
    **Option B — Dual Claude**
+
    ```
    ┌─────────────────┬─────────────────┐
    │    Claude 1     │    Claude 2     │  70%
@@ -132,6 +135,7 @@ it in `ide.yml` (sessions launched from a config are adopted automatically).
    ```
 
    **Option C — Explorer + Claude + Changes (widget panes)**
+
    ```
    ┌──────────┬───────────────┬─────────┐
    │ Explorer │    Claude     │ Changes │  100%
@@ -193,16 +197,31 @@ partial merge over defaults — any block or field you omit falls back:
 
 ```jsonc
 {
-  "keys": { "home": "M-h", "popup": "M-p", "cheatsheet": "M-k", "menu": "M-m",
-            "sidebar": "M-b", "panels": { "explorer": "M-e", "changes": "M-g", "config": "M-," } },
-  "theme": { "accent": "colour75", "muted": "colour240", "fg": "colour250",
-             "status": { "blocked": "colour203", "working": "colour221", "done": "colour111",
-                         "idle": "colour114", "unknown": "colour244" },
-             "glyphs": { "active": "●", "inactive": "○" } },
+  "keys": {
+    "home": "M-h",
+    "popup": "M-p",
+    "cheatsheet": "M-k",
+    "menu": "M-m",
+    "sidebar": "M-b",
+    "panels": { "explorer": "M-e", "changes": "M-g", "config": "M-," },
+  },
+  "theme": {
+    "accent": "colour75",
+    "muted": "colour240",
+    "fg": "colour250",
+    "status": {
+      "blocked": "colour203",
+      "working": "colour221",
+      "done": "colour111",
+      "idle": "colour114",
+      "unknown": "colour244",
+    },
+    "glyphs": { "active": "●", "inactive": "○" },
+  },
   "notifications": { "toast": true, "macos": false },
   "restore": { "resumeAgents": false },
   "updates": { "check": true },
-  "integrations": { "offer": true }
+  "integrations": { "offer": true },
 }
 ```
 

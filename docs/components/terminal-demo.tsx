@@ -73,7 +73,8 @@ Any agent can self-report:
       },
       {
         kind: "output",
-        text: `web:2      claude   working  -> blocked   (needs input)
+        text:
+          `web:2      claude   working  -> blocked   (needs input)
 api:1      claude   working  -> done
 web:3      claude   idle     -> working
 ` + "› toast fires on every client attached to the session",

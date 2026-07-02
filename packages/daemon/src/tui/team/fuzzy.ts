@@ -120,11 +120,7 @@ export function fuzzyMatch(
  * descending. The sort is STABLE — items with equal scores keep their input
  * order. An empty query returns every item (score 0) in original order.
  */
-export function fuzzyFilter<T>(
-  query: string,
-  items: T[],
-  key: (t: T) => string,
-): FuzzyMatch<T>[] {
+export function fuzzyFilter<T>(query: string, items: T[], key: (t: T) => string): FuzzyMatch<T>[] {
   const matches: FuzzyMatch<T>[] = [];
   for (const item of items) {
     const m = fuzzyMatch(query, key(item));

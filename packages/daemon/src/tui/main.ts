@@ -20,15 +20,7 @@
  * exactly one surface's top-level `render()` side effect from firing.
  */
 
-const SURFACES = [
-  "team",
-  "explorer",
-  "changes",
-  "preview",
-  "config",
-  "setup",
-  "sidebar",
-] as const;
+const SURFACES = ["team", "explorer", "changes", "preview", "config", "setup", "sidebar"] as const;
 
 type Surface = (typeof SURFACES)[number];
 
