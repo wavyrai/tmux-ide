@@ -2,33 +2,24 @@
 /**
  * Cross-platform native-deps smoke test.
  *
- * The daemon ships three modules that load native code at runtime:
+ * The daemon ships ONE module that loads native code at runtime:
  *
- *   - `better-sqlite3` — N-API binding, prebuilds via prebuild-install
- *     with a node-gyp fallback. Loads `build/Release/better_sqlite3.node`.
- *   - `node-pty`       — prebuilds via the package's own
- *     `scripts/prebuild.js`, falls back to `node-gyp rebuild`. Loads
- *     `build/Release/pty.node`.
- *   - `@vscode/ripgrep`— ships per-platform optional sub-packages
- *     (`@vscode/ripgrep-linux-x64`, `-win32-x64`, …) and resolves to
- *     the matching binary via `rgPath`.
+ *   - `node-pty` — prebuilds via the package's own `scripts/prebuild.js`,
+ *     falls back to `node-gyp rebuild`. Loads `build/Release/pty.node`.
+ *     Used by the server surface's PTY bridge.
  *
- * Any of the three can fail at install time when the host doesn't
- * have a Python toolchain, when prebuilds are unavailable for the
- * current Node ABI, or — for ripgrep — when the matching optional
- * sub-package wasn't installed (pnpm's strict resolver can skip
- * optional deps for some platforms).
+ * (The v2.6.0 trim removed better-sqlite3 and @vscode/ripgrep along with
+ * the dashboard/search stack they served.)
  *
- * This script catches those failures early. It imports each module,
- * exercises a minimal sanity path, and exits non-zero on any error
- * with a structured summary so CI can surface which dep regressed.
+ * Native installs can fail when the host lacks a Python toolchain or when
+ * prebuilds are unavailable for the current Node ABI. This script catches
+ * that early: it imports the module, exercises a minimal sanity path, and
+ * exits non-zero with a structured summary so CI can surface a regression.
  *
- * Intentionally has no production dependencies — wired into
- * `pnpm check` so a clean `pnpm install` on Linux / Windows / macOS
- * is enough to validate the daemon's runtime story.
+ * Intentionally has no production dependencies — wired into `pnpm check`
+ * so a clean `pnpm install` on Linux / Windows / macOS is enough to
+ * validate the daemon's runtime story.
  */
-
-import { existsSync, statSync } from "node:fs";
 
 const results = [];
 
@@ -43,20 +34,6 @@ async function check(name, fn) {
   }
 }
 
-await check("better-sqlite3", async () => {
-  const Database = (await import("better-sqlite3")).default;
-  const db = new Database(":memory:");
-  try {
-    const row = db.prepare("SELECT 1 AS one").get();
-    if (!row || row.one !== 1) {
-      throw new Error(`unexpected query result: ${JSON.stringify(row)}`);
-    }
-    return "loaded + in-memory query OK";
-  } finally {
-    db.close();
-  }
-});
-
 await check("node-pty", async () => {
   const mod = await import("node-pty");
   // node-pty's `spawn` export wraps the native `pty.node` binding.
@@ -66,24 +43,6 @@ await check("node-pty", async () => {
     throw new Error("`spawn` export missing");
   }
   return "loaded; spawn() reachable";
-});
-
-await check("@vscode/ripgrep", async () => {
-  const { rgPath } = await import("@vscode/ripgrep");
-  if (typeof rgPath !== "string" || rgPath.length === 0) {
-    throw new Error("rgPath is empty");
-  }
-  if (!existsSync(rgPath)) {
-    throw new Error(
-      `rgPath points at a missing binary (${rgPath}); the optional ` +
-        `platform sub-package was not installed`,
-    );
-  }
-  const stat = statSync(rgPath);
-  if (!stat.isFile()) {
-    throw new Error(`rgPath is not a regular file: ${rgPath}`);
-  }
-  return `binary present at ${rgPath} (${(stat.size / 1024).toFixed(0)} KiB)`;
 });
 
 let allOk = true;
@@ -100,12 +59,10 @@ for (const r of results) {
 
 if (!allOk) {
   console.error(
-    "\n[check-native-deps] one or more native modules failed to load.\n" +
+    "\n[check-native-deps] a native module failed to load.\n" +
       "  - Confirm `pnpm install` completed without prebuild fallback errors.\n" +
       "  - On Linux: install `python3`, `make`, `g++` if a prebuild was unavailable.\n" +
-      "  - On Windows: install the windows-build-tools (or VS2019+ with C++ desktop).\n" +
-      "  - For @vscode/ripgrep: confirm the matching `@vscode/ripgrep-<os>-<arch>` " +
-      "optional dep installed (pnpm sometimes skips them under strict resolver settings).",
+      "  - On Windows: install the windows-build-tools (or VS2019+ with C++ desktop).",
   );
   process.exit(1);
 }
