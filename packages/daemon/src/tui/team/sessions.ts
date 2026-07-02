@@ -27,6 +27,29 @@ export interface TeamSession {
   windows: number;
   panes: number;
   status: AgentStatus;
+  /**
+   * Per-window (tmux tab) rollup: one entry per window the session owns, in
+   * ascending window-index order. The `windows` count above stays for compat;
+   * this is the richer breakdown the switcher/cockpit navigate.
+   */
+  windowList: TeamWindow[];
+}
+
+/**
+ * A single tmux window (tab) within a session, with its panes' statuses rolled
+ * up to one status (highest severity wins, like a session rollup).
+ */
+export interface TeamWindow {
+  /** `window_index` — tmux's own index (may be non-contiguous). */
+  index: number;
+  /** `window_name`. */
+  name: string;
+  /** Whether this is the session's active (foreground) window. */
+  active: boolean;
+  /** How many panes the window owns. */
+  panes: number;
+  /** Rolled-up status of the window's panes. */
+  status: AgentStatus;
 }
 
 /**
@@ -55,6 +78,12 @@ interface PaneRecord {
   authority: string;
   /** Raw `@agent_hint` pane option — forces a manifest when set. */
   hint: string;
+  /** `window_index` — the window (tab) this pane lives in. */
+  windowIndex: number;
+  /** `window_name`. */
+  windowName: string;
+  /** `window_active` — whether this pane's window is the session's active one. */
+  windowActive: boolean;
 }
 
 /** Severity order — highest present status wins in a rollup. */
@@ -184,6 +213,9 @@ export function listTeamSessions(
         windows: Number(windows) || 0,
         panes: panes.length,
         status: rollupStatus(statuses),
+        // `panes` and `statuses` are parallel (statuses = panes.map(...)), so
+        // the pure rollup can group each pane's window with its resolved status.
+        windowList: rollupWindows(panes, statuses),
       };
     });
 }
@@ -194,15 +226,37 @@ function collectPanes(): Map<string, PaneRecord[]> {
     "list-panes",
     "-a",
     "-F",
-    "#{session_name}\t#{pane_id}\t#{pane_pid}\t#{pane_current_command}\t#{@agent_state}\t#{@agent_hint}\t#{pane_title}",
+    // Window fields sit before pane_title so the (tab-safe) title stays the
+    // trailing catch-all — window names don't contain tabs in practice.
+    "#{session_name}\t#{pane_id}\t#{pane_pid}\t#{pane_current_command}\t#{@agent_state}\t#{@agent_hint}\t#{window_index}\t#{window_name}\t#{window_active}\t#{pane_title}",
   ]);
   const bySession = new Map<string, PaneRecord[]>();
   for (const line of raw.split("\n").filter(Boolean)) {
-    const [session = "", id = "", pid = "", cmd = "", authority = "", hint = "", ...titleParts] =
-      line.split("\t");
+    const [
+      session = "",
+      id = "",
+      pid = "",
+      cmd = "",
+      authority = "",
+      hint = "",
+      windowIndex = "0",
+      windowName = "",
+      windowActive = "0",
+      ...titleParts
+    ] = line.split("\t");
     if (!session) continue;
     const list = bySession.get(session) ?? [];
-    list.push({ id, pid: Number(pid) || 0, cmd, authority, hint, title: titleParts.join("\t") });
+    list.push({
+      id,
+      pid: Number(pid) || 0,
+      cmd,
+      authority,
+      hint,
+      windowIndex: Number(windowIndex) || 0,
+      windowName,
+      windowActive: windowActive === "1",
+      title: titleParts.join("\t"),
+    });
     bySession.set(session, list);
   }
   return bySession;
@@ -229,4 +283,49 @@ export function rollupStatus(statuses: AgentStatus[]): AgentStatus {
     if (present.has(status)) return status;
   }
   return "unknown";
+}
+
+/** The window fields {@link rollupWindows} needs from each pane — PaneRecord fits. */
+export interface WindowPaneInput {
+  windowIndex: number;
+  windowName: string;
+  windowActive: boolean;
+}
+
+/**
+ * Group a session's panes into per-window rollups — PURE.
+ *
+ * `panes[i]` and `statuses[i]` are parallel (one status per pane). Panes are
+ * bucketed by `windowIndex`; each window's panes roll up to a single status via
+ * {@link rollupStatus}, its `name` taken from the first pane seen and `active`
+ * true if ANY of its panes report `window_active`. Windows come back in
+ * ascending index order. An empty pane list yields an empty window list.
+ */
+export function rollupWindows(
+  panes: WindowPaneInput[],
+  statuses: AgentStatus[],
+): TeamWindow[] {
+  const byIndex = new Map<
+    number,
+    { name: string; active: boolean; statuses: AgentStatus[] }
+  >();
+  panes.forEach((pane, i) => {
+    let entry = byIndex.get(pane.windowIndex);
+    if (!entry) {
+      entry = { name: pane.windowName, active: false, statuses: [] };
+      byIndex.set(pane.windowIndex, entry);
+    }
+    if (pane.windowActive) entry.active = true;
+    const status = statuses[i];
+    if (status) entry.statuses.push(status);
+  });
+  return [...byIndex.entries()]
+    .sort(([a], [b]) => a - b)
+    .map(([index, entry]) => ({
+      index,
+      name: entry.name,
+      active: entry.active,
+      panes: entry.statuses.length,
+      status: rollupStatus(entry.statuses),
+    }));
 }

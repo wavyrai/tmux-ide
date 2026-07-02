@@ -20,7 +20,7 @@ import type { TeamProject } from "../team/projects.ts";
 import type { TeamSession } from "../team/sessions.ts";
 
 function session(name: string, status: TeamSession["status"]): TeamSession {
-  return { name, attached: false, windows: 1, panes: 1, status };
+  return { name, attached: false, windows: 1, panes: 1, status, windowList: [] };
 }
 
 function project(name: string, overrides: Partial<TeamProject> = {}): TeamProject {

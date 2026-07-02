@@ -26,7 +26,7 @@ import {
 import { createTheme } from "../../widgets/lib/theme.ts";
 import { adoptSession } from "../chrome/statusline.ts";
 import { previewLines } from "./preview.ts";
-import { type TeamSession } from "./sessions.ts";
+import { type TeamSession, type TeamWindow } from "./sessions.ts";
 import { listTeamProjects, type TeamProject } from "./projects.ts";
 import { registerProject, unregisterProject } from "../../lib/project-registry.ts";
 import { createStatusTracker, type AgentStatus } from "../detect/classify.ts";
@@ -151,6 +151,10 @@ render(() => {
   // into the active project's sessions, default 0).
   const [activeProject, setActiveProject] = createSignal(0);
   const [activeSession, setActiveSession] = createSignal(0);
+  // Picker-only third cursor tier: which WINDOW (tab) of the active session is
+  // selected. `-1` = the session row itself (no window), `0..n-1` = a window
+  // row. Standalone never sets it past -1 (its window lines are read-only).
+  const [activeWindow, setActiveWindow] = createSignal(-1);
   // Whether the `?` keybindings overlay is showing.
   const [helpOpen, setHelpOpen] = createSignal(false);
   // The single inline text prompt (register dir / new session / rename). null =
@@ -182,6 +186,46 @@ render(() => {
   const activeProj = (): TeamProject | undefined => visibleProjects()[activeProject()];
   /** The active session within the active project, or undefined when none. */
   const activeSess = (): TeamSession | undefined => activeProj()?.sessions[activeSession()];
+  /** The selected window of the active session (picker only), or undefined. */
+  const activeWin = (): TeamWindow | undefined => {
+    const wi = activeWindow();
+    return wi >= 0 ? activeSess()?.windowList[wi] : undefined;
+  };
+
+  /**
+   * PICKER navigation is a single flat cursor over a THREE-tier row union:
+   * every project row, the active project's session rows, and the active
+   * session's window rows. This builds that ordered node list — the cursor is
+   * the `(activeProject, activeSession, activeWindow)` triple, where `si:-1`
+   * marks a project row and `wi:-1` a session (or project) row.
+   */
+  function pickerNodes(): Array<{ pi: number; si: number; wi: number }> {
+    const nodes: Array<{ pi: number; si: number; wi: number }> = [];
+    visibleProjects().forEach((proj, pi) => {
+      nodes.push({ pi, si: -1, wi: -1 });
+      if (pi !== activeProject()) return;
+      proj.sessions.forEach((sess, si) => {
+        nodes.push({ pi, si, wi: -1 });
+        if (si === activeSession()) {
+          sess.windowList.forEach((_w, wi) => nodes.push({ pi, si, wi }));
+        }
+      });
+    });
+    return nodes;
+  }
+
+  /** Move the picker's flat cursor by `delta`, wrapping across the row union. */
+  function movePicker(delta: number) {
+    const nodes = pickerNodes();
+    if (nodes.length === 0) return;
+    const cur = nodes.findIndex(
+      (n) => n.pi === activeProject() && n.si === activeSession() && n.wi === activeWindow(),
+    );
+    const next = nodes[wrapIndex(cur >= 0 ? cur : 0, delta, nodes.length)]!;
+    setActiveProject(next.pi);
+    setActiveSession(next.si);
+    setActiveWindow(next.wi);
+  }
 
   function refresh(viewed?: string) {
     const next = listTeamProjects(tracker, viewed ? { viewed } : {});
@@ -192,7 +236,12 @@ render(() => {
       : next;
     const pi = clampIndex(activeProject(), vis.length);
     setActiveProject(pi);
-    setActiveSession((s) => clampIndex(s, vis[pi]?.sessions.length ?? 0));
+    const si = clampIndex(activeSession(), vis[pi]?.sessions.length ?? 0);
+    setActiveSession(activeSession() < 0 ? -1 : si);
+    // Keep the window cursor valid: drop to the session row (-1) when it points
+    // past the (possibly shrunk) window list, so it never dangles after a tick.
+    const winCount = vis[pi]?.sessions[si]?.windowList.length ?? 0;
+    setActiveWindow((w) => (w >= 0 && w < winCount ? w : -1));
   }
 
   onMount(() => {
@@ -204,6 +253,7 @@ render(() => {
   function selectProject(index: number) {
     setActiveProject(index);
     setActiveSession(0);
+    setActiveWindow(-1);
   }
 
   /** Which tmux session (if any) the preview should mirror for the selection. */
@@ -357,7 +407,10 @@ render(() => {
     if (proj.running) {
       const sess = activeSess() ?? proj.sessions[0];
       if (sess) {
-        pickerSwitch(sess.name);
+        // A selected WINDOW row switches to that tab (`<session>:<index>`); a
+        // session (or project) row switches to the session as a whole.
+        const win = activeWin();
+        pickerSwitch(win ? `${sess.name}:${win.index}` : sess.name);
         return;
       }
     }
@@ -402,6 +455,7 @@ render(() => {
   // closure vars — they need no reactivity, they only feed the next click.
   let lastProjectClick: ClickRecord | null = null;
   let lastSessionClick: ClickRecord | null = null;
+  let lastWindowClick: ClickRecord | null = null;
 
   /**
    * A sidebar project row's mousedown: select it, and on a same-row
@@ -425,6 +479,7 @@ render(() => {
   function clickSession(index: number) {
     const now = Date.now();
     setActiveSession(index);
+    setActiveWindow(-1);
     if (isDoubleClick(lastSessionClick, index, now)) {
       lastSessionClick = null;
       const sess = activeProj()?.sessions[index];
@@ -440,6 +495,27 @@ render(() => {
     lastSessionClick = { index, at: now };
   }
 
+  /**
+   * PICKER: a window row's mousedown selects it (its parent session too), and
+   * on a same-row double-click switches the client to `<session>:<index>` and
+   * closes the popup — the window-scoped analogue of {@link clickSession}.
+   */
+  function clickWindow(sessionIndex: number, windowIndex: number) {
+    const now = Date.now();
+    setActiveSession(sessionIndex);
+    setActiveWindow(windowIndex);
+    // Composite key so a double-click is only counted within the same window row.
+    const key = sessionIndex * 10000 + windowIndex;
+    if (isDoubleClick(lastWindowClick, key, now)) {
+      lastWindowClick = null;
+      const sess = activeProj()?.sessions[sessionIndex];
+      const win = sess?.windowList[windowIndex];
+      if (sess && win) pickerSwitch(`${sess.name}:${win.index}`);
+      return;
+    }
+    lastWindowClick = { index: key, at: now };
+  }
+
   /** Wheel over the sidebar moves the project selection, wrapping like the arrows. */
   function scrollProjects(evt: MouseEvent) {
     const dir = evt.scroll?.direction;
@@ -448,6 +524,7 @@ render(() => {
     if (n === 0) return;
     setActiveProject((p) => wrapIndex(p, dir === "up" ? -1 : 1, n));
     setActiveSession(0);
+    setActiveWindow(-1);
   }
 
   /**
@@ -639,6 +716,7 @@ render(() => {
         setFilterQuery("");
         setActiveProject(0);
         setActiveSession(0);
+        setActiveWindow(-1);
         return;
       }
       if (evt.name === "return") {
@@ -657,11 +735,13 @@ render(() => {
       if (evt.name === "up" || evt.name === "k") {
         if (fn > 0) setActiveProject((s) => wrapIndex(s, -1, fn));
         setActiveSession(0);
+        setActiveWindow(-1);
         return;
       }
       if (evt.name === "down" || evt.name === "j") {
         if (fn > 0) setActiveProject((s) => wrapIndex(s, 1, fn));
         setActiveSession(0);
+        setActiveWindow(-1);
         return;
       }
       const next = nextInput(filterQuery(), evt);
@@ -669,6 +749,7 @@ render(() => {
         setFilterQuery(next);
         setActiveProject(0);
         setActiveSession(0);
+        setActiveWindow(-1);
       }
       return;
     }
@@ -700,15 +781,21 @@ render(() => {
     const action = resolveAction(keymap, keyName);
     switch (action) {
       case "up":
-        if (n > 0) {
+        // Picker walks the flat project→session→window row union; standalone
+        // just pages the project list (its window lines are read-only).
+        if (pickerMode) movePicker(-1);
+        else if (n > 0) {
           setActiveProject((s) => wrapIndex(s, -1, n));
           setActiveSession(0);
+          setActiveWindow(-1);
         }
         break;
       case "down":
-        if (n > 0) {
+        if (pickerMode) movePicker(1);
+        else if (n > 0) {
           setActiveProject((s) => wrapIndex(s, 1, n));
           setActiveSession(0);
+          setActiveWindow(-1);
         }
         break;
       case "enter":
@@ -746,6 +833,7 @@ render(() => {
         setFilterMode(true);
         setActiveProject(0);
         setActiveSession(0);
+        setActiveWindow(-1);
         break;
       case "refresh":
         refresh();
@@ -881,6 +969,9 @@ render(() => {
                 <For each={visibleProjects()}>
                   {(project, i) => {
                     const isActive = () => i() === activeProject();
+                    // The flat cursor sits on the project row only when no
+                    // session/window under it is selected (activeSession === -1).
+                    const isCursor = () => isActive() && activeSession() === -1;
                     const running = project.running;
                     return (
                       <box flexDirection="column">
@@ -888,11 +979,11 @@ render(() => {
                         <box
                           flexDirection="row"
                           gap={1}
-                          backgroundColor={isActive() ? toRGBA(theme.border) : undefined}
+                          backgroundColor={isCursor() ? toRGBA(theme.border) : undefined}
                           onMouseDown={() => clickProject(i())}
                         >
-                          <text fg={isActive() ? toRGBA(theme.accent) : toRGBA(theme.fgMuted)}>
-                            {isActive() ? "▸" : " "}
+                          <text fg={isCursor() ? toRGBA(theme.accent) : toRGBA(theme.fgMuted)}>
+                            {isCursor() ? "▸" : " "}
                           </text>
                           <text fg={running ? statusColor[project.status] : toRGBA(theme.fgMuted)}>
                             {running ? STATUS[project.status].glyph : "○"}
@@ -924,29 +1015,72 @@ render(() => {
                         <Show when={isActive() && project.sessions.length > 0}>
                           <For each={project.sessions}>
                             {(session, si) => {
-                              const sActive = () => si() === activeSession();
+                              // The session row is the cursor only when no window
+                              // under it is selected; its windows expand whenever
+                              // it's the active session.
+                              const sExpanded = () => si() === activeSession();
+                              const sActive = () => sExpanded() && activeWindow() === -1;
                               return (
-                                <box
-                                  flexDirection="row"
-                                  gap={1}
-                                  paddingLeft={2}
-                                  backgroundColor={sActive() ? toRGBA(theme.border) : undefined}
-                                  onMouseDown={() => clickSession(si())}
-                                >
-                                  <text
-                                    fg={sActive() ? toRGBA(theme.accent) : toRGBA(theme.fgMuted)}
+                                <box flexDirection="column">
+                                  <box
+                                    flexDirection="row"
+                                    gap={1}
+                                    paddingLeft={2}
+                                    backgroundColor={sActive() ? toRGBA(theme.border) : undefined}
+                                    onMouseDown={() => clickSession(si())}
                                   >
-                                    {sActive() ? "▸" : " "}
-                                  </text>
-                                  <text fg={statusColor[session.status]}>
-                                    {STATUS[session.status].glyph}
-                                  </text>
-                                  <text fg={toRGBA(theme.fg)}>{session.name}</text>
-                                  <box flexGrow={1} />
-                                  <text fg={toRGBA(theme.fgMuted)}>{`${session.panes}p`}</text>
-                                  <text fg={toRGBA(theme.fgMuted)}>
-                                    {session.attached ? "·a" : ""}
-                                  </text>
+                                    <text
+                                      fg={sActive() ? toRGBA(theme.accent) : toRGBA(theme.fgMuted)}
+                                    >
+                                      {sActive() ? "▸" : " "}
+                                    </text>
+                                    <text fg={statusColor[session.status]}>
+                                      {STATUS[session.status].glyph}
+                                    </text>
+                                    <text fg={toRGBA(theme.fg)}>{session.name}</text>
+                                    <box flexGrow={1} />
+                                    <text fg={toRGBA(theme.fgMuted)}>{`${session.panes}p`}</text>
+                                    <text fg={toRGBA(theme.fgMuted)}>
+                                      {session.attached ? "·a" : ""}
+                                    </text>
+                                  </box>
+                                  {/* windows (tabs) — expanded under the active session */}
+                                  <Show when={sExpanded() && session.windowList.length > 0}>
+                                    <For each={session.windowList}>
+                                      {(win, wi) => {
+                                        const wActive = () => wi() === activeWindow();
+                                        return (
+                                          <box
+                                            flexDirection="row"
+                                            gap={1}
+                                            paddingLeft={4}
+                                            backgroundColor={
+                                              wActive() ? toRGBA(theme.border) : undefined
+                                            }
+                                            onMouseDown={() => clickWindow(si(), wi())}
+                                          >
+                                            <text
+                                              fg={
+                                                wActive()
+                                                  ? toRGBA(theme.accent)
+                                                  : toRGBA(theme.fgMuted)
+                                              }
+                                            >
+                                              {wActive() ? "▸" : " "}
+                                            </text>
+                                            <text fg={statusColor[win.status]}>
+                                              {STATUS[win.status].glyph}
+                                            </text>
+                                            <text fg={toRGBA(theme.fg)}>
+                                              {`${win.index}:${win.name}${win.active ? " *" : ""}`}
+                                            </text>
+                                            <box flexGrow={1} />
+                                            <text fg={toRGBA(theme.fgMuted)}>{`${win.panes}p`}</text>
+                                          </box>
+                                        );
+                                      }}
+                                    </For>
+                                  </Show>
                                 </box>
                               );
                             }}
@@ -1105,30 +1239,49 @@ render(() => {
                         {(session, i) => {
                           const isActive = () => i() === activeSession();
                           return (
-                            <box
-                              flexDirection="row"
-                              gap={1}
-                              paddingLeft={1}
-                              paddingRight={1}
-                              backgroundColor={isActive() ? toRGBA(theme.border) : undefined}
-                              onMouseDown={() => clickSession(i())}
-                            >
-                              <text fg={isActive() ? toRGBA(theme.accent) : toRGBA(theme.fgMuted)}>
-                                {isActive() ? "▸" : " "}
-                              </text>
-                              <text fg={statusColor[session.status]}>
-                                {STATUS[session.status].glyph}
-                              </text>
-                              <text fg={toRGBA(theme.fg)}>
-                                {session.name.padEnd(22).slice(0, 22)}
-                              </text>
-                              <text fg={toRGBA(theme.fgMuted)}>
-                                {STATUS[session.status].label.padEnd(8)}
-                              </text>
-                              <text fg={toRGBA(theme.fgMuted)}>{`${session.panes}p`}</text>
-                              <text fg={toRGBA(theme.fgMuted)}>
-                                {session.attached ? "· attached" : ""}
-                              </text>
+                            <box flexDirection="column">
+                              <box
+                                flexDirection="row"
+                                gap={1}
+                                paddingLeft={1}
+                                paddingRight={1}
+                                backgroundColor={isActive() ? toRGBA(theme.border) : undefined}
+                                onMouseDown={() => clickSession(i())}
+                              >
+                                <text
+                                  fg={isActive() ? toRGBA(theme.accent) : toRGBA(theme.fgMuted)}
+                                >
+                                  {isActive() ? "▸" : " "}
+                                </text>
+                                <text fg={statusColor[session.status]}>
+                                  {STATUS[session.status].glyph}
+                                </text>
+                                <text fg={toRGBA(theme.fg)}>
+                                  {session.name.padEnd(22).slice(0, 22)}
+                                </text>
+                                <text fg={toRGBA(theme.fgMuted)}>
+                                  {STATUS[session.status].label.padEnd(8)}
+                                </text>
+                                <text fg={toRGBA(theme.fgMuted)}>{`${session.panes}p`}</text>
+                                <text fg={toRGBA(theme.fgMuted)}>
+                                  {session.attached ? "· attached" : ""}
+                                </text>
+                              </box>
+                              {/* windows (tabs) — read-only breakdown under each session */}
+                              <For each={session.windowList}>
+                                {(win) => (
+                                  <box flexDirection="row" gap={1} paddingLeft={4} paddingRight={1}>
+                                    <text fg={statusColor[win.status]}>
+                                      {STATUS[win.status].glyph}
+                                    </text>
+                                    <text fg={toRGBA(theme.fgMuted)}>
+                                      {`${win.index}:${win.name}${win.active ? " *" : ""}`}
+                                    </text>
+                                    <box flexGrow={1} />
+                                    <text fg={toRGBA(theme.fgMuted)}>{`${win.panes}p`}</text>
+                                  </box>
+                                )}
+                              </For>
                             </box>
                           );
                         }}

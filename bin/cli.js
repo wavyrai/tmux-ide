@@ -2639,7 +2639,8 @@ var sessions_exports = {};
 __export(sessions_exports, {
   isListableSession: () => isListableSession,
   listTeamSessions: () => listTeamSessions,
-  rollupStatus: () => rollupStatus
+  rollupStatus: () => rollupStatus,
+  rollupWindows: () => rollupWindows
 });
 import { execFileSync as execFileSync3 } from "node:child_process";
 function isListableSession(name) {
@@ -2706,7 +2707,10 @@ function listTeamSessions(tracker, opts = {}) {
       attached: attached === "1",
       windows: Number(windows) || 0,
       panes: panes.length,
-      status: rollupStatus(statuses)
+      status: rollupStatus(statuses),
+      // `panes` and `statuses` are parallel (statuses = panes.map(...)), so
+      // the pure rollup can group each pane's window with its resolved status.
+      windowList: rollupWindows(panes, statuses)
     };
   });
 }
@@ -2715,14 +2719,37 @@ function collectPanes() {
     "list-panes",
     "-a",
     "-F",
-    "#{session_name}	#{pane_id}	#{pane_pid}	#{pane_current_command}	#{@agent_state}	#{@agent_hint}	#{pane_title}"
+    // Window fields sit before pane_title so the (tab-safe) title stays the
+    // trailing catch-all — window names don't contain tabs in practice.
+    "#{session_name}	#{pane_id}	#{pane_pid}	#{pane_current_command}	#{@agent_state}	#{@agent_hint}	#{window_index}	#{window_name}	#{window_active}	#{pane_title}"
   ]);
   const bySession = /* @__PURE__ */ new Map();
   for (const line of raw.split("\n").filter(Boolean)) {
-    const [session = "", id = "", pid = "", cmd = "", authority = "", hint = "", ...titleParts] = line.split("	");
+    const [
+      session = "",
+      id = "",
+      pid = "",
+      cmd = "",
+      authority = "",
+      hint = "",
+      windowIndex = "0",
+      windowName = "",
+      windowActive = "0",
+      ...titleParts
+    ] = line.split("	");
     if (!session) continue;
     const list = bySession.get(session) ?? [];
-    list.push({ id, pid: Number(pid) || 0, cmd, authority, hint, title: titleParts.join("	") });
+    list.push({
+      id,
+      pid: Number(pid) || 0,
+      cmd,
+      authority,
+      hint,
+      windowIndex: Number(windowIndex) || 0,
+      windowName,
+      windowActive: windowActive === "1",
+      title: titleParts.join("	")
+    });
     bySession.set(session, list);
   }
   return bySession;
@@ -2737,6 +2764,26 @@ function rollupStatus(statuses) {
     if (present.has(status2)) return status2;
   }
   return "unknown";
+}
+function rollupWindows(panes, statuses) {
+  const byIndex = /* @__PURE__ */ new Map();
+  panes.forEach((pane, i) => {
+    let entry = byIndex.get(pane.windowIndex);
+    if (!entry) {
+      entry = { name: pane.windowName, active: false, statuses: [] };
+      byIndex.set(pane.windowIndex, entry);
+    }
+    if (pane.windowActive) entry.active = true;
+    const status2 = statuses[i];
+    if (status2) entry.statuses.push(status2);
+  });
+  return [...byIndex.entries()].sort(([a], [b]) => a - b).map(([index, entry]) => ({
+    index,
+    name: entry.name,
+    active: entry.active,
+    panes: entry.statuses.length,
+    status: rollupStatus(entry.statuses)
+  }));
 }
 var SEVERITY;
 var init_sessions2 = __esm({
@@ -9439,7 +9486,14 @@ function toFleetJson(projects) {
         name: s.name,
         status: s.status,
         panes: s.panes,
-        attached: s.attached
+        attached: s.attached,
+        windows: (s.windowList ?? []).map((w) => ({
+          index: w.index,
+          name: w.name,
+          active: w.active,
+          panes: w.panes,
+          status: w.status
+        }))
       }))
     }))
   };

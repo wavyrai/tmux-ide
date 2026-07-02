@@ -20,7 +20,19 @@ export interface FleetJson {
     registered: boolean;
     running: boolean;
     status: AgentStatus;
-    sessions: Array<{ name: string; status: AgentStatus; panes: number; attached: boolean }>;
+    sessions: Array<{
+      name: string;
+      status: AgentStatus;
+      panes: number;
+      attached: boolean;
+      windows: Array<{
+        index: number;
+        name: string;
+        active: boolean;
+        panes: number;
+        status: AgentStatus;
+      }>;
+    }>;
   }>;
 }
 
@@ -38,6 +50,13 @@ export function toFleetJson(projects: TeamProject[]): FleetJson {
         status: s.status,
         panes: s.panes,
         attached: s.attached,
+        windows: (s.windowList ?? []).map((w) => ({
+          index: w.index,
+          name: w.name,
+          active: w.active,
+          panes: w.panes,
+          status: w.status,
+        })),
       })),
     })),
   };

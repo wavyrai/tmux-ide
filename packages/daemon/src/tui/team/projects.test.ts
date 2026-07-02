@@ -4,7 +4,7 @@ import type { TeamSession } from "./sessions.ts";
 import type { AgentStatus } from "../detect/classify.ts";
 
 function session(name: string, status: AgentStatus = "idle"): TeamSession {
-  return { name, attached: false, windows: 1, panes: 1, status };
+  return { name, attached: false, windows: 1, panes: 1, status, windowList: [] };
 }
 
 /** Build a `sessionCwd` resolver from a plain map (unknown → null). */

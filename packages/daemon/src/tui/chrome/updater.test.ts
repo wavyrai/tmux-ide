@@ -21,7 +21,7 @@ function project(name: string, overrides: Partial<TeamProject> = {}): TeamProjec
     registered: true,
     running: true,
     status: "idle",
-    sessions: [{ name, attached: false, windows: 1, panes: 1, status: "idle" }],
+    sessions: [{ name, attached: false, windows: 1, panes: 1, status: "idle", windowList: [] }],
     ...overrides,
   };
 }
@@ -86,11 +86,11 @@ describe("runUpdaterTick", () => {
       computeProjects: () => [
         project("web", {
           status: "done",
-          sessions: [{ name: "web", attached: false, windows: 1, panes: 1, status: "done" }],
+          sessions: [{ name: "web", attached: false, windows: 1, panes: 1, status: "done", windowList: [] }],
         }),
         project("api", {
           status: "working",
-          sessions: [{ name: "api", attached: false, windows: 1, panes: 1, status: "working" }],
+          sessions: [{ name: "api", attached: false, windows: 1, panes: 1, status: "working", windowList: [] }],
         }),
       ],
       writeStatus: () => {},
@@ -118,7 +118,7 @@ describe("runUpdaterTick", () => {
       computeProjects: () => [
         project("web", {
           status: "blocked",
-          sessions: [{ name: "web", attached: false, windows: 1, panes: 1, status: "blocked" }],
+          sessions: [{ name: "web", attached: false, windows: 1, panes: 1, status: "blocked", windowList: [] }],
         }),
       ],
       writeStatus: () => {},
@@ -144,7 +144,7 @@ describe("runUpdaterTick", () => {
       computeProjects: () => [
         project("web", {
           status: "working",
-          sessions: [{ name: "web", attached: false, windows: 1, panes: 1, status: "working" }],
+          sessions: [{ name: "web", attached: false, windows: 1, panes: 1, status: "working", windowList: [] }],
         }),
       ],
       writeStatus: () => {},

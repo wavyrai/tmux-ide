@@ -4,7 +4,7 @@ import type { TeamProject } from "./projects.ts";
 import type { TeamSession } from "./sessions.ts";
 
 function session(over: Partial<TeamSession> = {}): TeamSession {
-  return { name: "s", attached: false, windows: 1, panes: 1, status: "idle", ...over };
+  return { name: "s", attached: false, windows: 1, panes: 1, status: "idle", windowList: [], ...over };
 }
 
 function project(over: Partial<TeamProject> = {}): TeamProject {
@@ -46,12 +46,37 @@ describe("toFleetJson", () => {
           running: true,
           status: "working",
           sessions: [
-            { name: "web", status: "working", panes: 3, attached: true },
-            { name: "web-2", status: "idle", panes: 1, attached: false },
+            { name: "web", status: "working", panes: 3, attached: true, windows: [] },
+            { name: "web-2", status: "idle", panes: 1, attached: false, windows: [] },
           ],
         },
       ],
     });
+  });
+
+  it("maps a session's windowList to the JSON windows array", () => {
+    const projects: TeamProject[] = [
+      project({
+        name: "web",
+        running: true,
+        sessions: [
+          session({
+            name: "web",
+            status: "working",
+            panes: 3,
+            windowList: [
+              { index: 0, name: "editor", active: true, panes: 2, status: "working" },
+              { index: 2, name: "server", active: false, panes: 1, status: "idle" },
+            ],
+          }),
+        ],
+      }),
+    ];
+
+    expect(toFleetJson(projects).projects[0]!.sessions[0]!.windows).toEqual([
+      { index: 0, name: "editor", active: true, panes: 2, status: "working" },
+      { index: 2, name: "server", active: false, panes: 1, status: "idle" },
+    ]);
   });
 
   it("preserves a null dir", () => {
