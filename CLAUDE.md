@@ -1,575 +1,103 @@
 # tmux-ide
 
-A CLI tool that turns any project into a tmux-powered terminal IDE using a simple `ide.yml` config file.
+**The terminal that understands your agents.** tmux-ide is a terminal-native IDE and agent cockpit built *around* tmux: one command adds a native chrome (the dock) to any existing tmux session — fleet tabs with live agent-status glyphs, ground-truth working/blocked/done detection, notifications when an agent needs you, and crash-proof restore that revives whole fleets including Claude conversations. Nothing to migrate into, nothing to lock into: the chrome is tmux options; `unadopt` reverts; if tmux-ide dies your sessions are ordinary tmux.
 
-## Quick Start
+Positioning: other tools rebuild the terminal to understand agents; tmux-ide teaches the terminal you already use to understand them. Never reference competitor projects by name in code, comments, commits, or docs.
+
+## Quick start
 
 ```bash
-tmux-ide              # Launch IDE from ide.yml
-tmux-ide init         # Scaffold ide.yml (auto-detects stack)
-tmux-ide inspect      # Show resolved config + live tmux state
-tmux-ide stop         # Kill session
-tmux-ide attach       # Reattach to running session
+tmux-ide adopt <session>            # add the dock to a session you already have
+tmux-ide integration install claude # ground-truth agent status via Claude Code hooks (+ skill sync)
+tmux-ide                            # home screen (fleet cockpit) — or launches ide.yml if present
+tmux-ide restore --resume-agents    # after a tmux server death: rebuild everything, revive claudes
 ```
 
-## ide.yml Format
+## Keys & surfaces (prefix-first)
+
+The PRIMARY key form is the tmux prefix + letter — it survives every keyboard protocol. The ⌥ twins are a fast path that dies while a focused app (e.g. Claude Code) switches the terminal's key encoding (kitty protocol); kitty-encoded user-keys fallbacks are registered but coverage varies by terminal.
+
+| Action | Reliable | Fast path |
+| --- | --- | --- |
+| Home cockpit (fleet tree + detail popup) | `prefix h` | `⌥h` |
+| Switcher popup | `prefix j` | `⌥p` |
+| Cheat sheet | `prefix k` | `⌥k` |
+| Actions menu (also: right-click anywhere — opens at the pointer, on button RELEASE) | `prefix u` | `⌥m` |
+| Sidebar (fleet nav column) | `prefix b` | `⌥b` |
+| Panels: explorer / git changes / config | `prefix e` / `g` / `v` | `⌥e` / `⌥g` / `⌥,` |
+
+All keys configurable via `~/.tmux-ide/config.json` (`keys.*`); re-adopt applies changes. Letters were chosen to never clobber tmux prefix defaults (hence menu=u, switcher=j, config=v).
+
+## The agent contract (two-layer detection)
+
+1. **Authority** (ground truth): lifecycle hooks stamp pane-local options. `tmux-ide integration install claude` wires Claude Code's hooks (UserPromptSubmit/PreToolUse→working, Notification→blocked, Stop→done, SessionEnd→idle; also records `@agent_session_id` — the `claude --resume` key restore uses). ANY agent can self-report the same way, no integration needed:
+   ```bash
+   tmux set-option -p @agent_state "working:$(date +%s)"   # working|blocked|done|idle
+   ```
+   Staleness guard: working/blocked older than 10 min fall back to scraping.
+2. **Fallback** (scraping): process-tree resolution (pane_pid → the real agent, not `node`) → evidence-tuned screen manifests (claude/codex tuned from real captures; opencode/gemini/aider/copilot conservative). User overrides in `~/.tmux-ide/agent-detection/*.json`; per-pane `@agent_hint <id>` forces a manifest. Debug any pane: `tmux-ide agent explain <pane|session>`.
+
+## CLI surface (everything supports --json)
+
+- Fleet: `team --json` · `events [--follow]` · `wait agent-status <s> --status <x>` · `wait output <pane> --match <re>` · `send <target> <msg>` · `agent explain <pane>`
+- Chrome: `adopt <s>` / `adopt --all` / `unadopt <s>` · `statusline` · `menu` · `cheatsheet` · `sidebar-toggle` · `popup <widget>` · `welcome`
+- Lifecycle: `restore [--dry-run] [--run-commands] [--resume-agents]` · `worktree create|open|list|remove <branch>` · `update [--dry-run]` · `skill-sync` · `integration install|uninstall|status claude` · `doctor`
+- Projects: launch (bare `tmux-ide`), `init`, `stop`, `restart`, `attach`, `ls`, `status`, `inspect`, `validate`, `detect [--write]`, `config` (get/set/add-pane/…)
+- A de-emphasized task system still exists (`tmux-ide task --help`); it is not the product's pitch.
+
+## ide.yml (optional — adopt works without it)
 
 ```yaml
-name: project-name # tmux session name
-
-before: pnpm install # optional pre-launch hook
-
+name: my-project
+sidebar: true            # inject the fleet nav column (or { width: "30" })
+before: pnpm install
 rows:
-  - size: 70% # row height percentage
+  - size: 70%
     panes:
-      - title: Claude 1 # pane border label
-        command: claude # command to run (optional)
-        size: 50% # pane width percentage (optional)
-        dir: apps/web # per-pane working directory (optional)
-        focus: true # initial focus (optional)
-        env: # environment variables (optional)
-          PORT: 3000
-
+      - { title: Editor, command: claude, focus: true, size: 50% }
+      - { title: Shell }
   - panes:
-      - title: Dev Server
-        command: pnpm dev
-      - title: Shell
-
-team: # optional agent team config
-  name: my-team
-
-theme: # optional color overrides
-  accent: colour75
-  border: colour238
-  bg: colour235
-  fg: colour248
+      - { title: Changes, type: changes }     # widget panes: explorer|changes|preview|config|sidebar
+      - { title: Dev, command: pnpm dev, dir: apps/web, env: { PORT: "3000" } }
 ```
 
-### Agent Team Pane Fields
-
-```yaml
-panes:
-  - title: Lead
-    command: claude
-    role: lead # optional layout metadata: lead | teammate | planner | validator | researcher
-    focus: true
-  - title: Frontend
-    command: claude
-    role: teammate
-    specialty: frontend
-    skill: frontend # loads .tmux-ide/skills/frontend.md into dispatch prompts
-    task: "Work on components" # suggested task text for your prompts
-  - title: Validator
-    command: claude
-    role: validator
-    skill: reviewer
-  - title: Researcher
-    command: claude
-    role: researcher
-    specialty: researcher
-    skill: researcher
-```
-
-### Orchestrator Config
-
-```yaml
-orchestrator:
-  enabled: true
-  auto_dispatch: true # auto-assign tasks to idle agents
-  dispatch_mode: missions # "tasks" | "goals" | "missions"
-  poll_interval: 5000 # ms between ticks
-  stall_timeout: 300000 # ms before nudging idle agent
-  max_concurrent_agents: 10
-  master_pane: Master # lead pane excluded from dispatch
-  before_run: pnpm install # hook before task starts
-  after_run: pnpm lint # hook after task completes
-  services:
-    web:
-      command: pnpm dev
-      port: 3000
-      healthcheck: http://localhost:3000
-  research:
-    enabled: true
-    triggers:
-      mission_start: true
-      milestone_complete: true
-      periodic_minutes: 20
-  webhooks: # fire-and-forget event notifications
-    - url: https://example.com/hook
-      events: [completion, dispatch] # filter (omit = all events)
-      secret: my-signing-key # HMAC-SHA256 via X-Signature-256
-```
-
-### Widget Pane Types
-
-```yaml
-panes:
-  - title: War Room
-    type: warroom # explorer | changes | preview | tasks | warroom | costs | config
-  - title: Explorer
-    type: explorer
-    target: src/ # optional target path
-```
-
-## Architecture
-
-The project is written in TypeScript. Source lives in `src/`, compiled output in `dist/`. Tests run via Node's `--experimental-strip-types`; the published package ships compiled JS from `tsc`.
-
-### Core CLI
-
-- `bin/cli.js` — CLI entry point and top-level error boundary (stays JS, imports from `dist/`)
-- `src/launch.ts` — Launch orchestration for tmux sessions
-- `src/restart.ts` — Stop + relaunch flow
-- `src/init.ts` — Scaffolds ide.yml with smart detection
-- `src/stop.ts` — Kills the tmux session
-- `src/attach.ts` — Reattach to running session
-- `src/send.ts` — Send messages to panes by name/title/role/ID
-- `src/orchestrator-status.ts` — Orchestrator status display (agents, tasks, events)
-- `src/config.ts` — Programmatic config mutations
-- `src/task.ts` — Mission/goal/task CRUD commands
-- `src/status.ts`, `src/inspect.ts`, `src/validate.ts`, `src/detect.ts`, `src/ls.ts`, `src/doctor.ts`
-
-### Daemon & Process Lifecycle
-
-- `src/lib/daemon.ts` — Unified background process: pane monitor + orchestrator + command-center HTTP server. Entry: `node dist/lib/daemon.js <session> [port]`
-- `src/lib/daemon-watchdog.ts` — Crash recovery wrapper: respawns daemon on crash with exponential backoff (1s→30s cap, 5 crashes/60s limit). Zero business imports.
-- `src/lib/session-monitor.ts` — Pure helper functions (computePortPanes, computeAgentStates) used by daemon.ts
-
-### Orchestrator & Task System
-
-- `src/lib/orchestrator.ts` — Autonomous task dispatch engine (dispatch, stall detection, completion, retry, reconciliation, hot reload)
-- `src/lib/task-store.ts` — Mission/goal/task CRUD with JSON file persistence in `.tasks/` (atomic writes via temp+rename)
-- `src/lib/event-log.ts` — Append-only event log with structured events and webhook integration
-- `src/lib/webhook.ts` — Fire-and-forget webhook dispatcher with HMAC signing
-- `src/lib/token-tracker.ts` — Agent time/cost accounting
-- `src/lib/worktree.ts` — Git worktree creation per task (with orphan cleanup on startup)
-- `src/lib/github-pr.ts` — Auto-PR creation on task completion
-
-### Schemas
-
-- `src/schemas/ide-config.ts` — Zod schemas for ide.yml (IdeConfig, Row, Pane, OrchestratorYamlConfig, WebhookConfig)
-- `src/schemas/domain.ts` — Zod schemas for tasks, goals, events, panes, agent details
-
-### Command Center (REST API + SSE + WebSocket)
-
-- `src/command-center/server.ts` — Hono REST API with SSE event streaming
-- `src/command-center/discovery.ts` — Session discovery, project detail, orchestrator snapshots
-- `src/command-center/pane-mirror.ts` — WebSocket terminal mirroring (raw ANSI)
-- `src/command-center/schemas.ts` — Request validation schemas
-
-### Widgets (OpenTUI/Solid TUI)
-
-- `src/widgets/resolve.ts` — Widget type → entry point resolution
-- `src/widgets/lib/` — Shared: theme, pane-comms, watcher, git, files, config-model
-- `src/widgets/explorer/` — File tree navigator
-- `src/widgets/tasks/` — Task list/detail/form
-- `src/widgets/warroom/` — Agent coordination dashboard
-- `src/widgets/costs/` — Token/cost tracking
-- `src/widgets/changes/` — Git diff viewer
-- `src/widgets/preview/` — File preview
-- `src/widgets/config/` — Interactive TUI config editor
-- `src/widgets/setup/` — Setup wizard
-
-### Native macOS App (in development)
-
-- `app/` — Swift/SwiftUI native gateway app with Ghostty terminal embedding
-- `app/project.yml` — XcodeGen build config
-- `app/TmuxIde/` — App source (services, models, UI, terminal bridge)
-- Consumes command-center REST/SSE/WebSocket APIs
-- Infinite canvas UI (workspace > columns > tiles)
-
-### Other
-
-- `src/lib/tmux.ts` — Shared tmux process helpers
-- `src/lib/yaml-io.ts` — Config read/write
-- `src/lib/errors.ts` — Error class hierarchy
-- `templates/` — Preset configs
-- `docs/content/docs/` — User-facing docs site
-- `.github/workflows/ci.yml` — CI quality gates
-
-## Programmatic CLI Reference
-
-All commands support `--json` for structured output.
-
-### Read Commands
-
-```bash
-# Session status
-tmux-ide status --json
-# → { "session": "...", "running": true, "configExists": true, "panes": [...] }
-
-# Validate config
-tmux-ide validate --json
-# → { "valid": true, "errors": [] }
-
-# Detect project stack
-tmux-ide detect --json
-# → { "detected": { "packageManager": "pnpm", "frameworks": ["next", "convex"], ... }, "suggestedConfig": {...} }
-
-# Dump config as JSON
-tmux-ide config --json
-# → { "name": "...", "rows": [...] }
-
-# List sessions
-tmux-ide ls --json
-# → { "sessions": [{ "name": "...", "created": "...", "attached": true }] }
-
-# System check
-tmux-ide doctor --json
-# → { "ok": true, "checks": [...] }
-
-# Inspect resolved config + live tmux data
-tmux-ide inspect --json
-# → { "valid": true, "session": "...", "resolved": {...}, "tmux": {...} }
-```
-
-### Write Commands
-
-```bash
-# Detect and write config
-tmux-ide detect --write
-
-# Set a config value by dot path
-tmux-ide config set name "my-app"
-tmux-ide config set rows.0.size "70%"
-tmux-ide config set rows.1.panes.0.command "npm run dev"
-
-# Add a pane to a row
-tmux-ide config add-pane --row 1 --title "Tests" --command "pnpm test"
-
-# Remove a pane
-tmux-ide config remove-pane --row 1 --pane 2
-
-# Add a new row
-tmux-ide config add-row --size "30%"
-
-# Enable agent teams
-tmux-ide config enable-team --name "my-team"
-
-# Disable agent teams
-tmux-ide config disable-team
-```
-
-### Pane Messaging
-
-```bash
-tmux-ide send <target> <message>        # Send message to pane by name/title/role/ID
-tmux-ide send --to "Agent 1" <message>  # Target by --to flag
-tmux-ide send <target> --no-enter msg   # Send text without pressing Enter
-echo "msg" | tmux-ide send <target>     # Pipe from stdin
-```
-
-### Orchestrator
-
-```bash
-tmux-ide orchestrator [--json]    # Show orchestrator status (agents, tasks, events)
-tmux-ide orch                     # Alias
-```
-
-### Settings TUI
-
-```bash
-tmux-ide settings                 # Interactive TUI config editor (tabs: Layout, Team, Orch, Theme)
-```
-
-### Session Commands
-
-```bash
-tmux-ide              # Launch (or re-launch) IDE
-tmux-ide stop         # Kill session
-tmux-ide attach       # Reattach
-tmux-ide init         # Scaffold config (auto-detects stack)
-tmux-ide init --template nextjs  # Use specific template
-```
-
-### Command Center
-
-```bash
-tmux-ide command-center [--port 6060]   # Start REST API + SSE + WebSocket server
-```
-
-### Dashboard
-
-```bash
-# Dashboard dev server defaults to port 6061 when launched with tmux-ide
-http://localhost:6061
-```
-
-## Claude Skill
-
-### When to suggest tmux-ide
-
-- User mentions multi-pane, tmux, terminal IDE, dev environment
-- User wants to set up a development workspace
-- User asks about running multiple terminals/tools side-by-side
-- User wants coordinated multi-agent development (agent teams)
-- User mentions team lead, teammates, or task delegation
-
-### Setup workflow
-
-1. Check if `ide.yml` exists: `tmux-ide status --json`
-2. Auto-detect the project: `tmux-ide detect --json`
-3. **Present 2-3 layout options to the user using ASCII diagrams** before writing any config. Show the pane arrangement visually so the user can pick or tweak. Example:
-
-   **Option A — Dual Claude + Dev (recommended)**
-
-   ```
-   ┌─────────────────┬─────────────────┐
-   │                 │                 │
-   │    Claude 1     │    Claude 2     │  70%
-   │                 │                 │
-   ├────────┬────────┴────────┬────────┤
-   │Dev Srv │  Tests  │ Shell │        │  30%
-   └────────┴─────────┴───────┘────────┘
-   ```
-
-   **Option B — Triple Claude**
-
-   ```
-   ┌───────────┬───────────┬───────────┐
-   │           │           │           │
-   │ Claude 1  │ Claude 2  │ Claude 3  │  70%
-   │           │           │           │
-   ├───────────┴─────┬─────┴───────────┤
-   │    Dev Server    │     Shell       │  30%
-   └─────────────────┴─────────────────┘
-   ```
-
-   **Option C — Single Claude + wide dev**
-
-   ```
-   ┌─────────────────────────────────────┐
-   │             Claude                  │  60%
-   ├──────────┬──────────┬──────────────┤
-   │ Dev Srv  │  Tests   │    Shell     │  40%
-   └──────────┴──────────┴──────────────┘
-   ```
-
-   Adapt pane names/commands to the detected stack (e.g., `pnpm dev`, `cargo watch`, `go run`). Always tailor the options to the project.
-
-4. Once the user picks an option, write the config:
-   - Quick path: `tmux-ide detect --write` then modify as needed
-   - Or build custom:
-     ```bash
-     tmux-ide config add-row --size "70%"
-     tmux-ide config add-pane --row 0 --title "Claude 1" --command "claude"
-     tmux-ide config add-pane --row 0 --title "Claude 2" --command "claude"
-     tmux-ide config add-row
-     tmux-ide config add-pane --row 1 --title "Dev" --command "pnpm dev"
-     tmux-ide config add-pane --row 1 --title "Shell"
-     tmux-ide validate --json
-     ```
-
-### Modification workflow
-
-1. Read current config: `tmux-ide config --json`
-2. Modify: `tmux-ide config set <path> <value>` or `add-pane`/`remove-pane`
-3. Validate: `tmux-ide validate --json`
-
-### Agent Teams workflow
-
-For coordinated multi-agent development:
-
-1. `tmux-ide config enable-team --name "my-team"` or `tmux-ide init --template agent-team`
-2. Assign tasks: `tmux-ide config set rows.0.panes.1.task "Work on frontend"`
-3. Validate: `tmux-ide validate --json`
-4. Launch: `tmux-ide` or `tmux-ide restart`
-5. In the lead pane, ask Claude to create and organize the team in natural language
-
-tmux-ide prepares the tmux layout and enables `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1` when `team` is configured. It does not synthesize hidden Claude CLI flags for team creation.
-
-The team lead can self-configure the workspace layout with `tmux-ide config ...`, then `restart` to apply changes.
-
-## Contributor Workflow
+Always `tmux-ide validate --json` after config mutations. When helping a user design a layout, present 2–3 ASCII-diagram options first (see skill/SKILL.md).
+
+## Architecture (monorepo)
+
+- `bin/cli.ts` → esbuild-bundled to `bin/cli.js` (`pnpm build`, scripts/build-cli.mjs). The published bin. All command cases live here.
+- `packages/daemon/src/`
+  - `tui/chrome/` — the dock: statusline (bar builder, adopt/unadopt, ALL key/mouse binds incl. prefix twins + kitty user-keys fallbacks + LEGACY_BINDS cleanup), updater (the `_tmux-ide-chrome` background tick: status vars, chips, events, notifications, snapshots, update checks), menu, cheatsheet, panels, sidebar, chip, notify, events, snapshot, welcome, kitty-keys.
+  - `tui/detect/` — two-layer detection: classify (authority parse + tracker), process-tree, manifest(+loader/corpus), snapshot.
+  - `tui/team/` — the cockpit app (index.tsx: standalone home screen / picker / popup modes), sessions/projects data layer, home, tree/fuzzy/nav/mouse/keymap, report (fleet JSON), CONTROL.md.
+  - `tui/integrations/` — claude.ts (hooks install/uninstall, settings merge; `TMUX_IDE_CLAUDE_SETTINGS` override).
+  - `tui/mirror/` — the control-mode (tmux -C) unified-render spike: proven, parked as the endgame option.
+  - `tui/main.ts` + `tui/compiled.ts` + `scripts/build-tui.mjs` — the single-binary TUI (`bun build --compile` → dist/tui/tmux-ide-tui; resolution order: dev checkout → compiled binary → honest error).
+  - `widgets/` — OpenTUI/Solid panels (explorer/changes/preview/config/setup/sidebar) + lib (theme mapped to app-config tokens, grammar, help-overlay); resolve.ts maps ide.yml `type:` panes (bundle-safe paths, spawns from REPO root for the bunfig preload).
+  - `lib/` — app-config (THE typed config: keys/theme/updater/notifications/restore/updates/integrations; `TMUX_IDE_CONFIG` path override), restore, worktree, update(+check), agent-discovery, skill-sync, project-registry.
+  - `command-center/` — HTTP API (secondary surface).
+- `packages/tmux-bridge` (process helpers) · `packages/contracts` (ide.yml schema) · `skill/SKILL.md` (the agent-facing manual, version-marked, synced to `~/.claude/skills/tmux-ide/` by postinstall / `tmux-ide update` / `tmux-ide skill-sync` / `integration install`).
+- `docs/` — the website (Next/fumadocs). Gate: `pnpm docs:build`.
+
+## Conventions & hard-won gotchas
+
+- **Pure core, thin io, everything tested.** New pure logic gets a colocated `*.test.ts` — and MUST be added to `packages/daemon/vitest.config.ts` include list if its path isn't covered; a test file outside the include silently never runs (this bit us twice).
+- **Gates before any commit**: daemon `tsc --noEmit` (now covers the .tsx apps via tui/main.ts imports), `vitest run` (600+), `pnpm lint`, `pnpm build`; `pnpm docs:build` when docs change. Full release gate: `pnpm check`.
+- **Live verification is part of done** for anything touching tmux: drive it against a real session. Scratch sessions are `zz-`-prefixed (auto-filtered as internal along with `_`-prefixed) and always cleaned up. NEVER mutate or unadopt a user's real sessions; refresh with `adopt` only.
+- **Nested tmux in tests** needs `TMUX= TMUX_TMPDIR= tmux attach …` (stale env leaks break the socket path). Real input can be INJECTED: `tmux send-keys -H <hex>` with SGR mouse (`\e[<b;x;yM/m`) or key escapes — this is how mouse/keyboard behavior gets truly verified.
+- **tmux binds**: root-table binds are SERVER-wide; bind args do NOT format-expand but `run-shell` command strings DO (at fire time — that's where `#{client_name}`/`#{mouse_x}` get captured). `#{mouse_x}` is PANE-relative (add `#{pane_left}` via `#{e|+:…}`); `display-menu -y` is the BOTTOM edge; menus opened via a CLI hop must bind on Mouse**Up** (a Down-bind's menu is killed by the user's own release). When retiring a bind, add it to `LEGACY_BINDS` in statusline.ts — adopt only ever adds otherwise.
+- **Alt keys are not reliable** (kitty keyboard protocol) — any new action needs a prefix twin (prefixKeyBinds) and shows the prefix form in user-facing hints.
+- **Widgets run via bun from the REPO root** (bunfig.toml JSX preload); the project dir travels as `--dir`. The compiled binary needs NO preload but trips on bunfig if run FROM the repo root (dev quirk).
+- **Env overrides for safe testing**: `TMUX_IDE_CONFIG` (config path), `TMUX_IDE_HOME` (state: welcome/update-check markers), `TMUX_IDE_CLAUDE_SETTINGS` (hooks target), `TMUX_IDE_CLAUDE_DIR` (skill target). Use them; never point tests at real user state.
+- **The updater** (`_tmux-ide-chrome` session) loads code at start — after changing chrome code, kill it and re-adopt to load the new build. Keep it running for the user at the end of any work.
+- **Snapshots/restore are load-bearing**: the tmux server has genuinely crashed during development; `tmux-ide restore --resume-agents` is the recovery path (and dogfood test).
+
+## Contributor workflow
 
 ```bash
 pnpm install --frozen-lockfile
-pnpm lint
-pnpm format:check
-pnpm test
-pnpm pack:check
-```
-
-- Main release gate: `pnpm check`
-- Live tmux coverage: `pnpm test:integration`
-- Docs build: `pnpm docs:build`
-
-### Best practices
-
-- Always use `--json` for programmatic access
-- Always run `validate --json` after config mutations
-- Prefer `inspect --json` when debugging config/runtime mismatches
-- Top row should be ~70% height for Claude panes
-- 2-3 Claude panes in the top row (or lead + 2 teammate-ready panes for agent teams)
-- Dev servers + shell in the bottom row
-- Use `detect --json` first to understand the project stack
-- For agent teams: assign specific tasks to teammate panes for focused parallel work
-
-## Task Management
-
-tmux-ide provides structured task management for coordinated multi-agent work.
-
-### Mission & Goals
-
-```bash
-tmux-ide mission create "title" --description "..." # Create mission in planning
-tmux-ide mission plan-complete                      # Move mission to active
-tmux-ide mission status                             # Show mission progress
-tmux-ide mission set "title" --description "..."   # Set the project mission active immediately
-tmux-ide mission show                               # Show current mission
-tmux-ide mission clear                              # Clear the mission
-
-tmux-ide goal create "title" --priority N --acceptance "criteria"
-tmux-ide goal list [--json]                         # List all goals
-tmux-ide goal show <id> [--json]                    # Show goal with tasks
-tmux-ide goal update <id> --status done
-tmux-ide goal done <id>                             # Mark goal complete
-tmux-ide goal delete <id>
-```
-
-### Milestones
-
-```bash
-tmux-ide milestone create "Foundation" --sequence 1
-tmux-ide milestone list [--json]
-tmux-ide milestone show M1 [--json]
-tmux-ide milestone update M1 --status done
-```
-
-### Tasks
-
-```bash
-tmux-ide task create "title" --goal NN --priority N --assign "Agent" --tags "a,b" --depends "001,002"
-tmux-ide task list [--status todo --goal NN] [--json]
-tmux-ide task show <id> [--json]                    # Full mission→goal→task context
-tmux-ide task update <id> --status review --proof '{"tests":{"passed":10,"total":10}}'
-tmux-ide task claim <id> --assign "Agent Name"      # Claim and start a task
-tmux-ide task done <id> --proof "description"       # Mark task complete with proof
-tmux-ide task delete <id>
-```
-
-### Validation
-
-Validation contracts live in `.tasks/validation-contract.md`. Tasks claim assertion IDs with `--fulfills`, and the validator updates assertion state as milestones finish.
-
-```bash
-tmux-ide validate show [--json]
-tmux-ide validate assert VAL-001 --status passing --evidence "integration test passed"
-tmux-ide validate report [--json]
-tmux-ide validate coverage [--json]
-```
-
-### Skills
-
-Project skills live in `.tmux-ide/skills/` and are injected into prompts when a pane declares `skill: <name>`.
-
-```bash
-tmux-ide skill list [--json]
-tmux-ide skill show frontend [--json]
-tmux-ide skill create reviewer
-tmux-ide skill validate [--json]
-```
-
-### Knowledge Library
-
-Shared mission context lives in `.tmux-ide/library/`:
-
-- `architecture.md` for repo-wide dispatch context
-- `learnings.md` for task summaries appended over time
-- `research-findings.md` for completed research output
-- `AGENTS.md` for project boundaries injected into prompts
-
-### Metrics
-
-```bash
-tmux-ide metrics [--json]
-tmux-ide metrics agents [--json]
-tmux-ide metrics timeline [--json]
-tmux-ide metrics eval [--json]
-tmux-ide metrics history [--json]
-```
-
-### Researcher
-
-The researcher agent audits the mission continuously. It can trigger on mission start, milestone completion, retry clusters, periodic intervals, and stalls.
-
-```bash
-tmux-ide research status [--json]
-tmux-ide research trigger periodic [--json]
-```
-
-### Proof Format
-
-The `--proof` flag accepts either a plain string (stored as `notes`) or a JSON object:
-
-```json
-{
-  "tests": { "passed": 10, "total": 10 },
-  "pr": { "number": 42, "url": "https://...", "status": "merged" },
-  "ci": { "status": "passing", "url": "https://..." },
-  "notes": "Additional context"
-}
-```
-
-### Task Dependencies
-
-Use `--depends "001,002"` to declare that a task depends on other tasks. The orchestrator will not dispatch a task until all its dependencies are complete.
-
-### Milestone Gating
-
-In `dispatch_mode: missions`, milestone order gates execution. Tasks assigned to `M2` do not dispatch until `M1` is complete and validation passes. `tmux-ide mission plan-complete` normalizes the mission so only the earliest milestone starts as `active`.
-
-### Orchestrator Auto-Dispatch
-
-When `orchestrator.enabled: true` and `auto_dispatch: true` in ide.yml, the orchestrator automatically:
-
-1. Finds idle agent panes (not the master/lead pane)
-2. Picks the highest-priority unblocked task in the current milestone
-3. Prefers panes whose `specialty` matches the task
-4. Builds a prompt from the mission, milestone, goal, task, skills, and knowledge library
-5. Sends it to the idle agent via `tmux send-keys`
-6. On completion, records timing, updates validation state, processes research summaries, and notifies the lead
-
-**Usage flow:**
-
-```bash
-tmux-ide mission set "Ship v2" -d "description"
-tmux-ide goal create "Auth system" -p 1 --acceptance "JWT + refresh tokens"
-tmux-ide task create "Implement JWT" -g 01 -p 1 -d "detailed description"
-tmux-ide task create "Add tests" -g 01 -p 2 --depends "001"
-tmux-ide   # Launch — orchestrator auto-dispatches tasks to agents
-tmux-ide orch   # Monitor progress
-```
-
-### Command Center API
-
-```bash
-tmux-ide command-center   # Start on port 6060
-
-# REST endpoints:
-# GET  /api/sessions                    — List all sessions
-# GET  /api/project/:name               — Full project detail (tasks, agents, goals)
-# GET  /api/project/:name/panes         — Live pane listing
-# GET  /api/project/:name/events        — Recent orchestrator events
-# GET  /api/project/:name/mission       — Mission + validation summary
-# POST /api/project/:name/mission/plan-complete
-# GET  /api/project/:name/milestones
-# GET  /api/project/:name/milestones/:id
-# POST /api/project/:name/milestones
-# POST /api/project/:name/milestones/:id
-# GET  /api/project/:name/validation
-# GET  /api/project/:name/validation/coverage
-# POST /api/project/:name/validation/assert/:assertId
-# GET  /api/project/:name/skills
-# GET  /api/project/:name/skills/:skillName
-# GET  /api/project/:name/research
-# POST /api/project/:name/research/trigger
-# GET  /api/project/:name/metrics
-# GET  /api/project/:name/metrics/agents
-# GET  /api/project/:name/metrics/timeline
-# GET  /api/project/:name/metrics/history
-# POST /api/project/:name/task          — Create task
-# POST /api/project/:name/task/:id      — Update task
-# GET  /api/events                      — SSE stream (real-time updates)
-# WS   /ws/mirror/:session/:paneId      — Terminal mirroring (raw ANSI)
+pnpm lint && pnpm format:check && pnpm test && pnpm pack:check   # or: pnpm check
+pnpm build            # bin/cli.js
+bun scripts/build-tui.mjs   # the compiled TUI binary (artifact, gitignored)
+pnpm docs:build       # website
 ```
