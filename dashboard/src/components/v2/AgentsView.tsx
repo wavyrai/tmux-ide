@@ -1,8 +1,8 @@
 /**
  * AgentsView — fleet-wide agent roster.
  *
- * A single read-only surface that lists every Claude/codex agent across
- * all machines so the user sees their laptop + remote (SSM) boxes and
+ * A single surface that lists every Claude/codex agent across all
+ * machines so the user sees their laptop + remote (SSM) boxes and
  * their sessions in one place.
  *
  * Data flows from `GET /api/hq/agents` (aggregated across machines),
@@ -10,12 +10,15 @@
  * AgentRecord shape comes straight from @tmux-ide/contracts — agents are
  * grouped by machine, then by session (tmux) vs "external".
  *
- * Observe-only for now: no actions. Matches the MissionStatementView
+ * Control: controllable agents (non-external with a pane) get an inline
+ * send composer that POSTs to `/api/agents/send` — works for local and
+ * remote (SSH) agents alike since the daemon routes by id + machineId.
+ * External agents stay observe-only. Matches the MissionStatementView
  * polling / Tailwind conventions used by the other v2 views.
  */
 
 import { createMemo, createSignal, For, onCleanup, Show, type JSX } from "solid-js";
-import { Bot } from "lucide-solid";
+import { Bot, Check, Send } from "lucide-solid";
 import type { AgentRecord } from "@tmux-ide/contracts";
 import { API_BASE } from "@/lib/api";
 
@@ -199,7 +202,14 @@ export function AgentsView(_props: AgentsViewProps): JSX.Element {
             }
           >
             <div class="flex flex-col gap-4 p-4">
-              <For each={machines()}>{(machine) => <MachineSection group={machine} />}</For>
+              {/* Keyed on the machine name (a stable primitive) rather than
+                  the group object — the poll rebuilds group objects every
+                  tick, and object-keyed rows would tear down the send
+                  composer (and its focus) mid-typing. Same pattern applies
+                  at the session and agent levels below. */}
+              <For each={machines().map((m) => m.machineName)}>
+                {(name) => <MachineSection name={name} machines={machines} />}
+              </For>
             </div>
           </Show>
         </Show>
@@ -226,44 +236,69 @@ function Header(props: { total: number; busy: number; machines: number }): JSX.E
   );
 }
 
-function MachineSection(props: { group: MachineGroup }): JSX.Element {
+function MachineSection(props: { name: string; machines: () => MachineGroup[] }): JSX.Element {
+  const group = createMemo(() => props.machines().find((m) => m.machineName === props.name));
+  const sessionKeys = createMemo(() => (group()?.sessions ?? []).map((s) => s.key));
   return (
-    <section
-      data-agents-machine={props.group.machineName}
-      class="rounded-md border border-[var(--border)] bg-[var(--surface)]"
-    >
-      <div class="flex items-center gap-2 border-b border-[var(--border-weak,var(--border))] px-3 py-2">
-        <span aria-hidden="true" class="text-[var(--dim)]">
-          ▣
-        </span>
-        <span class="font-medium text-[var(--fg)]">{props.group.machineName}</span>
-        <span class="ml-auto text-sm tabular-nums text-[var(--dim)]">
-          {props.group.agents.length}
-        </span>
-      </div>
-      <div class="flex flex-col gap-3 p-3">
-        <For each={props.group.sessions}>{(session) => <SessionBlock group={session} />}</For>
-      </div>
-    </section>
+    <Show when={group()}>
+      {(g) => (
+        <section
+          data-agents-machine={props.name}
+          class="rounded-md border border-[var(--border)] bg-[var(--surface)]"
+        >
+          <div class="flex items-center gap-2 border-b border-[var(--border-weak,var(--border))] px-3 py-2">
+            <span aria-hidden="true" class="text-[var(--dim)]">
+              ▣
+            </span>
+            <span class="font-medium text-[var(--fg)]">{props.name}</span>
+            <span class="ml-auto text-sm tabular-nums text-[var(--dim)]">{g().agents.length}</span>
+          </div>
+          <div class="flex flex-col gap-3 p-3">
+            <For each={sessionKeys()}>
+              {(key) => <SessionBlock sessionKey={key} group={group} />}
+            </For>
+          </div>
+        </section>
+      )}
+    </Show>
   );
 }
 
-function SessionBlock(props: { group: SessionGroup }): JSX.Element {
+function SessionBlock(props: {
+  sessionKey: string;
+  group: () => MachineGroup | undefined;
+}): JSX.Element {
+  const session = createMemo(() => props.group()?.sessions.find((s) => s.key === props.sessionKey));
+  const agentIds = createMemo(() => (session()?.agents ?? []).map((a) => a.id));
   return (
-    <div data-agents-session={props.group.key}>
-      <div class="mb-1 flex items-center gap-2 text-xs uppercase tracking-wider text-[var(--dim)]">
-        <span aria-hidden="true">{props.group.isExternal ? "◇" : "⊟"}</span>
-        <span>{props.group.label}</span>
-      </div>
-      <div class="flex flex-col gap-1">
-        <For each={props.group.agents}>{(agent) => <AgentRow agent={agent} />}</For>
-      </div>
-    </div>
+    <Show when={session()}>
+      {(s) => (
+        <div data-agents-session={props.sessionKey}>
+          <div class="mb-1 flex items-center gap-2 text-xs uppercase tracking-wider text-[var(--dim)]">
+            <span aria-hidden="true">{s().isExternal ? "◇" : "⊟"}</span>
+            <span>{s().label}</span>
+          </div>
+          <div class="flex flex-col gap-1">
+            <For each={agentIds()}>
+              {(id) => <AgentRow agent={() => s().agents.find((a) => a.id === id)} />}
+            </For>
+          </div>
+        </div>
+      )}
+    </Show>
   );
 }
 
-function AgentRow(props: { agent: AgentRecord }): JSX.Element {
-  const agent = () => props.agent;
+function AgentRow(props: { agent: () => AgentRecord | undefined }): JSX.Element {
+  return <Show when={props.agent()}>{(agent) => <AgentRowBody agent={agent} />}</Show>;
+}
+
+/** How long the success checkmark / inline error stay on screen. */
+const SENT_FLASH_MS = 2000;
+const ERROR_FLASH_MS = 5000;
+
+function AgentRowBody(props: { agent: () => AgentRecord }): JSX.Element {
+  const agent = props.agent;
   const subtitle = createMemo(() => {
     const a = agent();
     if (a.session && a.paneTitle) return `${a.session} · ${a.paneTitle}`;
@@ -271,40 +306,166 @@ function AgentRow(props: { agent: AgentRecord }): JSX.Element {
     return a.cwd ?? null;
   });
 
+  // "External" agents self-report via a hook — there's no pane to type
+  // into, so they stay observe-only. Everything else with a pane can be
+  // messaged through the daemon (which relays to remotes over SSH).
+  const controllable = createMemo(() => agent().kind !== "external" && agent().paneId !== null);
+
+  const [composerOpen, setComposerOpen] = createSignal(false);
+  const [draft, setDraft] = createSignal("");
+  const [sending, setSending] = createSignal(false);
+  const [sent, setSent] = createSignal(false);
+  const [sendError, setSendError] = createSignal<string | null>(null);
+
+  let sentTimer: ReturnType<typeof setTimeout> | undefined;
+  let errorTimer: ReturnType<typeof setTimeout> | undefined;
+  onCleanup(() => {
+    clearTimeout(sentTimer);
+    clearTimeout(errorTimer);
+  });
+
+  function showError(message: string): void {
+    setSendError(message);
+    clearTimeout(errorTimer);
+    errorTimer = setTimeout(() => setSendError(null), ERROR_FLASH_MS);
+  }
+
+  async function submit(): Promise<void> {
+    const message = draft().trim();
+    if (!message || sending()) return;
+    const a = agent();
+    setSending(true);
+    setSendError(null);
+    try {
+      const res = await fetch(`${API_BASE}/api/agents/send`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: a.id, machineId: a.machineId, message }),
+      });
+      if (!res.ok) {
+        let detail = `HTTP ${res.status}`;
+        try {
+          const body = (await res.json()) as { error?: string };
+          if (body?.error) detail = body.error;
+        } catch {
+          // Body wasn't JSON; the status-only message stands.
+        }
+        throw new Error(detail);
+      }
+      setDraft("");
+      setSent(true);
+      clearTimeout(sentTimer);
+      sentTimer = setTimeout(() => setSent(false), SENT_FLASH_MS);
+    } catch (err) {
+      showError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSending(false);
+    }
+  }
+
+  function onComposerKeyDown(event: KeyboardEvent): void {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      void submit();
+    } else if (event.key === "Escape") {
+      event.preventDefault();
+      setComposerOpen(false);
+      setSendError(null);
+    }
+  }
+
   return (
     <div
       data-agents-row={agent().id}
       data-agents-status={agent().status}
-      class="flex items-center gap-2 rounded border border-[var(--border)] bg-[var(--bg-strong,var(--surface))] px-2 py-1.5"
+      class="rounded border border-[var(--border)] bg-[var(--bg-strong,var(--surface))]"
     >
-      <StatusDot status={agent().status} />
-      <span
-        class="rounded border border-[var(--border)] px-1 text-xs uppercase tracking-wider text-[var(--fg-secondary)]"
-        title={`tool: ${agent().tool}`}
-      >
-        {agent().tool}
-      </span>
-      <span class="truncate font-medium text-[var(--fg)]">{agent().name}</span>
-      <Show when={subtitle()}>
-        <span class="truncate text-sm text-[var(--dim)]">{subtitle()}</span>
-      </Show>
-      <Show when={agent().taskTitle}>
-        {(title) => (
-          <span
-            class="truncate rounded border-l-2 border-[var(--accent)] bg-[var(--surface)] px-1.5 text-sm text-[var(--fg-secondary)]"
-            title={title()}
+      <div class="flex items-center gap-2 px-2 py-1.5">
+        <StatusDot status={agent().status} />
+        <span
+          class="rounded border border-[var(--border)] px-1 text-xs uppercase tracking-wider text-[var(--fg-secondary)]"
+          title={`tool: ${agent().tool}`}
+        >
+          {agent().tool}
+        </span>
+        <span class="truncate font-medium text-[var(--fg)]">{agent().name}</span>
+        <Show when={subtitle()}>
+          <span class="truncate text-sm text-[var(--dim)]">{subtitle()}</span>
+        </Show>
+        <Show when={agent().taskTitle}>
+          {(title) => (
+            <span
+              class="truncate rounded border-l-2 border-[var(--accent)] bg-[var(--surface)] px-1.5 text-sm text-[var(--fg-secondary)]"
+              title={title()}
+            >
+              {title()}
+            </span>
+          )}
+        </Show>
+        <span
+          class="ml-auto shrink-0 rounded-full border px-2 py-[1px] text-xs uppercase tracking-wider text-[var(--dim)]"
+          style={{ "border-color": "var(--border)" }}
+          title={
+            agent().kind === "external" ? "external agent — observe-only" : `kind: ${agent().kind}`
+          }
+        >
+          {KIND_LABEL[agent().kind]}
+        </span>
+        <Show when={controllable()}>
+          <button
+            type="button"
+            data-agents-send-toggle
+            aria-label={`Send a message to ${agent().name}`}
+            aria-expanded={composerOpen()}
+            title="Send a message to this agent"
+            class={
+              "shrink-0 rounded border border-[var(--border)] p-1 transition-colors hover:border-[var(--accent)] hover:text-[var(--accent)] " +
+              (composerOpen() ? "text-[var(--accent)]" : "text-[var(--dim)]")
+            }
+            onClick={() => setComposerOpen(!composerOpen())}
           >
-            {title()}
-          </span>
-        )}
+            <Send size={12} strokeWidth={1.75} aria-hidden="true" />
+          </button>
+        </Show>
+      </div>
+      <Show when={controllable() && composerOpen()}>
+        <div class="flex items-center gap-2 border-t border-[var(--border-weak,var(--border))] px-2 py-1.5">
+          <input
+            ref={(el) => requestAnimationFrame(() => el.focus())}
+            type="text"
+            data-agents-send-input
+            value={draft()}
+            disabled={sending()}
+            maxLength={10000}
+            placeholder={`Message ${agent().name}… (Enter to send, Esc to close)`}
+            class="min-w-0 flex-1 bg-transparent text-sm text-[var(--fg)] outline-none placeholder:text-[var(--dim)] disabled:opacity-50"
+            onInput={(e) => setDraft(e.currentTarget.value)}
+            onKeyDown={onComposerKeyDown}
+          />
+          <Show when={sending()}>
+            <span
+              aria-label="sending"
+              class="h-3 w-3 shrink-0 animate-spin rounded-full border-2 border-[var(--border)] border-t-[var(--accent)]"
+            />
+          </Show>
+          <Show when={!sending() && sent()}>
+            <Check
+              size={14}
+              strokeWidth={2}
+              aria-label="sent"
+              class="shrink-0 text-[var(--green)]"
+            />
+          </Show>
+        </div>
       </Show>
-      <span
-        class="ml-auto shrink-0 rounded-full border px-2 py-[1px] text-xs uppercase tracking-wider text-[var(--dim)]"
-        style={{ "border-color": "var(--border)" }}
-        title={`kind: ${agent().kind}`}
-      >
-        {KIND_LABEL[agent().kind]}
-      </span>
+      <Show when={sendError()}>
+        <div
+          data-agents-send-error
+          class="border-t border-[var(--border-weak,var(--border))] px-2 py-1 text-xs text-[var(--red,#cc6666)]"
+        >
+          {sendError()}
+        </div>
+      </Show>
     </div>
   );
 }
