@@ -89,14 +89,22 @@
  *   bun packages/daemon/src/tui/mirror/app.tsx --target <session>
  */
 import { parseArgs } from "node:util";
-import { appendFileSync, readFileSync, writeFileSync, renameSync } from "node:fs";
+import {
+  appendFileSync,
+  readFileSync,
+  writeFileSync,
+  renameSync,
+  openSync,
+  writeSync,
+  closeSync,
+} from "node:fs";
 import { readdir } from "node:fs/promises";
 import { basename, join } from "node:path";
-import { render, useKeyboard, useTerminalDimensions } from "@opentui/solid";
-import { RGBA, EditBuffer } from "@opentui/core";
+import { render, useKeyboard, usePaste, useTerminalDimensions } from "@opentui/solid";
+import { RGBA, EditBuffer, decodePasteBytes } from "@opentui/core";
 import { createSignal, createMemo, createEffect, onMount, onCleanup, For, Show } from "solid-js";
 import { SessionMirror, type LivePane } from "./session-mirror.ts";
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import type { AgentStatus } from "../detect/classify.ts";
 import { rollupChips, homeFooterHints, type FleetRollup } from "../team/home.ts";
 import {
@@ -129,6 +137,20 @@ import {
   type RawEntry,
 } from "./file-tree.ts";
 import { spans, spanHit } from "./spans.ts";
+import {
+  orderCells,
+  rowSelectionRange,
+  extractSelection,
+  wordRangeAt,
+  lineRangeAt,
+  clickCount,
+  tintRunsInverse,
+  osc52Sequence,
+  chunkByBytes,
+  ATTR_INVERSE,
+  type Cell,
+  type Selection,
+} from "./selection.ts";
 
 const { values } = parseArgs({
   options: {
@@ -219,6 +241,12 @@ const KEYMAP: Record<string, string> = {
   space: "Space",
 };
 const SCROLL_STEP = 3;
+// Selection & clipboard (M19.4). Copies above 1 MB refuse; double/triple clicks
+// resolve within CLICK_MS at the same cell; a paste forwarded into a pane is
+// chunked so each `send-keys -H` stays under tmux's per-command length cap.
+const MAX_CLIP_BYTES = 1_000_000;
+const CLICK_MS = 400;
+const PASTE_CHUNK_BYTES = 1024;
 const sgrMouse = (button: number, col: number, row: number, release: boolean): string =>
   `\x1b[<${button};${col + 1};${row + 1}${release ? "m" : "M"}`;
 interface WindowTab {
@@ -362,6 +390,28 @@ render(() => {
   };
   const [sel, setSel] = createSignal(0);
   const [status, setStatus] = createSignal(bareHome ? "home" : "attaching…");
+
+  // ── SELECTION & CLIPBOARD (M19.4) ────────────────────────────────────────
+  // The visible selection (drives inverse-tint on the mirror/editor render) and
+  // the gesture state machine driving it. `selecting` marks a drag in progress
+  // (null = none, discrete word/line selections leave it null); `selAnchor` is
+  // where the drag began; `lastClick` tracks click-count for double/triple. A
+  // transient `note` reuses the status channel for "copied/pasted N chars".
+  const [selection, setSelection] = createSignal<Selection | null>(null);
+  let selecting: { surface: "mirror"; paneId: string } | { surface: "editor" } | null = null;
+  let selAnchor: Cell = { row: 0, col: 0 };
+  let lastClick: { row: number; col: number; ts: number; count: number } | null = null;
+  const [note, setNote] = createSignal("");
+  let noteTimer: ReturnType<typeof setTimeout> | null = null;
+  const setStatusNote = (m: string) => {
+    setNote(m);
+    if (noteTimer) clearTimeout(noteTimer);
+    noteTimer = setTimeout(() => setNote(""), 3000);
+  };
+  const clearSelection = () => {
+    selecting = null;
+    if (selection() !== null) setSelection(null);
+  };
 
   // Derived, io-free views over the one async fleet payload. `fleet` is the
   // sidebar's flat, deduped session list; `homeRows` is the HOME panel's
@@ -716,6 +766,7 @@ render(() => {
    *  — that would drop scrollback and blink the pane. So a same-target switch is
    *  a pure tab flip; only a DIFFERENT session (re)attaches. */
   const switchTarget = (name: string) => {
+    clearSelection();
     if (name === curTarget() && mirror) {
       setTab("terminal");
       return;
@@ -726,7 +777,10 @@ render(() => {
   };
   /** ^g / F1 — show the HOME tab. The mirror is KEPT ALIVE (it keeps streaming
    *  in the background so a back-switch is instant); the session is untouched. */
-  const goHome = () => setTab("home");
+  const goHome = () => {
+    clearSelection();
+    setTab("home");
+  };
 
   // ── FILES TAB (M18.4) ────────────────────────────────────────────────────
   // A minimal, one-level-expandable file list (left) beside the M18.2 editor
@@ -820,6 +874,7 @@ render(() => {
    *  first shown empty). The Terminal tab never re-attaches here — the mirror is
    *  already streaming in the background. */
   const selectTab = (t: Tab) => {
+    clearSelection();
     if (t === "diff") {
       if (diffFiles().length === 0) enterDiff(workspaceDir());
       else setTab("diff");
@@ -916,6 +971,14 @@ render(() => {
   });
 
   onMount(() => {
+    // Copy relies on the surrounding tmux capturing our OSC52: turn on
+    // set-clipboard (so the sequence lands in tmux's paste buffer AND is
+    // forwarded to the real terminal — through ssh) and allow-passthrough,
+    // best-effort, once at launch so the first copy already works.
+    if (process.env.TMUX) {
+      execFile("tmux", ["set-option", "-gq", "set-clipboard", "on"], () => {});
+      execFile("tmux", ["set-option", "-gq", "allow-passthrough", "on"], () => {});
+    }
     // `--edit <file>` boots straight into the editor; otherwise a persisted
     // openFile restores the buffer WITHOUT stealing the restored tab (post-render
     // so the native EditBuffer FFI is loaded).
@@ -984,6 +1047,7 @@ render(() => {
       clearInterval(diffTimer);
       clearInterval(sizeTimer);
       if (saveTimer) clearTimeout(saveTimer);
+      if (noteTimer) clearTimeout(noteTimer);
       mirror?.dispose();
       editBuffer?.destroy();
     });
@@ -994,6 +1058,90 @@ render(() => {
       scrollOffsets.set(paneId, 0);
       markDirty();
     }
+  };
+
+  // ── clipboard io (M19.4) ──────────────────────────────────────────────────
+  // Copy rides OSC52 written to the app's OWN stdout: with `set-clipboard on`
+  // (enabled best-effort at mount) the surrounding tmux captures it into its
+  // paste buffer AND forwards it onward — through ssh — to the real terminal's
+  // clipboard. pbcopy is a local-darwin belt-and-braces. Selections above the
+  // cap refuse rather than blast a megabyte down the wire.
+  const copyText = (text: string) => {
+    const bytes = Buffer.byteLength(text, "utf8");
+    if (bytes === 0) return;
+    if (bytes > MAX_CLIP_BYTES) {
+      setStatusNote(`selection too large (${bytes} bytes) — not copied`);
+      return;
+    }
+    const b64 = Buffer.from(text, "utf8").toString("base64");
+    // Write the sequence to /dev/tty DIRECTLY: the renderer owns process.stdout
+    // with its own frame writer, and out-of-band writes there never reach the
+    // terminal (measured — the raw mechanism works from a plain pane).
+    try {
+      const fd = openSync("/dev/tty", "w");
+      writeSync(fd, osc52Sequence(b64));
+      closeSync(fd);
+    } catch {
+      try {
+        process.stdout.write(osc52Sequence(b64));
+      } catch {
+        // stdout gone — pbcopy below may still catch it
+      }
+    }
+    const local = !process.env.SSH_TTY && !process.env.SSH_CONNECTION;
+    if (process.platform === "darwin" && local) {
+      try {
+        const pb = spawn("pbcopy");
+        pb.on("error", () => {});
+        pb.stdin.end(text);
+      } catch {
+        // no pbcopy — OSC52 already sent
+      }
+    }
+    setStatusNote(`copied ${text.length} chars`);
+  };
+
+  /** The focused-window pane's snapshot rows as plain strings (runs joined),
+   *  reflecting exactly what's on screen incl. the current scrollback offset —
+   *  the source of truth for a mirror copy (not capture-pane). */
+  const paneRowTexts = (paneId: string): string[] => {
+    const p = panes().find((x) => x.id === paneId);
+    return p ? p.snapshot.rows.map((runs) => runs.map((r) => r.text).join("")) : [];
+  };
+  const commitMirrorCopy = (paneId: string, anchor: Cell, head: Cell) => {
+    const { start, end } = orderCells(anchor, head);
+    const text = extractSelection(paneRowTexts(paneId), start, end);
+    if (text.length > 0) copyText(text);
+  };
+  /** Map a pointer inside the editor viewport to a buffer (line,col). */
+  const editorCellAt = (x: number, gy: number): { line: number; col: number } =>
+    clickToCursor({
+      cx: x - SIDEBAR_W - filesListW(),
+      contentY: gy - HEADER_ROWS,
+      gutterW: gutterWidth(editorLines().length),
+      top: editorTop(),
+      lines: editorLines(),
+    });
+  /** The inclusive selected column interval on a mirror snapshot row (or editor
+   *  buffer line), or null — used by both renders to inverse-tint the span. */
+  const editorSelRange = (bufRow: number, lineLen: number): { from: number; to: number } | null => {
+    const s = selection();
+    if (!s || s.surface !== "editor") return null;
+    const { start, end } = orderCells(s.anchor, s.head);
+    return rowSelectionRange(bufRow, lineLen, start, end);
+  };
+  /** A mirror pane's rows with the active selection inverse-tinted (or the
+   *  untouched rows when nothing is selected on this pane). */
+  const paneSelRows = (pane: LivePane) => {
+    const s = selection();
+    const rows = pane.snapshot.rows;
+    if (!s || s.surface !== "mirror" || s.paneId !== pane.id) return rows;
+    const { start, end } = orderCells(s.anchor, s.head);
+    return rows.map((runs, r) => {
+      const rowLen = runs.reduce((n, run) => n + run.text.length, 0);
+      const range = rowSelectionRange(r, rowLen, start, end);
+      return range ? tintRunsInverse(runs, range.from, range.to) : runs;
+    });
   };
 
   const paneCell = (pane: LivePane, gx: number, gy: number) => ({
@@ -1064,7 +1212,17 @@ render(() => {
       return;
     }
     if (mode() === "editor") {
-      // Save / undo / redo work regardless of which half is focused.
+      // ^c with an active selection copies the buffer range (exact text — no
+      // trailing trim); without a selection it falls through (no pane to reach
+      // from the editor). Save / undo / redo work regardless of focused half.
+      if (evt.ctrl && evt.name === "c") {
+        const s = selection();
+        if (s && s.surface === "editor") {
+          const { start, end } = orderCells(s.anchor, s.head);
+          copyText(extractSelection(editorLines(), start, end, false));
+        }
+        return;
+      }
       if (evt.ctrl && evt.name === "s") {
         saveEditor();
         return;
@@ -1161,6 +1319,17 @@ render(() => {
       return;
     }
     if (!mirror) return;
+    // ^c copies an active mirror selection; with no selection it passes through
+    // to the pane (interrupt) exactly as before.
+    if (evt.ctrl && evt.name === "c") {
+      const s = selection();
+      if (s && s.surface === "mirror") {
+        commitMirrorCopy(s.paneId, s.anchor, s.head);
+        return;
+      }
+    }
+    // Any key that reaches the pane retires a stale selection highlight.
+    clearSelection();
     snapLive(mirror.focusedPane());
     if (evt.ctrl && evt.name.length === 1) {
       void mirror.sendKey(`C-${evt.name}`).catch(() => {});
@@ -1173,6 +1342,33 @@ render(() => {
     }
     if (evt.name.length === 1 && !evt.meta) {
       void mirror.sendText(evt.shift ? evt.name.toUpperCase() : evt.name).catch(() => {});
+    }
+  });
+
+  // Bracketed paste arrives as a discrete PasteEvent (OpenTUI detects the
+  // \x1b[200~…\x1b[201~ markers on stdin). Route it to the focused surface: the
+  // EDITOR inserts at the cursor as ONE undo unit; the TERMINAL forwards it to
+  // the focused pane re-wrapped in bracketed markers (so apps see a paste, not
+  // keystrokes), chunked so each send-keys stays under tmux's length cap.
+  usePaste((e) => {
+    const text = decodePasteBytes(e.bytes);
+    if (!text) return;
+    if (mode() === "editor" && filesFocus() === "editor" && editBuffer && !editorReadOnly()) {
+      editBuffer.insertText(text); // single insertText call = one undo unit
+      setEditorModified(true);
+      editorSyncScroll();
+      setEditorRev((r) => r + 1);
+      setStatusNote(`pasted ${text.length} chars`);
+      return;
+    }
+    if (mode() === "mirror" && mirror) {
+      const pane = mirror.focusedPane();
+      if (!pane) return;
+      void mirror.sendTextTo(pane, "\x1b[200~").catch(() => {});
+      for (const chunk of chunkByBytes(text, PASTE_CHUNK_BYTES))
+        void mirror.sendTextTo(pane, chunk).catch(() => {});
+      void mirror.sendTextTo(pane, "\x1b[201~").catch(() => {});
+      setStatusNote(`pasted ${text.length} chars`);
     }
   });
 
@@ -1263,6 +1459,28 @@ render(() => {
    *  sidebar, main). Geometry is ours. The tab bar is the top screen row; every
    *  other region is offset below it, so we subtract TABBAR_H once (`gy`) and the
    *  per-mode math below is exactly as it was before the bar existed. */
+  /** Extend a live selection's head to the pointer (surface-local cells). */
+  const extendSelection = (x: number, y: number) => {
+    if (!selecting) return;
+    const gy = y - TABBAR_H;
+    if (selecting.surface === "mirror") {
+      const paneId = selecting.paneId;
+      const pane = panes().find((p) => p.id === paneId);
+      if (!pane) return;
+      setSelection({
+        surface: "mirror",
+        paneId: pane.id,
+        anchor: selAnchor,
+        head: paneCell(pane, x, gy),
+      });
+    } else {
+      const { line, col } = editorCellAt(x, gy);
+      setSelection({ surface: "editor", anchor: selAnchor, head: { row: line, col } });
+      editBuffer?.setCursor(line, col);
+      setEditorRev((r) => r + 1);
+    }
+  };
+
   const route = (e: { type: string; x: number; y: number; scroll?: { direction: string } }) => {
     const { type, x, y } = e;
     zzlog(`${type} ${x},${y}`);
@@ -1272,9 +1490,28 @@ render(() => {
       setHoverIf(null);
       return;
     }
+    // A drag while a selection gesture is live extends the selection head rather
+    // than driving hover.
+    if (type === "drag" && selecting) {
+      extendSelection(x, y);
+      return;
+    }
     if (type === "move" || type === "over" || type === "drag") {
       resolveHover(x, y);
       return;
+    }
+    // Release ends a live selection: the mirror copies what was dragged; the
+    // editor keeps its selection for ^c. Discrete word/line selections leave
+    // `selecting` null, so their trailing release passes straight through — as
+    // does any release on an appMouse pane (which never starts a selection).
+    if (type === "up" || type === "drag-end" || type === "drop") {
+      if (selecting) {
+        const s = selection();
+        if (s && s.surface === "mirror" && selecting.surface === "mirror")
+          commitMirrorCopy(s.paneId, s.anchor, s.head);
+        selecting = null;
+        return;
+      }
     }
     // Row 0 — the surface tab bar (full width, above the sidebar).
     if (y === 0) {
@@ -1323,21 +1560,35 @@ render(() => {
         const top = clampTop(fileTop(), fileNodes().length, editorRows());
         const idx = top + contentY;
         if (idx >= 0 && idx < fileNodes().length) {
+          clearSelection();
           setFilesFocus("list");
           activateFile(idx);
         }
         return;
       }
       if (!editBuffer) return;
-      const { line, col } = clickToCursor({
-        cx: x - SIDEBAR_W - filesListW(),
-        contentY,
-        gutterW: gutterWidth(editorLines().length),
-        top: editorTop(),
-        lines: editorLines(),
-      });
-      editBuffer.setCursor(line, col);
+      const { line, col } = editorCellAt(x, gy);
       setFilesFocus("editor");
+      const now = Date.now();
+      const count = clickCount(lastClick, { row: line, col }, now, CLICK_MS);
+      lastClick = { row: line, col, ts: now, count };
+      if (count >= 2) {
+        // Double = word, triple = line — a discrete selection (kept for ^c).
+        const text = editorLines()[line] ?? "";
+        const r = count === 2 ? wordRangeAt(text, col) : lineRangeAt(text);
+        setSelection({
+          surface: "editor",
+          anchor: { row: line, col: r.from },
+          head: { row: line, col: r.to },
+        });
+        editBuffer.setCursor(line, r.to);
+        selecting = null;
+      } else {
+        editBuffer.setCursor(line, col);
+        selAnchor = { row: line, col };
+        selecting = { surface: "editor" };
+        setSelection(null);
+      }
       setEditorRev((r) => r + 1);
       return;
     }
@@ -1382,7 +1633,29 @@ render(() => {
     if (!pane) return;
     if (type === "down") {
       mirror?.focus(pane.id);
-      if (pane.appMouse) forwardPress(pane, x, gy, false);
+      if (pane.appMouse) {
+        forwardPress(pane, x, gy, false);
+        return;
+      }
+      // Non-appMouse pane: begin a drag selection, or on a repeat click select
+      // the word (double) / line (triple) and copy it immediately.
+      const cell = paneCell(pane, x, gy);
+      const now = Date.now();
+      const count = clickCount(lastClick, cell, now, CLICK_MS);
+      lastClick = { row: cell.row, col: cell.col, ts: now, count };
+      if (count >= 2) {
+        const rowText = paneRowTexts(pane.id)[cell.row] ?? "";
+        const r = count === 2 ? wordRangeAt(rowText, cell.col) : lineRangeAt(rowText);
+        const anchor = { row: cell.row, col: r.from };
+        const head = { row: cell.row, col: r.to };
+        setSelection({ surface: "mirror", paneId: pane.id, anchor, head });
+        selecting = null;
+        commitMirrorCopy(pane.id, anchor, head);
+      } else {
+        selAnchor = cell;
+        selecting = { surface: "mirror", paneId: pane.id };
+        setSelection(null);
+      }
     } else if (type === "up") {
       if (pane.appMouse) forwardPress(pane, x, gy, true);
     } else if (type === "scroll") {
@@ -1423,6 +1696,9 @@ render(() => {
           )}
         </For>
         <box flexGrow={1} />
+        <Show when={note()}>
+          <text fg={ACCENT} attributes={1}>{`${note()} `}</text>
+        </Show>
         <Show when={contextSession()}>
           <text fg={ACCENT}>{`⧉ ${contextSession()} `}</text>
         </Show>
@@ -1562,7 +1838,7 @@ render(() => {
                     flexDirection="column"
                     backgroundColor={DEFAULT_BG}
                   >
-                    <For each={pane.snapshot.rows}>
+                    <For each={paneSelRows(pane)}>
                       {(runs) => (
                         <box flexDirection="row" height={1}>
                           <For each={runs}>
@@ -1648,20 +1924,35 @@ render(() => {
                 <For each={editorVisible()}>
                   {(ln) => {
                     const gw = gutterWidth(editorLines().length);
+                    // An active selection on this line inverse-tints its span
+                    // (and wins over the cursor cell, which sits at the drag head
+                    // on the selection boundary anyway).
+                    const selR = editorSelRange(ln.num - 1, ln.text.length);
                     return (
                       <box flexDirection="row" height={1}>
                         <text bg={GUTTER_BG} fg={GUTTER_FG}>
                           {formatGutter(ln.num, gw)}
                         </text>
                         <Show
-                          when={ln.cursorCol !== null}
-                          fallback={<text fg={DEFAULT_FG}>{ln.text}</text>}
+                          when={selR}
+                          fallback={
+                            <Show
+                              when={ln.cursorCol !== null}
+                              fallback={<text fg={DEFAULT_FG}>{ln.text}</text>}
+                            >
+                              <text fg={DEFAULT_FG}>{ln.text.slice(0, ln.cursorCol!)}</text>
+                              <text fg={DEFAULT_BG} bg={CURSOR_BG}>
+                                {ln.text[ln.cursorCol!] ?? " "}
+                              </text>
+                              <text fg={DEFAULT_FG}>{ln.text.slice(ln.cursorCol! + 1)}</text>
+                            </Show>
+                          }
                         >
-                          <text fg={DEFAULT_FG}>{ln.text.slice(0, ln.cursorCol!)}</text>
-                          <text fg={DEFAULT_BG} bg={CURSOR_BG}>
-                            {ln.text[ln.cursorCol!] ?? " "}
+                          <text fg={DEFAULT_FG}>{ln.text.slice(0, selR!.from)}</text>
+                          <text fg={DEFAULT_FG} attributes={ATTR_INVERSE}>
+                            {ln.text.slice(selR!.from, selR!.to + 1) || " "}
                           </text>
-                          <text fg={DEFAULT_FG}>{ln.text.slice(ln.cursorCol! + 1)}</text>
+                          <text fg={DEFAULT_FG}>{ln.text.slice(selR!.to + 1)}</text>
                         </Show>
                       </box>
                     );
