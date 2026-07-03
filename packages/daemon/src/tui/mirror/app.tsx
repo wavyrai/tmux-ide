@@ -8,6 +8,13 @@
  * rendering, ^o pane focus cycle, ^t window cycle, ^q quits (session
  * untouched).
  *
+ * TWO MODES: the main area is either the HOME panel (fleet cards + detail; the
+ * bare-launch / `^h` state) or a session MIRROR (the SessionMirror canvas). One
+ * `mode()` signal drives both the render (`<Show>`) and the router: `route`
+ * branches on mode so a home-row click and a pane click share one entry point.
+ * `switchTarget(name)` → mirror (attach); `^h` → home (dispose mirror, keep the
+ * live fleet). A real `--target` starts in mirror mode; bare starts in home.
+ *
  * MOUSE ARCHITECTURE (hard-won): ALL pointer events are received by the two
  * top-level REGION CONTAINERS (sidebar box / main column box) and routed by
  * coordinate math (routeMouse) against geometry we render ourselves.
@@ -29,6 +36,7 @@
  * reason (deeper seeds froze input for ~15s per attach).
  *
  * Run (repo-root bunfig preload):
+ *   bun packages/daemon/src/tui/mirror/app.tsx              # home panel
  *   bun packages/daemon/src/tui/mirror/app.tsx --target <session>
  */
 import { parseArgs } from "node:util";
@@ -39,9 +47,42 @@ import { createSignal, onMount, onCleanup, For, Show } from "solid-js";
 import { SessionMirror, type LivePane } from "./session-mirror.ts";
 import { execFile } from "node:child_process";
 import type { AgentStatus } from "../detect/classify.ts";
+import { rollupChips, homeFooterHints, type FleetRollup } from "../team/home.ts";
 
 const { values } = parseArgs({ options: { target: { type: "string" } } });
 const target = values.target ?? "";
+// Bare launch (no `--target`, or the explicit `home` pseudo-target) opens the
+// HOME panel instead of a session mirror; a real target boots straight to the
+// mirror exactly as before.
+const bareHome = target === "" || target === "home";
+
+/** The `tmux-ide team --json` fleet shape this app reads (projects → sessions →
+ *  windows). Declared locally so the app never imports the data-layer modules
+ *  (listTeamProjects/listTeamSessions run a synchronous exec chain that blocks
+ *  the render loop — the async subprocess is the whole point). */
+interface FleetSession {
+  name: string;
+  status: AgentStatus;
+  panes: number;
+  attached: boolean;
+  windows: Array<{ index: number; name: string; active: boolean }>;
+}
+interface FleetProject {
+  name: string;
+  dir: string | null;
+  registered: boolean;
+  running: boolean;
+  status: AgentStatus;
+  sessions: FleetSession[];
+}
+/** One selectable HOME row: a live session, carrying its project context. */
+interface HomeRow {
+  project: string;
+  session: string;
+  status: AgentStatus;
+  windows: number;
+  dir: string | null;
+}
 const zzlog = (m: string) => {
   if (!process.env.TMUX_IDE_ZZ_LOG) return;
   try {
@@ -113,11 +154,59 @@ render(() => {
   const dims = useTerminalDimensions();
   const canvasCols = () => Math.max(20, dims().width - SIDEBAR_W);
   const canvasRows = () => Math.max(4, dims().height - HEADER_ROWS);
-  const [curTarget, setCurTarget] = createSignal(target);
+  const [mode, setMode] = createSignal<"home" | "mirror">(bareHome ? "home" : "mirror");
+  const [curTarget, setCurTarget] = createSignal(bareHome ? "" : target);
   const [panes, setPanes] = createSignal<LivePane[]>([]);
   const [windowTabs, setWindowTabs] = createSignal<WindowTab[]>([]);
-  const [fleet, setFleet] = createSignal<Array<{ name: string; status: AgentStatus }>>([]);
-  const [status, setStatus] = createSignal("attaching…");
+  const [projectsData, setProjectsData] = createSignal<FleetProject[]>([]);
+  const [sel, setSel] = createSignal(0);
+  const [status, setStatus] = createSignal(bareHome ? "home" : "attaching…");
+
+  // Derived, io-free views over the one async fleet payload. `fleet` is the
+  // sidebar's flat, deduped session list; `homeRows` is the HOME panel's
+  // selectable session rows; `rollup` is the header tally.
+  const fleet = (): Array<{ name: string; status: AgentStatus }> =>
+    projectsData()
+      .flatMap((p) => p.sessions.map((s) => ({ name: s.name, status: s.status })))
+      .filter((x, i, a) => a.findIndex((y) => y.name === x.name) === i);
+  const homeRows = (): HomeRow[] =>
+    projectsData().flatMap((p) =>
+      p.sessions.map((s) => ({
+        project: p.name,
+        session: s.name,
+        status: s.status,
+        windows: s.windows.length,
+        dir: p.dir,
+      })),
+    );
+  const rollup = (): FleetRollup => {
+    const r: FleetRollup = {
+      blocked: 0,
+      working: 0,
+      done: 0,
+      idle: 0,
+      unknown: 0,
+      sessions: 0,
+      projects: projectsData().length,
+    };
+    for (const p of projectsData())
+      for (const s of p.sessions) {
+        r[s.status] += 1;
+        r.sessions += 1;
+      }
+    return r;
+  };
+  const clampedSel = () => Math.min(sel(), Math.max(0, homeRows().length - 1));
+  const detailLine = (): string => {
+    const r = homeRows()[clampedSel()];
+    if (!r) return "no live sessions — launch one, then it appears here";
+    const w = `${r.windows} window${r.windows === 1 ? "" : "s"}`;
+    return `${r.project}${r.dir ? ` · ${r.dir}` : ""} · ${w} · ${r.status}`;
+  };
+  const homeFooter = (): string =>
+    homeFooterHints()
+      .map((h) => `${h.keys} ${h.label}`)
+      .join("   ");
   const scrollOffsets = new Map<string, number>();
   let dirty = false;
   const markDirty = () => {
@@ -151,13 +240,27 @@ render(() => {
       .catch((e) => setStatus(`error: ${(e as Error).message}`));
   };
   const switchTarget = (name: string) => {
-    if (name === curTarget()) return;
+    if (mode() === "mirror" && name === curTarget()) return;
     setCurTarget(name);
+    setMode("mirror");
     attach(name);
+  };
+  /** ^h — leave the mirror and return to the HOME panel. Disposes the control
+   *  client (the session itself is untouched) but keeps the live fleet running. */
+  const goHome = () => {
+    mirror?.dispose();
+    mirror = null;
+    scrollOffsets.clear();
+    setPanes([]);
+    setWindowTabs([]);
+    setCurTarget("");
+    setSel(0);
+    setStatus("home");
+    setMode("home");
   };
 
   onMount(() => {
-    attach(curTarget());
+    if (mode() === "mirror") attach(curTarget());
     const t = setInterval(() => {
       if (!dirty || !mirror) return;
       dirty = false;
@@ -175,13 +278,8 @@ render(() => {
         fleetInFlight = false;
         if (err) return;
         try {
-          const data = JSON.parse(stdout) as {
-            projects?: Array<{ sessions?: Array<{ name: string; status: AgentStatus }> }>;
-          };
-          const sessions = (data.projects ?? [])
-            .flatMap((p) => p.sessions ?? [])
-            .filter((x, i, a) => a.findIndex((y) => y.name === x.name) === i);
-          setFleet(sessions);
+          const data = JSON.parse(stdout) as { projects?: FleetProject[] };
+          setProjectsData(data.projects ?? []);
         } catch {
           // keep the previous fleet on parse trouble
         }
@@ -242,6 +340,24 @@ render(() => {
       mirror?.dispose();
       process.exit(0);
     }
+    // ^g, not ^h: legacy encoding makes ctrl+h indistinguishable from
+    // backspace (0x08), which must keep flowing to the pane.
+    if (evt.ctrl && (evt.name === "g" || evt.name === "h")) {
+      if (mode() === "mirror") goHome();
+      return;
+    }
+    if (mode() === "home") {
+      const rows = homeRows();
+      if (evt.name === "j" || evt.name === "down") {
+        setSel(Math.min(clampedSel() + 1, Math.max(0, rows.length - 1)));
+      } else if (evt.name === "k" || evt.name === "up") {
+        setSel(Math.max(clampedSel() - 1, 0));
+      } else if (evt.name === "return") {
+        const r = rows[clampedSel()];
+        if (r) switchTarget(r.session);
+      }
+      return;
+    }
     if (evt.ctrl && evt.name === "t") {
       const tabs = windowTabs();
       if (tabs.length > 1 && mirror) {
@@ -282,6 +398,17 @@ render(() => {
       if (type !== "down") return;
       const s = fleet()[y - 2];
       if (s) switchTarget(s.name);
+      return;
+    }
+    // HOME mode: the main area is the fleet panel. Rows render below the header
+    // (y=0) + rule (y=1), so a click at global row y hits home row `y - 2`.
+    if (mode() === "home") {
+      if (type !== "down") return;
+      const r = homeRows()[y - 2];
+      if (r) {
+        setSel(y - 2);
+        switchTarget(r.session);
+      }
       return;
     }
     if (y === 1) {
@@ -349,68 +476,112 @@ render(() => {
           </For>
         </box>
         <box flexGrow={1} />
-        <text fg={MUTED}>{"^o pane · ^t tab · ^q quit"}</text>
+        <text fg={MUTED}>{"^h home · ^t tab · ^q quit"}</text>
       </box>
       <box
         flexDirection="column"
         flexGrow={1}
         onMouse={(e: { type: string; x: number; y: number }) => route(e)}
       >
-        <box paddingLeft={1} flexDirection="row" gap={1}>
-          <text fg={DEFAULT_FG} attributes={1}>
-            {curTarget()}
-          </text>
-          <text fg={MUTED}>{status()}</text>
-        </box>
-        <box paddingLeft={1} flexDirection="row" gap={1}>
-          <For each={windowTabs()}>
-            {(w) => (
-              <box backgroundColor={w.active ? TAB_ACTIVE_BG : DEFAULT_BG}>
-                <text fg={w.active ? ACCENT : MUTED}>{` ${w.index}:${w.name} `}</text>
-              </box>
-            )}
-          </For>
-        </box>
-        <box position="relative" flexGrow={1} backgroundColor={GUTTER_BG}>
-          <For each={panes()}>
-            {(pane) => (
-              <box
-                position="absolute"
-                left={pane.left}
-                top={pane.top}
-                width={pane.width}
-                height={pane.height}
-                flexDirection="column"
-                backgroundColor={DEFAULT_BG}
-              >
-                <For each={pane.snapshot.rows}>
-                  {(runs) => (
-                    <box flexDirection="row" height={1}>
-                      <For each={runs}>
-                        {(run) => (
-                          <text
-                            fg={packedToRgba(run.fg, DEFAULT_FG)}
-                            bg={packedToRgba(run.bg, DEFAULT_BG)}
-                            attributes={run.attributes}
-                          >
-                            {run.text}
-                          </text>
-                        )}
-                      </For>
+        <Show when={mode() === "home"}>
+          {/* HOME header (y=0) + rule (y=1); rows below start at y=2 — the
+              coordinate `route` reverses for a home-row click. */}
+          <box paddingLeft={1} flexDirection="row" gap={1}>
+            <text fg={ACCENT} attributes={1}>
+              tmux-ide
+            </text>
+            <text fg={MUTED}>{`· ${rollup().sessions} sessions ·`}</text>
+            <For each={rollupChips(rollup())}>
+              {(c) => (
+                <text fg={STATUS_COLOR[c.status]}>{`${STATUS_GLYPH[c.status]} ${c.count}`}</text>
+              )}
+            </For>
+          </box>
+          <text fg={MUTED}>{"─".repeat(Math.max(4, canvasCols() - 2))}</text>
+          <box flexDirection="column">
+            <For each={homeRows()}>
+              {(r, i) => (
+                <box
+                  flexDirection="row"
+                  gap={1}
+                  paddingLeft={1}
+                  backgroundColor={i() === clampedSel() ? TAB_ACTIVE_BG : DEFAULT_BG}
+                >
+                  <text fg={STATUS_COLOR[r.status]}>{STATUS_GLYPH[r.status]}</text>
+                  <text fg={i() === clampedSel() ? DEFAULT_FG : MUTED} attributes={1}>
+                    {r.session}
+                  </text>
+                  <text fg={MUTED}>{`${r.windows}w`}</text>
+                  <text fg={MUTED}>{r.project === r.session ? "" : `· ${r.project}`}</text>
+                </box>
+              )}
+            </For>
+          </box>
+          <box flexGrow={1} />
+          <box paddingLeft={1}>
+            <text fg={ACCENT}>{detailLine()}</text>
+          </box>
+          <box paddingLeft={1}>
+            <text fg={MUTED}>{homeFooter()}</text>
+          </box>
+        </Show>
+        <Show when={mode() === "mirror"}>
+          <box paddingLeft={1} flexDirection="row" gap={1}>
+            <text fg={DEFAULT_FG} attributes={1}>
+              {curTarget()}
+            </text>
+            <text fg={MUTED}>{status()}</text>
+          </box>
+          <box paddingLeft={1} flexDirection="row" gap={1}>
+            <For each={windowTabs()}>
+              {(w) => (
+                <box backgroundColor={w.active ? TAB_ACTIVE_BG : DEFAULT_BG}>
+                  <text fg={w.active ? ACCENT : MUTED}>{` ${w.index}:${w.name} `}</text>
+                </box>
+              )}
+            </For>
+          </box>
+          <box position="relative" flexGrow={1} backgroundColor={GUTTER_BG}>
+            <For each={panes()}>
+              {(pane) => (
+                <box
+                  position="absolute"
+                  left={pane.left}
+                  top={pane.top}
+                  width={pane.width}
+                  height={pane.height}
+                  flexDirection="column"
+                  backgroundColor={DEFAULT_BG}
+                >
+                  <For each={pane.snapshot.rows}>
+                    {(runs) => (
+                      <box flexDirection="row" height={1}>
+                        <For each={runs}>
+                          {(run) => (
+                            <text
+                              fg={packedToRgba(run.fg, DEFAULT_FG)}
+                              bg={packedToRgba(run.bg, DEFAULT_BG)}
+                              attributes={run.attributes}
+                            >
+                              {run.text}
+                            </text>
+                          )}
+                        </For>
+                      </box>
+                    )}
+                  </For>
+                  <Show when={pane.snapshot.scrollOffset > 0}>
+                    <box position="absolute" right={1} top={0} backgroundColor={BADGE_BG}>
+                      <text fg={DEFAULT_FG}>
+                        {` ↑${pane.snapshot.scrollOffset}/${pane.scrollbackDepth} `}
+                      </text>
                     </box>
-                  )}
-                </For>
-                <Show when={pane.snapshot.scrollOffset > 0}>
-                  <box position="absolute" right={1} top={0} backgroundColor={BADGE_BG}>
-                    <text fg={DEFAULT_FG}>
-                      {` ↑${pane.snapshot.scrollOffset}/${pane.scrollbackDepth} `}
-                    </text>
-                  </box>
-                </Show>
-              </box>
-            )}
-          </For>
-        </box>
+                  </Show>
+                </box>
+              )}
+            </For>
+          </box>
+        </Show>
       </box>
     </box>
   );

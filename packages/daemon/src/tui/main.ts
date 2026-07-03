@@ -20,7 +20,16 @@
  * exactly one surface's top-level `render()` side effect from firing.
  */
 
-const SURFACES = ["team", "explorer", "changes", "preview", "config", "setup", "sidebar"] as const;
+const SURFACES = [
+  "team",
+  "app",
+  "explorer",
+  "changes",
+  "preview",
+  "config",
+  "setup",
+  "sidebar",
+] as const;
 
 type Surface = (typeof SURFACES)[number];
 
@@ -45,6 +54,9 @@ async function main(): Promise<void> {
   switch (surface) {
     case "team":
       await import("./team/index.tsx");
+      break;
+    case "app":
+      await import("./mirror/app.tsx");
       break;
     case "explorer":
       await import("../widgets/explorer/index.tsx");

@@ -12655,6 +12655,7 @@ var knownCommands = /* @__PURE__ */ new Set([
   "send",
   "settings",
   "team",
+  "app",
   "switcher",
   "wait",
   "events",
@@ -12715,6 +12716,7 @@ ${bold3("Usage:")}
                               ${dim3("(--resume-agents revives claude conversations via claude --resume)")}
   ${cyan2("tmux-ide attach")}             ${dim3("Reattach to a running session")}
   ${cyan2("tmux-ide team")} [--json]      ${dim3("TUI over all tmux sessions (--json prints fleet state)")}
+  ${cyan2("tmux-ide app")} [session]      ${dim3("Unified app: fleet home + live session mirror (bare = home)")}
   ${cyan2("tmux-ide switcher")}           ${dim3("Compact session picker (opens in the M-p popup on adopted sessions)")}
   ${cyan2("tmux-ide wait agent-status")} <session> --status <s> [--timeout <ms>]
                               ${dim3("Block until a session reaches a status (exit 0 match / 1 timeout)")}
@@ -12811,6 +12813,7 @@ async function printFleetJson() {
   console.log(JSON.stringify(toFleetJson2(listTeamProjects2(createStatusTracker2())), null, 2));
 }
 var teamScriptPath = resolve23(__dirname6, "../packages/daemon/src/tui/team/index.tsx");
+var appScriptPath = resolve23(__dirname6, "../packages/daemon/src/tui/mirror/app.tsx");
 function launchTeamCockpit() {
   execBunWidget("team", teamScriptPath, [], "team");
 }
@@ -12961,6 +12964,12 @@ try {
         break;
       }
       launchTeamCockpit();
+      break;
+    }
+    case "app": {
+      const session = positionals[1];
+      const appArgs = session ? [`--target=${session}`] : [];
+      execBunWidget("app", appScriptPath, appArgs, "app");
       break;
     }
     case "switcher": {

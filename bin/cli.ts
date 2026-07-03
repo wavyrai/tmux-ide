@@ -110,6 +110,7 @@ const knownCommands = new Set([
   "send",
   "settings",
   "team",
+  "app",
   "switcher",
   "wait",
   "events",
@@ -177,6 +178,7 @@ ${bold("Usage:")}
                               ${dim("(--resume-agents revives claude conversations via claude --resume)")}
   ${cyan("tmux-ide attach")}             ${dim("Reattach to a running session")}
   ${cyan("tmux-ide team")} [--json]      ${dim("TUI over all tmux sessions (--json prints fleet state)")}
+  ${cyan("tmux-ide app")} [session]      ${dim("Unified app: fleet home + live session mirror (bare = home)")}
   ${cyan("tmux-ide switcher")}           ${dim("Compact session picker (opens in the M-p popup on adopted sessions)")}
   ${cyan("tmux-ide wait agent-status")} <session> --status <s> [--timeout <ms>]
                               ${dim("Block until a session reaches a status (exit 0 match / 1 timeout)")}
@@ -302,6 +304,7 @@ async function printFleetJson(): Promise<void> {
 }
 
 const teamScriptPath = resolve(__dirname, "../packages/daemon/src/tui/team/index.tsx");
+const appScriptPath = resolve(__dirname, "../packages/daemon/src/tui/mirror/app.tsx");
 
 // `tmux-ide team` runs the standalone full-screen cockpit (the OpenTUI app owns
 // the whole terminal). The floating switcher popup (M-p on adopted sessions)
@@ -488,6 +491,16 @@ try {
         break;
       }
       launchTeamCockpit();
+      break;
+    }
+
+    case "app": {
+      // The unified app (M18.1): sidebar fleet + a live tmux-session mirror.
+      // Bare `tmux-ide app` opens the HOME panel (fleet cards); an optional
+      // session positional boots straight into that session's mirror.
+      const session = positionals[1];
+      const appArgs = session ? [`--target=${session}`] : [];
+      execBunWidget("app", appScriptPath, appArgs, "app");
       break;
     }
 
