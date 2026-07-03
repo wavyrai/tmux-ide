@@ -26,6 +26,8 @@ export interface PaneGeometry {
   width: number;
   height: number;
   active: boolean;
+  /** The pane's APP turned mouse reporting on (forward real SGR events). */
+  appMouse: boolean;
 }
 
 /** PURE — parse `list-panes -F "#{pane_id} #{pane_left} …"` reply lines. */
@@ -34,7 +36,7 @@ export function parsePaneGeometry(lines: string[]): PaneGeometry[] {
   for (const line of lines) {
     const parts = line.trim().split(/\s+/);
     if (parts.length < 6) continue;
-    const [id = "", left = "", top = "", width = "", height = "", active = ""] = parts;
+    const [id = "", left = "", top = "", width = "", height = "", active = "", mouse = ""] = parts;
     if (!id.startsWith("%")) continue;
     const nums = [left, top, width, height].map(Number);
     if (nums.some((n) => !Number.isInteger(n) || n < 0)) continue;
@@ -45,6 +47,7 @@ export function parsePaneGeometry(lines: string[]): PaneGeometry[] {
       width: nums[2]!,
       height: nums[3]!,
       active: active === "1",
+      appMouse: mouse === "1",
     });
   }
   return panes;
@@ -193,6 +196,35 @@ export class SessionMirror {
     return this.client.command(cmd);
   }
 
+  /** Windows (tabs) of the mirrored session, for the app's tab strip. */
+  async windows(): Promise<Array<{ index: number; name: string; active: boolean }>> {
+    const lines = await this.client
+      .command(
+        `list-windows -t ${this.opts.target} -F "#{window_index}\t#{window_name}\t#{window_active}"`,
+      )
+      .catch(() => [] as string[]);
+    return lines
+      .map((l) => l.split("\t"))
+      .filter((p) => p.length >= 3)
+      .map(([i = "", name = "", active = ""]) => ({
+        index: Number(i),
+        name,
+        active: active === "1",
+      }))
+      .filter((w) => Number.isInteger(w.index));
+  }
+
+  /** Switch the mirrored session's active window (the tab click). */
+  switchWindow(index: number): void {
+    void this.client.command(`select-window -t ${this.opts.target}:${index}`).catch(() => {});
+    this.queueSync();
+  }
+
+  /** Type raw text (incl. escape sequences) into a SPECIFIC pane. */
+  sendTextTo(pane: string, text: string): Promise<unknown> {
+    return this.client.sendText(pane, text);
+  }
+
   async resize(cols: number, rows: number): Promise<void> {
     this.opts.cols = cols;
     this.opts.rows = rows;
@@ -217,7 +249,7 @@ export class SessionMirror {
 
   private async sync(): Promise<void> {
     const lines = await this.client.command(
-      `list-panes -t ${this.opts.target} -F "#{pane_id} #{pane_left} #{pane_top} #{pane_width} #{pane_height} #{pane_active}"`,
+      `list-panes -t ${this.opts.target} -F "#{pane_id} #{pane_left} #{pane_top} #{pane_width} #{pane_height} #{pane_active} #{mouse_any_flag}"`,
     );
     const next = parsePaneGeometry(lines);
     const { added, removed, resized } = diffPanes(this.geometry, next);
@@ -231,10 +263,10 @@ export class SessionMirror {
       const mirror = new PaneMirror(pane.width, pane.height);
       this.mirrors.set(pane.id, mirror);
       // Seed with history + current screen (-e keeps colors, -S reaches back
-      // into tmux's scrollback) so the mirror starts with real depth instead
+      // into tmux's scrollback, 300 lines — deeper seeds block the event loop
       // of a blank past. -J joins wrapped lines so re-wrapping stays sane.
       const seed = await this.client
-        .command(`capture-pane -p -e -J -S -2000 -t ${pane.id}`)
+        .command(`capture-pane -p -e -J -S -300 -t ${pane.id}`)
         .catch(() => []);
       if (seed.length > 0) mirror.write(seed.join("\r\n") + "\r\n");
     }

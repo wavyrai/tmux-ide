@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { parsePaneGeometry, diffPanes, type PaneGeometry } from "./session-mirror.ts";
 
 const g = (id: string, left: number, top: number, w: number, h: number, active = false) =>
-  ({ id, left, top, width: w, height: h, active }) as PaneGeometry;
+  ({ id, left, top, width: w, height: h, active, appMouse: false }) as PaneGeometry;
 
 describe("parsePaneGeometry", () => {
   it("parses list-panes lines", () => {
@@ -12,7 +12,7 @@ describe("parsePaneGeometry", () => {
     ]);
   });
   it("skips malformed lines", () => {
-    expect(parsePaneGeometry(["junk", "%3 0 0 x 20 0", "", "%4 1 2 3 4 0"])).toEqual([
+    expect(parsePaneGeometry(["junk", "%3 0 0 x 20 0", "", "%4 1 2 3 4 0 0"])).toEqual([
       g("%4", 1, 2, 3, 4),
     ]);
   });
