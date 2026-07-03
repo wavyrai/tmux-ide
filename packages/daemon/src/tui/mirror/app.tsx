@@ -8,18 +8,32 @@
  * rendering, ^o pane focus cycle, ^t window cycle, ^q quits (session
  * untouched).
  *
- * FOUR MODES: the main area is the HOME panel (fleet cards + detail; the
- * bare-launch / `^h` state), a session MIRROR (the SessionMirror canvas), the
- * built-in file EDITOR (M18.2 — tmux stays the engine running servers/agents;
- * files are edited natively by us), or the git DIFF panel (M18.3 — the
- * working-tree diff of a project's dir, rendered natively). One `mode()` signal
- * drives both the render (`<Show>`) and the router: `route` branches on mode so a
- * home-row click, a pane click, an editor click, and a diff file-row click share
- * one entry point. `switchTarget(name)` → mirror (attach); `^h`/`^g` → home
- * (dispose mirror, keep the live fleet). A real `--target` starts in mirror mode;
- * bare starts in home; `--edit <file>` opens the editor; `--diff <dir>` opens the
- * diff panel. On home, `o` opens a path prompt, `d` opens the diff panel for the
- * selected session's dir; `^e` toggles editor↔previous.
+ * SURFACE TABS (M18.4): a persistent top row — [⌂ Home][❯ Terminal][▤ Files]
+ * [± Diff] — makes the app a real IDE. F1..F4 switch (F-keys encode reliably;
+ * ctrl+digit/alt do NOT — measured); the tab bar is also clickable (fixed x-span
+ * math in `tabSpans`). The active `tab()` is the source of truth; `mode()` is a
+ * DERIVED view (home|mirror|editor|diff) so the per-surface render/route math is
+ * unchanged. CRITICAL for the IDE feel: switching AWAY from Terminal does NOT
+ * dispose the SessionMirror — it keeps streaming in the background (dirty flags
+ * accumulate; a back-switch is instant); the editor buffer and diff selection
+ * likewise survive tab round trips. One WORKSPACE CONTEXT per session
+ * (`openWorkspace`): choosing a session on Home/sidebar/palette points the
+ * terminal target AND the files/diff dir at it; the header shows the context
+ * name. A command PALETTE (F5, or ^p when it arrives) opens a centered,
+ * keyboard-only overlay of fuzzy-filtered actions (switch tab / attach session /
+ * open file / save / refresh diff / quit). App state — { lastTab, contextSession,
+ * openFile, diffFile } — persists to `~/.tmux-ide/app-state.json`
+ * (TMUX_IDE_HOME override), debounced, restored on launch.
+ *
+ * The main area is the HOME panel (fleet cards + detail), a session MIRROR (the
+ * SessionMirror canvas), the built-in FILES tab (M18.2 editor + a one-level file
+ * list; tmux stays the engine running servers/agents while files are edited
+ * natively by us), or the git DIFF panel (M18.3 — the working-tree diff of the
+ * workspace dir). `route` branches on `mode()` so a tab-bar click, a home-row
+ * click, a pane click, a file-list/editor click, and a diff file-row click share
+ * one entry point. A real `--target` starts on Terminal; bare restores the
+ * persisted tab; `--edit <file>` opens Files; `--diff <dir>` opens Diff. On home,
+ * `o` opens a path prompt, `d` opens the Diff tab for the selected session's dir.
  *
  * DIFF (M18.3): a two-column panel — left is the changed-file list (status letter
  * + path, selected row highlighted), right is the unified diff of the selected
@@ -72,10 +86,11 @@
  */
 import { parseArgs } from "node:util";
 import { appendFileSync, readFileSync, writeFileSync, renameSync } from "node:fs";
+import { readdir } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { render, useKeyboard, useTerminalDimensions } from "@opentui/solid";
 import { RGBA, EditBuffer } from "@opentui/core";
-import { createSignal, createMemo, onMount, onCleanup, For, Show } from "solid-js";
+import { createSignal, createMemo, createEffect, onMount, onCleanup, For, Show } from "solid-js";
 import { SessionMirror, type LivePane } from "./session-mirror.ts";
 import { execFile } from "node:child_process";
 import type { AgentStatus } from "../detect/classify.ts";
@@ -100,6 +115,15 @@ import {
   type StatusEntry,
   type DiffLineKind,
 } from "./diff-model.ts";
+import { loadAppState, saveAppState, isTab, type AppState, type Tab } from "./app-state.ts";
+import { filterPaletteActions, type PaletteAction } from "./palette.ts";
+import {
+  buildNodes,
+  insertChildrenAt,
+  removeSubtreeAt,
+  type FileNode,
+  type RawEntry,
+} from "./file-tree.ts";
 
 const { values } = parseArgs({
   options: {
@@ -223,6 +247,27 @@ const STATUS_LETTER_FG: Record<string, RGBA> = {
 };
 const SIDEBAR_W = 24;
 const HEADER_ROWS = 2;
+// The persistent surface-tab row is one screen row at the very top (above the
+// sidebar + main region). Its height offsets every region's global y, so the
+// router subtracts it once (`gy = y - TABBAR_H`) before the per-mode math.
+const TABBAR_H = 1;
+/** The four top-level surfaces, in F-key order (F1..F4). Glyphs are all
+ *  single display-width so the tab-bar x-span math (`tabSpans`) is exact. */
+const TABS: { key: Tab; label: string; glyph: string; fkey: string }[] = [
+  { key: "home", label: "Home", glyph: "⌂", fkey: "f1" },
+  { key: "terminal", label: "Terminal", glyph: "❯", fkey: "f2" },
+  { key: "files", label: "Files", glyph: "▤", fkey: "f3" },
+  { key: "diff", label: "Diff", glyph: "±", fkey: "f4" },
+];
+/** One tab cell's rendered string (leading + trailing pad); width === length
+ *  because every glyph above is single-width. */
+const tabCell = (t: { glyph: string; label: string }): string => ` ${t.glyph} ${t.label} `;
+const PALETTE_W = 60;
+const PALETTE_ROWS = 10;
+const PALETTE_BG = RGBA.fromInts(28, 30, 42, 255);
+const PALETTE_BORDER = RGBA.fromInts(70, 78, 110, 255);
+const TABBAR_BG = RGBA.fromInts(18, 18, 26, 255);
+const DIR_FG = RGBA.fromInts(150, 180, 250, 255);
 const rgbaCache = new Map<number, RGBA>();
 const packedToRgba = (packed: number | null, fallback: RGBA): RGBA => {
   if (packed === null) return fallback;
@@ -237,11 +282,48 @@ const packedToRgba = (packed: number | null, fallback: RGBA): RGBA => {
 render(() => {
   const dims = useTerminalDimensions();
   const canvasCols = () => Math.max(20, dims().width - SIDEBAR_W);
-  const canvasRows = () => Math.max(4, dims().height - HEADER_ROWS);
-  const [mode, setMode] = createSignal<"home" | "mirror" | "editor" | "diff">(
-    startDiff ? "diff" : bareHome ? "home" : "mirror",
+  const canvasRows = () => Math.max(4, dims().height - HEADER_ROWS - TABBAR_H);
+
+  // Persisted state (one-shot read at launch — NOT on the render loop). The tab
+  // and context restore below; the open editor file / diff selection restore in
+  // onMount (after the FFI buffer + fleet arrive).
+  const persisted: AppState = loadAppState();
+  // The active surface TAB is the source of truth. Explicit CLI args win, else a
+  // real `--target` boots into Terminal, else the persisted tab, else Home.
+  const initialTab: Tab = startDiff
+    ? "diff"
+    : values.edit !== undefined
+      ? "files"
+      : !bareHome
+        ? "terminal"
+        : isTab(persisted.lastTab)
+          ? persisted.lastTab
+          : "home";
+  const [tab, setTab] = createSignal<Tab>(initialTab);
+  // The four render/route branches were written against a `mode` of
+  // home|mirror|editor|diff; keep that vocabulary as a DERIVED view of `tab` so
+  // the per-surface geometry math is untouched — only the top-level switching
+  // and state-retention change.
+  const mode = (): "home" | "mirror" | "editor" | "diff" =>
+    tab() === "terminal"
+      ? "mirror"
+      : tab() === "files"
+        ? "editor"
+        : tab() === "diff"
+          ? "diff"
+          : "home";
+
+  // ── WORKSPACE CONTEXT ────────────────────────────────────────────────────
+  // One context per session: choosing a session on Home (or via the palette)
+  // sets the terminal target AND the files/diff directory. The header shows the
+  // context name across every tab. `contextDir` starts from the persisted
+  // guess and is reconciled against the fleet payload once it arrives.
+  const [contextSession, setContextSession] = createSignal<string>(persisted.contextSession ?? "");
+  const [contextDir, setContextDir] = createSignal<string>("");
+
+  const [curTarget, setCurTarget] = createSignal(
+    bareHome ? (persisted.contextSession ?? "") : target,
   );
-  const [curTarget, setCurTarget] = createSignal(bareHome ? "" : target);
   const [panes, setPanes] = createSignal<LivePane[]>([]);
   const [windowTabs, setWindowTabs] = createSignal<WindowTab[]>([]);
   const [projectsData, setProjectsData] = createSignal<FleetProject[]>([]);
@@ -313,8 +395,9 @@ render(() => {
   // A path-input line on HOME (`o` to open). null = not prompting.
   const [pathPrompt, setPathPrompt] = createSignal<string | null>(null);
 
-  // Visible text rows = full height minus header (1) + rule/banner (1) + footer (1).
-  const editorRows = () => Math.max(1, dims().height - 3);
+  // Visible text rows = full height minus tab bar (1) + header (1) + rule/banner
+  // (1) + footer (1).
+  const editorRows = () => Math.max(1, dims().height - 3 - TABBAR_H);
   const editorLines = createMemo<string[]>(() => {
     editorRev();
     if (!editBuffer) return [""];
@@ -367,15 +450,16 @@ render(() => {
     setEditorTop(0);
     setEditorMsg("");
     setEditorRev((r) => r + 1);
-    setMode("editor");
+    setFilesFocus("editor");
+    setTab("files");
   };
 
   const toggleEditor = () => {
     if (!editBuffer) return; // nothing opened yet
-    if (mode() === "editor") setMode(prevMode);
+    if (mode() === "editor") setTab(prevMode === "mirror" ? "terminal" : "home");
     else {
       prevMode = mode() === "mirror" ? "mirror" : "home";
-      setMode("editor");
+      setTab("files");
     }
   };
 
@@ -451,10 +535,12 @@ render(() => {
   const [diffFileTop, setDiffFileTop] = createSignal(0); // file-list scroll (left)
   const [diffMsg, setDiffMsg] = createSignal("");
   let diffLoadToken = 0;
+  // A diff file to re-select once `git status` repopulates the list (restore).
+  let pendingDiffFile: string | null = persisted.diffFile;
 
   // Body rows below header (1) + rule (1), above the footer (1) — shared by both
   // columns. The left column width is a capped fraction of the canvas.
-  const diffBodyRows = () => Math.max(1, dims().height - 3);
+  const diffBodyRows = () => Math.max(1, dims().height - 3 - TABBAR_H);
   const diffListW = () => Math.max(20, Math.min(48, Math.floor(canvasCols() * 0.34)));
   const diffLines = createMemo(() => classifyDiff(diffText()));
   const diffVisible = createMemo(() => {
@@ -538,13 +624,23 @@ render(() => {
         setDiffMsg("working tree clean");
         return;
       }
+      // Restore: re-select the persisted diff file once it appears in the list.
+      if (pendingDiffFile) {
+        const restored = files.findIndex((f) => f.path === pendingDiffFile);
+        pendingDiffFile = null;
+        if (restored !== -1) {
+          selectDiffFile(restored);
+          return;
+        }
+      }
       const idx = clampSel(diffSel(), files.length);
       setDiffSel(idx);
       loadDiff(files[idx]!);
     });
   };
 
-  /** Enter the diff panel for `dir` (from home `d`, or `--diff` on boot). */
+  /** Enter the diff panel for `dir` (from home `d`, the Diff tab, or `--diff`
+   *  on boot). */
   const enterDiff = (dir: string) => {
     setDiffDir(dir);
     setDiffSel(0);
@@ -552,7 +648,7 @@ render(() => {
     setDiffFileTop(0);
     setDiffText("");
     setDiffMsg("");
-    setMode("diff");
+    setTab("diff");
     refreshStatus();
   };
 
@@ -582,32 +678,222 @@ render(() => {
       })
       .catch((e) => setStatus(`error: ${(e as Error).message}`));
   };
+  /** Switch the Terminal tab's target. CRITICAL for the IDE feel: attaching the
+   *  SAME session we're already mirroring must NOT re-create the control client
+   *  — that would drop scrollback and blink the pane. So a same-target switch is
+   *  a pure tab flip; only a DIFFERENT session (re)attaches. */
   const switchTarget = (name: string) => {
-    if (mode() === "mirror" && name === curTarget()) return;
+    if (name === curTarget() && mirror) {
+      setTab("terminal");
+      return;
+    }
     setCurTarget(name);
-    setMode("mirror");
+    setTab("terminal");
     attach(name);
   };
-  /** ^h — leave the mirror and return to the HOME panel. Disposes the control
-   *  client (the session itself is untouched) but keeps the live fleet running. */
-  const goHome = () => {
-    mirror?.dispose();
-    mirror = null;
-    scrollOffsets.clear();
-    setPanes([]);
-    setWindowTabs([]);
-    setCurTarget("");
-    setSel(0);
-    setStatus("home");
-    setMode("home");
+  /** ^g / F1 — show the HOME tab. The mirror is KEPT ALIVE (it keeps streaming
+   *  in the background so a back-switch is instant); the session is untouched. */
+  const goHome = () => setTab("home");
+
+  // ── FILES TAB (M18.4) ────────────────────────────────────────────────────
+  // A minimal, one-level-expandable file list (left) beside the M18.2 editor
+  // (right), rooted at the workspace dir. `fs.readdir` is ALWAYS async (the
+  // render-loop landmine); the flat-tree splice/prune math is pure in
+  // file-tree.ts.
+  const [fileNodes, setFileNodes] = createSignal<FileNode[]>([]);
+  const [fileSel, setFileSel] = createSignal(0);
+  const [fileTop, setFileTop] = createSignal(0);
+  // Which half of the Files tab has the keyboard: the file LIST (j/k/enter) or
+  // the EDITOR (typing). Opening a file hands focus to the editor; esc hands it
+  // back to the list.
+  const [filesFocus, setFilesFocus] = createSignal<"list" | "editor">("list");
+  const filesListW = () => Math.max(20, Math.min(44, Math.floor(canvasCols() * 0.34)));
+  /** The workspace directory driving both the file list and the diff panel. */
+  const workspaceDir = () => contextDir() || process.cwd();
+  const fileListVisible = createMemo(() => {
+    const nodes = fileNodes();
+    const rows = editorRows();
+    const top = clampTop(fileTop(), nodes.length, rows);
+    return nodes.slice(top, top + rows).map((node, i) => ({ node, index: top + i }));
+  });
+
+  const toRaw = (e: { name: string; isDirectory: () => boolean }): RawEntry => ({
+    name: e.name,
+    isDir: e.isDirectory(),
+  });
+  /** (Re)load the top-level listing for `dir` (async). Directories that were
+   *  expanded collapse back to the fresh root — a lean v1 (deep re-expansion is
+   *  a later nicety). */
+  const loadFileList = (dir: string) => {
+    void readdir(dir, { withFileTypes: true })
+      .then((ents) => {
+        setFileNodes(buildNodes(dir, ents.map(toRaw), 0));
+        setFileSel(0);
+        setFileTop(0);
+      })
+      .catch(() => {
+        setFileNodes([]);
+      });
+  };
+  const moveFileSel = (delta: number) => {
+    const nodes = fileNodes();
+    if (nodes.length === 0) return;
+    const idx = clampSel(fileSel() + delta, nodes.length);
+    setFileSel(idx);
+    setFileTop((t) => scrollToCursor(idx, t, editorRows(), nodes.length));
+  };
+  /** Enter on a row: open a file in the editor, or toggle a directory (async
+   *  readdir → splice children in, or prune the subtree). */
+  const activateFile = (index: number) => {
+    const node = fileNodes()[index];
+    if (!node) return;
+    setFileSel(index);
+    if (!node.isDir) {
+      openEditor(node.path);
+      return;
+    }
+    if (node.expanded) {
+      setFileNodes((list) => removeSubtreeAt(list, index));
+      return;
+    }
+    void readdir(node.path, { withFileTypes: true })
+      .then((ents) => {
+        const children = buildNodes(node.path, ents.map(toRaw), node.depth + 1);
+        setFileNodes((list) => insertChildrenAt(list, index, children));
+      })
+      .catch(() => {});
   };
 
+  /** The project dir the fleet payload records for `session` (null if unknown). */
+  const dirForSession = (name: string): string | null => {
+    for (const p of projectsData()) if (p.sessions.some((s) => s.name === name)) return p.dir;
+    return null;
+  };
+
+  /** Adopt a session as the workspace context: point the terminal target, the
+   *  file list, and the diff panel at it, then show the Terminal tab. The dir is
+   *  the project dir from the fleet payload (falling back to the cwd). */
+  const openWorkspace = (session: string, dir: string | null) => {
+    setContextSession(session);
+    const wd = dir ?? process.cwd();
+    setContextDir(wd);
+    setDiffDir(wd);
+    loadFileList(wd);
+    switchTarget(session);
+  };
+
+  /** Switch tabs preserving each surface's state: the editor buffer and diff
+   *  selection SURVIVE a round trip (only lazily initialized when a surface is
+   *  first shown empty). The Terminal tab never re-attaches here — the mirror is
+   *  already streaming in the background. */
+  const selectTab = (t: Tab) => {
+    if (t === "diff") {
+      if (diffFiles().length === 0) enterDiff(workspaceDir());
+      else setTab("diff");
+      return;
+    }
+    if (t === "files" && fileNodes().length === 0) loadFileList(workspaceDir());
+    setTab(t);
+  };
+
+  // ── COMMAND PALETTE (M18.4) ──────────────────────────────────────────────
+  // A centered overlay (F5 / ^p) — a fuzzy input line + result list over the
+  // action model in palette.ts. Keyboard-only for v1 (the overlay is late-
+  // mounted inside <Show>, so per-node mouse handlers would trip the landmine);
+  // the router never touches it.
+  const [paletteOpen, setPaletteOpen] = createSignal(false);
+  const [paletteQuery, setPaletteQuery] = createSignal("");
+  const [paletteSel, setPaletteSel] = createSignal(0);
+  const paletteActions = createMemo(() =>
+    filterPaletteActions(
+      paletteQuery(),
+      fleet().map((s) => s.name),
+    ),
+  );
+  const openPalette = () => {
+    setPaletteQuery("");
+    setPaletteSel(0);
+    setPaletteOpen(true);
+  };
+  const runPaletteAction = (a: PaletteAction) => {
+    setPaletteOpen(false);
+    switch (a.kind) {
+      case "tab":
+        selectTab(a.tab);
+        break;
+      case "attach":
+        openWorkspace(a.session, dirForSession(a.session));
+        break;
+      case "open-file":
+        openEditor(a.path);
+        break;
+      case "save":
+        saveEditor();
+        break;
+      case "refresh-diff":
+        if (mode() === "diff") refreshStatus();
+        else enterDiff(workspaceDir());
+        break;
+      case "quit":
+        mirror?.dispose();
+        editBuffer?.destroy();
+        process.exit(0);
+    }
+  };
+  /** Feed one key to the palette overlay. Returns true when the key was consumed
+   *  (so the global handler stops). */
+  const paletteKey = (evt: {
+    name: string;
+    ctrl: boolean;
+    meta: boolean;
+    shift: boolean;
+  }): void => {
+    const actions = paletteActions();
+    if (evt.name === "escape") {
+      setPaletteOpen(false);
+    } else if (evt.name === "return") {
+      const a = actions[Math.min(paletteSel(), actions.length - 1)];
+      if (a) runPaletteAction(a);
+    } else if (evt.name === "up") {
+      setPaletteSel((s) => Math.max(0, s - 1));
+    } else if (evt.name === "down") {
+      setPaletteSel((s) => Math.min(Math.max(0, actions.length - 1), s + 1));
+    } else if (evt.name === "backspace") {
+      setPaletteQuery((q) => q.slice(0, -1));
+      setPaletteSel(0);
+    } else if (evt.name.length === 1 && !evt.ctrl && !evt.meta) {
+      setPaletteQuery((q) => q + (evt.shift ? evt.name.toUpperCase() : evt.name));
+      setPaletteSel(0);
+    }
+  };
+
+  // ── PERSISTENCE (M18.4) ──────────────────────────────────────────────────
+  // Save { lastTab, contextSession, openFile, diffFile } debounced whenever any
+  // of them changes; the write is async (off the render tick).
+  let saveTimer: ReturnType<typeof setTimeout> | null = null;
+  createEffect(() => {
+    const snapshot: AppState = {
+      lastTab: tab(),
+      contextSession: contextSession() || null,
+      openFile: editorPath(),
+      diffFile: diffFiles()[diffSel()]?.path ?? null,
+    };
+    if (saveTimer) clearTimeout(saveTimer);
+    saveTimer = setTimeout(() => void saveAppState(snapshot), 400);
+  });
+
   onMount(() => {
-    // `--edit <file>` boots straight into the editor (post-render so the native
-    // EditBuffer FFI is loaded).
+    // `--edit <file>` boots straight into the editor; otherwise a persisted
+    // openFile restores the buffer WITHOUT stealing the restored tab (post-render
+    // so the native EditBuffer FFI is loaded).
     if (values.edit) openEditor(values.edit);
+    else if (persisted.openFile) {
+      openEditor(persisted.openFile);
+      setTab(initialTab);
+    }
+    if (mode() === "editor" && fileNodes().length === 0) loadFileList(workspaceDir());
     if (mode() === "diff") refreshStatus();
-    if (mode() === "mirror") attach(curTarget());
+    if (mode() === "mirror" && curTarget()) attach(curTarget());
     const t = setInterval(() => {
       if (!dirty || !mirror) return;
       dirty = false;
@@ -627,6 +913,18 @@ render(() => {
         try {
           const data = JSON.parse(stdout) as { projects?: FleetProject[] };
           setProjectsData(data.projects ?? []);
+          // Reconcile a RESTORED context session to its project dir once the
+          // fleet lands (persistence carries the name, not the dir). One-shot:
+          // only while contextDir is still unresolved.
+          if (contextSession() && !contextDir()) {
+            const dir = dirForSession(contextSession());
+            if (dir) {
+              setContextDir(dir);
+              setDiffDir(dir);
+              loadFileList(dir);
+              if (mode() === "diff") refreshStatus();
+            }
+          }
         } catch {
           // keep the previous fleet on parse trouble
         }
@@ -652,6 +950,7 @@ render(() => {
       clearInterval(fleetTimer);
       clearInterval(diffTimer);
       clearInterval(sizeTimer);
+      if (saveTimer) clearTimeout(saveTimer);
       mirror?.dispose();
       editBuffer?.destroy();
     });
@@ -694,6 +993,24 @@ render(() => {
       editBuffer?.destroy();
       process.exit(0);
     }
+    // The palette owns the keyboard while open (keyboard-only overlay); esc/enter
+    // inside close it.
+    if (paletteOpen()) {
+      paletteKey(evt);
+      return;
+    }
+    // F5 (and ^p when it arrives) open the command palette.
+    if (evt.name === "f5" || (evt.ctrl && evt.name === "p")) {
+      openPalette();
+      return;
+    }
+    // F1..F4 switch the top-level surface TABS. F-keys encode reliably across
+    // terminals (ctrl+digit / alt do NOT — measured); the tab bar mirrors these.
+    const fTab = TABS.find((t) => t.fkey === evt.name);
+    if (fTab) {
+      selectTab(fTab.key);
+      return;
+    }
     // ^e — from the diff panel, open the SELECTED file in the editor at its
     // repo-relative path; elsewhere toggle the editor against the previous mode
     // (no-op until a file is opened via `o`/`--edit`).
@@ -714,6 +1031,7 @@ render(() => {
       return;
     }
     if (mode() === "editor") {
+      // Save / undo / redo work regardless of which half is focused.
       if (evt.ctrl && evt.name === "s") {
         saveEditor();
         return;
@@ -728,6 +1046,19 @@ render(() => {
         editBuffer?.redo();
         editorSyncScroll();
         setEditorRev((r) => r + 1);
+        return;
+      }
+      // File LIST focus: j/k navigate, enter opens a file (→ editor focus) or
+      // toggles a directory. Otherwise the EDITOR has focus and types; esc hands
+      // focus back to the list.
+      if (filesFocus() === "list") {
+        if (evt.name === "j" || evt.name === "down") moveFileSel(1);
+        else if (evt.name === "k" || evt.name === "up") moveFileSel(-1);
+        else if (evt.name === "return") activateFile(fileSel());
+        return;
+      }
+      if (evt.name === "escape") {
+        setFilesFocus("list");
         return;
       }
       editorKey(evt);
@@ -759,9 +1090,13 @@ render(() => {
         return;
       }
       // `d` — open the diff panel for the selected session's project dir (the
-      // home row carries it via the team payload), falling back to the cwd.
+      // home row carries it via the team payload), adopting it as the context.
       if (evt.name === "d") {
         const r = homeRows()[clampedSel()];
+        if (r) {
+          setContextSession(r.session);
+          setContextDir(r.dir ?? process.cwd());
+        }
         enterDiff(r?.dir ?? process.cwd());
         return;
       }
@@ -772,7 +1107,7 @@ render(() => {
         setSel(Math.max(clampedSel() - 1, 0));
       } else if (evt.name === "return") {
         const r = rows[clampedSel()];
-        if (r) switchTarget(r.session);
+        if (r) openWorkspace(r.session, r.dir);
       }
       return;
     }
@@ -808,61 +1143,98 @@ render(() => {
     }
   });
 
-  /** One router, fed by the two region containers; geometry is ours. */
+  /** The tab bar's x-spans — one contiguous cell per tab from x=0. A fixed row
+   *  rendered at mount, so the click math is exact and never hits the late-mount
+   *  landmine. Shared by the router (hit test) and the render (cell strings). */
+  const tabSpans = createMemo(() => {
+    let start = 0;
+    return TABS.map((t) => {
+      const cell = tabCell(t);
+      const span = { key: t.key, start, width: cell.length, cell, active: false };
+      start += cell.length;
+      return span;
+    });
+  });
+
+  /** One router, fed by the three always-present region containers (tab bar,
+   *  sidebar, main). Geometry is ours. The tab bar is the top screen row; every
+   *  other region is offset below it, so we subtract TABBAR_H once (`gy`) and the
+   *  per-mode math below is exactly as it was before the bar existed. */
   const route = (e: { type: string; x: number; y: number; scroll?: { direction: string } }) => {
     const { type, x, y } = e;
     zzlog(`${type} ${x},${y}`);
+    // Row 0 — the surface tab bar (full width, above the sidebar).
+    if (y === 0) {
+      if (type !== "down") return;
+      for (const s of tabSpans()) {
+        if (x >= s.start && x < s.start + s.width) {
+          selectTab(s.key);
+          return;
+        }
+      }
+      return;
+    }
+    const gy = y - TABBAR_H;
     if (x < SIDEBAR_W) {
       if (type !== "down") return;
-      const s = fleet()[y - 2];
-      if (s) switchTarget(s.name);
+      const s = fleet()[gy - 2];
+      if (s) openWorkspace(s.name, dirForSession(s.name));
       return;
     }
     // HOME mode: the main area is the fleet panel. Rows render below the header
-    // (y=0) + rule (y=1), so a click at global row y hits home row `y - 2`.
+    // (gy=0) + rule (gy=1), so a click at row gy hits home row `gy - 2`.
     if (mode() === "home") {
       if (type !== "down") return;
-      const r = homeRows()[y - 2];
+      const r = homeRows()[gy - 2];
       if (r) {
-        setSel(y - 2);
-        switchTarget(r.session);
+        setSel(gy - 2);
+        openWorkspace(r.session, r.dir);
       }
       return;
     }
-    // EDITOR mode: header (y=0) + rule/banner (y=1), then text rows from y=2.
-    // Wheel scrolls the viewport; a click positions the cursor. All coordinate
-    // math against geometry we render ourselves — no handlers on the text rows.
+    // FILES (editor) mode: header (gy=0) + rule/banner (gy=1), then a two-column
+    // body from gy=2 — the file LIST on the left [0,listW), the editor on the
+    // right. Wheel scrolls whichever column the pointer is over; a left-column
+    // click selects+activates a file row, a right-column click positions the
+    // cursor (and takes editor focus).
     if (mode() === "editor") {
+      const overList = x < SIDEBAR_W + filesListW();
       if (type === "scroll") {
         const dir = e.scroll?.direction;
-        if (dir === "up" || dir === "down") {
-          setEditorTop((t) =>
-            clampTop(
-              t + (dir === "up" ? -SCROLL_STEP : SCROLL_STEP),
-              editorLines().length,
-              editorRows(),
-            ),
-          );
+        if (dir !== "up" && dir !== "down") return;
+        const step = dir === "up" ? -SCROLL_STEP : SCROLL_STEP;
+        if (overList) setFileTop((t) => clampTop(t + step, fileNodes().length, editorRows()));
+        else setEditorTop((t) => clampTop(t + step, editorLines().length, editorRows()));
+        return;
+      }
+      if (type !== "down") return;
+      const contentY = gy - HEADER_ROWS;
+      if (contentY < 0 || contentY >= editorRows()) return;
+      if (overList) {
+        const top = clampTop(fileTop(), fileNodes().length, editorRows());
+        const idx = top + contentY;
+        if (idx >= 0 && idx < fileNodes().length) {
+          setFilesFocus("list");
+          activateFile(idx);
         }
         return;
       }
-      if (type !== "down" || !editBuffer) return;
-      const contentY = y - HEADER_ROWS;
-      if (contentY < 0 || contentY >= editorRows()) return;
+      if (!editBuffer) return;
       const { line, col } = clickToCursor({
-        cx: x - SIDEBAR_W,
+        cx: x - SIDEBAR_W - filesListW(),
         contentY,
         gutterW: gutterWidth(editorLines().length),
         top: editorTop(),
         lines: editorLines(),
       });
       editBuffer.setCursor(line, col);
+      setFilesFocus("editor");
       setEditorRev((r) => r + 1);
       return;
     }
-    // DIFF mode: header (y=0) + rule (y=1), body from y=2. Left column [0,listW)
-    // is the file list, the rest is the diff. Wheel scrolls whichever column the
-    // pointer is over; a left-column click selects that file row.
+    // DIFF mode: header (gy=0) + rule (gy=1), body from gy=2. Left column
+    // [0,listW) is the file list, the rest is the diff. Wheel scrolls whichever
+    // column the pointer is over; a left-column click selects that file row.
     if (mode() === "diff") {
       const overList = x < SIDEBAR_W + diffListW();
       if (type === "scroll") {
@@ -877,14 +1249,14 @@ render(() => {
         return;
       }
       if (type !== "down") return;
-      const contentY = y - HEADER_ROWS;
+      const contentY = gy - HEADER_ROWS;
       if (contentY < 0 || !overList) return;
       const top = clampTop(diffFileTop(), diffFiles().length, diffBodyRows());
       const idx = top + contentY;
       if (idx >= 0 && idx < diffFiles().length) selectDiffFile(idx);
       return;
     }
-    if (y === 1) {
+    if (gy === 1) {
       if (type !== "down") return;
       let col = SIDEBAR_W + 1;
       for (const w of windowTabs()) {
@@ -898,280 +1270,372 @@ render(() => {
       return;
     }
     const cx = x - SIDEBAR_W;
-    const cy = y - HEADER_ROWS;
+    const cy = gy - HEADER_ROWS;
     const pane = panes().find(
       (p) => cx >= p.left && cx < p.left + p.width && cy >= p.top && cy < p.top + p.height,
     );
     if (!pane) return;
     if (type === "down") {
       mirror?.focus(pane.id);
-      if (pane.appMouse) forwardPress(pane, x, y, false);
+      if (pane.appMouse) forwardPress(pane, x, gy, false);
     } else if (type === "up") {
-      if (pane.appMouse) forwardPress(pane, x, y, true);
+      if (pane.appMouse) forwardPress(pane, x, gy, true);
     } else if (type === "scroll") {
       const dir = e.scroll?.direction;
       if (dir === "up" || dir === "down") {
-        const { col, row } = paneCell(pane, x, y);
+        const { col, row } = paneCell(pane, x, gy);
         wheel(pane, dir, col, row);
       }
     }
   };
 
   return (
-    <box flexDirection="row" flexGrow={1} backgroundColor={DEFAULT_BG}>
+    <box flexDirection="column" flexGrow={1} backgroundColor={DEFAULT_BG}>
+      {/* Surface tab bar — the top screen row (gy=0), full width above the
+          sidebar. Rendered at mount (static <For>), so the click x-spans in
+          `tabSpans` are exact and never hit the late-mount landmine. F1..F4
+          switch; the active tab carries the accent background. */}
       <box
-        width={SIDEBAR_W}
-        flexDirection="column"
-        backgroundColor={SIDEBAR_BG}
-        paddingLeft={1}
+        height={TABBAR_H}
+        flexDirection="row"
+        backgroundColor={TABBAR_BG}
         onMouse={(e: { type: string; x: number; y: number; scroll?: { direction: string } }) =>
           route(e)
         }
       >
-        <text fg={ACCENT} attributes={1}>
-          tmux-ide
-        </text>
-        <text fg={MUTED}>{"─".repeat(SIDEBAR_W - 2)}</text>
-        <box flexDirection="column">
-          <For each={fleet()}>
-            {(s) => (
-              <box
-                flexDirection="row"
-                gap={1}
-                backgroundColor={s.name === curTarget() ? TAB_ACTIVE_BG : SIDEBAR_BG}
-              >
-                <text fg={STATUS_COLOR[s.status]}>{STATUS_GLYPH[s.status]}</text>
-                <text fg={s.name === curTarget() ? DEFAULT_FG : MUTED}>
-                  {s.name.slice(0, SIDEBAR_W - 5)}
-                </text>
-              </box>
-            )}
-          </For>
-        </box>
+        <For each={TABS}>
+          {(t) => (
+            <box backgroundColor={tab() === t.key ? ACCENT : TABBAR_BG}>
+              <text fg={tab() === t.key ? DEFAULT_BG : MUTED} attributes={tab() === t.key ? 1 : 0}>
+                {tabCell(t)}
+              </text>
+            </box>
+          )}
+        </For>
         <box flexGrow={1} />
-        <text fg={MUTED}>{"^h home · ^t tab · ^q quit"}</text>
+        <Show when={contextSession()}>
+          <text fg={ACCENT}>{`⧉ ${contextSession()} `}</text>
+        </Show>
+        <text fg={MUTED}>{"F5 ⌘ palette "}</text>
       </box>
-      <box
-        flexDirection="column"
-        flexGrow={1}
-        onMouse={(e: { type: string; x: number; y: number }) => route(e)}
-      >
-        <Show when={mode() === "home"}>
-          {/* HOME header (y=0) + rule (y=1); rows below start at y=2 — the
-              coordinate `route` reverses for a home-row click. */}
-          <box paddingLeft={1} flexDirection="row" gap={1}>
-            <text fg={ACCENT} attributes={1}>
-              tmux-ide
-            </text>
-            <text fg={MUTED}>{`· ${rollup().sessions} sessions ·`}</text>
-            <For each={rollupChips(rollup())}>
-              {(c) => (
-                <text fg={STATUS_COLOR[c.status]}>{`${STATUS_GLYPH[c.status]} ${c.count}`}</text>
-              )}
-            </For>
-          </box>
-          <text fg={MUTED}>{"─".repeat(Math.max(4, canvasCols() - 2))}</text>
+      <box flexDirection="row" flexGrow={1} backgroundColor={DEFAULT_BG}>
+        <box
+          width={SIDEBAR_W}
+          flexDirection="column"
+          backgroundColor={SIDEBAR_BG}
+          paddingLeft={1}
+          onMouse={(e: { type: string; x: number; y: number; scroll?: { direction: string } }) =>
+            route(e)
+          }
+        >
+          <text fg={ACCENT} attributes={1}>
+            tmux-ide
+          </text>
+          <text fg={MUTED}>{"─".repeat(SIDEBAR_W - 2)}</text>
           <box flexDirection="column">
-            <For each={homeRows()}>
-              {(r, i) => (
+            <For each={fleet()}>
+              {(s) => (
                 <box
                   flexDirection="row"
                   gap={1}
-                  paddingLeft={1}
-                  backgroundColor={i() === clampedSel() ? TAB_ACTIVE_BG : DEFAULT_BG}
+                  backgroundColor={s.name === curTarget() ? TAB_ACTIVE_BG : SIDEBAR_BG}
                 >
-                  <text fg={STATUS_COLOR[r.status]}>{STATUS_GLYPH[r.status]}</text>
-                  <text fg={i() === clampedSel() ? DEFAULT_FG : MUTED} attributes={1}>
-                    {r.session}
+                  <text fg={STATUS_COLOR[s.status]}>{STATUS_GLYPH[s.status]}</text>
+                  <text fg={s.name === curTarget() ? DEFAULT_FG : MUTED}>
+                    {s.name.slice(0, SIDEBAR_W - 5)}
                   </text>
-                  <text fg={MUTED}>{`${r.windows}w`}</text>
-                  <text fg={MUTED}>{r.project === r.session ? "" : `· ${r.project}`}</text>
                 </box>
               )}
             </For>
           </box>
           <box flexGrow={1} />
-          <Show
-            when={pathPrompt() !== null}
-            fallback={
-              <box paddingLeft={1}>
-                <text fg={ACCENT}>{detailLine()}</text>
-              </box>
-            }
-          >
-            <box paddingLeft={1} flexDirection="row">
-              <text fg={ACCENT}>{"open file: "}</text>
-              <text fg={DEFAULT_FG}>{`${pathPrompt() ?? ""}▏`}</text>
+          <text fg={MUTED}>{"F1-4 tabs · F5 palette · ^q quit"}</text>
+        </box>
+        <box
+          flexDirection="column"
+          flexGrow={1}
+          onMouse={(e: { type: string; x: number; y: number }) => route(e)}
+        >
+          <Show when={mode() === "home"}>
+            {/* HOME header (y=0) + rule (y=1); rows below start at y=2 — the
+              coordinate `route` reverses for a home-row click. */}
+            <box paddingLeft={1} flexDirection="row" gap={1}>
+              <text fg={ACCENT} attributes={1}>
+                tmux-ide
+              </text>
+              <text fg={MUTED}>{`· ${rollup().sessions} sessions ·`}</text>
+              <For each={rollupChips(rollup())}>
+                {(c) => (
+                  <text fg={STATUS_COLOR[c.status]}>{`${STATUS_GLYPH[c.status]} ${c.count}`}</text>
+                )}
+              </For>
             </box>
-          </Show>
-          <box paddingLeft={1}>
-            <text fg={MUTED}>{`${homeFooter()}   o open file   d diff`}</text>
-          </box>
-        </Show>
-        <Show when={mode() === "mirror"}>
-          <box paddingLeft={1} flexDirection="row" gap={1}>
-            <text fg={DEFAULT_FG} attributes={1}>
-              {curTarget()}
-            </text>
-            <text fg={MUTED}>{status()}</text>
-          </box>
-          <box paddingLeft={1} flexDirection="row" gap={1}>
-            <For each={windowTabs()}>
-              {(w) => (
-                <box backgroundColor={w.active ? TAB_ACTIVE_BG : DEFAULT_BG}>
-                  <text fg={w.active ? ACCENT : MUTED}>{` ${w.index}:${w.name} `}</text>
-                </box>
-              )}
-            </For>
-          </box>
-          <box position="relative" flexGrow={1} backgroundColor={GUTTER_BG}>
-            <For each={panes()}>
-              {(pane) => (
-                <box
-                  position="absolute"
-                  left={pane.left}
-                  top={pane.top}
-                  width={pane.width}
-                  height={pane.height}
-                  flexDirection="column"
-                  backgroundColor={DEFAULT_BG}
-                >
-                  <For each={pane.snapshot.rows}>
-                    {(runs) => (
-                      <box flexDirection="row" height={1}>
-                        <For each={runs}>
-                          {(run) => (
-                            <text
-                              fg={packedToRgba(run.fg, DEFAULT_FG)}
-                              bg={packedToRgba(run.bg, DEFAULT_BG)}
-                              attributes={run.attributes}
-                            >
-                              {run.text}
-                            </text>
-                          )}
-                        </For>
-                      </box>
-                    )}
-                  </For>
-                  <Show when={pane.snapshot.scrollOffset > 0}>
-                    <box position="absolute" right={1} top={0} backgroundColor={BADGE_BG}>
-                      <text fg={DEFAULT_FG}>
-                        {` ↑${pane.snapshot.scrollOffset}/${pane.scrollbackDepth} `}
-                      </text>
-                    </box>
-                  </Show>
-                </box>
-              )}
-            </For>
-          </box>
-        </Show>
-        <Show when={mode() === "editor"}>
-          {/* header (y=0) · rule/banner (y=1) · text rows (y=2+). `route`
-              reverses this geometry for wheel + click. Text rows carry NO
-              onMouse handler — the main column container routes everything. */}
-          <box paddingLeft={1} flexDirection="row" gap={1}>
-            <text fg={ACCENT} attributes={1}>
-              {editorPath() ? basename(editorPath()!) : "editor"}
-            </text>
-            <Show when={editorModified()}>
-              <text fg={MODIFIED_FG}>●</text>
-            </Show>
-            <text fg={MUTED}>{`${editorCursor().row + 1}:${editorCursor().col + 1}`}</text>
-            <text fg={MUTED}>{`${editorLines().length}L`}</text>
-            <text fg={MUTED}>{editorMsg()}</text>
-          </box>
-          <Show
-            when={readOnlyBanner(editorReadOnly())}
-            fallback={<text fg={MUTED}>{"─".repeat(Math.max(4, canvasCols() - 2))}</text>}
-          >
-            <box paddingLeft={1}>
-              <text fg={BANNER_FG}>{readOnlyBanner(editorReadOnly())}</text>
-            </box>
-          </Show>
-          <box flexDirection="column">
-            <For each={editorVisible()}>
-              {(ln) => {
-                const gw = gutterWidth(editorLines().length);
-                return (
-                  <box flexDirection="row" height={1}>
-                    <text bg={GUTTER_BG} fg={GUTTER_FG}>
-                      {formatGutter(ln.num, gw)}
-                    </text>
-                    <Show
-                      when={ln.cursorCol !== null}
-                      fallback={<text fg={DEFAULT_FG}>{ln.text}</text>}
-                    >
-                      <text fg={DEFAULT_FG}>{ln.text.slice(0, ln.cursorCol!)}</text>
-                      <text fg={DEFAULT_BG} bg={CURSOR_BG}>
-                        {ln.text[ln.cursorCol!] ?? " "}
-                      </text>
-                      <text fg={DEFAULT_FG}>{ln.text.slice(ln.cursorCol! + 1)}</text>
-                    </Show>
-                  </box>
-                );
-              }}
-            </For>
-          </box>
-          <box flexGrow={1} />
-          <box paddingLeft={1}>
-            <text fg={MUTED}>{"^s save · ^z undo · ^e toggle · ^g home · ^q quit"}</text>
-          </box>
-        </Show>
-        <Show when={mode() === "diff"}>
-          {/* header (y=0) · rule (y=1) · two-column body (y=2+). `route` reverses
-              this geometry: left column = file list, right = diff. NO onMouse on
-              the rows — the main column container routes everything. */}
-          <box paddingLeft={1} flexDirection="row" gap={1}>
-            <text fg={ACCENT} attributes={1}>
-              {basename(diffDir()) || "diff"}
-            </text>
-            <text fg={MUTED}>{`${diffFiles().length} changed`}</text>
-            <Show when={diffMsg()}>
-              <text fg={MUTED}>{`· ${diffMsg()}`}</text>
-            </Show>
-          </box>
-          <text fg={MUTED}>{"─".repeat(Math.max(4, canvasCols() - 2))}</text>
-          <box flexDirection="row" flexGrow={1}>
-            {/* Left: changed-file list. */}
-            <box width={diffListW()} flexDirection="column" backgroundColor={GUTTER_BG}>
-              <For each={fileVisible()}>
-                {(row) => (
+            <text fg={MUTED}>{"─".repeat(Math.max(4, canvasCols() - 2))}</text>
+            <box flexDirection="column">
+              <For each={homeRows()}>
+                {(r, i) => (
                   <box
                     flexDirection="row"
                     gap={1}
                     paddingLeft={1}
-                    backgroundColor={row.index === diffSel() ? TAB_ACTIVE_BG : GUTTER_BG}
+                    backgroundColor={i() === clampedSel() ? TAB_ACTIVE_BG : DEFAULT_BG}
                   >
-                    <text fg={STATUS_LETTER_FG[row.entry.status] ?? DEFAULT_FG}>
-                      {row.entry.status}
+                    <text fg={STATUS_COLOR[r.status]}>{STATUS_GLYPH[r.status]}</text>
+                    <text fg={i() === clampedSel() ? DEFAULT_FG : MUTED} attributes={1}>
+                      {r.session}
                     </text>
-                    <text fg={row.index === diffSel() ? DEFAULT_FG : MUTED}>
-                      {row.entry.path.length > diffListW() - 4
-                        ? "…" + row.entry.path.slice(-(diffListW() - 5))
-                        : row.entry.path}
-                    </text>
+                    <text fg={MUTED}>{`${r.windows}w`}</text>
+                    <text fg={MUTED}>{r.project === r.session ? "" : `· ${r.project}`}</text>
                   </box>
                 )}
               </For>
             </box>
-            {/* Right: unified diff of the selected file. */}
-            <box flexGrow={1} flexDirection="column" paddingLeft={1}>
-              <For each={diffVisible()}>
-                {(ln) => (
-                  <box height={1}>
-                    <text fg={DIFF_FG[ln.kind]}>{ln.text || " "}</text>
+            <box flexGrow={1} />
+            <Show
+              when={pathPrompt() !== null}
+              fallback={
+                <box paddingLeft={1}>
+                  <text fg={ACCENT}>{detailLine()}</text>
+                </box>
+              }
+            >
+              <box paddingLeft={1} flexDirection="row">
+                <text fg={ACCENT}>{"open file: "}</text>
+                <text fg={DEFAULT_FG}>{`${pathPrompt() ?? ""}▏`}</text>
+              </box>
+            </Show>
+            <box paddingLeft={1}>
+              <text fg={MUTED}>{`${homeFooter()}   o open file   d diff`}</text>
+            </box>
+          </Show>
+          <Show when={mode() === "mirror"}>
+            <box paddingLeft={1} flexDirection="row" gap={1}>
+              <text fg={DEFAULT_FG} attributes={1}>
+                {curTarget()}
+              </text>
+              <text fg={MUTED}>{status()}</text>
+            </box>
+            <box paddingLeft={1} flexDirection="row" gap={1}>
+              <For each={windowTabs()}>
+                {(w) => (
+                  <box backgroundColor={w.active ? TAB_ACTIVE_BG : DEFAULT_BG}>
+                    <text fg={w.active ? ACCENT : MUTED}>{` ${w.index}:${w.name} `}</text>
                   </box>
                 )}
               </For>
             </box>
-          </box>
-          <box paddingLeft={1}>
-            <text fg={MUTED}>
-              {"j/k file · wheel scroll · ^e edit · r refresh · ^g home · ^q quit"}
-            </text>
-          </box>
-        </Show>
+            <box position="relative" flexGrow={1} backgroundColor={GUTTER_BG}>
+              <For each={panes()}>
+                {(pane) => (
+                  <box
+                    position="absolute"
+                    left={pane.left}
+                    top={pane.top}
+                    width={pane.width}
+                    height={pane.height}
+                    flexDirection="column"
+                    backgroundColor={DEFAULT_BG}
+                  >
+                    <For each={pane.snapshot.rows}>
+                      {(runs) => (
+                        <box flexDirection="row" height={1}>
+                          <For each={runs}>
+                            {(run) => (
+                              <text
+                                fg={packedToRgba(run.fg, DEFAULT_FG)}
+                                bg={packedToRgba(run.bg, DEFAULT_BG)}
+                                attributes={run.attributes}
+                              >
+                                {run.text}
+                              </text>
+                            )}
+                          </For>
+                        </box>
+                      )}
+                    </For>
+                    <Show when={pane.snapshot.scrollOffset > 0}>
+                      <box position="absolute" right={1} top={0} backgroundColor={BADGE_BG}>
+                        <text fg={DEFAULT_FG}>
+                          {` ↑${pane.snapshot.scrollOffset}/${pane.scrollbackDepth} `}
+                        </text>
+                      </box>
+                    </Show>
+                  </box>
+                )}
+              </For>
+            </box>
+          </Show>
+          <Show when={mode() === "editor"}>
+            {/* FILES tab: header (gy=0) · rule/banner (gy=1) · two-column body
+              (gy=2+): the file LIST on the left, the editor on the right. `route`
+              reverses this geometry for wheel + click. NO onMouse on the rows —
+              the main column container routes everything. */}
+            <box paddingLeft={1} flexDirection="row" gap={1}>
+              <text fg={ACCENT} attributes={1}>
+                {editorPath() ? basename(editorPath()!) : "files"}
+              </text>
+              <Show when={editorModified()}>
+                <text fg={MODIFIED_FG}>●</text>
+              </Show>
+              <text fg={MUTED}>{`${editorCursor().row + 1}:${editorCursor().col + 1}`}</text>
+              <text fg={MUTED}>{`${editorLines().length}L`}</text>
+              <text fg={MUTED}>{editorMsg()}</text>
+            </box>
+            <Show
+              when={readOnlyBanner(editorReadOnly())}
+              fallback={<text fg={MUTED}>{"─".repeat(Math.max(4, canvasCols() - 2))}</text>}
+            >
+              <box paddingLeft={1}>
+                <text fg={BANNER_FG}>{readOnlyBanner(editorReadOnly())}</text>
+              </box>
+            </Show>
+            <box flexDirection="row" flexGrow={1}>
+              {/* Left: the workspace file list (one-level expandable). */}
+              <box width={filesListW()} flexDirection="column" backgroundColor={GUTTER_BG}>
+                <For each={fileListVisible()}>
+                  {(row) => {
+                    const n = row.node;
+                    const sel = row.index === fileSel() && filesFocus() === "list";
+                    const prefix =
+                      "  ".repeat(n.depth) + (n.isDir ? (n.expanded ? "▾ " : "▸ ") : "  ");
+                    const label = (prefix + n.name).slice(0, filesListW() - 1);
+                    return (
+                      <box
+                        paddingLeft={1}
+                        height={1}
+                        backgroundColor={sel ? TAB_ACTIVE_BG : GUTTER_BG}
+                      >
+                        <text fg={n.isDir ? DIR_FG : sel ? DEFAULT_FG : MUTED}>{label}</text>
+                      </box>
+                    );
+                  }}
+                </For>
+              </box>
+              {/* Right: the editor viewport (gutter + text runs + cursor). */}
+              <box flexGrow={1} flexDirection="column">
+                <For each={editorVisible()}>
+                  {(ln) => {
+                    const gw = gutterWidth(editorLines().length);
+                    return (
+                      <box flexDirection="row" height={1}>
+                        <text bg={GUTTER_BG} fg={GUTTER_FG}>
+                          {formatGutter(ln.num, gw)}
+                        </text>
+                        <Show
+                          when={ln.cursorCol !== null}
+                          fallback={<text fg={DEFAULT_FG}>{ln.text}</text>}
+                        >
+                          <text fg={DEFAULT_FG}>{ln.text.slice(0, ln.cursorCol!)}</text>
+                          <text fg={DEFAULT_BG} bg={CURSOR_BG}>
+                            {ln.text[ln.cursorCol!] ?? " "}
+                          </text>
+                          <text fg={DEFAULT_FG}>{ln.text.slice(ln.cursorCol! + 1)}</text>
+                        </Show>
+                      </box>
+                    );
+                  }}
+                </For>
+              </box>
+            </box>
+            <box paddingLeft={1}>
+              <text fg={MUTED}>
+                {"j/k file · enter open · ^s save · esc list · ^g home · ^q quit"}
+              </text>
+            </box>
+          </Show>
+          <Show when={mode() === "diff"}>
+            {/* header (y=0) · rule (y=1) · two-column body (y=2+). `route` reverses
+              this geometry: left column = file list, right = diff. NO onMouse on
+              the rows — the main column container routes everything. */}
+            <box paddingLeft={1} flexDirection="row" gap={1}>
+              <text fg={ACCENT} attributes={1}>
+                {basename(diffDir()) || "diff"}
+              </text>
+              <text fg={MUTED}>{`${diffFiles().length} changed`}</text>
+              <Show when={diffMsg()}>
+                <text fg={MUTED}>{`· ${diffMsg()}`}</text>
+              </Show>
+            </box>
+            <text fg={MUTED}>{"─".repeat(Math.max(4, canvasCols() - 2))}</text>
+            <box flexDirection="row" flexGrow={1}>
+              {/* Left: changed-file list. */}
+              <box width={diffListW()} flexDirection="column" backgroundColor={GUTTER_BG}>
+                <For each={fileVisible()}>
+                  {(row) => (
+                    <box
+                      flexDirection="row"
+                      gap={1}
+                      paddingLeft={1}
+                      backgroundColor={row.index === diffSel() ? TAB_ACTIVE_BG : GUTTER_BG}
+                    >
+                      <text fg={STATUS_LETTER_FG[row.entry.status] ?? DEFAULT_FG}>
+                        {row.entry.status}
+                      </text>
+                      <text fg={row.index === diffSel() ? DEFAULT_FG : MUTED}>
+                        {row.entry.path.length > diffListW() - 4
+                          ? "…" + row.entry.path.slice(-(diffListW() - 5))
+                          : row.entry.path}
+                      </text>
+                    </box>
+                  )}
+                </For>
+              </box>
+              {/* Right: unified diff of the selected file. */}
+              <box flexGrow={1} flexDirection="column" paddingLeft={1}>
+                <For each={diffVisible()}>
+                  {(ln) => (
+                    <box height={1}>
+                      <text fg={DIFF_FG[ln.kind]}>{ln.text || " "}</text>
+                    </box>
+                  )}
+                </For>
+              </box>
+            </box>
+            <box paddingLeft={1}>
+              <text fg={MUTED}>
+                {"j/k file · wheel scroll · ^e edit · r refresh · ^g home · ^q quit"}
+              </text>
+            </box>
+          </Show>
+        </box>
       </box>
+      {/* COMMAND PALETTE overlay (M18.4) — centered, keyboard-only. Late-mounted
+          inside <Show>, so it carries NO mouse handlers (the router never sees
+          it); type to fuzzy-filter, up/down to move, enter to run, esc to close. */}
+      <Show when={paletteOpen()}>
+        <box
+          position="absolute"
+          left={Math.max(0, Math.floor((dims().width - PALETTE_W) / 2))}
+          top={Math.max(1, Math.floor(dims().height / 6))}
+          width={PALETTE_W}
+          flexDirection="column"
+          backgroundColor={PALETTE_BG}
+          border
+          borderColor={PALETTE_BORDER}
+          paddingLeft={1}
+          paddingRight={1}
+        >
+          <box flexDirection="row">
+            <text fg={ACCENT} attributes={1}>
+              {"⌘ "}
+            </text>
+            <text fg={DEFAULT_FG}>{`${paletteQuery()}▏`}</text>
+          </box>
+          <text fg={MUTED}>{"─".repeat(PALETTE_W - 4)}</text>
+          <For each={paletteActions().slice(0, PALETTE_ROWS)}>
+            {(a, i) => (
+              <box height={1} backgroundColor={i() === paletteSel() ? TAB_ACTIVE_BG : PALETTE_BG}>
+                <text fg={i() === paletteSel() ? DEFAULT_FG : MUTED}>
+                  {(i() === paletteSel() ? "› " : "  ") + a.label}
+                </text>
+              </box>
+            )}
+          </For>
+          <Show when={paletteActions().length === 0}>
+            <text fg={MUTED}>{"  no matches"}</text>
+          </Show>
+        </box>
+      </Show>
     </box>
   );
 });
