@@ -219,6 +219,57 @@ async function sendToAgent(opts: {
   console.log(`Sent to ${agent.name} [${agent.id}] on ${where}.`);
 }
 
+async function claimAgent(opts: {
+  id: string;
+  name?: string;
+  role?: string;
+  release?: boolean;
+  json?: boolean;
+}): Promise<void> {
+  const info = requireDaemonInfo();
+  const { agents } = await fetchAgentList(info);
+  const { agent, machineId } = resolveSendTarget(agents, opts.id);
+
+  const path = opts.release ? "/api/agents/release" : "/api/agents/claim";
+  const { url, headers } = daemonRequest(info, path);
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(
+        opts.release
+          ? { id: opts.id, machineId }
+          : { id: opts.id, machineId, name: opts.name, role: opts.role },
+      ),
+      signal: timeoutSignal(15_000),
+    });
+  } catch {
+    throw new IdeError(NO_DAEMON_MESSAGE, { code: "DAEMON_UNAVAILABLE", exitCode: 1 });
+  }
+
+  const body = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+  if (!res.ok) {
+    const detail = typeof body.error === "string" ? body.error : `HTTP ${res.status}`;
+    throw new IdeError(`${opts.release ? "Release" : "Claim"} failed: ${detail}`, {
+      code: opts.release ? "RELEASE_FAILED" : "CLAIM_FAILED",
+      exitCode: 1,
+    });
+  }
+
+  if (opts.json) {
+    console.log(JSON.stringify(body));
+    return;
+  }
+  const where = machineId === null ? "this machine" : (agent.machineName ?? machineId);
+  if (opts.release) {
+    console.log(`Released ${agent.name} [${agent.id}] on ${where} (back to unmanaged).`);
+  } else {
+    const label = opts.name ?? agent.name;
+    console.log(`Owned ${label} [${agent.id}] on ${where} — now managed.`);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Entry point
 // ---------------------------------------------------------------------------
@@ -228,6 +279,8 @@ export interface AgentsCommandOptions {
   args?: string[];
   json?: boolean;
   noEnter?: boolean;
+  name?: string;
+  role?: string;
 }
 
 /**
@@ -259,10 +312,32 @@ export async function agentsCommand(opts: AgentsCommandOptions): Promise<void> {
     return;
   }
 
+  if (sub === "claim" || sub === "release") {
+    const [id] = opts.args ?? [];
+    if (!id) {
+      throw new IdeError(
+        `Usage: tmux-ide agents ${sub} <agent-id>` +
+          (sub === "claim" ? " [--name <name>] [--role <role>]" : "") +
+          "\nRun `tmux-ide agents` to list agent ids.",
+        { code: "USAGE", exitCode: 1 },
+      );
+    }
+    await claimAgent({
+      id,
+      name: opts.name,
+      role: opts.role,
+      release: sub === "release",
+      json: opts.json,
+    });
+    return;
+  }
+
   throw new IdeError(
     "Usage:\n" +
       "  tmux-ide agents [list] [--json]\n" +
       "  tmux-ide agents send <agent-id> <message...> [--no-enter] [--json]\n" +
+      "  tmux-ide agents claim <agent-id> [--name <name>] [--role <role>]\n" +
+      "  tmux-ide agents release <agent-id>\n" +
       "(For the plain-terminal hook reporter, see `tmux-ide agent`.)",
     { code: "USAGE", exitCode: 1 },
   );

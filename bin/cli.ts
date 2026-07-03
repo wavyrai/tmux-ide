@@ -605,6 +605,8 @@ try {
         args: positionals.slice(2),
         json,
         noEnter: values["no-enter"] === true,
+        name: typeof values.name === "string" ? values.name : undefined,
+        role: typeof values.role === "string" ? values.role : undefined,
       });
       break;
     }

@@ -72,6 +72,7 @@ interface CliFlags {
   to?: string;
   "no-enter"?: boolean;
   print?: boolean;
+  role?: string;
 }
 
 export async function main(): Promise<void> {
@@ -671,6 +672,8 @@ ${bold("Flags:")}
             args: positionals.slice(2),
             json,
             noEnter: values["no-enter"],
+            name: values.name,
+            role: values.role,
           });
           break;
         }

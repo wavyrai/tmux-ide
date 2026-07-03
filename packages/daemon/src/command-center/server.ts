@@ -94,7 +94,12 @@ import {
   WorkspaceAlreadyExistsError,
   WorkspaceNotFoundError,
 } from "../lib/workspace-registry.ts";
-import { discoverTmuxAgents } from "../lib/agent-discovery.ts";
+import {
+  discoverTmuxAgents,
+  claimPane,
+  releasePane,
+  InvalidPaneIdError,
+} from "../lib/agent-discovery.ts";
 import { listSshAgentSources, resolveSshMachineUrl } from "../lib/agent-remotes.ts";
 import {
   aggregateHqAgents,
@@ -111,6 +116,8 @@ import {
   savePlanContentSchema,
   sendCommandSchema,
   agentSendSchema,
+  agentClaimSchema,
+  agentReleaseSchema,
   createMilestoneSchema,
   updateMilestoneSchema,
   updateAssertionSchema,
@@ -3908,60 +3915,92 @@ export function createApp(options: CreateAppOptions = {}): Hono {
     return c.json(AgentListSchemaZ.parse({ agents }));
   });
 
-  // Send input to any agent in the unified view — the control half of the
-  // central pane. Local tmux agents get send-keys directly; agents on another
-  // machine are proxied one hop to that machine's daemon (which then treats
-  // the send as local). External (plain-terminal) agents have no pane to
-  // drive and are observe-only.
-  app.post("/api/agents/send", zValidator("json", agentSendSchema), async (c) => {
-    const { id, machineId, message, noEnter } = c.req.valid("json");
+  // Resolve an agent id (+ optional machineId) to a control target: either a
+  // local AgentRecord on this host, or a one-hop proxy to the machine that owns
+  // it. Shared by every /api/agents/* control route so the local-vs-remote
+  // routing rule lives in exactly one place.
+  type AgentTarget =
+    | { kind: "local"; agent: AgentRecord }
+    | { kind: "remote"; baseUrl: string; headers: Record<string, string>; forwardId: string }
+    | { kind: "error"; status: 400 | 404; body: Record<string, unknown> };
 
+  async function resolveAgentTarget(
+    id: string,
+    machineId: string | null | undefined,
+  ): Promise<AgentTarget> {
     if (machineId) {
-      // Remote hop: resolve the machine's daemon URL, strip the namespace we
-      // stamped during aggregation, and forward WITHOUT machineId (one hop max).
       const sshUrl = await resolveSshMachineUrl(machineId);
       const hqMachine = sshUrl ? null : remoteRegistry?.getMachine(machineId);
       const baseUrl = sshUrl ?? hqMachine?.url;
       if (!baseUrl || !isHttpUrl(baseUrl)) {
-        return c.json({ error: `Unknown machine: ${machineId}` }, 404);
+        return { kind: "error", status: 404, body: { error: `Unknown machine: ${machineId}` } };
       }
       const prefix = `${machineId}:`;
       if (!id.startsWith(prefix)) {
-        return c.json({ error: "Agent id does not belong to that machine" }, 400);
+        return {
+          kind: "error",
+          status: 400,
+          body: { error: "Agent id does not belong to that machine" },
+        };
       }
       const headers: Record<string, string> = { "Content-Type": "application/json" };
       if (hqMachine) headers.Authorization = `Bearer ${hqMachine.token}`;
-      try {
-        const controller = new AbortController();
-        const tid = setTimeout(() => controller.abort(), 5_000);
-        const res = await fetch(`${baseUrl}/api/agents/send`, {
-          method: "POST",
-          headers,
-          body: JSON.stringify({ id: id.slice(prefix.length), message, noEnter }),
-          signal: controller.signal,
-          redirect: "manual",
-        });
-        clearTimeout(tid);
-        const body = (await res.json().catch(() => ({ error: `HTTP ${res.status}` }))) as Record<
-          string,
-          unknown
-        >;
-        if (res.ok) return c.json(body);
-        return c.json({ ...body, remoteStatus: res.status }, 502);
-      } catch {
-        return c.json({ error: `Machine ${machineId} is unreachable` }, 502);
-      }
+      return { kind: "remote", baseUrl, headers, forwardId: id.slice(prefix.length) };
+    }
+    const agent = localAgents().find((candidate) => candidate.id === id);
+    if (!agent) return { kind: "error", status: 404, body: { error: `Agent not found: ${id}` } };
+    return { kind: "local", agent };
+  }
+
+  // Forward a control call one hop to the machine that owns the agent. The
+  // forwarded body carries no machineId, so the far daemon treats it as local
+  // and can't re-proxy (one hop max, no loops). Never chases redirects.
+  // Returns a ready-to-emit status + body; the caller owns the response.
+  async function proxyAgentPost(
+    target: Extract<AgentTarget, { kind: "remote" }>,
+    path: string,
+    body: Record<string, unknown>,
+    machineId: string,
+  ): Promise<{ status: 200 | 502; body: Record<string, unknown> }> {
+    try {
+      const controller = new AbortController();
+      const tid = setTimeout(() => controller.abort(), 5_000);
+      const res = await fetch(`${target.baseUrl}${path}`, {
+        method: "POST",
+        headers: target.headers,
+        body: JSON.stringify({ ...body, id: target.forwardId }),
+        signal: controller.signal,
+        redirect: "manual",
+      });
+      clearTimeout(tid);
+      const respBody = (await res.json().catch(() => ({ error: `HTTP ${res.status}` }))) as Record<
+        string,
+        unknown
+      >;
+      if (res.ok) return { status: 200, body: respBody };
+      return { status: 502, body: { ...respBody, remoteStatus: res.status } };
+    } catch {
+      return { status: 502, body: { error: `Machine ${machineId} is unreachable` } };
+    }
+  }
+
+  // Send input to any agent in the unified view — the control half of the
+  // central pane. Local tmux agents get send-keys directly; agents on another
+  // machine are proxied one hop. External (plain-terminal) agents have no pane
+  // to drive and are observe-only.
+  app.post("/api/agents/send", zValidator("json", agentSendSchema), async (c) => {
+    const { id, machineId, message, noEnter } = c.req.valid("json");
+    const target = await resolveAgentTarget(id, machineId);
+    if (target.kind === "error") return c.json(target.body, target.status);
+    if (target.kind === "remote") {
+      const r = await proxyAgentPost(target, "/api/agents/send", { message, noEnter }, machineId!);
+      return c.json(r.body, r.status);
     }
 
-    // Local: the agent must be a tmux pane on this host.
-    const agent = localAgents().find((candidate) => candidate.id === id);
-    if (!agent) {
-      return c.json({ error: `Agent not found: ${id}` }, 404);
-    }
+    const { agent } = target;
     if (agent.kind === "external" || !agent.session || !agent.paneId) {
       return c.json({ error: "External agents are observe-only (no pane to drive)" }, 409);
     }
-
     const busyStatus = getPaneBusyStatus(agent.session, agent.paneId);
     // Collapse multiline for agent panes (same semantics as project send).
     const prepared = busyStatus === "agent" ? message.replace(/\n+/g, " ").trim() : message;
@@ -3974,6 +4013,52 @@ export function createApp(options: CreateAppOptions = {}): Hono {
       ok: true,
       agent: { id: agent.id, session: agent.session, paneId: agent.paneId },
     });
+  });
+
+  // Adopt ("own") an unmanaged tmux pane: tag the pane so discovery reports it
+  // as `managed`, and optionally give it a name/role. Per-pane, so it doesn't
+  // affect the rest of an unmanaged session.
+  app.post("/api/agents/claim", zValidator("json", agentClaimSchema), async (c) => {
+    const { id, machineId, name, role } = c.req.valid("json");
+    const target = await resolveAgentTarget(id, machineId);
+    if (target.kind === "error") return c.json(target.body, target.status);
+    if (target.kind === "remote") {
+      const r = await proxyAgentPost(target, "/api/agents/claim", { name, role }, machineId!);
+      return c.json(r.body, r.status);
+    }
+
+    const { agent } = target;
+    if (agent.kind === "external" || !agent.paneId) {
+      return c.json({ error: "External agents have no pane to claim" }, 409);
+    }
+    try {
+      claimPane(agent.paneId, { name, role });
+    } catch (err) {
+      if (err instanceof InvalidPaneIdError) return c.json({ error: err.message }, 400);
+      throw err;
+    }
+    return c.json({ ok: true, agent: { id: agent.id, paneId: agent.paneId, name: name ?? null } });
+  });
+
+  // Release a previously claimed pane (back to `tmux-unmanaged`).
+  app.post("/api/agents/release", zValidator("json", agentReleaseSchema), async (c) => {
+    const { id, machineId } = c.req.valid("json");
+    const target = await resolveAgentTarget(id, machineId);
+    if (target.kind === "error") return c.json(target.body, target.status);
+    if (target.kind === "remote") {
+      const r = await proxyAgentPost(target, "/api/agents/release", {}, machineId!);
+      return c.json(r.body, r.status);
+    }
+
+    const { agent } = target;
+    if (!agent.paneId) return c.json({ error: "Agent has no pane to release" }, 409);
+    try {
+      releasePane(agent.paneId);
+    } catch (err) {
+      if (err instanceof InvalidPaneIdError) return c.json({ error: err.message }, 400);
+      throw err;
+    }
+    return c.json({ ok: true, agent: { id: agent.id, paneId: agent.paneId } });
   });
 
   // --- Tunnel endpoints ---

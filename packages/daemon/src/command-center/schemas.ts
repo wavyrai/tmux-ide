@@ -41,6 +41,20 @@ export const agentSendSchema = z.object({
   noEnter: z.boolean().optional(),
 });
 
+// Adopt ("own") an unmanaged tmux pane, optionally naming it. Same routing
+// rule as send: machineId null = local, ssh:<name>/uuid = one-hop proxy.
+export const agentClaimSchema = z.object({
+  id: z.string().min(1).max(512),
+  machineId: z.string().min(1).max(256).nullish(),
+  name: z.string().min(1).max(200).optional(),
+  role: z.string().min(1).max(64).optional(),
+});
+
+export const agentReleaseSchema = z.object({
+  id: z.string().min(1).max(512),
+  machineId: z.string().min(1).max(256).nullish(),
+});
+
 export const createMilestoneSchema = z.object({
   title: z.string().trim().min(1, "Title is required"),
   sequence: z.number().int().positive(),

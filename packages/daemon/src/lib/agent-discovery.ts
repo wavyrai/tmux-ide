@@ -14,6 +14,9 @@ export interface TmuxPane extends PaneInfo {
   session: string;
   cwd: string | null;
   pid: number | null;
+  // Set via `claimPane`: this specific pane has been adopted ("owned") even
+  // though tmux-ide didn't create its session.
+  owned: boolean;
 }
 
 // pane_title is free-text and can contain tabs, so it goes LAST — any overflow
@@ -32,6 +35,7 @@ const FIELDS = [
   "#{@ide_role}",
   "#{@ide_name}",
   "#{@ide_type}",
+  "#{@ide_owned}",
   "#{pane_title}",
 ];
 const FIXED_FIELDS = FIELDS.length - 1; // everything before the trailing title
@@ -46,7 +50,8 @@ export function listAllTmuxPanes(): TmuxPane[] {
     const parts = line.split("\t");
     // Skip malformed rows (a tmux format glitch shouldn't crash discovery).
     if (parts.length < FIXED_FIELDS) continue;
-    const [session, id, index, cmd, cwd, pid, width, height, active, role, name, type] = parts;
+    const [session, id, index, cmd, cwd, pid, width, height, active, role, name, type, owned] =
+      parts;
     if (!session || !id) continue;
     panes.push({
       session,
@@ -62,6 +67,7 @@ export function listAllTmuxPanes(): TmuxPane[] {
       role: (role || null) as PaneInfo["role"],
       name: name || null,
       type: type || null,
+      owned: owned === "1",
     } satisfies TmuxPane);
   }
   return panes;
@@ -86,7 +92,9 @@ export function discoverTmuxAgents(managedSessions: Set<string>): AgentRecord[] 
   return listAllTmuxPanes()
     .filter((pane) => isAgentPane(pane))
     .map((pane) => {
-      const managed = managedSessions.has(pane.session);
+      // A pane is managed if tmux-ide owns its whole session OR it was
+      // individually claimed (`@ide_owned`).
+      const managed = managedSessions.has(pane.session) || pane.owned;
       return {
         id: `${pane.session}:${pane.id}`,
         kind: managed ? "managed" : "tmux-unmanaged",
@@ -105,4 +113,45 @@ export function discoverTmuxAgents(managedSessions: Set<string>): AgentRecord[] 
         machineName: null,
       } satisfies AgentRecord;
     });
+}
+
+const PANE_ID_RE = /^%\d+$/;
+
+/** Strip control chars and bound length for a tmux option value. */
+function sanitizeOption(value: string, max: number): string {
+  let out = "";
+  for (const ch of value) {
+    const code = ch.codePointAt(0)!;
+    if (code < 0x20 || code === 0x7f || (code >= 0x80 && code <= 0x9f)) continue;
+    out += ch;
+    if (out.length >= max) break;
+  }
+  return out;
+}
+
+export class InvalidPaneIdError extends Error {
+  constructor(paneId: string) {
+    super(`Invalid tmux pane id: ${paneId}`);
+    this.name = "InvalidPaneIdError";
+  }
+}
+
+/**
+ * Adopt ("own") a single tmux pane by tagging it with `@ide_owned`, so
+ * discovery reports it as `managed` even though tmux-ide didn't start its
+ * session. Optionally set a display name/role. Pane-scoped tmux options
+ * (`set-option -p`) don't touch the rest of the session.
+ */
+export function claimPane(paneId: string, opts: { name?: string; role?: string } = {}): void {
+  if (!PANE_ID_RE.test(paneId)) throw new InvalidPaneIdError(paneId);
+  tmux("set-option", "-p", "-t", paneId, "@ide_owned", "1");
+  if (opts.name)
+    tmux("set-option", "-p", "-t", paneId, "@ide_name", sanitizeOption(opts.name, 200));
+  if (opts.role) tmux("set-option", "-p", "-t", paneId, "@ide_role", sanitizeOption(opts.role, 64));
+}
+
+/** Release a previously claimed pane. Leaves any custom `@ide_name` intact. */
+export function releasePane(paneId: string): void {
+  if (!PANE_ID_RE.test(paneId)) throw new InvalidPaneIdError(paneId);
+  tmux("set-option", "-p", "-u", "-t", paneId, "@ide_owned");
 }

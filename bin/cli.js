@@ -16635,7 +16635,7 @@ function listAllTmuxPanes() {
     if (!line) continue;
     const parts = line.split("	");
     if (parts.length < FIXED_FIELDS) continue;
-    const [session, id, index, cmd, cwd, pid, width, height, active2, role, name, type] = parts;
+    const [session, id, index, cmd, cwd, pid, width, height, active2, role, name, type, owned] = parts;
     if (!session || !id) continue;
     panes.push({
       session,
@@ -16650,7 +16650,8 @@ function listAllTmuxPanes() {
       active: active2 === "1",
       role: role || null,
       name: name || null,
-      type: type || null
+      type: type || null,
+      owned: owned === "1"
     });
   }
   return panes;
@@ -16664,7 +16665,7 @@ function inferAgentTool(currentCommand) {
 }
 function discoverTmuxAgents(managedSessions) {
   return listAllTmuxPanes().filter((pane) => isAgentPane(pane)).map((pane) => {
-    const managed = managedSessions.has(pane.session);
+    const managed = managedSessions.has(pane.session) || pane.owned;
     return {
       id: `${pane.session}:${pane.id}`,
       kind: managed ? "managed" : "tmux-unmanaged",
@@ -16684,7 +16685,28 @@ function discoverTmuxAgents(managedSessions) {
     };
   });
 }
-var FIELDS, FIXED_FIELDS;
+function sanitizeOption(value, max) {
+  let out = "";
+  for (const ch of value) {
+    const code = ch.codePointAt(0);
+    if (code < 32 || code === 127 || code >= 128 && code <= 159) continue;
+    out += ch;
+    if (out.length >= max) break;
+  }
+  return out;
+}
+function claimPane(paneId, opts = {}) {
+  if (!PANE_ID_RE.test(paneId)) throw new InvalidPaneIdError(paneId);
+  tmux("set-option", "-p", "-t", paneId, "@ide_owned", "1");
+  if (opts.name)
+    tmux("set-option", "-p", "-t", paneId, "@ide_name", sanitizeOption(opts.name, 200));
+  if (opts.role) tmux("set-option", "-p", "-t", paneId, "@ide_role", sanitizeOption(opts.role, 64));
+}
+function releasePane(paneId) {
+  if (!PANE_ID_RE.test(paneId)) throw new InvalidPaneIdError(paneId);
+  tmux("set-option", "-p", "-u", "-t", paneId, "@ide_owned");
+}
+var FIELDS, FIXED_FIELDS, PANE_ID_RE, InvalidPaneIdError;
 var init_agent_discovery = __esm({
   "packages/daemon/src/lib/agent-discovery.ts"() {
     "use strict";
@@ -16703,9 +16725,17 @@ var init_agent_discovery = __esm({
       "#{@ide_role}",
       "#{@ide_name}",
       "#{@ide_type}",
+      "#{@ide_owned}",
       "#{pane_title}"
     ];
     FIXED_FIELDS = FIELDS.length - 1;
+    PANE_ID_RE = /^%\d+$/;
+    InvalidPaneIdError = class extends Error {
+      constructor(paneId) {
+        super(`Invalid tmux pane id: ${paneId}`);
+        this.name = "InvalidPaneIdError";
+      }
+    };
   }
 });
 
@@ -17381,7 +17411,7 @@ var init_agent_registry = __esm({
 
 // packages/daemon/src/command-center/schemas.ts
 import { z as z20 } from "zod";
-var updateTaskSchema, createTaskSchema, savePlanSchema, savePlanContentSchema, sendCommandSchema, agentSendSchema, createMilestoneSchema, updateMilestoneSchema, updateAssertionSchema, triggerResearchSchema, launchSchema, stopSchema, skillNameRegex, createSkillSchema, updateSkillSchema;
+var updateTaskSchema, createTaskSchema, savePlanSchema, savePlanContentSchema, sendCommandSchema, agentSendSchema, agentClaimSchema, agentReleaseSchema, createMilestoneSchema, updateMilestoneSchema, updateAssertionSchema, triggerResearchSchema, launchSchema, stopSchema, skillNameRegex, createSkillSchema, updateSkillSchema;
 var init_schemas = __esm({
   "packages/daemon/src/command-center/schemas.ts"() {
     "use strict";
@@ -17415,6 +17445,16 @@ var init_schemas = __esm({
       machineId: z20.string().min(1).max(256).nullish(),
       message: z20.string().min(1, "Message is required").max(1e4),
       noEnter: z20.boolean().optional()
+    });
+    agentClaimSchema = z20.object({
+      id: z20.string().min(1).max(512),
+      machineId: z20.string().min(1).max(256).nullish(),
+      name: z20.string().min(1).max(200).optional(),
+      role: z20.string().min(1).max(64).optional()
+    });
+    agentReleaseSchema = z20.object({
+      id: z20.string().min(1).max(512),
+      machineId: z20.string().min(1).max(256).nullish()
     });
     createMilestoneSchema = z20.object({
       title: z20.string().trim().min(1, "Title is required"),
@@ -24982,43 +25022,58 @@ function createApp(options = {}) {
     }
     return c.json(AgentListSchemaZ.parse({ agents }));
   });
-  app.post("/api/agents/send", zValidator2("json", agentSendSchema), async (c) => {
-    const { id, machineId, message, noEnter } = c.req.valid("json");
+  async function resolveAgentTarget(id, machineId) {
     if (machineId) {
       const sshUrl = await resolveSshMachineUrl(machineId);
       const hqMachine = sshUrl ? null : remoteRegistry?.getMachine(machineId);
       const baseUrl = sshUrl ?? hqMachine?.url;
       if (!baseUrl || !isHttpUrl(baseUrl)) {
-        return c.json({ error: `Unknown machine: ${machineId}` }, 404);
+        return { kind: "error", status: 404, body: { error: `Unknown machine: ${machineId}` } };
       }
       const prefix = `${machineId}:`;
       if (!id.startsWith(prefix)) {
-        return c.json({ error: "Agent id does not belong to that machine" }, 400);
+        return {
+          kind: "error",
+          status: 400,
+          body: { error: "Agent id does not belong to that machine" }
+        };
       }
       const headers = { "Content-Type": "application/json" };
       if (hqMachine) headers.Authorization = `Bearer ${hqMachine.token}`;
-      try {
-        const controller = new AbortController();
-        const tid = setTimeout(() => controller.abort(), 5e3);
-        const res = await fetch(`${baseUrl}/api/agents/send`, {
-          method: "POST",
-          headers,
-          body: JSON.stringify({ id: id.slice(prefix.length), message, noEnter }),
-          signal: controller.signal,
-          redirect: "manual"
-        });
-        clearTimeout(tid);
-        const body = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
-        if (res.ok) return c.json(body);
-        return c.json({ ...body, remoteStatus: res.status }, 502);
-      } catch {
-        return c.json({ error: `Machine ${machineId} is unreachable` }, 502);
-      }
+      return { kind: "remote", baseUrl, headers, forwardId: id.slice(prefix.length) };
     }
     const agent = localAgents().find((candidate) => candidate.id === id);
-    if (!agent) {
-      return c.json({ error: `Agent not found: ${id}` }, 404);
+    if (!agent) return { kind: "error", status: 404, body: { error: `Agent not found: ${id}` } };
+    return { kind: "local", agent };
+  }
+  async function proxyAgentPost(target, path4, body, machineId) {
+    try {
+      const controller = new AbortController();
+      const tid = setTimeout(() => controller.abort(), 5e3);
+      const res = await fetch(`${target.baseUrl}${path4}`, {
+        method: "POST",
+        headers: target.headers,
+        body: JSON.stringify({ ...body, id: target.forwardId }),
+        signal: controller.signal,
+        redirect: "manual"
+      });
+      clearTimeout(tid);
+      const respBody = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+      if (res.ok) return { status: 200, body: respBody };
+      return { status: 502, body: { ...respBody, remoteStatus: res.status } };
+    } catch {
+      return { status: 502, body: { error: `Machine ${machineId} is unreachable` } };
     }
+  }
+  app.post("/api/agents/send", zValidator2("json", agentSendSchema), async (c) => {
+    const { id, machineId, message, noEnter } = c.req.valid("json");
+    const target = await resolveAgentTarget(id, machineId);
+    if (target.kind === "error") return c.json(target.body, target.status);
+    if (target.kind === "remote") {
+      const r = await proxyAgentPost(target, "/api/agents/send", { message, noEnter }, machineId);
+      return c.json(r.body, r.status);
+    }
+    const { agent } = target;
     if (agent.kind === "external" || !agent.session || !agent.paneId) {
       return c.json({ error: "External agents are observe-only (no pane to drive)" }, 409);
     }
@@ -25033,6 +25088,44 @@ function createApp(options = {}) {
       ok: true,
       agent: { id: agent.id, session: agent.session, paneId: agent.paneId }
     });
+  });
+  app.post("/api/agents/claim", zValidator2("json", agentClaimSchema), async (c) => {
+    const { id, machineId, name, role } = c.req.valid("json");
+    const target = await resolveAgentTarget(id, machineId);
+    if (target.kind === "error") return c.json(target.body, target.status);
+    if (target.kind === "remote") {
+      const r = await proxyAgentPost(target, "/api/agents/claim", { name, role }, machineId);
+      return c.json(r.body, r.status);
+    }
+    const { agent } = target;
+    if (agent.kind === "external" || !agent.paneId) {
+      return c.json({ error: "External agents have no pane to claim" }, 409);
+    }
+    try {
+      claimPane(agent.paneId, { name, role });
+    } catch (err) {
+      if (err instanceof InvalidPaneIdError) return c.json({ error: err.message }, 400);
+      throw err;
+    }
+    return c.json({ ok: true, agent: { id: agent.id, paneId: agent.paneId, name: name ?? null } });
+  });
+  app.post("/api/agents/release", zValidator2("json", agentReleaseSchema), async (c) => {
+    const { id, machineId } = c.req.valid("json");
+    const target = await resolveAgentTarget(id, machineId);
+    if (target.kind === "error") return c.json(target.body, target.status);
+    if (target.kind === "remote") {
+      const r = await proxyAgentPost(target, "/api/agents/release", {}, machineId);
+      return c.json(r.body, r.status);
+    }
+    const { agent } = target;
+    if (!agent.paneId) return c.json({ error: "Agent has no pane to release" }, 409);
+    try {
+      releasePane(agent.paneId);
+    } catch (err) {
+      if (err instanceof InvalidPaneIdError) return c.json({ error: err.message }, 400);
+      throw err;
+    }
+    return c.json({ ok: true, agent: { id: agent.id, paneId: agent.paneId } });
   });
   const tunnelManager = options.tunnelManager ?? null;
   app.get("/api/tunnel", async (c) => {
@@ -29930,6 +30023,45 @@ async function sendToAgent(opts) {
   const where = machineId === null ? "this machine" : agent.machineName ?? machineId;
   console.log(`Sent to ${agent.name} [${agent.id}] on ${where}.`);
 }
+async function claimAgent(opts) {
+  const info = requireDaemonInfo();
+  const { agents } = await fetchAgentList(info);
+  const { agent, machineId } = resolveSendTarget(agents, opts.id);
+  const path4 = opts.release ? "/api/agents/release" : "/api/agents/claim";
+  const { url, headers } = daemonRequest(info, path4);
+  let res;
+  try {
+    res = await fetch(url, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(
+        opts.release ? { id: opts.id, machineId } : { id: opts.id, machineId, name: opts.name, role: opts.role }
+      ),
+      signal: timeoutSignal5(15e3)
+    });
+  } catch {
+    throw new IdeError(NO_DAEMON_MESSAGE, { code: "DAEMON_UNAVAILABLE", exitCode: 1 });
+  }
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const detail = typeof body.error === "string" ? body.error : `HTTP ${res.status}`;
+    throw new IdeError(`${opts.release ? "Release" : "Claim"} failed: ${detail}`, {
+      code: opts.release ? "RELEASE_FAILED" : "CLAIM_FAILED",
+      exitCode: 1
+    });
+  }
+  if (opts.json) {
+    console.log(JSON.stringify(body));
+    return;
+  }
+  const where = machineId === null ? "this machine" : agent.machineName ?? machineId;
+  if (opts.release) {
+    console.log(`Released ${agent.name} [${agent.id}] on ${where} (back to unmanaged).`);
+  } else {
+    const label = opts.name ?? agent.name;
+    console.log(`Owned ${label} [${agent.id}] on ${where} \u2014 now managed.`);
+  }
+}
 async function agentsCommand(opts) {
   const sub = opts.sub;
   if (sub === void 0 || sub === "list") {
@@ -29948,8 +30080,25 @@ async function agentsCommand(opts) {
     await sendToAgent({ id, message, noEnter: opts.noEnter, json: opts.json });
     return;
   }
+  if (sub === "claim" || sub === "release") {
+    const [id] = opts.args ?? [];
+    if (!id) {
+      throw new IdeError(
+        `Usage: tmux-ide agents ${sub} <agent-id>` + (sub === "claim" ? " [--name <name>] [--role <role>]" : "") + "\nRun `tmux-ide agents` to list agent ids.",
+        { code: "USAGE", exitCode: 1 }
+      );
+    }
+    await claimAgent({
+      id,
+      name: opts.name,
+      role: opts.role,
+      release: sub === "release",
+      json: opts.json
+    });
+    return;
+  }
   throw new IdeError(
-    "Usage:\n  tmux-ide agents [list] [--json]\n  tmux-ide agents send <agent-id> <message...> [--no-enter] [--json]\n(For the plain-terminal hook reporter, see `tmux-ide agent`.)",
+    "Usage:\n  tmux-ide agents [list] [--json]\n  tmux-ide agents send <agent-id> <message...> [--no-enter] [--json]\n  tmux-ide agents claim <agent-id> [--name <name>] [--role <role>]\n  tmux-ide agents release <agent-id>\n(For the plain-terminal hook reporter, see `tmux-ide agent`.)",
     { code: "USAGE", exitCode: 1 }
   );
 }
@@ -32784,7 +32933,9 @@ try {
         sub: positionals[1],
         args: positionals.slice(2),
         json,
-        noEnter: values["no-enter"] === true
+        noEnter: values["no-enter"] === true,
+        name: typeof values.name === "string" ? values.name : void 0,
+        role: typeof values.role === "string" ? values.role : void 0
       });
       break;
     }
