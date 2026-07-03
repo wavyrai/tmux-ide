@@ -13,12 +13,17 @@
  * Control: controllable agents (non-external with a pane) get an inline
  * send composer that POSTs to `/api/agents/send` — works for local and
  * remote (SSH) agents alike since the daemon routes by id + machineId.
- * External agents stay observe-only. Matches the MissionStatementView
- * polling / Tailwind conventions used by the other v2 views.
+ * Unmanaged tmux agents also get an "Own" control (POST
+ * `/api/agents/claim`, optional name) to adopt them, and managed agents
+ * get a "Release" control (POST `/api/agents/release`) to hand them
+ * back. Both let the 4 s poll reflect the resulting kind change rather
+ * than mutating local state. External agents stay observe-only. Matches
+ * the MissionStatementView polling / Tailwind conventions used by the
+ * other v2 views.
  */
 
 import { createMemo, createSignal, For, onCleanup, Show, type JSX } from "solid-js";
-import { Bot, Check, Send } from "lucide-solid";
+import { Anchor, Bot, Check, Send, Unlink } from "lucide-solid";
 import type { AgentRecord } from "@tmux-ide/contracts";
 import { API_BASE } from "@/lib/api";
 
@@ -297,6 +302,21 @@ function AgentRow(props: { agent: () => AgentRecord | undefined }): JSX.Element 
 const SENT_FLASH_MS = 2000;
 const ERROR_FLASH_MS = 5000;
 
+/**
+ * Pulls the daemon's `error` string out of a non-2xx response, falling
+ * back to a status-only message when the body isn't JSON.
+ */
+async function responseErrorText(res: Response): Promise<string> {
+  let detail = `HTTP ${res.status}`;
+  try {
+    const body = (await res.json()) as { error?: string };
+    if (body?.error) detail = body.error;
+  } catch {
+    // Body wasn't JSON; the status-only message stands.
+  }
+  return detail;
+}
+
 function AgentRowBody(props: { agent: () => AgentRecord }): JSX.Element {
   const agent = props.agent;
   const subtitle = createMemo(() => {
@@ -311,17 +331,32 @@ function AgentRowBody(props: { agent: () => AgentRecord }): JSX.Element {
   // messaged through the daemon (which relays to remotes over SSH).
   const controllable = createMemo(() => agent().kind !== "external" && agent().paneId !== null);
 
+  // Ownership controls. Unmanaged tmux agents can be adopted ("Own");
+  // managed agents with a pane can be handed back ("Release"). External
+  // agents have no pane, so neither applies. We never optimistically flip
+  // the record — the 4 s poll re-fetches and the kind/badge updates on
+  // its own after a successful claim/release.
+  const canOwn = createMemo(() => agent().kind === "tmux-unmanaged" && agent().paneId !== null);
+  const canRelease = createMemo(() => agent().kind === "managed" && agent().paneId !== null);
+
   const [composerOpen, setComposerOpen] = createSignal(false);
   const [draft, setDraft] = createSignal("");
   const [sending, setSending] = createSignal(false);
   const [sent, setSent] = createSignal(false);
   const [sendError, setSendError] = createSignal<string | null>(null);
 
+  const [ownOpen, setOwnOpen] = createSignal(false);
+  const [nameDraft, setNameDraft] = createSignal("");
+  const [owning, setOwning] = createSignal(false);
+  const [ownDone, setOwnDone] = createSignal(false);
+
   let sentTimer: ReturnType<typeof setTimeout> | undefined;
   let errorTimer: ReturnType<typeof setTimeout> | undefined;
+  let ownDoneTimer: ReturnType<typeof setTimeout> | undefined;
   onCleanup(() => {
     clearTimeout(sentTimer);
     clearTimeout(errorTimer);
+    clearTimeout(ownDoneTimer);
   });
 
   function showError(message: string): void {
@@ -342,16 +377,7 @@ function AgentRowBody(props: { agent: () => AgentRecord }): JSX.Element {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ id: a.id, machineId: a.machineId, message }),
       });
-      if (!res.ok) {
-        let detail = `HTTP ${res.status}`;
-        try {
-          const body = (await res.json()) as { error?: string };
-          if (body?.error) detail = body.error;
-        } catch {
-          // Body wasn't JSON; the status-only message stands.
-        }
-        throw new Error(detail);
-      }
+      if (!res.ok) throw new Error(await responseErrorText(res));
       setDraft("");
       setSent(true);
       clearTimeout(sentTimer);
@@ -360,6 +386,66 @@ function AgentRowBody(props: { agent: () => AgentRecord }): JSX.Element {
       showError(err instanceof Error ? err.message : String(err));
     } finally {
       setSending(false);
+    }
+  }
+
+  function flashOwnDone(): void {
+    setOwnDone(true);
+    clearTimeout(ownDoneTimer);
+    ownDoneTimer = setTimeout(() => setOwnDone(false), SENT_FLASH_MS);
+  }
+
+  async function claim(): Promise<void> {
+    if (owning()) return;
+    const a = agent();
+    const name = nameDraft().trim();
+    setOwning(true);
+    setSendError(null);
+    try {
+      const res = await fetch(`${API_BASE}/api/agents/claim`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: a.id, machineId: a.machineId, ...(name ? { name } : {}) }),
+      });
+      if (!res.ok) throw new Error(await responseErrorText(res));
+      setOwnOpen(false);
+      setNameDraft("");
+      flashOwnDone();
+    } catch (err) {
+      showError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setOwning(false);
+    }
+  }
+
+  async function release(): Promise<void> {
+    if (owning()) return;
+    const a = agent();
+    setOwning(true);
+    setSendError(null);
+    try {
+      const res = await fetch(`${API_BASE}/api/agents/release`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: a.id, machineId: a.machineId }),
+      });
+      if (!res.ok) throw new Error(await responseErrorText(res));
+      flashOwnDone();
+    } catch (err) {
+      showError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setOwning(false);
+    }
+  }
+
+  function onNameKeyDown(event: KeyboardEvent): void {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      void claim();
+    } else if (event.key === "Escape") {
+      event.preventDefault();
+      setOwnOpen(false);
+      setSendError(null);
     }
   }
 
@@ -411,6 +497,45 @@ function AgentRowBody(props: { agent: () => AgentRecord }): JSX.Element {
         >
           {KIND_LABEL[agent().kind]}
         </span>
+        <Show when={owning()}>
+          <span
+            aria-label="working"
+            class="h-3 w-3 shrink-0 animate-spin rounded-full border-2 border-[var(--border)] border-t-[var(--accent)]"
+          />
+        </Show>
+        <Show when={!owning() && ownDone()}>
+          <Check size={14} strokeWidth={2} aria-label="done" class="shrink-0 text-[var(--green)]" />
+        </Show>
+        <Show when={canOwn()}>
+          <button
+            type="button"
+            data-agents-own-toggle
+            aria-label={`Own ${agent().name}`}
+            aria-expanded={ownOpen()}
+            title="Adopt this agent (make it managed)"
+            disabled={owning()}
+            class={
+              "shrink-0 rounded border border-[var(--border)] p-1 transition-colors hover:border-[var(--accent)] hover:text-[var(--accent)] disabled:opacity-50 " +
+              (ownOpen() ? "text-[var(--accent)]" : "text-[var(--dim)]")
+            }
+            onClick={() => setOwnOpen(!ownOpen())}
+          >
+            <Anchor size={12} strokeWidth={1.75} aria-hidden="true" />
+          </button>
+        </Show>
+        <Show when={canRelease()}>
+          <button
+            type="button"
+            data-agents-release
+            aria-label={`Release ${agent().name}`}
+            title="Release this agent (make it unmanaged)"
+            disabled={owning()}
+            class="shrink-0 rounded border border-[var(--border)] p-1 text-[var(--dim)] transition-colors hover:border-[var(--accent)] hover:text-[var(--accent)] disabled:opacity-50"
+            onClick={() => void release()}
+          >
+            <Unlink size={12} strokeWidth={1.75} aria-hidden="true" />
+          </button>
+        </Show>
         <Show when={controllable()}>
           <button
             type="button"
@@ -456,6 +581,33 @@ function AgentRowBody(props: { agent: () => AgentRecord }): JSX.Element {
               class="shrink-0 text-[var(--green)]"
             />
           </Show>
+        </div>
+      </Show>
+      <Show when={canOwn() && ownOpen()}>
+        <div class="flex items-center gap-2 border-t border-[var(--border-weak,var(--border))] px-2 py-1.5">
+          <input
+            ref={(el) => requestAnimationFrame(() => el.focus())}
+            type="text"
+            data-agents-own-input
+            value={nameDraft()}
+            disabled={owning()}
+            maxLength={200}
+            placeholder="name (optional) — Enter to own, Esc to close"
+            class="min-w-0 flex-1 bg-transparent text-sm text-[var(--fg)] outline-none placeholder:text-[var(--dim)] disabled:opacity-50"
+            onInput={(e) => setNameDraft(e.currentTarget.value)}
+            onKeyDown={onNameKeyDown}
+          />
+          <button
+            type="button"
+            data-agents-own-confirm
+            aria-label="Confirm own"
+            title="Adopt this agent"
+            disabled={owning()}
+            class="shrink-0 rounded border border-[var(--border)] p-1 text-[var(--dim)] transition-colors hover:border-[var(--accent)] hover:text-[var(--accent)] disabled:opacity-50"
+            onClick={() => void claim()}
+          >
+            <Check size={12} strokeWidth={2} aria-hidden="true" />
+          </button>
         </div>
       </Show>
       <Show when={sendError()}>

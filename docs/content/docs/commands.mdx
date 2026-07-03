@@ -246,6 +246,27 @@ Failure modes are surfaced clearly:
 - machine unreachable (e.g. the SSH tunnel is down) → the daemon replies
   502 and the CLI prints the error text
 
+### `tmux-ide agents claim` / `release`
+
+An agent is `managed` when tmux-ide owns its tmux session; anything else is
+`tmux-unmanaged` (a Claude/codex session you started yourself). **Claiming**
+adopts a single unmanaged window — it flips that one pane to `managed` and
+optionally names it, without touching the rest of its session:
+
+```bash
+# Own one window and give it a name/role — works locally and over SSH
+tmux-ide agents claim "ssh:boxa:project:%1" --name "API work" --role teammate
+
+# Hand it back (returns to tmux-unmanaged)
+tmux-ide agents release "ssh:boxa:project:%1"
+```
+
+Claiming is non-destructive: it sets a pane-scoped `@ide_owned` tmux option
+(and `@ide_name`/`@ide_role`) — it sends no input and doesn't disturb the
+session. `external` agents have no pane and can't be claimed (409). In the
+dashboard Agents view, unmanaged rows show an **Own** button and managed rows
+a **Release** button.
+
 ## `tmux-ide ls`
 
 List all running tmux sessions.
