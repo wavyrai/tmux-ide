@@ -74,9 +74,11 @@ export function diffPanes(
   return { added, removed, resized, moved };
 }
 
-/** A live pane: geometry + its mirror. */
+/** A live pane: geometry + its mirror snapshot. */
 export interface LivePane extends PaneGeometry {
   snapshot: MirrorSnapshot;
+  /** Lines available above the live viewport (scrollback budget). */
+  scrollbackDepth: number;
 }
 
 export interface SessionMirrorOptions {
@@ -141,14 +143,27 @@ export class SessionMirror {
     await this.sync();
   }
 
-  /** The current panes with fresh grid snapshots, render-ready. */
-  panes(): LivePane[] {
-    return this.geometry.map((g) => ({
-      ...g,
-      active: g.id === this.focused || (this.focused === "" && g.active),
-      snapshot:
-        this.mirrors.get(g.id)?.snapshot() ?? ({ rows: [], cursorX: 0, cursorY: 0 } as const),
-    }));
+  /**
+   * The current panes with fresh grid snapshots, render-ready.
+   *
+   * @param scrollOffsets Per-pane scrollback offsets (lines above live view);
+   *   panes absent from the map render live. The focused pane gets its cursor
+   *   painted.
+   */
+  panes(scrollOffsets?: ReadonlyMap<string, number>): LivePane[] {
+    const focused = this.focusedPane();
+    return this.geometry.map((g) => {
+      const mirror = this.mirrors.get(g.id);
+      const offset = scrollOffsets?.get(g.id) ?? 0;
+      return {
+        ...g,
+        active: g.id === this.focused || (this.focused === "" && g.active),
+        scrollbackDepth: mirror?.scrollbackDepth() ?? 0,
+        snapshot:
+          mirror?.snapshot(offset, g.id === focused) ??
+          ({ rows: [], cursorX: 0, cursorY: 0, scrollOffset: 0 } as const),
+      };
+    });
   }
 
   focusedPane(): string {
@@ -215,8 +230,12 @@ export class SessionMirror {
     for (const pane of added) {
       const mirror = new PaneMirror(pane.width, pane.height);
       this.mirrors.set(pane.id, mirror);
-      // Seed with current content (-e keeps colors) so panes never pop blank.
-      const seed = await this.client.command(`capture-pane -p -e -t ${pane.id}`).catch(() => []);
+      // Seed with history + current screen (-e keeps colors, -S reaches back
+      // into tmux's scrollback) so the mirror starts with real depth instead
+      // of a blank past. -J joins wrapped lines so re-wrapping stays sane.
+      const seed = await this.client
+        .command(`capture-pane -p -e -J -S -2000 -t ${pane.id}`)
+        .catch(() => []);
       if (seed.length > 0) mirror.write(seed.join("\r\n") + "\r\n");
     }
     for (const pane of resized) {
