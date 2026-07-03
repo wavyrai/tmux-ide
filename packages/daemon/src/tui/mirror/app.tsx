@@ -127,7 +127,15 @@ import {
   type StatusEntry,
   type DiffLineKind,
 } from "./diff-model.ts";
-import { loadAppState, saveAppState, isTab, type AppState, type Tab } from "./app-state.ts";
+import {
+  loadAppState,
+  saveAppState,
+  clampSidebarWidth,
+  isTab,
+  type AppState,
+  type Tab,
+} from "./app-state.ts";
+import { separatorAt, resizedSize, resizeCommand, type Separator } from "./resize-model.ts";
 import { filterPaletteActions, type PaletteAction } from "./palette.ts";
 import {
   buildNodes,
@@ -309,7 +317,6 @@ const STATUS_LETTER_FG: Record<string, RGBA> = {
   C: ACCENT,
   "?": MUTED,
 };
-const SIDEBAR_W = 24;
 const HEADER_ROWS = 2;
 // The persistent surface-tab row is one screen row at the very top (above the
 // sidebar + main region). Its height offsets every region's global y, so the
@@ -349,13 +356,20 @@ const packedToRgba = (packed: number | null, fallback: RGBA): RGBA => {
 
 render(() => {
   const dims = useTerminalDimensions();
-  const canvasCols = () => Math.max(20, dims().width - SIDEBAR_W);
+  const canvasCols = () => Math.max(20, dims().width - sidebarW());
   const canvasRows = () => Math.max(4, dims().height - HEADER_ROWS - TABBAR_H);
 
   // Persisted state (one-shot read at launch — NOT on the render loop). The tab
   // and context restore below; the open editor file / diff selection restore in
   // onMount (after the FFI buffer + fleet arrive).
   const persisted: AppState = loadAppState();
+  // ── SIDEBAR WIDTH (M19.3) ────────────────────────────────────────────────
+  // Once a fixed constant, now a DRAGGABLE, persisted signal: every geometry
+  // that used to read the constant (canvasCols, pane/editor/diff offsets, the
+  // window-strip spans, the router's region math, the render widths) reads
+  // `sidebarW()` so a boundary drag reflows the whole app. Restored from
+  // app-state (clamped), re-clamped defensively, re-persisted on release.
+  const [sidebarW, setSidebarW] = createSignal(clampSidebarWidth(persisted.sidebarW));
   // The active surface TAB is the source of truth. Explicit CLI args win, else a
   // real `--target` boots into Terminal, else the persisted tab, else Home.
   const initialTab: Tab = startDiff
@@ -436,6 +450,20 @@ render(() => {
     selecting = null;
     if (selection() !== null) setSelection(null);
   };
+
+  // ── DRAG-RESIZE GESTURE (M19.3) ──────────────────────────────────────────
+  // A separate gesture machine from text selection: a "down" on the sidebar/main
+  // boundary starts a `sidebar` drag (updates `sidebarW`); a "down" on a pane
+  // separator (a canvas gutter cell between two panes) starts a `border` drag
+  // (emits absolute `resize-pane -x|-y` over the control client). Only ONE of
+  // {selecting, dragging} is ever live — selection starts only from an IN-pane
+  // down, a border drag only from a GUTTER down, so they never fight. `originCx/
+  // originCy` are the canvas-local cell the border drag began at; `lastSize`
+  // dedupes identical resize commands across drag ticks.
+  type DragState =
+    | { kind: "sidebar" }
+    | { kind: "border"; sep: Separator; originCx: number; originCy: number; lastSize: number };
+  let dragging: DragState | null = null;
 
   // ── RIGHT-CLICK CONTEXT MENU (M19.2) ─────────────────────────────────────
   // A small overlay opened at the pointer on a right-button press (SGR button
@@ -1014,8 +1042,10 @@ render(() => {
   };
 
   // ── PERSISTENCE (M18.4) ──────────────────────────────────────────────────
-  // Save { lastTab, contextSession, openFile, diffFile } debounced whenever any
-  // of them changes; the write is async (off the render tick).
+  // Save { lastTab, contextSession, openFile, diffFile, sidebarW } debounced
+  // whenever any of them changes; the write is async (off the render tick). A
+  // sidebar drag bumps `sidebarW()` on each tick — the 400ms debounce coalesces
+  // the burst so only the released width lands.
   let saveTimer: ReturnType<typeof setTimeout> | null = null;
   createEffect(() => {
     const snapshot: AppState = {
@@ -1023,6 +1053,7 @@ render(() => {
       contextSession: contextSession() || null,
       openFile: editorPath(),
       diffFile: diffFiles()[diffSel()]?.path ?? null,
+      sidebarW: sidebarW(),
     };
     if (saveTimer) clearTimeout(saveTimer);
     saveTimer = setTimeout(() => void saveAppState(snapshot), 400);
@@ -1175,7 +1206,7 @@ render(() => {
   /** Map a pointer inside the editor viewport to a buffer (line,col). */
   const editorCellAt = (x: number, gy: number): { line: number; col: number } =>
     clickToCursor({
-      cx: x - SIDEBAR_W - filesListW(),
+      cx: x - sidebarW() - filesListW(),
       contentY: gy - HEADER_ROWS,
       gutterW: gutterWidth(editorLines().length),
       top: editorTop(),
@@ -1204,7 +1235,7 @@ render(() => {
   };
 
   const paneCell = (pane: LivePane, gx: number, gy: number) => ({
-    col: Math.max(0, Math.min(pane.width - 1, gx - SIDEBAR_W - pane.left)),
+    col: Math.max(0, Math.min(pane.width - 1, gx - sidebarW() - pane.left)),
     row: Math.max(0, Math.min(pane.height - 1, gy - HEADER_ROWS - pane.top)),
   });
   const forwardPress = (pane: LivePane, gx: number, gy: number, release: boolean) => {
@@ -1236,7 +1267,7 @@ render(() => {
   ): Omit<MenuState, "left" | "top" | "width" | "height"> | null => {
     if (y === 0) return null; // the surface tab bar owns row 0
     const gy = y - TABBAR_H;
-    if (x < SIDEBAR_W) {
+    if (x < sidebarW()) {
       const s = fleet()[gy - 2];
       if (!s) return null;
       return {
@@ -1260,7 +1291,7 @@ render(() => {
       };
     }
     if (m === "editor") {
-      const overList = x < SIDEBAR_W + filesListW();
+      const overList = x < sidebarW() + filesListW();
       const contentY = gy - HEADER_ROWS;
       if (!overList || contentY < 0) return null;
       const top = clampTop(fileTop(), fileNodes().length, editorRows());
@@ -1278,7 +1309,7 @@ render(() => {
       };
     }
     if (m === "diff") {
-      const overList = x < SIDEBAR_W + diffListW();
+      const overList = x < sidebarW() + diffListW();
       const contentY = gy - HEADER_ROWS;
       if (!overList || contentY < 0) return null;
       const top = clampTop(diffFileTop(), diffFiles().length, diffBodyRows());
@@ -1294,7 +1325,7 @@ render(() => {
     }
     // mirror: the pane canvas lives below the header (gy=0) + window strip (gy=1).
     if (gy < HEADER_ROWS) return null;
-    const cx = x - SIDEBAR_W;
+    const cx = x - sidebarW();
     const cy = gy - HEADER_ROWS;
     const pane = panes().find(
       (p) => cx >= p.left && cx < p.left + p.width && cy >= p.top && cy < p.top + p.height,
@@ -1687,7 +1718,7 @@ render(() => {
    *  the router (click + hover hit test) and, cell-for-cell, by the render. The
    *  labels MUST equal the rendered segment strings for the math to hold. */
   const windowLabels = () => windowTabs().map((w) => ` ${w.index}:${w.name} `);
-  const windowSpans = createMemo(() => spans(windowLabels(), SIDEBAR_W + 1, 1));
+  const windowSpans = createMemo(() => spans(windowLabels(), sidebarW() + 1, 1));
 
   /** The strip as THREE static texts (pre/active/post) whose STRINGS update.
    *  KNOWN UPSTREAM QUIRK: clicks landing exactly ON this row's label cells
@@ -1720,7 +1751,7 @@ render(() => {
       return;
     }
     const gy = y - TABBAR_H;
-    if (x < SIDEBAR_W) {
+    if (x < sidebarW()) {
       const idx = gy - 2;
       setHoverIf(idx >= 0 && idx < fleet().length ? { region: "sidebar", index: idx } : null);
       return;
@@ -1733,7 +1764,7 @@ render(() => {
     }
     if (m === "editor") {
       const contentY = gy - HEADER_ROWS;
-      const overList = x < SIDEBAR_W + filesListW();
+      const overList = x < sidebarW() + filesListW();
       if (!overList || contentY < 0) {
         setHoverIf(null);
         return;
@@ -1745,7 +1776,7 @@ render(() => {
     }
     if (m === "diff") {
       const contentY = gy - HEADER_ROWS;
-      const overList = x < SIDEBAR_W + diffListW();
+      const overList = x < sidebarW() + diffListW();
       if (!overList || contentY < 0) {
         setHoverIf(null);
         return;
@@ -1822,6 +1853,66 @@ render(() => {
       openMenu(x, y);
       return;
     }
+    // A left-button "down" may START a resize drag (M19.3) — checked BEFORE the
+    // region routing below so it wins over sidebar-open / pane-selection. The
+    // sidebar/main boundary (last sidebar col or first main col) starts a sidebar
+    // drag; a pane SEPARATOR (a gutter cell between two panes, mirror only)
+    // starts a border drag. Neither fights selection: selection begins only from
+    // an in-pane down, never a boundary/gutter cell.
+    if (type === "down" && e.button !== 2) {
+      if (x === sidebarW() - 1 || x === sidebarW()) {
+        setHoverIf(null);
+        dragging = { kind: "sidebar" };
+        setStatusNote("resizing…");
+        return;
+      }
+      if (mode() === "mirror" && x > sidebarW()) {
+        const dgy = y - TABBAR_H;
+        if (dgy >= HEADER_ROWS) {
+          const cx = x - sidebarW();
+          const cy = dgy - HEADER_ROWS;
+          const sep = separatorAt(panes(), cx, cy);
+          if (sep) {
+            setHoverIf(null);
+            dragging = { kind: "border", sep, originCx: cx, originCy: cy, lastSize: sep.aSize };
+            setStatusNote("resizing…");
+            return;
+          }
+        }
+      }
+    }
+    // A drag while a resize gesture is live reflows the sidebar / resizes panes,
+    // suppressing hover; a release ends it (and persists the sidebar width via
+    // the debounced save effect that reads `sidebarW()`). The SAME apply runs on
+    // the terminal "up" as on each "drag" tick: OpenTUI coalesces rapid motion
+    // events, so honoring the release coordinate guarantees the final position
+    // sticks even when intermediate drags were dropped.
+    if (dragging) {
+      const isDrag = type === "drag";
+      const isEnd = type === "up" || type === "drag-end" || type === "drop";
+      if (isDrag || isEnd) {
+        if (dragging.kind === "sidebar") {
+          setSidebarW(clampSidebarWidth(x));
+        } else {
+          const cx = x - sidebarW();
+          const cy = y - TABBAR_H - HEADER_ROWS;
+          const delta = dragging.sep.axis === "x" ? cx - dragging.originCx : cy - dragging.originCy;
+          const size = resizedSize(dragging.sep, delta);
+          if (size !== dragging.lastSize) {
+            dragging.lastSize = size;
+            void mirror?.command(resizeCommand(dragging.sep, size)).catch(() => {});
+          }
+        }
+        if (isEnd) {
+          dragging = null;
+          setNote("");
+        }
+        return;
+      }
+      // Any other event type mid-drag (move/over/out) is swallowed — hover stays
+      // suppressed until the gesture ends.
+      return;
+    }
     // Motion (bubbled from child text runs) drives hover only; "out" clears it.
     // Handled first so every click branch below stays a pure down/up/scroll path.
     if (type === "out") {
@@ -1859,7 +1950,7 @@ render(() => {
       return;
     }
     const gy = y - TABBAR_H;
-    if (x < SIDEBAR_W) {
+    if (x < sidebarW()) {
       if (type !== "down") return;
       const s = fleet()[gy - 2];
       if (s) openWorkspace(s.name, dirForSession(s.name));
@@ -1882,7 +1973,7 @@ render(() => {
     // click selects+activates a file row, a right-column click positions the
     // cursor (and takes editor focus).
     if (mode() === "editor") {
-      const overList = x < SIDEBAR_W + filesListW();
+      const overList = x < sidebarW() + filesListW();
       if (type === "scroll") {
         const dir = e.scroll?.direction;
         if (dir !== "up" && dir !== "down") return;
@@ -1934,7 +2025,7 @@ render(() => {
     // [0,listW) is the file list, the rest is the diff. Wheel scrolls whichever
     // column the pointer is over; a left-column click selects that file row.
     if (mode() === "diff") {
-      const overList = x < SIDEBAR_W + diffListW();
+      const overList = x < sidebarW() + diffListW();
       if (type === "scroll") {
         const dir = e.scroll?.direction;
         if (dir !== "up" && dir !== "down") return;
@@ -1963,7 +2054,7 @@ render(() => {
       if (w) mirror?.switchWindow(w.index);
       return;
     }
-    const cx = x - SIDEBAR_W;
+    const cx = x - sidebarW();
     const cy = gy - HEADER_ROWS;
     const pane = panes().find(
       (p) => cx >= p.left && cx < p.left + p.width && cy >= p.top && cy < p.top + p.height,
@@ -2047,7 +2138,7 @@ render(() => {
       </box>
       <box flexDirection="row" flexGrow={1} backgroundColor={DEFAULT_BG}>
         <box
-          width={SIDEBAR_W}
+          width={sidebarW()}
           flexDirection="column"
           backgroundColor={SIDEBAR_BG}
           paddingLeft={1}
@@ -2056,7 +2147,7 @@ render(() => {
           <text fg={ACCENT} attributes={1}>
             tmux-ide
           </text>
-          <text fg={MUTED}>{"─".repeat(SIDEBAR_W - 2)}</text>
+          <text fg={MUTED}>{"─".repeat(sidebarW() - 2)}</text>
           <box flexDirection="column">
             <For each={fleet()}>
               {(s, i) => (
@@ -2073,7 +2164,7 @@ render(() => {
                 >
                   <text fg={STATUS_COLOR[s.status]}>{STATUS_GLYPH[s.status]}</text>
                   <text fg={s.name === curTarget() ? DEFAULT_FG : MUTED}>
-                    {s.name.slice(0, SIDEBAR_W - 5)}
+                    {s.name.slice(0, sidebarW() - 5)}
                   </text>
                 </box>
               )}

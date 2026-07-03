@@ -31,6 +31,20 @@ export function isTab(x: unknown): x is Tab {
   return typeof x === "string" && (TABS as readonly string[]).includes(x);
 }
 
+/** Sidebar-width bounds (M19.3). The user drags the sidebar/main boundary; the
+ *  resulting width is clamped to this range and persisted. `DEFAULT` is the
+ *  historical fixed width. */
+export const SIDEBAR_W_MIN = 16;
+export const SIDEBAR_W_MAX = 48;
+export const SIDEBAR_W_DEFAULT = 24;
+
+/** PURE — clamp a candidate sidebar width to `[SIDEBAR_W_MIN, SIDEBAR_W_MAX]`,
+ *  falling back to the default for a non-finite value. */
+export function clampSidebarWidth(w: number): number {
+  if (!Number.isFinite(w)) return SIDEBAR_W_DEFAULT;
+  return Math.max(SIDEBAR_W_MIN, Math.min(SIDEBAR_W_MAX, Math.round(w)));
+}
+
 /** The persisted shape. `null` means "nothing remembered" for that slot. */
 export interface AppState {
   /** The tab the app was showing when it last saved. */
@@ -41,6 +55,8 @@ export interface AppState {
   openFile: string | null;
   /** Repo-relative path of the file selected in the diff panel. */
   diffFile: string | null;
+  /** The sidebar column width (M19.3), clamped to the bounds above. */
+  sidebarW: number;
 }
 
 export const DEFAULT_APP_STATE: AppState = {
@@ -48,6 +64,7 @@ export const DEFAULT_APP_STATE: AppState = {
   contextSession: null,
   openFile: null,
   diffFile: null,
+  sidebarW: SIDEBAR_W_DEFAULT,
 };
 
 /** The tmux-ide home dir: `TMUX_IDE_HOME` when set, else `~/.tmux-ide`. */
@@ -84,6 +101,10 @@ export function parseAppState(raw: string): AppState {
     contextSession: optString(obj.contextSession),
     openFile: optString(obj.openFile),
     diffFile: optString(obj.diffFile),
+    sidebarW:
+      typeof obj.sidebarW === "number"
+        ? clampSidebarWidth(obj.sidebarW)
+        : DEFAULT_APP_STATE.sidebarW,
   };
 }
 
@@ -95,6 +116,7 @@ export function serializeAppState(state: AppState): string {
     contextSession: optString(state.contextSession),
     openFile: optString(state.openFile),
     diffFile: optString(state.diffFile),
+    sidebarW: clampSidebarWidth(state.sidebarW),
   };
   return JSON.stringify(clean, null, 2);
 }

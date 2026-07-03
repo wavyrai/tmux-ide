@@ -1,8 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   DEFAULT_APP_STATE,
+  SIDEBAR_W_DEFAULT,
   appStateHome,
   appStatePath,
+  clampSidebarWidth,
   isTab,
   parseAppState,
   serializeAppState,
@@ -28,6 +30,7 @@ describe("parseAppState", () => {
       contextSession: "zz-demo",
       openFile: "/tmp/a.ts",
       diffFile: "src/x.ts",
+      sidebarW: 30,
     };
     expect(parseAppState(serializeAppState(state))).toEqual(state);
   });
@@ -47,6 +50,7 @@ describe("parseAppState", () => {
       contextSession: "s",
       openFile: "/f",
       diffFile: "d",
+      sidebarW: SIDEBAR_W_DEFAULT,
     });
   });
 
@@ -59,7 +63,25 @@ describe("parseAppState", () => {
       contextSession: null,
       openFile: null,
       diffFile: null,
+      sidebarW: SIDEBAR_W_DEFAULT,
     });
+  });
+
+  it("clamps a persisted sidebar width to the bounds and rounds it", () => {
+    expect(parseAppState(JSON.stringify({ sidebarW: 9 })).sidebarW).toBe(16);
+    expect(parseAppState(JSON.stringify({ sidebarW: 99 })).sidebarW).toBe(48);
+    expect(parseAppState(JSON.stringify({ sidebarW: 30.6 })).sidebarW).toBe(31);
+    expect(parseAppState(JSON.stringify({ sidebarW: "wide" })).sidebarW).toBe(SIDEBAR_W_DEFAULT);
+  });
+});
+
+describe("clampSidebarWidth", () => {
+  it("clamps to [16,48], rounds, and defaults non-finite", () => {
+    expect(clampSidebarWidth(24)).toBe(24);
+    expect(clampSidebarWidth(0)).toBe(16);
+    expect(clampSidebarWidth(1000)).toBe(48);
+    expect(clampSidebarWidth(20.4)).toBe(20);
+    expect(clampSidebarWidth(NaN)).toBe(SIDEBAR_W_DEFAULT);
   });
 });
 
@@ -71,6 +93,7 @@ describe("serializeAppState", () => {
         contextSession: "s",
         openFile: null,
         diffFile: null,
+        sidebarW: SIDEBAR_W_DEFAULT,
         // @ts-expect-error — runtime extra keys must not leak into the file
         junk: "x",
       }),
@@ -80,6 +103,7 @@ describe("serializeAppState", () => {
       "diffFile",
       "lastTab",
       "openFile",
+      "sidebarW",
     ]);
   });
 });
