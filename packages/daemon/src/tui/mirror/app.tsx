@@ -8,15 +8,29 @@
  * rendering, ^o pane focus cycle, ^t window cycle, ^q quits (session
  * untouched).
  *
- * THREE MODES: the main area is the HOME panel (fleet cards + detail; the
- * bare-launch / `^h` state), a session MIRROR (the SessionMirror canvas), or the
+ * FOUR MODES: the main area is the HOME panel (fleet cards + detail; the
+ * bare-launch / `^h` state), a session MIRROR (the SessionMirror canvas), the
  * built-in file EDITOR (M18.2 — tmux stays the engine running servers/agents;
- * files are edited natively by us). One `mode()` signal drives both the render
- * (`<Show>`) and the router: `route` branches on mode so a home-row click, a
- * pane click, and an editor click share one entry point. `switchTarget(name)` →
- * mirror (attach); `^h`/`^g` → home (dispose mirror, keep the live fleet). A real
- * `--target` starts in mirror mode; bare starts in home; `--edit <file>` opens
- * the editor. On home, `o` opens a path prompt; `^e` toggles editor↔previous.
+ * files are edited natively by us), or the git DIFF panel (M18.3 — the
+ * working-tree diff of a project's dir, rendered natively). One `mode()` signal
+ * drives both the render (`<Show>`) and the router: `route` branches on mode so a
+ * home-row click, a pane click, an editor click, and a diff file-row click share
+ * one entry point. `switchTarget(name)` → mirror (attach); `^h`/`^g` → home
+ * (dispose mirror, keep the live fleet). A real `--target` starts in mirror mode;
+ * bare starts in home; `--edit <file>` opens the editor; `--diff <dir>` opens the
+ * diff panel. On home, `o` opens a path prompt, `d` opens the diff panel for the
+ * selected session's dir; `^e` toggles editor↔previous.
+ *
+ * DIFF (M18.3): a two-column panel — left is the changed-file list (status letter
+ * + path, selected row highlighted), right is the unified diff of the selected
+ * file (add/del/hunk/context colored). Git runs via ASYNC execFile ONLY (the
+ * landmine: no sync execs near the render loop; the one exception is reading a
+ * single untracked file to show it as additions). `git status --porcelain` +
+ * `git diff --no-color -- <file>` refresh on a 3s timer while mode=diff and on
+ * manual `r`. j/k move the file selection; the wheel scrolls the diff (or the
+ * file list when over the left column); a left-column click selects a file; `^e`
+ * opens the selected file in the EDITOR at its repo-relative path. Pure parsing +
+ * classification live in diff-model.ts (unit-tested).
  *
  * EDITOR (M18.2): the editing ENGINE is a native `EditBuffer` (bun:ffi —
  * insert/delete/cursor/undo, grapheme-aware). We do NOT mount OpenTUI's
@@ -58,7 +72,7 @@
  */
 import { parseArgs } from "node:util";
 import { appendFileSync, readFileSync, writeFileSync, renameSync } from "node:fs";
-import { basename } from "node:path";
+import { basename, join } from "node:path";
 import { render, useKeyboard, useTerminalDimensions } from "@opentui/solid";
 import { RGBA, EditBuffer } from "@opentui/core";
 import { createSignal, createMemo, onMount, onCleanup, For, Show } from "solid-js";
@@ -78,14 +92,28 @@ import {
   clickToCursor,
   type ReadOnlyReason,
 } from "./editor-buffer.ts";
+import {
+  parseStatusPorcelain,
+  classifyDiff,
+  untrackedDiffText,
+  clampSel,
+  type StatusEntry,
+  type DiffLineKind,
+} from "./diff-model.ts";
 
 const { values } = parseArgs({
-  options: { target: { type: "string" }, edit: { type: "string" } },
+  options: {
+    target: { type: "string" },
+    edit: { type: "string" },
+    diff: { type: "string" },
+  },
 });
 const target = values.target ?? "";
 // Bare launch (no `--target`, or the explicit `home` pseudo-target) opens the
 // HOME panel instead of a session mirror; a real target boots straight to the
-// mirror exactly as before.
+// mirror exactly as before. `--diff <dir>` boots straight into the diff panel
+// (for testing / direct entry).
+const startDiff = values.diff !== undefined;
 const bareHome = target === "" || target === "home";
 
 /** The `tmux-ide team --json` fleet shape this app reads (projects → sessions →
@@ -173,6 +201,26 @@ const GUTTER_FG = RGBA.fromInts(96, 100, 120, 255);
 const MODIFIED_FG = RGBA.fromInts(235, 200, 100, 255);
 const BANNER_FG = RGBA.fromInts(240, 150, 90, 255);
 const CURSOR_BG = RGBA.fromInts(130, 170, 255, 255);
+const DIFF_ADD_FG = RGBA.fromInts(120, 200, 140, 255);
+const DIFF_DEL_FG = RGBA.fromInts(240, 120, 120, 255);
+const DIFF_META_FG = RGBA.fromInts(120, 120, 140, 255);
+const DIFF_CONTEXT_FG = RGBA.fromInts(170, 170, 185, 255);
+const DIFF_FG: Record<DiffLineKind, RGBA> = {
+  add: DIFF_ADD_FG,
+  del: DIFF_DEL_FG,
+  hunk: ACCENT,
+  meta: DIFF_META_FG,
+  context: DIFF_CONTEXT_FG,
+};
+// Status-letter color for the changed-file list (worktree/index state).
+const STATUS_LETTER_FG: Record<string, RGBA> = {
+  M: MODIFIED_FG,
+  A: DIFF_ADD_FG,
+  D: DIFF_DEL_FG,
+  R: ACCENT,
+  C: ACCENT,
+  "?": MUTED,
+};
 const SIDEBAR_W = 24;
 const HEADER_ROWS = 2;
 const rgbaCache = new Map<number, RGBA>();
@@ -190,7 +238,9 @@ render(() => {
   const dims = useTerminalDimensions();
   const canvasCols = () => Math.max(20, dims().width - SIDEBAR_W);
   const canvasRows = () => Math.max(4, dims().height - HEADER_ROWS);
-  const [mode, setMode] = createSignal<"home" | "mirror" | "editor">(bareHome ? "home" : "mirror");
+  const [mode, setMode] = createSignal<"home" | "mirror" | "editor" | "diff">(
+    startDiff ? "diff" : bareHome ? "home" : "mirror",
+  );
   const [curTarget, setCurTarget] = createSignal(bareHome ? "" : target);
   const [panes, setPanes] = createSignal<LivePane[]>([]);
   const [windowTabs, setWindowTabs] = createSignal<WindowTab[]>([]);
@@ -388,6 +438,124 @@ render(() => {
     setEditorRev((r) => r + 1);
   };
 
+  // ── DIFF (M18.3) ────────────────────────────────────────────────────────
+  // The working-tree diff of `diffDir`, rendered natively. Git runs via async
+  // execFile (`runGit`); the only sync io is reading a single untracked file to
+  // show it as additions. `diffText` holds the raw diff for the selected file;
+  // `diffLoadToken` discards a slow diff whose selection has since moved on.
+  const [diffDir, setDiffDir] = createSignal(values.diff ?? process.cwd());
+  const [diffFiles, setDiffFiles] = createSignal<StatusEntry[]>([]);
+  const [diffSel, setDiffSel] = createSignal(0);
+  const [diffText, setDiffText] = createSignal("");
+  const [diffTop, setDiffTop] = createSignal(0); // diff-pane scroll (right)
+  const [diffFileTop, setDiffFileTop] = createSignal(0); // file-list scroll (left)
+  const [diffMsg, setDiffMsg] = createSignal("");
+  let diffLoadToken = 0;
+
+  // Body rows below header (1) + rule (1), above the footer (1) — shared by both
+  // columns. The left column width is a capped fraction of the canvas.
+  const diffBodyRows = () => Math.max(1, dims().height - 3);
+  const diffListW = () => Math.max(20, Math.min(48, Math.floor(canvasCols() * 0.34)));
+  const diffLines = createMemo(() => classifyDiff(diffText()));
+  const diffVisible = createMemo(() => {
+    const lines = diffLines();
+    const rows = diffBodyRows();
+    const top = clampTop(diffTop(), lines.length, rows);
+    return lines.slice(top, top + rows);
+  });
+  const fileVisible = createMemo(() => {
+    const files = diffFiles();
+    const rows = diffBodyRows();
+    const top = clampTop(diffFileTop(), files.length, rows);
+    return files.slice(top, top + rows).map((entry, i) => ({ entry, index: top + i }));
+  });
+
+  const runGit = (args: string[], cb: (out: string) => void) => {
+    execFile(
+      "git",
+      ["-C", diffDir(), "-c", "core.quotepath=false", "-c", "core.fsmonitor=false", ...args],
+      { timeout: 10_000, maxBuffer: 16_000_000 },
+      (err, stdout) => cb(err ? "" : stdout),
+    );
+  };
+
+  /** Load the diff for one file: async `git diff` for tracked paths (falling
+   *  back to `--cached` when the change is staged-only), or the untracked file's
+   *  contents rendered as additions. Guarded by `diffLoadToken` against races. */
+  const loadDiff = (entry: StatusEntry) => {
+    const token = ++diffLoadToken;
+    setDiffMsg("");
+    if (entry.status === "?") {
+      try {
+        const bytes = readFileSync(join(diffDir(), entry.path));
+        if (isBinary(bytes)) {
+          setDiffText("");
+          setDiffMsg("binary file");
+        } else {
+          setDiffText(untrackedDiffText(Buffer.from(bytes).toString("utf8")));
+        }
+      } catch (e) {
+        setDiffText("");
+        setDiffMsg(`cannot read: ${(e as Error).message}`);
+      }
+      return;
+    }
+    runGit(["diff", "--no-color", "--", entry.path], (out) => {
+      if (token !== diffLoadToken) return;
+      if (out.trim()) {
+        setDiffText((p) => (p === out ? p : out));
+        return;
+      }
+      runGit(["diff", "--no-color", "--cached", "--", entry.path], (cached) => {
+        if (token !== diffLoadToken) return;
+        setDiffText((p) => (p === cached ? p : cached));
+      });
+    });
+  };
+
+  /** Select file `i`: highlight it, reset the diff scroll, keep it in view in the
+   *  file list, and (re)load its diff. */
+  const selectDiffFile = (i: number) => {
+    const files = diffFiles();
+    if (files.length === 0) return;
+    const idx = clampSel(i, files.length);
+    setDiffSel(idx);
+    setDiffTop(0);
+    setDiffFileTop((t) => scrollToCursor(idx, t, diffBodyRows(), files.length));
+    loadDiff(files[idx]!);
+  };
+  const moveDiffSel = (delta: number) => selectDiffFile(diffSel() + delta);
+
+  /** Re-run `git status --porcelain`, reconcile the selection, and reload the
+   *  selected file's diff (so an external edit is reflected). */
+  const refreshStatus = () => {
+    runGit(["status", "--porcelain"], (out) => {
+      const files = parseStatusPorcelain(out);
+      setDiffFiles(files);
+      if (files.length === 0) {
+        setDiffText("");
+        setDiffSel(0);
+        setDiffMsg("working tree clean");
+        return;
+      }
+      const idx = clampSel(diffSel(), files.length);
+      setDiffSel(idx);
+      loadDiff(files[idx]!);
+    });
+  };
+
+  /** Enter the diff panel for `dir` (from home `d`, or `--diff` on boot). */
+  const enterDiff = (dir: string) => {
+    setDiffDir(dir);
+    setDiffSel(0);
+    setDiffTop(0);
+    setDiffFileTop(0);
+    setDiffText("");
+    setDiffMsg("");
+    setMode("diff");
+    refreshStatus();
+  };
+
   let mirror: SessionMirror | null = null;
   const attach = (name: string) => {
     mirror?.dispose();
@@ -438,6 +606,7 @@ render(() => {
     // `--edit <file>` boots straight into the editor (post-render so the native
     // EditBuffer FFI is loaded).
     if (values.edit) openEditor(values.edit);
+    if (mode() === "diff") refreshStatus();
     if (mode() === "mirror") attach(curTarget());
     const t = setInterval(() => {
       if (!dirty || !mirror) return;
@@ -465,6 +634,10 @@ render(() => {
     };
     refreshFleet();
     const fleetTimer = setInterval(refreshFleet, 3000);
+    // While the diff panel is up, re-poll git so external edits surface.
+    const diffTimer = setInterval(() => {
+      if (mode() === "diff") refreshStatus();
+    }, 3000);
     let lastW = canvasCols();
     let lastH = canvasRows();
     const sizeTimer = setInterval(() => {
@@ -477,6 +650,7 @@ render(() => {
     onCleanup(() => {
       clearInterval(t);
       clearInterval(fleetTimer);
+      clearInterval(diffTimer);
       clearInterval(sizeTimer);
       mirror?.dispose();
       editBuffer?.destroy();
@@ -520,10 +694,16 @@ render(() => {
       editBuffer?.destroy();
       process.exit(0);
     }
-    // ^e — toggle the editor against the previous mode (no-op until a file is
-    // opened via `o`/`--edit`).
+    // ^e — from the diff panel, open the SELECTED file in the editor at its
+    // repo-relative path; elsewhere toggle the editor against the previous mode
+    // (no-op until a file is opened via `o`/`--edit`).
     if (evt.ctrl && evt.name === "e") {
-      toggleEditor();
+      if (mode() === "diff") {
+        const entry = diffFiles()[diffSel()];
+        if (entry) openEditor(join(diffDir(), entry.path));
+      } else {
+        toggleEditor();
+      }
       return;
     }
     // ^g, not ^h: legacy encoding makes ctrl+h indistinguishable from
@@ -553,6 +733,14 @@ render(() => {
       editorKey(evt);
       return;
     }
+    if (mode() === "diff") {
+      // ^e / ^g / ^q are handled above; here j/k move the file selection and `r`
+      // forces a status+diff refresh.
+      if (evt.name === "j" || evt.name === "down") moveDiffSel(1);
+      else if (evt.name === "k" || evt.name === "up") moveDiffSel(-1);
+      else if (evt.name === "r") refreshStatus();
+      return;
+    }
     if (mode() === "home") {
       // Path-input line (`o` to open); while prompting, every key feeds it.
       if (pathPrompt() !== null) {
@@ -568,6 +756,13 @@ render(() => {
       }
       if (evt.name === "o") {
         setPathPrompt("");
+        return;
+      }
+      // `d` — open the diff panel for the selected session's project dir (the
+      // home row carries it via the team payload), falling back to the cwd.
+      if (evt.name === "d") {
+        const r = homeRows()[clampedSel()];
+        enterDiff(r?.dir ?? process.cwd());
         return;
       }
       const rows = homeRows();
@@ -663,6 +858,30 @@ render(() => {
       });
       editBuffer.setCursor(line, col);
       setEditorRev((r) => r + 1);
+      return;
+    }
+    // DIFF mode: header (y=0) + rule (y=1), body from y=2. Left column [0,listW)
+    // is the file list, the rest is the diff. Wheel scrolls whichever column the
+    // pointer is over; a left-column click selects that file row.
+    if (mode() === "diff") {
+      const overList = x < SIDEBAR_W + diffListW();
+      if (type === "scroll") {
+        const dir = e.scroll?.direction;
+        if (dir !== "up" && dir !== "down") return;
+        const step = dir === "up" ? -SCROLL_STEP : SCROLL_STEP;
+        if (overList) {
+          setDiffFileTop((t) => clampTop(t + step, diffFiles().length, diffBodyRows()));
+        } else {
+          setDiffTop((t) => clampTop(t + step, diffLines().length, diffBodyRows()));
+        }
+        return;
+      }
+      if (type !== "down") return;
+      const contentY = y - HEADER_ROWS;
+      if (contentY < 0 || !overList) return;
+      const top = clampTop(diffFileTop(), diffFiles().length, diffBodyRows());
+      const idx = top + contentY;
+      if (idx >= 0 && idx < diffFiles().length) selectDiffFile(idx);
       return;
     }
     if (y === 1) {
@@ -786,7 +1005,7 @@ render(() => {
             </box>
           </Show>
           <box paddingLeft={1}>
-            <text fg={MUTED}>{`${homeFooter()}   o open file`}</text>
+            <text fg={MUTED}>{`${homeFooter()}   o open file   d diff`}</text>
           </box>
         </Show>
         <Show when={mode() === "mirror"}>
@@ -896,6 +1115,60 @@ render(() => {
           <box flexGrow={1} />
           <box paddingLeft={1}>
             <text fg={MUTED}>{"^s save · ^z undo · ^e toggle · ^g home · ^q quit"}</text>
+          </box>
+        </Show>
+        <Show when={mode() === "diff"}>
+          {/* header (y=0) · rule (y=1) · two-column body (y=2+). `route` reverses
+              this geometry: left column = file list, right = diff. NO onMouse on
+              the rows — the main column container routes everything. */}
+          <box paddingLeft={1} flexDirection="row" gap={1}>
+            <text fg={ACCENT} attributes={1}>
+              {basename(diffDir()) || "diff"}
+            </text>
+            <text fg={MUTED}>{`${diffFiles().length} changed`}</text>
+            <Show when={diffMsg()}>
+              <text fg={MUTED}>{`· ${diffMsg()}`}</text>
+            </Show>
+          </box>
+          <text fg={MUTED}>{"─".repeat(Math.max(4, canvasCols() - 2))}</text>
+          <box flexDirection="row" flexGrow={1}>
+            {/* Left: changed-file list. */}
+            <box width={diffListW()} flexDirection="column" backgroundColor={GUTTER_BG}>
+              <For each={fileVisible()}>
+                {(row) => (
+                  <box
+                    flexDirection="row"
+                    gap={1}
+                    paddingLeft={1}
+                    backgroundColor={row.index === diffSel() ? TAB_ACTIVE_BG : GUTTER_BG}
+                  >
+                    <text fg={STATUS_LETTER_FG[row.entry.status] ?? DEFAULT_FG}>
+                      {row.entry.status}
+                    </text>
+                    <text fg={row.index === diffSel() ? DEFAULT_FG : MUTED}>
+                      {row.entry.path.length > diffListW() - 4
+                        ? "…" + row.entry.path.slice(-(diffListW() - 5))
+                        : row.entry.path}
+                    </text>
+                  </box>
+                )}
+              </For>
+            </box>
+            {/* Right: unified diff of the selected file. */}
+            <box flexGrow={1} flexDirection="column" paddingLeft={1}>
+              <For each={diffVisible()}>
+                {(ln) => (
+                  <box height={1}>
+                    <text fg={DIFF_FG[ln.kind]}>{ln.text || " "}</text>
+                  </box>
+                )}
+              </For>
+            </box>
+          </box>
+          <box paddingLeft={1}>
+            <text fg={MUTED}>
+              {"j/k file · wheel scroll · ^e edit · r refresh · ^g home · ^q quit"}
+            </text>
           </box>
         </Show>
       </box>
