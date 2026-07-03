@@ -133,7 +133,7 @@ describe("remote CLI contracts", () => {
           Host !blocked *.example.com
             User ignored
         `),
-      ).toEqual(["devbox-remote", "devbox-linux"]);
+      ).toEqual(["devbox-linux", "devbox-remote"]);
     });
 
     it("rejects SSH aliases with shell metacharacters", () => {
