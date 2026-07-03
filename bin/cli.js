@@ -17214,12 +17214,21 @@ async function fetchAgents(baseUrl) {
   }
 }
 async function listSshAgentSources() {
-  const remotes = (await readSshRemotes()).filter((remote) => tunnelPort(remote) !== null);
-  const probes = remotes.map(async (remote) => {
-    const agents = await fetchAgents(tunnelBaseUrl(remote));
-    if (!agents) return null;
-    return { machineId: sshMachineId(remote.name), machineName: remote.name, agents };
-  });
+  const byUrl = /* @__PURE__ */ new Map();
+  for (const remote of await readSshRemotes()) {
+    const url = tunnelBaseUrl(remote);
+    if (!url) continue;
+    const current = byUrl.get(url);
+    const launched = (candidate) => candidate.lastLaunchedAt ?? "";
+    if (!current || launched(remote) > launched(current)) byUrl.set(url, remote);
+  }
+  const probes = [...byUrl.entries()].map(
+    async ([url, remote]) => {
+      const agents = await fetchAgents(url);
+      if (!agents) return null;
+      return { machineId: sshMachineId(remote.name), machineName: remote.name, agents };
+    }
+  );
   return (await Promise.all(probes)).filter((source) => !!source);
 }
 var SSH_MACHINE_PREFIX, PROBE_TIMEOUT_MS;

@@ -102,6 +102,27 @@ describe("listSshAgentSources", () => {
     expect(calls).toHaveLength(2);
   });
 
+  it("dedupes store entries that share a tunnel url, preferring the freshest launch", async () => {
+    writeRemotes([
+      { name: "stale", host: "h", path: "/old", addedAt: "x", localPort: 7001 },
+      {
+        name: "fresh",
+        host: "h",
+        path: "/new",
+        addedAt: "x",
+        localPort: 7001,
+        lastLaunchedAt: "2026-07-02T00:00:00.000Z",
+      },
+    ]);
+    globalThis.fetch = vi.fn(
+      async () => new Response(JSON.stringify({ agents: [agent] }), { status: 200 }),
+    ) as typeof fetch;
+    const sources = await listSshAgentSources();
+    expect(sources).toHaveLength(1);
+    expect(sources[0]!.machineName).toBe("fresh");
+    expect((globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(1);
+  });
+
   it("skips a remote whose response fails schema validation", async () => {
     writeRemotes([{ name: "boxa", host: "h", path: "/p", addedAt: "x", lastLocalPort: 7001 }]);
     globalThis.fetch = vi.fn(

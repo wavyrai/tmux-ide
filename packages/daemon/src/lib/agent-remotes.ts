@@ -60,13 +60,26 @@ async function fetchAgents(baseUrl: string): Promise<RemoteAgentSource["agents"]
  * Probe every configured SSH remote with a recorded tunnel port and return the
  * reachable ones as agent sources. Remotes whose tunnel is down (fetch fails)
  * are silently skipped — `remote ssh launch` re-records the port next time.
+ *
+ * Multiple store entries can point at the same tunnel port (e.g. a stale
+ * remote plus a re-added one); probing both would duplicate every agent, so
+ * entries are deduped by resolved URL, keeping the most recently launched.
  */
 export async function listSshAgentSources(): Promise<RemoteAgentSource[]> {
-  const remotes = (await readSshRemotes()).filter((remote) => tunnelPort(remote) !== null);
-  const probes = remotes.map(async (remote): Promise<RemoteAgentSource | null> => {
-    const agents = await fetchAgents(tunnelBaseUrl(remote)!);
-    if (!agents) return null;
-    return { machineId: sshMachineId(remote.name), machineName: remote.name, agents };
-  });
+  const byUrl = new Map<string, SshRemote>();
+  for (const remote of await readSshRemotes()) {
+    const url = tunnelBaseUrl(remote);
+    if (!url) continue;
+    const current = byUrl.get(url);
+    const launched = (candidate: SshRemote) => candidate.lastLaunchedAt ?? "";
+    if (!current || launched(remote) > launched(current)) byUrl.set(url, remote);
+  }
+  const probes = [...byUrl.entries()].map(
+    async ([url, remote]): Promise<RemoteAgentSource | null> => {
+      const agents = await fetchAgents(url);
+      if (!agents) return null;
+      return { machineId: sshMachineId(remote.name), machineName: remote.name, agents };
+    },
+  );
   return (await Promise.all(probes)).filter((source): source is RemoteAgentSource => !!source);
 }

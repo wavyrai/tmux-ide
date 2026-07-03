@@ -94,20 +94,20 @@ from `127.0.0.1:<local-port>` to that remote loopback port.
 
 ```bash
 tmux-ide remote ssh hosts
-tmux-ide remote ssh add atlas --host atlas-evg --path ~/Documents/code/project-atlas
-tmux-ide remote ssh launch atlas
-tmux-ide remote ssh launch atlas --no-open
-tmux-ide remote ssh status atlas
-tmux-ide remote ssh remove atlas
+tmux-ide remote ssh add devbox --host devbox-remote --path ~/projects/my-app
+tmux-ide remote ssh launch devbox
+tmux-ide remote ssh launch devbox --no-open
+tmux-ide remote ssh status devbox
+tmux-ide remote ssh remove devbox
 ```
 
 Use `--local-port` when you want a stable local URL, and `--remote-port`
 when the remote machine already uses the default remote daemon port:
 
 ```bash
-tmux-ide remote ssh add atlas \
-  --host atlas-evg \
-  --path ~/Documents/code/project-atlas \
+tmux-ide remote ssh add devbox \
+  --host devbox-remote \
+  --path ~/projects/my-app \
   --local-port 6061 \
   --remote-port 6060
 ```

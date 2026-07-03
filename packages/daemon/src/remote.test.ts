@@ -124,8 +124,8 @@ describe("remote CLI contracts", () => {
     it("parses concrete SSH config hosts and skips wildcard entries", () => {
       expect(
         parseSshConfigHosts(`
-          Host atlas-evg atlas-linux-box
-            User evg
+          Host devbox-remote devbox-linux
+            User dev
 
           Host *
             ServerAliveInterval 15
@@ -133,30 +133,30 @@ describe("remote CLI contracts", () => {
           Host !blocked *.example.com
             User ignored
         `),
-      ).toEqual(["atlas-evg", "atlas-linux-box"]);
+      ).toEqual(["devbox-remote", "devbox-linux"]);
     });
 
     it("rejects SSH aliases with shell metacharacters", () => {
-      expect(() => validateSshAlias("atlas-evg")).not.toThrow();
-      expect(() => validateSshAlias("atlas-evg;touch /tmp/pwned")).toThrow();
+      expect(() => validateSshAlias("devbox-remote")).not.toThrow();
+      expect(() => validateSshAlias("devbox-remote;touch /tmp/pwned")).toThrow();
       expect(() => validateSshAlias("-oProxyCommand=evil")).toThrow();
     });
 
     it("quotes remote paths before passing them to the remote shell", () => {
-      expect(shellQuote("/home/evg/project atlas")).toBe("'/home/evg/project atlas'");
-      expect(shellQuote("/home/evg/it's-here")).toBe("'/home/evg/it'\\''s-here'");
+      expect(shellQuote("/home/dev/project alpha")).toBe("'/home/dev/project alpha'");
+      expect(shellQuote("/home/dev/it's-here")).toBe("'/home/dev/it'\\''s-here'");
     });
 
     it("builds a remote serve script that binds only through localhost tunnel inputs", () => {
-      const script = buildRemoteServeScript("/home/evg/project atlas", 6060);
-      expect(script).toContain("cd '/home/evg/project atlas'");
+      const script = buildRemoteServeScript("/home/dev/project alpha", 6060);
+      expect(script).toContain("cd '/home/dev/project alpha'");
       expect(script).toContain("tmux-ide __remote-serve --port 6060");
       expect(script).not.toContain("0.0.0.0");
     });
 
     it("builds SSH forwarding args without invoking a local shell", () => {
       expect(
-        buildSshForwardArgs({ host: "atlas-evg", localPort: 49152, remotePort: 6060 }),
+        buildSshForwardArgs({ host: "devbox-remote", localPort: 49152, remotePort: 6060 }),
       ).toEqual([
         "-N",
         "-L",
@@ -171,7 +171,7 @@ describe("remote CLI contracts", () => {
         "ControlMaster=no",
         "-o",
         "ControlPath=none",
-        "atlas-evg",
+        "devbox-remote",
       ]);
     });
   });
