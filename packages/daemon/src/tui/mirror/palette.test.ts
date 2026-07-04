@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { staticPaletteActions, filterPaletteActions } from "./palette.ts";
+import { staticPaletteActions, filterPaletteActions, parseBufferList } from "./palette.ts";
 
 describe("staticPaletteActions", () => {
-  it("offers the four tab switches, one attach per session, then save/refresh/quit", () => {
+  it("offers the four tab switches, one attach per session, then save/refresh/paste/quit", () => {
     const actions = staticPaletteActions(["alpha", "beta"]);
     expect(actions.map((a) => a.label)).toEqual([
       "Switch tab: Home",
@@ -13,8 +13,35 @@ describe("staticPaletteActions", () => {
       "Attach session: beta",
       "Save file",
       "Refresh diff",
+      "Paste buffer…",
       "Quit",
     ]);
+  });
+
+  it("offers the paste-buffer action on every surface (no terminal gate)", () => {
+    expect(staticPaletteActions([]).some((a) => a.kind === "paste-buffer")).toBe(true);
+    expect(
+      staticPaletteActions([], { terminal: true }).some((a) => a.kind === "paste-buffer"),
+    ).toBe(true);
+  });
+});
+
+describe("parseBufferList", () => {
+  it("parses name + sample lines, dropping blank/nameless rows", () => {
+    const bufs = parseBufferList(["buffer0\thello world", "buffer1\tsecond", "", "\tno name"]);
+    expect(bufs).toEqual([
+      { name: "buffer0", preview: "hello world" },
+      { name: "buffer1", preview: "second" },
+    ]);
+  });
+
+  it("truncates the preview and sanitizes control characters", () => {
+    const bufs = parseBufferList(["b\tline1\nline2\ttabbed"], 8);
+    expect(bufs[0]).toEqual({ name: "b", preview: "line1·li" });
+  });
+
+  it("handles a buffer with no sample field", () => {
+    expect(parseBufferList(["buffer2"])).toEqual([{ name: "buffer2", preview: "" }]);
   });
 });
 
@@ -22,7 +49,7 @@ describe("filterPaletteActions", () => {
   it("returns every static action for an empty query, no open-file entry", () => {
     const actions = filterPaletteActions("", ["alpha"]);
     expect(actions.some((a) => a.kind === "open-file")).toBe(false);
-    expect(actions).toHaveLength(8);
+    expect(actions).toHaveLength(9);
   });
 
   it("fuzzy-ranks matches and appends an open-file action for a plain word", () => {

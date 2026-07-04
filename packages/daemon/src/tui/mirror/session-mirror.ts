@@ -190,6 +190,12 @@ export class SessionMirror {
     return this.focused || this.geometry.find((g) => g.active)?.id || "";
   }
 
+  /** The whole mirror buffer (scrollback + viewport) of a pane as plain text
+   *  lines — the corpus for scrollback search. Empty for an unknown pane. */
+  bufferLines(paneId: string): string[] {
+    return this.mirrors.get(paneId)?.bufferLines() ?? [];
+  }
+
   /** Focus a pane locally AND in tmux (so splits/new panes open where expected). */
   focus(id: string): void {
     if (!this.geometry.some((g) => g.id === id)) return;

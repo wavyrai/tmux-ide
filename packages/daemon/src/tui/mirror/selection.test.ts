@@ -7,6 +7,7 @@ import {
   lineRangeAt,
   clickCount,
   tintRunsInverse,
+  tintRunsBg,
   osc52Sequence,
   tmuxPassthrough,
   chunkByBytes,
@@ -172,6 +173,25 @@ describe("tintRunsInverse", () => {
   it("returns runs unchanged when to < from", () => {
     const runs = [run("abc")];
     expect(tintRunsInverse(runs, 5, 3)).toBe(runs);
+  });
+});
+
+describe("tintRunsBg", () => {
+  const run = (text: string, bg: number | null = 2) => ({ text, fg: 1, bg, attributes: 0 });
+  it("splits a run and paints the spanned bg, keeping colors on the flanks", () => {
+    const out = tintRunsBg([run("hello world")], 0, 4, 0x82aaff);
+    expect(out).toEqual([
+      { text: "hello", fg: 1, bg: 0x82aaff, attributes: 0 },
+      { text: " world", fg: 1, bg: 2, attributes: 0 },
+    ]);
+  });
+  it("paints a middle span across multiple runs", () => {
+    const out = tintRunsBg([run("abc"), run("def")], 1, 4, 0x99);
+    expect(out.map((r) => `${r.text}:${r.bg}`)).toEqual([`a:2`, `bc:153`, `de:153`, `f:2`]);
+  });
+  it("returns runs unchanged when to < from", () => {
+    const runs = [run("abc")];
+    expect(tintRunsBg(runs, 5, 3, 0x1)).toBe(runs);
   });
 });
 

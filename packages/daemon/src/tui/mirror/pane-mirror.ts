@@ -99,6 +99,26 @@ export class PaneMirror {
   }
 
   /**
+   * The WHOLE buffer (scrollback + live viewport) as plain text lines, top→bottom
+   * — the search corpus. Read on demand (cheap; no per-frame cost). Uses xterm's
+   * `translateToString(true)` so wide-glyph spacers collapse and trailing blanks
+   * trim exactly the way the rendered snapshot rows do, keeping a match's column
+   * aligned between the search hit and the highlight injection. Line index `y` is
+   * absolute (0 = oldest scrollback line); the live viewport top sits at
+   * `scrollbackDepth()`, so a match at line `y` maps to visible row
+   * `y - (scrollbackDepth - scrollOffset)`.
+   */
+  bufferLines(): string[] {
+    const buf = this.term.buffer.active;
+    const out: string[] = [];
+    for (let y = 0; y < buf.length; y++) {
+      const line = buf.getLine(y);
+      out.push(line ? line.translateToString(true) : "");
+    }
+    return out;
+  }
+
+  /**
    * Read a grid as rows of same-styled runs.
    *
    * @param scrollOffset Render this many lines above the live viewport

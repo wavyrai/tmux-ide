@@ -136,7 +136,19 @@ import {
   type Tab,
 } from "./app-state.ts";
 import { separatorAt, resizedSize, resizeCommand, type Separator } from "./resize-model.ts";
-import { filterPaletteActions, type PaletteAction } from "./palette.ts";
+import {
+  filterPaletteActions,
+  parseBufferList,
+  type PaletteAction,
+  type TmuxBuffer,
+} from "./palette.ts";
+import {
+  findMatches,
+  visitOrder,
+  stepMatch,
+  offsetForMatch,
+  type SearchMatch,
+} from "./search-model.ts";
 import {
   buildNodes,
   insertChildrenAt,
@@ -167,6 +179,7 @@ import {
   lineRangeAt,
   clickCount,
   tintRunsInverse,
+  tintRunsBg,
   osc52Sequence,
   chunkByBytes,
   ATTR_INVERSE,
@@ -345,6 +358,12 @@ const tabCell = (t: { glyph: string; label: string }): string => ` ${t.glyph} ${
 const TAB_SPANS = spans(TABS.map(tabCell), 0, 0);
 const PALETTE_W = 60;
 const PALETTE_ROWS = 10;
+// Scrollback-search highlight backgrounds (M20.3), packed 0xRRGGBB to sit in a
+// run's `bg` (search paints a bg, distinct from selection's inverse video, so
+// the two coexist). Every visible match gets the dim accent; the CURRENT match
+// (the n/N cursor) gets the bright accent so it reads apart from the rest.
+const SEARCH_HL = 0x3a4e7a; // dim accent-blue — all matches
+const SEARCH_CUR = 0x82aaff; // bright accent (== ACCENT) — current match
 const PALETTE_BG = RGBA.fromInts(28, 30, 42, 255);
 const PALETTE_BORDER = RGBA.fromInts(70, 78, 110, 255);
 const TABBAR_BG = RGBA.fromInts(18, 18, 26, 255);
@@ -475,6 +494,30 @@ render(() => {
     selecting = null;
     if (selection() !== null) setSelection(null);
   };
+
+  // ── SCROLLBACK SEARCH (M20.3) ────────────────────────────────────────────
+  // copy-mode's `/` finder, app-native. `search` is the live search SESSION: a
+  // bottom-of-canvas input line owning the keyboard while open. `editing:true`
+  // builds the query (Enter executes); `editing:false` is navigation (n/N cycle,
+  // esc exits). Per-PANE results live in `paneSearches` keyed by pane id, so
+  // switching focus keeps each pane's last query/matches/cursor until esc — the
+  // render inverse/accent-tints a pane's matches straight from this map. Matches
+  // are a snapshot of the pane's full buffer at Enter time (pure math in
+  // search-model.ts); the jump converts the current match's buffer line to a
+  // scrollOffset via `offsetForMatch`.
+  interface PaneSearch {
+    query: string;
+    matches: SearchMatch[];
+    current: number;
+  }
+  const [search, setSearch] = createSignal<{ query: string; editing: boolean } | null>(null);
+  const [paneSearches, setPaneSearches] = createSignal<Map<string, PaneSearch>>(new Map());
+
+  // ── PASTE-BUFFER PICKER (M20.3) ──────────────────────────────────────────
+  // The palette's second level: "Paste buffer…" swaps the action list for this
+  // list of tmux paste buffers (null = normal palette, [] = loading/empty). Enter
+  // shows the chosen buffer and routes its content through the normal paste path.
+  const [paletteBuffers, setPaletteBuffers] = createSignal<TmuxBuffer[] | null>(null);
 
   // ── DRAG-RESIZE GESTURE (M19.3) ──────────────────────────────────────────
   // A separate gesture machine from text selection: a "down" on the sidebar/main
@@ -1043,9 +1086,17 @@ render(() => {
   const openPalette = () => {
     setPaletteQuery("");
     setPaletteSel(0);
+    setPaletteBuffers(null); // always open on the action list, never mid-picker
     setPaletteOpen(true);
   };
   const runPaletteAction = (a: PaletteAction) => {
+    // "Paste buffer…" descends into the second-level picker instead of
+    // dispatching — keep the palette open and load the buffer list.
+    if (a.kind === "paste-buffer") {
+      setPaletteSel(0);
+      loadBuffers();
+      return;
+    }
     setPaletteOpen(false);
     switch (a.kind) {
       case "tab":
@@ -1142,6 +1193,24 @@ render(() => {
     meta: boolean;
     shift: boolean;
   }): void => {
+    // Second level: the paste-buffer picker. esc backs out to the action list;
+    // up/down move; enter pastes the chosen buffer. No typing filter here (the
+    // list is short and buffer names aren't fuzzy-worthy).
+    const bufs = paletteBuffers();
+    if (bufs !== null) {
+      if (evt.name === "escape") {
+        setPaletteBuffers(null);
+        setPaletteSel(0);
+      } else if (evt.name === "return") {
+        const b = bufs[Math.min(paletteSel(), bufs.length - 1)];
+        if (b) pasteBuffer(b.name);
+      } else if (evt.name === "up") {
+        setPaletteSel((s) => Math.max(0, s - 1));
+      } else if (evt.name === "down") {
+        setPaletteSel((s) => Math.min(Math.max(0, bufs.length - 1), s + 1));
+      }
+      return;
+    }
     const actions = paletteActions();
     if (evt.name === "escape") {
       setPaletteOpen(false);
@@ -1270,6 +1339,164 @@ render(() => {
     }
   };
 
+  // ── SCROLLBACK SEARCH — session control (M20.3) ──────────────────────────
+  /** Depth (scrollback budget) + height of a pane from the current snapshot —
+   *  the geometry `offsetForMatch` needs to place a match line on screen. */
+  const paneScrollGeometry = (paneId: string): { depth: number; viewH: number } => {
+    const p = panes().find((x) => x.id === paneId);
+    return { depth: p?.scrollbackDepth ?? 0, viewH: p?.height ?? 0 };
+  };
+  /** Scroll the pane so its CURRENT match sits mid-viewport, and re-render. */
+  const jumpToCurrent = (paneId: string) => {
+    const ps = paneSearches().get(paneId);
+    if (!ps || ps.current < 0) return;
+    const m = ps.matches[ps.current];
+    if (!m) return;
+    const { depth, viewH } = paneScrollGeometry(paneId);
+    scrollOffsets.set(paneId, offsetForMatch(m.line, depth, viewH));
+    markDirty();
+  };
+  /** `/` — open the search input on the focused pane (Terminal mode only). */
+  const openSearch = () => {
+    if (!mirror) return;
+    setSearch({ query: "", editing: true });
+  };
+  /** esc — leave search entirely: drop every pane's matches (highlights gone),
+   *  keep each pane's scroll position where the last jump left it. */
+  const exitSearch = () => {
+    setSearch(null);
+    if (paneSearches().size > 0) setPaneSearches(new Map());
+    markDirty();
+  };
+  /** Enter — run the query against the focused pane's FULL buffer, store the
+   *  match set for that pane, jump to the nearest (bottom-most) match, and drop
+   *  from editing into navigation. An empty/zero-match query stays visible with
+   *  a "no matches" count so the user can retype. */
+  const executeSearch = () => {
+    const s = search();
+    if (!s || !mirror) return;
+    const query = s.query;
+    setSearch({ query, editing: false });
+    if (query.length === 0) return;
+    const pid = mirror.focusedPane();
+    if (!pid) return;
+    // Store matches bottom-up (nearest the live viewport first) so the landed
+    // match reads "1/N" and n walks upward — see visitOrder.
+    const matches = visitOrder(findMatches(mirror.bufferLines(pid), query));
+    const next = new Map(paneSearches());
+    next.set(pid, { query, matches, current: 0 });
+    setPaneSearches(next);
+    if (matches.length > 0) jumpToCurrent(pid);
+    markDirty();
+  };
+  /** n / N — cycle the focused pane's current match and re-scroll to it. */
+  const jumpMatch = (dir: 1 | -1) => {
+    const pid = mirror?.focusedPane();
+    if (!pid) return;
+    const ps = paneSearches().get(pid);
+    if (!ps || ps.matches.length === 0) return;
+    const next = new Map(paneSearches());
+    next.set(pid, { ...ps, current: stepMatch(ps.current, dir, ps.matches.length) });
+    setPaneSearches(next);
+    jumpToCurrent(pid);
+  };
+  /** The "3/17 matches" tally for the focused pane's search (input-line status). */
+  const searchStatus = (): string => {
+    const pid = mirror?.focusedPane();
+    const ps = pid ? paneSearches().get(pid) : undefined;
+    if (!ps || search()?.editing) return "";
+    if (ps.matches.length === 0) return "no matches";
+    return `${ps.current + 1}/${ps.matches.length} matches`;
+  };
+  /** Feed one key to the open search session. In `editing` the query grows and
+   *  Enter runs it; in navigation n/N cycle, `/` re-opens editing, esc exits.
+   *  Search OWNS the keyboard while open, so no key leaks to the pane. */
+  const searchKey = (evt: { name: string; ctrl: boolean; meta: boolean; shift: boolean }): void => {
+    const s = search();
+    if (!s) return;
+    if (s.editing) {
+      if (evt.name === "escape") exitSearch();
+      else if (evt.name === "return") executeSearch();
+      else if (evt.name === "backspace") setSearch({ query: s.query.slice(0, -1), editing: true });
+      else if (evt.name.length === 1 && !evt.ctrl && !evt.meta)
+        setSearch({
+          query: s.query + (evt.shift ? evt.name.toUpperCase() : evt.name),
+          editing: true,
+        });
+      return;
+    }
+    if (evt.name === "escape") exitSearch();
+    else if (evt.name === "n") jumpMatch(evt.shift ? -1 : 1);
+    else if (evt.name === "return") jumpMatch(1);
+    else if (evt.name === "/") setSearch({ query: "", editing: true });
+  };
+
+  // ── PASTE-BUFFER PICKER — io (M20.3) ─────────────────────────────────────
+  /** Insert `text` into the focused surface: the editor buffer as ONE undo unit,
+   *  else the focused pane wrapped in bracketed-paste markers + chunked under
+   *  tmux's send-keys length cap. The shared paste path — bracketed-paste input
+   *  and the buffer picker both funnel here. */
+  const pasteIntoFocused = (text: string) => {
+    if (!text) return;
+    if (mode() === "editor" && filesFocus() === "editor" && editBuffer && !editorReadOnly()) {
+      editBuffer.insertText(text); // single insertText call = one undo unit
+      setEditorModified(true);
+      editorSyncScroll();
+      setEditorRev((r) => r + 1);
+      setStatusNote(`pasted ${text.length} chars`);
+      return;
+    }
+    if (mirror) {
+      const pane = mirror.focusedPane();
+      if (!pane) return;
+      void mirror.sendTextTo(pane, "\x1b[200~").catch(() => {});
+      for (const chunk of chunkByBytes(text, PASTE_CHUNK_BYTES))
+        void mirror.sendTextTo(pane, chunk).catch(() => {});
+      void mirror.sendTextTo(pane, "\x1b[201~").catch(() => {});
+      setStatusNote(`pasted ${text.length} chars`);
+    }
+  };
+  /** Load the tmux paste buffers into the picker (name + sanitized sample). Runs
+   *  over the control client when a session is mirrored, else a plain execFile —
+   *  buffers are global tmux state, so either reaches them. */
+  const loadBuffers = () => {
+    setPaletteBuffers([]); // loading / empty placeholder
+    const fmt = `#{buffer_name}\t#{buffer_sample}`;
+    const done = (lines: string[]) => {
+      setPaletteBuffers(parseBufferList(lines));
+      setPaletteSel(0);
+    };
+    if (mirror) {
+      void mirror
+        .command(`list-buffers -F ${tmuxQuote(fmt)}`)
+        .then(done)
+        .catch(() => setPaletteBuffers([]));
+      return;
+    }
+    execFile("tmux", ["list-buffers", "-F", fmt], (err, stdout) => {
+      if (err) return setPaletteBuffers([]);
+      done(stdout.split("\n").filter((l) => l.length > 0));
+    });
+  };
+  /** Fetch one buffer's content and paste it. The control client reads replies as
+   *  latin1 (byte-per-char) so multibyte glyphs must be re-encoded latin1→utf8
+   *  (the same fix the pane seed uses) before hitting the paste path. */
+  const pasteBuffer = (name: string) => {
+    setPaletteOpen(false);
+    setPaletteBuffers(null);
+    setPaletteSel(0);
+    if (mirror) {
+      void mirror
+        .command(`show-buffer -b ${tmuxQuote(name)}`)
+        .then((lines) => pasteIntoFocused(Buffer.from(lines.join("\n"), "latin1").toString("utf8")))
+        .catch(() => {});
+      return;
+    }
+    execFile("tmux", ["show-buffer", "-b", name], (err, stdout) => {
+      if (!err) pasteIntoFocused(stdout);
+    });
+  };
+
   // ── clipboard io (M19.4) ──────────────────────────────────────────────────
   // Copy rides OSC52 written to the app's OWN stdout: with `set-clipboard on`
   // (enabled best-effort at mount) the surrounding tmux captures it into its
@@ -1340,18 +1567,42 @@ render(() => {
     const { start, end } = orderCells(s.anchor, s.head);
     return rowSelectionRange(bufRow, lineLen, start, end);
   };
-  /** A mirror pane's rows with the active selection inverse-tinted (or the
-   *  untouched rows when nothing is selected on this pane). */
+  /** A mirror pane's rows with its search matches accent-tinted (all matches dim,
+   *  the current one bright) and then the active selection inverse-tinted on top.
+   *  Both are pure run-splits over the snapshot; either may be absent. Matches are
+   *  keyed by ABSOLUTE buffer line, mapped to the visible row via the pane's
+   *  depth − scrollOffset (see PaneMirror.bufferLines). */
   const paneSelRows = (pane: LivePane) => {
+    let rows = pane.snapshot.rows;
+    const ps = paneSearches().get(pane.id);
+    if (ps && ps.matches.length > 0 && ps.query.length > 0) {
+      const baseY = pane.scrollbackDepth - pane.snapshot.scrollOffset;
+      const len = ps.query.length;
+      rows = rows.map((runs, r) => {
+        const line = baseY + r;
+        let out = runs;
+        ps.matches.forEach((m, idx) => {
+          if (m.line !== line) return;
+          out = tintRunsBg(
+            out,
+            m.col,
+            m.col + len - 1,
+            idx === ps.current ? SEARCH_CUR : SEARCH_HL,
+          );
+        });
+        return out;
+      });
+    }
     const s = selection();
-    const rows = pane.snapshot.rows;
-    if (!s || s.surface !== "mirror" || s.paneId !== pane.id) return rows;
-    const { start, end } = orderCells(s.anchor, s.head);
-    return rows.map((runs, r) => {
-      const rowLen = runs.reduce((n, run) => n + run.text.length, 0);
-      const range = rowSelectionRange(r, rowLen, start, end);
-      return range ? tintRunsInverse(runs, range.from, range.to) : runs;
-    });
+    if (s && s.surface === "mirror" && s.paneId === pane.id) {
+      const { start, end } = orderCells(s.anchor, s.head);
+      rows = rows.map((runs, r) => {
+        const rowLen = runs.reduce((n, run) => n + run.text.length, 0);
+        const range = rowSelectionRange(r, rowLen, start, end);
+        return range ? tintRunsInverse(runs, range.from, range.to) : runs;
+      });
+    }
+    return rows;
   };
 
   const paneCell = (pane: LivePane, gx: number, gy: number) => ({
@@ -1876,6 +2127,12 @@ render(() => {
       paletteKey(evt);
       return;
     }
+    // The scrollback-search session owns the keyboard while open (the bottom input
+    // line + n/N navigation), so no key leaks to the pane; ^q above still quits.
+    if (search()) {
+      searchKey(evt);
+      return;
+    }
     // F5 (and ^p when it arrives) open the command palette.
     if (evt.name === "f5" || (evt.ctrl && evt.name === "p")) {
       openPalette();
@@ -2015,6 +2272,13 @@ render(() => {
       return;
     }
     if (!mirror) return;
+    // `/` opens scrollback search on the focused pane (copy-mode's finder). Only
+    // in Terminal mode (home/editor/diff returned above); a raw `/` still reaches
+    // the pane once search is open, since search then owns the keyboard.
+    if (evt.name === "/" && !evt.ctrl && !evt.meta) {
+      openSearch();
+      return;
+    }
     // ^c copies an active mirror selection; with no selection it passes through
     // to the pane (interrupt) exactly as before.
     if (evt.ctrl && evt.name === "c") {
@@ -2046,27 +2310,7 @@ render(() => {
   // EDITOR inserts at the cursor as ONE undo unit; the TERMINAL forwards it to
   // the focused pane re-wrapped in bracketed markers (so apps see a paste, not
   // keystrokes), chunked so each send-keys stays under tmux's length cap.
-  usePaste((e) => {
-    const text = decodePasteBytes(e.bytes);
-    if (!text) return;
-    if (mode() === "editor" && filesFocus() === "editor" && editBuffer && !editorReadOnly()) {
-      editBuffer.insertText(text); // single insertText call = one undo unit
-      setEditorModified(true);
-      editorSyncScroll();
-      setEditorRev((r) => r + 1);
-      setStatusNote(`pasted ${text.length} chars`);
-      return;
-    }
-    if (mode() === "mirror" && mirror) {
-      const pane = mirror.focusedPane();
-      if (!pane) return;
-      void mirror.sendTextTo(pane, "\x1b[200~").catch(() => {});
-      for (const chunk of chunkByBytes(text, PASTE_CHUNK_BYTES))
-        void mirror.sendTextTo(pane, chunk).catch(() => {});
-      void mirror.sendTextTo(pane, "\x1b[201~").catch(() => {});
-      setStatusNote(`pasted ${text.length} chars`);
-    }
-  });
+  usePaste((e) => pasteIntoFocused(decodePasteBytes(e.bytes)));
 
   /** The per-window strip's x-spans — one segment per tmux window, laid out from
    *  the main column's first cell (SIDEBAR_W + paddingLeft 1) with a 1-cell gap,
@@ -2930,6 +3174,27 @@ render(() => {
                 )}
               </For>
             </box>
+            {/* Scrollback-search input (M20.3) — a bottom-of-canvas line, like the
+                palette's input but inline. A normal-flow row after the pane canvas
+                (keyboard-only, no mouse handler — search owns the keyboard while
+                open); it steals the canvas's last row only while open, so the pane
+                grid is untouched the rest of the time. `editing` shows a "/query▏"
+                cursor; navigation shows the query + the "3/17 matches" tally. */}
+            <Show when={search()}>
+              <box
+                flexDirection="row"
+                backgroundColor={PALETTE_BG}
+                paddingLeft={1}
+                paddingRight={1}
+              >
+                <text fg={ACCENT} attributes={1}>
+                  {search()!.editing ? "/" : "search "}
+                </text>
+                <text fg={DEFAULT_FG}>{`${search()!.query}${search()!.editing ? "▏" : ""}`}</text>
+                <box flexGrow={1} />
+                <text fg={MUTED}>{searchStatus()}</text>
+              </box>
+            </Show>
           </Show>
           <Show when={mode() === "editor"}>
             {/* FILES tab: header (gy=0) · rule/banner (gy=1) · two-column body
@@ -3114,24 +3379,63 @@ render(() => {
           paddingLeft={1}
           paddingRight={1}
         >
-          <box flexDirection="row">
-            <text fg={ACCENT} attributes={1}>
-              {"⌘ "}
-            </text>
-            <text fg={DEFAULT_FG}>{`${paletteQuery()}▏`}</text>
-          </box>
-          <text fg={MUTED}>{"─".repeat(PALETTE_W - 4)}</text>
-          <For each={paletteActions().slice(0, PALETTE_ROWS)}>
-            {(a, i) => (
-              <box height={1} backgroundColor={i() === paletteSel() ? TAB_ACTIVE_BG : PALETTE_BG}>
-                <text fg={i() === paletteSel() ? DEFAULT_FG : MUTED}>
-                  {(i() === paletteSel() ? "› " : "  ") + a.label}
-                </text>
-              </box>
-            )}
-          </For>
-          <Show when={paletteActions().length === 0}>
-            <text fg={MUTED}>{"  no matches"}</text>
+          {/* Second level (paste-buffer picker) when `paletteBuffers` is set;
+              otherwise the normal fuzzy action list. Same late-mount discipline —
+              no per-row handlers; paletteKey drives both. */}
+          <Show
+            when={paletteBuffers() !== null}
+            fallback={
+              <>
+                <box flexDirection="row">
+                  <text fg={ACCENT} attributes={1}>
+                    {"⌘ "}
+                  </text>
+                  <text fg={DEFAULT_FG}>{`${paletteQuery()}▏`}</text>
+                </box>
+                <text fg={MUTED}>{"─".repeat(PALETTE_W - 4)}</text>
+                <For each={paletteActions().slice(0, PALETTE_ROWS)}>
+                  {(a, i) => (
+                    <box
+                      height={1}
+                      backgroundColor={i() === paletteSel() ? TAB_ACTIVE_BG : PALETTE_BG}
+                    >
+                      <text fg={i() === paletteSel() ? DEFAULT_FG : MUTED}>
+                        {(i() === paletteSel() ? "› " : "  ") + a.label}
+                      </text>
+                    </box>
+                  )}
+                </For>
+                <Show when={paletteActions().length === 0}>
+                  <text fg={MUTED}>{"  no matches"}</text>
+                </Show>
+              </>
+            }
+          >
+            <box flexDirection="row">
+              <text fg={ACCENT} attributes={1}>
+                {"⎘ Paste buffer"}
+              </text>
+              <box flexGrow={1} />
+              <text fg={MUTED}>{"esc back"}</text>
+            </box>
+            <text fg={MUTED}>{"─".repeat(PALETTE_W - 4)}</text>
+            <For each={paletteBuffers()!.slice(0, PALETTE_ROWS)}>
+              {(b, i) => (
+                <box
+                  height={1}
+                  flexDirection="row"
+                  backgroundColor={i() === paletteSel() ? TAB_ACTIVE_BG : PALETTE_BG}
+                >
+                  <text fg={i() === paletteSel() ? DEFAULT_FG : MUTED}>
+                    {`${i() === paletteSel() ? "› " : "  "}${b.name}  `}
+                  </text>
+                  <text fg={MUTED}>{b.preview}</text>
+                </box>
+              )}
+            </For>
+            <Show when={paletteBuffers()!.length === 0}>
+              <text fg={MUTED}>{"  no buffers"}</text>
+            </Show>
           </Show>
         </box>
       </Show>

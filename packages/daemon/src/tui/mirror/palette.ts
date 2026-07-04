@@ -22,6 +22,7 @@ export type PaletteAction =
   | { kind: "open-file"; path: string; label: string }
   | { kind: "save"; label: string }
   | { kind: "refresh-diff"; label: string }
+  | { kind: "paste-buffer"; label: string }
   | { kind: "new-window"; label: string }
   | { kind: "rename-window"; name: string; label: string }
   | { kind: "kill-window"; label: string }
@@ -75,6 +76,10 @@ export function staticPaletteActions(
   }
   actions.push({ kind: "save", label: "Save file" });
   actions.push({ kind: "refresh-diff", label: "Refresh diff" });
+  // Paste target is the focused surface (a pane, or the editor buffer), so this
+  // is offered on every surface — selecting it opens a second-level list of the
+  // tmux paste buffers rather than dispatching directly.
+  actions.push({ kind: "paste-buffer", label: "Paste buffer…" });
   if (ctx.terminal) {
     actions.push({ kind: "new-window", label: "New window" });
     actions.push({ kind: "kill-window", label: "Kill window" });
@@ -89,6 +94,36 @@ export function staticPaletteActions(
   }
   actions.push({ kind: "quit", label: "Quit" });
   return actions;
+}
+
+/** One tmux paste buffer for the picker: its `name` (e.g. `buffer0`) and a
+ *  short, control-char-sanitized `preview` of its content. */
+export interface TmuxBuffer {
+  name: string;
+  preview: string;
+}
+
+/**
+ * PURE — parse `list-buffers -F "#{buffer_name}\t#{buffer_sample}"` reply lines
+ * into pickable buffers. The sample is truncated to `previewLen` chars and any
+ * control characters (tabs/newlines that survived a sample, C0 bytes) collapse
+ * to a middle-dot so one buffer stays one clean row. Nameless/blank lines drop.
+ */
+export function parseBufferList(lines: readonly string[], previewLen = 40): TmuxBuffer[] {
+  const out: TmuxBuffer[] = [];
+  for (const raw of lines) {
+    if (!raw) continue;
+    const tab = raw.indexOf("\t");
+    const name = (tab === -1 ? raw : raw.slice(0, tab)).trim();
+    if (!name) continue;
+    const sample = tab === -1 ? "" : raw.slice(tab + 1);
+    const preview = sample
+      .slice(0, previewLen)
+      // eslint-disable-next-line no-control-regex
+      .replace(/[\x00-\x1f\x7f]/g, "·");
+    out.push({ name, preview });
+  }
+  return out;
 }
 
 /** A typed query "looks like a path" when it carries a separator or dot — then

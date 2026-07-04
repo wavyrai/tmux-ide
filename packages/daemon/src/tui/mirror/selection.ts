@@ -154,6 +154,41 @@ export function tintRunsInverse<T extends { text: string; attributes: number }>(
   return out;
 }
 
+/**
+ * Set the background color across chars [from,to] (inclusive, in row-char
+ * columns) of a row's styled runs, splitting runs at the boundaries so the
+ * spanned cells render with `bg` while every other run keeps its colors. The
+ * twin of {@link tintRunsInverse} — search-match highlighting paints an accent
+ * background (a distinct treatment from the inverse-video selection) so the two
+ * can coexist on one row. `bg` is packed 0xRRGGBB (the run bg convention).
+ */
+export function tintRunsBg<T extends { text: string; bg: number | null }>(
+  runs: T[],
+  from: number,
+  to: number,
+  bg: number,
+): T[] {
+  if (to < from) return runs;
+  const out: T[] = [];
+  let col = 0;
+  for (const run of runs) {
+    const len = run.text.length;
+    const runStart = col;
+    const runEnd = col + len - 1;
+    col += len;
+    if (len === 0 || runEnd < from || runStart > to) {
+      out.push(run);
+      continue;
+    }
+    const a = Math.max(from, runStart) - runStart;
+    const b = Math.min(to, runEnd) - runStart;
+    if (a > 0) out.push({ ...run, text: run.text.slice(0, a) });
+    out.push({ ...run, text: run.text.slice(a, b + 1), bg });
+    if (b + 1 < len) out.push({ ...run, text: run.text.slice(b + 1) });
+  }
+  return out;
+}
+
 /** The raw OSC52 clipboard-set escape for a base64 payload (BEL-terminated). */
 export function osc52Sequence(base64: string): string {
   return `\x1b]52;c;${base64}\x07`;
