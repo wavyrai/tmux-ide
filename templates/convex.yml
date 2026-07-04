@@ -1,5 +1,7 @@
 name: my-app
 
+before: pnpm install
+
 rows:
   - size: 70%
     panes:

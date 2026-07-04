@@ -1,6 +1,8 @@
 name: my-project
 
-# before: npm install  # optional pre-launch hook
+# before: npm install   # optional pre-launch hook (runs once, before panes start)
+
+# sidebar: true         # inject the fleet nav column (prefix b toggles it live)
 
 rows:
   - size: 70%
@@ -11,10 +13,14 @@ rows:
         command: claude
 
   - panes:
+      # Widget panes render native UI instead of a command:
+      #   type: explorer | changes | preview | config | sidebar
+      - title: Changes
+        type: changes # live git changes — no command, tmux-ide draws it
       - title: Dev Server
         # command: npm run dev
-        # dir: apps/web       # per-pane working directory
-        # env:                 # per-pane environment variables
-        #   PORT: 3000
+        # dir: apps/web          # per-pane working directory
+        # env:                   # per-pane environment variables
+        #   PORT: "3000"
       - title: Shell
-        # focus: true          # give this pane initial focus
+        focus: true # give this pane initial focus

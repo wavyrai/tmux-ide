@@ -57,22 +57,17 @@ Surface useful findings early without stalling delivery. Prefer high-signal obse
 
 ## Reporting Protocol
 
-When you finish, record the result on your assigned task:
+Self-report your state — this drives the fleet status glyphs (see AGENTS.md):
 
-`tmux-ide task done <TASK_ID> --proof "findings, evidence, severity, next actions" --summary "short research takeaway"`
+    tmux set-option -p @agent_state "done:$(date +%s)"   # working|blocked|done|idle
 
-Your proof should include:
+Then send your findings to the lead:
+
+    tmux-ide send <lead-pane> "findings, evidence, severity, next actions"
+
+Your report should include:
 
 - What you inspected
 - The most important findings
 - Why they matter
 - The exact next action you recommend
-
-## After Completion
-
-When you finish, the orchestrator will:
-
-- Notify the lead with your proof and summary
-- Run any configured after-run hooks
-- Auto-dispatch the next available task
-- Append your summary to the learnings library
