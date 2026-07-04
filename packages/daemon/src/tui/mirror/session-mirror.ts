@@ -268,7 +268,14 @@ export class SessionMirror {
       const seed = await this.client
         .command(`capture-pane -p -e -J -S -300 -t ${pane.id}`)
         .catch(() => []);
-      if (seed.length > 0) mirror.write(seed.join("\r\n") + "\r\n");
+      // The control client reads replies as latin1 (one JS char per byte —
+      // required for the protocol), so the seed is a byte string in disguise:
+      // re-encode latin1 → bytes before feeding the VT parser, or every
+      // multibyte glyph shatters into mojibake (…→â¦, ⇡→â¡ — user-reported,
+      // "weird a's with a roof"). The live %output path already decodes bytes.
+      if (seed.length > 0) {
+        mirror.write(Buffer.from(seed.join("\r\n") + "\r\n", "latin1"));
+      }
     }
     for (const pane of resized) {
       this.mirrors.get(pane.id)?.resize(pane.width, pane.height);
