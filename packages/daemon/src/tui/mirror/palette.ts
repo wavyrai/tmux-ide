@@ -22,7 +22,18 @@ export type PaletteAction =
   | { kind: "open-file"; path: string; label: string }
   | { kind: "save"; label: string }
   | { kind: "refresh-diff"; label: string }
+  | { kind: "new-window"; label: string }
+  | { kind: "rename-window"; name: string; label: string }
+  | { kind: "kill-window"; label: string }
+  | { kind: "zoom-pane"; label: string }
   | { kind: "quit"; label: string };
+
+/** Context the palette needs beyond the fuzzy query. `terminal` gates the
+ *  window/pane verbs (New/Rename/Kill window, Zoom pane) to the Terminal surface
+ *  — they are no-ops on Home/Files/Diff, so they only clutter the list there. */
+export interface PaletteContext {
+  terminal?: boolean;
+}
 
 const TAB_LABELS: { tab: Tab; label: string }[] = [
   { tab: "home", label: "Switch tab: Home" },
@@ -32,8 +43,12 @@ const TAB_LABELS: { tab: Tab; label: string }[] = [
 ];
 
 /** PURE — the always-available static actions: the four tab switches, one
- *  attach-session per fleet session, then Save / Refresh diff / Quit. */
-export function staticPaletteActions(sessions: string[]): PaletteAction[] {
+ *  attach-session per fleet session, then Save / Refresh diff, the Terminal-only
+ *  window/pane verbs, and Quit. */
+export function staticPaletteActions(
+  sessions: string[],
+  ctx: PaletteContext = {},
+): PaletteAction[] {
   const actions: PaletteAction[] = TAB_LABELS.map((t) => ({
     kind: "tab" as const,
     tab: t.tab,
@@ -44,6 +59,11 @@ export function staticPaletteActions(sessions: string[]): PaletteAction[] {
   }
   actions.push({ kind: "save", label: "Save file" });
   actions.push({ kind: "refresh-diff", label: "Refresh diff" });
+  if (ctx.terminal) {
+    actions.push({ kind: "new-window", label: "New window" });
+    actions.push({ kind: "kill-window", label: "Kill window" });
+    actions.push({ kind: "zoom-pane", label: "Zoom pane" });
+  }
   actions.push({ kind: "quit", label: "Quit" });
   return actions;
 }
@@ -61,16 +81,22 @@ function looksLikePath(q: string): boolean {
  * query looks like a path, otherwise appended LAST so it never buries a real
  * match. An empty query returns every static action in natural order.
  */
-export function filterPaletteActions(query: string, sessions: string[]): PaletteAction[] {
-  const statics = staticPaletteActions(sessions);
+export function filterPaletteActions(
+  query: string,
+  sessions: string[],
+  ctx: PaletteContext = {},
+): PaletteAction[] {
+  const statics = staticPaletteActions(sessions, ctx);
   const q = query.trim();
   const matched =
     q.length === 0 ? statics : fuzzyFilter(query, statics, (a) => a.label).map((m) => m.item);
   if (q.length === 0) return matched;
-  const openFile: PaletteAction = {
-    kind: "open-file",
-    path: q,
-    label: `Open file: ${q}`,
-  };
-  return looksLikePath(q) ? [openFile, ...matched] : [...matched, openFile];
+  const dynamic: PaletteAction[] = [{ kind: "open-file", path: q, label: `Open file: ${q}` }];
+  // On the Terminal surface a non-empty query also offers a rename-to-<query>
+  // window verb (there is no way to fuzzy-match a name you are still typing —
+  // same reasoning as the open-file entry).
+  if (ctx.terminal) {
+    dynamic.push({ kind: "rename-window", name: q, label: `Rename window: ${q}` });
+  }
+  return looksLikePath(q) ? [...dynamic, ...matched] : [...matched, ...dynamic];
 }

@@ -28,15 +28,30 @@ export interface PaneGeometry {
   active: boolean;
   /** The pane's APP turned mouse reporting on (forward real SGR events). */
   appMouse: boolean;
+  /** The pane's WINDOW is zoomed (`#{window_zoomed_flag}`). A window property, so
+   *  every pane of the same window reports the same value; the app reads it off
+   *  the focused pane to tint the zoom button and show the `[Z]` chip. */
+  zoomed: boolean;
 }
 
-/** PURE — parse `list-panes -F "#{pane_id} #{pane_left} …"` reply lines. */
+/** PURE — parse `list-panes -F "#{pane_id} #{pane_left} …"` reply lines. The
+ *  trailing `window_zoomed_flag` field is optional (absent lines parse as not
+ *  zoomed) so older format strings and fixtures stay valid. */
 export function parsePaneGeometry(lines: string[]): PaneGeometry[] {
   const panes: PaneGeometry[] = [];
   for (const line of lines) {
     const parts = line.trim().split(/\s+/);
     if (parts.length < 6) continue;
-    const [id = "", left = "", top = "", width = "", height = "", active = "", mouse = ""] = parts;
+    const [
+      id = "",
+      left = "",
+      top = "",
+      width = "",
+      height = "",
+      active = "",
+      mouse = "",
+      zoomed = "",
+    ] = parts;
     if (!id.startsWith("%")) continue;
     const nums = [left, top, width, height].map(Number);
     if (nums.some((n) => !Number.isInteger(n) || n < 0)) continue;
@@ -48,6 +63,7 @@ export function parsePaneGeometry(lines: string[]): PaneGeometry[] {
       height: nums[3]!,
       active: active === "1",
       appMouse: mouse === "1",
+      zoomed: zoomed === "1",
     });
   }
   return panes;
@@ -100,6 +116,7 @@ const STRUCTURAL_NOTIFICATIONS = new Set([
   "layout-change",
   "window-add",
   "window-close",
+  "window-renamed",
   "window-pane-changed",
   "session-window-changed",
   "unlinked-window-close",
@@ -249,7 +266,7 @@ export class SessionMirror {
 
   private async sync(): Promise<void> {
     const lines = await this.client.command(
-      `list-panes -t ${this.opts.target} -F "#{pane_id} #{pane_left} #{pane_top} #{pane_width} #{pane_height} #{pane_active} #{mouse_any_flag}"`,
+      `list-panes -t ${this.opts.target} -F "#{pane_id} #{pane_left} #{pane_top} #{pane_width} #{pane_height} #{pane_active} #{mouse_any_flag} #{window_zoomed_flag}"`,
     );
     const next = parsePaneGeometry(lines);
     const { added, removed, resized } = diffPanes(this.geometry, next);

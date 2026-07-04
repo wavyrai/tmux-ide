@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { parsePaneGeometry, diffPanes, type PaneGeometry } from "./session-mirror.ts";
 
 const g = (id: string, left: number, top: number, w: number, h: number, active = false) =>
-  ({ id, left, top, width: w, height: h, active, appMouse: false }) as PaneGeometry;
+  ({ id, left, top, width: w, height: h, active, appMouse: false, zoomed: false }) as PaneGeometry;
 
 describe("parsePaneGeometry", () => {
   it("parses list-panes lines", () => {
@@ -15,6 +15,11 @@ describe("parsePaneGeometry", () => {
     expect(parsePaneGeometry(["junk", "%3 0 0 x 20 0", "", "%4 1 2 3 4 0 0"])).toEqual([
       g("%4", 1, 2, 3, 4),
     ]);
+  });
+  it("reads the trailing window_zoomed_flag", () => {
+    const [a, b] = parsePaneGeometry(["%1 0 0 80 20 1 0 1", "%2 81 0 79 20 0 1 0"]);
+    expect(a).toMatchObject({ id: "%1", active: true, appMouse: false, zoomed: true });
+    expect(b).toMatchObject({ id: "%2", active: false, appMouse: true, zoomed: false });
   });
 });
 

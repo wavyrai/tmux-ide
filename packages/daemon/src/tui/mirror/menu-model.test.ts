@@ -14,14 +14,17 @@ describe("MENU_ITEMS", () => {
     expect(MENU_ITEMS.file.map((i) => i.id)).toEqual(["open", "newfile", "rename", "delete"]);
     expect(MENU_ITEMS.difffile.map((i) => i.id)).toEqual(["open", "copypath"]);
     expect(MENU_ITEMS.pane.map((i) => i.id)).toEqual(["split-h", "split-v", "zoom", "kill"]);
+    expect(MENU_ITEMS.window.map((i) => i.id)).toEqual(["new", "rename", "kill"]);
   });
 
   it("marks destructive items danger and text-entry items input", () => {
     expect(MENU_ITEMS.session.find((i) => i.id === "kill")?.danger).toBe(true);
     expect(MENU_ITEMS.pane.find((i) => i.id === "kill")?.danger).toBe(true);
     expect(MENU_ITEMS.file.find((i) => i.id === "delete")?.danger).toBe(true);
+    expect(MENU_ITEMS.window.find((i) => i.id === "kill")?.danger).toBe(true);
     expect(MENU_ITEMS.session.find((i) => i.id === "rename")?.input).toBe("rename to");
     expect(MENU_ITEMS.file.find((i) => i.id === "newfile")?.input).toBe("new file");
+    expect(MENU_ITEMS.window.find((i) => i.id === "rename")?.input).toBe("rename to");
   });
 });
 

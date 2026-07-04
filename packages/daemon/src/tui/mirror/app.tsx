@@ -355,6 +355,14 @@ const SCROLL_THUMB_HOVER_BG = RGBA.fromInts(120, 130, 170, 255);
 const BUTTON_FG = RGBA.fromInts(150, 160, 190, 255);
 const BUTTON_BG = RGBA.fromInts(34, 38, 54, 255);
 const BUTTON_HOVER_BG = RGBA.fromInts(52, 60, 86, 255);
+// A toggled-on chip (the zoom button while the focused pane's window is zoomed):
+// the accent, tinted down so the button still reads as a chip, not a label.
+const BUTTON_ACTIVE_BG = RGBA.fromInts(58, 78, 128, 255);
+/** tmux command-lexer single-quoting for an interpolated argument (a renamed
+ *  window name typed by the user): wrap in single quotes, and splice any embedded
+ *  quote as `'\''` (close, escaped quote, reopen — tmux's lexer, like the shell,
+ *  honours the backslash outside quotes). */
+const tmuxQuote = (s: string): string => `'${s.replace(/'/g, "'\\''")}'`;
 const rgbaCache = new Map<number, RGBA>();
 const packedToRgba = (packed: number | null, fallback: RGBA): RGBA => {
   if (packed === null) return fallback;
@@ -519,6 +527,7 @@ render(() => {
     fileParent?: string;
     diffPath?: string;
     paneId?: string;
+    windowIndex?: number;
   }
   const [menu, setMenu] = createSignal<MenuState | null>(null);
   const [menuSel, setMenuSel] = createSignal(0);
@@ -1011,6 +1020,7 @@ render(() => {
     filterPaletteActions(
       paletteQuery(),
       fleet().map((s) => s.name),
+      { terminal: mode() === "mirror" },
     ),
   );
   const openPalette = () => {
@@ -1037,6 +1047,33 @@ render(() => {
         if (mode() === "diff") refreshStatus();
         else enterDiff(workspaceDir());
         break;
+      case "new-window":
+        void mirror?.command(`new-window -t ${curTarget()}:`).catch(() => {});
+        setStatusNote("new window");
+        break;
+      case "rename-window": {
+        const idx = windowTabs().find((w) => w.active)?.index;
+        if (idx !== undefined) {
+          void mirror
+            ?.command(`rename-window -t ${curTarget()}:${idx} ${tmuxQuote(a.name)}`)
+            .catch(() => {});
+          setStatusNote(`renamed window → ${a.name}`);
+        }
+        break;
+      }
+      case "kill-window": {
+        const idx = windowTabs().find((w) => w.active)?.index;
+        if (idx !== undefined) {
+          void mirror?.command(`kill-window -t ${curTarget()}:${idx}`).catch(() => {});
+          setStatusNote("killed window");
+        }
+        break;
+      }
+      case "zoom-pane": {
+        const pid = mirror?.focusedPane();
+        if (pid) void mirror?.command(`resize-pane -Z -t ${pid}`).catch(() => {});
+        break;
+      }
       case "quit":
         mirror?.dispose();
         editBuffer?.destroy();
@@ -1454,7 +1491,25 @@ render(() => {
         diffPath: join(diffDir(), entry.path),
       };
     }
-    // mirror: the pane canvas lives below the header (gy=0) + window strip (gy=1).
+    // mirror: gy=0 is the target/status row (no menu); gy=1 is the WINDOW STRIP —
+    // a right-click there opens the window menu. The window under a label span is
+    // the target; an empty-area / button right-click (span miss) falls back to the
+    // ACTIVE window. This dual targeting means the menu still opens even if the
+    // strip's known label-cell click swallow (see windowStripParts) eats the hit,
+    // because the empty area to the right of the labels always routes.
+    if (gy === 1) {
+      const i = spanHit(windowSpans(), x);
+      const tabs = windowTabs();
+      const w = i >= 0 ? tabs[i] : tabs.find((t) => t.active);
+      if (!w) return null;
+      return {
+        region: "window",
+        title: w.name,
+        items: MENU_ITEMS.window,
+        windowIndex: w.index,
+      };
+    }
+    // The pane canvas lives below the header (gy=0) + window strip (gy=1).
     if (gy < HEADER_ROWS) return null;
     const cx = x - sidebarW();
     const cy = gy - HEADER_ROWS;
@@ -1558,6 +1613,22 @@ render(() => {
         return;
       }
       if (id === "copypath" && m.diffPath) copyText(m.diffPath);
+      closeMenu();
+      return;
+    }
+    if (m.region === "window") {
+      const sess = curTarget();
+      const idx = m.windowIndex;
+      if (id === "new") {
+        void mirror?.command(`new-window -t ${sess}:`).catch(() => {});
+        setStatusNote("new window");
+      } else if (id === "rename" && val && idx !== undefined) {
+        void mirror?.command(`rename-window -t ${sess}:${idx} ${tmuxQuote(val)}`).catch(() => {});
+        setStatusNote(`renamed window → ${val}`);
+      } else if (id === "kill" && idx !== undefined) {
+        void mirror?.command(`kill-window -t ${sess}:${idx}`).catch(() => {});
+        setStatusNote("killed window");
+      }
       closeMenu();
       return;
     }
@@ -1862,6 +1933,8 @@ render(() => {
   interface HeaderButton {
     id: string;
     label: string;
+    /** Toggled-on chip (the zoom button while zoomed) — renders active-tinted. */
+    active?: boolean;
   }
   // Every header row ends flush at the main column's right edge (no paddingRight
   // anywhere on the chain), which is the terminal width.
@@ -1907,11 +1980,22 @@ render(() => {
       ),
     };
   });
-  /** Buttons on the terminal window-strip row (gy=1): a vertical split of the
-   *  focused pane. Placed on the far right, clear of the window-label cells. */
+  // The focused pane and its window's zoom state, derived from the live geometry
+  // (window_zoomed_flag is a window property, so every pane of the active window
+  // reports the same value; reading the focused pane keeps the intent clear).
+  const focusedLivePane = () => panes().find((p) => p.active);
+  const isZoomed = () => focusedLivePane()?.zoomed ?? false;
+  /** Buttons on the terminal window-strip row (gy=1): zoom-toggle then a vertical
+   *  split of the focused pane. Placed on the far right, clear of the window-label
+   *  cells. The zoom chip renders active-tinted while the window is zoomed. */
   const stripButtons = createMemo<{ defs: HeaderButton[]; spans: Span[] }>(() => {
     const defs: HeaderButton[] =
-      mode() === "mirror" && panes().length > 0 ? [{ id: "split", label: "[+ split]" }] : [];
+      mode() === "mirror" && panes().length > 0
+        ? [
+            { id: "zoom", label: "[⛶]", active: isZoomed() },
+            { id: "split", label: "[+ split]" },
+          ]
+        : [];
     return {
       defs,
       spans: spansFromRight(
@@ -1933,6 +2017,9 @@ render(() => {
     else if (id === "split") {
       const pid = mirror?.focusedPane();
       if (pid) void mirror?.command(`split-window -h -t ${pid}`).catch(() => {});
+    } else if (id === "zoom") {
+      const pid = mirror?.focusedPane();
+      if (pid) void mirror?.command(`resize-pane -Z -t ${pid}`).catch(() => {});
     } else if (id === "home-open") setPathPrompt("");
     else if (id === "home-diff") {
       // Mirror the home `d` key: adopt the selected session's dir as context and
@@ -2429,7 +2516,12 @@ render(() => {
       <box flexGrow={1} />
       <For each={buttons().defs}>
         {(b, i) => (
-          <text fg={BUTTON_FG} bg={isHovered("button", i()) ? BUTTON_HOVER_BG : BUTTON_BG}>
+          <text
+            fg={BUTTON_FG}
+            bg={
+              b.active ? BUTTON_ACTIVE_BG : isHovered("button", i()) ? BUTTON_HOVER_BG : BUTTON_BG
+            }
+          >
             {b.label}
           </text>
         )}
@@ -2593,6 +2685,16 @@ render(() => {
                 {windowStripParts().active}
               </text>
               <text fg={MUTED}>{windowStripParts().post}</text>
+              {/* Zoomed indicator: the focused pane's id + a [Z] chip, shown only
+                  while the window is zoomed. Left-aligned after the labels; the
+                  button row's flexGrow spacer keeps the [⛶]/[+ split] chips pinned
+                  right regardless, and windowSpans are measured from the left, so
+                  neither the click routing nor the button spans shift. */}
+              <Show when={isZoomed()}>
+                <text fg={ACCENT} bg={TAB_ACTIVE_BG} attributes={1}>
+                  {` ${focusedLivePane()?.id ?? ""} [Z] `}
+                </text>
+              </Show>
               {buttonRow(stripButtons)}
             </box>
             <box position="relative" flexGrow={1} backgroundColor={GUTTER_BG}>

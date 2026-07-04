@@ -41,4 +41,21 @@ describe("filterPaletteActions", () => {
     const labels = filterPaletteActions("quit", []).map((a) => a.label);
     expect(labels).toContain("Quit");
   });
+
+  it("offers the window/pane verbs only in terminal context", () => {
+    const off = staticPaletteActions(["a"]).map((x) => x.kind);
+    expect(off).not.toContain("new-window");
+    expect(off).not.toContain("zoom-pane");
+    const on = staticPaletteActions(["a"], { terminal: true }).map((x) => x.kind);
+    expect(on).toEqual(expect.arrayContaining(["new-window", "kill-window", "zoom-pane"]));
+  });
+
+  it("appends a rename-window verb for a non-empty terminal query", () => {
+    const actions = filterPaletteActions("build", ["a"], { terminal: true });
+    expect(actions.some((x) => x.kind === "rename-window" && x.name === "build")).toBe(true);
+    // …and never off the Terminal surface.
+    expect(filterPaletteActions("build", ["a"]).some((x) => x.kind === "rename-window")).toBe(
+      false,
+    );
+  });
 });

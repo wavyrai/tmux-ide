@@ -16,7 +16,7 @@
 /** The surfaces a right-click can target. Each maps to a fixed item list; the
  *  concrete payload (session name, file path, pane id) rides in the app's menu
  *  state, not here. */
-export type MenuRegion = "session" | "file" | "difffile" | "pane";
+export type MenuRegion = "session" | "file" | "difffile" | "pane" | "window";
 
 /** One menu entry. `id` is what the app dispatches on; `danger` items rearm to
  *  a "confirm: y" state instead of firing immediately; `input` items open an
@@ -50,6 +50,11 @@ export const MENU_ITEMS: Record<MenuRegion, MenuItem[]> = {
     { id: "split-v", label: "Split vertical" },
     { id: "zoom", label: "Zoom toggle" },
     { id: "kill", label: "Kill pane", danger: true },
+  ],
+  window: [
+    { id: "new", label: "New window" },
+    { id: "rename", label: "Rename window", input: "rename to" },
+    { id: "kill", label: "Kill window", danger: true },
   ],
 };
 
