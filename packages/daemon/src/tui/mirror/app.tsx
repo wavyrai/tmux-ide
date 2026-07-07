@@ -330,9 +330,11 @@ const DEFAULT_BG = RGBA.fromInts(16, 16, 22, 255);
 // the blit writes packed channels straight into the buffer, no RGBA per cell.
 const DEFAULT_FG_PACKED = 0xd4d4d8;
 const DEFAULT_BG_PACKED = 0x101016;
-// A/B flag: the <pane_surface> framebuffer blit vs. the default StyledRun <For>.
-// The flag flip + old-path deletion are the NEXT card; this one keeps both.
-const FB_PANES = process.env.TMUX_IDE_FB_PANES === "1";
+// The <pane_surface> framebuffer blit is now the DEFAULT (M21.4); TMUX_IDE_FB_PANES=0
+// is an opt-OUT kill switch (kept one release) that falls back to the StyledRun
+// <For> path below. The kill switch's removal + the StyledRun deletion are the
+// follow-up card.
+const FB_PANES = process.env.TMUX_IDE_FB_PANES !== "0";
 const GUTTER_BG = RGBA.fromInts(38, 40, 52, 255);
 const GUTTER_FG = RGBA.fromInts(96, 100, 120, 255);
 const MODIFIED_FG = RGBA.fromInts(235, 200, 100, 255);
@@ -479,11 +481,11 @@ render(
       bareHome ? (persisted.contextSession ?? "") : target,
     );
     const [panes, setPanes] = createSignal<LivePane[]>([]);
-    // ── FRAMEBUFFER-BLIT PLUMBING (M21.3, flagged) ───────────────────────────
-    // Under FB_PANES the 8ms tick fetches geometry-only panes (no styled rows)
-    // and bumps this epoch; each <pane_surface> reads it as `contentVersion` and
-    // re-blits only when it changes — coalesced content-dirty, not per-%output.
-    const [contentEpoch, setContentEpoch] = createSignal(0);
+    // ── FRAMEBUFFER-BLIT PLUMBING (M21.3/M21.4) ──────────────────────────────
+    // Under FB_PANES the 8ms tick fetches geometry-only panes (no styled rows).
+    // Each <pane_surface> reads its pane's PER-PANE version (`LivePane.version`)
+    // as `contentVersion` and walks only when THAT changes — so a quiet pane in a
+    // multi-pane window never re-reads while a sibling floods (M21.4).
     // The <For> that maps panes to surfaces keys on the id list (stable identity),
     // NOT the freshly-rebuilt panes() array — so a content tick REUSES each
     // pane_surface (and its framebuffer) instead of tearing it down and back up.
@@ -1312,11 +1314,10 @@ render(
         if (!dirty || !mirror) return;
         dirty = false;
         const t0 = performance.now();
-        // FB path: fetch geometry + cursor/offset only (no styled-row rebuild) —
-        // the <pane_surface> reads cells via the blit. Bump the content epoch so
-        // each surface re-blits even when geometry is unchanged (pure content).
+        // FB path: fetch geometry + cursor/offset + per-pane version only (no
+        // styled-row rebuild) — the <pane_surface> reads cells via the blit and
+        // gates its walk on the version, so unchanged panes cost nothing.
         setPanes(mirror.panes(scrollOffsets, !FB_PANES));
-        if (FB_PANES) setContentEpoch((e) => e + 1);
         // Under FB the real per-tick cost moved to the blit (tapped in the
         // renderable → same zz-perf.log); this tick is now geometry-only, so
         // don't pollute the "snapshot ms/tick" samples with its ~0ms.
@@ -3314,7 +3315,7 @@ render(
                               searchCur={SEARCH_CUR}
                               scrollOffset={pane()!.snapshot.scrollOffset}
                               paneFocused={pane()!.active}
-                              contentVersion={contentEpoch()}
+                              contentVersion={pane()!.version}
                               selRange={mirrorSelForPane(id)}
                               search={mirrorSearchForPane(pane()!)}
                             />

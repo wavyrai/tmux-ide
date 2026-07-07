@@ -79,6 +79,32 @@ function buildXtermPalette(): number[] {
   return palette;
 }
 
+/** Per-call inputs for the incremental {@link PaneMirror.blit} (M21.4). */
+export interface BlitOptions {
+  /** Repaint every visible row and refill the shadow (first frame, resize, a
+   *  scrolled/searching view, or any time the framebuffer may be out of sync). */
+  full: boolean;
+  /** Extra rows to repaint regardless of the content compare — the caller's
+   *  selection/search churn (the union of the old and new highlighted rows). */
+  forceRows?: readonly number[] | null;
+  /** OUT — the rows actually written this call. The caller clears it first and
+   *  re-applies its selection/search post-passes over exactly these rows. */
+  dirtyRows: number[];
+  /** OUT — multi-codepoint grapheme cells to re-write via `setCell`. */
+  graphemes?: GraphemeOverride[];
+}
+
+/** True iff the shadow slice at `off` equals `data` (an exact per-row cell-data
+ *  compare — no hash, so no collision can strand a stale row). Early-exits on the
+ *  first differing u32. */
+function shadowMatches(shadow: Uint32Array, off: number, data: Uint32Array): boolean {
+  if (data.length + off > shadow.length) return false;
+  for (let k = 0; k < data.length; k++) {
+    if (shadow[off + k] !== data[k]) return false;
+  }
+  return true;
+}
+
 export class PaneMirror {
   private readonly term: Terminal;
   /** Ack-paced writes (M21.5): xterm's `write` is async with a completion
@@ -96,10 +122,48 @@ export class PaneMirror {
   cols: number;
   rows: number;
 
+  // ── Incremental-blit state (M21.4) ─────────────────────────────────────────
+  /** Per-pane content version — bumps on any grid change (parse/scroll/resize).
+   *  A surface gates its walk on this: an unchanged pane never re-reads. */
+  private _version = 0;
+  /** Net forward scrolls (line count) since the last blit — drives the shift
+   *  fast path. Counted from xterm's onScroll (which fires once per scrolled
+   *  line and keeps firing at the scrollback cap, unlike the saturating payload). */
+  private _pendingScroll = 0;
+  /** The alt/normal buffer swapped (`?1049h/l`) — the whole grid is new. */
+  private _bufferSwapped = false;
+  /** Shadow of the last-blitted rows' raw xterm cell data (`_line._data`,
+   *  cols×3 u32/row) — an EXACT compare finds changed rows with no getter cost
+   *  and no hash-collision risk. Null until the capability probe or a resize. */
+  private _shadow: Uint32Array | null = null;
+  private _shadowValid = false;
+  /** `_line._data` reachable (xterm-headless internal, pinned 6.0). When false,
+   *  the blit degrades to a full repaint every walk — correct, just not
+   *  incremental. */
+  private _incremental = true;
+  /** The visible row the cursor last painted on, so a cursor move re-blits the
+   *  vacated row (the shadow tracks `_data`, which has no cursor overlay). */
+  private _lastCursorRow = -1;
+
   constructor(cols: number, rows: number) {
     this.cols = cols;
     this.rows = rows;
     this.term = new Terminal({ cols, rows, allowProposedApi: true, scrollback: 5000 });
+    this.term.onWriteParsed(() => this._version++);
+    this.term.onScroll(() => this._pendingScroll++);
+    this.term.buffer.onBufferChange(() => {
+      this._bufferSwapped = true;
+      this._version++;
+    });
+    // Capability probe (once): can we reach xterm's raw per-line cell data for
+    // the exact-compare dirty check? If not, the blit repaints in full.
+    const probe = this.term.buffer.active.getLine(0) as { _line?: { _data?: unknown } } | undefined;
+    this._incremental = probe?._line?._data instanceof Uint32Array;
+  }
+
+  /** The per-pane content version (M21.4) — see {@link _version}. */
+  contentVersion(): number {
+    return this._version;
   }
 
   /** Feed raw pane bytes (UTF-8) from a control-mode %output event. */
@@ -113,6 +177,12 @@ export class PaneMirror {
     this.cols = cols;
     this.rows = rows;
     this.term.resize(cols, rows);
+    // Geometry changed — the shadow and any prior framebuffer are stale; the
+    // next blit must repaint in full (the surface also forces it on its resize).
+    this._shadow = null;
+    this._pendingScroll = 0;
+    this._bufferSwapped = false;
+    this._version++;
   }
 
   /** Lines available above the live viewport (how far back scroll can go). */
@@ -213,18 +283,26 @@ export class PaneMirror {
   }
 
   /**
-   * Blit the visible grid straight into a framebuffer's packed typed arrays —
-   * the native-feel render path (M21.3). Same cell semantics as {@link snapshot}
-   * (colors resolved to `0xRRGGBB`, the OpenTUI attribute bitmask, wide-glyph
-   * spacers, focused-pane cursor as an inverse cell) but with no `StyledRun[]`
-   * rebuild and no per-run `RGBA` — each cell is a handful of typed-array stores.
+   * Blit the visible grid into a framebuffer's packed typed arrays — the
+   * native-feel render path, now INCREMENTAL (M21.4). Same cell semantics as
+   * {@link snapshot} (colors → `0xRRGGBB`, the OpenTUI attribute bitmask,
+   * wide-glyph spacers, focused cursor as a reverse-video cell) but only the rows
+   * that actually changed are rewritten:
    *
-   * `buffers` are `OptimizedBuffer.buffers` (or a plain-array stand-in). Cells
-   * beyond the pane content or below the last row fill with a default-styled
-   * space. `defaultFg`/`defaultBg` are packed `0xRRGGBB` for the terminal
-   * default (a cell whose fg/bg is `null`). Multi-codepoint graphemes get their
-   * base codepoint here and are pushed to `graphemes` (cleared by the caller) for
-   * the owner to re-write via `setCell` — see {@link GraphemeOverride}.
+   *  - A **scroll fast path** (xterm `onScroll` counted forward-scroll lines)
+   *    shifts the already-correct pixels up with `copyWithin`, so a flood repaints
+   *    only the new bottom rows, not the whole grid.
+   *  - A **per-row exact compare** of xterm's raw cell data against a shadow finds
+   *    in-place changes (alt-screen redraws) with no getter cost; unchanged rows
+   *    are skipped (~78% of the blit cost is the writes we then avoid).
+   *  - `opts.full` repaints everything (first frame, resize, scrolled/searching
+   *    view), `opts.forceRows` repaints the caller's selection/search churn, and
+   *    the cursor's old+new rows always repaint (the overlay isn't in the shadow).
+   *
+   * `opts.dirtyRows` is filled with the rows written (the caller re-applies its
+   * post-passes there). `defaultFg`/`defaultBg` are packed `0xRRGGBB` for the
+   * terminal default. When the raw-cell-data internal is unreachable the blit
+   * degrades to a full repaint every call (still correct).
    */
   blit(
     buffers: CellArrays,
@@ -234,7 +312,7 @@ export class PaneMirror {
     withCursor: boolean,
     defaultFg: number,
     defaultBg: number,
-    graphemes?: GraphemeOverride[],
+    opts: BlitOptions,
   ): void {
     const buf = this.term.buffer.active;
     const offset = Math.max(0, Math.min(scrollOffset, buf.viewportY));
@@ -242,65 +320,160 @@ export class PaneMirror {
     const live = offset === 0;
     const cell = buf.getNullCell();
     const cols = Math.min(this.cols, width);
+    const rowLen = this.cols * 3; // xterm packs 3 u32 per cell (content/fg/bg)
+
+    // (Re)size the shadow to the current geometry; a fresh shadow is invalid, so
+    // the first blit after it repaints in full and fills it.
+    if (this._incremental) {
+      if (this._shadow === null || this._shadow.length !== rowLen * height) {
+        this._shadow = rowLen * height > 0 ? new Uint32Array(rowLen * height) : null;
+        this._shadowValid = false;
+      }
+    }
+
+    // A full repaint is forced on the first frame, a resize, a buffer swap, a
+    // scrolled/searching view (offset > 0 — the whole window is different), or
+    // when the incremental machinery is unavailable.
+    const full =
+      opts.full ||
+      !live ||
+      this._bufferSwapped ||
+      !this._incremental ||
+      !this._shadowValid ||
+      this._shadow === null;
+    this._bufferSwapped = false;
+
+    // Scroll fast path: shift the already-correct pixels + shadow up so only the
+    // newly exposed bottom rows fall out of sync.
+    let shift = 0;
+    if (!full && this._pendingScroll > 0) shift = Math.min(this._pendingScroll, height);
+    this._pendingScroll = 0;
+    if (shift > 0 && this._shadow) {
+      const w4 = width * 4;
+      buffers.char.copyWithin(0, shift * width, height * width);
+      buffers.fg.copyWithin(0, shift * w4, height * w4);
+      buffers.bg.copyWithin(0, shift * w4, height * w4);
+      buffers.attributes.copyWithin(0, shift * width, height * width);
+      this._shadow.copyWithin(0, shift * rowLen, height * rowLen);
+    }
+    const bottomDirtyFrom = full ? 0 : height - shift;
+
     const dfR = (defaultFg >> 16) & 0xff;
     const dfG = (defaultFg >> 8) & 0xff;
     const dfB = defaultFg & 0xff;
     const dbR = (defaultBg >> 16) & 0xff;
     const dbG = (defaultBg >> 8) & 0xff;
     const dbB = defaultBg & 0xff;
+    const forceRows = opts.forceRows && opts.forceRows.length ? opts.forceRows : null;
+    const cursorRow = withCursor && live ? buf.cursorY : -1;
 
     for (let y = 0; y < height; y++) {
-      const line = y < this.rows ? buf.getLine(baseY + y) : null;
-      const isCursorRow = withCursor && live && line !== null && y === buf.cursorY;
-      for (let x = 0; x < width; x++) {
-        const idx = y * width + x;
-        if (!line || x >= cols) {
-          writeCell(buffers, idx, SPACE_CODE, null, null, 0, dfR, dfG, dfB, dbR, dbG, dbB);
-          continue;
-        }
-        line.getCell(x, cell);
-        if (cell.getWidth() === 0) {
-          // Spacer half of the preceding wide glyph — inherit its colors.
-          writeContinuation(buffers, idx);
-          continue;
-        }
+      const data = this._incremental ? this.rowData(baseY, y) : null;
+      let dirty =
+        full ||
+        y >= bottomDirtyFrom ||
+        y === cursorRow ||
+        y === this._lastCursorRow ||
+        data === null; // no shadow info for this row → always repaint
+      if (!dirty && this._shadow) dirty = !shadowMatches(this._shadow, y * rowLen, data!);
+      if (!dirty && forceRows) {
+        for (let i = 0; i < forceRows.length; i++)
+          if (forceRows[i] === y) {
+            dirty = true;
+            break;
+          }
+      }
+      if (!dirty) continue;
 
-        let fg: number | null = null;
-        if (cell.isFgRGB()) fg = cell.getFgColor();
-        else if (cell.isFgPalette()) fg = XTERM_PALETTE[cell.getFgColor()] ?? null;
+      this.blitRow(cell, buffers, y, baseY, width, cols, live, withCursor, dfR, dfG, dfB, dbR, dbG, dbB, defaultFg, defaultBg, opts.graphemes);
+      if (this._shadow && data) this._shadow.set(data, y * rowLen);
+      opts.dirtyRows.push(y);
+    }
+    this._lastCursorRow = cursorRow;
+    if (this._incremental && this._shadow) this._shadowValid = true;
+  }
 
-        let bg: number | null = null;
-        if (cell.isBgRGB()) bg = cell.getBgColor();
-        else if (cell.isBgPalette()) bg = XTERM_PALETTE[cell.getBgColor()] ?? null;
+  /** The raw xterm cell data for visible row `y` (`cols`×3 u32), or null when the
+   *  row or the internal is unavailable. See the constructor's capability probe. */
+  private rowData(baseY: number, y: number): Uint32Array | null {
+    if (y >= this.rows) return null;
+    const line = this.term.buffer.active.getLine(baseY + y) as
+      | { _line?: { _data?: Uint32Array } }
+      | undefined;
+    const data = line?._line?._data;
+    return data instanceof Uint32Array ? data : null;
+  }
 
-        let attrs = 0;
-        if (cell.isBold()) attrs |= ATTR_BOLD;
-        if (cell.isDim()) attrs |= ATTR_DIM;
-        if (cell.isItalic()) attrs |= ATTR_ITALIC;
-        if (cell.isUnderline()) attrs |= ATTR_UNDERLINE;
-        if (cell.isStrikethrough()) attrs |= ATTR_STRIKETHROUGH;
-        // Reverse video (app INVERSE ^ the focused cursor cell) renders as a
-        // fg/bg SWAP, not the INVERSE attribute bit — a framebuffer cell carrying
-        // that bit does not flush as reverse (see blit.ts). Resolve nulls to the
-        // defaults first so default-on-default inverts to defaultBg-on-defaultFg.
-        const inverted = !!cell.isInverse() !== (isCursorRow && x === buf.cursorX);
+  /** Write one visible row's cells into the framebuffer (the M21.3 per-cell blit,
+   *  extracted so the incremental path repaints a single row). */
+  private blitRow(
+    cell: ReturnType<Terminal["buffer"]["active"]["getNullCell"]>,
+    buffers: CellArrays,
+    y: number,
+    baseY: number,
+    width: number,
+    cols: number,
+    live: boolean,
+    withCursor: boolean,
+    dfR: number,
+    dfG: number,
+    dfB: number,
+    dbR: number,
+    dbG: number,
+    dbB: number,
+    defaultFg: number,
+    defaultBg: number,
+    graphemes?: GraphemeOverride[],
+  ): void {
+    const buf = this.term.buffer.active;
+    const line = y < this.rows ? buf.getLine(baseY + y) : null;
+    const isCursorRow = withCursor && live && line !== null && y === buf.cursorY;
+    for (let x = 0; x < width; x++) {
+      const idx = y * width + x;
+      if (!line || x >= cols) {
+        writeCell(buffers, idx, SPACE_CODE, null, null, 0, dfR, dfG, dfB, dbR, dbG, dbB);
+        continue;
+      }
+      line.getCell(x, cell);
+      if (cell.getWidth() === 0) {
+        // Spacer half of the preceding wide glyph — inherit its colors.
+        writeContinuation(buffers, idx);
+        continue;
+      }
 
-        const chars = cell.getChars();
-        const codepoint = chars ? (chars.codePointAt(0) ?? SPACE_CODE) : SPACE_CODE;
-        if (inverted) {
-          const rFg = fg === null ? defaultFg : fg;
-          const rBg = bg === null ? defaultBg : bg;
-          writeCell(buffers, idx, codepoint, rBg, rFg, attrs, dfR, dfG, dfB, dbR, dbG, dbB);
-        } else {
-          writeCell(buffers, idx, codepoint, fg, bg, attrs, dfR, dfG, dfB, dbR, dbG, dbB);
-        }
-        // A grapheme wider than its base codepoint (ZWJ/flag emoji, combining
-        // marks) can't live in a single u32 — record it for the native setCell
-        // re-write. The unit-count test is allocation-free (no spread) on the
-        // common path: a lone BMP char or a single astral emoji falls through.
-        if (graphemes && chars.length > (codepoint > 0xffff ? 2 : 1)) {
-          graphemes.push({ x, y, chars, fg, bg, attrs });
-        }
+      let fg: number | null = null;
+      if (cell.isFgRGB()) fg = cell.getFgColor();
+      else if (cell.isFgPalette()) fg = XTERM_PALETTE[cell.getFgColor()] ?? null;
+
+      let bg: number | null = null;
+      if (cell.isBgRGB()) bg = cell.getBgColor();
+      else if (cell.isBgPalette()) bg = XTERM_PALETTE[cell.getBgColor()] ?? null;
+
+      let attrs = 0;
+      if (cell.isBold()) attrs |= ATTR_BOLD;
+      if (cell.isDim()) attrs |= ATTR_DIM;
+      if (cell.isItalic()) attrs |= ATTR_ITALIC;
+      if (cell.isUnderline()) attrs |= ATTR_UNDERLINE;
+      if (cell.isStrikethrough()) attrs |= ATTR_STRIKETHROUGH;
+      // Reverse video (app INVERSE ^ the focused cursor cell) renders as a fg/bg
+      // SWAP, not the INVERSE attribute bit — a framebuffer cell carrying that bit
+      // does not flush as reverse (see blit.ts). Resolve nulls to the defaults
+      // first so default-on-default inverts to defaultBg-on-defaultFg.
+      const inverted = !!cell.isInverse() !== (isCursorRow && x === buf.cursorX);
+
+      const chars = cell.getChars();
+      const codepoint = chars ? (chars.codePointAt(0) ?? SPACE_CODE) : SPACE_CODE;
+      if (inverted) {
+        const rFg = fg === null ? defaultFg : fg;
+        const rBg = bg === null ? defaultBg : bg;
+        writeCell(buffers, idx, codepoint, rBg, rFg, attrs, dfR, dfG, dfB, dbR, dbG, dbB);
+      } else {
+        writeCell(buffers, idx, codepoint, fg, bg, attrs, dfR, dfG, dfB, dbR, dbG, dbB);
+      }
+      // A grapheme wider than its base codepoint (ZWJ/flag emoji, combining marks)
+      // can't live in a single u32 — record it for the native setCell re-write.
+      if (graphemes && chars.length > (codepoint > 0xffff ? 2 : 1)) {
+        graphemes.push({ x, y, chars, fg, bg, attrs });
       }
     }
   }

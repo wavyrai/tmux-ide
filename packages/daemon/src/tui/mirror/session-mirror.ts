@@ -17,8 +17,8 @@
 import { appendFileSync } from "node:fs";
 import { ControlModeClient } from "./control-client.ts";
 import { InputCoalescer } from "./input-coalescer.ts";
-import { PaneMirror, type MirrorSnapshot } from "./pane-mirror.ts";
-import type { CellArrays, GraphemeOverride } from "./blit.ts";
+import { PaneMirror, type MirrorSnapshot, type BlitOptions } from "./pane-mirror.ts";
+import type { CellArrays } from "./blit.ts";
 import { tapInputOutput } from "./perf-tap.ts";
 
 /** One pane's geometry inside the window, in cells (tmux coordinates). */
@@ -101,6 +101,9 @@ export interface LivePane extends PaneGeometry {
   snapshot: MirrorSnapshot;
   /** Lines available above the live viewport (scrollback budget). */
   scrollbackDepth: number;
+  /** Per-pane content version (M21.4) — the `<pane_surface>` gates its walk on
+   *  this, so an unchanged pane never re-reads its grid. */
+  version: number;
 }
 
 export interface SessionMirrorOptions {
@@ -197,6 +200,7 @@ export class SessionMirror {
         ...g,
         active: g.id === this.focused || (this.focused === "" && g.active),
         scrollbackDepth: mirror?.scrollbackDepth() ?? 0,
+        version: mirror?.contentVersion() ?? 0,
         snapshot:
           mirror?.snapshot(offset, g.id === focused, includeRows) ??
           ({ rows: [], cursorX: 0, cursorY: 0, scrollOffset: 0 } as const),
@@ -216,11 +220,11 @@ export class SessionMirror {
     withCursor: boolean,
     defaultFg: number,
     defaultBg: number,
-    graphemes?: GraphemeOverride[],
+    opts: BlitOptions,
   ): void {
     this.mirrors
       .get(id)
-      ?.blit(buffers, width, height, scrollOffset, withCursor, defaultFg, defaultBg, graphemes);
+      ?.blit(buffers, width, height, scrollOffset, withCursor, defaultFg, defaultBg, opts);
   }
 
   /** A pane's visible rows as plain text — the on-demand OSC52 copy read for the
@@ -345,10 +349,13 @@ export class SessionMirror {
       mirror.onParsed = () => this.opts.onDirty?.();
       this.mirrors.set(pane.id, mirror);
       // Seed with history + current screen (-e keeps colors, -S reaches back
-      // into tmux's scrollback, 300 lines — deeper seeds block the event loop
-      // of a blank past. -J joins wrapped lines so re-wrapping stays sane.
+      // into tmux's scrollback, 2000 lines. The old 300 cap guarded a SYNC seed
+      // write that blocked the event loop; with ack-paced writes (M21.5) the
+      // write just enqueues (~0.01ms) and xterm parses async — 2000 lines parse
+      // in ~8ms off the render loop (measured), so the deeper history is free.
+      // -J joins wrapped lines so re-wrapping stays sane.
       const seed = await this.client
-        .command(`capture-pane -p -e -J -S -300 -t ${pane.id}`)
+        .command(`capture-pane -p -e -J -S -2000 -t ${pane.id}`)
         .catch(() => []);
       // The control client reads replies as latin1 (one JS char per byte —
       // required for the protocol), so the seed is a byte string in disguise:

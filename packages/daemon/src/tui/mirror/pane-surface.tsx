@@ -75,6 +75,17 @@ function packedRgba(packed: number): RGBA {
 }
 
 const PERF = !!process.env.TMUX_IDE_ZZ_PERF;
+/** Log the rows-blitted count per walk (M21.4 acceptance: flood repaints only
+ *  dirty rows). Env-gated so it costs nothing in production. */
+const ROW_TAP = !!process.env.TMUX_IDE_FB_ROWS;
+
+/** Union of several row-index arrays into one deduped array (small arrays — a
+ *  linear membership check is cheaper than a Set here). */
+function unionRows(...groups: number[][]): number[] {
+  const out: number[] = [];
+  for (const g of groups) for (const r of g) if (!out.includes(r)) out.push(r);
+  return out;
+}
 
 class PaneSurfaceRenderable extends FrameBufferRenderable {
   // The OpenTUI/Solid reconciler constructs `new PaneSurfaceRenderable(ctx, {id})`
@@ -96,6 +107,18 @@ class PaneSurfaceRenderable extends FrameBufferRenderable {
   private _search: PaneSearchHighlight | null = null;
   private _needsWalk = true;
   private readonly _graphemes: GraphemeOverride[] = [];
+  // ── Incremental walk state (M21.4) ─────────────────────────────────────────
+  /** Force a full repaint next walk (first frame, resize — the framebuffer is
+   *  blank so the mirror's shadow must be refilled). */
+  private _forceFull = true;
+  private _lastScroll = -1;
+  private _lastFocused = false;
+  /** Rows the selection/search highlighted last walk — repainted this walk so a
+   *  vacated highlight's fg/bg swap is cleared, not stranded. */
+  private _prevSelRows: number[] = [];
+  private _prevSearchRows: number[] = [];
+  /** Reused out-array for the rows the blit wrote (its content-dirty ∪ forced). */
+  private readonly _dirtyRows: number[] = [];
 
   constructor(ctx: RenderContext, options: PaneSurfaceOptions) {
     // Default 1×1 — the real size arrives as the width/height layout props (base
@@ -165,8 +188,10 @@ class PaneSurfaceRenderable extends FrameBufferRenderable {
 
   protected override onResize(width: number, height: number): void {
     super.onResize(width, height);
-    // The framebuffer was reallocated (blank) — the next paint must re-blit.
+    // The framebuffer was reallocated (blank) — the next paint must repaint it
+    // in full (and the mirror refills its shadow).
     this._needsWalk = true;
+    this._forceFull = true;
   }
 
   protected override renderSelf(buffer: OptimizedBuffer): void {
@@ -178,10 +203,12 @@ class PaneSurfaceRenderable extends FrameBufferRenderable {
     super.renderSelf(buffer);
   }
 
-  /** The gated grid walk: blit content, re-write multi-codepoint graphemes, then
-   *  the search + selection post-passes. Timed to /tmp/zz-perf.log under
-   *  TMUX_IDE_ZZ_PERF (the blit path's "snapshot ms/tick" — the work that moved
-   *  off the setPanes tick). */
+  /** The gated grid walk (M21.4 — incremental): the mirror repaints only the
+   *  changed rows (content compare + scroll shift); we force-repaint the rows the
+   *  selection/search touched (old ∪ new) so a vacated highlight's fg/bg swap is
+   *  cleared, then re-apply the search + selection post-passes over the current
+   *  highlighted rows. Timed to /tmp/zz-perf.log under TMUX_IDE_ZZ_PERF (the blit
+   *  path's "snapshot ms/tick"); the rows-blitted count taps to a debug log. */
   private walk(): void {
     if (!this._mirror) return;
     const t0 = PERF ? performance.now() : 0;
@@ -190,18 +217,27 @@ class PaneSurfaceRenderable extends FrameBufferRenderable {
     const w = fb.width;
     const h = fb.height;
 
+    // View-wide changes force a full repaint; content dirtiness is the mirror's job.
+    const full =
+      this._forceFull || this._scrollOffset !== this._lastScroll || this._focusedPane !== this._lastFocused;
+    this._forceFull = false;
+    this._lastScroll = this._scrollOffset;
+    this._lastFocused = this._focusedPane;
+
+    const newSelRows = this.selRows(h);
+    const newSearchRows = this.searchRows(h);
+    // Rows that must repaint so their swap/highlight is cleared then re-applied.
+    const forceRows = full ? null : unionRows(this._prevSelRows, newSelRows, this._prevSearchRows, newSearchRows);
+
     this._graphemes.length = 0;
-    this._mirror.blitPane(
-      this._paneId,
-      buffers,
-      w,
-      h,
-      this._scrollOffset,
-      this._focusedPane,
-      this._defaultFg,
-      this._defaultBg,
-      this._graphemes,
-    );
+    this._dirtyRows.length = 0;
+    this._mirror.blitPane(this._paneId, buffers, w, h, this._scrollOffset, this._focusedPane, this._defaultFg, this._defaultBg, {
+      full,
+      forceRows,
+      dirtyRows: this._dirtyRows,
+      graphemes: this._graphemes,
+    });
+
     // Multi-codepoint graphemes (ZWJ/flag emoji, combining marks) — the native
     // setCell handles the full string + its width; rare, so the RGBA is fine.
     for (let i = 0; i < this._graphemes.length; i++) {
@@ -215,7 +251,8 @@ class PaneSurfaceRenderable extends FrameBufferRenderable {
         g.attrs,
       );
     }
-    // Scrollback-search highlights (all matches dim, the current one bright).
+    // Post-passes re-apply over the current highlighted rows — all of which were
+    // just repainted (they're in forceRows, or full covered them).
     const s = this._search;
     if (s && s.len > 0) {
       for (let i = 0; i < s.matches.length; i++) {
@@ -225,15 +262,17 @@ class PaneSurfaceRenderable extends FrameBufferRenderable {
         paintBg(buffers, w, row, m.col, m.col + s.len - 1, i === s.current ? this._searchCur : this._searchHl);
       }
     }
-    // Drag selection on top (reverse video via fg/bg swap), cell-column based
-    // like the mouse.
     const sel = this._sel;
     if (sel) {
-      for (let y = 0; y < h; y++) {
+      for (let i = 0; i < newSelRows.length; i++) {
+        const y = newSelRows[i]!;
         const r = rowSelectionRange(y, w, sel.start, sel.end);
         if (r) swapCells(buffers, w, y, r.from, r.to);
       }
     }
+    this._prevSelRows = newSelRows;
+    this._prevSearchRows = newSearchRows;
+
     if (PERF) {
       try {
         appendFileSync("/tmp/zz-perf.log", `${(performance.now() - t0).toFixed(2)}\n`);
@@ -241,6 +280,37 @@ class PaneSurfaceRenderable extends FrameBufferRenderable {
         /* perf tap only */
       }
     }
+    if (ROW_TAP) {
+      try {
+        appendFileSync("/tmp/zz-fb-rows.log", `${this._paneId} ${this._dirtyRows.length}/${h}${full ? " full" : ""}\n`);
+      } catch {
+        /* debug tap only */
+      }
+    }
+  }
+
+  /** Visible rows covered by the current drag selection (clamped), or []. The
+   *  range arrives ordered (app.tsx passes `orderCells`). */
+  private selRows(height: number): number[] {
+    const sel = this._sel;
+    if (!sel) return [];
+    const lo = Math.max(0, sel.start.row);
+    const hi = Math.min(height - 1, sel.end.row);
+    const out: number[] = [];
+    for (let y = lo; y <= hi; y++) out.push(y);
+    return out;
+  }
+
+  /** Distinct visible rows carrying a search match (clamped), or []. */
+  private searchRows(height: number): number[] {
+    const s = this._search;
+    if (!s || s.len === 0) return [];
+    const out: number[] = [];
+    for (let i = 0; i < s.matches.length; i++) {
+      const row = s.matches[i]!.line - s.baseY;
+      if (row >= 0 && row < height && !out.includes(row)) out.push(row);
+    }
+    return out;
   }
 }
 
