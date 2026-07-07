@@ -16,10 +16,24 @@ import { appendFileSync } from "node:fs";
 import { parseControlLine, textToHexKeys } from "./control.ts";
 
 interface PendingReply {
+  discard?: false;
   resolve: (lines: string[]) => void;
   reject: (err: Error) => void;
   lines: string[];
 }
+
+/** A fire-and-forget command's FIFO placeholder: its reply block is consumed
+ *  and dropped (errors counted). `lines` collects the error body only when
+ *  TMUX_IDE_MIRROR_DEBUG asks for it. */
+interface DiscardedReply {
+  discard: true;
+  lines?: string[];
+}
+
+type Pending = PendingReply | DiscardedReply;
+
+/** The shared no-debug placeholder — fire-and-forget input allocates NOTHING. */
+const DISCARDED: DiscardedReply = { discard: true };
 
 export interface ControlClientOptions {
   /** Session (or other tmux target) to attach the control client to. */
@@ -34,9 +48,10 @@ export interface ControlClientOptions {
 
 export class ControlModeClient {
   private proc: ChildProcess | null = null;
-  private readonly pending: PendingReply[] = [];
+  private readonly pending: Pending[] = [];
   private inReply = false;
   private buffer = "";
+  private discardedErrors = 0;
   private readonly opts: ControlClientOptions;
 
   constructor(opts: ControlClientOptions) {
@@ -73,14 +88,38 @@ export class ControlModeClient {
     });
   }
 
-  /** Type literal text into a pane (UTF-8, sent as hex bytes — quote-proof). */
-  sendText(pane: string, text: string): Promise<string[]> {
-    return this.command(`send-keys -t ${pane} -H ${textToHexKeys(text).join(" ")}`);
+  /**
+   * The INPUT FAST PATH (M21.5): write a command fire-and-forget. The bytes
+   * hit tmux's stdin exactly as immediately as `command()`'s do, but no
+   * Promise/resolver is allocated and nothing ever waits on the reply. Every
+   * control-mode command still produces exactly one `%begin/%end` block, so a
+   * placeholder is pushed onto the SAME pending FIFO — reply matching for
+   * reply-carrying commands (list-panes, capture-pane, …) stays aligned by
+   * construction. Errors are swallowed but counted ({@link inputErrorCount});
+   * with TMUX_IDE_MIRROR_DEBUG set the error body is appended to
+   * /tmp/zz-input-errors.log.
+   */
+  send(cmd: string): void {
+    const proc = this.proc;
+    if (!proc?.stdin?.writable) return;
+    this.pending.push(process.env.TMUX_IDE_MIRROR_DEBUG ? { discard: true, lines: [] } : DISCARDED);
+    proc.stdin.write(`${cmd}\n`);
   }
 
-  /** Send a named tmux key (Enter, Escape, Up, C-c, …) to a pane. */
-  sendKey(pane: string, key: string): Promise<string[]> {
-    return this.command(`send-keys -t ${pane} ${key}`);
+  /** Type literal text into a pane (UTF-8, sent as hex bytes — quote-proof).
+   *  Fire-and-forget: input never queues behind a slow structural reply. */
+  sendText(pane: string, text: string): void {
+    this.send(`send-keys -t ${pane} -H ${textToHexKeys(text).join(" ")}`);
+  }
+
+  /** Send a named tmux key (Enter, Escape, Up, C-c, …) to a pane. Fire-and-forget. */
+  sendKey(pane: string, key: string): void {
+    this.send(`send-keys -t ${pane} ${key}`);
+  }
+
+  /** How many fire-and-forget commands came back `%error` (debug/tests). */
+  get inputErrorCount(): number {
+    return this.discardedErrors;
   }
 
   dispose(): void {
@@ -126,14 +165,34 @@ export class ControlModeClient {
       case "begin":
         this.inReply = true;
         break;
-      case "reply-line":
-        this.pending[0]?.lines.push(event.line);
+      case "reply-line": {
+        const head = this.pending[0];
+        // Discarded (fire-and-forget) replies skip body collection entirely —
+        // unless the debug placeholder brought its own lines buffer.
+        if (head) head.lines?.push(event.line);
         break;
+      }
       case "end":
       case "error": {
         this.inReply = false;
         const reply = this.pending.shift();
         if (!reply) break; // unsolicited block (e.g. greeting after a race)
+        if (reply.discard) {
+          if (event.kind === "error") {
+            this.discardedErrors++;
+            if (process.env.TMUX_IDE_MIRROR_DEBUG) {
+              try {
+                appendFileSync(
+                  "/tmp/zz-input-errors.log",
+                  `#${this.discardedErrors} ${reply.lines?.join(" | ") ?? ""}\n`,
+                );
+              } catch {
+                // debug tap only
+              }
+            }
+          }
+          break;
+        }
         if (event.kind === "error") {
           reply.reject(new Error(reply.lines.join("\n") || "tmux command failed"));
         } else {

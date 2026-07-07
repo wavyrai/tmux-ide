@@ -16,6 +16,7 @@
  */
 import { appendFileSync } from "node:fs";
 import { ControlModeClient } from "./control-client.ts";
+import { InputCoalescer } from "./input-coalescer.ts";
 import { PaneMirror, type MirrorSnapshot } from "./pane-mirror.ts";
 import { tapInputOutput } from "./perf-tap.ts";
 
@@ -130,6 +131,17 @@ export class SessionMirror {
   private focused = "";
   private syncQueued = false;
   private readonly opts: SessionMirrorOptions;
+  /** The input fast path (M21.5): literals coalesce per pane and flush on a
+   *  microtask (same macrotask as the keystroke — no added latency); named
+   *  keys flush pending literals first so ordering is preserved; everything
+   *  leaves via the control client's fire-and-forget write. */
+  private readonly input = new InputCoalescer(
+    (a) => {
+      if (a.kind === "literal") this.client.sendText(a.pane, a.text);
+      else this.client.sendKey(a.pane, a.key);
+    },
+    (flush) => queueMicrotask(flush),
+  );
 
   constructor(opts: SessionMirrorOptions) {
     this.opts = opts;
@@ -202,22 +214,28 @@ export class SessionMirror {
   focus(id: string): void {
     if (!this.geometry.some((g) => g.id === id)) return;
     this.focused = id;
-    void this.client.command(`select-pane -t ${id}`).catch(() => {});
+    void this.command(`select-pane -t ${id}`).catch(() => {});
     this.opts.onDirty?.();
   }
 
-  sendText(text: string): Promise<unknown> {
+  /** Type literal text into the focused pane — coalesced, fire-and-forget. */
+  sendText(text: string): void {
     const pane = this.focusedPane();
-    return pane ? this.client.sendText(pane, text) : Promise.resolve();
+    if (pane) this.input.literal(pane, text);
   }
 
-  sendKey(key: string): Promise<unknown> {
+  /** Send a named tmux key to the focused pane — fire-and-forget, after any
+   *  pending literal batch (ordering invariant). */
+  sendKey(key: string): void {
     const pane = this.focusedPane();
-    return pane ? this.client.sendKey(pane, key) : Promise.resolve();
+    if (pane) this.input.key(pane, key);
   }
 
-  /** Run any tmux command over the control channel (splits, zoom, …). */
+  /** Run any tmux command over the control channel (splits, zoom, …).
+   *  Pending coalesced input flushes FIRST so a structural command can never
+   *  overtake keystrokes typed before it. */
   command(cmd: string): Promise<string[]> {
+    this.input.flush();
     return this.client.command(cmd);
   }
 
@@ -245,13 +263,14 @@ export class SessionMirror {
 
   /** Switch the mirrored session's active window (the tab click). */
   switchWindow(index: number): void {
-    void this.client.command(`select-window -t ${this.opts.target}:${index}`).catch(() => {});
+    void this.command(`select-window -t ${this.opts.target}:${index}`).catch(() => {});
     this.queueSync();
   }
 
-  /** Type raw text (incl. escape sequences) into a SPECIFIC pane. */
-  sendTextTo(pane: string, text: string): Promise<unknown> {
-    return this.client.sendText(pane, text);
+  /** Type raw text (incl. escape sequences — mouse SGR, paste chunks) into a
+   *  SPECIFIC pane — coalesced with typed literals, fire-and-forget. */
+  sendTextTo(pane: string, text: string): void {
+    this.input.literal(pane, text);
   }
 
   async resize(cols: number, rows: number): Promise<void> {
@@ -262,6 +281,7 @@ export class SessionMirror {
   }
 
   dispose(): void {
+    this.input.flush(); // last typed bytes leave before the detach
     this.client.dispose();
     for (const m of this.mirrors.values()) m.dispose();
     this.mirrors.clear();

@@ -195,7 +195,6 @@ import {
   tintRunsInverse,
   tintRunsBg,
   osc52Sequence,
-  chunkByBytes,
   ATTR_INVERSE,
   type Cell,
   type Selection,
@@ -291,11 +290,12 @@ const KEYMAP: Record<string, string> = {
 };
 const SCROLL_STEP = 3;
 // Selection & clipboard (M19.4). Copies above 1 MB refuse; double/triple clicks
-// resolve within CLICK_MS at the same cell; a paste forwarded into a pane is
-// chunked so each `send-keys -H` stays under tmux's per-command length cap.
+// resolve within CLICK_MS at the same cell. A paste forwarded into a pane is
+// chunked by the INPUT COALESCER under tmux's per-command cap (M21.5 — see
+// SEND_KEYS_CHUNK_BYTES in input-coalescer.ts; the old app-level
+// PASTE_CHUNK_BYTES=1024 pre-chunking is retired).
 const MAX_CLIP_BYTES = 1_000_000;
 const CLICK_MS = 400;
-const PASTE_CHUNK_BYTES = 1024;
 const sgrMouse = (button: number, col: number, row: number, release: boolean): string =>
   `\x1b[<${button};${col + 1};${row + 1}${release ? "m" : "M"}`;
 interface WindowTab {
@@ -1465,9 +1465,9 @@ render(
 
     // ── PASTE-BUFFER PICKER — io (M20.3) ─────────────────────────────────────
     /** Insert `text` into the focused surface: the editor buffer as ONE undo unit,
-     *  else the focused pane wrapped in bracketed-paste markers + chunked under
-     *  tmux's send-keys length cap. The shared paste path — bracketed-paste input
-     *  and the buffer picker both funnel here. */
+     *  else the focused pane wrapped in bracketed-paste markers (the coalescer
+     *  chunks under tmux's send-keys cap). The shared paste path — bracketed-paste
+     *  input and the buffer picker both funnel here. */
     const pasteIntoFocused = (text: string) => {
       if (!text) return;
       if (mode() === "editor" && filesFocus() === "editor" && editBuffer && !editorReadOnly()) {
@@ -1481,10 +1481,12 @@ render(
       if (mirror) {
         const pane = mirror.focusedPane();
         if (!pane) return;
-        void mirror.sendTextTo(pane, "\x1b[200~").catch(() => {});
-        for (const chunk of chunkByBytes(text, PASTE_CHUNK_BYTES))
-          void mirror.sendTextTo(pane, chunk).catch(() => {});
-        void mirror.sendTextTo(pane, "\x1b[201~").catch(() => {});
+        // Chunking under tmux's per-command cap happens in the input coalescer
+        // (SEND_KEYS_CHUNK_BYTES, input-coalescer.ts) — one path for typing,
+        // mouse and paste keeps the byte order a single-writer problem.
+        mirror.sendTextTo(pane, "\x1b[200~");
+        mirror.sendTextTo(pane, text);
+        mirror.sendTextTo(pane, "\x1b[201~");
         setStatusNote(`pasted ${text.length} chars`);
       }
     };
@@ -1753,13 +1755,11 @@ render(
     };
     const forwardPress = (pane: LivePane, gx: number, gy: number, release: boolean) => {
       const { col, row } = paneCell(pane, gx, gy);
-      void mirror?.sendTextTo(pane.id, sgrMouse(0, col, row, release)).catch(() => {});
+      mirror?.sendTextTo(pane.id, sgrMouse(0, col, row, release)); // fire-and-forget
     };
     const wheel = (pane: LivePane, direction: "up" | "down", col: number, row: number) => {
       if (pane.appMouse) {
-        void mirror
-          ?.sendTextTo(pane.id, sgrMouse(direction === "up" ? 64 : 65, col, row, false))
-          .catch(() => {});
+        mirror?.sendTextTo(pane.id, sgrMouse(direction === "up" ? 64 : 65, col, row, false));
         return;
       }
       const cur = scrollOffsets.get(pane.id) ?? 0;
@@ -2332,17 +2332,19 @@ render(
       clearSelection();
       snapLive(mirror.focusedPane());
       tapInputSent(mirror.focusedPane()); // t0: keystroke dispatched to the pane
+      // The input fast path (M21.5): sendKey/sendText are fire-and-forget —
+      // no reply Promise, literals coalesced (ordering preserved downstream).
       if (evt.ctrl && evt.name.length === 1) {
-        void mirror.sendKey(`C-${evt.name}`).catch(() => {});
+        mirror.sendKey(`C-${evt.name}`);
         return;
       }
       const named = KEYMAP[evt.name];
       if (named) {
-        void mirror.sendKey(named).catch(() => {});
+        mirror.sendKey(named);
         return;
       }
       if (evt.name.length === 1 && !evt.meta) {
-        void mirror.sendText(evt.shift ? evt.name.toUpperCase() : evt.name).catch(() => {});
+        mirror.sendText(evt.shift ? evt.name.toUpperCase() : evt.name);
       }
     });
 
@@ -2350,7 +2352,7 @@ render(
     // \x1b[200~…\x1b[201~ markers on stdin). Route it to the focused surface: the
     // EDITOR inserts at the cursor as ONE undo unit; the TERMINAL forwards it to
     // the focused pane re-wrapped in bracketed markers (so apps see a paste, not
-    // keystrokes), chunked so each send-keys stays under tmux's length cap.
+    // keystrokes); the input coalescer chunks it under tmux's per-command cap.
     usePaste((e) => pasteIntoFocused(decodePasteBytes(e.bytes)));
 
     /** The per-window strip's x-spans — one segment per tmux window, laid out from
