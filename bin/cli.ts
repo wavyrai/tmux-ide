@@ -9,8 +9,17 @@ import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+// The node-runnable CLI path that spawned TUI surfaces shell back to (the app's
+// async fleet poll + `detect --write`). When we're the published `bin/cli.js`
+// this file IS it; under dev (`bun bin/cli.ts`) it's the built sibling
+// `bin/cli.js`. Forwarded to surfaces as TMUX_IDE_CLI so the COMPILED TUI binary
+// — whose own `import.meta.url` is a virtual bunfs path with no real cli.js next
+// to it — can still find the CLI to run its subprocesses.
+const selfPath = fileURLToPath(import.meta.url);
+const nodeCliPath = selfPath.endsWith(".js") ? selfPath : resolve(__dirname, "cli.js");
 import { launch } from "../packages/daemon/src/launch.ts";
-import { shouldOpenCockpit } from "../packages/daemon/src/tui/team/entry.ts";
+import { resolveEntry } from "../packages/daemon/src/tui/team/entry.ts";
+import { loadAppConfig } from "../packages/daemon/src/lib/app-config.ts";
 import {
   resolveTuiLaunch,
   findCompiledTui,
@@ -271,7 +280,12 @@ function execBunWidget(
     );
   }
 
-  const env = { ...process.env, TMUX_IDE_CWD: process.cwd(), ...extraEnv };
+  const env = {
+    ...process.env,
+    TMUX_IDE_CWD: process.cwd(),
+    TMUX_IDE_CLI: nodeCliPath,
+    ...extraEnv,
+  };
   if (launch.mode === "bun") {
     // Spawn from the repo root so bun finds `bunfig.toml` (the @opentui/solid
     // JSX preload). Without this, running from any other cwd — e.g. bare
@@ -313,6 +327,13 @@ function launchTeamCockpit(): void {
   execBunWidget("team", teamScriptPath, [], "team");
 }
 
+// The unified app as the front door (M22.6): bare `tmux-ide` opens `tmux-ide
+// app`'s HOME panel when `app.frontDoor` is on and there's nothing else to
+// launch. Same entry as the explicit `app` command with no session positional.
+function launchApp(): void {
+  execBunWidget("app", appScriptPath, [], "app");
+}
+
 try {
   switch (command) {
     case "start": {
@@ -335,13 +356,23 @@ try {
       }
       const targetDir = resolve(startTargetDir || ".");
       const hasIdeYml = existsSync(join(targetDir, "ide.yml"));
-      if (shouldOpenCockpit(hasIdeYml, values.team === true)) {
-        // No project here (or --team): the cockpit is the front door.
+      // M22.6 — the front-door decision. `--team` always means the classic
+      // cockpit; a present ide.yml still auto-launches the project; otherwise
+      // `app.frontDoor` flips the default no-project entry to the unified app.
+      const entry = resolveEntry({
+        hasIdeYml,
+        teamFlag: values.team === true,
+        frontDoor: loadAppConfig().app.frontDoor,
+      });
+      if (entry !== "project") {
+        // No project to launch here. `--json` is a scripting surface — it always
+        // prints the fleet, whichever interactive front door is configured.
         if (json) {
           await printFleetJson();
           break;
         }
-        launchTeamCockpit();
+        if (entry === "app") launchApp();
+        else launchTeamCockpit();
         break;
       }
       await launch(startTargetDir, { json });

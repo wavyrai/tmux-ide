@@ -593,8 +593,22 @@ render(
     // onMount (after the FFI buffer + fleet arrive).
     const persisted: AppState = loadAppState();
     // The bundled CLI — the async fleet poll and `detect --write` both shell out
-    // to it (resolved once; `node <cliPath> …`).
-    const cliPath = new URL("../../../../../bin/cli.js", import.meta.url).pathname;
+    // to it (resolved once; `node <cliPath> …`). The CLI forwards its own
+    // node-runnable path as TMUX_IDE_CLI; prefer it, because in the COMPILED TUI
+    // binary `import.meta.url` is a virtual bunfs path so the relative fallback
+    // resolves to a bogus cli.js — the subprocesses would silently fail and the
+    // home would ALWAYS look empty. The fallback covers running the app directly
+    // via bun (dev, no CLI hop) where import.meta.url is a real on-disk file.
+    const cliPath =
+      process.env.TMUX_IDE_CLI || new URL("../../../../../bin/cli.js", import.meta.url).pathname;
+    // The user's REAL invocation directory. `tmux-ide app` runs bun from the
+    // repo root (the bunfig preload lives there), so `process.cwd()` is the repo
+    // root, NOT where the user typed the command — the CLI forwards the true dir
+    // as TMUX_IDE_CWD. Every "here" the app defaults to (the folder picker's
+    // start, a new session's dir, the diff/workspace root) reads THIS so cold
+    // starting from any directory lands where the user actually is. Falls back
+    // to process.cwd() when the app is spawned directly (dev, no CLI hop).
+    const invokeCwd = process.env.TMUX_IDE_CWD || process.cwd();
     // ── SIDEBAR WIDTH (M19.3) ────────────────────────────────────────────────
     // Once a fixed constant, now a DRAGGABLE, persisted signal: every geometry
     // that used to read the constant (canvasCols, pane/editor/diff offsets, the
@@ -1044,7 +1058,7 @@ render(
     // execFile (`runGit`); the only sync io is reading a single untracked file to
     // show it as additions. `diffText` holds the raw diff for the selected file;
     // `diffLoadToken` discards a slow diff whose selection has since moved on.
-    const [diffDir, setDiffDir] = createSignal(values.diff ?? process.cwd());
+    const [diffDir, setDiffDir] = createSignal(values.diff ?? invokeCwd);
     const [diffFiles, setDiffFiles] = createSignal<StatusEntry[]>([]);
     const [diffSel, setDiffSel] = createSignal(0);
     const [diffText, setDiffText] = createSignal("");
@@ -1237,7 +1251,7 @@ render(
     const [filesFocus, setFilesFocus] = createSignal<"list" | "editor">("list");
     const filesListW = () => Math.max(20, Math.min(44, Math.floor(canvasCols() * 0.34)));
     /** The workspace directory driving both the file list and the diff panel. */
-    const workspaceDir = () => contextDir() || process.cwd();
+    const workspaceDir = () => contextDir() || invokeCwd;
     const fileListVisible = createMemo(() => {
       const nodes = fileNodes();
       const rows = editorRows();
@@ -1303,7 +1317,7 @@ render(
      *  the project dir from the fleet payload (falling back to the cwd). */
     const openWorkspace = (session: string, dir: string | null) => {
       setContextSession(session);
-      const wd = dir ?? process.cwd();
+      const wd = dir ?? invokeCwd;
       setContextDir(wd);
       setDiffDir(wd);
       loadFileList(wd);
@@ -1335,7 +1349,7 @@ render(
      *  simply opens. `TMUX_IDE=1` marks the session the way the cockpit's
      *  launcher does, so agents inside can detect tmux-ide. */
     const createSession = (name: string, dir: string | null) => {
-      const wd = dir ?? process.cwd();
+      const wd = dir ?? invokeCwd;
       execFile("tmux", ["new-session", "-d", "-s", name, "-c", wd], (err) => {
         if (err && !/duplicate session/.test(err.message)) {
           setStatusNote(`launch failed: ${name}`);
@@ -1499,7 +1513,7 @@ render(
       setHoverIf(null); // the overlay owns the pointer, like the palette
       // `||` (not `??`): contextDir is "" when unset, and a selected header/none
       // gives null — either falls through to the working directory.
-      const start = selectedHomeDir() || contextDir() || process.cwd();
+      const start = selectedHomeDir() || contextDir() || invokeCwd;
       const dir = await runFolderPicker(start);
       if (dir) await openFolderPicked(dir);
     };
@@ -1525,8 +1539,8 @@ render(
       setSel(index);
       if (it.kind === "session") {
         setContextSession(it.session);
-        setContextDir(it.dir ?? process.cwd());
-        enterDiff(it.dir ?? process.cwd());
+        setContextDir(it.dir ?? invokeCwd);
+        enterDiff(it.dir ?? invokeCwd);
       } else if (it.kind === "recent") {
         openFolderAt(it.dir);
       } else {
@@ -3177,9 +3191,9 @@ render(
           const r = selectedHomeItem();
           if (r && r.kind === "session") {
             setContextSession(r.session);
-            setContextDir(r.dir ?? process.cwd());
+            setContextDir(r.dir ?? invokeCwd);
           }
-          enterDiff(selectedHomeDir() ?? process.cwd());
+          enterDiff(selectedHomeDir() ?? invokeCwd);
           return;
         }
         if (evt.name === "j" || evt.name === "down") {
@@ -3369,9 +3383,9 @@ render(
         const r = selectedHomeItem();
         if (r && r.kind === "session") {
           setContextSession(r.session);
-          setContextDir(r.dir ?? process.cwd());
+          setContextDir(r.dir ?? invokeCwd);
         }
-        enterDiff(selectedHomeDir() ?? process.cwd());
+        enterDiff(selectedHomeDir() ?? invokeCwd);
       }
     };
 

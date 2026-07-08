@@ -133,6 +133,17 @@ export interface AppIntegrations {
   offer: boolean;
 }
 
+/** The unified-app front-door decision (M22.6). */
+export interface AppApp {
+  /**
+   * Whether bare `tmux-ide` (no ide.yml here, no `--team`) launches the unified
+   * app (`tmux-ide app`) instead of the classic team cockpit. Default false —
+   * the flip is opt-in until the default-entry decision is made. `tmux-ide team`
+   * (the explicit cockpit) and a project's `ide.yml` auto-launch are unaffected.
+   */
+  frontDoor: boolean;
+}
+
 /** Worktree flow config (`tmux-ide worktree`). */
 export interface AppWorktrees {
   /**
@@ -154,6 +165,7 @@ export interface AppConfig {
   welcome: AppWelcome;
   integrations: AppIntegrations;
   worktrees: AppWorktrees;
+  app: AppApp;
 }
 
 // ---------------------------------------------------------------------------
@@ -190,6 +202,7 @@ export const DEFAULT_APP_CONFIG: AppConfig = {
   welcome: { show: true },
   integrations: { offer: true },
   worktrees: { dir: "" },
+  app: { frontDoor: false },
 };
 
 /** The default theme tokens — the fallback threaded into the pure builders. */
@@ -245,6 +258,7 @@ export function parseAppConfig(input: unknown): AppConfig {
   const welcome = asObject(root.welcome);
   const integrations = asObject(root.integrations);
   const worktrees = asObject(root.worktrees);
+  const app = asObject(root.app);
   return {
     keys: {
       popup: pickString(keys.popup, D.keys.popup),
@@ -287,6 +301,7 @@ export function parseAppConfig(input: unknown): AppConfig {
     welcome: { show: pickBool(welcome.show, D.welcome.show) },
     integrations: { offer: pickBool(integrations.offer, D.integrations.offer) },
     worktrees: { dir: pickString(worktrees.dir, D.worktrees.dir) },
+    app: { frontDoor: pickBool(app.frontDoor, D.app.frontDoor) },
   };
 }
 

@@ -3060,6 +3060,7 @@ function parseAppConfig(input) {
   const welcome = asObject(root.welcome);
   const integrations = asObject(root.integrations);
   const worktrees = asObject(root.worktrees);
+  const app = asObject(root.app);
   return {
     keys: {
       popup: pickString(keys.popup, D.keys.popup),
@@ -3101,7 +3102,8 @@ function parseAppConfig(input) {
     updates: { check: pickBool(updates.check, D.updates.check) },
     welcome: { show: pickBool(welcome.show, D.welcome.show) },
     integrations: { offer: pickBool(integrations.offer, D.integrations.offer) },
-    worktrees: { dir: pickString(worktrees.dir, D.worktrees.dir) }
+    worktrees: { dir: pickString(worktrees.dir, D.worktrees.dir) },
+    app: { frontDoor: pickBool(app.frontDoor, D.app.frontDoor) }
   };
 }
 function appConfigPath() {
@@ -3194,7 +3196,8 @@ var init_app_config = __esm({
       updates: { check: true },
       welcome: { show: true },
       integrations: { offer: true },
-      worktrees: { dir: "" }
+      worktrees: { dir: "" },
+      app: { frontDoor: false }
     };
     DEFAULT_THEME = DEFAULT_APP_CONFIG.theme;
     DEFAULT_KEYS = DEFAULT_APP_CONFIG.keys;
@@ -12121,11 +12124,14 @@ import { existsSync as existsSync33 } from "node:fs";
 import { fileURLToPath as fileURLToPath9 } from "node:url";
 
 // packages/daemon/src/tui/team/entry.ts
-function shouldOpenCockpit(hasIdeYml, teamFlag) {
-  return teamFlag || !hasIdeYml;
+function resolveEntry(opts) {
+  if (opts.teamFlag) return "cockpit";
+  if (opts.hasIdeYml) return "project";
+  return opts.frontDoor ? "app" : "cockpit";
 }
 
 // bin/cli.ts
+init_app_config();
 init_compiled();
 
 // packages/daemon/src/init.ts
@@ -13034,6 +13040,8 @@ init_send();
 init_errors2();
 init_output();
 var __dirname6 = dirname23(fileURLToPath9(import.meta.url));
+var selfPath = fileURLToPath9(import.meta.url);
+var nodeCliPath = selfPath.endsWith(".js") ? selfPath : resolve23(__dirname6, "cli.js");
 var { positionals, values } = parseArgs({
   allowPositionals: true,
   strict: false,
@@ -13251,7 +13259,12 @@ Install bun (https://bun.sh) \u2014 the TUI surfaces run on it. Sources ship wit
       { code: "USAGE", exitCode: 1 }
     );
   }
-  const env = { ...process.env, TMUX_IDE_CWD: process.cwd(), ...extraEnv };
+  const env = {
+    ...process.env,
+    TMUX_IDE_CWD: process.cwd(),
+    TMUX_IDE_CLI: nodeCliPath,
+    ...extraEnv
+  };
   if (launch2.mode === "bun") {
     execFileSync14(launch2.bin, launch2.argv, {
       stdio: "inherit",
@@ -13273,6 +13286,9 @@ var appScriptPath = resolve23(__dirname6, "../packages/daemon/src/tui/mirror/app
 function launchTeamCockpit() {
   execBunWidget("team", teamScriptPath, [], "team");
 }
+function launchApp() {
+  execBunWidget("app", appScriptPath, [], "app");
+}
 try {
   switch (command) {
     case "start": {
@@ -13291,12 +13307,18 @@ try {
       }
       const targetDir = resolve23(startTargetDir || ".");
       const hasIdeYml = existsSync33(join27(targetDir, "ide.yml"));
-      if (shouldOpenCockpit(hasIdeYml, values.team === true)) {
+      const entry = resolveEntry({
+        hasIdeYml,
+        teamFlag: values.team === true,
+        frontDoor: loadAppConfig().app.frontDoor
+      });
+      if (entry !== "project") {
         if (json) {
           await printFleetJson();
           break;
         }
-        launchTeamCockpit();
+        if (entry === "app") launchApp();
+        else launchTeamCockpit();
         break;
       }
       await launch(startTargetDir, { json });

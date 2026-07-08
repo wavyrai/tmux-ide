@@ -173,6 +173,15 @@ describe("parseAppConfig — mistyped fields fall back to default", () => {
     );
     expect(parseAppConfig({ worktrees: "nope" }).worktrees).toEqual(DEFAULT_APP_CONFIG.worktrees);
   });
+
+  it("app.frontDoor — defaults to false and coerces a mistyped value back to it", () => {
+    expect(DEFAULT_APP_CONFIG.app.frontDoor).toBe(false);
+    expect(parseAppConfig(undefined).app.frontDoor).toBe(false);
+    expect(parseAppConfig({ app: { frontDoor: "yes" } }).app.frontDoor).toBe(false);
+    expect(parseAppConfig({ app: "nope" }).app.frontDoor).toBe(false);
+    // An explicit true opts into the front-door flip.
+    expect(parseAppConfig({ app: { frontDoor: true } }).app.frontDoor).toBe(true);
+  });
 });
 
 describe("loadAppConfig / getAppConfig / TMUX_IDE_CONFIG", () => {
