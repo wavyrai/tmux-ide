@@ -189,6 +189,41 @@ export function tintRunsBg<T extends { text: string; bg: number | null }>(
   return out;
 }
 
+// ── Select mode on app-mouse panes (M22.9) ──────────────────────────────────
+// Panes whose app turned mouse reporting on (`appMouse`) normally get every
+// press FORWARDED, so a drag can never start a local selection there. Two
+// entries reopen selection: an explicit per-pane SELECT MODE (right-click →
+// "Select text…", paused forwarding until esc / a completed copy / focus
+// leaving the pane) and a SHIFT-modified press when the terminal passes shift
+// through (SGR encodes it as +4 on the button code; many terminals keep
+// shift+drag for native selection instead — then only select mode applies).
+
+/** PURE — whether a left press on a pane begins a LOCAL drag selection
+ *  (vs. being forwarded to the pane's app as an SGR press). */
+export function pressStartsSelection(
+  appMouse: boolean,
+  selectModeOn: boolean,
+  shift: boolean,
+): boolean {
+  return !appMouse || selectModeOn || shift;
+}
+
+/** PURE — whether the wheel scrolls the LOCAL mirror scrollback (vs. being
+ *  forwarded as SGR wheel events). Select mode reclaims the wheel so older
+ *  output can be scrolled into view and selected. */
+export function wheelScrollsLocal(appMouse: boolean, selectModeOn: boolean): boolean {
+  return !appMouse || selectModeOn;
+}
+
+/** PURE — the select-mode badge text for a pane width (rendered in the pane's
+ *  top-right badge family, next to the scroll badge), degrading label → glyph
+ *  → hidden on narrow panes exactly like the agent chip's budget. */
+export function selectBadgeLabel(paneWidth: number): string | null {
+  if (paneWidth >= 16) return " ⧉ select ";
+  if (paneWidth >= 5) return " ⧉ ";
+  return null;
+}
+
 /** The raw OSC52 clipboard-set escape for a base64 payload (BEL-terminated). */
 export function osc52Sequence(base64: string): string {
   return `\x1b]52;c;${base64}\x07`;

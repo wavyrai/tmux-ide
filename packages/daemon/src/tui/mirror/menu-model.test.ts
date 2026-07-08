@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   MENU_ITEMS,
+  paneMenuItems,
   SUBMENU_CARET,
   menuDims,
   clampMenuPos,
@@ -155,5 +156,21 @@ describe("submenuPos", () => {
   it("clamps back on-screen when the column would overflow the right edge", () => {
     // left 30 + width 18 = 48 fits at screenW 45? no → slides to 45 - 18 = 27.
     expect(submenuPos(parent, 0, 18, 8, 45, 40).left).toBe(27);
+  });
+});
+
+describe("paneMenuItems (M22.9 — select mode entry)", () => {
+  it("keeps the fixed pane list byte-identical for non-app-mouse panes", () => {
+    expect(paneMenuItems(false, false)).toBe(MENU_ITEMS.pane);
+  });
+  it("leads with Select text… on an app-mouse pane", () => {
+    const items = paneMenuItems(true, false);
+    expect(items[0]).toEqual({ id: "select-text", label: "Select text…" });
+    expect(items.slice(1)).toEqual(MENU_ITEMS.pane);
+  });
+  it("flips to the exit verb while the pane's select mode is on", () => {
+    const items = paneMenuItems(true, true);
+    expect(items[0]).toEqual({ id: "select-text-off", label: "Stop selecting" });
+    expect(items.slice(1)).toEqual(MENU_ITEMS.pane);
   });
 });

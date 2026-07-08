@@ -191,3 +191,26 @@ describe("palette overlay geometry (M21.9)", () => {
     expect(clampPaletteTop(4, 6, 10)).toBe(0); // shorter than a page never scrolls
   });
 });
+
+describe("select-text action (M22.9)", () => {
+  it("is offered only on the terminal surface with an app-mouse focused pane", () => {
+    const on = staticPaletteActions([], { terminal: true, appMousePane: true });
+    expect(on.some((a) => a.kind === "select-text")).toBe(true);
+    expect(on.find((a) => a.kind === "select-text")?.label).toBe("Select text in pane");
+  });
+  it("is absent for ordinary panes (drags already select directly)", () => {
+    const off = staticPaletteActions([], { terminal: true, appMousePane: false });
+    expect(off.some((a) => a.kind === "select-text")).toBe(false);
+    expect(staticPaletteActions([], { terminal: true }).some((a) => a.kind === "select-text")).toBe(
+      false,
+    );
+  });
+  it("is absent off the terminal surface even with an app-mouse pane", () => {
+    const home = staticPaletteActions([], { terminal: false, appMousePane: true });
+    expect(home.some((a) => a.kind === "select-text")).toBe(false);
+  });
+  it("fuzzy-matches by typing 'select'", () => {
+    const filtered = filterPaletteActions("select", [], { terminal: true, appMousePane: true });
+    expect(filtered.some((a) => a.kind === "select-text")).toBe(true);
+  });
+});

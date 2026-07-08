@@ -10,6 +10,9 @@ import {
   tintRunsBg,
   osc52Sequence,
   tmuxPassthrough,
+  pressStartsSelection,
+  wheelScrollsLocal,
+  selectBadgeLabel,
   chunkByBytes,
   ATTR_INVERSE,
   type Cell,
@@ -225,5 +228,51 @@ describe("chunkByBytes", () => {
   it("reassembles to the original", () => {
     const s = "the quick brown fox — jumped over 42 lazy dogs";
     expect(chunkByBytes(s, 5).join("")).toBe(s);
+  });
+});
+
+describe("select mode on app-mouse panes (M22.9)", () => {
+  describe("pressStartsSelection", () => {
+    it("always selects on a non-app-mouse pane (byte-identical old behavior)", () => {
+      expect(pressStartsSelection(false, false, false)).toBe(true);
+      expect(pressStartsSelection(false, false, true)).toBe(true);
+      expect(pressStartsSelection(false, true, false)).toBe(true);
+    });
+    it("forwards a plain press on an app-mouse pane", () => {
+      expect(pressStartsSelection(true, false, false)).toBe(false);
+    });
+    it("selects on an app-mouse pane while its select mode is on", () => {
+      expect(pressStartsSelection(true, true, false)).toBe(true);
+    });
+    it("selects on an app-mouse pane when the press is shift-modified", () => {
+      expect(pressStartsSelection(true, false, true)).toBe(true);
+    });
+  });
+
+  describe("wheelScrollsLocal", () => {
+    it("scrolls locally on a non-app-mouse pane", () => {
+      expect(wheelScrollsLocal(false, false)).toBe(true);
+    });
+    it("forwards the wheel on an app-mouse pane", () => {
+      expect(wheelScrollsLocal(true, false)).toBe(false);
+    });
+    it("reclaims the wheel for the local scrollback in select mode", () => {
+      expect(wheelScrollsLocal(true, true)).toBe(true);
+    });
+  });
+
+  describe("selectBadgeLabel", () => {
+    it("shows the full label on a normal-width pane", () => {
+      expect(selectBadgeLabel(80)).toBe(" ⧉ select ");
+      expect(selectBadgeLabel(16)).toBe(" ⧉ select ");
+    });
+    it("degrades to the bare glyph on a narrow pane", () => {
+      expect(selectBadgeLabel(15)).toBe(" ⧉ ");
+      expect(selectBadgeLabel(5)).toBe(" ⧉ ");
+    });
+    it("hides on a sliver pane", () => {
+      expect(selectBadgeLabel(4)).toBeNull();
+      expect(selectBadgeLabel(1)).toBeNull();
+    });
   });
 });

@@ -36,6 +36,7 @@ export type PaletteAction =
   | { kind: "rotate-window"; label: string }
   | { kind: "select-layout"; layout: string; label: string }
   | { kind: "sync-toggle"; label: string }
+  | { kind: "select-text"; label: string }
   | { kind: "resize-window"; label: string }
   | { kind: "settings"; id: SettingsCommandId; label: string }
   | { kind: "quit"; label: string };
@@ -64,6 +65,10 @@ export interface PaletteContext {
    *  (M22.8). Only then is the "Resize to fit this window" reclaim action worth
    *  offering — otherwise it is a no-op that clutters the list. */
   sizeMismatch?: boolean;
+  /** The focused pane's app turned mouse reporting on (M22.9) — only then is
+   *  "Select text in pane" offered (ordinary panes drag-select directly, so the
+   *  action would be a no-op that clutters the list). */
+  appMousePane?: boolean;
 }
 
 const TAB_LABELS: { tab: Tab; label: string }[] = [
@@ -122,6 +127,11 @@ export function staticPaletteActions(
     actions.push({ kind: "break-pane", label: "Break pane to window" });
     actions.push({ kind: "rotate-window", label: "Rotate panes" });
     actions.push({ kind: "sync-toggle", label: "Synchronize panes (toggle)" });
+    // Selection entry on app-mouse panes (M22.9) — the pane menu verb's
+    // keyboard twin, offered only where forwarding blocks a direct drag.
+    if (ctx.appMousePane) {
+      actions.push({ kind: "select-text", label: "Select text in pane" });
+    }
     for (const layout of LAYOUT_PRESETS) {
       actions.push({ kind: "select-layout", layout, label: `Layout: ${layout}` });
     }

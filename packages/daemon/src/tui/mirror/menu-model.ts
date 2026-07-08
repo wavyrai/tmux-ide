@@ -77,6 +77,19 @@ export const MENU_ITEMS: Record<MenuRegion, MenuItem[]> = {
   ],
 };
 
+/** PURE — the pane menu's item list for a concrete pane (M22.9). App-mouse
+ *  panes (the app turned mouse reporting on — presses are forwarded, so a drag
+ *  can't start a selection) get a leading "Select text…" verb that pauses
+ *  forwarding for that pane; while its select mode is active the entry flips to
+ *  the exit verb. Ordinary panes keep the fixed list untouched. */
+export function paneMenuItems(appMouse: boolean, selectModeOn: boolean): MenuItem[] {
+  if (!appMouse) return MENU_ITEMS.pane;
+  const entry: MenuItem = selectModeOn
+    ? { id: "select-text-off", label: "Stop selecting" }
+    : { id: "select-text", label: "Select text…" };
+  return [entry, ...MENU_ITEMS.pane];
+}
+
 /** The overlay's border (1) + horizontal padding (1 each side). The header row
  *  and every item row live INSIDE this frame. */
 const BORDER = 1;

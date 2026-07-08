@@ -8,6 +8,16 @@
  * rendering, ^o pane focus cycle, ^t window cycle, ^q quits (session
  * untouched).
  *
+ * SELECT MODE (M22.9): forwarding normally wins on app-mouse panes, so those
+ * panes (exactly the agent panes users copy from) could never drag-select.
+ * Right-click → "Select text…" (or the palette's "Select text in pane")
+ * pauses forwarding for THAT pane — a ⧉ select badge joins the top-right
+ * badge family, drags run the normal selection machine, the wheel scrolls the
+ * LOCAL scrollback — until Escape, a completed copy, or focus leaving the
+ * pane. A SHIFT-modified press selects without the mode where the terminal
+ * passes shift through to us (SGR button+4; many terminals keep shift+drag
+ * for native selection — measured: see the card notes).
+ *
  * SURFACE TABS (M18.4): a persistent top row — [⌂ Home][❯ Terminal][▤ Files]
  * [± Diff] — makes the app a real IDE. F1..F4 switch (F-keys encode reliably;
  * ctrl+digit/alt do NOT — measured); the tab bar is also clickable (fixed x-span
@@ -186,10 +196,7 @@ import {
   PICKER_UP_ID,
   type PathKind,
 } from "./folder-picker.ts";
-import {
-  registerProject,
-  ProjectAlreadyRegisteredError,
-} from "../../lib/project-registry.ts";
+import { registerProject, ProjectAlreadyRegisteredError } from "../../lib/project-registry.ts";
 import { separatorAt, resizedSize, resizeCommand, type Separator } from "./resize-model.ts";
 import {
   effectiveWindowSize,
@@ -229,7 +236,13 @@ import {
   type DialogPromptSpec,
   type DialogConfirmSpec,
 } from "./dialog-model.ts";
-import { dialogStack, dialogKey, DialogSelect, DialogPrompt, DialogConfirm } from "./dialog-stack.ts";
+import {
+  dialogStack,
+  dialogKey,
+  DialogSelect,
+  DialogPrompt,
+  DialogConfirm,
+} from "./dialog-stack.ts";
 import {
   HINT_CHROME_RESTART,
   HINT_LIVE,
@@ -301,6 +314,7 @@ import { focusStrips } from "./focus-border.ts";
 import { scrollThumb, trackZone, pageTop, dragTop } from "./scrollbar-model.ts";
 import {
   MENU_ITEMS,
+  paneMenuItems,
   CONFIRM_SUFFIX,
   SUBMENU_CARET,
   menuDims,
@@ -322,6 +336,9 @@ import {
   tintRunsInverse,
   tintRunsBg,
   osc52Sequence,
+  pressStartsSelection,
+  wheelScrollsLocal,
+  selectBadgeLabel,
   ATTR_INVERSE,
   type Cell,
   type Selection,
@@ -451,6 +468,11 @@ type RouteEvent = {
   x: number;
   y: number;
   scroll?: { direction: string };
+  /** Keyboard modifiers held on the pointer event (present on the real OpenTUI
+   *  MouseEvent — SGR encodes shift as +4 on the button code). A shift-modified
+   *  press on an app-mouse pane starts a LOCAL selection instead of being
+   *  forwarded (M22.9) — where the terminal passes shift through at all. */
+  modifiers?: { shift: boolean; alt: boolean; ctrl: boolean };
   stopPropagation?: () => void;
 };
 
@@ -709,6 +731,39 @@ render(
       if (selection() !== null) setSelection(null);
     };
 
+    // ── SELECT MODE on app-mouse panes (M22.9) ───────────────────────────────
+    // Presses on a pane whose app enabled mouse reporting are FORWARDED, so a
+    // drag can never start a selection there. `selectModePane` names the ONE
+    // pane whose forwarding is paused (right-click → "Select text…", or the
+    // palette twin); while set, presses/drags on that pane run the normal
+    // selection machine and the wheel scrolls the LOCAL scrollback. The mode
+    // ends on Escape, on a completed copy (commitMirrorCopy clears it), or when
+    // focus leaves the pane. Shift-modified presses select WITHOUT the mode
+    // when the terminal passes shift through (see RouteEvent.modifiers).
+    const [selectModePane, setSelectModePane] = createSignal<string | null>(null);
+    const enterSelectMode = (paneId: string) => {
+      mirror?.focus(paneId);
+      clearSelection();
+      setSelectModePane(paneId);
+      setStatusNote("select text: drag to copy · esc to exit");
+    };
+    const exitSelectMode = () => {
+      if (selectModePane() === null) return;
+      setSelectModePane(null);
+      clearSelection();
+    };
+    // Focus leaving the pane clears the mode. The reactive panes() lags one
+    // 8ms tick behind an enterSelectMode focus call, so only clear when the
+    // mirror's SYNCHRONOUS focus agrees the pane lost focus (mirror.focus sets
+    // it before the tick re-derives `active`). Window/session switches drop the
+    // pane from panes() and move both focus answers — the mode clears then too.
+    createEffect(() => {
+      const sm = selectModePane();
+      if (sm === null) return;
+      const focused = panes().find((p) => p.active)?.id;
+      if (focused && focused !== sm && mirror?.focusedPane() !== sm) exitSelectMode();
+    });
+
     // ── SCROLLBACK SEARCH (M20.3) ────────────────────────────────────────────
     // copy-mode's `/` finder, app-native. `search` is the live search SESSION: a
     // bottom-of-canvas input line owning the keyboard while open. `editing:true`
@@ -824,9 +879,7 @@ render(
           .filter((a, i, arr) => arr.findIndex((b) => b.paneId === a.paneId) === i),
       ),
     );
-    const homeItems = createMemo<HomeItem[]>(() =>
-      buildHomeItems(projectsData(), recentFolders()),
-    );
+    const homeItems = createMemo<HomeItem[]>(() => buildHomeItems(projectsData(), recentFolders()));
     // First-run (M22.5): a truly empty fleet gets a centered welcome. It reserves
     // WELCOME_ROWS at the top of the content area, so the home row math shifts by
     // that offset while it shows (shared by render, hover and click routing).
@@ -880,8 +933,7 @@ render(
       if (!r) return "no live sessions — press f to open a folder";
       if (r.kind === "project")
         return `${r.dir ?? "no dir"} · registered, not running — enter/click launches it`;
-      if (r.kind === "recent")
-        return `${r.dir} · recently opened — enter/click reopens it here`;
+      if (r.kind === "recent") return `${r.dir} · recently opened — enter/click reopens it here`;
       if (r.kind === "header") return "";
       const w = `${r.windows} window${r.windows === 1 ? "" : "s"}`;
       return `${r.project}${r.dir ? ` · ${r.dir}` : ""} · ${w} · ${r.status}`;
@@ -1464,7 +1516,9 @@ render(
      *  subprocess — the CLI resolves the layout from the project's stack). */
     const runDetectWrite = (dir: string) => {
       execFile("node", [cliPath, "detect", dir, "--write"], (err) => {
-        setStatusNote(err ? "couldn't set up a layout" : `set up a layout in ${basename(dir) || dir}`);
+        setStatusNote(
+          err ? "couldn't set up a layout" : `set up a layout in ${basename(dir) || dir}`,
+        );
       });
     };
 
@@ -1587,6 +1641,7 @@ render(
           terminal: mode() === "mirror",
           agents: fleetAgents(),
           sizeMismatch: windowMismatch() !== null,
+          appMousePane: panes().find((p) => p.active)?.appMouse === true,
         },
       ),
     );
@@ -1693,6 +1748,14 @@ render(
           const pid = mirror?.focusedPane();
           if (pid) void mirror?.command(`select-layout -t ${pid} ${a.layout}`).catch(() => {});
           setStatusNote(`layout: ${a.layout}`);
+          break;
+        }
+        case "select-text": {
+          // The pane menu verb's palette twin (M22.9) — same gate: the focused
+          // pane must be app-mouse (otherwise drags already select directly).
+          const pid = mirror?.focusedPane();
+          const p = panes().find((x) => x.id === pid);
+          if (pid && p?.appMouse) enterSelectMode(pid);
           break;
         }
         case "sync-toggle": {
@@ -2427,7 +2490,12 @@ render(
     const commitMirrorCopy = (paneId: string, anchor: Cell, head: Cell) => {
       const { start, end } = orderCells(anchor, head);
       const text = extractSelection(paneRowTexts(paneId), start, end);
-      if (text.length > 0) copyText(text);
+      if (text.length > 0) {
+        copyText(text);
+        // A completed copy ends the pane's select mode (M22.9) — forwarding
+        // resumes; the selection highlight stays until the next key/click.
+        if (selectModePane() === paneId) setSelectModePane(null);
+      }
     };
     /** Map a pointer inside the editor viewport to a buffer (line,col). */
     const editorCellAt = (x: number, gy: number): { line: number; col: number } =>
@@ -2621,7 +2689,9 @@ render(
       mirror?.sendTextTo(pane.id, sgrMouse(0, col, row, release)); // fire-and-forget
     };
     const wheel = (pane: LivePane, direction: "up" | "down", col: number, row: number) => {
-      if (pane.appMouse) {
+      // Select mode reclaims the wheel for the LOCAL scrollback (M22.9) so
+      // older output can be scrolled into view and selected.
+      if (!wheelScrollsLocal(pane.appMouse, selectModePane() === pane.id)) {
         mirror?.sendTextTo(pane.id, sgrMouse(direction === "up" ? 64 : 65, col, row, false));
         return;
       }
@@ -2732,7 +2802,13 @@ render(
         (p) => cx >= p.left && cx < p.left + p.width && cy >= p.top && cy < p.top + p.height,
       );
       if (!pane) return null;
-      return { region: "pane", title: pane.id, items: MENU_ITEMS.pane, paneId: pane.id };
+      return {
+        region: "pane",
+        title: pane.id,
+        // App-mouse panes lead with "Select text…" / "Stop selecting" (M22.9).
+        items: paneMenuItems(pane.appMouse, selectModePane() === pane.id),
+        paneId: pane.id,
+      };
     };
 
     const closeMenu = () => {
@@ -2891,6 +2967,18 @@ render(
       }
       if (m.region === "pane") {
         const pid = m.paneId!;
+        // Select mode (M22.9): pause forwarding for THIS pane so a drag selects
+        // locally; exits on esc / a completed copy / focus leaving the pane.
+        if (id === "select-text") {
+          enterSelectMode(pid);
+          closeMenu();
+          return;
+        }
+        if (id === "select-text-off") {
+          exitSelectMode();
+          closeMenu();
+          return;
+        }
         // Synchronize-panes is a WINDOW option tmux won't notify us about, so we
         // flip it explicitly and re-query the strip. Keep the menu OPEN so the
         // ✓/✗ checkbox visibly flips (every other pane verb closes on fire).
@@ -3208,6 +3296,13 @@ render(
         return;
       }
       if (!mirror) return;
+      // Escape ends select mode (M22.9) — forwarding resumes; the key is
+      // consumed here rather than sent to the pane's app.
+      if (evt.name === "escape" && selectModePane() !== null) {
+        exitSelectMode();
+        setStatusNote("select mode off");
+        return;
+      }
       // `/` opens scrollback search on the focused pane (copy-mode's finder). Only
       // in Terminal mode (home/editor/diff returned above); a raw `/` still reaches
       // the pane once search is open, since search then owns the keyboard.
@@ -4007,11 +4102,20 @@ render(
       if (!pane) return;
       if (type === "down") {
         mirror?.focus(pane.id);
-        if (pane.appMouse) {
+        // App-mouse panes forward the press UNLESS this pane's select mode is
+        // on or the press is shift-modified (M22.9) — then the normal selection
+        // machine below runs instead (non-app-mouse panes are unchanged).
+        if (
+          !pressStartsSelection(
+            pane.appMouse,
+            selectModePane() === pane.id,
+            e.modifiers?.shift === true,
+          )
+        ) {
           forwardPress(pane, x, gy, false);
           return;
         }
-        // Non-appMouse pane: begin a drag selection, or on a repeat click select
+        // Begin a drag selection, or on a repeat click select
         // the word (double) / line (triple) and copy it immediately.
         const cell = paneCell(pane, x, gy);
         const now = Date.now();
@@ -4031,7 +4135,9 @@ render(
           setSelection(null);
         }
       } else if (type === "up") {
-        if (pane.appMouse) forwardPress(pane, x, gy, true);
+        // Releases of a local selection gesture never reach here (the
+        // `selecting` branch above returns); select mode suppresses the rest.
+        if (pane.appMouse && selectModePane() !== pane.id) forwardPress(pane, x, gy, true);
       } else if (type === "scroll") {
         const dir = e.scroll?.direction;
         if (dir === "up" || dir === "down") {
@@ -4228,7 +4334,8 @@ render(
               >
                 <For each={fleetAgents()}>
                   {(a, i) => {
-                    const age = () => agentAgeLabel(a.state, a.since, Math.floor(Date.now() / 1000));
+                    const age = () =>
+                      agentAgeLabel(a.state, a.since, Math.floor(Date.now() / 1000));
                     const hovered = () => isHovered("sidebaragent", i());
                     const ageShown = () => (hovered() ? age() : null);
                     const labelBudget = () => {
@@ -4247,7 +4354,10 @@ render(
                         <text fg={STATUS_COLOR[a.state]} attributes={attn()}>
                           {STATUS_GLYPH[a.state]}
                         </text>
-                        <text fg={a.state === "blocked" ? STATUS_COLOR.blocked : MUTED} attributes={attn()}>
+                        <text
+                          fg={a.state === "blocked" ? STATUS_COLOR.blocked : MUTED}
+                          attributes={attn()}
+                        >
                           {agentRowLabel(a.kind, a.session, labelBudget())}
                         </text>
                         <Show when={ageShown()}>
@@ -4484,13 +4594,23 @@ render(
                               </box>
                             )}
                           </For>
-                          <Show when={pane.snapshot.scrollOffset > 0}>
-                            <box position="absolute" right={1} top={0} backgroundColor={BADGE_BG}>
-                              <text fg={DEFAULT_FG}>
+                          {/* Top-right badge family: the select-mode chip (M22.9,
+                            passive text runs — presses bubble to the router) then
+                            the scroll badge. */}
+                          <box position="absolute" right={1} top={0} flexDirection="row">
+                            <Show
+                              when={selectModePane() === pane.id && selectBadgeLabel(pane.width)}
+                            >
+                              <text fg={DEFAULT_FG} bg={BUTTON_ACTIVE_BG} attributes={1}>
+                                {selectBadgeLabel(pane.width)!}
+                              </text>
+                            </Show>
+                            <Show when={pane.snapshot.scrollOffset > 0}>
+                              <text fg={DEFAULT_FG} bg={BADGE_BG}>
                                 {` ↑${pane.snapshot.scrollOffset}/${pane.scrollbackDepth} `}
                               </text>
-                            </box>
-                          </Show>
+                            </Show>
+                          </box>
                           {agentChipOverlay(() => pane)}
                           {/* Right-edge scrollbar — only while scrolled up, so a live
                             terminal stays clean (mirrorScrollGeom gates on offset). */}
@@ -4528,13 +4648,23 @@ render(
                               selRange={mirrorSelForPane(id)}
                               search={mirrorSearchForPane(pane()!)}
                             />
-                            <Show when={pane()!.snapshot.scrollOffset > 0}>
-                              <box position="absolute" right={1} top={0} backgroundColor={BADGE_BG}>
-                                <text fg={DEFAULT_FG}>
+                            {/* Top-right badge family: the select-mode chip
+                              (M22.9, passive text runs — presses bubble to the
+                              router) then the scroll badge. */}
+                            <box position="absolute" right={1} top={0} flexDirection="row">
+                              <Show
+                                when={selectModePane() === id && selectBadgeLabel(pane()!.width)}
+                              >
+                                <text fg={DEFAULT_FG} bg={BUTTON_ACTIVE_BG} attributes={1}>
+                                  {selectBadgeLabel(pane()!.width)!}
+                                </text>
+                              </Show>
+                              <Show when={pane()!.snapshot.scrollOffset > 0}>
+                                <text fg={DEFAULT_FG} bg={BADGE_BG}>
                                   {` ↑${pane()!.snapshot.scrollOffset}/${pane()!.scrollbackDepth} `}
                                 </text>
-                              </box>
-                            </Show>
+                              </Show>
+                            </box>
                             {agentChipOverlay(pane)}
                             {scrollbarOverlay(() => mirrorScrollGeom(pane()!))}
                           </box>
@@ -5015,8 +5145,7 @@ render(
                   }).slice(2);
                 const markerFg = () =>
                   item.current ? dlgAccent() : selected() ? DEFAULT_FG : MUTED;
-                const bodyFg = () =>
-                  armed() ? DIFF_DEL_FG : selected() ? DEFAULT_FG : MUTED;
+                const bodyFg = () => (armed() ? DIFF_DEL_FG : selected() ? DEFAULT_FG : MUTED);
                 return (
                   <box
                     height={1}
@@ -5026,12 +5155,7 @@ render(
                     <text fg={markerFg()}>{dialogMarker(item, selected())}</text>
                     <Show when={item.swatch}>
                       <text
-                        fg={RGBA.fromInts(
-                          item.swatch![0],
-                          item.swatch![1],
-                          item.swatch![2],
-                          255,
-                        )}
+                        fg={RGBA.fromInts(item.swatch![0], item.swatch![1], item.swatch![2], 255)}
                       >
                         {"● "}
                       </text>
@@ -5077,9 +5201,7 @@ render(
               </Show>
             </box>
             <text
-              fg={
-                promptFooter(dlgPromptSpec(), dlgPrompt()!.state).error ? DIFF_DEL_FG : MUTED
-              }
+              fg={promptFooter(dlgPromptSpec(), dlgPrompt()!.state).error ? DIFF_DEL_FG : MUTED}
             >
               {promptFooter(dlgPromptSpec(), dlgPrompt()!.state).text.slice(0, DLG_INNER_W)}
             </text>
