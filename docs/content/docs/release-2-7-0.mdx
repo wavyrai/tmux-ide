@@ -1,0 +1,115 @@
+---
+title: What's New in 2.7
+description: tmux-ide 2.7 — the unified app becomes a real terminal IDE over your fleet
+---
+
+# tmux-ide 2.7
+
+2.7 is the unified-app release. `tmux-ide app` was a proven spike in 2.6; now
+it's a real terminal IDE over your fleet — panes that feel native, agents you can
+see at a glance, and a front door you can open from anywhere. tmux still owns the
+PTYs, the layout, and persistence; the app just renders them. If it dies, your
+sessions are ordinary tmux, exactly as before.
+
+```bash
+tmux-ide app          # from any folder — no tmux server required
+```
+
+Tabs across the top: **F1 Home** · **F2 Terminal** · **F3 Files** · **F4 Diff** ·
+**F5 palette**. It's mouse-native throughout, and `^q` detaches clean.
+
+## Panes that feel native
+
+The Terminal surface renders a live mirror of your real panes, and in 2.7 that
+mirror stopped feeling like a mirror:
+
+- **Much faster pane rendering** — pane content blits straight into the
+  framebuffer and repaints only the rows that actually changed, so a busy log
+  scrolls smoothly and a quiet pane costs nothing.
+- **A crisp input fast path** — keystrokes are fire-and-forget and coalesced
+  instead of waiting for a round-trip per key, so typing into a pane feels local
+  even over the control-mode hop. Large pastes land byte-perfect and fast.
+- **A hardware cursor** — the focused pane drives the terminal's real cursor:
+  shape, blink, and hide/show follow the application, so vim and Claude Code
+  behave exactly as they do outside the app. Unfocused panes show a quiet marker.
+
+You don't configure any of this — it's just how the Terminal surface behaves now.
+
+## Agents at a glance
+
+The fleet's agent state is now visible without opening anything:
+
+- **A sidebar agents section** lists every agent across every session, blocked
+  ones first. Click one and the app jumps straight to its pane.
+- **Per-pane status chips** — an agent pane wears a small chip (`● claude`); a
+  blocked agent turns bold red and shows how long it's been waiting
+  (`● claude · blocked 4m`).
+- **A focus hairline** — the focused pane gets a quiet accent border so you
+  always know where your keystrokes are going.
+
+Under the hood, `tmux-ide team --json` now carries a per-pane `agents[]` array,
+the same data the sidebar and chips read. → [Agent detection](/docs/agent-detection)
+
+## Start it anywhere
+
+The app no longer assumes you already have a session running. `tmux-ide app`
+works from any folder with **no tmux server at all** — a genuine cold start.
+
+- **A first-run welcome** greets new users in plain language instead of an empty
+  grid.
+- **Open folder…** is a real filesystem picker: choose a directory and the app
+  opens it as a terminal workspace, with the option to remember it as a project
+  and set up a layout. Recently opened folders are one click away.
+- **The front door, optionally.** Set `app.frontDoor: true` in
+  `~/.tmux-ide/config.json` and bare `tmux-ide` launches the unified app instead
+  of the classic home cockpit. It's opt-in; `ide.yml` auto-launch and
+  `tmux-ide team` are unaffected. → [Getting started](/docs/getting-started)
+
+## Settings without JSON
+
+There's no settings screen and no JSON to hand-edit for the common cases. Every
+setting is a palette command — press **F5** and type "settings":
+
+- **Accent color** with a live preview as you move the cursor.
+- **Notifications** — channels, which transitions alert you, and **quiet hours**
+  (a daily window where banners stay silent).
+- **Updates & background refresh** cadence.
+- **Crash restore** — whether restore revives agents or rebuilds sessions only.
+- **Keyboard shortcuts** — a read-only viewer of your current binds.
+- **Reset to defaults**, guarded by a confirm.
+
+Changes persist atomically to `~/.tmux-ide/config.json` and the status line tells
+you where they landed. → [ide.yml & configuration](/docs/configuration)
+
+## Select & copy inside agent panes
+
+Panes running a full-screen app (Claude Code, vim, htop) capture the mouse, so
+you couldn't drag to select text in them. Now you can: right-click →
+**"Select text…"** (or the palette's **"Select text in pane"**) pauses mouse
+forwarding so you can select and copy, with the wheel scrolling history while you
+do. Ordinary shell panes drag-select directly, as before. Copies use
+SSH-transparent OSC52, so the text lands on your local clipboard even across a
+remote session.
+
+## Size honesty with co-attached terminals
+
+If another terminal is attached to the same window and sizes it smaller, the app
+no longer pretends. It centers the view and says so, and the palette offers
+**"Resize to fit this window"** to reclaim the full canvas when you want it.
+Detaching always leaves the other terminal's size intact.
+
+## Per-platform release binaries
+
+The app used to need a dev checkout to run. 2.7 ships **per-platform TUI
+binaries** with download-on-demand, so a plain `npm i -g tmux-ide` gets you a
+working `tmux-ide app` without a repo. → [Getting started](/docs/getting-started)
+
+## Also in 2.7
+
+- Right-click context menus everywhere — pane, window, and session verbs
+  including layout presets and synchronize-panes, with destructive actions
+  confirmed.
+- Scrollback search (`/`), a paste-buffer picker, and pane-zoom fast paths.
+- Notification polish: deduped banners, quiet hours, and richer content.
+- Broader agent detection: six more screen manifests, with detection confidence
+  now surfaced.

@@ -93,7 +93,49 @@ any time to see the full sheet, or print it:
 tmux-ide cheatsheet
 ```
 
+## The unified app — `tmux-ide app`
+
+The surfaces above float over your real session. `tmux-ide app` is the other
+shape: a full-screen IDE over the whole fleet, with tabs across the top
+(**F1 Home** · **F2 Terminal** · **F3 Files** · **F4 Diff** · **F5 palette**).
+tmux still owns the PTYs and layout; the app renders them. See
+[What's new in 2.7](/docs/release-2-7-0) for the full tour.
+
+### The Terminal surface
+
+The Terminal tab is a live mirror of your panes, and it's agent-aware:
+
+- **Status chips** — an agent pane wears a chip (`● claude`); a blocked agent
+  turns bold red with its wait time (`● claude · blocked 4m`).
+- **A focus hairline** — the focused pane gets a quiet accent border, so you
+  always know where keystrokes land.
+- **Select & copy in agent panes** — a pane running a full-screen app (Claude
+  Code, vim) captures the mouse. Right-click → **"Select text…"** pauses mouse
+  forwarding so you can drag-select and copy (via SSH-transparent OSC52); the
+  wheel scrolls history while you select.
+- **Size honesty** — when another attached terminal sizes the shared window
+  smaller, the app centers the view and says so; the palette's **"Resize to fit
+  this window"** reclaims the full canvas.
+
+### Home v2
+
+The app's Home tab greets first-run users with a plain-language welcome instead
+of an empty grid. **Open folder…** is a real filesystem picker — choose a
+directory and the app opens it as a terminal workspace, optionally remembering it
+as a project. Recently opened folders are one click away, and the optional
+`app.frontDoor` config flag makes bare `tmux-ide` open the app. See
+[Getting started](/docs/getting-started#start-anywhere-with-the-app).
+
+### Settings without JSON
+
+There's no settings screen and no JSON to hand-edit for the common cases. Press
+**F5** and type "settings" for a palette command per setting — accent color (with
+a live preview), notifications and quiet hours, update cadence, crash restore, a
+keyboard-shortcut viewer, and a guarded reset. Changes persist atomically to
+`~/.tmux-ide/config.json`. See [ide.yml & configuration](/docs/configuration).
+
 ## See also
 
+- [What's new in 2.7](/docs/release-2-7-0) — the unified app in full
 - [The dock & keys](/docs/the-dock) — the triggers that open these surfaces
 - [Theming & config](/docs/theming) — rebind every key
