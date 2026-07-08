@@ -193,10 +193,10 @@ export default async function HomePage() {
             The terminal that understands your agents.
           </h1>
           <Link
-            href="/docs/release-2-6-0"
+            href="/docs/release-2-7-0"
             className="inline-flex items-center border border-fd-border px-2 py-0.5 text-[10px] font-mono uppercase tracking-[0.18em] text-fd-muted-foreground transition-colors hover:bg-fd-accent hover:text-fd-foreground shrink-0"
           >
-            2.6
+            2.7
           </Link>
         </div>
       </section>
@@ -478,10 +478,10 @@ export default async function HomePage() {
                 Get started
               </Link>
               <Link
-                href="/docs/release-2-6-0"
+                href="/docs/release-2-7-0"
                 className="border border-fd-border px-6 py-2.5 text-sm font-mono text-fd-foreground hover:bg-fd-accent transition-colors"
               >
-                What&apos;s new in 2.6
+                What&apos;s new in 2.7
               </Link>
             </div>
           </div>
