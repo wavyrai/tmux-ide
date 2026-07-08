@@ -50,6 +50,21 @@ export function parseAuthority(raw: string | undefined, nowSec: number): AgentSt
 }
 
 /**
+ * Extract the epoch STAMP from an `@agent_state` value (`"<state>:<epoch>"`) —
+ * the "since" timestamp of the reported state. PURE — returns the epoch, or
+ * null when the value is absent or its stamp isn't a finite number. Staleness
+ * is NOT considered here (that's {@link parseAuthority}'s job); callers pair
+ * this with a fresh `parseAuthority` result to surface a state's `since`.
+ */
+export function parseAuthorityEpoch(raw: string | undefined): number | null {
+  if (!raw) return null;
+  const sep = raw.lastIndexOf(":");
+  if (sep === -1) return null;
+  const epoch = Number(raw.slice(sep + 1));
+  return Number.isFinite(epoch) ? epoch : null;
+}
+
+/**
  * Classify a single snapshot against a manifest — PURE, never throws.
  *
  * - no manifest → `"unknown"` (we can't reason about an unrecognized command)

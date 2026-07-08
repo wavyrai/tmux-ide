@@ -1946,7 +1946,8 @@ __export(classify_exports, {
   classifyInstant: () => classifyInstant,
   classifyPaneCommand: () => classifyPaneCommand,
   createStatusTracker: () => createStatusTracker,
-  parseAuthority: () => parseAuthority
+  parseAuthority: () => parseAuthority,
+  parseAuthorityEpoch: () => parseAuthorityEpoch
 });
 function parseAuthority(raw, nowSec) {
   if (!raw) return null;
@@ -1959,6 +1960,13 @@ function parseAuthority(raw, nowSec) {
     return null;
   }
   return state;
+}
+function parseAuthorityEpoch(raw) {
+  if (!raw) return null;
+  const sep2 = raw.lastIndexOf(":");
+  if (sep2 === -1) return null;
+  const epoch = Number(raw.slice(sep2 + 1));
+  return Number.isFinite(epoch) ? epoch : null;
 }
 function classifyInstant(snapshot, manifest) {
   if (!manifest) return "unknown";
@@ -2287,6 +2295,7 @@ var init_snapshot = __esm({
 var sessions_exports = {};
 __export(sessions_exports, {
   SIDEBAR_PANE_OPTION: () => SIDEBAR_PANE_OPTION,
+  buildAgentEntry: () => buildAgentEntry,
   excludeSidebarPanes: () => excludeSidebarPanes,
   isListableSession: () => isListableSession,
   listTeamSessions: () => listTeamSessions,
@@ -2294,6 +2303,22 @@ __export(sessions_exports, {
   rollupWindows: () => rollupWindows
 });
 import { execFileSync as execFileSync3 } from "node:child_process";
+function buildAgentEntry(input) {
+  const { manifest, pane } = input;
+  if (!manifest || manifest.id === "shell") return null;
+  return {
+    paneId: pane.id,
+    windowIndex: pane.windowIndex,
+    session: input.sessionName,
+    kind: manifest.id,
+    state: input.state,
+    confidence: manifest.confidence ?? "conservative",
+    since: input.since,
+    title: pane.title,
+    command: pane.cmd,
+    dir: pane.dir
+  };
+}
 function excludeSidebarPanes(panes) {
   return panes.filter((pane) => !pane.sidebar);
 }
@@ -2324,23 +2349,23 @@ function listTeamSessions(tracker, opts = {}) {
     const panes = excludeSidebarPanes(panesBySession.get(name) ?? []);
     const seen = opts.viewed === name;
     const nowSec = Math.floor(Date.now() / 1e3);
-    const wantPane = typeof opts.onPane === "function";
+    const agents = [];
     const statuses = panes.map((pane) => {
       const authority = parseAuthority(pane.authority, nowSec);
       let status2;
       let manifest;
+      let since = null;
       if (authority !== null) {
+        since = parseAuthorityEpoch(pane.authority);
         if (authority === "done" && seen) {
           ackDone(pane.id, nowSec);
           status2 = "idle";
         } else {
           status2 = authority;
         }
-        if (wantPane) {
-          manifest = resolveAgentCommand(pane.cmd, pane.pid, processTable, {
-            hint: pane.hint
-          }).manifest;
-        }
+        manifest = resolveAgentCommand(pane.cmd, pane.pid, processTable, {
+          hint: pane.hint
+        }).manifest;
       } else {
         manifest = resolveAgentCommand(pane.cmd, pane.pid, processTable, {
           hint: pane.hint
@@ -2354,6 +2379,8 @@ function listTeamSessions(tracker, opts = {}) {
         agent: manifest && manifest.id !== "shell" ? manifest.id : null,
         status: status2
       });
+      const entry = buildAgentEntry({ sessionName: name, pane, manifest, state: status2, since });
+      if (entry) agents.push(entry);
       return status2;
     });
     return {
@@ -2364,7 +2391,8 @@ function listTeamSessions(tracker, opts = {}) {
       status: rollupStatus(statuses),
       // `panes` and `statuses` are parallel (statuses = panes.map(...)), so
       // the pure rollup can group each pane's window with its resolved status.
-      windowList: rollupWindows(panes, statuses)
+      windowList: rollupWindows(panes, statuses),
+      agents
     };
   });
 }
@@ -2373,9 +2401,11 @@ function collectPanes() {
     "list-panes",
     "-a",
     "-F",
-    // Window fields sit before pane_title so the (tab-safe) title stays the
-    // trailing catch-all — window names don't contain tabs in practice.
-    `#{session_name}	#{pane_id}	#{pane_pid}	#{pane_current_command}	#{@agent_state}	#{@agent_hint}	#{${SIDEBAR_PANE_OPTION}}	#{window_index}	#{window_name}	#{window_active}	#{pane_title}`
+    // Window fields + pane_current_path sit before pane_title so the (tab-safe)
+    // title stays the trailing catch-all — window names/paths don't contain tabs
+    // in practice. pane_current_path rides this SAME list-panes call (no extra
+    // tmux round-trip) so per-pane agent entries can carry a working dir.
+    `#{session_name}	#{pane_id}	#{pane_pid}	#{pane_current_command}	#{@agent_state}	#{@agent_hint}	#{${SIDEBAR_PANE_OPTION}}	#{window_index}	#{window_name}	#{window_active}	#{pane_current_path}	#{pane_title}`
   ]);
   const bySession = /* @__PURE__ */ new Map();
   for (const line of raw.split("\n").filter(Boolean)) {
@@ -2390,6 +2420,7 @@ function collectPanes() {
       windowIndex = "0",
       windowName = "",
       windowActive = "0",
+      dir = "",
       ...titleParts
     ] = line.split("	");
     if (!session) continue;
@@ -2404,6 +2435,7 @@ function collectPanes() {
       windowIndex: Number(windowIndex) || 0,
       windowName,
       windowActive: windowActive === "1",
+      dir,
       title: titleParts.join("	")
     });
     bySession.set(session, list);
@@ -11342,7 +11374,7 @@ var require_package = __commonJS({
   "package.json"(exports, module) {
     module.exports = {
       name: "tmux-ide",
-      version: "2.6.1",
+      version: "2.7.0",
       description: "Turn any project into a tmux-powered terminal IDE with a simple ide.yml",
       type: "module",
       bin: {
@@ -11476,7 +11508,10 @@ function toFleetJson(projects) {
           active: w.active,
           panes: w.panes,
           status: w.status
-        }))
+        })),
+        // A pre-agents TeamSession (older constructor/test) yields `[]` — the
+        // contract always exposes the array.
+        agents: s.agents ?? []
       }))
     }))
   };
