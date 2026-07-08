@@ -8,14 +8,22 @@
  * stay minimal. Treat every matcher below as a heuristic to tune, not a
  * contract — edit freely as agent UIs change.
  *
- * EVIDENCE PROVENANCE. The `claude` and `codex` manifests are tuned against
- * REAL captured screens (see `manifest-corpus.test.ts` for the sanitized
- * fixtures). Each matcher cites the invariant it was built from ("seen: …").
- * The remaining manifests (`opencode`, `gemini`, `aider`, `copilot`) are
- * best-effort from public docs/common knowledge — every one of their matchers
- * is marked "untuned — needs real captures" and kept HIGH-PRECISION
- * (esc-to-interrupt / spinner / explicit y-n) so they can never false-positive
- * on a plain prompt. Users can override any of these with a JSON file in
+ * EVIDENCE PROVENANCE (per-manifest `confidence`):
+ *   - `tuned` — built from REAL captured screens or the agent's own source
+ *     strings. `claude`, `codex`, and `aider` are tuned: codex from live
+ *     `tmux capture-pane` frames driven through a real turn (idle / working /
+ *     command-approval / trust prompt), aider from the verbatim prompt strings
+ *     in its installed source (`io.py` confirm_ask, `waiting.py` spinner).
+ *     Each matcher cites the invariant it was built from ("seen: …").
+ *   - `conservative` — best-effort from public docs/common knowledge
+ *     (`opencode`, `gemini`, `copilot`, `cursor`, `goose`, `amp`). Every
+ *     matcher is HIGH-PRECISION (esc-to-interrupt / spinner / explicit y-n /
+ *     "Do you want") so it can never false-positive on a plain prompt, but it
+ *     may miss real states until a live capture upgrades it. `opencode` was
+ *     attempted live but its local auth DB errored and the TUI rendered blank,
+ *     so it stays conservative.
+ *
+ * Users can override any of these with a JSON file in
  * `~/.tmux-ide/agent-detection/` (see `manifest-loader.ts`).
  */
 import type { AgentManifest } from "./manifest.ts";
@@ -27,6 +35,7 @@ const BRAILLE_SPINNER = "[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]";
 const CLAUDE: AgentManifest = {
   id: "claude",
   commands: ["claude"],
+  confidence: "tuned",
   states: {
     // Approval / confirmation prompts — Claude is waiting on the user.
     // Claude's approval UI is a bordered box asking a "Do you want …?" question
@@ -74,41 +83,57 @@ const CLAUDE: AgentManifest = {
 
 const CODEX: AgentManifest = {
   id: "codex",
-  commands: ["codex"],
+  commands: ["codex", "codex.exe"],
+  confidence: "tuned",
   states: {
+    // TUNED against real captures (codex-cli v0.142.5, driven through a turn).
+    // The command-approval dialog and the directory-trust prompt are the two
+    // "blocked" screens. Codex's approval menu uses a "› 1." numbered arrow —
+    // note the arrow is "›" (U+203A), NOT claude's "❯".
     blocked: {
       any: [
-        // untuned — needs real captures. Codex approval prompts (docs/common
-        // knowledge): a command-approval question before running a shell
-        // command. Kept high-precision so it can't fire on the idle "›" box.
-        { region: "bottom", contains: "Allow command", caseInsensitive: true },
-        { region: "bottom", contains: "Do you want" },
-        { region: "bottom", contains: "approve", caseInsensitive: true },
-        { region: "bottom", contains: "(y/n)", caseInsensitive: true },
+        // seen (command approval): "Would you like to run the following
+        // command?" above a "$ <cmd>" preview and the numbered menu.
+        { region: "bottom", contains: "Would you like to run", caseInsensitive: true },
+        // seen: the highlighted approval option "› 1. Yes, proceed".
+        { region: "bottom", contains: "Yes, proceed" },
+        // seen: "3. No, and tell Codex what to do differently (esc)".
+        { region: "bottom", contains: "No, and tell Codex" },
+        // seen: the confirm footer under the approval menu.
+        { region: "bottom", contains: "Press enter to confirm", caseInsensitive: true },
+        // seen (directory-trust prompt on first launch in an untrusted dir):
+        // "Do you trust the contents of this directory?" + "1. Yes, continue".
+        { region: "bottom", contains: "Do you trust the contents", caseInsensitive: true },
       ],
     },
     working: {
       any: [
-        // untuned for the exact string — Codex shows an elapsed-time working
-        // line with an interrupt hint while a turn runs. "esc to interrupt" is
-        // the shared CLI-TUI invariant; the spinner is the fallback.
+        // seen (verbatim): the working status line is
+        //   "• Working (6s • esc to interrupt)".
+        // Both the "Working (" prefix and the shared "esc to interrupt" hint
+        // are present for the whole turn.
+        { region: "bottom", regex: "Working \\(\\d" },
         { region: "bottom", contains: "esc to interrupt", caseInsensitive: true },
         { region: "bottom", regex: BRAILLE_SPINNER },
         { region: "title", regex: BRAILLE_SPINNER },
       ],
     },
-    // done: omitted. NOTE (seen, NOT used): idle Codex shows a "›" input prompt
-    // and a "gpt-5.5 high · <cwd>            Goal achieved (5m)" status line —
-    // "Goal achieved" is a finished/idle marker, not "working", so it is left
-    // out (a done rule would collapse to idle in the instant classifier anyway).
+    // done: omitted. NOTE (seen, NOT used): a finished turn leaves the agent's
+    // answer above the idle "›" input box (placeholder "Find and fix a bug in
+    // @filename") and a "gpt-5.5 xhigh · <cwd>" status line; older builds also
+    // showed "Goal achieved (5m)". None are working/blocked evidence, so codex
+    // correctly falls through to idle and the classifier infers done.
   },
 };
 
 const OPENCODE: AgentManifest = {
   id: "opencode",
-  commands: ["opencode"],
+  commands: ["opencode", "opencode.exe"],
+  confidence: "conservative",
   states: {
-    // untuned — needs real captures. High-precision only.
+    // conservative — a live capture was attempted (opencode v1.17.10) but its
+    // local auth DB errored ("no such column: name") and the TUI rendered
+    // blank, so these stay best-effort. High-precision only.
     blocked: {
       any: [
         { region: "bottom", contains: "(y/n)", caseInsensitive: true },
@@ -129,8 +154,10 @@ const OPENCODE: AgentManifest = {
 const GEMINI: AgentManifest = {
   id: "gemini",
   commands: ["gemini"],
+  confidence: "conservative",
   states: {
-    // untuned — needs real captures. gemini-cli. High-precision only.
+    // conservative — gemini-cli needs a Google account/API key to reach a
+    // working state, so no live capture was taken. High-precision only.
     blocked: {
       any: [
         { region: "bottom", contains: "(y/n)", caseInsensitive: true },
@@ -153,20 +180,33 @@ const GEMINI: AgentManifest = {
 const AIDER: AgentManifest = {
   id: "aider",
   commands: ["aider"],
+  confidence: "tuned",
   states: {
-    // untuned — needs real captures. aider uses "(Y)es/(N)o" confirmation
-    // prompts, which are its most reliable blocked signal.
+    // TUNED from aider's installed source (v0.86.2). Every confirmation renders
+    // through `io.confirm_ask` (io.py), which appends the literal option string
+    // " (Y)es/(N)o" (plus "/(A)ll/(S)kip all" or "/(D)on't ask again") and a
+    // "[Yes]:"/"[No]:" default — so "(Y)es/(N)o" is aider's exact, universal
+    // blocked marker. The specific questions below are verbatim from
+    // base_coder.py / commands.py.
     blocked: {
       any: [
         { region: "bottom", contains: "(Y)es/(N)o", caseInsensitive: true },
-        { region: "bottom", contains: "? [Yes]", caseInsensitive: true },
         { region: "bottom", contains: "Add file to the chat", caseInsensitive: true },
+        { region: "bottom", contains: "Allow edits to file", caseInsensitive: true },
+        { region: "bottom", contains: "Add command output to the chat", caseInsensitive: true },
+        { region: "bottom", contains: "Run pip install", caseInsensitive: true },
       ],
     },
-    // working: aider streams tokens without a stable status line, so we leave
-    // it to idle-by-default rather than risk a false positive.
+    // TUNED: while a turn runs aider shows a `WaitingSpinner` (waiting.py)
+    // rendered as "[░█   ] Waiting for <model>" — the text is literally
+    // "Waiting for LLM" or "Waiting for " + the model name (base_coder.py:1440).
+    // aider's spinner uses a "░█" scanner, NOT braille, so "Waiting for " is the
+    // real invariant; the braille probe is kept only as a harmless fallback.
     working: {
-      any: [{ region: "bottom", regex: BRAILLE_SPINNER }],
+      any: [
+        { region: "bottom", contains: "Waiting for ", caseInsensitive: false },
+        { region: "bottom", regex: BRAILLE_SPINNER },
+      ],
     },
   },
 };
@@ -174,8 +214,10 @@ const AIDER: AgentManifest = {
 const COPILOT: AgentManifest = {
   id: "copilot",
   commands: ["copilot", "github-copilot", "github-copilot-cli"],
+  confidence: "conservative",
   states: {
-    // untuned — needs real captures. github-copilot-cli. High-precision only.
+    // conservative — github-copilot-cli needs a GitHub account, so no live
+    // capture was taken. High-precision only.
     blocked: {
       any: [
         { region: "bottom", contains: "(y/n)", caseInsensitive: true },
@@ -193,9 +235,92 @@ const COPILOT: AgentManifest = {
   },
 };
 
+const CURSOR: AgentManifest = {
+  id: "cursor",
+  commands: ["cursor-agent", "cursor"],
+  confidence: "conservative",
+  states: {
+    // conservative — cursor-agent (Cursor CLI) was launched live but sits on a
+    // "Press any key to log in…" pre-auth screen without an account, so no
+    // working/blocked turn could be captured. The pre-auth splash ("Cursor
+    // Agent" / "Press any key to log in") is idle chrome and deliberately NOT
+    // matched here. Markers below are high-precision guesses from public
+    // knowledge of its approval/streaming UI. NOTE: cursor-agent runs under
+    // `node`, so it resolves via the process-tree (argv0 basename), not the
+    // pane's `current_command`.
+    blocked: {
+      any: [
+        { region: "bottom", contains: "Do you want", caseInsensitive: false },
+        { region: "bottom", contains: "Run this command", caseInsensitive: true },
+        { region: "bottom", contains: "Apply this edit", caseInsensitive: true },
+        { region: "bottom", contains: "(y/n)", caseInsensitive: true },
+      ],
+    },
+    working: {
+      any: [
+        { region: "bottom", contains: "esc to interrupt", caseInsensitive: true },
+        { region: "bottom", regex: BRAILLE_SPINNER },
+        { region: "title", regex: BRAILLE_SPINNER },
+      ],
+    },
+  },
+};
+
+const GOOSE: AgentManifest = {
+  id: "goose",
+  commands: ["goose"],
+  confidence: "conservative",
+  states: {
+    // conservative — Block's goose CLI needs a configured provider, so no live
+    // capture was taken. High-precision only; markers are best-effort from
+    // public knowledge of its confirmation/streaming UI.
+    blocked: {
+      any: [
+        { region: "bottom", contains: "Do you want", caseInsensitive: false },
+        { region: "bottom", contains: "Allow this tool", caseInsensitive: true },
+        { region: "bottom", contains: "(y/n)", caseInsensitive: true },
+        { region: "bottom", contains: "[y/n]", caseInsensitive: true },
+      ],
+    },
+    working: {
+      any: [
+        { region: "bottom", contains: "esc to interrupt", caseInsensitive: true },
+        { region: "bottom", regex: BRAILLE_SPINNER },
+        { region: "title", regex: BRAILLE_SPINNER },
+      ],
+    },
+  },
+};
+
+const AMP: AgentManifest = {
+  id: "amp",
+  commands: ["amp"],
+  confidence: "conservative",
+  states: {
+    // conservative — Sourcegraph's amp CLI needs an account, so no live capture
+    // was taken. High-precision only; markers are best-effort from public
+    // knowledge of its approval/streaming UI.
+    blocked: {
+      any: [
+        { region: "bottom", contains: "Do you want", caseInsensitive: false },
+        { region: "bottom", contains: "Allow", caseInsensitive: false },
+        { region: "bottom", contains: "(y/n)", caseInsensitive: true },
+      ],
+    },
+    working: {
+      any: [
+        { region: "bottom", contains: "esc to interrupt", caseInsensitive: true },
+        { region: "bottom", regex: BRAILLE_SPINNER },
+        { region: "title", regex: BRAILLE_SPINNER },
+      ],
+    },
+  },
+};
+
 const SHELL: AgentManifest = {
   id: "shell",
   commands: ["bash", "zsh", "sh", "fish", "nu"],
+  confidence: "conservative",
   states: {
     // Catch-all: a raw shell is almost always idle. We only flag an explicit
     // interactive confirmation as blocked; "working" is unreliable to read
@@ -222,5 +347,8 @@ export const BUNDLED_MANIFESTS: AgentManifest[] = [
   GEMINI,
   AIDER,
   COPILOT,
+  CURSOR,
+  GOOSE,
+  AMP,
   SHELL,
 ];

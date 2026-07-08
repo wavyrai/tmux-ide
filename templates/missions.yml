@@ -1,7 +1,13 @@
 name: project-name
 
+# Ground-truth agent status (working/blocked/done glyphs on the fleet tabs)
+# comes from Claude Code's lifecycle hooks. Wire them once with:
+#   tmux-ide integration install claude
+
 team:
   name: missions
+
+sidebar: true # fleet nav column — jump between agents (toggle: prefix b)
 
 rows:
   - size: 70%

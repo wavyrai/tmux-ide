@@ -84,6 +84,26 @@ export function subtreeCommands(entries: ProcEntry[], rootPid: number, maxDepth 
 }
 
 /**
+ * Summarize the executable-ish tokens seen in a pane's process subtree, in the
+ * order the tree-walk visits them (deepest first), de-duplicated. Pure.
+ *
+ * This is a DIAGNOSTIC for `agent explain`: when no manifest resolves, showing
+ * "process-tree saw: node, sleep" tells the user WHY nothing matched and what
+ * to point an `@agent_hint` at. Tokens are the same basenames
+ * `resolveAgentCommand` matches against, so the report reflects reality.
+ */
+export function describeSubtree(entries: ProcEntry[], rootPid: number, limit = 8): string[] {
+  const seen: string[] = [];
+  for (const command of subtreeCommands(entries, rootPid)) {
+    for (const token of commandTokens(command)) {
+      if (!seen.includes(token)) seen.push(token);
+      if (seen.length >= limit) return seen;
+    }
+  }
+  return seen;
+}
+
+/**
  * Read the live process table. Thin io wrapper — on any failure returns `[]`
  * so callers degrade to the fast path rather than throwing.
  */

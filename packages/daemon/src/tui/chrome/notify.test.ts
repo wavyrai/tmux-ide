@@ -1,27 +1,82 @@
 /**
  * Unit tests for the pure parts of the notification loop — the decision engine
- * (blocked/done filtering, viewer suppression, debounce), the message formats,
- * the client parser, and the prefs resolution + kill-switch.
+ * (state filtering, viewer suppression, debounce/flap guard), the message
+ * format, the client parser, prefs resolution + kill-switch, quiet hours, and
+ * the terminal-notifier click-through argv.
  */
 import { describe, expect, it } from "vitest";
 import {
   applyKillSwitch,
   decideNotifications,
   DEFAULT_NOTIFICATION_PREFS,
+  enabledStates,
+  inQuietHours,
+  notifyMessage,
   NOTIFY_DEBOUNCE_MS,
-  notificationPrefs,
+  NOTIFY_MAX_LEN,
+  parseHHMM,
+  parseNotificationPrefs,
   parseClients,
+  terminalNotifierArgs,
   type AttachedClient,
+  type NotificationPrefs,
   type NotifyEvent,
 } from "./notify.ts";
 
-function ev(
-  session: string,
-  to: NotifyEvent["to"],
-  from: NotifyEvent["from"] = "working",
-): NotifyEvent {
-  return { session, from, to };
+function ev(session: string, to: NotifyEvent["to"], extra: Partial<NotifyEvent> = {}): NotifyEvent {
+  return { session, from: "working", to, ...extra };
 }
+
+describe("notifyMessage", () => {
+  it("formats agent + location + state, e.g. 'claude blocked · myproj:1.2 — needs input'", () => {
+    expect(
+      notifyMessage({
+        session: "myproj",
+        from: "working",
+        to: "blocked",
+        agent: "claude",
+        location: "myproj:1.2",
+      }),
+    ).toBe("claude blocked · myproj:1.2 — needs input");
+    expect(
+      notifyMessage({
+        session: "myproj",
+        from: "working",
+        to: "done",
+        agent: "codex",
+        location: "myproj:0.1",
+      }),
+    ).toBe("codex done · myproj:0.1 — finished");
+  });
+
+  it("falls back to a generic agent label and the bare session name", () => {
+    expect(notifyMessage({ session: "web", from: "working", to: "blocked" })).toBe(
+      "agent blocked · web — needs input",
+    );
+  });
+
+  it("clamps over-long text to the banner cap", () => {
+    const msg = notifyMessage({
+      session: "s",
+      from: "working",
+      to: "blocked",
+      agent: "a".repeat(300),
+      location: "loc",
+    });
+    expect(msg.length).toBe(NOTIFY_MAX_LEN);
+    expect(msg.endsWith("…")).toBe(true);
+  });
+});
+
+describe("enabledStates", () => {
+  it("maps onBlocked/onDone to the notifiable state set", () => {
+    const base = DEFAULT_NOTIFICATION_PREFS;
+    expect([...enabledStates(base)].sort()).toEqual(["blocked", "done"]);
+    expect([...enabledStates({ ...base, onDone: false })]).toEqual(["blocked"]);
+    expect([...enabledStates({ ...base, onBlocked: false })]).toEqual(["done"]);
+    expect([...enabledStates({ ...base, onBlocked: false, onDone: false })]).toEqual([]);
+  });
+});
 
 describe("decideNotifications", () => {
   it("notifies only on blocked / done — working and idle are ignored", () => {
@@ -36,22 +91,27 @@ describe("decideNotifications", () => {
     // No clients → no toasts, but a system entry per qualifying event.
     expect(toasts).toEqual([]);
     expect(system).toEqual([
-      { message: "⚠ a needs you (blocked)" },
-      { message: "✓ b finished (done)" },
+      { message: "agent blocked · a — needs input", session: "a" },
+      { message: "agent done · b — finished", session: "b" },
     ]);
   });
 
-  it("uses the ⚠ / ✓ message formats", () => {
+  it("honors the passed-in `states` set (onBlocked/onDone gating)", () => {
+    const events = [ev("a", "blocked"), ev("b", "done")];
+    const { system } = decideNotifications(events, [], new Map(), 0, new Set(["blocked"]));
+    expect(system).toEqual([{ message: "agent blocked · a — needs input", session: "a" }]);
+  });
+
+  it("uses the enriched agent/location in the toast text", () => {
     const clients: AttachedClient[] = [{ client: "/dev/ttys001", session: "other" }];
     const { toasts } = decideNotifications(
-      [ev("web", "blocked"), ev("api", "done")],
+      [ev("web", "blocked", { agent: "claude", location: "web:1.2" })],
       clients,
       new Map(),
       0,
     );
-    expect(toasts.map((t) => t.message)).toEqual([
-      "⚠ web needs you (blocked)",
-      "✓ api finished (done)",
+    expect(toasts).toEqual([
+      { client: "/dev/ttys001", message: "claude blocked · web:1.2 — needs input" },
     ]);
   });
 
@@ -61,16 +121,16 @@ describe("decideNotifications", () => {
       { client: "other", session: "api" }, // watching api — still toasted
     ];
     const { toasts, system } = decideNotifications([ev("web", "blocked")], clients, new Map(), 0);
-    expect(toasts).toEqual([{ client: "other", message: "⚠ web needs you (blocked)" }]);
+    expect(toasts).toEqual([{ client: "other", message: "agent blocked · web — needs input" }]);
     // The system (macOS) entry is still produced regardless of viewers.
-    expect(system).toEqual([{ message: "⚠ web needs you (blocked)" }]);
+    expect(system).toEqual([{ message: "agent blocked · web — needs input", session: "web" }]);
   });
 
   it("suppresses toasts entirely when the only client is viewing the session, but keeps the system entry", () => {
     const clients: AttachedClient[] = [{ client: "viewer", session: "web" }];
     const { toasts, system } = decideNotifications([ev("web", "blocked")], clients, new Map(), 0);
     expect(toasts).toEqual([]);
-    expect(system).toEqual([{ message: "⚠ web needs you (blocked)" }]);
+    expect(system).toEqual([{ message: "agent blocked · web — needs input", session: "web" }]);
   });
 
   it("debounces the same session+state within the window and allows it after", () => {
@@ -101,11 +161,24 @@ describe("decideNotifications", () => {
     expect(after.nextLastNotified.get("web:blocked")).toBe(1000 + NOTIFY_DEBOUNCE_MS + 1);
   });
 
+  it("tames a flapping agent — repeated blocked flips inside the window notify once", () => {
+    const clients: AttachedClient[] = [{ client: "c1", session: "other" }];
+    let last = new Map<string, number>();
+    let fired = 0;
+    // working↔blocked bouncing every 5s for 25s — only the first blocked pings.
+    for (const t of [0, 5_000, 10_000, 15_000, 20_000, 25_000]) {
+      const d = decideNotifications([ev("web", "blocked")], clients, last, t);
+      fired += d.toasts.length;
+      last = d.nextLastNotified;
+    }
+    expect(fired).toBe(1);
+  });
+
   it("debounces per session+state, so blocked then done for the same session both fire", () => {
     const clients: AttachedClient[] = [{ client: "c1", session: "other" }];
     const blocked = decideNotifications([ev("web", "blocked")], clients, new Map(), 0);
     const done = decideNotifications([ev("web", "done")], clients, blocked.nextLastNotified, 5000);
-    expect(done.toasts).toEqual([{ client: "c1", message: "✓ web finished (done)" }]);
+    expect(done.toasts).toEqual([{ client: "c1", message: "agent done · web — finished" }]);
     expect(done.nextLastNotified.get("web:blocked")).toBe(0);
     expect(done.nextLastNotified.get("web:done")).toBe(5000);
   });
@@ -129,38 +202,137 @@ describe("parseClients", () => {
   });
 });
 
-describe("notificationPrefs", () => {
-  it("defaults toast=true, macos=false for missing / invalid config", () => {
-    expect(notificationPrefs(undefined)).toEqual({ toast: true, macos: false });
-    expect(notificationPrefs(null)).toEqual(DEFAULT_NOTIFICATION_PREFS);
-    expect(notificationPrefs("nonsense")).toEqual(DEFAULT_NOTIFICATION_PREFS);
-    expect(notificationPrefs({})).toEqual(DEFAULT_NOTIFICATION_PREFS);
-    expect(notificationPrefs({ notifications: {} })).toEqual(DEFAULT_NOTIFICATION_PREFS);
+describe("parseHHMM", () => {
+  it("parses valid HH:MM to minutes-since-midnight", () => {
+    expect(parseHHMM("00:00")).toBe(0);
+    expect(parseHHMM("08:30")).toBe(510);
+    expect(parseHHMM("23:59")).toBe(1439);
+    expect(parseHHMM(" 22:00 ")).toBe(1320);
   });
 
-  it("reads explicit booleans and ignores non-booleans", () => {
-    expect(notificationPrefs({ notifications: { toast: false, macos: true } })).toEqual({
+  it("rejects malformed / out-of-range / non-string input", () => {
+    for (const bad of ["24:00", "12:60", "9:00", "abc", "", "1200", 800, null, undefined]) {
+      expect(parseHHMM(bad)).toBeNull();
+    }
+  });
+});
+
+describe("inQuietHours", () => {
+  const at = (h: number, m = 0) => new Date(2026, 0, 1, h, m);
+
+  it("is never quiet without a window", () => {
+    expect(inQuietHours(at(3), null)).toBe(false);
+  });
+
+  it("handles a window that wraps midnight (22:00–08:00)", () => {
+    const q = { start: "22:00", end: "08:00" };
+    expect(inQuietHours(at(23), q)).toBe(true);
+    expect(inQuietHours(at(2), q)).toBe(true);
+    expect(inQuietHours(at(22, 0), q)).toBe(true); // inclusive start
+    expect(inQuietHours(at(8, 0), q)).toBe(false); // exclusive end
+    expect(inQuietHours(at(12), q)).toBe(false);
+  });
+
+  it("handles a same-day window (09:00–17:00)", () => {
+    const q = { start: "09:00", end: "17:00" };
+    expect(inQuietHours(at(12), q)).toBe(true);
+    expect(inQuietHours(at(8), q)).toBe(false);
+    expect(inQuietHours(at(17), q)).toBe(false); // exclusive end
+  });
+
+  it("is never quiet for a malformed or zero-width window", () => {
+    expect(inQuietHours(at(3), { start: "bad", end: "08:00" })).toBe(false);
+    expect(inQuietHours(at(3), { start: "08:00", end: "08:00" })).toBe(false);
+  });
+});
+
+describe("parseNotificationPrefs", () => {
+  it("defaults to the full DEFAULT_NOTIFICATION_PREFS for missing / invalid config", () => {
+    expect(parseNotificationPrefs(undefined)).toEqual(DEFAULT_NOTIFICATION_PREFS);
+    expect(parseNotificationPrefs(null)).toEqual(DEFAULT_NOTIFICATION_PREFS);
+    expect(parseNotificationPrefs("nonsense")).toEqual(DEFAULT_NOTIFICATION_PREFS);
+    expect(parseNotificationPrefs({})).toEqual(DEFAULT_NOTIFICATION_PREFS);
+    expect(parseNotificationPrefs({ notifications: {} })).toEqual(DEFAULT_NOTIFICATION_PREFS);
+  });
+
+  it("reads every field, ignoring mistyped ones", () => {
+    expect(
+      parseNotificationPrefs({
+        notifications: {
+          enabled: false,
+          toast: false,
+          macos: true,
+          onBlocked: false,
+          onDone: true,
+          quietHours: { start: "22:00", end: "08:00" },
+        },
+      }),
+    ).toEqual({
+      enabled: false,
       toast: false,
       macos: true,
+      onBlocked: false,
+      onDone: true,
+      quietHours: { start: "22:00", end: "08:00" },
     });
-    expect(notificationPrefs({ notifications: { toast: "yes", macos: 1 } })).toEqual(
+    // A malformed quietHours block resolves to null (disabled).
+    expect(
+      parseNotificationPrefs({ notifications: { quietHours: { start: "nope" } } }).quietHours,
+    ).toBeNull();
+    expect(parseNotificationPrefs({ notifications: { enabled: "yes", onDone: 1 } })).toEqual(
       DEFAULT_NOTIFICATION_PREFS,
     );
   });
 });
 
 describe("applyKillSwitch", () => {
-  it("TMUX_IDE_NOTIFY=0 disables both channels", () => {
-    expect(applyKillSwitch({ toast: true, macos: true }, "0")).toEqual({
+  const full: NotificationPrefs = {
+    enabled: true,
+    toast: true,
+    macos: true,
+    onBlocked: true,
+    onDone: true,
+    quietHours: null,
+  };
+
+  it("TMUX_IDE_NOTIFY=0 disables the master switch and both channels", () => {
+    expect(applyKillSwitch(full, "0")).toEqual({
+      ...full,
+      enabled: false,
       toast: false,
       macos: false,
     });
   });
 
   it("leaves prefs untouched otherwise", () => {
-    const prefs = { toast: true, macos: false };
-    expect(applyKillSwitch(prefs, undefined)).toEqual(prefs);
-    expect(applyKillSwitch(prefs, "1")).toEqual(prefs);
-    expect(applyKillSwitch(prefs, "")).toEqual(prefs);
+    expect(applyKillSwitch(full, undefined)).toEqual(full);
+    expect(applyKillSwitch(full, "1")).toEqual(full);
+    expect(applyKillSwitch(full, "")).toEqual(full);
+  });
+});
+
+describe("terminalNotifierArgs", () => {
+  it("builds a click-through banner that switches to the session", () => {
+    expect(
+      terminalNotifierArgs({ message: "claude blocked · web:1.2 — needs input", session: "web" }),
+    ).toEqual([
+      "-title",
+      "tmux-ide",
+      "-message",
+      "claude blocked · web:1.2 — needs input",
+      "-execute",
+      "tmux switch-client -t 'web'",
+    ]);
+  });
+
+  it("single-quote-escapes a session name for the -execute shell command", () => {
+    expect(terminalNotifierArgs({ message: "m", session: "wei'rd" })).toEqual([
+      "-title",
+      "tmux-ide",
+      "-message",
+      "m",
+      "-execute",
+      "tmux switch-client -t 'wei'\\''rd'",
+    ]);
   });
 });

@@ -40,6 +40,15 @@ export interface StateRules {
   done?: Rule;
 }
 
+/**
+ * How much trust the manifest's rules earn.
+ * - `tuned`: built from REAL captured screens (or the agent's own source
+ *   strings) — the markers are verbatim, not guessed.
+ * - `conservative`: best-effort from public knowledge; high-precision only, so
+ *   it can never false-positive on a plain prompt, but it may miss real states.
+ */
+export type ManifestConfidence = "tuned" | "conservative";
+
 /** A detection manifest for one or more pane commands. */
 export interface AgentManifest {
   /** Stable manifest id. */
@@ -48,6 +57,12 @@ export interface AgentManifest {
   commands: string[];
   /** Evidence rules per detectable state. */
   states: StateRules;
+  /**
+   * Evidence confidence (default `conservative` when omitted). Surfaced by
+   * `agent explain` so a user can see whether a verdict rests on real evidence
+   * or a best-effort heuristic. Purely informational — never affects matching.
+   */
+  confidence?: ManifestConfidence;
 }
 
 /** The states a manifest can positively detect (idle is inferred elsewhere). */

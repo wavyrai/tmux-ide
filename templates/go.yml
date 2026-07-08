@@ -1,5 +1,7 @@
 name: my-app
 
+before: go mod download
+
 rows:
   - size: 70%
     panes:
@@ -11,5 +13,7 @@ rows:
   - panes:
       - title: Go
         command: go run .
+      - title: Changes
+        type: changes # live git changes widget
       - title: Shell
         focus: true

@@ -1,5 +1,7 @@
 name: my-app
 
+# before: pip install -r requirements.txt   # or: uv sync / poetry install
+
 rows:
   - size: 70%
     panes:
@@ -11,5 +13,7 @@ rows:
   - panes:
       - title: Server
         # command: uvicorn main:app --reload
+      - title: Changes
+        type: changes # live git changes widget
       - title: Shell
         focus: true

@@ -1,5 +1,7 @@
 name: my-app
 
+before: pnpm install
+
 rows:
   - size: 70%
     panes:
@@ -11,5 +13,7 @@ rows:
   - panes:
       - title: Vite
         command: pnpm dev
+      - title: Changes
+        type: changes # live git changes widget
       - title: Shell
         focus: true

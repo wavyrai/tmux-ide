@@ -9,8 +9,17 @@ import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+// The node-runnable CLI path that spawned TUI surfaces shell back to (the app's
+// async fleet poll + `detect --write`). When we're the published `bin/cli.js`
+// this file IS it; under dev (`bun bin/cli.ts`) it's the built sibling
+// `bin/cli.js`. Forwarded to surfaces as TMUX_IDE_CLI so the COMPILED TUI binary
+// — whose own `import.meta.url` is a virtual bunfs path with no real cli.js next
+// to it — can still find the CLI to run its subprocesses.
+const selfPath = fileURLToPath(import.meta.url);
+const nodeCliPath = selfPath.endsWith(".js") ? selfPath : resolve(__dirname, "cli.js");
 import { launch } from "../packages/daemon/src/launch.ts";
-import { shouldOpenCockpit } from "../packages/daemon/src/tui/team/entry.ts";
+import { resolveEntry } from "../packages/daemon/src/tui/team/entry.ts";
+import { loadAppConfig } from "../packages/daemon/src/lib/app-config.ts";
 import {
   resolveTuiLaunch,
   findCompiledTui,
@@ -110,6 +119,7 @@ const knownCommands = new Set([
   "send",
   "settings",
   "team",
+  "app",
   "switcher",
   "wait",
   "events",
@@ -177,6 +187,7 @@ ${bold("Usage:")}
                               ${dim("(--resume-agents revives claude conversations via claude --resume)")}
   ${cyan("tmux-ide attach")}             ${dim("Reattach to a running session")}
   ${cyan("tmux-ide team")} [--json]      ${dim("TUI over all tmux sessions (--json prints fleet state)")}
+  ${cyan("tmux-ide app")} [session]      ${dim("Unified app: fleet home + live session mirror (bare = home)")}
   ${cyan("tmux-ide switcher")}           ${dim("Compact session picker (opens in the M-p popup on adopted sessions)")}
   ${cyan("tmux-ide wait agent-status")} <session> --status <s> [--timeout <ms>]
                               ${dim("Block until a session reaches a status (exit 0 match / 1 timeout)")}
@@ -269,7 +280,12 @@ function execBunWidget(
     );
   }
 
-  const env = { ...process.env, TMUX_IDE_CWD: process.cwd(), ...extraEnv };
+  const env = {
+    ...process.env,
+    TMUX_IDE_CWD: process.cwd(),
+    TMUX_IDE_CLI: nodeCliPath,
+    ...extraEnv,
+  };
   if (launch.mode === "bun") {
     // Spawn from the repo root so bun finds `bunfig.toml` (the @opentui/solid
     // JSX preload). Without this, running from any other cwd — e.g. bare
@@ -302,12 +318,20 @@ async function printFleetJson(): Promise<void> {
 }
 
 const teamScriptPath = resolve(__dirname, "../packages/daemon/src/tui/team/index.tsx");
+const appScriptPath = resolve(__dirname, "../packages/daemon/src/tui/mirror/app.tsx");
 
 // `tmux-ide team` runs the standalone full-screen cockpit (the OpenTUI app owns
 // the whole terminal). The floating switcher popup (M-p on adopted sessions)
 // supersedes the old nested `[ switcher | main ]` host shell.
 function launchTeamCockpit(): void {
   execBunWidget("team", teamScriptPath, [], "team");
+}
+
+// The unified app as the front door (M22.6): bare `tmux-ide` opens `tmux-ide
+// app`'s HOME panel when `app.frontDoor` is on and there's nothing else to
+// launch. Same entry as the explicit `app` command with no session positional.
+function launchApp(): void {
+  execBunWidget("app", appScriptPath, [], "app");
 }
 
 try {
@@ -332,13 +356,23 @@ try {
       }
       const targetDir = resolve(startTargetDir || ".");
       const hasIdeYml = existsSync(join(targetDir, "ide.yml"));
-      if (shouldOpenCockpit(hasIdeYml, values.team === true)) {
-        // No project here (or --team): the cockpit is the front door.
+      // M22.6 — the front-door decision. `--team` always means the classic
+      // cockpit; a present ide.yml still auto-launches the project; otherwise
+      // `app.frontDoor` flips the default no-project entry to the unified app.
+      const entry = resolveEntry({
+        hasIdeYml,
+        teamFlag: values.team === true,
+        frontDoor: loadAppConfig().app.frontDoor,
+      });
+      if (entry !== "project") {
+        // No project to launch here. `--json` is a scripting surface — it always
+        // prints the fleet, whichever interactive front door is configured.
         if (json) {
           await printFleetJson();
           break;
         }
-        launchTeamCockpit();
+        if (entry === "app") launchApp();
+        else launchTeamCockpit();
         break;
       }
       await launch(startTargetDir, { json });
@@ -488,6 +522,16 @@ try {
         break;
       }
       launchTeamCockpit();
+      break;
+    }
+
+    case "app": {
+      // The unified app (M18.1): sidebar fleet + a live tmux-session mirror.
+      // Bare `tmux-ide app` opens the HOME panel (fleet cards); an optional
+      // session positional boots straight into that session's mirror.
+      const session = positionals[1];
+      const appArgs = session ? [`--target=${session}`] : [];
+      execBunWidget("app", appScriptPath, appArgs, "app");
       break;
     }
 
@@ -1338,6 +1382,19 @@ try {
     }
 
     case "update": {
+      // `--tui-binary`: download the per-platform TUI binary (the fallback that
+      // lets an npm install with no bun run the full cockpit). Explicit opt-in —
+      // never auto-fetched on install (it's ~70MB). See lib/tui-binary.ts.
+      if (values["tui-binary"] === true) {
+        const { downloadTuiBinary } = await import("../packages/daemon/src/lib/tui-binary.ts");
+        const { path } = await downloadTuiBinary({ log: (m) => console.error(m) });
+        if (json) {
+          console.log(JSON.stringify({ ok: true, path }, null, 2));
+        } else {
+          console.log(`TUI binary ready: ${path}`);
+        }
+        break;
+      }
       // Detect how tmux-ide was installed and act on the pending update: a dev
       // checkout prints the `git pull` hint; a global install prints (with
       // --dry-run) or runs its package manager's update command. `__dirname` is

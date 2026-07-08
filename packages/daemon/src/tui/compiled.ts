@@ -9,7 +9,9 @@
  *
  * Order is "checkout first, binary second": a dev machine that happens to have
  * built the binary still uses its live `.tsx` sources. The binary is consulted
- * only when the checkout sources or `bun` are missing.
+ * only when the checkout sources or `bun` are missing. {@link findCompiledTui}
+ * probes the shipped/local compiled binary first, then a per-platform binary
+ * downloaded at runtime into `~/.tmux-ide/bin/` (see lib/tui-binary.ts).
  *
  * {@link resolveTuiLaunch} is a PURE decision (unit-tested); {@link findCompiledTui}
  * and {@link isBunAvailable} are the thin io probes that feed it.
@@ -18,6 +20,7 @@ import { existsSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
+import { findDownloadedTui } from "../lib/tui-binary.ts";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -63,7 +66,7 @@ export function resolveTuiLaunch(input: TuiResolveInput): TuiLaunch {
     reasons.push("the `bun` runtime is not installed (https://bun.sh)");
   }
   reasons.push(
-    "no compiled `tmux-ide-tui` binary was found (build one with `pnpm build:tui`, or reinstall a release that ships it)",
+    "no compiled `tmux-ide-tui` binary was found (build one with `pnpm build:tui`, download it with `tmux-ide update --tui-binary`, or reinstall a release that ships it)",
   );
   return { mode: "unavailable", reasons };
 }
@@ -99,7 +102,12 @@ export function findCompiledTui(): string | null {
       if (existsSync(candidate)) return candidate;
     }
   }
-  return null;
+
+  // Last: a per-platform binary fetched at runtime by `tmux-ide update
+  // --tui-binary` into `~/.tmux-ide/bin/` — the fallback for an npm install with
+  // no bun and no shipped compiled binary. Version-stamped, so it only matches
+  // the running version (see lib/tui-binary.ts).
+  return findDownloadedTui();
 }
 
 /** io — is the `bun` runtime callable? */

@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { excludeSidebarPanes, isListableSession, rollupStatus, rollupWindows } from "./sessions.ts";
+import {
+  buildAgentEntry,
+  excludeSidebarPanes,
+  isListableSession,
+  rollupStatus,
+  rollupWindows,
+} from "./sessions.ts";
 import type { AgentStatus } from "../detect/classify.ts";
+import type { AgentManifest } from "../detect/manifest.ts";
 
 describe("excludeSidebarPanes", () => {
   it("drops panes marked as the app sidebar", () => {
@@ -84,6 +91,81 @@ describe("rollupWindows", () => {
     expect(rollupWindows([pane(0, "w")], ["blocked"])).toEqual([
       { index: 0, name: "w", active: false, panes: 1, status: "blocked" },
     ]);
+  });
+});
+
+describe("buildAgentEntry", () => {
+  const pane = { id: "%5", windowIndex: 2, title: "Editor", cmd: "node", dir: "/w/proj" };
+  const claude: AgentManifest = {
+    id: "claude",
+    commands: ["claude"],
+    states: {},
+    confidence: "tuned",
+  };
+
+  it("builds an entry for a resolved agent pane, threading kind/state/confidence/since", () => {
+    expect(
+      buildAgentEntry({
+        sessionName: "web",
+        pane,
+        manifest: claude,
+        state: "working",
+        since: 1700000000,
+      }),
+    ).toEqual({
+      paneId: "%5",
+      windowIndex: 2,
+      session: "web",
+      kind: "claude",
+      state: "working",
+      confidence: "tuned",
+      since: 1700000000,
+      title: "Editor",
+      command: "node",
+      dir: "/w/proj",
+    });
+  });
+
+  it("returns null for a pane with no resolved manifest", () => {
+    expect(
+      buildAgentEntry({
+        sessionName: "web",
+        pane,
+        manifest: undefined,
+        state: "unknown",
+        since: null,
+      }),
+    ).toBeNull();
+  });
+
+  it("returns null for the `shell` catch-all — a raw shell isn't an agent", () => {
+    const shell: AgentManifest = { id: "shell", commands: ["bash"], states: {} };
+    expect(
+      buildAgentEntry({ sessionName: "web", pane, manifest: shell, state: "idle", since: null }),
+    ).toBeNull();
+  });
+
+  it("defaults confidence to `conservative` when the manifest omits it", () => {
+    const bare: AgentManifest = { id: "gemini", commands: ["gemini"], states: {} };
+    const entry = buildAgentEntry({
+      sessionName: "web",
+      pane,
+      manifest: bare,
+      state: "idle",
+      since: null,
+    });
+    expect(entry?.confidence).toBe("conservative");
+  });
+
+  it("carries a null `since` for a scraped/tracked pane (no authority stamp)", () => {
+    const entry = buildAgentEntry({
+      sessionName: "web",
+      pane,
+      manifest: claude,
+      state: "done",
+      since: null,
+    });
+    expect(entry?.since).toBeNull();
   });
 });
 

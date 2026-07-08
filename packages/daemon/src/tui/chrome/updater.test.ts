@@ -3,7 +3,13 @@
  * and the tick orchestration (with injected io, no live tmux).
  */
 import { describe, expect, it, vi } from "vitest";
-import { adoptedSessionsFrom, runUpdaterTick, updateSegment } from "./updater.ts";
+import {
+  adoptedSessionsFrom,
+  enrichEvents,
+  pickRepresentativePane,
+  runUpdaterTick,
+  updateSegment,
+} from "./updater.ts";
 import { buildStatusline } from "./statusline.ts";
 import { DEFAULT_THEME } from "../../lib/app-config.ts";
 import type { UpdateStatus } from "../../lib/update-check.ts";
@@ -12,7 +18,22 @@ import type { AgentEventInit } from "./events.ts";
 import type { AgentStatus } from "../detect/classify.ts";
 import type { PaneDetail } from "../team/sessions.ts";
 import type { TeamProject } from "../team/projects.ts";
-import type { AttachedClient, ToastTarget } from "./notify.ts";
+import type {
+  AttachedClient,
+  NotificationPrefs,
+  SystemNotification,
+  ToastTarget,
+} from "./notify.ts";
+
+/** A fully-enabled prefs object for the notification-dispatch tests. */
+const FULL_PREFS: NotificationPrefs = {
+  enabled: true,
+  toast: true,
+  macos: false,
+  onBlocked: true,
+  onDone: true,
+  quietHours: null,
+};
 
 function project(name: string, overrides: Partial<TeamProject> = {}): TeamProject {
   return {
@@ -122,39 +143,46 @@ describe("runUpdaterTick", () => {
     expect(prevState.get("api")).toBe("working");
   });
 
-  it("dispatches a toast when a session transitions to blocked", () => {
+  it("dispatches a toast when a session transitions to blocked, naming the agent + location", () => {
     const toasted: ToastTarget[][] = [];
     const clients: AttachedClient[] = [{ client: "/dev/ttys000", session: "other" }];
     const lastNotified = new Map<string, number>();
     runUpdaterTick({
       listAdopted: () => ["web"],
-      computeProjects: () => [
-        project("web", {
-          status: "blocked",
-          sessions: [
-            {
-              name: "web",
-              attached: false,
-              windows: 1,
-              panes: 1,
-              status: "blocked",
-              windowList: [],
-            },
-          ],
-        }),
-      ],
+      // Emit a blocked claude pane so enrichment can name it.
+      computeProjects: (onPane) => {
+        onPane({ sessionName: "web", paneId: "%3", agent: "claude", status: "blocked" });
+        return [
+          project("web", {
+            status: "blocked",
+            sessions: [
+              {
+                name: "web",
+                attached: false,
+                windows: 1,
+                panes: 1,
+                status: "blocked",
+                windowList: [],
+              },
+            ],
+          }),
+        ];
+      },
       writeStatus: () => {},
       prevState: new Map<string, AgentStatus>([["web", "working"]]),
       appendEvents: () => {},
       listClients: () => clients,
       lastNotified,
       now: () => 1000,
-      prefs: { toast: true, macos: false },
+      prefs: FULL_PREFS,
       sendToasts: (t) => toasted.push(t),
       sendSystem: () => {},
+      locatePane: (paneId) => (paneId === "%3" ? "web:1.2" : paneId),
     });
 
-    expect(toasted).toEqual([[{ client: "/dev/ttys000", message: "⚠ web needs you (blocked)" }]]);
+    expect(toasted).toEqual([
+      [{ client: "/dev/ttys000", message: "claude blocked · web:1.2 — needs input" }],
+    ]);
     // The debounce map was updated in place for the next tick.
     expect(lastNotified.get("web:blocked")).toBe(1000);
   });
@@ -184,7 +212,7 @@ describe("runUpdaterTick", () => {
       listClients: () => [{ client: "c1", session: "other" }],
       lastNotified: new Map(),
       now: () => 1000,
-      prefs: { toast: true, macos: false },
+      prefs: FULL_PREFS,
       sendToasts,
       sendSystem: vi.fn(),
     });
@@ -202,6 +230,142 @@ describe("runUpdaterTick", () => {
       appendEvents,
     });
     expect(appendEvents).not.toHaveBeenCalled();
+  });
+
+  // Drive a single blocked transition through the notification path with the
+  // given prefs / clock, returning what each channel received.
+  function runBlockedTick(opts: {
+    prefs: NotificationPrefs;
+    now?: number;
+    lastNotified?: Map<string, number>;
+  }): { toasts: ToastTarget[][]; system: SystemNotification[] } {
+    const toasts: ToastTarget[][] = [];
+    const system: SystemNotification[] = [];
+    runUpdaterTick({
+      listAdopted: () => ["web"],
+      computeProjects: () => [
+        project("web", {
+          status: "blocked",
+          sessions: [
+            {
+              name: "web",
+              attached: false,
+              windows: 1,
+              panes: 1,
+              status: "blocked",
+              windowList: [],
+            },
+          ],
+        }),
+      ],
+      writeStatus: () => {},
+      prevState: new Map<string, AgentStatus>([["web", "working"]]),
+      appendEvents: () => {},
+      listClients: () => [{ client: "c1", session: "other" }],
+      lastNotified: opts.lastNotified ?? new Map(),
+      now: () => opts.now ?? 1000,
+      prefs: opts.prefs,
+      sendToasts: (t) => toasts.push(t),
+      sendSystem: (n) => system.push(n),
+    });
+    return { toasts, system };
+  }
+
+  it("sends nothing when notifications are disabled (master switch)", () => {
+    const { toasts, system } = runBlockedTick({ prefs: { ...FULL_PREFS, enabled: false } });
+    expect(toasts).toEqual([]);
+    expect(system).toEqual([]);
+  });
+
+  it("suppresses a blocked ping when onBlocked is off", () => {
+    const { toasts } = runBlockedTick({ prefs: { ...FULL_PREFS, onBlocked: false } });
+    expect(toasts).toEqual([[]]); // dispatch ran, but the blocked state was filtered out
+  });
+
+  it("skips the macOS banner inside quiet hours but still toasts", () => {
+    // 02:00 local sits inside 22:00–08:00.
+    const nightMs = new Date(2026, 0, 1, 2, 0).getTime();
+    const { toasts, system } = runBlockedTick({
+      prefs: { ...FULL_PREFS, macos: true, quietHours: { start: "22:00", end: "08:00" } },
+      now: nightMs,
+    });
+    expect(system).toEqual([]); // banner suppressed
+    expect(toasts).toEqual([[{ client: "c1", message: "agent blocked · web — needs input" }]]);
+  });
+
+  it("fires the macOS banner outside quiet hours", () => {
+    const dayMs = new Date(2026, 0, 1, 12, 0).getTime();
+    const { system } = runBlockedTick({
+      prefs: { ...FULL_PREFS, macos: true, quietHours: { start: "22:00", end: "08:00" } },
+      now: dayMs,
+    });
+    expect(system).toEqual([{ message: "agent blocked · web — needs input", session: "web" }]);
+  });
+});
+
+describe("pickRepresentativePane", () => {
+  const panes: PaneDetail[] = [
+    { sessionName: "web", paneId: "%1", agent: null, status: "blocked" },
+    { sessionName: "web", paneId: "%2", agent: "claude", status: "blocked" },
+    { sessionName: "web", paneId: "%3", agent: "codex", status: "working" },
+    { sessionName: "api", paneId: "%4", agent: "claude", status: "blocked" },
+  ];
+
+  it("prefers a matching pane that resolved to a real agent", () => {
+    expect(pickRepresentativePane("web", "blocked", panes)?.paneId).toBe("%2");
+  });
+
+  it("falls back to the first matching pane when none has an agent", () => {
+    const shells: PaneDetail[] = [
+      { sessionName: "web", paneId: "%9", agent: null, status: "blocked" },
+    ];
+    expect(pickRepresentativePane("web", "blocked", shells)?.paneId).toBe("%9");
+  });
+
+  it("returns null when no pane matches the session + state", () => {
+    expect(pickRepresentativePane("web", "done", panes)).toBeNull();
+    expect(pickRepresentativePane("nope", "blocked", panes)).toBeNull();
+  });
+});
+
+describe("enrichEvents", () => {
+  const panes: PaneDetail[] = [
+    { sessionName: "web", paneId: "%2", agent: "claude", status: "blocked" },
+  ];
+
+  it("attaches the resolved agent + located pane for a blocked/done event", () => {
+    const enriched = enrichEvents(
+      [{ session: "web", from: "working", to: "blocked" }],
+      panes,
+      (id) => (id === "%2" ? "web:1.2" : id),
+    );
+    expect(enriched).toEqual([
+      { session: "web", from: "working", to: "blocked", agent: "claude", location: "web:1.2" },
+    ]);
+  });
+
+  it("leaves a non-notifiable event unlocated (location = session, agent null)", () => {
+    const locate = vi.fn();
+    const enriched = enrichEvents(
+      [{ session: "web", from: "blocked", to: "working" }],
+      panes,
+      locate,
+    );
+    expect(enriched).toEqual([
+      { session: "web", from: "blocked", to: "working", agent: null, location: "web" },
+    ]);
+    expect(locate).not.toHaveBeenCalled(); // no live tmux call for a non-ping
+  });
+
+  it("falls back to the session name when no representative pane is found", () => {
+    const enriched = enrichEvents(
+      [{ session: "ghost", from: "working", to: "done" }],
+      panes,
+      (id) => id,
+    );
+    expect(enriched).toEqual([
+      { session: "ghost", from: "working", to: "done", agent: null, location: "ghost" },
+    ]);
   });
 });
 

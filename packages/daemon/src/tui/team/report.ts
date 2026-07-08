@@ -10,7 +10,7 @@
  */
 import type { AgentStatus } from "../detect/classify.ts";
 import type { TeamProject } from "./projects.ts";
-import type { TeamSession } from "./sessions.ts";
+import type { PaneAgentEntry, TeamSession } from "./sessions.ts";
 
 /** The stable JSON shape emitted by `tmux-ide team --json`. */
 export interface FleetJson {
@@ -32,6 +32,13 @@ export interface FleetJson {
         panes: number;
         status: AgentStatus;
       }>;
+      /**
+       * Per-pane agent detail — one entry per pane the detection layer resolves
+       * to a real agent, flat across the session's windows (each entry carries
+       * its `windowIndex`). ADDITIVE: always present (possibly empty); existing
+       * consumers that ignore it are unaffected.
+       */
+      agents: PaneAgentEntry[];
     }>;
   }>;
 }
@@ -57,6 +64,9 @@ export function toFleetJson(projects: TeamProject[]): FleetJson {
           panes: w.panes,
           status: w.status,
         })),
+        // A pre-agents TeamSession (older constructor/test) yields `[]` — the
+        // contract always exposes the array.
+        agents: s.agents ?? [],
       })),
     })),
   };

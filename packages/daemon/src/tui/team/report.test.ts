@@ -54,12 +54,63 @@ describe("toFleetJson", () => {
           running: true,
           status: "working",
           sessions: [
-            { name: "web", status: "working", panes: 3, attached: true, windows: [] },
-            { name: "web-2", status: "idle", panes: 1, attached: false, windows: [] },
+            { name: "web", status: "working", panes: 3, attached: true, windows: [], agents: [] },
+            { name: "web-2", status: "idle", panes: 1, attached: false, windows: [], agents: [] },
           ],
         },
       ],
     });
+  });
+
+  it("surfaces a session's per-pane agents array in the JSON", () => {
+    const projects: TeamProject[] = [
+      project({
+        name: "web",
+        running: true,
+        sessions: [
+          session({
+            name: "web",
+            status: "working",
+            agents: [
+              {
+                paneId: "%3",
+                windowIndex: 0,
+                session: "web",
+                kind: "claude",
+                state: "working",
+                confidence: "tuned",
+                since: 1700000000,
+                title: "Editor",
+                command: "node",
+                dir: "/workspace/web",
+              },
+            ],
+          }),
+        ],
+      }),
+    ];
+
+    expect(toFleetJson(projects).projects[0]!.sessions[0]!.agents).toEqual([
+      {
+        paneId: "%3",
+        windowIndex: 0,
+        session: "web",
+        kind: "claude",
+        state: "working",
+        confidence: "tuned",
+        since: 1700000000,
+        title: "Editor",
+        command: "node",
+        dir: "/workspace/web",
+      },
+    ]);
+  });
+
+  it("ADDITIVITY: a pre-agents session (no agents field) still maps to agents: []", () => {
+    const out = toFleetJson([
+      project({ name: "web", running: true, sessions: [session({ name: "web" })] }),
+    ]);
+    expect(out.projects[0]!.sessions[0]!.agents).toEqual([]);
   });
 
   it("maps a session's windowList to the JSON windows array", () => {

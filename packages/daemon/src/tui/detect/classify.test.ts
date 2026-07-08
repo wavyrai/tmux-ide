@@ -6,7 +6,7 @@
  * sequence.
  */
 import { describe, expect, it } from "vitest";
-import { classifyInstant, createStatusTracker } from "./classify.ts";
+import { classifyInstant, createStatusTracker, parseAuthorityEpoch } from "./classify.ts";
 import type { AgentManifest } from "./manifest.ts";
 import type { PaneSnapshot } from "./snapshot.ts";
 
@@ -46,6 +46,28 @@ describe("classifyInstant", () => {
 
   it("returns idle on a manifest miss", () => {
     expect(classifyInstant(snap(["plain prompt $"]), manifest)).toBe("idle");
+  });
+});
+
+describe("parseAuthorityEpoch", () => {
+  it("extracts the epoch stamp from a well-formed value", () => {
+    expect(parseAuthorityEpoch("working:1700000000")).toBe(1700000000);
+    expect(parseAuthorityEpoch("done:42")).toBe(42);
+  });
+
+  it("uses the LAST colon so an id:state:epoch triple still yields the epoch", () => {
+    expect(parseAuthorityEpoch("idle:1700000000")).toBe(1700000000);
+  });
+
+  it("returns null for absent, colon-less, or non-numeric stamps", () => {
+    expect(parseAuthorityEpoch(undefined)).toBeNull();
+    expect(parseAuthorityEpoch("")).toBeNull();
+    expect(parseAuthorityEpoch("working")).toBeNull();
+    expect(parseAuthorityEpoch("working:soon")).toBeNull();
+  });
+
+  it("does NOT apply staleness — a very old stamp still parses (that's parseAuthority's job)", () => {
+    expect(parseAuthorityEpoch("working:1")).toBe(1);
   });
 });
 

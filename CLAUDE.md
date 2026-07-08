@@ -11,6 +11,7 @@ tmux-ide adopt <session>            # add the dock to a session you already have
 tmux-ide integration install claude # ground-truth agent status via Claude Code hooks (+ skill sync)
 tmux-ide                            # home screen (fleet cockpit) — or launches ide.yml if present
 tmux-ide restore --resume-agents    # after a tmux server death: rebuild everything, revive claudes
+tmux-ide app [session]              # the unified app: a terminal IDE over the fleet (needs bun, or update --tui-binary)
 ```
 
 ## Keys & surfaces (prefix-first)
@@ -27,6 +28,10 @@ The PRIMARY key form is the tmux prefix + letter — it survives every keyboard 
 | Panels: explorer / git changes / config                                             | `prefix e` / `g` / `v` | `⌥e` / `⌥g` / `⌥,` |
 
 All keys configurable via `~/.tmux-ide/config.json` (`keys.*`); re-adopt applies changes. Letters were chosen to never clobber tmux prefix defaults (hence menu=u, switcher=j, config=v).
+
+## The unified app (v2.7) — `tmux-ide app`
+
+Full-screen IDE via tmux control mode (`tui/mirror/`): tmux owns PTYs/layout/persistence, the app renders. Tabs F1 ⌂ Home · F2 ⌨ Terminal (live SessionMirror — streams while backgrounded) · F3 🗎 Files (native editor: ^s/^z, click-cursor) · F4 ± Diff (^e → editor) · F5 palette. Mouse-native: hover, right-click context menus (pane/window/session verbs incl. layouts + synchronize-panes, confirmed destructive), border-drag resize, drag-select → OSC52 clipboard (ssh-transparent, written to /dev/tty — the renderer owns stdout), scrollbars, buttons. `/` scrollback search, `[⛶]` zoom, paste-buffer picker. ^q detaches clean. State persists (~/.tmux-ide/app-state.json). **Read the app.tsx header before touching mouse/render code — the OpenTUI landmine laws there are measured, not folklore.** Perf: targetFps 60 explicitly (the default is a silent 30), 8ms state tick; taps env-gated behind TMUX_IDE_ZZ_PERF.
 
 ## The agent contract (two-layer detection)
 

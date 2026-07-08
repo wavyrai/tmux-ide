@@ -14,7 +14,7 @@
  * the target pane.
  */
 import { execFileSync } from "node:child_process";
-import { explain, type DetectedState } from "./tui/detect/manifest.ts";
+import { explain, type DetectedState, type ManifestConfidence } from "./tui/detect/manifest.ts";
 import {
   classifyInstant,
   parseAuthority,
@@ -22,7 +22,11 @@ import {
   type InstantState,
 } from "./tui/detect/classify.ts";
 import { getManifests } from "./tui/detect/manifest-loader.ts";
-import { readProcessTable, resolveAgentCommand } from "./tui/detect/process-tree.ts";
+import {
+  describeSubtree,
+  readProcessTable,
+  resolveAgentCommand,
+} from "./tui/detect/process-tree.ts";
 import { readPaneSnapshot } from "./tui/detect/snapshot.ts";
 import { IdeError } from "./lib/errors.ts";
 
@@ -53,6 +57,13 @@ export interface ExplainReport {
     manifestId: string | null;
     matchedCommand: string;
     source: "hint" | "fast" | "tree" | "none";
+    /** The matched manifest's evidence confidence (null when nothing resolved). */
+    confidence: ManifestConfidence | null;
+    /**
+     * Executable-ish tokens seen in the pane's process subtree. Populated for
+     * the "no manifest matched" case so the report can say what it DID find.
+     */
+    subtree: string[];
   };
   states: Array<{ state: DetectedState; matched: boolean }>;
   winner: DetectedState | null;
@@ -137,6 +148,9 @@ export function buildReport(target: string): ExplainReport {
     hint: info.hintRaw,
   });
   const manifest = resolved.manifest;
+  // When nothing resolved, record what the process-tree DID see so `explain`
+  // can point the user at an `@agent_hint` target instead of a dead end.
+  const subtree = manifest ? [] : describeSubtree(table, info.pid);
 
   // Snapshot + per-state explanation.
   const snapshot = { ...readPaneSnapshot(info.id), title: info.title };
@@ -168,6 +182,8 @@ export function buildReport(target: string): ExplainReport {
       manifestId: manifest?.id ?? null,
       matchedCommand: resolved.matchedCommand,
       source: resolved.source,
+      confidence: manifest ? (manifest.confidence ?? "conservative") : null,
+      subtree,
     },
     states: explained.checked,
     winner: explained.state,
@@ -223,10 +239,22 @@ export function renderReport(r: ExplainReport, opts: { color?: boolean } = {}): 
   }
 
   // Resolution
-  const mid = r.resolution.manifestId ?? dim("none");
-  out.push(
-    `  ${label("manifest")}  ${mid}  ${dim(`via ${r.resolution.source}` + (r.resolution.matchedCommand ? ` "${r.resolution.matchedCommand}"` : ""))}`,
-  );
+  if (r.resolution.manifestId) {
+    const conf =
+      r.resolution.confidence === "tuned"
+        ? c("\x1b[32m", "tuned")
+        : dim(r.resolution.confidence ?? "conservative");
+    out.push(
+      `  ${label("manifest")}  ${r.resolution.manifestId}  ${dim(`via ${r.resolution.source}` + (r.resolution.matchedCommand ? ` "${r.resolution.matchedCommand}"` : ""))}  [${conf}]`,
+    );
+  } else {
+    // No manifest matched — say so, and report what the process-tree DID see so
+    // the user can set an `@agent_hint` or add a manifest.
+    const saw =
+      r.resolution.subtree.length > 0 ? r.resolution.subtree.join(", ") : r.pane.cmd || "(nothing)";
+    out.push(`  ${label("manifest")}  ${dim("none matched")} — ${dim(`process-tree saw: ${saw}`)}`);
+    out.push(`            ${dim("set `tmux set-option -p @agent_hint <agent>` to force one")}`);
+  }
 
   // Per-state rule results
   out.push("");

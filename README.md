@@ -121,15 +121,20 @@ pnpm build:tui   # → packages/daemon/dist/tui/tmux-ide-tui (requires bun to bu
 
 It bundles every surface behind a `tmux-ide-tui <surface> [flags]` dispatcher,
 embeds the native OpenTUI dylib, and pre-transforms JSX at build time — so it
-needs no runtime. The CLI resolves surfaces checkout-first, binary-second; the
-binary is the installed fallback.
+needs no runtime. The CLI resolves surfaces checkout-first, then a shipped/local
+compiled binary, then a per-platform binary downloaded on demand.
 
-**Note:** a compiled binary is platform-specific (built for the host
-OS/arch). Shipping it for every platform requires per-target builds
-(`--target bun-<os>-<arch>`); a single npm tarball carries only the build host's
-binary. Until per-platform artifacts are wired, installs on other platforms fall
-back to the "install bun + run from a checkout" path, which `tmux-ide doctor`
-spells out.
+**Per-platform binaries.** The npm tarball does _not_ carry the ~70MB binary (a
+surprise on every install). Instead each release publishes one per platform
+(darwin-arm64, darwin-x64, linux-x64, linux-arm64) as a GitHub release asset. On
+a machine with no `bun` and no shipped binary, fetch the right one on demand:
+
+```bash
+tmux-ide update --tui-binary   # downloads it to ~/.tmux-ide/bin/ (verified, chmod +x)
+```
+
+Nothing is downloaded automatically on install. `tmux-ide doctor`'s "TUI
+surfaces" row spells out how surfaces currently resolve on your machine.
 
 ## Contributor workflow
 

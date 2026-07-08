@@ -34,6 +34,8 @@ import { paneChip } from "./chip.ts";
 import { appendEvents, diffFleet, type AgentEventInit } from "./events.ts";
 import {
   decideNotifications,
+  enabledStates,
+  inQuietHours,
   listAttachedClients,
   readNotificationPrefs,
   sendSystemNotification,
@@ -41,6 +43,7 @@ import {
   type AttachedClient,
   type NotificationPrefs,
   type NotifyEvent,
+  type SystemNotification,
   type ToastTarget,
 } from "./notify.ts";
 import {
@@ -148,7 +151,13 @@ export interface UpdaterTickDeps {
   now?: () => number;
   prefs?: NotificationPrefs;
   sendToasts?: (toasts: ToastTarget[]) => void;
-  sendSystem?: (message: string) => void;
+  sendSystem?: (n: SystemNotification) => void;
+  /**
+   * Resolve a pane id to its human `session:window.pane` location for the ping
+   * text (optional). Wired to the live tmux {@link paneLocation}; tests inject a
+   * pure stub. Only ever called for the pane behind a blocked/done transition.
+   */
+  locatePane?: (paneId: string) => string;
   /**
    * Update-flow surfacing (optional). When wired, the tick calls this cheap,
    * cache-backed check each tick (throttled internally to 24h; it kicks off a
@@ -211,7 +220,7 @@ export function runUpdaterTick(deps: UpdaterTickDeps): void {
     for (const [name, status] of state) deps.prevState.set(name, status);
     if (events.length > 0) {
       deps.appendEvents(events);
-      dispatchNotifications(deps, events);
+      dispatchNotifications(deps, enrichEvents(events, panes, deps.locatePane));
     }
   }
 }
@@ -242,20 +251,92 @@ function writeChips(
 }
 
 /**
+ * PURE — pick the pane to name in a session-level ping. A session rolls up many
+ * panes; the ping should point at ONE. We take a pane whose status matches the
+ * transition (`to`), preferring one that resolved to a real agent (so the ping
+ * reads `claude blocked …`, not a bare shell). Null when no pane matches — the
+ * updater then falls back to the session name / a generic label.
+ */
+export function pickRepresentativePane(
+  session: string,
+  to: AgentStatus,
+  panes: PaneDetail[],
+): PaneDetail | null {
+  const matching = panes.filter((p) => p.sessionName === session && p.status === to);
+  if (matching.length === 0) return null;
+  return matching.find((p) => p.agent !== null) ?? matching[0]!;
+}
+
+/**
+ * PURE — enrich session-level transitions with the pane's `agent` id and human
+ * `location` so {@link notifyMessage} can name who needs the user. Only the
+ * notifiable states (blocked/done) get resolved — everything else keeps the bare
+ * session as its location and is filtered out downstream anyway, so `locate`
+ * (a live tmux call) only fires for a real ping.
+ */
+export function enrichEvents(
+  events: AgentEventInit[],
+  panes: PaneDetail[],
+  locate?: (paneId: string) => string,
+): NotifyEvent[] {
+  return events.map((ev) => {
+    const notifiable = ev.to === "blocked" || ev.to === "done";
+    const rep = notifiable ? pickRepresentativePane(ev.session, ev.to, panes) : null;
+    return {
+      ...ev,
+      agent: rep?.agent ?? null,
+      location: rep && locate ? locate(rep.paneId) : ev.session,
+    };
+  });
+}
+
+/**
  * Ping the user about who needs them from this tick's transitions. Only runs
- * when the notification deps are wired AND at least one channel is enabled;
- * `lastNotified` is mutated in place so the debounce persists across ticks.
+ * when the notification deps are wired, notifications are `enabled`, AND at
+ * least one channel is on. `lastNotified` is mutated in place so the debounce
+ * (the flap guard) persists across ticks. The macOS banner is additionally
+ * gated on QUIET HOURS — inside the window the banner is skipped, but the event
+ * has already been recorded to the log by the caller, so history stays honest.
  */
 function dispatchNotifications(deps: UpdaterTickDeps, events: NotifyEvent[]): void {
   const { listClients, lastNotified, now, prefs, sendToasts: toast, sendSystem } = deps;
   if (!listClients || !lastNotified || !now || !prefs) return;
+  if (!prefs.enabled) return;
   if (!prefs.toast && !prefs.macos) return;
-  const decision = decideNotifications(events, listClients(), lastNotified, now());
+  const nowMs = now();
+  const decision = decideNotifications(
+    events,
+    listClients(),
+    lastNotified,
+    nowMs,
+    enabledStates(prefs),
+  );
   lastNotified.clear();
   for (const [key, ts] of decision.nextLastNotified) lastNotified.set(key, ts);
   if (prefs.toast && toast) toast(decision.toasts);
-  if (prefs.macos && sendSystem) {
-    for (const { message } of decision.system) sendSystem(message);
+  if (prefs.macos && sendSystem && !inQuietHours(new Date(nowMs), prefs.quietHours)) {
+    for (const n of decision.system) sendSystem(n);
+  }
+}
+
+/**
+ * io — resolve a pane id to `session:window.pane` (e.g. `myproj:1.2`) for the
+ * ping text. Best-effort: a gone pane / failed call degrades to the raw pane id.
+ */
+export function paneLocation(paneId: string): string {
+  try {
+    const raw = runTmux([
+      "display-message",
+      "-p",
+      "-t",
+      paneId,
+      "#{session_name}:#{window_index}.#{pane_index}",
+    ])
+      .toString()
+      .trim();
+    return raw || paneId;
+  } catch {
+    return paneId;
   }
 }
 
@@ -404,6 +485,7 @@ export function runUpdaterLoop(): void {
         prefs: readNotificationPrefs(),
         sendToasts,
         sendSystem: sendSystemNotification,
+        locatePane: paneLocation,
         maybeCheckForUpdate: () => maybeCheckForUpdate({ enabled: config.updates.check }),
         markUpdateNotified,
       });

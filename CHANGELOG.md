@@ -4,6 +4,43 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+## 2.7.0
+
+The unified app release: `tmux-ide app` is now a real terminal IDE over your fleet — panes feel native, agents are visible at a glance, and you can start it anywhere.
+
+### Added
+
+- **The unified app** (`tmux-ide app [session]`) — a full-screen IDE via tmux control mode: tmux keeps owning PTYs/layout/persistence, the app renders. Surfaces: Home cockpit, live Terminal, native file editor (^s/^z, click-cursor), diff viewer, command palette (F5)
+- **Start it anywhere** — `tmux-ide app` works from any folder with no tmux server running; the home screen greets first-run users with a plain-language welcome and **Open folder…**: a real filesystem picker that opens your project in a terminal workspace, with optional "remember as project" and layout setup. Recently opened folders one click away. The optional `app.frontDoor` config flag makes bare `tmux-ide` launch the app
+- **Agents at a glance** — a sidebar agents section lists every agent across your fleet (blocked first) and clicking one jumps straight to its pane; agent panes wear a status chip ("● claude", blocked shows bold red with age); the focused pane gets an accent hairline border; `team --json` now carries per-pane agent entries
+- **Settings without JSON** — every setting is a palette command (F5 → "settings"): accent theme with live preview, notifications with quiet hours, update cadence, crash restore, a keybinding viewer, and a guarded reset. Changes persist atomically and say where they land
+- **Select & copy inside agent panes** — right-click → "Select text…" (or shift+drag where your terminal passes it) pauses mouse forwarding so you can select and copy from claude/vim/htop panes; wheel scrolls history while selecting
+- **Size honesty with co-attached terminals** — when another terminal sizes the shared window, the app centers the view and says so; palette → "Resize to fit this window" reclaims it, and detaching always leaves your other terminal's size intact
+- **Mouse-native everywhere** — hover feedback, right-click context menus (pane/window/session verbs, layouts, synchronize-panes), border-drag resize, drag-select with SSH-transparent OSC52 copy, scrollbars, clickable buttons
+- **Mouse-complete navigation** — the palette is fully mouse-driven (hover, wheel, click-to-run, click-outside dismiss); the home screen launches registered projects and creates named sessions by click; every sidebar/tab-bar affordance is clickable, keyboard twins preserved
+- **Scrollback search** (`/`), paste-buffer picker, zoom fast-paths, pane ops and layout presets
+- **Hardware cursor** — the focused pane drives the real terminal cursor: shape, blink, and hide/show follow the application (vim/claude behave natively); unfocused panes show a quiet marker
+- **Per-platform TUI release binaries** with download-on-demand, so the app runs without a dev checkout
+- Notification polish: dedupe, quiet hours, richer banners
+- Agent-detection breadth: 6 more screen manifests, detection confidence surfaced
+- Perf harness (`scripts/perf-mirror.mjs`) with env-gated taps measuring the full input→echo→paint path
+
+### Changed
+
+- **~20× faster pane rendering** — pane content blits xterm cell data straight into framebuffer typed arrays, incrementally: only changed rows repaint (an exact shadow compare, no hashes), scrolls take a shift fast path, quiet panes cost zero. Opt out one release with `TMUX_IDE_FB_PANES=0`
+- **Input latency tail cut ~65%** — keystrokes are fire-and-forget and coalesced instead of awaiting a control-mode reply per key; parser writes are ack-paced so floods never stall input
+- Paste is chunked at the measured tmux parser sweet spot (256B): 100KB pastes land byte-perfect in ~0.3s
+- Scrollback seeding on attach deepened 300 → 2000 lines
+- OpenTUI 0.1.88 → 0.4.3
+- Blink attribute passes through to the host terminal
+
+### Fixed
+
+- Clicking the Files tab no longer starts a phantom sidebar drag (tab-bar row excluded from the boundary-drag check)
+- A lone keystroke echo can no longer miss its paint frame (dirty state re-arms when bytes are parsed, not when they're queued)
+- Seed content mojibake: latin1 reply bytes were fed to the VT parser as text
+- npm installs get the full TUI (sources shipped, workspaces linked)
+
 ## 2.1.3
 
 ### Added

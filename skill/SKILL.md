@@ -123,6 +123,28 @@ One interaction grammar everywhere: `j`/`k` move, `enter` opens, `/` filters,
 `esc` backs out, `?` asks. Bare `tmux-ide` with no `ide.yml` opens the **home
 cockpit** (the fleet home screen). `tmux-ide cheatsheet` prints the full sheet.
 
+## The app — `tmux-ide app` (the terminal IDE)
+
+v2.7 adds a full-screen unified app: tmux stays the engine (PTYs, agents,
+persistence); the app is the IDE around it. Launch `tmux-ide app` (bare = home
+screen) or `tmux-ide app <session>`. Needs `bun`, or a downloaded binary:
+`tmux-ide update --tui-binary`.
+
+- **Tabs** `F1`–`F4`: Home (fleet, pick a session = set the workspace) ·
+  Terminal (the session mirrored live — it keeps streaming while you're on
+  other tabs) · Files (tree + built-in editor: `^s` save, `^z` undo, click to
+  place the cursor) · Diff (colored working-tree changes, `^e` opens the file
+  in the editor). `F5` = command palette (fuzzy everything).
+- **Mouse-native**: hover highlights; right-click = context menus (split/zoom/
+  kill panes, layouts, synchronize-panes, kill/rename sessions & windows —
+  destructive actions confirm); drag pane borders to resize; drag-select text →
+  clipboard via OSC52 (works through ssh); scrollbars; clickable buttons.
+- **tmux parity**: `[⛶]` zoom, window verbs, layout presets, `/` scrollback
+  search with `n`/`N`, paste-buffer picker. `^q` quits — the session is
+  untouched, like you were never there.
+- State persists across launches (~/.tmux-ide/app-state.json): last tab,
+  session, open file.
+
 ## ide.yml (optional)
 
 Adopt works on any session. If you'd rather have tmux-ide build the layout, describe

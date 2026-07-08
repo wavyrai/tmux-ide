@@ -156,7 +156,8 @@ function normalizeStates(m: AgentManifest): AgentManifest {
   if (m.states.blocked) states.blocked = m.states.blocked;
   if (m.states.working) states.working = m.states.working;
   if (m.states.done) states.done = m.states.done;
-  return { id: m.id, commands: m.commands, states };
+  const confidence = m.confidence === "tuned" ? "tuned" : "conservative";
+  return { id: m.id, commands: m.commands, states, confidence };
 }
 
 function warnOnce(path: string, reason: string): void {

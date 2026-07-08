@@ -25,19 +25,12 @@ You are a general-purpose development agent.
 
 You are a general-purpose agent. Your dispatch prompt includes mission, goal, and task context along with relevant library excerpts. Follow the task description closely.
 
-## After Completion
+## Reporting
 
-When you finish, the orchestrator will:
+Self-report your state — this drives the fleet status glyphs (see AGENTS.md):
 
-- Notify the lead with your proof and summary
-- Run any configured after-run hooks (e.g., linting)
-- Auto-dispatch the next available task
-- Append your summary to the learnings library
+    tmux set-option -p @agent_state "done:$(date +%s)"   # working|blocked|done|idle
 
-## Completion Protocol
+Then report the result to the lead, and flag anything out of scope:
 
-When done, run:
-tmux-ide task done <TASK_ID> --proof "what you accomplished" --summary "key learnings for future tasks"
-
-If you discover out-of-scope issues, note them:
-tmux-ide task update <TASK_ID> --discovered-issues "description of issue"
+    tmux-ide send <lead-pane> "what you accomplished, how you verified it, follow-ups"

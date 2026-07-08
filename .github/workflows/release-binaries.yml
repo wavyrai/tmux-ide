@@ -1,0 +1,132 @@
+name: Release binaries
+
+# Per-platform prebuilt TUI binaries. The npm tarball ships the `.tsx` surfaces
+# (which need `bun` to run) but NOT the ~70MB compiled binary. This workflow
+# cross-compiles one binary per platform via `bun build --compile --target` and
+# uploads them as release assets, so a clean `npm i -g tmux-ide` with no `bun`
+# can download the right one on demand (`tmux-ide update --tui-binary` — see
+# packages/daemon/src/lib/tui-binary.ts for the asset-name/URL contract).
+#
+# Cross-compile note: `@opentui/core` dynamically imports its platform-specific
+# native package (`@opentui/core-<os>-<arch>`), so the target's native package
+# must be present before the build. We force-install it (npm's os/cpu guard
+# would otherwise refuse the non-host platforms) at the version pnpm resolved.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version (e.g. 2.6.1)"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  # Resolve the tag and make sure a GitHub release exists to attach assets to
+  # (the npm-publish workflow doesn't create one). Idempotent: a re-run or a
+  # release created by hand is left as-is.
+  release:
+    name: Ensure release
+    runs-on: ubuntu-24.04
+    outputs:
+      tag: ${{ steps.resolve.outputs.tag }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve tag
+        id: resolve
+        shell: bash
+        run: |
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+            raw="${{ github.event.inputs.version }}"
+          else
+            raw="${GITHUB_REF_NAME}"
+          fi
+          version="${raw#v}"
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "Invalid release version: $raw" >&2
+            exit 1
+          fi
+          echo "tag=v$version" >> "$GITHUB_OUTPUT"
+
+      - name: Ensure GitHub release exists
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          tag="${{ steps.resolve.outputs.tag }}"
+          if ! gh release view "$tag" >/dev/null 2>&1; then
+            gh release create "$tag" --title "$tag" --generate-notes
+          else
+            echo "Release $tag already exists — reusing it."
+          fi
+
+  binaries:
+    name: Build ${{ matrix.platform }}
+    needs: release
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [darwin-arm64, darwin-x64, linux-x64, linux-arm64]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.21.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install target native package (@opentui/core-${{ matrix.platform }})
+        # `bun build --compile --target` embeds the target's native OpenTUI
+        # dylib, which lives in a per-platform package the host install skips.
+        # --force bypasses npm's os/cpu guard; --no-save keeps the lockfile clean.
+        shell: bash
+        run: |
+          core_version="$(node -p "require('./node_modules/@opentui/core/package.json').version")"
+          echo "Installing @opentui/core-${{ matrix.platform }}@${core_version}"
+          npm install --no-save --no-package-lock --force \
+            "@opentui/core-${{ matrix.platform }}@${core_version}"
+
+      - name: Cross-compile the TUI binary
+        run: |
+          bun scripts/build-tui.mjs \
+            --target "bun-${{ matrix.platform }}" \
+            --outfile "dist-bin/tmux-ide-tui-${{ matrix.platform }}"
+
+      - name: Verify the artifact
+        shell: bash
+        run: |
+          bin="dist-bin/tmux-ide-tui-${{ matrix.platform }}"
+          file "$bin"
+          bytes="$(stat -c%s "$bin")"
+          echo "size: ${bytes} bytes"
+          if [[ "$bytes" -lt 10485760 ]]; then
+            echo "Binary is under 10MB — build looks broken." >&2
+            exit 1
+          fi
+
+      - name: Compress
+        run: gzip -9 -c "dist-bin/tmux-ide-tui-${{ matrix.platform }}" > "tmux-ide-tui-${{ matrix.platform }}.gz"
+
+      - name: Upload release asset
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "${{ needs.release.outputs.tag }}" "tmux-ide-tui-${{ matrix.platform }}.gz" --clobber

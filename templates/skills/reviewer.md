@@ -20,23 +20,14 @@ You are a code review and validation agent.
 3. Run relevant tests or manual checks
 4. Report each assertion's status
 
-## Assertion Reporting
+## Reporting
 
-For each assertion:
-tmux-ide validate assert <ASSERT_ID> --status passing --evidence "what you verified"
-tmux-ide validate assert <ASSERT_ID> --status failing --evidence "what's wrong"
-tmux-ide validate assert <ASSERT_ID> --status blocked --evidence "why it's blocked"
+Self-report your state — this drives the fleet status glyphs (see AGENTS.md):
 
-The orchestrator will detect your results and advance the milestone automatically.
+    tmux set-option -p @agent_state "done:$(date +%s)"   # working|blocked|done|idle
 
-If you find issues beyond the validation contract:
-tmux-ide task update <TASK_ID> --discovered-issues "description of issue"
+Then report the verdict to the lead: for each assertion give its status
+(passing / failing / blocked) and the evidence, plus any issues you found beyond
+the validation contract:
 
-## After Completion
-
-When you finish, the orchestrator will:
-
-- Notify the lead with your proof and summary
-- Run any configured after-run hooks (e.g., linting)
-- Auto-dispatch the next available task
-- Append your summary to the learnings library
+    tmux-ide send <lead-pane> "assertion results with evidence, plus out-of-scope issues"

@@ -5,6 +5,7 @@
 import { describe, expect, it } from "vitest";
 import {
   commandTokens,
+  describeSubtree,
   parsePsOutput,
   resolveAgentCommand,
   subtreeCommands,
@@ -61,6 +62,21 @@ describe("subtreeCommands", () => {
 
   it("returns [] for a pid absent from the table", () => {
     expect(subtreeCommands(tree, 999)).toEqual([]);
+  });
+
+  describe("describeSubtree", () => {
+    it("de-dupes executable tokens deepest-first for the explain diagnostic", () => {
+      // node appears in two entries; it should be reported once, deepest-first.
+      expect(describeSubtree(tree, 100)).toEqual(["node", "claude", "cli.js", "-zsh"]);
+    });
+
+    it("returns [] for an absent pid", () => {
+      expect(describeSubtree(tree, 999)).toEqual([]);
+    });
+
+    it("honors the token limit", () => {
+      expect(describeSubtree(tree, 100, 2)).toEqual(["node", "claude"]);
+    });
   });
 
   it("guards cycles without looping forever", () => {

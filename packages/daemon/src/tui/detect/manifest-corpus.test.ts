@@ -27,6 +27,8 @@ function byId(id: string): AgentManifest {
 
 const claude = byId("claude");
 const codex = byId("codex");
+const aider = byId("aider");
+const cursor = byId("cursor");
 
 // ── Real captured screens ────────────────────────────────────────────────
 
@@ -137,6 +139,154 @@ describe("manifest corpus — real Codex screens", () => {
   });
 });
 
+// ── Real captured Codex screens (codex-cli v0.142.5, driven live) ───────────
+
+// REAL (codex, idle) — the bordered banner + the "›" input box with the "Find
+// and fix a bug in @filename" placeholder and the "gpt-5.5 xhigh · <cwd>"
+// status line. Captured verbatim after accepting the trust prompt.
+const CODEX_IDLE_LIVE = `
+╭────────────────────────────────────────────────────────╮
+│ >_ OpenAI Codex (v0.142.5)                             │
+│                                                        │
+│ model:     gpt-5.5 xhigh   /model to change            │
+│ directory: /Users/dev/project                          │
+╰────────────────────────────────────────────────────────╯
+  Tip: Try the Codex App. Run 'codex app' or visit https://chatgpt.com/codex
+• You have 4 usage limit resets available. Run /usage to use one.
+› Find and fix a bug in @filename
+  gpt-5.5 xhigh · /Users/dev/project
+`;
+
+// REAL (codex, working) — the "• Working (2s • esc to interrupt)" status line
+// appears below the submitted prompt while the turn runs. Captured verbatim.
+const CODEX_WORKING_LIVE = `
+› Write a haiku about tmux, then stop. Do not run any commands.
+• Working (2s • esc to interrupt)
+› Find and fix a bug in @filename
+  gpt-5.5 xhigh · /Users/dev/project
+`;
+
+// REAL (codex, blocked) — the command-approval dialog: a "Would you like to run
+// the following command?" question, a "$ <cmd>" preview, and a "› 1." numbered
+// menu. Captured verbatim (codex launched with `-a untrusted -s read-only`,
+// then asked to run a write command). Note the "›" arrow, NOT claude's "❯".
+const CODEX_BLOCKED_LIVE = `
+• Running touch /tmp/newfile.txt
+  Would you like to run the following command?
+  Environment: local
+  $ touch /tmp/newfile.txt
+› 1. Yes, proceed (y)
+  2. Yes, and don't ask again for commands that start with \`touch /tmp/newfile.txt\` (p)
+  3. No, and tell Codex what to do differently (esc)
+  Press enter to confirm or esc to cancel
+`;
+
+// REAL (codex, blocked) — the directory-trust prompt shown on first launch in
+// an untrusted directory. Captured verbatim.
+const CODEX_TRUST_LIVE = `
+> You are in /Users/dev/project
+  Do you trust the contents of this directory? Working with untrusted contents
+  comes with higher risk of prompt injection. Trusting the directory allows
+  project-local config, hooks, and exec policies to load.
+› 1. Yes, continue
+  2. No, quit
+  Press enter to continue
+`;
+
+describe("manifest corpus — real Codex screens (live capture, v0.142.5)", () => {
+  it("idle input box (Find and fix a bug placeholder) → idle", () => {
+    const snap = parseSnapshot(CODEX_IDLE_LIVE);
+    expect(evaluateManifest(snap, codex).state).toBe(null);
+    expect(classifyInstant(snap, codex)).toBe("idle");
+  });
+
+  it("working status line (• Working (2s • esc to interrupt)) → working", () => {
+    const snap = parseSnapshot(CODEX_WORKING_LIVE);
+    expect(evaluateManifest(snap, codex).state).toBe("working");
+    expect(classifyInstant(snap, codex)).toBe("working");
+  });
+
+  it("command-approval dialog (Would you like to run / › 1. Yes) → blocked", () => {
+    const snap = parseSnapshot(CODEX_BLOCKED_LIVE);
+    expect(evaluateManifest(snap, codex).state).toBe("blocked");
+    expect(classifyInstant(snap, codex)).toBe("blocked");
+  });
+
+  it("directory-trust prompt (Do you trust the contents) → blocked", () => {
+    const snap = parseSnapshot(CODEX_TRUST_LIVE);
+    expect(evaluateManifest(snap, codex).state).toBe("blocked");
+    expect(classifyInstant(snap, codex)).toBe("blocked");
+  });
+});
+
+// ── aider screens (tuned from installed source strings, v0.86.2) ────────────
+
+// aider's WaitingSpinner renders "[░█   ] Waiting for <model>" while a turn
+// runs (waiting.py + base_coder.py). "Waiting for " is the exact invariant.
+const AIDER_WORKING = `
+> add a haiku to README
+[░█        ] Waiting for gpt-4o
+`;
+
+// Every aider confirmation appends " (Y)es/(N)o …[Yes]:" via io.confirm_ask.
+const AIDER_BLOCKED_ADD = `
+Add file to the chat? (Y)es/(N)o/(A)ll/(S)kip all [Yes]:
+`;
+const AIDER_BLOCKED_EDIT = `
+Allow edits to file that has not been added to the chat? (Y)es/(N)o [Yes]:
+`;
+
+// aider idle: the ">" prompt after a finished turn — no spinner, no confirm.
+const AIDER_IDLE = `
+Tokens: 2.1k sent, 340 received.
+main (diff)
+>
+`;
+
+describe("manifest corpus — aider (source-tuned, v0.86.2)", () => {
+  it("WaitingSpinner (Waiting for gpt-4o) → working", () => {
+    const snap = parseSnapshot(AIDER_WORKING);
+    expect(evaluateManifest(snap, aider).state).toBe("working");
+    expect(classifyInstant(snap, aider)).toBe("working");
+  });
+
+  it("confirm_ask add-file ((Y)es/(N)o) → blocked", () => {
+    const snap = parseSnapshot(AIDER_BLOCKED_ADD);
+    expect(evaluateManifest(snap, aider).state).toBe("blocked");
+    expect(classifyInstant(snap, aider)).toBe("blocked");
+  });
+
+  it("confirm_ask allow-edits → blocked", () => {
+    const snap = parseSnapshot(AIDER_BLOCKED_EDIT);
+    expect(classifyInstant(snap, aider)).toBe("blocked");
+  });
+
+  it("idle > prompt → idle", () => {
+    const snap = parseSnapshot(AIDER_IDLE);
+    expect(evaluateManifest(snap, aider).state).toBe(null);
+    expect(classifyInstant(snap, aider)).toBe("idle");
+  });
+});
+
+// ── cursor-agent (conservative; real pre-auth screen must read idle) ────────
+
+// REAL (cursor-agent) — the pre-auth splash captured live (no account). This
+// MUST read idle: "Cursor Agent" / "Press any key to log in…" is not a working
+// or blocked signal.
+const CURSOR_PREAUTH = `
+                     Cursor Agent
+                     v2026.04.30-4edb302
+                     Press any key to log in...
+`;
+
+describe("manifest corpus — cursor-agent (conservative)", () => {
+  it("pre-auth login splash → idle, not working/blocked", () => {
+    const snap = parseSnapshot(CURSOR_PREAUTH);
+    expect(evaluateManifest(snap, cursor).state).toBe(null);
+    expect(classifyInstant(snap, cursor)).toBe("idle");
+  });
+});
+
 // ── False-positive guard (table-driven, EVERY manifest) ────────────────────
 
 // A realistic idle shell prompt (oh-my-zsh powerline style) + a plain one.
@@ -153,6 +303,26 @@ describe("false-positive guard — no manifest fires on a plain shell prompt", (
       expect(evaluateManifest(PLAIN_SHELL, manifest).state).toBe(null);
     });
   }
+});
+
+describe("manifest confidence metadata", () => {
+  // The manifests built from real captures / verbatim source strings.
+  const TUNED = new Set(["claude", "codex", "aider"]);
+
+  for (const manifest of BUNDLED_MANIFESTS) {
+    it(`${manifest.id}: confidence is set and matches its provenance`, () => {
+      expect(manifest.confidence).toBeDefined();
+      expect(manifest.confidence).toBe(TUNED.has(manifest.id) ? "tuned" : "conservative");
+    });
+  }
+
+  it("newly added agents are present and conservative", () => {
+    for (const id of ["cursor", "goose", "amp"]) {
+      const m = BUNDLED_MANIFESTS.find((x) => x.id === id);
+      expect(m, `manifest ${id} missing`).toBeDefined();
+      expect(m?.confidence).toBe("conservative");
+    }
+  });
 });
 
 describe("working matchers fire on a synthetic spinner line", () => {

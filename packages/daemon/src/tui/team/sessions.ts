@@ -14,10 +14,11 @@ import { execFileSync } from "node:child_process";
 import {
   classifyInstant,
   parseAuthority,
+  parseAuthorityEpoch,
   type AgentStatus,
   type StatusTracker,
 } from "../detect/classify.ts";
-import type { AgentManifest } from "../detect/manifest.ts";
+import type { AgentManifest, ManifestConfidence } from "../detect/manifest.ts";
 import { readProcessTable, resolveAgentCommand } from "../detect/process-tree.ts";
 import { readPaneSnapshot } from "../detect/snapshot.ts";
 
@@ -33,6 +34,80 @@ export interface TeamSession {
    * this is the richer breakdown the switcher/cockpit navigate.
    */
   windowList: TeamWindow[];
+  /**
+   * Per-pane agent detail — one entry for every pane the two-layer detection
+   * classifies as an agent (a manifest resolved and it isn't the `shell`
+   * catch-all). A FLAT list across the session's windows; each entry carries
+   * its own `windowIndex`, so a consumer that wants a per-window view groups by
+   * it. ADDITIVE: the rollup fields above (`status`, `windowList`, `panes`) are
+   * unchanged — this only SURFACES per-pane truth the rollup already computes.
+   * Optional so pre-existing constructors stay valid; {@link listTeamSessions}
+   * always populates it (possibly empty).
+   */
+  agents?: PaneAgentEntry[];
+}
+
+/**
+ * Per-pane agent detail surfaced alongside a session's rollup. Emitted only for
+ * panes that resolve to a real agent (a manifest, excluding the `shell`
+ * catch-all). Everything here is already computed during the status rollup —
+ * this record just keeps it instead of discarding it.
+ */
+export interface PaneAgentEntry {
+  /** tmux pane id, e.g. `%5`. */
+  paneId: string;
+  /** `window_index` of the window (tab) this pane lives in. */
+  windowIndex: number;
+  /** Owning session name (repeated per entry so a flattened list stays keyed). */
+  session: string;
+  /** The resolved agent kind — the manifest id (`claude`, `codex`, …). */
+  kind: string;
+  /** Final per-pane status (authority when fresh, else scraped/tracked). */
+  state: AgentStatus;
+  /** The manifest's evidence confidence (`conservative` when the manifest omits it). */
+  confidence: ManifestConfidence;
+  /**
+   * The authority state's epoch stamp when the AUTHORITY layer provided the
+   * state (`@agent_state` = `"<state>:<epoch>"`); null for a scraped/tracked
+   * pane, which has no authoritative timestamp.
+   */
+  since: number | null;
+  /** `pane_title`. */
+  title: string;
+  /** `pane_current_command` — the pane's immediate process (often node/bun/sh). */
+  command: string;
+  /** `pane_current_path` — the pane's working directory. */
+  dir: string;
+}
+
+/**
+ * Build a {@link PaneAgentEntry} from a classified pane — PURE. Returns null
+ * for a NON-agent pane (no manifest resolved, or the `shell` catch-all), which
+ * gets no entry. `since` is threaded from the caller (the authority epoch when
+ * the authority layer supplied the state, else null). No tmux/`ps` access —
+ * every input is already resolved by the rollup.
+ */
+export function buildAgentEntry(input: {
+  sessionName: string;
+  pane: Pick<PaneRecord, "id" | "windowIndex" | "title" | "cmd" | "dir">;
+  manifest: AgentManifest | undefined;
+  state: AgentStatus;
+  since: number | null;
+}): PaneAgentEntry | null {
+  const { manifest, pane } = input;
+  if (!manifest || manifest.id === "shell") return null;
+  return {
+    paneId: pane.id,
+    windowIndex: pane.windowIndex,
+    session: input.sessionName,
+    kind: manifest.id,
+    state: input.state,
+    confidence: manifest.confidence ?? "conservative",
+    since: input.since,
+    title: pane.title,
+    command: pane.cmd,
+    dir: pane.dir,
+  };
 }
 
 /**
@@ -74,6 +149,8 @@ interface PaneRecord {
   cmd: string;
   /** `pane_title`. */
   title: string;
+  /** `pane_current_path` — the pane's working directory. */
+  dir: string;
   /** Raw `@agent_state` pane option (authority layer), if set. */
   authority: string;
   /** Raw `@agent_hint` pane option — forces a manifest when set. */
@@ -177,16 +254,21 @@ export function listTeamSessions(
       const seen = opts.viewed === name;
 
       const nowSec = Math.floor(Date.now() / 1000);
-      const wantPane = typeof opts.onPane === "function";
+      const agents: PaneAgentEntry[] = [];
       const statuses = panes.map((pane) => {
         // AUTHORITY first: a fresh hook-reported state outranks scraping.
         const authority = parseAuthority(pane.authority, nowSec);
         let status: AgentStatus;
-        // The manifest is resolved in the fallback anyway; for authority panes
-        // we only resolve it (cheaply — the process table is already loaded, no
-        // capture) when a pane sink wants the agent name for a chip.
+        // The agent kind is needed for BOTH the chip (onPane) and the per-pane
+        // agent entry, so the manifest is resolved for every pane. It's cheap —
+        // the process table is already loaded, and authority panes take NO
+        // capture-pane round-trip.
         let manifest: AgentManifest | undefined;
+        // The authority state's own timestamp (its "since"); only fresh
+        // authority states carry one — scraped panes have no stamp.
+        let since: number | null = null;
         if (authority !== null) {
+          since = parseAuthorityEpoch(pane.authority);
           if (authority === "done" && seen) {
             // Viewing acknowledges a finished agent — persist the ack so the
             // pane doesn't flip back to done on the next tick.
@@ -195,11 +277,9 @@ export function listTeamSessions(
           } else {
             status = authority;
           }
-          if (wantPane) {
-            manifest = resolveAgentCommand(pane.cmd, pane.pid, processTable, {
-              hint: pane.hint,
-            }).manifest;
-          }
+          manifest = resolveAgentCommand(pane.cmd, pane.pid, processTable, {
+            hint: pane.hint,
+          }).manifest;
         } else {
           // FALLBACK: snapshot scraping. Resolve the real agent from the pane's
           // process tree (pane_current_command alone is usually just node/bun/sh).
@@ -221,6 +301,10 @@ export function listTeamSessions(
           agent: manifest && manifest.id !== "shell" ? manifest.id : null,
           status,
         });
+        // Surface per-pane agent detail (same resolved manifest/status — nothing
+        // re-derived). Non-agent panes yield null and are skipped.
+        const entry = buildAgentEntry({ sessionName: name, pane, manifest, state: status, since });
+        if (entry) agents.push(entry);
         return status;
       });
 
@@ -233,6 +317,7 @@ export function listTeamSessions(
         // `panes` and `statuses` are parallel (statuses = panes.map(...)), so
         // the pure rollup can group each pane's window with its resolved status.
         windowList: rollupWindows(panes, statuses),
+        agents,
       };
     });
 }
@@ -243,9 +328,11 @@ function collectPanes(): Map<string, PaneRecord[]> {
     "list-panes",
     "-a",
     "-F",
-    // Window fields sit before pane_title so the (tab-safe) title stays the
-    // trailing catch-all — window names don't contain tabs in practice.
-    `#{session_name}\t#{pane_id}\t#{pane_pid}\t#{pane_current_command}\t#{@agent_state}\t#{@agent_hint}\t#{${SIDEBAR_PANE_OPTION}}\t#{window_index}\t#{window_name}\t#{window_active}\t#{pane_title}`,
+    // Window fields + pane_current_path sit before pane_title so the (tab-safe)
+    // title stays the trailing catch-all — window names/paths don't contain tabs
+    // in practice. pane_current_path rides this SAME list-panes call (no extra
+    // tmux round-trip) so per-pane agent entries can carry a working dir.
+    `#{session_name}\t#{pane_id}\t#{pane_pid}\t#{pane_current_command}\t#{@agent_state}\t#{@agent_hint}\t#{${SIDEBAR_PANE_OPTION}}\t#{window_index}\t#{window_name}\t#{window_active}\t#{pane_current_path}\t#{pane_title}`,
   ]);
   const bySession = new Map<string, PaneRecord[]>();
   for (const line of raw.split("\n").filter(Boolean)) {
@@ -260,6 +347,7 @@ function collectPanes(): Map<string, PaneRecord[]> {
       windowIndex = "0",
       windowName = "",
       windowActive = "0",
+      dir = "",
       ...titleParts
     ] = line.split("\t");
     if (!session) continue;
@@ -274,6 +362,7 @@ function collectPanes(): Map<string, PaneRecord[]> {
       windowIndex: Number(windowIndex) || 0,
       windowName,
       windowActive: windowActive === "1",
+      dir,
       title: titleParts.join("\t"),
     });
     bySession.set(session, list);

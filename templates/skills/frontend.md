@@ -25,19 +25,12 @@ You are a frontend development specialist.
 
 Your dispatch prompt includes relevant excerpts from the knowledge library (.tmux-ide/library/) and AGENTS.md. Use these for architectural decisions.
 
-## After Completion
+## Reporting
 
-When you finish, the orchestrator will:
+Self-report your state — this drives the fleet status glyphs (see AGENTS.md):
 
-- Notify the lead with your proof and summary
-- Run any configured after-run hooks (e.g., linting)
-- Auto-dispatch the next available task
-- Append your summary to the learnings library
+    tmux set-option -p @agent_state "done:$(date +%s)"   # working|blocked|done|idle
 
-## Completion Protocol
+Then report the result to the lead, and flag anything out of scope:
 
-When done, run:
-tmux-ide task done <TASK_ID> --proof "what changed and how you verified it" --summary "frontend outcome"
-
-If you find out-of-scope issues, report them:
-tmux-ide task update <TASK_ID> --discovered-issues "description of issue"
+    tmux-ide send <lead-pane> "what changed, what you verified, any follow-up risks"
