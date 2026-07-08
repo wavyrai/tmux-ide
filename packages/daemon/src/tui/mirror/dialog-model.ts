@@ -165,7 +165,11 @@ export interface DialogGeom {
 
 /** PURE — placement: horizontally centered, top at a sixth of the height
  *  (min 1 — below the surface tab bar). Same law as the palette. */
-export function dialogPos(termW: number, termH: number, width: number): { left: number; top: number } {
+export function dialogPos(
+  termW: number,
+  termH: number,
+  width: number,
+): { left: number; top: number } {
   return {
     left: Math.max(0, Math.floor((termW - width) / 2)),
     top: Math.max(1, Math.floor(termH / 6)),

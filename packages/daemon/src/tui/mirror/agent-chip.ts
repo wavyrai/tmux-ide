@@ -78,7 +78,12 @@ export function stateAge(since: number | null, nowMs: number): string | null {
  * Only `blocked` spells its state out — it is the attention state; everything
  * else leans on the glyph color, matching the dock chips' quiet default.
  */
-export function chipLabel(entry: ChipAgent, glyph: string, nowMs: number, budget: number): string | null {
+export function chipLabel(
+  entry: ChipAgent,
+  glyph: string,
+  nowMs: number,
+  budget: number,
+): string | null {
   const base = `${glyph} ${entry.kind}`;
   const candidates: string[] = [];
   if (entry.state === "blocked") {

@@ -126,7 +126,9 @@ describe("firstRunTip", () => {
 
   it("renders the reliable prefix twins for the user's keys", () => {
     // home M-h → prefix h; switch M-p is remapped to prefix j; menu M-m → prefix u.
-    expect(firstRunTip(keys)).toBe("Your keys: prefix h home · prefix j switch sessions · prefix u actions");
+    expect(firstRunTip(keys)).toBe(
+      "Your keys: prefix h home · prefix j switch sessions · prefix u actions",
+    );
   });
 });
 

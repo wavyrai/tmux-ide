@@ -6,11 +6,16 @@ All notable changes to this project will be documented in this file.
 
 ## 2.7.0
 
-The unified app release: `tmux-ide app` is now a real terminal IDE over your fleet — and its panes feel native.
+The unified app release: `tmux-ide app` is now a real terminal IDE over your fleet — panes feel native, agents are visible at a glance, and you can start it anywhere.
 
 ### Added
 
 - **The unified app** (`tmux-ide app [session]`) — a full-screen IDE via tmux control mode: tmux keeps owning PTYs/layout/persistence, the app renders. Surfaces: Home cockpit, live Terminal, native file editor (^s/^z, click-cursor), diff viewer, command palette (F5)
+- **Start it anywhere** — `tmux-ide app` works from any folder with no tmux server running; the home screen greets first-run users with a plain-language welcome and **Open folder…**: a real filesystem picker that opens your project in a terminal workspace, with optional "remember as project" and layout setup. Recently opened folders one click away. The optional `app.frontDoor` config flag makes bare `tmux-ide` launch the app
+- **Agents at a glance** — a sidebar agents section lists every agent across your fleet (blocked first) and clicking one jumps straight to its pane; agent panes wear a status chip ("● claude", blocked shows bold red with age); the focused pane gets an accent hairline border; `team --json` now carries per-pane agent entries
+- **Settings without JSON** — every setting is a palette command (F5 → "settings"): accent theme with live preview, notifications with quiet hours, update cadence, crash restore, a keybinding viewer, and a guarded reset. Changes persist atomically and say where they land
+- **Select & copy inside agent panes** — right-click → "Select text…" (or shift+drag where your terminal passes it) pauses mouse forwarding so you can select and copy from claude/vim/htop panes; wheel scrolls history while selecting
+- **Size honesty with co-attached terminals** — when another terminal sizes the shared window, the app centers the view and says so; palette → "Resize to fit this window" reclaims it, and detaching always leaves your other terminal's size intact
 - **Mouse-native everywhere** — hover feedback, right-click context menus (pane/window/session verbs, layouts, synchronize-panes), border-drag resize, drag-select with SSH-transparent OSC52 copy, scrollbars, clickable buttons
 - **Mouse-complete navigation** — the palette is fully mouse-driven (hover, wheel, click-to-run, click-outside dismiss); the home screen launches registered projects and creates named sessions by click; every sidebar/tab-bar affordance is clickable, keyboard twins preserved
 - **Scrollback search** (`/`), paste-buffer picker, zoom fast-paths, pane ops and layout presets

@@ -63,7 +63,14 @@ describe("dialogHeaderRows", () => {
 });
 
 describe("row hit-testing (the router law: same math as the render)", () => {
-  const g: DialogGeom = { left: 20, top: 10, width: 60, headerRows: 4, visibleRows: 3, footerRows: 1 };
+  const g: DialogGeom = {
+    left: 20,
+    top: 10,
+    width: 60,
+    headerRows: 4,
+    visibleRows: 3,
+    footerRows: 1,
+  };
   it("hits only real rows inside the interior", () => {
     expect(dialogRowAt(g, 25, 14)).toBe(0);
     expect(dialogRowAt(g, 25, 16)).toBe(2);

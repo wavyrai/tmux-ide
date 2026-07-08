@@ -333,9 +333,9 @@ export class SessionMirror {
     // size, so a terminal/sidebar resize after a reclaim must resize the window
     // directly to keep it matched to our canvas.
     if (this.sizeMode === "manual") {
-      await this.client.command(`resize-window -t ${this.opts.target} -x ${cols} -y ${rows}`).catch(
-        () => {},
-      );
+      await this.client
+        .command(`resize-window -t ${this.opts.target} -x ${cols} -y ${rows}`)
+        .catch(() => {});
     }
     this.queueSync();
   }

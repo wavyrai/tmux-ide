@@ -128,7 +128,13 @@ describe("buildAgentEntry", () => {
 
   it("returns null for a pane with no resolved manifest", () => {
     expect(
-      buildAgentEntry({ sessionName: "web", pane, manifest: undefined, state: "unknown", since: null }),
+      buildAgentEntry({
+        sessionName: "web",
+        pane,
+        manifest: undefined,
+        state: "unknown",
+        since: null,
+      }),
     ).toBeNull();
   });
 
