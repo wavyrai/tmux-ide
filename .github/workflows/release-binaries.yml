@@ -97,13 +97,19 @@ jobs:
       - name: Install target native package (@opentui/core-${{ matrix.platform }})
         # `bun build --compile --target` embeds the target's native OpenTUI
         # dylib, which lives in a per-platform package the host install skips.
-        # --force bypasses npm's os/cpu guard; --no-save keeps the lockfile clean.
+        # Fetched straight from the registry: `npm install` cannot run inside
+        # this pnpm workspace (arborist chokes on `workspace:*` specifiers with
+        # "Cannot read properties of null (reading 'matches')"), and npm's
+        # os/cpu guard would refuse the non-host platform anyway.
         shell: bash
         run: |
           core_version="$(node -p "require('./node_modules/@opentui/core/package.json').version")"
-          echo "Installing @opentui/core-${{ matrix.platform }}@${core_version}"
-          npm install --no-save --no-package-lock --force \
-            "@opentui/core-${{ matrix.platform }}@${core_version}"
+          pkg="@opentui/core-${{ matrix.platform }}"
+          echo "Fetching ${pkg}@${core_version}"
+          dest="node_modules/${pkg}"
+          mkdir -p "${dest}"
+          curl -fsSL "https://registry.npmjs.org/${pkg}/-/core-${{ matrix.platform }}-${core_version}.tgz" \
+            | tar -xz -C "${dest}" --strip-components=1
 
       - name: Cross-compile the TUI binary
         run: |
