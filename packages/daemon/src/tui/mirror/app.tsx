@@ -204,6 +204,7 @@ import {
 } from "./file-tree.ts";
 import { spans, spanHit, spansFromRight, type Span } from "./spans.ts";
 import { agentsByPane, chipLabel } from "./agent-chip.ts";
+import { focusStrips } from "./focus-border.ts";
 import { scrollThumb, trackZone, pageTop, dragTop } from "./scrollbar-model.ts";
 import {
   MENU_ITEMS,
@@ -284,6 +285,10 @@ const SIDEBAR_BG = RGBA.fromInts(22, 22, 30, 255);
 const ACCENT = RGBA.fromInts(130, 170, 255, 255);
 const MUTED = RGBA.fromInts(110, 110, 130, 255);
 const BADGE_BG = RGBA.fromInts(60, 66, 92, 255);
+// Focused-pane gutter strips (M22.7): the ACCENT family dimmed to a bar that is
+// unmistakable across the room but doesn't compete with the blocked chip's red —
+// focus is an accent signal, agent state is a status signal, never the same hue.
+const FOCUS_BORDER_BG = RGBA.fromInts(80, 110, 190, 255);
 const TAB_ACTIVE_BG = RGBA.fromInts(40, 46, 66, 255);
 // A single subtle pointer-hover tint, one lift above both DEFAULT_BG (16,16,22)
 // and SIDEBAR_BG (22,22,30) and below TAB_ACTIVE_BG — the active/selected state
@@ -3808,6 +3813,32 @@ render(
                     }}
                   </For>
                 </Show>
+                {/* Focused-pane border (M22.7): accent strips in the GUTTER cells
+                  around the active pane — the strips live outside every pane rect
+                  so no terminal cell is consumed or tinted, and they're
+                  handler-less boxes (gutter presses still bubble to the router,
+                  border drags keep working). Single-pane and zoomed windows paint
+                  nothing (focusStrips returns [] when the rect fills the canvas
+                  or the window has one pane). */}
+                <For
+                  each={(() => {
+                    const focused = panes().find((p) => p.active);
+                    return focused
+                      ? focusStrips(focused, canvasCols(), canvasRows(), panes().length)
+                      : [];
+                  })()}
+                >
+                  {(strip) => (
+                    <box
+                      position="absolute"
+                      left={strip.left}
+                      top={strip.top}
+                      width={strip.width}
+                      height={strip.height}
+                      backgroundColor={FOCUS_BORDER_BG}
+                    />
+                  )}
+                </For>
               </box>
               {/* Scrollback-search input (M20.3) — a bottom-of-canvas line, like the
                 palette's input but inline. A normal-flow row after the pane canvas
