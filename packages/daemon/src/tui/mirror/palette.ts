@@ -20,6 +20,7 @@ import { SETTINGS_PALETTE_COMMANDS, type SettingsCommandId } from "./settings-mo
  *  fuzzy filter scores; `kind` (+ payload) is what the app dispatches on. */
 export type PaletteAction =
   | { kind: "tab"; tab: Tab; label: string }
+  | { kind: "open-folder"; label: string }
   | { kind: "attach"; session: string; label: string }
   | { kind: "jump-agent"; paneId: string; session: string; windowIndex: number; label: string }
   | { kind: "open-file"; path: string; label: string }
@@ -84,6 +85,9 @@ export function staticPaletteActions(
     tab: t.tab,
     label: t.label,
   }));
+  // The non-technicals' front door (M22.5): a filesystem picker → create-or-
+  // attach a session in the chosen folder. Offered on every surface.
+  actions.push({ kind: "open-folder", label: "Open folder…" });
   for (const s of sessions) {
     actions.push({ kind: "attach", session: s, label: `Attach session: ${s}` });
   }

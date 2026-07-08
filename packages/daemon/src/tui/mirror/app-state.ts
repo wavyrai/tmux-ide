@@ -45,6 +45,9 @@ export function clampSidebarWidth(w: number): number {
   return Math.max(SIDEBAR_W_MIN, Math.min(SIDEBAR_W_MAX, Math.round(w)));
 }
 
+/** How many recently-opened folders home remembers (M22.5). Oldest fall off. */
+export const RECENTS_CAP = 8;
+
 /** The persisted shape. `null` means "nothing remembered" for that slot. */
 export interface AppState {
   /** The tab the app was showing when it last saved. */
@@ -57,6 +60,9 @@ export interface AppState {
   diffFile: string | null;
   /** The sidebar column width (M19.3), clamped to the bounds above. */
   sidebarW: number;
+  /** Recently-opened folder paths (M22.5), most-recent first, deduped and
+   *  capped at {@link RECENTS_CAP}. Home renders these under a "recent" header. */
+  recentFolders: string[];
 }
 
 export const DEFAULT_APP_STATE: AppState = {
@@ -65,7 +71,32 @@ export const DEFAULT_APP_STATE: AppState = {
   openFile: null,
   diffFile: null,
   sidebarW: SIDEBAR_W_DEFAULT,
+  recentFolders: [],
 };
+
+/** PURE — the recents list after opening `dir`: it moves to the front,
+ *  any earlier occurrence is removed (dedupe), and the tail past `cap` drops.
+ *  Blank paths are ignored (return the list unchanged). */
+export function addRecentFolder(
+  list: readonly string[],
+  dir: string,
+  cap: number = RECENTS_CAP,
+): string[] {
+  if (dir.length === 0) return [...list];
+  return [dir, ...list.filter((d) => d !== dir)].slice(0, cap);
+}
+
+/** PURE — a persisted recents value coerced to clean strings: non-empty,
+ *  deduped (first wins), capped. Anything not a string[] yields []. */
+function sanitizeRecents(v: unknown): string[] {
+  if (!Array.isArray(v)) return [];
+  const out: string[] = [];
+  for (const item of v) {
+    if (typeof item === "string" && item.length > 0 && !out.includes(item)) out.push(item);
+    if (out.length >= RECENTS_CAP) break;
+  }
+  return out;
+}
 
 /** The tmux-ide home dir: `TMUX_IDE_HOME` when set, else `~/.tmux-ide`. */
 export function appStateHome(): string {
@@ -105,6 +136,7 @@ export function parseAppState(raw: string): AppState {
       typeof obj.sidebarW === "number"
         ? clampSidebarWidth(obj.sidebarW)
         : DEFAULT_APP_STATE.sidebarW,
+    recentFolders: sanitizeRecents(obj.recentFolders),
   };
 }
 
@@ -117,6 +149,7 @@ export function serializeAppState(state: AppState): string {
     openFile: optString(state.openFile),
     diffFile: optString(state.diffFile),
     sidebarW: clampSidebarWidth(state.sidebarW),
+    recentFolders: sanitizeRecents(state.recentFolders),
   };
   return JSON.stringify(clean, null, 2);
 }

@@ -9,6 +9,7 @@ describe("staticPaletteActions", () => {
       "Switch tab: Terminal",
       "Switch tab: Files",
       "Switch tab: Diff",
+      "Open folder…",
       "Attach session: alpha",
       "Attach session: beta",
       "Save file",
@@ -25,6 +26,11 @@ describe("staticPaletteActions", () => {
       "Settings: Reset to defaults",
       "Quit",
     ]);
+  });
+
+  it("offers the open-folder command on every surface", () => {
+    expect(staticPaletteActions([]).some((a) => a.kind === "open-folder")).toBe(true);
+    expect(filterPaletteActions("open fold", []).some((a) => a.kind === "open-folder")).toBe(true);
   });
 
   it("typing 'set' surfaces the settings umbrella (the battery's palette entry)", () => {
@@ -63,7 +69,7 @@ describe("filterPaletteActions", () => {
   it("returns every static action for an empty query, no open-file entry", () => {
     const actions = filterPaletteActions("", ["alpha"]);
     expect(actions.some((a) => a.kind === "open-file")).toBe(false);
-    expect(actions).toHaveLength(17);
+    expect(actions).toHaveLength(18);
   });
 
   it("fuzzy-ranks matches and appends an open-file action for a plain word", () => {

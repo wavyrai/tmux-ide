@@ -1,7 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   DEFAULT_APP_STATE,
+  RECENTS_CAP,
   SIDEBAR_W_DEFAULT,
+  addRecentFolder,
   appStateHome,
   appStatePath,
   clampSidebarWidth,
@@ -31,6 +33,7 @@ describe("parseAppState", () => {
       openFile: "/tmp/a.ts",
       diffFile: "src/x.ts",
       sidebarW: 30,
+      recentFolders: ["/tmp/one", "/tmp/two"],
     };
     expect(parseAppState(serializeAppState(state))).toEqual(state);
   });
@@ -51,6 +54,7 @@ describe("parseAppState", () => {
       openFile: "/f",
       diffFile: "d",
       sidebarW: SIDEBAR_W_DEFAULT,
+      recentFolders: [],
     });
   });
 
@@ -64,7 +68,19 @@ describe("parseAppState", () => {
       openFile: null,
       diffFile: null,
       sidebarW: SIDEBAR_W_DEFAULT,
+      recentFolders: [],
     });
+  });
+
+  it("keeps only clean, deduped, capped recent folders", () => {
+    const parsed = parseAppState(
+      JSON.stringify({
+        recentFolders: ["/a", "/a", "", 5, "/b", "/c", "/d", "/e", "/f", "/g", "/h", "/i"],
+      }),
+    );
+    // dedupe drops the second "/a", blanks/non-strings drop, then cap at RECENTS_CAP.
+    expect(parsed.recentFolders).toEqual(["/a", "/b", "/c", "/d", "/e", "/f", "/g", "/h"]);
+    expect(parsed.recentFolders.length).toBe(RECENTS_CAP);
   });
 
   it("clamps a persisted sidebar width to the bounds and rounds it", () => {
@@ -86,7 +102,7 @@ describe("clampSidebarWidth", () => {
 });
 
 describe("serializeAppState", () => {
-  it("emits exactly the four keys and drops extras", () => {
+  it("emits exactly the persisted keys and drops extras", () => {
     const parsed = JSON.parse(
       serializeAppState({
         lastTab: "terminal",
@@ -94,6 +110,7 @@ describe("serializeAppState", () => {
         openFile: null,
         diffFile: null,
         sidebarW: SIDEBAR_W_DEFAULT,
+        recentFolders: [],
         // @ts-expect-error — runtime extra keys must not leak into the file
         junk: "x",
       }),
@@ -103,8 +120,34 @@ describe("serializeAppState", () => {
       "diffFile",
       "lastTab",
       "openFile",
+      "recentFolders",
       "sidebarW",
     ]);
+  });
+});
+
+describe("addRecentFolder", () => {
+  it("moves an opened folder to the front and dedupes", () => {
+    expect(addRecentFolder(["/a", "/b", "/c"], "/b")).toEqual(["/b", "/a", "/c"]);
+    expect(addRecentFolder(["/a", "/b"], "/new")).toEqual(["/new", "/a", "/b"]);
+  });
+
+  it("caps the list, dropping the oldest", () => {
+    const full = ["/1", "/2", "/3", "/4", "/5", "/6", "/7", "/8"];
+    expect(addRecentFolder(full, "/new")).toEqual([
+      "/new",
+      "/1",
+      "/2",
+      "/3",
+      "/4",
+      "/5",
+      "/6",
+      "/7",
+    ]);
+  });
+
+  it("ignores a blank path", () => {
+    expect(addRecentFolder(["/a"], "")).toEqual(["/a"]);
   });
 });
 

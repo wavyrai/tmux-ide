@@ -130,8 +130,9 @@ import {
   writeSync,
   closeSync,
 } from "node:fs";
-import { readdir, writeFile, rename, rm } from "node:fs/promises";
+import { readdir, writeFile, rename, rm, stat } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
+import { homedir } from "node:os";
 import { render, useKeyboard, usePaste, useTerminalDimensions } from "@opentui/solid";
 import { RGBA, EditBuffer, decodePasteBytes } from "@opentui/core";
 import { createSignal, createMemo, createEffect, onMount, onCleanup, For, Show } from "solid-js";
@@ -164,11 +165,31 @@ import {
 import {
   loadAppState,
   saveAppState,
+  addRecentFolder,
   clampSidebarWidth,
   isTab,
   type AppState,
   type Tab,
 } from "./app-state.ts";
+import {
+  expandUserPath,
+  filterDirs,
+  isPickerRoot,
+  pathKindHint,
+  pickerBreadcrumb,
+  pickerDirName,
+  pickerParent,
+  pickerRows,
+  PICKER_HIDDEN_ID,
+  PICKER_OPEN_ID,
+  PICKER_TYPE_ID,
+  PICKER_UP_ID,
+  type PathKind,
+} from "./folder-picker.ts";
+import {
+  registerProject,
+  ProjectAlreadyRegisteredError,
+} from "../../lib/project-registry.ts";
 import { separatorAt, resizedSize, resizeCommand, type Separator } from "./resize-model.ts";
 import {
   effectiveWindowSize,
@@ -240,7 +261,10 @@ import { loadAppConfig, loadRawAppConfig, updateAppConfig } from "../../lib/app-
 import { parseNotificationPrefs } from "../chrome/notify.ts";
 import {
   buildHomeItems,
+  centerPad,
   clampSelectable,
+  firstRunTip,
+  isFirstRun,
   stepSelectable,
   sessionNameFor,
   isValidSessionName,
@@ -413,6 +437,7 @@ type HoverRegion =
   | "button"
   | "tabbtn"
   | "homechip"
+  | "welcomeopen"
   | "sidebtn";
 
 /** The one pointer-event shape the central `route` reads. `button` distinguishes
@@ -497,7 +522,17 @@ const PALETTE_ROWS = 10;
 // lands cell-for-cell on what's drawn.
 const HOME_CHIP_SESSION = "[± diff] ";
 const HOME_CHIP_PROJECT = "[▸ launch] ";
+const HOME_CHIP_RECENT = "[▸ open] ";
 const TABBAR_PALETTE_LABEL = "F5 ⌘ palette ";
+// ── M22.5 first-run welcome ─────────────────────────────────────────────────
+// A centered greeting shown only on a truly empty fleet (no sessions, no
+// registered projects). WELCOME_ROWS rows in the content area (gy 2…); the
+// clickable "open a folder" action sits at WELCOME_ACTION_ROW. The render
+// centers each line with the same centerPad the router hit-tests with.
+const WELCOME_LINE = "Welcome to tmux-ide — a cockpit for the tmux sessions you already have.";
+const WELCOME_ACTION_LABEL = "▸ open a folder — press f";
+const WELCOME_ROWS = 6;
+const WELCOME_ACTION_ROW = 3; // 0-based within the welcome block
 // The sidebar footer hint, split so its "F5 palette" segment is a chip: the
 // span starts after paddingLeft (1) + the pre text.
 const SIDEBAR_HINT_PRE = "F1-4 tabs · ";
@@ -557,6 +592,9 @@ render(
     // and context restore below; the open editor file / diff selection restore in
     // onMount (after the FFI buffer + fleet arrive).
     const persisted: AppState = loadAppState();
+    // The bundled CLI — the async fleet poll and `detect --write` both shell out
+    // to it (resolved once; `node <cliPath> …`).
+    const cliPath = new URL("../../../../../bin/cli.js", import.meta.url).pathname;
     // ── SIDEBAR WIDTH (M19.3) ────────────────────────────────────────────────
     // Once a fixed constant, now a DRAGGABLE, persisted signal: every geometry
     // that used to read the constant (canvasCols, pane/editor/diff offsets, the
@@ -564,6 +602,13 @@ render(
     // `sidebarW()` so a boundary drag reflows the whole app. Restored from
     // app-state (clamped), re-clamped defensively, re-persisted on release.
     const [sidebarW, setSidebarW] = createSignal(clampSidebarWidth(persisted.sidebarW));
+    // Recently-opened folders (M22.5) — restored from app-state, prepended-to on
+    // every folder open, persisted with the rest of the app state. Home renders
+    // them under a "recent" header (deduped against sessions + the registry).
+    const [recentFolders, setRecentFolders] = createSignal<string[]>(persisted.recentFolders);
+    // The first-run tip line — the user's ACTUAL keybindings, read once at launch
+    // (loadAppConfig honors TMUX_IDE_CONFIG). Cheap + pure, computed once.
+    const welcomeTip = firstRunTip(loadAppConfig().keys);
     // The active surface TAB is the source of truth. Explicit CLI args win, else a
     // real `--target` boots into Terminal, else the persisted tab, else Home.
     const initialTab: Tab = startDiff
@@ -779,7 +824,32 @@ render(
           .filter((a, i, arr) => arr.findIndex((b) => b.paneId === a.paneId) === i),
       ),
     );
-    const homeItems = createMemo<HomeItem[]>(() => buildHomeItems(projectsData()));
+    const homeItems = createMemo<HomeItem[]>(() =>
+      buildHomeItems(projectsData(), recentFolders()),
+    );
+    // First-run (M22.5): a truly empty fleet gets a centered welcome. It reserves
+    // WELCOME_ROWS at the top of the content area, so the home row math shifts by
+    // that offset while it shows (shared by render, hover and click routing).
+    const firstRun = () => isFirstRun(projectsData());
+    const welcomeOffset = () => (firstRun() ? WELCOME_ROWS : 0);
+    /** The centered x-span [start, end) of the welcome's clickable action — the
+     *  render draws the label after the same centerPad, so a click lands on it. */
+    const welcomeActionSpan = (): [number, number] => {
+      const start = sidebarW() + centerPad(canvasCols(), WELCOME_ACTION_LABEL.length);
+      return [start, start + WELCOME_ACTION_LABEL.length];
+    };
+    /** Whether (gy, x) hits the welcome action row (only while first-run). */
+    const welcomeActionHit = (gy: number, x: number): boolean => {
+      if (!firstRun() || gy - 2 !== WELCOME_ACTION_ROW) return false;
+      const [x0, x1] = welcomeActionSpan();
+      return x >= x0 && x < x1;
+    };
+    /** The home item index under content-row gy (accounting for the welcome
+     *  offset), or -1 when gy is above the first row / on the welcome block. */
+    const homeItemIndexAt = (gy: number): number => {
+      const idx = gy - 2 - welcomeOffset();
+      return idx >= 0 ? idx : -1;
+    };
     const rollup = (): FleetRollup => {
       const r: FleetRollup = {
         blocked: 0,
@@ -807,9 +877,11 @@ render(
     };
     const detailLine = (): string => {
       const r = selectedHomeItem();
-      if (!r) return "no live sessions — launch one, then it appears here";
+      if (!r) return "no live sessions — press f to open a folder";
       if (r.kind === "project")
         return `${r.dir ?? "no dir"} · registered, not running — enter/click launches it`;
+      if (r.kind === "recent")
+        return `${r.dir} · recently opened — enter/click reopens it here`;
       if (r.kind === "header") return "";
       const w = `${r.windows} window${r.windows === 1 ? "" : "s"}`;
       return `${r.project}${r.dir ? ` · ${r.dir}` : ""} · ${w} · ${r.status}`;
@@ -1278,6 +1350,160 @@ render(
       });
     };
 
+    // ── OPEN A FOLDER (M22.5) — the non-technicals' front door ───────────────
+    // A filesystem picker (a DialogSelect browse loop over ASYNC readdir) →
+    // create-or-attach a session in the chosen dir → openWorkspace, then two
+    // optional, skippable offers: remember the project, and (if no ide.yml) set
+    // up a layout. Everything is async fs (the header's async-only law); the row
+    // math / breadcrumb / sorting is pure in folder-picker.ts.
+
+    /** Push a folder to the recents list (dedupe + cap live in app-state). */
+    const recordRecentFolder = (dir: string) => setRecentFolders((r) => addRecentFolder(r, dir));
+
+    /** Create-or-attach a session in `dir` and open it, remembering it as a
+     *  recent. The quick path shared by a recents-row reopen and the picker. */
+    const openFolderAt = (dir: string) => {
+      recordRecentFolder(dir);
+      createSession(sessionNameFor(basename(dir) || dir), dir);
+    };
+
+    /** ASYNC — the subdirectory names of `dir` (dirs only; unreadable → []). */
+    const listSubdirs = async (dir: string): Promise<string[]> => {
+      try {
+        const entries = await readdir(dir, { withFileTypes: true });
+        return entries.filter((e) => e.isDirectory()).map((e) => e.name);
+      } catch {
+        return [];
+      }
+    };
+
+    /** ASYNC — classify a path: a directory, a file, or missing/unreadable. */
+    const pathKind = async (path: string): Promise<PathKind> => {
+      try {
+        return (await stat(path)).isDirectory() ? "dir" : "file";
+      } catch {
+        return "missing";
+      }
+    };
+
+    /** ASYNC — whether `dir` already has an ide.yml (skip the layout offer). */
+    const hasIdeYml = async (dir: string): Promise<boolean> =>
+      (await pathKind(join(dir, "ide.yml"))) === "file";
+
+    /** The "type a path…" escape hatch: a prompt that async-validates the typed
+     *  path is a real folder (sync validate can't touch fs), re-asking with a
+     *  plain-language error until it is a dir or the user backs out. Returns the
+     *  resolved dir, or null to fall back to browsing. */
+    const runTypedPath = async (base: string): Promise<string | null> => {
+      let initial = "";
+      let footerHint = "type a folder path — ~ and relative paths are ok";
+      for (;;) {
+        const typed = await DialogPrompt.show({
+          title: "Open a folder by path",
+          placeholder: "~/code/my-project",
+          initial,
+          footerHint,
+          validate: (v) => (v.trim().length > 0 ? null : "Type a path, or press esc to go back"),
+        });
+        if (typed === null) return null;
+        const resolved = expandUserPath(typed, homedir(), base);
+        const kind = await pathKind(resolved);
+        if (kind === "dir") return resolved;
+        initial = typed;
+        footerHint = pathKindHint(kind);
+      }
+    };
+
+    /** The browse loop: descend/ascend directories, toggle hidden folders with
+     *  ^h, "open this folder" commits, "type a path…" hands off to the prompt.
+     *  Returns the chosen dir, or null on cancel (esc at the browser). */
+    const runFolderPicker = async (start: string): Promise<string | null> => {
+      let dir = start;
+      let showHidden = false;
+      for (;;) {
+        const subdirs = filterDirs(await listSubdirs(dir), showHidden);
+        const choice = await DialogSelect.show({
+          title: pickerBreadcrumb(dir, homedir()),
+          items: pickerRows(dir, subdirs, showHidden),
+        });
+        if (!choice) return null;
+        const id = choice.item.id;
+        if (id === PICKER_OPEN_ID) return dir;
+        if (id === PICKER_HIDDEN_ID) {
+          showHidden = !showHidden;
+          continue;
+        }
+        if (id === PICKER_UP_ID) {
+          if (!isPickerRoot(dir)) dir = pickerParent(dir);
+          continue;
+        }
+        if (id === PICKER_TYPE_ID) {
+          const typed = await runTypedPath(dir);
+          if (typed !== null) return typed;
+          continue; // backed out of the prompt → keep browsing
+        }
+        const name = pickerDirName(id);
+        if (name) dir = join(dir, name);
+      }
+    };
+
+    /** Offer to remember a just-opened folder as a project (registry add —
+     *  honoring TMUX_IDE_REGISTRY_DIR). Already-registered is a friendly no-op. */
+    const rememberProject = async (dir: string) => {
+      try {
+        await registerProject({ dir });
+        setStatusNote(`remembered ${basename(dir) || dir}`);
+        fleetRefresh?.();
+      } catch (e) {
+        if (e instanceof ProjectAlreadyRegisteredError) setStatusNote("already in your projects");
+        else setStatusNote("couldn't remember that project");
+      }
+    };
+
+    /** Write a starter ide.yml for `dir` via `tmux-ide detect --write` (async
+     *  subprocess — the CLI resolves the layout from the project's stack). */
+    const runDetectWrite = (dir: string) => {
+      execFile("node", [cliPath, "detect", dir, "--write"], (err) => {
+        setStatusNote(err ? "couldn't set up a layout" : `set up a layout in ${basename(dir) || dir}`);
+      });
+    };
+
+    /** The full picked-folder flow: open it, then the two skippable offers. */
+    const openFolderPicked = async (dir: string) => {
+      openFolderAt(dir);
+      const remember = await DialogConfirm.show({
+        title: "Remember this project?",
+        body:
+          "Add it to your projects so it's one click to reopen next time. " +
+          "This opens your project in a terminal workspace either way.",
+        yesLabel: "Remember it",
+        noLabel: "Not now",
+      });
+      if (remember) await rememberProject(dir);
+      if (!(await hasIdeYml(dir))) {
+        const setup = await DialogConfirm.show({
+          title: "Set up a layout?",
+          body:
+            "Detect this project and write a starter layout so it opens with the " +
+            "right panes next time. You can change it later.",
+          yesLabel: "Set it up",
+          noLabel: "Skip",
+        });
+        if (setup) runDetectWrite(dir);
+      }
+    };
+
+    /** Entry point for every "open folder" affordance (home key `f`, the footer
+     *  chip, the palette command, the welcome action): browse, then open. */
+    const openFolderFlow = async () => {
+      setHoverIf(null); // the overlay owns the pointer, like the palette
+      // `||` (not `??`): contextDir is "" when unset, and a selected header/none
+      // gives null — either falls through to the working directory.
+      const start = selectedHomeDir() || contextDir() || process.cwd();
+      const dir = await runFolderPicker(start);
+      if (dir) await openFolderPicked(dir);
+    };
+
     /** A home row's PRIMARY verb: open a session as the workspace, or launch a
      *  registered project (its sanitized name becomes the session). Shared by
      *  the row click and the enter key. */
@@ -1286,6 +1512,7 @@ render(
       if (!it || it.kind === "header") return;
       setSel(index);
       if (it.kind === "session") openWorkspace(it.session, it.dir);
+      else if (it.kind === "recent") openFolderAt(it.dir);
       else createSession(sessionNameFor(it.name), it.dir);
     };
 
@@ -1300,6 +1527,8 @@ render(
         setContextSession(it.session);
         setContextDir(it.dir ?? process.cwd());
         enterDiff(it.dir ?? process.cwd());
+      } else if (it.kind === "recent") {
+        openFolderAt(it.dir);
       } else {
         createSession(sessionNameFor(it.name), it.dir);
       }
@@ -1394,6 +1623,9 @@ render(
       switch (a.kind) {
         case "tab":
           selectTab(a.tab);
+          break;
+        case "open-folder":
+          void openFolderFlow();
           break;
         case "attach":
           openWorkspace(a.session, dirForSession(a.session));
@@ -1840,6 +2072,7 @@ render(
         openFile: editorPath(),
         diffFile: diffFiles()[diffSel()]?.path ?? null,
         sidebarW: sidebarW(),
+        recentFolders: recentFolders(),
       };
       if (saveTimer) clearTimeout(saveTimer);
       saveTimer = setTimeout(() => void saveAppState(snapshot), 400);
@@ -1904,7 +2137,6 @@ render(
       // Fleet via an ASYNC subprocess — the in-process data layer is a chain of
       // synchronous execs that blocks the event loop for seconds and swallows
       // input (mouse events die during the storm). The child does the work.
-      const cliPath = new URL("../../../../../bin/cli.js", import.meta.url).pathname;
       let fleetInFlight = false;
       const refreshFleet = () => {
         if (fleetInFlight) return;
@@ -2429,9 +2661,9 @@ render(
       }
       const m = mode();
       if (m === "home") {
-        // Only live-session rows carry the session menu; the registry section's
-        // project/header rows have no context verbs (left-click launches).
-        const r = homeItems()[gy - 2];
+        // Only live-session rows carry the session menu; the registry / recents
+        // rows have no context verbs (left-click launches / reopens).
+        const r = homeItems()[homeItemIndexAt(gy)];
         if (!r || r.kind !== "session") return null;
         return {
           region: "session",
@@ -2928,6 +3160,12 @@ render(
           setPathPrompt("");
           return;
         }
+        // `f` — open a folder (M22.5): the [f open folder] chip / welcome action /
+        // palette command's keyboard twin. Launches the filesystem picker.
+        if (evt.name === "f") {
+          void openFolderFlow();
+          return;
+        }
         // `n` — the [n new session] chip's keyboard twin.
         if (evt.name === "n") {
           setSessionPrompt("");
@@ -3067,6 +3305,7 @@ render(
       const defs: HeaderButton[] =
         mode() === "home"
           ? [
+              { id: "home-openfolder", label: "[f open folder]" },
               { id: "home-new", label: "[n new session]" },
               { id: "home-open", label: "[o open]" },
               { id: "home-diff", label: "[d diff]" },
@@ -3121,7 +3360,8 @@ render(
       } else if (id === "zoom") {
         const pid = mirror?.focusedPane();
         if (pid) void mirror?.command(`resize-pane -Z -t ${pid}`).catch(() => {});
-      } else if (id === "home-open") setPathPrompt("");
+      } else if (id === "home-openfolder") void openFolderFlow();
+      else if (id === "home-open") setPathPrompt("");
       else if (id === "home-new") setSessionPrompt("");
       else if (id === "home-diff") {
         // Mirror the home `d` key: adopt the selected session's dir as context and
@@ -3181,7 +3421,13 @@ render(
      *  row box runs flush to the terminal's right edge, so the span anchors
      *  there — same for every row of a kind. */
     const homeChipLabel = (it: HomeItem | undefined): string =>
-      it?.kind === "session" ? HOME_CHIP_SESSION : it?.kind === "project" ? HOME_CHIP_PROJECT : "";
+      it?.kind === "session"
+        ? HOME_CHIP_SESSION
+        : it?.kind === "project"
+          ? HOME_CHIP_PROJECT
+          : it?.kind === "recent"
+            ? HOME_CHIP_RECENT
+            : "";
     const homeChipHit = (it: HomeItem | undefined, x: number): boolean => {
       const label = homeChipLabel(it);
       if (!label) return false;
@@ -3194,7 +3440,9 @@ render(
         ? `${it.windows}w${it.project === it.session ? "" : ` · ${it.project}`}`
         : it.kind === "project"
           ? `${it.dir ?? ""} · registered`
-          : "";
+          : it.kind === "recent"
+            ? `${dirname(it.dir)} · recent`
+            : "";
 
     /** Resolve the hovered {region, index} from pointer coords with the SAME
      *  geometry the click router uses, then update `hover` (no-op unless changed).
@@ -3233,7 +3481,11 @@ render(
           setHoverIf(i >= 0 ? { region: "button", index: i } : null);
           return;
         }
-        const idx = gy - 2;
+        if (welcomeActionHit(gy, x)) {
+          setHoverIf({ region: "welcomeopen", index: 0 });
+          return;
+        }
+        const idx = homeItemIndexAt(gy);
         const it = homeItems()[idx];
         if (idx < 0 || !it || it.kind === "header") {
           setHoverIf(null);
@@ -3624,9 +3876,14 @@ render(
           if (i >= 0) runButton(hb.defs[i]!.id);
           return;
         }
+        // The first-run welcome's "open a folder" action (M22.5).
+        if (welcomeActionHit(gy, x)) {
+          void openFolderFlow();
+          return;
+        }
         // A row click: the right-aligned verb chip wins over the row body;
-        // header rows are inert. Sessions open, projects launch (M21.9).
-        const idx = gy - 2;
+        // header rows are inert. Sessions open, projects launch, recents reopen.
+        const idx = homeItemIndexAt(gy);
         const it = homeItems()[idx];
         if (!it || it.kind === "header") return;
         if (homeChipHit(it, x)) runHomeChip(idx);
@@ -4033,11 +4290,40 @@ render(
                 </For>
               </box>
               <text fg={MUTED}>{"─".repeat(Math.max(4, canvasCols() - 2))}</text>
+              {/* FIRST-RUN welcome (M22.5): exactly WELCOME_ROWS rows so the home
+                row math below simply shifts by welcomeOffset(). Each line is
+                centered with the SAME centerPad the click router hit-tests, so
+                the "open a folder" action lands where it's drawn. */}
+              <Show when={firstRun()}>
+                <box flexDirection="column">
+                  <box height={1} />
+                  <box flexDirection="row">
+                    <text>{" ".repeat(centerPad(canvasCols(), WELCOME_LINE.length))}</text>
+                    <text fg={DEFAULT_FG}>{WELCOME_LINE}</text>
+                  </box>
+                  <box height={1} />
+                  <box flexDirection="row">
+                    <text>{" ".repeat(centerPad(canvasCols(), WELCOME_ACTION_LABEL.length))}</text>
+                    <text
+                      fg={BUTTON_FG}
+                      bg={isHovered("welcomeopen", 0) ? BUTTON_HOVER_BG : BUTTON_BG}
+                    >
+                      {WELCOME_ACTION_LABEL}
+                    </text>
+                  </box>
+                  <box height={1} />
+                  <box flexDirection="row">
+                    <text>{" ".repeat(centerPad(canvasCols(), welcomeTip.length))}</text>
+                    <text fg={MUTED}>{welcomeTip}</text>
+                  </box>
+                </box>
+              </Show>
               {/* HOME items (M21.9): live-session rows, then the registry
-                section (header + launchable project rows). One uniform
-                selectable-row layout — status glyph / title / meta — plus a
-                right-aligned verb CHIP the router hit-tests by the same
-                right-anchored span math (homeChipHit). Headers are inert. */}
+                section (header + launchable project rows), then (M22.5) the
+                recently-opened folders. One uniform selectable-row layout —
+                status glyph / title / meta — plus a right-aligned verb CHIP the
+                router hit-tests by the same right-anchored span math
+                (homeChipHit). Headers are inert. */}
               <box flexDirection="column">
                 <For each={homeItems()}>
                   {(it, i) => (
@@ -4063,14 +4349,20 @@ render(
                         }
                       >
                         <text fg={it.kind === "session" ? STATUS_COLOR[it.status] : DIR_FG}>
-                          {it.kind === "session" ? STATUS_GLYPH[it.status] : "▸"}
+                          {it.kind === "session"
+                            ? STATUS_GLYPH[it.status]
+                            : it.kind === "recent"
+                              ? "↺"
+                              : "▸"}
                         </text>
                         <text fg={i() === clampedSel() ? DEFAULT_FG : MUTED} attributes={1}>
                           {it.kind === "session"
                             ? it.session
                             : it.kind === "project"
                               ? it.name
-                              : ""}
+                              : it.kind === "recent"
+                                ? it.name
+                                : ""}
                         </text>
                         <text fg={MUTED}>{homeRowMeta(it)}</text>
                         <box flexGrow={1} />
