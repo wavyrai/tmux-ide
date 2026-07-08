@@ -104,12 +104,19 @@ jobs:
         shell: bash
         run: |
           core_version="$(node -p "require('./node_modules/@opentui/core/package.json').version")"
-          pkg="@opentui/core-${{ matrix.platform }}"
-          echo "Fetching ${pkg}@${core_version}"
-          dest="node_modules/${pkg}"
-          mkdir -p "${dest}"
-          curl -fsSL "https://registry.npmjs.org/${pkg}/-/core-${{ matrix.platform }}-${core_version}.tgz" \
-            | tar -xz -C "${dest}" --strip-components=1
+          fetch() {
+            local tag="$1" pkg="@opentui/core-$1"
+            echo "Fetching ${pkg}@${core_version}"
+            mkdir -p "node_modules/${pkg}"
+            curl -fsSL "https://registry.npmjs.org/${pkg}/-/core-${tag}-${core_version}.tgz" \
+              | tar -xz -C "node_modules/${pkg}" --strip-components=1
+          }
+          fetch "${{ matrix.platform }}"
+          # Linux runtimes probe glibc vs musl, so the bundler resolves BOTH
+          # variants (the arm64 build failed on the missing -musl sibling).
+          case "${{ matrix.platform }}" in
+            linux-*) fetch "${{ matrix.platform }}-musl" ;;
+          esac
 
       - name: Cross-compile the TUI binary
         run: |
