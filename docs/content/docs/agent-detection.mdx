@@ -99,6 +99,29 @@ applied and which manifest it forced. For authoritative control, prefer the
 [self-report contract](#the-self-report-contract) above: a fresh `@agent_state`
 always wins.
 
+## Per-pane agents in `team --json`
+
+Whatever the detector resolves is exposed programmatically. `tmux-ide team --json`
+carries a per-pane `agents[]` array on each session — one entry per pane that
+classified to a real agent, flat across the session's windows:
+
+| Field         | What it is                                                          |
+| ------------- | ------------------------------------------------------------------- |
+| `paneId`      | tmux pane id, e.g. `%5`                                             |
+| `windowIndex` | the window (tab) the pane lives in                                  |
+| `session`     | owning session name (repeated per entry so a flat list stays keyed) |
+| `kind`        | resolved agent — the manifest id (`claude`, `codex`, …)             |
+| `state`       | final status (`blocked` / `working` / `done` / `idle`)              |
+| `confidence`  | the manifest's evidence confidence                                  |
+| `since`       | authority-state epoch stamp, or `null` for a scraped/tracked pane   |
+| `title`       | `pane_title`                                                        |
+| `command`     | `pane_current_command` — the immediate process (often node/bun/sh)  |
+| `dir`         | `pane_current_path` — the pane's working directory                  |
+
+This is the same data the unified app reads: the sidebar's agents section and the
+Terminal surface's per-pane chips both render from it. See
+[Home, sidebar & panels](/docs/app-surfaces#the-terminal-surface).
+
 ## See also
 
 - [The dock & keys](/docs/the-dock) — where the glyphs and chips appear

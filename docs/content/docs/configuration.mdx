@@ -116,6 +116,34 @@ theme:
 For the product-wide palette that colors the dock, chips, panels, and widgets,
 use `~/.tmux-ide/config.json` instead — see [Theming & config](/docs/theming).
 
+## The global config & in-app settings
+
+`ide.yml` describes one project's layout. Product-wide behavior lives in
+`~/.tmux-ide/config.json` (override the path with `TMUX_IDE_CONFIG`) — the same
+file that holds the shared theme. Two things worth knowing for 2.7:
+
+- **`app.frontDoor`** flips the default entry point: with `{ "app": { "frontDoor": true } }`,
+  bare `tmux-ide` launches the unified app (`tmux-ide app`) instead of the home
+  cockpit. Default `false`; `ide.yml` auto-launch and `tmux-ide team` are
+  unaffected.
+- **Settings are editable in the app.** Inside `tmux-ide app`, press **F5** and
+  type "settings" for a palette command per setting — no JSON required. Edits
+  write back to `~/.tmux-ide/config.json` atomically:
+
+  | Setting        | Config field                             |
+  | -------------- | ---------------------------------------- |
+  | Accent color   | `theme.accent`                           |
+  | Notifications  | `notifications` (channels & transitions) |
+  | Quiet hours    | `notifications.quietHours`               |
+  | Update cadence | `updater`, `updates`                     |
+  | Crash restore  | `restore`                                |
+
+  Keyboard shortcuts have a read-only viewer, and a guarded "reset to defaults"
+  removes your overrides so the built-in defaults take over.
+
+See [Theming & config](/docs/theming) for the full palette, and
+[What's new in 2.7](/docs/release-2-7-0#settings-without-json).
+
 ## Editing config programmatically
 
 Every field is reachable from the CLI with `--json` output, e.g.:

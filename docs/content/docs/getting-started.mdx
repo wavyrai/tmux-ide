@@ -62,6 +62,30 @@ uninstall removes exactly the tmux-ide entries). It takes effect for **new**
 Claude Code sessions. See [Agent detection](/docs/agent-detection) for the two
 detection layers and the self-report contract any agent can use.
 
+## Start anywhere with the app
+
+`tmux-ide app` opens the unified app — a full-screen IDE over your fleet. It works
+from **any folder with no tmux server running**, a genuine cold start:
+
+```bash
+tmux-ide app          # from any directory
+```
+
+A first-run welcome greets you, and **Open folder…** is a real filesystem picker:
+choose a directory and the app opens it as a terminal workspace, optionally
+remembering it as a project. Recently opened folders stay one click away.
+
+If you'd like bare `tmux-ide` to open the app instead of the home cockpit, set
+the optional front-door flag in `~/.tmux-ide/config.json`:
+
+```json
+{ "app": { "frontDoor": true } }
+```
+
+It's opt-in — `ide.yml` auto-launch and `tmux-ide team` are unaffected. See
+[Home, sidebar & panels](/docs/app-surfaces#the-unified-app--tmux-ide-app) and
+[What's new in 2.7](/docs/release-2-7-0).
+
 ## Optional: describe a layout with ide.yml
 
 Adopt works on sessions you launch however you like. If you'd rather have
