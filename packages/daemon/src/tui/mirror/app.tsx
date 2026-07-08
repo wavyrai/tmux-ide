@@ -292,10 +292,11 @@ const SIDEBAR_BG = RGBA.fromInts(22, 22, 30, 255);
 const ACCENT = RGBA.fromInts(130, 170, 255, 255);
 const MUTED = RGBA.fromInts(110, 110, 130, 255);
 const BADGE_BG = RGBA.fromInts(60, 66, 92, 255);
-// Focused-pane gutter strips (M22.7): the ACCENT family dimmed to a bar that is
-// unmistakable across the room but doesn't compete with the blocked chip's red —
-// focus is an accent signal, agent state is a status signal, never the same hue.
-const FOCUS_BORDER_BG = RGBA.fromInts(80, 110, 190, 255);
+// Focused-pane gutter hairline (M22.7): the ACCENT family, drawn as │/─ glyphs
+// so the gutter stays visually thin (a filled bar read as extra padding — user
+// feedback). Doesn't compete with the blocked chip's red — focus is an accent
+// signal, agent state is a status signal, never the same hue.
+const FOCUS_BORDER_FG = RGBA.fromInts(110, 145, 230, 255);
 const TAB_ACTIVE_BG = RGBA.fromInts(40, 46, 66, 255);
 // A single subtle pointer-hover tint, one lift above both DEFAULT_BG (16,16,22)
 // and SIDEBAR_BG (22,22,30) and below TAB_ACTIVE_BG — the active/selected state
@@ -3869,14 +3870,23 @@ render(
                   })()}
                 >
                   {(strip) => (
+                    // A HAIRLINE, not a filled bar (user feedback: bars read as
+                    // extra gutter padding): line glyphs in accent fg on the
+                    // normal canvas bg keep the gutter visually thin. One text
+                    // per strip — newline-joined glyphs render as a column.
                     <box
                       position="absolute"
                       left={strip.left}
                       top={strip.top}
                       width={strip.width}
                       height={strip.height}
-                      backgroundColor={FOCUS_BORDER_BG}
-                    />
+                    >
+                      <text fg={FOCUS_BORDER_FG}>
+                        {strip.height === 1
+                          ? "─".repeat(strip.width)
+                          : Array(strip.height).fill("│").join("\n")}
+                      </text>
+                    </box>
                   )}
                 </For>
                 {/* Size-truth hint (M22.8): quiet, dismiss-free, shown ONLY while
