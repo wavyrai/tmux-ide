@@ -186,13 +186,7 @@ describe("respawnArgs", () => {
       "/proj",
       "claude",
     ]);
-    expect(respawnArgs("%7", "claude", null)).toEqual([
-      "respawn-pane",
-      "-k",
-      "-t",
-      "%7",
-      "claude",
-    ]);
+    expect(respawnArgs("%7", "claude", null)).toEqual(["respawn-pane", "-k", "-t", "%7", "claude"]);
   });
 });
 

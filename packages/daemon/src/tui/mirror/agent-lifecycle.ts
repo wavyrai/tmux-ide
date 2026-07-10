@@ -81,9 +81,7 @@ export type SpawnPlacement = "window" | "split-h" | "split-v";
  * agent will land before anything runs.
  */
 export function placementItems(opts: { split: boolean }): DialogSelectItem[] {
-  const items: DialogSelectItem[] = [
-    { id: "window", label: "New window", detail: "its own tab" },
-  ];
+  const items: DialogSelectItem[] = [{ id: "window", label: "New window", detail: "its own tab" }];
   if (opts.split) {
     items.push({ id: "split-h", label: "Split right", detail: "beside this pane" });
     items.push({ id: "split-v", label: "Split below", detail: "under this pane" });

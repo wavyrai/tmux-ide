@@ -3805,7 +3805,9 @@ render(
      *  the [+ agent] spawn chip (M23.1), then every row's PRIMARY verb chip.
      *  The render walks these defs and the hit-test lays the SAME labels out
      *  from the right edge, so clicks land exactly on what's drawn. */
-    const homeRowChips = (it: HomeItem | undefined): { id: "agent" | "primary"; label: string }[] => {
+    const homeRowChips = (
+      it: HomeItem | undefined,
+    ): { id: "agent" | "primary"; label: string }[] => {
       const defs: { id: "agent" | "primary"; label: string }[] = [];
       if (it?.kind === "session" || it?.kind === "project") {
         defs.push({ id: "agent", label: HOME_CHIP_AGENT });
