@@ -10,6 +10,7 @@ describe("staticPaletteActions", () => {
       "Switch tab: Files",
       "Switch tab: Diff",
       "Open folder…",
+      "New agent…",
       "Attach session: alpha",
       "Attach session: beta",
       "Save file",
@@ -36,6 +37,34 @@ describe("staticPaletteActions", () => {
   it("typing 'set' surfaces the settings umbrella (the battery's palette entry)", () => {
     const filtered = filterPaletteActions("set", []);
     expect(filtered.some((a) => a.kind === "settings" && a.id === "settings")).toBe(true);
+  });
+
+  it("offers new-agent on every surface, and per-agent lifecycle verbs after the jumps (M23.1)", () => {
+    expect(staticPaletteActions([]).some((a) => a.kind === "new-agent")).toBe(true);
+    const agent = {
+      paneId: "%4",
+      windowIndex: 1,
+      session: "web",
+      kind: "claude",
+      state: "working" as const,
+      since: null,
+    };
+    const actions = staticPaletteActions(["web"], { agents: [agent] });
+    const labels = actions.map((a) => a.label);
+    const jump = labels.indexOf("Agent: claude · web (working)");
+    const restart = labels.indexOf("Restart agent: claude · web");
+    const stop = labels.indexOf("Stop agent: claude · web");
+    expect(jump).toBeGreaterThanOrEqual(0);
+    expect(restart).toBeGreaterThan(jump);
+    expect(stop).toBeGreaterThan(restart);
+    const r = actions[restart]!;
+    expect(r.kind === "restart-agent" && r.paneId === "%4" && r.agentKind === "claude").toBe(true);
+    // typing "restart" narrows straight to the verb
+    expect(
+      filterPaletteActions("restart", ["web"], { agents: [agent] }).some(
+        (a) => a.kind === "restart-agent",
+      ),
+    ).toBe(true);
   });
 
   it("offers the paste-buffer action on every surface (no terminal gate)", () => {
@@ -69,7 +98,7 @@ describe("filterPaletteActions", () => {
   it("returns every static action for an empty query, no open-file entry", () => {
     const actions = filterPaletteActions("", ["alpha"]);
     expect(actions.some((a) => a.kind === "open-file")).toBe(false);
-    expect(actions).toHaveLength(18);
+    expect(actions).toHaveLength(19);
   });
 
   it("fuzzy-ranks matches and appends an open-file action for a plain word", () => {

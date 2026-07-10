@@ -16,7 +16,7 @@
 /** The surfaces a right-click can target. Each maps to a fixed item list; the
  *  concrete payload (session name, file path, pane id) rides in the app's menu
  *  state, not here. */
-export type MenuRegion = "session" | "file" | "difffile" | "pane" | "window";
+export type MenuRegion = "session" | "agent" | "file" | "difffile" | "pane" | "window";
 
 /** One menu entry. `id` is what the app dispatches on; `danger` items rearm to
  *  a "confirm: y" state instead of firing immediately; `input` items open an
@@ -36,8 +36,20 @@ export interface MenuItem {
 export const MENU_ITEMS: Record<MenuRegion, MenuItem[]> = {
   session: [
     { id: "attach", label: "Attach" },
+    { id: "new-agent", label: "New agent…" },
     { id: "rename", label: "Rename", input: "rename to" },
     { id: "kill", label: "Kill session", danger: true },
+  ],
+  // Sidebar AGENT rows (M23.1): a left-click jumps; the context menu carries
+  // the lifecycle verbs. "Stop agent" only interrupts (the pane survives);
+  // "Close pane" is the destructive twin that also kills the pane. restart/
+  // stop confirm via DialogConfirm in the app (plain-language body), so only
+  // close — where there is no dialog — uses the inline confirm rearm.
+  agent: [
+    { id: "jump", label: "Go to agent" },
+    { id: "restart", label: "Restart agent" },
+    { id: "stop", label: "Stop agent" },
+    { id: "close", label: "Close pane", danger: true },
   ],
   file: [
     { id: "open", label: "Open" },
