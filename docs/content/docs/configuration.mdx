@@ -126,6 +126,11 @@ file that holds the shared theme. Two things worth knowing for 2.7:
   bare `tmux-ide` launches the unified app (`tmux-ide app`) instead of the home
   cockpit. Default `false`; `ide.yml` auto-launch and `tmux-ide team` are
   unaffected.
+- **`app.detachable`** makes plain `tmux-ide app` run hosted: the app lives in
+  a tmux session of its own and your terminal attaches to it, so the cockpit
+  survives the terminal and reattaches from anywhere (`^q` detaches instead of
+  quitting). Default `false` — same as passing `--detachable` every time. See
+  [the app surfaces](/docs/app-surfaces#keep-it-running--even-from-your-phone).
 - **Settings are editable in the app.** Inside `tmux-ide app`, press **F5** and
   type "settings" for a palette command per setting — no JSON required. Edits
   write back to `~/.tmux-ide/config.json` atomically:

@@ -126,6 +126,34 @@ as a project. Recently opened folders are one click away, and the optional
 `app.frontDoor` config flag makes bare `tmux-ide` open the app. See
 [Getting started](/docs/getting-started#start-anywhere-with-the-app).
 
+### Keep it running — even from your phone
+
+Your sessions already survive everything; with `--detachable`, the cockpit does
+too:
+
+```bash
+tmux-ide app --detachable   # or --hosted — same thing
+```
+
+Instead of running in your terminal, the app lives in a tmux session of its own
+and your terminal attaches to it. Close the terminal, lose the ssh connection,
+switch machines — the cockpit keeps running exactly where you left it: same
+tab, same scroll position, same open dialogs. Run the command again from any
+terminal (including your phone: ssh in, run it) and you're back in the same
+cockpit.
+
+Two things change in this mode:
+
+- **^q detaches** instead of quitting — the app keeps running in the
+  background. If you launched from inside tmux, ^q returns you to the session
+  you came from. To actually stop the cockpit, press **F5** and run **Quit**.
+- If two terminals of different sizes are attached at once, tmux sizes the
+  cockpit to the one you used last (the smaller view wins while you're on it —
+  standard tmux behavior).
+
+Set `app.detachable: true` in `~/.tmux-ide/config.json` to make plain
+`tmux-ide app` (and the `app.frontDoor` entry) always work this way.
+
 ### Settings without JSON
 
 There's no settings screen and no JSON to hand-edit for the common cases. Press

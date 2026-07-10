@@ -182,6 +182,15 @@ describe("parseAppConfig — mistyped fields fall back to default", () => {
     // An explicit true opts into the front-door flip.
     expect(parseAppConfig({ app: { frontDoor: true } }).app.frontDoor).toBe(true);
   });
+
+  it("app.detachable — defaults to false and coerces a mistyped value back to it", () => {
+    expect(DEFAULT_APP_CONFIG.app.detachable).toBe(false);
+    expect(parseAppConfig(undefined).app.detachable).toBe(false);
+    expect(parseAppConfig({ app: { detachable: "yes" } }).app.detachable).toBe(false);
+    expect(parseAppConfig({ app: "nope" }).app.detachable).toBe(false);
+    // An explicit true makes bare `tmux-ide app` run hosted (M23.2).
+    expect(parseAppConfig({ app: { detachable: true } }).app.detachable).toBe(true);
+  });
 });
 
 describe("loadAppConfig / getAppConfig / TMUX_IDE_CONFIG", () => {
