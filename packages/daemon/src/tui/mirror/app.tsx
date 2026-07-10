@@ -6,7 +6,11 @@
  * scrollback (wheel; ↑n/depth badge; any key snaps live), real SGR mouse
  * forwarding into panes whose app enabled mouse mode, 60fps-paced (8ms state tick + targetFps 60 paint)
  * rendering, ^o pane focus cycle, ^t window cycle, ^q quits (session
- * untouched).
+ * untouched) — except HOSTED (M23.2): launched by `tmux-ide app --detachable`
+ * inside the internal `_tmux-ide-app` session (TMUX_IDE_HOSTED=1), ^q puts the
+ * cockpit away and the app keeps running (switch-client -l back to where the
+ * client came from, else detach); the palette's "Quit" verb remains the real
+ * exit (ending the pane command ends the host session).
  *
  * SELECT MODE (M22.9): forwarding normally wins on app-mouse panes, so those
  * panes (exactly the agent panes users copy from) could never drag-select.
@@ -576,11 +580,17 @@ const WELCOME_LINE = "Welcome to tmux-ide — a cockpit for the tmux sessions yo
 const WELCOME_ACTION_LABEL = "▸ open a folder — press f";
 const WELCOME_ROWS = 6;
 const WELCOME_ACTION_ROW = 3; // 0-based within the welcome block
+// HOSTED mode (M23.2): the detachable-cockpit launcher stamps this marker on
+// the app's pane command inside `_tmux-ide-app`. ^q then detaches the tmux
+// client instead of exiting (the cockpit survives the terminal); every "^q
+// quit" hint reads "detach" so the keycap tells the truth.
+const HOSTED = process.env.TMUX_IDE_HOSTED === "1";
+const QUIT_HINT = HOSTED ? "^q detach" : "^q quit";
 // The sidebar footer hint, split so its "F5 palette" segment is a chip: the
 // span starts after paddingLeft (1) + the pre text.
 const SIDEBAR_HINT_PRE = "F1-4 tabs · ";
 const SIDEBAR_HINT_BTN = "F5 palette";
-const SIDEBAR_HINT_POST = " · ^q quit";
+const SIDEBAR_HINT_POST = ` · ${QUIT_HINT}`;
 const SIDEBAR_HINT_SPAN = { start: 1 + SIDEBAR_HINT_PRE.length, width: SIDEBAR_HINT_BTN.length };
 // Scrollback-search highlight backgrounds (M20.3), packed 0xRRGGBB to sit in a
 // run's `bg` (search paints a bg, distinct from selection's inverse video, so
@@ -3380,6 +3390,19 @@ render(
 
     useKeyboard((evt) => {
       if (evt.ctrl && evt.name === "q") {
+        // HOSTED (M23.2): put the cockpit away and keep running — the palette's
+        // "Quit" verb is the real exit. A client that came here via
+        // switch-client (launched inside tmux) bounces BACK to its last
+        // session; a client that attached from a plain terminal has no last
+        // session, so `switch-client -l` fails and it detaches instead. No -t:
+        // tmux resolves "current client" from the pane's $TMUX to the most
+        // recently active client on our session — the presser.
+        if (HOSTED) {
+          execFile("tmux", ["switch-client", "-l"], (err) => {
+            if (err) execFile("tmux", ["detach-client"], () => {});
+          });
+          return;
+        }
         mirror?.dispose();
         editBuffer?.destroy();
         process.exit(0);
@@ -3404,7 +3427,7 @@ render(
         return;
       }
       // The scrollback-search session owns the keyboard while open (the bottom input
-      // line + n/N navigation), so no key leaks to the pane; ^q above still quits.
+      // line + n/N navigation), so no key leaks to the pane; ^q above still works.
       if (search()) {
         searchKey(evt);
         return;
@@ -5164,7 +5187,7 @@ render(
               </box>
               <box paddingLeft={1}>
                 <text fg={MUTED}>
-                  {"j/k file · enter open · ^s save · esc list · ^g home · ^q quit"}
+                  {`j/k file · enter open · ^s save · esc list · ^g home · ${QUIT_HINT}`}
                 </text>
               </box>
             </Show>
@@ -5227,7 +5250,7 @@ render(
               </box>
               <box paddingLeft={1}>
                 <text fg={MUTED}>
-                  {"j/k file · wheel scroll · ^e edit · r refresh · ^g home · ^q quit"}
+                  {`j/k file · wheel scroll · ^e edit · r refresh · ^g home · ${QUIT_HINT}`}
                 </text>
               </box>
             </Show>

@@ -3103,7 +3103,10 @@ function parseAppConfig(input) {
     welcome: { show: pickBool(welcome.show, D.welcome.show) },
     integrations: { offer: pickBool(integrations.offer, D.integrations.offer) },
     worktrees: { dir: pickString(worktrees.dir, D.worktrees.dir) },
-    app: { frontDoor: pickBool(app.frontDoor, D.app.frontDoor) }
+    app: {
+      frontDoor: pickBool(app.frontDoor, D.app.frontDoor),
+      detachable: pickBool(app.detachable, D.app.detachable)
+    }
   };
 }
 function appConfigPath() {
@@ -3197,7 +3200,7 @@ var init_app_config = __esm({
       welcome: { show: true },
       integrations: { offer: true },
       worktrees: { dir: "" },
-      app: { frontDoor: false }
+      app: { frontDoor: false, detachable: false }
     };
     DEFAULT_THEME = DEFAULT_APP_CONFIG.theme;
     DEFAULT_KEYS = DEFAULT_APP_CONFIG.keys;
@@ -13066,6 +13069,50 @@ function reportPlan(plan, snapshot, { json: json2, dryRun, restored, launched, r
 init_send();
 init_errors2();
 init_output();
+
+// packages/daemon/src/tui/mirror/hosted.ts
+var APP_HOST_SESSION = "_tmux-ide-app";
+var HOSTED_ENV = "TMUX_IDE_HOSTED";
+function wantsHostedApp(input) {
+  if (input.hostedEnv) return false;
+  return input.flagDetachable || input.flagHosted || input.configDetachable;
+}
+function shellQuote(word) {
+  return `'${word.replaceAll("'", `'\\''`)}'`;
+}
+function hostedEnvVars(base) {
+  const env = {
+    [HOSTED_ENV]: "1",
+    TMUX_IDE_CWD: base.cwd,
+    TMUX_IDE_CLI: base.cli
+  };
+  if (base.path) env.PATH = base.path;
+  if (base.home) env.TMUX_IDE_HOME = base.home;
+  if (base.config) env.TMUX_IDE_CONFIG = base.config;
+  if (base.tuiBin) env.TMUX_IDE_TUI_BIN = base.tuiBin;
+  return env;
+}
+function hostedCommandLine(bin, argv, env) {
+  const assigns = Object.entries(env).map(([k, v]) => `${k}=${shellQuote(v)}`);
+  return ["exec", "env", ...assigns, shellQuote(bin), ...argv.map(shellQuote)].join(" ");
+}
+function hostExistsArgv() {
+  return ["has-session", "-t", `=${APP_HOST_SESSION}`];
+}
+function hostCreateArgv(opts) {
+  return ["new-session", "-d", "-s", APP_HOST_SESSION, "-c", opts.cwd, opts.commandLine];
+}
+function hostSetupArgvs() {
+  return [
+    ["set-option", "-t", APP_HOST_SESSION, "status", "off"],
+    ["set-option", "-w", "-t", `${APP_HOST_SESSION}:`, "window-size", "latest"]
+  ];
+}
+function hostAttachArgv(insideTmux) {
+  return insideTmux ? ["switch-client", "-t", `=${APP_HOST_SESSION}`] : ["attach-session", "-t", `=${APP_HOST_SESSION}`];
+}
+
+// bin/cli.ts
 var __dirname6 = dirname23(fileURLToPath9(import.meta.url));
 var selfPath = fileURLToPath9(import.meta.url);
 var nodeCliPath = selfPath.endsWith(".js") ? selfPath : resolve23(__dirname6, "cli.js");
@@ -13120,6 +13167,10 @@ var { positionals, values } = parseArgs({
     // actions menu opens at the pointer instead of centered (see `menu` case)
     x: { type: "string" },
     y: { type: "string" },
+    // app: host the cockpit in the internal `_tmux-ide-app` session and attach
+    // to it (M23.2) — `--detachable` is the primary name, `--hosted` the alias
+    detachable: { type: "boolean" },
+    hosted: { type: "boolean" },
     // worktree: base ref for a new branch, the worktree checkout dir override,
     // skip creating a session, and force-remove a dirty worktree (see `worktree`)
     from: { type: "string" },
@@ -13208,6 +13259,7 @@ ${bold3("Usage:")}
   ${cyan2("tmux-ide attach")}             ${dim3("Reattach to a running session")}
   ${cyan2("tmux-ide team")} [--json]      ${dim3("TUI over all tmux sessions (--json prints fleet state)")}
   ${cyan2("tmux-ide app")} [session]      ${dim3("Unified app: fleet home + live session mirror (bare = home)")}
+  ${cyan2("tmux-ide app --detachable")}   ${dim3("Host the app in tmux and attach \u2014 survives the terminal, ^q detaches")}
   ${cyan2("tmux-ide switcher")}           ${dim3("Compact session picker (opens in the M-p popup on adopted sessions)")}
   ${cyan2("tmux-ide wait agent-status")} <session> --status <s> [--timeout <ms>]
                               ${dim3("Block until a session reaches a status (exit 0 match / 1 timeout)")}
@@ -13302,6 +13354,47 @@ Install bun (https://bun.sh) \u2014 the TUI surfaces run on it. Sources ship wit
   }
   execFileSync14(launch2.bin, launch2.argv, { stdio: "inherit", env });
 }
+function launchHostedApp(scriptPath, appArgs) {
+  const launch2 = resolveTuiLaunch({
+    surface: "app",
+    scriptPath,
+    args: appArgs,
+    checkoutExists: existsSync33(scriptPath),
+    bunAvailable: isBunAvailable(),
+    compiledBinary: findCompiledTui()
+  });
+  if (launch2.mode === "unavailable") {
+    throw new IdeError(
+      `\`tmux-ide app --detachable\` is unavailable because ${launch2.reasons.join(" and ")}.
+Install bun (https://bun.sh) \u2014 the TUI surfaces run on it. Sources ship with the npm package since v2.6.1.`,
+      { code: "USAGE", exitCode: 1 }
+    );
+  }
+  let exists = true;
+  try {
+    execFileSync14("tmux", hostExistsArgv(), { stdio: "ignore" });
+  } catch {
+    exists = false;
+  }
+  if (!exists) {
+    const cwd = launch2.mode === "bun" ? resolve23(__dirname6, "..") : process.cwd();
+    const commandLine = hostedCommandLine(
+      launch2.bin,
+      launch2.argv,
+      hostedEnvVars({
+        cwd: process.cwd(),
+        cli: nodeCliPath,
+        path: process.env.PATH,
+        home: process.env.TMUX_IDE_HOME,
+        config: process.env.TMUX_IDE_CONFIG,
+        tuiBin: process.env.TMUX_IDE_TUI_BIN
+      })
+    );
+    execFileSync14("tmux", hostCreateArgv({ cwd, commandLine }), { stdio: "ignore" });
+    for (const args of hostSetupArgvs()) execFileSync14("tmux", args, { stdio: "ignore" });
+  }
+  execFileSync14("tmux", hostAttachArgv(Boolean(process.env.TMUX)), { stdio: "inherit" });
+}
 async function printFleetJson() {
   const { createStatusTracker: createStatusTracker2 } = await Promise.resolve().then(() => (init_classify(), classify_exports));
   const { listTeamProjects: listTeamProjects2 } = await Promise.resolve().then(() => (init_projects(), projects_exports));
@@ -13313,8 +13406,18 @@ var appScriptPath = resolve23(__dirname6, "../packages/daemon/src/tui/mirror/app
 function launchTeamCockpit() {
   execBunWidget("team", teamScriptPath, [], "team");
 }
+function runApp(appArgs) {
+  const hosted = wantsHostedApp({
+    flagDetachable: values.detachable === true,
+    flagHosted: values.hosted === true,
+    configDetachable: loadAppConfig().app.detachable,
+    hostedEnv: process.env[HOSTED_ENV] === "1"
+  });
+  if (hosted) launchHostedApp(appScriptPath, appArgs);
+  else execBunWidget("app", appScriptPath, appArgs, "app");
+}
 function launchApp() {
-  execBunWidget("app", appScriptPath, [], "app");
+  runApp([]);
 }
 try {
   switch (command) {
@@ -13474,7 +13577,7 @@ try {
     case "app": {
       const session = positionals[1];
       const appArgs = session ? [`--target=${session}`] : [];
-      execBunWidget("app", appScriptPath, appArgs, "app");
+      runApp(appArgs);
       break;
     }
     case "switcher": {

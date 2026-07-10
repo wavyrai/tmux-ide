@@ -40,6 +40,16 @@ import { restore } from "../packages/daemon/src/restore.ts";
 import { send } from "../packages/daemon/src/send.ts";
 import { IdeError } from "../packages/daemon/src/lib/errors.ts";
 import { printCommandError } from "../packages/daemon/src/lib/output.ts";
+import {
+  wantsHostedApp,
+  hostedEnvVars,
+  hostedCommandLine,
+  hostExistsArgv,
+  hostCreateArgv,
+  hostSetupArgvs,
+  hostAttachArgv,
+  HOSTED_ENV,
+} from "../packages/daemon/src/tui/mirror/hosted.ts";
 
 const { positionals, values } = parseArgs({
   allowPositionals: true,
@@ -92,6 +102,10 @@ const { positionals, values } = parseArgs({
     // actions menu opens at the pointer instead of centered (see `menu` case)
     x: { type: "string" },
     y: { type: "string" },
+    // app: host the cockpit in the internal `_tmux-ide-app` session and attach
+    // to it (M23.2) — `--detachable` is the primary name, `--hosted` the alias
+    detachable: { type: "boolean" },
+    hosted: { type: "boolean" },
     // worktree: base ref for a new branch, the worktree checkout dir override,
     // skip creating a session, and force-remove a dirty worktree (see `worktree`)
     from: { type: "string" },
@@ -188,6 +202,7 @@ ${bold("Usage:")}
   ${cyan("tmux-ide attach")}             ${dim("Reattach to a running session")}
   ${cyan("tmux-ide team")} [--json]      ${dim("TUI over all tmux sessions (--json prints fleet state)")}
   ${cyan("tmux-ide app")} [session]      ${dim("Unified app: fleet home + live session mirror (bare = home)")}
+  ${cyan("tmux-ide app --detachable")}   ${dim("Host the app in tmux and attach — survives the terminal, ^q detaches")}
   ${cyan("tmux-ide switcher")}           ${dim("Compact session picker (opens in the M-p popup on adopted sessions)")}
   ${cyan("tmux-ide wait agent-status")} <session> --status <s> [--timeout <ms>]
                               ${dim("Block until a session reaches a status (exit 0 match / 1 timeout)")}
@@ -306,6 +321,58 @@ function execBunWidget(
   execFileSync(launch.bin, launch.argv, { stdio: "inherit", env });
 }
 
+// The detachable cockpit (M23.2): instead of running the app in THIS terminal,
+// ensure the internal `_tmux-ide-app` session exists running it full-screen
+// (status off, window-size latest — see hostSetupArgvs), then attach here.
+// Re-invocation from any terminal reattaches the SAME cockpit; ^q inside a
+// hosted app detaches (the HOSTED_ENV marker on the pane command flips it).
+// Inside tmux the client switch-clients instead of nesting an attach.
+function launchHostedApp(scriptPath: string, appArgs: string[]): void {
+  const launch = resolveTuiLaunch({
+    surface: "app",
+    scriptPath,
+    args: appArgs,
+    checkoutExists: existsSync(scriptPath),
+    bunAvailable: isBunAvailable(),
+    compiledBinary: findCompiledTui(),
+  });
+  if (launch.mode === "unavailable") {
+    throw new IdeError(
+      `\`tmux-ide app --detachable\` is unavailable because ${launch.reasons.join(" and ")}.\n` +
+        `Install bun (https://bun.sh) — the TUI surfaces run on it. Sources ship with the npm package since v2.6.1.`,
+      { code: "USAGE", exitCode: 1 },
+    );
+  }
+
+  let exists = true;
+  try {
+    execFileSync("tmux", hostExistsArgv(), { stdio: "ignore" });
+  } catch {
+    exists = false; // also covers "no server yet" — new-session starts one
+  }
+  if (!exists) {
+    // Same cwd rule as execBunWidget: bun needs the repo root (bunfig preload),
+    // the compiled binary must NOT run from it. The app's real env travels on
+    // the pane command line — the tmux server's environment is not ours.
+    const cwd = launch.mode === "bun" ? resolve(__dirname, "..") : process.cwd();
+    const commandLine = hostedCommandLine(
+      launch.bin,
+      launch.argv,
+      hostedEnvVars({
+        cwd: process.cwd(),
+        cli: nodeCliPath,
+        path: process.env.PATH,
+        home: process.env.TMUX_IDE_HOME,
+        config: process.env.TMUX_IDE_CONFIG,
+        tuiBin: process.env.TMUX_IDE_TUI_BIN,
+      }),
+    );
+    execFileSync("tmux", hostCreateArgv({ cwd, commandLine }), { stdio: "ignore" });
+    for (const args of hostSetupArgvs()) execFileSync("tmux", args, { stdio: "ignore" });
+  }
+  execFileSync("tmux", hostAttachArgv(Boolean(process.env.TMUX)), { stdio: "inherit" });
+}
+
 // The scriptable control surface for the cockpit: print the fleet state as JSON
 // and exit without spawning the (bun/OpenTUI) TUI. Shared by `tmux-ide team
 // --json` and bare `tmux-ide --json` when there's no ide.yml to launch. Dynamic
@@ -327,11 +394,27 @@ function launchTeamCockpit(): void {
   execBunWidget("team", teamScriptPath, [], "team");
 }
 
+// The one entry for the unified app: `--detachable`/`--hosted` (or
+// `app.detachable` in config) route through the hosted launcher, everything
+// else runs the app in this terminal as before. The HOSTED_ENV guard keeps the
+// app INSIDE the host session from re-hosting itself.
+function runApp(appArgs: string[]): void {
+  const hosted = wantsHostedApp({
+    flagDetachable: values.detachable === true,
+    flagHosted: values.hosted === true,
+    configDetachable: loadAppConfig().app.detachable,
+    hostedEnv: process.env[HOSTED_ENV] === "1",
+  });
+  if (hosted) launchHostedApp(appScriptPath, appArgs);
+  else execBunWidget("app", appScriptPath, appArgs, "app");
+}
+
 // The unified app as the front door (M22.6): bare `tmux-ide` opens `tmux-ide
 // app`'s HOME panel when `app.frontDoor` is on and there's nothing else to
-// launch. Same entry as the explicit `app` command with no session positional.
+// launch. Same entry as the explicit `app` command with no session positional
+// — including the hosted flip when `app.detachable` is set (M23.2).
 function launchApp(): void {
-  execBunWidget("app", appScriptPath, [], "app");
+  runApp([]);
 }
 
 try {
@@ -528,10 +611,14 @@ try {
     case "app": {
       // The unified app (M18.1): sidebar fleet + a live tmux-session mirror.
       // Bare `tmux-ide app` opens the HOME panel (fleet cards); an optional
-      // session positional boots straight into that session's mirror.
+      // session positional boots straight into that session's mirror. With
+      // `--detachable` (alias `--hosted`, or `app.detachable` in config) the
+      // app runs in the internal `_tmux-ide-app` session instead and this
+      // terminal attaches to it (M23.2) — the positional only shapes the
+      // cockpit at CREATE time; a reattach finds the app exactly as left.
       const session = positionals[1];
       const appArgs = session ? [`--target=${session}`] : [];
-      execBunWidget("app", appScriptPath, appArgs, "app");
+      runApp(appArgs);
       break;
     }
 

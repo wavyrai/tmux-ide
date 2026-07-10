@@ -142,6 +142,15 @@ export interface AppApp {
    * (the explicit cockpit) and a project's `ide.yml` auto-launch are unaffected.
    */
   frontDoor: boolean;
+  /**
+   * Whether `tmux-ide app` runs HOSTED by default (M23.2): the app lives in an
+   * internal `_tmux-ide-app` tmux session and the invoking terminal attaches to
+   * it, so the cockpit survives the terminal and reattaches from anywhere (^q
+   * detaches instead of quitting). Default false — the same behavior as the
+   * explicit `--detachable` flag; `--detachable`/`--hosted` still force it on a
+   * single run.
+   */
+  detachable: boolean;
 }
 
 /** Worktree flow config (`tmux-ide worktree`). */
@@ -202,7 +211,7 @@ export const DEFAULT_APP_CONFIG: AppConfig = {
   welcome: { show: true },
   integrations: { offer: true },
   worktrees: { dir: "" },
-  app: { frontDoor: false },
+  app: { frontDoor: false, detachable: false },
 };
 
 /** The default theme tokens — the fallback threaded into the pure builders. */
@@ -301,7 +310,10 @@ export function parseAppConfig(input: unknown): AppConfig {
     welcome: { show: pickBool(welcome.show, D.welcome.show) },
     integrations: { offer: pickBool(integrations.offer, D.integrations.offer) },
     worktrees: { dir: pickString(worktrees.dir, D.worktrees.dir) },
-    app: { frontDoor: pickBool(app.frontDoor, D.app.frontDoor) },
+    app: {
+      frontDoor: pickBool(app.frontDoor, D.app.frontDoor),
+      detachable: pickBool(app.detachable, D.app.detachable),
+    },
   };
 }
 
