@@ -89,3 +89,96 @@ jobs:
         run: pnpm publish --access public --no-git-checks
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+  # Push the just-released version into the Homebrew tap
+  # (wavyrai/homebrew-tap → Formula/tmux-ide.rb). The formula's source of
+  # truth is packaging/homebrew/Formula/tmux-ide.rb in THIS repo; this job
+  # rewrites its url + sha256 to the fresh npm tarball and pushes the result.
+  #
+  # Gated to a graceful no-op until two one-time setup steps exist:
+  #   1. the `wavyrai/homebrew-tap` GitHub repo (empty is fine — this job
+  #      creates Formula/tmux-ide.rb on first run), and
+  #   2. a `TAP_PUSH_TOKEN` repo secret: a fine-grained PAT with contents
+  #      read/write on wavyrai/homebrew-tap.
+  bump_tap:
+    name: Bump Homebrew tap
+    needs: publish_npm
+    runs-on: ubuntu-24.04
+    env:
+      TAP_PUSH_TOKEN: ${{ secrets.TAP_PUSH_TOKEN }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Gate on tap secret
+        id: gate
+        run: |
+          if [[ -z "${TAP_PUSH_TOKEN}" ]]; then
+            echo "TAP_PUSH_TOKEN not set — skipping tap bump (create wavyrai/homebrew-tap and add the secret to enable)."
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Resolve release version
+        if: steps.gate.outputs.enabled == 'true'
+        id: release
+        shell: bash
+        run: |
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+            raw="${{ github.event.inputs.version }}"
+          else
+            raw="${GITHUB_REF_NAME}"
+          fi
+          version="${raw#v}"
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "Invalid release version: $raw" >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Wait for the npm tarball and compute its sha256
+        if: steps.gate.outputs.enabled == 'true'
+        id: tarball
+        shell: bash
+        run: |
+          version="${{ steps.release.outputs.version }}"
+          url="https://registry.npmjs.org/tmux-ide/-/tmux-ide-${version}.tgz"
+          # The registry can lag the publish by a little; poll up to 5 minutes.
+          for i in $(seq 1 30); do
+            if curl -fsSL -o tmux-ide.tgz "$url"; then break; fi
+            echo "tarball not visible yet (attempt $i/30) — retrying in 10s"
+            sleep 10
+          done
+          [[ -s tmux-ide.tgz ]] || { echo "npm tarball never appeared: $url" >&2; exit 1; }
+          sha="$(sha256sum tmux-ide.tgz | cut -d' ' -f1)"
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+          echo "sha256=$sha" >> "$GITHUB_OUTPUT"
+
+      - name: Update formula and push to the tap
+        if: steps.gate.outputs.enabled == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${{ steps.release.outputs.version }}"
+          url="${{ steps.tarball.outputs.url }}"
+          sha="${{ steps.tarball.outputs.sha256 }}"
+          if ! git clone --depth 1 "https://x-access-token:${TAP_PUSH_TOKEN}@github.com/wavyrai/homebrew-tap.git" tap; then
+            echo "wavyrai/homebrew-tap does not exist (or the token cannot read it) — skipping tap bump."
+            exit 0
+          fi
+          mkdir -p tap/Formula
+          sed -E \
+            -e "s#^(  url \").*(\")\$#\\1${url}\\2#" \
+            -e "s#^(  sha256 \").*(\")\$#\\1${sha}\\2#" \
+            packaging/homebrew/Formula/tmux-ide.rb > tap/Formula/tmux-ide.rb
+          cd tap
+          git add Formula/tmux-ide.rb
+          if git diff --cached --quiet; then
+            echo "Formula already at v${version} — nothing to push."
+            exit 0
+          fi
+          git -c user.name="tmux-ide release bot" \
+              -c user.email="noreply@wavyr.com" \
+              commit -m "tmux-ide ${version}"
+          git push origin HEAD

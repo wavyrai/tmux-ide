@@ -91,7 +91,14 @@ const nextSettings = {
   },
 };
 
-writeFileSync(settingsPath, `${JSON.stringify(nextSettings, null, 2)}\n`);
+try {
+  writeFileSync(settingsPath, `${JSON.stringify(nextSettings, null, 2)}\n`);
+} catch (error) {
+  // Best-effort like everything above: sandboxed installs (e.g. a package
+  // manager building in a $HOME-restricted sandbox) may deny this write —
+  // that must never fail the install itself.
+  console.warn(`[tmux-ide] Skipping Claude settings update: ${error.message}`);
+}
 
 function shouldInstallClaudeIntegration() {
   return process.env.npm_config_global === "true";

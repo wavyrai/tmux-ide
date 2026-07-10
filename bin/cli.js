@@ -12396,8 +12396,9 @@ init_update_check();
 init_skill_sync();
 init_agent_discovery();
 init_compiled();
+init_claude();
 import { execSync as execSync3 } from "node:child_process";
-import { existsSync as existsSync20 } from "node:fs";
+import { accessSync, constants, existsSync as existsSync20 } from "node:fs";
 import { resolve as resolve14, dirname as dirname15 } from "node:path";
 import { fileURLToPath as fileURLToPath7 } from "node:url";
 function agentIntegrationRows(agents) {
@@ -12419,6 +12420,23 @@ function agentIntegrationRows(agents) {
     };
   });
 }
+function hooksTargetRow(facts) {
+  const label = "Claude hooks target writable";
+  if (facts.writable) {
+    return {
+      label,
+      pass: true,
+      detail: facts.fileExists ? facts.settingsPath : `${facts.settingsPath} (will be created)`,
+      optional: true
+    };
+  }
+  return {
+    label,
+    pass: false,
+    detail: `cannot write ${facts.settingsPath} \u2014 fix its permissions (chown/chmod), or point TMUX_IDE_CLAUDE_SETTINGS at a writable path`,
+    optional: true
+  };
+}
 function check(label, fn, { optional = false } = {}) {
   try {
     const result = fn();
@@ -12433,7 +12451,13 @@ async function doctor({
   const checks = [];
   checks.push(
     check("tmux installed", () => {
-      execSync3("which tmux", { stdio: "ignore" });
+      try {
+        execSync3("which tmux", { stdio: "ignore" });
+      } catch {
+        throw new Error(
+          "not found on PATH \u2014 install it (macOS: `brew install tmux`; Debian/Ubuntu: `sudo apt install tmux`)"
+        );
+      }
       return "found";
     })
   );
@@ -12503,35 +12527,38 @@ async function doctor({
       { optional: true }
     )
   );
-  checks.push(
-    check(
-      "tailscale CLI",
-      () => {
-        const version = execSync3("tailscale version", { encoding: "utf-8" }).trim().split("\n")[0];
-        return version;
-      },
-      { optional: true }
-    )
+  const tunnelCli = (label, cmd) => check(
+    label,
+    () => {
+      try {
+        return execSync3(cmd, { encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"] }).trim().split("\n")[0];
+      } catch {
+        throw new Error("not found (optional \u2014 used for remote access tunnels)");
+      }
+    },
+    { optional: true }
   );
+  checks.push(tunnelCli("tailscale CLI", "tailscale version"));
+  checks.push(tunnelCli("ngrok CLI", "ngrok version"));
+  checks.push(tunnelCli("cloudflared CLI", "cloudflared --version"));
   checks.push(
-    check(
-      "ngrok CLI",
-      () => {
-        const version = execSync3("ngrok version", { encoding: "utf-8" }).trim();
-        return version;
-      },
-      { optional: true }
-    )
-  );
-  checks.push(
-    check(
-      "cloudflared CLI",
-      () => {
-        const version = execSync3("cloudflared --version", { encoding: "utf-8" }).trim();
-        return version;
-      },
-      { optional: true }
-    )
+    (() => {
+      const settingsPath = claudeSettingsPath();
+      const fileExists2 = existsSync20(settingsPath);
+      let probe = fileExists2 ? settingsPath : dirname15(settingsPath);
+      while (!existsSync20(probe)) {
+        const parent = dirname15(probe);
+        if (parent === probe) break;
+        probe = parent;
+      }
+      let writable = false;
+      try {
+        accessSync(probe, constants.W_OK);
+        writable = true;
+      } catch {
+      }
+      return hooksTargetRow({ settingsPath, fileExists: fileExists2, writable });
+    })()
   );
   checks.push(
     check(

@@ -3,7 +3,7 @@
  * text depends only on a DiscoveredAgent[], so no io is needed here.
  */
 import { describe, expect, it } from "vitest";
-import { agentIntegrationRows } from "./doctor.ts";
+import { agentIntegrationRows, hooksTargetRow } from "./doctor.ts";
 import type { DiscoveredAgent } from "./lib/agent-discovery.ts";
 
 const agent = (over: Partial<DiscoveredAgent>): DiscoveredAgent => ({
@@ -60,5 +60,37 @@ describe("agentIntegrationRows", () => {
       agent({ id: "codex", integration: false, path: "/bin/codex" }),
     ]);
     expect(rows.every((r) => r.optional)).toBe(true);
+  });
+});
+
+describe("hooksTargetRow", () => {
+  const path = "/home/u/.claude/settings.json";
+
+  it("passes with the bare path when the file exists and is writable", () => {
+    const row = hooksTargetRow({ settingsPath: path, fileExists: true, writable: true });
+    expect(row.pass).toBe(true);
+    expect(row.detail).toBe(path);
+  });
+
+  it("passes with a 'will be created' note when the file is absent but creatable", () => {
+    const row = hooksTargetRow({ settingsPath: path, fileExists: false, writable: true });
+    expect(row.pass).toBe(true);
+    expect(row.detail).toContain("will be created");
+  });
+
+  it("fails with a plain fix hint (permissions + env override) when not writable", () => {
+    const row = hooksTargetRow({ settingsPath: path, fileExists: true, writable: false });
+    expect(row.pass).toBe(false);
+    expect(row.detail).toContain(path);
+    expect(row.detail).toContain("chown/chmod");
+    expect(row.detail).toContain("TMUX_IDE_CLAUDE_SETTINGS");
+  });
+
+  it("never fails doctor overall (always optional)", () => {
+    for (const fileExists of [true, false]) {
+      for (const writable of [true, false]) {
+        expect(hooksTargetRow({ settingsPath: path, fileExists, writable }).optional).toBe(true);
+      }
+    }
   });
 });
