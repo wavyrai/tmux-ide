@@ -9,6 +9,9 @@ description: Install tmux-ide and adopt your first session in under a minute
 - **Node.js** — ≥ 20
 - **Bun** — only needed for the TUI surfaces (home cockpit, sidebar, floating panels)
 
+The Homebrew install resolves tmux and Node.js for you — with it, there are no
+prerequisites to install by hand.
+
 Check everything at once:
 
 ```bash
@@ -16,6 +19,29 @@ tmux-ide doctor
 ```
 
 ## Install
+
+{/* PENDING TAP PUBLICATION — the `wavyrai/homebrew-tap` repo is not published yet. */}
+{/* The formula (packaging/homebrew/Formula/tmux-ide.rb) and the seeding script */}
+{/* (scripts/publish-tap.sh) are ready; once the tap exists, this Homebrew block */}
+{/* is the lead install path — delete this comment then. */}
+
+### Homebrew (macOS and Linux)
+
+One command — tmux and Node.js are resolved as dependencies, nothing to
+install first:
+
+```bash
+brew install wavyrai/tap/tmux-ide
+```
+
+Homebrew skips npm lifecycle scripts, so wire the Claude Code pieces once
+after installing (the npm path below does this automatically):
+
+```bash
+tmux-ide integration install claude   # Claude Code hooks + skill sync
+```
+
+### npm
 
 ```bash
 npm i -g tmux-ide

@@ -1,11 +1,12 @@
 import { execSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { accessSync, constants, existsSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { getCurrentVersion, getUpdateStatus } from "./lib/update-check.ts";
 import { installedSkillVersion } from "./lib/skill-sync.ts";
 import { discoverAgents, presentAgents, type DiscoveredAgent } from "./lib/agent-discovery.ts";
 import { findCompiledTui, isBunAvailable } from "./tui/compiled.ts";
+import { claudeSettingsPath } from "./tui/integrations/claude.ts";
 
 interface CheckResult {
   label: string;
@@ -45,6 +46,34 @@ export function agentIntegrationRows(agents: DiscoveredAgent[]): CheckResult[] {
   });
 }
 
+/**
+ * PURE — the "Claude hooks target writable" row from observed facts. Both
+ * `integration install claude` and the npm postinstall write the settings
+ * file; surface a permissions problem BEFORE an install fails halfway.
+ * Optional: a machine without Claude Code shouldn't fail doctor over this.
+ */
+export function hooksTargetRow(facts: {
+  settingsPath: string;
+  fileExists: boolean;
+  writable: boolean;
+}): CheckResult {
+  const label = "Claude hooks target writable";
+  if (facts.writable) {
+    return {
+      label,
+      pass: true,
+      detail: facts.fileExists ? facts.settingsPath : `${facts.settingsPath} (will be created)`,
+      optional: true,
+    };
+  }
+  return {
+    label,
+    pass: false,
+    detail: `cannot write ${facts.settingsPath} — fix its permissions (chown/chmod), or point TMUX_IDE_CLAUDE_SETTINGS at a writable path`,
+    optional: true,
+  };
+}
+
 function check(
   label: string,
   fn: () => string,
@@ -67,7 +96,13 @@ export async function doctor({
 
   checks.push(
     check("tmux installed", () => {
-      execSync("which tmux", { stdio: "ignore" });
+      try {
+        execSync("which tmux", { stdio: "ignore" });
+      } catch {
+        throw new Error(
+          "not found on PATH — install it (macOS: `brew install tmux`; Debian/Ubuntu: `sudo apt install tmux`)",
+        );
+      }
       return "found";
     }),
   );
@@ -153,37 +188,49 @@ export async function doctor({
     ),
   );
 
-  checks.push(
+  // Optional tunnel CLIs: probe quietly (a missing binary must not leak
+  // "command not found" stderr into doctor's own output) and fail with a
+  // plain hint rather than execSync's raw error.
+  const tunnelCli = (label: string, cmd: string): CheckResult =>
     check(
-      "tailscale CLI",
+      label,
       () => {
-        const version = execSync("tailscale version", { encoding: "utf-8" }).trim().split("\n")[0]!;
-        return version;
+        try {
+          return execSync(cmd, { encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"] })
+            .trim()
+            .split("\n")[0]!;
+        } catch {
+          throw new Error("not found (optional — used for remote access tunnels)");
+        }
       },
       { optional: true },
-    ),
-  );
+    );
+  checks.push(tunnelCli("tailscale CLI", "tailscale version"));
+  checks.push(tunnelCli("ngrok CLI", "ngrok version"));
+  checks.push(tunnelCli("cloudflared CLI", "cloudflared --version"));
 
   checks.push(
-    check(
-      "ngrok CLI",
-      () => {
-        const version = execSync("ngrok version", { encoding: "utf-8" }).trim();
-        return version;
-      },
-      { optional: true },
-    ),
-  );
-
-  checks.push(
-    check(
-      "cloudflared CLI",
-      () => {
-        const version = execSync("cloudflared --version", { encoding: "utf-8" }).trim();
-        return version;
-      },
-      { optional: true },
-    ),
+    (() => {
+      // Claude hooks target: the settings file `integration install claude`
+      // (and the npm postinstall) will write. Writability of the file itself
+      // when it exists, else of its nearest existing ancestor directory.
+      const settingsPath = claudeSettingsPath();
+      const fileExists = existsSync(settingsPath);
+      let probe = fileExists ? settingsPath : dirname(settingsPath);
+      while (!existsSync(probe)) {
+        const parent = dirname(probe);
+        if (parent === probe) break;
+        probe = parent;
+      }
+      let writable = false;
+      try {
+        accessSync(probe, constants.W_OK);
+        writable = true;
+      } catch {
+        // leave writable=false — the row explains the fix
+      }
+      return hooksTargetRow({ settingsPath, fileExists, writable });
+    })(),
   );
 
   checks.push(
