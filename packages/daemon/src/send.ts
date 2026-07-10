@@ -86,24 +86,36 @@ function prepareMessage(message: string, busyStatus: PaneBusyStatus): string {
   return message;
 }
 
-export async function send(targetDir: string | undefined, opts: SendOptions): Promise<void> {
-  const dir = resolve(targetDir ?? ".");
-  const { name: session } = getSessionName(dir);
-  const { json, to: target, message: rawMessage, noEnter } = opts;
+/** What a delivery reports back (the `send --json` payload, and the control
+ *  socket's `send` verb data). */
+export interface DeliverResult {
+  ok: true;
+  session: string;
+  target: { paneId: string; name: string | null; title: string; role: string | null };
+  message: string;
+  busyStatus: PaneBusyStatus;
+  sentViaFile: boolean;
+  warning?: "agent_busy";
+}
 
-  if (!target) {
-    throw new IdeError("Missing target. Usage: tmux-ide send <target> <message>", {
-      code: "USAGE",
-    });
-  }
+/**
+ * Deliver `message` to a pane of `session` — the SHARED core behind the
+ * `tmux-ide send` CLI case and the control socket's `send` verb. Resolves
+ * `target` (pane id / @ide_name / title / role / partial title), adapts to
+ * the pane's busy status, and routes long messages through a dispatch file
+ * under `dir` when one is given (without a `dir` the text is sent directly).
+ * Throws `IdeError` (SESSION_NOT_FOUND / PANE_NOT_FOUND) — no printing here.
+ */
+export function deliverMessage(opts: {
+  session: string;
+  target: string;
+  message: string;
+  noEnter?: boolean;
+  /** The project dir long messages are dispatched through as a file. */
+  dir?: string;
+}): DeliverResult {
+  const { session, target, noEnter, dir } = opts;
 
-  if (!rawMessage) {
-    throw new IdeError("Missing message. Usage: tmux-ide send <target> <message>", {
-      code: "USAGE",
-    });
-  }
-
-  // Verify session is running
   const state = getSessionState(session);
   if (!state.running) {
     throw new IdeError(`Session "${session}" is not running`, {
@@ -126,13 +138,13 @@ export async function send(targetDir: string | undefined, opts: SendOptions): Pr
   }
 
   const busyStatus = getPaneBusyStatus(session, pane.id);
-  const message = prepareMessage(rawMessage, busyStatus);
+  const message = prepareMessage(opts.message, busyStatus);
 
   let sentViaFile = false;
   if (noEnter) {
     sendText(session, pane.id, message);
   } else {
-    const dispatch = writeDispatchFile(dir, pane.id, message);
+    const dispatch = dir ? writeDispatchFile(dir, pane.id, message) : null;
     if (dispatch) {
       sendCommand(session, pane.id, dispatch.triggerCmd);
       sentViaFile = true;
@@ -141,7 +153,7 @@ export async function send(targetDir: string | undefined, opts: SendOptions): Pr
     }
   }
 
-  const result = {
+  return {
     ok: true,
     session,
     target: {
@@ -153,8 +165,30 @@ export async function send(targetDir: string | undefined, opts: SendOptions): Pr
     message,
     busyStatus,
     sentViaFile,
-    ...(busyStatus === "agent" ? { warning: "agent_busy" } : {}),
+    ...(busyStatus === "agent" ? { warning: "agent_busy" as const } : {}),
   };
+}
+
+export async function send(targetDir: string | undefined, opts: SendOptions): Promise<void> {
+  const dir = resolve(targetDir ?? ".");
+  const { name: session } = getSessionName(dir);
+  const { json, to: target, message: rawMessage, noEnter } = opts;
+
+  if (!target) {
+    throw new IdeError("Missing target. Usage: tmux-ide send <target> <message>", {
+      code: "USAGE",
+    });
+  }
+
+  if (!rawMessage) {
+    throw new IdeError("Missing message. Usage: tmux-ide send <target> <message>", {
+      code: "USAGE",
+    });
+  }
+
+  const result = deliverMessage({ session, target, message: rawMessage, noEnter, dir });
+  const { message, busyStatus } = result;
+  const pane = result.target;
 
   if (json) {
     console.log(JSON.stringify(result, null, 2));
@@ -163,7 +197,7 @@ export async function send(targetDir: string | undefined, opts: SendOptions): Pr
 
   const label = pane.name ?? pane.title;
   const preview = message.length > 60 ? message.slice(0, 60) + "..." : message;
-  console.log(`Sent to "${label}" (${pane.id}): ${preview}`);
+  console.log(`Sent to "${label}" (${pane.paneId}): ${preview}`);
 
   if (busyStatus === "agent") {
     console.log("Warning: agent appears busy. Message sent anyway.");

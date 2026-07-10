@@ -102,6 +102,69 @@ tmux-ide update --dry-run                  # detect install method (dev checkout
 tmux-ide doctor                            # system + integration health (tmux version, TUI surfaces, skill freshness)
 ```
 
+## Drive tmux-ide over the socket (agent loops)
+
+The CLI above spawns a process per call. If you are driving the fleet in a
+loop — polling status, waiting on agents, reacting to transitions — start the
+control server once and keep ONE connection open instead:
+
+```bash
+tmux-ide serve &   # local Unix socket at ~/.tmux-ide/control.sock (0600, this user only)
+```
+
+**Frame format:** newline-delimited JSON, one object per line. Send
+`{"v":1,"id":<any>,"verb":"<verb>","params":{…}}`; you get back
+`{"v":1,"id":<same>,"ok":true,"data":…}` or
+`{"v":1,"id":<same>,"ok":false,"error":{"code","message"}}`. Responses
+correlate by `id` (they may arrive out of order — a long `wait` doesn't block
+other verbs on the same connection). After the `subscribe` verb the server
+also PUSHES unsolicited `{"v":1,"event":"agent-status","data":{ts,session,from,to}}`
+frames the moment its detection tick sees a session change state — no polling.
+
+**Verbs:** `fleet` (the `team --json` payload) · `agents` (per-pane entries,
+optional `{session}`) · `send` (`{session,target,message,noEnter?,dir?}`) ·
+`wait` (`{kind:"agent-status",session,status,timeoutMs?}` or
+`{kind:"output",target,match,timeoutMs?}`; a timeout is an error response with
+code `timeout`) · `spawn` (`{kind|command, session?|sessionName, dir?,
+placement?, paneId?}` → the new `paneId`) · `restart-agent` / `stop-agent`
+(`{paneId, kind|command}`) · `explain` (`{target}`) · `subscribe`.
+
+One-shot from a shell (nc keeps the pipe open for the response):
+
+```bash
+printf '{"v":1,"id":1,"verb":"fleet"}\n' | nc -U ~/.tmux-ide/control.sock | head -1
+```
+
+A subscribe loop from node:
+
+```js
+const net = require("node:net");
+const os = require("node:os");
+const sock = net.connect(`${os.homedir()}/.tmux-ide/control.sock`);
+let buf = "";
+sock.on("data", (chunk) => {
+  buf += chunk;
+  const lines = buf.split("\n");
+  buf = lines.pop();
+  for (const line of lines.filter(Boolean)) {
+    const frame = JSON.parse(line);
+    if (frame.event === "agent-status") console.log(frame.data); // react here
+  }
+});
+sock.write('{"v":1,"id":1,"verb":"subscribe"}\n');
+```
+
+Right after `subscribe`, the first tick reports every session once with
+`from:null` (a snapshot of where the fleet stands); real transitions follow.
+
+**Socket vs CLI:** prefer the socket for anything event-driven or repeated
+(subscribe replaces an `events --follow` poll; a server-held `wait` costs no
+spawn-per-poll). Prefer the CLI for one-shot reads and anything a human might
+re-run — it needs no server. With a server running, `tmux-ide events --follow
+--socket` and `tmux-ide wait … --socket` use it automatically and fall back to
+polling silently when it's gone. The server is local-only by design: no
+network listener, no tokens — filesystem permissions are the auth.
+
 ## Keys & surfaces to tell USERS about
 
 Once a session is adopted, the whole UI is a keystroke away. **Lead with the

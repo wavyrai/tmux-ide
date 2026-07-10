@@ -151,6 +151,7 @@ const knownCommands = new Set([
   "worktree",
   "update",
   "skill-sync",
+  "serve",
   "command-center",
   "server",
   "help",
@@ -208,7 +209,8 @@ ${bold("Usage:")}
                               ${dim("Block until a session reaches a status (exit 0 match / 1 timeout)")}
   ${cyan("tmux-ide wait output")} <pane|session> --match <regex> [--timeout <ms>]
                               ${dim("Block until a pane's output matches a regex (exit 0 match / 1 timeout)")}
-  ${cyan("tmux-ide events")} [--follow] [--json]  ${dim("Stream agent-status transitions (needs an adopted session)")}
+  ${cyan("tmux-ide events")} [--follow] [--json] [--socket]  ${dim("Stream agent-status transitions (--socket: push from a running serve)")}
+  ${cyan("tmux-ide serve")} [--socket <path>]  ${dim("Local control socket: NDJSON verbs + pushed events (~/.tmux-ide/control.sock)")}
   ${cyan("tmux-ide adopt")} <session>    ${dim("Add the live tmux-ide status bar to a session")}
   ${cyan("tmux-ide adopt --all")}        ${dim("Adopt every live (non-internal) session")}
   ${cyan("tmux-ide unadopt")} <session>  ${dim("Remove the status bar")}
@@ -382,6 +384,41 @@ async function printFleetJson(): Promise<void> {
   const { listTeamProjects } = await import("../packages/daemon/src/tui/team/projects.ts");
   const { toFleetJson } = await import("../packages/daemon/src/tui/team/report.ts");
   console.log(JSON.stringify(toFleetJson(listTeamProjects(createStatusTracker())), null, 2));
+}
+
+// The `--socket[=path]` opt-in (undeclared in parseArgs on purpose: bare
+// `--socket` parses to `true`, `--socket=/path` to the path — strict:false
+// gives optional-value semantics parseArgs can't declare). `true | string |
+// undefined`; string overrides the default socket path.
+const socketFlag = values.socket as string | boolean | undefined;
+
+// Run a `wait` on a live `tmux-ide serve` (connect once, the server holds the
+// wait — no local polling). Returns null when the flag is off, no server
+// answers, or the connection drops mid-wait — callers fall back SILENTLY to
+// the local polling implementation (same shared logic, tui/team/wait.ts).
+async function waitOverSocket(
+  params: Record<string, unknown>,
+): Promise<{ timedOut: boolean; data?: unknown } | null> {
+  if (!socketFlag) return null;
+  const { connectControl, ControlRequestError } =
+    await import("../packages/daemon/src/control/client.ts");
+  let client: Awaited<ReturnType<typeof connectControl>>;
+  try {
+    client = await connectControl({
+      socketPath: typeof socketFlag === "string" ? socketFlag : undefined,
+    });
+  } catch {
+    return null; // no server listening — poll locally instead
+  }
+  try {
+    const data = await client.request("wait", params);
+    return { timedOut: false, data };
+  } catch (err) {
+    if (err instanceof ControlRequestError && err.code === "timeout") return { timedOut: true };
+    return null; // dropped/errored mid-wait — fall back to polling
+  } finally {
+    client.close();
+  }
 }
 
 const teamScriptPath = resolve(__dirname, "../packages/daemon/src/tui/team/index.tsx");
@@ -644,7 +681,7 @@ try {
         const pattern = values.match;
         if (!target || typeof pattern !== "string" || pattern.length === 0) {
           console.error(
-            "Usage: tmux-ide wait output <pane|session> --match <regex> [--timeout <ms>]",
+            "Usage: tmux-ide wait output <pane|session> --match <regex> [--timeout <ms>] [--socket[=path]]",
           );
           process.exit(1);
         }
@@ -654,46 +691,42 @@ try {
           console.error(`Invalid --match regex: ${(err as Error).message}`);
           process.exit(1);
         }
-        const { capturePane } = await import("../packages/tmux-bridge/src/index.ts");
         const outTimeout = Number(values.timeout ?? "60000");
-        const outStart = Date.now();
-        const nap = (ms: number) => new Promise((r) => setTimeout(r, ms));
-        while (true) {
-          let text = "";
-          try {
-            text = capturePane(target!, { lines: 200 });
-          } catch {
-            // pane/session not (yet) available — keep polling until timeout
-          }
-          const lines = text.split("\n");
-          // Fresh regex per test so a user-supplied /g flag can't carry lastIndex
-          // between calls. Report the specific matching line when we can.
-          let hit: string | null = null;
-          for (const line of lines) {
-            if (new RegExp(pattern!).test(line)) {
-              hit = line;
-              break;
-            }
-          }
-          if (hit === null && new RegExp(pattern!).test(text)) hit = lines[lines.length - 1] ?? "";
-          if (hit !== null) {
-            if (json) console.log(JSON.stringify({ matched: hit }));
-            else console.log(hit);
-            process.exit(0);
-          }
-          if (Date.now() - outStart >= outTimeout) {
+
+        // `--socket` fast path: let a running `tmux-ide serve` hold the wait
+        // (one process, no spawn-per-poll). Falls back silently when no server
+        // is listening — the polling below is exactly the same implementation.
+        const viaSocket = await waitOverSocket({
+          kind: "output",
+          target,
+          match: pattern,
+          timeoutMs: outTimeout,
+        });
+        if (viaSocket) {
+          if (viaSocket.timedOut) {
             console.error(
               `Timed out after ${outTimeout}ms waiting for ${target} output to match /${pattern}/`,
             );
             process.exit(1);
           }
-          await nap(500);
+          const hit = (viaSocket.data as { matched: string }).matched;
+          if (json) console.log(JSON.stringify({ matched: hit }));
+          else console.log(hit);
+          process.exit(0);
         }
-      }
 
-      const { createStatusTracker } = await import("../packages/daemon/src/tui/detect/classify.ts");
-      const { listTeamSessions } = await import("../packages/daemon/src/tui/team/sessions.ts");
-      const { findSessionStatus } = await import("../packages/daemon/src/tui/team/report.ts");
+        const { waitForOutputMatch } = await import("../packages/daemon/src/tui/team/wait.ts");
+        const result = await waitForOutputMatch(target!, pattern!, { timeoutMs: outTimeout });
+        if (!result.ok) {
+          console.error(
+            `Timed out after ${outTimeout}ms waiting for ${target} output to match /${pattern}/`,
+          );
+          process.exit(1);
+        }
+        if (json) console.log(JSON.stringify({ matched: result.matched }));
+        else console.log(result.matched);
+        process.exit(0);
+      }
 
       const VALID = new Set(["blocked", "working", "done", "idle", "unknown"]);
       const sessionName = positionals[2];
@@ -701,37 +734,50 @@ try {
 
       if (sub !== "agent-status" || !sessionName || typeof want !== "string" || !VALID.has(want)) {
         console.error(
-          "Usage: tmux-ide wait agent-status <session> --status <blocked|working|done|idle|unknown> [--timeout <ms>]",
+          "Usage: tmux-ide wait agent-status <session> --status <blocked|working|done|idle|unknown> [--timeout <ms>] [--socket[=path]]",
         );
         process.exit(1);
       }
 
       const timeout = Number(values.timeout ?? "60000");
-      const started = Date.now();
-      const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-      // One tracker persists across polls so the working→idle `done` transition
-      // can be observed (it's inherently cross-tick).
-      const tracker = createStatusTracker();
 
-      while (true) {
-        const sessions = listTeamSessions(tracker);
-        const status = findSessionStatus(sessions, sessionName!);
-        if (status === want) {
-          if (json) {
-            console.log(JSON.stringify({ session: sessionName, status, ok: true }));
-          } else {
-            console.log(`${sessionName} reached status: ${status}`);
-          }
-          process.exit(0);
-        }
-        if (Date.now() - started >= timeout) {
+      const viaSocket = await waitOverSocket({
+        kind: "agent-status",
+        session: sessionName,
+        status: want,
+        timeoutMs: timeout,
+      });
+      if (viaSocket) {
+        if (viaSocket.timedOut) {
           console.error(
-            `Timed out after ${timeout}ms waiting for ${sessionName} to reach status "${want}" (last: ${status ?? "absent"})`,
+            `Timed out after ${timeout}ms waiting for ${sessionName} to reach status "${want}"`,
           );
           process.exit(1);
         }
-        await sleep(750);
+        if (json) console.log(JSON.stringify({ session: sessionName, status: want, ok: true }));
+        else console.log(`${sessionName} reached status: ${want}`);
+        process.exit(0);
       }
+
+      const { waitForAgentStatus } = await import("../packages/daemon/src/tui/team/wait.ts");
+      const result = await waitForAgentStatus(
+        sessionName!,
+        want as import("../packages/daemon/src/tui/detect/classify.ts").AgentStatus,
+        { timeoutMs: timeout },
+      );
+      if (!result.ok) {
+        console.error(
+          `Timed out after ${timeout}ms waiting for ${sessionName} to reach status "${want}" (last: ${result.status ?? "absent"})`,
+        );
+        process.exit(1);
+      }
+      if (json) {
+        console.log(JSON.stringify({ session: sessionName, status: result.status, ok: true }));
+      } else {
+        console.log(`${sessionName} reached status: ${result.status}`);
+      }
+      process.exit(0);
+      break;
     }
 
     case "events": {
@@ -744,10 +790,6 @@ try {
       type EventLike = { ts: string; session: string; from: Status | null; to: Status };
 
       const path = eventsPath();
-      if (!existsSync(path)) {
-        console.log("no events yet — is a session adopted? (the chrome updater writes events)");
-        break;
-      }
 
       // Status → ANSI color, matching the chrome bar's palette in spirit.
       const paintStatus = (status: Status | null, text: string): string => {
@@ -776,6 +818,40 @@ try {
           // skip malformed line
         }
       };
+
+      // `--follow --socket` fast path: a running `tmux-ide serve` PUSHES
+      // transitions the moment its detection tick sees them — no file polling.
+      // The last-50 backlog still comes from the log (the server has no
+      // history); falls back silently to the polling path when no server is up.
+      if (values.follow && socketFlag) {
+        const { connectControl } = await import("../packages/daemon/src/control/client.ts");
+        const client = await connectControl({
+          socketPath: typeof socketFlag === "string" ? socketFlag : undefined,
+        }).catch(() => null);
+        if (client) {
+          if (existsSync(path)) {
+            const backlog = readFileSync(path, "utf8")
+              .split("\n")
+              .filter((l) => l.trim().length > 0);
+            for (const line of backlog.slice(-50)) printLine(line);
+          }
+          await client.subscribe((frame) => {
+            if (frame.event === "agent-status") printLine(JSON.stringify(frame.data));
+          });
+          process.on("SIGINT", () => {
+            client.close();
+            process.exit(0);
+          });
+          // Ends when the server shuts down (EOF) — exit cleanly then.
+          await client.done;
+          break;
+        }
+      }
+
+      if (!existsSync(path)) {
+        console.log("no events yet — is a session adopted? (the chrome updater writes events)");
+        break;
+      }
 
       const allLines = readFileSync(path, "utf8")
         .split("\n")
@@ -1522,6 +1598,34 @@ try {
             : ` (v${result.to})`;
         console.log(`skill ${result.action}${detail}: ${result.path}`);
       }
+      break;
+    }
+
+    case "serve": {
+      // The local control socket (M23.3): NDJSON verbs + pushed agent-status
+      // events over a 0600 Unix socket. Foreground on purpose — the process
+      // the user (or their agent loop) started is the process they own; see
+      // the host tradeoff in control/server.ts.
+      const { startControlServer, defaultControlSocketPath } =
+        await import("../packages/daemon/src/control/server.ts");
+      const socketPath =
+        typeof socketFlag === "string"
+          ? socketFlag
+          : (positionals[1] ?? defaultControlSocketPath());
+      const server = await startControlServer({
+        socketPath,
+        log: (m) => console.error(`[serve] ${m}`),
+      });
+      let closing = false;
+      const shutdown = () => {
+        if (closing) return;
+        closing = true;
+        // Unlinks the socket and EOFs every client before exiting.
+        void server.close().then(() => process.exit(0));
+      };
+      process.on("SIGTERM", shutdown);
+      process.on("SIGINT", shutdown);
+      await new Promise(() => {}); // the server owns the process lifetime
       break;
     }
 

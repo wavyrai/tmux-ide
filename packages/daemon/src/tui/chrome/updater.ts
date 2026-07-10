@@ -181,8 +181,11 @@ export function updateSegment(status: UpdateStatus, theme: AppTheme): string {
   return `#[range=user|update]#[fg=${theme.accent}]⬆ v${status.latest}#[default]#[norange]`;
 }
 
-/** Flatten the project view to a flat per-session status list for {@link diffFleet}. */
-function fleetStatuses(projects: TeamProject[]): Array<{ name: string; status: AgentStatus }> {
+/** Flatten the project view to a flat per-session status list for {@link diffFleet}.
+ *  Exported: the control server's event tick diffs the same projection. */
+export function fleetStatuses(
+  projects: TeamProject[],
+): Array<{ name: string; status: AgentStatus }> {
   return projects.flatMap((p) => p.sessions.map((s) => ({ name: s.name, status: s.status })));
 }
 
