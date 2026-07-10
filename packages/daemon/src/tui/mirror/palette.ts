@@ -23,6 +23,13 @@ export type PaletteAction =
   | { kind: "open-folder"; label: string }
   | { kind: "attach"; session: string; label: string }
   | { kind: "jump-agent"; paneId: string; session: string; windowIndex: number; label: string }
+  // The lifecycle verbs (M23.1) — `agentKind` (not `kind`, taken by the action
+  // discriminant) is the manifest id the restart flow resolves a launch
+  // command from. Each fleet agent gets one restart + one stop row; "New
+  // agent…" opens the spawn flow (kind → placement → run) on the dialog stack.
+  | { kind: "new-agent"; label: string }
+  | { kind: "restart-agent"; paneId: string; agentKind: string; session: string; label: string }
+  | { kind: "stop-agent"; paneId: string; agentKind: string; session: string; label: string }
   | { kind: "open-file"; path: string; label: string }
   | { kind: "save"; label: string }
   | { kind: "refresh-diff"; label: string }
@@ -93,6 +100,9 @@ export function staticPaletteActions(
   // The non-technicals' front door (M22.5): a filesystem picker → create-or-
   // attach a session in the chosen folder. Offered on every surface.
   actions.push({ kind: "open-folder", label: "Open folder…" });
+  // Spawn an agent (M23.1) — offered on every surface; the flow's placement
+  // step is what's contextual (splits only where a focused pane exists).
+  actions.push({ kind: "new-agent", label: "New agent…" });
   for (const s of sessions) {
     actions.push({ kind: "attach", session: s, label: `Attach session: ${s}` });
   }
@@ -106,6 +116,25 @@ export function staticPaletteActions(
       session: a.session,
       windowIndex: a.windowIndex,
       label: `Agent: ${a.kind} · ${a.session} (${a.state})`,
+    });
+  }
+  // The per-agent lifecycle verbs (M23.1), grouped after the jumps so an empty
+  // query reads jump-first; the fuzzy filter finds "restart"/"stop" directly.
+  for (const a of ctx.agents ?? []) {
+    const who = `${a.kind} · ${a.session}`;
+    actions.push({
+      kind: "restart-agent",
+      paneId: a.paneId,
+      agentKind: a.kind,
+      session: a.session,
+      label: `Restart agent: ${who}`,
+    });
+    actions.push({
+      kind: "stop-agent",
+      paneId: a.paneId,
+      agentKind: a.kind,
+      session: a.session,
+      label: `Stop agent: ${who}`,
     });
   }
   actions.push({ kind: "save", label: "Save file" });

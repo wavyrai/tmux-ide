@@ -309,6 +309,23 @@ import {
   type RawEntry,
 } from "./file-tree.ts";
 import { spans, spanHit, spansFromRight, type Span } from "./spans.ts";
+import {
+  CUSTOM_KIND_ID,
+  INTERRUPT_TAP_GAP_MS,
+  RESTART_GRACE_MS,
+  agentKindItems,
+  clearAuthorityArgs,
+  interruptArgs,
+  launchCommandFor,
+  paneHostsShell,
+  placementItems,
+  relaunchArgs,
+  respawnArgs,
+  spawnAgentArgs,
+  spawnSessionArgs,
+  type SpawnPlacement,
+} from "./agent-lifecycle.ts";
+import { getManifests } from "../detect/manifest-loader.ts";
 import { agentsByPane, chipLabel } from "./agent-chip.ts";
 import { focusStrips } from "./focus-border.ts";
 import { scrollThumb, trackZone, pageTop, dragTop } from "./scrollbar-model.ts";
@@ -454,6 +471,7 @@ type HoverRegion =
   | "button"
   | "tabbtn"
   | "homechip"
+  | "homeagentchip"
   | "welcomeopen"
   | "sidebtn";
 
@@ -545,6 +563,9 @@ const PALETTE_ROWS = 10;
 const HOME_CHIP_SESSION = "[± diff] ";
 const HOME_CHIP_PROJECT = "[▸ launch] ";
 const HOME_CHIP_RECENT = "[▸ open] ";
+// The spawn verb's home entry (M23.1): session/project rows carry a second
+// chip left of the primary one; `a` is its keyboard twin.
+const HOME_CHIP_AGENT = "[+ agent] ";
 const TABBAR_PALETTE_LABEL = "F5 ⌘ palette ";
 // ── M22.5 first-run welcome ─────────────────────────────────────────────────
 // A centered greeting shown only on a truly empty fleet (no sessions, no
@@ -859,6 +880,8 @@ render(
       diffPath?: string;
       paneId?: string;
       windowIndex?: number;
+      /** The sidebar agent row a menu targets (M23.1 lifecycle verbs). */
+      agent?: AgentRowInput;
     }
     const [menu, setMenu] = createSignal<MenuState | null>(null);
     const [menuSel, setMenuSel] = createSignal(0);
@@ -1416,6 +1439,185 @@ render(
       });
     };
 
+    // ── AGENT LIFECYCLE (M23.1) — spawn / restart / stop / close ────────────
+    // The verbs go to tmux DIRECTLY (async execFile — the render-loop law, and
+    // the target agent may live in a session the mirror isn't attached to).
+    // The kind list / launch commands / exact argv are pure in
+    // agent-lifecycle.ts; only the dialog flows and the io live here.
+    const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+    /** One awaited tmux call; errors are swallowed (a dead pane target is a
+     *  normal race — the fleet poll shows the truth moments later). */
+    const tmuxRun = (args: string[]) =>
+      new Promise<void>((resolve) => execFile("tmux", args, () => resolve()));
+
+    /** Out-of-band stop hygiene: killing an agent ourselves fires NO lifecycle
+     *  hook (a clean exit's SessionEnd stamps idle), so a working/blocked
+     *  authority stamp would keep lying until the 10-minute staleness guard.
+     *  Unset both pane options — the same "no authority" end state. */
+    const clearAgentAuthority = async (paneId: string) => {
+      for (const args of clearAuthorityArgs(paneId)) await tmuxRun(args);
+    };
+
+    /** ctrl-c TWICE: TUI agents (claude, codex) treat a single ^c as "clear
+     *  input / cancel turn" and only a quick second one as exit; a plain
+     *  process ignores the repeat. */
+    const interruptAgent = async (paneId: string) => {
+      await tmuxRun(interruptArgs(paneId));
+      await sleep(INTERRUPT_TAP_GAP_MS);
+      await tmuxRun(interruptArgs(paneId));
+    };
+
+    const stopAgentFlow = async (a: Pick<AgentRowInput, "paneId" | "kind">) => {
+      const ok = await DialogConfirm.show({
+        title: `Stop ${a.kind}?`,
+        body: "Interrupts the agent (ctrl-c). The pane and its shell stay open.",
+        yesLabel: "Stop it",
+        noLabel: "Cancel",
+        defaultNo: true,
+      });
+      if (!ok) return;
+      await interruptAgent(a.paneId);
+      await clearAgentAuthority(a.paneId);
+      setStatusNote(`stopped ${a.kind}`);
+      setTimeout(() => fleetRefresh?.(), 500);
+    };
+
+    /** The pane's `pane_start_command` (its ROOT: "" = default shell) +
+     *  `pane_current_path`, or null when the pane is gone. One async display
+     *  call (tab-joined). NOT pane_current_command — that is the FOREGROUND
+     *  process, so a user-typed `claude` under zsh would read as `claude` too
+     *  and be indistinguishable from a pane-command agent (measured). */
+    const paneStartAndPath = (paneId: string) =>
+      new Promise<{ start: string; path: string } | null>((resolve) =>
+        execFile(
+          "tmux",
+          ["display", "-p", "-t", paneId, "#{pane_start_command}\t#{pane_current_path}"],
+          (err, stdout) => {
+            if (err) return resolve(null);
+            const [start = "", path = ""] = stdout.trimEnd().split("\t");
+            resolve({ start, path });
+          },
+        ),
+      );
+
+    /** Two restart strategies, picked by what the pane's ROOT process is:
+     *  shell-hosted agents get ctrl-c + relaunch via send-keys (the shell
+     *  survives to type into); when the agent IS the pane's own process (our
+     *  spawn verb's panes), ctrl-c would end the pane — respawn it in place
+     *  instead (same pane id, cwd pinned explicitly). Both paths clear the
+     *  authority stamps. */
+    const restartAgentFlow = async (a: Pick<AgentRowInput, "paneId" | "kind">) => {
+      const manifests = getManifests();
+      const command = launchCommandFor(a.kind, manifests);
+      const live = await paneStartAndPath(a.paneId);
+      if (!live) {
+        setStatusNote("that pane is gone — refreshing");
+        setTimeout(() => fleetRefresh?.(), 300);
+        return;
+      }
+      const underShell = paneHostsShell(live.start, manifests);
+      const ok = await DialogConfirm.show({
+        title: `Restart ${a.kind}?`,
+        body: underShell
+          ? `Stops it with ctrl-c, waits a moment, then runs "${command}" again in the same pane.`
+          : `The agent is this pane's own process, so the pane is relaunched in place running "${command}".`,
+        yesLabel: "Restart it",
+        noLabel: "Cancel",
+        defaultNo: true,
+      });
+      if (!ok) return;
+      if (underShell) {
+        await interruptAgent(a.paneId);
+        await clearAgentAuthority(a.paneId);
+        await sleep(RESTART_GRACE_MS);
+        for (const args of relaunchArgs(a.paneId, command)) await tmuxRun(args);
+      } else {
+        await clearAgentAuthority(a.paneId);
+        await tmuxRun(respawnArgs(a.paneId, command, live.path || null));
+      }
+      setStatusNote(`restarted ${a.kind}`);
+      setTimeout(() => fleetRefresh?.(), 1500);
+    };
+
+    /** The destructive twin of stop: kill the agent's pane. Confirmation is the
+     *  caller's job (the menu's armed "confirm: y" state). The pane's options
+     *  die with it, so no authority cleanup is needed. */
+    const closeAgentPane = (a: Pick<AgentRowInput, "paneId" | "kind">) => {
+      execFile("tmux", ["kill-pane", "-t", a.paneId], () =>
+        setTimeout(() => fleetRefresh?.(), 300),
+      );
+      setStatusNote(`closed ${a.kind}'s pane`);
+    };
+
+    /** The spawn flow: WHAT runs (manifest kinds + a custom command) → WHERE
+     *  (splits only when a concrete pane exists) → run it. Without a live
+     *  session (a home project row) the agent gets a fresh detached session in
+     *  the project dir. Detection needs no extra wiring: the spawned pane's
+     *  command IS the agent, so the next fleet poll classifies it. */
+    interface NewAgentContext {
+      session?: string;
+      dir: string | null;
+      paneId?: string;
+      /** Names the fresh session when there is no live one (project rows). */
+      sessionName?: string;
+    }
+    const newAgentFlow = async (ctx: NewAgentContext) => {
+      setHoverIf(null); // the overlay owns the pointer, like the palette
+      const manifests = getManifests();
+      const kind = await DialogSelect.show({
+        title: "New agent — what should run?",
+        items: agentKindItems(manifests),
+        footerHint: "pick an agent, or type your own command",
+      });
+      if (!kind) return;
+      let command: string;
+      if (kind.item.id === CUSTOM_KIND_ID) {
+        const typed = await DialogPrompt.show({
+          title: "Custom command",
+          placeholder: "my-agent --flag",
+          footerHint: "runs as the new pane's command",
+          validate: (v) => (v.trim().length > 0 ? null : "Type a command, or press esc to go back"),
+        });
+        if (typed === null) return;
+        command = typed.trim();
+      } else {
+        command = launchCommandFor(kind.item.id, manifests);
+      }
+      if (!ctx.session) {
+        const base = ctx.sessionName ?? basename(ctx.dir ?? invokeCwd);
+        const name = sessionNameFor(base || "agents");
+        execFile("tmux", spawnSessionArgs(name, ctx.dir, command), (err) => {
+          setStatusNote(err ? `couldn't start ${command}` : `started ${command} in ${name}`);
+          if (!err) execFile("tmux", ["set-environment", "-t", name, "TMUX_IDE", "1"], () => {});
+          setTimeout(() => fleetRefresh?.(), 300);
+        });
+        return;
+      }
+      const where = await DialogSelect.show({
+        title: "Where should it run?",
+        items: placementItems({ split: ctx.paneId !== undefined }),
+        filterable: false,
+      });
+      if (!where) return;
+      const placement = where.item.id as SpawnPlacement;
+      const target = { session: ctx.session, paneId: ctx.paneId };
+      execFile("tmux", spawnAgentArgs(placement, target, ctx.dir, command), (err) => {
+        setStatusNote(err ? `couldn't start ${command}` : `started ${command} in ${ctx.session}`);
+        setTimeout(() => fleetRefresh?.(), 300);
+      });
+    };
+
+    /** "New agent…" for a home row (the [+ agent] chip, the `a` key, the home
+     *  palette command): a session row spawns into that session, a project/
+     *  recent row into a fresh session in its dir; with nothing useful selected
+     *  fall back to the working directory. */
+    const newAgentFromHome = (it: HomeItem | undefined) => {
+      if (it?.kind === "session") void newAgentFlow({ session: it.session, dir: it.dir });
+      else if (it?.kind === "project") void newAgentFlow({ dir: it.dir, sessionName: it.name });
+      else if (it?.kind === "recent") void newAgentFlow({ dir: it.dir });
+      else void newAgentFlow({ dir: invokeCwd });
+    };
+
     // ── OPEN A FOLDER (M22.5) — the non-technicals' front door ───────────────
     // A filesystem picker (a DialogSelect browse loop over ASYNC readdir) →
     // create-or-attach a session in the chosen dir → openWorkspace, then two
@@ -1701,6 +1903,32 @@ render(
           break;
         case "jump-agent":
           jumpToAgent(a);
+          break;
+        case "new-agent":
+          // Contextual target: the Terminal surface spawns into the mirrored
+          // session (splits offered — a focused pane exists); home uses the
+          // selected row; anywhere else the workspace session, else a fresh one.
+          if (mode() === "mirror") {
+            // The mirrored session's OWN dir first: contextDir can be a stale
+            // persisted workspace when the app booted straight to --target.
+            void newAgentFlow({
+              session: curTarget(),
+              dir: dirForSession(curTarget()) ?? (contextDir() || null),
+              paneId: mirror?.focusedPane() ?? undefined,
+            });
+          } else if (mode() === "home") {
+            newAgentFromHome(selectedHomeItem());
+          } else if (contextSession()) {
+            void newAgentFlow({ session: contextSession(), dir: contextDir() || null });
+          } else {
+            void newAgentFlow({ dir: workspaceDir() });
+          }
+          break;
+        case "restart-agent":
+          void restartAgentFlow({ paneId: a.paneId, kind: a.agentKind });
+          break;
+        case "stop-agent":
+          void stopAgentFlow({ paneId: a.paneId, kind: a.agentKind });
           break;
         case "open-file":
           openEditor(a.path);
@@ -2728,10 +2956,21 @@ render(
       if (y === 0) return null; // the surface tab bar owns row 0
       const gy = y - TABBAR_H;
       if (x < sidebarW()) {
-        // Only SESSION rows carry a context menu; agent rows (left-click jumps),
-        // the gap, header, and empty-state line have none. Route through the same
-        // sidebarHit the click/hover resolvers use so the ranges never diverge.
+        // SESSION rows carry the session menu; AGENT rows carry the lifecycle
+        // menu (M23.1 — left-click still jumps). The gap, header, and
+        // empty-state line have none. Route through the same sidebarHit the
+        // click/hover resolvers use so the ranges never diverge.
         const hit = sidebarHit(gy, fleet().length, fleetAgents().length);
+        if (hit?.kind === "agent") {
+          const a = fleetAgents()[hit.index];
+          if (!a) return null;
+          return {
+            region: "agent",
+            title: `${a.kind} · ${a.session}`,
+            items: MENU_ITEMS.agent,
+            agent: a,
+          };
+        }
         if (hit?.kind !== "session") return null;
         const s = fleet()[hit.index];
         if (!s) return null;
@@ -2895,11 +3134,28 @@ render(
       const m = menu();
       if (!m) return;
       const val = (input ?? "").trim();
+      if (m.region === "agent") {
+        // The sidebar agent row's lifecycle verbs (M23.1). restart/stop confirm
+        // via DialogConfirm inside their flows; close fired through the menu's
+        // armed "confirm: y" state (danger), so it runs immediately here.
+        const a = m.agent!;
+        closeMenu();
+        if (id === "jump") jumpToAgent(a);
+        else if (id === "restart") void restartAgentFlow(a);
+        else if (id === "stop") void stopAgentFlow(a);
+        else if (id === "close") closeAgentPane(a);
+        return;
+      }
       if (m.region === "session") {
         const name = m.session!;
         if (id === "attach") {
           closeMenu();
           openWorkspace(name, m.sessionDir ?? null);
+          return;
+        }
+        if (id === "new-agent") {
+          closeMenu();
+          void newAgentFlow({ session: name, dir: m.sessionDir ?? null });
           return;
         }
         if (id === "kill") {
@@ -3273,6 +3529,12 @@ render(
           setSessionPrompt("");
           return;
         }
+        // `a` — the row [+ agent] chip's keyboard twin (M23.1): spawn an agent
+        // for the selected row (or a fresh session when nothing is selected).
+        if (evt.name === "a") {
+          newAgentFromHome(selectedHomeItem());
+          return;
+        }
         // `d` — open the diff panel for the selected row's project dir (the
         // home item carries it via the team payload), adopting it as context.
         if (evt.name === "d") {
@@ -3416,6 +3678,7 @@ render(
           ? [
               { id: "home-openfolder", label: "[f open folder]" },
               { id: "home-new", label: "[n new session]" },
+              { id: "home-agent", label: "[a new agent]" },
               { id: "home-open", label: "[o open]" },
               { id: "home-diff", label: "[d diff]" },
             ]
@@ -3470,6 +3733,7 @@ render(
         const pid = mirror?.focusedPane();
         if (pid) void mirror?.command(`resize-pane -Z -t ${pid}`).catch(() => {});
       } else if (id === "home-openfolder") void openFolderFlow();
+      else if (id === "home-agent") newAgentFromHome(selectedHomeItem());
       else if (id === "home-open") setPathPrompt("");
       else if (id === "home-new") setSessionPrompt("");
       else if (id === "home-diff") {
@@ -3537,10 +3801,32 @@ render(
           : it?.kind === "recent"
             ? HOME_CHIP_RECENT
             : "";
-    const homeChipHit = (it: HomeItem | undefined, x: number): boolean => {
-      const label = homeChipLabel(it);
-      if (!label) return false;
-      return spanHit(spansFromRight([label], buttonRightEdge(), 0), x) === 0;
+    /** A home row's chip list, left to right: session/project rows lead with
+     *  the [+ agent] spawn chip (M23.1), then every row's PRIMARY verb chip.
+     *  The render walks these defs and the hit-test lays the SAME labels out
+     *  from the right edge, so clicks land exactly on what's drawn. */
+    const homeRowChips = (it: HomeItem | undefined): { id: "agent" | "primary"; label: string }[] => {
+      const defs: { id: "agent" | "primary"; label: string }[] = [];
+      if (it?.kind === "session" || it?.kind === "project") {
+        defs.push({ id: "agent", label: HOME_CHIP_AGENT });
+      }
+      const primary = homeChipLabel(it);
+      if (primary) defs.push({ id: "primary", label: primary });
+      return defs;
+    };
+    /** Which chip (if any) column `x` hits on the row for `it`. */
+    const homeChipAt = (it: HomeItem | undefined, x: number): "agent" | "primary" | null => {
+      const defs = homeRowChips(it);
+      if (defs.length === 0) return null;
+      const i = spanHit(
+        spansFromRight(
+          defs.map((d) => d.label),
+          buttonRightEdge(),
+          0,
+        ),
+        x,
+      );
+      return i >= 0 ? defs[i]!.id : null;
     };
     /** A home row's muted meta text — sessions keep the exact `3w · project`
      *  string the panel always showed; projects show their dir + origin. */
@@ -3600,7 +3886,11 @@ render(
           setHoverIf(null);
           return;
         }
-        setHoverIf({ region: homeChipHit(it, x) ? "homechip" : "home", index: idx });
+        const chip = homeChipAt(it, x);
+        setHoverIf({
+          region: chip === "agent" ? "homeagentchip" : chip === "primary" ? "homechip" : "home",
+          index: idx,
+        });
         return;
       }
       if (m === "editor") {
@@ -3990,12 +4280,17 @@ render(
           void openFolderFlow();
           return;
         }
-        // A row click: the right-aligned verb chip wins over the row body;
+        // A row click: the right-aligned verb chips win over the row body
+        // ([+ agent] spawns — M23.1; the primary chip diffs/launches/reopens);
         // header rows are inert. Sessions open, projects launch, recents reopen.
         const idx = homeItemIndexAt(gy);
         const it = homeItems()[idx];
         if (!it || it.kind === "header") return;
-        if (homeChipHit(it, x)) runHomeChip(idx);
+        const chip = homeChipAt(it, x);
+        if (chip === "agent") {
+          setSel(idx);
+          newAgentFromHome(it);
+        } else if (chip === "primary") runHomeChip(idx);
         else activateHomeItem(idx);
         return;
       }
@@ -4490,12 +4785,23 @@ render(
                         </text>
                         <text fg={MUTED}>{homeRowMeta(it)}</text>
                         <box flexGrow={1} />
-                        <text
-                          fg={BUTTON_FG}
-                          bg={isHovered("homechip", i()) ? BUTTON_HOVER_BG : BUTTON_BG}
-                        >
-                          {homeChipLabel(it)}
-                        </text>
+                        {/* The row's chips (M23.1: [+ agent] before the primary
+                          verb) — the SAME defs homeChipAt lays out from the
+                          right edge, so hover/click match cell-for-cell. */}
+                        <For each={homeRowChips(it)}>
+                          {(c) => (
+                            <text
+                              fg={BUTTON_FG}
+                              bg={
+                                isHovered(c.id === "agent" ? "homeagentchip" : "homechip", i())
+                                  ? BUTTON_HOVER_BG
+                                  : BUTTON_BG
+                              }
+                            >
+                              {c.label}
+                            </text>
+                          )}
+                        </For>
                       </box>
                     </Show>
                   )}
