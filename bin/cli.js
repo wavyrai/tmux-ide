@@ -1360,6 +1360,109 @@ var init_terminals = __esm({
   }
 });
 
+// packages/contracts/src/control.ts
+import { z as z9 } from "zod";
+var CONTROL_PROTOCOL_VERSION, controlIdSchema, agentStatusSchema, controlRequestSchema, controlErrorSchema, controlResponseSchema, controlEventSchema, agentStatusEventSchema, agentsParamsSchema, sendParamsSchema, CONTROL_WAIT_MAX_TIMEOUT_MS, waitTimeoutSchema, waitParamsSchema, spawnPlacementSchema, spawnParamsSchema, restartAgentParamsSchema, stopAgentParamsSchema, explainParamsSchema, subscribeParamsSchema;
+var init_control = __esm({
+  "packages/contracts/src/control.ts"() {
+    "use strict";
+    CONTROL_PROTOCOL_VERSION = 1;
+    controlIdSchema = z9.union([z9.string(), z9.number()]);
+    agentStatusSchema = z9.enum(["blocked", "working", "done", "idle", "unknown"]);
+    controlRequestSchema = z9.object({
+      v: z9.literal(CONTROL_PROTOCOL_VERSION),
+      id: controlIdSchema,
+      verb: z9.string().min(1),
+      params: z9.record(z9.string(), z9.unknown()).optional()
+    });
+    controlErrorSchema = z9.object({
+      code: z9.string(),
+      message: z9.string()
+    });
+    controlResponseSchema = z9.discriminatedUnion("ok", [
+      z9.object({
+        v: z9.literal(CONTROL_PROTOCOL_VERSION),
+        id: controlIdSchema.nullable(),
+        ok: z9.literal(true),
+        data: z9.unknown()
+      }),
+      z9.object({
+        v: z9.literal(CONTROL_PROTOCOL_VERSION),
+        id: controlIdSchema.nullable(),
+        ok: z9.literal(false),
+        error: controlErrorSchema
+      })
+    ]);
+    controlEventSchema = z9.object({
+      v: z9.literal(CONTROL_PROTOCOL_VERSION),
+      event: z9.string().min(1),
+      data: z9.unknown()
+    });
+    agentStatusEventSchema = z9.object({
+      ts: z9.string(),
+      session: z9.string(),
+      from: agentStatusSchema.nullable(),
+      to: agentStatusSchema
+    });
+    agentsParamsSchema = z9.object({
+      session: z9.string().optional()
+    });
+    sendParamsSchema = z9.object({
+      session: z9.string().min(1),
+      target: z9.string().min(1),
+      message: z9.string().min(1),
+      noEnter: z9.boolean().optional(),
+      dir: z9.string().optional()
+    });
+    CONTROL_WAIT_MAX_TIMEOUT_MS = 6e5;
+    waitTimeoutSchema = z9.number().int().positive().max(CONTROL_WAIT_MAX_TIMEOUT_MS).optional();
+    waitParamsSchema = z9.discriminatedUnion("kind", [
+      z9.object({
+        kind: z9.literal("agent-status"),
+        session: z9.string().min(1),
+        status: agentStatusSchema,
+        timeoutMs: waitTimeoutSchema
+      }),
+      z9.object({
+        kind: z9.literal("output"),
+        target: z9.string().min(1),
+        match: z9.string().min(1),
+        timeoutMs: waitTimeoutSchema
+      })
+    ]);
+    spawnPlacementSchema = z9.enum(["window", "split-h", "split-v"]);
+    spawnParamsSchema = z9.object({
+      kind: z9.string().min(1).optional(),
+      command: z9.string().min(1).optional(),
+      session: z9.string().min(1).optional(),
+      sessionName: z9.string().min(1).optional(),
+      dir: z9.string().optional(),
+      placement: spawnPlacementSchema.optional(),
+      paneId: z9.string().optional()
+    }).refine((p) => Boolean(p.kind) !== Boolean(p.command), {
+      message: "exactly one of `kind` or `command` is required"
+    }).refine((p) => Boolean(p.session) || Boolean(p.sessionName), {
+      message: "`session` (spawn into it) or `sessionName` (create it) is required"
+    }).refine((p) => !(p.placement && p.placement !== "window") || Boolean(p.paneId), {
+      message: "split placements need `paneId`"
+    });
+    restartAgentParamsSchema = z9.object({
+      paneId: z9.string().min(1),
+      kind: z9.string().min(1).optional(),
+      command: z9.string().min(1).optional()
+    }).refine((p) => Boolean(p.kind) || Boolean(p.command), {
+      message: "`kind` or `command` is required"
+    });
+    stopAgentParamsSchema = z9.object({
+      paneId: z9.string().min(1)
+    });
+    explainParamsSchema = z9.object({
+      target: z9.string().min(1)
+    });
+    subscribeParamsSchema = z9.object({}).loose();
+  }
+});
+
 // packages/contracts/src/index.ts
 var init_src2 = __esm({
   "packages/contracts/src/index.ts"() {
@@ -1373,6 +1476,7 @@ var init_src2 = __esm({
     init_actions_contract();
     init_actions_errors();
     init_terminals();
+    init_control();
   }
 });
 
@@ -3932,37 +4036,37 @@ var init_kitty_keys = __esm({
 });
 
 // packages/daemon/src/schemas/registry.ts
-import { z as z9 } from "zod";
+import { z as z10 } from "zod";
 var RegisteredProjectSchemaZ, RegisterProjectRequestSchemaZ, InitProjectRequestSchemaZ, ProjectTemplateSchemaZ;
 var init_registry = __esm({
   "packages/daemon/src/schemas/registry.ts"() {
     "use strict";
-    RegisteredProjectSchemaZ = z9.object({
+    RegisteredProjectSchemaZ = z10.object({
       /** Unique registry key. Defaults to `basename(dir)`; collisions resolved by appending `-2`, `-3`, … */
-      name: z9.string(),
+      name: z10.string(),
       /** Absolute path to the project directory. */
-      dir: z9.string(),
+      dir: z10.string(),
       /** Whether `<dir>/ide.yml` exists; refreshed on register and on `probe()`. */
-      hasIdeYml: z9.boolean(),
+      hasIdeYml: z10.boolean(),
       /** Git remote origin URL, or `null` if not a git repo / no origin / probe failed. */
-      gitOrigin: z9.string().nullable(),
+      gitOrigin: z10.string().nullable(),
       /** Current git branch, or `null` if not a git repo / detached HEAD / probe failed. */
-      gitBranch: z9.string().nullable(),
+      gitBranch: z10.string().nullable(),
       /** ISO-8601 timestamp the project was first registered. */
-      registeredAt: z9.string()
+      registeredAt: z10.string()
     });
-    RegisterProjectRequestSchemaZ = z9.object({
-      dir: z9.string().min(1),
-      name: z9.string().min(1).optional()
+    RegisterProjectRequestSchemaZ = z10.object({
+      dir: z10.string().min(1),
+      name: z10.string().min(1).optional()
     });
-    InitProjectRequestSchemaZ = z9.object({
-      dir: z9.string().min(1),
-      template: z9.string().min(1).optional()
+    InitProjectRequestSchemaZ = z10.object({
+      dir: z10.string().min(1),
+      template: z10.string().min(1).optional()
     });
-    ProjectTemplateSchemaZ = z9.object({
-      id: z9.string(),
-      label: z9.string(),
-      description: z9.string()
+    ProjectTemplateSchemaZ = z10.object({
+      id: z10.string(),
+      label: z10.string(),
+      description: z10.string()
     });
   }
 });
@@ -4024,7 +4128,7 @@ import { EventEmitter } from "node:events";
 import { existsSync as existsSync12, mkdirSync as mkdirSync7, readFileSync as readFileSync7, renameSync as renameSync3, writeFileSync as writeFileSync8 } from "node:fs";
 import { homedir as homedir9 } from "node:os";
 import { dirname as dirname10, isAbsolute as isAbsolute2, join as join9, resolve as resolve8 } from "node:path";
-import { z as z10 } from "zod";
+import { z as z11 } from "zod";
 function applyAction(state, action) {
   switch (action.type) {
     case "register":
@@ -4159,9 +4263,9 @@ var init_project_registry = __esm({
     init_registry();
     init_project_probe();
     REGISTRY_DIR_ENV = "TMUX_IDE_REGISTRY_DIR";
-    RegistryFileSchemaZ = z10.object({
-      version: z10.literal(1),
-      projects: z10.array(RegisteredProjectSchemaZ)
+    RegistryFileSchemaZ = z11.object({
+      version: z11.literal(1),
+      projects: z11.array(RegisteredProjectSchemaZ)
     });
     ProjectRegistryError = class extends Error {
       code;
@@ -4551,7 +4655,7 @@ var init_notify = __esm({
 import { existsSync as existsSync15, mkdirSync as mkdirSync9, readFileSync as readFileSync9, renameSync as renameSync5, writeFileSync as writeFileSync9 } from "node:fs";
 import { homedir as homedir11 } from "node:os";
 import { dirname as dirname11, join as join11 } from "node:path";
-import { z as z11 } from "zod";
+import { z as z12 } from "zod";
 function isBareShell(cmd) {
   return /^-?(zsh|bash|sh|fish|dash|ksh|tcsh|csh|nu)$/.test(cmd.trim());
 }
@@ -4723,32 +4827,32 @@ var init_snapshot2 = __esm({
     init_src();
     init_process_tree();
     init_sessions2();
-    PaneSnapshotSchemaZ = z11.object({
-      index: z11.number(),
-      cwd: z11.string(),
-      command: z11.string().nullable(),
-      agent: z11.string().nullable(),
-      agentSessionId: z11.string().nullable(),
-      agentState: z11.string().nullable(),
-      title: z11.string()
+    PaneSnapshotSchemaZ = z12.object({
+      index: z12.number(),
+      cwd: z12.string(),
+      command: z12.string().nullable(),
+      agent: z12.string().nullable(),
+      agentSessionId: z12.string().nullable(),
+      agentState: z12.string().nullable(),
+      title: z12.string()
     });
-    WindowSnapshotSchemaZ = z11.object({
-      index: z11.number(),
-      name: z11.string(),
-      active: z11.boolean(),
-      layout: z11.string(),
-      panes: z11.array(PaneSnapshotSchemaZ)
+    WindowSnapshotSchemaZ = z12.object({
+      index: z12.number(),
+      name: z12.string(),
+      active: z12.boolean(),
+      layout: z12.string(),
+      panes: z12.array(PaneSnapshotSchemaZ)
     });
-    SessionSnapshotSchemaZ = z11.object({
-      name: z11.string(),
-      cwd: z11.string(),
-      adopted: z11.boolean(),
-      windows: z11.array(WindowSnapshotSchemaZ)
+    SessionSnapshotSchemaZ = z12.object({
+      name: z12.string(),
+      cwd: z12.string(),
+      adopted: z12.boolean(),
+      windows: z12.array(WindowSnapshotSchemaZ)
     });
-    FleetSnapshotSchemaZ = z11.object({
-      version: z11.literal(1),
-      savedAt: z11.string(),
-      sessions: z11.array(SessionSnapshotSchemaZ)
+    FleetSnapshotSchemaZ = z12.object({
+      version: z12.literal(1),
+      savedAt: z12.string(),
+      sessions: z12.array(SessionSnapshotSchemaZ)
     });
     SNAPSHOT_PANE_FORMAT = [
       "#{session_name}",
@@ -4785,6 +4889,7 @@ __export(updater_exports, {
   UPDATER_SESSION: () => UPDATER_SESSION,
   adoptedSessionsFrom: () => adoptedSessionsFrom,
   enrichEvents: () => enrichEvents,
+  fleetStatuses: () => fleetStatuses,
   listAdoptedSessions: () => listAdoptedSessions,
   paneLocation: () => paneLocation,
   pickRepresentativePane: () => pickRepresentativePane,
@@ -5441,7 +5546,7 @@ function waitForPaneCommand(targetPane, expectedCommands, {
   attempts = 20,
   delayMs = 100,
   getCurrentCommand = getPaneCurrentCommand,
-  sleep = sleepMs
+  sleep: sleep2 = sleepMs
 } = {}) {
   const allowed = new Set(expectedCommands.map((command2) => command2.toLowerCase()));
   for (let attempt = 0; attempt < attempts; attempt++) {
@@ -5451,7 +5556,7 @@ function waitForPaneCommand(targetPane, expectedCommands, {
     } catch {
     }
     if (attempt < attempts - 1) {
-      sleep(delayMs);
+      sleep2(delayMs);
     }
   }
   return false;
@@ -7141,7 +7246,7 @@ import { EventEmitter as EventEmitter3 } from "node:events";
 import { existsSync as existsSync23, mkdirSync as mkdirSync13, readFileSync as readFileSync14, renameSync as renameSync8, writeFileSync as writeFileSync13 } from "node:fs";
 import { homedir as homedir14 } from "node:os";
 import { dirname as dirname17, join as join16 } from "node:path";
-import { z as z12 } from "zod";
+import { z as z13 } from "zod";
 function getDefaultWorkspaceRegistry() {
   if (!_default) _default = new WorkspaceRegistry();
   return _default;
@@ -7164,9 +7269,9 @@ var init_workspace_registry = __esm({
     "use strict";
     init_src2();
     REGISTRY_DIR_ENV3 = "TMUX_IDE_REGISTRY_DIR";
-    RegistryFileSchemaZ2 = z12.object({
-      version: z12.literal(1),
-      workspaces: z12.array(WorkspaceSchemaZ)
+    RegistryFileSchemaZ2 = z13.object({
+      version: z13.literal(1),
+      workspaces: z13.array(WorkspaceSchemaZ)
     });
     WorkspaceAlreadyExistsError = class extends Error {
       code = "ALREADY_EXISTS";
@@ -7814,6 +7919,57 @@ function prepareMessage(message, busyStatus) {
   }
   return message;
 }
+function deliverMessage(opts) {
+  const { session, target, noEnter, dir } = opts;
+  const state = getSessionState(session);
+  if (!state.running) {
+    throw new IdeError(`Session "${session}" is not running`, {
+      code: "SESSION_NOT_FOUND"
+    });
+  }
+  const panes = listSessionPanes(session);
+  const pane = resolvePane(panes, target);
+  if (!pane) {
+    const available = panes.map((p) => {
+      const label = p.name ?? p.title;
+      return `  ${p.id}  ${label}${p.role ? ` (${p.role})` : ""}`;
+    }).join("\n");
+    throw new IdeError(`Pane "${target}" not found.
+
+Available panes:
+${available}`, {
+      code: "PANE_NOT_FOUND"
+    });
+  }
+  const busyStatus = getPaneBusyStatus(session, pane.id);
+  const message = prepareMessage(opts.message, busyStatus);
+  let sentViaFile = false;
+  if (noEnter) {
+    sendText(session, pane.id, message);
+  } else {
+    const dispatch = dir ? writeDispatchFile(dir, pane.id, message) : null;
+    if (dispatch) {
+      sendCommand(session, pane.id, dispatch.triggerCmd);
+      sentViaFile = true;
+    } else {
+      sendCommand(session, pane.id, message);
+    }
+  }
+  return {
+    ok: true,
+    session,
+    target: {
+      paneId: pane.id,
+      name: pane.name,
+      title: pane.title,
+      role: pane.role
+    },
+    message,
+    busyStatus,
+    sentViaFile,
+    ...busyStatus === "agent" ? { warning: "agent_busy" } : {}
+  };
+}
 async function send(targetDir, opts) {
   const dir = resolve17(targetDir ?? ".");
   const { name: session } = getSessionName(dir);
@@ -7828,61 +7984,16 @@ async function send(targetDir, opts) {
       code: "USAGE"
     });
   }
-  const state = getSessionState(session);
-  if (!state.running) {
-    throw new IdeError(`Session "${session}" is not running`, {
-      code: "SESSION_NOT_FOUND"
-    });
-  }
-  const panes = listSessionPanes(session);
-  const pane = resolvePane(panes, target);
-  if (!pane) {
-    const available = panes.map((p) => {
-      const label2 = p.name ?? p.title;
-      return `  ${p.id}  ${label2}${p.role ? ` (${p.role})` : ""}`;
-    }).join("\n");
-    throw new IdeError(`Pane "${target}" not found.
-
-Available panes:
-${available}`, {
-      code: "PANE_NOT_FOUND"
-    });
-  }
-  const busyStatus = getPaneBusyStatus(session, pane.id);
-  const message = prepareMessage(rawMessage, busyStatus);
-  let sentViaFile = false;
-  if (noEnter) {
-    sendText(session, pane.id, message);
-  } else {
-    const dispatch = writeDispatchFile(dir, pane.id, message);
-    if (dispatch) {
-      sendCommand(session, pane.id, dispatch.triggerCmd);
-      sentViaFile = true;
-    } else {
-      sendCommand(session, pane.id, message);
-    }
-  }
-  const result = {
-    ok: true,
-    session,
-    target: {
-      paneId: pane.id,
-      name: pane.name,
-      title: pane.title,
-      role: pane.role
-    },
-    message,
-    busyStatus,
-    sentViaFile,
-    ...busyStatus === "agent" ? { warning: "agent_busy" } : {}
-  };
+  const result = deliverMessage({ session, target, message: rawMessage, noEnter, dir });
+  const { message, busyStatus } = result;
+  const pane = result.target;
   if (json2) {
     console.log(JSON.stringify(result, null, 2));
     return;
   }
   const label = pane.name ?? pane.title;
   const preview = message.length > 60 ? message.slice(0, 60) + "..." : message;
-  console.log(`Sent to "${label}" (${pane.id}): ${preview}`);
+  console.log(`Sent to "${label}" (${pane.paneId}): ${preview}`);
   if (busyStatus === "agent") {
     console.log("Warning: agent appears busy. Message sent anyway.");
   }
@@ -7959,74 +8070,74 @@ var init_log = __esm({
 });
 
 // packages/daemon/src/command-center/schemas.ts
-import { z as z13 } from "zod";
+import { z as z14 } from "zod";
 var updateTaskSchema, createTaskSchema, savePlanSchema, savePlanContentSchema, sendCommandSchema, createMilestoneSchema, updateMilestoneSchema, updateAssertionSchema, triggerResearchSchema, launchSchema, stopSchema, skillNameRegex, createSkillSchema, updateSkillSchema;
 var init_schemas = __esm({
   "packages/daemon/src/command-center/schemas.ts"() {
     "use strict";
-    updateTaskSchema = z13.object({
-      status: z13.enum(["todo", "in-progress", "review", "done"]).optional(),
-      assignee: z13.string().optional(),
-      title: z13.string().optional(),
-      description: z13.string().optional(),
-      priority: z13.number().optional()
+    updateTaskSchema = z14.object({
+      status: z14.enum(["todo", "in-progress", "review", "done"]).optional(),
+      assignee: z14.string().optional(),
+      title: z14.string().optional(),
+      description: z14.string().optional(),
+      priority: z14.number().optional()
     });
-    createTaskSchema = z13.object({
-      title: z13.string().trim().min(1, "Title is required"),
-      description: z13.string().optional(),
-      priority: z13.number().optional(),
-      goal: z13.string().optional(),
-      tags: z13.array(z13.string()).optional()
+    createTaskSchema = z14.object({
+      title: z14.string().trim().min(1, "Title is required"),
+      description: z14.string().optional(),
+      priority: z14.number().optional(),
+      goal: z14.string().optional(),
+      tags: z14.array(z14.string()).optional()
     });
-    savePlanSchema = z13.object({
-      content: z13.string().max(1e6, "Plan content is too large")
+    savePlanSchema = z14.object({
+      content: z14.string().max(1e6, "Plan content is too large")
     });
-    savePlanContentSchema = z13.object({
-      content: z13.string().max(1e6, "Plan content is too large")
+    savePlanContentSchema = z14.object({
+      content: z14.string().max(1e6, "Plan content is too large")
     });
-    sendCommandSchema = z13.object({
-      target: z13.string().min(1, "Target pane is required"),
-      message: z13.string().min(1, "Message is required"),
-      noEnter: z13.boolean().optional()
+    sendCommandSchema = z14.object({
+      target: z14.string().min(1, "Target pane is required"),
+      message: z14.string().min(1, "Message is required"),
+      noEnter: z14.boolean().optional()
     });
-    createMilestoneSchema = z13.object({
-      title: z13.string().trim().min(1, "Title is required"),
-      sequence: z13.number().int().positive(),
-      description: z13.string().optional()
+    createMilestoneSchema = z14.object({
+      title: z14.string().trim().min(1, "Title is required"),
+      sequence: z14.number().int().positive(),
+      description: z14.string().optional()
     });
-    updateMilestoneSchema = z13.object({
-      status: z13.enum(["locked", "active", "done", "validating"]).optional(),
-      title: z13.string().optional(),
-      description: z13.string().optional()
+    updateMilestoneSchema = z14.object({
+      status: z14.enum(["locked", "active", "done", "validating"]).optional(),
+      title: z14.string().optional(),
+      description: z14.string().optional()
     });
-    updateAssertionSchema = z13.object({
-      status: z13.enum(["pending", "passing", "failing", "blocked"]),
-      evidence: z13.string().optional(),
-      verifiedBy: z13.string().optional()
+    updateAssertionSchema = z14.object({
+      status: z14.enum(["pending", "passing", "failing", "blocked"]),
+      evidence: z14.string().optional(),
+      verifiedBy: z14.string().optional()
     });
-    triggerResearchSchema = z13.object({
-      type: z13.string().trim().min(1, "Research type is required")
+    triggerResearchSchema = z14.object({
+      type: z14.string().trim().min(1, "Research type is required")
     });
-    launchSchema = z13.object({
-      attach: z13.boolean().optional()
+    launchSchema = z14.object({
+      attach: z14.boolean().optional()
     }).optional();
-    stopSchema = z13.object({}).optional();
+    stopSchema = z14.object({}).optional();
     skillNameRegex = /^[A-Za-z0-9._ -]+$/;
-    createSkillSchema = z13.object({
-      name: z13.string().trim().min(1, "Skill name is required").regex(
+    createSkillSchema = z14.object({
+      name: z14.string().trim().min(1, "Skill name is required").regex(
         skillNameRegex,
         "Skill name may only contain letters, digits, dot, dash, underscore, or space"
       ),
-      role: z13.string().trim().optional(),
-      description: z13.string().optional(),
-      specialties: z13.array(z13.string()).optional(),
-      body: z13.string().optional()
+      role: z14.string().trim().optional(),
+      description: z14.string().optional(),
+      specialties: z14.array(z14.string()).optional(),
+      body: z14.string().optional()
     });
-    updateSkillSchema = z13.object({
-      role: z13.string().trim().optional(),
-      description: z13.string().optional(),
-      specialties: z13.array(z13.string()).optional(),
-      body: z13.string().optional()
+    updateSkillSchema = z14.object({
+      role: z14.string().trim().optional(),
+      description: z14.string().optional(),
+      specialties: z14.array(z14.string()).optional(),
+      body: z14.string().optional()
     });
   }
 });
@@ -8630,8 +8741,8 @@ var init_terminal_respawn = __esm({
 // packages/daemon/src/command-center/actions/handlers/terminal-stop.ts
 function terminalStopHandler(input, deps2 = {}) {
   const registry = deps2.registry ?? defaultPtyBridgeRegistry;
-  const ok = registry.delete(input.terminalId);
-  if (!ok) {
+  const ok2 = registry.delete(input.terminalId);
+  if (!ok2) {
     throw new ActionError({
       code: "terminal_not_found",
       message: `No terminal bridge for id "${input.terminalId}"`,
@@ -9039,56 +9150,56 @@ var init_project_init_runner = __esm({
 });
 
 // packages/daemon/src/schemas/inspect.ts
-import { z as z14 } from "zod";
+import { z as z15 } from "zod";
 var ProjectInspectDetectedSchemaZ, ProjectInspectSchemaZ, InspectFilesystemRequestSchemaZ, OnboardProjectRequestSchemaZ;
 var init_inspect = __esm({
   "packages/daemon/src/schemas/inspect.ts"() {
     "use strict";
-    ProjectInspectDetectedSchemaZ = z14.object({
+    ProjectInspectDetectedSchemaZ = z15.object({
       /** Detected package manager from lockfile, or `null`. */
-      packageManager: z14.enum(["pnpm", "npm", "yarn", "bun"]).nullable(),
+      packageManager: z15.enum(["pnpm", "npm", "yarn", "bun"]).nullable(),
       /** Detected frameworks (e.g. `["next", "convex"]`). Empty array when none. */
-      frameworks: z14.array(z14.string()),
+      frameworks: z15.array(z15.string()),
       /** Suggested dev command (e.g. `pnpm dev`). `null` if no dev script found. */
-      devCommand: z14.string().nullable(),
+      devCommand: z15.string().nullable(),
       /** Suggested test command (e.g. `pnpm test`). `null` if no test script found. */
-      testCommand: z14.string().nullable()
+      testCommand: z15.string().nullable()
     });
-    ProjectInspectSchemaZ = z14.object({
+    ProjectInspectSchemaZ = z15.object({
       /** Sanitized basename of the directory — safe to use as a tmux session name. */
-      name: z14.string(),
+      name: z15.string(),
       /** Absolute, canonical path to the directory. */
-      dir: z14.string(),
+      dir: z15.string(),
       /** Whether `<dir>/ide.yml` exists. */
-      hasIdeYml: z14.boolean(),
+      hasIdeYml: z15.boolean(),
       /** Git remote origin URL, or `null` if not a git repo / no origin / probe failed. */
-      gitOrigin: z14.string().nullable(),
+      gitOrigin: z15.string().nullable(),
       /** Current git branch, or `null` if not a git repo / detached HEAD / probe failed. */
-      gitBranch: z14.string().nullable(),
+      gitBranch: z15.string().nullable(),
       /** Detected stack signals (reuses `tmux-ide detect` logic). */
       detected: ProjectInspectDetectedSchemaZ
     });
-    InspectFilesystemRequestSchemaZ = z14.object({
-      dir: z14.string().min(1)
+    InspectFilesystemRequestSchemaZ = z15.object({
+      dir: z15.string().min(1)
     });
-    OnboardProjectRequestSchemaZ = z14.object({
-      dir: z14.string().min(1),
+    OnboardProjectRequestSchemaZ = z15.object({
+      dir: z15.string().min(1),
       /** Optional override for the project name — defaults to inspect.name. */
-      name: z14.string().min(1).optional(),
+      name: z15.string().min(1).optional(),
       /** 1, 2, or 3 — how many Claude panes to scaffold in the top row. */
-      agents: z14.number().int().min(1).max(3),
+      agents: z15.number().int().min(1).max(3),
       /**
        * Optional per-agent pane titles. When provided, length must equal
        * `agents`; the server uses these as `title:` for the Claude panes
        * instead of the canonical `Lead`/`Teammate N`/`Claude N` defaults.
        */
-      agentNames: z14.array(z14.string().min(1)).optional(),
+      agentNames: z15.array(z15.string().min(1)).optional(),
       /** Dev server command (e.g. `pnpm dev`). Omit / null to skip the dev pane. */
-      devCommand: z14.string().min(1).nullable().optional(),
+      devCommand: z15.string().min(1).nullable().optional(),
       /** Test command (e.g. `pnpm test`). Currently informational; stored for later. */
-      testCommand: z14.string().min(1).nullable().optional(),
+      testCommand: z15.string().min(1).nullable().optional(),
       /** Lint command (e.g. `pnpm lint`). Currently informational; stored for later. */
-      lintCommand: z14.string().min(1).nullable().optional()
+      lintCommand: z15.string().min(1).nullable().optional()
     });
   }
 });
@@ -10819,7 +10930,7 @@ var init_daemon_embed = __esm({
 
 // packages/daemon/src/lib/cli-action-bridge.ts
 import { createRequire as createRequire3 } from "node:module";
-import { z as z15 } from "zod";
+import { z as z16 } from "zod";
 function timeoutSignal3(ms) {
   const controller = new AbortController();
   setTimeout(() => controller.abort(), ms).unref?.();
@@ -10922,7 +11033,7 @@ async function tryDispatchAction(name, input, options = {}) {
       details: failure.data.error.details
     });
   }
-  const success = z15.object({ ok: z15.literal(true), result: contract.result }).safeParse(body);
+  const success = z16.object({ ok: z16.literal(true), result: contract.result }).safeParse(body);
   if (!success.success) return null;
   return success.data.result;
 }
@@ -10933,12 +11044,12 @@ var init_cli_action_bridge = __esm({
     init_contract();
     init_canonical_daemon();
     init_daemon_embed();
-    FailureEnvelopeZ = z15.object({
-      ok: z15.literal(false),
-      error: z15.object({
-        code: z15.string(),
-        message: z15.string(),
-        details: z15.unknown().optional()
+    FailureEnvelopeZ = z16.object({
+      ok: z16.literal(false),
+      error: z16.object({
+        code: z16.string(),
+        message: z16.string(),
+        details: z16.unknown().optional()
       })
     });
     deps = {
@@ -11574,6 +11685,130 @@ var init_report = __esm({
   }
 });
 
+// packages/daemon/src/control/frames.ts
+function encodeFrame(message) {
+  return `${JSON.stringify(message)}
+`;
+}
+function createFrameSplitter() {
+  let buffer = "";
+  return (chunk) => {
+    buffer += chunk;
+    const parts = buffer.split("\n");
+    buffer = parts.pop() ?? "";
+    if (buffer.length > MAX_FRAME_BYTES) {
+      buffer = "";
+      throw new Error(`frame exceeds ${MAX_FRAME_BYTES} bytes without a newline`);
+    }
+    return parts.filter((line) => line.trim().length > 0);
+  };
+}
+var MAX_FRAME_BYTES;
+var init_frames = __esm({
+  "packages/daemon/src/control/frames.ts"() {
+    "use strict";
+    MAX_FRAME_BYTES = 4 * 1024 * 1024;
+  }
+});
+
+// packages/daemon/src/control/dispatch.ts
+function extractId(value) {
+  if (typeof value === "object" && value !== null && "id" in value) {
+    const id = value.id;
+    if (typeof id === "string" || typeof id === "number") return id;
+  }
+  return null;
+}
+async function dispatchLine(line, handlers, ctx) {
+  let raw;
+  try {
+    raw = JSON.parse(line);
+  } catch {
+    return fail(null, "bad-request", "frame is not valid JSON");
+  }
+  const parsed = controlRequestSchema.safeParse(raw);
+  if (!parsed.success) {
+    return fail(
+      extractId(raw),
+      "bad-request",
+      `invalid request envelope (need {v:${CONTROL_PROTOCOL_VERSION}, id, verb})`
+    );
+  }
+  const { id, verb, params } = parsed.data;
+  const handler = handlers[verb];
+  if (!handler) {
+    return fail(id, "unknown-verb", `unknown verb "${verb}"`);
+  }
+  try {
+    return ok(id, await handler(params ?? {}, ctx));
+  } catch (err) {
+    if (err instanceof ControlVerbError) return fail(id, err.code, err.message);
+    if (err instanceof IdeError) {
+      const code = err.code === "USAGE" ? "bad-request" : "not-found";
+      return fail(id, code, err.message);
+    }
+    return fail(id, "internal", err?.message ?? "internal error");
+  }
+}
+var ControlVerbError, ok, fail;
+var init_dispatch = __esm({
+  "packages/daemon/src/control/dispatch.ts"() {
+    "use strict";
+    init_src2();
+    init_errors2();
+    ControlVerbError = class extends Error {
+      code;
+      constructor(code, message) {
+        super(message);
+        this.code = code;
+      }
+    };
+    ok = (id, data) => ({
+      v: CONTROL_PROTOCOL_VERSION,
+      id,
+      ok: true,
+      data
+    });
+    fail = (id, code, message) => ({
+      v: CONTROL_PROTOCOL_VERSION,
+      id,
+      ok: false,
+      error: { code, message }
+    });
+  }
+});
+
+// packages/daemon/src/control/fanout.ts
+function createFanout(edges = {}) {
+  const sinks = /* @__PURE__ */ new Set();
+  const remove = (sink) => {
+    if (!sinks.delete(sink)) return;
+    if (sinks.size === 0) edges.onLast?.();
+  };
+  return {
+    add(sink) {
+      sinks.add(sink);
+      if (sinks.size === 1) edges.onFirst?.();
+      return () => remove(sink);
+    },
+    emit(event) {
+      for (const sink of [...sinks]) {
+        try {
+          sink(event);
+        } catch {
+          remove(sink);
+        }
+      }
+    },
+    size: () => sinks.size
+  };
+}
+var init_fanout = __esm({
+  "packages/daemon/src/control/fanout.ts"() {
+    "use strict";
+  }
+});
+
 // packages/daemon/src/agent-explain.ts
 var agent_explain_exports = {};
 __export(agent_explain_exports, {
@@ -11769,6 +12004,578 @@ var init_agent_explain = __esm({
   }
 });
 
+// packages/daemon/src/tui/team/wait.ts
+var wait_exports = {};
+__export(wait_exports, {
+  WAIT_DEFAULT_TIMEOUT_MS: () => WAIT_DEFAULT_TIMEOUT_MS,
+  WAIT_OUTPUT_POLL_MS: () => WAIT_OUTPUT_POLL_MS,
+  WAIT_STATUS_POLL_MS: () => WAIT_STATUS_POLL_MS,
+  matchOutput: () => matchOutput,
+  waitForAgentStatus: () => waitForAgentStatus,
+  waitForOutputMatch: () => waitForOutputMatch
+});
+function matchOutput(text, pattern) {
+  const lines = text.split("\n");
+  for (const line of lines) {
+    if (new RegExp(pattern).test(line)) return line;
+  }
+  if (new RegExp(pattern).test(text)) return lines[lines.length - 1] ?? "";
+  return null;
+}
+async function waitForAgentStatus(session, want, opts = {}) {
+  const timeoutMs = opts.timeoutMs ?? WAIT_DEFAULT_TIMEOUT_MS;
+  const pollMs = opts.pollMs ?? WAIT_STATUS_POLL_MS;
+  const tracker = opts.tracker ?? createStatusTracker();
+  const list = opts.listSessions ?? listTeamSessions;
+  const now = opts.now ?? Date.now;
+  const sleep2 = opts.sleep ?? sleepMs3;
+  const started = now();
+  for (; ; ) {
+    const status2 = findSessionStatus(list(tracker), session);
+    if (status2 === want) return { ok: true, session, want, status: status2 };
+    if (now() - started >= timeoutMs) {
+      return { ok: false, session, want, status: status2, timedOutAfterMs: timeoutMs };
+    }
+    await sleep2(pollMs);
+  }
+}
+async function waitForOutputMatch(target, pattern, opts = {}) {
+  new RegExp(pattern);
+  const timeoutMs = opts.timeoutMs ?? WAIT_DEFAULT_TIMEOUT_MS;
+  const pollMs = opts.pollMs ?? WAIT_OUTPUT_POLL_MS;
+  const capture = opts.capture ?? defaultCapture;
+  const now = opts.now ?? Date.now;
+  const sleep2 = opts.sleep ?? sleepMs3;
+  const started = now();
+  for (; ; ) {
+    let text = "";
+    try {
+      text = capture(target);
+    } catch {
+    }
+    const matched = matchOutput(text, pattern);
+    if (matched !== null) return { ok: true, target, pattern, matched };
+    if (now() - started >= timeoutMs) {
+      return { ok: false, target, pattern, matched: null, timedOutAfterMs: timeoutMs };
+    }
+    await sleep2(pollMs);
+  }
+}
+function defaultCapture(target) {
+  return capturePane(target, { lines: 200 });
+}
+var WAIT_DEFAULT_TIMEOUT_MS, WAIT_STATUS_POLL_MS, WAIT_OUTPUT_POLL_MS, sleepMs3;
+var init_wait = __esm({
+  "packages/daemon/src/tui/team/wait.ts"() {
+    "use strict";
+    init_src();
+    init_classify();
+    init_report();
+    init_sessions2();
+    WAIT_DEFAULT_TIMEOUT_MS = 6e4;
+    WAIT_STATUS_POLL_MS = 750;
+    WAIT_OUTPUT_POLL_MS = 500;
+    sleepMs3 = (ms) => new Promise((r) => setTimeout(r, ms));
+  }
+});
+
+// packages/daemon/src/tui/mirror/agent-lifecycle.ts
+function launchCommandFor(kind, manifests) {
+  const mapped = AGENT_LAUNCH_COMMANDS[kind];
+  if (mapped) return mapped;
+  const m = manifests.find((x) => x.id === kind);
+  return m?.commands[0] ?? kind;
+}
+function spawnAgentArgs(placement, target, dir, command2) {
+  const cd = dir ? ["-c", dir] : [];
+  if (placement === "window") return ["new-window", "-t", `${target.session}:`, ...cd, command2];
+  const flag = placement === "split-h" ? "-h" : "-v";
+  return ["split-window", flag, "-t", target.paneId ?? `${target.session}:`, ...cd, command2];
+}
+function spawnSessionArgs(name, dir, command2) {
+  return ["new-session", "-d", "-s", name, ...dir ? ["-c", dir] : [], command2];
+}
+function isShellCommand(command2, manifests) {
+  const name = command2.replace(/^-/, "").split("/").pop() ?? command2;
+  const shell = manifests.find((m) => m.id === "shell");
+  return [...shell?.commands ?? [], ...EXTRA_SHELLS].includes(name);
+}
+function paneHostsShell(startCommand, manifests) {
+  const first = startCommand.trim().split(/\s+/)[0] ?? "";
+  if (first.length === 0) return true;
+  return isShellCommand(first, manifests);
+}
+function respawnArgs(paneId, command2, dir) {
+  return ["respawn-pane", "-k", "-t", paneId, ...dir ? ["-c", dir] : [], command2];
+}
+function interruptArgs(paneId) {
+  return ["send-keys", "-t", paneId, "C-c"];
+}
+function relaunchArgs(paneId, command2) {
+  return [
+    ["send-keys", "-t", paneId, "-l", command2],
+    ["send-keys", "-t", paneId, "Enter"]
+  ];
+}
+function clearAuthorityArgs(paneId) {
+  return [
+    ["set-option", "-p", "-t", paneId, "-u", "@agent_state"],
+    ["set-option", "-p", "-t", paneId, "-u", "@agent_session_id"]
+  ];
+}
+var AGENT_LAUNCH_COMMANDS, EXTRA_SHELLS, INTERRUPT_TAP_GAP_MS, RESTART_GRACE_MS;
+var init_agent_lifecycle = __esm({
+  "packages/daemon/src/tui/mirror/agent-lifecycle.ts"() {
+    "use strict";
+    AGENT_LAUNCH_COMMANDS = {
+      claude: "claude",
+      codex: "codex",
+      opencode: "opencode",
+      gemini: "gemini",
+      aider: "aider",
+      copilot: "copilot",
+      cursor: "cursor-agent",
+      goose: "goose",
+      amp: "amp"
+    };
+    EXTRA_SHELLS = ["dash", "ksh", "tcsh", "csh"];
+    INTERRUPT_TAP_GAP_MS = 250;
+    RESTART_GRACE_MS = 1e3;
+  }
+});
+
+// packages/daemon/src/control/lifecycle.ts
+import { execFile as execFile3 } from "node:child_process";
+function tmuxRun(args) {
+  return new Promise((resolve24, reject) => {
+    execFile3("tmux", args, (err, stdout) => err ? reject(err) : resolve24(stdout.trimEnd()));
+  });
+}
+async function tmuxTry(args) {
+  await tmuxRun(args).catch(() => {
+  });
+}
+function resolveLaunchCommand(params) {
+  if (params.command) return params.command;
+  return launchCommandFor(params.kind, getManifests());
+}
+async function spawnAgent(params) {
+  const dir = params.dir ?? null;
+  const argv = params.session ? spawnAgentArgs(
+    params.placement ?? "window",
+    { session: params.session, paneId: params.paneId },
+    dir,
+    params.command
+  ) : spawnSessionArgs(params.sessionName, dir, params.command);
+  const [subcommand, ...rest] = argv;
+  let paneId;
+  try {
+    paneId = await tmuxRun([subcommand, "-P", "-F", "#{pane_id}", ...rest]);
+  } catch (err) {
+    throw new ControlVerbError("not-found", `tmux refused to spawn: ${err.message}`);
+  }
+  const session = params.session ?? params.sessionName;
+  if (!params.session) await tmuxTry(["set-environment", "-t", session, "TMUX_IDE", "1"]);
+  return {
+    paneId,
+    session,
+    command: params.command,
+    placement: params.session ? params.placement ?? "window" : "new-session"
+  };
+}
+async function interruptAgent(paneId) {
+  await tmuxTry(interruptArgs(paneId));
+  await sleep(INTERRUPT_TAP_GAP_MS);
+  await tmuxTry(interruptArgs(paneId));
+}
+async function clearAgentAuthority(paneId) {
+  for (const args of clearAuthorityArgs(paneId)) await tmuxTry(args);
+}
+function paneStartAndPath(paneId) {
+  return tmuxRun(["display", "-p", "-t", paneId, "#{pane_start_command}	#{pane_current_path}"]).then((out) => {
+    const [start2 = "", path2 = ""] = out.split("	");
+    return { start: start2, path: path2 };
+  }).catch(() => null);
+}
+async function stopAgent(paneId) {
+  const live = await paneStartAndPath(paneId);
+  if (!live) throw new ControlVerbError("not-found", `no pane "${paneId}"`);
+  await interruptAgent(paneId);
+  await clearAgentAuthority(paneId);
+  return { paneId, stopped: true };
+}
+async function restartAgent(paneId, command2) {
+  const live = await paneStartAndPath(paneId);
+  if (!live) throw new ControlVerbError("not-found", `no pane "${paneId}"`);
+  if (paneHostsShell(live.start, getManifests())) {
+    await interruptAgent(paneId);
+    await clearAgentAuthority(paneId);
+    await sleep(RESTART_GRACE_MS);
+    for (const args of relaunchArgs(paneId, command2)) await tmuxTry(args);
+    return { paneId, command: command2, strategy: "relaunch" };
+  }
+  await clearAgentAuthority(paneId);
+  await tmuxTry(respawnArgs(paneId, command2, live.path || null));
+  return { paneId, command: command2, strategy: "respawn" };
+}
+var sleep;
+var init_lifecycle = __esm({
+  "packages/daemon/src/control/lifecycle.ts"() {
+    "use strict";
+    init_agent_lifecycle();
+    init_manifest_loader();
+    init_dispatch();
+    sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  }
+});
+
+// packages/daemon/src/control/verbs.ts
+function parse(schema, params) {
+  const result = schema.safeParse(params);
+  if (!result.success) {
+    const issue = result.error.issues[0];
+    const at = issue?.path?.length ? ` at ${issue.path.join(".")}` : "";
+    throw new ControlVerbError("bad-request", `invalid params${at}: ${issue?.message ?? "?"}`);
+  }
+  return result.data;
+}
+function createVerbHandlers(ctx) {
+  return {
+    fleet: () => toFleetJson(listTeamProjects(ctx.tracker)),
+    agents: (params) => {
+      const p = parse(agentsParamsSchema, params);
+      const sessions = listTeamSessions(ctx.tracker);
+      const scoped = p.session ? sessions.filter((s) => s.name === p.session) : sessions;
+      if (p.session && scoped.length === 0) {
+        throw new ControlVerbError("not-found", `no session "${p.session}"`);
+      }
+      return { agents: scoped.flatMap((s) => s.agents ?? []) };
+    },
+    send: (params) => {
+      const p = parse(sendParamsSchema, params);
+      return deliverMessage(p);
+    },
+    wait: async (params) => {
+      const p = parse(waitParamsSchema, params);
+      if (p.kind === "output") {
+        try {
+          new RegExp(p.match);
+        } catch (err) {
+          throw new ControlVerbError(
+            "bad-request",
+            `invalid match regex: ${err.message}`
+          );
+        }
+      }
+      const result = p.kind === "agent-status" ? await waitForAgentStatus(p.session, p.status, { timeoutMs: p.timeoutMs }) : await waitForOutputMatch(p.target, p.match, { timeoutMs: p.timeoutMs });
+      if (!result.ok) {
+        const what = p.kind === "agent-status" ? `"${p.session}" to reach status "${p.status}"` : `${p.target} output to match /${p.match}/`;
+        throw new ControlVerbError(
+          "timeout",
+          `timed out after ${result.timedOutAfterMs}ms waiting for ${what}`
+        );
+      }
+      return result;
+    },
+    spawn: (params) => {
+      const p = parse(spawnParamsSchema, params);
+      return spawnAgent({ ...p, command: resolveLaunchCommand(p) });
+    },
+    "restart-agent": (params) => {
+      const p = parse(restartAgentParamsSchema, params);
+      return restartAgent(p.paneId, resolveLaunchCommand(p));
+    },
+    "stop-agent": (params) => {
+      const p = parse(stopAgentParamsSchema, params);
+      return stopAgent(p.paneId);
+    },
+    explain: (params) => {
+      const p = parse(explainParamsSchema, params);
+      return buildReport(p.target);
+    },
+    subscribe: (_params, verbCtx) => {
+      verbCtx.subscribe();
+      return { subscribed: true, events: ["agent-status"] };
+    }
+  };
+}
+var init_verbs = __esm({
+  "packages/daemon/src/control/verbs.ts"() {
+    "use strict";
+    init_src2();
+    init_agent_explain();
+    init_send();
+    init_report();
+    init_projects();
+    init_sessions2();
+    init_wait();
+    init_dispatch();
+    init_lifecycle();
+  }
+});
+
+// packages/daemon/src/control/server.ts
+var server_exports2 = {};
+__export(server_exports2, {
+  defaultControlSocketPath: () => defaultControlSocketPath,
+  startControlServer: () => startControlServer
+});
+import { chmodSync as chmodSync4, existsSync as existsSync32, mkdirSync as mkdirSync17, statSync as statSync5, unlinkSync } from "node:fs";
+import { createServer as createServer2, connect } from "node:net";
+import { dirname as dirname21, join as join25 } from "node:path";
+function defaultControlSocketPath() {
+  return join25(tuiStateHome(), "control.sock");
+}
+async function claimSocketPath(path2) {
+  if (!existsSync32(path2)) return;
+  if (!statSync5(path2).isSocket()) {
+    throw new IdeError(
+      `${path2} exists and is not a socket \u2014 refusing to remove it. Pass a different --socket path.`,
+      { code: "USAGE", exitCode: 1 }
+    );
+  }
+  const alive = await new Promise((resolve24) => {
+    const probe = connect(path2);
+    const done = (result) => {
+      probe.destroy();
+      resolve24(result);
+    };
+    probe.once("connect", () => done(true));
+    probe.once("error", () => done(false));
+    probe.setTimeout(500, () => done(false));
+  });
+  if (alive) {
+    throw new IdeError(`another server is already listening on ${path2}`, {
+      code: "USAGE",
+      exitCode: 1
+    });
+  }
+  unlinkSync(path2);
+}
+async function startControlServer(opts = {}) {
+  const socketPath = opts.socketPath ?? defaultControlSocketPath();
+  const log = opts.log ?? (() => {
+  });
+  const tickMs = opts.tickMs ?? TICK_MS;
+  mkdirSync17(dirname21(socketPath), { recursive: true });
+  await claimSocketPath(socketPath);
+  const tracker = createStatusTracker();
+  const handlers = createVerbHandlers({ tracker });
+  const prevState = /* @__PURE__ */ new Map();
+  let timer = null;
+  const tick = () => {
+    try {
+      const { events, state } = diffFleet(prevState, fleetStatuses(listTeamProjects(tracker)));
+      prevState.clear();
+      for (const [name, status2] of state) prevState.set(name, status2);
+      const ts = (/* @__PURE__ */ new Date()).toISOString();
+      for (const ev of events) fanout.emit({ ts, ...ev });
+    } catch (err) {
+      log(`event tick failed: ${err.message}`);
+    }
+  };
+  const fanout = createFanout({
+    onFirst: () => {
+      tick();
+      timer = setInterval(tick, tickMs);
+    },
+    onLast: () => {
+      if (timer) clearInterval(timer);
+      timer = null;
+      prevState.clear();
+    }
+  });
+  const connections = /* @__PURE__ */ new Set();
+  const server = createServer2((conn) => {
+    connections.add(conn);
+    conn.setEncoding("utf8");
+    const split = createFrameSplitter();
+    let unsubscribe = null;
+    const push = (ev) => {
+      conn.write(encodeFrame({ v: CONTROL_PROTOCOL_VERSION, event: "agent-status", data: ev }));
+    };
+    const ctx = {
+      subscribe: () => {
+        unsubscribe ??= fanout.add(push);
+      }
+    };
+    conn.on("data", (chunk) => {
+      let lines;
+      try {
+        lines = split(chunk);
+      } catch {
+        conn.destroy();
+        return;
+      }
+      for (const line of lines) {
+        void dispatchLine(line, handlers, ctx).then((response) => {
+          if (!conn.destroyed) conn.write(encodeFrame(response));
+        });
+      }
+    });
+    conn.on("close", () => {
+      unsubscribe?.();
+      connections.delete(conn);
+    });
+    conn.on("error", () => {
+    });
+  });
+  await new Promise((resolve24, reject) => {
+    server.once("error", (err) => {
+      if ((err.code === "EINVAL" || err.code === "ENAMETOOLONG") && socketPath.length > 100) {
+        reject(
+          new IdeError(
+            `socket path is too long for a Unix socket (${socketPath.length} chars; the OS caps it around 104): ${socketPath}
+Pass a shorter path: tmux-ide serve --socket /tmp/tmux-ide-control.sock`,
+            { code: "USAGE", exitCode: 1 }
+          )
+        );
+        return;
+      }
+      reject(err);
+    });
+    server.listen(socketPath, () => {
+      server.removeAllListeners("error");
+      resolve24();
+    });
+  });
+  chmodSync4(socketPath, 384);
+  log(`listening on ${socketPath}`);
+  return {
+    socketPath,
+    close: () => new Promise((resolve24) => {
+      if (timer) clearInterval(timer);
+      timer = null;
+      for (const conn of connections) conn.destroy();
+      server.close(() => {
+        try {
+          unlinkSync(socketPath);
+        } catch {
+        }
+        resolve24();
+      });
+    })
+  };
+}
+var init_server2 = __esm({
+  "packages/daemon/src/control/server.ts"() {
+    "use strict";
+    init_src2();
+    init_errors2();
+    init_tui_binary();
+    init_classify();
+    init_events();
+    init_updater();
+    init_projects();
+    init_dispatch();
+    init_fanout();
+    init_frames();
+    init_verbs();
+  }
+});
+
+// packages/daemon/src/control/client.ts
+var client_exports = {};
+__export(client_exports, {
+  ControlRequestError: () => ControlRequestError,
+  connectControl: () => connectControl
+});
+import { connect as connect2 } from "node:net";
+function connectControl(opts = {}) {
+  const path2 = opts.socketPath ?? defaultControlSocketPath();
+  return new Promise((resolve24, reject) => {
+    const socket = connect2(path2);
+    socket.once("error", reject);
+    socket.once("connect", () => {
+      socket.removeListener("error", reject);
+      resolve24(wrap(socket));
+    });
+  });
+}
+function wrap(socket) {
+  socket.setEncoding("utf8");
+  const split = createFrameSplitter();
+  const pending = /* @__PURE__ */ new Map();
+  const eventSinks = [];
+  let nextId = 1;
+  let markDone;
+  const done = new Promise((r) => {
+    markDone = r;
+  });
+  socket.on("data", (chunk) => {
+    for (const line of split(chunk)) {
+      let raw;
+      try {
+        raw = JSON.parse(line);
+      } catch {
+        continue;
+      }
+      const event = controlEventSchema.safeParse(raw);
+      if (event.success) {
+        for (const sink of eventSinks) sink(event.data);
+        continue;
+      }
+      const response = controlResponseSchema.safeParse(raw);
+      if (!response.success || response.data.id === null) continue;
+      const waiter = pending.get(response.data.id);
+      if (!waiter) continue;
+      pending.delete(response.data.id);
+      if (response.data.ok) waiter.resolve(response.data.data);
+      else {
+        waiter.reject(
+          new ControlRequestError(response.data.error.code, response.data.error.message)
+        );
+      }
+    }
+  });
+  const teardown = () => {
+    for (const { reject } of pending.values()) {
+      reject(new ControlRequestError("disconnected", "control socket closed"));
+    }
+    pending.clear();
+    markDone();
+  };
+  socket.on("close", teardown);
+  socket.on("error", () => {
+  });
+  const request = (verb, params) => {
+    const id = nextId++;
+    return new Promise((resolve24, reject) => {
+      if (socket.destroyed) {
+        reject(new ControlRequestError("disconnected", "control socket closed"));
+        return;
+      }
+      pending.set(id, { resolve: resolve24, reject });
+      socket.write(encodeFrame({ v: CONTROL_PROTOCOL_VERSION, id, verb, params }));
+    });
+  };
+  return {
+    request,
+    subscribe: async (onEvent) => {
+      eventSinks.push(onEvent);
+      await request("subscribe");
+    },
+    close: () => socket.destroy(),
+    done
+  };
+}
+var ControlRequestError;
+var init_client = __esm({
+  "packages/daemon/src/control/client.ts"() {
+    "use strict";
+    init_src2();
+    init_frames();
+    init_server2();
+    ControlRequestError = class extends Error {
+      code;
+      constructor(code, message) {
+        super(message);
+        this.code = code;
+      }
+    };
+  }
+});
+
 // packages/daemon/src/lib/worktree.ts
 var worktree_exports = {};
 __export(worktree_exports, {
@@ -11784,7 +12591,7 @@ __export(worktree_exports, {
   worktreeSessionName: () => worktreeSessionName
 });
 import { execFileSync as execFileSync13 } from "node:child_process";
-import { basename as basename9, dirname as dirname21, isAbsolute as isAbsolute6, join as join25, resolve as resolve22 } from "node:path";
+import { basename as basename9, dirname as dirname22, isAbsolute as isAbsolute6, join as join26, resolve as resolve22 } from "node:path";
 function sanitizeForTmux(part) {
   return part.replace(/[.:/\s]+/g, "-");
 }
@@ -11793,11 +12600,11 @@ function worktreeSessionName(project, branch) {
 }
 function defaultWorktreeBaseDir(repoDir) {
   const abs = resolve22(repoDir);
-  return join25(dirname21(abs), `${basename9(abs)}-worktrees`);
+  return join26(dirname22(abs), `${basename9(abs)}-worktrees`);
 }
 function worktreePath(repoDir, branch, configuredDir) {
   const base = configuredDir && configuredDir.length > 0 ? isAbsolute6(configuredDir) ? configuredDir : resolve22(repoDir, configuredDir) : defaultWorktreeBaseDir(repoDir);
-  return join25(base, branch);
+  return join26(base, branch);
 }
 function parseWorktreeList(porcelain) {
   const entries = [];
@@ -11941,8 +12748,8 @@ __export(update_exports, {
   runUpdate: () => runUpdate
 });
 import { execSync as execSync4 } from "node:child_process";
-import { existsSync as existsSync32 } from "node:fs";
-import { dirname as dirname22, join as join26 } from "node:path";
+import { existsSync as existsSync33 } from "node:fs";
+import { dirname as dirname23, join as join27 } from "node:path";
 function detectPackageManager(cliPath) {
   const p = cliPath.toLowerCase();
   if (/(^|\/)\.?bun(\/|$)/.test(p)) return "bun";
@@ -11988,8 +12795,8 @@ function renderPlan(plan, { current, latest, dryRun }) {
 function findGitCheckoutRoot(startDir) {
   let dir = startDir;
   for (; ; ) {
-    if (existsSync32(join26(dir, ".git"))) return dir;
-    const parent = dirname22(dir);
+    if (existsSync33(join27(dir, ".git"))) return dir;
+    const parent = dirname23(dir);
     if (parent === dir) return null;
     dir = parent;
   }
@@ -12024,7 +12831,7 @@ var command_center_exports = {};
 __export(command_center_exports, {
   startCommandCenter: () => startCommandCenter
 });
-import { createServer as createServer2 } from "node:http";
+import { createServer as createServer3 } from "node:http";
 import { getRequestListener } from "@hono/node-server";
 async function startCommandCenter(options = {}) {
   const port = options.port ?? 6060;
@@ -12034,7 +12841,7 @@ async function startCommandCenter(options = {}) {
   if (options.authConfig) appOpts.authConfig = options.authConfig;
   const app = createApp(appOpts);
   const listener = getRequestListener(app.fetch);
-  const server = createServer2(listener);
+  const server = createServer3(listener);
   return new Promise((resolve24) => {
     server.listen(port, hostname2, () => {
       console.log(`Command Center API on http://${hostname2}:${port}`);
@@ -12050,14 +12857,14 @@ var init_command_center = __esm({
 });
 
 // packages/daemon/src/server/index.ts
-var server_exports2 = {};
-__export(server_exports2, {
+var server_exports3 = {};
+__export(server_exports3, {
   createApp: () => createApp2,
   resolvePort: () => resolvePort,
   start: () => start
 });
-import { createServer as createServer3 } from "node:http";
-import { parse } from "node:url";
+import { createServer as createServer4 } from "node:http";
+import { parse as parse2 } from "node:url";
 import { Hono as Hono2 } from "hono";
 import { getRequestListener as getRequestListener2 } from "@hono/node-server";
 import { WebSocketServer as WebSocketServer3 } from "ws";
@@ -12077,10 +12884,10 @@ function createApp2() {
 async function start(port) {
   const resolvedPort = resolvePort(port);
   const app = createApp2();
-  const server = createServer3(getRequestListener2(app.fetch));
+  const server = createServer4(getRequestListener2(app.fetch));
   const ptyWss = new WebSocketServer3({ noServer: true });
   server.on("upgrade", (req, socket, head3) => {
-    const { pathname } = parse(req.url ?? "/", true);
+    const { pathname } = parse2(req.url ?? "/", true);
     const match = pathname?.match(/^\/ws\/pty\/([^/]+)$/);
     if (!match) {
       socket.destroy();
@@ -12110,7 +12917,7 @@ async function start(port) {
   };
 }
 var DEFAULT_PORT;
-var init_server2 = __esm({
+var init_server3 = __esm({
   "packages/daemon/src/server/index.ts"() {
     "use strict";
     init_ws_route();
@@ -12121,9 +12928,9 @@ var init_server2 = __esm({
 // bin/cli.ts
 init_launch();
 import { parseArgs } from "node:util";
-import { resolve as resolve23, dirname as dirname23, join as join27 } from "node:path";
+import { resolve as resolve23, dirname as dirname24, join as join28 } from "node:path";
 import { execFileSync as execFileSync14 } from "node:child_process";
-import { existsSync as existsSync33 } from "node:fs";
+import { existsSync as existsSync34 } from "node:fs";
 import { fileURLToPath as fileURLToPath9 } from "node:url";
 
 // packages/daemon/src/tui/team/entry.ts
@@ -12960,8 +13767,8 @@ async function restore({
   for (const action of plan.actions) {
     if (action.kind === "skip") continue;
     if (action.kind === "launch") {
-      const ok = await launchProject(action.dir, json2);
-      if (ok) launched.push(action.session);
+      const ok2 = await launchProject(action.dir, json2);
+      if (ok2) launched.push(action.session);
       else {
         const snap = snapshot.sessions.find((s) => s.name === action.session);
         if (snap) {
@@ -13113,7 +13920,7 @@ function hostAttachArgv(insideTmux) {
 }
 
 // bin/cli.ts
-var __dirname6 = dirname23(fileURLToPath9(import.meta.url));
+var __dirname6 = dirname24(fileURLToPath9(import.meta.url));
 var selfPath = fileURLToPath9(import.meta.url);
 var nodeCliPath = selfPath.endsWith(".js") ? selfPath : resolve23(__dirname6, "cli.js");
 var { positionals, values } = parseArgs({
@@ -13215,6 +14022,7 @@ var knownCommands = /* @__PURE__ */ new Set([
   "worktree",
   "update",
   "skill-sync",
+  "serve",
   "command-center",
   "server",
   "help"
@@ -13265,7 +14073,8 @@ ${bold3("Usage:")}
                               ${dim3("Block until a session reaches a status (exit 0 match / 1 timeout)")}
   ${cyan2("tmux-ide wait output")} <pane|session> --match <regex> [--timeout <ms>]
                               ${dim3("Block until a pane's output matches a regex (exit 0 match / 1 timeout)")}
-  ${cyan2("tmux-ide events")} [--follow] [--json]  ${dim3("Stream agent-status transitions (needs an adopted session)")}
+  ${cyan2("tmux-ide events")} [--follow] [--json] [--socket]  ${dim3("Stream agent-status transitions (--socket: push from a running serve)")}
+  ${cyan2("tmux-ide serve")} [--socket <path>]  ${dim3("Local control socket: NDJSON verbs + pushed events (~/.tmux-ide/control.sock)")}
   ${cyan2("tmux-ide adopt")} <session>    ${dim3("Add the live tmux-ide status bar to a session")}
   ${cyan2("tmux-ide adopt --all")}        ${dim3("Adopt every live (non-internal) session")}
   ${cyan2("tmux-ide unadopt")} <session>  ${dim3("Remove the status bar")}
@@ -13327,7 +14136,7 @@ function execBunWidget(surface, scriptPath, args, commandLabel, extraEnv = {}) {
     surface,
     scriptPath,
     args,
-    checkoutExists: existsSync33(scriptPath),
+    checkoutExists: existsSync34(scriptPath),
     bunAvailable: isBunAvailable(),
     compiledBinary: findCompiledTui()
   });
@@ -13359,7 +14168,7 @@ function launchHostedApp(scriptPath, appArgs) {
     surface: "app",
     scriptPath,
     args: appArgs,
-    checkoutExists: existsSync33(scriptPath),
+    checkoutExists: existsSync34(scriptPath),
     bunAvailable: isBunAvailable(),
     compiledBinary: findCompiledTui()
   });
@@ -13401,6 +14210,28 @@ async function printFleetJson() {
   const { toFleetJson: toFleetJson2 } = await Promise.resolve().then(() => (init_report(), report_exports));
   console.log(JSON.stringify(toFleetJson2(listTeamProjects2(createStatusTracker2())), null, 2));
 }
+var socketFlag = values.socket;
+async function waitOverSocket(params) {
+  if (!socketFlag) return null;
+  const { connectControl: connectControl2, ControlRequestError: ControlRequestError2 } = await Promise.resolve().then(() => (init_client(), client_exports));
+  let client;
+  try {
+    client = await connectControl2({
+      socketPath: typeof socketFlag === "string" ? socketFlag : void 0
+    });
+  } catch {
+    return null;
+  }
+  try {
+    const data = await client.request("wait", params);
+    return { timedOut: false, data };
+  } catch (err) {
+    if (err instanceof ControlRequestError2 && err.code === "timeout") return { timedOut: true };
+    return null;
+  } finally {
+    client.close();
+  }
+}
 var teamScriptPath = resolve23(__dirname6, "../packages/daemon/src/tui/team/index.tsx");
 var appScriptPath = resolve23(__dirname6, "../packages/daemon/src/tui/mirror/app.tsx");
 function launchTeamCockpit() {
@@ -13436,7 +14267,7 @@ try {
         }
       }
       const targetDir = resolve23(startTargetDir || ".");
-      const hasIdeYml = existsSync33(join27(targetDir, "ide.yml"));
+      const hasIdeYml = existsSync34(join28(targetDir, "ide.yml"));
       const entry = resolveEntry({
         hasIdeYml,
         teamFlag: values.team === true,
@@ -13592,7 +14423,7 @@ try {
         const pattern = values.match;
         if (!target || typeof pattern !== "string" || pattern.length === 0) {
           console.error(
-            "Usage: tmux-ide wait output <pane|session> --match <regex> [--timeout <ms>]"
+            "Usage: tmux-ide wait output <pane|session> --match <regex> [--timeout <ms>] [--socket[=path]]"
           );
           process.exit(1);
         }
@@ -13602,83 +14433,88 @@ try {
           console.error(`Invalid --match regex: ${err.message}`);
           process.exit(1);
         }
-        const { capturePane: capturePane2 } = await Promise.resolve().then(() => (init_src(), src_exports));
         const outTimeout = Number(values.timeout ?? "60000");
-        const outStart = Date.now();
-        const nap = (ms) => new Promise((r) => setTimeout(r, ms));
-        while (true) {
-          let text = "";
-          try {
-            text = capturePane2(target, { lines: 200 });
-          } catch {
-          }
-          const lines = text.split("\n");
-          let hit = null;
-          for (const line of lines) {
-            if (new RegExp(pattern).test(line)) {
-              hit = line;
-              break;
-            }
-          }
-          if (hit === null && new RegExp(pattern).test(text)) hit = lines[lines.length - 1] ?? "";
-          if (hit !== null) {
-            if (json) console.log(JSON.stringify({ matched: hit }));
-            else console.log(hit);
-            process.exit(0);
-          }
-          if (Date.now() - outStart >= outTimeout) {
+        const viaSocket2 = await waitOverSocket({
+          kind: "output",
+          target,
+          match: pattern,
+          timeoutMs: outTimeout
+        });
+        if (viaSocket2) {
+          if (viaSocket2.timedOut) {
             console.error(
               `Timed out after ${outTimeout}ms waiting for ${target} output to match /${pattern}/`
             );
             process.exit(1);
           }
-          await nap(500);
+          const hit = viaSocket2.data.matched;
+          if (json) console.log(JSON.stringify({ matched: hit }));
+          else console.log(hit);
+          process.exit(0);
         }
+        const { waitForOutputMatch: waitForOutputMatch2 } = await Promise.resolve().then(() => (init_wait(), wait_exports));
+        const result2 = await waitForOutputMatch2(target, pattern, { timeoutMs: outTimeout });
+        if (!result2.ok) {
+          console.error(
+            `Timed out after ${outTimeout}ms waiting for ${target} output to match /${pattern}/`
+          );
+          process.exit(1);
+        }
+        if (json) console.log(JSON.stringify({ matched: result2.matched }));
+        else console.log(result2.matched);
+        process.exit(0);
       }
-      const { createStatusTracker: createStatusTracker2 } = await Promise.resolve().then(() => (init_classify(), classify_exports));
-      const { listTeamSessions: listTeamSessions2 } = await Promise.resolve().then(() => (init_sessions2(), sessions_exports));
-      const { findSessionStatus: findSessionStatus2 } = await Promise.resolve().then(() => (init_report(), report_exports));
       const VALID = /* @__PURE__ */ new Set(["blocked", "working", "done", "idle", "unknown"]);
       const sessionName = positionals[2];
       const want = values.status;
       if (sub !== "agent-status" || !sessionName || typeof want !== "string" || !VALID.has(want)) {
         console.error(
-          "Usage: tmux-ide wait agent-status <session> --status <blocked|working|done|idle|unknown> [--timeout <ms>]"
+          "Usage: tmux-ide wait agent-status <session> --status <blocked|working|done|idle|unknown> [--timeout <ms>] [--socket[=path]]"
         );
         process.exit(1);
       }
       const timeout = Number(values.timeout ?? "60000");
-      const started = Date.now();
-      const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-      const tracker = createStatusTracker2();
-      while (true) {
-        const sessions = listTeamSessions2(tracker);
-        const status2 = findSessionStatus2(sessions, sessionName);
-        if (status2 === want) {
-          if (json) {
-            console.log(JSON.stringify({ session: sessionName, status: status2, ok: true }));
-          } else {
-            console.log(`${sessionName} reached status: ${status2}`);
-          }
-          process.exit(0);
-        }
-        if (Date.now() - started >= timeout) {
+      const viaSocket = await waitOverSocket({
+        kind: "agent-status",
+        session: sessionName,
+        status: want,
+        timeoutMs: timeout
+      });
+      if (viaSocket) {
+        if (viaSocket.timedOut) {
           console.error(
-            `Timed out after ${timeout}ms waiting for ${sessionName} to reach status "${want}" (last: ${status2 ?? "absent"})`
+            `Timed out after ${timeout}ms waiting for ${sessionName} to reach status "${want}"`
           );
           process.exit(1);
         }
-        await sleep(750);
+        if (json) console.log(JSON.stringify({ session: sessionName, status: want, ok: true }));
+        else console.log(`${sessionName} reached status: ${want}`);
+        process.exit(0);
       }
+      const { waitForAgentStatus: waitForAgentStatus2 } = await Promise.resolve().then(() => (init_wait(), wait_exports));
+      const result = await waitForAgentStatus2(
+        sessionName,
+        want,
+        { timeoutMs: timeout }
+      );
+      if (!result.ok) {
+        console.error(
+          `Timed out after ${timeout}ms waiting for ${sessionName} to reach status "${want}" (last: ${result.status ?? "absent"})`
+        );
+        process.exit(1);
+      }
+      if (json) {
+        console.log(JSON.stringify({ session: sessionName, status: result.status, ok: true }));
+      } else {
+        console.log(`${sessionName} reached status: ${result.status}`);
+      }
+      process.exit(0);
+      break;
     }
     case "events": {
-      const { readFileSync: readFileSync19, existsSync: existsSync34, statSync: statSync5, openSync, readSync, closeSync } = await import("node:fs");
+      const { readFileSync: readFileSync19, existsSync: existsSync35, statSync: statSync6, openSync, readSync, closeSync } = await import("node:fs");
       const { eventsPath: eventsPath2, formatEventLine: formatEventLine2 } = await Promise.resolve().then(() => (init_events(), events_exports));
       const path2 = eventsPath2();
-      if (!existsSync34(path2)) {
-        console.log("no events yet \u2014 is a session adopted? (the chrome updater writes events)");
-        break;
-      }
       const paintStatus = (status2, text) => {
         if (noColor || status2 === null) return text;
         const code = status2 === "blocked" ? "203" : status2 === "working" ? "221" : status2 === "done" ? "111" : status2 === "idle" ? "114" : "244";
@@ -13695,15 +14531,40 @@ try {
         } catch {
         }
       };
+      if (values.follow && socketFlag) {
+        const { connectControl: connectControl2 } = await Promise.resolve().then(() => (init_client(), client_exports));
+        const client = await connectControl2({
+          socketPath: typeof socketFlag === "string" ? socketFlag : void 0
+        }).catch(() => null);
+        if (client) {
+          if (existsSync35(path2)) {
+            const backlog = readFileSync19(path2, "utf8").split("\n").filter((l) => l.trim().length > 0);
+            for (const line of backlog.slice(-50)) printLine(line);
+          }
+          await client.subscribe((frame) => {
+            if (frame.event === "agent-status") printLine(JSON.stringify(frame.data));
+          });
+          process.on("SIGINT", () => {
+            client.close();
+            process.exit(0);
+          });
+          await client.done;
+          break;
+        }
+      }
+      if (!existsSync35(path2)) {
+        console.log("no events yet \u2014 is a session adopted? (the chrome updater writes events)");
+        break;
+      }
       const allLines = readFileSync19(path2, "utf8").split("\n").filter((l) => l.trim().length > 0);
       for (const line of allLines.slice(-50)) printLine(line);
       if (!values.follow) break;
-      let offset = statSync5(path2).size;
+      let offset = statSync6(path2).size;
       let leftover = "";
       const timer = setInterval(() => {
         let size;
         try {
-          size = statSync5(path2).size;
+          size = statSync6(path2).size;
         } catch {
           return;
         }
@@ -14102,7 +14963,7 @@ Known panels: ${POPUP_WIDGETS2.join(", ")}.`,
       const mainPath = worktrees[0]?.path ?? repoDir;
       const projectName = getSessionName2(mainPath).name;
       async function openWorktreeSession(wtPath, name) {
-        if (existsSync33(join27(wtPath, "ide.yml"))) {
+        if (existsSync34(join28(wtPath, "ide.yml"))) {
           await launch(wtPath, { attach: false, sessionName: name });
         } else {
           if (!hasSession2(name)) createDetachedSession2(name, wtPath);
@@ -14276,6 +15137,25 @@ Known panels: ${POPUP_WIDGETS2.join(", ")}.`,
       }
       break;
     }
+    case "serve": {
+      const { startControlServer: startControlServer2, defaultControlSocketPath: defaultControlSocketPath2 } = await Promise.resolve().then(() => (init_server2(), server_exports2));
+      const socketPath = typeof socketFlag === "string" ? socketFlag : positionals[1] ?? defaultControlSocketPath2();
+      const server = await startControlServer2({
+        socketPath,
+        log: (m) => console.error(`[serve] ${m}`)
+      });
+      let closing = false;
+      const shutdown = () => {
+        if (closing) return;
+        closing = true;
+        void server.close().then(() => process.exit(0));
+      };
+      process.on("SIGTERM", shutdown);
+      process.on("SIGINT", shutdown);
+      await new Promise(() => {
+      });
+      break;
+    }
     case "command-center": {
       const { startCommandCenter: startCommandCenter2 } = await Promise.resolve().then(() => (init_command_center(), command_center_exports));
       await startCommandCenter2({ port: parseInt(values.port ?? "4000") });
@@ -14288,7 +15168,7 @@ Known panels: ${POPUP_WIDGETS2.join(", ")}.`,
         if (values.port) serverArgs.push("--port", values.port);
         execFileSync14("node", serverArgs, { stdio: "inherit" });
       } else {
-        const { start: start2 } = await Promise.resolve().then(() => (init_server2(), server_exports2));
+        const { start: start2 } = await Promise.resolve().then(() => (init_server3(), server_exports3));
         await start2(values.port ? parseInt(values.port, 10) : void 0);
       }
       break;
