@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { parsePaneGeometry, diffPanes, type PaneGeometry } from "./session-mirror.ts";
+import { parsePaneGeometry, geometryFromLeaves, type PaneGeometry } from "./session-mirror.ts";
+import { parseLayout } from "./layout-parse.ts";
 
 const g = (id: string, left: number, top: number, w: number, h: number, active = false) =>
   ({ id, left, top, width: w, height: h, active, appMouse: false, zoomed: false }) as PaneGeometry;
@@ -21,24 +22,81 @@ describe("parsePaneGeometry", () => {
     expect(a).toMatchObject({ id: "%1", active: true, appMouse: false, zoomed: true });
     expect(b).toMatchObject({ id: "%2", active: false, appMouse: true, zoomed: false });
   });
+  it("ignores extra trailing fields (the sync format appends window_id)", () => {
+    expect(parsePaneGeometry(["%1 0 0 80 20 1 0 0 @387"])).toEqual([g("%1", 0, 0, 80, 20, true)]);
+  });
 });
 
-describe("diffPanes", () => {
-  const prev = [g("%1", 0, 0, 80, 20), g("%2", 81, 0, 79, 20)];
-  it("detects adds and removes", () => {
-    const d = diffPanes(prev, [g("%1", 0, 0, 80, 20), g("%3", 0, 21, 160, 10)]);
-    expect(d.added.map((p) => p.id)).toEqual(["%3"]);
-    expect(d.removed).toEqual(["%2"]);
+describe("geometryFromLeaves", () => {
+  // A real captured visible layout feeds the leaves, as in production.
+  const leaves = parseLayout(
+    "468e,120x40,0,0{60x40,0,0,443,59x40,61,0[59x20,61,0,444,59x19,61,21,445]}",
+  )!.leaves;
+
+  it("builds geometry from leaves with tracked active + appMouse flags", () => {
+    const out = geometryFromLeaves(leaves, [], "%444", new Map([["%444", true]]), false);
+    expect(out).toEqual([
+      {
+        id: "%443",
+        left: 0,
+        top: 0,
+        width: 60,
+        height: 40,
+        active: false,
+        appMouse: false,
+        zoomed: false,
+      },
+      {
+        id: "%444",
+        left: 61,
+        top: 0,
+        width: 59,
+        height: 20,
+        active: true,
+        appMouse: true,
+        zoomed: false,
+      },
+      {
+        id: "%445",
+        left: 61,
+        top: 21,
+        width: 59,
+        height: 19,
+        active: false,
+        appMouse: false,
+        zoomed: false,
+      },
+    ]);
   });
-  it("detects resizes and pure moves separately", () => {
-    const d = diffPanes(prev, [g("%1", 0, 0, 100, 20), g("%2", 101, 0, 79, 20)]);
-    expect(d.resized.map((p) => p.id)).toEqual(["%1"]);
-    expect(d.moved.map((p) => p.id)).toEqual(["%2"]);
+
+  it("falls back to the previous geometry's flags while trackers are silent", () => {
+    const prev = [{ ...g("%443", 0, 0, 60, 40, true), appMouse: true }];
+    const out = geometryFromLeaves(leaves, prev, "", new Map(), false);
+    expect(out[0]).toMatchObject({ id: "%443", active: true, appMouse: true });
+    expect(out[1]).toMatchObject({ id: "%444", active: false, appMouse: false });
   });
-  it("empty diff when identical", () => {
-    const d = diffPanes(prev, prev);
-    expect(d.added).toEqual([]);
-    expect(d.removed).toEqual([]);
-    expect(d.resized).toEqual([]);
+
+  it("the tracked active pane overrides a stale previous flag", () => {
+    const prev = [g("%443", 0, 0, 60, 40, true)];
+    const out = geometryFromLeaves(leaves, prev, "%445", new Map(), false);
+    expect(out.find((p) => p.id === "%443")!.active).toBe(false);
+    expect(out.find((p) => p.id === "%445")!.active).toBe(true);
+  });
+
+  it("stamps the zoom flag on every visible pane", () => {
+    const zoomedLeaves = parseLayout("6a6f,100x30,0,0,445")!.leaves;
+    const out = geometryFromLeaves(zoomedLeaves, [], "%445", new Map(), true);
+    expect(out).toEqual([
+      {
+        id: "%445",
+        left: 0,
+        top: 0,
+        width: 100,
+        height: 30,
+        active: true,
+        appMouse: false,
+        zoomed: true,
+      },
+    ]);
   });
 });

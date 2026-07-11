@@ -103,9 +103,10 @@ export function tapInputTick(): void {
 // ── size re-pin tap (M22.8) ─────────────────────────────────────────────────
 // Every canvas-area change (terminal resize, sidebar drag) funnels through the
 // mirror's `resize()` — the ONE re-pin chokepoint. This tap records each re-pin
-// so a live drag/resize burst can be asserted to collapse to the expected count
-// (the 200ms size poll coalesces a burst to one re-pin per settled size). Gated
-// behind TMUX_IDE_ZZ_PERF, appending `cols rows` lines to /tmp/zz-repin.log.
+// so a live drag/resize burst can be asserted against the expected count (since
+// M23.5 the renderer dims signal re-pins per actual size change — no more 200ms
+// poll). Gated behind TMUX_IDE_ZZ_PERF, appending `cols rows` lines to
+// /tmp/zz-repin.log.
 
 const REPIN_LOG = "/tmp/zz-repin.log";
 
@@ -114,6 +115,31 @@ export function tapRepin(cols: number, rows: number): void {
   if (!process.env.TMUX_IDE_ZZ_PERF) return;
   try {
     appendFileSync(REPIN_LOG, `${cols} ${rows}\n`);
+  } catch {
+    /* perf tap only */
+  }
+}
+
+// ── resize tap (M23.5) ──────────────────────────────────────────────────────
+// The event-driven geometry pipeline's flight recorder: one timestamped line
+// per hop — %layout-change received (`notify`), geometry applied into the
+// mirrors (`geometry-applied`), a canvas re-pin (`repin`), a per-pane term
+// resize (`pane-resize`), and per-%output mirror dims (`output`) — so a resize
+// battery can assert "geometry applied <5ms after the notify" and "no %output
+// parsed into stale dims" straight from the log. Own env gate
+// (TMUX_IDE_ZZ_RESIZE_TAP): the per-output line is too chatty for the general
+// TMUX_IDE_ZZ_PERF sessions.
+
+const RESIZE_LOG = "/tmp/zz-resize-tap.log";
+
+/** Append one `<t> <event> <detail>` line. No-op unless TMUX_IDE_ZZ_RESIZE_TAP. */
+export function tapResize(event: string, detail = ""): void {
+  if (!process.env.TMUX_IDE_ZZ_RESIZE_TAP) return;
+  try {
+    appendFileSync(
+      RESIZE_LOG,
+      `${performance.now().toFixed(2)} ${event}${detail ? ` ${detail}` : ""}\n`,
+    );
   } catch {
     /* perf tap only */
   }

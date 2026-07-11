@@ -126,4 +126,27 @@ describe("PaneMirror.blit — incremental (M21.4)", () => {
     expect(dirtyRows).toEqual([2]);
     m.dispose();
   });
+
+  it("a mismatched-length row is bounds-guarded: always dirty, never RangeError (D5)", async () => {
+    const W = 10,
+      H = 4;
+    const m = new PaneMirror(W, H);
+    m.write("A\r\nB\r\nC\r\nD");
+    await flushed(m, "D");
+    const buffers = arrays(W, H);
+    blit(m, buffers, W, H, true);
+    // Force the xterm internal into the post-shrink shape the guard exists for:
+    // a line whose raw cell data is NOT cols×3 u32 long. Writing it into the
+    // rowLen-strided shadow used to throw RangeError (measured after rapid
+    // shrinks over wrapped content).
+    const line = m["term"].buffer.active.getLine(1) as unknown as {
+      _line: { _data: Uint32Array };
+    };
+    line._line._data = new Uint32Array(W * 3 + 6); // longer than the stride
+    expect(() => blit(m, buffers, W, H, false)).not.toThrow();
+    // Shadow-less rows repaint every walk — the guarded row stays dirty.
+    expect(blit(m, buffers, W, H, false)).toContain(1);
+    expect(blit(m, buffers, W, H, false)).toContain(1);
+    m.dispose();
+  });
 });

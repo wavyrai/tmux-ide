@@ -204,9 +204,10 @@ import { registerProject, ProjectAlreadyRegisteredError } from "../../lib/projec
 import { separatorAt, resizedSize, resizeCommand, type Separator } from "./resize-model.ts";
 import {
   effectiveWindowSize,
-  detectSizeMismatch,
+  detectSizeMismatchWithRepin,
   letterboxOffset,
   formatSizeHint,
+  type RepinState,
   type Size,
 } from "./size-truth.ts";
 import {
@@ -1269,15 +1270,33 @@ render(
     };
 
     let mirror: SessionMirror | null = null;
+    // ── EVENT-DRIVEN RE-PIN (M23.5) ──────────────────────────────────────────
+    // The 200ms canvas size poll is gone: a createEffect on the renderer dims
+    // signal (canvasCols/canvasRows read dims() + sidebarW()) re-pins the
+    // mirror the moment the size actually changes. `lastPin` is what we last
+    // asked tmux for; `repinInFlight` gates the size-truth hint while tmux
+    // confirms (D4b — see the tick).
+    let lastPin: Size = { cols: canvasCols(), rows: canvasRows() };
+    let repinInFlight: RepinState | null = null;
+    createEffect(() => {
+      const next: Size = { cols: canvasCols(), rows: canvasRows() };
+      if (next.cols === lastPin.cols && next.rows === lastPin.rows) return;
+      repinInFlight = { prev: lastPin, at: performance.now() };
+      lastPin = next;
+      void mirror?.resize(next.cols, next.rows);
+    });
     const attach = (name: string) => {
       mirror?.dispose();
       scrollOffsets.clear();
       setPanes([]);
       setStatus(`attaching ${name}…`);
+      // A fresh mirror pins at the current canvas size — no re-pin in flight.
+      lastPin = { cols: canvasCols(), rows: canvasRows() };
+      repinInFlight = null;
       const m = new SessionMirror({
         target: name,
-        cols: canvasCols(),
-        rows: canvasRows(),
+        cols: lastPin.cols,
+        rows: lastPin.rows,
         onDirty: markDirty,
         onStatus: () => {
           markDirty();
@@ -2421,15 +2440,28 @@ render(
         // styled-row rebuild) — the <pane_surface> reads cells via the blit and
         // gates its walk on the version, so unchanged panes cost nothing.
         const raw = mirror.panes(scrollOffsets, !FB_PANES);
-        // Size truth (M22.8): the RAW pane bounding box is the effective window
-        // size. When a co-attached terminal shrank it below our pinned canvas we
-        // surface the honest hint AND center the grid — the offset is baked into
+        // Size truth (M22.8, event-driven M23.5): the effective window size is
+        // the layout ROOT's WxH pushed by %layout-change (the pane bounding
+        // box only seeds it before the first layout lands). When a co-attached
+        // terminal sized the window away from our pinned canvas we surface the
+        // honest hint AND center the grid — the offset is baked into
         // pane.left/top HERE (one place), so every render and pointer-routing
         // read (all expressed relative to pane.left/top or `inside(pane,…)`)
-        // stays consistent for free without touching the mouse math.
+        // stays consistent for free without touching the mouse math. A re-pin
+        // in flight suppresses the mismatch (D4b): between our refresh-client
+        // -C and tmux's %layout-change the stale size is expected, and honest-
+        // hinting it flashed "window sized by another terminal" + a letterbox
+        // jump on every grow (measured).
         const pinned: Size = { cols: canvasCols(), rows: canvasRows() };
-        const effective = effectiveWindowSize(raw);
-        const mm = effective ? detectSizeMismatch(pinned, effective) : null;
+        const effective = mirror.windowSize() ?? effectiveWindowSize(raw);
+        const mm = effective
+          ? detectSizeMismatchWithRepin(pinned, effective, repinInFlight, performance.now())
+          : null;
+        // The transition completed (sizes agree) — retire the grace so a LATER
+        // genuine co-attach shrink to exactly the old size still surfaces.
+        if (effective && effective.cols === pinned.cols && effective.rows === pinned.rows) {
+          repinInFlight = null;
+        }
         setWindowMismatch(mm);
         const off = mm ? letterboxOffset(pinned, mm) : { x: 0, y: 0 };
         setPanes(
@@ -2486,20 +2518,10 @@ render(
       const diffTimer = setInterval(() => {
         if (mode() === "diff") refreshStatus();
       }, 3000);
-      let lastW = canvasCols();
-      let lastH = canvasRows();
-      const sizeTimer = setInterval(() => {
-        if (canvasCols() !== lastW || canvasRows() !== lastH) {
-          lastW = canvasCols();
-          lastH = canvasRows();
-          void mirror?.resize(lastW, lastH);
-        }
-      }, 200);
       onCleanup(() => {
         clearInterval(t);
         clearInterval(fleetTimer);
         clearInterval(diffTimer);
-        clearInterval(sizeTimer);
         if (saveTimer) clearTimeout(saveTimer);
         if (noteTimer) clearTimeout(noteTimer);
         mirror?.dispose();
@@ -5592,5 +5614,13 @@ render(
   },
   // targetFps stays EXPLICIT: @opentui 0.4.3 still silently defaults it to 30
   // (maxFps already defaults to 60). Re-confirmed on the 0.4.3 bump (M21.2).
-  { targetFps: 60, maxFps: 60 },
+  // consoleMode: OpenTUI's error console is an in-app OVERLAY that pops over
+  // the canvas on any console.error (a runtime exception mid-render flashed it
+  // during the M23.5 resize battery). Off in production; the mirror debug flag
+  // keeps it for development, where it is genuinely useful.
+  {
+    targetFps: 60,
+    maxFps: 60,
+    consoleMode: process.env.TMUX_IDE_MIRROR_DEBUG ? "console-overlay" : "disabled",
+  },
 );

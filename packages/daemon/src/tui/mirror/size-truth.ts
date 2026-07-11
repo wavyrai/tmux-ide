@@ -66,6 +66,47 @@ export function letterboxOffset(canvas: Size, content: Size): { x: number; y: nu
   };
 }
 
+/** An in-flight re-pin (M23.5): we changed our pinned size and tmux has not
+ *  confirmed the new layout yet. `prev` is the pin BEFORE this re-pin. */
+export interface RepinState {
+  prev: Size;
+  at: number;
+}
+
+/** How long any mismatch is suppressed after a re-pin (server round-trip +
+ *  layout-change latency is sub-ms; the margin covers a loaded machine). */
+export const REPIN_GRACE_MS = 400;
+/** How long a mismatch that still equals the PRE-repin pin is suppressed — the
+ *  unambiguous "tmux hasn't applied our new pin yet" signature can wait longer
+ *  before we call it another terminal's doing. */
+export const REPIN_STALE_GRACE_MS = 1500;
+
+/**
+ * PURE — {@link detectSizeMismatch}, gated for the re-pin transition (M23.5,
+ * D4b): between our `refresh-client -C` and tmux's `%layout-change` the
+ * effective size is legitimately stale, and surfacing it flashed a false
+ * "window sized by another terminal" hint plus a letterbox jump-to-center on
+ * EVERY grow (measured). Suppress the mismatch while a re-pin is in flight:
+ * any mismatch within {@link REPIN_GRACE_MS}, and — for longer, up to
+ * {@link REPIN_STALE_GRACE_MS} — one whose effective size still equals the
+ * pre-repin pin exactly (that shape can only be the old pin, not a co-attached
+ * terminal's choice). Past the grace the honest hint returns.
+ */
+export function detectSizeMismatchWithRepin(
+  pinned: Size,
+  effective: Size,
+  repin: RepinState | null,
+  now: number,
+): Size | null {
+  const mm = detectSizeMismatch(pinned, effective);
+  if (!mm || !repin) return mm;
+  const age = now - repin.at;
+  if (age < REPIN_GRACE_MS) return null;
+  const isPrevPin = effective.cols === repin.prev.cols && effective.rows === repin.prev.rows;
+  if (isPrevPin && age < REPIN_STALE_GRACE_MS) return null;
+  return mm;
+}
+
 /**
  * PURE — the quiet, plain-language hint for a size mismatch: the honest answer
  * ("here is the size another terminal chose"), dimensions in the terminal-native

@@ -2,6 +2,9 @@ import { describe, it, expect } from "vitest";
 import {
   effectiveWindowSize,
   detectSizeMismatch,
+  detectSizeMismatchWithRepin,
+  REPIN_GRACE_MS,
+  REPIN_STALE_GRACE_MS,
   letterboxOffset,
   formatSizeHint,
   type Rect,
@@ -59,6 +62,40 @@ describe("detectSizeMismatch", () => {
       cols: 200,
       rows: 55,
     });
+  });
+});
+
+describe("detectSizeMismatchWithRepin", () => {
+  const prev = { cols: 120, rows: 40 };
+  const pinned = { cols: 160, rows: 50 }; // the NEW pin (a grow)
+  const repin = { prev, at: 1000 };
+
+  it("passes mismatches through with no re-pin in flight", () => {
+    expect(detectSizeMismatchWithRepin(pinned, prev, null, 99_999)).toEqual(prev);
+  });
+
+  it("is null when sizes agree (and regardless of any re-pin)", () => {
+    expect(detectSizeMismatchWithRepin(pinned, pinned, repin, 1001)).toBeNull();
+  });
+
+  it("suppresses ANY mismatch within the re-pin grace (the grow flash)", () => {
+    expect(detectSizeMismatchWithRepin(pinned, prev, repin, 1000 + REPIN_GRACE_MS - 1)).toBeNull();
+    // Even a size that is neither pin (mid-transition on a storm).
+    expect(detectSizeMismatchWithRepin(pinned, { cols: 130, rows: 44 }, repin, 1100)).toBeNull();
+  });
+
+  it("keeps suppressing the exact pre-repin size up to the stale grace", () => {
+    expect(
+      detectSizeMismatchWithRepin(pinned, prev, repin, 1000 + REPIN_STALE_GRACE_MS - 1),
+    ).toBeNull();
+    expect(detectSizeMismatchWithRepin(pinned, prev, repin, 1000 + REPIN_STALE_GRACE_MS)).toEqual(
+      prev,
+    );
+  });
+
+  it("surfaces a DIFFERENT size once the short grace passed (a real co-attach)", () => {
+    const other = { cols: 100, rows: 30 };
+    expect(detectSizeMismatchWithRepin(pinned, other, repin, 1000 + REPIN_GRACE_MS)).toEqual(other);
   });
 });
 
