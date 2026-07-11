@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { staticPaletteActions, filterPaletteActions, parseBufferList } from "./palette.ts";
+import {
+  staticPaletteActions,
+  filterPaletteActions,
+  parseBufferList,
+  goToFileActions,
+  GO_FILE_CAP,
+} from "./palette.ts";
 
 describe("staticPaletteActions", () => {
   it("offers the four tab switches, one attach per session, then save/refresh/paste/settings/quit", () => {
@@ -264,5 +270,29 @@ describe("select-text action (M22.9)", () => {
   it("fuzzy-matches by typing 'select'", () => {
     const filtered = filterPaletteActions("select", [], { terminal: true, appMousePane: true });
     expect(filtered.some((a) => a.kind === "select-text")).toBe(true);
+  });
+});
+
+describe("goToFileActions / repoFiles (M24.6)", () => {
+  const files = ["src/tui/mirror/file-tree.ts", "src/lib/app-config.ts", "README.md"];
+
+  it("offers fuzzy-matched Go to file rows, capped, and none on an empty query", () => {
+    const rows = goToFileActions("filetree", files);
+    expect(rows.map((a) => a.label)).toEqual(["Go to file: src/tui/mirror/file-tree.ts"]);
+    expect(rows[0]).toMatchObject({ kind: "go-file", path: "src/tui/mirror/file-tree.ts" });
+    expect(goToFileActions("", files)).toEqual([]);
+    expect(goToFileActions("x", [])).toEqual([]);
+    const many = Array.from({ length: 30 }, (_, i) => `src/f${i}.ts`);
+    expect(goToFileActions("src", many, GO_FILE_CAP).length).toBe(GO_FILE_CAP);
+  });
+
+  it("appends go-file rows AFTER the existing results (ranking untouched)", () => {
+    const out = filterPaletteActions("readme", [], { repoFiles: files });
+    const kinds = out.map((a) => a.kind);
+    // the dynamic open-file row still precedes the appended go-file rows
+    expect(kinds.indexOf("open-file")).toBeLessThan(kinds.indexOf("go-file"));
+    expect(out[out.length - 1]).toMatchObject({ kind: "go-file", path: "README.md" });
+    // without repoFiles the list is exactly as before — no go-file rows
+    expect(filterPaletteActions("readme", []).some((a) => a.kind === "go-file")).toBe(false);
   });
 });

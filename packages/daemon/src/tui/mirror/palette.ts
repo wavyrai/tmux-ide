@@ -35,6 +35,10 @@ export type PaletteAction =
   | { kind: "restart-agent"; paneId: string; agentKind: string; session: string; label: string }
   | { kind: "stop-agent"; paneId: string; agentKind: string; session: string; label: string }
   | { kind: "open-file"; path: string; label: string }
+  // "Go to file:" (M24.6) — one row per fuzzy-matched REPO file (workspace-
+  // relative, ignore-respecting, fed by the app via ctx.repoFiles), unlike
+  // open-file whose path is whatever the user typed.
+  | { kind: "go-file"; path: string; label: string }
   | { kind: "save"; label: string }
   | { kind: "refresh-diff"; label: string }
   | { kind: "paste-buffer"; label: string }
@@ -84,6 +88,10 @@ export interface PaletteContext {
    *  argv, …) — when set, a direct "New agent: <name> (again)" action is PINNED
    *  FIRST, so a repeat spawn is F5 → Enter (M24.1's ≤2-Enters bar). */
   againName?: string | null;
+  /** The workspace's file list (M24.6) — repo-relative paths, gitignore-
+   *  respecting, capped by the caller. A non-empty query offers fuzzy-matched
+   *  "Go to file: <path>" rows via {@link goToFileActions}. */
+  repoFiles?: readonly string[];
 }
 
 const TAB_LABELS: { tab: Tab; label: string }[] = [
@@ -290,6 +298,29 @@ function looksLikePath(q: string): boolean {
   return /[/.~]/.test(q);
 }
 
+/** Cap on "Go to file:" rows so a big repo never floods the palette. */
+export const GO_FILE_CAP = 8;
+
+/**
+ * PURE (M24.6) — the dynamic "Go to file:" rows for `query`: the repo's
+ * (ignore-respecting) file list fuzzy-filtered against the query, one open
+ * action per match, capped at `cap`. An empty query offers none — the static
+ * list stays uncluttered. Strictly ADDITIVE to the palette: this only CALLS
+ * the shared fuzzy filter, and its rows are appended after the existing
+ * results (see {@link filterPaletteActions}).
+ */
+export function goToFileActions(
+  query: string,
+  repoFiles: readonly string[],
+  cap: number = GO_FILE_CAP,
+): PaletteAction[] {
+  const q = query.trim();
+  if (q.length === 0 || repoFiles.length === 0) return [];
+  return fuzzyFilter(q, [...repoFiles], (p) => p)
+    .slice(0, cap)
+    .map((m) => ({ kind: "go-file" as const, path: m.item, label: `Go to file: ${m.item}` }));
+}
+
 /**
  * PURE — the palette result list for `query`: the static actions fuzzy-filtered
  * and score-sorted, plus (when the query is non-empty) a dynamic
@@ -314,5 +345,10 @@ export function filterPaletteActions(
   if (ctx.terminal) {
     dynamic.push({ kind: "rename-window", name: q, label: `Rename window: ${q}` });
   }
-  return looksLikePath(q) ? [...dynamic, ...matched] : [...matched, ...dynamic];
+  // "Go to file:" rows (M24.6) are APPENDED after everything so this addition
+  // cannot disturb the existing result ranking.
+  const goFiles = goToFileActions(q, ctx.repoFiles ?? []);
+  return looksLikePath(q)
+    ? [...dynamic, ...matched, ...goFiles]
+    : [...matched, ...dynamic, ...goFiles];
 }

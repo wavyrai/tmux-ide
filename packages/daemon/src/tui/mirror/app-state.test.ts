@@ -45,6 +45,8 @@ describe("parseAppState", () => {
         "session:web": { kind: "custom-command", command: "my-agent --x", placement: "window" },
       },
       customCommands: ["my-agent --x", "other --y"],
+      filesShowHidden: true,
+      filesShowIgnored: false,
     };
     expect(parseAppState(serializeAppState(state))).toEqual(state);
   });
@@ -68,6 +70,8 @@ describe("parseAppState", () => {
       recentFolders: [],
       lastSpawns: {},
       customCommands: [],
+      filesShowHidden: false,
+      filesShowIgnored: false,
     });
   });
 
@@ -84,6 +88,8 @@ describe("parseAppState", () => {
       recentFolders: [],
       lastSpawns: {},
       customCommands: [],
+      filesShowHidden: false,
+      filesShowIgnored: false,
     });
   });
 
@@ -152,6 +158,8 @@ describe("serializeAppState", () => {
         recentFolders: [],
         lastSpawns: {},
         customCommands: [],
+        filesShowHidden: false,
+        filesShowIgnored: false,
         // @ts-expect-error — runtime extra keys must not leak into the file
         junk: "x",
       }),
@@ -160,6 +168,8 @@ describe("serializeAppState", () => {
       "contextSession",
       "customCommands",
       "diffFile",
+      "filesShowHidden",
+      "filesShowIgnored",
       "lastSpawns",
       "lastTab",
       "openFile",
@@ -254,5 +264,19 @@ describe("appStateHome / appStatePath", () => {
 
   it("defaults under the user home when unset", () => {
     expect(appStatePath().endsWith("/.tmux-ide/app-state.json")).toBe(true);
+  });
+});
+
+describe("files toggles (M24.6)", () => {
+  it("default hidden, parse tolerates absence/mistypes, round-trips", () => {
+    expect(parseAppState("{}").filesShowHidden).toBe(false);
+    expect(parseAppState("{}").filesShowIgnored).toBe(false);
+    expect(parseAppState('{"filesShowHidden":"yes"}').filesShowHidden).toBe(false);
+    const s = parseAppState('{"filesShowHidden":true,"filesShowIgnored":true}');
+    expect(s.filesShowHidden).toBe(true);
+    expect(s.filesShowIgnored).toBe(true);
+    const round = parseAppState(serializeAppState(s));
+    expect(round.filesShowHidden).toBe(true);
+    expect(round.filesShowIgnored).toBe(true);
   });
 });
