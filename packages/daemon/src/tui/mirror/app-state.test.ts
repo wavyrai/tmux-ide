@@ -51,6 +51,8 @@ describe("parseAppState", () => {
         save: { count: 3, lastUsed: 1700000100 },
         "attach:web": { count: 1, lastUsed: 1700000200 },
       },
+      filesShowHidden: true,
+      filesShowIgnored: false,
     };
     expect(parseAppState(serializeAppState(state))).toEqual(state);
   });
@@ -75,6 +77,8 @@ describe("parseAppState", () => {
       lastSpawns: {},
       customCommands: [],
       paletteUsage: {},
+      filesShowHidden: false,
+      filesShowIgnored: false,
     });
   });
 
@@ -92,6 +96,8 @@ describe("parseAppState", () => {
       lastSpawns: {},
       customCommands: [],
       paletteUsage: {},
+      filesShowHidden: false,
+      filesShowIgnored: false,
     });
   });
 
@@ -161,6 +167,8 @@ describe("serializeAppState", () => {
         lastSpawns: {},
         customCommands: [],
         paletteUsage: {},
+        filesShowHidden: false,
+        filesShowIgnored: false,
         // @ts-expect-error — runtime extra keys must not leak into the file
         junk: "x",
       }),
@@ -169,6 +177,8 @@ describe("serializeAppState", () => {
       "contextSession",
       "customCommands",
       "diffFile",
+      "filesShowHidden",
+      "filesShowIgnored",
       "lastSpawns",
       "lastTab",
       "openFile",
@@ -315,5 +325,19 @@ describe("appStateHome / appStatePath", () => {
 
   it("defaults under the user home when unset", () => {
     expect(appStatePath().endsWith("/.tmux-ide/app-state.json")).toBe(true);
+  });
+});
+
+describe("files toggles (M24.6)", () => {
+  it("default hidden, parse tolerates absence/mistypes, round-trips", () => {
+    expect(parseAppState("{}").filesShowHidden).toBe(false);
+    expect(parseAppState("{}").filesShowIgnored).toBe(false);
+    expect(parseAppState('{"filesShowHidden":"yes"}').filesShowHidden).toBe(false);
+    const s = parseAppState('{"filesShowHidden":true,"filesShowIgnored":true}');
+    expect(s.filesShowHidden).toBe(true);
+    expect(s.filesShowIgnored).toBe(true);
+    const round = parseAppState(serializeAppState(s));
+    expect(round.filesShowHidden).toBe(true);
+    expect(round.filesShowIgnored).toBe(true);
   });
 });

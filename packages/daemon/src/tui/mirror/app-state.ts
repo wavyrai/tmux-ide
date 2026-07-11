@@ -94,6 +94,10 @@ export interface AppState {
    *  Insertion-ordered LRU (oldest first) capped at {@link PALETTE_USAGE_CAP};
    *  drives the empty-query "recent" group and the ranking tie-break. */
   paletteUsage: Record<string, PaletteUsageEntry>;
+  /** Files surface (M24.6): show dotfiles (H toggle). Default hidden. */
+  filesShowHidden: boolean;
+  /** Files surface (M24.6): show gitignored entries (I toggle). Default hidden. */
+  filesShowIgnored: boolean;
 }
 
 export const DEFAULT_APP_STATE: AppState = {
@@ -106,6 +110,8 @@ export const DEFAULT_APP_STATE: AppState = {
   lastSpawns: {},
   customCommands: [],
   paletteUsage: {},
+  filesShowHidden: false,
+  filesShowIgnored: false,
 };
 
 /** PURE — the "again" memory key for a spawn context: the concrete dir when
@@ -287,6 +293,8 @@ export function parseAppState(raw: string): AppState {
     lastSpawns: sanitizeSpawns(obj.lastSpawns),
     customCommands: sanitizeStringList(obj.customCommands, CUSTOM_COMMANDS_CAP),
     paletteUsage: sanitizePaletteUsage(obj.paletteUsage),
+    filesShowHidden: obj.filesShowHidden === true,
+    filesShowIgnored: obj.filesShowIgnored === true,
   };
 }
 
@@ -303,6 +311,8 @@ export function serializeAppState(state: AppState): string {
     lastSpawns: sanitizeSpawns(state.lastSpawns),
     customCommands: sanitizeStringList(state.customCommands, CUSTOM_COMMANDS_CAP),
     paletteUsage: sanitizePaletteUsage(state.paletteUsage),
+    filesShowHidden: state.filesShowHidden === true,
+    filesShowIgnored: state.filesShowIgnored === true,
   };
   return JSON.stringify(clean, null, 2);
 }

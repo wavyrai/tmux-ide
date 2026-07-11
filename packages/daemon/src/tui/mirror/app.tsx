@@ -212,7 +212,10 @@ import {
   untrackedDiffText,
   clampSel,
   parseStatusGroups,
-  filterEntries,
+  parseStatusPorcelain,
+  // Both diff-model and file-tree export a `filterEntries`; alias the diff one
+  // (merge of M24.5 + M24.6 — the two surfaces grew them independently).
+  filterEntries as filterDiffEntries,
   buildDiffRows,
   rowIndexOfFile,
   parseNumstat,
@@ -224,6 +227,7 @@ import {
   type DiffEntry,
   type DiffGroup,
   type DiffLineKind,
+  type StatusEntry,
 } from "./diff-model.ts";
 import {
   loadAppState,
@@ -368,12 +372,24 @@ import {
   type SearchMatch,
 } from "./search-model.ts";
 import {
+  ALWAYS_IGNORE,
+  ancestorDirs,
   buildNodes,
+  changedFileWalk,
+  filterEntries,
+  filterView,
+  indexOfPath,
   insertChildrenAt,
+  nextChangedPath,
+  rebuildTree,
+  relPath,
   removeSubtreeAt,
+  statusMapFromEntries,
   type FileNode,
   type RawEntry,
 } from "./file-tree.ts";
+import ignore, { type Ignore } from "ignore";
+import { watchDirectory } from "../../widgets/lib/watcher.ts";
 import { spans, spanHit, spansFromRight, type Span } from "./spans.ts";
 import {
   AGAIN_ID,
@@ -1324,6 +1340,12 @@ render(
       } else if (!ro && name === "delete") {
         eb.deleteChar();
         setEditorModified(true);
+      } else if (!ro && name === "space" && !evt.ctrl && !evt.meta) {
+        // OpenTUI names the key "space", not " " — without this branch the
+        // editor could not insert spaces at all (found by the M24.6 battery;
+        // same trap the dialog stack hit in M24.1).
+        eb.insertText(" ");
+        setEditorModified(true);
       } else if (!ro && name.length === 1 && !evt.ctrl && !evt.meta) {
         eb.insertText(evt.shift ? name.toUpperCase() : name);
         setEditorModified(true);
@@ -1371,7 +1393,7 @@ render(
     // the mouse router, and the selection all walk the SAME rows, so the hit
     // math cannot drift from what's drawn (the AGENTS_GAP_ROWS lesson).
     const diffRowsData = createMemo(() =>
-      buildDiffRows(filterEntries(diffEntries(), diffFilter() ?? "")),
+      buildDiffRows(filterDiffEntries(diffEntries(), diffFilter() ?? "")),
     );
     const diffRows = () => diffRowsData().rows;
     const diffVisibleFiles = () => diffRowsData().files;
@@ -1718,14 +1740,29 @@ render(
       setTab("home");
     };
 
-    // ── FILES TAB (M18.4) ────────────────────────────────────────────────────
-    // A minimal, one-level-expandable file list (left) beside the M18.2 editor
-    // (right), rooted at the workspace dir. `fs.readdir` is ALWAYS async (the
-    // render-loop landmine); the flat-tree splice/prune math is pure in
-    // file-tree.ts.
+    // ── FILES TAB (M18.4, uplifted M24.6) ────────────────────────────────────
+    // An expandable file list (left) beside the M18.2 editor (right), rooted at
+    // the workspace dir. `fs.readdir` and every git call are ALWAYS async (the
+    // render-loop landmine); ordering, ignore/hidden filtering, git-status
+    // decoration, the changed-file walk, the `/` filter view and the expansion-
+    // preserving rebuild are all pure in file-tree.ts. Ignore rules come from
+    // the workspace's .gitignore via the `ignore` package (matching is pure;
+    // only the file read is io). SELECTION indexes the VISIBLE (filtered) rows;
+    // expansion math maps back to the underlying flat list via FilteredRow.index.
     const [fileNodes, setFileNodes] = createSignal<FileNode[]>([]);
     const [fileSel, setFileSel] = createSignal(0);
     const [fileTop, setFileTop] = createSignal(0);
+    // The H / I visibility toggles — persisted in app-state (default: hidden).
+    const [showHiddenFiles, setShowHiddenFiles] = createSignal(persisted.filesShowHidden);
+    const [showIgnoredFiles, setShowIgnoredFiles] = createSignal(persisted.filesShowIgnored);
+    // Git decoration: porcelain entries for the workspace repo + its toplevel
+    // (status paths are REPO-relative — the workspace dir may sit deeper).
+    const [fileStatusEntries, setFileStatusEntries] = createSignal<StatusEntry[]>([]);
+    const [filesGitTop, setFilesGitTop] = createSignal<string | null>(null);
+    // The `/` filter: null = off, "" = filter mode just opened. The selection
+    // to restore when the filter is escaped lives beside it (not reactive).
+    const [filesQuery, setFilesQuery] = createSignal<string | null>(null);
+    let filesPreFilterPath: string | null = null;
     // Which half of the Files tab has the keyboard: the file LIST (j/k/enter) or
     // the EDITOR (typing). Opening a file hands focus to the editor; esc hands it
     // back to the list.
@@ -1733,59 +1770,277 @@ render(
     const filesListW = () => Math.max(20, Math.min(44, Math.floor(canvasCols() * 0.34)));
     /** The workspace directory driving both the file list and the diff panel. */
     const workspaceDir = () => contextDir() || invokeCwd;
+    const fileStatusMap = createMemo(() => statusMapFromEntries(fileStatusEntries()));
+    const changedWalk = createMemo(() =>
+      changedFileWalk(fileStatusEntries(), { showHidden: showHiddenFiles() }),
+    );
+    /** The rows the list actually shows: the flat tree through the `/` filter. */
+    const visibleFiles = createMemo(() => filterView(fileNodes(), filesQuery()));
     const fileListVisible = createMemo(() => {
-      const nodes = fileNodes();
-      const rows = editorRows();
-      const top = clampTop(fileTop(), nodes.length, rows);
-      return nodes.slice(top, top + rows).map((node, i) => ({ node, index: top + i }));
+      const rows = visibleFiles();
+      const view = editorRows();
+      const top = clampTop(fileTop(), rows.length, view);
+      return rows.slice(top, top + view).map((row, i) => ({ node: row.node, index: top + i }));
     });
+    /** The status letter for a node (repo-relative lookup incl. propagated
+     *  ancestor letters), or null outside a repo / for a clean path. */
+    const fileStatusFor = (n: FileNode): string | null => {
+      const top = filesGitTop();
+      if (!top) return null;
+      const rel = relPath(top, n.path);
+      return rel ? (fileStatusMap().get(rel) ?? null) : null;
+    };
 
-    const toRaw = (e: { name: string; isDirectory: () => boolean }): RawEntry => ({
-      name: e.name,
-      isDir: e.isDirectory(),
-    });
-    /** (Re)load the top-level listing for `dir` (async). Directories that were
-     *  expanded collapse back to the fresh root — a lean v1 (deep re-expansion is
-     *  a later nicety). */
+    // The gitignore matcher for the CURRENT workspace root (reloaded when the
+    // root changes or the tree refreshes — cheap: one small file read).
+    let filesIg: Ignore = ignore();
+    let filesIgDir = "";
+    const loadIgnoreRules = async (root: string): Promise<void> => {
+      const ig = ignore();
+      try {
+        ig.add(await readFile(join(root, ".gitignore"), "utf8"));
+      } catch {
+        // no .gitignore — everything passes
+      }
+      filesIg = ig;
+      filesIgDir = root;
+    };
+    /** Async list of `dir`, annotated with the gitignore verdict and filtered
+     *  through the current H/I toggles (pure filterEntries). */
+    const listDir = async (dir: string): Promise<RawEntry[]> => {
+      const root = workspaceDir();
+      if (filesIgDir !== root) await loadIgnoreRules(root);
+      const ents = await readdir(dir, { withFileTypes: true });
+      const raw: RawEntry[] = ents.map((e) => {
+        const isDir = e.isDirectory();
+        const rel = relPath(root, join(dir, e.name));
+        let ignored = false;
+        if (rel) {
+          try {
+            ignored = filesIg.ignores(isDir ? `${rel}/` : rel);
+          } catch {
+            // malformed path for the matcher — treat as not ignored
+          }
+        }
+        return { name: e.name, isDir, ignored };
+      });
+      return filterEntries(raw, {
+        showHidden: showHiddenFiles(),
+        showIgnored: showIgnoredFiles(),
+      });
+    };
+
+    /** Re-run `git status --porcelain` for the workspace (async; also resolves
+     *  the repo toplevel the porcelain paths are relative to). */
+    const runGitFiles = (args: string[], cb: (out: string) => void) => {
+      execFile(
+        "git",
+        ["-C", workspaceDir(), "-c", "core.quotepath=false", "-c", "core.fsmonitor=false", ...args],
+        { timeout: 10_000, maxBuffer: 16_000_000 },
+        (err, stdout) => cb(err ? "" : stdout),
+      );
+    };
+    const refreshFileStatus = () => {
+      runGitFiles(["rev-parse", "--show-toplevel"], (top) => {
+        const t = top.trim();
+        setFilesGitTop(t || null);
+        if (!t) {
+          setFileStatusEntries([]);
+          return;
+        }
+        runGitFiles(["status", "--porcelain"], (out) =>
+          setFileStatusEntries(parseStatusPorcelain(out)),
+        );
+      });
+    };
+
+    /** (Re)load the top-level listing for `dir` (async), reset the filter and
+     *  selection, refresh the git decoration, and (re)arm the watcher. */
     const loadFileList = (dir: string) => {
-      void readdir(dir, { withFileTypes: true })
-        .then((ents) => {
-          setFileNodes(buildNodes(dir, ents.map(toRaw), 0));
-          setFileSel(0);
-          setFileTop(0);
+      void loadIgnoreRules(workspaceDir()).then(() =>
+        listDir(dir)
+          .then((ents) => {
+            setFileNodes(buildNodes(dir, ents, 0));
+            setFileSel(0);
+            setFileTop(0);
+            setFilesQuery(null);
+          })
+          .catch(() => setFileNodes([])),
+      );
+      refreshFileStatus();
+      ensureFilesWatch(workspaceDir());
+    };
+
+    /** Expansion-preserving refresh: re-read the root + every expanded dir with
+     *  the CURRENT toggles, rebuild the flat tree (pure), keep the selection on
+     *  the same path where it survived. Used by the watcher push, the H/I
+     *  toggles, `r`, and the file-mutation menu verbs. */
+    let treeRefreshBusy = false;
+    const refreshTree = () => {
+      if (treeRefreshBusy) return;
+      treeRefreshBusy = true;
+      const root = workspaceDir();
+      const keepPath = visibleFiles()[fileSel()]?.node.path ?? null;
+      const expanded = new Set(
+        fileNodes()
+          .filter((n) => n.isDir && n.expanded)
+          .map((n) => n.path),
+      );
+      // Fresh rules first (the .gitignore itself may have changed), then every
+      // still-relevant dir in parallel; failed reads (vanished dirs) drop out.
+      void loadIgnoreRules(root)
+        .then(() =>
+          Promise.all(
+            [root, ...expanded].map(async (d) => [d, await listDir(d).catch(() => null)] as const),
+          ),
+        )
+        .then((pairs) => {
+          if (root !== workspaceDir()) return; // workspace moved on mid-flight
+          const listing = new Map<string, RawEntry[]>();
+          for (const [d, ents] of pairs) if (ents) listing.set(d, ents);
+          setFileNodes(rebuildTree(root, listing, expanded));
+          const rows = visibleFiles();
+          const idx = keepPath ? rows.findIndex((r) => r.node.path === keepPath) : -1;
+          const sel = idx !== -1 ? idx : clampSel(fileSel(), Math.max(1, rows.length));
+          setFileSel(sel);
+          setFileTop((t) => scrollToCursor(sel, t, editorRows(), rows.length));
         })
-        .catch(() => {
-          setFileNodes([]);
+        .finally(() => {
+          treeRefreshBusy = false;
         });
+      refreshFileStatus();
     };
+
+    const toggleHiddenFiles = () => {
+      setShowHiddenFiles((v) => !v);
+      refreshTree();
+    };
+    const toggleIgnoredFiles = () => {
+      setShowIgnoredFiles((v) => !v);
+      refreshTree();
+    };
+
     const moveFileSel = (delta: number) => {
-      const nodes = fileNodes();
-      if (nodes.length === 0) return;
-      const idx = clampSel(fileSel() + delta, nodes.length);
+      const rows = visibleFiles();
+      if (rows.length === 0) return;
+      const idx = clampSel(fileSel() + delta, rows.length);
       setFileSel(idx);
-      setFileTop((t) => scrollToCursor(idx, t, editorRows(), nodes.length));
+      setFileTop((t) => scrollToCursor(idx, t, editorRows(), rows.length));
     };
-    /** Enter on a row: open a file in the editor, or toggle a directory (async
-     *  readdir → splice children in, or prune the subtree). */
-    const activateFile = (index: number) => {
-      const node = fileNodes()[index];
-      if (!node) return;
-      setFileSel(index);
+    /** Enter on a VISIBLE row: open a file in the editor, or toggle a directory
+     *  (async readdir → splice children in, or prune the subtree). Expansion
+     *  applies at the row's UNDERLYING index, re-resolved by path at apply time
+     *  (a watcher refresh may have reshaped the list under a slow readdir). */
+    const activateFile = (visIndex: number) => {
+      const row = visibleFiles()[visIndex];
+      if (!row) return;
+      setFileSel(visIndex);
+      const node = row.node;
       if (!node.isDir) {
         openEditor(node.path);
         return;
       }
       if (node.expanded) {
-        setFileNodes((list) => removeSubtreeAt(list, index));
+        setFileNodes((list) => removeSubtreeAt(list, indexOfPath(list, node.path)));
         return;
       }
-      void readdir(node.path, { withFileTypes: true })
+      void listDir(node.path)
         .then((ents) => {
-          const children = buildNodes(node.path, ents.map(toRaw), node.depth + 1);
-          setFileNodes((list) => insertChildrenAt(list, index, children));
+          const children = buildNodes(node.path, ents, node.depth + 1);
+          setFileNodes((list) => insertChildrenAt(list, indexOfPath(list, node.path), children));
         })
         .catch(() => {});
     };
+
+    /** Reveal `absPath` in the tree: expand each collapsed ancestor in turn
+     *  (async readdirs), then select the row. Bails silently when a segment is
+     *  filtered out of view (the changed walk pre-filters what it offers). */
+    const revealPath = async (absPath: string): Promise<void> => {
+      const root = workspaceDir();
+      const rel = relPath(root, absPath);
+      if (!rel) return;
+      for (const anc of ancestorDirs(rel)) {
+        const ancAbs = join(root, anc);
+        const idx = indexOfPath(fileNodes(), ancAbs);
+        const node = fileNodes()[idx];
+        if (!node || !node.isDir) return;
+        if (!node.expanded) {
+          const ents = await listDir(ancAbs).catch(() => null);
+          if (!ents) return;
+          const children = buildNodes(ancAbs, ents, node.depth + 1);
+          setFileNodes((list) => insertChildrenAt(list, indexOfPath(list, ancAbs), children));
+        }
+      }
+      const idx = indexOfPath(fileNodes(), absPath);
+      if (idx === -1) return;
+      setFileSel(idx);
+      setFileTop((t) => scrollToCursor(idx, t, editorRows(), visibleFiles().length));
+    };
+
+    /** `[` / `]` — hop the selection to the prev/next CHANGED file (tree display
+     *  order, wrapping), auto-expanding collapsed ancestors. Clears the `/`
+     *  filter first: the hop is defined on the whole tree. */
+    const hopChanged = (dir: 1 | -1) => {
+      const top = filesGitTop();
+      const walk = changedWalk();
+      if (!top || walk.length === 0) return;
+      if (filesQuery() !== null) setFilesQuery(null);
+      const cur = visibleFiles()[fileSel()]?.node ?? null;
+      const curRel = cur ? relPath(top, cur.path) || null : null;
+      const next = nextChangedPath(walk, curRel, dir);
+      if (next) void revealPath(join(top, next));
+    };
+
+    // ── WATCHER PUSH REFRESH (M24.6) ─────────────────────────────────────────
+    // widgets/lib/watcher.ts (@parcel/watcher; fs.watch fallback in the compiled
+    // binary) — measured working under bun in this process (import + events).
+    // Events refresh the visible tree expansion-preservingly; while the Files
+    // tab is backgrounded they only mark it stale (refreshed on tab return).
+    // The watcher ignores .git, so index-only changes (external staging) ride
+    // the 3s status poll armed in onMount instead.
+    let stopFilesWatch: (() => Promise<void>) | null = null;
+    let filesWatchDir = "";
+    let filesStale = false;
+    const onFilesWatchEvent = () => {
+      if (mode() === "editor") {
+        refreshTree();
+      } else {
+        filesStale = true;
+      }
+    };
+    const ensureFilesWatch = (root: string) => {
+      if (filesWatchDir === root) return;
+      filesWatchDir = root;
+      const prev = stopFilesWatch;
+      stopFilesWatch = null;
+      void prev?.().catch(() => {});
+      void watchDirectory(root, onFilesWatchEvent, { ignore: [...ALWAYS_IGNORE] })
+        .then((stop) => {
+          if (filesWatchDir !== root) {
+            void stop().catch(() => {});
+            return;
+          }
+          stopFilesWatch = stop;
+        })
+        .catch(() => {
+          // watcher unavailable — the Files-tab status poll still runs, and
+          // `r` / toggles / mutations refresh on demand.
+        });
+    };
+    onCleanup(() => void stopFilesWatch?.().catch(() => {}));
+    /** A tab switch back onto a stale Files surface catches up in one shot. */
+    const catchUpFilesIfStale = () => {
+      if (!filesStale) return;
+      filesStale = false;
+      refreshTree();
+    };
+    // Status letters must also follow index-only changes (external staging),
+    // which the directory watcher never sees — a light poll while the Files
+    // tab is active, mirroring the diff panel's 3s discipline.
+    const filesStatusPoll = setInterval(() => {
+      if (mode() === "editor" && fileNodes().length > 0) refreshFileStatus();
+    }, 3000);
+    onCleanup(() => clearInterval(filesStatusPoll));
 
     /** The project dir the fleet payload records for `session` (null if unknown). */
     const dirForSession = (name: string): string | null => {
@@ -2394,7 +2649,10 @@ render(
         else setTab("diff");
         return;
       }
-      if (t === "files" && fileNodes().length === 0) loadFileList(workspaceDir());
+      if (t === "files") {
+        if (fileNodes().length === 0) loadFileList(workspaceDir());
+        else catchUpFilesIfStale();
+      }
       setTab(t);
     };
 
@@ -2410,6 +2668,50 @@ render(
     // a press outside dismisses. Keyboard behavior is unchanged.
     const [paletteOpen, setPaletteOpen] = createSignal(false);
     const [paletteQuery, setPaletteQuery] = createSignal("");
+    // "Go to file:" source (M24.6): the workspace's ignore-respecting file list,
+    // repo-relative, capped, refreshed on each palette open (async — the rows
+    // appear as soon as the list lands). `git ls-files -co --exclude-standard`
+    // where the workspace is a repo; a capped, filtered async walk elsewhere.
+    const REPO_FILES_CAP = 2000;
+    const REPO_WALK_DEPTH = 8;
+    const [repoFiles, setRepoFiles] = createSignal<string[]>([]);
+    const walkRepoFiles = async (root: string): Promise<string[]> => {
+      const out: string[] = [];
+      let queue: { dir: string; depth: number }[] = [{ dir: root, depth: 0 }];
+      while (queue.length > 0 && out.length < REPO_FILES_CAP) {
+        const next: typeof queue = [];
+        for (const { dir, depth } of queue) {
+          const ents = await listDir(dir).catch(() => []);
+          for (const e of ents) {
+            if (out.length >= REPO_FILES_CAP) break;
+            const abs = join(dir, e.name);
+            if (e.isDir) {
+              if (depth + 1 < REPO_WALK_DEPTH) next.push({ dir: abs, depth: depth + 1 });
+            } else {
+              const rel = relPath(root, abs);
+              if (rel) out.push(rel);
+            }
+          }
+        }
+        queue = next;
+      }
+      return out;
+    };
+    const loadRepoFiles = () => {
+      const root = workspaceDir();
+      runGitFiles(["ls-files", "-co", "--exclude-standard"], (out) => {
+        if (root !== workspaceDir()) return;
+        if (out) {
+          setRepoFiles(out.split("\n").filter(Boolean).slice(0, REPO_FILES_CAP));
+          return;
+        }
+        void walkRepoFiles(root)
+          .then((files) => {
+            if (root === workspaceDir()) setRepoFiles(files);
+          })
+          .catch(() => setRepoFiles([]));
+      });
+    };
     const [paletteSel, setPaletteSel] = createSignal(0);
     // The wheel-scrolled window top of the result list (0 unless scrolled — the
     // keyboard never moves it, so keyboard-only sessions render exactly as
@@ -2435,6 +2737,8 @@ render(
           againName: currentAgainName(),
           usage: paletteUsage(),
           keycaps: PALETTE_ROW_KEYCAPS,
+          // "Go to file:" rows (M24.6) — appended after everything.
+          repoFiles: repoFiles(),
         },
       ),
     );
@@ -2458,6 +2762,7 @@ render(
       // the row after the "recent" header, keeping F5 → Enter one gesture.
       setPaletteSel(Math.max(0, firstPaletteAction(paletteRowList())));
       setHoverIf(null); // the overlay owns the pointer; drop any underlying tint
+      loadRepoFiles(); // refresh the "Go to file:" source (async, M24.6)
       setPaletteOpen(true);
     };
     const runPaletteAction = (a: PaletteAction) => {
@@ -2515,6 +2820,10 @@ render(
           break;
         case "open-file":
           openEditor(a.path);
+          break;
+        case "go-file":
+          // A fuzzy-matched repo file (M24.6) — path is workspace-relative.
+          openEditor(join(workspaceDir(), a.path));
           break;
         case "save":
           saveEditor();
@@ -2964,6 +3273,8 @@ render(
         lastSpawns: lastSpawns(),
         customCommands: customCommands(),
         paletteUsage: paletteUsage(),
+        filesShowHidden: showHiddenFiles(),
+        filesShowIgnored: showIgnoredFiles(),
       };
       if (saveTimer) clearTimeout(saveTimer);
       saveTimer = setTimeout(() => void saveAppState(snapshot), 400);
@@ -3590,9 +3901,9 @@ render(
         const overList = x < sidebarW() + filesListW();
         const contentY = gy - HEADER_ROWS;
         if (!overList || contentY < 0) return null;
-        const top = clampTop(fileTop(), fileNodes().length, editorRows());
+        const top = clampTop(fileTop(), visibleFiles().length, editorRows());
         const idx = top + contentY;
-        const node = fileNodes()[idx];
+        const node = visibleFiles()[idx]?.node;
         if (!node) return null;
         return {
           region: "file",
@@ -3778,7 +4089,7 @@ render(
           void writeFile(p, "", { flag: "wx" })
             .then(() => {
               setStatusNote(`created ${val}`);
-              loadFileList(workspaceDir());
+              refreshTree(); // expansion-preserving (M24.6)
             })
             .catch((e) => setStatusNote(`create failed: ${(e as Error).message}`));
         } else if (id === "rename" && val && m.filePath) {
@@ -3786,14 +4097,14 @@ render(
           void rename(m.filePath, p)
             .then(() => {
               setStatusNote(`renamed → ${val}`);
-              loadFileList(workspaceDir());
+              refreshTree();
             })
             .catch((e) => setStatusNote(`rename failed: ${(e as Error).message}`));
         } else if (id === "delete" && m.filePath) {
           void rm(m.filePath, { recursive: true, force: false })
             .then(() => {
               setStatusNote(`deleted ${basename(m.filePath!)}`);
-              loadFileList(workspaceDir());
+              refreshTree();
             })
             .catch((e) => setStatusNote(`delete failed: ${(e as Error).message}`));
         }
@@ -4101,10 +4412,59 @@ render(
           return;
         }
         // File LIST focus: j/k navigate, enter opens a file (→ editor focus) or
-        // toggles a directory. Otherwise the EDITOR has focus and types; esc hands
-        // focus back to the list.
+        // toggles a directory; `/` opens the live name filter, [ / ] hop the
+        // changed files, H / I toggle hidden / gitignored visibility (M24.6).
+        // Otherwise the EDITOR has focus and types; esc hands focus back to the
+        // list.
         if (filesFocus() === "list") {
-          if (evt.name === "j" || evt.name === "down") moveFileSel(1);
+          const q = filesQuery();
+          if (q !== null) {
+            // Filter input active: printable chars narrow live; arrows move in
+            // the FILTERED rows; enter activates the row (exiting the filter);
+            // escape restores the full list and the pre-filter selection.
+            if (evt.name === "escape") {
+              setFilesQuery(null);
+              const back = filesPreFilterPath ? indexOfPath(fileNodes(), filesPreFilterPath) : -1;
+              const idx = back !== -1 ? back : 0;
+              setFileSel(idx);
+              setFileTop((t) => scrollToCursor(idx, t, editorRows(), visibleFiles().length));
+            } else if (evt.name === "return") {
+              const row = visibleFiles()[fileSel()];
+              setFilesQuery(null);
+              if (row) {
+                const idx = indexOfPath(fileNodes(), row.node.path);
+                if (idx !== -1) {
+                  setFileSel(idx);
+                  setFileTop((t) => scrollToCursor(idx, t, editorRows(), visibleFiles().length));
+                  activateFile(idx);
+                }
+              }
+            } else if (evt.name === "backspace") {
+              setFilesQuery(q.slice(0, -1));
+              setFileSel(0);
+              setFileTop(0);
+            } else if (evt.name === "down") {
+              moveFileSel(1);
+            } else if (evt.name === "up") {
+              moveFileSel(-1);
+            } else if (evt.name.length === 1 && !evt.ctrl && !evt.meta) {
+              setFilesQuery(q + (evt.shift ? evt.name.toUpperCase() : evt.name));
+              setFileSel(0);
+              setFileTop(0);
+            }
+            return;
+          }
+          if (evt.name === "/") {
+            filesPreFilterPath = visibleFiles()[fileSel()]?.node.path ?? null;
+            setFilesQuery("");
+            setFileSel(0);
+            setFileTop(0);
+          } else if (evt.name === "]") hopChanged(1);
+          else if (evt.name === "[") hopChanged(-1);
+          else if (evt.shift && evt.name === "h") toggleHiddenFiles();
+          else if (evt.shift && evt.name === "i") toggleIgnoredFiles();
+          else if (evt.name === "r") refreshTree();
+          else if (evt.name === "j" || evt.name === "down") moveFileSel(1);
           else if (evt.name === "k" || evt.name === "up") moveFileSel(-1);
           else if (evt.name === "return") activateFile(fileSel());
           return;
@@ -4593,9 +4953,11 @@ render(
           setHoverIf(null);
           return;
         }
-        const top = clampTop(fileTop(), fileNodes().length, editorRows());
+        const top = clampTop(fileTop(), visibleFiles().length, editorRows());
         const idx = top + contentY;
-        setHoverIf(idx >= 0 && idx < fileNodes().length ? { region: "files", index: idx } : null);
+        setHoverIf(
+          idx >= 0 && idx < visibleFiles().length ? { region: "files", index: idx } : null,
+        );
         return;
       }
       if (m === "diff") {
@@ -5062,7 +5424,7 @@ render(
           const dir = e.scroll?.direction;
           if (dir !== "up" && dir !== "down") return;
           const step = dir === "up" ? -SCROLL_STEP : SCROLL_STEP;
-          if (overList) setFileTop((t) => clampTop(t + step, fileNodes().length, editorRows()));
+          if (overList) setFileTop((t) => clampTop(t + step, visibleFiles().length, editorRows()));
           else setEditorTop((t) => clampTop(t + step, editorLines().length, editorRows()));
           return;
         }
@@ -5077,9 +5439,9 @@ render(
         const contentY = gy - HEADER_ROWS;
         if (contentY < 0 || contentY >= editorRows()) return;
         if (overList) {
-          const top = clampTop(fileTop(), fileNodes().length, editorRows());
+          const top = clampTop(fileTop(), visibleFiles().length, editorRows());
           const idx = top + contentY;
-          if (idx >= 0 && idx < fileNodes().length) {
+          if (idx >= 0 && idx < visibleFiles().length) {
             clearSelection();
             setFilesFocus("list");
             activateFile(idx);
@@ -5886,6 +6248,9 @@ render(
                 <text fg={MUTED}>{`${editorCursor().row + 1}:${editorCursor().col + 1}`}</text>
                 <text fg={MUTED}>{`${editorLines().length}L`}</text>
                 <text fg={MUTED}>{editorMsg()}</text>
+                <Show when={filesQuery() !== null}>
+                  <text fg={ACCENT}>{`/${filesQuery()}▏`}</text>
+                </Show>
                 {buttonRow(headerButtons)}
               </box>
               <Show
@@ -5903,13 +6268,16 @@ render(
                     {(row) => {
                       const n = row.node;
                       const selected = () => row.index === fileSel() && filesFocus() === "list";
+                      // Reactive: the status map refreshes on the watcher/poll.
+                      const letter = () => fileStatusFor(n);
                       const prefix =
                         "  ".repeat(n.depth) + (n.isDir ? (n.expanded ? "▾ " : "▸ ") : "  ");
-                      const label = (prefix + n.name).slice(0, filesListW() - 1);
+                      const label = (prefix + n.name).slice(0, filesListW() - 4);
                       return (
                         <box
                           paddingLeft={1}
                           height={1}
+                          flexDirection="row"
                           backgroundColor={
                             selected()
                               ? TAB_ACTIVE_BG
@@ -5918,9 +6286,25 @@ render(
                                 : GUTTER_BG
                           }
                         >
-                          <text fg={n.isDir ? DIR_FG : selected() ? DEFAULT_FG : MUTED}>
+                          <text
+                            flexGrow={1}
+                            fg={
+                              n.ignored
+                                ? DIFF_META_FG // gitignored: dimmed when shown
+                                : n.isDir
+                                  ? DIR_FG
+                                  : selected()
+                                    ? DEFAULT_FG
+                                    : MUTED
+                            }
+                          >
                             {label}
                           </text>
+                          <Show when={letter()}>
+                            <text fg={STATUS_LETTER_FG[letter()!] ?? DEFAULT_FG}>
+                              {` ${letter()!}`}
+                            </text>
+                          </Show>
                         </box>
                       );
                     }}
@@ -5971,7 +6355,11 @@ render(
               </box>
               <box paddingLeft={1}>
                 <text fg={MUTED}>
-                  {`j/k file · enter open · ^s save · esc list · ^g home · ${QUIT_HINT}`}
+                  {`j/k · enter open · [/] change · / filter · H dot:${
+                    showHiddenFiles() ? "on" : "off"
+                  } · I ign:${
+                    showIgnoredFiles() ? "on" : "off"
+                  } · ^s save · esc list · ^g home · ${QUIT_HINT}`}
                 </text>
               </box>
             </Show>
