@@ -2240,6 +2240,11 @@ render(
       }
       setPaletteOpen(false);
       switch (a.kind) {
+        case "search-scrollback":
+          // The live-prompt entry to scrollback search — `/` only works while
+          // scrolled (it belongs to the pane's agent at the bottom).
+          openSearch();
+          break;
         case "tab":
           selectTab(a.tab);
           break;
@@ -3973,10 +3978,18 @@ render(
         setStatusNote("select mode off");
         return;
       }
-      // `/` opens scrollback search on the focused pane (copy-mode's finder). Only
-      // in Terminal mode (home/editor/diff returned above); a raw `/` still reaches
-      // the pane once search is open, since search then owns the keyboard.
-      if (evt.name === "/" && !evt.ctrl && !evt.meta) {
+      // `/` opens scrollback search ONLY when the focused pane is scrolled into
+      // history — at the live prompt `/` belongs to the PANE (agents' slash
+      // commands; user report 2026-07-11: "we cannot hijack that"). Scrolled up,
+      // you're reading, not talking, so `/` means find. At the live bottom the
+      // palette's "Search scrollback" action is the entry. Once search is open
+      // it owns the keyboard as before.
+      if (
+        evt.name === "/" &&
+        !evt.ctrl &&
+        !evt.meta &&
+        (scrollOffsets.get(mirror.focusedPane()) ?? 0) > 0
+      ) {
         openSearch();
         return;
       }

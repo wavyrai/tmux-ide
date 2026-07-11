@@ -38,6 +38,7 @@ export type PaletteAction =
   | { kind: "save"; label: string }
   | { kind: "refresh-diff"; label: string }
   | { kind: "paste-buffer"; label: string }
+  | { kind: "search-scrollback"; label: string }
   | { kind: "new-window"; label: string }
   | { kind: "rename-window"; name: string; label: string }
   | { kind: "kill-window"; label: string }
@@ -177,6 +178,10 @@ export function staticPaletteActions(
     actions.push({ kind: "settings", id: c.id, label: c.label });
   }
   if (ctx.terminal) {
+    // `/` only opens search while scrolled into history (at the live prompt it
+    // belongs to the pane — agents' slash commands); this is the always-there
+    // entry.
+    actions.push({ kind: "search-scrollback", label: "Search scrollback" });
     actions.push({ kind: "new-window", label: "New window" });
     actions.push({ kind: "kill-window", label: "Kill window" });
     actions.push({ kind: "zoom-pane", label: "Zoom pane" });
