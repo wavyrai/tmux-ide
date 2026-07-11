@@ -2,20 +2,39 @@ import { describe, expect, it } from "vitest";
 import type { AgentManifest } from "../detect/manifest.ts";
 import { BUNDLED_MANIFESTS } from "../detect/manifests.ts";
 import {
+  AGAIN_ID,
   AGENT_LAUNCH_COMMANDS,
   CUSTOM_KIND_ID,
+  TEAM_ACTIONS,
+  TEAM_NEW_ID,
   agentKindItems,
   clearAuthorityArgs,
+  compatiblePlacement,
+  customRecentId,
+  customRecentIndex,
+  defaultSpawnPlacement,
   interruptArgs,
   isShellCommand,
+  isSpawnWhere,
+  labelPaneArgs,
+  labelWindowArgs,
+  lastSpawnName,
   launchCommandFor,
+  newAgentItems,
   paneHostsShell,
-  placementItems,
+  placementActions,
+  placementLabel,
   relaunchArgs,
+  resolvePlacement,
   respawnArgs,
   spawnAgentArgs,
+  spawnLabelFor,
   spawnSessionArgs,
+  stampLaunchArgs,
+  teamAgentIndex,
+  teamItems,
 } from "./agent-lifecycle.ts";
+import type { AgentRowInput } from "./agent-rows.ts";
 
 const manifest = (id: string, commands: string[]): AgentManifest => ({
   id,
@@ -69,23 +88,131 @@ describe("agentKindItems", () => {
   });
 });
 
-describe("placementItems", () => {
-  it("offers splits only when there is a pane to split", () => {
-    expect(placementItems({ split: false }).map((i) => i.id)).toEqual(["window"]);
-    expect(placementItems({ split: true }).map((i) => i.id)).toEqual([
-      "window",
-      "split-h",
-      "split-v",
-    ]);
+describe("defaultSpawnPlacement", () => {
+  it("splits right of a focused pane, else a window in the session, else a fresh session", () => {
+    expect(defaultSpawnPlacement({ pane: true, session: true })).toBe("split-h");
+    expect(defaultSpawnPlacement({ pane: false, session: true })).toBe("window");
+    expect(defaultSpawnPlacement({ pane: false, session: false })).toBe("session");
+  });
+});
+
+describe("compatiblePlacement", () => {
+  it("splits need a pane, windows a session, a fresh session always works", () => {
+    expect(compatiblePlacement("split-h", { pane: true, session: true })).toBe(true);
+    expect(compatiblePlacement("split-h", { pane: false, session: true })).toBe(false);
+    expect(compatiblePlacement("split-v", { pane: false, session: false })).toBe(false);
+    expect(compatiblePlacement("window", { pane: false, session: true })).toBe(true);
+    expect(compatiblePlacement("window", { pane: false, session: false })).toBe(false);
+    expect(compatiblePlacement("session", { pane: false, session: false })).toBe(true);
+  });
+});
+
+describe("placementActions", () => {
+  it("offers ^w window / ^d split-below only where a pane exists (the default is split-right)", () => {
+    expect(placementActions({ pane: true, session: true }).map((a) => a.key)).toEqual(["w", "d"]);
+    expect(placementActions({ pane: false, session: true })).toEqual([]);
+    expect(placementActions({ pane: false, session: false })).toEqual([]);
+  });
+});
+
+describe("resolvePlacement", () => {
+  it("maps the footer action keys, and keeps the fallback on plain enter", () => {
+    expect(resolvePlacement("split-h", "w")).toBe("window");
+    expect(resolvePlacement("split-h", "d")).toBe("split-v");
+    expect(resolvePlacement("split-h", undefined)).toBe("split-h");
+    expect(resolvePlacement("session", undefined)).toBe("session");
+  });
+});
+
+describe("placementLabel", () => {
+  it("names every placement in plain language", () => {
+    expect(placementLabel("split-h")).toBe("split right");
+    expect(placementLabel("split-v")).toBe("split below");
+    expect(placementLabel("window")).toBe("new window");
+    expect(placementLabel("session")).toBe("new session");
+  });
+});
+
+describe("isSpawnWhere", () => {
+  it("accepts the four placements and rejects everything else", () => {
+    for (const p of ["window", "split-h", "split-v", "session"]) expect(isSpawnWhere(p)).toBe(true);
+    expect(isSpawnWhere("pane")).toBe(false);
+    expect(isSpawnWhere(3)).toBe(false);
+    expect(isSpawnWhere(undefined)).toBe(false);
+  });
+});
+
+describe("newAgentItems", () => {
+  const last = { kind: "claude", command: "claude", placement: "split-h" as const };
+
+  it("front-loads the again row (pre-selected at index 0) when a spawn is remembered", () => {
+    const items = newAgentItems({ manifests: BUNDLED_MANIFESTS, last, customRecents: [] });
+    expect(items[0]!.id).toBe(AGAIN_ID);
+    expect(items[0]!.label).toBe("claude — again");
+    expect(items[0]!.detail).toBe("split right");
+  });
+
+  it("labels a remembered custom spawn by its argv and shows the checked placement", () => {
+    const items = newAgentItems({
+      manifests: BUNDLED_MANIFESTS,
+      last: { kind: CUSTOM_KIND_ID, command: "my-agent --x", placement: "split-h" },
+      againPlacement: "window", // context lost its pane — the row says where it will REALLY go
+      customRecents: [],
+    });
+    expect(items[0]!.label).toBe("my-agent --x — again");
+    expect(items[0]!.detail).toBe("new window");
+  });
+
+  it("omits the again row without memory and keeps the kind list + custom row", () => {
+    const items = newAgentItems({ manifests: BUNDLED_MANIFESTS, last: null, customRecents: [] });
+    expect(items[0]!.id).not.toBe(AGAIN_ID);
+    expect(items.map((i) => i.id)).toContain("claude");
+    expect(items.map((i) => i.id)).toContain(CUSTOM_KIND_ID);
+  });
+
+  it("lists custom recents as selectable rows beneath the custom row", () => {
+    const items = newAgentItems({
+      manifests: BUNDLED_MANIFESTS,
+      last: null,
+      customRecents: ["my-agent --x", "other --y"],
+    });
+    const ids = items.map((i) => i.id);
+    const customIdx = ids.indexOf(CUSTOM_KIND_ID);
+    expect(ids[customIdx + 1]).toBe(customRecentId(0));
+    expect(ids[customIdx + 2]).toBe(customRecentId(1));
+    expect(items[customIdx + 1]!.label).toBe("my-agent --x");
+    expect(customRecentIndex(customRecentId(1))).toBe(1);
+    expect(customRecentIndex("claude")).toBeNull();
+    expect(customRecentIndex(`${customRecentId(0)}x`)).toBeNull();
+  });
+});
+
+describe("lastSpawnName", () => {
+  it("names a kind spawn by kind and a custom spawn by its argv", () => {
+    expect(lastSpawnName({ kind: "codex", command: "codex", placement: "window" })).toBe("codex");
+    expect(lastSpawnName({ kind: CUSTOM_KIND_ID, command: "m --f", placement: "window" })).toBe(
+      "m --f",
+    );
+  });
+});
+
+describe("spawnLabelFor", () => {
+  it("labels kind spawns by kind and custom spawns by the command's basename", () => {
+    expect(spawnLabelFor("claude", "claude")).toBe("claude");
+    expect(spawnLabelFor(CUSTOM_KIND_ID, "/usr/local/bin/my-agent --flag")).toBe("my-agent");
+    expect(spawnLabelFor(CUSTOM_KIND_ID, "  ")).toBe("agent");
   });
 });
 
 describe("spawnAgentArgs", () => {
-  it("spawns a new window in the session, with -c when the dir is known", () => {
+  it("spawns a new window in the session (printing the pane id), with -c when the dir is known", () => {
     expect(spawnAgentArgs("window", { session: "web" }, "/proj", "claude")).toEqual([
       "new-window",
       "-t",
       "web:",
+      "-P",
+      "-F",
+      "#{pane_id}",
       "-c",
       "/proj",
       "claude",
@@ -94,6 +221,9 @@ describe("spawnAgentArgs", () => {
       "new-window",
       "-t",
       "web:",
+      "-P",
+      "-F",
+      "#{pane_id}",
       "claude",
     ]);
   });
@@ -104,6 +234,9 @@ describe("spawnAgentArgs", () => {
       "-h",
       "-t",
       "%3",
+      "-P",
+      "-F",
+      "#{pane_id}",
       "-c",
       "/proj",
       "codex",
@@ -113,18 +246,24 @@ describe("spawnAgentArgs", () => {
       "-v",
       "-t",
       "web:",
+      "-P",
+      "-F",
+      "#{pane_id}",
       "codex",
     ]);
   });
 });
 
 describe("spawnSessionArgs", () => {
-  it("creates a detached session running the command in the project dir", () => {
+  it("creates a detached session running the command in the project dir, printing the pane id", () => {
     expect(spawnSessionArgs("api", "/proj", "claude")).toEqual([
       "new-session",
       "-d",
       "-s",
       "api",
+      "-P",
+      "-F",
+      "#{pane_id}",
       "-c",
       "/proj",
       "claude",
@@ -134,8 +273,52 @@ describe("spawnSessionArgs", () => {
       "-d",
       "-s",
       "api",
+      "-P",
+      "-F",
+      "#{pane_id}",
       "claude",
     ]);
+  });
+});
+
+describe("label + stamp argv (M24.1 auto-label)", () => {
+  it("titles the spawned pane / names the spawned window after the agent", () => {
+    expect(labelPaneArgs("%7", "claude")).toEqual(["select-pane", "-t", "%7", "-T", "claude"]);
+    expect(labelWindowArgs("%7", "codex")).toEqual(["rename-window", "-t", "%7", "codex"]);
+  });
+
+  it("stamps the exact launch argv as a pane-local option", () => {
+    expect(stampLaunchArgs("%7", "claude --resume abc")).toEqual([
+      "set-option",
+      "-p",
+      "-t",
+      "%7",
+      "@agent_launch",
+      "claude --resume abc",
+    ]);
+  });
+});
+
+describe("teamItems", () => {
+  const agents: AgentRowInput[] = [
+    { paneId: "%1", windowIndex: 0, session: "web", kind: "claude", state: "working", since: 970 },
+    { paneId: "%2", windowIndex: 1, session: "api", kind: "codex", state: "blocked", since: null },
+  ];
+
+  it("pins + new agent first, then one row per fleet agent with state (+ dwell) detail", () => {
+    const items = teamItems(agents, 1000);
+    expect(items[0]!.id).toBe(TEAM_NEW_ID);
+    expect(items[1]!.label).toBe("claude · web");
+    expect(items[1]!.detail).toBe("working 30s"); // stamped → dwell shown
+    expect(items[2]!.label).toBe("codex · api");
+    expect(items[2]!.detail).toBe("blocked"); // scraped → bare state
+    expect(teamAgentIndex(items[1]!.id)).toBe(0);
+    expect(teamAgentIndex(items[2]!.id)).toBe(1);
+    expect(teamAgentIndex(TEAM_NEW_ID)).toBeNull();
+  });
+
+  it("offers restart/stop as the footer ctrl-actions", () => {
+    expect(TEAM_ACTIONS.map((a) => a.key)).toEqual(["r", "s"]);
   });
 });
 

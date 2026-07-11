@@ -28,6 +28,10 @@ export type PaletteAction =
   // command from. Each fleet agent gets one restart + one stop row; "New
   // agent…" opens the spawn flow (kind → placement → run) on the dialog stack.
   | { kind: "new-agent"; label: string }
+  // Repeat the current context's remembered spawn directly — no dialog (M24.1).
+  | { kind: "new-agent-again"; label: string }
+  // The one-surface team console (M24.1): jump/restart/stop + "+ new agent".
+  | { kind: "manage-team"; label: string }
   | { kind: "restart-agent"; paneId: string; agentKind: string; session: string; label: string }
   | { kind: "stop-agent"; paneId: string; agentKind: string; session: string; label: string }
   | { kind: "open-file"; path: string; label: string }
@@ -76,6 +80,10 @@ export interface PaletteContext {
    *  "Select text in pane" offered (ordinary panes drag-select directly, so the
    *  action would be a no-op that clutters the list). */
   appMousePane?: boolean;
+  /** What the current context's remembered spawn is called (`claude`, a custom
+   *  argv, …) — when set, a direct "New agent: <name> (again)" action is PINNED
+   *  FIRST, so a repeat spawn is F5 → Enter (M24.1's ≤2-Enters bar). */
+  againName?: string | null;
 }
 
 const TAB_LABELS: { tab: Tab; label: string }[] = [
@@ -92,17 +100,24 @@ export function staticPaletteActions(
   sessions: string[],
   ctx: PaletteContext = {},
 ): PaletteAction[] {
-  const actions: PaletteAction[] = TAB_LABELS.map((t) => ({
-    kind: "tab" as const,
-    tab: t.tab,
-    label: t.label,
-  }));
+  const actions: PaletteAction[] = [];
+  // The repeat spawn (M24.1) — FIRST, above everything: with memory for the
+  // current context, an empty-query Enter repeats the last spawn, making
+  // F5 → Enter the whole gesture (the card's ≤2-Enters acceptance bar).
+  if (ctx.againName) {
+    actions.push({ kind: "new-agent-again", label: `New agent: ${ctx.againName} (again)` });
+  }
+  for (const t of TAB_LABELS) actions.push({ kind: "tab", tab: t.tab, label: t.label });
   // The non-technicals' front door (M22.5): a filesystem picker → create-or-
   // attach a session in the chosen folder. Offered on every surface.
   actions.push({ kind: "open-folder", label: "Open folder…" });
-  // Spawn an agent (M23.1) — offered on every surface; the flow's placement
-  // step is what's contextual (splits only where a focused pane exists).
+  // Spawn an agent (M23.1/M24.1) — offered on every surface; ONE dialog whose
+  // default placement is contextual (split beside a focused pane, else a new
+  // window in the session, else a fresh session).
   actions.push({ kind: "new-agent", label: "New agent…" });
+  // The team console (M24.1): every fleet agent in one dialog — jump, restart,
+  // stop, spawn. The sidebar agents-header click's keyboard twin.
+  actions.push({ kind: "manage-team", label: "Manage team…" });
   for (const s of sessions) {
     actions.push({ kind: "attach", session: s, label: `Attach session: ${s}` });
   }

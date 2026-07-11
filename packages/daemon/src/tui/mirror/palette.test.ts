@@ -11,6 +11,7 @@ describe("staticPaletteActions", () => {
       "Switch tab: Diff",
       "Open folder…",
       "New agent…",
+      "Manage team…",
       "Attach session: alpha",
       "Attach session: beta",
       "Save file",
@@ -27,6 +28,28 @@ describe("staticPaletteActions", () => {
       "Settings: Reset to defaults",
       "Quit",
     ]);
+  });
+
+  it("pins 'New agent: <name> (again)' FIRST when the context has spawn memory (M24.1)", () => {
+    const actions = staticPaletteActions(["alpha"], { againName: "claude" });
+    expect(actions[0]).toMatchObject({
+      kind: "new-agent-again",
+      label: "New agent: claude (again)",
+    });
+    // Empty-query Enter therefore repeats the spawn: F5 → Enter (≤2 Enters).
+    expect(filterPaletteActions("", ["alpha"], { againName: "claude" })[0]!.kind).toBe(
+      "new-agent-again",
+    );
+    // …and the action ranks above "New agent…" by construction.
+    const labels = actions.map((a) => a.label);
+    expect(labels.indexOf("New agent: claude (again)")).toBeLessThan(labels.indexOf("New agent…"));
+    // Without memory it is absent entirely.
+    expect(staticPaletteActions([]).some((a) => a.kind === "new-agent-again")).toBe(false);
+  });
+
+  it("offers the team console on every surface (M24.1)", () => {
+    expect(staticPaletteActions([]).some((a) => a.kind === "manage-team")).toBe(true);
+    expect(filterPaletteActions("team", []).some((a) => a.kind === "manage-team")).toBe(true);
   });
 
   it("offers the open-folder command on every surface", () => {
@@ -98,7 +121,7 @@ describe("filterPaletteActions", () => {
   it("returns every static action for an empty query, no open-file entry", () => {
     const actions = filterPaletteActions("", ["alpha"]);
     expect(actions.some((a) => a.kind === "open-file")).toBe(false);
-    expect(actions).toHaveLength(19);
+    expect(actions).toHaveLength(20);
   });
 
   it("fuzzy-ranks matches and appends an open-file action for a plain word", () => {

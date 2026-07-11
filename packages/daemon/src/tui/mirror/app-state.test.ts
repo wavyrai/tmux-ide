@@ -1,17 +1,23 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
+  CUSTOM_COMMANDS_CAP,
   DEFAULT_APP_STATE,
   RECENTS_CAP,
   SIDEBAR_W_DEFAULT,
+  SPAWN_MEMORY_CAP,
+  addCustomCommand,
   addRecentFolder,
   appStateHome,
   appStatePath,
   clampSidebarWidth,
   isTab,
   parseAppState,
+  rememberSpawn,
   serializeAppState,
+  spawnMemoryKey,
   type AppState,
 } from "./app-state.ts";
+import type { LastSpawn } from "./agent-lifecycle.ts";
 
 describe("isTab", () => {
   it("accepts the four surface keys and rejects anything else", () => {
@@ -34,6 +40,11 @@ describe("parseAppState", () => {
       diffFile: "src/x.ts",
       sidebarW: 30,
       recentFolders: ["/tmp/one", "/tmp/two"],
+      lastSpawns: {
+        "/tmp/one": { kind: "claude", command: "claude", placement: "split-h" },
+        "session:web": { kind: "custom-command", command: "my-agent --x", placement: "window" },
+      },
+      customCommands: ["my-agent --x", "other --y"],
     };
     expect(parseAppState(serializeAppState(state))).toEqual(state);
   });
@@ -55,6 +66,8 @@ describe("parseAppState", () => {
       diffFile: "d",
       sidebarW: SIDEBAR_W_DEFAULT,
       recentFolders: [],
+      lastSpawns: {},
+      customCommands: [],
     });
   });
 
@@ -69,7 +82,33 @@ describe("parseAppState", () => {
       diffFile: null,
       sidebarW: SIDEBAR_W_DEFAULT,
       recentFolders: [],
+      lastSpawns: {},
+      customCommands: [],
     });
+  });
+
+  it("drops malformed spawn-memory entries and keeps clean ones (order preserved)", () => {
+    const parsed = parseAppState(
+      JSON.stringify({
+        lastSpawns: {
+          "/good": { kind: "claude", command: "claude", placement: "window" },
+          "/bad-placement": { kind: "claude", command: "claude", placement: "pane" },
+          "/bad-kind": { kind: "", command: "claude", placement: "window" },
+          "/bad-shape": "claude",
+          "": { kind: "claude", command: "claude", placement: "window" },
+          "/good2": { kind: "custom-command", command: "m --x", placement: "session" },
+        },
+        customCommands: ["a", "", 5, "a", "b"],
+      }),
+    );
+    expect(Object.keys(parsed.lastSpawns)).toEqual(["/good", "/good2"]);
+    expect(parsed.customCommands).toEqual(["a", "b"]);
+  });
+
+  it("yields empty spawn memory for a non-object value", () => {
+    expect(parseAppState(JSON.stringify({ lastSpawns: ["x"], customCommands: "y" }))).toEqual(
+      DEFAULT_APP_STATE,
+    );
   });
 
   it("keeps only clean, deduped, capped recent folders", () => {
@@ -111,18 +150,64 @@ describe("serializeAppState", () => {
         diffFile: null,
         sidebarW: SIDEBAR_W_DEFAULT,
         recentFolders: [],
+        lastSpawns: {},
+        customCommands: [],
         // @ts-expect-error — runtime extra keys must not leak into the file
         junk: "x",
       }),
     );
     expect(Object.keys(parsed).sort()).toEqual([
       "contextSession",
+      "customCommands",
       "diffFile",
+      "lastSpawns",
       "lastTab",
       "openFile",
       "recentFolders",
       "sidebarW",
     ]);
+  });
+});
+
+describe("spawnMemoryKey", () => {
+  it("prefers the dir, falls back to a namespaced session, else null", () => {
+    expect(spawnMemoryKey("/proj", "web")).toBe("/proj");
+    expect(spawnMemoryKey(null, "web")).toBe("session:web");
+    expect(spawnMemoryKey("", "web")).toBe("session:web");
+    expect(spawnMemoryKey(null, undefined)).toBeNull();
+    expect(spawnMemoryKey(null, "")).toBeNull();
+  });
+});
+
+describe("rememberSpawn", () => {
+  const spawn = (kind: string): LastSpawn => ({ kind, command: kind, placement: "window" });
+
+  it("re-inserts an existing key as newest (LRU order) without touching the input", () => {
+    const map = { "/a": spawn("claude"), "/b": spawn("codex") };
+    const out = rememberSpawn(map, "/a", spawn("opencode"));
+    expect(Object.keys(out)).toEqual(["/b", "/a"]);
+    expect(out["/a"]!.kind).toBe("opencode");
+    expect(Object.keys(map)).toEqual(["/a", "/b"]); // input untouched
+  });
+
+  it("drops the oldest entries past the cap", () => {
+    let map: Record<string, LastSpawn> = {};
+    for (let i = 0; i < SPAWN_MEMORY_CAP + 3; i++) {
+      map = rememberSpawn(map, `/p${i}`, spawn("claude"));
+    }
+    const keys = Object.keys(map);
+    expect(keys.length).toBe(SPAWN_MEMORY_CAP);
+    expect(keys[0]).toBe("/p3"); // /p0../p2 fell off
+    expect(keys[keys.length - 1]).toBe(`/p${SPAWN_MEMORY_CAP + 2}`);
+  });
+});
+
+describe("addCustomCommand", () => {
+  it("moves a command to the front, dedupes, caps, and ignores blanks", () => {
+    expect(addCustomCommand(["a", "b"], "b")).toEqual(["b", "a"]);
+    expect(addCustomCommand(["a", "b", "c", "d", "e"], "f")).toEqual(["f", "a", "b", "c", "d"]);
+    expect(addCustomCommand(["a"], "  ")).toEqual(["a"]);
+    expect(addCustomCommand([], "x --y").length).toBeLessThanOrEqual(CUSTOM_COMMANDS_CAP);
   });
 });
 

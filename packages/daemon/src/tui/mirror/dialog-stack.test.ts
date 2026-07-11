@@ -107,6 +107,15 @@ describe("select behavior", () => {
     expect(stack.top()!.state.query).toBe("");
   });
 
+  it('the space key (OpenTUI name "space") types a real space into the filter (M24.1)', () => {
+    const stack = createDialogStack();
+    void stack.push({ kind: "select", title: "Pick", items });
+    dialogKey(stack, key("a"));
+    dialogKey(stack, key("space"));
+    dialogKey(stack, key("b"));
+    expect(stack.top()!.state.query).toBe("a b");
+  });
+
   it("a danger row arms to press-again-to-confirm; a second enter resolves; moving disarms", async () => {
     const danger: DialogSelectItem[] = [
       { id: "keep", label: "Keep" },
@@ -193,6 +202,15 @@ describe("prompt behavior", () => {
     stack.setBusy(true);
     dialogKey(stack, key("d"));
     expect(stack.top()!.state.input).toBe("abC");
+  });
+
+  it("types spaces (a custom command's flags depend on it — M24.1)", async () => {
+    const stack = createDialogStack();
+    const p = stack.push({ kind: "prompt", title: "Custom command" });
+    for (const n of ["m", "y", "space", "-", "x"]) dialogKey(stack, key(n));
+    expect(stack.top()!.state.input).toBe("my -x");
+    dialogKey(stack, key("return"));
+    await expect(p).resolves.toBe("my -x");
   });
 });
 
