@@ -78,6 +78,11 @@ export function agentsHeaderLabel(count: number, maxChars: number): string {
 /** The quiet empty-state line shown under the header when no agents are running. */
 export const AGENTS_EMPTY_LINE = "no agents running — panes running claude or codex show up here";
 
+/** The always-present spawn chip on the AGENTS header row (and the empty-state
+ *  row) — THE discoverable "start a new agent" entry (M24.1). Right-aligned;
+ *  the render and the router share its span via `spansFromRight`. */
+export const AGENTS_ADD_CHIP = "[+ agent]";
+
 /**
  * PURE — a compact state-age like `"blocked 4m"` from a `since` epoch-seconds
  * stamp, for the hovered row. Returns null when there is no timestamp (a scraped
@@ -103,12 +108,15 @@ export function agentAgeLabel(
  *  agree on the row the header sits on — a mismatch lands clicks one row off. */
 export const AGENTS_GAP_ROWS = 1;
 
-/** What a sidebar content row (a tab-bar-adjusted `gy`) targets. `agents-header`,
- *  the gap row(s), and the empty-state row are inert (the router does nothing). */
+/** What a sidebar content row (a tab-bar-adjusted `gy`) targets. The gap
+ *  row(s) are inert; `agents-header` opens the Team dialog (its right-aligned
+ *  `[+ agent]` chip spawns — the router x-tests the chip span first), and
+ *  `agents-empty` is the empty-state row (inert except its chip). */
 export type SidebarHit =
   | { kind: "session"; index: number }
   | { kind: "agent"; index: number }
   | { kind: "agents-header" }
+  | { kind: "agents-empty" }
   | null;
 
 /**
@@ -117,8 +125,8 @@ export type SidebarHit =
  * never land where a row isn't drawn. Layout, top to bottom: `gy 0` title,
  * `gy 1` rule, then `sessionCount` session rows from `gy 2`, then
  * `AGENTS_GAP_ROWS` blank row(s), then the agents section — one header row, then
- * `agentCount` agent rows (or a single inert empty-state row when
- * `agentCount === 0`).
+ * `agentCount` agent rows (or a single empty-state row when `agentCount === 0`,
+ * hit-tested as `agents-empty` so its `[+ agent]` chip stays clickable).
  */
 export function sidebarHit(gy: number, sessionCount: number, agentCount: number): SidebarHit {
   if (gy < 2) return null;
@@ -128,6 +136,7 @@ export function sidebarHit(gy: number, sessionCount: number, agentCount: number)
   if (gy < headerGy) return null; // the gap row(s) between sessions and agents
   if (gy === headerGy) return { kind: "agents-header" };
   const ai = gy - headerGy - 1;
-  if (agentCount === 0 || ai < 0 || ai >= agentCount) return null;
+  if (agentCount === 0) return ai === 0 ? { kind: "agents-empty" } : null;
+  if (ai < 0 || ai >= agentCount) return null;
   return { kind: "agent", index: ai };
 }

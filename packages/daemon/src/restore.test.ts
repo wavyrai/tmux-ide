@@ -117,9 +117,41 @@ describe("paneResumeCommand", () => {
       resumeAgents: true,
       want: null,
     },
+    // The M24.1 table extensions — each spelling VERIFIED against the CLI's
+    // own --help (codex/opencode/cursor) or the official docs (copilot).
     {
-      name: "other agent + session id → null (no resume story)",
+      name: "codex + session id → codex resume <id>",
       pane: pane({ agent: "codex", agentSessionId: id }),
+      resumeAgents: true,
+      want: `codex resume ${id}`,
+    },
+    {
+      name: "opencode + its ses_… id → opencode --session <id> (underscore is safe)",
+      pane: pane({ agent: "opencode", agentSessionId: "ses_8f2ab91ccd" }),
+      resumeAgents: true,
+      want: "opencode --session ses_8f2ab91ccd",
+    },
+    {
+      name: "cursor + chat id → cursor-agent --resume <id> (launch binary, not the kind)",
+      pane: pane({ agent: "cursor", agentSessionId: id }),
+      resumeAgents: true,
+      want: `cursor-agent --resume ${id}`,
+    },
+    {
+      name: "copilot + session id → copilot --resume=<id> (the optional-value = form)",
+      pane: pane({ agent: "copilot", agentSessionId: id }),
+      resumeAgents: true,
+      want: `copilot --resume=${id}`,
+    },
+    {
+      name: "unverified agent (gemini) + session id → null (no VERIFIED resume story)",
+      pane: pane({ agent: "gemini", agentSessionId: id }),
+      resumeAgents: true,
+      want: null,
+    },
+    {
+      name: "codex id with shell metacharacters → null (same guard as claude)",
+      pane: pane({ agent: "codex", agentSessionId: "abc;rm -rf" }),
       resumeAgents: true,
       want: null,
     },

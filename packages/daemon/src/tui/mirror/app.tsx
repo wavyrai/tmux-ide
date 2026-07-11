@@ -180,8 +180,11 @@ import {
   loadAppState,
   saveAppState,
   addRecentFolder,
+  addCustomCommand,
   clampSidebarWidth,
   isTab,
+  rememberSpawn,
+  spawnMemoryKey,
   type AppState,
   type Tab,
 } from "./app-state.ts";
@@ -294,6 +297,7 @@ import {
   agentsHeaderLabel,
   agentAgeLabel,
   sidebarHit,
+  AGENTS_ADD_CHIP,
   AGENTS_EMPTY_LINE,
   AGENTS_GAP_ROWS,
   type AgentRowInput,
@@ -315,20 +319,37 @@ import {
 } from "./file-tree.ts";
 import { spans, spanHit, spansFromRight, type Span } from "./spans.ts";
 import {
+  AGAIN_ID,
   CUSTOM_KIND_ID,
   INTERRUPT_TAP_GAP_MS,
   RESTART_GRACE_MS,
-  agentKindItems,
+  TEAM_ACTIONS,
+  TEAM_NEW_ID,
   clearAuthorityArgs,
+  compatiblePlacement,
+  customRecentIndex,
+  defaultSpawnPlacement,
   interruptArgs,
+  labelPaneArgs,
+  labelWindowArgs,
+  lastSpawnName,
   launchCommandFor,
+  newAgentItems,
   paneHostsShell,
-  placementItems,
+  placementActions,
+  placementLabel,
   relaunchArgs,
+  resolvePlacement,
   respawnArgs,
   spawnAgentArgs,
+  spawnLabelFor,
   spawnSessionArgs,
+  stampLaunchArgs,
+  teamAgentIndex,
+  teamItems,
+  type LastSpawn,
   type SpawnPlacement,
+  type SpawnWhere,
 } from "./agent-lifecycle.ts";
 import { getManifests } from "../detect/manifest-loader.ts";
 import { agentsByPane, chipLabel } from "./agent-chip.ts";
@@ -478,7 +499,11 @@ type HoverRegion =
   | "homechip"
   | "homeagentchip"
   | "welcomeopen"
-  | "sidebtn";
+  | "sidebtn"
+  // M24.1: the AGENTS header row (click → Team dialog) and its right-aligned
+  // [+ agent] chip (index 0 = header row, 1 = the empty-state row's twin).
+  | "agentshdr"
+  | "agentschip";
 
 /** The one pointer-event shape the central `route` reads. `button` distinguishes
  *  left (0) / right (2) presses; `stopPropagation` (present on the real OpenTUI
@@ -674,6 +699,12 @@ render(
     // every folder open, persisted with the rest of the app state. Home renders
     // them under a "recent" header (deduped against sessions + the registry).
     const [recentFolders, setRecentFolders] = createSignal<string[]>(persisted.recentFolders);
+    // The "again" spawn memory + custom-command recents (M24.1) — restored from
+    // app-state, updated on every spawn, persisted with the rest.
+    const [lastSpawns, setLastSpawns] = createSignal<Record<string, LastSpawn>>(
+      persisted.lastSpawns,
+    );
+    const [customCommands, setCustomCommands] = createSignal<string[]>(persisted.customCommands);
     // The first-run tip line — the user's ACTUAL keybindings, read once at launch
     // (loadAppConfig honors TMUX_IDE_CONFIG). Cheap + pure, computed once.
     const welcomeTip = firstRunTip(loadAppConfig().keys);
@@ -1512,19 +1543,28 @@ render(
     };
 
     /** The pane's `pane_start_command` (its ROOT: "" = default shell) +
-     *  `pane_current_path`, or null when the pane is gone. One async display
-     *  call (tab-joined). NOT pane_current_command — that is the FOREGROUND
-     *  process, so a user-typed `claude` under zsh would read as `claude` too
-     *  and be indistinguishable from a pane-command agent (measured). */
+     *  `pane_current_path` + our `@agent_launch` stamp (M24.1 — the exact argv
+     *  our spawn verb ran, the preferred relaunch source), or null when the
+     *  pane is gone. One async display call (tab-joined; the stamp rides LAST
+     *  and re-joins, so a command containing tabs survives). NOT
+     *  pane_current_command — that is the FOREGROUND process, so a user-typed
+     *  `claude` under zsh would read as `claude` too and be indistinguishable
+     *  from a pane-command agent (measured). */
     const paneStartAndPath = (paneId: string) =>
-      new Promise<{ start: string; path: string } | null>((resolve) =>
+      new Promise<{ start: string; path: string; launch: string } | null>((resolve) =>
         execFile(
           "tmux",
-          ["display", "-p", "-t", paneId, "#{pane_start_command}\t#{pane_current_path}"],
+          [
+            "display",
+            "-p",
+            "-t",
+            paneId,
+            "#{pane_start_command}\t#{pane_current_path}\t#{@agent_launch}",
+          ],
           (err, stdout) => {
             if (err) return resolve(null);
-            const [start = "", path = ""] = stdout.trimEnd().split("\t");
-            resolve({ start, path });
+            const [start = "", path = "", ...rest] = stdout.trimEnd().split("\t");
+            resolve({ start, path, launch: rest.join("\t") });
           },
         ),
       );
@@ -1537,13 +1577,15 @@ render(
      *  authority stamps. */
     const restartAgentFlow = async (a: Pick<AgentRowInput, "paneId" | "kind">) => {
       const manifests = getManifests();
-      const command = launchCommandFor(a.kind, manifests);
       const live = await paneStartAndPath(a.paneId);
       if (!live) {
         setStatusNote("that pane is gone — refreshing");
         setTimeout(() => fleetRefresh?.(), 300);
         return;
       }
+      // The @agent_launch stamp (our own spawn's exact argv — flags included)
+      // beats the kind's generic launch command when present (M24.1).
+      const command = live.launch || launchCommandFor(a.kind, manifests);
       const underShell = paneHostsShell(live.start, manifests);
       const ok = await DialogConfirm.show({
         title: `Restart ${a.kind}?`,
@@ -1578,11 +1620,16 @@ render(
       setStatusNote(`closed ${a.kind}'s pane`);
     };
 
-    /** The spawn flow: WHAT runs (manifest kinds + a custom command) → WHERE
-     *  (splits only when a concrete pane exists) → run it. Without a live
-     *  session (a home project row) the agent gets a fresh detached session in
-     *  the project dir. Detection needs no extra wiring: the spawned pane's
-     *  command IS the agent, so the next fleet poll classifies it. */
+    // ── THE SPAWN FLOW (M24.1 — one dialog, defaults everywhere) ─────────────
+    // The flow never ASKS what it can default: ONE kind picker whose Enter
+    // spawns at the context's default placement (split right of a focused
+    // pane / a new window in the session / a fresh session for project rows);
+    // placement ALTERNATIVES are footer ctrl-actions, never a second dialog.
+    // The picker's TOP row repeats the last spawn remembered for this context
+    // (per project/session-dir, app-state), custom commands keep a global
+    // recents list, and DialogPrompt only ever appears for a brand-new custom
+    // command. Detection needs no extra wiring: the spawned pane's command IS
+    // the agent, so the next fleet poll classifies it.
     interface NewAgentContext {
       session?: string;
       dir: string | null;
@@ -1590,17 +1637,106 @@ render(
       /** Names the fresh session when there is no live one (project rows). */
       sessionName?: string;
     }
+    /** The context's shape for the pure placement decisions. */
+    const spawnShape = (ctx: NewAgentContext) => ({
+      pane: ctx.paneId !== undefined,
+      session: ctx.session !== undefined,
+    });
+    /** The context's "again"-memory key + remembered spawn (null when none). */
+    const spawnMemoryFor = (
+      ctx: NewAgentContext,
+    ): { key: string | null; last: LastSpawn | null } => {
+      const key = spawnMemoryKey(ctx.dir, ctx.session ?? ctx.sessionName);
+      return { key, last: key ? (lastSpawns()[key] ?? null) : null };
+    };
+    /** ASYNC — a pane's `#{pane_current_path}`, or null when unreadable. */
+    const paneCurrentPath = (paneId: string) =>
+      new Promise<string | null>((resolve) =>
+        execFile("tmux", ["display", "-p", "-t", paneId, "#{pane_current_path}"], (err, stdout) =>
+          resolve(err ? null : stdout.trim() || null),
+        ),
+      );
+    /** Run ONE spawn: resolve the cwd policy (Terminal-surface spawns inherit
+     *  the FOCUSED pane's cwd under `app.newAgentCwd: "pane"`, the default),
+     *  build the argv (`-P -F` returns the new pane id), then — in the same
+     *  breath — auto-label the pane/window after the agent and stamp
+     *  `@agent_launch` with the exact command, and remember the spawn for the
+     *  again row / palette action / custom recents. */
+    const runSpawn = async (
+      ctx: NewAgentContext,
+      choice: { kind: string; command: string; placement: SpawnWhere },
+    ) => {
+      const { kind, command, placement } = choice;
+      let dir = ctx.dir;
+      if (ctx.paneId && loadAppConfig().app.newAgentCwd === "pane") {
+        dir = (await paneCurrentPath(ctx.paneId)) ?? ctx.dir;
+      }
+      const label = spawnLabelFor(kind, command);
+      // Remember FIRST (fire-and-forget spawn callbacks shouldn't gate it):
+      // the again memory is keyed per project/session-dir, custom argv joins
+      // the global recents.
+      const { key } = spawnMemoryFor(ctx);
+      if (key) setLastSpawns((m) => rememberSpawn(m, key, { kind, command, placement }));
+      if (kind === CUSTOM_KIND_ID) setCustomCommands((l) => addCustomCommand(l, command));
+      /** Post-spawn follow-ups against the printed pane id: title the pane
+       *  (or its window), stamp the launch argv. Best-effort, async. */
+      const decorate = (stdout: string) => {
+        const paneId = stdout.trim();
+        if (!paneId.startsWith("%")) return;
+        const labelArgs =
+          placement === "window" ? labelWindowArgs(paneId, label) : labelPaneArgs(paneId, label);
+        execFile("tmux", labelArgs, () => {});
+        execFile("tmux", stampLaunchArgs(paneId, command), () => {});
+      };
+      if (placement === "session" || !ctx.session) {
+        const base = ctx.sessionName ?? basename(ctx.dir ?? invokeCwd);
+        const name = sessionNameFor(base || "agents");
+        execFile("tmux", spawnSessionArgs(name, dir, command), (err, stdout) => {
+          setStatusNote(err ? `couldn't start ${command}` : `started ${command} in ${name}`);
+          if (!err) {
+            execFile("tmux", ["set-environment", "-t", name, "TMUX_IDE", "1"], () => {});
+            decorate(stdout);
+          }
+          setTimeout(() => fleetRefresh?.(), 300);
+        });
+        return;
+      }
+      const target = { session: ctx.session, paneId: ctx.paneId };
+      const args = spawnAgentArgs(placement as SpawnPlacement, target, dir, command);
+      execFile("tmux", args, (err, stdout) => {
+        setStatusNote(err ? `couldn't start ${command}` : `started ${command} in ${ctx.session}`);
+        if (!err) decorate(stdout);
+        setTimeout(() => fleetRefresh?.(), 300);
+      });
+    };
     const newAgentFlow = async (ctx: NewAgentContext) => {
       setHoverIf(null); // the overlay owns the pointer, like the palette
       const manifests = getManifests();
-      const kind = await DialogSelect.show({
-        title: "New agent — what should run?",
-        items: agentKindItems(manifests),
-        footerHint: "pick an agent, or type your own command",
+      const shape = spawnShape(ctx);
+      const fallback = defaultSpawnPlacement(shape);
+      const { last } = spawnMemoryFor(ctx);
+      // The again row replays its remembered placement where the context still
+      // allows it (a remembered split needs a focused pane); else the default.
+      const againPlacement =
+        last && compatiblePlacement(last.placement, shape) ? last.placement : fallback;
+      const res = await DialogSelect.show({
+        title: "New agent",
+        items: newAgentItems({ manifests, last, againPlacement, customRecents: customCommands() }),
+        actions: placementActions(shape),
+        footerHint: `enter: ${placementLabel(fallback)}`,
       });
-      if (!kind) return;
+      if (!res) return;
+      let kind: string;
       let command: string;
-      if (kind.item.id === CUSTOM_KIND_ID) {
+      const recentIdx = customRecentIndex(res.item.id);
+      if (res.item.id === AGAIN_ID && last) {
+        kind = last.kind;
+        command = last.command;
+      } else if (recentIdx !== null) {
+        kind = CUSTOM_KIND_ID;
+        command = customCommands()[recentIdx] ?? "";
+        if (!command) return;
+      } else if (res.item.id === CUSTOM_KIND_ID) {
         const typed = await DialogPrompt.show({
           title: "Custom command",
           placeholder: "my-agent --flag",
@@ -1608,32 +1744,32 @@ render(
           validate: (v) => (v.trim().length > 0 ? null : "Type a command, or press esc to go back"),
         });
         if (typed === null) return;
+        kind = CUSTOM_KIND_ID;
         command = typed.trim();
       } else {
-        command = launchCommandFor(kind.item.id, manifests);
+        kind = res.item.id;
+        command = launchCommandFor(res.item.id, manifests);
       }
-      if (!ctx.session) {
-        const base = ctx.sessionName ?? basename(ctx.dir ?? invokeCwd);
-        const name = sessionNameFor(base || "agents");
-        execFile("tmux", spawnSessionArgs(name, ctx.dir, command), (err) => {
-          setStatusNote(err ? `couldn't start ${command}` : `started ${command} in ${name}`);
-          if (!err) execFile("tmux", ["set-environment", "-t", name, "TMUX_IDE", "1"], () => {});
-          setTimeout(() => fleetRefresh?.(), 300);
-        });
+      // WHERE: Enter keeps the default (the again row: its remembered
+      // placement); a footer ctrl-action (^w / ^d) overrides.
+      const base = res.item.id === AGAIN_ID ? againPlacement : fallback;
+      await runSpawn(ctx, { kind, command, placement: resolvePlacement(base, res.action) });
+    };
+    /** Repeat the current context's remembered spawn DIRECTLY — the palette's
+     *  "New agent: <kind> (again)" action (no dialog). Falls through to the
+     *  full flow when nothing is remembered (shouldn't happen — the action is
+     *  only offered with memory). */
+    const newAgentAgain = (ctx: NewAgentContext) => {
+      const { last } = spawnMemoryFor(ctx);
+      if (!last) {
+        void newAgentFlow(ctx);
         return;
       }
-      const where = await DialogSelect.show({
-        title: "Where should it run?",
-        items: placementItems({ split: ctx.paneId !== undefined }),
-        filterable: false,
-      });
-      if (!where) return;
-      const placement = where.item.id as SpawnPlacement;
-      const target = { session: ctx.session, paneId: ctx.paneId };
-      execFile("tmux", spawnAgentArgs(placement, target, ctx.dir, command), (err) => {
-        setStatusNote(err ? `couldn't start ${command}` : `started ${command} in ${ctx.session}`);
-        setTimeout(() => fleetRefresh?.(), 300);
-      });
+      const shape = spawnShape(ctx);
+      const placement = compatiblePlacement(last.placement, shape)
+        ? last.placement
+        : defaultSpawnPlacement(shape);
+      void runSpawn(ctx, { kind: last.kind, command: last.command, placement });
     };
 
     /** "New agent…" for a home row (the [+ agent] chip, the `a` key, the home
@@ -1641,10 +1777,66 @@ render(
      *  recent row into a fresh session in its dir; with nothing useful selected
      *  fall back to the working directory. */
     const newAgentFromHome = (it: HomeItem | undefined) => {
-      if (it?.kind === "session") void newAgentFlow({ session: it.session, dir: it.dir });
-      else if (it?.kind === "project") void newAgentFlow({ dir: it.dir, sessionName: it.name });
-      else if (it?.kind === "recent") void newAgentFlow({ dir: it.dir });
-      else void newAgentFlow({ dir: invokeCwd });
+      void newAgentFlow(homeAgentContext(it));
+    };
+    /** The spawn context a home row implies (shared by the row chips and the
+     *  contextual resolver below). */
+    const homeAgentContext = (it: HomeItem | undefined): NewAgentContext => {
+      if (it?.kind === "session") return { session: it.session, dir: it.dir };
+      if (it?.kind === "project") return { dir: it.dir, sessionName: it.name };
+      if (it?.kind === "recent") return { dir: it.dir };
+      return { dir: invokeCwd };
+    };
+    /** THE contextual spawn target — one resolver shared by the palette's
+     *  new-agent actions, the sidebar's [+ agent] chip, and the Team dialog:
+     *  the Terminal surface spawns beside its focused pane, home uses the
+     *  selected row, anywhere else the workspace session, else a fresh one. */
+    const currentNewAgentContext = (): NewAgentContext => {
+      if (mode() === "mirror") {
+        // The mirrored session's OWN dir first: contextDir can be a stale
+        // persisted workspace when the app booted straight to --target.
+        return {
+          session: curTarget(),
+          dir: dirForSession(curTarget()) ?? (contextDir() || null),
+          paneId: mirror?.focusedPane() ?? undefined,
+        };
+      }
+      if (mode() === "home") return homeAgentContext(selectedHomeItem());
+      if (contextSession()) return { session: contextSession(), dir: contextDir() || null };
+      return { dir: workspaceDir() };
+    };
+    /** What the current context's remembered spawn is called, or null — drives
+     *  the palette's pinned "New agent: <name> (again)" action. */
+    const currentAgainName = (): string | null => {
+      const { last } = spawnMemoryFor(currentNewAgentContext());
+      return last ? lastSpawnName(last) : null;
+    };
+
+    /** The TEAM dialog (M24.1): every fleet agent in one surface — Enter/click
+     *  JUMPS to the agent, ^r restarts, ^s stops (both confirm via their own
+     *  flows), and a pinned "+ new agent" row opens the one-dialog kind picker.
+     *  Opened from the sidebar's agents-header click and the palette's
+     *  "Manage team…". */
+    const manageTeamFlow = async () => {
+      setHoverIf(null); // the overlay owns the pointer, like the palette
+      const agents = fleetAgents();
+      const res = await DialogSelect.show({
+        title: `Team — ${agents.length} agent${agents.length === 1 ? "" : "s"}`,
+        items: teamItems(agents, Math.floor(Date.now() / 1000)),
+        actions: TEAM_ACTIONS,
+        footerHint: "enter jumps",
+      });
+      if (!res) return;
+      if (res.item.id === TEAM_NEW_ID) {
+        void newAgentFlow(currentNewAgentContext());
+        return;
+      }
+      const idx = teamAgentIndex(res.item.id);
+      const a = idx !== null ? agents[idx] : undefined;
+      if (!a) return;
+      if (res.action === "r") void restartAgentFlow(a);
+      else if (res.action === "s") void stopAgentFlow(a);
+      else jumpToAgent(a);
     };
 
     // ── OPEN A FOLDER (M22.5) — the non-technicals' front door ───────────────
@@ -1887,6 +2079,9 @@ render(
           agents: fleetAgents(),
           sizeMismatch: windowMismatch() !== null,
           appMousePane: panes().find((p) => p.active)?.appMouse === true,
+          // Pins "New agent: <name> (again)" FIRST when this context has spawn
+          // memory (M24.1) — F5 → Enter repeats the last spawn.
+          againName: currentAgainName(),
         },
       ),
     );
@@ -1934,24 +2129,18 @@ render(
           jumpToAgent(a);
           break;
         case "new-agent":
-          // Contextual target: the Terminal surface spawns into the mirrored
-          // session (splits offered — a focused pane exists); home uses the
-          // selected row; anywhere else the workspace session, else a fresh one.
-          if (mode() === "mirror") {
-            // The mirrored session's OWN dir first: contextDir can be a stale
-            // persisted workspace when the app booted straight to --target.
-            void newAgentFlow({
-              session: curTarget(),
-              dir: dirForSession(curTarget()) ?? (contextDir() || null),
-              paneId: mirror?.focusedPane() ?? undefined,
-            });
-          } else if (mode() === "home") {
-            newAgentFromHome(selectedHomeItem());
-          } else if (contextSession()) {
-            void newAgentFlow({ session: contextSession(), dir: contextDir() || null });
-          } else {
-            void newAgentFlow({ dir: workspaceDir() });
-          }
+          // Contextual target (currentNewAgentContext): the Terminal surface
+          // spawns beside its focused pane; home uses the selected row;
+          // anywhere else the workspace session, else a fresh one.
+          void newAgentFlow(currentNewAgentContext());
+          break;
+        case "new-agent-again":
+          // Repeat the remembered spawn directly — no dialog (M24.1: the
+          // pinned action makes F5 → Enter the whole repeat gesture).
+          newAgentAgain(currentNewAgentContext());
+          break;
+        case "manage-team":
+          void manageTeamFlow();
           break;
         case "restart-agent":
           void restartAgentFlow({ paneId: a.paneId, kind: a.agentKind });
@@ -2407,6 +2596,8 @@ render(
         diffFile: diffFiles()[diffSel()]?.path ?? null,
         sidebarW: sidebarW(),
         recentFolders: recentFolders(),
+        lastSpawns: lastSpawns(),
+        customCommands: customCommands(),
       };
       if (saveTimer) clearTimeout(saveTimer);
       saveTimer = setTimeout(() => void saveAppState(snapshot), 400);
@@ -3875,6 +4066,10 @@ render(
       );
       return i >= 0 ? defs[i]!.id : null;
     };
+    /** The `[+ agent]` chip's x-span on the sidebar's AGENTS header row and the
+     *  empty-state row (M24.1) — right-anchored flush to the sidebar's edge; the
+     *  render (label · flexGrow spacer · chip) lays out the same cells. */
+    const agentsChipSpans = createMemo(() => spansFromRight([AGENTS_ADD_CHIP], sidebarW(), 0));
     /** A home row's muted meta text — sessions keep the exact `3w · project`
      *  string the panel always showed; projects show their dir + origin. */
     const homeRowMeta = (it: HomeItem): string =>
@@ -3913,7 +4108,19 @@ render(
         const hit = sidebarHit(gy, fleet().length, fleetAgents().length);
         if (hit?.kind === "session") setHoverIf({ region: "sidebar", index: hit.index });
         else if (hit?.kind === "agent") setHoverIf({ region: "sidebaragent", index: hit.index });
-        else setHoverIf(null);
+        else if (hit?.kind === "agents-header") {
+          // The [+ agent] chip lifts on its own; the rest of the header row
+          // tints as the Team-dialog target (M24.1).
+          setHoverIf(
+            spanHit(agentsChipSpans(), x) === 0
+              ? { region: "agentschip", index: 0 }
+              : { region: "agentshdr", index: 0 },
+          );
+        } else if (hit?.kind === "agents-empty") {
+          setHoverIf(
+            spanHit(agentsChipSpans(), x) === 0 ? { region: "agentschip", index: 1 } : null,
+          );
+        } else setHoverIf(null);
         return;
       }
       const m = mode();
@@ -4299,7 +4506,9 @@ render(
           return;
         }
         // Session rows switch the workspace; agent rows JUMP to their exact pane
-        // (M22.2). The agents-header row and the empty-state line are inert.
+        // (M22.2). The agents-header row opens the TEAM dialog — its [+ agent]
+        // chip (also on the empty-state row) spawns via the one-dialog kind
+        // picker (M24.1).
         const hit = sidebarHit(gy, fleet().length, fleetAgents().length);
         if (hit?.kind === "session") {
           const s = fleet()[hit.index];
@@ -4307,6 +4516,11 @@ render(
         } else if (hit?.kind === "agent") {
           const a = fleetAgents()[hit.index];
           if (a) jumpToAgent(a);
+        } else if (hit?.kind === "agents-header") {
+          if (spanHit(agentsChipSpans(), x) === 0) void newAgentFlow(currentNewAgentContext());
+          else void manageTeamFlow();
+        } else if (hit?.kind === "agents-empty") {
+          if (spanHit(agentsChipSpans(), x) === 0) void newAgentFlow(currentNewAgentContext());
         }
         return;
       }
@@ -4681,12 +4895,42 @@ render(
               starts right after the session <For>, one header row then the agent
               rows (or one quiet empty-state line). Hover reveals the state age. */}
             <box flexDirection="column" marginTop={AGENTS_GAP_ROWS}>
-              <text fg={MUTED} attributes={1}>
-                {agentsHeaderLabel(fleetAgents().length, sidebarW() - 2)}
-              </text>
+              {/* Header row (M24.1): label + a right-aligned [+ agent] chip.
+                The row body opens the TEAM dialog, the chip spawns; the router
+                x-tests `agentsChipSpans` — the flexGrow spacer here lays the
+                chip on exactly those cells. The empty state keeps a chip twin
+                so spawning is discoverable before any agent runs. */}
+              <box
+                flexDirection="row"
+                backgroundColor={isHovered("agentshdr", 0) ? HOVER_BG : SIDEBAR_BG}
+              >
+                <text fg={MUTED} attributes={1}>
+                  {agentsHeaderLabel(
+                    fleetAgents().length,
+                    Math.max(1, sidebarW() - AGENTS_ADD_CHIP.length - 2),
+                  )}
+                </text>
+                <box flexGrow={1} />
+                <text fg={MUTED} bg={isHovered("agentschip", 0) ? BUTTON_HOVER_BG : SIDEBAR_BG}>
+                  {AGENTS_ADD_CHIP}
+                </text>
+              </box>
               <Show
                 when={fleetAgents().length > 0}
-                fallback={<text fg={MUTED}>{AGENTS_EMPTY_LINE.slice(0, sidebarW() - 2)}</text>}
+                fallback={
+                  <box flexDirection="row">
+                    <text fg={MUTED}>
+                      {AGENTS_EMPTY_LINE.slice(
+                        0,
+                        Math.max(1, sidebarW() - AGENTS_ADD_CHIP.length - 2),
+                      )}
+                    </text>
+                    <box flexGrow={1} />
+                    <text fg={MUTED} bg={isHovered("agentschip", 1) ? BUTTON_HOVER_BG : SIDEBAR_BG}>
+                      {AGENTS_ADD_CHIP}
+                    </text>
+                  </box>
+                }
               >
                 <For each={fleetAgents()}>
                   {(a, i) => {

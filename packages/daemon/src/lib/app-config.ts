@@ -151,7 +151,18 @@ export interface AppApp {
    * single run.
    */
   detachable: boolean;
+  /**
+   * Where a Terminal-surface "New agent" spawn starts (M24.1): `"pane"`
+   * (default) inherits the FOCUSED pane's current working directory —
+   * `#{pane_current_path}`, so the agent lands where you are — while
+   * `"session"` keeps the session/project directory. Home/sidebar spawns
+   * always use the session/project dir (no focused pane exists there).
+   */
+  newAgentCwd: NewAgentCwd;
 }
+
+/** The two Terminal-spawn cwd policies (see {@link AppApp.newAgentCwd}). */
+export type NewAgentCwd = "pane" | "session";
 
 /** Worktree flow config (`tmux-ide worktree`). */
 export interface AppWorktrees {
@@ -211,7 +222,7 @@ export const DEFAULT_APP_CONFIG: AppConfig = {
   welcome: { show: true },
   integrations: { offer: true },
   worktrees: { dir: "" },
-  app: { frontDoor: false, detachable: false },
+  app: { frontDoor: false, detachable: false, newAgentCwd: "pane" },
 };
 
 /** The default theme tokens — the fallback threaded into the pure builders. */
@@ -244,6 +255,13 @@ function pickBool(value: unknown, fallback: boolean): boolean {
 /** A positive integer, else the default. */
 function pickPosInt(value: unknown, fallback: number): number {
   return typeof value === "number" && Number.isInteger(value) && value > 0 ? value : fallback;
+}
+
+/** One of `allowed`, else the default. */
+function pickEnum<T extends string>(value: unknown, allowed: readonly T[], fallback: T): T {
+  return typeof value === "string" && (allowed as readonly string[]).includes(value)
+    ? (value as T)
+    : fallback;
 }
 
 /**
@@ -313,6 +331,7 @@ export function parseAppConfig(input: unknown): AppConfig {
     app: {
       frontDoor: pickBool(app.frontDoor, D.app.frontDoor),
       detachable: pickBool(app.detachable, D.app.detachable),
+      newAgentCwd: pickEnum(app.newAgentCwd, ["pane", "session"], D.app.newAgentCwd),
     },
   };
 }

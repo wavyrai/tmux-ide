@@ -19,6 +19,7 @@ import { existsSync, readFileSync, mkdirSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { isSpawnWhere, type LastSpawn } from "./agent-lifecycle.ts";
 
 /** The four top-level surfaces. `terminal` is the SessionMirror, `files` the
  *  editor + file list, `diff` the git panel, `home` the fleet cockpit. */
@@ -48,6 +49,12 @@ export function clampSidebarWidth(w: number): number {
 /** How many recently-opened folders home remembers (M22.5). Oldest fall off. */
 export const RECENTS_CAP = 8;
 
+/** How many per-context "again" spawn memories persist (M24.1). Oldest fall off. */
+export const SPAWN_MEMORY_CAP = 20;
+
+/** How many custom spawn commands the recents list keeps (M24.1, global). */
+export const CUSTOM_COMMANDS_CAP = 5;
+
 /** The persisted shape. `null` means "nothing remembered" for that slot. */
 export interface AppState {
   /** The tab the app was showing when it last saved. */
@@ -63,6 +70,13 @@ export interface AppState {
   /** Recently-opened folder paths (M22.5), most-recent first, deduped and
    *  capped at {@link RECENTS_CAP}. Home renders these under a "recent" header. */
   recentFolders: string[];
+  /** The "again" memory (M24.1): spawn-context key (a project/session dir, or
+   *  `session:<name>` when no dir is known) → the last spawn there. Insertion-
+   *  ordered LRU capped at {@link SPAWN_MEMORY_CAP}. */
+  lastSpawns: Record<string, LastSpawn>;
+  /** Recent CUSTOM spawn commands (M24.1), most-recent first, deduped, global
+   *  (not per-project), capped at {@link CUSTOM_COMMANDS_CAP}. */
+  customCommands: string[];
 }
 
 export const DEFAULT_APP_STATE: AppState = {
@@ -72,7 +86,88 @@ export const DEFAULT_APP_STATE: AppState = {
   diffFile: null,
   sidebarW: SIDEBAR_W_DEFAULT,
   recentFolders: [],
+  lastSpawns: {},
+  customCommands: [],
 };
+
+/** PURE — the "again" memory key for a spawn context: the concrete dir when
+ *  known, else the session name (namespaced so a dirless session can't collide
+ *  with a path), else null — nothing stable to remember under. */
+export function spawnMemoryKey(dir: string | null, session?: string): string | null {
+  if (dir && dir.length > 0) return dir;
+  if (session && session.length > 0) return `session:${session}`;
+  return null;
+}
+
+/**
+ * PURE — the spawn-memory map after remembering `spawn` under `key`: the key
+ * moves to newest (re-inserted last), and when the map outgrows `cap` the
+ * OLDEST entries drop (JS objects preserve string-key insertion order — the
+ * same order JSON round-trips, so the LRU survives restarts).
+ */
+export function rememberSpawn(
+  map: Readonly<Record<string, LastSpawn>>,
+  key: string,
+  spawn: LastSpawn,
+  cap: number = SPAWN_MEMORY_CAP,
+): Record<string, LastSpawn> {
+  const out: Record<string, LastSpawn> = {};
+  for (const [k, v] of Object.entries(map)) if (k !== key) out[k] = v;
+  out[key] = spawn;
+  const keys = Object.keys(out);
+  for (let i = 0; i < keys.length - cap; i++) delete out[keys[i]!];
+  return out;
+}
+
+/** PURE — the custom-command recents after running `command`: moved to the
+ *  front, deduped, capped. Blank commands leave the list unchanged. */
+export function addCustomCommand(
+  list: readonly string[],
+  command: string,
+  cap: number = CUSTOM_COMMANDS_CAP,
+): string[] {
+  const cmd = command.trim();
+  if (cmd.length === 0) return [...list];
+  return [cmd, ...list.filter((c) => c !== cmd)].slice(0, cap);
+}
+
+/** PURE — one persisted spawn coerced to a clean {@link LastSpawn}, or null
+ *  when any field is missing/mistyped (the whole entry drops). */
+function sanitizeSpawn(v: unknown): LastSpawn | null {
+  if (!v || typeof v !== "object" || Array.isArray(v)) return null;
+  const o = v as Record<string, unknown>;
+  if (typeof o.kind !== "string" || o.kind.length === 0) return null;
+  if (typeof o.command !== "string" || o.command.length === 0) return null;
+  if (!isSpawnWhere(o.placement)) return null;
+  return { kind: o.kind, command: o.command, placement: o.placement };
+}
+
+/** PURE — a persisted spawn-memory value coerced clean: non-object → {},
+ *  malformed entries drop, order kept, capped from the OLD end. */
+function sanitizeSpawns(v: unknown): Record<string, LastSpawn> {
+  if (!v || typeof v !== "object" || Array.isArray(v)) return {};
+  const out: Record<string, LastSpawn> = {};
+  for (const [key, raw] of Object.entries(v as Record<string, unknown>)) {
+    if (key.length === 0) continue;
+    const spawn = sanitizeSpawn(raw);
+    if (spawn) out[key] = spawn;
+  }
+  const keys = Object.keys(out);
+  for (let i = 0; i < keys.length - SPAWN_MEMORY_CAP; i++) delete out[keys[i]!];
+  return out;
+}
+
+/** PURE — a persisted string list coerced clean: non-empty, deduped (first
+ *  wins), capped at `cap`. Anything not a string[] yields []. */
+function sanitizeStringList(v: unknown, cap: number): string[] {
+  if (!Array.isArray(v)) return [];
+  const out: string[] = [];
+  for (const item of v) {
+    if (typeof item === "string" && item.length > 0 && !out.includes(item)) out.push(item);
+    if (out.length >= cap) break;
+  }
+  return out;
+}
 
 /** PURE — the recents list after opening `dir`: it moves to the front,
  *  any earlier occurrence is removed (dedupe), and the tail past `cap` drops.
@@ -89,13 +184,7 @@ export function addRecentFolder(
 /** PURE — a persisted recents value coerced to clean strings: non-empty,
  *  deduped (first wins), capped. Anything not a string[] yields []. */
 function sanitizeRecents(v: unknown): string[] {
-  if (!Array.isArray(v)) return [];
-  const out: string[] = [];
-  for (const item of v) {
-    if (typeof item === "string" && item.length > 0 && !out.includes(item)) out.push(item);
-    if (out.length >= RECENTS_CAP) break;
-  }
-  return out;
+  return sanitizeStringList(v, RECENTS_CAP);
 }
 
 /** The tmux-ide home dir: `TMUX_IDE_HOME` when set, else `~/.tmux-ide`. */
@@ -137,10 +226,12 @@ export function parseAppState(raw: string): AppState {
         ? clampSidebarWidth(obj.sidebarW)
         : DEFAULT_APP_STATE.sidebarW,
     recentFolders: sanitizeRecents(obj.recentFolders),
+    lastSpawns: sanitizeSpawns(obj.lastSpawns),
+    customCommands: sanitizeStringList(obj.customCommands, CUSTOM_COMMANDS_CAP),
   };
 }
 
-/** PURE — serialize an {@link AppState} to the exact four-key JSON we persist
+/** PURE — serialize an {@link AppState} to the exact JSON shape we persist
  *  (extra runtime keys are dropped; stable key order for tidy diffs). */
 export function serializeAppState(state: AppState): string {
   const clean: AppState = {
@@ -150,6 +241,8 @@ export function serializeAppState(state: AppState): string {
     diffFile: optString(state.diffFile),
     sidebarW: clampSidebarWidth(state.sidebarW),
     recentFolders: sanitizeRecents(state.recentFolders),
+    lastSpawns: sanitizeSpawns(state.lastSpawns),
+    customCommands: sanitizeStringList(state.customCommands, CUSTOM_COMMANDS_CAP),
   };
   return JSON.stringify(clean, null, 2);
 }
