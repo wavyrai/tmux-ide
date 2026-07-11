@@ -136,7 +136,7 @@ describe("sidebarHit", () => {
     expect(sidebarHit(4, 2, 3)).toBeNull();
   });
 
-  it("maps the agents header row (inert)", () => {
+  it("maps the agents header row (the Team dialog / [+ agent] chip target)", () => {
     expect(sidebarHit(5, 2, 3)).toEqual({ kind: "agents-header" });
   });
 
@@ -151,10 +151,11 @@ describe("sidebarHit", () => {
     expect(sidebarHit(20, 2, 3)).toBeNull();
   });
 
-  it("treats the empty-state row (agentCount 0) as inert", () => {
-    // gy2..3 sessions, gy4 gap, gy5 header, gy6 is the empty-state line → null.
+  it("addresses the empty-state row (agentCount 0) so its [+ agent] chip can hit (M24.1)", () => {
+    // gy2..3 sessions, gy4 gap, gy5 header, gy6 the empty-state line, then null.
     expect(sidebarHit(5, 2, 0)).toEqual({ kind: "agents-header" });
-    expect(sidebarHit(6, 2, 0)).toBeNull();
+    expect(sidebarHit(6, 2, 0)).toEqual({ kind: "agents-empty" });
+    expect(sidebarHit(7, 2, 0)).toBeNull();
   });
 
   it("works with zero sessions (gap then agents section after the rule)", () => {

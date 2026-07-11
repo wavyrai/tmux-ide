@@ -162,7 +162,18 @@ export interface AppApp {
    * per pane for the session.
    */
   dragSelect: "agents" | "always" | "never";
+  /**
+   * Where a Terminal-surface "New agent" spawn starts (M24.1): `"pane"`
+   * (default) inherits the FOCUSED pane's current working directory —
+   * `#{pane_current_path}`, so the agent lands where you are — while
+   * `"session"` keeps the session/project directory. Home/sidebar spawns
+   * always use the session/project dir (no focused pane exists there).
+   */
+  newAgentCwd: NewAgentCwd;
 }
+
+/** The two Terminal-spawn cwd policies (see {@link AppApp.newAgentCwd}). */
+export type NewAgentCwd = "pane" | "session";
 
 /** Worktree flow config (`tmux-ide worktree`). */
 export interface AppWorktrees {
@@ -222,7 +233,7 @@ export const DEFAULT_APP_CONFIG: AppConfig = {
   welcome: { show: true },
   integrations: { offer: true },
   worktrees: { dir: "" },
-  app: { frontDoor: false, detachable: false, dragSelect: "agents" },
+  app: { frontDoor: false, detachable: false, dragSelect: "agents", newAgentCwd: "pane" },
 };
 
 /** The default theme tokens — the fallback threaded into the pure builders. */
@@ -332,6 +343,7 @@ export function parseAppConfig(input: unknown): AppConfig {
       frontDoor: pickBool(app.frontDoor, D.app.frontDoor),
       detachable: pickBool(app.detachable, D.app.detachable),
       dragSelect: pickChoice(app.dragSelect, ["agents", "always", "never"], D.app.dragSelect),
+      newAgentCwd: pickChoice(app.newAgentCwd, ["pane", "session"], D.app.newAgentCwd),
     },
   };
 }

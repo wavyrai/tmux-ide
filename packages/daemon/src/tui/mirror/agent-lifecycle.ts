@@ -22,10 +22,18 @@
  * clean exit, without inventing a fake idle epoch.
  */
 import type { AgentManifest } from "../detect/manifest.ts";
-import type { DialogSelectItem } from "./dialog-model.ts";
+import type { DialogRowAction, DialogSelectItem } from "./dialog-model.ts";
+import { agentAgeLabel, type AgentRowInput } from "./agent-rows.ts";
 
 /** The "Custom command…" picker row — resolves to a DialogPrompt, not a kind. */
 export const CUSTOM_KIND_ID = "custom-command";
+
+/** The kind picker's front-loaded repeat row (M24.1) — pre-selected, so a
+ *  repeat spawn is Enter·Enter from the palette. */
+export const AGAIN_ID = "again";
+
+/** Prefix for the custom-command RECENTS rows beneath "Custom command…". */
+const CUSTOM_RECENT_PREFIX = "custom-recent:";
 
 /**
  * Launch command per manifest id. Manifest `commands` are process-match
@@ -73,20 +81,145 @@ export function agentKindItems(manifests: readonly AgentManifest[]): DialogSelec
 /** Where a spawned agent lands, relative to the target session/pane. */
 export type SpawnPlacement = "window" | "split-h" | "split-v";
 
+/** Every place a spawn can land — the pane placements plus a fresh detached
+ *  session (home project rows). The "again" memory remembers one of these. */
+export type SpawnWhere = SpawnPlacement | "session";
+
+const SPAWN_WHERES: readonly SpawnWhere[] = ["window", "split-h", "split-v", "session"];
+
+/** PURE — is `x` a persistable spawn placement? (app-state sanitizing). */
+export function isSpawnWhere(x: unknown): x is SpawnWhere {
+  return typeof x === "string" && (SPAWN_WHERES as readonly string[]).includes(x);
+}
+
+/** One remembered spawn — enough to repeat it exactly (M24.1). Persisted per
+ *  project/session-dir in app-state; `command` carries custom argv verbatim. */
+export interface LastSpawn {
+  /** Manifest id, or {@link CUSTOM_KIND_ID} for a typed command. */
+  kind: string;
+  /** The exact command the spawn ran (the resolved launch command / custom argv). */
+  command: string;
+  /** Where it landed. */
+  placement: SpawnWhere;
+}
+
+/** What the spawn flow knows about its entry point: is there a concrete pane
+ *  to split (Terminal surface), and is there a live session at all? */
+export interface SpawnContextShape {
+  pane: boolean;
+  session: boolean;
+}
+
 /**
- * PURE — the "where should it run" rows. Splits are offered only when there is
- * a concrete pane to split (the Terminal surface's focused pane); the home /
- * sidebar entry points target a session, where a new window is the honest
- * placement. A single-row list still shows, so the flow always says where the
- * agent will land before anything runs.
+ * PURE — where a spawn lands when the user just presses Enter (M24.1: the flow
+ * never ASKS where). Terminal surface (a focused pane exists) → split right of
+ * it; a live session without a concrete pane (home/sidebar session rows) → a
+ * new window in it; no session (home project rows) → a fresh detached session.
  */
-export function placementItems(opts: { split: boolean }): DialogSelectItem[] {
-  const items: DialogSelectItem[] = [{ id: "window", label: "New window", detail: "its own tab" }];
-  if (opts.split) {
-    items.push({ id: "split-h", label: "Split right", detail: "beside this pane" });
-    items.push({ id: "split-v", label: "Split below", detail: "under this pane" });
+export function defaultSpawnPlacement(ctx: SpawnContextShape): SpawnWhere {
+  if (ctx.pane) return "split-h";
+  if (ctx.session) return "window";
+  return "session";
+}
+
+/** PURE — can a remembered placement replay in this context? Splits need a
+ *  concrete pane; window needs a live session; a fresh session always can. */
+export function compatiblePlacement(placement: SpawnWhere, ctx: SpawnContextShape): boolean {
+  if (placement === "session") return true;
+  if (placement === "window") return ctx.session;
+  return ctx.pane;
+}
+
+/** PURE — plain language for a placement (footer hints, the again row). */
+export function placementLabel(placement: SpawnWhere): string {
+  if (placement === "split-h") return "split right";
+  if (placement === "split-v") return "split below";
+  if (placement === "window") return "new window";
+  return "new session";
+}
+
+/**
+ * PURE — the kind picker's footer ACTIONS: placement ALTERNATIVES as ctrl-key
+ * chords, never a second dialog (M24.1). Offered only where they differ from
+ * the default and are honest in this context: with a focused pane the default
+ * is split-right, so ^w (new window) and ^d (split below) are the escapes; a
+ * session-only context defaults to a new window with nothing else honest to
+ * offer; no session means a fresh one — no alternatives.
+ */
+export function placementActions(ctx: SpawnContextShape): DialogRowAction[] {
+  if (ctx.pane) {
+    return [
+      { key: "w", label: "in a new window" },
+      { key: "d", label: "split below" },
+    ];
   }
+  return [];
+}
+
+/** PURE — the placement a dialog result maps to: an action key overrides the
+ *  default (`^w` → window, `^d` → split below); Enter keeps the default. */
+export function resolvePlacement(fallback: SpawnWhere, actionKey?: string): SpawnWhere {
+  if (actionKey === "w") return "window";
+  if (actionKey === "d") return "split-v";
+  return fallback;
+}
+
+/** PURE — a custom-recent row id for `index` into the recents list. */
+export function customRecentId(index: number): string {
+  return `${CUSTOM_RECENT_PREFIX}${index}`;
+}
+
+/** PURE — the recents index a row id encodes, or null for any other row. */
+export function customRecentIndex(id: string): number | null {
+  if (!id.startsWith(CUSTOM_RECENT_PREFIX)) return null;
+  const n = Number(id.slice(CUSTOM_RECENT_PREFIX.length));
+  return Number.isInteger(n) && n >= 0 ? n : null;
+}
+
+/** PURE — what a remembered spawn is called: the kind, or the custom argv
+ *  verbatim (labels for the again row + the palette's again action). */
+export function lastSpawnName(last: LastSpawn): string {
+  return last.kind === CUSTOM_KIND_ID ? last.command : last.kind;
+}
+
+/**
+ * PURE — the ONE dialog's rows (M24.1): the "again" repeat row FIRST (when a
+ * spawn is remembered for this context — pre-selected, so repeat = Enter), then
+ * the manifest kinds, then "Custom command…", then the recent custom commands
+ * as directly selectable rows beneath it. The again row names what it repeats
+ * and where it will land.
+ */
+export function newAgentItems(opts: {
+  manifests: readonly AgentManifest[];
+  last: LastSpawn | null;
+  /** The placement the again row will actually use (memory, context-checked). */
+  againPlacement?: SpawnWhere;
+  customRecents: readonly string[];
+}): DialogSelectItem[] {
+  const items: DialogSelectItem[] = [];
+  if (opts.last) {
+    const where = opts.againPlacement ?? opts.last.placement;
+    items.push({
+      id: AGAIN_ID,
+      label: `${lastSpawnName(opts.last)} — again`,
+      detail: placementLabel(where),
+    });
+  }
+  items.push(...agentKindItems(opts.manifests));
+  opts.customRecents.forEach((cmd, i) => {
+    items.push({ id: customRecentId(i), label: cmd, detail: "recent" });
+  });
   return items;
+}
+
+/** PURE — the label a spawned pane/window gets: the kind, or a custom
+ *  command's first token stripped to its basename (`/us/bin/my-agent -x` →
+ *  `my-agent`). Empty input falls back to "agent". */
+export function spawnLabelFor(kind: string, command: string): string {
+  if (kind !== CUSTOM_KIND_ID) return kind;
+  const first = command.trim().split(/\s+/)[0] ?? "";
+  const base = first.split("/").pop() ?? "";
+  return base.length > 0 ? base : "agent";
 }
 
 /** The spawn target: the owning session, plus the concrete pane for splits. */
@@ -96,12 +229,17 @@ export interface SpawnTarget {
   paneId?: string;
 }
 
+/** `-P -F` — every spawn PRINTS its new pane id, so the flow can label the
+ *  pane/window and stamp `@agent_launch` without a lookup race. */
+const PRINT_PANE_ID = ["-P", "-F", "#{pane_id}"];
+
 /**
  * PURE — the tmux argv that spawns `command` at `placement`. New windows
  * target `<session>:` (tmux appends); splits target the pane. `dir` becomes
  * `-c` when known. The command is passed as tmux's shell-command argument —
  * a bare binary is exec'd directly, so `pane_current_command` is the agent
- * itself and detection picks it up with no extra wiring.
+ * itself and detection picks it up with no extra wiring. `-P -F "#{pane_id}"`
+ * prints the spawned pane's id (M24.1 — the label/stamp follow-ups target it).
  */
 export function spawnAgentArgs(
   placement: SpawnPlacement,
@@ -110,19 +248,96 @@ export function spawnAgentArgs(
   command: string,
 ): string[] {
   const cd = dir ? ["-c", dir] : [];
-  if (placement === "window") return ["new-window", "-t", `${target.session}:`, ...cd, command];
+  if (placement === "window") {
+    return ["new-window", "-t", `${target.session}:`, ...PRINT_PANE_ID, ...cd, command];
+  }
   const flag = placement === "split-h" ? "-h" : "-v";
-  return ["split-window", flag, "-t", target.paneId ?? `${target.session}:`, ...cd, command];
+  return [
+    "split-window",
+    flag,
+    "-t",
+    target.paneId ?? `${target.session}:`,
+    ...PRINT_PANE_ID,
+    ...cd,
+    command,
+  ];
 }
 
 /**
  * PURE — the tmux argv that creates a fresh detached session running
  * `command` (the home PROJECT-row spawn: no live session exists yet, so the
- * agent gets one, named for the project).
+ * agent gets one, named for the project). Prints the new pane id like
+ * {@link spawnAgentArgs}.
  */
 export function spawnSessionArgs(name: string, dir: string | null, command: string): string[] {
-  return ["new-session", "-d", "-s", name, ...(dir ? ["-c", dir] : []), command];
+  return ["new-session", "-d", "-s", name, ...PRINT_PANE_ID, ...(dir ? ["-c", dir] : []), command];
 }
+
+/** PURE — title the spawned pane after its agent (`select-pane -T`), so the
+ *  pane is named without the user being asked (M24.1 auto-label). */
+export function labelPaneArgs(paneId: string, label: string): string[] {
+  return ["select-pane", "-t", paneId, "-T", label];
+}
+
+/** PURE — name a spawned WINDOW after its agent. Targets the spawned pane's
+ *  id, which tmux resolves to the window that holds it. */
+export function labelWindowArgs(paneId: string, label: string): string[] {
+  return ["rename-window", "-t", paneId, label];
+}
+
+/** PURE — stamp the spawned pane with the exact command that launched it
+ *  (`@agent_launch`, pane-local) — restart's preferred relaunch source (better
+ *  than `pane_start_command`, which tmux rewrites for respawned panes). */
+export function stampLaunchArgs(paneId: string, command: string): string[] {
+  return ["set-option", "-p", "-t", paneId, "@agent_launch", command];
+}
+
+// ── The team dialog (M24.1 — "manage your team" in one surface) ─────────────
+
+/** The team dialog's pinned "+ new agent" row id. */
+export const TEAM_NEW_ID = "team-new";
+
+/** Prefix for the team dialog's per-agent rows: `agent:<index>` into the
+ *  caller's (already sorted) fleet agent list. */
+const TEAM_AGENT_PREFIX = "agent:";
+
+/** PURE — a team row id for `index` into the fleet agent list. */
+export function teamAgentId(index: number): string {
+  return `${TEAM_AGENT_PREFIX}${index}`;
+}
+
+/** PURE — the fleet-agent index a team row id encodes, or null. */
+export function teamAgentIndex(id: string): number | null {
+  if (!id.startsWith(TEAM_AGENT_PREFIX)) return null;
+  const n = Number(id.slice(TEAM_AGENT_PREFIX.length));
+  return Number.isInteger(n) && n >= 0 ? n : null;
+}
+
+/**
+ * PURE — the Team dialog rows: a pinned "+ new agent" first (the same one-
+ * dialog kind picker), then one row per fleet agent — "<kind> · <session>",
+ * detail its state (+ dwell when stamped). Enter/click jumps; the footer's
+ * ctrl-actions (restart/stop) ride the DialogRowAction channel.
+ */
+export function teamItems(agents: readonly AgentRowInput[], nowSec: number): DialogSelectItem[] {
+  const items: DialogSelectItem[] = [
+    { id: TEAM_NEW_ID, label: "+ new agent", detail: "kind picker" },
+  ];
+  agents.forEach((a, i) => {
+    items.push({
+      id: teamAgentId(i),
+      label: `${a.kind} · ${a.session}`,
+      detail: agentAgeLabel(a.state, a.since, nowSec) ?? a.state,
+    });
+  });
+  return items;
+}
+
+/** The Team dialog's footer ctrl-actions (restart/stop the selected agent). */
+export const TEAM_ACTIONS: DialogRowAction[] = [
+  { key: "r", label: "restart" },
+  { key: "s", label: "stop" },
+];
 
 /** Interactive shells beyond the shell manifest's `commands` — a login shell
  *  hosting an agent can surface as any of these in `pane_current_command`. */

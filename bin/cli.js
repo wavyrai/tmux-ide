@@ -3213,7 +3213,8 @@ function parseAppConfig(input) {
     app: {
       frontDoor: pickBool(app.frontDoor, D.app.frontDoor),
       detachable: pickBool(app.detachable, D.app.detachable),
-      dragSelect: pickChoice(app.dragSelect, ["agents", "always", "never"], D.app.dragSelect)
+      dragSelect: pickChoice(app.dragSelect, ["agents", "always", "never"], D.app.dragSelect),
+      newAgentCwd: pickChoice(app.newAgentCwd, ["pane", "session"], D.app.newAgentCwd)
     }
   };
 }
@@ -3308,7 +3309,7 @@ var init_app_config = __esm({
       welcome: { show: true },
       integrations: { offer: true },
       worktrees: { dir: "" },
-      app: { frontDoor: false, detachable: false, dragSelect: "agents" }
+      app: { frontDoor: false, detachable: false, dragSelect: "agents", newAgentCwd: "pane" }
     };
     DEFAULT_THEME = DEFAULT_APP_CONFIG.theme;
     DEFAULT_KEYS = DEFAULT_APP_CONFIG.keys;
@@ -12083,6 +12084,32 @@ var init_wait = __esm({
   }
 });
 
+// packages/daemon/src/tui/team/home.ts
+var ROLLUP_ORDER;
+var init_home = __esm({
+  "packages/daemon/src/tui/team/home.ts"() {
+    "use strict";
+    init_grammar();
+    init_panels();
+    ROLLUP_ORDER = ["blocked", "working", "done", "idle"];
+  }
+});
+
+// packages/daemon/src/tui/mirror/agent-rows.ts
+var STATE_RANK;
+var init_agent_rows = __esm({
+  "packages/daemon/src/tui/mirror/agent-rows.ts"() {
+    "use strict";
+    init_home();
+    STATE_RANK = (() => {
+      const rank = {};
+      ROLLUP_ORDER.forEach((s, i) => rank[s] = i);
+      rank.unknown = ROLLUP_ORDER.length;
+      return rank;
+    })();
+  }
+});
+
 // packages/daemon/src/tui/mirror/agent-lifecycle.ts
 function launchCommandFor(kind, manifests) {
   const mapped = AGENT_LAUNCH_COMMANDS[kind];
@@ -12092,12 +12119,22 @@ function launchCommandFor(kind, manifests) {
 }
 function spawnAgentArgs(placement, target, dir, command2) {
   const cd = dir ? ["-c", dir] : [];
-  if (placement === "window") return ["new-window", "-t", `${target.session}:`, ...cd, command2];
+  if (placement === "window") {
+    return ["new-window", "-t", `${target.session}:`, ...PRINT_PANE_ID, ...cd, command2];
+  }
   const flag = placement === "split-h" ? "-h" : "-v";
-  return ["split-window", flag, "-t", target.paneId ?? `${target.session}:`, ...cd, command2];
+  return [
+    "split-window",
+    flag,
+    "-t",
+    target.paneId ?? `${target.session}:`,
+    ...PRINT_PANE_ID,
+    ...cd,
+    command2
+  ];
 }
 function spawnSessionArgs(name, dir, command2) {
-  return ["new-session", "-d", "-s", name, ...dir ? ["-c", dir] : [], command2];
+  return ["new-session", "-d", "-s", name, ...PRINT_PANE_ID, ...dir ? ["-c", dir] : [], command2];
 }
 function isShellCommand(command2, manifests) {
   const name = command2.replace(/^-/, "").split("/").pop() ?? command2;
@@ -12127,10 +12164,11 @@ function clearAuthorityArgs(paneId) {
     ["set-option", "-p", "-t", paneId, "-u", "@agent_session_id"]
   ];
 }
-var AGENT_LAUNCH_COMMANDS, EXTRA_SHELLS, INTERRUPT_TAP_GAP_MS, RESTART_GRACE_MS;
+var AGENT_LAUNCH_COMMANDS, PRINT_PANE_ID, EXTRA_SHELLS, INTERRUPT_TAP_GAP_MS, RESTART_GRACE_MS;
 var init_agent_lifecycle = __esm({
   "packages/daemon/src/tui/mirror/agent-lifecycle.ts"() {
     "use strict";
+    init_agent_rows();
     AGENT_LAUNCH_COMMANDS = {
       claude: "claude",
       codex: "codex",
@@ -12142,6 +12180,7 @@ var init_agent_lifecycle = __esm({
       goose: "goose",
       amp: "amp"
     };
+    PRINT_PANE_ID = ["-P", "-F", "#{pane_id}"];
     EXTRA_SHELLS = ["dash", "ksh", "tcsh", "csh"];
     INTERRUPT_TAP_GAP_MS = 250;
     RESTART_GRACE_MS = 1e3;
@@ -13618,13 +13657,21 @@ function buildRestorePlan(snapshot, liveSessionNames, ideProjects = /* @__PURE__
   }
   return { actions, paneCount };
 }
-var SAFE_SESSION_ID = /^[A-Za-z0-9-]+$/;
+var SAFE_SESSION_ID = /^[A-Za-z0-9_-]+$/;
+var AGENT_RESUME_COMMANDS = {
+  claude: (id) => `claude --resume ${id}`,
+  codex: (id) => `codex resume ${id}`,
+  opencode: (id) => `opencode --session ${id}`,
+  cursor: (id) => `cursor-agent --resume ${id}`,
+  copilot: (id) => `copilot --resume=${id}`
+};
 function paneResumeCommand(pane, opts) {
   if (!opts.resumeAgents) return null;
-  if (pane.agent !== "claude") return null;
+  const resume = pane.agent ? AGENT_RESUME_COMMANDS[pane.agent] : void 0;
+  if (!resume) return null;
   const id = pane.agentSessionId;
   if (!id || !SAFE_SESSION_ID.test(id)) return null;
-  return `claude --resume ${id}`;
+  return resume(id);
 }
 function countResumableAgents(session, resumeAgents) {
   let n = 0;

@@ -201,6 +201,15 @@ describe("parseAppConfig — mistyped fields fall back to default", () => {
     expect(parseAppConfig({ app: { dragSelect: "always" } }).app.dragSelect).toBe("always");
     expect(parseAppConfig({ app: { dragSelect: "never" } }).app.dragSelect).toBe("never");
   });
+
+  it("app.newAgentCwd — defaults to pane, accepts session, coerces junk back (M24.1)", () => {
+    expect(DEFAULT_APP_CONFIG.app.newAgentCwd).toBe("pane");
+    expect(parseAppConfig(undefined).app.newAgentCwd).toBe("pane");
+    expect(parseAppConfig({ app: { newAgentCwd: "session" } }).app.newAgentCwd).toBe("session");
+    expect(parseAppConfig({ app: { newAgentCwd: "pane" } }).app.newAgentCwd).toBe("pane");
+    expect(parseAppConfig({ app: { newAgentCwd: "window" } }).app.newAgentCwd).toBe("pane");
+    expect(parseAppConfig({ app: { newAgentCwd: true } }).app.newAgentCwd).toBe("pane");
+  });
 });
 
 describe("loadAppConfig / getAppConfig / TMUX_IDE_CONFIG", () => {

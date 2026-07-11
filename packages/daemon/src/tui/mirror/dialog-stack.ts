@@ -279,6 +279,17 @@ export interface DialogKeyEvent {
   shift: boolean;
 }
 
+/** The typed character a key event contributes to a filter/prompt, or null.
+ *  OpenTUI names the space key `"space"` (not a 1-char name), so the bare
+ *  length-1 check silently DROPPED every space — a custom command with flags
+ *  could never be typed (measured live, M24.1). */
+function typedChar(evt: DialogKeyEvent): string | null {
+  if (evt.ctrl || evt.meta) return null;
+  if (evt.name === "space") return " ";
+  if (evt.name.length === 1) return evt.shift ? evt.name.toUpperCase() : evt.name;
+  return null;
+}
+
 /**
  * Feed one key to the stack's top dialog. Centralized ESCAPE lives here: it
  * pops exactly one level. The caller must treat EVERY key as consumed while
@@ -313,8 +324,9 @@ export function dialogKey(stack: DialogStack, evt: DialogKeyEvent): void {
       state.armed = null;
       return stack.touch();
     }
-    if (evt.name.length === 1 && !evt.ctrl && !evt.meta) {
-      state.query += evt.shift ? evt.name.toUpperCase() : evt.name;
+    const ch = typedChar(evt);
+    if (ch !== null) {
+      state.query += ch;
       state.sel = 0;
       state.top = 0;
       state.armed = null;
@@ -338,8 +350,9 @@ export function dialogKey(stack: DialogStack, evt: DialogKeyEvent): void {
       state.error = null;
       return stack.touch();
     }
-    if (evt.name.length === 1 && !evt.ctrl && !evt.meta) {
-      state.input += evt.shift ? evt.name.toUpperCase() : evt.name;
+    const ch = typedChar(evt);
+    if (ch !== null) {
+      state.input += ch;
       state.error = null;
       return stack.touch();
     }

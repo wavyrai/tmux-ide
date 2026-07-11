@@ -13,9 +13,11 @@
  *
  * `--resume-agents` (or `{ "restore": { "resumeAgents": true } }` in
  * `~/.tmux-ide/config.json`) layers native agent-resume on top: a rebuilt
- * claude pane that carries a recorded `@agent_session_id` relaunches as
- * `claude --resume <id>`, reviving the actual conversation rather than opening
- * a fresh shell. See {@link paneResumeCommand} for the exact decision table.
+ * agent pane that carries a recorded `@agent_session_id` relaunches with its
+ * kind's VERIFIED resume invocation (`claude --resume <id>`, `codex resume
+ * <id>`, … — {@link AGENT_RESUME_COMMANDS}), reviving the actual conversation
+ * rather than opening a fresh shell. See {@link paneResumeCommand} for the
+ * exact decision table.
  *
  * {@link buildRestorePlan} + {@link paneResumeCommand} + {@link restorePrefs}
  * are PURE (unit-tested); {@link restore} is the thin io wrapper that reads the
@@ -92,22 +94,51 @@ export function buildRestorePlan(
 // Pure — agent resume decision
 // ---------------------------------------------------------------------------
 
-/** A session id is trusted only if it's the uuid alphabet — nothing shell-active. */
-const SAFE_SESSION_ID = /^[A-Za-z0-9-]+$/;
+/** A session id is trusted only if it's uuid-ish (`[A-Za-z0-9_-]` — underscore
+ *  covers opencode's `ses_…` ids) — nothing shell-active. */
+const SAFE_SESSION_ID = /^[A-Za-z0-9_-]+$/;
+
+/**
+ * The native session-resume invocation per agent kind (M24.1 — the table was
+ * claude-only until then). ONLY VERIFIED entries ship; each spelling's source:
+ *  - `claude --resume <id>`: the shipped integration (its hooks record the id).
+ *  - `codex resume <id>`: `codex resume --help` — "Usage: codex resume
+ *    [OPTIONS] [SESSION_ID]  … Session id (UUID) or session name".
+ *  - `opencode --session <id>`: `opencode --help` — "-s, --session  session id
+ *    to continue".
+ *  - `cursor-agent --resume <id>`: `cursor-agent --help` — "--resume [chatId]
+ *    Select a session to resume".
+ *  - `copilot --resume=<id>`: GitHub Copilot CLI command reference —
+ *    "--resume[=VALUE]  Resume a previous interactive session … Optionally
+ *    specify a session ID" (the `=` form, since the value is optional).
+ * Unverified (no entry): gemini, aider, goose, amp — no confirmed native
+ * per-session resume invocation at the time of writing.
+ *
+ * Only claude's hooks record `@agent_session_id` automatically today; the
+ * other entries fire for panes whose agent self-reported the id per the agent
+ * contract (`tmux set-option -p @agent_session_id <id>`).
+ */
+export const AGENT_RESUME_COMMANDS: Record<string, (id: string) => string> = {
+  claude: (id) => `claude --resume ${id}`,
+  codex: (id) => `codex resume ${id}`,
+  opencode: (id) => `opencode --session ${id}`,
+  cursor: (id) => `cursor-agent --resume ${id}`,
+  copilot: (id) => `copilot --resume=${id}`,
+};
 
 /**
  * PURE — the command to relaunch a pane so its agent conversation is revived,
  * or `null` for "no resume — leave it a plain shell (or replay `command`)".
  *
  * Decision table (only fires when `resumeAgents` is on):
- *  - claude + a recorded `@agent_session_id` → `claude --resume <id>`. The id is
- *    a uuid, but we don't trust the snapshot: unless it matches
- *    {@link SAFE_SESSION_ID} (`[A-Za-z0-9-]`) we bail to `null` rather than risk
- *    feeding shell metacharacters into send-keys.
- *  - claude with NO session id → `null`. `claude --continue` would be too
- *    magical here (it resumes the most-recent conversation in the cwd, which may
- *    belong to a different pane); a fresh shell is the safe, predictable default.
- *  - any other agent → `null`. No native resume story yet.
+ *  - a kind in {@link AGENT_RESUME_COMMANDS} + a recorded `@agent_session_id` →
+ *    that kind's resume invocation. The id is uuid-ish, but we don't trust the
+ *    snapshot: unless it matches {@link SAFE_SESSION_ID} we bail to `null`
+ *    rather than risk feeding shell metacharacters into send-keys.
+ *  - a known kind with NO session id → `null`. A "continue most recent" flag
+ *    would be too magical here (it resumes the cwd's most-recent conversation,
+ *    which may belong to a different pane); a fresh shell is the safe default.
+ *  - any other agent → `null`. No VERIFIED resume story.
  *  - `resumeAgents` off → always `null`.
  */
 export function paneResumeCommand(
@@ -115,10 +146,11 @@ export function paneResumeCommand(
   opts: { resumeAgents: boolean },
 ): string | null {
   if (!opts.resumeAgents) return null;
-  if (pane.agent !== "claude") return null;
+  const resume = pane.agent ? AGENT_RESUME_COMMANDS[pane.agent] : undefined;
+  if (!resume) return null;
   const id = pane.agentSessionId;
   if (!id || !SAFE_SESSION_ID.test(id)) return null;
-  return `claude --resume ${id}`;
+  return resume(id);
 }
 
 /** PURE — how many of a session's panes would resume under `resumeAgents`. */
