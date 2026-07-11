@@ -420,7 +420,12 @@ export class PaneMirror {
     const forceRows = opts.forceRows && opts.forceRows.length ? opts.forceRows : null;
 
     for (let y = 0; y < height; y++) {
-      const data = this._incremental ? this.rowData(baseY, y) : null;
+      const raw = this._incremental ? this.rowData(baseY, y) : null;
+      // Bounds guard (M23.5, D5): after a shrink xterm's reflow can leave a
+      // line's `_data` at a length ≠ cols×3; comparing or `set`ting it against
+      // the rowLen-strided shadow would read garbage / throw RangeError. Treat
+      // such a row as shadow-less: always repaint it, never write the shadow.
+      const data = raw !== null && raw.length === rowLen ? raw : null;
       let dirty = full || y >= bottomDirtyFrom || data === null; // no shadow info for this row → always repaint
       if (!dirty && this._shadow) dirty = !shadowMatches(this._shadow, y * rowLen, data!);
       if (!dirty && forceRows) {
