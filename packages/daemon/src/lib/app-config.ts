@@ -151,6 +151,17 @@ export interface AppApp {
    * single run.
    */
   detachable: boolean;
+  /**
+   * When a plain left drag on an app-mouse pane SELECTS locally instead of
+   * forwarding to the pane's app (M24.2). "agents" (default): panes our own
+   * detection matches to a fleet agent entry select; other app-mouse panes
+   * (vim/htop) forward. "always": every app-mouse pane selects on drag.
+   * "never": every app-mouse pane forwards (the pre-M24.2 behavior). A genuine
+   * click (press+release in one cell) is still forwarded on select-default
+   * panes; shift inverts a pane's default; the right-click pane menu overrides
+   * per pane for the session.
+   */
+  dragSelect: "agents" | "always" | "never";
 }
 
 /** Worktree flow config (`tmux-ide worktree`). */
@@ -211,7 +222,7 @@ export const DEFAULT_APP_CONFIG: AppConfig = {
   welcome: { show: true },
   integrations: { offer: true },
   worktrees: { dir: "" },
-  app: { frontDoor: false, detachable: false },
+  app: { frontDoor: false, detachable: false, dragSelect: "agents" },
 };
 
 /** The default theme tokens — the fallback threaded into the pure builders. */
@@ -244,6 +255,13 @@ function pickBool(value: unknown, fallback: boolean): boolean {
 /** A positive integer, else the default. */
 function pickPosInt(value: unknown, fallback: number): number {
   return typeof value === "number" && Number.isInteger(value) && value > 0 ? value : fallback;
+}
+
+/** One of the allowed literals, else the default. */
+function pickChoice<T extends string>(value: unknown, allowed: readonly T[], fallback: T): T {
+  return typeof value === "string" && (allowed as readonly string[]).includes(value)
+    ? (value as T)
+    : fallback;
 }
 
 /**
@@ -313,6 +331,7 @@ export function parseAppConfig(input: unknown): AppConfig {
     app: {
       frontDoor: pickBool(app.frontDoor, D.app.frontDoor),
       detachable: pickBool(app.detachable, D.app.detachable),
+      dragSelect: pickChoice(app.dragSelect, ["agents", "always", "never"], D.app.dragSelect),
     },
   };
 }

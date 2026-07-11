@@ -10,7 +10,8 @@ import {
   tintRunsBg,
   osc52Sequence,
   tmuxPassthrough,
-  pressStartsSelection,
+  paneDragDefault,
+  routePanePress,
   wheelScrollsLocal,
   selectBadgeLabel,
   chunkByBytes,
@@ -232,20 +233,45 @@ describe("chunkByBytes", () => {
 });
 
 describe("select mode on app-mouse panes (M22.9)", () => {
-  describe("pressStartsSelection", () => {
-    it("always selects on a non-app-mouse pane (byte-identical old behavior)", () => {
-      expect(pressStartsSelection(false, false, false)).toBe(true);
-      expect(pressStartsSelection(false, false, true)).toBe(true);
-      expect(pressStartsSelection(false, true, false)).toBe(true);
+  describe("paneDragDefault (M24.2)", () => {
+    const agent = { paneId: "%7" };
+    it("selects on an agent pane, forwards on a plain one, under the default policy", () => {
+      expect(paneDragDefault(agent, "agents", null)).toBe("select");
+      expect(paneDragDefault(undefined, "agents", null)).toBe("forward");
     });
-    it("forwards a plain press on an app-mouse pane", () => {
-      expect(pressStartsSelection(true, false, false)).toBe(false);
+    it("'always' selects and 'never' forwards regardless of the agent join", () => {
+      expect(paneDragDefault(undefined, "always", null)).toBe("select");
+      expect(paneDragDefault(agent, "never", null)).toBe("forward");
     });
-    it("selects on an app-mouse pane while its select mode is on", () => {
-      expect(pressStartsSelection(true, true, false)).toBe(true);
+    it("a per-pane override beats both the policy and the join", () => {
+      expect(paneDragDefault(agent, "agents", "forward")).toBe("forward");
+      expect(paneDragDefault(undefined, "agents", "select")).toBe("select");
+      expect(paneDragDefault(agent, "never", "select")).toBe("select");
+      expect(paneDragDefault(undefined, "always", "forward")).toBe("forward");
     });
-    it("selects on an app-mouse pane when the press is shift-modified", () => {
-      expect(pressStartsSelection(true, false, true)).toBe(true);
+  });
+
+  describe("routePanePress (M22.9 + M24.2)", () => {
+    it("always selects immediately on a non-app-mouse pane", () => {
+      expect(routePanePress(false, false, false, "forward")).toBe("select");
+      expect(routePanePress(false, false, true, "select")).toBe("select");
+      expect(routePanePress(false, true, false, "forward")).toBe("select");
+    });
+    it("selects immediately while the pane's select mode is on", () => {
+      expect(routePanePress(true, true, false, "forward")).toBe("select");
+      expect(routePanePress(true, true, true, "select")).toBe("select");
+    });
+    it("forwards a plain press on a forward-default pane (old behavior)", () => {
+      expect(routePanePress(true, false, false, "forward")).toBe("forward");
+    });
+    it("defers a plain press on a select-default pane (agent panes)", () => {
+      expect(routePanePress(true, false, false, "select")).toBe("defer");
+    });
+    it("shift inverts the default: selects immediately on a forward-default pane", () => {
+      expect(routePanePress(true, false, true, "forward")).toBe("select");
+    });
+    it("shift inverts the default: forwards on a select-default (agent) pane", () => {
+      expect(routePanePress(true, false, true, "select")).toBe("forward");
     });
   });
 
