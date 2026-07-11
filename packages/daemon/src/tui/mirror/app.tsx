@@ -22,6 +22,19 @@
  * passes shift through to us (SGR button+4; many terminals keep shift+drag
  * for native selection — measured: see the card notes).
  *
+ * DRAG SELECTS ON AGENT PANES (M24.2): the implicit default now follows the
+ * pane. Where the fleet's agent join (agentByPane) matches, a plain left
+ * press is DEFERRED (`pendingPress`): motion off the press cell starts a
+ * normal selection (the app sees NOTHING — no stray down), a release in
+ * place forwards the owed SGR press/release pair (agents are click-driven).
+ * Other app-mouse panes (vim/htop) forward as before. SHIFT inverts a pane's
+ * default (so shift+drag on an agent pane forwards; on vim it selects, as in
+ * M22.9); the right-click pane menu carries a per-pane session override; the
+ * `app.dragSelect` policy ("agents"|"always"|"never", app-config) is read
+ * once at boot. Wheel routing is UNTOUCHED (agent panes still forward the
+ * wheel outside select mode); pure logic in selection.ts (paneDragDefault /
+ * routePanePress).
+ *
  * SURFACE TABS (M18.4): a persistent top row — [⌂ Home][❯ Terminal][▤ Files]
  * [± Diff] — makes the app a real IDE. F1..F4 switch (F-keys encode reliably;
  * ctrl+digit/alt do NOT — measured); the tab bar is also clickable (fixed x-span
@@ -358,11 +371,13 @@ import {
   tintRunsInverse,
   tintRunsBg,
   osc52Sequence,
-  pressStartsSelection,
+  paneDragDefault,
+  routePanePress,
   wheelScrollsLocal,
   selectBadgeLabel,
   ATTR_INVERSE,
   type Cell,
+  type PaneDragDefault,
   type Selection,
 } from "./selection.ts";
 
@@ -810,6 +825,39 @@ render(
       if (focused && focused !== sm && mirror?.focusedPane() !== sm) exitSelectMode();
     });
 
+    // ── IMPLICIT DRAG-SELECT DEFAULT (M24.2) ─────────────────────────────────
+    // Select mode is the explicit escape hatch; the DEFAULT now follows the
+    // pane. Where the fleet says an agent runs (the M22.3 agentByPane join), a
+    // plain left drag SELECTS — the press is DEFERRED (`pendingPress`) so a
+    // genuine click still reaches the app as one SGR press/release pair, and
+    // NOTHING is forwarded once motion starts a selection. Other app-mouse
+    // panes keep forwarding; shift inverts a pane's default (routePanePress);
+    // the right-click toggle overrides per pane for the session (pruned when
+    // the pane dies); `app.dragSelect` sets the policy, read once at boot like
+    // the rest of the app config.
+    const dragSelectPolicy = loadAppConfig().app.dragSelect;
+    const dragOverrides = new Map<string, PaneDragDefault>();
+    const paneDrag = (paneId: string): PaneDragDefault =>
+      paneDragDefault(
+        agentByPane().get(paneId),
+        dragSelectPolicy,
+        dragOverrides.get(paneId) ?? null,
+      );
+    /** Drop overrides for panes that no longer exist anywhere on the server
+     *  (pane ids are server-global and never recycled, so a miss is a death,
+     *  not a window switch). Piggybacks on the 3s fleet tick; one control-mode
+     *  round-trip, only while overrides exist at all. */
+    const pruneDragOverrides = () => {
+      if (dragOverrides.size === 0 || !mirror) return;
+      void mirror
+        .command('list-panes -a -F "#{pane_id}"')
+        .then((lines) => {
+          const alive = new Set(lines.map((l) => l.trim()));
+          for (const id of [...dragOverrides.keys()]) if (!alive.has(id)) dragOverrides.delete(id);
+        })
+        .catch(() => {});
+    };
+
     // ── SCROLLBACK SEARCH (M20.3) ────────────────────────────────────────────
     // copy-mode's `/` finder, app-native. `search` is the live search SESSION: a
     // bottom-of-canvas input line owning the keyboard while open. `editing:true`
@@ -864,6 +912,23 @@ render(
           surface: ScrollSurface;
         };
     let dragging: DragState | null = null;
+
+    // ── DEFERRED PRESS (M24.2) ───────────────────────────────────────────────
+    // A left press on a select-default app-mouse pane is WITHHELD: if the
+    // pointer leaves the press cell before release, the press becomes the
+    // anchor of a normal selection (the app never sees any of it); if the
+    // release lands in the same cell, the owed SGR press/release pair is
+    // forwarded then — a click, which is how agents like claude are driven.
+    // Coordinates are frozen at press so the forwarded pair is exactly the
+    // cell the user pressed. Only one of {pendingPress, selecting, dragging}
+    // is ever live.
+    let pendingPress: { paneId: string; x: number; gy: number; cell: Cell } | null = null;
+    // The pane whose app is OWED a release because its press was forwarded.
+    // OpenTUI synthesizes SEVERAL release-type events per physical release
+    // (drag-end, up, drop, up — measured live), so the release forward must be
+    // debt-tracked: paid exactly ONCE, to the pane that got the down (wherever
+    // the pointer is at release), and never for gestures we consumed locally.
+    let forwardedDown: string | null = null;
 
     // ── RIGHT-CLICK CONTEXT MENU (M19.2) ─────────────────────────────────────
     // A small overlay opened at the pointer on a right-button press (SGR button
@@ -2486,6 +2551,7 @@ render(
       // input (mouse events die during the storm). The child does the work.
       let fleetInFlight = false;
       const refreshFleet = () => {
+        pruneDragOverrides();
         if (fleetInFlight) return;
         fleetInFlight = true;
         execFile("node", [cliPath, "team", "--json"], { timeout: 10_000 }, (err, stdout) => {
@@ -3090,8 +3156,9 @@ render(
       return {
         region: "pane",
         title: pane.id,
-        // App-mouse panes lead with "Select text…" / "Stop selecting" (M22.9).
-        items: paneMenuItems(pane.appMouse, selectModePane() === pane.id),
+        // App-mouse panes lead with "Select text…" / "Stop selecting" (M22.9)
+        // and the per-pane drag-default toggle (M24.2).
+        items: paneMenuItems(pane.appMouse, selectModePane() === pane.id, paneDrag(pane.id)),
         paneId: pane.id,
       };
     };
@@ -3278,6 +3345,17 @@ render(
         }
         if (id === "select-text-off") {
           exitSelectMode();
+          closeMenu();
+          return;
+        }
+        // The drag-default toggle (M24.2): a session-scoped per-pane override
+        // (pruned when the pane dies) flipping whether a plain drag selects
+        // locally or forwards to the pane's app.
+        if (id === "drag-select" || id === "drag-forward") {
+          dragOverrides.set(pid, id === "drag-select" ? "select" : "forward");
+          setStatusNote(
+            id === "drag-select" ? "drag selects in this pane" : "drags forward to the app",
+          );
           closeMenu();
           return;
         }
@@ -4246,6 +4324,41 @@ render(
         // suppressed until the gesture ends.
         return;
       }
+      // A DEFERRED press (M24.2) resolves on the next event: a drag that leaves
+      // the press cell starts the selection the press was withheld for (nothing
+      // is ever forwarded, no stray down); a release still in that cell forwards
+      // the owed SGR press/release pair — the click the pane's app was due.
+      // Everything else mid-press is swallowed, like the resize gestures above;
+      // a second down without a release (never seen live) just drops the debt.
+      if (pendingPress) {
+        const pp = pendingPress;
+        const pane = panesById().get(pp.paneId);
+        if (type === "drag") {
+          if (!pane) {
+            pendingPress = null; // the pane died mid-press — nothing is owed
+            return;
+          }
+          const cell = paneCell(pane, x, y - TABBAR_H);
+          if (cell.row !== pp.cell.row || cell.col !== pp.cell.col) {
+            pendingPress = null;
+            selAnchor = pp.cell;
+            selecting = { surface: "mirror", paneId: pane.id };
+            setSelection({ surface: "mirror", paneId: pane.id, anchor: pp.cell, head: cell });
+          }
+          return;
+        }
+        if (type === "up" || type === "drag-end" || type === "drop") {
+          pendingPress = null;
+          if (pane) {
+            forwardPress(pane, pp.x, pp.gy, false);
+            forwardPress(pane, pp.x, pp.gy, true);
+          }
+          return;
+        }
+        if (type === "down")
+          pendingPress = null; // drop the debt, route the press
+        else return;
+      }
       // Motion (bubbled from child text runs) drives hover only; "out" clears it.
       // Handled first so every click branch below stays a pure down/up/scroll path.
       if (type === "out") {
@@ -4264,14 +4377,22 @@ render(
       }
       // Release ends a live selection: the mirror copies what was dragged; the
       // editor keeps its selection for ^c. Discrete word/line selections leave
-      // `selecting` null, so their trailing release passes straight through — as
-      // does any release on an appMouse pane (which never starts a selection).
+      // `selecting` null, so their trailing release passes straight through.
       if (type === "up" || type === "drag-end" || type === "drop") {
         if (selecting) {
           const s = selection();
           if (s && s.surface === "mirror" && selecting.surface === "mirror")
             commitMirrorCopy(s.paneId, s.anchor, s.head);
           selecting = null;
+          return;
+        }
+        // A FORWARDED press's release: pay the debt to the pane that got the
+        // down — at the pointer's release cell, clamped into that pane — and
+        // only once (the synthesized duplicates find no debt and stay local).
+        if (forwardedDown) {
+          const pane = panesById().get(forwardedDown);
+          forwardedDown = null;
+          if (pane && selectModePane() !== pane.id) forwardPress(pane, x, y - TABBAR_H, true);
           return;
         }
       }
@@ -4458,17 +4579,24 @@ render(
       if (!pane) return;
       if (type === "down") {
         mirror?.focus(pane.id);
-        // App-mouse panes forward the press UNLESS this pane's select mode is
-        // on or the press is shift-modified (M22.9) — then the normal selection
-        // machine below runs instead (non-app-mouse panes are unchanged).
-        if (
-          !pressStartsSelection(
-            pane.appMouse,
-            selectModePane() === pane.id,
-            e.modifiers?.shift === true,
-          )
-        ) {
+        // Where the press goes (M22.9 + M24.2): plain panes and select mode run
+        // the selection machine below; app-mouse panes follow the pane's drag
+        // default (agents select, others forward; shift inverts) — a select
+        // default DEFERS the press so a genuine click still reaches the app
+        // (see the pendingPress resolution above).
+        const routing = routePanePress(
+          pane.appMouse,
+          selectModePane() === pane.id,
+          e.modifiers?.shift === true,
+          paneDrag(pane.id),
+        );
+        if (routing === "forward") {
+          forwardedDown = pane.id;
           forwardPress(pane, x, gy, false);
+          return;
+        }
+        if (routing === "defer") {
+          pendingPress = { paneId: pane.id, x, gy, cell: paneCell(pane, x, gy) };
           return;
         }
         // Begin a drag selection, or on a repeat click select
@@ -4490,11 +4618,11 @@ render(
           selecting = { surface: "mirror", paneId: pane.id };
           setSelection(null);
         }
-      } else if (type === "up") {
-        // Releases of a local selection gesture never reach here (the
-        // `selecting` branch above returns); select mode suppresses the rest.
-        if (pane.appMouse && selectModePane() !== pane.id) forwardPress(pane, x, gy, true);
       } else if (type === "scroll") {
+        // (Releases never reach here: local gestures are consumed by the
+        // selecting/pendingPress branches above and a forwarded press's
+        // release is paid via the `forwardedDown` debt — never re-derived
+        // from whichever pane happens to sit under the pointer.)
         const dir = e.scroll?.direction;
         if (dir === "up" || dir === "down") {
           const { col, row } = paneCell(pane, x, gy);

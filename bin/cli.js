@@ -3149,6 +3149,9 @@ function pickBool(value, fallback) {
 function pickPosInt(value, fallback) {
   return typeof value === "number" && Number.isInteger(value) && value > 0 ? value : fallback;
 }
+function pickChoice(value, allowed, fallback) {
+  return typeof value === "string" && allowed.includes(value) ? value : fallback;
+}
 function parseAppConfig(input) {
   const D = DEFAULT_APP_CONFIG;
   const root = asObject(input);
@@ -3209,7 +3212,8 @@ function parseAppConfig(input) {
     worktrees: { dir: pickString(worktrees.dir, D.worktrees.dir) },
     app: {
       frontDoor: pickBool(app.frontDoor, D.app.frontDoor),
-      detachable: pickBool(app.detachable, D.app.detachable)
+      detachable: pickBool(app.detachable, D.app.detachable),
+      dragSelect: pickChoice(app.dragSelect, ["agents", "always", "never"], D.app.dragSelect)
     }
   };
 }
@@ -3304,7 +3308,7 @@ var init_app_config = __esm({
       welcome: { show: true },
       integrations: { offer: true },
       worktrees: { dir: "" },
-      app: { frontDoor: false, detachable: false }
+      app: { frontDoor: false, detachable: false, dragSelect: "agents" }
     };
     DEFAULT_THEME = DEFAULT_APP_CONFIG.theme;
     DEFAULT_KEYS = DEFAULT_APP_CONFIG.keys;

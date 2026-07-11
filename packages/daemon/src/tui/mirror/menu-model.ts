@@ -93,13 +93,24 @@ export const MENU_ITEMS: Record<MenuRegion, MenuItem[]> = {
  *  panes (the app turned mouse reporting on — presses are forwarded, so a drag
  *  can't start a selection) get a leading "Select text…" verb that pauses
  *  forwarding for that pane; while its select mode is active the entry flips to
- *  the exit verb. Ordinary panes keep the fixed list untouched. */
-export function paneMenuItems(appMouse: boolean, selectModeOn: boolean): MenuItem[] {
+ *  the exit verb. They also get the drag-default toggle (M24.2): the label is
+ *  always the OTHER default (`dragDefault` is the pane's current one, override
+ *  and config applied), so picking it flips the pane for the session. Ordinary
+ *  panes keep the fixed list untouched. */
+export function paneMenuItems(
+  appMouse: boolean,
+  selectModeOn: boolean,
+  dragDefault: "select" | "forward",
+): MenuItem[] {
   if (!appMouse) return MENU_ITEMS.pane;
   const entry: MenuItem = selectModeOn
     ? { id: "select-text-off", label: "Stop selecting" }
     : { id: "select-text", label: "Select text…" };
-  return [entry, ...MENU_ITEMS.pane];
+  const dragToggle: MenuItem =
+    dragDefault === "select"
+      ? { id: "drag-forward", label: "Forward mouse drags" }
+      : { id: "drag-select", label: "Select on drag" };
+  return [entry, dragToggle, ...MENU_ITEMS.pane];
 }
 
 /** The overlay's border (1) + horizontal padding (1 each side). The header row

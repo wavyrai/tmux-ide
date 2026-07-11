@@ -191,6 +191,16 @@ describe("parseAppConfig — mistyped fields fall back to default", () => {
     // An explicit true makes bare `tmux-ide app` run hosted (M23.2).
     expect(parseAppConfig({ app: { detachable: true } }).app.detachable).toBe(true);
   });
+
+  it("app.dragSelect — defaults to 'agents' and coerces anything off the enum back to it", () => {
+    expect(DEFAULT_APP_CONFIG.app.dragSelect).toBe("agents");
+    expect(parseAppConfig(undefined).app.dragSelect).toBe("agents");
+    expect(parseAppConfig({ app: { dragSelect: "sometimes" } }).app.dragSelect).toBe("agents");
+    expect(parseAppConfig({ app: { dragSelect: true } }).app.dragSelect).toBe("agents");
+    expect(parseAppConfig({ app: "nope" }).app.dragSelect).toBe("agents");
+    expect(parseAppConfig({ app: { dragSelect: "always" } }).app.dragSelect).toBe("always");
+    expect(parseAppConfig({ app: { dragSelect: "never" } }).app.dragSelect).toBe("never");
+  });
 });
 
 describe("loadAppConfig / getAppConfig / TMUX_IDE_CONFIG", () => {

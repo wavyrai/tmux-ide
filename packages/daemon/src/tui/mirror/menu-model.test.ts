@@ -164,18 +164,24 @@ describe("submenuPos", () => {
   });
 });
 
-describe("paneMenuItems (M22.9 — select mode entry)", () => {
+describe("paneMenuItems (M22.9 select mode + M24.2 drag-default toggle)", () => {
   it("keeps the fixed pane list byte-identical for non-app-mouse panes", () => {
-    expect(paneMenuItems(false, false)).toBe(MENU_ITEMS.pane);
+    expect(paneMenuItems(false, false, "select")).toBe(MENU_ITEMS.pane);
+    expect(paneMenuItems(false, false, "forward")).toBe(MENU_ITEMS.pane);
   });
-  it("leads with Select text… on an app-mouse pane", () => {
-    const items = paneMenuItems(true, false);
+  it("leads with Select text… then the drag toggle on an app-mouse pane", () => {
+    const items = paneMenuItems(true, false, "forward");
     expect(items[0]).toEqual({ id: "select-text", label: "Select text…" });
-    expect(items.slice(1)).toEqual(MENU_ITEMS.pane);
+    expect(items[1]).toEqual({ id: "drag-select", label: "Select on drag" });
+    expect(items.slice(2)).toEqual(MENU_ITEMS.pane);
   });
   it("flips to the exit verb while the pane's select mode is on", () => {
-    const items = paneMenuItems(true, true);
+    const items = paneMenuItems(true, true, "forward");
     expect(items[0]).toEqual({ id: "select-text-off", label: "Stop selecting" });
-    expect(items.slice(1)).toEqual(MENU_ITEMS.pane);
+    expect(items.slice(2)).toEqual(MENU_ITEMS.pane);
+  });
+  it("offers the OTHER default: a select-default (agent) pane gets Forward mouse drags", () => {
+    const items = paneMenuItems(true, false, "select");
+    expect(items[1]).toEqual({ id: "drag-forward", label: "Forward mouse drags" });
   });
 });

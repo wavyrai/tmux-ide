@@ -198,14 +198,60 @@ export function tintRunsBg<T extends { text: string; bg: number | null }>(
 // through (SGR encodes it as +4 on the button code; many terminals keep
 // shift+drag for native selection instead — then only select mode applies).
 
-/** PURE — whether a left press on a pane begins a LOCAL drag selection
- *  (vs. being forwarded to the pane's app as an SGR press). */
-export function pressStartsSelection(
+// ── Implicit drag-select default (M24.2) ─────────────────────────────────────
+// Every agent pane (claude/codex) is app-mouse, so "forwarding wins" meant a
+// user's whole fleet couldn't drag-select. The DEFAULT now follows the pane:
+// where our own detection says an agent runs there, a plain drag selects and
+// only a genuine click (press+release in one cell) is forwarded — deferred
+// until motion or release decides. Shift INVERTS the pane's default (so on an
+// agent pane shift+drag forwards; on a vim pane it selects, as in M22.9), the
+// right-click toggle overrides per pane for the session, and `app.dragSelect`
+// ("agents"|"always"|"never") sets the policy.
+
+/** Where a plain left drag on a pane goes by default. */
+export type PaneDragDefault = "select" | "forward";
+/** The `app.dragSelect` policy values (app-config). */
+export type DragSelectSetting = "agents" | "always" | "never";
+
+/** PURE — a pane's drag default. Precedence: the session's per-pane override
+ *  (the right-click toggle) > the config policy ("always"/"never") > the agent
+ *  join ("agents": a pane matching a fleet agent entry selects; every other
+ *  app-mouse pane forwards). */
+export function paneDragDefault(
+  agentEntry: { paneId: string } | undefined,
+  config: DragSelectSetting,
+  override: PaneDragDefault | null,
+): PaneDragDefault {
+  if (override !== null) return override;
+  if (config === "always") return "select";
+  if (config === "never") return "forward";
+  return agentEntry !== undefined ? "select" : "forward";
+}
+
+/** What a left press on a pane does: run the selection machine NOW, forward
+ *  the SGR press NOW, or DEFER (withhold the press until motion starts a
+ *  selection or a release-in-place forwards the owed click pair). */
+export type PressRouting = "select" | "forward" | "defer";
+
+/** PURE — route a left press. Plain panes and select mode keep the immediate
+ *  selection machine. Otherwise the pane's drag default decides, with shift
+ *  inverting it: a shift press that lands on "select" stays IMMEDIATE (the
+ *  M22.9 behavior — a shift-click was never forwarded), while an unshifted
+ *  "select" defers so the pane's app still gets genuine clicks. */
+export function routePanePress(
   appMouse: boolean,
   selectModeOn: boolean,
   shift: boolean,
-): boolean {
-  return !appMouse || selectModeOn || shift;
+  dragDefault: PaneDragDefault,
+): PressRouting {
+  if (!appMouse || selectModeOn) return "select";
+  const effective: PaneDragDefault = shift
+    ? dragDefault === "select"
+      ? "forward"
+      : "select"
+    : dragDefault;
+  if (effective === "forward") return "forward";
+  return shift ? "select" : "defer";
 }
 
 /** PURE — whether the wheel scrolls the LOCAL mirror scrollback (vs. being
