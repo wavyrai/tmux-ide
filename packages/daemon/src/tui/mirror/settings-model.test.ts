@@ -12,6 +12,7 @@ import {
 } from "../chrome/notify.ts";
 import { prefixKeyBinds } from "../chrome/statusline.ts";
 import {
+  PALETTE_KEYCAPS,
   SETTINGS_PALETTE_COMMANDS,
   THEME_PRESETS,
   keybindingItems,
@@ -173,6 +174,33 @@ describe("keybinding viewer", () => {
     expect(keybindingItems(rebound).find((r) => r.label === "Home cockpit")?.detail).toBe("M-c");
     // the app's fixed keys are listed after the chrome rows
     expect(rows.some((r) => r.id === "app:Command palette")).toBe(true);
+  });
+  it("appends the kitty ⌘K fast path to the palette row only when enabled (M24.4)", () => {
+    const off = keybindingItems(CHROME_DEFAULT_KEYS);
+    expect(off.find((r) => r.id === "app:Command palette")?.detail).toBe("F5 · ^p");
+    const on = keybindingItems(CHROME_DEFAULT_KEYS, true);
+    expect(on.find((r) => r.id === "app:Command palette")?.detail).toBe("F5 · ^p · ⌘K");
+    // no other row changes
+    expect(on.filter((r) => r.detail?.includes("⌘K"))).toHaveLength(1);
+  });
+});
+
+describe("PALETTE_KEYCAPS (M24.4 — the palette rows' shortcut source)", () => {
+  it("maps exactly the actions the viewer enumerates with palette keys", () => {
+    expect(PALETTE_KEYCAPS).toEqual({
+      "tab:home": "F1",
+      "tab:terminal": "F2",
+      "tab:files": "F3",
+      "tab:diff": "F4",
+      save: "^s",
+      quit: "^q",
+    });
+  });
+  it("agrees with the viewer rows (single source — no drift)", () => {
+    const rows = keybindingItems(CHROME_DEFAULT_KEYS);
+    for (const keycap of Object.values(PALETTE_KEYCAPS)) {
+      expect(rows.some((r) => r.detail === keycap)).toBe(true);
+    }
   });
 });
 

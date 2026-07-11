@@ -170,6 +170,15 @@ export interface AppApp {
    * always use the session/project dir (no focused pane exists there).
    */
   newAgentCwd: NewAgentCwd;
+  /**
+   * Whether the unified app enables the kitty keyboard protocol on its host
+   * terminal (M24.4). On (default), kitty-capable terminals deliver ⌘-modified
+   * keys — ⌘K opens the command palette — and disambiguated escapes; the app
+   * re-encodes every key for the mirrored panes either way, and terminals
+   * without the protocol ignore the request entirely. Off restores the legacy
+   * key encoding for hosts where the protocol misbehaves.
+   */
+  kittyKeys: boolean;
 }
 
 /** The two Terminal-spawn cwd policies (see {@link AppApp.newAgentCwd}). */
@@ -233,7 +242,13 @@ export const DEFAULT_APP_CONFIG: AppConfig = {
   welcome: { show: true },
   integrations: { offer: true },
   worktrees: { dir: "" },
-  app: { frontDoor: false, detachable: false, dragSelect: "agents", newAgentCwd: "pane" },
+  app: {
+    frontDoor: false,
+    detachable: false,
+    dragSelect: "agents",
+    newAgentCwd: "pane",
+    kittyKeys: true,
+  },
 };
 
 /** The default theme tokens — the fallback threaded into the pure builders. */
@@ -344,6 +359,7 @@ export function parseAppConfig(input: unknown): AppConfig {
       detachable: pickBool(app.detachable, D.app.detachable),
       dragSelect: pickChoice(app.dragSelect, ["agents", "always", "never"], D.app.dragSelect),
       newAgentCwd: pickChoice(app.newAgentCwd, ["pane", "session"], D.app.newAgentCwd),
+      kittyKeys: pickBool(app.kittyKeys, D.app.kittyKeys),
     },
   };
 }

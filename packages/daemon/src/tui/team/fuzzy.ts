@@ -24,6 +24,15 @@ const START_BONUS = 10; // matched char is the first char of the target
 const SEPARATOR_BONUS = 8; // matched char follows a separator (word start)
 const CONTIGUOUS_BONUS = 5; // matched char is adjacent to the previous match
 const BASE = 1; // every matched char is worth at least this
+// Whole-alignment extra when the query is a contiguous PREFIX of the target
+// (M24.4): typing a label's start must rank that label above mid-word runs
+// AND above scattered matches that rack up several word-start bonuses —
+// measured: "save" scored 29 on "Save file" but 30 on "swap pane view east"
+// (three word-start hits). Sized to dominate realistic competitors (a
+// non-prefix alignment outscores a prefix only past ~8 all-word-start chars);
+// word-boundary preference WITHIN non-prefix matches is untouched ("web"
+// still anchors on the "web" of `wavyr-website`, not the leading "w").
+const PREFIX_EXTRA = 24;
 
 /**
  * Case-insensitive subsequence match of `query` against `target`.
@@ -105,6 +114,17 @@ export function fuzzyMatch(
     }
   }
   if (start === -1) return null;
+
+  // The exact/prefix tier (M24.4): when the query IS the target's start, that
+  // alignment (positions 0..m-1) + PREFIX_EXTRA competes with the DP's best —
+  // and effectively always wins, so prefix matches rank first however many
+  // word-start bonuses a scattered alignment collected.
+  if (t.startsWith(q)) {
+    const prefixScore = m * BASE + START_BONUS + (m - 1) * CONTIGUOUS_BONUS + PREFIX_EXTRA;
+    if (prefixScore >= bestScore) {
+      return { score: prefixScore, positions: Array.from({ length: m }, (_, i) => i) };
+    }
+  }
 
   const positions: number[] = [];
   let j = start;

@@ -55,6 +55,19 @@ export const SPAWN_MEMORY_CAP = 20;
 /** How many custom spawn commands the recents list keeps (M24.1, global). */
 export const CUSTOM_COMMANDS_CAP = 5;
 
+/** How many palette actions the usage history remembers (M24.4). LRU by
+ *  last use — the map is insertion-ordered oldest-first, like lastSpawns. */
+export const PALETTE_USAGE_CAP = 50;
+
+/** One palette action's usage record (M24.4): how often it ran and when last.
+ *  Keyed by the STABLE action key ({@link ./palette.ts}'s paletteActionKey) so
+ *  a relabeled action keeps its history. */
+export interface PaletteUsageEntry {
+  count: number;
+  /** Epoch seconds of the most recent run. */
+  lastUsed: number;
+}
+
 /** The persisted shape. `null` means "nothing remembered" for that slot. */
 export interface AppState {
   /** The tab the app was showing when it last saved. */
@@ -77,6 +90,14 @@ export interface AppState {
   /** Recent CUSTOM spawn commands (M24.1), most-recent first, deduped, global
    *  (not per-project), capped at {@link CUSTOM_COMMANDS_CAP}. */
   customCommands: string[];
+  /** Palette usage history (M24.4): stable action key → {count, lastUsed}.
+   *  Insertion-ordered LRU (oldest first) capped at {@link PALETTE_USAGE_CAP};
+   *  drives the empty-query "recent" group and the ranking tie-break. */
+  paletteUsage: Record<string, PaletteUsageEntry>;
+  /** Files surface (M24.6): show dotfiles (H toggle). Default hidden. */
+  filesShowHidden: boolean;
+  /** Files surface (M24.6): show gitignored entries (I toggle). Default hidden. */
+  filesShowIgnored: boolean;
 }
 
 export const DEFAULT_APP_STATE: AppState = {
@@ -88,6 +109,9 @@ export const DEFAULT_APP_STATE: AppState = {
   recentFolders: [],
   lastSpawns: {},
   customCommands: [],
+  paletteUsage: {},
+  filesShowHidden: false,
+  filesShowIgnored: false,
 };
 
 /** PURE — the "again" memory key for a spawn context: the concrete dir when
@@ -116,6 +140,46 @@ export function rememberSpawn(
   out[key] = spawn;
   const keys = Object.keys(out);
   for (let i = 0; i < keys.length - cap; i++) delete out[keys[i]!];
+  return out;
+}
+
+/**
+ * PURE — the palette-usage map after running the action keyed `key` at
+ * `nowSec`: count bumps, lastUsed updates, and the key moves to newest
+ * (re-inserted last — the rememberSpawn LRU idiom, so JSON round-trips keep the
+ * eviction order). Past `cap`, the OLDEST-used entries drop. Blank keys no-op.
+ */
+export function recordPaletteUse(
+  map: Readonly<Record<string, PaletteUsageEntry>>,
+  key: string,
+  nowSec: number,
+  cap: number = PALETTE_USAGE_CAP,
+): Record<string, PaletteUsageEntry> {
+  if (key.length === 0) return { ...map };
+  const out: Record<string, PaletteUsageEntry> = {};
+  for (const [k, v] of Object.entries(map)) if (k !== key) out[k] = v;
+  out[key] = { count: (map[key]?.count ?? 0) + 1, lastUsed: nowSec };
+  const keys = Object.keys(out);
+  for (let i = 0; i < keys.length - cap; i++) delete out[keys[i]!];
+  return out;
+}
+
+/** PURE — a persisted palette-usage value coerced clean: non-object → {},
+ *  entries with a mistyped/non-finite count or lastUsed drop, order kept,
+ *  capped from the OLD end (like sanitizeSpawns). */
+function sanitizePaletteUsage(v: unknown): Record<string, PaletteUsageEntry> {
+  if (!v || typeof v !== "object" || Array.isArray(v)) return {};
+  const out: Record<string, PaletteUsageEntry> = {};
+  for (const [key, raw] of Object.entries(v as Record<string, unknown>)) {
+    if (key.length === 0) continue;
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) continue;
+    const o = raw as Record<string, unknown>;
+    if (typeof o.count !== "number" || !Number.isFinite(o.count) || o.count < 1) continue;
+    if (typeof o.lastUsed !== "number" || !Number.isFinite(o.lastUsed)) continue;
+    out[key] = { count: Math.floor(o.count), lastUsed: Math.floor(o.lastUsed) };
+  }
+  const keys = Object.keys(out);
+  for (let i = 0; i < keys.length - PALETTE_USAGE_CAP; i++) delete out[keys[i]!];
   return out;
 }
 
@@ -228,6 +292,9 @@ export function parseAppState(raw: string): AppState {
     recentFolders: sanitizeRecents(obj.recentFolders),
     lastSpawns: sanitizeSpawns(obj.lastSpawns),
     customCommands: sanitizeStringList(obj.customCommands, CUSTOM_COMMANDS_CAP),
+    paletteUsage: sanitizePaletteUsage(obj.paletteUsage),
+    filesShowHidden: obj.filesShowHidden === true,
+    filesShowIgnored: obj.filesShowIgnored === true,
   };
 }
 
@@ -243,6 +310,9 @@ export function serializeAppState(state: AppState): string {
     recentFolders: sanitizeRecents(state.recentFolders),
     lastSpawns: sanitizeSpawns(state.lastSpawns),
     customCommands: sanitizeStringList(state.customCommands, CUSTOM_COMMANDS_CAP),
+    paletteUsage: sanitizePaletteUsage(state.paletteUsage),
+    filesShowHidden: state.filesShowHidden === true,
+    filesShowIgnored: state.filesShowIgnored === true,
   };
   return JSON.stringify(clean, null, 2);
 }

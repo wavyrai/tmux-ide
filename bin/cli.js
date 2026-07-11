@@ -3214,7 +3214,8 @@ function parseAppConfig(input) {
       frontDoor: pickBool(app.frontDoor, D.app.frontDoor),
       detachable: pickBool(app.detachable, D.app.detachable),
       dragSelect: pickChoice(app.dragSelect, ["agents", "always", "never"], D.app.dragSelect),
-      newAgentCwd: pickChoice(app.newAgentCwd, ["pane", "session"], D.app.newAgentCwd)
+      newAgentCwd: pickChoice(app.newAgentCwd, ["pane", "session"], D.app.newAgentCwd),
+      kittyKeys: pickBool(app.kittyKeys, D.app.kittyKeys)
     }
   };
 }
@@ -3309,7 +3310,13 @@ var init_app_config = __esm({
       welcome: { show: true },
       integrations: { offer: true },
       worktrees: { dir: "" },
-      app: { frontDoor: false, detachable: false, dragSelect: "agents", newAgentCwd: "pane" }
+      app: {
+        frontDoor: false,
+        detachable: false,
+        dragSelect: "agents",
+        newAgentCwd: "pane",
+        kittyKeys: true
+      }
     };
     DEFAULT_THEME = DEFAULT_APP_CONFIG.theme;
     DEFAULT_KEYS = DEFAULT_APP_CONFIG.keys;

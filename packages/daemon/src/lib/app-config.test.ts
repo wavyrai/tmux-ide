@@ -210,6 +210,14 @@ describe("parseAppConfig — mistyped fields fall back to default", () => {
     expect(parseAppConfig({ app: { newAgentCwd: "window" } }).app.newAgentCwd).toBe("pane");
     expect(parseAppConfig({ app: { newAgentCwd: true } }).app.newAgentCwd).toBe("pane");
   });
+
+  it("app.kittyKeys — defaults ON, accepts an explicit opt-out, coerces junk (M24.4)", () => {
+    expect(DEFAULT_APP_CONFIG.app.kittyKeys).toBe(true);
+    expect(parseAppConfig(undefined).app.kittyKeys).toBe(true);
+    expect(parseAppConfig({ app: { kittyKeys: false } }).app.kittyKeys).toBe(false);
+    expect(parseAppConfig({ app: { kittyKeys: "off" } }).app.kittyKeys).toBe(true);
+    expect(parseAppConfig({ app: "nope" }).app.kittyKeys).toBe(true);
+  });
 });
 
 describe("loadAppConfig / getAppConfig / TMUX_IDE_CONFIG", () => {

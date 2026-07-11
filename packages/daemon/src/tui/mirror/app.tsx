@@ -55,6 +55,21 @@
  * openFile, diffFile } — persists to `~/.tmux-ide/app-state.json`
  * (TMUX_IDE_HOME override), debounced, restored on launch.
  *
+ * PALETTE V2 (M24.4): the overlay renders ROWS (palette.ts's PaletteRow) —
+ * an empty query groups "recent" (persisted usage in app-state's paletteUsage,
+ * keyed by paletteActionKey so relabels keep history) · "suggested" (surface
+ * verbs; BLOCKED agents' jumps first) · "commands"; a typed query is one flat
+ * list ranked by the label-start-weighted fuzzy score with a frequency/recency
+ * tie-break. Headers are inert rows: keyboard (stepPaletteRow) and the router
+ * both skip them. Action rows right-align their app keycap (settings-model's
+ * PALETTE_KEYCAPS — the keybind viewer's single source). ⌘K is a third opener
+ * beside F5/^p, delivered ONLY under the kitty keyboard protocol: the renderer
+ * requests it (useKittyKeyboard, app.kittyKeys config, default on), the stdin
+ * parser maps CSI-u keys to the SAME names as legacy so pane re-encoding is
+ * untouched, and ALL super-modified keys are consumed at the top of the key
+ * handler (never typed into a query/prompt/editor, never forwarded — pane
+ * forwarding of modifier-rich keys is card #83's scope).
+ *
  * SETTINGS (M22.4): no settings screen — every setting is a palette COMMAND
  * ("Settings…" is the categorized umbrella) executed via three DIALOG
  * primitives on ONE global stack (dialog-stack.ts; pure model in
@@ -81,15 +96,26 @@
  * persisted tab; `--edit <file>` opens Files; `--diff <dir>` opens Diff. On home,
  * `o` opens a path prompt, `d` opens the Diff tab for the selected session's dir.
  *
- * DIFF (M18.3): a two-column panel — left is the changed-file list (status letter
- * + path, selected row highlighted), right is the unified diff of the selected
- * file (add/del/hunk/context colored). Git runs via ASYNC execFile ONLY (the
- * landmine: no sync execs near the render loop; the one exception is reading a
- * single untracked file to show it as additions). `git status --porcelain` +
- * `git diff --no-color -- <file>` refresh on a 3s timer while mode=diff and on
- * manual `r`. j/k move the file selection; the wheel scrolls the diff (or the
- * file list when over the left column); a left-column click selects a file; `^e`
- * opens the selected file in the EDITOR at its repo-relative path. Pure parsing +
+ * DIFF (M18.3; v2 M24.5): a two-column panel — left is the changed-file list
+ * GROUPED into Staged / Unstaged / Untracked sections (counted headers are
+ * non-selectable rows; an `MM` file appears in BOTH stage groups, each side
+ * diffing its own half of the index), right is the unified diff of the selected
+ * row (add/del/hunk/context colored, add/del lines carry background fills).
+ * Git runs via ASYNC execFile ONLY (the landmine: no sync execs near the render
+ * loop; the one exception is reading a single untracked file to show it as
+ * additions). `git status --porcelain` + both `--numstat`s (per-file ± counts,
+ * header totals) refresh on a 3s timer while mode=diff and on manual `r`.
+ * j/k move the file selection (headers skipped — the row/selection math is the
+ * shared buildDiffRows pass, the AGENTS_GAP_ROWS lesson); s/u stage/unstage the
+ * selected file and S/U everything (reversible, so no confirms — each verb
+ * notes what it did and follows the file into its new group); the footer verbs
+ * and a selected/hovered row's [s stage]/[u unstage] chip are their span-routed
+ * mouse twins; `/` filters the list live (escape clears — diff surface only,
+ * Terminal's `/` scrollback search is untouched); ]/[ jump the diff view
+ * between hunks; the wheel scrolls the diff (or the file list when over the
+ * left column); a left-column click selects a file row; `^e` opens the selected
+ * file in the EDITOR at the first changed line of the top-visible hunk (pure
+ * hunk math from the `@@ -a,b +c,d` header). Pure parsing + grouping +
  * classification live in diff-model.ts (unit-tested).
  *
  * EDITOR (M18.2): the editing ENGINE is a native `EditBuffer` (bun:ffi —
@@ -157,7 +183,7 @@ import {
   writeSync,
   closeSync,
 } from "node:fs";
-import { readdir, writeFile, rename, rm, stat } from "node:fs/promises";
+import { readdir, readFile, writeFile, rename, rm, stat } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { homedir } from "node:os";
 import { render, useKeyboard, usePaste, useTerminalDimensions } from "@opentui/solid";
@@ -182,23 +208,39 @@ import {
   type ReadOnlyReason,
 } from "./editor-buffer.ts";
 import {
-  parseStatusPorcelain,
   classifyDiff,
   untrackedDiffText,
   clampSel,
-  type StatusEntry,
+  parseStatusGroups,
+  parseStatusPorcelain,
+  // Both diff-model and file-tree export a `filterEntries`; alias the diff one
+  // (merge of M24.5 + M24.6 — the two surfaces grew them independently).
+  filterEntries as filterDiffEntries,
+  buildDiffRows,
+  rowIndexOfFile,
+  parseNumstat,
+  untrackedLineCount,
+  applyCounts,
+  totalCounts,
+  nextHunkTop,
+  hunkEditTarget,
+  type DiffEntry,
+  type DiffGroup,
   type DiffLineKind,
+  type StatusEntry,
 } from "./diff-model.ts";
 import {
   loadAppState,
   saveAppState,
   addRecentFolder,
   addCustomCommand,
+  recordPaletteUse,
   clampSidebarWidth,
   isTab,
   rememberSpawn,
   spawnMemoryKey,
   type AppState,
+  type PaletteUsageEntry,
   type Tab,
 } from "./app-state.ts";
 import {
@@ -227,13 +269,18 @@ import {
   type Size,
 } from "./size-truth.ts";
 import {
-  filterPaletteActions,
+  paletteRows,
+  paletteActionKey,
+  paletteRowText,
+  firstPaletteAction,
+  stepPaletteRow,
   parseBufferList,
   palettePos,
   paletteRowAt,
   paletteContains,
   clampPaletteTop,
   type PaletteAction,
+  type PaletteRow,
   type PaletteGeom,
   type TmuxBuffer,
 } from "./palette.ts";
@@ -288,6 +335,7 @@ import {
   validateQuietTime,
   validateSnapshotEvery,
   validateTickMs,
+  PALETTE_KEYCAPS,
   type NotificationToggleId,
   type SettingsCommandId,
 } from "./settings-model.ts";
@@ -324,12 +372,24 @@ import {
   type SearchMatch,
 } from "./search-model.ts";
 import {
+  ALWAYS_IGNORE,
+  ancestorDirs,
   buildNodes,
+  changedFileWalk,
+  filterEntries,
+  filterView,
+  indexOfPath,
   insertChildrenAt,
+  nextChangedPath,
+  rebuildTree,
+  relPath,
   removeSubtreeAt,
+  statusMapFromEntries,
   type FileNode,
   type RawEntry,
 } from "./file-tree.ts";
+import ignore, { type Ignore } from "ignore";
+import { watchDirectory } from "../../widgets/lib/watcher.ts";
 import { spans, spanHit, spansFromRight, type Span } from "./spans.ts";
 import {
   AGAIN_ID,
@@ -509,6 +569,9 @@ type HoverRegion =
   | "windowtab"
   | "files"
   | "diff"
+  // M24.5: the diff footer's clickable [s stage]/[u unstage]/[S all]/[U all]
+  // verb chips (index into DIFF_VERBS).
+  | "diffverb"
   | "button"
   | "tabbtn"
   | "homechip"
@@ -578,6 +641,27 @@ const STATUS_LETTER_FG: Record<string, RGBA> = {
   C: ACCENT,
   "?": MUTED,
 };
+// Add/del BACKGROUND fills layered UNDER the DIFF_FG classes (M24.5). Values
+// mirror the widget theme's diffAddedBg/diffRemovedBg (widgets/lib/theme.ts:27-34)
+// — that theme is the future token source once the app's const surface colors
+// move onto the theming pipeline.
+const DIFF_ADD_BG = RGBA.fromInts(20, 60, 30, 255);
+const DIFF_DEL_BG = RGBA.fromInts(60, 20, 20, 255);
+const DIFF_LINE_BG: Partial<Record<DiffLineKind, RGBA>> = { add: DIFF_ADD_BG, del: DIFF_DEL_BG };
+// The diff footer's clickable stage/unstage verbs (M24.5) — fixed labels so
+// the x-span math is constant. Laid out from the main column's first content
+// cell (sidebarW()+paddingLeft 1) with the render's gap={1}; the spans memo and
+// the footer render walk this SAME list, so a click lands where it's drawn.
+const DIFF_VERBS: { id: "stage" | "unstage" | "stage-all" | "unstage-all"; label: string }[] = [
+  { id: "stage", label: "[s stage]" },
+  { id: "unstage", label: "[u unstage]" },
+  { id: "stage-all", label: "[S all]" },
+  { id: "unstage-all", label: "[U all]" },
+];
+// A diff file row's right-anchored stage/unstage chip (shown on the selected
+// and hovered rows) — trailing space = a 1-cell inset from the list edge.
+const DIFF_ROW_CHIP_STAGE = "[s stage] ";
+const DIFF_ROW_CHIP_UNSTAGE = "[u unstage] ";
 const HEADER_ROWS = 2;
 // The persistent surface-tab row is one screen row at the very top (above the
 // sidebar + main region). Its height offsets every region's global y, so the
@@ -611,7 +695,23 @@ const HOME_CHIP_RECENT = "[▸ open] ";
 // The spawn verb's home entry (M23.1): session/project rows carry a second
 // chip left of the primary one; `a` is its keyboard twin.
 const HOME_CHIP_AGENT = "[+ agent] ";
-const TABBAR_PALETTE_LABEL = "F5 ⌘ palette ";
+// ── M24.4 kitty keyboard protocol ───────────────────────────────────────────
+// One config read at boot (the dragSelect discipline): when on, the renderer
+// requests kitty's disambiguated key encoding from the host terminal, which is
+// what delivers ⌘-modified keys at all — ⌘K opens the palette. Hosts without
+// the protocol ignore the request (legacy encoding, no behavior change);
+// `app.kittyKeys: false` opts out entirely. The ⌘K hint only shows while the
+// request is actually made.
+const KITTY_KEYS = loadAppConfig().app.kittyKeys;
+const TABBAR_PALETTE_LABEL = KITTY_KEYS ? "F5 ⌘K palette " : "F5 ⌘ palette ";
+// The palette rows' right-aligned keycaps (M24.4) — the settings keybind
+// viewer's enumeration, minus `quit` when HOSTED (^q detaches there; the
+// palette's Quit is the real exit, so the keycap would lie).
+const PALETTE_ROW_KEYCAPS: Readonly<Record<string, string>> = Object.fromEntries(
+  Object.entries(PALETTE_KEYCAPS).filter(
+    ([key]) => !(key === "quit" && process.env.TMUX_IDE_HOSTED === "1"),
+  ),
+);
 // ── M22.5 first-run welcome ─────────────────────────────────────────────────
 // A centered greeting shown only on a truly empty fleet (no sessions, no
 // registered projects). WELCOME_ROWS rows in the content area (gy 2…); the
@@ -720,6 +820,12 @@ render(
       persisted.lastSpawns,
     );
     const [customCommands, setCustomCommands] = createSignal<string[]>(persisted.customCommands);
+    // Palette usage history (M24.4) — restored from app-state, bumped on every
+    // dispatched palette action, persisted with the rest. Drives the empty-query
+    // "recent" group and the typed-query tie-break.
+    const [paletteUsage, setPaletteUsage] = createSignal<Record<string, PaletteUsageEntry>>(
+      persisted.paletteUsage,
+    );
     // The first-run tip line — the user's ACTUAL keybindings, read once at launch
     // (loadAppConfig honors TMUX_IDE_CONFIG). Cheap + pure, computed once.
     const welcomeTip = firstRunTip(loadAppConfig().keys);
@@ -1138,7 +1244,7 @@ render(
       },
     );
 
-    const openEditor = (rawPath: string) => {
+    const openEditor = (rawPath: string, line?: number) => {
       const path = rawPath.startsWith("~/")
         ? `${process.env.HOME ?? ""}${rawPath.slice(1)}`
         : rawPath;
@@ -1156,11 +1262,20 @@ render(
       editBuffer = EditBuffer.create("wcwidth");
       editBuffer.setText(text);
       editBuffer.setCursor(0, 0);
+      // Jump target (M24.5: ^e from a diff hunk): clamp into the buffer, put
+      // the cursor there, and scroll it into view.
+      let top = 0;
+      if (line !== undefined) {
+        const lineCount = text.split("\n").length;
+        const target = Math.max(0, Math.min(line, lineCount - 1));
+        editBuffer.setCursor(target, 0);
+        top = scrollToCursor(target, 0, editorRows(), lineCount);
+      }
       if (mode() !== "editor") prevMode = mode() === "mirror" ? "mirror" : "home";
       setEditorPath(path);
       setEditorReadOnly(reason);
       setEditorModified(false);
-      setEditorTop(0);
+      setEditorTop(top);
       setEditorMsg("");
       setEditorRev((r) => r + 1);
       setFilesFocus("editor");
@@ -1225,6 +1340,12 @@ render(
       } else if (!ro && name === "delete") {
         eb.deleteChar();
         setEditorModified(true);
+      } else if (!ro && name === "space" && !evt.ctrl && !evt.meta) {
+        // OpenTUI names the key "space", not " " — without this branch the
+        // editor could not insert spaces at all (found by the M24.6 battery;
+        // same trap the dialog stack hit in M24.1).
+        eb.insertText(" ");
+        setEditorModified(true);
       } else if (!ro && name.length === 1 && !evt.ctrl && !evt.meta) {
         eb.insertText(evt.shift ? name.toUpperCase() : name);
         setEditorModified(true);
@@ -1235,27 +1356,48 @@ render(
       setEditorRev((r) => r + 1);
     };
 
-    // ── DIFF (M18.3) ────────────────────────────────────────────────────────
-    // The working-tree diff of `diffDir`, rendered natively. Git runs via async
-    // execFile (`runGit`); the only sync io is reading a single untracked file to
-    // show it as additions. `diffText` holds the raw diff for the selected file;
-    // `diffLoadToken` discards a slow diff whose selection has since moved on.
+    // ── DIFF (M18.3; grouped + stage-aware M24.5) ───────────────────────────
+    // The working-tree diff of `diffDir`, rendered natively as a GROUPED list
+    // (Staged / Unstaged / Untracked; an MM file appears in both stage groups,
+    // each side diffing its own half of the index). Git runs via async execFile
+    // (`runGit`); the only sync io is reading a single untracked file to show it
+    // as additions. `diffText` holds the raw diff for the selected file;
+    // `diffLoadToken` discards a slow diff whose selection has since moved on,
+    // `diffStatusToken` a stale status/numstat merge (same race discipline).
     const [diffDir, setDiffDir] = createSignal(values.diff ?? invokeCwd);
-    const [diffFiles, setDiffFiles] = createSignal<StatusEntry[]>([]);
+    const [diffEntries, setDiffEntries] = createSignal<DiffEntry[]>([]);
     const [diffSel, setDiffSel] = createSignal(0);
     const [diffText, setDiffText] = createSignal("");
     const [diffTop, setDiffTop] = createSignal(0); // diff-pane scroll (right)
-    const [diffFileTop, setDiffFileTop] = createSignal(0); // file-list scroll (left)
+    const [diffFileTop, setDiffFileTop] = createSignal(0); // file-list scroll (left, in ROWS)
     const [diffMsg, setDiffMsg] = createSignal("");
+    // The `/` filter over the grouped file list (diff surface only — Terminal's
+    // `/` scrollback search is a different mode branch). null = off; while
+    // non-null every printable key narrows live, escape/return clear + exit.
+    const [diffFilter, setDiffFilter] = createSignal<string | null>(null);
     let diffLoadToken = 0;
-    // A diff file to re-select once `git status` repopulates the list (restore).
+    let diffStatusToken = 0;
+    // A diff file to re-select once `git status` repopulates the list: the
+    // persisted path on restore, or a verb's follow target — path + preferred
+    // group, so a just-staged file is re-selected in its NEW section.
     let pendingDiffFile: string | null = persisted.diffFile;
+    let pendingDiffGroup: DiffGroup | null = null;
 
     // Body rows below header (1) + rule (1), above the footer (1) — shared by both
     // columns. The left column width is a capped fraction of the canvas.
     const diffBodyRows = () => Math.max(1, dims().height - 3 - TABBAR_H);
     const diffListW = () => Math.max(20, Math.min(48, Math.floor(canvasCols() * 0.34)));
     const diffLines = createMemo(() => classifyDiff(diffText()));
+    // Grouped rows (section headers + files) and the flat selectable-file order,
+    // both from ONE buildDiffRows pass over the filtered entries: the render,
+    // the mouse router, and the selection all walk the SAME rows, so the hit
+    // math cannot drift from what's drawn (the AGENTS_GAP_ROWS lesson).
+    const diffRowsData = createMemo(() =>
+      buildDiffRows(filterDiffEntries(diffEntries(), diffFilter() ?? "")),
+    );
+    const diffRows = () => diffRowsData().rows;
+    const diffVisibleFiles = () => diffRowsData().files;
+    const diffTotals = createMemo(() => totalCounts(diffVisibleFiles()));
     const diffVisible = createMemo(() => {
       const lines = diffLines();
       const rows = diffBodyRows();
@@ -1263,10 +1405,10 @@ render(
       return lines.slice(top, top + rows);
     });
     const fileVisible = createMemo(() => {
-      const files = diffFiles();
-      const rows = diffBodyRows();
-      const top = clampTop(diffFileTop(), files.length, rows);
-      return files.slice(top, top + rows).map((entry, i) => ({ entry, index: top + i }));
+      const rows = diffRows();
+      const view = diffBodyRows();
+      const top = clampTop(diffFileTop(), rows.length, view);
+      return rows.slice(top, top + view).map((row, i) => ({ row, rowIndex: top + i }));
     });
 
     const runGit = (args: string[], cb: (out: string) => void) => {
@@ -1277,14 +1419,15 @@ render(
         (err, stdout) => cb(err ? "" : stdout),
       );
     };
+    const runGitP = (args: string[]) => new Promise<string>((resolve) => runGit(args, resolve));
 
-    /** Load the diff for one file: async `git diff` for tracked paths (falling
-     *  back to `--cached` when the change is staged-only), or the untracked file's
-     *  contents rendered as additions. Guarded by `diffLoadToken` against races. */
-    const loadDiff = (entry: StatusEntry) => {
+    /** Load the diff for one entry, by its GROUP: staged rows diff `--cached`,
+     *  unstaged rows the worktree, and an untracked file's contents render as
+     *  additions. Guarded by `diffLoadToken` against races. */
+    const loadDiff = (entry: DiffEntry) => {
       const token = ++diffLoadToken;
       setDiffMsg("");
-      if (entry.status === "?") {
+      if (entry.group === "untracked") {
         try {
           const bytes = readFileSync(join(diffDir(), entry.path));
           if (isBinary(bytes)) {
@@ -1299,57 +1442,180 @@ render(
         }
         return;
       }
-      runGit(["diff", "--no-color", "--", entry.path], (out) => {
+      const args =
+        entry.group === "staged"
+          ? ["diff", "--no-color", "--cached", "--", entry.path]
+          : ["diff", "--no-color", "--", entry.path];
+      runGit(args, (out) => {
         if (token !== diffLoadToken) return;
-        if (out.trim()) {
-          setDiffText((p) => (p === out ? p : out));
-          return;
-        }
-        runGit(["diff", "--no-color", "--cached", "--", entry.path], (cached) => {
-          if (token !== diffLoadToken) return;
-          setDiffText((p) => (p === cached ? p : cached));
-        });
+        setDiffText((p) => (p === out ? p : out));
       });
     };
 
-    /** Select file `i`: highlight it, reset the diff scroll, keep it in view in the
-     *  file list, and (re)load its diff. */
+    /** Select FILE `i` (an index into the flat selectable order — section
+     *  headers are not selectable): highlight it, reset the diff scroll, keep
+     *  its ROW in view in the file list, and (re)load its diff. */
     const selectDiffFile = (i: number) => {
-      const files = diffFiles();
+      const files = diffVisibleFiles();
       if (files.length === 0) return;
       const idx = clampSel(i, files.length);
       setDiffSel(idx);
       setDiffTop(0);
-      setDiffFileTop((t) => scrollToCursor(idx, t, diffBodyRows(), files.length));
+      const rows = diffRows();
+      const rowIdx = rowIndexOfFile(rows, idx);
+      if (rowIdx !== -1)
+        setDiffFileTop((t) => scrollToCursor(rowIdx, t, diffBodyRows(), rows.length));
       loadDiff(files[idx]!);
     };
     const moveDiffSel = (delta: number) => selectDiffFile(diffSel() + delta);
 
-    /** Re-run `git status --porcelain`, reconcile the selection, and reload the
-     *  selected file's diff (so an external edit is reflected). */
+    /** After a filter mutation: select the first match (reloading its diff), or
+     *  clear the diff pane when nothing matches. */
+    const diffFilterReselect = () => {
+      if (diffVisibleFiles().length === 0) {
+        setDiffSel(0);
+        setDiffText("");
+      } else {
+        selectDiffFile(0);
+      }
+    };
+
+    /** Re-run `git status --porcelain` + both `--numstat`s (and untracked line
+     *  counts via async reads), merge counts into the grouped entries, reconcile
+     *  the selection, and reload the selected file's diff (so an external edit
+     *  is reflected). Fully async; one race token guards the whole merge. */
     const refreshStatus = () => {
-      runGit(["status", "--porcelain"], (out) => {
-        const files = parseStatusPorcelain(out);
-        setDiffFiles(files);
+      const token = ++diffStatusToken;
+      const dir = diffDir();
+      void (async () => {
+        const [statusOut, unstagedOut, stagedOut] = await Promise.all([
+          runGitP(["status", "--porcelain"]),
+          runGitP(["diff", "--numstat"]),
+          runGitP(["diff", "--numstat", "--cached"]),
+        ]);
+        if (token !== diffStatusToken) return;
+        let entries = parseStatusGroups(statusOut);
+        // Untracked ± = the file's line count (binaries skipped; the reads are
+        // capped so a giant fresh tree can't fan out thousands of opens).
+        const untrackedCounts = new Map<string, number>();
+        await Promise.all(
+          entries
+            .filter((e) => e.group === "untracked")
+            .slice(0, 200)
+            .map(async (e) => {
+              try {
+                const bytes = await readFile(join(dir, e.path));
+                if (!isBinary(bytes))
+                  untrackedCounts.set(e.path, untrackedLineCount(bytes.toString("utf8")));
+              } catch {
+                /* unreadable: counts stay null */
+              }
+            }),
+        );
+        if (token !== diffStatusToken) return;
+        entries = applyCounts(
+          entries,
+          parseNumstat(stagedOut),
+          parseNumstat(unstagedOut),
+          untrackedCounts,
+        );
+        setDiffEntries(entries);
+        const files = diffVisibleFiles();
         if (files.length === 0) {
           setDiffText("");
           setDiffSel(0);
-          setDiffMsg("working tree clean");
+          if (entries.length === 0) setDiffMsg("working tree clean");
           return;
         }
-        // Restore: re-select the persisted diff file once it appears in the list.
+        // Re-select a followed file: a verb's target in its NEW group (a staged
+        // file moves to Staged), or the persisted path on restore.
         if (pendingDiffFile) {
-          const restored = files.findIndex((f) => f.path === pendingDiffFile);
+          const path = pendingDiffFile;
+          const group = pendingDiffGroup;
           pendingDiffFile = null;
-          if (restored !== -1) {
-            selectDiffFile(restored);
+          pendingDiffGroup = null;
+          const exact = group ? files.findIndex((f) => f.path === path && f.group === group) : -1;
+          const found = exact !== -1 ? exact : files.findIndex((f) => f.path === path);
+          if (found !== -1) {
+            selectDiffFile(found);
             return;
           }
         }
         const idx = clampSel(diffSel(), files.length);
         setDiffSel(idx);
         loadDiff(files[idx]!);
+      })();
+    };
+
+    // ── Stage/unstage verbs (M24.5) ─────────────────────────────────────────
+    // Reversible operations, so no confirms — each verb notes what it did,
+    // follows the file into its new group, and refreshes (git is the truth).
+    const stageEntry = (e: DiffEntry) => {
+      if (e.group === "staged") {
+        setStatusNote("already staged");
+        return;
+      }
+      runGit(["add", "--", e.path], () => {
+        pendingDiffFile = e.path;
+        pendingDiffGroup = "staged";
+        setStatusNote(`staged ${e.path}`);
+        refreshStatus();
       });
+    };
+    const unstageEntry = (e: DiffEntry) => {
+      if (e.group !== "staged") {
+        setStatusNote("not staged");
+        return;
+      }
+      runGit(["reset", "HEAD", "--", e.path], () => {
+        pendingDiffFile = e.path;
+        pendingDiffGroup = "unstaged";
+        setStatusNote(`unstaged ${e.path}`);
+        refreshStatus();
+      });
+    };
+    const toggleStageEntry = (e: DiffEntry) =>
+      e.group === "staged" ? unstageEntry(e) : stageEntry(e);
+    const stageAll = () => {
+      const cur = diffVisibleFiles()[diffSel()];
+      runGit(["add", "-A"], () => {
+        if (cur) {
+          pendingDiffFile = cur.path;
+          pendingDiffGroup = "staged";
+        }
+        setStatusNote("staged all changes");
+        refreshStatus();
+      });
+    };
+    const unstageAll = () => {
+      const cur = diffVisibleFiles()[diffSel()];
+      runGit(["reset", "HEAD"], () => {
+        if (cur) {
+          pendingDiffFile = cur.path;
+          pendingDiffGroup = cur.group === "staged" ? "unstaged" : cur.group;
+        }
+        setStatusNote("unstaged all");
+        refreshStatus();
+      });
+    };
+
+    /** `]`/`[` — jump the diff view to the next/previous hunk header. */
+    const jumpHunk = (dir: 1 | -1) => {
+      const lines = diffLines();
+      const cur = clampTop(diffTop(), lines.length, diffBodyRows());
+      const next = nextHunkTop(lines, cur, dir);
+      if (next !== null) setDiffTop(clampTop(next, lines.length, diffBodyRows()));
+    };
+
+    /** ^e from the diff panel: open the selected file in the editor AT the
+     *  first changed line of the selected (top-visible) hunk — pure math in
+     *  hunkEditTarget; diffs without hunks (binary/untracked) open at 0. */
+    const openSelectedInEditor = () => {
+      const entry = diffVisibleFiles()[diffSel()];
+      if (!entry) return;
+      const lines = diffLines();
+      const target = hunkEditTarget(lines, clampTop(diffTop(), lines.length, diffBodyRows()));
+      openEditor(join(diffDir(), entry.path), target ?? undefined);
     };
 
     /** Enter the diff panel for `dir` (from home `d`, the Diff tab, or `--diff`
@@ -1361,8 +1627,45 @@ render(
       setDiffFileTop(0);
       setDiffText("");
       setDiffMsg("");
+      setDiffFilter(null);
       setTab("diff");
       refreshStatus();
+    };
+
+    /** The diff footer's clickable verb chips — laid out from the main column's
+     *  first content cell, exactly matching the rendered `paddingLeft={1}
+     *  gap={1}` row (shared render↔router). */
+    const diffVerbSpans = createMemo(() =>
+      spans(
+        DIFF_VERBS.map((v) => v.label),
+        sidebarW() + 1,
+        1,
+      ),
+    );
+    const runDiffVerb = (id: (typeof DIFF_VERBS)[number]["id"]) => {
+      const cur = diffVisibleFiles()[diffSel()];
+      if (id === "stage-all") stageAll();
+      else if (id === "unstage-all") unstageAll();
+      else if (cur && id === "stage") stageEntry(cur);
+      else if (cur && id === "unstage") unstageEntry(cur);
+    };
+    /** A diff file row's right-anchored [s stage]/[u unstage] chip: label by
+     *  group, span pinned to the list column's right edge — the same
+     *  spansFromRight math the render's flexGrow spacer produces. */
+    const diffRowChipLabel = (e: DiffEntry) =>
+      e.group === "staged" ? DIFF_ROW_CHIP_UNSTAGE : DIFF_ROW_CHIP_STAGE;
+    const diffRowChipSpan = (e: DiffEntry): Span =>
+      spansFromRight([diffRowChipLabel(e)], sidebarW() + diffListW(), 0)[0]!;
+    /** Truncate a diff row's path (keeping the tail — the filename is the
+     *  signal) so status + ± counts + the chip (when shown) fit the column. */
+    const diffRowPath = (e: DiffEntry, chip: boolean): string => {
+      const addW = (e.additions ?? 0) > 0 ? `+${e.additions}`.length + 1 : 0;
+      const delW = (e.deletions ?? 0) > 0 ? `-${e.deletions}`.length + 1 : 0;
+      const budget = Math.max(
+        4,
+        diffListW() - 4 - addW - delW - (chip ? diffRowChipLabel(e).length + 1 : 0),
+      );
+      return e.path.length > budget ? "…" + e.path.slice(-(budget - 1)) : e.path;
     };
 
     let mirror: SessionMirror | null = null;
@@ -1437,14 +1740,29 @@ render(
       setTab("home");
     };
 
-    // ── FILES TAB (M18.4) ────────────────────────────────────────────────────
-    // A minimal, one-level-expandable file list (left) beside the M18.2 editor
-    // (right), rooted at the workspace dir. `fs.readdir` is ALWAYS async (the
-    // render-loop landmine); the flat-tree splice/prune math is pure in
-    // file-tree.ts.
+    // ── FILES TAB (M18.4, uplifted M24.6) ────────────────────────────────────
+    // An expandable file list (left) beside the M18.2 editor (right), rooted at
+    // the workspace dir. `fs.readdir` and every git call are ALWAYS async (the
+    // render-loop landmine); ordering, ignore/hidden filtering, git-status
+    // decoration, the changed-file walk, the `/` filter view and the expansion-
+    // preserving rebuild are all pure in file-tree.ts. Ignore rules come from
+    // the workspace's .gitignore via the `ignore` package (matching is pure;
+    // only the file read is io). SELECTION indexes the VISIBLE (filtered) rows;
+    // expansion math maps back to the underlying flat list via FilteredRow.index.
     const [fileNodes, setFileNodes] = createSignal<FileNode[]>([]);
     const [fileSel, setFileSel] = createSignal(0);
     const [fileTop, setFileTop] = createSignal(0);
+    // The H / I visibility toggles — persisted in app-state (default: hidden).
+    const [showHiddenFiles, setShowHiddenFiles] = createSignal(persisted.filesShowHidden);
+    const [showIgnoredFiles, setShowIgnoredFiles] = createSignal(persisted.filesShowIgnored);
+    // Git decoration: porcelain entries for the workspace repo + its toplevel
+    // (status paths are REPO-relative — the workspace dir may sit deeper).
+    const [fileStatusEntries, setFileStatusEntries] = createSignal<StatusEntry[]>([]);
+    const [filesGitTop, setFilesGitTop] = createSignal<string | null>(null);
+    // The `/` filter: null = off, "" = filter mode just opened. The selection
+    // to restore when the filter is escaped lives beside it (not reactive).
+    const [filesQuery, setFilesQuery] = createSignal<string | null>(null);
+    let filesPreFilterPath: string | null = null;
     // Which half of the Files tab has the keyboard: the file LIST (j/k/enter) or
     // the EDITOR (typing). Opening a file hands focus to the editor; esc hands it
     // back to the list.
@@ -1452,59 +1770,277 @@ render(
     const filesListW = () => Math.max(20, Math.min(44, Math.floor(canvasCols() * 0.34)));
     /** The workspace directory driving both the file list and the diff panel. */
     const workspaceDir = () => contextDir() || invokeCwd;
+    const fileStatusMap = createMemo(() => statusMapFromEntries(fileStatusEntries()));
+    const changedWalk = createMemo(() =>
+      changedFileWalk(fileStatusEntries(), { showHidden: showHiddenFiles() }),
+    );
+    /** The rows the list actually shows: the flat tree through the `/` filter. */
+    const visibleFiles = createMemo(() => filterView(fileNodes(), filesQuery()));
     const fileListVisible = createMemo(() => {
-      const nodes = fileNodes();
-      const rows = editorRows();
-      const top = clampTop(fileTop(), nodes.length, rows);
-      return nodes.slice(top, top + rows).map((node, i) => ({ node, index: top + i }));
+      const rows = visibleFiles();
+      const view = editorRows();
+      const top = clampTop(fileTop(), rows.length, view);
+      return rows.slice(top, top + view).map((row, i) => ({ node: row.node, index: top + i }));
     });
+    /** The status letter for a node (repo-relative lookup incl. propagated
+     *  ancestor letters), or null outside a repo / for a clean path. */
+    const fileStatusFor = (n: FileNode): string | null => {
+      const top = filesGitTop();
+      if (!top) return null;
+      const rel = relPath(top, n.path);
+      return rel ? (fileStatusMap().get(rel) ?? null) : null;
+    };
 
-    const toRaw = (e: { name: string; isDirectory: () => boolean }): RawEntry => ({
-      name: e.name,
-      isDir: e.isDirectory(),
-    });
-    /** (Re)load the top-level listing for `dir` (async). Directories that were
-     *  expanded collapse back to the fresh root — a lean v1 (deep re-expansion is
-     *  a later nicety). */
+    // The gitignore matcher for the CURRENT workspace root (reloaded when the
+    // root changes or the tree refreshes — cheap: one small file read).
+    let filesIg: Ignore = ignore();
+    let filesIgDir = "";
+    const loadIgnoreRules = async (root: string): Promise<void> => {
+      const ig = ignore();
+      try {
+        ig.add(await readFile(join(root, ".gitignore"), "utf8"));
+      } catch {
+        // no .gitignore — everything passes
+      }
+      filesIg = ig;
+      filesIgDir = root;
+    };
+    /** Async list of `dir`, annotated with the gitignore verdict and filtered
+     *  through the current H/I toggles (pure filterEntries). */
+    const listDir = async (dir: string): Promise<RawEntry[]> => {
+      const root = workspaceDir();
+      if (filesIgDir !== root) await loadIgnoreRules(root);
+      const ents = await readdir(dir, { withFileTypes: true });
+      const raw: RawEntry[] = ents.map((e) => {
+        const isDir = e.isDirectory();
+        const rel = relPath(root, join(dir, e.name));
+        let ignored = false;
+        if (rel) {
+          try {
+            ignored = filesIg.ignores(isDir ? `${rel}/` : rel);
+          } catch {
+            // malformed path for the matcher — treat as not ignored
+          }
+        }
+        return { name: e.name, isDir, ignored };
+      });
+      return filterEntries(raw, {
+        showHidden: showHiddenFiles(),
+        showIgnored: showIgnoredFiles(),
+      });
+    };
+
+    /** Re-run `git status --porcelain` for the workspace (async; also resolves
+     *  the repo toplevel the porcelain paths are relative to). */
+    const runGitFiles = (args: string[], cb: (out: string) => void) => {
+      execFile(
+        "git",
+        ["-C", workspaceDir(), "-c", "core.quotepath=false", "-c", "core.fsmonitor=false", ...args],
+        { timeout: 10_000, maxBuffer: 16_000_000 },
+        (err, stdout) => cb(err ? "" : stdout),
+      );
+    };
+    const refreshFileStatus = () => {
+      runGitFiles(["rev-parse", "--show-toplevel"], (top) => {
+        const t = top.trim();
+        setFilesGitTop(t || null);
+        if (!t) {
+          setFileStatusEntries([]);
+          return;
+        }
+        runGitFiles(["status", "--porcelain"], (out) =>
+          setFileStatusEntries(parseStatusPorcelain(out)),
+        );
+      });
+    };
+
+    /** (Re)load the top-level listing for `dir` (async), reset the filter and
+     *  selection, refresh the git decoration, and (re)arm the watcher. */
     const loadFileList = (dir: string) => {
-      void readdir(dir, { withFileTypes: true })
-        .then((ents) => {
-          setFileNodes(buildNodes(dir, ents.map(toRaw), 0));
-          setFileSel(0);
-          setFileTop(0);
+      void loadIgnoreRules(workspaceDir()).then(() =>
+        listDir(dir)
+          .then((ents) => {
+            setFileNodes(buildNodes(dir, ents, 0));
+            setFileSel(0);
+            setFileTop(0);
+            setFilesQuery(null);
+          })
+          .catch(() => setFileNodes([])),
+      );
+      refreshFileStatus();
+      ensureFilesWatch(workspaceDir());
+    };
+
+    /** Expansion-preserving refresh: re-read the root + every expanded dir with
+     *  the CURRENT toggles, rebuild the flat tree (pure), keep the selection on
+     *  the same path where it survived. Used by the watcher push, the H/I
+     *  toggles, `r`, and the file-mutation menu verbs. */
+    let treeRefreshBusy = false;
+    const refreshTree = () => {
+      if (treeRefreshBusy) return;
+      treeRefreshBusy = true;
+      const root = workspaceDir();
+      const keepPath = visibleFiles()[fileSel()]?.node.path ?? null;
+      const expanded = new Set(
+        fileNodes()
+          .filter((n) => n.isDir && n.expanded)
+          .map((n) => n.path),
+      );
+      // Fresh rules first (the .gitignore itself may have changed), then every
+      // still-relevant dir in parallel; failed reads (vanished dirs) drop out.
+      void loadIgnoreRules(root)
+        .then(() =>
+          Promise.all(
+            [root, ...expanded].map(async (d) => [d, await listDir(d).catch(() => null)] as const),
+          ),
+        )
+        .then((pairs) => {
+          if (root !== workspaceDir()) return; // workspace moved on mid-flight
+          const listing = new Map<string, RawEntry[]>();
+          for (const [d, ents] of pairs) if (ents) listing.set(d, ents);
+          setFileNodes(rebuildTree(root, listing, expanded));
+          const rows = visibleFiles();
+          const idx = keepPath ? rows.findIndex((r) => r.node.path === keepPath) : -1;
+          const sel = idx !== -1 ? idx : clampSel(fileSel(), Math.max(1, rows.length));
+          setFileSel(sel);
+          setFileTop((t) => scrollToCursor(sel, t, editorRows(), rows.length));
         })
-        .catch(() => {
-          setFileNodes([]);
+        .finally(() => {
+          treeRefreshBusy = false;
         });
+      refreshFileStatus();
     };
+
+    const toggleHiddenFiles = () => {
+      setShowHiddenFiles((v) => !v);
+      refreshTree();
+    };
+    const toggleIgnoredFiles = () => {
+      setShowIgnoredFiles((v) => !v);
+      refreshTree();
+    };
+
     const moveFileSel = (delta: number) => {
-      const nodes = fileNodes();
-      if (nodes.length === 0) return;
-      const idx = clampSel(fileSel() + delta, nodes.length);
+      const rows = visibleFiles();
+      if (rows.length === 0) return;
+      const idx = clampSel(fileSel() + delta, rows.length);
       setFileSel(idx);
-      setFileTop((t) => scrollToCursor(idx, t, editorRows(), nodes.length));
+      setFileTop((t) => scrollToCursor(idx, t, editorRows(), rows.length));
     };
-    /** Enter on a row: open a file in the editor, or toggle a directory (async
-     *  readdir → splice children in, or prune the subtree). */
-    const activateFile = (index: number) => {
-      const node = fileNodes()[index];
-      if (!node) return;
-      setFileSel(index);
+    /** Enter on a VISIBLE row: open a file in the editor, or toggle a directory
+     *  (async readdir → splice children in, or prune the subtree). Expansion
+     *  applies at the row's UNDERLYING index, re-resolved by path at apply time
+     *  (a watcher refresh may have reshaped the list under a slow readdir). */
+    const activateFile = (visIndex: number) => {
+      const row = visibleFiles()[visIndex];
+      if (!row) return;
+      setFileSel(visIndex);
+      const node = row.node;
       if (!node.isDir) {
         openEditor(node.path);
         return;
       }
       if (node.expanded) {
-        setFileNodes((list) => removeSubtreeAt(list, index));
+        setFileNodes((list) => removeSubtreeAt(list, indexOfPath(list, node.path)));
         return;
       }
-      void readdir(node.path, { withFileTypes: true })
+      void listDir(node.path)
         .then((ents) => {
-          const children = buildNodes(node.path, ents.map(toRaw), node.depth + 1);
-          setFileNodes((list) => insertChildrenAt(list, index, children));
+          const children = buildNodes(node.path, ents, node.depth + 1);
+          setFileNodes((list) => insertChildrenAt(list, indexOfPath(list, node.path), children));
         })
         .catch(() => {});
     };
+
+    /** Reveal `absPath` in the tree: expand each collapsed ancestor in turn
+     *  (async readdirs), then select the row. Bails silently when a segment is
+     *  filtered out of view (the changed walk pre-filters what it offers). */
+    const revealPath = async (absPath: string): Promise<void> => {
+      const root = workspaceDir();
+      const rel = relPath(root, absPath);
+      if (!rel) return;
+      for (const anc of ancestorDirs(rel)) {
+        const ancAbs = join(root, anc);
+        const idx = indexOfPath(fileNodes(), ancAbs);
+        const node = fileNodes()[idx];
+        if (!node || !node.isDir) return;
+        if (!node.expanded) {
+          const ents = await listDir(ancAbs).catch(() => null);
+          if (!ents) return;
+          const children = buildNodes(ancAbs, ents, node.depth + 1);
+          setFileNodes((list) => insertChildrenAt(list, indexOfPath(list, ancAbs), children));
+        }
+      }
+      const idx = indexOfPath(fileNodes(), absPath);
+      if (idx === -1) return;
+      setFileSel(idx);
+      setFileTop((t) => scrollToCursor(idx, t, editorRows(), visibleFiles().length));
+    };
+
+    /** `[` / `]` — hop the selection to the prev/next CHANGED file (tree display
+     *  order, wrapping), auto-expanding collapsed ancestors. Clears the `/`
+     *  filter first: the hop is defined on the whole tree. */
+    const hopChanged = (dir: 1 | -1) => {
+      const top = filesGitTop();
+      const walk = changedWalk();
+      if (!top || walk.length === 0) return;
+      if (filesQuery() !== null) setFilesQuery(null);
+      const cur = visibleFiles()[fileSel()]?.node ?? null;
+      const curRel = cur ? relPath(top, cur.path) || null : null;
+      const next = nextChangedPath(walk, curRel, dir);
+      if (next) void revealPath(join(top, next));
+    };
+
+    // ── WATCHER PUSH REFRESH (M24.6) ─────────────────────────────────────────
+    // widgets/lib/watcher.ts (@parcel/watcher; fs.watch fallback in the compiled
+    // binary) — measured working under bun in this process (import + events).
+    // Events refresh the visible tree expansion-preservingly; while the Files
+    // tab is backgrounded they only mark it stale (refreshed on tab return).
+    // The watcher ignores .git, so index-only changes (external staging) ride
+    // the 3s status poll armed in onMount instead.
+    let stopFilesWatch: (() => Promise<void>) | null = null;
+    let filesWatchDir = "";
+    let filesStale = false;
+    const onFilesWatchEvent = () => {
+      if (mode() === "editor") {
+        refreshTree();
+      } else {
+        filesStale = true;
+      }
+    };
+    const ensureFilesWatch = (root: string) => {
+      if (filesWatchDir === root) return;
+      filesWatchDir = root;
+      const prev = stopFilesWatch;
+      stopFilesWatch = null;
+      void prev?.().catch(() => {});
+      void watchDirectory(root, onFilesWatchEvent, { ignore: [...ALWAYS_IGNORE] })
+        .then((stop) => {
+          if (filesWatchDir !== root) {
+            void stop().catch(() => {});
+            return;
+          }
+          stopFilesWatch = stop;
+        })
+        .catch(() => {
+          // watcher unavailable — the Files-tab status poll still runs, and
+          // `r` / toggles / mutations refresh on demand.
+        });
+    };
+    onCleanup(() => void stopFilesWatch?.().catch(() => {}));
+    /** A tab switch back onto a stale Files surface catches up in one shot. */
+    const catchUpFilesIfStale = () => {
+      if (!filesStale) return;
+      filesStale = false;
+      refreshTree();
+    };
+    // Status letters must also follow index-only changes (external staging),
+    // which the directory watcher never sees — a light poll while the Files
+    // tab is active, mirroring the diff panel's 3s discipline.
+    const filesStatusPoll = setInterval(() => {
+      if (mode() === "editor" && fileNodes().length > 0) refreshFileStatus();
+    }, 3000);
+    onCleanup(() => clearInterval(filesStatusPoll));
 
     /** The project dir the fleet payload records for `session` (null if unknown). */
     const dirForSession = (name: string): string | null => {
@@ -2109,11 +2645,14 @@ render(
     const selectTab = (t: Tab) => {
       clearSelection();
       if (t === "diff") {
-        if (diffFiles().length === 0) enterDiff(workspaceDir());
+        if (diffEntries().length === 0) enterDiff(workspaceDir());
         else setTab("diff");
         return;
       }
-      if (t === "files" && fileNodes().length === 0) loadFileList(workspaceDir());
+      if (t === "files") {
+        if (fileNodes().length === 0) loadFileList(workspaceDir());
+        else catchUpFilesIfStale();
+      }
       setTab(t);
     };
 
@@ -2129,29 +2668,82 @@ render(
     // a press outside dismisses. Keyboard behavior is unchanged.
     const [paletteOpen, setPaletteOpen] = createSignal(false);
     const [paletteQuery, setPaletteQuery] = createSignal("");
+    // "Go to file:" source (M24.6): the workspace's ignore-respecting file list,
+    // repo-relative, capped, refreshed on each palette open (async — the rows
+    // appear as soon as the list lands). `git ls-files -co --exclude-standard`
+    // where the workspace is a repo; a capped, filtered async walk elsewhere.
+    const REPO_FILES_CAP = 2000;
+    const REPO_WALK_DEPTH = 8;
+    const [repoFiles, setRepoFiles] = createSignal<string[]>([]);
+    const walkRepoFiles = async (root: string): Promise<string[]> => {
+      const out: string[] = [];
+      let queue: { dir: string; depth: number }[] = [{ dir: root, depth: 0 }];
+      while (queue.length > 0 && out.length < REPO_FILES_CAP) {
+        const next: typeof queue = [];
+        for (const { dir, depth } of queue) {
+          const ents = await listDir(dir).catch(() => []);
+          for (const e of ents) {
+            if (out.length >= REPO_FILES_CAP) break;
+            const abs = join(dir, e.name);
+            if (e.isDir) {
+              if (depth + 1 < REPO_WALK_DEPTH) next.push({ dir: abs, depth: depth + 1 });
+            } else {
+              const rel = relPath(root, abs);
+              if (rel) out.push(rel);
+            }
+          }
+        }
+        queue = next;
+      }
+      return out;
+    };
+    const loadRepoFiles = () => {
+      const root = workspaceDir();
+      runGitFiles(["ls-files", "-co", "--exclude-standard"], (out) => {
+        if (root !== workspaceDir()) return;
+        if (out) {
+          setRepoFiles(out.split("\n").filter(Boolean).slice(0, REPO_FILES_CAP));
+          return;
+        }
+        void walkRepoFiles(root)
+          .then((files) => {
+            if (root === workspaceDir()) setRepoFiles(files);
+          })
+          .catch(() => setRepoFiles([]));
+      });
+    };
     const [paletteSel, setPaletteSel] = createSignal(0);
     // The wheel-scrolled window top of the result list (0 unless scrolled — the
     // keyboard never moves it, so keyboard-only sessions render exactly as
     // before). Reset wherever the list identity changes (query edits, level
     // swaps, reopen).
     const [paletteTop, setPaletteTop] = createSignal(0);
-    const paletteActions = createMemo(() =>
-      filterPaletteActions(
+    // ROWS, not bare actions (M24.4): an empty query opens grouped — "recent"
+    // (persisted usage), "suggested" (surface verbs; BLOCKED agents' jumps
+    // first), then "commands" — a typed query is one flat ranked list. Headers
+    // are real, non-selectable rows; the selection helpers below skip them.
+    const paletteRowList = createMemo(() =>
+      paletteRows(
         paletteQuery(),
         fleet().map((s) => s.name),
         {
           terminal: mode() === "mirror",
+          surface: tab(),
           agents: fleetAgents(),
           sizeMismatch: windowMismatch() !== null,
           appMousePane: panes().find((p) => p.active)?.appMouse === true,
           // Pins "New agent: <name> (again)" FIRST when this context has spawn
           // memory (M24.1) — F5 → Enter repeats the last spawn.
           againName: currentAgainName(),
+          usage: paletteUsage(),
+          keycaps: PALETTE_ROW_KEYCAPS,
+          // "Go to file:" rows (M24.6) — appended after everything.
+          repoFiles: repoFiles(),
         },
       ),
     );
-    /** The current palette LIST length — buffers level when open, else actions. */
-    const paletteCount = () => paletteBuffers()?.length ?? paletteActions().length;
+    /** The current palette LIST length — buffers level when open, else rows. */
+    const paletteCount = () => paletteBuffers()?.length ?? paletteRowList().length;
     /** The palette box geometry as placed by the render, for the router. */
     const paletteGeom = (): PaletteGeom => {
       const { left, top } = palettePos(dims().width, dims().height, PALETTE_W);
@@ -2164,13 +2756,21 @@ render(
     };
     const openPalette = () => {
       setPaletteQuery("");
-      setPaletteSel(0);
       setPaletteTop(0);
       setPaletteBuffers(null); // always open on the action list, never mid-picker
+      // The selection starts on the first ACTION row — under grouping that is
+      // the row after the "recent" header, keeping F5 → Enter one gesture.
+      setPaletteSel(Math.max(0, firstPaletteAction(paletteRowList())));
       setHoverIf(null); // the overlay owns the pointer; drop any underlying tint
+      loadRepoFiles(); // refresh the "Go to file:" source (async, M24.6)
       setPaletteOpen(true);
     };
     const runPaletteAction = (a: PaletteAction) => {
+      // Usage history (M24.4): every dispatched action bumps its stable key —
+      // count + lastUsed feed the "recent" group and the ranking tie-break.
+      setPaletteUsage((u) =>
+        recordPaletteUse(u, paletteActionKey(a), Math.floor(Date.now() / 1e3)),
+      );
       // "Paste buffer…" descends into the second-level picker instead of
       // dispatching — keep the palette open and load the buffer list.
       if (a.kind === "paste-buffer") {
@@ -2181,6 +2781,11 @@ render(
       }
       setPaletteOpen(false);
       switch (a.kind) {
+        case "search-scrollback":
+          // The live-prompt entry to scrollback search — `/` only works while
+          // scrolled (it belongs to the pane's agent at the bottom).
+          openSearch();
+          break;
         case "tab":
           selectTab(a.tab);
           break;
@@ -2215,6 +2820,10 @@ render(
           break;
         case "open-file":
           openEditor(a.path);
+          break;
+        case "go-file":
+          // A fuzzy-matched repo file (M24.6) — path is workspace-relative.
+          openEditor(join(workspaceDir(), a.path));
           break;
         case "save":
           saveEditor();
@@ -2341,23 +2950,23 @@ render(
         }
         return;
       }
-      const actions = paletteActions();
+      const rows = paletteRowList();
       if (evt.name === "escape") {
         setPaletteOpen(false);
       } else if (evt.name === "return") {
-        const a = actions[Math.min(paletteSel(), actions.length - 1)];
-        if (a) runPaletteAction(a);
+        const r = rows[Math.min(paletteSel(), rows.length - 1)];
+        if (r?.type === "action") runPaletteAction(r.action);
       } else if (evt.name === "up") {
-        setPaletteSel((s) => Math.max(0, s - 1));
+        setPaletteSel((s) => stepPaletteRow(rows, s, -1));
       } else if (evt.name === "down") {
-        setPaletteSel((s) => Math.min(Math.max(0, actions.length - 1), s + 1));
+        setPaletteSel((s) => stepPaletteRow(rows, s, 1));
       } else if (evt.name === "backspace") {
         setPaletteQuery((q) => q.slice(0, -1));
-        setPaletteSel(0);
+        setPaletteSel(Math.max(0, firstPaletteAction(paletteRowList())));
         setPaletteTop(0);
       } else if (evt.name.length === 1 && !evt.ctrl && !evt.meta) {
         setPaletteQuery((q) => q + (evt.shift ? evt.name.toUpperCase() : evt.name));
-        setPaletteSel(0);
+        setPaletteSel(Math.max(0, firstPaletteAction(paletteRowList())));
         setPaletteTop(0);
       }
     };
@@ -2585,7 +3194,7 @@ render(
     const runKeybindViewer = async (): Promise<boolean> => {
       await DialogSelect.show({
         title: "Keyboard shortcuts",
-        items: keybindingItems(freshCfg().keys),
+        items: keybindingItems(freshCfg().keys, KITTY_KEYS),
         footerHint: "read-only — edit keys.* in ~/.tmux-ide/config.json",
       });
       return false; // viewing commits nothing; the umbrella reopens
@@ -2658,11 +3267,14 @@ render(
         lastTab: tab(),
         contextSession: contextSession() || null,
         openFile: editorPath(),
-        diffFile: diffFiles()[diffSel()]?.path ?? null,
+        diffFile: diffVisibleFiles()[diffSel()]?.path ?? null,
         sidebarW: sidebarW(),
         recentFolders: recentFolders(),
         lastSpawns: lastSpawns(),
         customCommands: customCommands(),
+        paletteUsage: paletteUsage(),
+        filesShowHidden: showHiddenFiles(),
+        filesShowIgnored: showIgnoredFiles(),
       };
       if (saveTimer) clearTimeout(saveTimer);
       saveTimer = setTimeout(() => void saveAppState(snapshot), 400);
@@ -3289,9 +3901,9 @@ render(
         const overList = x < sidebarW() + filesListW();
         const contentY = gy - HEADER_ROWS;
         if (!overList || contentY < 0) return null;
-        const top = clampTop(fileTop(), fileNodes().length, editorRows());
+        const top = clampTop(fileTop(), visibleFiles().length, editorRows());
         const idx = top + contentY;
-        const node = fileNodes()[idx];
+        const node = visibleFiles()[idx]?.node;
         if (!node) return null;
         return {
           region: "file",
@@ -3307,15 +3919,15 @@ render(
         const overList = x < sidebarW() + diffListW();
         const contentY = gy - HEADER_ROWS;
         if (!overList || contentY < 0) return null;
-        const top = clampTop(diffFileTop(), diffFiles().length, diffBodyRows());
-        const idx = top + contentY;
-        const entry = diffFiles()[idx];
-        if (!entry) return null;
+        const rows = diffRows();
+        const top = clampTop(diffFileTop(), rows.length, diffBodyRows());
+        const row = rows[top + contentY];
+        if (!row || row.kind !== "file") return null;
         return {
           region: "difffile",
-          title: basename(entry.path),
+          title: basename(row.entry.path),
           items: MENU_ITEMS.difffile,
-          diffPath: join(diffDir(), entry.path),
+          diffPath: join(diffDir(), row.entry.path),
         };
       }
       // mirror: gy=0 is the target/status row (no menu); gy=1 is the WINDOW STRIP —
@@ -3477,7 +4089,7 @@ render(
           void writeFile(p, "", { flag: "wx" })
             .then(() => {
               setStatusNote(`created ${val}`);
-              loadFileList(workspaceDir());
+              refreshTree(); // expansion-preserving (M24.6)
             })
             .catch((e) => setStatusNote(`create failed: ${(e as Error).message}`));
         } else if (id === "rename" && val && m.filePath) {
@@ -3485,14 +4097,14 @@ render(
           void rename(m.filePath, p)
             .then(() => {
               setStatusNote(`renamed → ${val}`);
-              loadFileList(workspaceDir());
+              refreshTree();
             })
             .catch((e) => setStatusNote(`rename failed: ${(e as Error).message}`));
         } else if (id === "delete" && m.filePath) {
           void rm(m.filePath, { recursive: true, force: false })
             .then(() => {
               setStatusNote(`deleted ${basename(m.filePath!)}`);
-              loadFileList(workspaceDir());
+              refreshTree();
             })
             .catch((e) => setStatusNote(`delete failed: ${(e as Error).message}`));
         }
@@ -3698,6 +4310,25 @@ render(
         editBuffer?.destroy();
         process.exit(0);
       }
+      // SUPER-modified keys arrive only under the kitty keyboard protocol
+      // (M24.4). ⌘K opens the palette — suppressed while any overlay owns the
+      // keyboard (dialog/menu/palette/search), mirroring F5. Every OTHER super
+      // combo is consumed here: it must never type into a prompt/editor/query
+      // and never reach a pane (forwarding modifier-rich keys into panes is a
+      // separate card — #83).
+      if (evt.super) {
+        if (
+          evt.name === "k" &&
+          !evt.ctrl &&
+          dialogStack.depth() === 0 &&
+          !menu() &&
+          !paletteOpen() &&
+          !search()
+        ) {
+          openPalette();
+        }
+        return;
+      }
       // A DIALOG owns the keyboard while open (M22.4) — topmost overlay, so it
       // is checked before the menu and the palette. EVERY key is consumed here
       // (escape pops one stack level inside dialogKey): nothing may leak to the
@@ -3723,7 +4354,8 @@ render(
         searchKey(evt);
         return;
       }
-      // F5 (and ^p when it arrives) open the command palette.
+      // F5 (and ^p when it arrives) open the command palette; ⌘K is the kitty
+      // fast path handled above.
       if (evt.name === "f5" || (evt.ctrl && evt.name === "p")) {
         openPalette();
         return;
@@ -3735,16 +4367,13 @@ render(
         selectTab(fTab.key);
         return;
       }
-      // ^e — from the diff panel, open the SELECTED file in the editor at its
-      // repo-relative path; elsewhere toggle the editor against the previous mode
-      // (no-op until a file is opened via `o`/`--edit`).
+      // ^e — from the diff panel, open the SELECTED file in the editor at the
+      // first changed line of the top-visible hunk (M24.5); elsewhere toggle the
+      // editor against the previous mode (no-op until a file is opened via
+      // `o`/`--edit`).
       if (evt.ctrl && evt.name === "e") {
-        if (mode() === "diff") {
-          const entry = diffFiles()[diffSel()];
-          if (entry) openEditor(join(diffDir(), entry.path));
-        } else {
-          toggleEditor();
-        }
+        if (mode() === "diff") openSelectedInEditor();
+        else toggleEditor();
         return;
       }
       // ^g, not ^h: legacy encoding makes ctrl+h indistinguishable from
@@ -3783,10 +4412,59 @@ render(
           return;
         }
         // File LIST focus: j/k navigate, enter opens a file (→ editor focus) or
-        // toggles a directory. Otherwise the EDITOR has focus and types; esc hands
-        // focus back to the list.
+        // toggles a directory; `/` opens the live name filter, [ / ] hop the
+        // changed files, H / I toggle hidden / gitignored visibility (M24.6).
+        // Otherwise the EDITOR has focus and types; esc hands focus back to the
+        // list.
         if (filesFocus() === "list") {
-          if (evt.name === "j" || evt.name === "down") moveFileSel(1);
+          const q = filesQuery();
+          if (q !== null) {
+            // Filter input active: printable chars narrow live; arrows move in
+            // the FILTERED rows; enter activates the row (exiting the filter);
+            // escape restores the full list and the pre-filter selection.
+            if (evt.name === "escape") {
+              setFilesQuery(null);
+              const back = filesPreFilterPath ? indexOfPath(fileNodes(), filesPreFilterPath) : -1;
+              const idx = back !== -1 ? back : 0;
+              setFileSel(idx);
+              setFileTop((t) => scrollToCursor(idx, t, editorRows(), visibleFiles().length));
+            } else if (evt.name === "return") {
+              const row = visibleFiles()[fileSel()];
+              setFilesQuery(null);
+              if (row) {
+                const idx = indexOfPath(fileNodes(), row.node.path);
+                if (idx !== -1) {
+                  setFileSel(idx);
+                  setFileTop((t) => scrollToCursor(idx, t, editorRows(), visibleFiles().length));
+                  activateFile(idx);
+                }
+              }
+            } else if (evt.name === "backspace") {
+              setFilesQuery(q.slice(0, -1));
+              setFileSel(0);
+              setFileTop(0);
+            } else if (evt.name === "down") {
+              moveFileSel(1);
+            } else if (evt.name === "up") {
+              moveFileSel(-1);
+            } else if (evt.name.length === 1 && !evt.ctrl && !evt.meta) {
+              setFilesQuery(q + (evt.shift ? evt.name.toUpperCase() : evt.name));
+              setFileSel(0);
+              setFileTop(0);
+            }
+            return;
+          }
+          if (evt.name === "/") {
+            filesPreFilterPath = visibleFiles()[fileSel()]?.node.path ?? null;
+            setFilesQuery("");
+            setFileSel(0);
+            setFileTop(0);
+          } else if (evt.name === "]") hopChanged(1);
+          else if (evt.name === "[") hopChanged(-1);
+          else if (evt.shift && evt.name === "h") toggleHiddenFiles();
+          else if (evt.shift && evt.name === "i") toggleIgnoredFiles();
+          else if (evt.name === "r") refreshTree();
+          else if (evt.name === "j" || evt.name === "down") moveFileSel(1);
           else if (evt.name === "k" || evt.name === "up") moveFileSel(-1);
           else if (evt.name === "return") activateFile(fileSel());
           return;
@@ -3799,10 +4477,40 @@ render(
         return;
       }
       if (mode() === "diff") {
-        // ^e / ^g / ^q are handled above; here j/k move the file selection and `r`
-        // forces a status+diff refresh.
+        // The `/` filter owns the keyboard while active (M24.5): printable keys
+        // narrow the grouped list live, escape/return clear + exit (widget
+        // semantics), arrows still move the (filtered) selection.
+        if (diffFilter() !== null) {
+          if (evt.name === "escape" || evt.name === "return") {
+            setDiffFilter(null);
+            diffFilterReselect();
+          } else if (evt.name === "backspace") {
+            setDiffFilter((q) => (q ?? "").slice(0, -1));
+            diffFilterReselect();
+          } else if (evt.name === "up") moveDiffSel(-1);
+          else if (evt.name === "down") moveDiffSel(1);
+          else if (evt.name.length === 1 && !evt.ctrl && !evt.meta) {
+            setDiffFilter((q) => (q ?? "") + (evt.shift ? evt.name.toUpperCase() : evt.name));
+            diffFilterReselect();
+          }
+          return;
+        }
+        // ^e / ^g / ^q are handled above; j/k move the file selection, s/u
+        // stage/unstage the selected file (S/U everything), ]/[ jump between
+        // hunks, `/` filters, and `r` forces a status+diff refresh.
         if (evt.name === "j" || evt.name === "down") moveDiffSel(1);
         else if (evt.name === "k" || evt.name === "up") moveDiffSel(-1);
+        else if (evt.name === "s" && evt.shift) stageAll();
+        else if (evt.name === "u" && evt.shift) unstageAll();
+        else if (evt.name === "s") {
+          const cur = diffVisibleFiles()[diffSel()];
+          if (cur) stageEntry(cur);
+        } else if (evt.name === "u") {
+          const cur = diffVisibleFiles()[diffSel()];
+          if (cur) unstageEntry(cur);
+        } else if (evt.name === "]") jumpHunk(1);
+        else if (evt.name === "[") jumpHunk(-1);
+        else if (evt.name === "/" && !evt.ctrl && !evt.meta) setDiffFilter("");
         else if (evt.name === "r") refreshStatus();
         return;
       }
@@ -3893,10 +4601,18 @@ render(
         setStatusNote("select mode off");
         return;
       }
-      // `/` opens scrollback search on the focused pane (copy-mode's finder). Only
-      // in Terminal mode (home/editor/diff returned above); a raw `/` still reaches
-      // the pane once search is open, since search then owns the keyboard.
-      if (evt.name === "/" && !evt.ctrl && !evt.meta) {
+      // `/` opens scrollback search ONLY when the focused pane is scrolled into
+      // history — at the live prompt `/` belongs to the PANE (agents' slash
+      // commands; user report 2026-07-11: "we cannot hijack that"). Scrolled up,
+      // you're reading, not talking, so `/` means find. At the live bottom the
+      // palette's "Search scrollback" action is the entry. Once search is open
+      // it owns the keyboard as before.
+      if (
+        evt.name === "/" &&
+        !evt.ctrl &&
+        !evt.meta &&
+        (scrollOffsets.get(mirror.focusedPane()) ?? 0) > 0
+      ) {
         openSearch();
         return;
       }
@@ -4237,9 +4953,11 @@ render(
           setHoverIf(null);
           return;
         }
-        const top = clampTop(fileTop(), fileNodes().length, editorRows());
+        const top = clampTop(fileTop(), visibleFiles().length, editorRows());
         const idx = top + contentY;
-        setHoverIf(idx >= 0 && idx < fileNodes().length ? { region: "files", index: idx } : null);
+        setHoverIf(
+          idx >= 0 && idx < visibleFiles().length ? { region: "files", index: idx } : null,
+        );
         return;
       }
       if (m === "diff") {
@@ -4248,15 +4966,24 @@ render(
           setHoverIf(i >= 0 ? { region: "button", index: i } : null);
           return;
         }
+        // The footer's stage/unstage verb chips (last screen row).
+        if (y === dims().height - 1) {
+          const i = spanHit(diffVerbSpans(), x);
+          setHoverIf(i >= 0 ? { region: "diffverb", index: i } : null);
+          return;
+        }
         const contentY = gy - HEADER_ROWS;
         const overList = x < sidebarW() + diffListW();
         if (!overList || contentY < 0) {
           setHoverIf(null);
           return;
         }
-        const top = clampTop(diffFileTop(), diffFiles().length, diffBodyRows());
+        // Only FILE rows are hoverable (section headers are inert); the hover
+        // index is the ROW index, matching the render's slice.
+        const rows = diffRows();
+        const top = clampTop(diffFileTop(), rows.length, diffBodyRows());
         const idx = top + contentY;
-        setHoverIf(idx >= 0 && idx < diffFiles().length ? { region: "diff", index: idx } : null);
+        setHoverIf(rows[idx]?.kind === "file" ? { region: "diff", index: idx } : null);
         return;
       }
       // mirror mode: the per-window strip lives on gy=1, with the [+ split] button
@@ -4409,7 +5136,14 @@ render(
         }
         if (type === "move" || type === "over" || type === "drag") {
           const ri = paletteRowAt(g, x, y);
-          if (ri >= 0) setPaletteSel(paletteTop() + ri);
+          // A header row is not selectable (M24.4) — motion over it keeps the
+          // selection where it was, like the box chrome.
+          if (ri >= 0) {
+            const abs = paletteTop() + ri;
+            if (paletteBuffers() !== null || paletteRowList()[abs]?.type === "action") {
+              setPaletteSel(abs);
+            }
+          }
           return;
         }
         if (type !== "down") return;
@@ -4417,14 +5151,17 @@ render(
         if (ri >= 0) {
           if (e.button === 2) return; // right press on a row: no-op, stay open
           const abs = paletteTop() + ri;
-          setPaletteSel(abs);
           const bufs = paletteBuffers();
           if (bufs !== null) {
+            setPaletteSel(abs);
             const b = bufs[abs];
             if (b) pasteBuffer(b.name);
           } else {
-            const a = paletteActions()[abs];
-            if (a) runPaletteAction(a);
+            const r = paletteRowList()[abs];
+            if (r?.type === "action") {
+              setPaletteSel(abs);
+              runPaletteAction(r.action);
+            } // a header click is a no-op — the palette stays open
           }
           return;
         }
@@ -4687,7 +5424,7 @@ render(
           const dir = e.scroll?.direction;
           if (dir !== "up" && dir !== "down") return;
           const step = dir === "up" ? -SCROLL_STEP : SCROLL_STEP;
-          if (overList) setFileTop((t) => clampTop(t + step, fileNodes().length, editorRows()));
+          if (overList) setFileTop((t) => clampTop(t + step, visibleFiles().length, editorRows()));
           else setEditorTop((t) => clampTop(t + step, editorLines().length, editorRows()));
           return;
         }
@@ -4702,9 +5439,9 @@ render(
         const contentY = gy - HEADER_ROWS;
         if (contentY < 0 || contentY >= editorRows()) return;
         if (overList) {
-          const top = clampTop(fileTop(), fileNodes().length, editorRows());
+          const top = clampTop(fileTop(), visibleFiles().length, editorRows());
           const idx = top + contentY;
-          if (idx >= 0 && idx < fileNodes().length) {
+          if (idx >= 0 && idx < visibleFiles().length) {
             clearSelection();
             setFilesFocus("list");
             activateFile(idx);
@@ -4737,9 +5474,11 @@ render(
         setEditorRev((r) => r + 1);
         return;
       }
-      // DIFF mode: header (gy=0) + rule (gy=1), body from gy=2. Left column
-      // [0,listW) is the file list, the rest is the diff. Wheel scrolls whichever
-      // column the pointer is over; a left-column click selects that file row.
+      // DIFF mode: header (gy=0) + rule (gy=1), body from gy=2, footer verbs on
+      // the last screen row. Left column [0,listW) is the grouped file list, the
+      // rest is the diff. Wheel scrolls whichever column the pointer is over; a
+      // left-column click selects that file ROW (headers are inert), and the
+      // row's right-anchored [s stage]/[u unstage] chip wins over selection.
       if (mode() === "diff") {
         const overList = x < sidebarW() + diffListW();
         if (type === "scroll") {
@@ -4747,7 +5486,7 @@ render(
           if (dir !== "up" && dir !== "down") return;
           const step = dir === "up" ? -SCROLL_STEP : SCROLL_STEP;
           if (overList) {
-            setDiffFileTop((t) => clampTop(t + step, diffFiles().length, diffBodyRows()));
+            setDiffFileTop((t) => clampTop(t + step, diffRows().length, diffBodyRows()));
           } else {
             setDiffTop((t) => clampTop(t + step, diffLines().length, diffBodyRows()));
           }
@@ -4761,11 +5500,24 @@ render(
           if (i >= 0) runButton(hb.defs[i]!.id);
           return;
         }
+        // The footer's stage/unstage verb chips (same spans the render draws).
+        if (y === dims().height - 1) {
+          const i = spanHit(diffVerbSpans(), x);
+          if (i >= 0) runDiffVerb(DIFF_VERBS[i]!.id);
+          return;
+        }
         const contentY = gy - HEADER_ROWS;
         if (contentY < 0 || !overList) return;
-        const top = clampTop(diffFileTop(), diffFiles().length, diffBodyRows());
-        const idx = top + contentY;
-        if (idx >= 0 && idx < diffFiles().length) selectDiffFile(idx);
+        const rows = diffRows();
+        const top = clampTop(diffFileTop(), rows.length, diffBodyRows());
+        const row = rows[top + contentY];
+        if (!row || row.kind !== "file") return;
+        const chip = diffRowChipSpan(row.entry);
+        if (x >= chip.start && x < chip.start + chip.width) {
+          toggleStageEntry(row.entry);
+          return;
+        }
+        selectDiffFile(row.fileIndex);
         return;
       }
       // The per-window strip (gy=1) — resolved by the SAME x-span math the render
@@ -5496,6 +6248,9 @@ render(
                 <text fg={MUTED}>{`${editorCursor().row + 1}:${editorCursor().col + 1}`}</text>
                 <text fg={MUTED}>{`${editorLines().length}L`}</text>
                 <text fg={MUTED}>{editorMsg()}</text>
+                <Show when={filesQuery() !== null}>
+                  <text fg={ACCENT}>{`/${filesQuery()}▏`}</text>
+                </Show>
                 {buttonRow(headerButtons)}
               </box>
               <Show
@@ -5513,13 +6268,16 @@ render(
                     {(row) => {
                       const n = row.node;
                       const selected = () => row.index === fileSel() && filesFocus() === "list";
+                      // Reactive: the status map refreshes on the watcher/poll.
+                      const letter = () => fileStatusFor(n);
                       const prefix =
                         "  ".repeat(n.depth) + (n.isDir ? (n.expanded ? "▾ " : "▸ ") : "  ");
-                      const label = (prefix + n.name).slice(0, filesListW() - 1);
+                      const label = (prefix + n.name).slice(0, filesListW() - 4);
                       return (
                         <box
                           paddingLeft={1}
                           height={1}
+                          flexDirection="row"
                           backgroundColor={
                             selected()
                               ? TAB_ACTIVE_BG
@@ -5528,9 +6286,25 @@ render(
                                 : GUTTER_BG
                           }
                         >
-                          <text fg={n.isDir ? DIR_FG : selected() ? DEFAULT_FG : MUTED}>
+                          <text
+                            flexGrow={1}
+                            fg={
+                              n.ignored
+                                ? DIFF_META_FG // gitignored: dimmed when shown
+                                : n.isDir
+                                  ? DIR_FG
+                                  : selected()
+                                    ? DEFAULT_FG
+                                    : MUTED
+                            }
+                          >
                             {label}
                           </text>
+                          <Show when={letter()}>
+                            <text fg={STATUS_LETTER_FG[letter()!] ?? DEFAULT_FG}>
+                              {` ${letter()!}`}
+                            </text>
+                          </Show>
                         </box>
                       );
                     }}
@@ -5581,19 +6355,34 @@ render(
               </box>
               <box paddingLeft={1}>
                 <text fg={MUTED}>
-                  {`j/k file · enter open · ^s save · esc list · ^g home · ${QUIT_HINT}`}
+                  {`j/k · enter open · [/] change · / filter · H dot:${
+                    showHiddenFiles() ? "on" : "off"
+                  } · I ign:${
+                    showIgnoredFiles() ? "on" : "off"
+                  } · ^s save · esc list · ^g home · ${QUIT_HINT}`}
                 </text>
               </box>
             </Show>
             <Show when={mode() === "diff"}>
-              {/* header (y=0) · rule (y=1) · two-column body (y=2+). `route` reverses
-              this geometry: left column = file list, right = diff. NO onMouse on
-              the rows — the main column container routes everything. */}
+              {/* header (y=0) · rule (y=1) · two-column body (y=2+) · footer
+              verbs (last row). `route` reverses this geometry: left column =
+              grouped file list (headers + rows from the SAME buildDiffRows the
+              router walks), right = diff. NO onMouse on the rows — the main
+              column container routes everything. */}
               <box paddingLeft={1} flexDirection="row" gap={1}>
                 <text fg={ACCENT} attributes={1}>
                   {basename(diffDir()) || "diff"}
                 </text>
-                <text fg={MUTED}>{`${diffFiles().length} changed`}</text>
+                <text fg={MUTED}>{`${diffVisibleFiles().length} files`}</text>
+                <Show when={diffTotals().additions > 0}>
+                  <text fg={DIFF_ADD_FG}>{`+${diffTotals().additions}`}</text>
+                </Show>
+                <Show when={diffTotals().deletions > 0}>
+                  <text fg={DIFF_DEL_FG}>{`-${diffTotals().deletions}`}</text>
+                </Show>
+                <Show when={diffFilter() !== null}>
+                  <text fg={ACCENT}>{`/${diffFilter()}▏`}</text>
+                </Show>
                 <Show when={diffMsg()}>
                   <text fg={MUTED}>{`· ${diffMsg()}`}</text>
                 </Show>
@@ -5601,50 +6390,89 @@ render(
               </box>
               <text fg={MUTED}>{"─".repeat(Math.max(4, canvasCols() - 2))}</text>
               <box flexDirection="row" flexGrow={1}>
-                {/* Left: changed-file list. */}
+                {/* Left: the grouped changed-file list (Staged / Unstaged /
+                  Untracked). Section headers are inert; file rows show ±
+                  counts and, when selected or hovered, a right-anchored
+                  stage/unstage chip the router hit-tests with the SAME
+                  spansFromRight math. */}
                 <box width={diffListW()} flexDirection="column" backgroundColor={GUTTER_BG}>
                   <For each={fileVisible()}>
-                    {(row) => (
-                      <box
-                        flexDirection="row"
-                        gap={1}
-                        paddingLeft={1}
-                        backgroundColor={
-                          row.index === diffSel()
-                            ? TAB_ACTIVE_BG
-                            : isHovered("diff", row.index)
-                              ? HOVER_BG
-                              : GUTTER_BG
-                        }
-                      >
-                        <text fg={STATUS_LETTER_FG[row.entry.status] ?? DEFAULT_FG}>
-                          {row.entry.status}
-                        </text>
-                        <text fg={row.index === diffSel() ? DEFAULT_FG : MUTED}>
-                          {row.entry.path.length > diffListW() - 4
-                            ? "…" + row.entry.path.slice(-(diffListW() - 5))
-                            : row.entry.path}
-                        </text>
-                      </box>
-                    )}
+                    {({ row, rowIndex }) =>
+                      row.kind === "header" ? (
+                        <box height={1} paddingLeft={1} backgroundColor={GUTTER_BG}>
+                          <text fg={ACCENT} attributes={1}>
+                            {row.label}
+                          </text>
+                        </box>
+                      ) : (
+                        <box
+                          height={1}
+                          flexDirection="row"
+                          gap={1}
+                          paddingLeft={1}
+                          backgroundColor={
+                            row.fileIndex === diffSel()
+                              ? TAB_ACTIVE_BG
+                              : isHovered("diff", rowIndex)
+                                ? HOVER_BG
+                                : GUTTER_BG
+                          }
+                        >
+                          <text fg={STATUS_LETTER_FG[row.entry.status] ?? DEFAULT_FG}>
+                            {row.entry.status}
+                          </text>
+                          <text fg={row.fileIndex === diffSel() ? DEFAULT_FG : MUTED}>
+                            {diffRowPath(
+                              row.entry,
+                              row.fileIndex === diffSel() || isHovered("diff", rowIndex),
+                            )}
+                          </text>
+                          <Show when={(row.entry.additions ?? 0) > 0}>
+                            <text fg={DIFF_ADD_FG}>{`+${row.entry.additions}`}</text>
+                          </Show>
+                          <Show when={(row.entry.deletions ?? 0) > 0}>
+                            <text fg={DIFF_DEL_FG}>{`-${row.entry.deletions}`}</text>
+                          </Show>
+                          <Show when={row.fileIndex === diffSel() || isHovered("diff", rowIndex)}>
+                            <box flexGrow={1} />
+                            <text fg={BUTTON_FG} bg={BUTTON_BG}>
+                              {diffRowChipLabel(row.entry)}
+                            </text>
+                          </Show>
+                        </box>
+                      )
+                    }
                   </For>
                 </box>
-                {/* Right: unified diff of the selected file, with a right-edge
-                  scrollbar overlaid on the last column. */}
+                {/* Right: unified diff of the selected file — add/del rows carry
+                  the widget-derived background fills under the fg classes — with
+                  a right-edge scrollbar overlaid on the last column. */}
                 <box position="relative" flexGrow={1} flexDirection="column" paddingLeft={1}>
                   {scrollbarOverlay(diffScrollGeom)}
                   <For each={diffVisible()}>
                     {(ln) => (
-                      <box height={1}>
+                      <box height={1} backgroundColor={DIFF_LINE_BG[ln.kind] ?? DEFAULT_BG}>
                         <text fg={DIFF_FG[ln.kind]}>{ln.text || " "}</text>
                       </box>
                     )}
                   </For>
                 </box>
               </box>
-              <box paddingLeft={1}>
+              {/* Footer: clickable stage/unstage verbs (the spans the router
+                hit-tests) followed by plain keyboard hints. */}
+              <box paddingLeft={1} flexDirection="row" gap={1}>
+                <For each={DIFF_VERBS}>
+                  {(v, i) => (
+                    <text
+                      fg={BUTTON_FG}
+                      bg={isHovered("diffverb", i()) ? BUTTON_HOVER_BG : BUTTON_BG}
+                    >
+                      {v.label}
+                    </text>
+                  )}
+                </For>
                 <text fg={MUTED}>
-                  {`j/k file · wheel scroll · ^e edit · r refresh · ^g home · ${QUIT_HINT}`}
+                  {`]/[ hunk · ^e edit · / filter · r refresh · ^g home · ${QUIT_HINT}`}
                 </text>
               </box>
             </Show>
@@ -5684,21 +6512,40 @@ render(
                     <text fg={DEFAULT_FG}>{`${paletteQuery()}▏`}</text>
                   </box>
                   <text fg={MUTED}>{"─".repeat(PALETTE_W - 4)}</text>
-                  <For each={paletteActions().slice(paletteTop(), paletteTop() + PALETTE_ROWS)}>
-                    {(a, i) => (
+                  {/* Rows (M24.4): group headers render as inert muted lines;
+                    action rows carry the selection prefix + a right-aligned
+                    keycap (paletteRowText keeps the keycap inside the width
+                    however long the label). Hit-testing stays row-level — the
+                    router skips headers by row type. */}
+                  <For each={paletteRowList().slice(paletteTop(), paletteTop() + PALETTE_ROWS)}>
+                    {(r, i) => (
                       <box
                         height={1}
                         backgroundColor={
-                          paletteTop() + i() === paletteSel() ? TAB_ACTIVE_BG : PALETTE_BG
+                          r.type === "action" && paletteTop() + i() === paletteSel()
+                            ? TAB_ACTIVE_BG
+                            : PALETTE_BG
                         }
                       >
-                        <text fg={paletteTop() + i() === paletteSel() ? DEFAULT_FG : MUTED}>
-                          {(paletteTop() + i() === paletteSel() ? "› " : "  ") + a.label}
-                        </text>
+                        <Show
+                          when={r.type === "action"}
+                          fallback={
+                            <text fg={MUTED}>{`— ${r.type === "header" ? r.label : ""}`}</text>
+                          }
+                        >
+                          <text fg={paletteTop() + i() === paletteSel() ? DEFAULT_FG : MUTED}>
+                            {(paletteTop() + i() === paletteSel() ? "› " : "  ") +
+                              paletteRowText(
+                                r.type === "action" ? r.action.label : "",
+                                r.type === "action" ? r.shortcut : null,
+                                PALETTE_W - 6,
+                              )}
+                          </text>
+                        </Show>
                       </box>
                     )}
                   </For>
-                  <Show when={paletteActions().length === 0}>
+                  <Show when={paletteRowList().length === 0}>
                     <text fg={MUTED}>{"  no matches"}</text>
                   </Show>
                 </>
@@ -5990,9 +6837,17 @@ render(
   // the canvas on any console.error (a runtime exception mid-render flashed it
   // during the M23.5 resize battery). Off in production; the mirror debug flag
   // keeps it for development, where it is genuinely useful.
+  // useKittyKeyboard (M24.4): `{}` requests the protocol with OpenTUI's
+  // defaults (disambiguate + alternateKeys; NO events/allKeysAsEscapes — no
+  // release events, printables still arrive as plain text). Kitty-capable
+  // hosts then deliver ⌘K (super+k) and CSI-u escapes the stdin parser maps to
+  // the SAME key names the legacy parser does, so the pane re-encode path
+  // (KEYMAP/sendKey/sendText) is unchanged; hosts without the protocol ignore
+  // the request. `app.kittyKeys: false` opts out.
   {
     targetFps: 60,
     maxFps: 60,
+    useKittyKeyboard: KITTY_KEYS ? {} : null,
     consoleMode: process.env.TMUX_IDE_MIRROR_DEBUG ? "console-overlay" : "disabled",
   },
 );
