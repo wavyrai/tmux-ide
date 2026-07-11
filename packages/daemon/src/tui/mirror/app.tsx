@@ -55,6 +55,21 @@
  * openFile, diffFile } — persists to `~/.tmux-ide/app-state.json`
  * (TMUX_IDE_HOME override), debounced, restored on launch.
  *
+ * PALETTE V2 (M24.4): the overlay renders ROWS (palette.ts's PaletteRow) —
+ * an empty query groups "recent" (persisted usage in app-state's paletteUsage,
+ * keyed by paletteActionKey so relabels keep history) · "suggested" (surface
+ * verbs; BLOCKED agents' jumps first) · "commands"; a typed query is one flat
+ * list ranked by the label-start-weighted fuzzy score with a frequency/recency
+ * tie-break. Headers are inert rows: keyboard (stepPaletteRow) and the router
+ * both skip them. Action rows right-align their app keycap (settings-model's
+ * PALETTE_KEYCAPS — the keybind viewer's single source). ⌘K is a third opener
+ * beside F5/^p, delivered ONLY under the kitty keyboard protocol: the renderer
+ * requests it (useKittyKeyboard, app.kittyKeys config, default on), the stdin
+ * parser maps CSI-u keys to the SAME names as legacy so pane re-encoding is
+ * untouched, and ALL super-modified keys are consumed at the top of the key
+ * handler (never typed into a query/prompt/editor, never forwarded — pane
+ * forwarding of modifier-rich keys is card #83's scope).
+ *
  * SETTINGS (M22.4): no settings screen — every setting is a palette COMMAND
  * ("Settings…" is the categorized umbrella) executed via three DIALOG
  * primitives on ONE global stack (dialog-stack.ts; pure model in
@@ -194,11 +209,13 @@ import {
   saveAppState,
   addRecentFolder,
   addCustomCommand,
+  recordPaletteUse,
   clampSidebarWidth,
   isTab,
   rememberSpawn,
   spawnMemoryKey,
   type AppState,
+  type PaletteUsageEntry,
   type Tab,
 } from "./app-state.ts";
 import {
@@ -227,13 +244,18 @@ import {
   type Size,
 } from "./size-truth.ts";
 import {
-  filterPaletteActions,
+  paletteRows,
+  paletteActionKey,
+  paletteRowText,
+  firstPaletteAction,
+  stepPaletteRow,
   parseBufferList,
   palettePos,
   paletteRowAt,
   paletteContains,
   clampPaletteTop,
   type PaletteAction,
+  type PaletteRow,
   type PaletteGeom,
   type TmuxBuffer,
 } from "./palette.ts";
@@ -288,6 +310,7 @@ import {
   validateQuietTime,
   validateSnapshotEvery,
   validateTickMs,
+  PALETTE_KEYCAPS,
   type NotificationToggleId,
   type SettingsCommandId,
 } from "./settings-model.ts";
@@ -611,7 +634,23 @@ const HOME_CHIP_RECENT = "[▸ open] ";
 // The spawn verb's home entry (M23.1): session/project rows carry a second
 // chip left of the primary one; `a` is its keyboard twin.
 const HOME_CHIP_AGENT = "[+ agent] ";
-const TABBAR_PALETTE_LABEL = "F5 ⌘ palette ";
+// ── M24.4 kitty keyboard protocol ───────────────────────────────────────────
+// One config read at boot (the dragSelect discipline): when on, the renderer
+// requests kitty's disambiguated key encoding from the host terminal, which is
+// what delivers ⌘-modified keys at all — ⌘K opens the palette. Hosts without
+// the protocol ignore the request (legacy encoding, no behavior change);
+// `app.kittyKeys: false` opts out entirely. The ⌘K hint only shows while the
+// request is actually made.
+const KITTY_KEYS = loadAppConfig().app.kittyKeys;
+const TABBAR_PALETTE_LABEL = KITTY_KEYS ? "F5 ⌘K palette " : "F5 ⌘ palette ";
+// The palette rows' right-aligned keycaps (M24.4) — the settings keybind
+// viewer's enumeration, minus `quit` when HOSTED (^q detaches there; the
+// palette's Quit is the real exit, so the keycap would lie).
+const PALETTE_ROW_KEYCAPS: Readonly<Record<string, string>> = Object.fromEntries(
+  Object.entries(PALETTE_KEYCAPS).filter(
+    ([key]) => !(key === "quit" && process.env.TMUX_IDE_HOSTED === "1"),
+  ),
+);
 // ── M22.5 first-run welcome ─────────────────────────────────────────────────
 // A centered greeting shown only on a truly empty fleet (no sessions, no
 // registered projects). WELCOME_ROWS rows in the content area (gy 2…); the
@@ -720,6 +759,12 @@ render(
       persisted.lastSpawns,
     );
     const [customCommands, setCustomCommands] = createSignal<string[]>(persisted.customCommands);
+    // Palette usage history (M24.4) — restored from app-state, bumped on every
+    // dispatched palette action, persisted with the rest. Drives the empty-query
+    // "recent" group and the typed-query tie-break.
+    const [paletteUsage, setPaletteUsage] = createSignal<Record<string, PaletteUsageEntry>>(
+      persisted.paletteUsage,
+    );
     // The first-run tip line — the user's ACTUAL keybindings, read once at launch
     // (loadAppConfig honors TMUX_IDE_CONFIG). Cheap + pure, computed once.
     const welcomeTip = firstRunTip(loadAppConfig().keys);
@@ -2135,23 +2180,30 @@ render(
     // before). Reset wherever the list identity changes (query edits, level
     // swaps, reopen).
     const [paletteTop, setPaletteTop] = createSignal(0);
-    const paletteActions = createMemo(() =>
-      filterPaletteActions(
+    // ROWS, not bare actions (M24.4): an empty query opens grouped — "recent"
+    // (persisted usage), "suggested" (surface verbs; BLOCKED agents' jumps
+    // first), then "commands" — a typed query is one flat ranked list. Headers
+    // are real, non-selectable rows; the selection helpers below skip them.
+    const paletteRowList = createMemo(() =>
+      paletteRows(
         paletteQuery(),
         fleet().map((s) => s.name),
         {
           terminal: mode() === "mirror",
+          surface: tab(),
           agents: fleetAgents(),
           sizeMismatch: windowMismatch() !== null,
           appMousePane: panes().find((p) => p.active)?.appMouse === true,
           // Pins "New agent: <name> (again)" FIRST when this context has spawn
           // memory (M24.1) — F5 → Enter repeats the last spawn.
           againName: currentAgainName(),
+          usage: paletteUsage(),
+          keycaps: PALETTE_ROW_KEYCAPS,
         },
       ),
     );
-    /** The current palette LIST length — buffers level when open, else actions. */
-    const paletteCount = () => paletteBuffers()?.length ?? paletteActions().length;
+    /** The current palette LIST length — buffers level when open, else rows. */
+    const paletteCount = () => paletteBuffers()?.length ?? paletteRowList().length;
     /** The palette box geometry as placed by the render, for the router. */
     const paletteGeom = (): PaletteGeom => {
       const { left, top } = palettePos(dims().width, dims().height, PALETTE_W);
@@ -2164,13 +2216,20 @@ render(
     };
     const openPalette = () => {
       setPaletteQuery("");
-      setPaletteSel(0);
       setPaletteTop(0);
       setPaletteBuffers(null); // always open on the action list, never mid-picker
+      // The selection starts on the first ACTION row — under grouping that is
+      // the row after the "recent" header, keeping F5 → Enter one gesture.
+      setPaletteSel(Math.max(0, firstPaletteAction(paletteRowList())));
       setHoverIf(null); // the overlay owns the pointer; drop any underlying tint
       setPaletteOpen(true);
     };
     const runPaletteAction = (a: PaletteAction) => {
+      // Usage history (M24.4): every dispatched action bumps its stable key —
+      // count + lastUsed feed the "recent" group and the ranking tie-break.
+      setPaletteUsage((u) =>
+        recordPaletteUse(u, paletteActionKey(a), Math.floor(Date.now() / 1e3)),
+      );
       // "Paste buffer…" descends into the second-level picker instead of
       // dispatching — keep the palette open and load the buffer list.
       if (a.kind === "paste-buffer") {
@@ -2341,23 +2400,23 @@ render(
         }
         return;
       }
-      const actions = paletteActions();
+      const rows = paletteRowList();
       if (evt.name === "escape") {
         setPaletteOpen(false);
       } else if (evt.name === "return") {
-        const a = actions[Math.min(paletteSel(), actions.length - 1)];
-        if (a) runPaletteAction(a);
+        const r = rows[Math.min(paletteSel(), rows.length - 1)];
+        if (r?.type === "action") runPaletteAction(r.action);
       } else if (evt.name === "up") {
-        setPaletteSel((s) => Math.max(0, s - 1));
+        setPaletteSel((s) => stepPaletteRow(rows, s, -1));
       } else if (evt.name === "down") {
-        setPaletteSel((s) => Math.min(Math.max(0, actions.length - 1), s + 1));
+        setPaletteSel((s) => stepPaletteRow(rows, s, 1));
       } else if (evt.name === "backspace") {
         setPaletteQuery((q) => q.slice(0, -1));
-        setPaletteSel(0);
+        setPaletteSel(Math.max(0, firstPaletteAction(paletteRowList())));
         setPaletteTop(0);
       } else if (evt.name.length === 1 && !evt.ctrl && !evt.meta) {
         setPaletteQuery((q) => q + (evt.shift ? evt.name.toUpperCase() : evt.name));
-        setPaletteSel(0);
+        setPaletteSel(Math.max(0, firstPaletteAction(paletteRowList())));
         setPaletteTop(0);
       }
     };
@@ -2585,7 +2644,7 @@ render(
     const runKeybindViewer = async (): Promise<boolean> => {
       await DialogSelect.show({
         title: "Keyboard shortcuts",
-        items: keybindingItems(freshCfg().keys),
+        items: keybindingItems(freshCfg().keys, KITTY_KEYS),
         footerHint: "read-only — edit keys.* in ~/.tmux-ide/config.json",
       });
       return false; // viewing commits nothing; the umbrella reopens
@@ -2663,6 +2722,7 @@ render(
         recentFolders: recentFolders(),
         lastSpawns: lastSpawns(),
         customCommands: customCommands(),
+        paletteUsage: paletteUsage(),
       };
       if (saveTimer) clearTimeout(saveTimer);
       saveTimer = setTimeout(() => void saveAppState(snapshot), 400);
@@ -3698,6 +3758,25 @@ render(
         editBuffer?.destroy();
         process.exit(0);
       }
+      // SUPER-modified keys arrive only under the kitty keyboard protocol
+      // (M24.4). ⌘K opens the palette — suppressed while any overlay owns the
+      // keyboard (dialog/menu/palette/search), mirroring F5. Every OTHER super
+      // combo is consumed here: it must never type into a prompt/editor/query
+      // and never reach a pane (forwarding modifier-rich keys into panes is a
+      // separate card — #83).
+      if (evt.super) {
+        if (
+          evt.name === "k" &&
+          !evt.ctrl &&
+          dialogStack.depth() === 0 &&
+          !menu() &&
+          !paletteOpen() &&
+          !search()
+        ) {
+          openPalette();
+        }
+        return;
+      }
       // A DIALOG owns the keyboard while open (M22.4) — topmost overlay, so it
       // is checked before the menu and the palette. EVERY key is consumed here
       // (escape pops one stack level inside dialogKey): nothing may leak to the
@@ -3723,7 +3802,8 @@ render(
         searchKey(evt);
         return;
       }
-      // F5 (and ^p when it arrives) open the command palette.
+      // F5 (and ^p when it arrives) open the command palette; ⌘K is the kitty
+      // fast path handled above.
       if (evt.name === "f5" || (evt.ctrl && evt.name === "p")) {
         openPalette();
         return;
@@ -4409,7 +4489,14 @@ render(
         }
         if (type === "move" || type === "over" || type === "drag") {
           const ri = paletteRowAt(g, x, y);
-          if (ri >= 0) setPaletteSel(paletteTop() + ri);
+          // A header row is not selectable (M24.4) — motion over it keeps the
+          // selection where it was, like the box chrome.
+          if (ri >= 0) {
+            const abs = paletteTop() + ri;
+            if (paletteBuffers() !== null || paletteRowList()[abs]?.type === "action") {
+              setPaletteSel(abs);
+            }
+          }
           return;
         }
         if (type !== "down") return;
@@ -4417,14 +4504,17 @@ render(
         if (ri >= 0) {
           if (e.button === 2) return; // right press on a row: no-op, stay open
           const abs = paletteTop() + ri;
-          setPaletteSel(abs);
           const bufs = paletteBuffers();
           if (bufs !== null) {
+            setPaletteSel(abs);
             const b = bufs[abs];
             if (b) pasteBuffer(b.name);
           } else {
-            const a = paletteActions()[abs];
-            if (a) runPaletteAction(a);
+            const r = paletteRowList()[abs];
+            if (r?.type === "action") {
+              setPaletteSel(abs);
+              runPaletteAction(r.action);
+            } // a header click is a no-op — the palette stays open
           }
           return;
         }
@@ -5684,21 +5774,40 @@ render(
                     <text fg={DEFAULT_FG}>{`${paletteQuery()}▏`}</text>
                   </box>
                   <text fg={MUTED}>{"─".repeat(PALETTE_W - 4)}</text>
-                  <For each={paletteActions().slice(paletteTop(), paletteTop() + PALETTE_ROWS)}>
-                    {(a, i) => (
+                  {/* Rows (M24.4): group headers render as inert muted lines;
+                    action rows carry the selection prefix + a right-aligned
+                    keycap (paletteRowText keeps the keycap inside the width
+                    however long the label). Hit-testing stays row-level — the
+                    router skips headers by row type. */}
+                  <For each={paletteRowList().slice(paletteTop(), paletteTop() + PALETTE_ROWS)}>
+                    {(r, i) => (
                       <box
                         height={1}
                         backgroundColor={
-                          paletteTop() + i() === paletteSel() ? TAB_ACTIVE_BG : PALETTE_BG
+                          r.type === "action" && paletteTop() + i() === paletteSel()
+                            ? TAB_ACTIVE_BG
+                            : PALETTE_BG
                         }
                       >
-                        <text fg={paletteTop() + i() === paletteSel() ? DEFAULT_FG : MUTED}>
-                          {(paletteTop() + i() === paletteSel() ? "› " : "  ") + a.label}
-                        </text>
+                        <Show
+                          when={r.type === "action"}
+                          fallback={
+                            <text fg={MUTED}>{`— ${r.type === "header" ? r.label : ""}`}</text>
+                          }
+                        >
+                          <text fg={paletteTop() + i() === paletteSel() ? DEFAULT_FG : MUTED}>
+                            {(paletteTop() + i() === paletteSel() ? "› " : "  ") +
+                              paletteRowText(
+                                r.type === "action" ? r.action.label : "",
+                                r.type === "action" ? r.shortcut : null,
+                                PALETTE_W - 6,
+                              )}
+                          </text>
+                        </Show>
                       </box>
                     )}
                   </For>
-                  <Show when={paletteActions().length === 0}>
+                  <Show when={paletteRowList().length === 0}>
                     <text fg={MUTED}>{"  no matches"}</text>
                   </Show>
                 </>
@@ -5990,9 +6099,17 @@ render(
   // the canvas on any console.error (a runtime exception mid-render flashed it
   // during the M23.5 resize battery). Off in production; the mirror debug flag
   // keeps it for development, where it is genuinely useful.
+  // useKittyKeyboard (M24.4): `{}` requests the protocol with OpenTUI's
+  // defaults (disambiguate + alternateKeys; NO events/allKeysAsEscapes — no
+  // release events, printables still arrive as plain text). Kitty-capable
+  // hosts then deliver ⌘K (super+k) and CSI-u escapes the stdin parser maps to
+  // the SAME key names the legacy parser does, so the pane re-encode path
+  // (KEYMAP/sendKey/sendText) is unchanged; hosts without the protocol ignore
+  // the request. `app.kittyKeys: false` opts out.
   {
     targetFps: 60,
     maxFps: 60,
+    useKittyKeyboard: KITTY_KEYS ? {} : null,
     consoleMode: process.env.TMUX_IDE_MIRROR_DEBUG ? "console-overlay" : "disabled",
   },
 );

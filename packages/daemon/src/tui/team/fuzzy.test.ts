@@ -43,6 +43,27 @@ describe("fuzzyMatch", () => {
     const midWord = fuzzyMatch("web", "wavyrwebsite")!;
     expect(postSep.score).toBeGreaterThan(midWord.score);
   });
+
+  it("ranks a label-start (prefix) match above a mid-word run (M24.4)", () => {
+    const prefix = fuzzyMatch("abcd", "abcdxyz")!;
+    const midWord = fuzzyMatch("abcd", "xxabcdxx")!;
+    expect(prefix.score).toBeGreaterThan(midWord.score);
+    expect(prefix.positions).toEqual([0, 1, 2, 3]);
+  });
+
+  it("ranks a prefix match above a scattered match rich in word-start bonuses (M24.4)", () => {
+    // Measured regression this tier fixes: three word-start hits (30) used to
+    // outscore the exact prefix (29), so "save" ranked the wrong label first.
+    const prefix = fuzzyMatch("save", "save file")!;
+    const scattered = fuzzyMatch("save", "swap pane view east")!;
+    expect(prefix.score).toBeGreaterThan(scattered.score);
+  });
+
+  it("the prefix tier is case-insensitive and leaves non-prefix anchoring alone", () => {
+    expect(fuzzyMatch("SAVE", "Save file")!.score).toBe(fuzzyMatch("save", "Save file")!.score);
+    // "web" still anchors on the word after the separator, not the leading w.
+    expect(fuzzyMatch("web", "wavyr-website")!.positions).toEqual([6, 7, 8]);
+  });
 });
 
 describe("fuzzyFilter", () => {

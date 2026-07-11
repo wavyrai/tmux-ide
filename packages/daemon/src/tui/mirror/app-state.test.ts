@@ -2,11 +2,13 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   CUSTOM_COMMANDS_CAP,
   DEFAULT_APP_STATE,
+  PALETTE_USAGE_CAP,
   RECENTS_CAP,
   SIDEBAR_W_DEFAULT,
   SPAWN_MEMORY_CAP,
   addCustomCommand,
   addRecentFolder,
+  recordPaletteUse,
   appStateHome,
   appStatePath,
   clampSidebarWidth,
@@ -45,6 +47,10 @@ describe("parseAppState", () => {
         "session:web": { kind: "custom-command", command: "my-agent --x", placement: "window" },
       },
       customCommands: ["my-agent --x", "other --y"],
+      paletteUsage: {
+        save: { count: 3, lastUsed: 1700000100 },
+        "attach:web": { count: 1, lastUsed: 1700000200 },
+      },
     };
     expect(parseAppState(serializeAppState(state))).toEqual(state);
   });
@@ -68,6 +74,7 @@ describe("parseAppState", () => {
       recentFolders: [],
       lastSpawns: {},
       customCommands: [],
+      paletteUsage: {},
     });
   });
 
@@ -84,6 +91,7 @@ describe("parseAppState", () => {
       recentFolders: [],
       lastSpawns: {},
       customCommands: [],
+      paletteUsage: {},
     });
   });
 
@@ -152,6 +160,7 @@ describe("serializeAppState", () => {
         recentFolders: [],
         lastSpawns: {},
         customCommands: [],
+        paletteUsage: {},
         // @ts-expect-error — runtime extra keys must not leak into the file
         junk: "x",
       }),
@@ -163,6 +172,7 @@ describe("serializeAppState", () => {
       "lastSpawns",
       "lastTab",
       "openFile",
+      "paletteUsage",
       "recentFolders",
       "sidebarW",
     ]);
@@ -233,6 +243,57 @@ describe("addRecentFolder", () => {
 
   it("ignores a blank path", () => {
     expect(addRecentFolder(["/a"], "")).toEqual(["/a"]);
+  });
+});
+
+describe("recordPaletteUse (M24.4)", () => {
+  it("bumps count, stamps lastUsed, and moves the key to newest", () => {
+    const m0 = recordPaletteUse({}, "save", 100);
+    expect(m0).toEqual({ save: { count: 1, lastUsed: 100 } });
+    const m1 = recordPaletteUse(m0, "quit", 200);
+    const m2 = recordPaletteUse(m1, "save", 300);
+    expect(m2.save).toEqual({ count: 2, lastUsed: 300 });
+    // re-use re-inserts LAST — the LRU order JSON round-trips
+    expect(Object.keys(m2)).toEqual(["quit", "save"]);
+  });
+
+  it("caps at the limit, dropping the least-recently-used", () => {
+    let m: Record<string, { count: number; lastUsed: number }> = {};
+    for (let i = 0; i < PALETTE_USAGE_CAP + 3; i++) m = recordPaletteUse(m, `k${i}`, i);
+    expect(Object.keys(m)).toHaveLength(PALETTE_USAGE_CAP);
+    expect(m.k0).toBeUndefined();
+    expect(m.k2).toBeUndefined();
+    expect(m.k3).toBeDefined();
+  });
+
+  it("ignores a blank key and never mutates the input", () => {
+    const orig = { save: { count: 1, lastUsed: 1 } };
+    expect(recordPaletteUse(orig, "", 9)).toEqual(orig);
+    const next = recordPaletteUse(orig, "save", 9);
+    expect(orig.save.count).toBe(1);
+    expect(next.save.count).toBe(2);
+  });
+});
+
+describe("paletteUsage sanitization", () => {
+  it("drops malformed entries and non-object values on parse", () => {
+    const parsed = parseAppState(
+      JSON.stringify({
+        paletteUsage: {
+          good: { count: 2, lastUsed: 123 },
+          floats: { count: 2.9, lastUsed: 456.2 },
+          negative: { count: 0, lastUsed: 1 },
+          mistyped: { count: "3", lastUsed: 1 },
+          missing: { count: 1 },
+          notObject: 7,
+        },
+      }),
+    );
+    expect(parsed.paletteUsage).toEqual({
+      good: { count: 2, lastUsed: 123 },
+      floats: { count: 2, lastUsed: 456 },
+    });
+    expect(parseAppState(JSON.stringify({ paletteUsage: [1] })).paletteUsage).toEqual({});
   });
 });
 

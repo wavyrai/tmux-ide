@@ -258,10 +258,35 @@ export function prefixTwinFor(altKey: string): string | null {
   return letter;
 }
 
+/** THE app-key enumeration — the ONE place the unified app's fixed keys are
+ *  listed (M24.4). The keybind viewer's app rows AND the palette's right-aligned
+ *  row shortcuts both read this; `paletteAction` is the stable palette action
+ *  key ({@link ./palette.ts}'s paletteActionKey) a keycap attaches to. */
+const APP_KEY_ROWS: ReadonlyArray<{ label: string; keycap: string; paletteAction?: string }> = [
+  { label: "Command palette", keycap: "F5 · ^p" },
+  { label: "Home tab", keycap: "F1", paletteAction: "tab:home" },
+  { label: "Terminal tab", keycap: "F2", paletteAction: "tab:terminal" },
+  { label: "Files tab", keycap: "F3", paletteAction: "tab:files" },
+  { label: "Diff tab", keycap: "F4", paletteAction: "tab:diff" },
+  { label: "Save file", keycap: "^s", paletteAction: "save" },
+  { label: "Back to Home", keycap: "^g" },
+  { label: "Toggle editor", keycap: "^e" },
+  { label: "Quit / detach", keycap: "^q", paletteAction: "quit" },
+];
+
+/** PURE — palette action key → keycap, derived from {@link APP_KEY_ROWS}. The
+ *  palette right-aligns these on rows that have one; app.tsx drops `quit` in
+ *  HOSTED mode, where ^q detaches instead. */
+export const PALETTE_KEYCAPS: Readonly<Record<string, string>> = Object.fromEntries(
+  APP_KEY_ROWS.filter((r) => r.paletteAction).map((r) => [r.paletteAction!, r.keycap]),
+);
+
 /** PURE — the read-only shortcut rows: the chrome actions from the LIVE config
  *  (prefix-first, the Alt fast path second — the prefix form is the one that
- *  survives every keyboard protocol) and then the app's fixed keys. */
-export function keybindingItems(keys: AppKeys): DialogSelectItem[] {
+ *  survives every keyboard protocol) and then the app's fixed keys
+ *  ({@link APP_KEY_ROWS}). `superK` appends the kitty-protocol ⌘K fast path to
+ *  the palette row — shown only when the renderer actually enables it. */
+export function keybindingItems(keys: AppKeys, superK = false): DialogSelectItem[] {
   const chrome: Array<{ label: string; altKey: string }> = [
     { label: "Home cockpit", altKey: keys.home },
     { label: "Session switcher", altKey: keys.popup },
@@ -280,14 +305,10 @@ export function keybindingItems(keys: AppKeys): DialogSelectItem[] {
       detail: twin ? `prefix ${twin} · ${altKey}` : altKey,
     };
   });
-  const app: Array<[string, string]> = [
-    ["Command palette", "F5 · ^p"],
-    ["Home / Terminal / Files / Diff tabs", "F1–F4"],
-    ["Back to Home", "^g"],
-    ["Toggle editor", "^e"],
-    ["Detach from the app", "^q"],
-  ];
-  for (const [label, detail] of app) rows.push({ id: `app:${label}`, label, detail });
+  for (const { label, keycap } of APP_KEY_ROWS) {
+    const detail = superK && label === "Command palette" ? `${keycap} · ⌘K` : keycap;
+    rows.push({ id: `app:${label}`, label, detail });
+  }
   return rows;
 }
 

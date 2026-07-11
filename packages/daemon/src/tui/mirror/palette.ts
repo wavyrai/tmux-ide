@@ -12,7 +12,7 @@
  * to the top when the query looks like a path.
  */
 import { fuzzyFilter } from "../team/fuzzy.ts";
-import type { Tab } from "./app-state.ts";
+import type { PaletteUsageEntry, Tab } from "./app-state.ts";
 import type { AgentRowInput } from "./agent-rows.ts";
 import { SETTINGS_PALETTE_COMMANDS, type SettingsCommandId } from "./settings-model.ts";
 
@@ -84,6 +84,19 @@ export interface PaletteContext {
    *  argv, …) — when set, a direct "New agent: <name> (again)" action is PINNED
    *  FIRST, so a repeat spawn is F5 → Enter (M24.1's ≤2-Enters bar). */
   againName?: string | null;
+  /** Palette usage history (M24.4) keyed by {@link paletteActionKey}: drives
+   *  the empty-query "recent" group and the frequency/recency tie-break on a
+   *  typed query. Persisted in app-state. */
+  usage?: Readonly<Record<string, PaletteUsageEntry>>;
+  /** The active surface tab (M24.4) — steers the empty-query "suggested"
+   *  group (Terminal → window/pane verbs + the again spawn; Files → save +
+   *  open-folder). `terminal` above stays THE gate for the window/pane verbs
+   *  so existing callers/tests are untouched. */
+  surface?: Tab;
+  /** Action key → keycap ({@link ../mirror/settings-model.ts}'s
+   *  PALETTE_KEYCAPS) — rows whose action has one right-align it (M24.4).
+   *  app.tsx drops `quit` in HOSTED mode, where ^q detaches instead. */
+  keycaps?: Readonly<Record<string, string>>;
 }
 
 const TAB_LABELS: { tab: Tab; label: string }[] = [
@@ -291,8 +304,52 @@ function looksLikePath(q: string): boolean {
 }
 
 /**
+ * PURE — the STABLE identity of an action for usage history (M24.4): the kind
+ * plus the payload fields that survive restarts (session/layout/settings id/
+ * path — NOT the label, so relabeling never orphans history, and NOT pane ids,
+ * which tmux renumbers). Kinds without a stable payload are keyed by kind
+ * alone (rename-window's typed name is query-dependent, not identity).
+ */
+export function paletteActionKey(a: PaletteAction): string {
+  switch (a.kind) {
+    case "tab":
+      return `tab:${a.tab}`;
+    case "attach":
+      return `attach:${a.session}`;
+    case "jump-agent":
+      return `jump-agent:${a.session}`;
+    case "restart-agent":
+      return `restart-agent:${a.session}:${a.agentKind}`;
+    case "stop-agent":
+      return `stop-agent:${a.session}:${a.agentKind}`;
+    case "select-layout":
+      return `select-layout:${a.layout}`;
+    case "settings":
+      return `settings:${a.id}`;
+    case "open-file":
+      return `open-file:${a.path}`;
+    default:
+      return a.kind;
+  }
+}
+
+/** PURE — the usage comparator (frequency first, then recency): negative when
+ *  `a` should rank before `b`. Unused actions rank last, mutually tied. */
+function compareUsage(
+  a: PaletteAction,
+  b: PaletteAction,
+  usage: Readonly<Record<string, PaletteUsageEntry>> | undefined,
+): number {
+  const ua = usage?.[paletteActionKey(a)];
+  const ub = usage?.[paletteActionKey(b)];
+  return (ub?.count ?? 0) - (ua?.count ?? 0) || (ub?.lastUsed ?? 0) - (ua?.lastUsed ?? 0);
+}
+
+/**
  * PURE — the palette result list for `query`: the static actions fuzzy-filtered
- * and score-sorted, plus (when the query is non-empty) a dynamic
+ * and score-sorted (exact/prefix matches outrank mid-word via the scorer's
+ * label-start weighting; score TIES break by usage — frequency then recency —
+ * M24.4), plus (when the query is non-empty) a dynamic
  * "Open file: <query>" action. That open-file entry is pinned FIRST when the
  * query looks like a path, otherwise appended LAST so it never buries a real
  * match. An empty query returns every static action in natural order.
@@ -305,7 +362,11 @@ export function filterPaletteActions(
   const statics = staticPaletteActions(sessions, ctx);
   const q = query.trim();
   const matched =
-    q.length === 0 ? statics : fuzzyFilter(query, statics, (a) => a.label).map((m) => m.item);
+    q.length === 0
+      ? statics
+      : fuzzyFilter(query, statics, (a) => a.label)
+          .sort((x, y) => y.score - x.score || compareUsage(x.item, y.item, ctx.usage))
+          .map((m) => m.item);
   if (q.length === 0) return matched;
   const dynamic: PaletteAction[] = [{ kind: "open-file", path: q, label: `Open file: ${q}` }];
   // On the Terminal surface a non-empty query also offers a rename-to-<query>
@@ -315,4 +376,148 @@ export function filterPaletteActions(
     dynamic.push({ kind: "rename-window", name: q, label: `Rename window: ${q}` });
   }
   return looksLikePath(q) ? [...dynamic, ...matched] : [...matched, ...dynamic];
+}
+
+// ── Grouped rows (M24.4 — the palette's list model) ─────────────────────────
+// The overlay renders ROWS, not bare actions: on an EMPTY query the list opens
+// with a "recent" group (top used actions), a contextual "suggested" group,
+// then everything else under "commands"; a typed query is one flat ranked list
+// (no headers). Headers are real rows — they occupy a screen line, scroll with
+// the list, and are NOT selectable/clickable — so the selection helpers below
+// are what the keyboard/router use to move between action rows.
+
+/** One rendered palette line: a group header, or an action with its optional
+ *  right-aligned keycap (from ctx.keycaps). */
+export type PaletteRow =
+  | { type: "header"; label: string }
+  | { type: "action"; action: PaletteAction; shortcut: string | null };
+
+/** How many actions the empty-query "recent" group shows at most. */
+export const PALETTE_RECENT_LIMIT = 5;
+
+/** The Terminal surface's suggested window/pane verbs, in offer order. */
+const TERMINAL_SUGGESTED_KINDS: ReadonlyArray<PaletteAction["kind"]> = [
+  "new-window",
+  "kill-window",
+  "zoom-pane",
+  "swap-pane",
+  "break-pane",
+  "rotate-window",
+];
+
+/**
+ * PURE — the palette rows for `query` (M24.4). A non-empty query is the flat
+ * {@link filterPaletteActions} ranking. An empty query groups:
+ *   1. "recent" — up to {@link PALETTE_RECENT_LIMIT} previously-run actions
+ *      still offerable now (usage keys matched against the current statics),
+ *      most-frequently-used first, recency breaking ties;
+ *   2. "suggested" — BLOCKED agents' jump actions first (ctx.agents arrives
+ *      attention-sorted, so their relative order is the sidebar's), then the
+ *      surface's verbs: Terminal → the again-spawn + window/pane verbs, Files
+ *      → save + open-folder;
+ *   3. "commands" — every remaining action in today's natural order.
+ * With nothing to group (no usage, no suggestions) the list is exactly the
+ * ungrouped statics — no headers, same as before this card.
+ */
+export function paletteRows(
+  query: string,
+  sessions: string[],
+  ctx: PaletteContext = {},
+): PaletteRow[] {
+  const row = (action: PaletteAction): PaletteRow => ({
+    type: "action",
+    action,
+    shortcut: ctx.keycaps?.[paletteActionKey(action)] ?? null,
+  });
+  if (query.trim().length > 0) return filterPaletteActions(query, sessions, ctx).map(row);
+
+  const statics = staticPaletteActions(sessions, ctx);
+  // First static per key — recents resolve through this so a persisted key
+  // finds the action's CURRENT incarnation (relabels don't orphan history).
+  const byKey = new Map<string, PaletteAction>();
+  for (const a of statics) {
+    const k = paletteActionKey(a);
+    if (!byKey.has(k)) byKey.set(k, a);
+  }
+  const taken = new Set<PaletteAction>();
+
+  const recent: PaletteAction[] = [];
+  const usedKeys = Object.entries(ctx.usage ?? {})
+    .sort(([, a], [, b]) => b.count - a.count || b.lastUsed - a.lastUsed)
+    .map(([k]) => k);
+  for (const k of usedKeys) {
+    if (recent.length >= PALETTE_RECENT_LIMIT) break;
+    const a = byKey.get(k);
+    if (a && !taken.has(a)) {
+      recent.push(a);
+      taken.add(a);
+    }
+  }
+
+  const suggested: PaletteAction[] = [];
+  const suggest = (pred: (a: PaletteAction) => boolean): void => {
+    for (const a of statics) {
+      if (!taken.has(a) && pred(a)) {
+        suggested.push(a);
+        taken.add(a);
+      }
+    }
+  };
+  // Blocked agents outrank every other suggestion — they are why the user is
+  // opening the palette (the sidebar's attention-first law, applied here).
+  const blockedPanes = new Set(
+    (ctx.agents ?? []).filter((x) => x.state === "blocked").map((x) => x.paneId),
+  );
+  suggest((a) => a.kind === "jump-agent" && blockedPanes.has(a.paneId));
+  if (ctx.surface === "terminal") {
+    suggest((a) => a.kind === "new-agent-again");
+    suggest((a) => TERMINAL_SUGGESTED_KINDS.includes(a.kind));
+  } else if (ctx.surface === "files") {
+    suggest((a) => a.kind === "save" || a.kind === "open-folder");
+  }
+
+  if (recent.length === 0 && suggested.length === 0) return statics.map(row);
+  const rows: PaletteRow[] = [];
+  if (recent.length > 0) {
+    rows.push({ type: "header", label: "recent" });
+    for (const a of recent) rows.push(row(a));
+  }
+  if (suggested.length > 0) {
+    rows.push({ type: "header", label: "suggested" });
+    for (const a of suggested) rows.push(row(a));
+  }
+  rows.push({ type: "header", label: "commands" });
+  for (const a of statics) if (!taken.has(a)) rows.push(row(a));
+  return rows;
+}
+
+/** PURE — the first selectable (action) row index, or -1 when none. Where the
+ *  selection starts on open/query edits (headers are never selected). */
+export function firstPaletteAction(rows: readonly PaletteRow[]): number {
+  return rows.findIndex((r) => r.type === "action");
+}
+
+/** PURE — the next action row from `cur` in `dir` (±1), skipping headers;
+ *  stays put at the list's ends. The keyboard's up/down. */
+export function stepPaletteRow(rows: readonly PaletteRow[], cur: number, dir: 1 | -1): number {
+  for (let i = cur + dir; i >= 0 && i < rows.length; i += dir) {
+    if (rows[i]!.type === "action") return i;
+  }
+  return cur;
+}
+
+/**
+ * PURE — one action row's text after the selection prefix: the label, then —
+ * when the row has a keycap — right-aligned padding + the keycap inside
+ * `width` cells. The label truncates with an ellipsis so the keycap ALWAYS
+ * fits (min one space between); without a keycap the label just truncates.
+ */
+export function paletteRowText(label: string, shortcut: string | null, width: number): string {
+  if (width <= 0) return "";
+  if (!shortcut || shortcut.length + 2 > width) {
+    return label.length <= width ? label : label.slice(0, Math.max(0, width - 1)) + "…";
+  }
+  const labelMax = width - shortcut.length - 1;
+  const shown = label.length <= labelMax ? label : label.slice(0, Math.max(0, labelMax - 1)) + "…";
+  return shown + " ".repeat(width - shown.length - shortcut.length) + shortcut;
 }
