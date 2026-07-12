@@ -448,6 +448,30 @@ export class SessionMirror {
     return this.mirrors.get(id)?.visibleRowTexts(scrollOffset) ?? [];
   }
 
+  /** A pane's LIVE scrollback depth (M25.6) — read at event time by the drag
+   *  machine, ahead of the 8ms tick's LivePane snapshot. 0 for an unknown pane. */
+  scrollbackDepth(id: string): number {
+    return this.mirrors.get(id)?.scrollbackDepth() ?? 0;
+  }
+
+  /** A pane's monotonic trimmed-lines counter (M25.6) — see
+   *  {@link PaneMirror.lineTrim}. 0 for an unknown pane. */
+  lineTrim(id: string): number {
+    return this.mirrors.get(id)?.lineTrim() ?? 0;
+  }
+
+  /** Extract an ORDERED absolute-line range from a pane's buffer (M25.6) — the
+   *  selection release path. Empty for an unknown pane. See
+   *  {@link PaneMirror.extractAbsoluteText}. */
+  extractText(
+    id: string,
+    start: { row: number; col: number },
+    end: { row: number; col: number },
+    maxBytes: number,
+  ): string {
+    return this.mirrors.get(id)?.extractAbsoluteText(start, end, maxBytes) ?? "";
+  }
+
   /** A pane's live cursor state (position + DECTCEM/DECSCUSR), for the hardware
    *  cursor (M21.6). Null for an unknown pane. */
   cursorState(id: string): CursorState | null {

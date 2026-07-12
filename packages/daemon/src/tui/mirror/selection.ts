@@ -11,15 +11,21 @@
  * cell is selected if it falls between the anchor and head in row-major order.
  */
 
-/** A cell in surface-local coordinates: mirror = snapshot row + pane column;
- *  editor = buffer line + buffer column. */
+/** A cell in surface-local coordinates. Mirror (M25.6): ABSOLUTE xterm buffer
+ *  line (0 = oldest scrollback line) + pane column — anchored to CONTENT, so
+ *  the selection survives scrolling mid-drag and can span many screens. Editor:
+ *  buffer line + buffer column (already absolute by nature). A visible pane row
+ *  `r` at scroll offset `off` maps to absolute line `baseY + r` where
+ *  `baseY = scrollbackDepth − off` (the search path's existing arithmetic —
+ *  see PaneMirror.bufferLines). */
 export interface Cell {
   row: number;
   col: number;
 }
 
 /** An active selection on one surface. `anchor` is where the drag began, `head`
- *  the current/last pointer cell; either may precede the other. */
+ *  the current/last pointer cell; either may precede the other. Mirror cells
+ *  are in ABSOLUTE buffer coordinates (see {@link Cell}). */
 export type Selection =
   | { surface: "mirror"; paneId: string; anchor: Cell; head: Cell }
   | { surface: "editor"; anchor: Cell; head: Cell };
@@ -76,6 +82,68 @@ export function extractSelection(
     out.push(seg);
   }
   return out.join("\n");
+}
+
+// ── Absolute-space mapping (M25.6) ──────────────────────────────────────────
+// The selection model is anchored to ABSOLUTE buffer lines; the render works in
+// visible pane rows. These mappers are the one bridge: given the pane's current
+// baseY (scrollbackDepth − scrollOffset) and height, an absolute range resolves
+// to the visible rows it covers and the per-row column spans to highlight.
+
+/** A highlighted span on one VISIBLE pane row (row is viewport-relative). */
+export interface VisibleSpan {
+  row: number;
+  from: number;
+  to: number;
+}
+
+/** Visible pane rows [0,height) covered by an ORDERED absolute range at the
+ *  current view (`baseY` = scrollbackDepth − scrollOffset). Empty when the
+ *  whole range is scrolled off either edge. */
+export function visibleSelRows(start: Cell, end: Cell, baseY: number, height: number): number[] {
+  const lo = Math.max(0, start.row - baseY);
+  const hi = Math.min(height - 1, end.row - baseY);
+  const out: number[] = [];
+  for (let r = lo; r <= hi; r++) out.push(r);
+  return out;
+}
+
+/**
+ * Map an ORDERED absolute range to the visible per-row column spans at the
+ * current view. `rowLen(viewRow)` supplies each visible row's selectable cell
+ * count (grid width for the framebuffer swap; the row's char count for run
+ * tinting — wide glyphs collapse to one char there, so the two callers pass
+ * different lengths and each gets spans clamped to ITS space). Rows whose
+ * span is empty (zero-length row, or a first/last-row column interval that
+ * falls outside it) are omitted.
+ */
+export function visibleSelectionSpans(
+  start: Cell,
+  end: Cell,
+  baseY: number,
+  height: number,
+  rowLen: (viewRow: number) => number,
+): VisibleSpan[] {
+  const out: VisibleSpan[] = [];
+  for (const r of visibleSelRows(start, end, baseY, height)) {
+    const range = rowSelectionRange(baseY + r, rowLen(r), start, end);
+    if (range) out.push({ row: r, from: range.from, to: range.to });
+  }
+  return out;
+}
+
+/**
+ * Re-anchor an absolute cell after the buffer trimmed `trimDelta` lines off its
+ * top (the scrollback cap rotating mid-drag): every retained line's index
+ * dropped by the trim, so the cell follows its content down. A cell whose line
+ * was trimmed away clamps to the oldest retained line (row 0), col 0 — the
+ * selection top pins to the oldest text still in the buffer.
+ */
+export function trimAdjustCell(cell: Cell, trimDelta: number): Cell {
+  if (trimDelta <= 0) return cell;
+  const row = cell.row - trimDelta;
+  if (row < 0) return { row: 0, col: 0 };
+  return { row, col: cell.col };
 }
 
 /**

@@ -15,6 +15,9 @@ import {
   wheelScrollsLocal,
   selectBadgeLabel,
   chunkByBytes,
+  visibleSelRows,
+  visibleSelectionSpans,
+  trimAdjustCell,
   ATTR_INVERSE,
   type Cell,
 } from "./selection.ts";
@@ -229,6 +232,116 @@ describe("chunkByBytes", () => {
   it("reassembles to the original", () => {
     const s = "the quick brown fox — jumped over 42 lazy dogs";
     expect(chunkByBytes(s, 5).join("")).toBe(s);
+  });
+});
+
+describe("absolute-space mapping (M25.6)", () => {
+  // A 4-row pane over a buffer whose live viewport starts at absolute line 100
+  // when at the bottom (scrollbackDepth 100, offset 0 → baseY 100).
+  const H = 4;
+
+  describe("visibleSelRows", () => {
+    it("maps a fully visible range to its viewport rows", () => {
+      expect(visibleSelRows({ row: 101, col: 0 }, { row: 102, col: 5 }, 100, H)).toEqual([1, 2]);
+    });
+    it("clamps a range extending above the view (start off-screen)", () => {
+      expect(visibleSelRows({ row: 90, col: 3 }, { row: 101, col: 2 }, 100, H)).toEqual([0, 1]);
+    });
+    it("clamps a range extending below the view (end off-screen)", () => {
+      expect(visibleSelRows({ row: 102, col: 0 }, { row: 300, col: 9 }, 100, H)).toEqual([2, 3]);
+    });
+    it("covers the whole viewport when both ends are off-screen", () => {
+      expect(visibleSelRows({ row: 10, col: 4 }, { row: 900, col: 0 }, 100, H)).toEqual([
+        0, 1, 2, 3,
+      ]);
+    });
+    it("is empty when the range is entirely above or below the view", () => {
+      expect(visibleSelRows({ row: 10, col: 0 }, { row: 50, col: 9 }, 100, H)).toEqual([]);
+      expect(visibleSelRows({ row: 200, col: 0 }, { row: 250, col: 9 }, 100, H)).toEqual([]);
+    });
+  });
+
+  describe("visibleSelectionSpans", () => {
+    const len = (n: number) => () => n;
+    it("full-width middle rows, column-clipped first/last rows", () => {
+      const spans = visibleSelectionSpans(
+        { row: 100, col: 3 },
+        { row: 103, col: 6 },
+        100,
+        H,
+        len(10),
+      );
+      expect(spans).toEqual([
+        { row: 0, from: 3, to: 9 },
+        { row: 1, from: 0, to: 9 },
+        { row: 2, from: 0, to: 9 },
+        { row: 3, from: 0, to: 6 },
+      ]);
+    });
+    it("off-screen endpoints select the visible rows edge-to-edge", () => {
+      const spans = visibleSelectionSpans(
+        { row: 90, col: 7 },
+        { row: 200, col: 1 },
+        100,
+        H,
+        len(8),
+      );
+      expect(spans).toEqual([
+        { row: 0, from: 0, to: 7 },
+        { row: 1, from: 0, to: 7 },
+        { row: 2, from: 0, to: 7 },
+        { row: 3, from: 0, to: 7 },
+      ]);
+    });
+    it("a partially visible single-row selection keeps its column interval", () => {
+      const spans = visibleSelectionSpans(
+        { row: 100, col: 2 },
+        { row: 100, col: 5 },
+        98,
+        H,
+        len(10),
+      );
+      expect(spans).toEqual([{ row: 2, from: 2, to: 5 }]);
+    });
+    it("wide-glyph rows: a shorter char-space rowLen clamps the columns into it", () => {
+      // The pane is 10 cells wide but the row's TEXT is 6 chars (wide glyphs
+      // collapse to one char each) — a grid-column head at 9 clamps to char 5.
+      const spans = visibleSelectionSpans(
+        { row: 100, col: 1 },
+        { row: 100, col: 9 },
+        100,
+        H,
+        len(6),
+      );
+      expect(spans).toEqual([{ row: 0, from: 1, to: 5 }]);
+    });
+    it("omits zero-length rows entirely", () => {
+      const rowLen = (r: number) => (r === 1 ? 0 : 10);
+      const spans = visibleSelectionSpans(
+        { row: 100, col: 0 },
+        { row: 102, col: 9 },
+        100,
+        H,
+        rowLen,
+      );
+      expect(spans).toEqual([
+        { row: 0, from: 0, to: 9 },
+        { row: 2, from: 0, to: 9 },
+      ]);
+    });
+  });
+
+  describe("trimAdjustCell", () => {
+    it("no trim → the cell is untouched (same object)", () => {
+      const c: Cell = { row: 42, col: 3 };
+      expect(trimAdjustCell(c, 0)).toBe(c);
+    });
+    it("follows the content down by the trimmed line count", () => {
+      expect(trimAdjustCell({ row: 42, col: 3 }, 5)).toEqual({ row: 37, col: 3 });
+    });
+    it("a cell whose line was trimmed away pins to the oldest retained line", () => {
+      expect(trimAdjustCell({ row: 4, col: 7 }, 10)).toEqual({ row: 0, col: 0 });
+    });
   });
 });
 

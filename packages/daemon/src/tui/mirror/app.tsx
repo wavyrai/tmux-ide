@@ -35,6 +35,21 @@
  * wheel outside select mode); pure logic in selection.ts (paneDragDefault /
  * routePanePress).
  *
+ * SELECTION SURVIVES SCROLLING (M25.6): mirror selections anchor in ABSOLUTE
+ * xterm buffer lines (absLine = scrollbackDepth − scrollOffset + viewportRow),
+ * not viewport cells — so scrolling mid-drag keeps the highlight on its text
+ * and a selection can span many screens. While a drag is live the wheel over
+ * the pane always scrolls the LOCAL scrollback (never forwarded, never cancels
+ * — even on app-mouse panes), and holding the pointer at the pane's top/bottom
+ * content row auto-scrolls ~1 row per 8ms state tick (clamped at the
+ * scrollback top / the live bottom). The release copy extracts the FULL
+ * absolute span straight from the pane's buffer (SessionMirror.extractText,
+ * built capped so a runaway span never materializes unbounded — the 1 MB
+ * clipboard cap still refuses over-limit selections). Buffer rotation at the
+ * scrollback cap mid-drag is compensated via PaneMirror.lineTrim (the anchor
+ * follows its content); both plain drags and M22.9/M24.2 select-mode /
+ * shift / deferred-press entries share this machinery.
+ *
  * SURFACE TABS (M18.4): a persistent top row — [⌂ Home][❯ Terminal][▤ Files]
  * [± Diff] — makes the app a real IDE. F1..F4 switch (F-keys encode reliably;
  * ctrl+digit/alt do NOT — measured); the tab bar is also clickable (fixed x-span
@@ -465,6 +480,7 @@ import {
   orderCells,
   rowSelectionRange,
   extractSelection,
+  trimAdjustCell,
   wordRangeAt,
   lineRangeAt,
   clickCount,
@@ -926,15 +942,27 @@ render(
     const [sel, setSel] = createSignal(0);
     const [status, setStatus] = createSignal(bareHome ? "home" : "attaching…");
 
-    // ── SELECTION & CLIPBOARD (M19.4) ────────────────────────────────────────
+    // ── SELECTION & CLIPBOARD (M19.4; absolute-space M25.6) ──────────────────
     // The visible selection (drives inverse-tint on the mirror/editor render) and
     // the gesture state machine driving it. `selecting` marks a drag in progress
     // (null = none, discrete word/line selections leave it null); `selAnchor` is
-    // where the drag began; `lastClick` tracks click-count for double/triple. A
-    // transient `note` reuses the status channel for "copied/pasted N chars".
+    // where the drag began — for the MIRROR that's an ABSOLUTE buffer cell
+    // (M25.6), fixed at press; `selTrimBase` records the pane's lineTrim() at
+    // that moment so a buffer rotating past its scrollback cap mid-drag keeps
+    // the anchor on its content (trimAdjustCell subtracts the drift at each
+    // extend). `lastClick` tracks click-count for double/triple. A transient
+    // `note` reuses the status channel for "copied/pasted N chars".
     const [selection, setSelection] = createSignal<Selection | null>(null);
     let selecting: { surface: "mirror"; paneId: string } | { surface: "editor" } | null = null;
     let selAnchor: Cell = { row: 0, col: 0 };
+    let selTrimBase = 0;
+    // Edge auto-scroll (M25.6): armed by extendSelection when the drag pointer
+    // sits at/beyond the selecting pane's top/bottom content row; the 8ms state
+    // tick then scrolls 1 row per tick and re-extends at the LAST pointer —
+    // no new timers. Cleared on release/escape (clearSelection) and whenever
+    // the pointer moves back inside the pane body.
+    let dragAutoScroll: "up" | "down" | null = null;
+    let lastDragPointer = { x: 0, y: 0 };
     let lastClick: { row: number; col: number; ts: number; count: number } | null = null;
     const [note, setNote] = createSignal("");
     let noteTimer: ReturnType<typeof setTimeout> | null = null;
@@ -945,6 +973,7 @@ render(
     };
     const clearSelection = () => {
       selecting = null;
+      dragAutoScroll = null;
       if (selection() !== null) setSelection(null);
     };
 
@@ -1076,9 +1105,18 @@ render(
     // release lands in the same cell, the owed SGR press/release pair is
     // forwarded then — a click, which is how agents like claude are driven.
     // Coordinates are frozen at press so the forwarded pair is exactly the
-    // cell the user pressed. Only one of {pendingPress, selecting, dragging}
-    // is ever live.
-    let pendingPress: { paneId: string; x: number; gy: number; cell: Cell } | null = null;
+    // cell the user pressed. `absCell`/`trimBase` freeze the press's ABSOLUTE
+    // buffer cell (M25.6) so a selection born from the deferred press anchors
+    // exactly where the button went down. Only one of {pendingPress, selecting,
+    // dragging} is ever live.
+    let pendingPress: {
+      paneId: string;
+      x: number;
+      gy: number;
+      cell: Cell;
+      absCell: Cell;
+      trimBase: number;
+    } | null = null;
     // The pane whose app is OWED a release because its press was forwarded.
     // OpenTUI synthesizes SEVERAL release-type events per physical release
     // (drag-end, up, drop, up — measured live), so the release forward must be
@@ -3462,6 +3500,22 @@ render(
       if (mode() === "diff") refreshStatus();
       if (mode() === "mirror" && curTarget()) attach(curTarget());
       const t = setInterval(() => {
+        // Edge auto-scroll (M25.6): while a mirror drag parks the pointer at
+        // the pane's top/bottom content row, extend ~1 row per state tick —
+        // the existing 8ms cadence, no new timers. The clamps stop it at the
+        // scrollback top (up) / the live bottom (down); release or escape
+        // clears the gesture (clearSelection / the release branch in `route`).
+        if (mirror && dragAutoScroll && selecting?.surface === "mirror") {
+          const paneId = selecting.paneId;
+          const depth = mirror.scrollbackDepth(paneId);
+          const cur = Math.min(scrollOffsets.get(paneId) ?? 0, depth);
+          const next = dragAutoScroll === "up" ? Math.min(cur + 1, depth) : Math.max(cur - 1, 0);
+          if (next !== cur) {
+            scrollOffsets.set(paneId, next);
+            extendSelection(lastDragPointer.x, lastDragPointer.y);
+            dirty = true;
+          }
+        }
         if (!dirty || !mirror) return;
         dirty = false;
         const t0 = performance.now();
@@ -3797,8 +3851,13 @@ render(
       return p.snapshot.rows.map((runs) => runs.map((r) => r.text).join(""));
     };
     const commitMirrorCopy = (paneId: string, anchor: Cell, head: Cell) => {
+      // Cells are ABSOLUTE buffer coordinates (M25.6); the extractor reads the
+      // full span straight from the pane's buffer — scrollback included — with
+      // the same trim/collapse as the old visible-rows path, built capped so a
+      // runaway span never materializes unbounded (copyText still refuses over
+      // MAX_CLIP_BYTES, with the honest over-limit byte count).
       const { start, end } = orderCells(anchor, head);
-      const text = extractSelection(paneRowTexts(paneId), start, end);
+      const text = mirror?.extractText(paneId, start, end, MAX_CLIP_BYTES) ?? "";
       if (text.length > 0) {
         copyText(text);
         // A completed copy ends the pane's select mode (M22.9) — forwarding
@@ -3854,10 +3913,13 @@ render(
       }
       const s = selection();
       if (s && s.surface === "mirror" && s.paneId === pane.id) {
+        // Selection cells are ABSOLUTE buffer lines (M25.6) — map each visible
+        // row through the same baseY the search pass uses above.
+        const baseY = pane.scrollbackDepth - pane.snapshot.scrollOffset;
         const { start, end } = orderCells(s.anchor, s.head);
         rows = rows.map((runs, r) => {
           const rowLen = runs.reduce((n, run) => n + run.text.length, 0);
-          const range = rowSelectionRange(r, rowLen, start, end);
+          const range = rowSelectionRange(baseY + r, rowLen, start, end);
           return range ? tintRunsInverse(runs, range.from, range.to) : runs;
         });
       }
@@ -3865,7 +3927,10 @@ render(
     };
 
     // FB-path twins of the two paneSelRows passes, shaped as <pane_surface> props
-    // (cell-column based; the renderable applies them over the blitted cells).
+    // (the renderable applies them over the blitted cells). Both are ABSOLUTE-
+    // space inputs (M25.6): the selection range is absolute buffer cells and the
+    // search matches absolute lines — the surface maps them to visible rows
+    // per-frame against the pane's current baseY, so highlights ride the scroll.
     // Reading selection()/paneSearches() here subscribes the surface so the prop
     // re-sets — and the blit re-runs — only when they actually change.
     const mirrorSelForPane = (paneId: string): { start: Cell; end: Cell } | null => {
@@ -3888,6 +3953,19 @@ render(
       col: Math.max(0, Math.min(pane.width - 1, gx - sidebarW() - pane.left)),
       row: Math.max(0, Math.min(pane.height - 1, gy - HEADER_ROWS - pane.top)),
     });
+    /** The view's current absolute top for a pane (M25.6): live scrollback
+     *  depth − the clamped LOCAL offset, both read from the mirror/offset map
+     *  at EVENT time — the LivePane snapshot lags one 8ms tick, and a wheel
+     *  that just moved the offset must map the very next pointer cell right. */
+    const paneBaseY = (paneId: string): number => {
+      const depth = mirror?.scrollbackDepth(paneId) ?? 0;
+      return depth - Math.max(0, Math.min(scrollOffsets.get(paneId) ?? 0, depth));
+    };
+    /** A pointer position as an ABSOLUTE buffer cell of `pane` (M25.6). */
+    const paneAbsCell = (pane: LivePane, gx: number, gy: number): Cell => {
+      const cell = paneCell(pane, gx, gy);
+      return { row: paneBaseY(pane.id) + cell.row, col: cell.col };
+    };
 
     // ── SCROLLBARS (M19.5) ────────────────────────────────────────────────────
     // The scroll geometry for one surface: the global column its 1-col track sits
@@ -5171,7 +5249,11 @@ render(
      *  sidebar, main). Geometry is ours. The tab bar is the top screen row; every
      *  other region is offset below it, so we subtract TABBAR_H once (`gy`) and the
      *  per-mode math below is exactly as it was before the bar existed. */
-    /** Extend a live selection's head to the pointer (surface-local cells). */
+    /** Extend a live selection's head to the pointer. Mirror cells are ABSOLUTE
+     *  (M25.6): the head derives from the pointer + the pane's CURRENT view
+     *  offset, the anchor is re-based over any scrollback-cap rotation since
+     *  the press, and the pointer parking at/beyond the pane's top/bottom
+     *  content row arms the edge auto-scroll the 8ms tick drives. */
     const extendSelection = (x: number, y: number) => {
       if (!selecting) return;
       const gy = y - TABBAR_H;
@@ -5179,11 +5261,14 @@ render(
         const paneId = selecting.paneId;
         const pane = panes().find((p) => p.id === paneId);
         if (!pane) return;
+        lastDragPointer = { x, y };
+        const rawRow = gy - HEADER_ROWS - pane.top;
+        dragAutoScroll = rawRow <= 0 ? "up" : rawRow >= pane.height - 1 ? "down" : null;
         setSelection({
           surface: "mirror",
           paneId: pane.id,
-          anchor: selAnchor,
-          head: paneCell(pane, x, gy),
+          anchor: trimAdjustCell(selAnchor, (mirror?.lineTrim(paneId) ?? 0) - selTrimBase),
+          head: paneAbsCell(pane, x, gy),
         });
       } else {
         const { line, col } = editorCellAt(x, gy);
@@ -5451,9 +5536,12 @@ render(
           const cell = paneCell(pane, x, y - TABBAR_H);
           if (cell.row !== pp.cell.row || cell.col !== pp.cell.col) {
             pendingPress = null;
-            selAnchor = pp.cell;
+            // Anchor at the press's frozen ABSOLUTE cell (M25.6); the extend
+            // derives the head from the pointer's current absolute cell.
+            selAnchor = pp.absCell;
+            selTrimBase = pp.trimBase;
             selecting = { surface: "mirror", paneId: pane.id };
-            setSelection({ surface: "mirror", paneId: pane.id, anchor: pp.cell, head: cell });
+            extendSelection(x, y);
           }
           return;
         }
@@ -5481,6 +5569,27 @@ render(
         extendSelection(x, y);
         return;
       }
+      // The wheel during a live MIRROR selection (M25.6): the drag owns it. It
+      // adjusts the selecting pane's LOCAL offset — never forwarded to the
+      // pane's app (even on app-mouse panes), never cancels the drag — and the
+      // head re-derives at the pointer's new absolute cell, so the highlight
+      // extends across the scroll. The scroll badge updates via the same tick.
+      if (type === "scroll" && selecting && selecting.surface === "mirror") {
+        const dir = e.scroll?.direction;
+        if (dir === "up" || dir === "down") {
+          const paneId = selecting.paneId;
+          const depth = mirror?.scrollbackDepth(paneId) ?? 0;
+          const cur = Math.min(scrollOffsets.get(paneId) ?? 0, depth);
+          const next =
+            dir === "up" ? Math.min(cur + SCROLL_STEP, depth) : Math.max(cur - SCROLL_STEP, 0);
+          if (next !== cur) {
+            scrollOffsets.set(paneId, next);
+            markDirty();
+          }
+          extendSelection(x, y);
+        }
+        return;
+      }
       if (type === "move" || type === "over" || type === "drag") {
         resolveHover(x, y);
         return;
@@ -5494,6 +5603,7 @@ render(
           if (s && s.surface === "mirror" && selecting.surface === "mirror")
             commitMirrorCopy(s.paneId, s.anchor, s.head);
           selecting = null;
+          dragAutoScroll = null;
           return;
         }
         // A FORWARDED press's release: pay the debt to the pane that got the
@@ -5728,11 +5838,20 @@ render(
           return;
         }
         if (routing === "defer") {
-          pendingPress = { paneId: pane.id, x, gy, cell: paneCell(pane, x, gy) };
+          pendingPress = {
+            paneId: pane.id,
+            x,
+            gy,
+            cell: paneCell(pane, x, gy),
+            absCell: paneAbsCell(pane, x, gy),
+            trimBase: mirror?.lineTrim(pane.id) ?? 0,
+          };
           return;
         }
         // Begin a drag selection, or on a repeat click select
-        // the word (double) / line (triple) and copy it immediately.
+        // the word (double) / line (triple) and copy it immediately. Click
+        // cadence tracks in VIEWPORT cells (the same physical spot); the
+        // selection itself anchors in ABSOLUTE buffer cells (M25.6).
         const cell = paneCell(pane, x, gy);
         const now = Date.now();
         const count = clickCount(lastClick, cell, now, CLICK_MS);
@@ -5740,13 +5859,15 @@ render(
         if (count >= 2) {
           const rowText = paneRowTexts(pane.id)[cell.row] ?? "";
           const r = count === 2 ? wordRangeAt(rowText, cell.col) : lineRangeAt(rowText);
-          const anchor = { row: cell.row, col: r.from };
-          const head = { row: cell.row, col: r.to };
+          const absRow = paneBaseY(pane.id) + cell.row;
+          const anchor = { row: absRow, col: r.from };
+          const head = { row: absRow, col: r.to };
           setSelection({ surface: "mirror", paneId: pane.id, anchor, head });
           selecting = null;
           commitMirrorCopy(pane.id, anchor, head);
         } else {
-          selAnchor = cell;
+          selAnchor = paneAbsCell(pane, x, gy);
+          selTrimBase = mirror?.lineTrim(pane.id) ?? 0;
           selecting = { surface: "mirror", paneId: pane.id };
           setSelection(null);
         }

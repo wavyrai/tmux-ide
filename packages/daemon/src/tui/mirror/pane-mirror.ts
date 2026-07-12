@@ -40,6 +40,7 @@ import {
   type GraphemeOverride,
 } from "./blit.ts";
 import { AckWriter } from "./ack-writer.ts";
+import { extractSelection, type Cell } from "./selection.ts";
 
 /** OpenTUI TextAttributes bit values (kept literal to avoid the dep here). */
 const ATTR_BOLD = 1;
@@ -163,6 +164,18 @@ export class PaneMirror {
    *  fast path. Counted from xterm's onScroll (which fires once per scrolled
    *  line and keeps firing at the scrollback cap, unlike the saturating payload). */
   private _pendingScroll = 0;
+  // ── Absolute-line stability (M25.6) ────────────────────────────────────────
+  /** Lines TRIMMED off the top of the scrollback (monotonic): once viewportY
+   *  saturates at the scrollback cap, each further scroll rotates one line out
+   *  and every retained line's absolute index drops by one. An absolute-space
+   *  consumer (the drag selection) records `lineTrim()` when it anchors and
+   *  subtracts the delta later, so its anchor keeps naming the same content.
+   *  Detected as "onScroll fired but viewportY did not grow". A scrollback
+   *  clear (`clear-history` / ED3) collapses viewportY instead — that index
+   *  shift is NOT counted; stale absolute cells then clamp into the buffer
+   *  (the selection was over content that no longer exists anyway). */
+  private _trimmed = 0;
+  private _lastViewportY = 0;
   /** The alt/normal buffer swapped (`?1049h/l`) — the whole grid is new. */
   private _bufferSwapped = false;
   /** Shadow of the last-blitted rows' raw xterm cell data (`_line._data`,
@@ -175,12 +188,19 @@ export class PaneMirror {
    *  incremental. */
   private _incremental = true;
 
-  constructor(cols: number, rows: number) {
+  constructor(cols: number, rows: number, scrollback = 5000) {
     this.cols = cols;
     this.rows = rows;
-    this.term = new Terminal({ cols, rows, allowProposedApi: true, scrollback: 5000 });
+    this.term = new Terminal({ cols, rows, allowProposedApi: true, scrollback });
     this.term.onWriteParsed(() => this._version++);
-    this.term.onScroll(() => this._pendingScroll++);
+    this.term.onScroll(() => {
+      this._pendingScroll++;
+      // Trim detection (M25.6): below the cap each scroll grows viewportY by
+      // one; at the cap it stays put and the oldest line rotated out.
+      const vy = this.term.buffer.active.viewportY;
+      if (vy === this._lastViewportY) this._trimmed++;
+      else this._lastViewportY = vy;
+    });
     this.term.buffer.onBufferChange(() => {
       this._bufferSwapped = true;
       this._version++;
@@ -234,7 +254,18 @@ export class PaneMirror {
     this._shadow = null;
     this._pendingScroll = 0;
     this._bufferSwapped = false;
+    // Reflow moved viewportY without scrolls — re-baseline the trim detector so
+    // the first post-resize scroll isn't miscounted as a cap rotation. (Reflow
+    // also re-indexes wrapped lines; a mid-resize drag selection is approximate
+    // by nature and clamps safely.)
+    this._lastViewportY = this.term.buffer.active.viewportY;
     this._version++;
+  }
+
+  /** Monotonic count of lines trimmed off the scrollback top (M25.6) — the
+   *  absolute-line drift an anchored consumer must subtract. See {@link _trimmed}. */
+  lineTrim(): number {
+    return this._trimmed;
   }
 
   /** Lines available above the live viewport (how far back scroll can go). */
@@ -558,6 +589,48 @@ export class PaneMirror {
       out.push(line ? line.translateToString(true) : "");
     }
     return out;
+  }
+
+  /**
+   * Extract the text of an ORDERED absolute-line range (M25.6) — the release
+   * path of a selection that may span far beyond the viewport. Each buffer
+   * line reads via `translateToString(true)` — the SAME trim/collapse as
+   * {@link visibleRowTexts} (wide-glyph spacers collapse, trailing blanks trim)
+   * — and the columns/joining go through {@link extractSelection}, so a
+   * selection that happens to fit one screen extracts byte-identically to the
+   * old visible-rows path. Wrapped lines stay separate visual rows joined with
+   * "\n", exactly as the on-screen copy always has.
+   *
+   * `maxBytes` bounds the string BUILT here: accumulation stops once the raw
+   * line total strictly exceeds it, so a runaway span never materializes tens
+   * of MB — the caller's clipboard cap (which refuses anything over the limit)
+   * still sees an over-limit byte count and refuses honestly.
+   */
+  extractAbsoluteText(start: Cell, end: Cell, maxBytes: number): string {
+    const buf = this.term.buffer.active;
+    const last = buf.length - 1;
+    if (last < 0 || end.row < 0 || start.row > last) return "";
+    const lo = Math.max(0, Math.min(start.row, last));
+    const hi = Math.max(0, Math.min(end.row, last));
+    const rowTexts: string[] = [];
+    let bytes = 0;
+    for (let y = lo; y <= hi; y++) {
+      const line = buf.getLine(y);
+      const text = line ? line.translateToString(true) : "";
+      rowTexts.push(text);
+      bytes += Buffer.byteLength(text, "utf8") + 1; // +1 for the joining "\n"
+      if (bytes > maxBytes) break;
+    }
+    // Shift the range to the accumulated slice. A clamped start selects from
+    // column 0 (its true start line is gone/off-buffer); a clamped or
+    // byte-truncated end extends to its last line's end (Infinity clamps to
+    // the row length inside rowSelectionRange).
+    const lastRowAbs = lo + rowTexts.length - 1;
+    return extractSelection(
+      rowTexts,
+      { row: 0, col: start.row === lo ? start.col : 0 },
+      { row: rowTexts.length - 1, col: lastRowAbs === end.row ? end.col : Infinity },
+    );
   }
 
   dispose(): void {

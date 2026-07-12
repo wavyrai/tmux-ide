@@ -31,7 +31,7 @@ import { appendFileSync } from "node:fs";
 import type { SessionMirror } from "./session-mirror.ts";
 import type { CursorState } from "./pane-mirror.ts";
 import { swapCells, paintBg, type GraphemeOverride } from "./blit.ts";
-import { rowSelectionRange, type Cell } from "./selection.ts";
+import { rowSelectionRange, visibleSelRows, type Cell } from "./selection.ts";
 import type { SearchMatch } from "./search-model.ts";
 
 /** The scrollback-search highlight payload for one pane: matches keyed by
@@ -60,7 +60,10 @@ export interface PaneSurfaceOptions extends RenderableOptions<FrameBufferRendera
   paneFocused?: boolean;
   /** Bumps (coalesced, once per state tick) when this pane's content changed. */
   contentVersion?: number;
-  /** The drag selection on THIS pane (already surface/pane-filtered), or null. */
+  /** The drag selection on THIS pane (already surface/pane-filtered and
+   *  ordered), or null. ABSOLUTE buffer lines (M25.6): the walk maps them to
+   *  visible rows per-frame against the pane's live baseY (depth − offset), so
+   *  the highlight stays glued to its content while the view scrolls. */
   selRange?: { start: Cell; end: Cell } | null;
   search?: PaneSearchHighlight | null;
 }
@@ -234,7 +237,14 @@ class PaneSurfaceRenderable extends FrameBufferRenderable {
     this._lastScroll = this._scrollOffset;
     this._lastFocused = this._focusedPane;
 
-    const newSelRows = this.selRows(h);
+    // The view's absolute→visible mapping (M25.6), re-read every walk: both the
+    // selection (absolute cells) and the search matches (absolute lines) resolve
+    // to visible rows against the CURRENT baseY, so a scroll — or new content
+    // pushing the depth — moves the highlights with their text. Same clamping as
+    // the blit's own offset math (depth here == viewportY there).
+    const depth = this._mirror.scrollbackDepth(this._paneId);
+    const baseY = depth - Math.min(Math.max(0, this._scrollOffset), depth);
+    const newSelRows = this.selRows(h, baseY);
     const newSearchRows = this.searchRows(h);
     // The live cursor (M21.6): the focused pane drives the hardware cursor; an
     // unfocused pane paints a quiet marker on its cursor cell. Read once.
@@ -309,7 +319,7 @@ class PaneSurfaceRenderable extends FrameBufferRenderable {
     if (sel) {
       for (let i = 0; i < newSelRows.length; i++) {
         const y = newSelRows[i]!;
-        const r = rowSelectionRange(y, w, sel.start, sel.end);
+        const r = rowSelectionRange(baseY + y, w, sel.start, sel.end);
         if (r) swapCells(buffers, w, y, r.from, r.to);
       }
     }
@@ -370,15 +380,12 @@ class PaneSurfaceRenderable extends FrameBufferRenderable {
   }
 
   /** Visible rows covered by the current drag selection (clamped), or []. The
-   *  range arrives ordered (app.tsx passes `orderCells`). */
-  private selRows(height: number): number[] {
+   *  range arrives ordered (app.tsx passes `orderCells`) in ABSOLUTE buffer
+   *  lines; `baseY` is the view's current absolute top (M25.6). */
+  private selRows(height: number, baseY: number): number[] {
     const sel = this._sel;
     if (!sel) return [];
-    const lo = Math.max(0, sel.start.row);
-    const hi = Math.min(height - 1, sel.end.row);
-    const out: number[] = [];
-    for (let y = lo; y <= hi; y++) out.push(y);
-    return out;
+    return visibleSelRows(sel.start, sel.end, baseY, height);
   }
 
   /** Distinct visible rows carrying a search match (clamped), or []. */

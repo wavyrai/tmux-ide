@@ -150,3 +150,96 @@ describe("PaneMirror.blit — incremental (M21.4)", () => {
     m.dispose();
   });
 });
+
+describe("PaneMirror.extractAbsoluteText + lineTrim (M25.6)", () => {
+  /** Write numbered lines 1..n ("line 1".."line n") and wait for the last. */
+  async function seeded(cols: number, rows: number, n: number): Promise<PaneMirror> {
+    const m = new PaneMirror(cols, rows);
+    m.write(Array.from({ length: n }, (_, i) => `line ${i + 1}`).join("\r\n"));
+    await flushed(m, `line ${n}`);
+    return m;
+  }
+
+  it("extracts a single visible line byte-identically to the visible-rows path", async () => {
+    const m = await seeded(20, 4, 4); // no scrollback yet: absolute == visible
+    expect(m.scrollbackDepth()).toBe(0);
+    const abs = m.extractAbsoluteText({ row: 1, col: 0 }, { row: 1, col: 5 }, 1_000_000);
+    expect(abs).toBe("line 2");
+    m.dispose();
+  });
+
+  it("a single-screen extraction equals extractSelection over visibleRowTexts", async () => {
+    const m = await seeded(20, 4, 10); // depth 6, viewport = lines 7..10
+    const depth = m.scrollbackDepth();
+    expect(depth).toBe(6);
+    // Select visible rows 1..2 (absolute depth+1 .. depth+2) mid-column.
+    const visible = m.visibleRowTexts(0);
+    const legacy = [
+      visible[1]!.slice(2).replace(/\s+$/u, ""),
+      visible[2]!.slice(0, 4).replace(/\s+$/u, ""),
+    ].join("\n");
+    const abs = m.extractAbsoluteText(
+      { row: depth + 1, col: 2 },
+      { row: depth + 2, col: 3 },
+      1_000_000,
+    );
+    expect(abs).toBe(legacy);
+    m.dispose();
+  });
+
+  it("extracts a span far beyond one screen, oldest scrollback included", async () => {
+    const m = await seeded(20, 4, 30);
+    const text = m.extractAbsoluteText({ row: 0, col: 0 }, { row: 29, col: 19 }, 1_000_000);
+    const lines = text.split("\n");
+    expect(lines[0]).toBe("line 1");
+    expect(lines[29]).toBe("line 30");
+    expect(lines).toHaveLength(30);
+    m.dispose();
+  });
+
+  it("clamps out-of-buffer endpoints and selects edge-to-edge across them", async () => {
+    const m = await seeded(20, 4, 5);
+    // start.row negative → col resets to 0; end.row beyond the buffer → full last line.
+    const text = m.extractAbsoluteText({ row: -3, col: 9 }, { row: 999, col: 0 }, 1_000_000);
+    expect(text.split("\n")[0]).toBe("line 1");
+    expect(text.split("\n")).toContain("line 5");
+    m.dispose();
+  });
+
+  it("stops accumulating once the byte cap is exceeded (over-cap result, never unbounded)", async () => {
+    const m = await seeded(20, 4, 40);
+    const capped = m.extractAbsoluteText({ row: 0, col: 0 }, { row: 39, col: 19 }, 30);
+    const bytes = Buffer.byteLength(capped, "utf8");
+    expect(bytes).toBeGreaterThan(30); // the caller's clipboard cap still refuses
+    expect(capped.split("\n").length).toBeLessThan(40); // but the build stopped early
+    m.dispose();
+  });
+
+  it("collapses wide-glyph spacers exactly like visibleRowTexts", async () => {
+    const m = new PaneMirror(20, 3);
+    m.write("你好 world");
+    await flushed(m, "world");
+    // The CJK chars occupy 2 cells each but ONE char in the extracted text.
+    const text = m.extractAbsoluteText({ row: 0, col: 0 }, { row: 0, col: 19 }, 1_000_000);
+    expect(text).toBe("你好 world");
+    expect(text).toBe(m.visibleRowTexts(0)[0]);
+    m.dispose();
+  });
+
+  it("lineTrim stays 0 below the cap and counts rotations at the cap", async () => {
+    const m = await seeded(20, 4, 20);
+    expect(m.lineTrim()).toBe(0); // depth 16, nowhere near the 5000 cap
+    m.dispose();
+    // A tiny scrollback (10) saturates fast: 20 lines into a 4-row viewport
+    // leaves 16 scrolled; the first 10 grow viewportY, the last 6 rotate.
+    const small = new PaneMirror(20, 4, 10);
+    small.write(Array.from({ length: 20 }, (_, i) => `line ${i + 1}`).join("\r\n"));
+    await flushed(small, "line 20");
+    expect(small.scrollbackDepth()).toBe(10); // saturated at the cap
+    expect(small.lineTrim()).toBe(6);
+    // The absolute index of surviving content shifted by exactly the trim:
+    // buffer line 0 is now "line 7" (lines 1..6 rotated out).
+    expect(small.bufferLines()[0]).toBe("line 7");
+    small.dispose();
+  });
+});
