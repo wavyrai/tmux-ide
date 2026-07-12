@@ -12,6 +12,8 @@ const agent = (over: Partial<DiscoveredAgent>): DiscoveredAgent => ({
   integration: false,
   path: "/usr/bin/x",
   installed: false,
+  capture: null,
+  captureActive: false,
   ...over,
 });
 

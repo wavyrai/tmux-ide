@@ -141,6 +141,12 @@ export interface PaneDetail {
   /** `window_index` of the pane's window — the notification path suppresses
    *  toasts window-granularly, so the transition must know its window. */
   windowIndex: number;
+  /** `pane_pid` — root of the pane's process tree (session-id capture probes from it). */
+  pid: number;
+  /** `pane_current_path` — the pane's working directory. */
+  dir: string;
+  /** Existing `@agent_session_id` stamp, or null (capture only fills empty ones). */
+  sessionId: string | null;
 }
 
 interface PaneRecord {
@@ -158,6 +164,8 @@ interface PaneRecord {
   authority: string;
   /** Raw `@agent_hint` pane option — forces a manifest when set. */
   hint: string;
+  /** Raw `@agent_session_id` pane option — the agent's own session id, if recorded. */
+  sessionId: string;
   /** `window_index` — the window (tab) this pane lives in. */
   windowIndex: number;
   /** `window_name`. */
@@ -305,6 +313,9 @@ export function listTeamSessions(
           agent: manifest && manifest.id !== "shell" ? manifest.id : null,
           status,
           windowIndex: pane.windowIndex,
+          pid: pane.pid,
+          dir: pane.dir,
+          sessionId: pane.sessionId.length > 0 ? pane.sessionId : null,
         });
         // Surface per-pane agent detail (same resolved manifest/status — nothing
         // re-derived). Non-agent panes yield null and are skipped.
@@ -337,7 +348,7 @@ function collectPanes(): Map<string, PaneRecord[]> {
     // title stays the trailing catch-all — window names/paths don't contain tabs
     // in practice. pane_current_path rides this SAME list-panes call (no extra
     // tmux round-trip) so per-pane agent entries can carry a working dir.
-    `#{session_name}\t#{pane_id}\t#{pane_pid}\t#{pane_current_command}\t#{@agent_state}\t#{@agent_hint}\t#{${SIDEBAR_PANE_OPTION}}\t#{window_index}\t#{window_name}\t#{window_active}\t#{pane_current_path}\t#{pane_title}`,
+    `#{session_name}\t#{pane_id}\t#{pane_pid}\t#{pane_current_command}\t#{@agent_state}\t#{@agent_hint}\t#{@agent_session_id}\t#{${SIDEBAR_PANE_OPTION}}\t#{window_index}\t#{window_name}\t#{window_active}\t#{pane_current_path}\t#{pane_title}`,
   ]);
   const bySession = new Map<string, PaneRecord[]>();
   for (const line of raw.split("\n").filter(Boolean)) {
@@ -348,6 +359,7 @@ function collectPanes(): Map<string, PaneRecord[]> {
       cmd = "",
       authority = "",
       hint = "",
+      sessionId = "",
       sidebar = "",
       windowIndex = "0",
       windowName = "",
@@ -363,6 +375,7 @@ function collectPanes(): Map<string, PaneRecord[]> {
       cmd,
       authority,
       hint,
+      sessionId,
       sidebar: sidebar === "1",
       windowIndex: Number(windowIndex) || 0,
       windowName,

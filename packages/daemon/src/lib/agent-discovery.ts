@@ -17,6 +17,21 @@
  */
 import { execFileSync } from "node:child_process";
 import { claudeIntegrationStatus } from "../tui/integrations/claude.ts";
+import { opencodeIntegrationStatus } from "../tui/integrations/opencode.ts";
+
+/**
+ * How a kind's `@agent_session_id` (the `restore --resume-agents` key) gets
+ * captured:
+ *  - `"hooks"`  — the agent's own lifecycle hooks stamp it (claude; needs
+ *    `integration install`).
+ *  - `"plugin"` — an in-process plugin stamps it (opencode; needs
+ *    `integration install`).
+ *  - `"probe"`  — the chrome updater discovers it from the agent's own on-disk
+ *    session state (codex, cursor; automatic, nothing to install).
+ *  - `null`     — no defensible capture surface (see
+ *    {@link ../tui/detect/session-id.ts} for the per-kind evidence).
+ */
+export type CaptureMechanism = "hooks" | "plugin" | "probe" | null;
 
 /** A coding agent tmux-ide knows how to detect. */
 export interface KnownAgent {
@@ -26,19 +41,24 @@ export interface KnownAgent {
   bin: string;
   /** True → tmux-ide ships a lifecycle-integration installer for this agent. */
   integration: boolean;
+  /** How this kind's session id is captured for `restore --resume-agents`. */
+  capture: CaptureMechanism;
 }
 
 /**
  * The agents tmux-ide recognizes. `integration: true` means we HAVE an installer
- * (a real lifecycle hook → ground-truth pane state); the rest are detected via
- * screen-manifest scraping only, with no lifecycle hook yet.
+ * (claude's lifecycle hooks, opencode's plugin); the rest are detected via
+ * screen-manifest scraping only. `capture` records each kind's session-id
+ * story ({@link CaptureMechanism}).
  */
 export const KNOWN_AGENTS: readonly KnownAgent[] = [
-  { id: "claude", bin: "claude", integration: true },
-  { id: "codex", bin: "codex", integration: false },
-  { id: "opencode", bin: "opencode", integration: false },
-  { id: "gemini", bin: "gemini", integration: false },
-  { id: "aider", bin: "aider", integration: false },
+  { id: "claude", bin: "claude", integration: true, capture: "hooks" },
+  { id: "codex", bin: "codex", integration: false, capture: "probe" },
+  { id: "opencode", bin: "opencode", integration: true, capture: "plugin" },
+  { id: "gemini", bin: "gemini", integration: false, capture: null },
+  { id: "aider", bin: "aider", integration: false, capture: null },
+  { id: "cursor", bin: "cursor-agent", integration: false, capture: "probe" },
+  { id: "copilot", bin: "copilot", integration: false, capture: null },
 ];
 
 /** One probed agent: its registry facts plus what the PATH/integration probe found. */
@@ -55,6 +75,15 @@ export interface DiscoveredAgent {
    * integrate (there's nothing to install) and for any agent absent from PATH.
    */
   installed: boolean;
+  /** How this kind's session id is captured (copied from the registry). */
+  capture: CaptureMechanism;
+  /**
+   * Whether session-id capture is LIVE for this kind on this machine:
+   * `"probe"` capture is automatic whenever the binary is present; hook/plugin
+   * capture requires the integration to be installed; `null` capture is never
+   * active.
+   */
+  captureActive: boolean;
 }
 
 /** Resolve a binary to its absolute path, or null. Must never throw. */
@@ -84,14 +113,15 @@ const defaultWhich: WhichRunner = (bin) => {
 };
 
 /**
- * Default integration probe: only `claude` has an installer, so only it can be
- * "installed". Reads the real Claude settings; any failure degrades to false so
- * discovery never throws.
+ * Default integration probe: claude's hooks and opencode's plugin are the two
+ * shipped installers. Reads the real settings/plugin file; any failure degrades
+ * to false so discovery never throws.
  */
 const defaultIntegrationProbe: IntegrationProbe = (agentId) => {
-  if (agentId !== "claude") return false;
   try {
-    return claudeIntegrationStatus().installed;
+    if (agentId === "claude") return claudeIntegrationStatus().installed;
+    if (agentId === "opencode") return opencodeIntegrationStatus().installed;
+    return false;
   } catch {
     return false;
   }
@@ -111,7 +141,17 @@ export function discoverAgents(
     const path = which(agent.bin);
     const present = path !== null;
     const installed = present && agent.integration ? isInstalled(agent.id) : false;
-    return { id: agent.id, bin: agent.bin, integration: agent.integration, path, installed };
+    const captureActive =
+      agent.capture === "probe" ? present : agent.capture !== null ? installed : false;
+    return {
+      id: agent.id,
+      bin: agent.bin,
+      integration: agent.integration,
+      path,
+      installed,
+      capture: agent.capture,
+      captureActive,
+    };
   });
 }
 

@@ -114,9 +114,15 @@ const SAFE_SESSION_ID = /^[A-Za-z0-9_-]+$/;
  * Unverified (no entry): gemini, aider, goose, amp — no confirmed native
  * per-session resume invocation at the time of writing.
  *
- * Only claude's hooks record `@agent_session_id` automatically today; the
- * other entries fire for panes whose agent self-reported the id per the agent
- * contract (`tmux set-option -p @agent_session_id <id>`).
+ * How `@agent_session_id` gets recorded per kind (M25.3):
+ *  - claude — the hooks integration (`integration install claude`).
+ *  - opencode — the plugin integration (`integration install opencode`).
+ *  - codex, cursor — automatic: the chrome updater probes the agent's own
+ *    on-disk session state ({@link ./tui/detect/session-id.ts}).
+ *  - copilot — no automatic capture (skipped with evidence — see the
+ *    session-id module header); fires only for panes whose agent self-reported
+ *    the id per the agent contract
+ *    (`tmux set-option -p @agent_session_id <id>`), which any kind may do.
  */
 export const AGENT_RESUME_COMMANDS: Record<string, (id: string) => string> = {
   claude: (id) => `claude --resume ${id}`,

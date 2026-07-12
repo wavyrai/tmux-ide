@@ -39,6 +39,16 @@ const FULL_PREFS: NotificationPrefs = {
   quietHours: null,
 };
 
+/**
+ * PaneDetail factory — the chip/notify tests only care about identity + agent +
+ * status; the capture fields (pid/dir/sessionId) get inert defaults.
+ */
+function pd(
+  over: Pick<PaneDetail, "sessionName" | "paneId" | "agent" | "status"> & Partial<PaneDetail>,
+): PaneDetail {
+  return { windowIndex: 1, pid: 0, dir: "/", sessionId: null, ...over };
+}
+
 function project(name: string, overrides: Partial<TeamProject> = {}): TeamProject {
   return {
     name,
@@ -635,5 +645,35 @@ describe("runUpdaterTick — update surface", () => {
       prefs: { toast: false, macos: false },
     });
     expect(toasted).toHaveLength(0);
+  });
+});
+
+describe("runUpdaterTick — session-id capture", () => {
+  it("forwards this tick's pane details to captureSessionIds", () => {
+    const seen: PaneDetail[][] = [];
+    const panes = [
+      pd({ sessionName: "web", paneId: "%1", agent: "codex", status: "working" }),
+      pd({ sessionName: "web", paneId: "%2", agent: null, status: "idle" }),
+    ];
+    runUpdaterTick({
+      listAdopted: () => ["web"],
+      computeProjects: (onPane) => {
+        for (const pane of panes) onPane(pane);
+        return [project("web")];
+      },
+      writeStatus: () => {},
+      captureSessionIds: (p) => seen.push(p),
+    });
+    expect(seen).toEqual([panes]);
+  });
+
+  it("is optional — a tick without the capture dep still runs", () => {
+    expect(() =>
+      runUpdaterTick({
+        listAdopted: () => ["web"],
+        computeProjects: () => [project("web")],
+        writeStatus: () => {},
+      }),
+    ).not.toThrow();
   });
 });
