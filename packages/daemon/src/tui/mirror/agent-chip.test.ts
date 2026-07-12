@@ -88,3 +88,41 @@ describe("chipLabel", () => {
     expect(chipLabel(entry({ kind: "copilot-workspace" }), "●", now, 10)).toBe("●");
   });
 });
+
+describe("chipLabel — display metadata (M25.4)", () => {
+  const now = 1_000_000_000_000;
+
+  it("appends the self-reported status text", () => {
+    const e = entry({ statusText: "refactoring auth" });
+    expect(chipLabel(e, "●", now, 44)).toBe("● claude · refactoring auth");
+  });
+
+  it("displayName replaces the kind in the label", () => {
+    const e = entry({ displayName: "reviewer", statusText: "checking PR" });
+    expect(chipLabel(e, "●", now, 44)).toBe("● reviewer · checking PR");
+    expect(chipLabel(entry({ displayName: "reviewer" }), "●", now, 44)).toBe("● reviewer");
+  });
+
+  it("blocked keeps its spelled state FIRST, status text riding after", () => {
+    const e = entry({ state: "blocked", since: now / 1000 - 240, statusText: "needs approval" });
+    expect(chipLabel(e, "●", now, 60)).toBe("● claude · blocked 4m · needs approval");
+  });
+
+  it("an overflowing status text is truncated with an ellipsis, not dropped mid-step", () => {
+    const e = entry({ statusText: "refactoring auth" });
+    // "● claude · " is 11 cells; budget 20 leaves 9 for the text → 8 + "…".
+    expect(chipLabel(e, "●", now, 20)).toBe("● claude · refactor…");
+  });
+
+  it("with no room for readable text the suffix drops to the base label, then the glyph", () => {
+    const e = entry({ statusText: "refactoring auth" });
+    expect(chipLabel(e, "●", now, 13)).toBe("● claude");
+    expect(chipLabel(e, "●", now, 3)).toBe("●");
+  });
+
+  it("blocked degradation still walks blocked-age → blocked → base when the text can't fit", () => {
+    const e = entry({ state: "blocked", since: now / 1000 - 240, statusText: "needs approval" });
+    expect(chipLabel(e, "●", now, 21)).toBe("● claude · blocked 4m");
+    expect(chipLabel(e, "●", now, 18)).toBe("● claude · blocked");
+  });
+});

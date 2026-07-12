@@ -20,14 +20,17 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { runTmux } from "@tmux-ide/tmux-bridge";
 import { appConfigPath, parseAppConfig } from "../../lib/app-config.ts";
+import { APP_HOST_SESSION } from "../mirror/hosted.ts";
 import type { AgentStatus } from "../detect/classify.ts";
 
 /**
- * A fleet transition this tick — the shape {@link ./events.ts diffFleet} emits,
- * ENRICHED by the updater with the pane's resolved `agent` id and human
- * `location` (`session:window.pane`) so the ping can name who needs the user.
- * Both are optional: a caller that can't resolve them falls back to a generic
- * `agent` label and the bare session name (see {@link notifyMessage}).
+ * A fleet transition this tick — since M25.1 a PANE-level transition (the
+ * updater diffs per-pane states, not the session rollup, so a second agent
+ * blocking in an already-blocked session still pings), ENRICHED with the
+ * pane's resolved `agent` id and human `location` (`session:window.pane`) so
+ * the ping can name who needs the user. The enrichments are optional: a caller
+ * that can't resolve them falls back to a generic `agent` label and the bare
+ * session name (see {@link notifyMessage}).
  */
 export interface NotifyEvent {
   session: string;
@@ -37,12 +40,22 @@ export interface NotifyEvent {
   agent?: string | null;
   /** Human location `session:window.pane` (e.g. `myproj:1.2`); falls back to `session`. */
   location?: string;
+  /** The pane behind the transition — the debounce key and the visibility
+   *  test both want the pane, not the session. Absent for a caller that only
+   *  has session granularity (falls back to session-keyed behavior). */
+  paneId?: string | null;
+  /** The pane's `window_index` — window-granular toast suppression needs it.
+   *  Absent/null degrades that check to session granularity. */
+  windowIndex?: number | null;
 }
 
-/** An attached tmux client and the session it's currently viewing. */
+/** An attached tmux client, the session it's viewing, and that session's
+ *  CURRENT window (null when the caller couldn't resolve it — suppression then
+ *  degrades to session granularity for that client). */
 export interface AttachedClient {
   client: string;
   session: string;
+  windowIndex?: number | null;
 }
 
 /** A toast destined for one client's status line. */
@@ -109,16 +122,44 @@ export function enabledStates(prefs: NotificationPrefs): ReadonlySet<AgentStatus
   return states;
 }
 
+/** PURE — the debounce-map key for an event: the PANE when known (so a second
+ *  agent blocking in the same session still pings — per-pane debounce), else
+ *  the session (session-granular callers keep the old behavior). */
+export function notifyDebounceKey(ev: Pick<NotifyEvent, "session" | "to" | "paneId">): string {
+  return `${ev.paneId ?? ev.session}:${ev.to}`;
+}
+
+/** PURE — should this client's toast be suppressed for this event? A client
+ *  gets no toast when it is already LOOKING at the transition: same session
+ *  AND same window (window-granular since M25.1 — an agent in window 2 while
+ *  the client views window 1 IS toast-worthy). Unknown window info on either
+ *  side degrades to the old session-granular suppression. Clients viewing the
+ *  hosted app are always suppressed: the app has its own in-app surfacing, and
+ *  a raw tmux message over the app's renderer is noise. */
+export function suppressToastFor(client: AttachedClient, ev: NotifyEvent): boolean {
+  if (client.session === APP_HOST_SESSION) return true;
+  if (client.session !== ev.session) return false;
+  if (ev.windowIndex === undefined || ev.windowIndex === null) return true;
+  if (client.windowIndex === undefined || client.windowIndex === null) return true;
+  return client.windowIndex === ev.windowIndex;
+}
+
 /**
  * PURE — decide who to ping from this tick's transitions.
  *
  * Rules:
+ *   - a FIRST-SIGHT event (`from: null`) never notifies — the updater's first
+ *     tick (or a restart, or a session appearing) sees every pane as new, and
+ *     re-pinging an agent that has been blocked for an hour is noise;
  *   - only states in `states` qualify (default {@link NOTIFY_STATES}; the caller
  *     narrows it via {@link enabledStates} to honor `onBlocked`/`onDone`);
- *   - DEBOUNCE: skip a session+state that fired within {@link NOTIFY_DEBOUNCE_MS}
- *     — this is the flap guard (see {@link NOTIFY_DEBOUNCE_MS});
- *   - SUPPRESS the toast for any client already viewing that session (they can
- *     see the bar flip themselves) — other clients still get toasted;
+ *   - DEBOUNCE: skip a pane+state (see {@link notifyDebounceKey}) that fired
+ *     within {@link NOTIFY_DEBOUNCE_MS} — the flap guard;
+ *   - APP FOCUS: when the unified app is attached and the event's pane is on
+ *     its screen ({@link AppFocus}), the user is LOOKING at it — no toast, no
+ *     banner (and no debounce stamp: nothing fired);
+ *   - SUPPRESS the toast for any client already viewing that pane's window
+ *     ({@link suppressToastFor}) — other clients still get toasted;
  *   - a `system` entry is produced per qualifying, non-debounced event regardless
  *     of clients (so the macOS path fires even with nothing attached — the
  *     caller gates it on prefs / quiet hours).
@@ -132,19 +173,22 @@ export function decideNotifications(
   lastNotified: Map<string, number>,
   nowMs: number,
   states: ReadonlySet<AgentStatus> = NOTIFY_STATES,
+  appFocus: AppFocus | null = null,
 ): NotifyDecision {
   const nextLastNotified = new Map(lastNotified);
   const toasts: ToastTarget[] = [];
   const system: SystemNotification[] = [];
   for (const ev of events) {
+    if (ev.from === null) continue; // first sight — not a transition worth pinging
     if (!states.has(ev.to)) continue;
-    const key = `${ev.session}:${ev.to}`;
+    const key = notifyDebounceKey(ev);
     const last = nextLastNotified.get(key);
     if (last !== undefined && nowMs - last < NOTIFY_DEBOUNCE_MS) continue;
+    if (appFocus?.attached && ev.paneId && appFocus.panes.includes(ev.paneId)) continue;
     nextLastNotified.set(key, nowMs);
     const message = notifyMessage(ev);
     for (const c of clients) {
-      if (c.session === ev.session) continue; // they're already looking at it
+      if (suppressToastFor(c, ev)) continue;
       toasts.push({ client: c.client, message });
     }
     system.push({ message, session: ev.session });
@@ -152,25 +196,102 @@ export function decideNotifications(
   return { toasts, system, nextLastNotified };
 }
 
-/** PURE — parse `list-clients -F '#{client_name}\t#{session_name}'` output. */
+/** PURE — parse `list-clients -F '#{client_name}\t#{session_name}\t#{window_index}'`
+ *  output (the third field is the client's session's CURRENT window; missing/
+ *  non-numeric parses as null so old two-field callers degrade gracefully). */
 export function parseClients(lines: string[]): AttachedClient[] {
   const out: AttachedClient[] = [];
   for (const line of lines) {
-    const [client = "", session = ""] = line.split("\t");
-    if (client && session) out.push({ client, session });
+    const [client = "", session = "", win = ""] = line.split("\t");
+    if (!client || !session) continue;
+    const n = Number.parseInt(win, 10);
+    out.push({ client, session, windowIndex: Number.isInteger(n) ? n : null });
   }
   return out;
 }
 
-/** io — enumerate attached clients from the live tmux server. Never throws. */
+/** io — enumerate attached clients (+ their current window) from the live tmux
+ *  server. Never throws. */
 export function listAttachedClients(): AttachedClient[] {
   try {
-    const raw = runTmux(["list-clients", "-F", "#{client_name}\t#{session_name}"])
+    const raw = runTmux(["list-clients", "-F", "#{client_name}\t#{session_name}\t#{window_index}"])
       .toString()
       .trim();
     return raw ? parseClients(raw.split("\n")) : [];
   } catch {
     return [];
+  }
+}
+
+// ---------------------------------------------------------------------------
+// The app focus handshake (M25.1)
+// ---------------------------------------------------------------------------
+
+/**
+ * What the unified app publishes about its own screen, so the updater can
+ * suppress pings for panes the user is literally looking at. Lives as a tmux
+ * SERVER option ({@link APP_FOCUS_OPTION}) rather than a file: the record is
+ * scoped to exactly the server whose panes are being watched (no cross-server
+ * or cross-`TMUX_IDE_HOME` leakage), it is readable in the same cheap tmux
+ * calls the updater already makes, and it DIES WITH THE SERVER — a crashed
+ * server can't leave a stale record behind. A crashed APP can, which is what
+ * the `ts` staleness guard covers ({@link APP_FOCUS_STALE_MS}).
+ */
+export interface AppFocus {
+  /** Epoch ms the app last refreshed the record (each fleet poll, ~3s). */
+  ts: number;
+  /** Whether a client is attached to the app (hosted: probed; plain: true). */
+  attached: boolean;
+  /** The session the app's Terminal tab mirrors ("" on Home with no context). */
+  session: string;
+  /** Pane ids VISIBLE on the app's screen right now — the mirrored window's
+   *  panes while the Terminal tab is active, [] on Files/Diff/Home. */
+  panes: string[];
+}
+
+/** The tmux server option carrying the app's JSON {@link AppFocus} record. */
+export const APP_FOCUS_OPTION = "@tmux_ide_app_focus";
+/** Ignore a focus record older than this — covers an app that died without
+ *  cleanup (the app refreshes every ~3s fleet poll). */
+export const APP_FOCUS_STALE_MS = 15_000;
+
+/** PURE — serialize an {@link AppFocus} for the option value. */
+export function buildAppFocusValue(focus: AppFocus): string {
+  return JSON.stringify(focus);
+}
+
+/** PURE — parse a raw option value into a live {@link AppFocus}, or null for
+ *  anything missing, malformed, or STALE (`ts` older than
+ *  {@link APP_FOCUS_STALE_MS} relative to `nowMs`). Never throws. */
+export function parseAppFocus(raw: string | null | undefined, nowMs: number): AppFocus | null {
+  if (!raw) return null;
+  try {
+    const o = JSON.parse(raw) as Record<string, unknown>;
+    if (!o || typeof o !== "object") return null;
+    const ts = typeof o.ts === "number" ? o.ts : null;
+    if (ts === null || nowMs - ts > APP_FOCUS_STALE_MS) return null;
+    return {
+      ts,
+      attached: o.attached === true,
+      session: typeof o.session === "string" ? o.session : "",
+      panes: Array.isArray(o.panes)
+        ? o.panes.filter((p): p is string => typeof p === "string")
+        : [],
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** io — read the app's focus record off the live tmux server (null when unset,
+ *  malformed, or stale). Never throws. */
+export function readAppFocus(nowMs: number = Date.now()): AppFocus | null {
+  try {
+    const raw = runTmux(["show-option", "-s", "-v", APP_FOCUS_OPTION]).toString().trim();
+    return parseAppFocus(raw, nowMs);
+  } catch {
+    // option never set (unset server user-options error out) — no app around
+    return null;
   }
 }
 
@@ -203,12 +324,41 @@ function shellSingleQuote(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`;
 }
 
+/** The session option a banner click stamps on the hosted app: "open THIS
+ *  session when you next look". The app consumes it on its fleet poll. */
+export const APP_JUMP_OPTION = "@tmux_ide_app_jump";
+
+/**
+ * PURE — the shell command a banner click runs (M25.1 click-to-jump v2).
+ * When the hosted app exists, the click routes THROUGH the cockpit: stamp
+ * {@link APP_JUMP_OPTION} on the host session (the running app consumes it and
+ * opens that workspace — so even a DETACHED cockpit shows the right session on
+ * the next attach), then switch the user's most-recent client to the cockpit.
+ * Without a hosted app, fall back to switching the client straight to the
+ * session. (`switch-client` without `-c` targets the last-active client — the
+ * best we can do without knowing which terminal the click came from; with no
+ * client attached at all it fails silently, and the jump stamp still lands.)
+ *
+ * NOTE the target spellings: has-session/switch-client take the `=` exact-match
+ * prefix, but set-option REJECTS it ("no such session", measured on 3.7b — see
+ * {@link ../mirror/hosted.ts hostSetupArgvs}), so the stamp uses the plain name.
+ */
+export function notifierExecuteCommand(session: string): string {
+  const target = shellSingleQuote(session);
+  const host = shellSingleQuote(`=${APP_HOST_SESSION}`);
+  return (
+    `if tmux has-session -t ${host} 2>/dev/null; then ` +
+    `tmux set-option -t ${shellSingleQuote(APP_HOST_SESSION)} ${APP_JUMP_OPTION} ${target}; ` +
+    `tmux switch-client -t ${host}; ` +
+    `else tmux switch-client -t ${target}; fi`
+  );
+}
+
 /**
  * PURE — the `terminal-notifier` argv for a click-through banner: clicking it
- * runs `tmux switch-client -t <session>`, jumping the user's most-recent client
- * straight to the session that needs them. (`switch-client` without `-c` targets
- * the last-active client — the best we can do without knowing which terminal the
- * click came from.)
+ * runs {@link notifierExecuteCommand}, which jumps the user's most-recent
+ * client to the hosted cockpit (selecting the session that needs them) when
+ * one exists, else straight to the session.
  */
 export function terminalNotifierArgs(n: SystemNotification): string[] {
   return [
@@ -217,7 +367,7 @@ export function terminalNotifierArgs(n: SystemNotification): string[] {
     "-message",
     n.message,
     "-execute",
-    `tmux switch-client -t ${shellSingleQuote(n.session)}`,
+    notifierExecuteCommand(n.session),
   ];
 }
 

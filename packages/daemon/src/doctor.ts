@@ -7,6 +7,7 @@ import { installedSkillVersion } from "./lib/skill-sync.ts";
 import { discoverAgents, presentAgents, type DiscoveredAgent } from "./lib/agent-discovery.ts";
 import { findCompiledTui, isBunAvailable } from "./tui/compiled.ts";
 import { claudeSettingsPath } from "./tui/integrations/claude.ts";
+import { hasTerminalNotifier, readNotificationPrefs } from "./tui/chrome/notify.ts";
 
 interface CheckResult {
   label: string;
@@ -28,12 +29,19 @@ export function agentIntegrationRows(agents: DiscoveredAgent[]): CheckResult[] {
   return presentAgents(agents).map((agent) => {
     const label = `agent: ${agent.id}`;
     if (agent.integration) {
+      // What installing actually buys, honestly per mechanism: claude's hooks
+      // give ground-truth status (and record resume ids); opencode's plugin
+      // records resume ids only.
+      const benefit =
+        agent.capture === "hooks"
+          ? "for ground-truth status"
+          : "to record session ids for restore --resume-agents";
       return agent.installed
         ? { label, pass: true, detail: "integration installed ✓", optional: true }
         : {
             label,
             pass: false,
-            detail: `found on PATH — run \`tmux-ide integration install ${agent.id}\` for ground-truth status`,
+            detail: `found on PATH — run \`tmux-ide integration install ${agent.id}\` ${benefit}`,
             optional: true,
           };
     }
@@ -70,6 +78,31 @@ export function hooksTargetRow(facts: {
     label,
     pass: false,
     detail: `cannot write ${facts.settingsPath} — fix its permissions (chown/chmod), or point TMUX_IDE_CLAUDE_SETTINGS at a writable path`,
+    optional: true,
+  };
+}
+
+/**
+ * PURE — the "banner clicks can jump" row, shown only when macOS notifications
+ * are actually ON (`notifications.macos`): without `terminal-notifier`,
+ * banners fall back to osascript, which shows fine but a click does nothing.
+ * Optional — informational, never fails doctor.
+ */
+export function notifierRow(present: boolean): CheckResult {
+  const label = "notification click-to-jump (terminal-notifier)";
+  if (present) {
+    return {
+      label,
+      pass: true,
+      detail: "found — clicking a banner jumps to the session that needs you",
+      optional: true,
+    };
+  }
+  return {
+    label,
+    pass: false,
+    detail:
+      "macOS notifications are on, but terminal-notifier isn't installed — banners will still show, just without click-to-jump. Install it: `brew install terminal-notifier`",
     optional: true,
   };
 }
@@ -268,6 +301,12 @@ export async function doctor({
       { optional: true },
     ),
   );
+
+  // Banner click-to-jump: only when the macOS channel is actually on (a user
+  // who never enabled banners shouldn't be told to install its helper).
+  if (process.platform === "darwin" && readNotificationPrefs().macos) {
+    checks.push(notifierRow(hasTerminalNotifier()));
+  }
 
   // Agent integrations: one row per agent discovered on PATH (absent → no row).
   checks.push(...agentIntegrationRows(discoverAgents()));

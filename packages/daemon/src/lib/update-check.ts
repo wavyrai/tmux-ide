@@ -252,6 +252,11 @@ export function getUpdateStatus({
 export async function runUpdateCheck({ now = Date.now() }: { now?: number } = {}): Promise<void> {
   const cache = readUpdateCache();
   if (!shouldCheck(cache?.lastCheckedAt ?? null, now)) return;
+  // The agent-detection manifest-pack refresh RIDES this same daily throttle
+  // (M25.4) — no timer of its own, gated again inside on `updates.manifests`
+  // (default false) and never throwing. Dynamic import: manifest-pack imports
+  // this module for getCurrentVersion, so a static import would be a cycle.
+  void import("./manifest-pack.ts").then((m) => m.maybeRefreshManifestPack()).catch(() => {});
   const fetched = await fetchLatestVersion();
   writeUpdateCache({
     lastCheckedAt: now,

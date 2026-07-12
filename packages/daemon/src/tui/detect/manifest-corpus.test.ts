@@ -287,6 +287,214 @@ describe("manifest corpus — cursor-agent (conservative)", () => {
   });
 });
 
+// ── M25.4 breadth — kilo (synthesized from binary-verbatim strings) ─────────
+
+// SYNTHESIZED (kilo, blocked) — assembled from strings extracted VERBATIM from
+// the shipped @kilocode/cli binary (v7.4.5): the permission dialog's
+// "△ Permission required" header and its "Allow once" / "Allow always" /
+// "Reject" options. The layout around them is our reconstruction (no account
+// was available to drive a live capture); replace with a real capture when one
+// exists.
+const KILO_BLOCKED = `
+ △ Permission required
+   Bash: rm -rf ./dist
+ ❯ Allow once
+   Allow always
+   Reject
+`;
+
+// SYNTHESIZED (kilo, idle) — a bare prompt with the documented slash-command
+// hint chrome; must NOT read blocked/working.
+const KILO_IDLE = `
+ Welcome to Kilo Code
+ >
+ /connect /models /new /status /exit
+`;
+
+describe("manifest corpus — kilo (binary-verbatim strings, v7.4.5)", () => {
+  const kilo = byId("kilo");
+
+  it("permission dialog (Permission required / Allow once) → blocked", () => {
+    const snap = parseSnapshot(KILO_BLOCKED);
+    expect(evaluateManifest(snap, kilo).state).toBe("blocked");
+    expect(classifyInstant(snap, kilo)).toBe("blocked");
+  });
+
+  it("idle prompt chrome → idle", () => {
+    const snap = parseSnapshot(KILO_IDLE);
+    expect(evaluateManifest(snap, kilo).state).toBe(null);
+    expect(classifyInstant(snap, kilo)).toBe("idle");
+  });
+});
+
+// ── M25.4 breadth — droid (REAL login capture + docs-derived blocked) ───────
+
+// REAL (droid, auth-gated login) — Factory CLI v0.114.1 captured live (no
+// account, so this is the only reachable screen). MUST read idle: the login
+// menu is not working/blocked evidence. (Also verified live: droid runs as its
+// OWN process — `pane_current_command` = "droid".)
+const DROID_LOGIN = `
+                     v0.114.1 (ctrl+j for changelog)
+          TIP: Use /settings to customize your experience
+         shift+tab to cycle modes · ctrl+N to cycle models
+              ctrl+L for autonomy · tab for reasoning
+               Skills (4) ✓  MCPs (0) ✗  AGENTS.md ✗
+╭──────────────────────────────────────────────╮
+│ Welcome to Factory CLI                        │
+╰──────────────────────────────────────────────╯
+Please login with your Factory account to continue.
+> Login
+  Exit
+`;
+
+// SYNTHESIZED (droid, blocked) — the Spec-mode proceed menu, assembled from
+// the docs-verbatim autonomy-level option labels (docs.factory.ai auto-run).
+// Pending live-capture confirmation; replace when an authenticated pane exists.
+const DROID_BLOCKED = `
+ Ready to proceed with this plan?
+ ❯ Proceed, manual approval (Low)
+   Proceed, allow safe commands (Medium)
+   Proceed, allow all commands (High)
+`;
+
+describe("manifest corpus — droid (login captured live, blocked docs-derived)", () => {
+  const droid = byId("droid");
+
+  it("auth-gated login menu → idle, not working/blocked", () => {
+    const snap = parseSnapshot(DROID_LOGIN);
+    expect(evaluateManifest(snap, droid).state).toBe(null);
+    expect(classifyInstant(snap, droid)).toBe("idle");
+  });
+
+  it("Spec-mode proceed menu (Proceed, manual approval …) → blocked", () => {
+    const snap = parseSnapshot(DROID_BLOCKED);
+    expect(evaluateManifest(snap, droid).state).toBe("blocked");
+    expect(classifyInstant(snap, droid)).toBe("blocked");
+  });
+});
+
+// ── M25.4 breadth — devin / kimi / pi / grok / kiro / cline ─────────────────
+// All SYNTHESIZED from documented output (each fixture's markers are verbatim
+// from the agent's own source or docs — see the manifest comments for the
+// provenance trail); layout around the markers is our reconstruction.
+
+// devin (docs.devin.ai changelog): the plan-mode approval menu.
+const DEVIN_BLOCKED = `
+ Plan is ready.
+ ❯ Yes, implement plan and accept edits
+   Yes, implement plan and bypass permissions
+   No, plan needs changes
+`;
+
+// kimi (MoonshotAI/kimi-cli _approval_panel.py): the tool-approval panel.
+const KIMI_BLOCKED = `
+ Bash is requesting approval to run \`rm -rf dist\`
+ ❯ Approve once
+   Approve for this session
+   Reject
+   Reject, tell the model what to do instead
+`;
+
+// pi (interactive-mode.ts): the literal working status line.
+const PI_WORKING = `
+> fix the failing test
+Working... (esc to interrupt)
+`;
+
+// grok (superagent-ai/grok-cli app.tsx + headless output.ts).
+const GROK_WORKING = `
+⏳ Processing...
+Queue a follow-up... (esc to interrupt)
+`;
+
+// kiro (aws/amazon-q-developer-cli chat-cli mod.rs): tool approval + spinner.
+const KIRO_BLOCKED = `
+Using tool: execute_bash
+Allow this action? Use 't' to trust (always allow) this tool for the session. [y/n/t]:
+`;
+const KIRO_WORKING = `
+Thinking...
+`;
+
+// cline (apps/cli tui components): approval dialog + streaming status.
+const CLINE_BLOCKED = `
+ Cline needs permission
+ Approve tool call?
+ write_to_file: src/index.ts
+ [y] Approve   [n] deny
+`;
+const CLINE_WORKING = `
+Thinking... (esc to cancel)
+`;
+
+describe("manifest corpus — M25.4 breadth (synthesized from documented output)", () => {
+  const cases: Array<[string, string, "blocked" | "working"]> = [
+    ["devin", DEVIN_BLOCKED, "blocked"],
+    ["kimi", KIMI_BLOCKED, "blocked"],
+    ["pi", PI_WORKING, "working"],
+    ["grok", GROK_WORKING, "working"],
+    ["kiro", KIRO_BLOCKED, "blocked"],
+    ["kiro", KIRO_WORKING, "working"],
+    ["cline", CLINE_BLOCKED, "blocked"],
+    ["cline", CLINE_WORKING, "working"],
+  ];
+  for (const [id, screen, expected] of cases) {
+    it(`${id}: documented ${expected} screen → ${expected}`, () => {
+      const snap = parseSnapshot(screen);
+      expect(evaluateManifest(snap, byId(id)).state).toBe(expected);
+      expect(classifyInstant(snap, byId(id))).toBe(expected);
+    });
+  }
+
+  it("pi ships NO blocked rule — its core has no distinctive approval wording", () => {
+    expect(byId("pi").states.blocked).toBeUndefined();
+  });
+});
+
+// ── M25.4 cross-check — new manifests must stay silent on the OTHER agents'
+//    screens (and every manifest on the new agents' idle screens) ───────────
+
+/** Every idle/quiet screen in this corpus — no manifest may fire on ANY of
+ *  them (a state on someone else's idle screen is a cross-agent misfire). */
+const IDLE_SCREENS: Array<[string, string]> = [
+  ["claude idle", CLAUDE_IDLE],
+  ["claude finished", CLAUDE_IDLE_FINISHED],
+  ["claude survey", CLAUDE_SURVEY],
+  ["codex idle", CODEX_IDLE],
+  ["codex idle (live)", CODEX_IDLE_LIVE],
+  ["aider idle", AIDER_IDLE],
+  ["cursor pre-auth", CURSOR_PREAUTH],
+  ["droid login", DROID_LOGIN],
+  ["kilo idle", KILO_IDLE],
+];
+
+/** The M25.4 additions under cross-check. */
+const NEW_IDS = ["devin", "kimi", "pi", "grok", "kiro", "cline", "droid", "kilo"];
+
+describe("cross-check — M25.4 manifests never fire on any idle screen", () => {
+  for (const id of NEW_IDS) {
+    const manifest = byId(id);
+    for (const [label, screen] of IDLE_SCREENS) {
+      it(`${id} on "${label}" → no state`, () => {
+        expect(evaluateManifest(parseSnapshot(screen), manifest).state).toBe(null);
+      });
+    }
+  }
+
+  // And the reverse: NO manifest (old or new) fires on the new agents' idle
+  // screens (the new chrome must not read as someone else's evidence).
+  for (const manifest of BUNDLED_MANIFESTS) {
+    for (const [label, screen] of [
+      ["droid login", DROID_LOGIN],
+      ["kilo idle", KILO_IDLE],
+    ] as const) {
+      it(`${manifest.id} on ${label} → no state`, () => {
+        expect(evaluateManifest(parseSnapshot(screen), manifest).state).toBe(null);
+      });
+    }
+  }
+});
+
 // ── False-positive guard (table-driven, EVERY manifest) ────────────────────
 
 // A realistic idle shell prompt (oh-my-zsh powerline style) + a plain one.
@@ -317,7 +525,20 @@ describe("manifest confidence metadata", () => {
   }
 
   it("newly added agents are present and conservative", () => {
-    for (const id of ["cursor", "goose", "amp"]) {
+    for (const id of [
+      "cursor",
+      "goose",
+      "amp",
+      // M25.4 breadth:
+      "devin",
+      "kimi",
+      "pi",
+      "grok",
+      "kiro",
+      "cline",
+      "droid",
+      "kilo",
+    ]) {
       const m = BUNDLED_MANIFESTS.find((x) => x.id === id);
       expect(m, `manifest ${id} missing`).toBeDefined();
       expect(m?.confidence).toBe("conservative");

@@ -6,18 +6,25 @@
  */
 import { describe, expect, it } from "vitest";
 import {
+  APP_FOCUS_STALE_MS,
   applyKillSwitch,
+  buildAppFocusValue,
   decideNotifications,
   DEFAULT_NOTIFICATION_PREFS,
   enabledStates,
   inQuietHours,
+  notifierExecuteCommand,
+  notifyDebounceKey,
   notifyMessage,
   NOTIFY_DEBOUNCE_MS,
   NOTIFY_MAX_LEN,
+  parseAppFocus,
   parseHHMM,
   parseNotificationPrefs,
   parseClients,
+  suppressToastFor,
   terminalNotifierArgs,
+  type AppFocus,
   type AttachedClient,
   type NotificationPrefs,
   type NotifyEvent,
@@ -189,15 +196,155 @@ describe("decideNotifications", () => {
     decideNotifications([ev("web", "blocked")], clients, lastNotified, 0);
     expect(lastNotified.size).toBe(0);
   });
+
+  it("never notifies a first-sight event (from: null) — the restart/first-tick grace", () => {
+    const clients: AttachedClient[] = [{ client: "c1", session: "other" }];
+    const d = decideNotifications(
+      [ev("web", "blocked", { from: null, paneId: "%1" })],
+      clients,
+      new Map(),
+      0,
+    );
+    expect(d.toasts).toEqual([]);
+    expect(d.system).toEqual([]);
+    expect(d.nextLastNotified.size).toBe(0);
+  });
+
+  it("debounces per PANE, so two agents blocking in the same session both ping", () => {
+    const clients: AttachedClient[] = [{ client: "c1", session: "other" }];
+    const first = decideNotifications(
+      [ev("web", "blocked", { paneId: "%1", agent: "claude" })],
+      clients,
+      new Map(),
+      0,
+    );
+    expect(first.toasts).toHaveLength(1);
+    // 10s later, a SECOND pane in the same session blocks — inside the window.
+    const second = decideNotifications(
+      [ev("web", "blocked", { paneId: "%2", agent: "codex" })],
+      clients,
+      first.nextLastNotified,
+      10_000,
+    );
+    expect(second.toasts).toHaveLength(1);
+    expect(second.nextLastNotified.get("%1:blocked")).toBe(0);
+    expect(second.nextLastNotified.get("%2:blocked")).toBe(10_000);
+    // The SAME pane flapping again inside the window stays quiet.
+    const flap = decideNotifications(
+      [ev("web", "blocked", { paneId: "%1" })],
+      clients,
+      second.nextLastNotified,
+      20_000,
+    );
+    expect(flap.toasts).toEqual([]);
+  });
+
+  it("suppresses toast AND banner when the app is attached and the pane is on its screen", () => {
+    const clients: AttachedClient[] = [{ client: "c1", session: "other" }];
+    const focus: AppFocus = { ts: 0, attached: true, session: "web", panes: ["%1"] };
+    const visible = decideNotifications(
+      [ev("web", "blocked", { paneId: "%1" })],
+      clients,
+      new Map(),
+      0,
+      undefined,
+      focus,
+    );
+    expect(visible.toasts).toEqual([]);
+    expect(visible.system).toEqual([]);
+    // Nothing fired → nothing stamped: the transition isn't debounced away for later.
+    expect(visible.nextLastNotified.size).toBe(0);
+    // A pane NOT on the app's screen still pings.
+    const hidden = decideNotifications(
+      [ev("web", "blocked", { paneId: "%2" })],
+      clients,
+      new Map(),
+      0,
+      undefined,
+      focus,
+    );
+    expect(hidden.system).toHaveLength(1);
+    // A DETACHED app suppresses nothing.
+    const detached = decideNotifications(
+      [ev("web", "blocked", { paneId: "%1" })],
+      clients,
+      new Map(),
+      0,
+      undefined,
+      { ...focus, attached: false },
+    );
+    expect(detached.system).toHaveLength(1);
+  });
+});
+
+describe("notifyDebounceKey", () => {
+  it("keys on the pane when known, else the session", () => {
+    expect(notifyDebounceKey({ session: "web", to: "blocked", paneId: "%3" })).toBe("%3:blocked");
+    expect(notifyDebounceKey({ session: "web", to: "blocked" })).toBe("web:blocked");
+    expect(notifyDebounceKey({ session: "web", to: "done", paneId: null })).toBe("web:done");
+  });
+});
+
+describe("suppressToastFor", () => {
+  const event = ev("web", "blocked", { paneId: "%1", windowIndex: 2 });
+
+  it("is window-granular: same session other window still toasts", () => {
+    expect(suppressToastFor({ client: "c", session: "web", windowIndex: 2 }, event)).toBe(true);
+    expect(suppressToastFor({ client: "c", session: "web", windowIndex: 1 }, event)).toBe(false);
+    expect(suppressToastFor({ client: "c", session: "api", windowIndex: 2 }, event)).toBe(false);
+  });
+
+  it("degrades to session granularity when either window is unknown", () => {
+    expect(suppressToastFor({ client: "c", session: "web", windowIndex: null }, event)).toBe(true);
+    expect(suppressToastFor({ client: "c", session: "web" }, ev("web", "blocked"))).toBe(true);
+  });
+
+  it("always suppresses clients viewing the hosted app (in-app surfacing owns that screen)", () => {
+    expect(suppressToastFor({ client: "c", session: "_tmux-ide-app", windowIndex: 0 }, event)).toBe(
+      true,
+    );
+  });
+});
+
+describe("app focus record", () => {
+  const focus: AppFocus = { ts: 10_000, attached: true, session: "web", panes: ["%1", "%2"] };
+
+  it("round-trips through build + parse while fresh", () => {
+    expect(parseAppFocus(buildAppFocusValue(focus), 10_000 + 3000)).toEqual(focus);
+  });
+
+  it("treats a stale record as absent (an app that died without cleanup)", () => {
+    expect(parseAppFocus(buildAppFocusValue(focus), 10_000 + APP_FOCUS_STALE_MS + 1)).toBeNull();
+  });
+
+  it("never throws on garbage and filters non-string pane ids", () => {
+    expect(parseAppFocus("not json", 0)).toBeNull();
+    expect(parseAppFocus("", 0)).toBeNull();
+    expect(parseAppFocus(null, 0)).toBeNull();
+    expect(parseAppFocus(JSON.stringify({ ts: 5, panes: ["%1", 7, null] }), 5)).toEqual({
+      ts: 5,
+      attached: false,
+      session: "",
+      panes: ["%1"],
+    });
+    expect(parseAppFocus(JSON.stringify({ attached: true }), 0)).toBeNull(); // no ts
+  });
 });
 
 describe("parseClients", () => {
-  it("parses client\\tsession lines and drops malformed ones", () => {
+  it("parses client\\tsession\\twindow lines and drops malformed ones", () => {
     expect(
-      parseClients(["/dev/ttys000\tweb", "/dev/ttys001\tapi", "", "lonely", "\tdangling"]),
+      parseClients(["/dev/ttys000\tweb\t2", "/dev/ttys001\tapi\t0", "", "lonely", "\tdangling\t1"]),
     ).toEqual([
-      { client: "/dev/ttys000", session: "web" },
-      { client: "/dev/ttys001", session: "api" },
+      { client: "/dev/ttys000", session: "web", windowIndex: 2 },
+      { client: "/dev/ttys001", session: "api", windowIndex: 0 },
+    ]);
+  });
+
+  it("parses a missing/garbage window field as null (session-granular fallback)", () => {
+    expect(parseClients(["/dev/ttys000\tweb", "/dev/ttys001\tapi\tx"])).toEqual([
+      { client: "/dev/ttys000", session: "web", windowIndex: null },
+      { client: "/dev/ttys001", session: "api", windowIndex: null },
     ]);
   });
 });
@@ -311,8 +458,25 @@ describe("applyKillSwitch", () => {
   });
 });
 
+describe("notifierExecuteCommand", () => {
+  it("routes through the hosted cockpit when it exists, else switches straight to the session", () => {
+    expect(notifierExecuteCommand("web")).toBe(
+      "if tmux has-session -t '=_tmux-ide-app' 2>/dev/null; then " +
+        "tmux set-option -t '_tmux-ide-app' @tmux_ide_app_jump 'web'; " +
+        "tmux switch-client -t '=_tmux-ide-app'; " +
+        "else tmux switch-client -t 'web'; fi",
+    );
+  });
+
+  it("single-quote-escapes the session name in both branches", () => {
+    const cmd = notifierExecuteCommand("wei'rd");
+    expect(cmd).toContain("@tmux_ide_app_jump 'wei'\\''rd'");
+    expect(cmd).toContain("else tmux switch-client -t 'wei'\\''rd'; fi");
+  });
+});
+
 describe("terminalNotifierArgs", () => {
-  it("builds a click-through banner that switches to the session", () => {
+  it("builds a click-through banner whose -execute is the jump command", () => {
     expect(
       terminalNotifierArgs({ message: "claude blocked · web:1.2 — needs input", session: "web" }),
     ).toEqual([
@@ -321,18 +485,7 @@ describe("terminalNotifierArgs", () => {
       "-message",
       "claude blocked · web:1.2 — needs input",
       "-execute",
-      "tmux switch-client -t 'web'",
-    ]);
-  });
-
-  it("single-quote-escapes a session name for the -execute shell command", () => {
-    expect(terminalNotifierArgs({ message: "m", session: "wei'rd" })).toEqual([
-      "-title",
-      "tmux-ide",
-      "-message",
-      "m",
-      "-execute",
-      "tmux switch-client -t 'wei'\\''rd'",
+      notifierExecuteCommand("web"),
     ]);
   });
 });

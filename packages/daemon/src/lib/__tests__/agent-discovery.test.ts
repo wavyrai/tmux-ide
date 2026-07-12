@@ -12,23 +12,42 @@ import {
 } from "../agent-discovery.ts";
 
 describe("KNOWN_AGENTS", () => {
-  it("lists claude as the only integrated agent, with stable ids/bins", () => {
+  it("ships installers for exactly claude (hooks) and opencode (plugin)", () => {
     const claude = KNOWN_AGENTS.find((a) => a.id === "claude");
-    expect(claude).toEqual({ id: "claude", bin: "claude", integration: true });
-    // exactly one integration installer today
-    expect(KNOWN_AGENTS.filter((a) => a.integration).map((a) => a.id)).toEqual(["claude"]);
-    // the rest are detection-only
+    expect(claude).toEqual({ id: "claude", bin: "claude", integration: true, capture: "hooks" });
+    expect(KNOWN_AGENTS.filter((a) => a.integration).map((a) => a.id)).toEqual([
+      "claude",
+      "opencode",
+    ]);
     expect(KNOWN_AGENTS.map((a) => a.id)).toEqual([
       "claude",
       "codex",
       "opencode",
       "gemini",
       "aider",
+      "cursor",
+      "copilot",
     ]);
   });
 
-  it("uses the id as the probed binary for every agent", () => {
-    for (const a of KNOWN_AGENTS) expect(a.bin).toBe(a.id);
+  it("uses the id as the probed binary except cursor (binary: cursor-agent)", () => {
+    for (const a of KNOWN_AGENTS) {
+      if (a.id === "cursor") expect(a.bin).toBe("cursor-agent");
+      else expect(a.bin).toBe(a.id);
+    }
+  });
+
+  it("records the session-id capture story per kind (matching the shipped probes)", () => {
+    const byId = Object.fromEntries(KNOWN_AGENTS.map((a) => [a.id, a.capture]));
+    expect(byId).toEqual({
+      claude: "hooks",
+      codex: "probe",
+      opencode: "plugin",
+      gemini: null,
+      aider: null,
+      cursor: "probe",
+      copilot: null,
+    });
   });
 });
 
@@ -63,8 +82,38 @@ describe("discoverAgents", () => {
     const installed = discoverAgents(which, (id) => id === "claude");
     const byId = Object.fromEntries(installed.map((a) => [a.id, a]));
     expect(byId.claude!.installed).toBe(true);
-    // present but non-integrated → never "installed"
+    // opencode integrates too — present but its probe says not installed
     expect(byId.opencode!.installed).toBe(false);
+    // present but non-integrated → never "installed"
+    const codex = discoverAgents(foundAt({ codex: "/opt/codex" }), () => true);
+    expect(codex.find((a) => a.id === "codex")!.installed).toBe(false);
+  });
+
+  it("marks probe-captured kinds active whenever the binary is present", () => {
+    const which = foundAt({ codex: "/opt/codex", "cursor-agent": "/usr/bin/cursor-agent" });
+    const agents = discoverAgents(which, () => false);
+    const byId = Object.fromEntries(agents.map((a) => [a.id, a]));
+    expect(byId.codex!.captureActive).toBe(true);
+    expect(byId.cursor!.captureActive).toBe(true);
+    // absent binary → no capture
+    expect(byId.claude!.captureActive).toBe(false);
+  });
+
+  it("marks hook/plugin-captured kinds active only once their integration is installed", () => {
+    const which = foundAt({ claude: "/usr/bin/claude", opencode: "/usr/bin/opencode" });
+    const none = discoverAgents(which, () => false);
+    expect(none.find((a) => a.id === "claude")!.captureActive).toBe(false);
+    expect(none.find((a) => a.id === "opencode")!.captureActive).toBe(false);
+    const all = discoverAgents(which, () => true);
+    expect(all.find((a) => a.id === "claude")!.captureActive).toBe(true);
+    expect(all.find((a) => a.id === "opencode")!.captureActive).toBe(true);
+  });
+
+  it("never marks capture-less kinds active", () => {
+    const which = foundAt({ copilot: "/usr/bin/copilot", gemini: "/usr/bin/gemini" });
+    const agents = discoverAgents(which, () => true);
+    expect(agents.find((a) => a.id === "copilot")!.captureActive).toBe(false);
+    expect(agents.find((a) => a.id === "gemini")!.captureActive).toBe(false);
   });
 
   it("leaves installed false when claude is present but the integration is not installed", () => {

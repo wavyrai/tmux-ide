@@ -320,6 +320,11 @@ describe("teamItems", () => {
   it("offers restart/stop as the footer ctrl-actions", () => {
     expect(TEAM_ACTIONS.map((a) => a.key)).toEqual(["r", "s"]);
   });
+
+  it("a stamped display name replaces the kind in the row label (M25.4)", () => {
+    const named: AgentRowInput[] = [{ ...agents[0]!, displayName: "reviewer" }];
+    expect(teamItems(named, 1000)[1]!.label).toBe("reviewer · web");
+  });
 });
 
 describe("isShellCommand", () => {

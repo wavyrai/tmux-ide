@@ -340,7 +340,21 @@ import {
   type SettingsCommandId,
 } from "./settings-model.ts";
 import { loadAppConfig, loadRawAppConfig, updateAppConfig } from "../../lib/app-config.ts";
-import { parseNotificationPrefs } from "../chrome/notify.ts";
+import {
+  APP_FOCUS_OPTION,
+  APP_JUMP_OPTION,
+  buildAppFocusValue,
+  parseNotificationPrefs,
+} from "../chrome/notify.ts";
+import { adoptMarkArgv, updaterProbeArgv, updaterSpawnArgv } from "../chrome/front-door.ts";
+import { APP_HOST_SESSION } from "./hosted.ts";
+import {
+  ATTENTION_FLASH_MS,
+  attentionNoteLine,
+  diffAttention,
+  noteworthyTransitions,
+  type AttentionAgent,
+} from "./attention.ts";
 import {
   buildHomeItems,
   centerPad,
@@ -357,6 +371,7 @@ import {
   agentRowLabel,
   agentsHeaderLabel,
   agentAgeLabel,
+  agentDisplayKind,
   sidebarHit,
   AGENTS_ADD_CHIP,
   AGENTS_EMPTY_LINE,
@@ -1129,6 +1144,95 @@ render(
           .filter((a, i, arr) => arr.findIndex((b) => b.paneId === a.paneId) === i),
       ),
     );
+
+    // ── IN-APP ATTENTION (M25.1) ─────────────────────────────────────────────
+    // The 3s fleet poll diffs the previous per-pane agent states against the
+    // fresh payload (pure math in attention.ts); blocked/done flips for agents
+    // NOT on the current screen (other workspace / other window / a non-
+    // Terminal tab) surface as a status-strip note plus a brief flash on their
+    // sidebar rows. First sight is graced — an app boot announces nothing.
+    let attnPrev = new Map<string, AgentStatus>();
+    const [attnFlash, setAttnFlash] = createSignal<ReadonlySet<string>>(new Set());
+    let attnFlashTimer: ReturnType<typeof setTimeout> | null = null;
+    const noteAttention = (projects: FleetProject[]) => {
+      const agents: AttentionAgent[] = projects.flatMap((p) =>
+        p.sessions.flatMap((s) =>
+          (s.agents ?? []).map((a) => ({
+            paneId: a.paneId,
+            session: a.session,
+            kind: a.kind,
+            state: a.state,
+          })),
+        ),
+      );
+      const { transitions, next } = diffAttention(attnPrev, agents);
+      attnPrev = next;
+      const worthy = noteworthyTransitions(transitions, {
+        tab: tab(),
+        visiblePaneIds: tab() === "terminal" ? panes().map((p) => p.id) : [],
+      });
+      const line = attentionNoteLine(worthy);
+      if (!line) return;
+      setStatusNote(line);
+      setAttnFlash(new Set(worthy.map((w) => w.paneId)));
+      if (attnFlashTimer) clearTimeout(attnFlashTimer);
+      attnFlashTimer = setTimeout(() => setAttnFlash(new Set()), ATTENTION_FLASH_MS);
+    };
+
+    // ── FOCUS HANDSHAKE (M25.1) ──────────────────────────────────────────────
+    // The app publishes what it is showing — attached?, the mirrored session,
+    // the on-screen pane ids — as a tmux SERVER option the chrome updater's
+    // notify path reads (see notify.ts AppFocus for the option-vs-file
+    // rationale). Refreshed on every fleet poll and on tab switches; the
+    // record's `ts` plus the reader's staleness guard cover an app that died
+    // without cleanup. Hosted attachment is probed (the cockpit keeps running
+    // detached); a plain app IS the user's terminal, so it's attached while
+    // it runs.
+    const writeFocusRecord = (attached: boolean) => {
+      const value = buildAppFocusValue({
+        ts: Date.now(),
+        attached,
+        session: curTarget(),
+        panes: tab() === "terminal" ? panes().map((p) => p.id) : [],
+      });
+      execFile("tmux", ["set-option", "-s", APP_FOCUS_OPTION, value], () => {});
+    };
+    const refreshFocusRecord = () => {
+      if (!HOSTED) {
+        writeFocusRecord(true);
+        return;
+      }
+      execFile("tmux", ["list-clients", "-t", `=${APP_HOST_SESSION}`, "-F", "x"], (err, stdout) =>
+        writeFocusRecord(!err && stdout.trim().length > 0),
+      );
+    };
+    onCleanup(() => {
+      if (attnFlashTimer) clearTimeout(attnFlashTimer);
+      // Best-effort; the staleness guard is the real cleanup for a hard death.
+      execFile("tmux", ["set-option", "-s", "-u", APP_FOCUS_OPTION], () => {});
+    });
+
+    // ── CLICK-TO-JUMP CONSUME (M25.1, hosted only) ───────────────────────────
+    // A macOS banner click stamps @tmux_ide_app_jump on the host session (see
+    // notify.ts notifierExecuteCommand) and switches the user's client to the
+    // cockpit. The fleet poll consumes the stamp: unset it FIRST (never loop),
+    // then open that session's workspace — which also serves the detached
+    // case, where the switch-client had nobody to move but the next attach
+    // should land on the session that needed input.
+    const consumeJumpRequest = () => {
+      if (!HOSTED) return;
+      execFile(
+        "tmux",
+        ["show-option", "-t", APP_HOST_SESSION, "-qv", APP_JUMP_OPTION],
+        (err, stdout) => {
+          const target = err ? "" : stdout.trim();
+          if (!target) return;
+          execFile("tmux", ["set-option", "-t", APP_HOST_SESSION, "-u", APP_JUMP_OPTION], () => {
+            openWorkspace(target, dirForSession(target));
+          });
+        },
+      );
+    };
     const homeItems = createMemo<HomeItem[]>(() => buildHomeItems(projectsData(), recentFolders()));
     // First-run (M22.5): a truly empty fleet gets a centered welcome. It reserves
     // WELCOME_ROWS at the top of the content area, so the home row math shifts by
@@ -1727,17 +1831,20 @@ render(
       clearSelection();
       if (name === curTarget() && mirror) {
         setTab("terminal");
+        refreshFocusRecord();
         return;
       }
       setCurTarget(name);
       setTab("terminal");
       attach(name);
+      refreshFocusRecord();
     };
     /** ^g / F1 — show the HOME tab. The mirror is KEPT ALIVE (it keeps streaming
      *  in the background so a back-switch is instant); the session is untouched. */
     const goHome = () => {
       clearSelection();
       setTab("home");
+      refreshFocusRecord();
     };
 
     // ── FILES TAB (M18.4, uplifted M24.6) ────────────────────────────────────
@@ -2079,6 +2186,21 @@ render(
       });
     };
 
+    /** FRONT DOOR (M25.1): a session the app itself creates is WATCHED — the
+     *  adopted marker is stamped (inert re: chrome painting; none of adopt's
+     *  status-row/border options are set — see ../chrome/front-door.ts) and
+     *  the background updater is ensured up, probed the way adopt probes. So
+     *  pure app users get blocked/done notifications without ever running
+     *  `adopt`, with zero visible dock changes. Async execFile only (the
+     *  render-loop law); everything best-effort. */
+    const watchCreatedSession = (name: string) => {
+      execFile("tmux", adoptMarkArgv(name), () => {
+        execFile("tmux", updaterProbeArgv(), (probeErr) => {
+          if (probeErr) execFile("tmux", updaterSpawnArgv(), () => {});
+        });
+      });
+    };
+
     /** Create a detached session named `name` in `dir` and open it as the
      *  workspace (M21.9 — the home "launch project" / "new session" verbs).
      *  ASYNC execFile only (the render-loop law); an already-existing session
@@ -2093,6 +2215,7 @@ render(
         }
         if (!err) {
           execFile("tmux", ["set-environment", "-t", name, "TMUX_IDE", "1"], () => {});
+          watchCreatedSession(name);
           setStatusNote(`launched ${name}`);
         }
         fleetRefresh?.();
@@ -2296,6 +2419,7 @@ render(
           setStatusNote(err ? `couldn't start ${command}` : `started ${command} in ${name}`);
           if (!err) {
             execFile("tmux", ["set-environment", "-t", name, "TMUX_IDE", "1"], () => {});
+            watchCreatedSession(name);
             decorate(stdout);
           }
           setTimeout(() => fleetRefresh?.(), 300);
@@ -2306,7 +2430,13 @@ render(
       const args = spawnAgentArgs(placement as SpawnPlacement, target, dir, command);
       execFile("tmux", args, (err, stdout) => {
         setStatusNote(err ? `couldn't start ${command}` : `started ${command} in ${ctx.session}`);
-        if (!err) decorate(stdout);
+        if (!err) {
+          decorate(stdout);
+          // The agent's session must be watched for its blocked/done pings to
+          // exist — front-door sessions were stamped at create, but a spawn
+          // can target a pre-existing, never-adopted session too.
+          watchCreatedSession(target.session);
+        }
         setTimeout(() => fleetRefresh?.(), 300);
       });
     };
@@ -2647,6 +2777,7 @@ render(
       if (t === "diff") {
         if (diffEntries().length === 0) enterDiff(workspaceDir());
         else setTab("diff");
+        refreshFocusRecord(); // visibility changed — tell the notify path now
         return;
       }
       if (t === "files") {
@@ -2654,6 +2785,7 @@ render(
         else catchUpFilesIfStale();
       }
       setTab(t);
+      refreshFocusRecord(); // visibility changed — tell the notify path now
     };
 
     // ── COMMAND PALETTE (M18.4, mouse-complete M21.9) ───────────────────────
@@ -3355,6 +3487,10 @@ render(
       let fleetInFlight = false;
       const refreshFleet = () => {
         pruneDragOverrides();
+        // The M25.1 handshakes piggyback on the poll cadence: publish what the
+        // app is showing, and consume any banner-click jump request.
+        refreshFocusRecord();
+        consumeJumpRequest();
         if (fleetInFlight) return;
         fleetInFlight = true;
         execFile("node", [cliPath, "team", "--json"], { timeout: 10_000 }, (err, stdout) => {
@@ -3363,6 +3499,7 @@ render(
           try {
             const data = JSON.parse(stdout) as { projects?: FleetProject[] };
             setProjectsData(data.projects ?? []);
+            noteAttention(data.projects ?? []);
             // Reconcile a RESTORED context session to its project dir once the
             // fleet lands (persistence carries the name, not the dir). One-shot:
             // only while contextDir is still unresolved.
@@ -5624,7 +5761,10 @@ render(
         if (!e || !p) return null;
         // Budget: pane width minus the left inset (1) + padding (2), capped so a
         // wide pane's chip stays a chip (and clears the top-right scroll badge).
-        return chipLabel(e, STATUS_GLYPH[e.state], Date.now(), Math.min(p.width - 3, 28));
+        // A self-reported status text earns a wider cap (M25.4) — "● claude ·
+        // refactoring auth" needs the room; chipLabel still truncates to fit.
+        const cap = e.statusText ? 44 : 28;
+        return chipLabel(e, STATUS_GLYPH[e.state], Date.now(), Math.min(p.width - 3, cap));
       };
       return (
         <Show when={label()}>
@@ -5825,11 +5965,16 @@ render(
                     // Blocked is the attention state: bold, matching the
                     // statusline's grammar (`blocked` reads bold there too).
                     const attn = () => (a.state === "blocked" ? 1 : 0);
+                    // M25.1: a just-flipped hidden agent flashes its row for a
+                    // beat (the status-strip note's "look here" twin).
+                    const flashed = () => attnFlash().has(a.paneId);
                     return (
                       <box
                         flexDirection="row"
                         gap={1}
-                        backgroundColor={hovered() ? HOVER_BG : SIDEBAR_BG}
+                        backgroundColor={
+                          flashed() ? CHIP_ATTN_BG : hovered() ? HOVER_BG : SIDEBAR_BG
+                        }
                       >
                         <text fg={STATUS_COLOR[a.state]} attributes={attn()}>
                           {STATUS_GLYPH[a.state]}
@@ -5838,7 +5983,7 @@ render(
                           fg={a.state === "blocked" ? STATUS_COLOR.blocked : MUTED}
                           attributes={attn()}
                         >
-                          {agentRowLabel(a.kind, a.session, labelBudget())}
+                          {agentRowLabel(agentDisplayKind(a), a.session, labelBudget())}
                         </text>
                         <Show when={ageShown()}>
                           <box flexGrow={1} />

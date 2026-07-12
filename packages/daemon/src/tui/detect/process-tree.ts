@@ -53,6 +53,16 @@ export function parsePsOutput(raw: string): ProcEntry[] {
  * depth are guarded.
  */
 export function subtreeCommands(entries: ProcEntry[], rootPid: number, maxDepth = 6): string[] {
+  return subtreeEntries(entries, rootPid, maxDepth).map((entry) => entry.command);
+}
+
+/**
+ * The full {@link ProcEntry} rows of the subtree rooted at `rootPid`, in the
+ * same deepest-first order as {@link subtreeCommands}. Callers that need PIDs
+ * (e.g. the session-id capture probing a pane's agent process by open files)
+ * use this; the command-only view above stays the common path.
+ */
+export function subtreeEntries(entries: ProcEntry[], rootPid: number, maxDepth = 6): ProcEntry[] {
   const childrenByParent = new Map<number, ProcEntry[]>();
   const byPid = new Map<number, ProcEntry>();
   for (const entry of entries) {
@@ -65,7 +75,7 @@ export function subtreeCommands(entries: ProcEntry[], rootPid: number, maxDepth 
   const root = byPid.get(rootPid);
   if (!root) return [];
 
-  const commands: string[] = [];
+  const out: ProcEntry[] = [];
   const visited = new Set<number>();
 
   const walk = (pid: number, depth: number): void => {
@@ -76,11 +86,11 @@ export function subtreeCommands(entries: ProcEntry[], rootPid: number, maxDepth 
       walk(child.pid, depth + 1);
     }
     const self = byPid.get(pid);
-    if (self) commands.push(self.command);
+    if (self) out.push(self);
   };
 
   walk(rootPid, 0);
-  return commands;
+  return out;
 }
 
 /**

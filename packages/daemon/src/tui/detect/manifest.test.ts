@@ -135,6 +135,24 @@ describe("pickManifest", () => {
     expect(pickManifest("emacs", BUNDLED_MANIFESTS)).toBeUndefined();
     expect(pickManifest("", BUNDLED_MANIFESTS)).toBeUndefined();
   });
+
+  it("matches whole segments in either direction (M25.4)", () => {
+    // command contains a manifest token as a segment…
+    expect(pickManifest("grok-build", BUNDLED_MANIFESTS)?.id).toBe("grok");
+    expect(pickManifest(".kilo", BUNDLED_MANIFESTS)?.id).toBe("kilo");
+    expect(pickManifest("codex.exe", BUNDLED_MANIFESTS)?.id).toBe("codex");
+    // …or a manifest token contains the command as a segment.
+    expect(pickManifest("kiro", BUNDLED_MANIFESTS)?.id).toBe("kiro");
+    expect(pickManifest("cursor", BUNDLED_MANIFESTS)?.id).toBe("cursor");
+  });
+
+  it("does NOT raw-substring match — short tokens can't hijack unrelated commands (M25.4)", () => {
+    expect(pickManifest("pip", BUNDLED_MANIFESTS)).toBeUndefined(); // not `pi`
+    expect(pickManifest("pipx", BUNDLED_MANIFESTS)).toBeUndefined();
+    expect(pickManifest("api-server", BUNDLED_MANIFESTS)).toBeUndefined();
+    expect(pickManifest("vi", BUNDLED_MANIFESTS)).toBeUndefined(); // not `devin`
+    expect(pickManifest("dev", BUNDLED_MANIFESTS)).toBeUndefined();
+  });
 });
 
 describe("claude manifest against realistic snapshots", () => {

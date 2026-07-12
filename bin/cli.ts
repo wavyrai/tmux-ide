@@ -230,6 +230,7 @@ ${bold("Usage:")}
   ${cyan("tmux-ide inspect")} [--json]   ${dim("Show effective config and runtime state")}
   ${cyan("tmux-ide doctor")}             ${dim("Check system requirements")}
   ${cyan("tmux-ide update")} [--dry-run] ${dim("Update tmux-ide (detects dev checkout vs npm/pnpm/bun global)")}
+  ${cyan("tmux-ide update --manifests")} ${dim("Fetch the latest agent-detection manifest pack (your overrides still win)")}
   ${cyan("tmux-ide skill-sync")}         ${dim("Refresh the bundled Claude Code skill in ~/.claude/skills/tmux-ide")}
   ${cyan("tmux-ide validate")} [--json]  ${dim("Validate ide.yml")}
   ${cyan("tmux-ide detect")} [--json]    ${dim("Detect project stack")}
@@ -976,17 +977,35 @@ try {
     case "integration": {
       const sub = positionals[1];
       const agent = positionals[2];
-      // `status` and `offer` need no agent arg; install/uninstall are claude-only.
-      const needsClaude = sub === "install" || sub === "uninstall";
-      if (!sub || (needsClaude && agent !== "claude")) {
+      // `status` and `offer` need no agent arg; install/uninstall take a kind
+      // we ship an integration for (claude hooks, opencode plugin).
+      const needsAgent = sub === "install" || sub === "uninstall";
+      const installable = agent === "claude" || agent === "opencode";
+      if (!sub || (needsAgent && !installable)) {
         console.error(
-          "Usage: tmux-ide integration <install|uninstall|status|offer> [claude]\n" +
-            "  install    hook Claude Code lifecycle events into tmux pane state\n" +
-            "  uninstall  remove exactly the tmux-ide hook entries\n" +
-            "  status     list discovered agents + integration state\n" +
+          "Usage: tmux-ide integration <install|uninstall|status|offer> [claude|opencode]\n" +
+            "  install    claude: hook lifecycle events into tmux pane state\n" +
+            "             opencode: plugin that records the session id for restore --resume-agents\n" +
+            "  uninstall  remove exactly the tmux-ide entries for that agent\n" +
+            "  status     list discovered agents + integration/capture state\n" +
             "  offer      one-time first-adopt install prompt (used by the popup)",
         );
         process.exit(1);
+      }
+      if (needsAgent && agent === "opencode") {
+        const oc = await import("../packages/daemon/src/tui/integrations/opencode.ts");
+        if (sub === "install") {
+          const { pluginPath } = oc.installOpencodeIntegration();
+          console.log(`plugin: ${pluginPath}`);
+          console.log(
+            "installed — NEW opencode sessions record their session id into the pane\n" +
+              "(@agent_session_id), so `tmux-ide restore --resume-agents` can revive them.",
+          );
+        } else {
+          const { wasInstalled } = oc.uninstallOpencodeIntegration();
+          console.log(wasInstalled ? "uninstalled — plugin removed" : "was not installed");
+        }
+        break;
       }
       const mod = await import("../packages/daemon/src/tui/integrations/claude.ts");
       if (sub === "install") {
@@ -1003,6 +1022,57 @@ try {
           "installed — NEW Claude Code sessions now report working/blocked/done " +
             "authoritatively into the tmux-ide chrome.",
         );
+        // M25.1: this is the moment the user is wiring notifications, so offer
+        // the macOS banner channel here — one plain y/N key, same shape as the
+        // first-adopt offer. Skipped when already on, off-macOS, or when there
+        // is no TTY to ask (TMUX_IDE_NOTIFY_KEY forces an answer for tests).
+        const { getAppConfig, updateAppConfig } =
+          await import("../packages/daemon/src/lib/app-config.ts");
+        const { hasTerminalNotifier } = await import("../packages/daemon/src/tui/chrome/notify.ts");
+        const forcedKey = process.env.TMUX_IDE_NOTIFY_KEY;
+        const canAsk = forcedKey !== undefined || process.stdin.isTTY === true;
+        if (process.platform === "darwin" && !getAppConfig().notifications.macos && canAsk) {
+          const act = (key: string): void => {
+            if (key === "y" || key === "Y") {
+              updateAppConfig({ notifications: { macos: true } });
+              console.log(
+                "macOS notifications on — you'll get a banner when an agent blocks or finishes.",
+              );
+              if (!hasTerminalNotifier()) {
+                console.log(
+                  "tip: `brew install terminal-notifier` makes those banners clickable (a click jumps to the session).",
+                );
+              }
+            } else {
+              console.log(
+                "skipped — turn banners on anytime: notifications.macos in ~/.tmux-ide/config.json.",
+              );
+            }
+          };
+          process.stdout.write("\nAlso get a macOS notification when an agent needs you? [y/N] ");
+          if (forcedKey !== undefined) {
+            console.log(forcedKey);
+            act(forcedKey);
+          } else {
+            const key = await new Promise<string>((resolve) => {
+              try {
+                process.stdin.setRawMode?.(true);
+                process.stdin.resume();
+                process.stdin.once("data", (data) => resolve(data.toString()));
+              } catch {
+                resolve(""); // no readable stdin — treat as "no"
+              }
+            });
+            try {
+              process.stdin.setRawMode?.(false);
+              process.stdin.pause();
+            } catch {
+              // best-effort terminal restore
+            }
+            console.log(/^[ -~]$/.test(key) ? key : "");
+            act(key);
+          }
+        }
       } else if (sub === "uninstall") {
         const { wasInstalled } = mod.uninstallClaudeIntegration();
         console.log(wasInstalled ? "uninstalled — hook entries removed" : "was not installed");
@@ -1068,7 +1138,18 @@ try {
           else if (a.integration)
             state = a.installed ? "integration installed ✓" : "on PATH — integration not installed";
           else state = "detected (no integration)";
-          console.log(`  ${a.id.padEnd(10)} ${state}`);
+          // The resume-key story: how @agent_session_id (what `restore
+          // --resume-agents` revives from) gets captured for this kind.
+          let capture = "";
+          if (a.path !== null) {
+            if (a.capture === "probe") capture = " · session-id capture: automatic";
+            else if (a.capture !== null)
+              capture = a.captureActive
+                ? ` · session-id capture: ${a.capture} ✓`
+                : ` · session-id capture: ${a.capture} (install to enable)`;
+            else capture = " · session-id capture: none";
+          }
+          console.log(`  ${a.id.padEnd(10)} ${state}${capture}`);
         }
       }
       break;
@@ -1545,6 +1626,32 @@ try {
     }
 
     case "update": {
+      // `--manifests`: fetch the agent-detection manifest pack (versioned JSON,
+      // a GitHub release asset) into ~/.tmux-ide/agent-detection/pack/ — the
+      // loader hot-merges it under bundled<pack<user precedence. Schema-invalid
+      // packs are rejected loudly. See lib/manifest-pack.ts for the format.
+      if (values["manifests"] === true) {
+        const { updateManifestPack } = await import("../packages/daemon/src/lib/manifest-pack.ts");
+        try {
+          const r = await updateManifestPack({ log: (m) => console.error(m) });
+          if (json) {
+            console.log(JSON.stringify({ ok: true, ...r }, null, 2));
+          } else {
+            console.log(
+              `manifest pack ${r.packVersion} installed (${r.count} manifests): ${r.path}`,
+            );
+            console.log(
+              "your own agent-detection/*.json overrides still win — the pack merges beneath them",
+            );
+          }
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          if (json) console.log(JSON.stringify({ ok: false, error: message }, null, 2));
+          else console.error(`manifest pack NOT installed: ${message}`);
+          process.exitCode = 1;
+        }
+        break;
+      }
       // `--tui-binary`: download the per-platform TUI binary (the fallback that
       // lets an npm install with no bun run the full cockpit). Explicit opt-in —
       // never auto-fetched on install (it's ~70MB). See lib/tui-binary.ts.

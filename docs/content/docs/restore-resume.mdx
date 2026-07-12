@@ -1,6 +1,6 @@
 ---
 title: Restore & Resume
-description: Rebuild your whole fleet after a tmux server death — sessions, windows, layouts, cwds, titles, and Claude conversations
+description: Rebuild your whole fleet after a tmux server death — sessions, windows, layouts, cwds, titles, and agent conversations
 ---
 
 # Restore & resume
@@ -44,13 +44,12 @@ tmux-ide restore --dry-run
 tmux-ide restore --dry-run --json
 ```
 
-## Resume Claude conversations
+## Resume agent conversations
 
 The strongest form of recovery brings the **conversations** back, not just the
-panes. When the Claude Code integration is installed, each agent pane carries a
-recorded `@agent_session_id`. With `--resume-agents`, a rebuilt Claude pane that
-has one relaunches as `claude --resume <id>` — reviving the actual conversation
-instead of opening a fresh shell.
+panes. An agent pane that carries a recorded `@agent_session_id` relaunches,
+under `--resume-agents`, with its kind's native resume invocation — reviving
+the actual conversation instead of opening a fresh shell.
 
 ```bash
 tmux-ide restore --resume-agents
@@ -65,6 +64,38 @@ You can make this the default in `~/.tmux-ide/config.json`:
   }
 }
 ```
+
+### Support per agent
+
+Two things have to be true for a pane to resume: tmux-ide must know the kind's
+**resume invocation**, and the pane's **session id** must have been captured
+while the agent ran. Honest status of both:
+
+| Agent                     | Resume invocation            | Session-id capture                                                           |
+| ------------------------- | ---------------------------- | ---------------------------------------------------------------------------- |
+| Claude Code               | `claude --resume <id>`       | automatic once `tmux-ide integration install claude` is set up (hooks)       |
+| Codex CLI                 | `codex resume <id>`          | **automatic** — the updater reads the session's own rollout file             |
+| Cursor CLI                | `cursor-agent --resume <id>` | **automatic** — the updater reads the CLI's chat store                       |
+| opencode                  | `opencode --session <id>`    | automatic once `tmux-ide integration install opencode` is set up (plugin)    |
+| Copilot CLI               | `copilot --resume=<id>`      | not automatic (no stable capture surface yet) — self-report works, see below |
+| gemini, aider, goose, amp | —                            | no verified native resume invocation                                         |
+
+Check what's active on your machine:
+
+```bash
+tmux-ide integration status
+```
+
+Any agent not listed can still join: the agent contract is open. An agent that
+writes its own id resumes like the rest (given a known invocation for its kind):
+
+```bash
+tmux set-option -p @agent_session_id <its-session-id>
+```
+
+Capture never overwrites: an id stamped by an integration (or by the agent
+itself) is left alone. Codex/Cursor capture runs inside the chrome updater, so
+it is active whenever any session is adopted.
 
 ## Snapshot cadence
 

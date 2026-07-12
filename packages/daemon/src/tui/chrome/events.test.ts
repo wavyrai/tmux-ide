@@ -101,3 +101,19 @@ describe("shouldRotate", () => {
     expect(shouldRotate(EVENTS_MAX_BYTES + 1)).toBe(true);
   });
 });
+
+describe("eventsPath", () => {
+  it("honors TMUX_IDE_HOME (the state-home override), falling back to ~/.tmux-ide", async () => {
+    const { eventsPath } = await import("./events.ts");
+    const prev = process.env.TMUX_IDE_HOME;
+    try {
+      process.env.TMUX_IDE_HOME = "/tmp/zz-events-home";
+      expect(eventsPath()).toBe("/tmp/zz-events-home/events.jsonl");
+      delete process.env.TMUX_IDE_HOME;
+      expect(eventsPath().endsWith("/.tmux-ide/events.jsonl")).toBe(true);
+    } finally {
+      if (prev === undefined) delete process.env.TMUX_IDE_HOME;
+      else process.env.TMUX_IDE_HOME = prev;
+    }
+  });
+});

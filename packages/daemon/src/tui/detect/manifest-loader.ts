@@ -30,9 +30,20 @@ import { join } from "node:path";
 import type { AgentManifest, Rule, StateRules } from "./manifest.ts";
 import { BUNDLED_MANIFESTS } from "./manifests.ts";
 
-/** Directory scanned for user override manifests. */
+/** Directory scanned for user override manifests. Honors `TMUX_IDE_HOME` (the
+ *  state-home override every other `~/.tmux-ide` consumer respects) so tests
+ *  never read a real user's overrides. */
 export function overrideDir(): string {
-  return join(homedir(), ".tmux-ide", "agent-detection");
+  const home = process.env.TMUX_IDE_HOME ?? join(homedir(), ".tmux-ide");
+  return join(home, "agent-detection");
+}
+
+/** The fetched manifest-pack file (`tmux-ide update --manifests` installs it;
+ *  see `lib/manifest-pack.ts` for the format + publish contract). Lives in a
+ *  SUBDIRECTORY so {@link readOverrideManifests}'s top-level `*.json` scan
+ *  never sees it — that is what keeps user files ABOVE the pack. */
+export function packFile(dir = overrideDir()): string {
+  return join(dir, "pack", "manifest-pack.json");
 }
 
 /**
@@ -167,11 +178,49 @@ function warnOnce(path: string, reason: string): void {
 }
 
 /**
- * Load the full manifest set: bundled + user overrides, merged. Does io on
- * every call — prefer {@link getManifests} for hot paths.
+ * Read the installed manifest PACK (fetched by `tmux-ide update --manifests`),
+ * or `[]` when none is installed. Thin io — a malformed pack file is skipped
+ * with a one-time stderr warning, never a throw (the pack was schema-validated
+ * at install time; this guards a hand-edited/corrupted file). Each entry gets
+ * the same structural validation + normalization as a user override file.
+ */
+export function readPackManifests(dir = overrideDir()): AgentManifest[] {
+  const path = packFile(dir);
+  let raw: string;
+  try {
+    raw = readFileSync(path, "utf8");
+  } catch {
+    // No pack installed (the common case).
+    return [];
+  }
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    const manifests = (parsed as { manifests?: unknown })?.manifests;
+    if (!Array.isArray(manifests)) {
+      warnOnce(path, "not a manifest pack (missing manifests[])");
+      return [];
+    }
+    const valid: AgentManifest[] = [];
+    for (const entry of manifests) {
+      if (validateManifestShape(entry)) valid.push(normalizeStates(entry));
+      else warnOnce(path, "pack entry is not a valid AgentManifest — entry skipped");
+    }
+    return valid;
+  } catch (err) {
+    warnOnce(path, err instanceof Error ? err.message : String(err));
+    return [];
+  }
+}
+
+/**
+ * Load the full manifest set: bundled + pack + user overrides, merged in that
+ * PRECEDENCE order — a fetched pack refines the bundled set, and a user's own
+ * `agent-detection/*.json` file always beats both (it is merged LAST). Does io
+ * on every call — prefer {@link getManifests} for hot paths.
  */
 export function loadManifests(): AgentManifest[] {
-  return mergeManifests(BUNDLED_MANIFESTS, readOverrideManifests());
+  const withPack = mergeManifests(BUNDLED_MANIFESTS, readPackManifests());
+  return mergeManifests(withPack, readOverrideManifests());
 }
 
 /** Process-lifetime cache for the merged manifest set. */

@@ -5,9 +5,13 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   adoptedSessionsFrom,
-  enrichEvents,
-  pickRepresentativePane,
+  createUnreachableCounter,
+  diffPaneTransitions,
   runUpdaterTick,
+  updaterProbeArgv,
+  updaterSpawnArgv,
+  UPDATER_SESSION,
+  UPDATER_UNREACHABLE_EXIT_TICKS,
   updateSegment,
 } from "./updater.ts";
 import { buildStatusline } from "./statusline.ts";
@@ -34,6 +38,16 @@ const FULL_PREFS: NotificationPrefs = {
   onDone: true,
   quietHours: null,
 };
+
+/**
+ * PaneDetail factory — the chip/notify tests only care about identity + agent +
+ * status; the capture fields (pid/dir/sessionId) get inert defaults.
+ */
+function pd(
+  over: Pick<PaneDetail, "sessionName" | "paneId" | "agent" | "status"> & Partial<PaneDetail>,
+): PaneDetail {
+  return { windowIndex: 1, pid: 0, dir: "/", sessionId: null, ...over };
+}
 
 function project(name: string, overrides: Partial<TeamProject> = {}): TeamProject {
   return {
@@ -143,15 +157,22 @@ describe("runUpdaterTick", () => {
     expect(prevState.get("api")).toBe("working");
   });
 
-  it("dispatches a toast when a session transitions to blocked, naming the agent + location", () => {
+  it("dispatches a toast when a PANE transitions to blocked, naming the agent + location", () => {
     const toasted: ToastTarget[][] = [];
     const clients: AttachedClient[] = [{ client: "/dev/ttys000", session: "other" }];
     const lastNotified = new Map<string, number>();
+    const persistNotified = vi.fn();
     runUpdaterTick({
       listAdopted: () => ["web"],
-      // Emit a blocked claude pane so enrichment can name it.
+      // Emit a blocked claude pane — pane transitions drive the notification.
       computeProjects: (onPane) => {
-        onPane({ sessionName: "web", paneId: "%3", agent: "claude", status: "blocked" });
+        onPane({
+          sessionName: "web",
+          paneId: "%3",
+          agent: "claude",
+          status: "blocked",
+          windowIndex: 1,
+        });
         return [
           project("web", {
             status: "blocked",
@@ -171,6 +192,7 @@ describe("runUpdaterTick", () => {
       writeStatus: () => {},
       prevState: new Map<string, AgentStatus>([["web", "working"]]),
       appendEvents: () => {},
+      prevPaneState: new Map<string, AgentStatus>([["%3", "working"]]),
       listClients: () => clients,
       lastNotified,
       now: () => 1000,
@@ -178,37 +200,65 @@ describe("runUpdaterTick", () => {
       sendToasts: (t) => toasted.push(t),
       sendSystem: () => {},
       locatePane: (paneId) => (paneId === "%3" ? "web:1.2" : paneId),
+      persistNotified,
     });
 
     expect(toasted).toEqual([
       [{ client: "/dev/ttys000", message: "claude blocked · web:1.2 — needs input" }],
     ]);
-    // The debounce map was updated in place for the next tick.
-    expect(lastNotified.get("web:blocked")).toBe(1000);
+    // The debounce map was updated in place (per-pane key) AND persisted.
+    expect(lastNotified.get("%3:blocked")).toBe(1000);
+    expect(persistNotified).toHaveBeenCalledWith(lastNotified);
+  });
+
+  it("does not re-ping a pane the updater sees for the FIRST time (restart grace)", () => {
+    const sendToasts = vi.fn();
+    const sendSystem = vi.fn();
+    const persistNotified = vi.fn();
+    runUpdaterTick({
+      listAdopted: () => ["web"],
+      computeProjects: (onPane) => {
+        // Already blocked when the (re)started updater first looks.
+        onPane({
+          sessionName: "web",
+          paneId: "%3",
+          agent: "claude",
+          status: "blocked",
+          windowIndex: 0,
+        });
+        return [project("web")];
+      },
+      writeStatus: () => {},
+      prevPaneState: new Map(), // fresh start — no pane ever seen
+      listClients: () => [{ client: "c1", session: "other" }],
+      lastNotified: new Map(),
+      now: () => 1000,
+      prefs: FULL_PREFS,
+      sendToasts,
+      sendSystem,
+      persistNotified,
+    });
+    expect(sendToasts).toHaveBeenCalledWith([]);
+    expect(sendSystem).not.toHaveBeenCalled();
+    expect(persistNotified).not.toHaveBeenCalled();
   });
 
   it("dispatches no toast for a working transition (only blocked/done notify)", () => {
     const sendToasts = vi.fn();
     runUpdaterTick({
       listAdopted: () => ["web"],
-      computeProjects: () => [
-        project("web", {
+      computeProjects: (onPane) => {
+        onPane({
+          sessionName: "web",
+          paneId: "%3",
+          agent: "claude",
           status: "working",
-          sessions: [
-            {
-              name: "web",
-              attached: false,
-              windows: 1,
-              panes: 1,
-              status: "working",
-              windowList: [],
-            },
-          ],
-        }),
-      ],
+          windowIndex: 0,
+        });
+        return [project("web")];
+      },
       writeStatus: () => {},
-      prevState: new Map<string, AgentStatus>([["web", "idle"]]),
-      appendEvents: () => {},
+      prevPaneState: new Map<string, AgentStatus>([["%3", "idle"]]),
       listClients: () => [{ client: "c1", session: "other" }],
       lastNotified: new Map(),
       now: () => 1000,
@@ -232,8 +282,8 @@ describe("runUpdaterTick", () => {
     expect(appendEvents).not.toHaveBeenCalled();
   });
 
-  // Drive a single blocked transition through the notification path with the
-  // given prefs / clock, returning what each channel received.
+  // Drive a single blocked PANE transition through the notification path with
+  // the given prefs / clock, returning what each channel received.
   function runBlockedTick(opts: {
     prefs: NotificationPrefs;
     now?: number;
@@ -243,24 +293,18 @@ describe("runUpdaterTick", () => {
     const system: SystemNotification[] = [];
     runUpdaterTick({
       listAdopted: () => ["web"],
-      computeProjects: () => [
-        project("web", {
+      computeProjects: (onPane) => {
+        onPane({
+          sessionName: "web",
+          paneId: "%1",
+          agent: null,
           status: "blocked",
-          sessions: [
-            {
-              name: "web",
-              attached: false,
-              windows: 1,
-              panes: 1,
-              status: "blocked",
-              windowList: [],
-            },
-          ],
-        }),
-      ],
+          windowIndex: 0,
+        });
+        return [project("web")];
+      },
       writeStatus: () => {},
-      prevState: new Map<string, AgentStatus>([["web", "working"]]),
-      appendEvents: () => {},
+      prevPaneState: new Map<string, AgentStatus>([["%1", "working"]]),
       listClients: () => [{ client: "c1", session: "other" }],
       lastNotified: opts.lastNotified ?? new Map(),
       now: () => opts.now ?? 1000,
@@ -303,68 +347,105 @@ describe("runUpdaterTick", () => {
   });
 });
 
-describe("pickRepresentativePane", () => {
-  const panes: PaneDetail[] = [
-    { sessionName: "web", paneId: "%1", agent: null, status: "blocked" },
-    { sessionName: "web", paneId: "%2", agent: "claude", status: "blocked" },
-    { sessionName: "web", paneId: "%3", agent: "codex", status: "working" },
-    { sessionName: "api", paneId: "%4", agent: "claude", status: "blocked" },
-  ];
+describe("diffPaneTransitions", () => {
+  const pane = (
+    paneId: string,
+    status: AgentStatus,
+    agent: string | null = "claude",
+  ): PaneDetail => ({ sessionName: "web", paneId, agent, status, windowIndex: 1 });
 
-  it("prefers a matching pane that resolved to a real agent", () => {
-    expect(pickRepresentativePane("web", "blocked", panes)?.paneId).toBe("%2");
+  it("emits a located, enriched event for a pane's blocked/done transition", () => {
+    const prev = new Map<string, AgentStatus>([["%2", "working"]]);
+    const events = diffPaneTransitions(prev, [pane("%2", "blocked")], (id) =>
+      id === "%2" ? "web:1.2" : id,
+    );
+    expect(events).toEqual([
+      {
+        session: "web",
+        from: "working",
+        to: "blocked",
+        paneId: "%2",
+        windowIndex: 1,
+        agent: "claude",
+        location: "web:1.2",
+      },
+    ]);
+    // prev was mutated in place to the fresh pane state.
+    expect(prev.get("%2")).toBe("blocked");
   });
 
-  it("falls back to the first matching pane when none has an agent", () => {
-    const shells: PaneDetail[] = [
-      { sessionName: "web", paneId: "%9", agent: null, status: "blocked" },
-    ];
-    expect(pickRepresentativePane("web", "blocked", shells)?.paneId).toBe("%9");
+  it("emits first-sight events with from: null and does NOT locate them", () => {
+    const locate = vi.fn((id: string) => id);
+    const events = diffPaneTransitions(new Map(), [pane("%2", "blocked")], locate);
+    expect(events).toEqual([
+      {
+        session: "web",
+        from: null,
+        to: "blocked",
+        paneId: "%2",
+        windowIndex: 1,
+        agent: "claude",
+        location: "web",
+      },
+    ]);
+    expect(locate).not.toHaveBeenCalled();
   });
 
-  it("returns null when no pane matches the session + state", () => {
-    expect(pickRepresentativePane("web", "done", panes)).toBeNull();
-    expect(pickRepresentativePane("nope", "blocked", panes)).toBeNull();
+  it("does not locate a non-notifiable transition either (no tmux call for a non-ping)", () => {
+    const locate = vi.fn((id: string) => id);
+    const prev = new Map<string, AgentStatus>([["%2", "blocked"]]);
+    const events = diffPaneTransitions(prev, [pane("%2", "working")], locate);
+    expect(events).toHaveLength(1);
+    expect(events[0]!.location).toBe("web");
+    expect(locate).not.toHaveBeenCalled();
+  });
+
+  it("emits one event PER PANE — a second agent blocking in the same session is seen", () => {
+    const prev = new Map<string, AgentStatus>([
+      ["%1", "blocked"],
+      ["%2", "working"],
+    ]);
+    const events = diffPaneTransitions(prev, [pane("%1", "blocked"), pane("%2", "blocked")]);
+    expect(events.map((e) => e.paneId)).toEqual(["%2"]);
+  });
+
+  it("drops vanished panes from the state and emits nothing for them", () => {
+    const prev = new Map<string, AgentStatus>([["%9", "working"]]);
+    const events = diffPaneTransitions(prev, []);
+    expect(events).toEqual([]);
+    expect(prev.size).toBe(0);
   });
 });
 
-describe("enrichEvents", () => {
-  const panes: PaneDetail[] = [
-    { sessionName: "web", paneId: "%2", agent: "claude", status: "blocked" },
-  ];
-
-  it("attaches the resolved agent + located pane for a blocked/done event", () => {
-    const enriched = enrichEvents(
-      [{ session: "web", from: "working", to: "blocked" }],
-      panes,
-      (id) => (id === "%2" ? "web:1.2" : id),
-    );
-    expect(enriched).toEqual([
-      { session: "web", from: "working", to: "blocked", agent: "claude", location: "web:1.2" },
-    ]);
+describe("createUnreachableCounter", () => {
+  it("trips only after N consecutive misses and resets on any success", () => {
+    const shouldExit = createUnreachableCounter(3);
+    expect(shouldExit(false)).toBe(false);
+    expect(shouldExit(false)).toBe(false);
+    expect(shouldExit(true)).toBe(false); // reset
+    expect(shouldExit(false)).toBe(false);
+    expect(shouldExit(false)).toBe(false);
+    expect(shouldExit(false)).toBe(true); // 3 in a row
   });
 
-  it("leaves a non-notifiable event unlocated (location = session, agent null)", () => {
-    const locate = vi.fn();
-    const enriched = enrichEvents(
-      [{ session: "web", from: "blocked", to: "working" }],
-      panes,
-      locate,
-    );
-    expect(enriched).toEqual([
-      { session: "web", from: "blocked", to: "working", agent: null, location: "web" },
-    ]);
-    expect(locate).not.toHaveBeenCalled(); // no live tmux call for a non-ping
+  it("defaults to the exported threshold", () => {
+    const shouldExit = createUnreachableCounter();
+    for (let i = 0; i < UPDATER_UNREACHABLE_EXIT_TICKS - 1; i++) {
+      expect(shouldExit(false)).toBe(false);
+    }
+    expect(shouldExit(false)).toBe(true);
   });
+});
 
-  it("falls back to the session name when no representative pane is found", () => {
-    const enriched = enrichEvents(
-      [{ session: "ghost", from: "working", to: "done" }],
-      panes,
-      (id) => id,
-    );
-    expect(enriched).toEqual([
-      { session: "ghost", from: "working", to: "done", agent: null, location: "ghost" },
+describe("updater argv builders (the app's async front door)", () => {
+  it("probes with an exact-match has-session and spawns the loop detached", () => {
+    expect(updaterProbeArgv()).toEqual(["has-session", "-t", `=${UPDATER_SESSION}`]);
+    expect(updaterSpawnArgv()).toEqual([
+      "new-session",
+      "-d",
+      "-s",
+      UPDATER_SESSION,
+      "exec tmux-ide chrome-updater",
     ]);
   });
 });
@@ -383,8 +464,8 @@ describe("runUpdaterTick — pane chips", () => {
     runUpdaterTick({
       listAdopted: () => ["web"],
       computeProjects: withPanes([
-        { sessionName: "web", paneId: "%1", agent: "claude", status: "working" },
-        { sessionName: "web", paneId: "%2", agent: null, status: "idle" },
+        { sessionName: "web", paneId: "%1", agent: "claude", status: "working", windowIndex: 0 },
+        { sessionName: "web", paneId: "%2", agent: null, status: "idle", windowIndex: 0 },
       ]),
       writeStatus: () => {},
       writeChip: (paneId, value) => writes.push([paneId, value]),
@@ -401,8 +482,8 @@ describe("runUpdaterTick — pane chips", () => {
     runUpdaterTick({
       listAdopted: () => ["web"],
       computeProjects: withPanes([
-        { sessionName: "web", paneId: "%1", agent: "claude", status: "working" },
-        { sessionName: "other", paneId: "%9", agent: "codex", status: "blocked" },
+        { sessionName: "web", paneId: "%1", agent: "claude", status: "working", windowIndex: 0 },
+        { sessionName: "other", paneId: "%9", agent: "codex", status: "blocked", windowIndex: 0 },
       ]),
       writeStatus: () => {},
       writeChip,
@@ -418,7 +499,13 @@ describe("runUpdaterTick — pane chips", () => {
     const deps = {
       listAdopted: () => ["web"],
       computeProjects: withPanes([
-        { sessionName: "web", paneId: "%1", agent: "claude", status: "working" as AgentStatus },
+        {
+          sessionName: "web",
+          paneId: "%1",
+          agent: "claude",
+          status: "working" as AgentStatus,
+          windowIndex: 0,
+        },
       ]),
       writeStatus: () => {},
       writeChip,
@@ -436,7 +523,7 @@ describe("runUpdaterTick — pane chips", () => {
     runUpdaterTick({
       listAdopted: () => ["web"],
       computeProjects: withPanes([
-        { sessionName: "web", paneId: "%1", agent: "claude", status: "working" },
+        { sessionName: "web", paneId: "%1", agent: "claude", status: "working", windowIndex: 0 },
       ]),
       writeStatus: () => {},
       writeChip,
@@ -445,7 +532,7 @@ describe("runUpdaterTick — pane chips", () => {
     runUpdaterTick({
       listAdopted: () => ["web"],
       computeProjects: withPanes([
-        { sessionName: "web", paneId: "%1", agent: "claude", status: "blocked" },
+        { sessionName: "web", paneId: "%1", agent: "claude", status: "blocked", windowIndex: 0 },
       ]),
       writeStatus: () => {},
       writeChip,
@@ -461,7 +548,7 @@ describe("runUpdaterTick — pane chips", () => {
     runUpdaterTick({
       listAdopted: () => ["web"],
       computeProjects: withPanes([
-        { sessionName: "web", paneId: "%1", agent: "claude", status: "working" },
+        { sessionName: "web", paneId: "%1", agent: "claude", status: "working", windowIndex: 0 },
       ]),
       writeStatus: (s) => writes.push(s),
     });
@@ -558,5 +645,35 @@ describe("runUpdaterTick — update surface", () => {
       prefs: { toast: false, macos: false },
     });
     expect(toasted).toHaveLength(0);
+  });
+});
+
+describe("runUpdaterTick — session-id capture", () => {
+  it("forwards this tick's pane details to captureSessionIds", () => {
+    const seen: PaneDetail[][] = [];
+    const panes = [
+      pd({ sessionName: "web", paneId: "%1", agent: "codex", status: "working" }),
+      pd({ sessionName: "web", paneId: "%2", agent: null, status: "idle" }),
+    ];
+    runUpdaterTick({
+      listAdopted: () => ["web"],
+      computeProjects: (onPane) => {
+        for (const pane of panes) onPane(pane);
+        return [project("web")];
+      },
+      writeStatus: () => {},
+      captureSessionIds: (p) => seen.push(p),
+    });
+    expect(seen).toEqual([panes]);
+  });
+
+  it("is optional — a tick without the capture dep still runs", () => {
+    expect(() =>
+      runUpdaterTick({
+        listAdopted: () => ["web"],
+        computeProjects: () => [project("web")],
+        writeStatus: () => {},
+      }),
+    ).not.toThrow();
   });
 });
