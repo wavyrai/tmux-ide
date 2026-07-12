@@ -175,10 +175,31 @@ export function explain(
   return { state: winner ? winner.state : null, checked };
 }
 
+/** Escape a string for literal use inside a RegExp source. */
+function escapeRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * Does `haystack` contain `needle` as a WHOLE alphanumeric segment (delimited
+ * by start/end or any non-alphanumeric)? `grok-build` contains the segment
+ * `grok`; `pip` does NOT contain the segment `pi`. This is what keeps short
+ * manifest command tokens (pi, devin, kimi — M25.4) from substring-matching
+ * unrelated commands (`pip`, `vi`, `api-server`).
+ */
+function containsSegment(haystack: string, needle: string): boolean {
+  if (!haystack.includes(needle)) return false;
+  return new RegExp(`(^|[^a-z0-9])${escapeRegex(needle)}([^a-z0-9]|$)`).test(haystack);
+}
+
 /**
  * Pick the manifest whose `commands` best match a pane's current command.
- * Prefers an exact (case-insensitive) match, then a substring match in either
- * direction. Returns undefined when nothing applies.
+ * Prefers an exact (case-insensitive) match, then a SEGMENT match in either
+ * direction — the command contains a manifest token as a whole segment
+ * (`grok-build` → `grok`, `.kilo` → `kilo`) or vice versa (`cursor` →
+ * `cursor-agent`). Raw substring matching was retired in M25.4: it made every
+ * short token a false-positive machine (`pi` ⊂ `pip`, `vi` ⊂ `devin`).
+ * Returns undefined when nothing applies.
  */
 export function pickManifest(
   command: string,
@@ -193,7 +214,7 @@ export function pickManifest(
   return manifests.find((m) =>
     m.commands.some((c) => {
       const name = c.toLowerCase();
-      return cmd.includes(name) || name.includes(cmd);
+      return containsSegment(cmd, name) || containsSegment(name, cmd);
     }),
   );
 }

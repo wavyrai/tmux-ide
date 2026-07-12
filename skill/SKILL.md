@@ -38,6 +38,22 @@ tmux set-option -p @agent_session_id "<id>"   # your own session id — powers r
 tmux set-option -p @agent_hint claude          # force which agent manifest Layer 2 uses for this pane
 ```
 
+**Display metadata** — say WHAT you're doing and WHO you are, right in the
+fleet UI. Two more optional pane-local options:
+
+```bash
+tmux set-option -p @agent_status_text "refactoring auth"  # one-liner, ≤32 chars — shows in the pane chip ("● claude · refactoring auth")
+tmux set-option -p @agent_display_name "reviewer"          # your name — replaces the detected kind in sidebar rows & chips
+```
+
+Plain text only (control characters are stripped, tabs break the line for your
+pane — don't stamp them; anything past 32 chars is ellipsized). Both surface in
+`tmux-ide team --json` (per-pane `statusText` / `displayName`), the unified
+app's pane chips, and the sidebar agent rows. They follow the SAME staleness
+rules as `@agent_state`: they only show while your state stamp is fresh, so
+re-stamp `@agent_state` alongside — update the text whenever your focus
+changes, and it disappears with a stale/cleared state instead of lying.
+
 **Claude Code users get this for free** — `tmux-ide integration install claude`
 writes a POSIX hook into `~/.claude/settings.json` that stamps `@agent_state` on
 every lifecycle event (UserPromptSubmit/PreToolUse → working, Notification →

@@ -49,6 +49,40 @@ export function parseAuthority(raw: string | undefined, nowSec: number): AgentSt
   return state as AgentStatus;
 }
 
+/** Display-metadata budget — `@agent_status_text` / `@agent_display_name`
+ *  values are clamped to this many characters (ellipsis included). */
+export const AGENT_TEXT_MAX = 32;
+
+/**
+ * Sanitize a self-reported display-metadata pane option
+ * (`@agent_status_text` / `@agent_display_name`) — PURE, never throws.
+ *
+ * ANSI escape sequences are stripped, remaining control characters become
+ * spaces, runs of whitespace collapse to one space, and the result is clamped
+ * to {@link AGENT_TEXT_MAX} characters (with a trailing ellipsis when cut).
+ * Returns undefined for an absent or effectively-empty value, so callers can
+ * spread the field additively (`...(text ? { statusText: text } : {})`).
+ *
+ * Freshness is NOT judged here: the metadata options carry no epoch of their
+ * own — they ride the pane's `@agent_state` stamp, and the caller surfaces
+ * them only while {@link parseAuthority} reports that stamp fresh.
+ */
+export function sanitizeAgentText(raw: string | undefined): string | undefined {
+  if (!raw) return undefined;
+  const cleaned = raw
+    // CSI escape sequences (colors, cursor moves) — drop entirely.
+    // eslint-disable-next-line no-control-regex
+    .replace(/\x1b\[[0-9;?]*[ -/]*[\x40-\x7e]/g, "")
+    // Any remaining C0 control chars (incl. bare ESC, tabs, newlines) + DEL.
+    // eslint-disable-next-line no-control-regex
+    .replace(/[\x00-\x1f\x7f]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (cleaned.length === 0) return undefined;
+  if (cleaned.length <= AGENT_TEXT_MAX) return cleaned;
+  return cleaned.slice(0, AGENT_TEXT_MAX - 1) + "…";
+}
+
 /**
  * Extract the epoch STAMP from an `@agent_state` value (`"<state>:<epoch>"`) —
  * the "since" timestamp of the reported state. PURE — returns the epoch, or

@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   sortAgentRows,
+  agentDisplayKind,
   agentRowLabel,
   agentsHeaderLabel,
   agentAgeLabel,
@@ -57,6 +58,13 @@ describe("sortAgentRows", () => {
 
   it("handles an empty list", () => {
     expect(sortAgentRows([])).toEqual([]);
+  });
+});
+
+describe("agentDisplayKind", () => {
+  it("prefers a stamped display name over the detected kind", () => {
+    expect(agentDisplayKind(mk({ displayName: "reviewer" }))).toBe("reviewer");
+    expect(agentDisplayKind(mk({}))).toBe("claude");
   });
 });
 

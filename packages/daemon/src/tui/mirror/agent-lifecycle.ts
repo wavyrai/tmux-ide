@@ -23,7 +23,7 @@
  */
 import type { AgentManifest } from "../detect/manifest.ts";
 import type { DialogRowAction, DialogSelectItem } from "./dialog-model.ts";
-import { agentAgeLabel, type AgentRowInput } from "./agent-rows.ts";
+import { agentAgeLabel, agentDisplayKind, type AgentRowInput } from "./agent-rows.ts";
 
 /** The "Custom command…" picker row — resolves to a DialogPrompt, not a kind. */
 export const CUSTOM_KIND_ID = "custom-command";
@@ -51,6 +51,20 @@ export const AGENT_LAUNCH_COMMANDS: Record<string, string> = {
   cursor: "cursor-agent",
   goose: "goose",
   amp: "amp",
+  // M25.4 breadth — real installable CLIs only (spawn-picker honesty), each
+  // verified against an installer/package: devin (curl cli.devin.ai), kimi
+  // (curl code.kimi.com), pi (npm @mariozechner/pi-coding-agent), grok (npm
+  // @vibe-kit/grok-cli), kiro (curl cli.kiro.dev → kiro-cli), cline (npm
+  // cline), droid (verified live — Factory CLI, own process), kilo (npm
+  // @kilocode/cli; the manifest matches its ".kilo" platform binary too).
+  devin: "devin",
+  kimi: "kimi",
+  pi: "pi",
+  grok: "grok",
+  kiro: "kiro-cli",
+  cline: "cline",
+  droid: "droid",
+  kilo: "kilo",
 };
 
 /**
@@ -326,7 +340,9 @@ export function teamItems(agents: readonly AgentRowInput[], nowSec: number): Dia
   agents.forEach((a, i) => {
     items.push({
       id: teamAgentId(i),
-      label: `${a.kind} · ${a.session}`,
+      // Display-name precedence (M25.4): the Team dialog names an agent the
+      // same way the sidebar rows do.
+      label: `${agentDisplayKind(a)} · ${a.session}`,
       detail: agentAgeLabel(a.state, a.since, nowSec) ?? a.state,
     });
   });

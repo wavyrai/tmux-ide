@@ -371,6 +371,7 @@ import {
   agentRowLabel,
   agentsHeaderLabel,
   agentAgeLabel,
+  agentDisplayKind,
   sidebarHit,
   AGENTS_ADD_CHIP,
   AGENTS_EMPTY_LINE,
@@ -5760,7 +5761,10 @@ render(
         if (!e || !p) return null;
         // Budget: pane width minus the left inset (1) + padding (2), capped so a
         // wide pane's chip stays a chip (and clears the top-right scroll badge).
-        return chipLabel(e, STATUS_GLYPH[e.state], Date.now(), Math.min(p.width - 3, 28));
+        // A self-reported status text earns a wider cap (M25.4) — "● claude ·
+        // refactoring auth" needs the room; chipLabel still truncates to fit.
+        const cap = e.statusText ? 44 : 28;
+        return chipLabel(e, STATUS_GLYPH[e.state], Date.now(), Math.min(p.width - 3, cap));
       };
       return (
         <Show when={label()}>
@@ -5979,7 +5983,7 @@ render(
                           fg={a.state === "blocked" ? STATUS_COLOR.blocked : MUTED}
                           attributes={attn()}
                         >
-                          {agentRowLabel(a.kind, a.session, labelBudget())}
+                          {agentRowLabel(agentDisplayKind(a), a.session, labelBudget())}
                         </text>
                         <Show when={ageShown()}>
                           <box flexGrow={1} />

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  agentMetadataFor,
   buildAgentEntry,
   excludeSidebarPanes,
   isListableSession,
@@ -166,6 +167,55 @@ describe("buildAgentEntry", () => {
       since: null,
     });
     expect(entry?.since).toBeNull();
+  });
+
+  it("threads display metadata additively — absent fields stay ABSENT, not undefined-valued", () => {
+    const withMeta = buildAgentEntry({
+      sessionName: "web",
+      pane,
+      manifest: claude,
+      state: "working",
+      since: 1700000000,
+      statusText: "refactoring auth",
+      displayName: "reviewer",
+    })!;
+    expect(withMeta.statusText).toBe("refactoring auth");
+    expect(withMeta.displayName).toBe("reviewer");
+
+    const without = buildAgentEntry({
+      sessionName: "web",
+      pane,
+      manifest: claude,
+      state: "working",
+      since: null,
+    })!;
+    expect("statusText" in without).toBe(false);
+    expect("displayName" in without).toBe(false);
+  });
+});
+
+describe("agentMetadataFor (staleness gate, M25.4)", () => {
+  const pane = { statusTextRaw: "refactoring auth", displayNameRaw: "reviewer" };
+
+  it("surfaces sanitized metadata while the authority stamp is fresh", () => {
+    expect(agentMetadataFor(pane, true)).toEqual({
+      statusText: "refactoring auth",
+      displayName: "reviewer",
+    });
+  });
+
+  it("drops ALL metadata when the authority stamp is stale/absent — same rules as @agent_state", () => {
+    expect(agentMetadataFor(pane, false)).toEqual({});
+  });
+
+  it("sanitizes: control chars stripped, overlong text ellipsized, empty → omitted", () => {
+    const meta = agentMetadataFor(
+      { statusTextRaw: "a\tb " + "x".repeat(60), displayNameRaw: "  " },
+      true,
+    );
+    expect(meta.displayName).toBeUndefined();
+    expect(meta.statusText?.length).toBe(32);
+    expect(meta.statusText?.startsWith("a b x")).toBe(true);
   });
 });
 

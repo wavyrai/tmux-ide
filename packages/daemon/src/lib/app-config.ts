@@ -110,6 +110,14 @@ export interface AppRestore {
 /** Update-check toggles (consumed later by the update-flow card). */
 export interface AppUpdates {
   check: boolean;
+  /**
+   * Whether the daily update check ALSO refreshes the remote agent-detection
+   * manifest pack into `~/.tmux-ide/agent-detection/pack/` (M25.4). Default
+   * FALSE — auto-installing detection rules is opt-in; `tmux-ide update
+   * --manifests` always works explicitly. Requires `check: true` (the refresh
+   * rides the same daily throttle — no timer of its own).
+   */
+  manifests: boolean;
 }
 
 /** First-run welcome toggles. */
@@ -238,7 +246,7 @@ export const DEFAULT_APP_CONFIG: AppConfig = {
   updater: { tickMs: 2000, snapshotEvery: 15 },
   notifications: { toast: true, macos: false },
   restore: { resumeAgents: false },
-  updates: { check: true },
+  updates: { check: true, manifests: false },
   welcome: { show: true },
   integrations: { offer: true },
   worktrees: { dir: "" },
@@ -350,7 +358,10 @@ export function parseAppConfig(input: unknown): AppConfig {
       macos: pickBool(notifications.macos, D.notifications.macos),
     },
     restore: { resumeAgents: pickBool(restore.resumeAgents, D.restore.resumeAgents) },
-    updates: { check: pickBool(updates.check, D.updates.check) },
+    updates: {
+      check: pickBool(updates.check, D.updates.check),
+      manifests: pickBool(updates.manifests, D.updates.manifests),
+    },
     welcome: { show: pickBool(welcome.show, D.welcome.show) },
     integrations: { offer: pickBool(integrations.offer, D.integrations.offer) },
     worktrees: { dir: pickString(worktrees.dir, D.worktrees.dir) },
