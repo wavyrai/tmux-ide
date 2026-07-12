@@ -149,7 +149,9 @@ Two things change in this mode:
   you came from. To actually stop the cockpit, press **F5** and run **Quit**.
 - If two terminals of different sizes are attached at once, tmux sizes the
   cockpit to the one you used last (the smaller view wins while you're on it —
-  standard tmux behavior).
+  standard tmux behavior). The cockpit follows the terminal you're actually
+  using: attach from anywhere — or just come back to a terminal you left
+  attached — and it resizes to you.
 
 Set `app.detachable: true` in `~/.tmux-ide/config.json` to make plain
 `tmux-ide app` (and the `app.frontDoor` entry) always work this way.

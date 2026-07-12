@@ -5257,20 +5257,28 @@ function hostCreateArgv(opts) {
   return ["new-session", "-d", "-s", APP_HOST_SESSION, "-c", opts.cwd, opts.commandLine];
 }
 function hostSetupArgvs() {
+  const heal = `set-option -w -t ${APP_HOST_SESSION}: window-size latest`;
   return [
     ["set-option", "-t", APP_HOST_SESSION, "status", "off"],
-    ["set-option", "-w", "-t", `${APP_HOST_SESSION}:`, "window-size", "latest"]
+    ["set-option", "-w", "-t", `${APP_HOST_SESSION}:`, "window-size", "latest"],
+    ["set-option", "-s", "focus-events", "on"],
+    ...HOST_RESIZE_HOOKS.map((hook) => ["set-hook", "-t", APP_HOST_SESSION, hook, heal])
   ];
 }
 function hostAttachArgv(insideTmux) {
   return insideTmux ? ["switch-client", "-t", `=${APP_HOST_SESSION}`] : ["attach-session", "-t", `=${APP_HOST_SESSION}`];
 }
-var APP_HOST_SESSION, HOSTED_ENV;
+var APP_HOST_SESSION, HOSTED_ENV, HOST_RESIZE_HOOKS;
 var init_hosted = __esm({
   "packages/daemon/src/tui/mirror/hosted.ts"() {
     "use strict";
     APP_HOST_SESSION = "_tmux-ide-app";
     HOSTED_ENV = "TMUX_IDE_HOSTED";
+    HOST_RESIZE_HOOKS = [
+      "client-attached",
+      "client-focus-in",
+      "client-session-changed"
+    ];
   }
 });
 
@@ -15517,8 +15525,8 @@ Install bun (https://bun.sh) \u2014 the TUI surfaces run on it. Sources ship wit
       })
     );
     execFileSync15("tmux", hostCreateArgv({ cwd, commandLine }), { stdio: "ignore" });
-    for (const args of hostSetupArgvs()) execFileSync15("tmux", args, { stdio: "ignore" });
   }
+  for (const args of hostSetupArgvs()) execFileSync15("tmux", args, { stdio: "ignore" });
   execFileSync15("tmux", hostAttachArgv(Boolean(process.env.TMUX)), { stdio: "inherit" });
 }
 async function printFleetJson() {

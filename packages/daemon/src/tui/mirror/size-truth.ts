@@ -10,6 +10,18 @@
  * mismatch from the pane layout, center the grid inside the canvas, and format
  * the quiet honest hint. No tmux, no render loop — unit-tested in isolation; the
  * app reads the pane geometry and the pinned canvas size and wires the rest.
+ *
+ * KNOWN GAP, measured (M25.5, tmux 3.7b): when TWO app processes mirror the
+ * same session (one per terminal — the non-hosted double-open), the later
+ * control client's boot pin wins `window-size latest`, and the other app can
+ * NEVER re-win it by interaction — the keys/mouse it forwards travel as
+ * control-client `send-keys` commands, which do not update tmux's
+ * latest-client
+ * bookkeeping (measured: local keystroke and wheel left the window at the
+ * other app's pin). The hint + the palette's "Resize to fit" verb are the
+ * designed escape; the structural fix is the hosted cockpit (`--detachable`),
+ * where one app process serves every terminal and REAL clients attach to the
+ * host session, whose native latest handling re-adopts on attach/focus/detach.
  */
 
 export interface Size {

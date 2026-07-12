@@ -371,8 +371,13 @@ function launchHostedApp(scriptPath: string, appArgs: string[]): void {
       }),
     );
     execFileSync("tmux", hostCreateArgv({ cwd, commandLine }), { stdio: "ignore" });
-    for (const args of hostSetupArgvs()) execFileSync("tmux", args, { stdio: "ignore" });
   }
+  // Setup runs on EVERY ensure, not just create (M25.5): the list is
+  // idempotent, so this upgrades a host created by an older tmux-ide (no
+  // resize hooks yet) and re-asserts `window-size latest` on a host a stray
+  // `resize-window` flipped to manual — the measured way a cockpit gets stuck
+  // at a departed client's size.
+  for (const args of hostSetupArgvs()) execFileSync("tmux", args, { stdio: "ignore" });
   execFileSync("tmux", hostAttachArgv(Boolean(process.env.TMUX)), { stdio: "inherit" });
 }
 
