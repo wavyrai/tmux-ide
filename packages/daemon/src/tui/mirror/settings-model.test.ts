@@ -1,13 +1,19 @@
-import { describe, expect, it } from "vitest";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
 import {
   DEFAULT_APP_CONFIG,
   DEFAULT_KEYS as CHROME_DEFAULT_KEYS,
+  _resetForTests,
   parseAppConfig,
   mergeConfigPatch,
+  updateAppConfig,
 } from "../../lib/app-config.ts";
 import {
   DEFAULT_NOTIFICATION_PREFS,
   parseNotificationPrefs,
+  readNotificationPrefs,
   type NotificationPrefs,
 } from "../chrome/notify.ts";
 import { prefixKeyBinds } from "../chrome/statusline.ts";
@@ -15,6 +21,8 @@ import {
   PALETTE_KEYCAPS,
   SETTINGS_PALETTE_COMMANDS,
   THEME_PRESETS,
+  delaySecondsPatch,
+  delaySummary,
   keybindingItems,
   notificationItems,
   notificationTogglePatch,
@@ -25,6 +33,10 @@ import {
   quietHoursPatch,
   quietHoursSummary,
   resetSettingsPatch,
+  soundItems,
+  soundPatch,
+  soundSummary,
+  validateDelaySeconds,
   restoreItems,
   restorePatch,
   settingsRootItems,
@@ -80,17 +92,49 @@ describe("notifications", () => {
       "enabled",
       "toast",
       "macos",
+      "terminal",
       "onBlocked",
       "onDone",
+      "sound",
+      "delaySeconds",
       "quietHours",
     ]);
     expect(rows.find((r) => r.id === "macos")?.detail).toBe("off");
+    expect(rows.find((r) => r.id === "terminal")?.detail).toBe("on");
+    expect(rows.find((r) => r.id === "sound")?.detail).toBe("when blocked");
+    expect(rows.find((r) => r.id === "delaySeconds")?.detail).toBe("2 s");
     expect(rows.find((r) => r.id === "quietHours")?.detail).toBe("off");
   });
   it("toggle patches flip the current value and survive the raw round-trip", () => {
     expect(notificationTogglePatch("macos", PREFS)).toEqual({ notifications: { macos: true } });
+    expect(notificationTogglePatch("terminal", PREFS)).toEqual({
+      notifications: { terminal: false },
+    });
     const raw = mergeConfigPatch({}, notificationTogglePatch("onBlocked", PREFS));
     expect(parseNotificationPrefs(raw).onBlocked).toBe(false);
+  });
+  it("sound: summary words, chooser marking, patch round-trip", () => {
+    expect(soundSummary(PREFS)).toBe("when blocked");
+    expect(soundSummary({ ...PREFS, sound: "all" })).toBe("always");
+    expect(soundSummary({ ...PREFS, sound: "none" })).toBe("off");
+    expect(soundItems(PREFS).find((i) => i.current)?.id).toBe("blocked");
+    expect(soundItems({ ...PREFS, sound: "none" }).find((i) => i.current)?.id).toBe("none");
+    const raw = mergeConfigPatch({}, soundPatch("all"));
+    expect(parseNotificationPrefs(raw).sound).toBe("all");
+  });
+  it("delay: summary, 0–60 whole-second validation, patch round-trip (0 = immediate)", () => {
+    expect(delaySummary(PREFS)).toBe("2 s");
+    expect(delaySummary({ ...PREFS, delaySeconds: 0 })).toBe("immediately");
+    expect(validateDelaySeconds("0")).toBeNull();
+    expect(validateDelaySeconds(" 60 ")).toBeNull();
+    expect(validateDelaySeconds("61")).toContain("between 0 and 60");
+    expect(validateDelaySeconds("2.5")).toContain("whole number");
+    expect(validateDelaySeconds("soon")).toContain("whole number");
+    const raw = mergeConfigPatch({}, delaySecondsPatch(" 5 "));
+    expect(parseNotificationPrefs(raw).delaySeconds).toBe(5);
+    expect(parseNotificationPrefs(mergeConfigPatch(raw, delaySecondsPatch("0"))).delaySeconds).toBe(
+      0,
+    );
   });
   it("quiet hours: summary, chooser marking, HH:MM validation, on/off patches", () => {
     const withWindow: NotificationPrefs = {
@@ -234,5 +278,35 @@ describe("umbrella + reset", () => {
     expect(merged).toEqual({ keys: { popup: "M-o" }, somethingUserAdded: { keep: "me" } });
     expect(parseAppConfig(merged).theme.accent).toBe(CFG.theme.accent);
     expect(parseAppConfig(merged).keys.popup).toBe("M-o");
+  });
+});
+
+describe("M25.2 channel fields round-trip through the real config file", () => {
+  let dir: string | null = null;
+  const savedEnv = process.env.TMUX_IDE_CONFIG;
+
+  afterEach(() => {
+    if (dir) rmSync(dir, { recursive: true, force: true });
+    if (savedEnv === undefined) delete process.env.TMUX_IDE_CONFIG;
+    else process.env.TMUX_IDE_CONFIG = savedEnv;
+    _resetForTests();
+  });
+
+  it("the dialogs' patches land in the file and read back through the live prefs path", () => {
+    dir = mkdtempSync(join(tmpdir(), "settings-m252-"));
+    process.env.TMUX_IDE_CONFIG = join(dir, "config.json");
+    _resetForTests();
+    updateAppConfig(notificationTogglePatch("terminal", DEFAULT_NOTIFICATION_PREFS));
+    updateAppConfig(soundPatch("all"));
+    updateAppConfig(delaySecondsPatch("7"));
+    const prefs = readNotificationPrefs();
+    expect(prefs.terminal).toBe(false);
+    expect(prefs.sound).toBe("all");
+    expect(prefs.delaySeconds).toBe(7);
+    // and the settings rows render the persisted values
+    const rows = notificationItems(prefs);
+    expect(rows.find((r) => r.id === "terminal")?.detail).toBe("off");
+    expect(rows.find((r) => r.id === "sound")?.detail).toBe("always");
+    expect(rows.find((r) => r.id === "delaySeconds")?.detail).toBe("7 s");
   });
 });

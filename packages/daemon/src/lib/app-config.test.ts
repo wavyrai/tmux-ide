@@ -153,10 +153,27 @@ describe("parseAppConfig — mistyped fields fall back to default", () => {
       DEFAULT_APP_CONFIG.restore,
     );
     expect(parseAppConfig({ updates: { check: 0 } }).updates).toEqual(DEFAULT_APP_CONFIG.updates);
-    // valid booleans apply
+    // valid values apply (unnamed fields keep their defaults)
     expect(parseAppConfig({ notifications: { toast: false, macos: true } }).notifications).toEqual({
+      ...DEFAULT_APP_CONFIG.notifications,
       toast: false,
       macos: true,
+    });
+    // the M25.2 channel fields: bad values fall back, good ones apply, 0 delay is valid
+    expect(
+      parseAppConfig({
+        notifications: { terminal: "on", delaySeconds: 1.5, sound: "loud" },
+      }).notifications,
+    ).toEqual(DEFAULT_APP_CONFIG.notifications);
+    expect(
+      parseAppConfig({
+        notifications: { terminal: false, delaySeconds: 0, sound: "none" },
+      }).notifications,
+    ).toEqual({
+      ...DEFAULT_APP_CONFIG.notifications,
+      terminal: false,
+      delaySeconds: 0,
+      sound: "none",
     });
     expect(parseAppConfig({ updates: { check: false } }).updates).toEqual({
       check: false,

@@ -10,6 +10,7 @@ import {
   hostCreateArgv,
   hostSetupArgvs,
   hostAttachArgv,
+  HOST_RESIZE_HOOKS,
 } from "./hosted.ts";
 
 const noEntry = {
@@ -115,10 +116,37 @@ describe("tmux argv builders", () => {
   });
 
   it("setup turns status off and pins window-size latest (no `=` — set-option rejects it)", () => {
-    expect(hostSetupArgvs()).toEqual([
+    expect(hostSetupArgvs().slice(0, 2)).toEqual([
       ["set-option", "-t", APP_HOST_SESSION, "status", "off"],
       ["set-option", "-w", "-t", `${APP_HOST_SESSION}:`, "window-size", "latest"],
     ]);
+  });
+
+  it("setup enables focus-events so a returning terminal's focus re-adopts its size (M25.5)", () => {
+    expect(hostSetupArgvs()).toContainEqual(["set-option", "-s", "focus-events", "on"]);
+  });
+
+  it("setup installs one session-scoped self-heal hook per client event (M25.5)", () => {
+    const argvs = hostSetupArgvs();
+    const heal = `set-option -w -t ${APP_HOST_SESSION}: window-size latest`;
+    for (const hook of HOST_RESIZE_HOOKS) {
+      expect(argvs).toContainEqual(["set-hook", "-t", APP_HOST_SESSION, hook, heal]);
+    }
+    // and nothing else rides along — status/window-size/focus-events + the hooks
+    expect(argvs).toHaveLength(3 + HOST_RESIZE_HOOKS.length);
+  });
+
+  it("the heal is never resize-window (any form flips window-size to manual — the stuck state)", () => {
+    for (const argv of hostSetupArgvs()) {
+      expect(argv).not.toContain("resize-window");
+      expect(argv.join(" ")).not.toMatch(/resize-window/);
+    }
+  });
+
+  it("hook commands are tmux-native — no run-shell (run-shell hooks serialize the server)", () => {
+    for (const argv of hostSetupArgvs()) {
+      expect(argv.join(" ")).not.toMatch(/run-shell/);
+    }
   });
 
   it("attach from a plain terminal, switch-client from inside tmux", () => {

@@ -113,22 +113,82 @@ export function hostCreateArgv(opts: { cwd: string; commandLine: string }): stri
 }
 
 /**
- * PURE — the post-create session setup: status OFF so the app owns every row
- * (under `status on` the host steals the bottom row and the app renders one
- * short), and `window-size latest` pinned explicitly so the most recently
- * active client dictates the size — a smaller second client letterboxes the
- * larger one (tmux's own dot-fill), which is the documented behavior.
+ * The client events that re-assert `window-size latest` on the host (M25.5).
+ * Each hook's effect was MEASURED on tmux 3.7b in an isolated two-client rig
+ * (220x60 local + 120x40 ssh-sim):
+ *
+ * - `client-attached` / `client-focus-in` / `client-session-changed`: tmux
+ *   3.7b already re-adopts the event client's size natively on all of these
+ *   (attach ~8ms, focus-in ~17ms, switch-client ~17ms — window-resized hook
+ *   timestamps; detach of the latest client also re-adopts natively, ~13ms).
+ *   The hooks are NOT what makes those paths work; they are the SELF-HEAL for
+ *   the one measured way the host gets permanently stuck: any `resize-window`
+ *   against it (a stray tool or user command) flips `window-size` to manual —
+ *   after which NO client event re-adopts, ever (measured: a fresh 220x60
+ *   attach left a manually-80x24 host at 80x24). Re-asserting the option is
+ *   the heal (measured: instant re-adopt) — and it is safe to fire
+ *   redundantly: setting `window-size latest` when it is already latest just
+ *   recomputes the same size. Fire counts are bounded and linear (measured:
+ *   10 rapid focus alternations → exactly 20 focus-in fires; 10 attach cycles
+ *   → 10 attached + 10 session-changed fires — attach fires both — each a
+ *   single in-server set-option, no storm).
+ *
+ * NO `client-detached` hook: measured on 3.7b it never fires as a SESSION
+ * hook (the detaching client has already left the session when hooks are
+ * resolved — 0 fires across 10 detach cycles while the same rig's global
+ * hook logged every one), and the native detach re-adopt covers the path.
+ *
+ * Deliberately NOT `resize-window -a`: per the tmux manual, EVERY
+ * resize-window form — -a included — "will automatically set window-size to
+ * manual", i.e. it would cause the exact stuck state it is meant to fix. And
+ * no `run-shell`: these are tmux-native commands executed in-server
+ * (run-shell hooks serialize the server — prior measurement).
+ */
+export const HOST_RESIZE_HOOKS = [
+  "client-attached",
+  "client-focus-in",
+  "client-session-changed",
+] as const;
+
+/**
+ * PURE — the post-create/ensure session setup: status OFF so the app owns
+ * every row (under `status on` the host steals the bottom row and the app
+ * renders one short), and `window-size latest` pinned explicitly so the most
+ * recently active client dictates the size — a smaller second client
+ * letterboxes the larger one (tmux's own dot-fill), which is the documented
+ * behavior.
+ *
+ * M25.5 additions (each measured on 3.7b — see {@link HOST_RESIZE_HOOKS}):
+ *
+ * - `focus-events on` (server option — the ONE non-session-scoped line, and
+ *   the load-bearing one): it defaults OFF, so real terminals are never asked
+ *   for focus reporting and `client-focus-in` never fires. With it on, coming
+ *   BACK to a terminal that stayed attached re-adopts that client's size on
+ *   the focus event alone (measured: focus-in → client-active →
+ *   window-resized in ~17ms) — no keystroke needed. This is the user's exact
+ *   "reopen it on my computer locally" moment when the local client never
+ *   detached. Side effect is the widely-recommended one (panes that request
+ *   focus, e.g. editors, start receiving it).
+ * - the {@link HOST_RESIZE_HOOKS} self-heal hooks, session-scoped to the host
+ *   (zero effect on user sessions).
+ *
+ * The whole list is idempotent — the CLI applies it on EVERY ensure, not just
+ * create, so upgrading tmux-ide fixes an already-running cockpit on its next
+ * `tmux-ide app` (and un-sticks a manually-resized host).
  *
  * No `=` exact-match prefix here: tmux (measured on 3.7b) rejects it on
  * `set-option` session targets ("no such session") even though has-session
  * and attach accept it. Plain names are safe in THIS builder only because
- * setup runs right after create — the exact session exists, and tmux prefers
- * an exact match over a prefix match when one does.
+ * setup runs right after the exists-probe/create — the exact session exists,
+ * and tmux prefers an exact match over a prefix match when one does.
  */
 export function hostSetupArgvs(): string[][] {
+  const heal = `set-option -w -t ${APP_HOST_SESSION}: window-size latest`;
   return [
     ["set-option", "-t", APP_HOST_SESSION, "status", "off"],
     ["set-option", "-w", "-t", `${APP_HOST_SESSION}:`, "window-size", "latest"],
+    ["set-option", "-s", "focus-events", "on"],
+    ...HOST_RESIZE_HOOKS.map((hook) => ["set-hook", "-t", APP_HOST_SESSION, hook, heal]),
   ];
 }
 

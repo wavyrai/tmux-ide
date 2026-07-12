@@ -107,22 +107,81 @@ export function themePatch(accent: string): AppConfigPatch {
 
 // ── Notifications ────────────────────────────────────────────────────────────
 
-export type NotificationToggleId = "enabled" | "toast" | "macos" | "onBlocked" | "onDone";
+export type NotificationToggleId =
+  | "enabled"
+  | "toast"
+  | "macos"
+  | "terminal"
+  | "onBlocked"
+  | "onDone";
 
 const onOff = (v: boolean) => (v ? "on" : "off");
 
 /** PURE — the notification toggle rows (the REAL fields notify.ts reads: the
- *  typed toast/macos plus the polish-era raw fields), and a quiet-hours row
- *  that descends into its own flow. Enter toggles in place. */
+ *  typed channel fields plus the polish-era raw fields), plus the rows that
+ *  descend into their own flows (sound tri-choice, delay prompt, quiet hours).
+ *  Enter toggles the boolean rows in place. */
 export function notificationItems(prefs: NotificationPrefs): DialogSelectItem[] {
   return [
     { id: "enabled", label: "All notifications", detail: onOff(prefs.enabled) },
     { id: "toast", label: "In-terminal toasts", detail: onOff(prefs.toast) },
-    { id: "macos", label: "macOS banners", detail: onOff(prefs.macos) },
+    { id: "macos", label: "System banners", detail: onOff(prefs.macos) },
+    { id: "terminal", label: "Terminal banners (OSC)", detail: onOff(prefs.terminal) },
     { id: "onBlocked", label: "Alert when an agent needs you", detail: onOff(prefs.onBlocked) },
     { id: "onDone", label: "Alert when an agent finishes", detail: onOff(prefs.onDone) },
+    { id: "sound", label: "Sound…", detail: soundSummary(prefs) },
+    { id: "delaySeconds", label: "Alert delay…", detail: delaySummary(prefs) },
     { id: "quietHours", label: "Quiet hours…", detail: quietHoursSummary(prefs) },
   ];
+}
+
+/** PURE — plain words for the sound tri-state. */
+export function soundSummary(prefs: NotificationPrefs): string {
+  return prefs.sound === "blocked" ? "when blocked" : prefs.sound === "all" ? "always" : "off";
+}
+
+/** PURE — the sound chooser rows (● on the saved choice). */
+export function soundItems(prefs: NotificationPrefs): DialogSelectItem[] {
+  return [
+    {
+      id: "blocked",
+      label: "When an agent needs you",
+      detail: "sound + terminal bell on blocked",
+      current: prefs.sound === "blocked",
+    },
+    {
+      id: "all",
+      label: "Every alert",
+      detail: "blocked and finished",
+      current: prefs.sound === "all",
+    },
+    { id: "none", label: "Off — no sound", current: prefs.sound === "none" },
+  ];
+}
+
+/** PURE — persist a picked sound mode. */
+export function soundPatch(id: string): AppConfigPatch {
+  return { notifications: { sound: id } };
+}
+
+/** PURE — "2 s" / "immediately". */
+export function delaySummary(prefs: NotificationPrefs): string {
+  return prefs.delaySeconds > 0 ? `${prefs.delaySeconds} s` : "immediately";
+}
+
+/** PURE — 0–60 whole seconds (0 = fire immediately; the delay exists to swallow
+ *  flappy transitions, and a minute is already generous). */
+export function validateDelaySeconds(value: string): string | null {
+  const n = Number(value.trim());
+  if (!Number.isInteger(n) || n < 0 || n > 60) {
+    return "Use a whole number of seconds between 0 and 60 (0 alerts immediately)";
+  }
+  return null;
+}
+
+/** PURE — persist a validated delay. */
+export function delaySecondsPatch(value: string): AppConfigPatch {
+  return { notifications: { delaySeconds: Number(value.trim()) } };
 }
 
 /** PURE — flip one notification toggle. */
@@ -144,7 +203,7 @@ export function quietHoursItems(prefs: NotificationPrefs): DialogSelectItem[] {
     { id: "off", label: "Off — always notify", current: prefs.quietHours === null },
     {
       id: "window",
-      label: "Silence banners during a daily window…",
+      label: "Silence banners & sounds during a daily window…",
       detail: prefs.quietHours ? quietHoursSummary(prefs) : undefined,
       current: prefs.quietHours !== null,
     },

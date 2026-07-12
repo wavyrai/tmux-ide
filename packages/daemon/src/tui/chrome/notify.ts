@@ -7,20 +7,36 @@
  * signals out to the human: a tmux toast on each attached client
  * (`display-message -c`), and optionally a macOS notification.
  *
+ * Since M25.2 the fan-out spans FIVE channels: the in-app toast, the system
+ * banner (macOS `terminal-notifier`/`osascript`, Linux `notify-send`), the
+ * terminal-native OSC 9/99 escape written straight to each eligible client's
+ * tty, a ping sound, and a BEL on blocked. The OS-level channels (everything
+ * but the toast) are quiet-hours gated and delay/re-verified by the updater.
+ *
  * Split as usual: {@link decideNotifications} + {@link notifyMessage} +
  * {@link enabledStates} + {@link inQuietHours} + {@link parseNotificationPrefs}
  * + {@link applyKillSwitch} + {@link parseClients} + {@link terminalNotifierArgs}
- * are PURE (unit-tested without a live tmux / filesystem); {@link sendToasts},
- * {@link sendSystemNotification}, {@link hasTerminalNotifier},
- * {@link listAttachedClients} and {@link readNotificationPrefs} are the thin io
+ * + {@link terminalNotifyEscape} + {@link decideTtyWrites} + {@link notifySendArgs}
+ * + {@link soundEligible} + {@link soundArgv} are PURE (unit-tested without a
+ * live tmux / filesystem); {@link sendToasts}, {@link sendSystemNotification},
+ * {@link hasTerminalNotifier}, {@link listAttachedClients}, {@link writeTtys},
+ * {@link playPingSound} and {@link readNotificationPrefs} are the thin io
  * wrappers. Every io path is best-effort — a failed ping must never break the
  * updater loop.
  */
-import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { execFileSync, spawn } from "node:child_process";
+import {
+  closeSync,
+  constants as fsConstants,
+  existsSync,
+  openSync,
+  readFileSync,
+  writeSync,
+} from "node:fs";
 import { runTmux } from "@tmux-ide/tmux-bridge";
-import { appConfigPath, parseAppConfig } from "../../lib/app-config.ts";
+import { appConfigPath, parseAppConfig, type NotificationSound } from "../../lib/app-config.ts";
 import { APP_HOST_SESSION } from "../mirror/hosted.ts";
+import { tmuxPassthrough } from "../mirror/selection.ts";
 import type { AgentStatus } from "../detect/classify.ts";
 
 /**
@@ -51,11 +67,18 @@ export interface NotifyEvent {
 
 /** An attached tmux client, the session it's viewing, and that session's
  *  CURRENT window (null when the caller couldn't resolve it — suppression then
- *  degrades to session granularity for that client). */
+ *  degrades to session granularity for that client). `tty`/`termname` (M25.2)
+ *  are what the terminal-escape channel needs — the device to write and which
+ *  escape form the terminal behind it understands; null/absent means the
+ *  caller couldn't resolve them and that client just gets no escapes. */
 export interface AttachedClient {
   client: string;
   session: string;
   windowIndex?: number | null;
+  /** `#{client_tty}` — the device the escape/BEL bytes are written to. */
+  tty?: string | null;
+  /** `#{client_termname}` — picks OSC 99 (kitty) / passthrough (nested tmux). */
+  termname?: string | null;
 }
 
 /** A toast destined for one client's status line. */
@@ -65,12 +88,22 @@ export interface ToastTarget {
 }
 
 /**
- * A macOS-notification payload. `session` rides along so the click-through path
- * ({@link terminalNotifierArgs}) can focus the right session on click.
+ * One OS-level ping. `session` rides along so the click-through path
+ * ({@link terminalNotifierArgs}) can focus the right session on click; since
+ * M25.2 the payload also carries the transition's `state` (urgency + sound
+ * routing) and its pane identity (`paneId`/`windowIndex`) so the delayed
+ * re-verify can confirm the pane is STILL in that state and the terminal-escape
+ * channel can re-apply per-client suppression at fire time.
  */
 export interface SystemNotification {
   message: string;
   session: string;
+  /** The state that was pinged — must still hold when a delayed ping fires. */
+  state: AgentStatus;
+  /** The pane behind the ping (null: session-granular caller — unverifiable). */
+  paneId: string | null;
+  /** The pane's window — per-client escape suppression wants it. */
+  windowIndex: number | null;
 }
 
 /** The verdict of {@link decideNotifications}. */
@@ -191,30 +224,47 @@ export function decideNotifications(
       if (suppressToastFor(c, ev)) continue;
       toasts.push({ client: c.client, message });
     }
-    system.push({ message, session: ev.session });
+    system.push({
+      message,
+      session: ev.session,
+      state: ev.to,
+      paneId: ev.paneId ?? null,
+      windowIndex: ev.windowIndex ?? null,
+    });
   }
   return { toasts, system, nextLastNotified };
 }
 
-/** PURE — parse `list-clients -F '#{client_name}\t#{session_name}\t#{window_index}'`
- *  output (the third field is the client's session's CURRENT window; missing/
- *  non-numeric parses as null so old two-field callers degrade gracefully). */
+/** PURE — parse `list-clients -F '#{client_name}\t#{session_name}\t#{window_index}
+ *  \t#{client_tty}\t#{client_termname}'` output (fields three-plus are optional;
+ *  missing/non-numeric window parses as null so shorter-format callers degrade
+ *  gracefully, and a missing tty/termname just disables that client's escapes). */
 export function parseClients(lines: string[]): AttachedClient[] {
   const out: AttachedClient[] = [];
   for (const line of lines) {
-    const [client = "", session = "", win = ""] = line.split("\t");
+    const [client = "", session = "", win = "", tty = "", termname = ""] = line.split("\t");
     if (!client || !session) continue;
     const n = Number.parseInt(win, 10);
-    out.push({ client, session, windowIndex: Number.isInteger(n) ? n : null });
+    out.push({
+      client,
+      session,
+      windowIndex: Number.isInteger(n) ? n : null,
+      tty: tty || null,
+      termname: termname || null,
+    });
   }
   return out;
 }
 
-/** io — enumerate attached clients (+ their current window) from the live tmux
- *  server. Never throws. */
+/** io — enumerate attached clients (+ their current window, tty, termname) from
+ *  the live tmux server. Never throws. */
 export function listAttachedClients(): AttachedClient[] {
   try {
-    const raw = runTmux(["list-clients", "-F", "#{client_name}\t#{session_name}\t#{window_index}"])
+    const raw = runTmux([
+      "list-clients",
+      "-F",
+      "#{client_name}\t#{session_name}\t#{window_index}\t#{client_tty}\t#{client_termname}",
+    ])
       .toString()
       .trim();
     return raw ? parseClients(raw.split("\n")) : [];
@@ -309,10 +359,177 @@ export function sendToasts(toasts: ToastTarget[]): void {
   }
 }
 
+// ---------------------------------------------------------------------------
+// The terminal-escape + sound channels (M25.2)
+// ---------------------------------------------------------------------------
+
+/**
+ * PURE — the OSC 9 desktop-notification escape (iTerm2 / Ghostty / WezTerm and
+ * friends; BEL-terminated). Terminals without support ignore it entirely.
+ */
+export function osc9Notification(text: string): string {
+  return `\x1b]9;${text}\x07`;
+}
+
+/**
+ * PURE — kitty's richer OSC 99 form (ST-terminated; the empty-metadata payload
+ * is the notification title). Blocked pings carry `u=2` (critical urgency) —
+ * kitty ignores metadata keys it doesn't know, so this is safe on older kitties.
+ */
+export function osc99Notification(text: string, urgent: boolean): string {
+  return `\x1b]99;${urgent ? "u=2" : ""};${text}\x1b\\`;
+}
+
+/**
+ * PURE — the escape a client's terminal actually understands, by
+ * `#{client_termname}` (conservative, MEASURED — see {@link writeClientTty}):
+ *
+ *   - `*kitty*` → OSC 99 (kitty ignores OSC 9's text form);
+ *   - `tmux-*` / `screen*` → the OSC 9 wrapped in the tmux passthrough envelope
+ *     ({@link tmuxPassthrough}): that termname means the client is itself INSIDE
+ *     another tmux/screen, so our bytes land as pane OUTPUT of the outer mux and
+ *     only the envelope (plus the outer mux's `allow-passthrough`, which is the
+ *     user's to set — we can't reach a foreign server) carries them further;
+ *   - anything else → raw OSC 9. A direct client-tty write BYPASSES our own
+ *     tmux server entirely (measured: bytes arrive on the tty stream verbatim),
+ *     so for a directly-attached terminal the RAW escape is the correct form —
+ *     an envelope there would be ignored by the terminal, not unwrapped.
+ */
+export function terminalNotifyEscape(
+  termname: string | null | undefined,
+  text: string,
+  urgent: boolean,
+): string {
+  const t = termname ?? "";
+  if (t.includes("kitty")) return osc99Notification(text, urgent);
+  if (t.startsWith("tmux") || t.startsWith("screen")) {
+    return tmuxPassthrough(osc9Notification(text));
+  }
+  return osc9Notification(text);
+}
+
+/** One pending write to a client's tty device. */
+export interface TtyWrite {
+  tty: string;
+  data: string;
+}
+
+/** PURE — should the sound channel fire for this state under this pref? */
+export function soundEligible(state: AgentStatus, sound: NotificationSound): boolean {
+  if (sound === "none") return false;
+  if (sound === "all") return state === "blocked" || state === "done";
+  return state === "blocked";
+}
+
+/** BEL rings the terminal's attention marker — `blocked` only, and it rides the
+ *  sound pref (a user who turned sound off asked for silence). */
+function belEligible(state: AgentStatus, sound: NotificationSound): boolean {
+  return state === "blocked" && sound !== "none";
+}
+
+/**
+ * PURE — the tty writes for one OS-level ping: for every attached client that
+ * is NOT already looking at the transition (the SAME suppression rule as toasts,
+ * {@link suppressToastFor}) and whose tty we know, the terminal-notification
+ * escape (when `prefs.terminal`) plus a BEL on blocked (when the sound pref
+ * allows). Clients contribute nothing when both channels are off for them.
+ */
+export function decideTtyWrites(
+  n: SystemNotification,
+  clients: AttachedClient[],
+  prefs: Pick<NotificationPrefs, "terminal" | "sound">,
+): TtyWrite[] {
+  const asEvent: NotifyEvent = {
+    session: n.session,
+    from: null,
+    to: n.state,
+    paneId: n.paneId,
+    windowIndex: n.windowIndex,
+  };
+  const bel = belEligible(n.state, prefs.sound) ? "\x07" : "";
+  const out: TtyWrite[] = [];
+  for (const c of clients) {
+    if (!c.tty) continue;
+    if (suppressToastFor(c, asEvent)) continue;
+    const escape = prefs.terminal
+      ? terminalNotifyEscape(c.termname, n.message, n.state === "blocked")
+      : "";
+    const data = escape + bel;
+    if (data) out.push({ tty: c.tty, data });
+  }
+  return out;
+}
+
+/**
+ * io — write escape/BEL bytes straight to a client's tty device. This is the
+ * delivery mechanism (MEASURED against a recorded client tty): the write goes
+ * to the pty the tmux client sits on, so the bytes reach the outer terminal
+ * verbatim without our tmux server ever seeing them — no `allow-passthrough`
+ * needed on this server, no `run-shell`/`display-message` indirection.
+ * Non-blocking open so a flow-stopped tty (^S) can never stall the updater
+ * tick; any failure just drops that client's ping.
+ */
+export function writeClientTty(write: TtyWrite): void {
+  let fd: number | null = null;
+  try {
+    fd = openSync(write.tty, fsConstants.O_WRONLY | fsConstants.O_NOCTTY | fsConstants.O_NONBLOCK);
+    writeSync(fd, write.data);
+  } catch {
+    // client gone / tty unwritable — never fatal
+  } finally {
+    if (fd !== null) {
+      try {
+        closeSync(fd);
+      } catch {
+        // best-effort
+      }
+    }
+  }
+}
+
+/** io — dispatch a batch of tty writes, each best-effort. */
+export function writeTtys(writes: TtyWrite[]): void {
+  for (const w of writes) writeClientTty(w);
+}
+
+/** The calm default ping sounds — a short macOS system chime and the standard
+ *  freedesktop completion sound (skipped silently when absent). */
+export const DARWIN_SOUND_FILE = "/System/Library/Sounds/Tink.aiff";
+export const LINUX_SOUND_FILE = "/usr/share/sounds/freedesktop/stereo/complete.oga";
+
+/** PURE — the sound-player argv for a platform, or null when it has none. */
+export function soundArgv(platform: NodeJS.Platform): string[] | null {
+  if (platform === "darwin") return ["afplay", DARWIN_SOUND_FILE];
+  if (platform === "linux") return ["paplay", LINUX_SOUND_FILE];
+  return null;
+}
+
+/**
+ * io — play the platform ping sound, fire-and-forget (a sync wait would stall
+ * the updater tick for the clip's duration). Missing sound file or player →
+ * silent skip.
+ */
+export function playPingSound(platform: NodeJS.Platform = process.platform): void {
+  const argv = soundArgv(platform);
+  if (!argv || !existsSync(argv[1]!)) return;
+  try {
+    const child = spawn(argv[0]!, argv.slice(1), { stdio: "ignore", detached: true });
+    child.on("error", () => {});
+    child.unref();
+  } catch {
+    // no player — never fatal
+  }
+}
+
 /** io — whether `terminal-notifier` is on PATH (enables click-through banners). */
 export function hasTerminalNotifier(): boolean {
+  return hasBinary("terminal-notifier");
+}
+
+/** io — whether a binary resolves on PATH. */
+function hasBinary(name: string): boolean {
   try {
-    execFileSync("which", ["terminal-notifier"], { stdio: "ignore" });
+    execFileSync("which", [name], { stdio: "ignore" });
     return true;
   } catch {
     return false;
@@ -372,25 +589,58 @@ export function terminalNotifierArgs(n: SystemNotification): string[] {
 }
 
 /**
- * io — fire a macOS notification. macOS-only (guarded), best-effort. When
- * `terminal-notifier` is available we use it for a CLICK-THROUGH banner
- * ({@link terminalNotifierArgs}) that focuses the session on click; otherwise we
- * fall back to `osascript`, whose `display notification` has NO click action —
- * so on a stock machine the banner informs but can't be clicked to jump.
+ * PURE — the `notify-send` argv for a Linux desktop banner: app-named, blocked
+ * pings marked critical so they persist until dismissed (that's the "an agent
+ * is stuck waiting on you" contract).
  */
-export function sendSystemNotification(n: SystemNotification): void {
-  if (process.platform !== "darwin") return;
+export function notifySendArgs(n: SystemNotification): string[] {
+  const args = ["--app-name=tmux-ide"];
+  if (n.state === "blocked") args.push("--urgency=critical");
+  args.push("tmux-ide", n.message);
+  return args;
+}
+
+/** The io {@link sendSystemNotification} needs — injectable so the per-platform
+ *  routing is unit-tested without firing real banners. */
+export interface SystemNotifyIo {
+  platform?: NodeJS.Platform;
+  env?: Record<string, string | undefined>;
+  exec?: (cmd: string, args: string[]) => void;
+  hasBinary?: (name: string) => boolean;
+}
+
+/**
+ * io — fire a system notification, best-effort. macOS: `terminal-notifier` when
+ * available (a CLICK-THROUGH banner — {@link terminalNotifierArgs} focuses the
+ * session on click), else `osascript`, whose `display notification` has NO
+ * click action — the banner informs but can't jump. Linux (M25.2): under a
+ * desktop session (DISPLAY / WAYLAND_DISPLAY) with `notify-send` on PATH, the
+ * same title/body (+ critical urgency for blocked — {@link notifySendArgs});
+ * anything missing → silent skip. Other platforms: no-op.
+ */
+export function sendSystemNotification(n: SystemNotification, io: SystemNotifyIo = {}): void {
+  const platform = io.platform ?? process.platform;
+  const exec =
+    io.exec ?? ((cmd: string, args: string[]) => execFileSync(cmd, args, { stdio: "ignore" }));
+  const has = io.hasBinary ?? hasBinary;
   try {
-    if (hasTerminalNotifier()) {
-      execFileSync("terminal-notifier", terminalNotifierArgs(n), { stdio: "ignore" });
+    if (platform === "darwin") {
+      if (has("terminal-notifier")) {
+        exec("terminal-notifier", terminalNotifierArgs(n));
+        return;
+      }
+      const escaped = n.message.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+      exec("osascript", ["-e", `display notification "${escaped}" with title "tmux-ide"`]);
       return;
     }
-    const escaped = n.message.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
-    execFileSync("osascript", ["-e", `display notification "${escaped}" with title "tmux-ide"`], {
-      stdio: "ignore",
-    });
+    if (platform === "linux") {
+      const env = io.env ?? process.env;
+      if (!env.DISPLAY && !env.WAYLAND_DISPLAY) return; // headless — nowhere to banner
+      if (!has("notify-send")) return;
+      exec("notify-send", notifySendArgs(n));
+    }
   } catch {
-    // osascript / terminal-notifier missing or notification blocked — never fatal
+    // notifier missing or notification blocked — never fatal
   }
 }
 
@@ -408,21 +658,33 @@ export interface NotificationPrefs {
   enabled: boolean;
   /** In-terminal status-line toasts. */
   toast: boolean;
-  /** macOS system banners. */
+  /** System banners (macOS `terminal-notifier`/`osascript`, Linux `notify-send`). */
   macos: boolean;
+  /** Terminal-native banners — OSC 9/99 escapes to eligible client ttys (M25.2). */
+  terminal: boolean;
+  /** Seconds the OS-level channels wait + re-verify before firing (0 = immediate). */
+  delaySeconds: number;
+  /** Sound channel — ping sound + BEL routing (M25.2). */
+  sound: NotificationSound;
   /** Ping when an agent goes `blocked`. */
   onBlocked: boolean;
   /** Ping when an agent goes `done`. */
   onDone: boolean;
-  /** Optional local-time window that suppresses macOS banners (events still record). */
+  /** Optional local-time window that suppresses every OS-LEVEL channel (banner,
+   *  terminal escape, sound, BEL — since M25.2). In-app toasts and the event
+   *  log stay on. */
   quietHours: QuietHours | null;
 }
 
-/** Defaults: enabled, tmux toasts on, macOS banners off, both states pinged, no quiet window. */
+/** Defaults: enabled, tmux toasts + terminal escapes on, system banners off,
+ *  sound on blocked, a 2s re-verify delay, both states pinged, no quiet window. */
 export const DEFAULT_NOTIFICATION_PREFS: NotificationPrefs = {
   enabled: true,
   toast: true,
   macos: false,
+  terminal: true,
+  delaySeconds: 2,
+  sound: "blocked",
   onBlocked: true,
   onDone: true,
   quietHours: null,
@@ -492,6 +754,9 @@ export function parseNotificationPrefs(rawConfig: unknown): NotificationPrefs {
     enabled: pickBool(n.enabled, DEFAULT_NOTIFICATION_PREFS.enabled),
     toast: base.toast,
     macos: base.macos,
+    terminal: base.terminal,
+    delaySeconds: base.delaySeconds,
+    sound: base.sound,
     onBlocked: pickBool(n.onBlocked, DEFAULT_NOTIFICATION_PREFS.onBlocked),
     onDone: pickBool(n.onDone, DEFAULT_NOTIFICATION_PREFS.onDone),
     quietHours: parseQuietHours(n.quietHours),
@@ -503,7 +768,9 @@ export function applyKillSwitch(
   prefs: NotificationPrefs,
   envValue: string | undefined,
 ): NotificationPrefs {
-  return envValue === "0" ? { ...prefs, enabled: false, toast: false, macos: false } : prefs;
+  return envValue === "0"
+    ? { ...prefs, enabled: false, toast: false, macos: false, terminal: false, sound: "none" }
+    : prefs;
 }
 
 /** Absolute path to the shared config (honors `TMUX_IDE_CONFIG`). */
