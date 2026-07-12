@@ -9,29 +9,45 @@ import {
   APP_FOCUS_STALE_MS,
   applyKillSwitch,
   buildAppFocusValue,
+  DARWIN_SOUND_FILE,
   decideNotifications,
+  decideTtyWrites,
   DEFAULT_NOTIFICATION_PREFS,
   enabledStates,
   inQuietHours,
+  LINUX_SOUND_FILE,
   notifierExecuteCommand,
   notifyDebounceKey,
   notifyMessage,
+  notifySendArgs,
   NOTIFY_DEBOUNCE_MS,
   NOTIFY_MAX_LEN,
+  osc9Notification,
+  osc99Notification,
   parseAppFocus,
   parseHHMM,
   parseNotificationPrefs,
   parseClients,
+  sendSystemNotification,
+  soundArgv,
+  soundEligible,
   suppressToastFor,
   terminalNotifierArgs,
+  terminalNotifyEscape,
   type AppFocus,
   type AttachedClient,
   type NotificationPrefs,
   type NotifyEvent,
+  type SystemNotification,
 } from "./notify.ts";
 
 function ev(session: string, to: NotifyEvent["to"], extra: Partial<NotifyEvent> = {}): NotifyEvent {
   return { session, from: "working", to, ...extra };
+}
+
+/** The expected system entry for a pane-less `ev()` transition. */
+function sys(session: string, state: NotifyEvent["to"], message: string) {
+  return { message, session, state, paneId: null, windowIndex: null };
 }
 
 describe("notifyMessage", () => {
@@ -98,15 +114,15 @@ describe("decideNotifications", () => {
     // No clients → no toasts, but a system entry per qualifying event.
     expect(toasts).toEqual([]);
     expect(system).toEqual([
-      { message: "agent blocked · a — needs input", session: "a" },
-      { message: "agent done · b — finished", session: "b" },
+      sys("a", "blocked", "agent blocked · a — needs input"),
+      sys("b", "done", "agent done · b — finished"),
     ]);
   });
 
   it("honors the passed-in `states` set (onBlocked/onDone gating)", () => {
     const events = [ev("a", "blocked"), ev("b", "done")];
     const { system } = decideNotifications(events, [], new Map(), 0, new Set(["blocked"]));
-    expect(system).toEqual([{ message: "agent blocked · a — needs input", session: "a" }]);
+    expect(system).toEqual([sys("a", "blocked", "agent blocked · a — needs input")]);
   });
 
   it("uses the enriched agent/location in the toast text", () => {
@@ -129,15 +145,15 @@ describe("decideNotifications", () => {
     ];
     const { toasts, system } = decideNotifications([ev("web", "blocked")], clients, new Map(), 0);
     expect(toasts).toEqual([{ client: "other", message: "agent blocked · web — needs input" }]);
-    // The system (macOS) entry is still produced regardless of viewers.
-    expect(system).toEqual([{ message: "agent blocked · web — needs input", session: "web" }]);
+    // The system (banner) entry is still produced regardless of viewers.
+    expect(system).toEqual([sys("web", "blocked", "agent blocked · web — needs input")]);
   });
 
   it("suppresses toasts entirely when the only client is viewing the session, but keeps the system entry", () => {
     const clients: AttachedClient[] = [{ client: "viewer", session: "web" }];
     const { toasts, system } = decideNotifications([ev("web", "blocked")], clients, new Map(), 0);
     expect(toasts).toEqual([]);
-    expect(system).toEqual([{ message: "agent blocked · web — needs input", session: "web" }]);
+    expect(system).toEqual([sys("web", "blocked", "agent blocked · web — needs input")]);
   });
 
   it("debounces the same session+state within the window and allows it after", () => {
@@ -332,19 +348,37 @@ describe("app focus record", () => {
 });
 
 describe("parseClients", () => {
-  it("parses client\\tsession\\twindow lines and drops malformed ones", () => {
+  it("parses client\\tsession\\twindow\\ttty\\ttermname lines and drops malformed ones", () => {
     expect(
-      parseClients(["/dev/ttys000\tweb\t2", "/dev/ttys001\tapi\t0", "", "lonely", "\tdangling\t1"]),
+      parseClients([
+        "/dev/ttys000\tweb\t2\t/dev/ttys000\txterm-256color",
+        "/dev/ttys001\tapi\t0\t/dev/ttys001\txterm-kitty",
+        "",
+        "lonely",
+        "\tdangling\t1",
+      ]),
     ).toEqual([
-      { client: "/dev/ttys000", session: "web", windowIndex: 2 },
-      { client: "/dev/ttys001", session: "api", windowIndex: 0 },
+      {
+        client: "/dev/ttys000",
+        session: "web",
+        windowIndex: 2,
+        tty: "/dev/ttys000",
+        termname: "xterm-256color",
+      },
+      {
+        client: "/dev/ttys001",
+        session: "api",
+        windowIndex: 0,
+        tty: "/dev/ttys001",
+        termname: "xterm-kitty",
+      },
     ]);
   });
 
-  it("parses a missing/garbage window field as null (session-granular fallback)", () => {
+  it("parses missing/garbage optional fields as null (session-granular, escape-less fallback)", () => {
     expect(parseClients(["/dev/ttys000\tweb", "/dev/ttys001\tapi\tx"])).toEqual([
-      { client: "/dev/ttys000", session: "web", windowIndex: null },
-      { client: "/dev/ttys001", session: "api", windowIndex: null },
+      { client: "/dev/ttys000", session: "web", windowIndex: null, tty: null, termname: null },
+      { client: "/dev/ttys001", session: "api", windowIndex: null, tty: null, termname: null },
     ]);
   });
 });
@@ -409,6 +443,9 @@ describe("parseNotificationPrefs", () => {
           enabled: false,
           toast: false,
           macos: true,
+          terminal: false,
+          delaySeconds: 5,
+          sound: "all",
           onBlocked: false,
           onDone: true,
           quietHours: { start: "22:00", end: "08:00" },
@@ -418,10 +455,20 @@ describe("parseNotificationPrefs", () => {
       enabled: false,
       toast: false,
       macos: true,
+      terminal: false,
+      delaySeconds: 5,
+      sound: "all",
       onBlocked: false,
       onDone: true,
       quietHours: { start: "22:00", end: "08:00" },
     });
+    // Mistyped M25.2 fields fall back to their defaults (delay 0 is VALID).
+    expect(
+      parseNotificationPrefs({
+        notifications: { terminal: "yes", delaySeconds: -3, sound: "loud" },
+      }),
+    ).toMatchObject({ terminal: true, delaySeconds: 2, sound: "blocked" });
+    expect(parseNotificationPrefs({ notifications: { delaySeconds: 0 } }).delaySeconds).toBe(0);
     // A malformed quietHours block resolves to null (disabled).
     expect(
       parseNotificationPrefs({ notifications: { quietHours: { start: "nope" } } }).quietHours,
@@ -437,17 +484,22 @@ describe("applyKillSwitch", () => {
     enabled: true,
     toast: true,
     macos: true,
+    terminal: true,
+    delaySeconds: 2,
+    sound: "all",
     onBlocked: true,
     onDone: true,
     quietHours: null,
   };
 
-  it("TMUX_IDE_NOTIFY=0 disables the master switch and both channels", () => {
+  it("TMUX_IDE_NOTIFY=0 disables the master switch and every channel", () => {
     expect(applyKillSwitch(full, "0")).toEqual({
       ...full,
       enabled: false,
       toast: false,
       macos: false,
+      terminal: false,
+      sound: "none",
     });
   });
 
@@ -475,11 +527,21 @@ describe("notifierExecuteCommand", () => {
   });
 });
 
+/** A full SystemNotification for the channel-arg tests. */
+function sysN(over: Partial<SystemNotification> = {}): SystemNotification {
+  return {
+    message: "claude blocked · web:1.2 — needs input",
+    session: "web",
+    state: "blocked",
+    paneId: "%1",
+    windowIndex: 1,
+    ...over,
+  };
+}
+
 describe("terminalNotifierArgs", () => {
   it("builds a click-through banner whose -execute is the jump command", () => {
-    expect(
-      terminalNotifierArgs({ message: "claude blocked · web:1.2 — needs input", session: "web" }),
-    ).toEqual([
+    expect(terminalNotifierArgs(sysN())).toEqual([
       "-title",
       "tmux-ide",
       "-message",
@@ -487,5 +549,159 @@ describe("terminalNotifierArgs", () => {
       "-execute",
       notifierExecuteCommand("web"),
     ]);
+  });
+});
+
+describe("notifySendArgs (Linux banners)", () => {
+  it("marks blocked critical; done stays default urgency", () => {
+    expect(notifySendArgs(sysN())).toEqual([
+      "--app-name=tmux-ide",
+      "--urgency=critical",
+      "tmux-ide",
+      "claude blocked · web:1.2 — needs input",
+    ]);
+    expect(notifySendArgs(sysN({ state: "done", message: "m" }))).toEqual([
+      "--app-name=tmux-ide",
+      "tmux-ide",
+      "m",
+    ]);
+  });
+});
+
+describe("sendSystemNotification routing (injected io)", () => {
+  const calls = () => {
+    const seen: Array<{ cmd: string; args: string[] }> = [];
+    return {
+      seen,
+      exec: (cmd: string, args: string[]) => {
+        seen.push({ cmd, args });
+      },
+    };
+  };
+
+  it("linux + desktop env + notify-send on PATH → notify-send with the banner args", () => {
+    const { seen, exec } = calls();
+    sendSystemNotification(sysN(), {
+      platform: "linux",
+      env: { DISPLAY: ":0" },
+      exec,
+      hasBinary: (n) => n === "notify-send",
+    });
+    expect(seen).toEqual([{ cmd: "notify-send", args: notifySendArgs(sysN()) }]);
+  });
+
+  it("linux honors WAYLAND_DISPLAY too, and skips silently when headless or binary-less", () => {
+    const { seen, exec } = calls();
+    const io = { platform: "linux" as const, exec, hasBinary: () => true };
+    sendSystemNotification(sysN(), { ...io, env: { WAYLAND_DISPLAY: "wayland-0" } });
+    expect(seen).toHaveLength(1);
+    sendSystemNotification(sysN(), { ...io, env: {} }); // headless
+    sendSystemNotification(sysN(), {
+      ...io,
+      env: { DISPLAY: ":0" },
+      hasBinary: () => false, // no notify-send
+    });
+    expect(seen).toHaveLength(1);
+  });
+
+  it("darwin prefers terminal-notifier and falls back to osascript", () => {
+    const { seen, exec } = calls();
+    sendSystemNotification(sysN(), {
+      platform: "darwin",
+      exec,
+      hasBinary: (n) => n === "terminal-notifier",
+    });
+    expect(seen[0]).toEqual({ cmd: "terminal-notifier", args: terminalNotifierArgs(sysN()) });
+    sendSystemNotification(sysN(), { platform: "darwin", exec, hasBinary: () => false });
+    expect(seen[1]?.cmd).toBe("osascript");
+    expect(seen[1]?.args[1]).toContain("claude blocked");
+  });
+
+  it("other platforms are a no-op", () => {
+    const { seen, exec } = calls();
+    sendSystemNotification(sysN(), { platform: "win32", exec, hasBinary: () => true });
+    expect(seen).toEqual([]);
+  });
+});
+
+describe("terminal escapes (M25.2)", () => {
+  it("OSC 9 is BEL-terminated; OSC 99 is kitty's ST form with urgency on blocked", () => {
+    expect(osc9Notification("hi")).toBe("\x1b]9;hi\x07");
+    expect(osc99Notification("hi", false)).toBe("\x1b]99;;hi\x1b\\");
+    expect(osc99Notification("hi", true)).toBe("\x1b]99;u=2;hi\x1b\\");
+  });
+
+  it("picks the form by termname: kitty → OSC 99, nested tmux/screen → passthrough, else raw OSC 9", () => {
+    expect(terminalNotifyEscape("xterm-kitty", "m", true)).toBe(osc99Notification("m", true));
+    expect(terminalNotifyEscape("xterm-256color", "m", true)).toBe(osc9Notification("m"));
+    expect(terminalNotifyEscape(null, "m", false)).toBe(osc9Notification("m"));
+    // nested: the envelope with the inner ESC doubled, so the OUTER mux unwraps it
+    expect(terminalNotifyEscape("tmux-256color", "m", false)).toBe(
+      "\x1bPtmux;\x1b\x1b]9;m\x07\x1b\\",
+    );
+    expect(terminalNotifyEscape("screen-256color", "m", false)).toBe(
+      "\x1bPtmux;\x1b\x1b]9;m\x07\x1b\\",
+    );
+  });
+});
+
+describe("decideTtyWrites", () => {
+  const prefs = { terminal: true, sound: "blocked" as const };
+  const clients: AttachedClient[] = [
+    { client: "c1", session: "other", windowIndex: 0, tty: "/dev/t1", termname: "xterm-256color" },
+    { client: "c2", session: "web", windowIndex: 1, tty: "/dev/t2", termname: "xterm-kitty" },
+    { client: "c3", session: "other", windowIndex: 0, tty: null, termname: "xterm" },
+  ];
+
+  it("writes escape + BEL to every non-viewing client with a known tty", () => {
+    const n = sysN({ message: "m" });
+    expect(decideTtyWrites(n, clients, prefs)).toEqual([
+      // c1: not viewing web → raw OSC 9 + BEL (blocked)
+      { tty: "/dev/t1", data: `${osc9Notification("m")}\x07` },
+      // c2 IS viewing web:1 (the event's window) → suppressed; c3 has no tty
+    ]);
+  });
+
+  it("kitty client gets the OSC 99 form", () => {
+    const n = sysN({ message: "m", session: "api", windowIndex: 0 });
+    const writes = decideTtyWrites(n, clients, prefs);
+    expect(writes.find((w) => w.tty === "/dev/t2")?.data).toBe(
+      `${osc99Notification("m", true)}\x07`,
+    );
+  });
+
+  it("BEL rides only blocked and only while sound is on; escapes ride prefs.terminal", () => {
+    const done = sysN({ message: "m", state: "done" });
+    expect(decideTtyWrites(done, [clients[0]!], prefs)).toEqual([
+      { tty: "/dev/t1", data: osc9Notification("m") }, // no BEL on done
+    ]);
+    expect(
+      decideTtyWrites(sysN({ message: "m" }), [clients[0]!], { ...prefs, sound: "none" }),
+    ).toEqual([{ tty: "/dev/t1", data: osc9Notification("m") }]);
+    // terminal off, sound on → the BEL still lands alone on blocked
+    expect(
+      decideTtyWrites(sysN({ message: "m" }), [clients[0]!], { terminal: false, sound: "blocked" }),
+    ).toEqual([{ tty: "/dev/t1", data: "\x07" }]);
+    // both channels off → nothing at all
+    expect(
+      decideTtyWrites(sysN({ message: "m" }), [clients[0]!], { terminal: false, sound: "none" }),
+    ).toEqual([]);
+  });
+});
+
+describe("sound routing (M25.2)", () => {
+  it("soundEligible follows the tri-state", () => {
+    expect(soundEligible("blocked", "blocked")).toBe(true);
+    expect(soundEligible("done", "blocked")).toBe(false);
+    expect(soundEligible("done", "all")).toBe(true);
+    expect(soundEligible("blocked", "all")).toBe(true);
+    expect(soundEligible("blocked", "none")).toBe(false);
+    expect(soundEligible("working", "all")).toBe(false);
+  });
+
+  it("soundArgv picks the platform player (null elsewhere)", () => {
+    expect(soundArgv("darwin")).toEqual(["afplay", DARWIN_SOUND_FILE]);
+    expect(soundArgv("linux")).toEqual(["paplay", LINUX_SOUND_FILE]);
+    expect(soundArgv("win32")).toBeNull();
   });
 });

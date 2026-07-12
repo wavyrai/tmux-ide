@@ -13,6 +13,7 @@ import {
   UPDATER_SESSION,
   UPDATER_UNREACHABLE_EXIT_TICKS,
   updateSegment,
+  type PendingOsPing,
 } from "./updater.ts";
 import { buildStatusline } from "./statusline.ts";
 import { DEFAULT_THEME } from "../../lib/app-config.ts";
@@ -27,13 +28,19 @@ import type {
   NotificationPrefs,
   SystemNotification,
   ToastTarget,
+  TtyWrite,
 } from "./notify.ts";
 
-/** A fully-enabled prefs object for the notification-dispatch tests. */
+/** A fully-enabled prefs object for the notification-dispatch tests. The
+ *  M25.2 channels default OFF/immediate here so the M25.1 tests keep asserting
+ *  the immediate paths; the M25.2 suite opts in per test. */
 const FULL_PREFS: NotificationPrefs = {
   enabled: true,
   toast: true,
   macos: false,
+  terminal: false,
+  delaySeconds: 0,
+  sound: "none",
   onBlocked: true,
   onDone: true,
   quietHours: null,
@@ -343,7 +350,210 @@ describe("runUpdaterTick", () => {
       prefs: { ...FULL_PREFS, macos: true, quietHours: { start: "22:00", end: "08:00" } },
       now: dayMs,
     });
-    expect(system).toEqual([{ message: "agent blocked · web — needs input", session: "web" }]);
+    expect(system).toEqual([
+      {
+        message: "agent blocked · web — needs input",
+        session: "web",
+        state: "blocked",
+        paneId: "%1",
+        windowIndex: 0,
+      },
+    ]);
+  });
+});
+
+describe("runUpdaterTick — delayed, re-verified OS channels (M25.2)", () => {
+  /** The M25.2 channels all on: banner + terminal escape + sound-on-blocked. */
+  const OS_PREFS: NotificationPrefs = {
+    ...FULL_PREFS,
+    macos: true,
+    terminal: true,
+    sound: "blocked",
+    delaySeconds: 2,
+  };
+
+  /**
+   * A minimal multi-tick rig: one agent pane whose status/existence the test
+   * mutates between ticks, every channel captured, the pending queue and the
+   * debounce/pane maps persistent across ticks — the loop's real shape.
+   */
+  function tickRig(prefs: NotificationPrefs) {
+    const state = {
+      status: "working" as AgentStatus,
+      paneGone: false,
+      now: 0,
+      prefs,
+      focusPanes: null as string[] | null,
+    };
+    const prevPaneState = new Map<string, AgentStatus>();
+    const pendingPings: PendingOsPing[] = [];
+    const lastNotified = new Map<string, number>();
+    const toasts: ToastTarget[][] = [];
+    const system: SystemNotification[] = [];
+    const ttyWrites: TtyWrite[][] = [];
+    let sounds = 0;
+    const tick = () =>
+      runUpdaterTick({
+        listAdopted: () => ["web"],
+        computeProjects: (onPane) => {
+          if (!state.paneGone) {
+            onPane(pd({ sessionName: "web", paneId: "%1", agent: "claude", status: state.status }));
+          }
+          return [project("web")];
+        },
+        writeStatus: () => {},
+        prevPaneState,
+        pendingPings,
+        listClients: () => [
+          {
+            client: "c1",
+            session: "other",
+            windowIndex: 0,
+            tty: "/dev/t1",
+            termname: "xterm-256color",
+          },
+        ],
+        lastNotified,
+        now: () => state.now,
+        prefs: state.prefs,
+        sendToasts: (t) => toasts.push(t),
+        sendSystem: (n) => system.push(n),
+        sendTerminal: (w) => ttyWrites.push(w),
+        playSound: () => {
+          sounds += 1;
+        },
+        appFocus: () =>
+          state.focusPanes
+            ? { ts: state.now, attached: true, session: "web", panes: state.focusPanes }
+            : null,
+      });
+    return {
+      state,
+      pendingPings,
+      toasts,
+      system,
+      ttyWrites,
+      sounds: () => sounds,
+      tick,
+    };
+  }
+
+  it("toasts immediately but queues the OS channels, firing them once the state HELD", () => {
+    const rig = tickRig(OS_PREFS);
+    rig.tick(); // first sight — working, nothing pings
+    rig.state.status = "blocked";
+    rig.state.now = 1000;
+    rig.tick(); // the transition: toast now, OS channels queued for +2s
+    expect(rig.toasts.flat()).toHaveLength(1);
+    expect(rig.system).toEqual([]);
+    expect(rig.ttyWrites).toEqual([]);
+    expect(rig.sounds()).toBe(0);
+    expect(rig.pendingPings).toHaveLength(1);
+    rig.state.now = 2000;
+    rig.tick(); // not due yet
+    expect(rig.system).toEqual([]);
+    rig.state.now = 3200; // past dueAt (1000 + 2000)
+    rig.tick(); // still blocked → everything fires
+    expect(rig.system).toHaveLength(1);
+    expect(rig.system[0]).toMatchObject({ state: "blocked", paneId: "%1", session: "web" });
+    expect(rig.ttyWrites).toHaveLength(1);
+    expect(rig.ttyWrites[0]![0]!.tty).toBe("/dev/t1");
+    expect(rig.ttyWrites[0]![0]!.data).toContain("\x1b]9;");
+    expect(rig.ttyWrites[0]![0]!.data.endsWith("\x07\x07")).toBe(true); // OSC 9 BEL + the bell BEL
+    expect(rig.sounds()).toBe(1);
+    expect(rig.pendingPings).toEqual([]);
+    // no double fire on the next tick
+    rig.state.now = 5000;
+    rig.tick();
+    expect(rig.system).toHaveLength(1);
+  });
+
+  it("a flap inside the window fires NOTHING OS-level (the toast already informed)", () => {
+    const rig = tickRig(OS_PREFS);
+    rig.tick();
+    rig.state.status = "blocked";
+    rig.state.now = 1000;
+    rig.tick(); // blocked → queued
+    expect(rig.toasts.flat()).toHaveLength(1);
+    rig.state.status = "working";
+    rig.state.now = 1800; // flips back within 1s of the stamp
+    rig.tick();
+    rig.state.now = 3200;
+    rig.tick(); // due — but the pane is working again
+    expect(rig.system).toEqual([]);
+    expect(rig.ttyWrites).toEqual([]);
+    expect(rig.sounds()).toBe(0);
+    expect(rig.pendingPings).toEqual([]);
+  });
+
+  it("a vanished pane cancels its pending ping", () => {
+    const rig = tickRig(OS_PREFS);
+    rig.tick();
+    rig.state.status = "blocked";
+    rig.state.now = 1000;
+    rig.tick();
+    rig.state.paneGone = true;
+    rig.state.now = 3200;
+    rig.tick();
+    expect(rig.system).toEqual([]);
+    expect(rig.pendingPings).toEqual([]);
+  });
+
+  it("delaySeconds 0 fires the OS channels immediately", () => {
+    const rig = tickRig({ ...OS_PREFS, delaySeconds: 0 });
+    rig.tick();
+    rig.state.status = "blocked";
+    rig.state.now = 1000;
+    rig.tick();
+    expect(rig.system).toHaveLength(1);
+    expect(rig.ttyWrites).toHaveLength(1);
+    expect(rig.sounds()).toBe(1);
+    expect(rig.pendingPings).toEqual([]);
+  });
+
+  it("quiet hours gate EVERY OS channel but never the toast", () => {
+    const night = new Date(2026, 0, 1, 2, 0).getTime(); // inside 22:00–08:00
+    const rig = tickRig({
+      ...OS_PREFS,
+      delaySeconds: 0,
+      quietHours: { start: "22:00", end: "08:00" },
+    });
+    rig.state.now = night;
+    rig.tick();
+    rig.state.status = "blocked";
+    rig.state.now = night + 1000;
+    rig.tick();
+    expect(rig.toasts.flat()).toHaveLength(1); // the in-app note stays on
+    expect(rig.system).toEqual([]);
+    expect(rig.ttyWrites).toEqual([]);
+    expect(rig.sounds()).toBe(0);
+  });
+
+  it("app focus at FIRE time cancels a queued ping (the user got there on their own)", () => {
+    const rig = tickRig(OS_PREFS);
+    rig.tick();
+    rig.state.status = "blocked";
+    rig.state.now = 1000;
+    rig.tick(); // queued (no focus yet)
+    rig.state.focusPanes = ["%1"]; // user opens the app on that pane
+    rig.state.now = 3200;
+    rig.tick();
+    expect(rig.system).toEqual([]);
+    expect(rig.pendingPings).toEqual([]);
+  });
+
+  it("the sound tri-state routes at fire time: 'all' rings on done, 'blocked' stays quiet", () => {
+    const onDone = (sound: NotificationPrefs["sound"]) => {
+      const rig = tickRig({ ...OS_PREFS, delaySeconds: 0, sound });
+      rig.tick();
+      rig.state.status = "done";
+      rig.state.now = 1000;
+      rig.tick();
+      return rig.sounds();
+    };
+    expect(onDone("all")).toBe(1);
+    expect(onDone("blocked")).toBe(0);
+    expect(onDone("none")).toBe(0);
   });
 });
 

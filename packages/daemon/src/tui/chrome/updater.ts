@@ -36,19 +36,24 @@ import { paneChip } from "./chip.ts";
 import { appendEvents, diffFleet, type AgentEventInit } from "./events.ts";
 import {
   decideNotifications,
+  decideTtyWrites,
   enabledStates,
   inQuietHours,
   listAttachedClients,
+  playPingSound,
   readAppFocus,
   readNotificationPrefs,
   sendSystemNotification,
   sendToasts,
+  soundEligible,
+  writeTtys,
   type AppFocus,
   type AttachedClient,
   type NotificationPrefs,
   type NotifyEvent,
   type SystemNotification,
   type ToastTarget,
+  type TtyWrite,
 } from "./notify.ts";
 import { loadLastNotified, saveLastNotified } from "./notify-state.ts";
 import {
@@ -167,6 +172,26 @@ export interface UpdaterTickDeps {
   prefs?: NotificationPrefs;
   sendToasts?: (toasts: ToastTarget[]) => void;
   sendSystem?: (n: SystemNotification) => void;
+  /**
+   * The OS-level channel io (M25.2), both optional and deps-injected like the
+   * rest: `sendTerminal` writes OSC 9/99 + BEL bytes to client ttys
+   * ({@link writeTtys}); `playSound` fires the platform ping sound
+   * ({@link playPingSound}). Which clients/states qualify is decided purely
+   * ({@link decideTtyWrites} / {@link soundEligible}).
+   */
+  sendTerminal?: (writes: TtyWrite[]) => void;
+  playSound?: () => void;
+  /**
+   * The DELAYED RE-VERIFY queue (M25.2), loop-owned and mutated in place like
+   * `prevPaneState`. With `notifications.delaySeconds > 0`, a notify-eligible
+   * transition queues its OS-LEVEL channels here instead of firing them; each
+   * tick {@link firePendingOsPings} fires the due entries whose pane is STILL
+   * in the notified state (this tick's scan is the re-verify — no setTimeout
+   * racing the tick), so a flappy blocked→working inside the window fires
+   * nothing OS-level. Toasts never queue — the in-app note stays immediate.
+   * Omitted (tests, delay 0) → OS channels fire immediately.
+   */
+  pendingPings?: PendingOsPing[];
   /** The unified app's focus record (see {@link AppFocus}) — pings for panes
    *  on the app's screen are suppressed. Wired to {@link readAppFocus}. */
   appFocus?: () => AppFocus | null;
@@ -255,8 +280,11 @@ export function runUpdaterTick(deps: UpdaterTickDeps): void {
   }
   // Notifications ride PANE transitions (M25.1), not the session rollup — a
   // second agent blocking in an already-blocked session is invisible at the
-  // session level but is exactly who the user needs to hear about.
+  // session level but is exactly who the user needs to hear about. Due delayed
+  // pings re-verify against THIS tick's pane states before the diff mutates
+  // anything (M25.2).
   if (deps.prevPaneState) {
+    firePendingOsPings(deps, panes);
     const events = diffPaneTransitions(deps.prevPaneState, panes, deps.locatePane);
     if (events.length > 0) dispatchNotifications(deps, events);
   }
@@ -326,19 +354,34 @@ export function diffPaneTransitions(
   return events;
 }
 
+/** A queued OS-level ping: the {@link SystemNotification} payload plus when it
+ *  becomes due. Fires only if its pane is STILL in `state` at fire time. */
+export interface PendingOsPing extends SystemNotification {
+  dueAtMs: number;
+}
+
+/** PURE — whether ANY channel beyond the master switch is on; an all-off
+ *  config costs the tick nothing. */
+function anyChannelOn(prefs: NotificationPrefs): boolean {
+  return prefs.toast || prefs.macos || prefs.terminal || prefs.sound !== "none";
+}
+
 /**
  * Ping the user about who needs them from this tick's transitions. Only runs
  * when the notification deps are wired, notifications are `enabled`, AND at
  * least one channel is on. `lastNotified` is mutated in place so the debounce
- * (the flap guard) persists across ticks. The macOS banner is additionally
- * gated on QUIET HOURS — inside the window the banner is skipped, but the event
- * has already been recorded to the log by the caller, so history stays honest.
+ * (the flap guard) persists across ticks. The in-app toast fires IMMEDIATELY
+ * (cheap, low-annoyance); the OS-LEVEL channels (banner / terminal escape /
+ * sound / BEL) either fire now (`delaySeconds` 0 or no queue wired) or queue
+ * onto `pendingPings` for the delayed re-verify (M25.2). The debounce stamp
+ * lands at DECIDE time either way — a flap that later cancels its OS ping
+ * already toasted, so it spent its debounce slot honestly.
  */
 function dispatchNotifications(deps: UpdaterTickDeps, events: NotifyEvent[]): void {
-  const { listClients, lastNotified, now, prefs, sendToasts: toast, sendSystem } = deps;
+  const { listClients, lastNotified, now, prefs, sendToasts: toast } = deps;
   if (!listClients || !lastNotified || !now || !prefs) return;
   if (!prefs.enabled) return;
-  if (!prefs.toast && !prefs.macos) return;
+  if (!anyChannelOn(prefs)) return;
   const nowMs = now();
   const decision = decideNotifications(
     events,
@@ -354,8 +397,71 @@ function dispatchNotifications(deps: UpdaterTickDeps, events: NotifyEvent[]): vo
   // debounce map), so this is exactly "the map changed — persist it".
   if (decision.system.length > 0) deps.persistNotified?.(lastNotified);
   if (prefs.toast && toast) toast(decision.toasts);
-  if (prefs.macos && sendSystem && !inQuietHours(new Date(nowMs), prefs.quietHours)) {
-    for (const n of decision.system) sendSystem(n);
+  if (decision.system.length === 0) return;
+  const delayMs = prefs.delaySeconds * 1000;
+  if (delayMs > 0 && deps.pendingPings) {
+    for (const n of decision.system) deps.pendingPings.push({ ...n, dueAtMs: nowMs + delayMs });
+  } else {
+    fireOsChannels(deps, prefs, decision.system, nowMs);
+  }
+}
+
+/**
+ * Fire the DUE queued OS pings whose transition still holds (M25.2). The
+ * re-verify is tick-native: this tick's fresh pane scan is the source of truth
+ * — a pane that flapped out of the notified state, vanished, or is now on the
+ * unified app's screen ({@link AppFocus} — the user got there on their own)
+ * fires nothing and is dropped. Prefs are the CURRENT tick's fresh read, so a
+ * config change during the delay is honored. Runs before this tick's diff so
+ * "the next tick's pane states" is literally what confirms each ping.
+ */
+function firePendingOsPings(deps: UpdaterTickDeps, panes: PaneDetail[]): void {
+  const { pendingPings: pending, now, prefs } = deps;
+  if (!pending || pending.length === 0 || !now || !prefs) return;
+  const nowMs = now();
+  const due: PendingOsPing[] = [];
+  const keep: PendingOsPing[] = [];
+  for (const p of pending) (p.dueAtMs <= nowMs ? due : keep).push(p);
+  if (due.length === 0) return;
+  pending.length = 0;
+  for (const p of keep) pending.push(p);
+  if (!prefs.enabled) return;
+  const statusByPane = new Map(panes.map((p) => [p.paneId, p.status]));
+  const focus = deps.appFocus?.() ?? null;
+  const confirmed = due.filter((p) => {
+    // A pane-less ping (session-granular caller) can't be re-verified — fire it.
+    if (p.paneId !== null && statusByPane.get(p.paneId) !== p.state) return false;
+    if (focus?.attached && p.paneId !== null && focus.panes.includes(p.paneId)) return false;
+    return true;
+  });
+  fireOsChannels(deps, prefs, confirmed, nowMs);
+}
+
+/**
+ * The OS-LEVEL fan-out (M25.2): system banner, terminal escapes + BEL to
+ * eligible client ttys, and the ping sound (at most ONE sound per batch — a
+ * fleet-wide flap must not ring a carillon). ALL of it is gated on quiet hours
+ * — inside the window nothing OS-level fires (the in-app toast and the event
+ * log have already surfaced the transition, so history stays honest).
+ */
+function fireOsChannels(
+  deps: UpdaterTickDeps,
+  prefs: NotificationPrefs,
+  entries: SystemNotification[],
+  nowMs: number,
+): void {
+  if (entries.length === 0) return;
+  if (inQuietHours(new Date(nowMs), prefs.quietHours)) return;
+  if (prefs.macos && deps.sendSystem) {
+    for (const n of entries) deps.sendSystem(n);
+  }
+  if ((prefs.terminal || prefs.sound !== "none") && deps.sendTerminal && deps.listClients) {
+    const clients = deps.listClients();
+    const writes = entries.flatMap((n) => decideTtyWrites(n, clients, prefs));
+    if (writes.length > 0) deps.sendTerminal(writes);
+  }
+  if (deps.playSound && entries.some((n) => soundEligible(n.state, prefs.sound))) {
+    deps.playSound();
   }
 }
 
@@ -532,6 +638,9 @@ export function runUpdaterLoop(): void {
   // The notification debounce map — restored from disk so a restart can't
   // re-ping inside the window, persisted back on every ping.
   const lastNotified = loadLastNotified();
+  // Queued OS-level pings awaiting their delayed re-verify (M25.2). In-memory
+  // only: the window is seconds, so a restart just drops the queue.
+  const pendingPings: PendingOsPing[] = [];
   // Persistent per-pane chip cache so we only rewrite a chip when it changed.
   const chipCache = new Map<string, string>();
   // Session-id capture for kinds without a hook integration (codex/cursor):
@@ -569,6 +678,9 @@ export function runUpdaterLoop(): void {
         prefs: readNotificationPrefs(),
         sendToasts,
         sendSystem: sendSystemNotification,
+        sendTerminal: writeTtys,
+        playSound: playPingSound,
+        pendingPings,
         locatePane: paneLocation,
         appFocus: () => readAppFocus(),
         persistNotified: (map) => saveLastNotified(map),

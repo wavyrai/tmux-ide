@@ -96,10 +96,30 @@ export interface AppUpdater {
   snapshotEvery: number;
 }
 
+/** The sound channel's states: ping sound on blocked only, on every ping, or never. */
+export type NotificationSound = "blocked" | "all" | "none";
+
 /** Notification channel toggles. */
 export interface AppNotifications {
   toast: boolean;
   macos: boolean;
+  /**
+   * Terminal-native banners (M25.2): an OSC 9 (kitty: OSC 99) escape written to
+   * each eligible attached client's tty, so terminals that surface them (iTerm2,
+   * Ghostty, WezTerm, kitty) show a native notification even over ssh. Default
+   * true — terminals without support ignore the sequence entirely.
+   */
+  terminal: boolean;
+  /**
+   * Seconds the OS-LEVEL channels (banner / terminal escape / sound / BEL) wait
+   * before firing, re-verifying the pane is STILL in the notified state — a
+   * blocked→working flap inside the window fires nothing. 0 fires immediately.
+   * The in-app toast never waits. Tick-native: the delay rounds up to the
+   * updater's next tick at or after `delaySeconds`.
+   */
+  delaySeconds: number;
+  /** Sound channel (M25.2) — `afplay`/`paplay` + a BEL to eligible client ttys. */
+  sound: NotificationSound;
 }
 
 /** Restore behaviour toggles. */
@@ -244,7 +264,7 @@ export const DEFAULT_APP_CONFIG: AppConfig = {
     glyphs: { active: "●", inactive: "○" },
   },
   updater: { tickMs: 2000, snapshotEvery: 15 },
-  notifications: { toast: true, macos: false },
+  notifications: { toast: true, macos: false, terminal: true, delaySeconds: 2, sound: "blocked" },
   restore: { resumeAgents: false },
   updates: { check: true, manifests: false },
   welcome: { show: true },
@@ -289,6 +309,11 @@ function pickBool(value: unknown, fallback: boolean): boolean {
 /** A positive integer, else the default. */
 function pickPosInt(value: unknown, fallback: number): number {
   return typeof value === "number" && Number.isInteger(value) && value > 0 ? value : fallback;
+}
+
+/** A non-negative integer (0 allowed — e.g. "no delay"), else the default. */
+function pickNonNegInt(value: unknown, fallback: number): number {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : fallback;
 }
 
 /** One of the allowed literals, else the default. */
@@ -356,6 +381,9 @@ export function parseAppConfig(input: unknown): AppConfig {
     notifications: {
       toast: pickBool(notifications.toast, D.notifications.toast),
       macos: pickBool(notifications.macos, D.notifications.macos),
+      terminal: pickBool(notifications.terminal, D.notifications.terminal),
+      delaySeconds: pickNonNegInt(notifications.delaySeconds, D.notifications.delaySeconds),
+      sound: pickChoice(notifications.sound, ["blocked", "all", "none"], D.notifications.sound),
     },
     restore: { resumeAgents: pickBool(restore.resumeAgents, D.restore.resumeAgents) },
     updates: {

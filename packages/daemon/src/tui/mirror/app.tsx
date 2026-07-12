@@ -315,6 +315,7 @@ import {
   HINT_CHROME_RESTART,
   HINT_LIVE,
   HINT_READOPT,
+  delaySecondsPatch,
   keybindingItems,
   notificationItems,
   notificationTogglePatch,
@@ -323,6 +324,9 @@ import {
   quietHoursOffPatch,
   quietHoursPatch,
   resetSettingsPatch,
+  soundItems,
+  soundPatch,
+  validateDelaySeconds,
   restoreItems,
   restorePatch,
   settingsRootItems,
@@ -3206,7 +3210,7 @@ render(
       const choice = await DialogSelect.show({
         title: "Quiet hours",
         items: quietHoursItems(prefs),
-        footerHint: "silences macOS banners during the window",
+        footerHint: "silences banners, sounds & bells during the window",
       });
       if (!choice) return false;
       if (choice.item.id === "off") {
@@ -3251,6 +3255,31 @@ render(
         if (choice.item.id === "quietHours") {
           await runQuietHours();
           continue; // back to the list with fresh details either way
+        }
+        if (choice.item.id === "sound") {
+          const picked = await DialogSelect.show({
+            title: "Notification sound",
+            items: soundItems(prefs),
+            footerHint: HINT_LIVE,
+          });
+          if (picked) {
+            updateAppConfig(soundPatch(picked.item.id));
+            setStatusNote(`sound: ${picked.item.label} — ${HINT_LIVE}`);
+          }
+          continue;
+        }
+        if (choice.item.id === "delaySeconds") {
+          const v = await DialogPrompt.show({
+            title: "Alert delay (seconds)",
+            initial: String(prefs.delaySeconds),
+            validate: validateDelaySeconds,
+            footerHint: `waits, then re-checks the agent still needs you · ${HINT_LIVE}`,
+          });
+          if (v !== null) {
+            updateAppConfig(delaySecondsPatch(v));
+            setStatusNote(`alert delay ${v.trim()} s — ${HINT_LIVE}`);
+          }
+          continue;
         }
         const id = choice.item.id as NotificationToggleId;
         updateAppConfig(notificationTogglePatch(id, prefs));

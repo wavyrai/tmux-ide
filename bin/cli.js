@@ -2924,6 +2924,9 @@ function pickBool(value, fallback) {
 function pickPosInt(value, fallback) {
   return typeof value === "number" && Number.isInteger(value) && value > 0 ? value : fallback;
 }
+function pickNonNegInt(value, fallback) {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : fallback;
+}
 function pickChoice(value, allowed, fallback) {
   return typeof value === "string" && allowed.includes(value) ? value : fallback;
 }
@@ -2978,7 +2981,10 @@ function parseAppConfig(input) {
     },
     notifications: {
       toast: pickBool(notifications.toast, D.notifications.toast),
-      macos: pickBool(notifications.macos, D.notifications.macos)
+      macos: pickBool(notifications.macos, D.notifications.macos),
+      terminal: pickBool(notifications.terminal, D.notifications.terminal),
+      delaySeconds: pickNonNegInt(notifications.delaySeconds, D.notifications.delaySeconds),
+      sound: pickChoice(notifications.sound, ["blocked", "all", "none"], D.notifications.sound)
     },
     restore: { resumeAgents: pickBool(restore2.resumeAgents, D.restore.resumeAgents) },
     updates: {
@@ -3082,7 +3088,7 @@ var init_app_config = __esm({
         glyphs: { active: "\u25CF", inactive: "\u25CB" }
       },
       updater: { tickMs: 2e3, snapshotEvery: 15 },
-      notifications: { toast: true, macos: false },
+      notifications: { toast: true, macos: false, terminal: true, delaySeconds: 2, sound: "blocked" },
       restore: { resumeAgents: false },
       updates: { check: true, manifests: false },
       welcome: { show: true },
@@ -5268,18 +5274,32 @@ var init_hosted = __esm({
   }
 });
 
+// packages/daemon/src/tui/mirror/selection.ts
+function tmuxPassthrough(seq) {
+  const doubled = seq.split("\x1B").join("\x1B\x1B");
+  return `\x1BPtmux;${doubled}\x1B\\`;
+}
+var init_selection = __esm({
+  "packages/daemon/src/tui/mirror/selection.ts"() {
+    "use strict";
+  }
+});
+
 // packages/daemon/src/tui/chrome/notify.ts
 var notify_exports = {};
 __export(notify_exports, {
   APP_FOCUS_OPTION: () => APP_FOCUS_OPTION,
   APP_FOCUS_STALE_MS: () => APP_FOCUS_STALE_MS,
   APP_JUMP_OPTION: () => APP_JUMP_OPTION,
+  DARWIN_SOUND_FILE: () => DARWIN_SOUND_FILE,
   DEFAULT_NOTIFICATION_PREFS: () => DEFAULT_NOTIFICATION_PREFS,
+  LINUX_SOUND_FILE: () => LINUX_SOUND_FILE,
   NOTIFY_DEBOUNCE_MS: () => NOTIFY_DEBOUNCE_MS,
   NOTIFY_MAX_LEN: () => NOTIFY_MAX_LEN,
   applyKillSwitch: () => applyKillSwitch,
   buildAppFocusValue: () => buildAppFocusValue,
   decideNotifications: () => decideNotifications,
+  decideTtyWrites: () => decideTtyWrites,
   enabledStates: () => enabledStates,
   hasTerminalNotifier: () => hasTerminalNotifier,
   inQuietHours: () => inQuietHours,
@@ -5288,19 +5308,35 @@ __export(notify_exports, {
   notifyConfigPath: () => notifyConfigPath,
   notifyDebounceKey: () => notifyDebounceKey,
   notifyMessage: () => notifyMessage,
+  notifySendArgs: () => notifySendArgs,
+  osc99Notification: () => osc99Notification,
+  osc9Notification: () => osc9Notification,
   parseAppFocus: () => parseAppFocus,
   parseClients: () => parseClients,
   parseHHMM: () => parseHHMM,
   parseNotificationPrefs: () => parseNotificationPrefs,
+  playPingSound: () => playPingSound,
   readAppFocus: () => readAppFocus,
   readNotificationPrefs: () => readNotificationPrefs,
   sendSystemNotification: () => sendSystemNotification,
   sendToasts: () => sendToasts,
+  soundArgv: () => soundArgv,
+  soundEligible: () => soundEligible,
   suppressToastFor: () => suppressToastFor,
-  terminalNotifierArgs: () => terminalNotifierArgs
+  terminalNotifierArgs: () => terminalNotifierArgs,
+  terminalNotifyEscape: () => terminalNotifyEscape,
+  writeClientTty: () => writeClientTty,
+  writeTtys: () => writeTtys
 });
-import { execFileSync as execFileSync7 } from "node:child_process";
-import { existsSync as existsSync14, readFileSync as readFileSync10 } from "node:fs";
+import { execFileSync as execFileSync7, spawn as spawn4 } from "node:child_process";
+import {
+  closeSync,
+  constants as fsConstants,
+  existsSync as existsSync14,
+  openSync,
+  readFileSync as readFileSync10,
+  writeSync
+} from "node:fs";
 function statusPhrase(to) {
   return to === "blocked" ? "needs input" : "finished";
 }
@@ -5343,23 +5379,39 @@ function decideNotifications(events, clients, lastNotified, nowMs, states = NOTI
       if (suppressToastFor(c, ev)) continue;
       toasts.push({ client: c.client, message });
     }
-    system.push({ message, session: ev.session });
+    system.push({
+      message,
+      session: ev.session,
+      state: ev.to,
+      paneId: ev.paneId ?? null,
+      windowIndex: ev.windowIndex ?? null
+    });
   }
   return { toasts, system, nextLastNotified };
 }
 function parseClients(lines) {
   const out = [];
   for (const line of lines) {
-    const [client = "", session = "", win = ""] = line.split("	");
+    const [client = "", session = "", win = "", tty = "", termname = ""] = line.split("	");
     if (!client || !session) continue;
     const n = Number.parseInt(win, 10);
-    out.push({ client, session, windowIndex: Number.isInteger(n) ? n : null });
+    out.push({
+      client,
+      session,
+      windowIndex: Number.isInteger(n) ? n : null,
+      tty: tty || null,
+      termname: termname || null
+    });
   }
   return out;
 }
 function listAttachedClients() {
   try {
-    const raw = runTmux(["list-clients", "-F", "#{client_name}	#{session_name}	#{window_index}"]).toString().trim();
+    const raw = runTmux([
+      "list-clients",
+      "-F",
+      "#{client_name}	#{session_name}	#{window_index}	#{client_tty}	#{client_termname}"
+    ]).toString().trim();
     return raw ? parseClients(raw.split("\n")) : [];
   } catch {
     return [];
@@ -5401,9 +5453,87 @@ function sendToasts(toasts) {
     }
   }
 }
-function hasTerminalNotifier() {
+function osc9Notification(text) {
+  return `\x1B]9;${text}\x07`;
+}
+function osc99Notification(text, urgent) {
+  return `\x1B]99;${urgent ? "u=2" : ""};${text}\x1B\\`;
+}
+function terminalNotifyEscape(termname, text, urgent) {
+  const t = termname ?? "";
+  if (t.includes("kitty")) return osc99Notification(text, urgent);
+  if (t.startsWith("tmux") || t.startsWith("screen")) {
+    return tmuxPassthrough(osc9Notification(text));
+  }
+  return osc9Notification(text);
+}
+function soundEligible(state, sound) {
+  if (sound === "none") return false;
+  if (sound === "all") return state === "blocked" || state === "done";
+  return state === "blocked";
+}
+function belEligible(state, sound) {
+  return state === "blocked" && sound !== "none";
+}
+function decideTtyWrites(n, clients, prefs) {
+  const asEvent = {
+    session: n.session,
+    from: null,
+    to: n.state,
+    paneId: n.paneId,
+    windowIndex: n.windowIndex
+  };
+  const bel = belEligible(n.state, prefs.sound) ? "\x07" : "";
+  const out = [];
+  for (const c of clients) {
+    if (!c.tty) continue;
+    if (suppressToastFor(c, asEvent)) continue;
+    const escape = prefs.terminal ? terminalNotifyEscape(c.termname, n.message, n.state === "blocked") : "";
+    const data = escape + bel;
+    if (data) out.push({ tty: c.tty, data });
+  }
+  return out;
+}
+function writeClientTty(write) {
+  let fd = null;
   try {
-    execFileSync7("which", ["terminal-notifier"], { stdio: "ignore" });
+    fd = openSync(write.tty, fsConstants.O_WRONLY | fsConstants.O_NOCTTY | fsConstants.O_NONBLOCK);
+    writeSync(fd, write.data);
+  } catch {
+  } finally {
+    if (fd !== null) {
+      try {
+        closeSync(fd);
+      } catch {
+      }
+    }
+  }
+}
+function writeTtys(writes) {
+  for (const w of writes) writeClientTty(w);
+}
+function soundArgv(platform) {
+  if (platform === "darwin") return ["afplay", DARWIN_SOUND_FILE];
+  if (platform === "linux") return ["paplay", LINUX_SOUND_FILE];
+  return null;
+}
+function playPingSound(platform = process.platform) {
+  const argv = soundArgv(platform);
+  if (!argv || !existsSync14(argv[1])) return;
+  try {
+    const child = spawn4(argv[0], argv.slice(1), { stdio: "ignore", detached: true });
+    child.on("error", () => {
+    });
+    child.unref();
+  } catch {
+  }
+}
+function hasTerminalNotifier() {
+  return hasBinary("terminal-notifier");
+}
+function hasBinary(name) {
+  try {
+    execFileSync7("which", [name], { stdio: "ignore" });
     return true;
   } catch {
     return false;
@@ -5427,17 +5557,32 @@ function terminalNotifierArgs(n) {
     notifierExecuteCommand(n.session)
   ];
 }
-function sendSystemNotification(n) {
-  if (process.platform !== "darwin") return;
+function notifySendArgs(n) {
+  const args = ["--app-name=tmux-ide"];
+  if (n.state === "blocked") args.push("--urgency=critical");
+  args.push("tmux-ide", n.message);
+  return args;
+}
+function sendSystemNotification(n, io = {}) {
+  const platform = io.platform ?? process.platform;
+  const exec = io.exec ?? ((cmd, args) => execFileSync7(cmd, args, { stdio: "ignore" }));
+  const has = io.hasBinary ?? hasBinary;
   try {
-    if (hasTerminalNotifier()) {
-      execFileSync7("terminal-notifier", terminalNotifierArgs(n), { stdio: "ignore" });
+    if (platform === "darwin") {
+      if (has("terminal-notifier")) {
+        exec("terminal-notifier", terminalNotifierArgs(n));
+        return;
+      }
+      const escaped = n.message.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+      exec("osascript", ["-e", `display notification "${escaped}" with title "tmux-ide"`]);
       return;
     }
-    const escaped = n.message.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
-    execFileSync7("osascript", ["-e", `display notification "${escaped}" with title "tmux-ide"`], {
-      stdio: "ignore"
-    });
+    if (platform === "linux") {
+      const env = io.env ?? process.env;
+      if (!env.DISPLAY && !env.WAYLAND_DISPLAY) return;
+      if (!has("notify-send")) return;
+      exec("notify-send", notifySendArgs(n));
+    }
   } catch {
   }
 }
@@ -5479,13 +5624,16 @@ function parseNotificationPrefs(rawConfig) {
     enabled: pickBool2(n.enabled, DEFAULT_NOTIFICATION_PREFS.enabled),
     toast: base.toast,
     macos: base.macos,
+    terminal: base.terminal,
+    delaySeconds: base.delaySeconds,
+    sound: base.sound,
     onBlocked: pickBool2(n.onBlocked, DEFAULT_NOTIFICATION_PREFS.onBlocked),
     onDone: pickBool2(n.onDone, DEFAULT_NOTIFICATION_PREFS.onDone),
     quietHours: parseQuietHours(n.quietHours)
   };
 }
 function applyKillSwitch(prefs, envValue) {
-  return envValue === "0" ? { ...prefs, enabled: false, toast: false, macos: false } : prefs;
+  return envValue === "0" ? { ...prefs, enabled: false, toast: false, macos: false, terminal: false, sound: "none" } : prefs;
 }
 function notifyConfigPath() {
   return appConfigPath();
@@ -5502,23 +5650,29 @@ function readRawConfig() {
 function readNotificationPrefs() {
   return applyKillSwitch(parseNotificationPrefs(readRawConfig()), process.env.TMUX_IDE_NOTIFY);
 }
-var NOTIFY_STATES, NOTIFY_DEBOUNCE_MS, NOTIFY_MAX_LEN, APP_FOCUS_OPTION, APP_FOCUS_STALE_MS, APP_JUMP_OPTION, DEFAULT_NOTIFICATION_PREFS;
+var NOTIFY_STATES, NOTIFY_DEBOUNCE_MS, NOTIFY_MAX_LEN, APP_FOCUS_OPTION, APP_FOCUS_STALE_MS, DARWIN_SOUND_FILE, LINUX_SOUND_FILE, APP_JUMP_OPTION, DEFAULT_NOTIFICATION_PREFS;
 var init_notify = __esm({
   "packages/daemon/src/tui/chrome/notify.ts"() {
     "use strict";
     init_src();
     init_app_config();
     init_hosted();
+    init_selection();
     NOTIFY_STATES = /* @__PURE__ */ new Set(["blocked", "done"]);
     NOTIFY_DEBOUNCE_MS = 3e4;
     NOTIFY_MAX_LEN = 120;
     APP_FOCUS_OPTION = "@tmux_ide_app_focus";
     APP_FOCUS_STALE_MS = 15e3;
+    DARWIN_SOUND_FILE = "/System/Library/Sounds/Tink.aiff";
+    LINUX_SOUND_FILE = "/usr/share/sounds/freedesktop/stereo/complete.oga";
     APP_JUMP_OPTION = "@tmux_ide_app_jump";
     DEFAULT_NOTIFICATION_PREFS = {
       enabled: true,
       toast: true,
       macos: false,
+      terminal: true,
+      delaySeconds: 2,
+      sound: "blocked",
       onBlocked: true,
       onDone: true,
       quietHours: null
@@ -5882,6 +6036,7 @@ function runUpdaterTick(deps2) {
     if (events.length > 0) deps2.appendEvents(events);
   }
   if (deps2.prevPaneState) {
+    firePendingOsPings(deps2, panes);
     const events = diffPaneTransitions(deps2.prevPaneState, panes, deps2.locatePane);
     if (events.length > 0) dispatchNotifications(deps2, events);
   }
@@ -5920,11 +6075,14 @@ function diffPaneTransitions(prev, panes, locate) {
   for (const [paneId, status2] of next) prev.set(paneId, status2);
   return events;
 }
+function anyChannelOn(prefs) {
+  return prefs.toast || prefs.macos || prefs.terminal || prefs.sound !== "none";
+}
 function dispatchNotifications(deps2, events) {
-  const { listClients, lastNotified, now, prefs, sendToasts: toast, sendSystem } = deps2;
+  const { listClients, lastNotified, now, prefs, sendToasts: toast } = deps2;
   if (!listClients || !lastNotified || !now || !prefs) return;
   if (!prefs.enabled) return;
-  if (!prefs.toast && !prefs.macos) return;
+  if (!anyChannelOn(prefs)) return;
   const nowMs = now();
   const decision = decideNotifications(
     events,
@@ -5938,8 +6096,47 @@ function dispatchNotifications(deps2, events) {
   for (const [key, ts] of decision.nextLastNotified) lastNotified.set(key, ts);
   if (decision.system.length > 0) deps2.persistNotified?.(lastNotified);
   if (prefs.toast && toast) toast(decision.toasts);
-  if (prefs.macos && sendSystem && !inQuietHours(new Date(nowMs), prefs.quietHours)) {
-    for (const n of decision.system) sendSystem(n);
+  if (decision.system.length === 0) return;
+  const delayMs = prefs.delaySeconds * 1e3;
+  if (delayMs > 0 && deps2.pendingPings) {
+    for (const n of decision.system) deps2.pendingPings.push({ ...n, dueAtMs: nowMs + delayMs });
+  } else {
+    fireOsChannels(deps2, prefs, decision.system, nowMs);
+  }
+}
+function firePendingOsPings(deps2, panes) {
+  const { pendingPings: pending, now, prefs } = deps2;
+  if (!pending || pending.length === 0 || !now || !prefs) return;
+  const nowMs = now();
+  const due = [];
+  const keep = [];
+  for (const p of pending) (p.dueAtMs <= nowMs ? due : keep).push(p);
+  if (due.length === 0) return;
+  pending.length = 0;
+  for (const p of keep) pending.push(p);
+  if (!prefs.enabled) return;
+  const statusByPane = new Map(panes.map((p) => [p.paneId, p.status]));
+  const focus = deps2.appFocus?.() ?? null;
+  const confirmed = due.filter((p) => {
+    if (p.paneId !== null && statusByPane.get(p.paneId) !== p.state) return false;
+    if (focus?.attached && p.paneId !== null && focus.panes.includes(p.paneId)) return false;
+    return true;
+  });
+  fireOsChannels(deps2, prefs, confirmed, nowMs);
+}
+function fireOsChannels(deps2, prefs, entries, nowMs) {
+  if (entries.length === 0) return;
+  if (inQuietHours(new Date(nowMs), prefs.quietHours)) return;
+  if (prefs.macos && deps2.sendSystem) {
+    for (const n of entries) deps2.sendSystem(n);
+  }
+  if ((prefs.terminal || prefs.sound !== "none") && deps2.sendTerminal && deps2.listClients) {
+    const clients = deps2.listClients();
+    const writes = entries.flatMap((n) => decideTtyWrites(n, clients, prefs));
+    if (writes.length > 0) deps2.sendTerminal(writes);
+  }
+  if (deps2.playSound && entries.some((n) => soundEligible(n.state, prefs.sound))) {
+    deps2.playSound();
   }
 }
 function paneLocation(paneId) {
@@ -6037,6 +6234,7 @@ function runUpdaterLoop() {
   const prevState = /* @__PURE__ */ new Map();
   const prevPaneState = /* @__PURE__ */ new Map();
   const lastNotified = loadLastNotified();
+  const pendingPings = [];
   const chipCache = /* @__PURE__ */ new Map();
   const capturer = createSessionIdCapturer({
     // Throwing is fine here — the capturer treats a failed stamp as "retry on
@@ -6068,6 +6266,9 @@ function runUpdaterLoop() {
         prefs: readNotificationPrefs(),
         sendToasts,
         sendSystem: sendSystemNotification,
+        sendTerminal: writeTtys,
+        playSound: playPingSound,
+        pendingPings,
         locatePane: paneLocation,
         appFocus: () => readAppFocus(),
         persistNotified: (map) => saveLastNotified(map),
@@ -10127,7 +10328,7 @@ var init_dispatcher = __esm({
 });
 
 // packages/daemon/src/lib/project-init-runner.ts
-import { spawn as spawn5 } from "node:child_process";
+import { spawn as spawn6 } from "node:child_process";
 function lineStreamer(onChunk) {
   let pending = "";
   return {
@@ -10149,7 +10350,7 @@ function lineStreamer(onChunk) {
   };
 }
 async function runInit(options) {
-  const spawnFn = options.spawnFn ?? spawn5;
+  const spawnFn = options.spawnFn ?? spawn6;
   const command2 = options.command ?? "tmux-ide";
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const args = ["init"];
@@ -15628,7 +15829,7 @@ try {
       break;
     }
     case "events": {
-      const { readFileSync: readFileSync23, existsSync: existsSync37, statSync: statSync7, openSync, readSync, closeSync } = await import("node:fs");
+      const { readFileSync: readFileSync23, existsSync: existsSync37, statSync: statSync7, openSync: openSync2, readSync, closeSync: closeSync2 } = await import("node:fs");
       const { eventsPath: eventsPath2, formatEventLine: formatEventLine2 } = await Promise.resolve().then(() => (init_events(), events_exports));
       const path2 = eventsPath2();
       const paintStatus = (status2, text) => {
@@ -15689,7 +15890,7 @@ try {
           leftover = "";
         }
         if (size <= offset) return;
-        const fd = openSync(path2, "r");
+        const fd = openSync2(path2, "r");
         try {
           const buf = Buffer.alloc(size - offset);
           readSync(fd, buf, 0, buf.length, offset);
@@ -15698,7 +15899,7 @@ try {
           leftover = parts.pop() ?? "";
           for (const line of parts) if (line.trim().length > 0) printLine(line);
         } finally {
-          closeSync(fd);
+          closeSync2(fd);
         }
       }, 500);
       process.on("SIGINT", () => {
