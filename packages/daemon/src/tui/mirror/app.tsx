@@ -202,11 +202,12 @@ import { readdir, readFile, writeFile, rename, rm, stat } from "node:fs/promises
 import { basename, dirname, join } from "node:path";
 import { homedir } from "node:os";
 import { render, useKeyboard, usePaste, useTerminalDimensions } from "@opentui/solid";
-import { RGBA, EditBuffer, decodePasteBytes } from "@opentui/core";
+import { RGBA, EditBuffer, createCliRenderer, decodePasteBytes } from "@opentui/core";
 import { createSignal, createMemo, createEffect, onMount, onCleanup, For, Show } from "solid-js";
 import { SessionMirror, type LivePane } from "./session-mirror.ts";
 import { registerPaneSurface, type PaneSearchHighlight } from "./pane-surface.tsx";
 import { tapInputSent, tapInputTick } from "./perf-tap.ts";
+import { installHostAutowrapGuard, type HostAutowrapGuard } from "./host-terminal.ts";
 import { execFile, spawn } from "node:child_process";
 import type { AgentStatus } from "../detect/classify.ts";
 import { rollupChips, homeFooterHints, type FleetRollup } from "../team/home.ts";
@@ -808,8 +809,30 @@ const packedToRgba = (packed: number | null, fallback: RGBA): RGBA => {
   return c;
 };
 
-render(
-  () => {
+// Create the renderer explicitly so host-terminal mode ownership spans its
+// exact lifetime. OpenTUI's terminal setup must finish BEFORE DECAWM is turned
+// off; its onDestroy runs after native terminal teardown and restores it. The
+// process-exit fallback covers any future direct process.exit path and uses a
+// synchronous fd write because queued stdout is not reliable during `exit`.
+let hostAutowrap: HostAutowrapGuard | null = null;
+const appRenderer = await createCliRenderer({
+  // targetFps stays EXPLICIT: @opentui 0.4.3 silently defaults it to 30
+  // (maxFps already defaults to 60). Re-confirmed on the 0.4.3 bump (M21.2).
+  targetFps: 60,
+  maxFps: 60,
+  // `{}` requests kitty's default disambiguation + alternate-key flags.
+  useKittyKeyboard: KITTY_KEYS ? {} : null,
+  // OpenTUI's error console is an in-app overlay; keep it development-only.
+  consoleMode: process.env.TMUX_IDE_MIRROR_DEBUG ? "console-overlay" : "disabled",
+  onDestroy: () => hostAutowrap?.restore(),
+});
+hostAutowrap = installHostAutowrapGuard((sequence) => writeSync(process.stdout.fd, sequence), {
+  onExit: (listener) => process.once("exit", listener),
+  offExit: (listener) => process.removeListener("exit", listener),
+});
+
+try {
+  await render(() => {
     // Register <pane_surface> before any is created (M21.3). An explicit call —
     // a bare side-effect import of the module gets DCE'd by the transpiler.
     if (FB_PANES) registerPaneSurface();
@@ -3092,9 +3115,11 @@ render(
           void runSettingsCommand(a.id);
           break;
         case "quit":
-          mirror?.dispose();
-          editBuffer?.destroy();
-          process.exit(0);
+          // Renderer destruction disposes the Solid root first, so the shared
+          // onCleanup path owns mirrors/buffers and the host-mode guard restores
+          // DECAWM after OpenTUI's native terminal teardown.
+          appRenderer.destroy();
+          break;
       }
     };
     /** Feed one key to the palette overlay. Returns true when the key was consumed
@@ -4550,9 +4575,8 @@ render(
           });
           return;
         }
-        mirror?.dispose();
-        editBuffer?.destroy();
-        process.exit(0);
+        appRenderer.destroy();
+        return;
       }
       // SUPER-modified keys arrive only under the kitty keyboard protocol
       // (M24.4). ⌘K opens the palette — suppressed while any overlay owns the
@@ -6023,12 +6047,13 @@ render(
             )}
           </For>
         </box>
-        <box flexDirection="row" flexGrow={1} backgroundColor={DEFAULT_BG}>
+        <box flexDirection="row" flexGrow={1} backgroundColor={DEFAULT_BG} overflow="hidden">
           <box
             width={sidebarW()}
             flexDirection="column"
             backgroundColor={SIDEBAR_BG}
             paddingLeft={1}
+            overflow="hidden"
             onMouse={(e: RouteEvent) => route(e)}
           >
             <text fg={ACCENT} attributes={1}>
@@ -6157,7 +6182,12 @@ render(
               <text fg={MUTED}>{SIDEBAR_HINT_POST}</text>
             </box>
           </box>
-          <box flexDirection="column" flexGrow={1} onMouse={(e: RouteEvent) => route(e)}>
+          <box
+            flexDirection="column"
+            flexGrow={1}
+            overflow="hidden"
+            onMouse={(e: RouteEvent) => route(e)}
+          >
             <Show when={mode() === "home"}>
               {/* HOME header (y=0) + rule (y=1); rows below start at y=2 — the
               coordinate `route` reverses for a home-row click. */}
@@ -6342,7 +6372,7 @@ render(
                 </Show>
                 {buttonRow(stripButtons)}
               </box>
-              <box position="relative" flexGrow={1} backgroundColor={GUTTER_BG}>
+              <box position="relative" flexGrow={1} backgroundColor={GUTTER_BG} overflow="hidden">
                 {/* M21.3 — framebuffer blit (flagged). ONE <pane_surface> per
                   pane blits the grid straight into packed buffers; the For keys
                   on the stable id list so a content tick reuses each surface (and
@@ -6362,6 +6392,7 @@ render(
                           height={pane.height}
                           flexDirection="column"
                           backgroundColor={DEFAULT_BG}
+                          overflow="hidden"
                         >
                           <For each={paneSelRows(pane)}>
                             {(runs) => (
@@ -6418,6 +6449,7 @@ render(
                             width={pane()!.width}
                             height={pane()!.height}
                             backgroundColor={DEFAULT_BG}
+                            overflow="hidden"
                           >
                             <pane_surface
                               width={pane()!.width}
@@ -7125,24 +7157,8 @@ render(
         </Show>
       </box>
     );
-  },
-  // targetFps stays EXPLICIT: @opentui 0.4.3 still silently defaults it to 30
-  // (maxFps already defaults to 60). Re-confirmed on the 0.4.3 bump (M21.2).
-  // consoleMode: OpenTUI's error console is an in-app OVERLAY that pops over
-  // the canvas on any console.error (a runtime exception mid-render flashed it
-  // during the M23.5 resize battery). Off in production; the mirror debug flag
-  // keeps it for development, where it is genuinely useful.
-  // useKittyKeyboard (M24.4): `{}` requests the protocol with OpenTUI's
-  // defaults (disambiguate + alternateKeys; NO events/allKeysAsEscapes — no
-  // release events, printables still arrive as plain text). Kitty-capable
-  // hosts then deliver ⌘K (super+k) and CSI-u escapes the stdin parser maps to
-  // the SAME key names the legacy parser does, so the pane re-encode path
-  // (KEYMAP/sendKey/sendText) is unchanged; hosts without the protocol ignore
-  // the request. `app.kittyKeys: false` opts out.
-  {
-    targetFps: 60,
-    maxFps: 60,
-    useKittyKeyboard: KITTY_KEYS ? {} : null,
-    consoleMode: process.env.TMUX_IDE_MIRROR_DEBUG ? "console-overlay" : "disabled",
-  },
-);
+  }, appRenderer);
+} catch (error) {
+  appRenderer.destroy();
+  throw error;
+}
