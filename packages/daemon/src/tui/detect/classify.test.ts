@@ -6,7 +6,13 @@
  * sequence.
  */
 import { describe, expect, it } from "vitest";
-import { classifyInstant, createStatusTracker, parseAuthorityEpoch } from "./classify.ts";
+import {
+  AGENT_TEXT_MAX,
+  classifyInstant,
+  createStatusTracker,
+  parseAuthorityEpoch,
+  sanitizeAgentText,
+} from "./classify.ts";
 import type { AgentManifest } from "./manifest.ts";
 import type { PaneSnapshot } from "./snapshot.ts";
 
@@ -130,5 +136,42 @@ describe("StatusTracker", () => {
     t.update("b", "idle");
     expect(t.update("a", "idle")).toBe("done");
     expect(t.update("b", "idle")).toBe("idle");
+  });
+});
+
+describe("sanitizeAgentText (display metadata, M25.4)", () => {
+  const ESC = String.fromCharCode(27);
+
+  it("passes plain short text through", () => {
+    expect(sanitizeAgentText("refactoring auth")).toBe("refactoring auth");
+  });
+
+  it("returns undefined for absent/empty/whitespace-only values", () => {
+    expect(sanitizeAgentText(undefined)).toBeUndefined();
+    expect(sanitizeAgentText("")).toBeUndefined();
+    expect(sanitizeAgentText("   ")).toBeUndefined();
+  });
+
+  it("strips ANSI CSI sequences entirely (no leftover brackets)", () => {
+    expect(sanitizeAgentText(`${ESC}[1;31mred${ESC}[0m text`)).toBe("red text");
+  });
+
+  it("replaces control chars (tabs, newlines) with spaces and collapses runs", () => {
+    expect(sanitizeAgentText("a\tb\n\ncd")).toBe("a b cd");
+  });
+
+  it("clamps to AGENT_TEXT_MAX with a trailing ellipsis", () => {
+    const out = sanitizeAgentText("x".repeat(80))!;
+    expect(out.length).toBe(AGENT_TEXT_MAX);
+    expect(out.endsWith("…")).toBe(true);
+  });
+
+  it("a value that is exactly the max survives untouched", () => {
+    const exact = "y".repeat(AGENT_TEXT_MAX);
+    expect(sanitizeAgentText(exact)).toBe(exact);
+  });
+
+  it("a value that is ONLY control chars sanitizes to undefined", () => {
+    expect(sanitizeAgentText(`${ESC}[2J\t\n`)).toBeUndefined();
   });
 });

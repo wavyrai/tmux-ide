@@ -158,7 +158,14 @@ describe("parseAppConfig — mistyped fields fall back to default", () => {
       toast: false,
       macos: true,
     });
-    expect(parseAppConfig({ updates: { check: false } }).updates).toEqual({ check: false });
+    expect(parseAppConfig({ updates: { check: false } }).updates).toEqual({
+      check: false,
+      manifests: false,
+    });
+    expect(parseAppConfig({ updates: { manifests: true } }).updates).toEqual({
+      check: true,
+      manifests: true,
+    });
   });
 
   it("worktrees.dir — a non-empty string overrides, anything else stays the empty default", () => {

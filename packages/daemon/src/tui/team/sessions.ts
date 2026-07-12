@@ -15,6 +15,7 @@ import {
   classifyInstant,
   parseAuthority,
   parseAuthorityEpoch,
+  sanitizeAgentText,
   type AgentStatus,
   type StatusTracker,
 } from "../detect/classify.ts";
@@ -78,6 +79,19 @@ export interface PaneAgentEntry {
   command: string;
   /** `pane_current_path` — the pane's working directory. */
   dir: string;
+  /**
+   * Self-reported one-liner (`@agent_status_text`, sanitized + clamped to 32
+   * chars) — what the agent says it is doing ("refactoring auth"). ADDITIVE and
+   * present only while the pane's `@agent_state` stamp is FRESH (the metadata
+   * follows the same authority-staleness rules; stale/absent authority drops it).
+   */
+  statusText?: string;
+  /**
+   * Self-reported display name (`@agent_display_name`, sanitized) — label
+   * precedence over `kind` in the sidebar/chips. Same freshness gate as
+   * {@link statusText}. ADDITIVE.
+   */
+  displayName?: string;
 }
 
 /**
@@ -93,6 +107,9 @@ export function buildAgentEntry(input: {
   manifest: AgentManifest | undefined;
   state: AgentStatus;
   since: number | null;
+  /** Already-sanitized display metadata (undefined when absent/stale). */
+  statusText?: string;
+  displayName?: string;
 }): PaneAgentEntry | null {
   const { manifest, pane } = input;
   if (!manifest || manifest.id === "shell") return null;
@@ -107,6 +124,29 @@ export function buildAgentEntry(input: {
     title: pane.title,
     command: pane.cmd,
     dir: pane.dir,
+    ...(input.statusText !== undefined ? { statusText: input.statusText } : {}),
+    ...(input.displayName !== undefined ? { displayName: input.displayName } : {}),
+  };
+}
+
+/**
+ * PURE — the display metadata a pane's agent entry surfaces: the sanitized
+ * `@agent_status_text` / `@agent_display_name` options, gated on the SAME
+ * authority-freshness verdict as the state itself. `authorityFresh` is
+ * `parseAuthority(...) !== null` — when the pane's `@agent_state` stamp is
+ * absent or stale (a dead hook mid-turn), the metadata is dropped with it
+ * rather than lying alongside a scraped state.
+ */
+export function agentMetadataFor(
+  pane: Pick<PaneRecord, "statusTextRaw" | "displayNameRaw">,
+  authorityFresh: boolean,
+): { statusText?: string; displayName?: string } {
+  if (!authorityFresh) return {};
+  const statusText = sanitizeAgentText(pane.statusTextRaw);
+  const displayName = sanitizeAgentText(pane.displayNameRaw);
+  return {
+    ...(statusText !== undefined ? { statusText } : {}),
+    ...(displayName !== undefined ? { displayName } : {}),
   };
 }
 
@@ -155,6 +195,10 @@ interface PaneRecord {
   authority: string;
   /** Raw `@agent_hint` pane option — forces a manifest when set. */
   hint: string;
+  /** Raw `@agent_status_text` pane option — sanitized by {@link agentMetadataFor}. */
+  statusTextRaw: string;
+  /** Raw `@agent_display_name` pane option — sanitized by {@link agentMetadataFor}. */
+  displayNameRaw: string;
   /** `window_index` — the window (tab) this pane lives in. */
   windowIndex: number;
   /** `window_name`. */
@@ -302,8 +346,17 @@ export function listTeamSessions(
           status,
         });
         // Surface per-pane agent detail (same resolved manifest/status — nothing
-        // re-derived). Non-agent panes yield null and are skipped.
-        const entry = buildAgentEntry({ sessionName: name, pane, manifest, state: status, since });
+        // re-derived). Non-agent panes yield null and are skipped. Display
+        // metadata (@agent_status_text/@agent_display_name) is gated on the SAME
+        // freshness verdict as the authority state — stale/absent stamp drops it.
+        const entry = buildAgentEntry({
+          sessionName: name,
+          pane,
+          manifest,
+          state: status,
+          since,
+          ...agentMetadataFor(pane, authority !== null),
+        });
         if (entry) agents.push(entry);
         return status;
       });
@@ -332,7 +385,10 @@ function collectPanes(): Map<string, PaneRecord[]> {
     // title stays the trailing catch-all — window names/paths don't contain tabs
     // in practice. pane_current_path rides this SAME list-panes call (no extra
     // tmux round-trip) so per-pane agent entries can carry a working dir.
-    `#{session_name}\t#{pane_id}\t#{pane_pid}\t#{pane_current_command}\t#{@agent_state}\t#{@agent_hint}\t#{${SIDEBAR_PANE_OPTION}}\t#{window_index}\t#{window_name}\t#{window_active}\t#{pane_current_path}\t#{pane_title}`,
+    // @agent_status_text/@agent_display_name ride the same caveat: the contract
+    // (skill/SKILL.md) says plain text; a stamped tab would shift this one
+    // pane's fields (sanitizeAgentText strips control chars AFTER the split).
+    `#{session_name}\t#{pane_id}\t#{pane_pid}\t#{pane_current_command}\t#{@agent_state}\t#{@agent_hint}\t#{@agent_status_text}\t#{@agent_display_name}\t#{${SIDEBAR_PANE_OPTION}}\t#{window_index}\t#{window_name}\t#{window_active}\t#{pane_current_path}\t#{pane_title}`,
   ]);
   const bySession = new Map<string, PaneRecord[]>();
   for (const line of raw.split("\n").filter(Boolean)) {
@@ -343,6 +399,8 @@ function collectPanes(): Map<string, PaneRecord[]> {
       cmd = "",
       authority = "",
       hint = "",
+      statusTextRaw = "",
+      displayNameRaw = "",
       sidebar = "",
       windowIndex = "0",
       windowName = "",
@@ -358,6 +416,8 @@ function collectPanes(): Map<string, PaneRecord[]> {
       cmd,
       authority,
       hint,
+      statusTextRaw,
+      displayNameRaw,
       sidebar: sidebar === "1",
       windowIndex: Number(windowIndex) || 0,
       windowName,

@@ -230,6 +230,7 @@ ${bold("Usage:")}
   ${cyan("tmux-ide inspect")} [--json]   ${dim("Show effective config and runtime state")}
   ${cyan("tmux-ide doctor")}             ${dim("Check system requirements")}
   ${cyan("tmux-ide update")} [--dry-run] ${dim("Update tmux-ide (detects dev checkout vs npm/pnpm/bun global)")}
+  ${cyan("tmux-ide update --manifests")} ${dim("Fetch the latest agent-detection manifest pack (your overrides still win)")}
   ${cyan("tmux-ide skill-sync")}         ${dim("Refresh the bundled Claude Code skill in ~/.claude/skills/tmux-ide")}
   ${cyan("tmux-ide validate")} [--json]  ${dim("Validate ide.yml")}
   ${cyan("tmux-ide detect")} [--json]    ${dim("Detect project stack")}
@@ -1545,6 +1546,32 @@ try {
     }
 
     case "update": {
+      // `--manifests`: fetch the agent-detection manifest pack (versioned JSON,
+      // a GitHub release asset) into ~/.tmux-ide/agent-detection/pack/ — the
+      // loader hot-merges it under bundled<pack<user precedence. Schema-invalid
+      // packs are rejected loudly. See lib/manifest-pack.ts for the format.
+      if (values["manifests"] === true) {
+        const { updateManifestPack } = await import("../packages/daemon/src/lib/manifest-pack.ts");
+        try {
+          const r = await updateManifestPack({ log: (m) => console.error(m) });
+          if (json) {
+            console.log(JSON.stringify({ ok: true, ...r }, null, 2));
+          } else {
+            console.log(
+              `manifest pack ${r.packVersion} installed (${r.count} manifests): ${r.path}`,
+            );
+            console.log(
+              "your own agent-detection/*.json overrides still win — the pack merges beneath them",
+            );
+          }
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          if (json) console.log(JSON.stringify({ ok: false, error: message }, null, 2));
+          else console.error(`manifest pack NOT installed: ${message}`);
+          process.exitCode = 1;
+        }
+        break;
+      }
       // `--tui-binary`: download the per-platform TUI binary (the fallback that
       // lets an npm install with no bun run the full cockpit). Explicit opt-in —
       // never auto-fetched on install (it's ~70MB). See lib/tui-binary.ts.

@@ -30,6 +30,19 @@ export interface AgentRowInput {
   state: AgentStatus;
   /** Authority state's epoch-seconds stamp, or null for a scraped pane. */
   since: number | null;
+  /** Self-reported one-liner (`@agent_status_text`, sanitized by the report;
+   *  dropped with a stale authority stamp). Rides to the pane chips (M25.4). */
+  statusText?: string;
+  /** Self-reported display name (`@agent_display_name`) — row-label precedence
+   *  over the detected `kind` ({@link agentDisplayKind}). */
+  displayName?: string;
+}
+
+/** PURE — what an agent row is CALLED: the self-reported display name when one
+ *  is stamped (and fresh — the report already applied staleness), else the
+ *  detected kind. The one precedence rule every label surface shares. */
+export function agentDisplayKind(a: Pick<AgentRowInput, "kind" | "displayName">): string {
+  return a.displayName ?? a.kind;
 }
 
 /** Attention-first rank: blocked, working, done, idle (from `ROLLUP_ORDER`), then

@@ -30,6 +30,13 @@ export interface ChipAgent {
   /** Authority epoch (SECONDS) when the authority layer supplied the state;
    *  null for scraped panes. Feeds the "blocked 4m" age suffix. */
   since: number | null;
+  /** Self-reported one-liner (`@agent_status_text`, already sanitized ≤32 chars
+   *  by the report; absent when the pane never stamped one or its authority
+   *  stamp went stale). Renders as the "· refactoring auth" suffix. */
+  statusText?: string;
+  /** Self-reported display name (`@agent_display_name`) — replaces `kind` in
+   *  the label when present. Same staleness gate as {@link statusText}. */
+  displayName?: string;
 }
 
 /**
@@ -64,19 +71,28 @@ export function stateAge(since: number | null, nowMs: number): string | null {
   return `${Math.floor(s / 86400)}d`;
 }
 
+/** The least status-text worth showing: 3 chars + the ellipsis. Below this the
+ *  suffix is dropped instead of rendering an unreadable "· r…". */
+const MIN_STATUS_TEXT = 4;
+
 /**
  * Build a chip label that fits `budget` cells (the printable text, WITHOUT the
  * one-cell padding the renderer adds each side). Degrades in steps rather than
  * mid-word ellipsis so a narrow pane still reads:
  *
- *   `● claude · blocked 4m`   blocked, authority age known
- *   `● claude · blocked`      blocked, scraped (no stamp)
- *   `● claude`                any other state (color carries the state)
- *   `●`                       narrow pane
- *   null                      no room at all (or a hidden-worthy budget < 1)
+ *   `● claude · refactoring auth`  self-reported status text (M25.4)
+ *   `● claude · blocked 4m`        blocked, authority age known
+ *   `● claude · blocked`           blocked, scraped (no stamp)
+ *   `● claude`                     any other state (color carries the state)
+ *   `●`                            narrow pane
+ *   null                           no room at all (or a hidden-worthy budget < 1)
  *
- * Only `blocked` spells its state out — it is the attention state; everything
- * else leans on the glyph color, matching the dock chips' quiet default.
+ * `displayName` replaces the kind when the agent stamped one. A status-text
+ * candidate that overflows is first re-fit by truncating the TEXT with an
+ * ellipsis (never the glyph/name prefix), then dropped entirely — so the
+ * degradation order stays step-wise and readable. Blocked still spells its
+ * state out (it is the attention state) and outranks the status text; the text
+ * rides after it when the budget allows.
  */
 export function chipLabel(
   entry: ChipAgent,
@@ -84,14 +100,27 @@ export function chipLabel(
   nowMs: number,
   budget: number,
 ): string | null {
-  const base = `${glyph} ${entry.kind}`;
+  const base = `${glyph} ${entry.displayName ?? entry.kind}`;
+  const text = entry.statusText;
   const candidates: string[] = [];
   if (entry.state === "blocked") {
     const age = stateAge(entry.since, nowMs);
-    if (age) candidates.push(`${base} · blocked ${age}`);
-    candidates.push(`${base} · blocked`);
+    const blocked = age ? `${base} · blocked ${age}` : `${base} · blocked`;
+    if (text) candidates.push(`${blocked} · ${text}`);
+    candidates.push(blocked);
+    if (age) candidates.push(`${base} · blocked`);
+  } else if (text) {
+    candidates.push(`${base} · ${text}`);
   }
   candidates.push(base, glyph);
-  for (const c of candidates) if (c.length <= budget) return c;
+  for (const c of candidates) {
+    if (c.length <= budget) return c;
+    // A status-text candidate re-fits by truncating its text before giving up.
+    if (text && c.endsWith(` · ${text}`)) {
+      const head = c.slice(0, c.length - text.length);
+      const room = budget - head.length;
+      if (room >= MIN_STATUS_TEXT) return head + text.slice(0, room - 1) + "…";
+    }
+  }
   return null;
 }
