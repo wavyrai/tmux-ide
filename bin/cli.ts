@@ -976,17 +976,35 @@ try {
     case "integration": {
       const sub = positionals[1];
       const agent = positionals[2];
-      // `status` and `offer` need no agent arg; install/uninstall are claude-only.
-      const needsClaude = sub === "install" || sub === "uninstall";
-      if (!sub || (needsClaude && agent !== "claude")) {
+      // `status` and `offer` need no agent arg; install/uninstall take a kind
+      // we ship an integration for (claude hooks, opencode plugin).
+      const needsAgent = sub === "install" || sub === "uninstall";
+      const installable = agent === "claude" || agent === "opencode";
+      if (!sub || (needsAgent && !installable)) {
         console.error(
-          "Usage: tmux-ide integration <install|uninstall|status|offer> [claude]\n" +
-            "  install    hook Claude Code lifecycle events into tmux pane state\n" +
-            "  uninstall  remove exactly the tmux-ide hook entries\n" +
-            "  status     list discovered agents + integration state\n" +
+          "Usage: tmux-ide integration <install|uninstall|status|offer> [claude|opencode]\n" +
+            "  install    claude: hook lifecycle events into tmux pane state\n" +
+            "             opencode: plugin that records the session id for restore --resume-agents\n" +
+            "  uninstall  remove exactly the tmux-ide entries for that agent\n" +
+            "  status     list discovered agents + integration/capture state\n" +
             "  offer      one-time first-adopt install prompt (used by the popup)",
         );
         process.exit(1);
+      }
+      if (needsAgent && agent === "opencode") {
+        const oc = await import("../packages/daemon/src/tui/integrations/opencode.ts");
+        if (sub === "install") {
+          const { pluginPath } = oc.installOpencodeIntegration();
+          console.log(`plugin: ${pluginPath}`);
+          console.log(
+            "installed — NEW opencode sessions record their session id into the pane\n" +
+              "(@agent_session_id), so `tmux-ide restore --resume-agents` can revive them.",
+          );
+        } else {
+          const { wasInstalled } = oc.uninstallOpencodeIntegration();
+          console.log(wasInstalled ? "uninstalled — plugin removed" : "was not installed");
+        }
+        break;
       }
       const mod = await import("../packages/daemon/src/tui/integrations/claude.ts");
       if (sub === "install") {
@@ -1068,7 +1086,18 @@ try {
           else if (a.integration)
             state = a.installed ? "integration installed ✓" : "on PATH — integration not installed";
           else state = "detected (no integration)";
-          console.log(`  ${a.id.padEnd(10)} ${state}`);
+          // The resume-key story: how @agent_session_id (what `restore
+          // --resume-agents` revives from) gets captured for this kind.
+          let capture = "";
+          if (a.path !== null) {
+            if (a.capture === "probe") capture = " · session-id capture: automatic";
+            else if (a.capture !== null)
+              capture = a.captureActive
+                ? ` · session-id capture: ${a.capture} ✓`
+                : ` · session-id capture: ${a.capture} (install to enable)`;
+            else capture = " · session-id capture: none";
+          }
+          console.log(`  ${a.id.padEnd(10)} ${state}${capture}`);
         }
       }
       break;

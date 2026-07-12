@@ -34,7 +34,7 @@ minutes is treated as stale (the detector falls back to Layer 2), so long-runnin
 agents should re-stamp periodically. Two optional companions:
 
 ```bash
-tmux set-option -p @agent_session_id "<id>"   # your Claude session id — powers restore --resume-agents
+tmux set-option -p @agent_session_id "<id>"   # your own session id — powers restore --resume-agents
 tmux set-option -p @agent_hint claude          # force which agent manifest Layer 2 uses for this pane
 ```
 
@@ -44,6 +44,13 @@ every lifecycle event (UserPromptSubmit/PreToolUse → working, Notification →
 blocked, Stop → done, SessionEnd → idle) and records `@agent_session_id`. It
 takes effect for **new** Claude Code sessions; the merge is reversible
 (`integration uninstall claude`).
+
+**Session-id capture for other kinds** (what `restore --resume-agents` resumes
+from): codex and cursor-agent panes are stamped **automatically** — the chrome
+updater reads each CLI's own on-disk session state; opencode gets a plugin via
+`tmux-ide integration install opencode`. `tmux-ide integration status` shows
+what's active. Kinds without a verified resume story (gemini, aider, copilot, …)
+can self-report the id as above.
 
 **How detection layers work:** Layer 1 is the authority above — a fresh
 `@agent_state` option is ground truth. When none is present, Layer 2 resolves the
@@ -91,7 +98,7 @@ tmux-ide adopt --all                       # adopt every live session
 tmux-ide unadopt <session>                 # remove the dock — sessions keep running as plain tmux
 
 tmux-ide restore --dry-run --json          # preview rebuilding the fleet from the last snapshot
-tmux-ide restore --resume-agents           # rebuild after a tmux crash; revive Claude convos via claude --resume
+tmux-ide restore --resume-agents           # rebuild after a tmux crash; revive agent convos (claude/codex/cursor/opencode)
 
 tmux-ide worktree create <branch> --from <ref>   # git worktree on a new branch + a session in it
 tmux-ide worktree open <branch>            # open/switch to an existing worktree's session

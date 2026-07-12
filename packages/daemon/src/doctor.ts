@@ -28,12 +28,19 @@ export function agentIntegrationRows(agents: DiscoveredAgent[]): CheckResult[] {
   return presentAgents(agents).map((agent) => {
     const label = `agent: ${agent.id}`;
     if (agent.integration) {
+      // What installing actually buys, honestly per mechanism: claude's hooks
+      // give ground-truth status (and record resume ids); opencode's plugin
+      // records resume ids only.
+      const benefit =
+        agent.capture === "hooks"
+          ? "for ground-truth status"
+          : "to record session ids for restore --resume-agents";
       return agent.installed
         ? { label, pass: true, detail: "integration installed ✓", optional: true }
         : {
             label,
             pass: false,
-            detail: `found on PATH — run \`tmux-ide integration install ${agent.id}\` for ground-truth status`,
+            detail: `found on PATH — run \`tmux-ide integration install ${agent.id}\` ${benefit}`,
             optional: true,
           };
     }

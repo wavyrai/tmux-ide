@@ -28,6 +28,7 @@ import {
   type UpdateStatus,
 } from "../../lib/update-check.ts";
 import { createStatusTracker, type AgentStatus } from "../detect/classify.ts";
+import { createSessionIdCapturer } from "../detect/session-id.ts";
 import { listTeamProjects, type TeamProject } from "../team/projects.ts";
 import type { PaneDetail } from "../team/sessions.ts";
 import { paneChip } from "./chip.ts";
@@ -168,6 +169,14 @@ export interface UpdaterTickDeps {
    */
   maybeCheckForUpdate?: () => UpdateStatus;
   markUpdateNotified?: (version: string) => boolean;
+  /**
+   * Session-id capture (optional). When wired, receives this tick's per-pane
+   * detail so the capturer ({@link ../detect/session-id.ts}) can stamp
+   * `@agent_session_id` on codex/cursor panes that lack one — the key
+   * `restore --resume-agents` resumes from. Self-throttled and stamp-once, so
+   * a fleet with no unstamped capturable panes costs nothing.
+   */
+  captureSessionIds?: (panes: PaneDetail[]) => void;
 }
 
 /**
@@ -216,6 +225,7 @@ export function runUpdaterTick(deps: UpdaterTickDeps): void {
     deps.writeStatus(session, buildStatusline(projects, session, 12, theme, extra));
   }
   writeChips(deps, adopted, panes, theme);
+  deps.captureSessionIds?.(panes);
   if (update?.updateAvailable && update.latest) dispatchUpdateToast(deps, update.latest);
   if (deps.prevState && deps.appendEvents) {
     const { events, state } = diffFleet(deps.prevState, fleetStatuses(projects));
@@ -463,6 +473,14 @@ export function runUpdaterLoop(): void {
   const lastNotified = new Map<string, number>();
   // Persistent per-pane chip cache so we only rewrite a chip when it changed.
   const chipCache = new Map<string, string>();
+  // Session-id capture for kinds without a hook integration (codex/cursor):
+  // stamps @agent_session_id so restore --resume-agents has its key. Throttled
+  // internally; probes only unstamped panes of capturable kinds.
+  const capturer = createSessionIdCapturer({
+    // Throwing is fine here — the capturer treats a failed stamp as "retry on
+    // the next capture window".
+    stamp: (paneId, id) => runTmux(["set-option", "-p", "-t", paneId, "@agent_session_id", id]),
+  });
   // The fleet snapshotter — pulsed each tick, self-throttled, writes only on a
   // structural change so the fleet can be rebuilt after a tmux-server death.
   const snapshotter = createSnapshotter({
@@ -491,6 +509,7 @@ export function runUpdaterLoop(): void {
         locatePane: paneLocation,
         maybeCheckForUpdate: () => maybeCheckForUpdate({ enabled: config.updates.check }),
         markUpdateNotified,
+        captureSessionIds: (panes) => capturer.onTick(panes),
       });
     } catch {
       // never let one bad tick kill the loop

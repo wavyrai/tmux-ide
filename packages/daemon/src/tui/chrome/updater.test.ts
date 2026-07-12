@@ -35,6 +35,16 @@ const FULL_PREFS: NotificationPrefs = {
   quietHours: null,
 };
 
+/**
+ * PaneDetail factory — the chip/notify tests only care about identity + agent +
+ * status; the capture fields (pid/dir/sessionId) get inert defaults.
+ */
+function pd(
+  over: Pick<PaneDetail, "sessionName" | "paneId" | "agent" | "status"> & Partial<PaneDetail>,
+): PaneDetail {
+  return { pid: 0, dir: "/", sessionId: null, ...over };
+}
+
 function project(name: string, overrides: Partial<TeamProject> = {}): TeamProject {
   return {
     name,
@@ -151,7 +161,7 @@ describe("runUpdaterTick", () => {
       listAdopted: () => ["web"],
       // Emit a blocked claude pane so enrichment can name it.
       computeProjects: (onPane) => {
-        onPane({ sessionName: "web", paneId: "%3", agent: "claude", status: "blocked" });
+        onPane(pd({ sessionName: "web", paneId: "%3", agent: "claude", status: "blocked" }));
         return [
           project("web", {
             status: "blocked",
@@ -305,10 +315,10 @@ describe("runUpdaterTick", () => {
 
 describe("pickRepresentativePane", () => {
   const panes: PaneDetail[] = [
-    { sessionName: "web", paneId: "%1", agent: null, status: "blocked" },
-    { sessionName: "web", paneId: "%2", agent: "claude", status: "blocked" },
-    { sessionName: "web", paneId: "%3", agent: "codex", status: "working" },
-    { sessionName: "api", paneId: "%4", agent: "claude", status: "blocked" },
+    pd({ sessionName: "web", paneId: "%1", agent: null, status: "blocked" }),
+    pd({ sessionName: "web", paneId: "%2", agent: "claude", status: "blocked" }),
+    pd({ sessionName: "web", paneId: "%3", agent: "codex", status: "working" }),
+    pd({ sessionName: "api", paneId: "%4", agent: "claude", status: "blocked" }),
   ];
 
   it("prefers a matching pane that resolved to a real agent", () => {
@@ -317,7 +327,7 @@ describe("pickRepresentativePane", () => {
 
   it("falls back to the first matching pane when none has an agent", () => {
     const shells: PaneDetail[] = [
-      { sessionName: "web", paneId: "%9", agent: null, status: "blocked" },
+      pd({ sessionName: "web", paneId: "%9", agent: null, status: "blocked" }),
     ];
     expect(pickRepresentativePane("web", "blocked", shells)?.paneId).toBe("%9");
   });
@@ -330,7 +340,7 @@ describe("pickRepresentativePane", () => {
 
 describe("enrichEvents", () => {
   const panes: PaneDetail[] = [
-    { sessionName: "web", paneId: "%2", agent: "claude", status: "blocked" },
+    pd({ sessionName: "web", paneId: "%2", agent: "claude", status: "blocked" }),
   ];
 
   it("attaches the resolved agent + located pane for a blocked/done event", () => {
@@ -383,8 +393,8 @@ describe("runUpdaterTick — pane chips", () => {
     runUpdaterTick({
       listAdopted: () => ["web"],
       computeProjects: withPanes([
-        { sessionName: "web", paneId: "%1", agent: "claude", status: "working" },
-        { sessionName: "web", paneId: "%2", agent: null, status: "idle" },
+        pd({ sessionName: "web", paneId: "%1", agent: "claude", status: "working" }),
+        pd({ sessionName: "web", paneId: "%2", agent: null, status: "idle" }),
       ]),
       writeStatus: () => {},
       writeChip: (paneId, value) => writes.push([paneId, value]),
@@ -401,8 +411,8 @@ describe("runUpdaterTick — pane chips", () => {
     runUpdaterTick({
       listAdopted: () => ["web"],
       computeProjects: withPanes([
-        { sessionName: "web", paneId: "%1", agent: "claude", status: "working" },
-        { sessionName: "other", paneId: "%9", agent: "codex", status: "blocked" },
+        pd({ sessionName: "web", paneId: "%1", agent: "claude", status: "working" }),
+        pd({ sessionName: "other", paneId: "%9", agent: "codex", status: "blocked" }),
       ]),
       writeStatus: () => {},
       writeChip,
@@ -418,7 +428,7 @@ describe("runUpdaterTick — pane chips", () => {
     const deps = {
       listAdopted: () => ["web"],
       computeProjects: withPanes([
-        { sessionName: "web", paneId: "%1", agent: "claude", status: "working" as AgentStatus },
+        pd({ sessionName: "web", paneId: "%1", agent: "claude", status: "working" as AgentStatus }),
       ]),
       writeStatus: () => {},
       writeChip,
@@ -436,7 +446,7 @@ describe("runUpdaterTick — pane chips", () => {
     runUpdaterTick({
       listAdopted: () => ["web"],
       computeProjects: withPanes([
-        { sessionName: "web", paneId: "%1", agent: "claude", status: "working" },
+        pd({ sessionName: "web", paneId: "%1", agent: "claude", status: "working" }),
       ]),
       writeStatus: () => {},
       writeChip,
@@ -445,7 +455,7 @@ describe("runUpdaterTick — pane chips", () => {
     runUpdaterTick({
       listAdopted: () => ["web"],
       computeProjects: withPanes([
-        { sessionName: "web", paneId: "%1", agent: "claude", status: "blocked" },
+        pd({ sessionName: "web", paneId: "%1", agent: "claude", status: "blocked" }),
       ]),
       writeStatus: () => {},
       writeChip,
@@ -461,7 +471,7 @@ describe("runUpdaterTick — pane chips", () => {
     runUpdaterTick({
       listAdopted: () => ["web"],
       computeProjects: withPanes([
-        { sessionName: "web", paneId: "%1", agent: "claude", status: "working" },
+        pd({ sessionName: "web", paneId: "%1", agent: "claude", status: "working" }),
       ]),
       writeStatus: (s) => writes.push(s),
     });
@@ -558,5 +568,35 @@ describe("runUpdaterTick — update surface", () => {
       prefs: { toast: false, macos: false },
     });
     expect(toasted).toHaveLength(0);
+  });
+});
+
+describe("runUpdaterTick — session-id capture", () => {
+  it("forwards this tick's pane details to captureSessionIds", () => {
+    const seen: PaneDetail[][] = [];
+    const panes = [
+      pd({ sessionName: "web", paneId: "%1", agent: "codex", status: "working" }),
+      pd({ sessionName: "web", paneId: "%2", agent: null, status: "idle" }),
+    ];
+    runUpdaterTick({
+      listAdopted: () => ["web"],
+      computeProjects: (onPane) => {
+        for (const pane of panes) onPane(pane);
+        return [project("web")];
+      },
+      writeStatus: () => {},
+      captureSessionIds: (p) => seen.push(p),
+    });
+    expect(seen).toEqual([panes]);
+  });
+
+  it("is optional — a tick without the capture dep still runs", () => {
+    expect(() =>
+      runUpdaterTick({
+        listAdopted: () => ["web"],
+        computeProjects: () => [project("web")],
+        writeStatus: () => {},
+      }),
+    ).not.toThrow();
   });
 });
