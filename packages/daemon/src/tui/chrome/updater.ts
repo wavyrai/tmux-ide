@@ -21,6 +21,7 @@
  * without a live tmux; `adoptedSessionsFrom` is a pure parser.
  */
 import { hasSession, isProcessAlive, runTmux } from "@tmux-ide/tmux-bridge";
+import { ADOPTED_OPTION, UPDATER_SESSION, updaterSpawnArgv } from "./front-door.ts";
 import { DEFAULT_THEME, getAppConfig, type AppTheme } from "../../lib/app-config.ts";
 import {
   maybeCheckForUpdate,
@@ -37,15 +38,18 @@ import {
   enabledStates,
   inQuietHours,
   listAttachedClients,
+  readAppFocus,
   readNotificationPrefs,
   sendSystemNotification,
   sendToasts,
+  type AppFocus,
   type AttachedClient,
   type NotificationPrefs,
   type NotifyEvent,
   type SystemNotification,
   type ToastTarget,
 } from "./notify.ts";
+import { loadLastNotified, saveLastNotified } from "./notify-state.ts";
 import {
   collectFleetSnapshot,
   createSnapshotter,
@@ -58,10 +62,15 @@ import { buildStatusline } from "./statusline.ts";
 export const STATUS_OPTION = "@tmux_ide_status";
 /** Per-PANE user option holding the pre-rendered agent chip (read by pane-border-format). */
 export const CHIP_OPTION = "@tmux_ide_chip";
-/** Per-session marker option set on adopt so the updater can enumerate adopted sessions. */
-export const ADOPTED_OPTION = "@tmux_ide_adopted";
-/** The hidden internal session that hosts the updater loop. */
-export const UPDATER_SESSION = "_tmux-ide-chrome";
+// The adopted marker, the updater session name, and their argv builders live
+// in the LEAF module front-door.ts (the unified app imports them without
+// pulling this module's fleet-scan graph); re-exported here for the chrome.
+export {
+  ADOPTED_OPTION,
+  UPDATER_SESSION,
+  updaterProbeArgv,
+  updaterSpawnArgv,
+} from "./front-door.ts";
 /** Server option holding the running updater's pid (a lightweight single-owner guard). */
 export const UPDATER_PID_OPTION = "@tmux_ide_updater_pid";
 /** Default tick cadence — overridable via `updater.tickMs` in the app config. */
@@ -140,18 +149,29 @@ export interface UpdaterTickDeps {
   prevState?: Map<string, AgentStatus>;
   appendEvents?: (events: AgentEventInit[]) => void;
   /**
-   * Notification dispatch (optional). When wired alongside `prevState`, the tick
-   * turns THIS tick's transitions into user pings — toasts on attached clients
-   * and/or a macOS notification — via {@link decideNotifications}, gated on
-   * `prefs`. `lastNotified` is the persistent debounce map, mutated in place.
-   * All deps-injected so the routing is unit-tested without a live tmux.
+   * Notification dispatch (optional). When wired alongside `prevPaneState`
+   * (M25.1 — notifications are PANE-granular so a second agent blocking in an
+   * already-blocked session still pings), the tick turns THIS tick's pane
+   * transitions into user pings — toasts on attached clients and/or a macOS
+   * notification — via {@link decideNotifications}, gated on `prefs`.
+   * `lastNotified` is the persistent debounce map, mutated in place (and
+   * persisted via `persistNotified` when a ping fired, so a restart can't
+   * re-ping inside the window). All deps-injected so the routing is
+   * unit-tested without a live tmux.
    */
+  prevPaneState?: Map<string, AgentStatus>;
   listClients?: () => AttachedClient[];
   lastNotified?: Map<string, number>;
   now?: () => number;
   prefs?: NotificationPrefs;
   sendToasts?: (toasts: ToastTarget[]) => void;
   sendSystem?: (n: SystemNotification) => void;
+  /** The unified app's focus record (see {@link AppFocus}) — pings for panes
+   *  on the app's screen are suppressed. Wired to {@link readAppFocus}. */
+  appFocus?: () => AppFocus | null;
+  /** Persist the debounce map after a tick that fired a ping. Wired to
+   *  {@link saveLastNotified}. */
+  persistNotified?: (map: ReadonlyMap<string, number>) => void;
   /**
    * Resolve a pane id to its human `session:window.pane` location for the ping
    * text (optional). Wired to the live tmux {@link paneLocation}; tests inject a
@@ -221,10 +241,14 @@ export function runUpdaterTick(deps: UpdaterTickDeps): void {
     const { events, state } = diffFleet(deps.prevState, fleetStatuses(projects));
     deps.prevState.clear();
     for (const [name, status] of state) deps.prevState.set(name, status);
-    if (events.length > 0) {
-      deps.appendEvents(events);
-      dispatchNotifications(deps, enrichEvents(events, panes, deps.locatePane));
-    }
+    if (events.length > 0) deps.appendEvents(events);
+  }
+  // Notifications ride PANE transitions (M25.1), not the session rollup — a
+  // second agent blocking in an already-blocked session is invisible at the
+  // session level but is exactly who the user needs to hear about.
+  if (deps.prevPaneState) {
+    const events = diffPaneTransitions(deps.prevPaneState, panes, deps.locatePane);
+    if (events.length > 0) dispatchNotifications(deps, events);
   }
 }
 
@@ -254,43 +278,42 @@ function writeChips(
 }
 
 /**
- * PURE — pick the pane to name in a session-level ping. A session rolls up many
- * panes; the ping should point at ONE. We take a pane whose status matches the
- * transition (`to`), preferring one that resolved to a real agent (so the ping
- * reads `claude blocked …`, not a bare shell). Null when no pane matches — the
- * updater then falls back to the session name / a generic label.
+ * PURE (given `locate`) — diff the previous per-pane states against this
+ * tick's panes into ready-to-ping {@link NotifyEvent}s: each carries its
+ * `paneId` (the debounce/visibility key), `windowIndex` (window-granular toast
+ * suppression), the pane's resolved `agent`, and — only for a notifiable
+ * blocked/done transition that isn't first-sight — the human `location`
+ * (`locate` is a live tmux call, so it only fires for a potential ping).
+ * `prev` is mutated in place to the fresh state, like the session-level
+ * `prevState`; a pane that vanished simply drops out. First sight of a pane
+ * emits `from: null`, which {@link decideNotifications} ignores — that's the
+ * restart/first-tick grace.
  */
-export function pickRepresentativePane(
-  session: string,
-  to: AgentStatus,
-  panes: PaneDetail[],
-): PaneDetail | null {
-  const matching = panes.filter((p) => p.sessionName === session && p.status === to);
-  if (matching.length === 0) return null;
-  return matching.find((p) => p.agent !== null) ?? matching[0]!;
-}
-
-/**
- * PURE — enrich session-level transitions with the pane's `agent` id and human
- * `location` so {@link notifyMessage} can name who needs the user. Only the
- * notifiable states (blocked/done) get resolved — everything else keeps the bare
- * session as its location and is filtered out downstream anyway, so `locate`
- * (a live tmux call) only fires for a real ping.
- */
-export function enrichEvents(
-  events: AgentEventInit[],
+export function diffPaneTransitions(
+  prev: Map<string, AgentStatus>,
   panes: PaneDetail[],
   locate?: (paneId: string) => string,
 ): NotifyEvent[] {
-  return events.map((ev) => {
-    const notifiable = ev.to === "blocked" || ev.to === "done";
-    const rep = notifiable ? pickRepresentativePane(ev.session, ev.to, panes) : null;
-    return {
-      ...ev,
-      agent: rep?.agent ?? null,
-      location: rep && locate ? locate(rep.paneId) : ev.session,
-    };
-  });
+  const events: NotifyEvent[] = [];
+  const next = new Map<string, AgentStatus>();
+  for (const pane of panes) {
+    const before = prev.has(pane.paneId) ? prev.get(pane.paneId)! : null;
+    next.set(pane.paneId, pane.status);
+    if (before === pane.status) continue;
+    const notifiable = before !== null && (pane.status === "blocked" || pane.status === "done");
+    events.push({
+      session: pane.sessionName,
+      from: before,
+      to: pane.status,
+      paneId: pane.paneId,
+      windowIndex: pane.windowIndex,
+      agent: pane.agent,
+      location: notifiable && locate ? locate(pane.paneId) : pane.sessionName,
+    });
+  }
+  prev.clear();
+  for (const [paneId, status] of next) prev.set(paneId, status);
+  return events;
 }
 
 /**
@@ -313,9 +336,13 @@ function dispatchNotifications(deps: UpdaterTickDeps, events: NotifyEvent[]): vo
     lastNotified,
     nowMs,
     enabledStates(prefs),
+    deps.appFocus?.() ?? null,
   );
   lastNotified.clear();
   for (const [key, ts] of decision.nextLastNotified) lastNotified.set(key, ts);
+  // A system entry exists for every event that actually fired (stamped the
+  // debounce map), so this is exactly "the map changed — persist it".
+  if (decision.system.length > 0) deps.persistNotified?.(lastNotified);
   if (prefs.toast && toast) toast(decision.toasts);
   if (prefs.macos && sendSystem && !inQuietHours(new Date(nowMs), prefs.quietHours)) {
     for (const n of decision.system) sendSystem(n);
@@ -384,15 +411,14 @@ export function updaterRunning(): boolean {
 
 /**
  * Ensure the background updater is running: if the `_tmux-ide-chrome` session
- * isn't up, start it detached running `tmux-ide chrome-updater`. `exec` replaces
- * the shell so the pane IS the loop; killing the session stops it. `_`-internal
+ * isn't up, start it detached running `tmux-ide chrome-updater`. `_`-internal
  * so it's hidden from the bar/switcher. Best-effort — a chrome failure must
  * never break adopt/launch.
  */
 export function startUpdaterIfNeeded(): void {
   try {
     if (updaterRunning()) return;
-    runTmux(["new-session", "-d", "-s", UPDATER_SESSION, "exec tmux-ide chrome-updater"]);
+    runTmux(updaterSpawnArgv());
   } catch {
     // best-effort — the bar still works via the last-written var
   }
@@ -444,11 +470,43 @@ function releaseUpdater(): void {
   }
 }
 
+/** Exit the loop after this many CONSECUTIVE ticks with the tmux server gone —
+ *  a dead server means nothing to watch and nobody to ping, and an immortal
+ *  interval would zombie (two were found live before M25.1). */
+export const UPDATER_UNREACHABLE_EXIT_TICKS = 5;
+
+/** PURE — a consecutive-failure counter: feed it each tick's reachability;
+ *  it answers "give up now?" after `threshold` misses in a row (any success
+ *  resets the run). */
+export function createUnreachableCounter(
+  threshold: number = UPDATER_UNREACHABLE_EXIT_TICKS,
+): (reachable: boolean) => boolean {
+  let consecutive = 0;
+  return (reachable: boolean): boolean => {
+    consecutive = reachable ? 0 : consecutive + 1;
+    return consecutive >= threshold;
+  };
+}
+
+/** io — can we still talk to the tmux server? (A server with zero sessions
+ *  exits, so `list-sessions` failing means the server itself is gone.) */
+function isServerReachable(): boolean {
+  try {
+    runTmux(["list-sessions", "-F", "#{session_name}"]);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Run the updater loop forever (the body of `tmux-ide chrome-updater`). Claims
  * single-ownership, then rewrites every adopted session's bar immediately and
  * every {@link TICK_MS} thereafter behind ONE persistent tracker (so `done`
- * transitions surface). Blocks — the interval keeps the event loop alive.
+ * transitions surface). Blocks — the interval keeps the event loop alive —
+ * until the tmux server has been unreachable for
+ * {@link UPDATER_UNREACHABLE_EXIT_TICKS} consecutive ticks, at which point the
+ * loop logs once and exits instead of running headless forever.
  */
 export function runUpdaterLoop(): void {
   if (!claimUpdater()) return;
@@ -459,8 +517,11 @@ export function runUpdaterLoop(): void {
   const tracker = createStatusTracker();
   // Persistent across ticks so `diffFleet` can spot working→done etc.
   const prevState = new Map<string, AgentStatus>();
-  // Persistent so the notification debounce survives across ticks.
-  const lastNotified = new Map<string, number>();
+  // Per-PANE states for the notification path (M25.1 — pane-granular pings).
+  const prevPaneState = new Map<string, AgentStatus>();
+  // The notification debounce map — restored from disk so a restart can't
+  // re-ping inside the window, persisted back on every ping.
+  const lastNotified = loadLastNotified();
   // Persistent per-pane chip cache so we only rewrite a chip when it changed.
   const chipCache = new Map<string, string>();
   // The fleet snapshotter — pulsed each tick, self-throttled, writes only on a
@@ -471,6 +532,7 @@ export function runUpdaterLoop(): void {
     write: writeSnapshot,
     every: config.updater.snapshotEvery,
   });
+  const shouldGiveUp = createUnreachableCounter();
   const tick = () => {
     try {
       runUpdaterTick({
@@ -482,6 +544,7 @@ export function runUpdaterLoop(): void {
         chipCache,
         prevState,
         appendEvents,
+        prevPaneState,
         listClients: listAttachedClients,
         lastNotified,
         now: () => Date.now(),
@@ -489,6 +552,8 @@ export function runUpdaterLoop(): void {
         sendToasts,
         sendSystem: sendSystemNotification,
         locatePane: paneLocation,
+        appFocus: () => readAppFocus(),
+        persistNotified: (map) => saveLastNotified(map),
         maybeCheckForUpdate: () => maybeCheckForUpdate({ enabled: config.updates.check }),
         markUpdateNotified,
       });
@@ -500,8 +565,14 @@ export function runUpdaterLoop(): void {
     } catch {
       // a failed snapshot just means staler disaster-recovery state
     }
+    // Self-exit when the server we exist to watch is gone (logged ONCE).
+    if (shouldGiveUp(isServerReachable())) {
+      console.error(
+        `tmux-ide chrome-updater: tmux server unreachable for ${UPDATER_UNREACHABLE_EXIT_TICKS} consecutive ticks — exiting`,
+      );
+      shutdown();
+    }
   };
-  tick();
   const timer = setInterval(tick, config.updater.tickMs);
   const shutdown = () => {
     clearInterval(timer);
@@ -510,4 +581,5 @@ export function runUpdaterLoop(): void {
   };
   process.on("SIGTERM", shutdown);
   process.on("SIGINT", shutdown);
+  tick();
 }

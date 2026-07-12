@@ -176,8 +176,15 @@ describe("isListableSession", () => {
     expect(isListableSession("_")).toBe(false);
   });
 
-  it("keeps every non-internal session", () => {
+  it("hides `zz-`-prefixed scratch sessions (dev scratch is internal, per the contract)", () => {
+    expect(isListableSession("zz-probe")).toBe(false);
+    expect(isListableSession("zz-")).toBe(false);
+  });
+
+  it("keeps every non-internal session (zz must be a PREFIX, not a substring)", () => {
     expect(isListableSession("my-project")).toBe(true);
     expect(isListableSession("tmux-ide")).toBe(true);
+    expect(isListableSession("fizz-buzz")).toBe(true);
+    expect(isListableSession("zzz")).toBe(true);
   });
 });

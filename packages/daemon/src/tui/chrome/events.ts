@@ -13,8 +13,8 @@
  * file, and appends.
  */
 import { appendFileSync, existsSync, mkdirSync, renameSync, statSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
+import { stateHome } from "../../lib/state-home.ts";
 import type { AgentStatus } from "../detect/classify.ts";
 
 /** A single session-level status transition. `from` is null the first time a session is seen. */
@@ -86,9 +86,9 @@ export function formatEventLine(
   return `${isoTime(ev.ts)} ${ev.session} ${from} → ${paint(ev.to, ev.to)}`;
 }
 
-/** Absolute path to the fleet event log. */
+/** Absolute path to the fleet event log (under the `TMUX_IDE_HOME`-aware home). */
 export function eventsPath(): string {
-  return join(homedir(), ".tmux-ide", "events.jsonl");
+  return join(stateHome(), "events.jsonl");
 }
 
 /**
@@ -106,7 +106,7 @@ export function appendEvents(
   if (events.length === 0) return;
   const path = eventsPath();
   try {
-    mkdirSync(join(homedir(), ".tmux-ide"), { recursive: true });
+    mkdirSync(stateHome(), { recursive: true });
     if (existsSync(path) && shouldRotate(statSync(path).size)) {
       renameSync(path, `${path}.1`);
     }

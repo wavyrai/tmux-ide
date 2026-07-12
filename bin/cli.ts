@@ -1003,6 +1003,57 @@ try {
           "installed — NEW Claude Code sessions now report working/blocked/done " +
             "authoritatively into the tmux-ide chrome.",
         );
+        // M25.1: this is the moment the user is wiring notifications, so offer
+        // the macOS banner channel here — one plain y/N key, same shape as the
+        // first-adopt offer. Skipped when already on, off-macOS, or when there
+        // is no TTY to ask (TMUX_IDE_NOTIFY_KEY forces an answer for tests).
+        const { getAppConfig, updateAppConfig } =
+          await import("../packages/daemon/src/lib/app-config.ts");
+        const { hasTerminalNotifier } = await import("../packages/daemon/src/tui/chrome/notify.ts");
+        const forcedKey = process.env.TMUX_IDE_NOTIFY_KEY;
+        const canAsk = forcedKey !== undefined || process.stdin.isTTY === true;
+        if (process.platform === "darwin" && !getAppConfig().notifications.macos && canAsk) {
+          const act = (key: string): void => {
+            if (key === "y" || key === "Y") {
+              updateAppConfig({ notifications: { macos: true } });
+              console.log(
+                "macOS notifications on — you'll get a banner when an agent blocks or finishes.",
+              );
+              if (!hasTerminalNotifier()) {
+                console.log(
+                  "tip: `brew install terminal-notifier` makes those banners clickable (a click jumps to the session).",
+                );
+              }
+            } else {
+              console.log(
+                "skipped — turn banners on anytime: notifications.macos in ~/.tmux-ide/config.json.",
+              );
+            }
+          };
+          process.stdout.write("\nAlso get a macOS notification when an agent needs you? [y/N] ");
+          if (forcedKey !== undefined) {
+            console.log(forcedKey);
+            act(forcedKey);
+          } else {
+            const key = await new Promise<string>((resolve) => {
+              try {
+                process.stdin.setRawMode?.(true);
+                process.stdin.resume();
+                process.stdin.once("data", (data) => resolve(data.toString()));
+              } catch {
+                resolve(""); // no readable stdin — treat as "no"
+              }
+            });
+            try {
+              process.stdin.setRawMode?.(false);
+              process.stdin.pause();
+            } catch {
+              // best-effort terminal restore
+            }
+            console.log(/^[ -~]$/.test(key) ? key : "");
+            act(key);
+          }
+        }
       } else if (sub === "uninstall") {
         const { wasInstalled } = mod.uninstallClaudeIntegration();
         console.log(wasInstalled ? "uninstalled — hook entries removed" : "was not installed");

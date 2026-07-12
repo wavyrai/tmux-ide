@@ -138,6 +138,9 @@ export interface PaneDetail {
   paneId: string;
   agent: string | null;
   status: AgentStatus;
+  /** `window_index` of the pane's window — the notification path suppresses
+   *  toasts window-granularly, so the transition must know its window. */
+  windowIndex: number;
 }
 
 interface PaneRecord {
@@ -182,12 +185,13 @@ export function excludeSidebarPanes<T extends { sidebar: boolean }>(panes: T[]):
 const SEVERITY: AgentStatus[] = ["blocked", "working", "done", "idle", "unknown"];
 
 /**
- * Whether a session should appear in the switcher. Any `_`-prefixed session is
- * internal plumbing (the `_tmux-ide-chrome` updater, scratch sessions, …) and
- * is filtered out so the cockpit never lists — or navigates into — infrastructure.
+ * Whether a session should appear in the switcher. `_`-prefixed sessions are
+ * internal plumbing (the `_tmux-ide-chrome` updater, the `_tmux-ide-app` host)
+ * and `zz-`-prefixed sessions are development scratch sessions — both are
+ * filtered out so the cockpit never lists — or navigates into — infrastructure.
  */
 export function isListableSession(name: string): boolean {
-  return !name.startsWith("_");
+  return !name.startsWith("_") && !name.startsWith("zz-");
 }
 
 function tmux(args: string[]): string {
@@ -300,6 +304,7 @@ export function listTeamSessions(
           paneId: pane.id,
           agent: manifest && manifest.id !== "shell" ? manifest.id : null,
           status,
+          windowIndex: pane.windowIndex,
         });
         // Surface per-pane agent detail (same resolved manifest/status — nothing
         // re-derived). Non-agent panes yield null and are skipped.
