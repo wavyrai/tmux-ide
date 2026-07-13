@@ -38,6 +38,12 @@ import { appConfigPath, parseAppConfig, type NotificationSound } from "../../lib
 import { APP_HOST_SESSION } from "../mirror/hosted.ts";
 import { tmuxPassthrough } from "../mirror/selection.ts";
 import type { AgentStatus } from "../detect/classify.ts";
+// The pure prefs shapes + parsing live in a pure module (notify-prefs.ts) so
+// pure surfaces (settings-model) can import them without dragging this file's
+// node/tmux io behind them. Re-exported here: existing importers are unchanged.
+import { parseHHMM, type NotificationPrefs, type QuietHours } from "./notify-prefs.ts";
+export { parseHHMM };
+export type { NotificationPrefs, QuietHours };
 
 /**
  * A fleet transition this tick — since M25.1 a PANE-level transition (the
@@ -645,36 +651,7 @@ export function sendSystemNotification(n: SystemNotification, io: SystemNotifyIo
 }
 
 /** A "quiet hours" window — banners are suppressed while the wall clock is inside it. */
-export interface QuietHours {
-  /** Local `HH:MM` the window opens (e.g. `22:00`). */
-  start: string;
-  /** Local `HH:MM` the window closes (e.g. `08:00`). */
-  end: string;
-}
-
 /** User notification preferences. */
-export interface NotificationPrefs {
-  /** Master switch — false silences every channel. */
-  enabled: boolean;
-  /** In-terminal status-line toasts. */
-  toast: boolean;
-  /** System banners (macOS `terminal-notifier`/`osascript`, Linux `notify-send`). */
-  macos: boolean;
-  /** Terminal-native banners — OSC 9/99 escapes to eligible client ttys (M25.2). */
-  terminal: boolean;
-  /** Seconds the OS-level channels wait + re-verify before firing (0 = immediate). */
-  delaySeconds: number;
-  /** Sound channel — ping sound + BEL routing (M25.2). */
-  sound: NotificationSound;
-  /** Ping when an agent goes `blocked`. */
-  onBlocked: boolean;
-  /** Ping when an agent goes `done`. */
-  onDone: boolean;
-  /** Optional local-time window that suppresses every OS-LEVEL channel (banner,
-   *  terminal escape, sound, BEL — since M25.2). In-app toasts and the event
-   *  log stay on. */
-  quietHours: QuietHours | null;
-}
 
 /** Defaults: enabled, tmux toasts + terminal escapes on, system banners off,
  *  sound on blocked, a 2s re-verify delay, both states pinged, no quiet window. */
@@ -702,16 +679,6 @@ function pickBool(value: unknown, fallback: boolean): boolean {
   return typeof value === "boolean" ? value : fallback;
 }
 
-/** PURE — parse `HH:MM` to minutes-since-midnight, or null when malformed / out of range. */
-export function parseHHMM(value: unknown): number | null {
-  if (typeof value !== "string") return null;
-  const m = /^(\d{2}):(\d{2})$/.exec(value.trim());
-  if (!m) return null;
-  const hours = Number(m[1]);
-  const minutes = Number(m[2]);
-  if (hours > 23 || minutes > 59) return null;
-  return hours * 60 + minutes;
-}
 
 /**
  * PURE — is `now` (local time) inside the quiet window? Handles a window that

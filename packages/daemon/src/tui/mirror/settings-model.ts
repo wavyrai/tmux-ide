@@ -12,7 +12,7 @@
  * never left guessing.
  */
 import type { AppConfig, AppConfigPatch, AppKeys } from "../../lib/app-config.ts";
-import { parseHHMM, type NotificationPrefs } from "../chrome/notify.ts";
+import { parseHHMM, type NotificationPrefs } from "../chrome/notify-prefs.ts";
 import type { DialogSelectItem } from "./dialog-model.ts";
 
 // ── Command registry (what the palette offers) ───────────────────────────────
