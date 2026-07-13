@@ -4,12 +4,13 @@
   "private": true,
   "scripts": {
     "generate": "fumadocs-mdx",
-    "build": "pnpm run generate && next build",
-    "dev": "pnpm run generate && next dev",
+    "build": "pnpm run generate && pnpm run build:tui && next build",
+    "dev": "pnpm run generate && pnpm run build:tui && next dev",
     "lint": "pnpm run typecheck",
     "start": "next start",
-    "typecheck": "pnpm run generate && tsc --noEmit",
-    "types:check": "pnpm run typecheck"
+    "typecheck": "pnpm run generate && tsc --noEmit && tsc --noEmit -p tui-web/tsconfig.json",
+    "types:check": "pnpm run typecheck",
+    "build:tui": "vite build --config tui-web/vite.config.ts"
   },
   "dependencies": {
     "@paper-design/shaders-react": "^0.0.77",

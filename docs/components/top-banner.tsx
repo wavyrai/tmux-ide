@@ -25,7 +25,10 @@ function ArrowUpRight() {
 
 export function TopBanner() {
   return (
-    <div className="relative isolate w-full overflow-hidden bg-black text-white">
+    // Sticky above the nav: the banner is the topmost chrome, so it must win the
+    // stacking (fumadocs' #nd-nav is sticky top-0 z-40 — global.css pushes it
+    // down by the banner's height, and the banner sits at z-50 above it).
+    <div className="sticky top-0 z-50 h-10 w-full overflow-hidden bg-black text-white isolate">
       <div
         aria-hidden
         className="pointer-events-none absolute inset-0 -z-10"

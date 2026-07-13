@@ -370,14 +370,7 @@ export default async function HomePage() {
               title="tmux-ide — checkout-api"
               accessory={agentCast.map((a) => (
                 <span key={a.name} className="flex items-center gap-1.5">
-                  <Image
-                    src={a.logo}
-                    alt=""
-                    width={14}
-                    height={14}
-
-                    unoptimized
-                  />
+                  <Image src={a.logo} alt="" width={14} height={14} unoptimized />
                   <span className="hidden text-[11px] text-[#98989d] lg:inline">{a.name}</span>
                 </span>
               ))}

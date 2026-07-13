@@ -39,3 +39,12 @@
 @utility animate-pane-in {
   animation: paneIn 600ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
+
+/* The Prototyper OSS banner is sticky at the top (h-10 = 2.5rem), so fumadocs'
+   own sticky header — #nd-nav, top-0 by default — has to start below it or the
+   two would occupy the same strip. */
+#nd-nav {
+  /* !important: Tailwind's top-0 utility on the nav is generated in a layer
+     and was still winning; the banner owns the top strip. */
+  top: 2.5rem !important;
+}
