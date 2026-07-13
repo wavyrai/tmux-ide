@@ -210,6 +210,20 @@ import { tapInputSent, tapInputTick } from "./perf-tap.ts";
 import { installHostAutowrapGuard, type HostAutowrapGuard } from "./host-terminal.ts";
 import { execFile, spawn } from "node:child_process";
 import type { AgentStatus } from "../detect/classify.ts";
+import { Sidebar } from "./sidebar.tsx";
+import {
+  ACCENT,
+  BADGE_BG,
+  BUTTON_HOVER_BG,
+  CHIP_ATTN_BG,
+  DEFAULT_BG,
+  DEFAULT_FG,
+  FOCUS_BORDER_FG,
+  HOVER_BG,
+  MUTED,
+  SIDEBAR_BG,
+  TAB_ACTIVE_BG,
+} from "./theme.ts";
 import { rollupChips, homeFooterHints, type FleetRollup } from "../team/home.ts";
 import {
   isBinary,
@@ -545,20 +559,13 @@ const zzlog = (m: string) => {
   } catch {}
 };
 
-const SIDEBAR_BG = RGBA.fromInts(22, 22, 30, 255);
-const ACCENT = RGBA.fromInts(130, 170, 255, 255);
-const MUTED = RGBA.fromInts(110, 110, 130, 255);
-const BADGE_BG = RGBA.fromInts(60, 66, 92, 255);
 // Focused-pane gutter hairline (M22.7): the ACCENT family, drawn as │/─ glyphs
 // so the gutter stays visually thin (a filled bar read as extra padding — user
 // feedback). Doesn't compete with the blocked chip's red — focus is an accent
 // signal, agent state is a status signal, never the same hue.
-const FOCUS_BORDER_FG = RGBA.fromInts(110, 145, 230, 255);
-const TAB_ACTIVE_BG = RGBA.fromInts(40, 46, 66, 255);
 // A single subtle pointer-hover tint, one lift above both DEFAULT_BG (16,16,22)
 // and SIDEBAR_BG (22,22,30) and below TAB_ACTIVE_BG — the active/selected state
 // always wins over hover. Used on every hoverable row/segment (see `hover`).
-const HOVER_BG = RGBA.fromInts(30, 34, 48, 255);
 const KEYMAP: Record<string, string> = {
   return: "Enter",
   backspace: "BSpace",
@@ -638,8 +645,6 @@ type RouteEvent = {
   stopPropagation?: () => void;
 };
 
-const DEFAULT_FG = RGBA.fromInts(212, 212, 216, 255);
-const DEFAULT_BG = RGBA.fromInts(16, 16, 22, 255);
 // Packed 0xRRGGBB twins of the defaults, for the framebuffer-blit path (M21.3):
 // the blit writes packed channels straight into the buffer, no RGBA per cell.
 const DEFAULT_FG_PACKED = 0xd4d4d8;
@@ -651,7 +656,6 @@ const DEFAULT_BG_PACKED = 0x101016;
 const FB_PANES = process.env.TMUX_IDE_FB_PANES !== "0";
 // The blocked pane-chip's attention background (M22.3) — a red-leaning lift of
 // BADGE_BG so a blocked agent's chip pops without tinting any terminal cells.
-const CHIP_ATTN_BG = RGBA.fromInts(92, 44, 48, 255);
 const GUTTER_BG = RGBA.fromInts(38, 40, 52, 255);
 const GUTTER_FG = RGBA.fromInts(96, 100, 120, 255);
 const MODIFIED_FG = RGBA.fromInts(235, 200, 100, 255);
@@ -789,7 +793,6 @@ const SCROLL_THUMB_HOVER_BG = RGBA.fromInts(120, 130, 170, 255);
 // rows, styled like a subtle chip; the hovered one lifts to the accent.
 const BUTTON_FG = RGBA.fromInts(150, 160, 190, 255);
 const BUTTON_BG = RGBA.fromInts(34, 38, 54, 255);
-const BUTTON_HOVER_BG = RGBA.fromInts(52, 60, 86, 255);
 // A toggled-on chip (the zoom button while the focused pane's window is zoomed):
 // the accent, tinted down so the button still reads as a chip, not a label.
 const BUTTON_ACTIVE_BG = RGBA.fromInts(58, 78, 128, 255);
@@ -6048,140 +6051,21 @@ try {
           </For>
         </box>
         <box flexDirection="row" flexGrow={1} backgroundColor={DEFAULT_BG} overflow="hidden">
-          <box
+          <Sidebar
             width={sidebarW()}
-            flexDirection="column"
-            backgroundColor={SIDEBAR_BG}
-            paddingLeft={1}
-            overflow="hidden"
-            onMouse={(e: RouteEvent) => route(e)}
-          >
-            <text fg={ACCENT} attributes={1}>
-              tmux-ide
-            </text>
-            <text fg={MUTED}>{"─".repeat(sidebarW() - 2)}</text>
-            <box flexDirection="column">
-              <For each={fleet()}>
-                {(s, i) => (
-                  <box
-                    flexDirection="row"
-                    gap={1}
-                    backgroundColor={
-                      s.name === curTarget()
-                        ? TAB_ACTIVE_BG
-                        : isHovered("sidebar", i())
-                          ? HOVER_BG
-                          : SIDEBAR_BG
-                    }
-                  >
-                    <text fg={STATUS_COLOR[s.status]}>{STATUS_GLYPH[s.status]}</text>
-                    <text fg={s.name === curTarget() ? DEFAULT_FG : MUTED}>
-                      {s.name.slice(0, sidebarW() - 5)}
-                    </text>
-                  </box>
-                )}
-              </For>
-            </box>
-            {/* AGENTS section (M22.2): the fleet's agents at a glance, one row
-              per agent, sorted attention-first (fleetAgents), each a JUMP target
-              (click → its session/window/pane). REUSES the session rows' glyph +
-              state-color grammar (STATUS_GLYPH/STATUS_COLOR by state). Row
-              y-accounting for the router is pure in `sidebarHit`: this section
-              starts right after the session <For>, one header row then the agent
-              rows (or one quiet empty-state line). Hover reveals the state age. */}
-            <box flexDirection="column" marginTop={AGENTS_GAP_ROWS}>
-              {/* Header row (M24.1): label + a right-aligned [+ agent] chip.
-                The row body opens the TEAM dialog, the chip spawns; the router
-                x-tests `agentsChipSpans` — the flexGrow spacer here lays the
-                chip on exactly those cells. The empty state keeps a chip twin
-                so spawning is discoverable before any agent runs. */}
-              <box
-                flexDirection="row"
-                backgroundColor={isHovered("agentshdr", 0) ? HOVER_BG : SIDEBAR_BG}
-              >
-                <text fg={MUTED} attributes={1}>
-                  {agentsHeaderLabel(
-                    fleetAgents().length,
-                    Math.max(1, sidebarW() - AGENTS_ADD_CHIP.length - 2),
-                  )}
-                </text>
-                <box flexGrow={1} />
-                <text fg={MUTED} bg={isHovered("agentschip", 0) ? BUTTON_HOVER_BG : SIDEBAR_BG}>
-                  {AGENTS_ADD_CHIP}
-                </text>
-              </box>
-              <Show
-                when={fleetAgents().length > 0}
-                fallback={
-                  <box flexDirection="row">
-                    <text fg={MUTED}>
-                      {AGENTS_EMPTY_LINE.slice(
-                        0,
-                        Math.max(1, sidebarW() - AGENTS_ADD_CHIP.length - 2),
-                      )}
-                    </text>
-                    <box flexGrow={1} />
-                    <text fg={MUTED} bg={isHovered("agentschip", 1) ? BUTTON_HOVER_BG : SIDEBAR_BG}>
-                      {AGENTS_ADD_CHIP}
-                    </text>
-                  </box>
-                }
-              >
-                <For each={fleetAgents()}>
-                  {(a, i) => {
-                    const age = () =>
-                      agentAgeLabel(a.state, a.since, Math.floor(Date.now() / 1000));
-                    const hovered = () => isHovered("sidebaragent", i());
-                    const ageShown = () => (hovered() ? age() : null);
-                    const labelBudget = () => {
-                      const a2 = ageShown();
-                      return sidebarW() - 5 - (a2 ? a2.length + 1 : 0);
-                    };
-                    // Blocked is the attention state: bold, matching the
-                    // statusline's grammar (`blocked` reads bold there too).
-                    const attn = () => (a.state === "blocked" ? 1 : 0);
-                    // M25.1: a just-flipped hidden agent flashes its row for a
-                    // beat (the status-strip note's "look here" twin).
-                    const flashed = () => attnFlash().has(a.paneId);
-                    return (
-                      <box
-                        flexDirection="row"
-                        gap={1}
-                        backgroundColor={
-                          flashed() ? CHIP_ATTN_BG : hovered() ? HOVER_BG : SIDEBAR_BG
-                        }
-                      >
-                        <text fg={STATUS_COLOR[a.state]} attributes={attn()}>
-                          {STATUS_GLYPH[a.state]}
-                        </text>
-                        <text
-                          fg={a.state === "blocked" ? STATUS_COLOR.blocked : MUTED}
-                          attributes={attn()}
-                        >
-                          {agentRowLabel(agentDisplayKind(a), a.session, labelBudget())}
-                        </text>
-                        <Show when={ageShown()}>
-                          <box flexGrow={1} />
-                          <text fg={MUTED}>{ageShown()}</text>
-                        </Show>
-                      </box>
-                    );
-                  }}
-                </For>
-              </Show>
-            </box>
-            <box flexGrow={1} />
-            {/* Footer hint — its "F5 palette" segment is a CHIP (M21.9): the
-              router hit-tests SIDEBAR_HINT_SPAN on the last screen row, and
-              these three runs render the exact same cells. */}
-            <box flexDirection="row">
-              <text fg={MUTED}>{SIDEBAR_HINT_PRE}</text>
-              <text fg={MUTED} bg={isHovered("sidebtn", 0) ? BUTTON_HOVER_BG : SIDEBAR_BG}>
-                {SIDEBAR_HINT_BTN}
-              </text>
-              <text fg={MUTED}>{SIDEBAR_HINT_POST}</text>
-            </box>
-          </box>
+            sessions={fleet()}
+            agents={fleetAgents()}
+            current={curTarget()}
+            nowSec={Math.floor(Date.now() / 1000)}
+            isHovered={isHovered}
+            flashed={(paneId: string) => attnFlash().has(paneId)}
+            hint={{
+              pre: SIDEBAR_HINT_PRE,
+              btn: SIDEBAR_HINT_BTN,
+              post: SIDEBAR_HINT_POST,
+            }}
+            onMouse={(e) => route(e as RouteEvent)}
+          />
           <box
             flexDirection="column"
             flexGrow={1}

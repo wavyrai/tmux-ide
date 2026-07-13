@@ -2,7 +2,11 @@ import Link from "next/link";
 import type { Metadata } from "next";
 import { CopyButton } from "./copy-button";
 import { AsciiLogo } from "./ascii-logo";
-import TerminalDemo from "@/components/terminal-demo";
+import { AppIcon } from "@/components/app-icon";
+import { TuiIsland } from "@/components/tui-island";
+import { MacWindow } from "@/components/mac-window";
+import { GrainStage } from "@/components/grain-backdrop";
+import Image from "next/image";
 
 export const metadata: Metadata = {
   title: "tmux-ide — teach the terminal you already use to understand agents",
@@ -23,6 +27,13 @@ export const metadata: Metadata = {
   },
   alternates: { canonical: "/" },
 };
+
+/** The agents starring in the live demo, with their own marks. */
+const agentCast = [
+  { name: "codex", logo: "/agents/codex.webp" },
+  { name: "claude code", logo: "/agents/claude.webp" },
+  { name: "cursor", logo: "/agents/cursor.webp" },
+];
 
 const installCommand = "npm i -g tmux-ide";
 const adoptCommand = "tmux-ide adopt <session>";
@@ -181,41 +192,115 @@ const features = [
   },
 ];
 
+/** The three setup commands, in order. */
+const steps = [
+  {
+    phase: "01",
+    title: "Adopt",
+    cmd: "tmux-ide adopt work",
+    description:
+      "Add the chrome to a session you already have. Fleet tabs, agent glyphs, and triggers appear. Nothing else changes.",
+  },
+  {
+    phase: "02",
+    title: "Integrate",
+    cmd: "tmux-ide integration install claude",
+    description:
+      "Hook Claude Code's lifecycle so working / blocked / done are ground truth. Any agent can self-report the same way.",
+  },
+  {
+    phase: "03",
+    title: "Work",
+    cmd: "tmux-ide events --follow",
+    description:
+      "Glance at the dock, get toasts when an agent needs you, and restore the whole fleet if the server ever dies.",
+  },
+];
+
+/**
+ * One chapter of the manual. Every chapter is the same shape — a numbered
+ * kicker, a heading, a lead, then the surface itself — so the page reads as a
+ * sequence rather than as a pile of sections. The rule between chapters is the
+ * old SectionDivider, kept as the one visual seam.
+ */
+function Chapter({
+  n,
+  id,
+  title,
+  lead,
+  children,
+  last,
+}: {
+  n: string;
+  id: string;
+  title: string;
+  lead: string;
+  children: React.ReactNode;
+  last?: boolean;
+}) {
+  return (
+    <section id={id} className="scroll-mt-24 py-14 first:pt-4">
+      <div className="mb-6 flex items-baseline gap-4">
+        <span className="font-mono text-xs tracking-widest text-fd-muted-foreground/70">{n}</span>
+        <div>
+          <h2 className="font-sans text-2xl text-fd-foreground">{title}</h2>
+          <p className="mt-2 max-w-2xl text-sm leading-relaxed text-fd-muted-foreground">{lead}</p>
+        </div>
+      </div>
+      {children}
+      {!last ? (
+        <div className="pt-14">
+          <SectionDivider />
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+/** The line under a live window: what you're looking at, and what to try. */
+function Caption({ children }: { children: React.ReactNode }) {
+  return <p className="mt-3 text-xs leading-relaxed text-fd-muted-foreground">{children}</p>;
+}
+
 export default async function HomePage() {
   const stars = await fetchStarCount();
   return (
-    <div className="font-mono">
+    <div className="font-sans">
       {/* HERO ROW 1 — full-width ASCII logo + positioning line */}
       <section className="relative max-w-screen-xl mx-auto pt-16 md:pt-28 px-6 text-center">
+        <div className="mb-8 flex justify-center">
+          <AppIcon size={120} priority />
+        </div>
         <AsciiLogo />
         <div className="mt-4 flex items-center justify-center gap-3">
           <h1 className="font-sans text-3xl md:text-4xl lg:text-5xl leading-[1.1] tracking-tight text-fd-foreground">
             The terminal that understands your agents.
           </h1>
           <Link
-            href="/docs/release-2-7-0"
-            className="inline-flex items-center border border-fd-border px-2 py-0.5 text-[10px] font-mono uppercase tracking-[0.18em] text-fd-muted-foreground transition-colors hover:bg-fd-accent hover:text-fd-foreground shrink-0"
+            href="/docs/release-2-8-0"
+            className="inline-flex items-center border border-fd-border px-2 py-0.5 text-[10px] font-mono tracking-[0.18em] text-fd-muted-foreground transition-colors hover:bg-fd-accent hover:text-fd-foreground shrink-0"
           >
-            2.7
+            2.8
           </Link>
         </div>
       </section>
 
-      {/* HERO ROW 2 — two columns: content + terminal */}
-      <section className="max-w-screen-xl mx-auto pb-12 md:pb-28 pt-8 md:pt-12 flex flex-col lg:flex-row gap-12 justify-between items-center px-6">
-        <div className="lg:max-w-[480px] space-y-8 w-full">
-          <p className="text-fd-muted-foreground text-base leading-normal">
+      {/* HERO ROW 2 — the pitch + the install. The screenshot slot is gone: the
+        live app window below IS the screenshot. */}
+      <section className="max-w-2xl mx-auto pb-10 md:pb-16 pt-8 md:pt-12 flex flex-col items-center gap-8 px-6 text-center">
+        <div className="space-y-8 w-full flex flex-col items-center">
+          <p className="text-fd-muted-foreground text-base leading-normal max-w-xl">
             Other tools rebuild the terminal to understand agents. tmux-ide teaches the terminal you
             already use to understand them. One command adds a native chrome to any tmux session —
             ground-truth agent status, notifications, and crash-proof restore. Zero lock-in.
           </p>
 
-          <div className="max-w-[480px] space-y-2">
+          <div className="w-full max-w-[480px] space-y-2 text-left">
             <CopyButton
               text={installCommand}
               className="group flex items-center gap-3 w-full border border-fd-border p-2 px-4 text-sm transition-colors hover:bg-fd-accent cursor-pointer relative bg-fd-muted/10"
             >
-              <span className="text-fd-foreground">$ {installCommand}</span>
+              <span className="font-mono text-fd-foreground">$ {installCommand}</span>
               <svg
                 width="14"
                 height="14"
@@ -235,12 +320,14 @@ export default async function HomePage() {
               text={adoptCommand}
               className="group flex items-center gap-3 w-full border border-fd-border p-2 px-4 text-sm transition-colors hover:bg-fd-accent cursor-pointer relative bg-fd-muted/10"
             >
-              <span className="text-fd-foreground">$ {adoptCommand}</span>
-              <span className="ml-auto text-fd-muted-foreground text-xs">on any session</span>
+              <span className="font-mono text-fd-foreground">$ {adoptCommand}</span>
+              <span className="ml-auto font-mono text-fd-muted-foreground text-xs">
+                on any session
+              </span>
             </CopyButton>
           </div>
 
-          <div className="flex items-center gap-4">
+          <div className="flex items-center justify-center gap-4">
             <Link
               href="/docs/getting-started"
               className="bg-fd-primary px-6 py-2.5 text-sm font-mono text-fd-primary-foreground hover:opacity-90 transition-opacity"
@@ -263,79 +350,113 @@ export default async function HomePage() {
             </a>
           </div>
         </div>
-
-        <TerminalDemo />
       </section>
 
-      <div className="space-y-16 max-w-screen-lg mx-auto px-6">
-        {/* THREE-BEAT STORY */}
-        <div className="space-y-px bg-fd-border border border-fd-border">
-          {beats.map((beat, i) => (
-            <div key={beat.kicker} className="bg-fd-background p-6 md:p-8">
-              <div className="flex flex-col md:flex-row md:items-start gap-4 md:gap-8">
-                <div className="md:w-40 shrink-0">
-                  <span className="text-xs text-fd-muted-foreground uppercase tracking-widest">
-                    {String(i + 1).padStart(2, "0")}
-                  </span>
-                  <div className="text-sm text-fd-primary mt-1">{beat.kicker}</div>
-                </div>
-                <div className="space-y-2">
-                  <h3 className="font-sans text-lg text-fd-foreground">{beat.title}</h3>
-                  <p className="text-fd-muted-foreground text-sm leading-normal">{beat.body}</p>
+      {/* THE MANUAL. Six numbered chapters, one rhythm each: a kicker, a
+        heading, a lead, then the surface itself — live. The page used to carry
+        three overlapping lists (a key grid, a feature grid, and a
+        trust/resilience/DX bullet block that restated both); the reference list
+        is now singular, in chapter 05. */}
+      <div className="max-w-screen-lg mx-auto px-6">
+        {/* 01 — THE FLEET */}
+        <Chapter
+          n="01"
+          id="fleet"
+          title="See who needs you"
+          lead="Adopt a session and the fleet gets a face: every agent's state, live, sorted so whoever is blocked rises to the top. The window below is the app's real sidebar component, running here."
+        >
+          <GrainStage tone="teal">
+            <MacWindow
+              title="tmux-ide — checkout-api"
+              accessory={agentCast.map((a) => (
+                <span key={a.name} className="flex items-center gap-1.5">
+                  <Image src={a.logo} alt="" width={14} height={14} unoptimized />
+                  <span className="hidden text-[11px] text-[#98989d] lg:inline">{a.name}</span>
+                </span>
+              ))}
+              footer={
+                <p className="text-xs leading-relaxed text-gray-400">
+                  Three agents, one project.{" "}
+                  <span className="text-gray-100">
+                    codex hands the migration to claude for review
+                  </span>{" "}
+                  —{" "}
+                  <code className="font-mono text-[11px]">tmux-ide send claude &quot;…&quot;</code>{" "}
+                  types the message straight into claude&apos;s pane. claude hits a call it
+                  can&apos;t make alone and goes{" "}
+                  <span className="text-[rgb(240,100,100)]">blocked</span>, which floats it to the
+                  top of the sidebar. Once you answer, it hands the tests to cursor. No message bus:
+                  the terminal is the bus.
+                </p>
+              }
+            >
+              <TuiIsland className="min-w-[760px]" />
+            </MacWindow>
+          </GrainStage>
+
+          <div className="mt-8 space-y-px bg-fd-border border border-fd-border">
+            {beats.map((beat, i) => (
+              <div key={beat.kicker} className="bg-fd-background p-6 md:p-8">
+                <div className="flex flex-col md:flex-row md:items-start gap-4 md:gap-8">
+                  <div className="md:w-40 shrink-0">
+                    <span className="text-xs text-fd-muted-foreground tracking-widest">
+                      {String(i + 1).padStart(2, "0")}
+                    </span>
+                    <div className="text-sm text-fd-primary mt-1">{beat.kicker}</div>
+                  </div>
+                  <div className="space-y-2">
+                    <h3 className="font-sans text-lg text-fd-foreground">{beat.title}</h3>
+                    <p className="text-fd-muted-foreground text-sm leading-normal">{beat.body}</p>
+                  </div>
                 </div>
               </div>
-            </div>
-          ))}
-        </div>
-
-        <SectionDivider />
-
-        {/* TEAMS OF ANY AGENTS */}
-        <div>
-          <h2 className="font-sans text-2xl text-fd-foreground">Teams of any agents</h2>
-          <p className="text-fd-muted-foreground text-base leading-normal mt-2 max-w-2xl">
-            Run a heterogeneous fleet — Claude Code, codex, cursor-agent, aider, anything — in one
-            set of sessions, and let them coordinate. Every agent&apos;s status is on a shared bus
-            every other agent can read; one agent can task another by typing into its prompt; and
-            any agent can block until a teammate finishes. It&apos;s agent-agnostic by design:
-            Claude Code reports automatically, everyone else self-reports with a one-line pane
-            option.
-          </p>
-          <div className="mt-5 border border-fd-border bg-fd-muted/10 p-4 font-mono text-xs text-fd-muted-foreground overflow-x-auto">
-            <div>
-              <span className="text-fd-foreground">tmux-ide team --json</span>{" "}
-              <span># read the fleet&apos;s status</span>
-            </div>
-            <div>
-              <span className="text-fd-foreground">
-                tmux-ide send %2 &quot;implement /login, then run the tests&quot;
-              </span>{" "}
-              <span># task another agent</span>
-            </div>
-            <div>
-              <span className="text-fd-foreground">
-                tmux-ide wait output %2 --match &quot;tests passed&quot;
-              </span>{" "}
-              <span># block until it finishes</span>
-            </div>
+            ))}
           </div>
-          <p className="text-fd-muted-foreground text-sm mt-3">
+        </Chapter>
+
+        {/* 02 — COORDINATION */}
+        <Chapter
+          n="02"
+          id="coordination"
+          title="Agents that task each other"
+          lead="Run a mixed fleet — Claude Code, codex, cursor, aider, anything — and let them coordinate. One agent tasks another by typing into its prompt; any agent can block until a teammate finishes. Claude Code reports automatically; everyone else self-reports with a one-line pane option."
+        >
+          <GrainStage tone="indigo">
+            <MacWindow title="checkout-api — coordination">
+              <TuiIsland scene="cli" className="min-w-[860px]" />
+            </MacWindow>
+          </GrainStage>
+          <Caption>
+            Click a command to run it. <code className="font-mono">send</code> types the message
+            into %2 and its hooks flip it to working; <code className="font-mono">wait</code> blocks
+            until the pane prints the match. Three commands, one loop —{" "}
             <Link href="/docs/multi-agent-teams" className="text-fd-primary hover:underline">
-              How multi-agent teams work →
+              how multi-agent teams work →
             </Link>
-          </p>
-        </div>
+          </Caption>
+        </Chapter>
 
-        <SectionDivider />
+        {/* 03 — THE PALETTE + THE KEYS */}
+        <Chapter
+          n="03"
+          id="palette"
+          title="Every verb, one keystroke"
+          lead="⌘K opens the palette; the prefix twins open everything else — reliable under every keyboard protocol, with an ⌥ fast-path on top. One grammar, one theme."
+        >
+          <GrainStage tone="violet">
+            <MacWindow title="⌘K — command palette">
+              <TuiIsland scene="palette" className="min-w-[620px]" />
+            </MacWindow>
+          </GrainStage>
+          <Caption>
+            Click <code className="font-mono">⌘K</code>, then type — try{" "}
+            <code className="font-mono">ses</code>, <code className="font-mono">agent</code>, or{" "}
+            <code className="font-mono">layout</code>. The rows and the ranking are the app&apos;s
+            own; the highlighted characters are its matcher showing its work. (The real chord is ⌘K;
+            on this page that belongs to the site search, so the demo opens on a click.)
+          </Caption>
 
-        {/* SURFACE TOUR */}
-        <div>
-          <h2 className="font-sans text-2xl text-fd-foreground">One app, a keystroke away</h2>
-          <p className="text-fd-muted-foreground text-sm mt-1">
-            Once a session is adopted, the whole UI is a prefix twin away — reliable under every
-            keyboard protocol, with an ⌥ fast-path on top. One grammar, one theme.
-          </p>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 mt-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 mt-8">
             {surfaces.map((s) => (
               <div className="border border-fd-border p-1 -mt-[1px] -ml-[1px]" key={s.title}>
                 <div className="p-4 space-y-3">
@@ -346,14 +467,54 @@ export default async function HomePage() {
               </div>
             ))}
           </div>
-        </div>
+        </Chapter>
 
-        <SectionDivider />
+        {/* 04 — FILES & DIFFS */}
+        <Chapter
+          n="04"
+          id="files"
+          title="Files and diffs, without leaving"
+          lead="F3 is a file explorer with a native editor; F4 is a diff you can stage from. The tree's hide/ignore rules, the diff's grouping, and the line colors below are the app's own code."
+        >
+          <div className="space-y-10">
+            <div>
+              <GrainStage tone="ember">
+                <MacWindow title="F3 — files">
+                  <TuiIsland scene="files" className="min-w-[760px]" />
+                </MacWindow>
+              </GrainStage>
+              <Caption>
+                Click a folder to expand, a file to open. Toggle{" "}
+                <code className="font-mono">H</code> and <code className="font-mono">I</code> —{" "}
+                <code className="font-mono">node_modules</code> and{" "}
+                <code className="font-mono">.git</code> stay hidden either way, because the app
+                always ignores them.
+              </Caption>
+            </div>
+            <div>
+              <GrainStage tone="sky">
+                <MacWindow title="F4 — diff">
+                  <TuiIsland scene="diff" className="min-w-[760px]" />
+                </MacWindow>
+              </GrainStage>
+              <Caption>
+                Real <code className="font-mono">git status --porcelain</code>, grouped into staged
+                / unstaged / untracked by the app&apos;s parser. Pick a file, then{" "}
+                <code className="font-mono">[s stage]</code> — it moves between groups, no shell
+                required.
+              </Caption>
+            </div>
+          </div>
+        </Chapter>
 
-        {/* FEATURES */}
-        <div>
-          <h2 className="font-sans text-2xl text-fd-foreground">Features</h2>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 mt-4">
+        {/* 05 — THE REFERENCE LIST */}
+        <Chapter
+          n="05"
+          id="capabilities"
+          title="Everything else it does"
+          lead="The full surface, once over lightly. Each of these has a page in the docs."
+        >
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3">
             {features.map((f) => (
               <div className="border border-fd-border p-1 -mt-[1px] -ml-[1px]" key={f.title}>
                 <div className="p-4 space-y-4">
@@ -363,43 +524,22 @@ export default async function HomePage() {
               </div>
             ))}
           </div>
-        </div>
+        </Chapter>
 
-        <SectionDivider />
-
-        {/* HOW IT WORKS */}
-        <div>
-          <h2 className="font-sans text-2xl text-fd-foreground">
-            From zero to fleet in three commands
-          </h2>
-          <div className="grid grid-cols-1 md:grid-cols-3 mt-4">
-            {[
-              {
-                phase: "01",
-                title: "Adopt",
-                cmd: "tmux-ide adopt work",
-                description:
-                  "Add the chrome to a session you already have. Fleet tabs, agent glyphs, and triggers appear. Nothing else changes.",
-              },
-              {
-                phase: "02",
-                title: "Integrate",
-                cmd: "tmux-ide integration install claude",
-                description:
-                  "Hook Claude Code's lifecycle so working / blocked / done are ground truth. Any agent can self-report the same way.",
-              },
-              {
-                phase: "03",
-                title: "Work",
-                cmd: "tmux-ide events --follow",
-                description:
-                  "Glance at the dock, get toasts when an agent needs you, and restore the whole fleet if the server ever dies.",
-              },
-            ].map((item) => (
+        {/* 06 — GET STARTED */}
+        <Chapter
+          n="06"
+          id="start"
+          title="From zero to fleet in three commands"
+          lead="No migration, no new terminal. Adopt the sessions you already have."
+          last
+        >
+          <div className="grid grid-cols-1 md:grid-cols-3">
+            {steps.map((item) => (
               <div className="border border-fd-border p-1 -mt-[1px] -ml-[1px]" key={item.phase}>
                 <div className="p-4 space-y-3">
-                  <span className="text-xs text-fd-muted-foreground uppercase tracking-widest">
-                    Step {item.phase}
+                  <span className="text-xs text-fd-muted-foreground lowercase tracking-widest">
+                    step {item.phase}
                   </span>
                   <h3 className="text-sm text-fd-foreground">{item.title}</h3>
                   <code className="block text-xs text-fd-primary font-mono break-all">
@@ -410,62 +550,20 @@ export default async function HomePage() {
               </div>
             ))}
           </div>
-        </div>
-
-        <SectionDivider />
-
-        {/* SURFACE AREAS — 3-column */}
-        <div className="grid grid-cols-1 md:grid-cols-3">
-          <div className="border border-fd-border p-1 -mt-[1px] -ml-[1px]">
-            <div className="p-4 space-y-4">
-              <h3 className="text-sm text-fd-foreground">Trust</h3>
-              <ul className="text-fd-muted-foreground space-y-2">
-                <li className="text-sm">{"◇"} Adopt is just tmux options — reversible</li>
-                <li className="text-sm">{"◇"} If tmux-ide dies, plain tmux remains</li>
-                <li className="text-sm">{"◇"} Ground-truth status from agent hooks</li>
-                <li className="text-sm">{"◇"} agent explain shows exactly why</li>
-                <li className="text-sm">{"◇"} User-overridable detection</li>
-              </ul>
-            </div>
-          </div>
-          <div className="border border-fd-border p-1 -mt-[1px] -ml-[1px]">
-            <div className="p-4 space-y-4">
-              <h3 className="text-sm text-fd-foreground">Resilience</h3>
-              <ul className="text-fd-muted-foreground space-y-2">
-                <li className="text-sm">{"◇"} Continuous fleet snapshots</li>
-                <li className="text-sm">{"◇"} Restore sessions, windows, layouts</li>
-                <li className="text-sm">{"◇"} Cwds and titles come back too</li>
-                <li className="text-sm">{"◇"} Revive Claude conversations on resume</li>
-                <li className="text-sm">{"◇"} Worktree-per-branch isolation</li>
-              </ul>
-            </div>
-          </div>
-          <div className="border border-fd-border p-1 -mt-[1px] -ml-[1px]">
-            <div className="p-4 space-y-4">
-              <h3 className="text-sm text-fd-foreground">Developer experience</h3>
-              <ul className="text-fd-muted-foreground space-y-2">
-                <li className="text-sm">{"◇"} One command to adopt</li>
-                <li className="text-sm">{"◇"} One grammar: j/k · enter · / · esc · ?</li>
-                <li className="text-sm">{"◇"} One theme file for everything</li>
-                <li className="text-sm">{"◇"} Renders over SSH, any client</li>
-                <li className="text-sm">{"◇"} --json everywhere, open source</li>
-              </ul>
-            </div>
-          </div>
-        </div>
+        </Chapter>
       </div>
 
-      {/* FOOTER CTA */}
+      {/* FOOTER CTA — on the grain, back on the tone the page opened with: the
+        last card closes the loop the hero started. The diagonal stripes are
+        retired; the ground is the texture now. */}
       <div className="max-w-screen-lg mx-auto mt-16 mb-24 px-6">
-        <div
-          className="bg-fd-background border border-fd-border p-8 lg:p-12 text-center relative before:absolute before:inset-0 before:pointer-events-none"
-          style={{ "--stripe-bg": STRIPE_BG } as React.CSSProperties}
-        >
-          <div
-            className="absolute inset-0 pointer-events-none opacity-30"
-            style={{ backgroundImage: STRIPE_BG }}
-          />
-          <div className="relative z-10">
+        <GrainStage tone="teal">
+          <div className="py-6 text-center lg:py-10">
+            {/* The icon closes the page the way it opened it — the hero's mark,
+              smaller, sitting above the last ask. */}
+            <div className="mb-5 flex justify-center">
+              <AppIcon size={56} />
+            </div>
             <h2 className="font-sans text-2xl sm:text-3xl text-fd-foreground mb-4">Get started</h2>
             <p className="font-sans text-base text-fd-muted-foreground mb-6 max-w-lg mx-auto">
               Keep your terminal. Add the chrome. Adopt a session in seconds.
@@ -478,45 +576,15 @@ export default async function HomePage() {
                 Get started
               </Link>
               <Link
-                href="/docs/release-2-7-0"
-                className="border border-fd-border px-6 py-2.5 text-sm font-mono text-fd-foreground hover:bg-fd-accent transition-colors"
+                href="/docs/release-2-8-0"
+                className="border border-fd-border bg-fd-background px-6 py-2.5 text-sm font-mono text-fd-foreground hover:bg-fd-accent transition-colors"
               >
-                What&apos;s new in 2.7
+                What&apos;s new in 2.8
               </Link>
             </div>
           </div>
-        </div>
+        </GrainStage>
       </div>
-
-      {/* FOOTER */}
-      <footer className="w-full border-t border-fd-border py-8 px-6">
-        <div className="max-w-3xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-fd-muted-foreground">
-          <span>
-            tmux-ide by{" "}
-            <a
-              href="https://thijsverreck.com"
-              className="hover:text-fd-foreground transition-colors"
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              Thijs Verreck
-            </a>
-          </span>
-          <div className="flex items-center gap-4">
-            <Link href="/docs" className="hover:text-fd-foreground transition-colors">
-              Docs
-            </Link>
-            <a
-              href="https://github.com/wavyrai/tmux-ide"
-              className="hover:text-fd-foreground transition-colors"
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              GitHub
-            </a>
-          </div>
-        </div>
-      </footer>
     </div>
   );
 }
