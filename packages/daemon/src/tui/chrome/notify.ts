@@ -679,7 +679,6 @@ function pickBool(value: unknown, fallback: boolean): boolean {
   return typeof value === "boolean" ? value : fallback;
 }
 
-
 /**
  * PURE — is `now` (local time) inside the quiet window? Handles a window that
  * WRAPS midnight (`22:00`–`08:00`). A null window, or a malformed / zero-width
