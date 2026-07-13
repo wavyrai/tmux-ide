@@ -1,0 +1,97 @@
+---
+title: What's New in 2.8
+description: "tmux-ide 2.8 — agent lifecycle control, a detachable cockpit, a local socket API, per-pane notifications, and eight new detection manifests"
+---
+
+# tmux-ide 2.8
+
+2.7 shipped the unified app. 2.8 adds control over the agents it shows you:
+spawn, restart, and stop from any surface; a cockpit you can detach and reattach
+from another terminal; a local socket API so agents can call the same verbs you
+can; per-pane notifications; and detection for eight more agent kinds.
+
+```bash
+npm i -g tmux-ide      # or: brew install wavyrai/tap/tmux-ide
+tmux-ide app           # from any folder — no tmux server required
+```
+
+## Agent lifecycle: spawn, restart, stop
+
+**Spawn** from the home chips, the sidebar's session menu, or the palette. Agent
+kinds come from the detection manifests, so your own overrides appear
+automatically, and a custom-command option covers anything not in a manifest. A
+project row that isn't running spawns a fresh session.
+
+The two-step placement dialog is replaced by **one picker**, with your last spawn
+pinned and pre-selected — repeating it is the palette plus one Enter. Placement
+defaults to context (split right on Terminal, a new window from a session, a
+fresh session from a project), with the alternatives on footer ctrl-actions. New
+panes inherit the focused pane's cwd (`app.newAgentCwd`) and are auto-labelled.
+
+**Restart**, **stop**, and **close** are available on agent rows and in the
+palette.
+
+## The detachable cockpit
+
+```bash
+tmux-ide app --detachable      # alias: --hosted · config: app.detachable
+```
+
+The app hosts itself inside an internal session and attaches your terminal to it.
+Detach and reattach from any terminal — a second window, another machine, a phone
+over SSH — with scroll position and workspace state intact. Inside tmux it
+switches clients; `^q` from a hosted app returns you to the session you came from
+rather than to a shell.
+
+## Local socket API
+
+```bash
+tmux-ide serve      # NDJSON over a 0600 unix socket
+```
+
+Verbs: `fleet`, `agents`, `send`, `wait`, `spawn`, `restart-agent`, `stop-agent`,
+`explain`. Responses are returned by id (out-of-order safe), and `subscribe`
+pushes events. Every verb calls the same data layer as the CLI, so the two
+surfaces cannot drift apart.
+
+## Notifications
+
+Notification decisions are now **per-pane**: two agents in one session both
+notify, instead of one shadowing the other. First-sight events never notify, so
+restarting the app doesn't re-announce work you already know about.
+`lastNotified` persists across restarts. New channels: **SSH banners**, **Linux**
+support, and an optional **sound**.
+
+## Detection
+
+Eight new manifests: **devin, kimi, pi, grok, kiro, cline, droid, kilo** — each
+with corpus fixtures and a cross-misfire matrix, so a new manifest cannot claim
+panes belonging to another agent. `--resume` session-id capture covers three more
+agent kinds, so restore revives more of the fleet's conversations.
+
+## App surfaces
+
+- **Resize** is driven by tmux's own `%layout-change` payload, parsed and applied
+  synchronously in the same read turn, so a resize cannot race the output that
+  follows it.
+- **Drag-selection** anchors to absolute buffer lines rather than viewport cells:
+  the highlight stays on its content while the pane scrolls, and a wheel mid-drag
+  extends the selection instead of cancelling it. Drag-select is now the default
+  in agent panes.
+- **Diff** gained stage/unstage verbs, grouping, and counts. **Files** gained
+  filtering. The **palette** gained ⌘K and a ranking that learns what you run.
+  `/` at a live prompt is no longer intercepted — the agent receives it.
+
+## Install
+
+```bash
+brew install wavyrai/tap/tmux-ide
+```
+
+Homebrew is a supported install path, with `tmux-ide doctor` checking the pieces
+Homebrew does not wire up.
+
+## Upgrading
+
+Nothing to migrate. Re-run `tmux-ide adopt <session>` to pick up the new key
+binds; `tmux-ide update` refreshes the bundled Claude Code skill.

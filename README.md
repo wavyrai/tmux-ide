@@ -1,8 +1,25 @@
-# tmux-ide
+<p align="center">
+  <picture>
+    <source
+      media="(prefers-color-scheme: dark)"
+      srcset="https://raw.githubusercontent.com/wavyrai/tmux-ide/main/.github/assets/icon-dark.png"
+    />
+    <img
+      src="https://raw.githubusercontent.com/wavyrai/tmux-ide/main/.github/assets/icon-light.png"
+      alt="tmux-ide"
+      width="120"
+      height="120"
+    />
+  </picture>
+</p>
 
-[![CI](https://github.com/wavyrai/tmux-ide/actions/workflows/ci.yml/badge.svg)](https://github.com/wavyrai/tmux-ide/actions/workflows/ci.yml)
+<h1 align="center">tmux-ide</h1>
 
-**The terminal that understands your agents.**
+<p align="center"><strong>The terminal that understands your agents.</strong></p>
+
+<p align="center">
+  <a href="https://github.com/wavyrai/tmux-ide/actions/workflows/ci.yml"><img src="https://github.com/wavyrai/tmux-ide/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
+</p>
 
 Other tools rebuild the terminal to understand agents. tmux-ide teaches the terminal you already use to understand them. One command adds a native chrome to any tmux session: a fleet of tabs with live agent-status glyphs, ground-truth working/blocked/done detection, notifications when an agent needs you, and a crash-proof restore that rebuilds your whole fleet — including your Claude conversations. It's built _around_ tmux, so there's nothing to migrate and nothing to lock into.
 
