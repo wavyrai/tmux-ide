@@ -8,6 +8,21 @@ on:
   pull_request:
 
 jobs:
+  native_macos_notifier:
+    name: Native macOS notifier
+    runs-on: macos-26
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Build and verify universal adaptive app
+        run: node scripts/build-macos-notifier.mjs --output "$RUNNER_TEMP/TmuxIdeNotifier.app" --version 0.0.0
+
   cli:
     name: CLI checks (Node ${{ matrix.node }})
     runs-on: ubuntu-latest

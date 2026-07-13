@@ -1033,7 +1033,6 @@ try {
         // is no TTY to ask (TMUX_IDE_NOTIFY_KEY forces an answer for tests).
         const { getAppConfig, updateAppConfig } =
           await import("../packages/daemon/src/lib/app-config.ts");
-        const { hasTerminalNotifier } = await import("../packages/daemon/src/tui/chrome/notify.ts");
         const forcedKey = process.env.TMUX_IDE_NOTIFY_KEY;
         const canAsk = forcedKey !== undefined || process.stdin.isTTY === true;
         if (process.platform === "darwin" && !getAppConfig().notifications.macos && canAsk) {
@@ -1041,13 +1040,8 @@ try {
             if (key === "y" || key === "Y") {
               updateAppConfig({ notifications: { macos: true } });
               console.log(
-                "macOS notifications on — you'll get a banner when an agent blocks or finishes.",
+                "macOS notifications on — native branded banners will jump to the session when clicked.",
               );
-              if (!hasTerminalNotifier()) {
-                console.log(
-                  "tip: `brew install terminal-notifier` makes those banners clickable (a click jumps to the session).",
-                );
-              }
             } else {
               console.log(
                 "skipped — turn banners on anytime: notifications.macos in ~/.tmux-ide/config.json.",

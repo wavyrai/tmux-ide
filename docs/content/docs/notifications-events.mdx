@@ -29,6 +29,12 @@ Notifications are configured in `~/.tmux-ide/config.json`:
 - `toast` (default `true`) — the in-tmux toast.
 - `macos` (default `false`) — also post a native macOS notification.
 
+The macOS helper is bundled with tmux-ide—there is nothing else to install.
+Its banners use the tmux-ide app icon, follow the system's light/dark icon
+appearance, and jump to the session that needs you when clicked. On first use,
+macOS may show its permission card instead of the agent banner. Choose
+**Options → Allow**; subsequent agent notifications then appear normally.
+
 See [Theming & config](/docs/theming) for the full file.
 
 ## Per-pane chips

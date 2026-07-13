@@ -62,6 +62,11 @@ restarting the app doesn't re-announce work you already know about.
 `lastNotified` persists across restarts. New channels: **SSH banners**, **Linux**
 support, and an optional **sound**.
 
+On macOS, banners now come from a **bundled native notifier** — a small signed
+universal helper app that ships inside the npm package. No `terminal-notifier`
+dependency, branded with the app icon, and clicking a banner jumps straight to
+the session that needs you.
+
 ## Detection
 
 Eight new manifests: **devin, kimi, pi, grok, kiro, cline, droid, kilo** — each

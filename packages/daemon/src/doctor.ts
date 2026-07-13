@@ -7,7 +7,7 @@ import { installedSkillVersion } from "./lib/skill-sync.ts";
 import { discoverAgents, presentAgents, type DiscoveredAgent } from "./lib/agent-discovery.ts";
 import { findCompiledTui, isBunAvailable } from "./tui/compiled.ts";
 import { claudeSettingsPath } from "./tui/integrations/claude.ts";
-import { hasTerminalNotifier, readNotificationPrefs } from "./tui/chrome/notify.ts";
+import { readNotificationPrefs, resolveNativeMacosNotifierPath } from "./tui/chrome/notify.ts";
 
 interface CheckResult {
   label: string;
@@ -83,18 +83,18 @@ export function hooksTargetRow(facts: {
 }
 
 /**
- * PURE — the "banner clicks can jump" row, shown only when macOS notifications
- * are actually ON (`notifications.macos`): without `terminal-notifier`,
- * banners fall back to osascript, which shows fine but a click does nothing.
+ * PURE — native notifier health, shown only when macOS notifications are ON.
+ * Release packages always include the helper; absence means an incomplete or
+ * old installation, which can still fall back to the unbranded AppleScript path.
  * Optional — informational, never fails doctor.
  */
 export function notifierRow(present: boolean): CheckResult {
-  const label = "notification click-to-jump (terminal-notifier)";
+  const label = "native macOS notifications";
   if (present) {
     return {
       label,
       pass: true,
-      detail: "found — clicking a banner jumps to the session that needs you",
+      detail: "bundled — branded banners and click-to-jump are ready",
       optional: true,
     };
   }
@@ -102,7 +102,7 @@ export function notifierRow(present: boolean): CheckResult {
     label,
     pass: false,
     detail:
-      "macOS notifications are on, but terminal-notifier isn't installed — banners will still show, just without click-to-jump. Install it: `brew install terminal-notifier`",
+      "native helper missing — reinstall tmux-ide; unbranded AppleScript banners remain available",
     optional: true,
   };
 }
@@ -302,10 +302,9 @@ export async function doctor({
     ),
   );
 
-  // Banner click-to-jump: only when the macOS channel is actually on (a user
-  // who never enabled banners shouldn't be told to install its helper).
+  // Native branded sender: only when the macOS channel is actually on.
   if (process.platform === "darwin" && readNotificationPrefs().macos) {
-    checks.push(notifierRow(hasTerminalNotifier()));
+    checks.push(notifierRow(resolveNativeMacosNotifierPath() !== null));
   }
 
   // Agent integrations: one row per agent discovered on PATH (absent → no row).
