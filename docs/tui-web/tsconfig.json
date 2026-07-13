@@ -1,0 +1,22 @@
+{
+  "// note": "The island is Solid, not React, and imports daemon source by .ts path — a different TS regime than the Next app, hence its own config (docs/tsconfig.json excludes this dir). Vite/esbuild compiles it; this file is what makes `tsc --noEmit` here meaningful.",
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "noEmit": true,
+    "strict": true,
+    "skipLibCheck": true,
+    "jsx": "preserve",
+    "jsxImportSource": "solid-js",
+    "types": [],
+    "baseUrl": ".",
+    "paths": {
+      "@daemon/*": ["../../packages/daemon/src/*"],
+      "@opentui/core": ["./opentui-shim.ts"]
+    }
+  },
+  "include": ["**/*.ts", "**/*.tsx"]
+}
