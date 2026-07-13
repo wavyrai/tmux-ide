@@ -98,20 +98,20 @@ describe("hooksTargetRow", () => {
 });
 
 describe("notifierRow", () => {
-  it("passes when terminal-notifier is present", async () => {
+  it("passes when the bundled native helper is present", async () => {
     const { notifierRow } = await import("./doctor.ts");
     const row = notifierRow(true);
     expect(row.pass).toBe(true);
     expect(row.optional).toBe(true);
-    expect(row.detail).toContain("jumps to the session");
+    expect(row.detail).toContain("branded banners");
   });
 
-  it("hints plainly (brew install) when banners are on but the helper is absent", async () => {
+  it("suggests reinstalling when the release helper is absent", async () => {
     const { notifierRow } = await import("./doctor.ts");
     const row = notifierRow(false);
     expect(row.pass).toBe(false);
     expect(row.optional).toBe(true); // informational — never fails doctor
-    expect(row.detail).toContain("brew install terminal-notifier");
-    expect(row.detail).toContain("without click-to-jump");
+    expect(row.detail).toContain("reinstall tmux-ide");
+    expect(row.detail).toContain("AppleScript");
   });
 });

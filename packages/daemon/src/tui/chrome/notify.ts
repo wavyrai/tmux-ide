@@ -8,7 +8,7 @@
  * (`display-message -c`), and optionally a macOS notification.
  *
  * Since M25.2 the fan-out spans FIVE channels: the in-app toast, the system
- * banner (macOS `terminal-notifier`/`osascript`, Linux `notify-send`), the
+ * banner (native macOS helper, Linux `notify-send`), the
  * terminal-native OSC 9/99 escape written straight to each eligible client's
  * tty, a ping sound, and a BEL on blocked. The OS-level channels (everything
  * but the toast) are quiet-hours gated and delay/re-verified by the updater.
@@ -19,12 +19,14 @@
  * + {@link terminalNotifyEscape} + {@link decideTtyWrites} + {@link notifySendArgs}
  * + {@link soundEligible} + {@link soundArgv} are PURE (unit-tested without a
  * live tmux / filesystem); {@link sendToasts}, {@link sendSystemNotification},
- * {@link hasTerminalNotifier}, {@link listAttachedClients}, {@link writeTtys},
+ * {@link resolveNativeMacosNotifierPath}, {@link listAttachedClients}, {@link writeTtys},
  * {@link playPingSound} and {@link readNotificationPrefs} are the thin io
  * wrappers. Every io path is best-effort — a failed ping must never break the
  * updater loop.
  */
 import { execFileSync, spawn } from "node:child_process";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   closeSync,
   constants as fsConstants,
@@ -532,14 +534,19 @@ export function hasTerminalNotifier(): boolean {
   return hasBinary("terminal-notifier");
 }
 
+/** io — resolve a binary to the absolute path a GUI-launched helper can retain. */
+function binaryPath(name: string): string | null {
+  try {
+    const path = execFileSync("which", [name], { encoding: "utf8" }).trim();
+    return path.startsWith("/") ? path : null;
+  } catch {
+    return null;
+  }
+}
+
 /** io — whether a binary resolves on PATH. */
 function hasBinary(name: string): boolean {
-  try {
-    execFileSync("which", [name], { stdio: "ignore" });
-    return true;
-  } catch {
-    return false;
-  }
+  return binaryPath(name) !== null;
 }
 
 /** PURE — single-quote a string for safe interpolation into a `/bin/sh -c` command. */
@@ -577,11 +584,98 @@ export function notifierExecuteCommand(session: string): string {
   );
 }
 
+/** The native sender injected into the npm/Homebrew payload at release. */
+export const NATIVE_MACOS_NOTIFIER_RELATIVE_PATH =
+  "packages/daemon/dist/native/TmuxIdeNotifier.app";
+const NATIVE_MACOS_NOTIFIER_EXECUTABLE = "Contents/MacOS/tmux-ide-notifier";
+
+export interface NativeMacosNotifierPathIo {
+  /** The real node CLI path forwarded to compiled TUI surfaces. */
+  cliPath?: string | null;
+  /** Injectable module path keeps the ancestor walk deterministic in tests. */
+  modulePath?: string;
+  exists?: (path: string) => boolean;
+}
+
 /**
- * PURE — the `terminal-notifier` argv for a click-through banner: clicking it
- * runs {@link notifierExecuteCommand}, which jumps the user's most-recent
- * client to the hosted cockpit (selecting the session that needs them) when
- * one exists, else straight to the session.
+ * io — find the packaged native notifier from either runtime shape:
+ *
+ * - the bundled CLI lives at `bin/cli.js`, one level below the package root;
+ * - checkout source lives below `packages/daemon/src/…`;
+ * - the standalone Bun TUI has a virtual module URL, but the CLI forwards its
+ *   real path through `TMUX_IDE_CLI`.
+ *
+ * Walking ancestors handles all three without baking an install prefix into
+ * the binary. A missing helper is a silent null so older installs can fall back.
+ */
+export function resolveNativeMacosNotifierPath(io: NativeMacosNotifierPathIo = {}): string | null {
+  const exists = io.exists ?? existsSync;
+  const cliPath = io.cliPath === undefined ? process.env.TMUX_IDE_CLI : io.cliPath;
+  const modulePath = io.modulePath ?? fileURLToPath(import.meta.url);
+  const anchors = [cliPath, modulePath]
+    .filter((path): path is string => Boolean(path))
+    .map((path) => dirname(resolve(path)));
+  const visited = new Set<string>();
+
+  for (const anchor of anchors) {
+    let directory = anchor;
+    while (!visited.has(directory)) {
+      visited.add(directory);
+      const candidate = resolve(directory, NATIVE_MACOS_NOTIFIER_RELATIVE_PATH);
+      if (exists(resolve(candidate, NATIVE_MACOS_NOTIFIER_EXECUTABLE))) return candidate;
+      const parent = dirname(directory);
+      if (parent === directory) break;
+      directory = parent;
+    }
+  }
+  return null;
+}
+
+/** PURE — recover tmux's exact socket from `$TMUX` (`path,server-pid,pane-id`). */
+export function parseTmuxSocketPath(value: string | undefined): string | null {
+  if (!value) return null;
+  const normalized = value.trim();
+  // Match the two numeric TMUX metadata fields from the RIGHT: socket paths
+  // themselves are allowed to contain commas.
+  const path = (/^(.*),\d+,\d+$/.exec(normalized)?.[1] ?? normalized).trim();
+  return path.startsWith("/") ? path : null;
+}
+
+/**
+ * PURE — launch the branded LSUIElement app through LaunchServices. The helper
+ * stores structured tmux coordinates in the system notification payload so a
+ * later click can jump without inheriting a shell, PATH, or TMUX environment.
+ */
+export function nativeMacosNotifierArgs(
+  appPath: string,
+  n: SystemNotification,
+  tmuxPath: string | null,
+  socketPath: string | null,
+): string[] {
+  const args = [
+    "-g",
+    "-n",
+    appPath,
+    "--args",
+    "--title",
+    "tmux-ide",
+    "--message",
+    n.message,
+    "--session",
+    n.session,
+    "--host-session",
+    APP_HOST_SESSION,
+    "--jump-option",
+    APP_JUMP_OPTION,
+  ];
+  if (tmuxPath) args.push("--tmux-path", tmuxPath);
+  if (socketPath) args.push("--socket-path", socketPath);
+  return args;
+}
+
+/**
+ * PURE — the legacy `terminal-notifier` argv retained for older installations
+ * whose package predates the native helper.
  */
 export function terminalNotifierArgs(n: SystemNotification): string[] {
   return [
@@ -613,13 +707,17 @@ export interface SystemNotifyIo {
   env?: Record<string, string | undefined>;
   exec?: (cmd: string, args: string[]) => void;
   hasBinary?: (name: string) => boolean;
+  /** undefined auto-resolves the shipped bundle; null tests/old installs skip it. */
+  nativeNotifierPath?: string | null;
+  /** Absolute executable retained for a click relaunch with no terminal PATH. */
+  tmuxPath?: string | null;
 }
 
 /**
- * io — fire a system notification, best-effort. macOS: `terminal-notifier` when
- * available (a CLICK-THROUGH banner — {@link terminalNotifierArgs} focuses the
- * session on click), else `osascript`, whose `display notification` has NO
- * click action — the banner informs but can't jump. Linux (M25.2): under a
+ * io — fire a system notification, best-effort. macOS: the bundled native app
+ * first (branded, appearance-aware, click-through), then `terminal-notifier`
+ * for an older install, then `osascript` as the last unbranded fallback. Linux:
+ * under a
  * desktop session (DISPLAY / WAYLAND_DISPLAY) with `notify-send` on PATH, the
  * same title/body (+ critical urgency for blocked — {@link notifySendArgs});
  * anything missing → silent skip. Other platforms: no-op.
@@ -631,6 +729,23 @@ export function sendSystemNotification(n: SystemNotification, io: SystemNotifyIo
   const has = io.hasBinary ?? hasBinary;
   try {
     if (platform === "darwin") {
+      const appPath =
+        io.nativeNotifierPath === undefined
+          ? resolveNativeMacosNotifierPath()
+          : io.nativeNotifierPath;
+      if (appPath) {
+        const env = io.env ?? process.env;
+        const tmuxPath = io.tmuxPath === undefined ? binaryPath("tmux") : io.tmuxPath;
+        try {
+          exec(
+            "/usr/bin/open",
+            nativeMacosNotifierArgs(appPath, n, tmuxPath, parseTmuxSocketPath(env.TMUX)),
+          );
+          return;
+        } catch {
+          // Corrupt/blocked helper: retain the two compatibility fallbacks.
+        }
+      }
       if (has("terminal-notifier")) {
         exec("terminal-notifier", terminalNotifierArgs(n));
         return;

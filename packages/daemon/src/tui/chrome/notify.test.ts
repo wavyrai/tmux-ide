@@ -2,7 +2,7 @@
  * Unit tests for the pure parts of the notification loop — the decision engine
  * (state filtering, viewer suppression, debounce/flap guard), the message
  * format, the client parser, prefs resolution + kill-switch, quiet hours, and
- * the terminal-notifier click-through argv.
+ * the native/legacy macOS click-through argv.
  */
 import { describe, expect, it } from "vitest";
 import {
@@ -17,6 +17,7 @@ import {
   inQuietHours,
   LINUX_SOUND_FILE,
   notifierExecuteCommand,
+  nativeMacosNotifierArgs,
   notifyDebounceKey,
   notifyMessage,
   notifySendArgs,
@@ -28,6 +29,8 @@ import {
   parseHHMM,
   parseNotificationPrefs,
   parseClients,
+  parseTmuxSocketPath,
+  resolveNativeMacosNotifierPath,
   sendSystemNotification,
   soundArgv,
   soundEligible,
@@ -540,7 +543,7 @@ function sysN(over: Partial<SystemNotification> = {}): SystemNotification {
 }
 
 describe("terminalNotifierArgs", () => {
-  it("builds a click-through banner whose -execute is the jump command", () => {
+  it("builds the legacy click-through banner whose -execute is the jump command", () => {
     expect(terminalNotifierArgs(sysN())).toEqual([
       "-title",
       "tmux-ide",
@@ -548,6 +551,71 @@ describe("terminalNotifierArgs", () => {
       "claude blocked · web:1.2 — needs input",
       "-execute",
       notifierExecuteCommand("web"),
+    ]);
+  });
+});
+
+describe("native macOS notifier", () => {
+  it("finds the packaged app above the bundled bin directory", () => {
+    const app = "/opt/tmux-ide/packages/daemon/dist/native/TmuxIdeNotifier.app";
+    const executable = `${app}/Contents/MacOS/tmux-ide-notifier`;
+    expect(
+      resolveNativeMacosNotifierPath({
+        cliPath: "/opt/tmux-ide/bin/cli.js",
+        modulePath: "/virtual/tmux-ide-tui",
+        exists: (path) => path === executable,
+      }),
+    ).toBe(app);
+  });
+
+  it("returns null when no runtime anchor contains the helper", () => {
+    expect(
+      resolveNativeMacosNotifierPath({
+        cliPath: null,
+        modulePath: "/virtual/tmux-ide-tui",
+        exists: () => false,
+      }),
+    ).toBeNull();
+  });
+
+  it("parses the exact tmux socket and rejects malformed values", () => {
+    expect(parseTmuxSocketPath("/private/tmp/tmux-501/default,123,0")).toBe(
+      "/private/tmp/tmux-501/default",
+    );
+    expect(parseTmuxSocketPath("/private/tmp/tmux,with,commas,123,0")).toBe(
+      "/private/tmp/tmux,with,commas",
+    );
+    expect(parseTmuxSocketPath("relative,123,0")).toBeNull();
+    expect(parseTmuxSocketPath(undefined)).toBeNull();
+  });
+
+  it("passes structured click coordinates to the hidden native app", () => {
+    expect(
+      nativeMacosNotifierArgs(
+        "/opt/tmux-ide/TmuxIdeNotifier.app",
+        sysN(),
+        "/opt/homebrew/bin/tmux",
+        "/private/tmp/tmux-501/default",
+      ),
+    ).toEqual([
+      "-g",
+      "-n",
+      "/opt/tmux-ide/TmuxIdeNotifier.app",
+      "--args",
+      "--title",
+      "tmux-ide",
+      "--message",
+      "claude blocked · web:1.2 — needs input",
+      "--session",
+      "web",
+      "--host-session",
+      "_tmux-ide-app",
+      "--jump-option",
+      "@tmux_ide_app_jump",
+      "--tmux-path",
+      "/opt/homebrew/bin/tmux",
+      "--socket-path",
+      "/private/tmp/tmux-501/default",
     ]);
   });
 });
@@ -604,17 +672,57 @@ describe("sendSystemNotification routing (injected io)", () => {
     expect(seen).toHaveLength(1);
   });
 
-  it("darwin prefers terminal-notifier and falls back to osascript", () => {
+  it("darwin prefers the native app, retaining terminal-notifier and osascript fallbacks", () => {
     const { seen, exec } = calls();
+    const app = "/opt/tmux-ide/TmuxIdeNotifier.app";
+    const tmux = "/opt/homebrew/bin/tmux";
+    const env = { TMUX: "/private/tmp/tmux-501/default,123,0" };
     sendSystemNotification(sysN(), {
       platform: "darwin",
       exec,
-      hasBinary: (n) => n === "terminal-notifier",
+      env,
+      nativeNotifierPath: app,
+      tmuxPath: tmux,
+      hasBinary: () => false,
     });
-    expect(seen[0]).toEqual({ cmd: "terminal-notifier", args: terminalNotifierArgs(sysN()) });
-    sendSystemNotification(sysN(), { platform: "darwin", exec, hasBinary: () => false });
-    expect(seen[1]?.cmd).toBe("osascript");
-    expect(seen[1]?.args[1]).toContain("claude blocked");
+    expect(seen[0]).toEqual({
+      cmd: "/usr/bin/open",
+      args: nativeMacosNotifierArgs(app, sysN(), tmux, parseTmuxSocketPath(env.TMUX)),
+    });
+
+    sendSystemNotification(sysN(), {
+      platform: "darwin",
+      exec,
+      nativeNotifierPath: null,
+      hasBinary: (name) => name === "terminal-notifier",
+    });
+    expect(seen[1]).toEqual({ cmd: "terminal-notifier", args: terminalNotifierArgs(sysN()) });
+
+    sendSystemNotification(sysN(), {
+      platform: "darwin",
+      exec,
+      nativeNotifierPath: null,
+      hasBinary: () => false,
+    });
+    expect(seen[2]?.cmd).toBe("osascript");
+    expect(seen[2]?.args[1]).toContain("claude blocked");
+  });
+
+  it("darwin falls back when LaunchServices rejects a corrupt native bundle", () => {
+    const seen: Array<{ cmd: string; args: string[] }> = [];
+    sendSystemNotification(sysN(), {
+      platform: "darwin",
+      nativeNotifierPath: "/broken/TmuxIdeNotifier.app",
+      tmuxPath: "/opt/homebrew/bin/tmux",
+      hasBinary: (name) => name === "terminal-notifier",
+      exec: (cmd, args) => {
+        seen.push({ cmd, args });
+        if (cmd === "/usr/bin/open") throw new Error("LaunchServices rejected bundle");
+      },
+    });
+
+    expect(seen.map(({ cmd }) => cmd)).toEqual(["/usr/bin/open", "terminal-notifier"]);
+    expect(seen[1]?.args).toEqual(terminalNotifierArgs(sysN()));
   });
 
   it("other platforms are a no-op", () => {

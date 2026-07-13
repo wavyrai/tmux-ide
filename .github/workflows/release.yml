@@ -5,7 +5,8 @@ name: Release
 # version. Replaces the older `publish.yml` which raced this workflow
 # on the same tag-push trigger (G22-P3 housekeeping).
 #
-# Scope: npm only — the terminal-first CLI/daemon. No desktop bundle.
+# Scope: npm — the terminal-first CLI/daemon plus its hidden macOS notification
+# sender (not a standalone desktop product).
 
 on:
   push:
@@ -21,8 +22,63 @@ permissions:
   id-token: write
 
 jobs:
+  build_macos_notifier:
+    name: Build native macOS notifier
+    runs-on: macos-26
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Resolve release version
+        id: release
+        shell: bash
+        run: |
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+            raw="${{ github.event.inputs.version }}"
+          else
+            raw="${GITHUB_REF_NAME}"
+          fi
+          version="${raw#v}"
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "Invalid release version: $raw" >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Build universal notifier app
+        run: node scripts/build-macos-notifier.mjs --version "${{ steps.release.outputs.version }}"
+
+      - name: Verify signature, architectures, and adaptive icon
+        shell: bash
+        run: |
+          app="packages/daemon/dist/native/TmuxIdeNotifier.app"
+          codesign --verify --deep --strict "$app"
+          archs="$(xcrun lipo -archs "$app/Contents/MacOS/tmux-ide-notifier")"
+          [[ "$archs" == *arm64* && "$archs" == *x86_64* ]]
+          xcrun assetutil --info "$app/Contents/Resources/Assets.car" > "$RUNNER_TEMP/assets.json"
+          node -e 'const fs=require("node:fs"); const assets=JSON.parse(fs.readFileSync(process.argv[1], "utf8")); const actual=new Set(assets.filter((item)=>item.AssetType==="IconGroup").map((item)=>item.Appearance)); for (const expected of ["NSAppearanceNameAqua", "NSAppearanceNameDarkAqua"]) if (!actual.has(expected)) throw new Error(`missing real ${expected} IconGroup`);' "$RUNNER_TEMP/assets.json"
+
+      - name: Archive app bundle
+        run: |
+          tar -C packages/daemon/dist/native -czf "$RUNNER_TEMP/tmux-ide-macos-notifier.tar.gz" TmuxIdeNotifier.app
+
+      - name: Upload notifier artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tmux-ide-macos-notifier
+          path: ${{ runner.temp }}/tmux-ide-macos-notifier.tar.gz
+          if-no-files-found: error
+          retention-days: 1
+
   publish_npm:
     name: Publish to npm
+    needs: build_macos_notifier
     runs-on: ubuntu-24.04
     environment: npm
 
@@ -47,6 +103,19 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Download native macOS notifier
+        uses: actions/download-artifact@v4
+        with:
+          name: tmux-ide-macos-notifier
+          path: ${{ runner.temp }}/tmux-ide-macos-notifier
+
+      - name: Add native notifier to npm payload
+        run: |
+          mkdir -p packages/daemon/dist/native
+          tar -xzf "$RUNNER_TEMP/tmux-ide-macos-notifier/tmux-ide-macos-notifier.tar.gz" \
+            -C packages/daemon/dist/native
+          test -x packages/daemon/dist/native/TmuxIdeNotifier.app/Contents/MacOS/tmux-ide-notifier
 
       - name: Resolve release version
         id: release

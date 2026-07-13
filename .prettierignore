@@ -19,3 +19,6 @@ app-electron/scripts/build-icon.mjs
 # Bundled CLI artefact emitted by scripts/build-cli.mjs. Formatting it
 # churns 6k lines on every run and adds noise to every PR diff.
 bin/cli.js
+
+# Keep the Icon Composer package byte-for-byte compatible with Apple's editor.
+native/macos/notifier/AppIcon.icon/icon.json
