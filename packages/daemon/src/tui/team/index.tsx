@@ -1020,11 +1020,13 @@ render(() => {
   function promptRow() {
     return (
       <Show when={prompt()}>
-        <box paddingLeft={1} paddingRight={1} flexDirection="row" gap={1}>
-          <text fg={toRGBA(theme.accent)}>{promptLabel(prompt()!.kind)}</text>
-          <text fg={toRGBA(theme.fg)}>{prompt()!.value}</text>
-          <text fg={toRGBA(theme.fgMuted)}>_</text>
-        </box>
+        {(p) => (
+          <box paddingLeft={1} paddingRight={1} flexDirection="row" gap={1}>
+            <text fg={toRGBA(theme.accent)}>{promptLabel(p().kind)}</text>
+            <text fg={toRGBA(theme.fg)}>{p().value}</text>
+            <text fg={toRGBA(theme.fgMuted)}>_</text>
+          </box>
+        )}
       </Show>
     );
   }
@@ -1401,11 +1403,11 @@ render(() => {
                     {/* header: name · dir · branch · ide.yml */}
                     <box flexDirection="row" gap={1} paddingRight={1}>
                       <text fg={toRGBA(theme.accent)} attributes={TextAttributes.BOLD}>
-                        {activeProj()!.name}
+                        {activeProj()?.name ?? ""}
                       </text>
-                      <text fg={toRGBA(theme.fgMuted)}>{activeProj()!.dir ?? ""}</text>
-                      <text fg={toRGBA(theme.fgMuted)}>{activeProj()!.gitBranch ?? ""}</text>
-                      <Show when={activeProj()!.hasIdeYml}>
+                      <text fg={toRGBA(theme.fgMuted)}>{activeProj()?.dir ?? ""}</text>
+                      <text fg={toRGBA(theme.fgMuted)}>{activeProj()?.gitBranch ?? ""}</text>
+                      <Show when={activeProj()?.hasIdeYml}>
                         <text fg={toRGBA(theme.fgMuted)}>ide.yml</text>
                       </Show>
                     </box>
