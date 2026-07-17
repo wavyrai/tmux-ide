@@ -1,18 +1,19 @@
 /**
  * Project probe — inspects a directory and returns identity facts (name from
- * basename, ide.yml presence, git origin/branch). Pure-ish wrapper over a few
- * filesystem and git child-process calls; the io functions are pluggable for
- * tests so we don't need a full mock filesystem.
+ * basename, legacy ide.yml presence, git origin/branch). Canonical path and
+ * config facts delegate to project-resolver; the io functions remain
+ * pluggable so tests don't need a full mock filesystem.
  *
  * All git invocations are hard-bounded by a 2s timeout — we never want a
  * single misbehaving repo to hang an HTTP request.
  */
 
-import { execFile } from "node:child_process";
-import { existsSync } from "node:fs";
 import { basename, isAbsolute, resolve } from "node:path";
-
-const GIT_TIMEOUT_MS = 2_000;
+import {
+  defaultProjectResolverIo,
+  resolveProject,
+  type ProjectResolverIo,
+} from "./project-resolver.ts";
 
 export interface ProjectProbe {
   name: string;
@@ -29,26 +30,10 @@ export interface ProjectProbe {
 export interface ProbeIo {
   exists(path: string): boolean;
   runGit(args: string[], cwd: string): Promise<string | null>;
+  realpath?: ProjectResolverIo["realpath"];
 }
 
-const realIo: ProbeIo = {
-  exists: existsSync,
-  runGit: (args, cwd) =>
-    new Promise((resolveResult) => {
-      execFile(
-        "git",
-        ["-C", cwd, ...args],
-        { timeout: GIT_TIMEOUT_MS, encoding: "utf-8" },
-        (err, stdout) => {
-          if (err) {
-            resolveResult(null);
-            return;
-          }
-          resolveResult(stdout.trim());
-        },
-      );
-    }),
-};
+const realIo: ProbeIo = defaultProjectResolverIo;
 
 /**
  * Replace dangerous filename characters and collapse whitespace so the
@@ -69,24 +54,38 @@ export function sanitizeName(raw: string): string {
  */
 export async function probeProject(dir: string, io: ProbeIo = realIo): Promise<ProjectProbe> {
   const absoluteDir = isAbsolute(dir) ? dir : resolve(dir);
+  const resolution = await resolveProject(dir, {
+    // Existing injected ProbeIo values predate canonicalization. Treat their
+    // paths as canonical unless they explicitly provide a realpath operation,
+    // so the probe remains a fully injected seam rather than touching real fs.
+    io: { ...io, realpath: io.realpath ?? ((path) => path) },
+  });
   const rawName = basename(absoluteDir);
   const sanitized = sanitizeName(rawName);
   const name = sanitized.length > 0 ? sanitized : "project";
 
-  const hasIdeYml = io.exists(`${absoluteDir}/ide.yml`);
-
   const [gitOrigin, gitBranch] = await Promise.all([
-    io.runGit(["config", "--get", "remote.origin.url"], absoluteDir),
-    io.runGit(["branch", "--show-current"], absoluteDir),
+    runGitSafely(io, ["config", "--get", "remote.origin.url"], absoluteDir),
+    runGitSafely(io, ["branch", "--show-current"], absoluteDir),
   ]);
 
   return {
     name,
+    // Preserve the public probe/command-center contract: this is the absolute
+    // caller path, while canonical roots live on ProjectResolution.
     dir: absoluteDir,
-    hasIdeYml,
+    hasIdeYml: resolution.hasLegacyConfigAtInput,
     // Treat empty string as null — branch --show-current returns "" on a
     // detached HEAD.
     gitOrigin: gitOrigin && gitOrigin.length > 0 ? gitOrigin : null,
     gitBranch: gitBranch && gitBranch.length > 0 ? gitBranch : null,
   };
+}
+
+async function runGitSafely(io: ProbeIo, args: string[], cwd: string): Promise<string | null> {
+  try {
+    return await io.runGit(args, cwd);
+  } catch {
+    return null;
+  }
 }
