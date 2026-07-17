@@ -49,6 +49,14 @@ describe("probeProject", () => {
     expect(probe.hasIdeYml).toBe(false);
   });
 
+  it("preserves hasIdeYml semantics for the input directory while using discovery", async () => {
+    const probe = await probeProject(
+      "/work/foo/nested",
+      makeIo({ exists: (path) => path === "/work/foo/ide.yml" }),
+    );
+    expect(probe.hasIdeYml).toBe(false);
+  });
+
   it("captures git origin + branch when both git calls succeed", async () => {
     const probe = await probeProject(
       "/work/foo",
