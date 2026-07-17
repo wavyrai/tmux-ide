@@ -214,10 +214,10 @@ async function scenarioInput() {
   }
   await sleep(400);
   const out = { echo: readCol(INPUT_LOG, 1), paint: readCol(INPUT_LOG, 2) };
-  // Drop the half-typed line by interrupting the TARGET pane directly. NEVER
-  // send C-c to the host: the app exits on ctrl-c, which would kill the mirror
-  // and silence every later scenario.
-  tmuxQuiet(["send-keys", "-t", TARGET, "C-c"]);
+  // Drop the half-typed line through the app. This is also the harness's
+  // regression check that Ctrl-C reaches the focused pane without exiting the
+  // mirror; every later scenario depends on the host staying alive.
+  sendHostKey("C-c");
   return out;
 }
 

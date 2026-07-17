@@ -819,6 +819,10 @@ const packedToRgba = (packed: number | null, fallback: RGBA): RGBA => {
 // synchronous fd write because queued stdout is not reliable during `exit`.
 let hostAutowrap: HostAutowrapGuard | null = null;
 const appRenderer = await createCliRenderer({
+  // Ctrl-C belongs to the focused terminal/editor. The app's explicit global
+  // exit is Ctrl-Q; OpenTUI otherwise destroys the renderer before Ctrl-C can
+  // reliably pass through to the mirrored pane.
+  exitOnCtrlC: false,
   // targetFps stays EXPLICIT: @opentui 0.4.3 silently defaults it to 30
   // (maxFps already defaults to 60). Re-confirmed on the 0.4.3 bump (M21.2).
   targetFps: 60,
