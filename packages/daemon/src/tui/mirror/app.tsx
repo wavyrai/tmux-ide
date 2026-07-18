@@ -50,12 +50,15 @@
  * follows its content); both plain drags and M22.9/M24.2 select-mode /
  * shift / deferred-press entries share this machinery.
  *
- * SURFACE TABS (M18.4): a persistent top row — [⌂ Home][❯ Terminal][▤ Files]
- * [± Diff] — makes the app a real IDE. F1..F4 switch (F-keys encode reliably;
- * ctrl+digit/alt do NOT — measured); the tab bar is also clickable (fixed x-span
- * math in `TAB_SPANS`). The active `tab()` is the source of truth; `mode()` is a
- * DERIVED view (home|mirror|editor|diff) so the per-surface render/route math is
- * unchanged. CRITICAL for the IDE feel: switching AWAY from Terminal does NOT
+ * SURFACE VIEWS (M18.4, configured in C05): a persistent top row makes the app a
+ * real IDE. `.tmux-ide/workspace.yml` `app.views` supplies configured view IDs,
+ * order, titles, and panel kinds; absent/broken config falls back to Home,
+ * Terminals, Files, Diff, Missions. F1..F4 then F6..F13 switch by configured
+ * position (F5 remains the palette; later views remain mouse/palette selectable); the tab bar is also
+ * clickable with fixed x-span math from the same rendered labels. The active
+ * hosted view ID is the source of truth; `mode()` is derived from its panel kind
+ * (home|mirror|editor|diff|missions). CRITICAL for the IDE feel: switching AWAY
+ * from Terminal does NOT
  * dispose the SessionMirror — it keeps streaming in the background (dirty flags
  * accumulate; a back-switch is instant); the editor buffer and diff selection
  * likewise survive tab round trips. One WORKSPACE CONTEXT per session
@@ -289,6 +292,7 @@ import {
   type PathKind,
 } from "./folder-picker.ts";
 import { registerProject, ProjectAlreadyRegisteredError } from "../../lib/project-registry.ts";
+import { resolveProjectConfigContext } from "../../lib/config-context.ts";
 import { separatorAt, resizedSize, resizeCommand, type Separator } from "./resize-model.ts";
 import {
   effectiveWindowSize,
@@ -314,6 +318,27 @@ import {
   type PaletteGeom,
   type TmuxBuffer,
 } from "./palette.ts";
+import {
+  MISSIONS_PLACEHOLDER_LINES,
+  PanelHostLoadGeneration,
+  findFirstHostedViewForPanel,
+  findHostedViewById,
+  initialHostedSelection,
+  isHostedPanelInert,
+  legacyTabFromPanelKind,
+  navigateHostedPanel,
+  panelCell,
+  panelKindFromLegacyTab,
+  panelMode,
+  panelSpans,
+  planHostedInitialActivation,
+  planHostedReconciledActivation,
+  planHostedViewActivation,
+  reconcileHostedSelection,
+  viewsFromResolvedConfig,
+  type HostedPanelKind,
+  type HostedPanelView,
+} from "./panel-host.ts";
 import {
   DIALOG_W,
   DIALOG_ROWS,
@@ -707,21 +732,6 @@ const HEADER_ROWS = 2;
 // sidebar + main region). Its height offsets every region's global y, so the
 // router subtracts it once (`gy = y - TABBAR_H`) before the per-mode math.
 const TABBAR_H = 1;
-/** The four top-level surfaces, in F-key order (F1..F4). Glyphs are all
- *  single display-width so the tab-bar x-span math (`TAB_SPANS`) is exact. */
-const TABS: { key: Tab; label: string; glyph: string; fkey: string }[] = [
-  { key: "home", label: "Home", glyph: "⌂", fkey: "f1" },
-  { key: "terminal", label: "Terminal", glyph: "❯", fkey: "f2" },
-  { key: "files", label: "Files", glyph: "▤", fkey: "f3" },
-  { key: "diff", label: "Diff", glyph: "±", fkey: "f4" },
-];
-/** One tab cell's rendered string (leading + trailing pad); width === length
- *  because every glyph above is single-width. */
-const tabCell = (t: { glyph: string; label: string }): string => ` ${t.glyph} ${t.label} `;
-/** The surface bar's x-spans. TABS is static (mounted at initial render), so the
- *  layout is constant — computed once and shared by the router (hit test) and,
- *  implicitly, the render (which walks TABS with the same cell strings). */
-const TAB_SPANS = spans(TABS.map(tabCell), 0, 0);
 const PALETTE_W = 60;
 const PALETTE_ROWS = 10;
 // ── M21.9 clickable-chip labels ─────────────────────────────────────────────
@@ -769,7 +779,7 @@ const HOSTED = process.env.TMUX_IDE_HOSTED === "1";
 const QUIT_HINT = HOSTED ? "^q detach" : "^q quit";
 // The sidebar footer hint, split so its "F5 palette" segment is a chip: the
 // span starts after paddingLeft (1) + the pre text.
-const SIDEBAR_HINT_PRE = "F1-4 tabs · ";
+const SIDEBAR_HINT_PRE = "F1-4/F6-13 views · ";
 const SIDEBAR_HINT_BTN = "F5 palette";
 const SIDEBAR_HINT_POST = ` · ${QUIT_HINT}`;
 const SIDEBAR_HINT_SPAN = { start: 1 + SIDEBAR_HINT_PRE.length, width: SIDEBAR_HINT_BTN.length };
@@ -894,30 +904,37 @@ try {
     // The first-run tip line — the user's ACTUAL keybindings, read once at launch
     // (loadAppConfig honors TMUX_IDE_CONFIG). Cheap + pure, computed once.
     const welcomeTip = firstRunTip(loadAppConfig().keys);
-    // The active surface TAB is the source of truth. Explicit CLI args win, else a
-    // real `--target` boots into Terminal, else the persisted tab, else Home.
-    const initialTab: Tab = startDiff
+    // C05 hosted panel views are loaded through the resolved-config pipeline.
+    // Persistence remains the legacy four-value `lastTab` until C06; the active
+    // runtime identity is the configured view ID so duplicate panel kinds switch
+    // and highlight independently.
+    const requestedPanel: HostedPanelKind | null = startDiff
       ? "diff"
       : values.edit !== undefined
         ? "files"
         : !bareHome
-          ? "terminal"
-          : isTab(persisted.lastTab)
-            ? persisted.lastTab
-            : "home";
-    const [tab, setTab] = createSignal<Tab>(initialTab);
-    // The four render/route branches were written against a `mode` of
-    // home|mirror|editor|diff; keep that vocabulary as a DERIVED view of `tab` so
-    // the per-surface geometry math is untouched — only the top-level switching
-    // and state-retention change.
-    const mode = (): "home" | "mirror" | "editor" | "diff" =>
-      tab() === "terminal"
-        ? "mirror"
-        : tab() === "files"
-          ? "editor"
-          : tab() === "diff"
-            ? "diff"
-            : "home";
+          ? "terminals"
+          : null;
+    const persistedPanel = isTab(persisted.lastTab)
+      ? panelKindFromLegacyTab(persisted.lastTab)
+      : null;
+    const [hostedViews, setHostedViews] = createSignal<HostedPanelView[]>(
+      viewsFromResolvedConfig(null),
+    );
+    const initialView = initialHostedSelection(
+      hostedViews(),
+      requestedPanel,
+      bareHome ? persistedPanel : null,
+    )!;
+    const initialTab = legacyTabFromPanelKind(initialView.panel);
+    const [activeViewId, setActiveViewId] = createSignal(initialView.id);
+    const activeView = createMemo(
+      () => findHostedViewById(hostedViews(), activeViewId()) ?? hostedViews()[0]!,
+    );
+    const activePanel = (): HostedPanelKind => activeView().panel;
+    const tab = (): Tab => legacyTabFromPanelKind(activePanel());
+    const mode = (): "home" | "mirror" | "editor" | "diff" | "missions" => panelMode(activePanel());
+    const surfaceSpans = createMemo(() => panelSpans(hostedViews()));
 
     // ── WORKSPACE CONTEXT ────────────────────────────────────────────────────
     // One context per session: choosing a session on Home (or via the palette)
@@ -1006,6 +1023,87 @@ try {
       dragAutoScroll = null;
       if (selection() !== null) setSelection(null);
     };
+    const runActivationEffects = (effects: readonly string[]) => {
+      for (const effect of effects) {
+        if (effect === "load-files") loadFileList(workspaceDir());
+        else if (effect === "catch-up-files") catchUpFilesIfStale();
+        else if (effect === "enter-diff") prepareDiff(workspaceDir());
+      }
+    };
+    const selectView = (viewId: string) => {
+      const plan = planHostedViewActivation(hostedViews(), viewId, {
+        filesLoaded: fileNodes().length > 0,
+        diffLoaded: diffEntries().length > 0,
+      });
+      if (!plan.view || !plan.activeViewId) {
+        setStatusNote(plan.note ?? "that view is no longer configured");
+        return false;
+      }
+      clearSelection();
+      runActivationEffects(plan.effects);
+      setActiveViewId(plan.activeViewId);
+      refreshFocusRecord();
+      return true;
+    };
+    const selectPanel = (panel: HostedPanelKind) => {
+      const result = navigateHostedPanel(hostedViews(), activeViewId(), panel);
+      if (result.note) {
+        setStatusNote(result.note);
+        return false;
+      }
+      return selectView(result.activeViewId);
+    };
+    const setTab = (next: Tab) => {
+      const panel = panelKindFromLegacyTab(next);
+      if (panel) selectPanel(panel);
+    };
+    const panelGeneration = new PanelHostLoadGeneration();
+    let panelHostResolved = false;
+    const loadPanelHostForDir = (dir: string) => {
+      const generation = panelGeneration.next();
+      void resolveProjectConfigContext(dir)
+        .then((context) => {
+          if (!panelGeneration.isCurrent(generation)) return;
+          const previous = {
+            id: activeViewId(),
+            panel: activePanel(),
+          };
+          const nextViews = viewsFromResolvedConfig(context.resolved);
+          const state = {
+            filesLoaded: fileNodes().length > 0,
+            diffLoaded: diffEntries().length > 0,
+          };
+          const nextPlan = panelHostResolved
+            ? planHostedReconciledActivation(nextViews, previous, state)
+            : planHostedInitialActivation(
+                nextViews,
+                requestedPanel,
+                bareHome ? persistedPanel : null,
+                state,
+                previous.panel,
+              );
+          setHostedViews(nextViews);
+          runActivationEffects(nextPlan.effects);
+          if (nextPlan.activeViewId) setActiveViewId(nextPlan.activeViewId);
+          panelHostResolved = true;
+        })
+        .catch((error) => {
+          if (!panelGeneration.isCurrent(generation)) return;
+          const previous = {
+            id: activeViewId(),
+            panel: activePanel(),
+          };
+          const nextViews = viewsFromResolvedConfig(null);
+          const nextActive = reconcileHostedSelection(nextViews, previous);
+          setHostedViews(nextViews);
+          if (nextActive) setActiveViewId(nextActive.id);
+          panelHostResolved = true;
+          setStatusNote(`config views unavailable: ${(error as Error).message}`);
+        });
+    };
+    createEffect(() => {
+      loadPanelHostForDir(contextDir() || invokeCwd);
+    });
 
     // ── SELECT MODE on app-mouse panes (M22.9) ───────────────────────────────
     // Presses on a pane whose app enabled mouse reporting are FORWARDED, so a
@@ -1796,7 +1894,7 @@ try {
 
     /** Enter the diff panel for `dir` (from home `d`, the Diff tab, or `--diff`
      *  on boot). */
-    const enterDiff = (dir: string) => {
+    const prepareDiff = (dir: string) => {
       setDiffDir(dir);
       setDiffSel(0);
       setDiffTop(0);
@@ -1804,8 +1902,11 @@ try {
       setDiffText("");
       setDiffMsg("");
       setDiffFilter(null);
-      setTab("diff");
       refreshStatus();
+    };
+    const enterDiff = (dir: string) => {
+      prepareDiff(dir);
+      setTab("diff");
     };
 
     /** The diff footer's clickable verb chips — laid out from the main column's
@@ -1901,13 +2002,17 @@ try {
      *  a pure tab flip; only a DIFFERENT session (re)attaches. */
     const switchTarget = (name: string) => {
       clearSelection();
+      if (!findFirstHostedViewForPanel(hostedViews(), "terminals")) {
+        selectPanel("terminals");
+        return;
+      }
       if (name === curTarget() && mirror) {
-        setTab("terminal");
+        selectPanel("terminals");
         refreshFocusRecord();
         return;
       }
       setCurTarget(name);
-      setTab("terminal");
+      selectPanel("terminals");
       attach(name);
       refreshFocusRecord();
     };
@@ -2847,19 +2952,7 @@ try {
      *  first shown empty). The Terminal tab never re-attaches here — the mirror is
      *  already streaming in the background. */
     const selectTab = (t: Tab) => {
-      clearSelection();
-      if (t === "diff") {
-        if (diffEntries().length === 0) enterDiff(workspaceDir());
-        else setTab("diff");
-        refreshFocusRecord(); // visibility changed — tell the notify path now
-        return;
-      }
-      if (t === "files") {
-        if (fileNodes().length === 0) loadFileList(workspaceDir());
-        else catchUpFilesIfStale();
-      }
       setTab(t);
-      refreshFocusRecord(); // visibility changed — tell the notify path now
     };
 
     // ── COMMAND PALETTE (M18.4, mouse-complete M21.9) ───────────────────────
@@ -2943,6 +3036,7 @@ try {
           againName: currentAgainName(),
           usage: paletteUsage(),
           keycaps: PALETTE_ROW_KEYCAPS,
+          views: hostedViews(),
           // "Go to file:" rows (M24.6) — appended after everything.
           repoFiles: repoFiles(),
         },
@@ -2994,6 +3088,9 @@ try {
           break;
         case "tab":
           selectTab(a.tab);
+          break;
+        case "view":
+          selectView(a.viewId);
           break;
         case "open-folder":
           void openFolderFlow();
@@ -3764,6 +3861,7 @@ try {
      *  input and the buffer picker both funnel here. */
     const pasteIntoFocused = (text: string) => {
       if (!text) return;
+      if (isHostedPanelInert(activePanel())) return;
       if (mode() === "editor" && filesFocus() === "editor" && editBuffer && !editorReadOnly()) {
         editBuffer.insertText(text); // single insertText call = one undo unit
         setEditorModified(true);
@@ -4637,13 +4735,21 @@ try {
         openPalette();
         return;
       }
-      // F1..F4 switch the top-level surface TABS. F-keys encode reliably across
-      // terminals (ctrl+digit / alt do NOT — measured); the tab bar mirrors these.
-      const fTab = TABS.find((t) => t.fkey === evt.name);
-      if (fTab) {
-        selectTab(fTab.key);
+      // F1..F4 then F6..F13 switch configured hosted views by position. F5 is
+      // reserved for the palette; later views remain reachable by mouse/palette.
+      const fView = hostedViews().find((view) => view.shortcut?.key === evt.name);
+      if (fView) {
+        selectView(fView.id);
         return;
       }
+      // ^g, not ^h: legacy encoding makes ctrl+h indistinguishable from
+      // backspace (0x08), which must keep flowing to the pane. Works from every
+      // hosted view, including inert Missions.
+      if (evt.ctrl && (evt.name === "g" || evt.name === "h")) {
+        if (mode() !== "home") goHome();
+        return;
+      }
+      if (isHostedPanelInert(activePanel())) return;
       // ^e — from the diff panel, open the SELECTED file in the editor at the
       // first changed line of the top-visible hunk (M24.5); elsewhere toggle the
       // editor against the previous mode (no-op until a file is opened via
@@ -4651,13 +4757,6 @@ try {
       if (evt.ctrl && evt.name === "e") {
         if (mode() === "diff") openSelectedInEditor();
         else toggleEditor();
-        return;
-      }
-      // ^g, not ^h: legacy encoding makes ctrl+h indistinguishable from
-      // backspace (0x08), which must keep flowing to the pane. Works from mirror
-      // OR editor.
-      if (evt.ctrl && (evt.name === "g" || evt.name === "h")) {
-        if (mode() !== "home") goHome();
         return;
       }
       if (mode() === "editor") {
@@ -5163,7 +5262,7 @@ try {
           setHoverIf({ region: "tabbtn", index: bi });
           return;
         }
-        const i = spanHit(TAB_SPANS, x);
+        const i = spanHit(surfaceSpans(), x);
         setHoverIf(i >= 0 ? { region: "surfacetab", index: i } : null);
         return;
       }
@@ -5261,6 +5360,10 @@ try {
         const top = clampTop(diffFileTop(), rows.length, diffBodyRows());
         const idx = top + contentY;
         setHoverIf(rows[idx]?.kind === "file" ? { region: "diff", index: idx } : null);
+        return;
+      }
+      if (m === "missions") {
+        setHoverIf(null);
         return;
       }
       // mirror mode: the per-window strip lives on gy=1, with the [+ split] button
@@ -5450,6 +5553,49 @@ try {
           return;
         }
         if (!paletteContains(g, x, y)) setPaletteOpen(false);
+        return;
+      }
+      if (isHostedPanelInert(activePanel())) {
+        if (type === "out") {
+          setHoverIf(null);
+          return;
+        }
+        if (type === "move" || type === "over" || type === "drag") {
+          resolveHover(x, y);
+          return;
+        }
+        if (type !== "down") return;
+        if (y === 0) {
+          const tb = tabbarButtons();
+          const bi = spanHit(tb.spans, x);
+          if (bi >= 0) {
+            runTabbarButton(tb.defs[bi]!.id);
+            return;
+          }
+          const i = spanHit(surfaceSpans(), x);
+          if (i >= 0) selectView(hostedViews()[i]!.id);
+          return;
+        }
+        const gy = y - TABBAR_H;
+        if (x < sidebarW()) {
+          if (y === dims().height - 1) {
+            if (spanHit([SIDEBAR_HINT_SPAN], x) === 0) openPalette();
+            return;
+          }
+          const hit = sidebarHit(gy, fleet().length, fleetAgents().length);
+          if (hit?.kind === "session") {
+            const s = fleet()[hit.index];
+            if (s) openWorkspace(s.name, dirForSession(s.name));
+          } else if (hit?.kind === "agent") {
+            const a = fleetAgents()[hit.index];
+            if (a) jumpToAgent(a);
+          } else if (hit?.kind === "agents-header") {
+            if (spanHit(agentsChipSpans(), x) === 0) void newAgentFlow(currentNewAgentContext());
+            else void manageTeamFlow();
+          } else if (hit?.kind === "agents-empty") {
+            if (spanHit(agentsChipSpans(), x) === 0) void newAgentFlow(currentNewAgentContext());
+          }
+        }
         return;
       }
       // A right-button press (SGR button 2) opens the context menu at the pointer.
@@ -5660,8 +5806,8 @@ try {
           runTabbarButton(tb.defs[bi]!.id);
           return;
         }
-        const i = spanHit(TAB_SPANS, x);
-        if (i >= 0) selectTab(TABS[i]!.key);
+        const i = spanHit(surfaceSpans(), x);
+        if (i >= 0) selectView(hostedViews()[i]!.id);
         return;
       }
       const gy = y - TABBAR_H;
@@ -6011,9 +6157,8 @@ try {
         onMouse={(e: RouteEvent) => route(e)}
       >
         {/* Surface tab bar — the top screen row (gy=0), full width above the
-          sidebar. Rendered at mount (static <For>), so the click x-spans in
-          `TAB_SPANS` are exact and never hit the late-mount landmine. F1..F4
-          switch; the active tab carries the accent background, a hovered one a
+          sidebar. The click x-spans are computed from the exact same hosted-view
+          labels rendered here. F1..F4 then F6..F13 switch configured views; the active view carries the accent background, a hovered one a
           subtle tint. */}
         <box
           height={TABBAR_H}
@@ -6021,18 +6166,22 @@ try {
           backgroundColor={TABBAR_BG}
           onMouse={(e: RouteEvent) => route(e)}
         >
-          <For each={TABS}>
-            {(t, i) => (
+          <For each={hostedViews()}>
+            {(view, i) => (
               <box
                 backgroundColor={
-                  tab() === t.key ? ACCENT : isHovered("surfacetab", i()) ? HOVER_BG : TABBAR_BG
+                  activeViewId() === view.id
+                    ? ACCENT
+                    : isHovered("surfacetab", i())
+                      ? HOVER_BG
+                      : TABBAR_BG
                 }
               >
                 <text
-                  fg={tab() === t.key ? DEFAULT_BG : MUTED}
-                  attributes={tab() === t.key ? 1 : 0}
+                  fg={activeViewId() === view.id ? DEFAULT_BG : MUTED}
+                  attributes={activeViewId() === view.id ? 1 : 0}
                 >
-                  {tabCell(t)}
+                  {panelCell(view)}
                 </text>
               </box>
             )}
@@ -6691,6 +6840,23 @@ try {
                 <text fg={MUTED}>
                   {`]/[ hunk · ^e edit · / filter · r refresh · ^g home · ${QUIT_HINT}`}
                 </text>
+              </box>
+            </Show>
+            <Show when={mode() === "missions"}>
+              <box paddingLeft={1} flexDirection="row" gap={1}>
+                <text fg={ACCENT} attributes={1}>
+                  Missions
+                </text>
+                <text fg={MUTED}>deterministic mission data is available</text>
+              </box>
+              <text fg={MUTED}>{"─".repeat(Math.max(4, canvasCols() - 2))}</text>
+              <box flexDirection="column" flexGrow={1} paddingLeft={1}>
+                <box height={1} />
+                <text fg={DEFAULT_FG}>{MISSIONS_PLACEHOLDER_LINES[0]}</text>
+                <text fg={MUTED}>{MISSIONS_PLACEHOLDER_LINES[1]}</text>
+                <text fg={MUTED}>{MISSIONS_PLACEHOLDER_LINES[2]}</text>
+                <box flexGrow={1} />
+                <text fg={MUTED}>{`^g home · F5 palette · ${QUIT_HINT}`}</text>
               </box>
             </Show>
           </box>
