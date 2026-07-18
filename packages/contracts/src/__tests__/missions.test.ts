@@ -13,6 +13,7 @@ import {
   MissionTaskSchemaZ,
   MissionTaskIdSchemaZ,
   MissionTaskStatusSchemaZ,
+  MissionTerminalReferenceSchemaZ,
 } from "../domain.ts";
 
 const actor = { type: "user" as const, id: "pm" };
@@ -52,7 +53,7 @@ describe("mission domain contracts", () => {
         agent: "worker.profile",
         harness: "generic-harness",
         model: "opaque/model-ref",
-        terminal: "term_1",
+        terminal: "%7",
         session: "session_1",
         worktree: "worktrees/task",
         actor,
@@ -86,6 +87,13 @@ describe("mission domain contracts", () => {
     expect(MissionTaskIdSchemaZ.safeParse("task-1").success).toBe(false);
     expect(MissionAttemptIdSchemaZ.safeParse("att space").success).toBe(false);
     expect(MissionReferenceIdSchemaZ.safeParse("../profile").success).toBe(false);
+    expect(MissionReferenceIdSchemaZ.safeParse("%7").success).toBe(false);
+    expect(MissionTerminalReferenceSchemaZ.safeParse("%7").success).toBe(true);
+    expect(MissionTerminalReferenceSchemaZ.safeParse("term_1").success).toBe(true);
+    for (const value of ["%", "%-1", "%abc", "%7 bad", "%7;send-keys", "%7\n"]) {
+      expect(MissionTerminalReferenceSchemaZ.safeParse(value).success).toBe(false);
+    }
+    expect(MissionTerminalReferenceSchemaZ.safeParse(`%${"7".repeat(21)}`).success).toBe(false);
     expect(MissionStatusSchemaZ.safeParse("dispatching").success).toBe(false);
     expect(MissionTaskStatusSchemaZ.safeParse("updated").success).toBe(false);
     expect(MissionActorSchemaZ.safeParse({ type: "claude" }).success).toBe(false);

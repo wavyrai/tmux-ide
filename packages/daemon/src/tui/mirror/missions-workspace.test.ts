@@ -6,9 +6,11 @@ import type {
   MissionBoardColumn,
   MissionBoardView,
   MissionCardView,
+  MissionDetailView,
   MissionHistorySummary,
   MissionProgressSummary,
   MissionProofSummary,
+  TaskCardView,
 } from "@tmux-ide/contracts";
 import type { ProjectResolution } from "../../lib/project-resolver.ts";
 import { createProjectRuntimeRepository } from "../../lib/project-runtime-repository.ts";
@@ -21,21 +23,35 @@ import {
   applyMissionWorkspaceHit,
   clipTerminal,
   cycleMissionDensity,
+  closeMissionDetail,
   defaultMissionWorkspaceModel,
   invalidatedMissionWorkspaceLoadState,
   missionCardLines,
+  missionDetailAttemptLines,
+  missionDetailProofLines,
+  missionDetailTaskLines,
+  missionDetailTimelineLines,
   missionHistoryLines,
   missionSelectionFromWorkspaceState,
+  missionTmuxPanePreflightMatches,
+  missionTmuxPreflightCommands,
   missionWorkspaceHitTest,
   missionWorkspaceLayout,
   moveMissionSelection,
+  openMissionDetail,
   readMissionWorkspace,
   reconcileMissionWorkspaceModel,
+  resolveMissionDeepLink,
   scrollMissionWorkspace,
+  setMissionDetailSection,
   setMissionWorkspaceMode,
   workspaceStateWithMissionSelection,
 } from "./missions-workspace.ts";
-import { defaultWorkspaceUiState, serializeWorkspaceUiState } from "./workspace-ui-state.ts";
+import {
+  absoluteProjectPath,
+  defaultWorkspaceUiState,
+  serializeWorkspaceUiState,
+} from "./workspace-ui-state.ts";
 import { terminalDisplayWidth } from "./panel-host.ts";
 
 function progress(overrides: Partial<MissionProgressSummary> = {}): MissionProgressSummary {
@@ -169,10 +185,157 @@ function history(
   };
 }
 
-function snapshot(boardView = board({}), historyView: MissionHistorySummary[] = []) {
+function task(
+  id: string,
+  column: MissionBoardColumn,
+  overrides: Partial<TaskCardView> = {},
+): TaskCardView {
+  return {
+    version: 1,
+    id,
+    missionId: "mis_detail",
+    title: `Task ${id}`,
+    summary: `summary ${id}`,
+    status:
+      column === "planned"
+        ? "ready"
+        : column === "running"
+          ? "started"
+          : column === "blocked"
+            ? "blocked"
+            : column === "review"
+              ? "submitted"
+              : "completed",
+    column,
+    priority: 1,
+    dependencies: [],
+    blockedBy: [],
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:01.000Z",
+    durationMs: null,
+    latestAttempt: null,
+    proofSummary: proof(),
+    refs: { missionId: "mis_detail", taskId: id, attemptIds: [], proofIds: [] },
+    ...overrides,
+  };
+}
+
+function detail(overrides: Partial<MissionDetailView> = {}): MissionDetailView {
+  const setup = task("tsk_setup", "planned", {
+    latestAttempt: {
+      id: "att_setup",
+      taskId: "tsk_setup",
+      status: "approved",
+      outcome: "approved",
+      agent: "worker",
+      harness: "codex",
+      model: "gpt-5",
+      terminal: "%7",
+      session: "proj",
+      worktree: "apps/api",
+      startedAt: "2026-01-01T00:01:00.000Z",
+      updatedAt: "2026-01-01T00:02:00.000Z",
+      finishedAt: "2026-01-01T00:02:00.000Z",
+      durationMs: 60_000,
+      proofIds: ["prf_one"],
+    },
+    proofSummary: proof({
+      proofIds: ["prf_one"],
+      hasProof: true,
+      tests: { suites: 1, passed: 4, failed: 0, skipped: 0, total: 4 },
+      diff: {
+        summaries: ["apps/api/index.ts"],
+        urls: [],
+        filesChanged: 1,
+        insertions: 5,
+        deletions: 1,
+      },
+      artifacts: [{ name: "source", uri: "apps/api/index.ts" }],
+    }),
+    refs: {
+      missionId: "mis_detail",
+      taskId: "tsk_setup",
+      attemptIds: ["att_setup"],
+      proofIds: ["prf_one"],
+      terminal: "%7",
+      session: "proj",
+      worktree: "apps/api",
+    },
+  });
+  const finish = task("tsk_finish", "done", { priority: 2 });
+  return {
+    version: 1,
+    mission: card("mis_detail", "running", "Mission detail", {
+      latestAttempt: setup.latestAttempt,
+      progress: progress({ total: 2, running: 1, completed: 1, done: 1, planned: 0 }),
+      proofSummary: setup.proofSummary,
+      refs: {
+        missionId: "mis_detail",
+        taskIds: ["tsk_setup", "tsk_finish"],
+        attemptIds: ["att_setup"],
+        proofIds: ["prf_one"],
+      },
+    }),
+    taskBoard: {
+      columns: {
+        planned: [setup],
+        running: [],
+        blocked: [],
+        review: [],
+        done: [finish],
+      },
+      counts: { planned: 1, running: 0, blocked: 0, review: 0, done: 1, total: 2 },
+    },
+    attempts: [setup.latestAttempt!],
+    proofSummary: setup.proofSummary,
+    progress: progress({ total: 2, running: 1, completed: 1, done: 1, planned: 0 }),
+    timeline: [
+      {
+        version: 1,
+        sequence: 1,
+        timestamp: "2026-01-01T00:00:00.000Z",
+        missionId: "mis_detail",
+        type: "mission.created",
+        label: "Mission created",
+        actor: { type: "user", id: "pm" },
+        refs: { missionId: "mis_detail" },
+      },
+      {
+        version: 1,
+        sequence: 2,
+        timestamp: "2026-01-01T00:01:00.000Z",
+        missionId: "mis_detail",
+        taskId: "tsk_setup",
+        attemptId: "att_setup",
+        proofId: "prf_one",
+        type: "attempt.approved",
+        label: "Attempt approved",
+        actor: { type: "agent", id: "worker" },
+        reason: "tests passed",
+        refs: {
+          missionId: "mis_detail",
+          taskId: "tsk_setup",
+          attemptId: "att_setup",
+          proofId: "prf_one",
+          terminal: "%7",
+          session: "proj",
+          worktree: "apps/api",
+        },
+      },
+    ],
+    ...overrides,
+  };
+}
+
+function snapshot(
+  boardView = board({}),
+  historyView: MissionHistorySummary[] = [],
+  detailView: MissionDetailView | null = null,
+) {
   return {
     board: boardView,
     history: historyView,
+    detail: detailView,
     project: { identityKey: "git-abc", projectRoot: "/repo" },
     loadedAt: "2026-01-01T00:00:00.000Z",
   };
@@ -199,7 +362,11 @@ describe("missions workspace loader/model", () => {
       const repository = createProjectRuntimeRepository(resolution(root), {
         home: join(root, ".state"),
       });
-      const loaded = readMissionWorkspace(repository, () => new Date("2026-01-01T00:00:00.000Z"));
+      const loaded = readMissionWorkspace(
+        repository,
+        null,
+        () => new Date("2026-01-01T00:00:00.000Z"),
+      );
       expect(loaded.board.counts.total).toBe(0);
       expect(loaded.history).toEqual([]);
       expect(loaded.project.identityKey).toBe(repository.metadata.identityKey);
@@ -594,18 +761,503 @@ describe("missions workspace loader/model", () => {
       "missions-a",
       reconciled.selectedMissionId,
     );
-    expect(missionSelectionFromWorkspaceState(state, "missions-a")).toBe("mis_new");
+    expect(missionSelectionFromWorkspaceState(state, "missions-a")).toEqual({
+      selectedMissionId: "mis_new",
+      selectedTaskId: null,
+    });
   });
 
-  it("persists only selectedMissionId per exact missions view without projection blobs", () => {
+  it("opens detail from board/history and returns to the originating surface", () => {
+    const view = snapshot(
+      board({ running: [card("mis_detail", "running")] }),
+      [history("mis_done")],
+      detail(),
+    );
+    let model = reconcileMissionWorkspaceModel(defaultMissionWorkspaceModel("mis_detail"), view);
+    model = openMissionDetail(model, view, { persistedTaskId: "tsk_setup" });
+    expect(model.mode).toBe("detail");
+    expect(model.detailReturnMode).toBe("board");
+    expect(model.selectedTaskId).toBe("tsk_setup");
+    expect(closeMissionDetail(model).mode).toBe("board");
+
+    model = setMissionWorkspaceMode(model, view, "history");
+    model = openMissionDetail(model, view);
+    expect(model.detailReturnMode).toBe("history");
+    expect(closeMissionDetail(model).mode).toBe("history");
+  });
+
+  it("keeps detail mode active while selected detail is loading for an existing mission", () => {
+    const boardOnly = snapshot(
+      board({
+        planned: [card("mis_other", "planned")],
+        running: [card("mis_detail", "running")],
+      }),
+    );
+    const model = openMissionDetail(defaultMissionWorkspaceModel("mis_detail"), boardOnly);
+    expect(model.mode).toBe("detail");
+    expect(model.selectedMissionId).toBe("mis_detail");
+    const loading = reconcileMissionWorkspaceModel(model, boardOnly, {
+      persistedMissionId: "mis_other",
+    });
+    expect(loading.mode).toBe("detail");
+    expect(loading.selectedMissionId).toBe("mis_detail");
+    const loaded = reconcileMissionWorkspaceModel(
+      loading,
+      snapshot(boardOnly.board, [], detail()),
+      { persistedMissionId: "mis_other" },
+    );
+    expect(loaded.mode).toBe("detail");
+    expect(loaded.selectedMissionId).toBe("mis_detail");
+    const missing = reconcileMissionWorkspaceModel(model, snapshot(board({})));
+    expect(missing.mode).toBe("board");
+  });
+
+  it("flattens task-board order, restores task by id, and falls back after removal", () => {
+    const view = snapshot(board({ running: [card("mis_detail", "running")] }), [], detail());
+    const restored = reconcileMissionWorkspaceModel(
+      { ...defaultMissionWorkspaceModel("mis_detail", "tsk_finish"), mode: "detail" },
+      view,
+    );
+    expect(restored.selectedTaskId).toBe("tsk_finish");
+    const shrunk = snapshot(
+      board({ running: [card("mis_detail", "running")] }),
+      [],
+      detail({
+        taskBoard: {
+          columns: {
+            planned: [task("tsk_only", "planned")],
+            running: [],
+            blocked: [],
+            review: [],
+            done: [],
+          },
+          counts: { planned: 1, running: 0, blocked: 0, review: 0, done: 0, total: 1 },
+        },
+      }),
+    );
+    const fallback = reconcileMissionWorkspaceModel(restored, shrunk);
+    expect(fallback.selectedTaskId).toBe("tsk_only");
+  });
+
+  it("renders bounded detail sections, hits section/rows/links, and clips Unicode safely", () => {
+    const view = snapshot(board({ running: [card("mis_detail", "running")] }), [], detail());
+    let model = openMissionDetail(defaultMissionWorkspaceModel("mis_detail"), view);
+    for (const width of [20, 56, 72, 120]) {
+      const layout = missionWorkspaceLayout(width, 10, model, view);
+      expect(layout.detail.rows.every((row) => row.x + row.width <= layout.width)).toBe(true);
+      expect(layout.detail.rows.every((row) => row.y + row.height <= layout.height - 1)).toBe(true);
+      expect(layout.detail.rows.some((row) => row.kind === "context")).toBe(width < 72);
+      expect(layout.detail.sections.map((chip) => chip.section)).toEqual([
+        "tasks",
+        "timeline",
+        "attempts",
+        "proof",
+      ]);
+      const chips = [...layout.detail.sections, ...layout.detail.links].sort(
+        (a, b) => a.start - b.start,
+      );
+      for (const [index, chip] of chips.entries()) {
+        expect(chip.start).toBeGreaterThanOrEqual(0);
+        expect(chip.start + chip.width).toBeLessThanOrEqual(layout.width);
+        const previous = chips[index - 1];
+        if (previous) expect(chip.start).toBeGreaterThanOrEqual(previous.start + previous.width);
+      }
+      for (const section of layout.detail.sections) {
+        expect(missionWorkspaceHitTest(layout, section.start, section.row)).toEqual({
+          kind: "detail-section",
+          section: section.section,
+        });
+      }
+      for (const link of layout.detail.links) {
+        expect(missionWorkspaceHitTest(layout, link.start, link.row)).toEqual({
+          kind: "deep-link",
+          link: link.link,
+        });
+      }
+      const row = layout.detail.rows[0]!;
+      const hit = missionWorkspaceHitTest(layout, row.x, row.y);
+      if (row.kind === "context") {
+        expect(hit).toBeNull();
+      } else {
+        expect(hit).toMatchObject({
+          kind: "detail-row",
+          section: "tasks",
+          id: "tsk_setup",
+        });
+      }
+      expect(row.lines.every((line) => terminalWidth(line) <= row.width)).toBe(true);
+    }
+    const lines = [
+      missionDetailTaskLines(view.detail!.taskBoard.columns.planned[0]!, "detailed", 80).join("\n"),
+      missionDetailTimelineLines(view.detail!.timeline[1]!, 80).join("\n"),
+      missionDetailAttemptLines(view.detail!.attempts[0]!, "detailed", 80).join("\n"),
+      missionDetailProofLines(view.detail!, "detailed", 80).join("\n"),
+    ].join("\n");
+    expect(lines).toContain("codex");
+    expect(lines).toContain("Attempt approved");
+    expect(lines).toContain("pane %7");
+    expect(lines).toContain("tests 4/4");
+    expect(missionDetailProofLines(view.detail!, "comfortable", 80)).toHaveLength(4);
+    expect(missionDetailProofLines(view.detail!, "detailed", 80)).toHaveLength(5);
+    expect(missionWorkspaceLayout(120, 24, model, view).footer.label).toContain("esc back");
+    expect(missionWorkspaceLayout(120, 24, model, view).footer.label).toContain("t/f/d open");
+  });
+
+  it("keeps narrow detail scroll and selected task visibility width-aware", () => {
+    const tasks = Array.from({ length: 6 }, (_, index) => task(`tsk_${index}`, "planned"));
+    const view = snapshot(
+      board({ running: [card("mis_detail", "running")] }),
+      [],
+      detail({
+        taskBoard: {
+          columns: { planned: tasks, running: [], blocked: [], review: [], done: [] },
+          counts: { planned: 6, running: 0, blocked: 0, review: 0, done: 0, total: 6 },
+        },
+      }),
+    );
+    let model = reconcileMissionWorkspaceModel(
+      { ...defaultMissionWorkspaceModel("mis_detail", "tsk_5"), mode: "detail" },
+      view,
+      { width: 56, height: 24 },
+    );
+    expect(model.detailScroll.tasks).toBe(2);
+    let layout = missionWorkspaceLayout(56, 24, model, view);
+    expect(layout.detail.itemCapacity).toBe(4);
+    expect(layout.detail.rows.filter((row) => row.kind === "tasks").map((row) => row.id)).toEqual([
+      "tsk_2",
+      "tsk_3",
+      "tsk_4",
+      "tsk_5",
+    ]);
+
+    model = moveMissionSelection(model, view, "home", { width: 56, height: 24 });
+    expect(model.selectedTaskId).toBe("tsk_0");
+    expect(model.detailScroll.tasks).toBe(0);
+    model = moveMissionSelection(model, view, "end", { width: 56, height: 24 });
+    expect(model.selectedTaskId).toBe("tsk_5");
+    expect(model.detailScroll.tasks).toBe(2);
+
+    layout = missionWorkspaceLayout(56, 6, model, view);
+    expect(layout.detail.itemCapacity).toBe(0);
+    expect(layout.detail.rows.length).toBeGreaterThan(0);
+    expect(layout.detail.rows.every((row) => row.kind === "context")).toBe(true);
+    expect(
+      missionWorkspaceHitTest(layout, layout.detail.rows[0]!.x, layout.detail.rows[0]!.y),
+    ).toBeNull();
+  });
+
+  it("keeps narrow mission context visible when the active detail section is empty", () => {
+    const view = snapshot(
+      board({ running: [card("mis_detail", "running")] }),
+      [],
+      detail({ attempts: [] }),
+    );
+    const model = setMissionDetailSection(
+      openMissionDetail(defaultMissionWorkspaceModel("mis_detail"), view),
+      view,
+      "attempts",
+    );
+    const layout = missionWorkspaceLayout(56, 24, model, view);
+    expect(layout.detail.itemCapacity).toBe(0);
+    expect(layout.detail.rows.map((row) => row.kind)).toEqual(["context", "context"]);
+    expect(layout.detail.rows[0]!.lines[0]).toContain("Mission detail");
+  });
+
+  it("keeps proof-section navigation deterministic when no proof is recorded", () => {
+    const noProof = detail({ proofSummary: proof() });
+    const view = snapshot(board({ running: [card("mis_detail", "running")] }), [], noProof);
+    const model = setMissionDetailSection(
+      openMissionDetail(defaultMissionWorkspaceModel("mis_detail"), view),
+      view,
+      "proof",
+    );
+    const layout = missionWorkspaceLayout(56, 10, model, view);
+    expect(layout.detail.itemCapacity).toBeGreaterThan(0);
+    const proofRow = layout.detail.rows.find((row) => row.kind === "proof");
+    expect(proofRow).toMatchObject({ kind: "proof", id: "proof", index: 0 });
+    expect(proofRow!.lines.join("\n")).toContain("no proof recorded");
+    const scrolled = scrollMissionWorkspace(model, view, "proof", 10, { height: 10 });
+    expect(scrolled.detailScroll.proof).toBe(0);
+  });
+
+  it("resolves safe deep-link intents and rejects missing, outside, traversal, and unsupported URI refs", () => {
+    const views = [
+      { id: "term", title: "Term", panel: "terminals" as const },
+      { id: "files", title: "Files", panel: "files" as const },
+      { id: "diff", title: "Diff", panel: "diff" as const },
+    ];
+    const model = defaultMissionWorkspaceModel("mis_detail", "tsk_setup");
+    const projected = detail();
+    expect(
+      resolveMissionDeepLink("terminal", projected, model, {
+        projectRoot: "/repo",
+        views,
+        resolveProjectPath: absoluteProjectPath,
+      }),
+    ).toMatchObject({
+      available: true,
+      intent: { kind: "terminal", session: "proj", paneId: "%7", viewId: "term" },
+    });
+    expect(
+      resolveMissionDeepLink("files", projected, model, {
+        projectRoot: "/repo",
+        views,
+        resolveProjectPath: absoluteProjectPath,
+      }),
+    ).toMatchObject({
+      available: true,
+      intent: { kind: "files", path: "/repo/apps/api/index.ts", mode: "open" },
+    });
+    expect(
+      resolveMissionDeepLink(
+        "files",
+        detail({
+          taskBoard: {
+            columns: {
+              planned: [
+                task("tsk_setup", "planned", {
+                  proofSummary: proof(),
+                  refs: {
+                    missionId: "mis_detail",
+                    taskId: "tsk_setup",
+                    attemptIds: [],
+                    proofIds: [],
+                    worktree: "apps/api",
+                  },
+                }),
+              ],
+              running: [],
+              blocked: [],
+              review: [],
+              done: [],
+            },
+            counts: { planned: 1, running: 0, blocked: 0, review: 0, done: 0, total: 1 },
+          },
+        }),
+        model,
+        {
+          projectRoot: "/repo",
+          views,
+          resolveProjectPath: absoluteProjectPath,
+        },
+      ),
+    ).toMatchObject({
+      available: true,
+      intent: { kind: "files", path: "/repo/apps/api", mode: "reveal" },
+    });
+    expect(
+      resolveMissionDeepLink("diff", projected, model, {
+        projectRoot: "/repo",
+        views,
+        resolveProjectPath: absoluteProjectPath,
+      }),
+    ).toMatchObject({ available: true, intent: { kind: "diff", path: "/repo/apps/api" } });
+    const unsafe = detail({
+      proofSummary: proof({
+        hasProof: true,
+        proofIds: ["prf_bad"],
+        artifacts: [{ name: "bad", uri: "https://example.com/file" }],
+      }),
+      taskBoard: {
+        columns: {
+          planned: [
+            task("tsk_setup", "planned", {
+              refs: {
+                missionId: "mis_detail",
+                taskId: "tsk_setup",
+                attemptIds: [],
+                proofIds: [],
+                worktree: "../outside",
+              },
+            }),
+          ],
+          running: [],
+          blocked: [],
+          review: [],
+          done: [],
+        },
+        counts: { planned: 1, running: 0, blocked: 0, review: 0, done: 0, total: 1 },
+      },
+    });
+    expect(
+      resolveMissionDeepLink("files", unsafe, model, {
+        projectRoot: "/repo",
+        views,
+        resolveProjectPath: absoluteProjectPath,
+      }),
+    ).toMatchObject({ available: false });
+    expect(
+      resolveMissionDeepLink("terminal", projected, model, {
+        projectRoot: "/repo",
+        views: views.filter((view) => view.panel !== "terminals"),
+        resolveProjectPath: absoluteProjectPath,
+      }),
+    ).toMatchObject({ available: false, reason: "no configured Terminals view" });
+  });
+
+  it("scopes detail deep links to selected task refs and fails closed without them", () => {
+    const views = [
+      { id: "term", title: "Term", panel: "terminals" as const },
+      { id: "files", title: "Files", panel: "files" as const },
+      { id: "diff", title: "Diff", panel: "diff" as const },
+    ];
+    const selected = task("tsk_selected", "planned", {
+      latestAttempt: {
+        id: "att_selected",
+        taskId: "tsk_selected",
+        status: "approved",
+        outcome: "approved",
+        agent: "worker",
+        harness: "codex",
+        model: "gpt-5",
+        terminal: "%selected",
+        session: "selected-session",
+        worktree: "apps/selected",
+        startedAt: "2026-01-01T00:01:00.000Z",
+        updatedAt: "2026-01-01T00:02:00.000Z",
+        finishedAt: "2026-01-01T00:02:00.000Z",
+        durationMs: 60_000,
+        proofIds: ["prf_selected"],
+      },
+      proofSummary: proof({
+        proofIds: ["prf_selected"],
+        hasProof: true,
+        artifacts: [{ name: "selected", uri: "apps/selected/file.ts" }],
+      }),
+      refs: {
+        missionId: "mis_detail",
+        taskId: "tsk_selected",
+        attemptIds: ["att_selected"],
+        proofIds: ["prf_selected"],
+        terminal: "%selected",
+        session: "selected-session",
+        worktree: "apps/selected",
+      },
+    });
+    const sibling = task("tsk_sibling", "done", {
+      latestAttempt: {
+        ...selected.latestAttempt!,
+        id: "att_sibling",
+        taskId: "tsk_sibling",
+        terminal: "%sibling",
+        session: "sibling-session",
+        worktree: "apps/sibling",
+      },
+      proofSummary: proof({
+        proofIds: ["prf_sibling"],
+        hasProof: true,
+        artifacts: [{ name: "sibling", uri: "apps/sibling/file.ts" }],
+      }),
+      refs: {
+        missionId: "mis_detail",
+        taskId: "tsk_sibling",
+        attemptIds: ["att_sibling"],
+        proofIds: ["prf_sibling"],
+        terminal: "%sibling",
+        session: "sibling-session",
+        worktree: "apps/sibling",
+      },
+    });
+    const noRefs = task("tsk_no_refs", "blocked");
+    const projected = detail({
+      mission: card("mis_detail", "running", "Mission detail", {
+        latestAttempt: sibling.latestAttempt,
+        proofSummary: sibling.proofSummary,
+      }),
+      taskBoard: {
+        columns: {
+          planned: [selected, noRefs],
+          running: [],
+          blocked: [],
+          review: [],
+          done: [sibling],
+        },
+        counts: { planned: 2, running: 0, blocked: 0, review: 0, done: 1, total: 3 },
+      },
+      attempts: [selected.latestAttempt!, sibling.latestAttempt!],
+      proofSummary: sibling.proofSummary,
+    });
+    const selectedModel = defaultMissionWorkspaceModel("mis_detail", "tsk_selected");
+    expect(
+      resolveMissionDeepLink("terminal", projected, selectedModel, {
+        projectRoot: "/repo",
+        views,
+        resolveProjectPath: absoluteProjectPath,
+      }),
+    ).toMatchObject({
+      available: true,
+      intent: { kind: "terminal", session: "selected-session", paneId: "%selected" },
+    });
+    expect(
+      resolveMissionDeepLink("files", projected, selectedModel, {
+        projectRoot: "/repo",
+        views,
+        resolveProjectPath: absoluteProjectPath,
+      }),
+    ).toMatchObject({
+      available: true,
+      intent: { kind: "files", path: "/repo/apps/selected/file.ts", mode: "open" },
+    });
+
+    const noRefModel = defaultMissionWorkspaceModel("mis_detail", "tsk_no_refs");
+    for (const link of ["terminal", "files", "diff"] as const) {
+      expect(
+        resolveMissionDeepLink(link, projected, noRefModel, {
+          projectRoot: "/repo",
+          views,
+          resolveProjectPath: absoluteProjectPath,
+        }),
+      ).toMatchObject({ available: false });
+    }
+  });
+
+  it("plans terminal deep-link preflight with hostile-looking values as single argv elements", () => {
+    const commands = missionTmuxPreflightCommands({
+      kind: "terminal",
+      session: "proj; rm -rf /",
+      paneId: "%7; send-keys pwn",
+      viewId: "term",
+    });
+    expect(commands).toEqual([
+      { kind: "session", file: "tmux", args: ["has-session", "-t", "=proj; rm -rf /"] },
+      {
+        kind: "pane",
+        file: "tmux",
+        args: ["display-message", "-p", "-t", "%7; send-keys pwn", "#{session_name}\t#{pane_id}"],
+      },
+    ]);
+    expect(
+      missionTmuxPanePreflightMatches(
+        "proj; rm -rf /\t%7; send-keys pwn\n",
+        commands[0]!.args[2].slice(1),
+        "%7; send-keys pwn",
+      ),
+    ).toBe(true);
+    expect(
+      missionTmuxPanePreflightMatches(
+        "other\t%7; send-keys pwn\n",
+        commands[0]!.args[2].slice(1),
+        "%7; send-keys pwn",
+      ),
+    ).toBe(false);
+  });
+
+  it("persists only selectedMissionId and selectedTaskId per exact missions view without projection blobs", () => {
     const state = workspaceStateWithMissionSelection(
       defaultWorkspaceUiState(),
       "mission-a",
       "mis_one",
+      "tsk_one",
     );
     const next = workspaceStateWithMissionSelection(state, "mission-b", "mis_two");
-    expect(missionSelectionFromWorkspaceState(next, "mission-a")).toBe("mis_one");
-    expect(missionSelectionFromWorkspaceState(next, "mission-b")).toBe("mis_two");
+    expect(missionSelectionFromWorkspaceState(next, "mission-a")).toEqual({
+      selectedMissionId: "mis_one",
+      selectedTaskId: "tsk_one",
+    });
+    expect(missionSelectionFromWorkspaceState(next, "mission-b")).toEqual({
+      selectedMissionId: "mis_two",
+      selectedTaskId: null,
+    });
     const json = serializeWorkspaceUiState(next);
     expect(json).toContain('"selectedTaskId": null');
     expect(json).not.toContain("columns");

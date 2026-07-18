@@ -255,6 +255,32 @@ describe("MissionRepository replay and persistence", () => {
     expect(snapshot.state.missions.mis_single?.title).toBe("Single");
   });
 
+  it("round-trips canonical tmux pane IDs in attempt terminal refs", () => {
+    const { missions } = repository();
+    missions.create({ id: "mis_tmux", title: "Tmux", objective: "tmux pane ids", actor });
+    missions.planMission("mis_tmux", actor);
+    missions.startMission("mis_tmux", actor);
+    missions.addTask({ id: "tsk_tmux", missionId: "mis_tmux", title: "Use pane", actor });
+    missions.readyTask("mis_tmux", "tsk_tmux", actor);
+    missions.claimTask("mis_tmux", "tsk_tmux", "worker", actor);
+    missions.startTask("mis_tmux", "tsk_tmux", actor);
+    missions.startAttempt({
+      id: "att_tmux",
+      missionId: "mis_tmux",
+      taskId: "tsk_tmux",
+      agent: "worker",
+      harness: "generic",
+      terminal: "%7",
+      session: "session_1",
+      actor,
+    });
+
+    expect(missions.state().missions.mis_tmux?.attempts.att_tmux?.terminal).toBe("%7");
+    expect(
+      missions.history().find((entry) => entry.event.type === "attempt.started")?.event,
+    ).toMatchObject({ terminal: "%7" });
+  });
+
   it("reopens with byte-equivalent logical state and keeps multiple missions isolated", () => {
     const home = temporaryRoot("tmux-ide-home-");
     const project = temporaryRoot("tmux-ide-project-");

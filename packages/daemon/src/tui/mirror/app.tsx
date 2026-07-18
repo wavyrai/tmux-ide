@@ -343,19 +343,28 @@ import {
 import {
   MissionWorkspaceLoader,
   applyMissionWorkspaceHit,
+  closeMissionDetail,
   clipTerminal,
   cycleMissionDensity,
+  cycleMissionDetailSection,
   defaultMissionWorkspaceModel,
   invalidatedMissionWorkspaceLoadState,
   missionSelectionFromWorkspaceState,
+  missionTmuxPanePreflightMatches,
+  missionTmuxPreflightCommands,
   missionWorkspaceHitTest,
   missionWorkspaceLayout,
   moveMissionSelection,
+  openMissionDetail,
   readMissionWorkspace,
   reconcileMissionWorkspaceModel,
+  resolveMissionDeepLink,
   scrollMissionWorkspace,
+  setMissionDetailSection,
   setMissionWorkspaceMode,
   workspaceStateWithMissionSelection,
+  type MissionDeepLinkKind,
+  type MissionDeepLinkResolution,
   type MissionWorkspaceLoadState,
   type MissionWorkspaceModel,
   type MissionWorkspaceSnapshot,
@@ -1094,19 +1103,28 @@ try {
       width: canvasCols(),
       height: Math.max(4, dims().height - TABBAR_H),
     });
-    const persistMissionSelection = (missionId: string | null) => {
+    const persistMissionSelection = (missionId: string | null, taskId: string | null = null) => {
       const view = activeView();
       if (view.panel !== "missions") return;
       touchedWorkspaceViewIds.add(view.id);
-      setWorkspaceUiState((state) => workspaceStateWithMissionSelection(state, view.id, missionId));
+      setWorkspaceUiState((state) =>
+        workspaceStateWithMissionSelection(state, view.id, missionId, taskId),
+      );
     };
     const updateMissionModel = (
       updater: (model: MissionWorkspaceModel) => MissionWorkspaceModel,
     ) => {
       setMissionWorkspaceModel((current) => {
-        const next = updater(current);
-        if (next.selectedMissionId !== current.selectedMissionId)
-          persistMissionSelection(next.selectedMissionId);
+        const updated = updater(current);
+        const next =
+          updated.mode !== "detail" && updated.selectedMissionId !== current.selectedMissionId
+            ? { ...updated, selectedTaskId: null }
+            : updated;
+        if (
+          next.selectedMissionId !== current.selectedMissionId ||
+          next.selectedTaskId !== current.selectedTaskId
+        )
+          persistMissionSelection(next.selectedMissionId, next.selectedTaskId);
         return next;
       });
     };
@@ -1122,19 +1140,25 @@ try {
       const start = missionWorkspaceLoader.begin(repository.metadata.identityKey, priorSnapshot);
       setMissionWorkspaceLoad(start);
       const projectKey = repository.metadata.identityKey;
+      const persistedSelection = missionSelectionFromWorkspaceState(
+        workspaceUiState(),
+        activeViewId(),
+      );
+      const selectedForDetail =
+        missionWorkspaceModel().mode === "detail"
+          ? (missionWorkspaceModel().selectedMissionId ?? persistedSelection.selectedMissionId)
+          : null;
       currentMissionsLoadIdentity = projectKey;
       void Promise.resolve()
-        .then(() => readMissionWorkspace(repository))
+        .then(() => readMissionWorkspace(repository, selectedForDetail))
         .then((snapshot) => {
           const accepted = missionWorkspaceLoader.accept(start.generation, projectKey, snapshot);
           if (!accepted) return;
           setMissionWorkspaceSnapshot(snapshot);
           updateMissionModel((current) =>
             reconcileMissionWorkspaceModel(current, snapshot, {
-              persistedMissionId: missionSelectionFromWorkspaceState(
-                workspaceUiState(),
-                activeViewId(),
-              ),
+              persistedMissionId: persistedSelection.selectedMissionId,
+              persistedTaskId: persistedSelection.selectedTaskId,
               ...missionLayoutSize(),
             }),
           );
@@ -2479,12 +2503,12 @@ try {
         };
       }
       if (panel === "missions") {
+        const existing = missionSelectionFromWorkspaceState(workspaceUiState(), activeView().id);
         return {
           panel,
           selectedMissionId:
-            missionWorkspaceModel().selectedMissionId ??
-            missionSelectionFromWorkspaceState(workspaceUiState(), activeView().id),
-          selectedTaskId: null,
+            missionWorkspaceModel().selectedMissionId ?? existing.selectedMissionId,
+          selectedTaskId: missionWorkspaceModel().selectedTaskId ?? existing.selectedTaskId,
         };
       }
       return { panel };
@@ -2544,7 +2568,11 @@ try {
       } else if (entry.panel === "missions") {
         setMissionWorkspaceModel((current) =>
           reconcileMissionWorkspaceModel(
-            { ...current, selectedMissionId: entry.selectedMissionId },
+            {
+              ...current,
+              selectedMissionId: entry.selectedMissionId,
+              selectedTaskId: entry.selectedTaskId,
+            },
             missionWorkspaceSnapshot(),
             missionLayoutSize(),
           ),
@@ -2552,6 +2580,82 @@ try {
       }
     };
     const missionSnapshotForModel = () => missionWorkspaceSnapshot();
+    const missionDeepLink = (kind: MissionDeepLinkKind): MissionDeepLinkResolution =>
+      resolveMissionDeepLink(
+        kind,
+        missionWorkspaceSnapshot()?.detail ?? null,
+        missionWorkspaceModel(),
+        {
+          projectRoot: workspaceUiProjectRoot(),
+          views: hostedViews(),
+          resolveProjectPath: absoluteProjectPath,
+        },
+      );
+    const execFileChecked = (file: string, args: string[]): Promise<string> =>
+      new Promise((resolvePromise, rejectPromise) => {
+        execFile(file, args, (error, stdout) => {
+          if (error) rejectPromise(error);
+          else resolvePromise(stdout);
+        });
+      });
+    const followMissionDeepLink = (kind: MissionDeepLinkKind) => {
+      const resolved = missionDeepLink(kind);
+      if (!resolved.available) {
+        setStatusNote(resolved.reason);
+        return;
+      }
+      const intent = resolved.intent;
+      if (intent.kind === "terminal") {
+        const preflight = missionTmuxPreflightCommands(intent);
+        void execFileChecked(preflight[0]!.file, preflight[0]!.args)
+          .then(async () => {
+            const panePreflight = preflight.find((command) => command.kind === "pane");
+            if (panePreflight && intent.paneId) {
+              const output = await execFileChecked(panePreflight.file, panePreflight.args);
+              if (!missionTmuxPanePreflightMatches(output, intent.session, intent.paneId)) {
+                throw new Error("pane does not belong to target session");
+              }
+            }
+          })
+          .then(() => {
+            snapshotActiveWorkspaceView();
+            setCurTarget(intent.session);
+            selectView(intent.viewId);
+            attach(intent.session);
+            if (intent.paneId) {
+              execFile("tmux", ["select-pane", "-t", intent.paneId], (error) => {
+                if (error) setStatusNote(`pane unavailable: ${intent.paneId}`);
+              });
+            }
+          })
+          .catch(() => {
+            setStatusNote(
+              intent.paneId
+                ? `pane unavailable for session ${intent.session}: ${intent.paneId}`
+                : `session unavailable: ${intent.session}`,
+            );
+          });
+        return;
+      }
+      if (intent.kind === "files") {
+        void stat(intent.path)
+          .then((info) => {
+            snapshotActiveWorkspaceView();
+            selectView(intent.viewId);
+            if (info.isFile() && intent.mode === "open") openEditor(intent.path);
+            else void revealPath(intent.path);
+          })
+          .catch(() => setStatusNote(`file target unavailable: ${intent.path}`));
+        return;
+      }
+      void stat(intent.path)
+        .then((info) => {
+          snapshotActiveWorkspaceView();
+          selectView(intent.viewId);
+          prepareDiff(info.isDirectory() ? intent.path : dirname(intent.path));
+        })
+        .catch(() => setStatusNote(`diff target unavailable: ${intent.path}`));
+    };
     const handleMissionsKey = (evt: {
       name: string;
       ctrl: boolean;
@@ -2563,11 +2667,43 @@ try {
         loadMissionsWorkspace("refresh");
         return true;
       }
+      if (evt.name === "t" || evt.name === "f" || evt.name === "d") {
+        followMissionDeepLink(evt.name === "t" ? "terminal" : evt.name === "f" ? "files" : "diff");
+        return true;
+      }
       if (evt.name === "z") {
         updateMissionModel((model) => cycleMissionDensity(model, snapshot, missionLayoutSize()));
         return true;
       }
       if (!snapshot) return true;
+      if (missionWorkspaceModel().mode === "detail") {
+        if (evt.name === "escape" || evt.name === "backspace") {
+          updateMissionModel(closeMissionDetail);
+          return true;
+        }
+        if (evt.name === "tab") {
+          updateMissionModel((model) =>
+            cycleMissionDetailSection(model, snapshot, evt.shift ? -1 : 1, missionLayoutSize()),
+          );
+          return true;
+        }
+        const sectionKey =
+          evt.name === "1"
+            ? "tasks"
+            : evt.name === "2"
+              ? "timeline"
+              : evt.name === "3"
+                ? "attempts"
+                : evt.name === "4"
+                  ? "proof"
+                  : null;
+        if (sectionKey) {
+          updateMissionModel((model) =>
+            setMissionDetailSection(model, snapshot, sectionKey, missionLayoutSize()),
+          );
+          return true;
+        }
+      }
       if (evt.name === "tab") {
         updateMissionModel((model) =>
           setMissionWorkspaceMode(
@@ -2613,8 +2749,17 @@ try {
       if (evt.name === "return") {
         const selected = missionWorkspaceModel().selectedMissionId;
         if (selected) {
-          persistMissionSelection(selected);
-          setStatusNote("Mission details arrive next (C11)");
+          persistMissionSelection(selected, missionWorkspaceModel().selectedTaskId);
+          updateMissionModel((model) =>
+            openMissionDetail(model, snapshot, {
+              persistedTaskId: missionSelectionFromWorkspaceState(
+                workspaceUiState(),
+                activeViewId(),
+              ).selectedTaskId,
+              ...missionLayoutSize(),
+            }),
+          );
+          if (snapshot.detail?.mission.id !== selected) loadMissionsWorkspace("refresh");
         }
         return true;
       }
@@ -5781,6 +5926,26 @@ try {
           setHoverIf({ region: "missioncard", index: hit.hoverKey });
         } else if (hit?.kind === "history") {
           setHoverIf({ region: "missionhistory", index: hit.hoverKey });
+        } else if (hit?.kind === "detail-section") {
+          setHoverIf({
+            region: "missionbutton",
+            index:
+              10 +
+              (hit.section === "tasks"
+                ? 0
+                : hit.section === "timeline"
+                  ? 1
+                  : hit.section === "attempts"
+                    ? 2
+                    : 3),
+          });
+        } else if (hit?.kind === "deep-link") {
+          setHoverIf({
+            region: "missionbutton",
+            index: hit.link === "terminal" ? 20 : hit.link === "files" ? 21 : 22,
+          });
+        } else if (hit?.kind === "detail-row") {
+          setHoverIf({ region: "missionhistory", index: hit.hoverKey });
         } else {
           setHoverIf(null);
         }
@@ -5992,11 +6157,15 @@ try {
           if (direction !== "up" && direction !== "down") return;
           const delta = direction === "up" ? -SCROLL_STEP : SCROLL_STEP;
           const target =
-            hit?.kind === "card" || hit?.kind === "column"
-              ? hit.column
-              : missionWorkspaceModel().mode === "history"
-                ? "history"
-                : missionWorkspaceModel().selectedColumn;
+            hit?.kind === "detail-row"
+              ? hit.section
+              : missionWorkspaceModel().mode === "detail"
+                ? missionWorkspaceModel().detailSection
+                : hit?.kind === "card" || hit?.kind === "column"
+                  ? hit.column
+                  : missionWorkspaceModel().mode === "history"
+                    ? "history"
+                    : missionWorkspaceModel().selectedColumn;
           updateMissionModel((model) =>
             scrollMissionWorkspace(model, snapshot, target, delta, missionLayoutSize()),
           );
@@ -6040,10 +6209,22 @@ try {
           const hit = missionHitAt(x, y);
           if (hit?.kind === "refresh") {
             loadMissionsWorkspace("refresh");
+          } else if (hit?.kind === "deep-link") {
+            followMissionDeepLink(hit.link);
+          } else if (hit?.kind === "detail-section" && snapshot) {
+            updateMissionModel((model) =>
+              setMissionDetailSection(model, snapshot, hit.section, missionLayoutSize()),
+            );
           } else if (hit && snapshot) {
             updateMissionModel((model) =>
               applyMissionWorkspaceHit(model, snapshot, hit, missionLayoutSize()),
             );
+            if (hit.kind === "card" || hit.kind === "history") {
+              updateMissionModel((model) =>
+                openMissionDetail(model, snapshot, missionLayoutSize()),
+              );
+              loadMissionsWorkspace("refresh");
+            }
           }
         }
         return;
@@ -7439,6 +7620,107 @@ try {
                         );
                       }}
                     </For>
+                  </box>
+                </Show>
+                <Show when={missionWorkspaceModel().mode === "detail"}>
+                  <box flexDirection="column" flexGrow={1}>
+                    <box width={canvasCols()} flexDirection="row" gap={1}>
+                      <For each={missionsLayout().detail.sections}>
+                        {(chip) => (
+                          <text
+                            fg={DEFAULT_FG}
+                            bg={
+                              chip.section === missionWorkspaceModel().detailSection ||
+                              isHovered(
+                                "missionbutton",
+                                10 + missionsLayout().detail.sections.indexOf(chip),
+                              )
+                                ? BUTTON_ACTIVE_BG
+                                : BUTTON_BG
+                            }
+                          >
+                            {chip.label}
+                          </text>
+                        )}
+                      </For>
+                      <box flexGrow={1} />
+                      <For each={missionsLayout().detail.links}>
+                        {(chip) => {
+                          const resolved = chip.link ? missionDeepLink(chip.link) : null;
+                          return (
+                            <text
+                              fg={resolved?.available ? BUTTON_FG : MUTED}
+                              bg={
+                                chip.link &&
+                                isHovered(
+                                  "missionbutton",
+                                  20 + missionsLayout().detail.links.indexOf(chip),
+                                )
+                                  ? BUTTON_HOVER_BG
+                                  : BUTTON_BG
+                              }
+                            >
+                              {chip.label}
+                            </text>
+                          );
+                        }}
+                      </For>
+                    </box>
+                    <Show
+                      when={missionWorkspaceSnapshot()?.detail}
+                      fallback={
+                        <box flexDirection="column" flexGrow={1}>
+                          <text fg={DEFAULT_FG}>Loading mission detail…</text>
+                          <text fg={MUTED}>Press r to refresh if this does not resolve.</text>
+                        </box>
+                      }
+                    >
+                      <box flexDirection="row" flexGrow={1} gap={1}>
+                        <Show when={missionsLayout().detail.wide}>
+                          <box flexDirection="column" width={missionsLayout().detail.contextWidth}>
+                            <For each={missionsLayout().detail.contextRows}>
+                              {(row) => (
+                                <For each={row.lines}>
+                                  {(line, lineIndex) => (
+                                    <text fg={lineIndex() === 0 ? ACCENT : MUTED}>{line}</text>
+                                  )}
+                                </For>
+                              )}
+                            </For>
+                          </box>
+                        </Show>
+                        <box flexDirection="column" width={missionsLayout().detail.sectionWidth}>
+                          <For each={missionsLayout().detail.rows}>
+                            {(row) => {
+                              const selected =
+                                row.kind === "tasks" &&
+                                missionWorkspaceModel().selectedTaskId === row.id;
+                              return (
+                                <box
+                                  flexDirection="column"
+                                  height={row.height}
+                                  backgroundColor={
+                                    selected
+                                      ? BADGE_BG
+                                      : isHovered("missionhistory", row.hoverKey)
+                                        ? HOVER_BG
+                                        : DEFAULT_BG
+                                  }
+                                >
+                                  <For each={row.lines}>
+                                    {(line, lineIndex) => (
+                                      <text fg={lineIndex() === 0 ? DEFAULT_FG : MUTED}>
+                                        {line}
+                                      </text>
+                                    )}
+                                  </For>
+                                </box>
+                              );
+                            }}
+                          </For>
+                        </box>
+                      </box>
+                    </Show>
                   </box>
                 </Show>
               </Show>
