@@ -1,67 +1,15 @@
 ---
 title: Task System
-description: The optional mission / goal / task orchestrator — a secondary surface, not the headline
+description: Planned mission runtime for future coordinated agent workflows
 ---
 
 # Task system
 
-tmux-ide is, first, a cockpit around tmux: adopt a session, know your fleet,
-survive crashes. Everything on this page is **optional** and secondary — it's for
-people who want tmux-ide to coordinate multi-agent work, not just observe it.
+This page is historical/future-facing. There is no current task/mission CLI or
+orchestrator runtime implementation to present as an available workflow.
+Mission runtime wiring for `.tmux-ide/workspace.yml` is future work.
 
-If you just want status, notifications, and restore, you can ignore all of this.
-
-## Agent teams
-
-tmux-ide can prepare a tmux layout for a Claude Code agent team and enable
-`CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1` when a `team` block is present in
-`ide.yml`:
-
-```bash
-tmux-ide config enable-team --name my-team
-tmux-ide                 # launch; ask the lead pane to organize the team
-```
-
-It does not synthesize hidden Claude CLI flags — it sets up the panes and the
-environment; you drive team creation in natural language from the lead pane.
-
-## Missions, goals, and tasks
-
-For structured coordination, tmux-ide ships a mission → goal → task model with
-JSON persistence under `.tasks/`:
-
-```bash
-tmux-ide mission set "Ship v2" -d "auth + billing"
-tmux-ide goal create "Auth system" -p 1 --acceptance "JWT + refresh tokens"
-tmux-ide task create "Implement JWT" -g 01 -p 1 -d "..."
-tmux-ide task create "Add tests" -g 01 -p 2 --depends "001"
-```
-
-With `orchestrator.enabled: true` and `auto_dispatch: true` in `ide.yml`, the
-orchestrator finds idle agent panes, picks the highest-priority unblocked task,
-prefers a specialty match, builds a prompt, and sends it. On completion it
-records timing and notifies the lead.
-
-Dependencies (`--depends`) and milestone gating control ordering; every command
-supports `--json`.
-
-## Reference
-
-The full command surface — missions, goals, milestones, tasks, validation
-contracts, skills, the knowledge library, metrics, and the researcher — is large
-and documented in the project's `CLAUDE.md` and `--help` output. The commands
-all follow the same shape:
-
-```bash
-tmux-ide mission ...     # mission lifecycle
-tmux-ide goal ...        # goals
-tmux-ide milestone ...   # milestones
-tmux-ide task ...        # tasks
-tmux-ide validate ...    # validation contracts
-tmux-ide skill ...       # project skills
-tmux-ide metrics ...     # time / cost / utilization
-tmux-ide research ...    # the researcher agent
-```
-
-There's also a `tmux-ide command-center` HTTP API (REST + SSE) that exposes the
-same data for external tooling.
+tmux-ide is, first, a cockpit around tmux: adopt a session, know your fleet, and
+survive crashes. Current coordinated work should be modeled in your own project
+or agent prompts. WorkspaceConfigV1 can declare `harnesses`, `agents`, and
+`missions` data, but runtime adapters and dispatch behavior are not wired yet.

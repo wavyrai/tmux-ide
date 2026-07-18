@@ -3,7 +3,7 @@
 // esbuild banner. Dev iteration uses `bun bin/cli.ts` directly, which
 // doesn't need a shebang.
 import { parseArgs } from "node:util";
-import { resolve, dirname, join } from "node:path";
+import { resolve, dirname } from "node:path";
 import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -20,6 +20,8 @@ const nodeCliPath = selfPath.endsWith(".js") ? selfPath : resolve(__dirname, "cl
 import { launch } from "../packages/daemon/src/launch.ts";
 import { resolveEntry } from "../packages/daemon/src/tui/team/entry.ts";
 import { loadAppConfig } from "../packages/daemon/src/lib/app-config.ts";
+import { resolveConfig } from "../packages/daemon/src/lib/resolved-config.ts";
+import { resolveProjectConfigContext } from "../packages/daemon/src/lib/config-context.ts";
 import {
   resolveTuiLaunch,
   findCompiledTui,
@@ -35,6 +37,7 @@ import { inspect } from "../packages/daemon/src/inspect.ts";
 import { validate } from "../packages/daemon/src/validate.ts";
 import { detect } from "../packages/daemon/src/detect.ts";
 import { config } from "../packages/daemon/src/config.ts";
+import { migrate } from "../packages/daemon/src/migrate.ts";
 import { restart } from "../packages/daemon/src/restart.ts";
 import { restore } from "../packages/daemon/src/restore.ts";
 import { send } from "../packages/daemon/src/send.ts";
@@ -128,6 +131,7 @@ const knownCommands = new Set([
   "inspect",
   "validate",
   "detect",
+  "migrate",
   "config",
   "setup",
   "send",
@@ -189,12 +193,12 @@ function printHelp() {
   console.log(`${bold("tmux-ide")} — Terminal IDE powered by tmux
 
 ${bold("Usage:")}
-  ${cyan("tmux-ide")}                    ${dim("Launch ide.yml, or open the team cockpit if none")}
-  ${cyan("tmux-ide <path>")}             ${dim("Launch from a specific directory (cockpit if no ide.yml)")}
+  ${cyan("tmux-ide")}                    ${dim("Launch workspace config, or open the team cockpit if none")}
+  ${cyan("tmux-ide <path>")}             ${dim("Launch from a specific directory (cockpit if no config)")}
   ${cyan("tmux-ide setup")}              ${dim("Interactive TUI setup wizard")}
   ${cyan("tmux-ide setup --edit")}       ${dim("Open config tree editor")}
   ${cyan("tmux-ide settings")}           ${dim("Interactive TUI config manager")}
-  ${cyan("tmux-ide init")} [--template]  ${dim("Scaffold a new ide.yml (auto-detects stack)")}
+  ${cyan("tmux-ide init")} [--template]  ${dim("Scaffold .tmux-ide/workspace.yml (auto-detects stack)")}
   ${cyan("tmux-ide stop")}               ${dim("Kill the current IDE session")}
   ${cyan("tmux-ide restart")}            ${dim("Stop and relaunch the IDE session")}
   ${cyan("tmux-ide restore")} [--dry-run] [--run-commands] [--resume-agents] [--json]
@@ -232,16 +236,16 @@ ${bold("Usage:")}
   ${cyan("tmux-ide update")} [--dry-run] ${dim("Update tmux-ide (detects dev checkout vs npm/pnpm/bun global)")}
   ${cyan("tmux-ide update --manifests")} ${dim("Fetch the latest agent-detection manifest pack (your overrides still win)")}
   ${cyan("tmux-ide skill-sync")}         ${dim("Refresh the bundled Claude Code skill in ~/.claude/skills/tmux-ide")}
-  ${cyan("tmux-ide validate")} [--json]  ${dim("Validate ide.yml")}
+  ${cyan("tmux-ide validate")} [--json]  ${dim("Validate workspace config")}
   ${cyan("tmux-ide detect")} [--json]    ${dim("Detect project stack")}
-  ${cyan("tmux-ide detect --write")}     ${dim("Detect and write ide.yml")}
+  ${cyan("tmux-ide detect --write")}     ${dim("Detect and write .tmux-ide/workspace.yml")}
+  ${cyan("tmux-ide migrate --dry-run")} [--json]  ${dim("Preview ide.yml migration")}
+  ${cyan("tmux-ide migrate --write")} [--json]    ${dim("Create .tmux-ide/workspace.yml")}
   ${cyan("tmux-ide config")} [--json]    ${dim("Dump config as JSON")}
   ${cyan("tmux-ide config set")} <path> <value>
   ${cyan("tmux-ide config add-pane")} --row <N> --title <T> [--command <C>]
   ${cyan("tmux-ide config remove-pane")} --row <N> --pane <M>
   ${cyan("tmux-ide config add-row")} [--size <percent>]
-  ${cyan("tmux-ide config enable-team")} [--name <N>]   ${dim("Enable agent teams")}
-  ${cyan("tmux-ide config disable-team")}               ${dim("Disable agent teams")}
 
 ${bold("Pane Messaging:")}
   ${cyan("tmux-ide send")} <target> <message>     ${dim("Send message to a pane")}
@@ -253,7 +257,7 @@ ${bold("Server:")}
   ${cyan("tmux-ide server")} [--port N]            ${dim("Start HTTP + PTY WebSocket server")}
 
 ${bold("Discover (in the TUI):")}
-  ${dim("Bare")} ${cyan("tmux-ide")} ${dim("with no ide.yml opens the HOME cockpit — the fleet home screen.")}
+  ${dim("Bare")} ${cyan("tmux-ide")} ${dim("with no project config opens the HOME cockpit — the fleet home screen.")}
   ${dim("Once a session is adopted, the whole UI is one keystroke away:")}
   ${cyan("⌥h")}  ${dim("home cockpit from anywhere    ")}${cyan("⌥p")}  ${dim("switch session")}
   ${cyan("⌥k")}  ${dim("cheat sheet (all keys)        ")}${cyan("⌥m")}  ${dim("actions menu (or right-click any pane / the bar)")}
@@ -263,7 +267,8 @@ ${bold("Discover (in the TUI):")}
 ${bold("Flags:")}
   ${cyan("--json")}                      ${dim("Output as JSON (all commands)")}
   ${cyan("--template <name>")}           ${dim("Use specific template for init")}
-  ${cyan("--write")}                     ${dim("Write detected config to ide.yml")}
+  ${cyan("--write")}                     ${dim("Write detected config to .tmux-ide/workspace.yml")}
+  ${cyan("--dry-run")}                   ${dim("Preview migration/restore without writing")}
   ${cyan("--verbose")}                   ${dim("Log all tmux commands (or set TMUX_IDE_DEBUG=1)")}
   ${cyan("-h, --help")}                  ${dim("Show usage")}
   ${cyan("-v, --version")}               ${dim("Show version number")}`);
@@ -383,7 +388,7 @@ function launchHostedApp(scriptPath: string, appArgs: string[]): void {
 
 // The scriptable control surface for the cockpit: print the fleet state as JSON
 // and exit without spawning the (bun/OpenTUI) TUI. Shared by `tmux-ide team
-// --json` and bare `tmux-ide --json` when there's no ide.yml to launch. Dynamic
+// --json` and bare `tmux-ide --json` when there's no project config to launch. Dynamic
 // imports keep the interactive path free of the data-layer modules.
 async function printFleetJson(): Promise<void> {
   const { createStatusTracker } = await import("../packages/daemon/src/tui/detect/classify.ts");
@@ -481,12 +486,20 @@ try {
         }
       }
       const targetDir = resolve(startTargetDir || ".");
-      const hasIdeYml = existsSync(join(targetDir, "ide.yml"));
+      if (startTargetDir && !existsSync(targetDir)) {
+        throw new IdeError(
+          `No workspace config found in ${targetDir}. Run "tmux-ide init" or "tmux-ide detect --write" to create one.`,
+          { code: "CONFIG_NOT_FOUND", exitCode: 1 },
+        );
+      }
+      const configContext = await resolveProjectConfigContext(targetDir);
       // M22.6 — the front-door decision. `--team` always means the classic
-      // cockpit; a present ide.yml still auto-launches the project; otherwise
+      // cockpit; a present project config still auto-launches the project; otherwise
       // `app.frontDoor` flips the default no-project entry to the unified app.
       const entry = resolveEntry({
-        hasIdeYml,
+        configKind: configContext.configKind,
+        hasWorkspaceConfig: configContext.hasWorkspaceConfig,
+        hasIdeYml: configContext.hasIdeYml,
         teamFlag: values.team === true,
         frontDoor: loadAppConfig().app.frontDoor,
       });
@@ -552,6 +565,10 @@ try {
 
     case "detect":
       await detect(positionals[1], { json, write: values.write });
+      break;
+
+    case "migrate":
+      await migrate(positionals[1], { json, dryRun: values["dry-run"], write: values.write });
       break;
 
     case "config": {
@@ -1381,7 +1398,7 @@ try {
           break;
         }
         // Opening: resolve the session's cwd + best-effort sidebar width/theme
-        // from an ide.yml there (any adopted session may have none → defaults).
+        // from the resolved project config there (any adopted session may have none → defaults).
         const { getSessionCwd } = await import("../packages/tmux-bridge/src/index.ts");
         let dir = process.cwd();
         try {
@@ -1392,13 +1409,13 @@ try {
         let width = DEFAULT_SIDEBAR_WIDTH;
         let theme = null;
         try {
-          const { readConfig } = await import("../packages/daemon/src/lib/yaml-io.ts");
-          const { config } = readConfig(dir);
-          theme = config.theme ?? null;
-          const sb = resolveSidebarConfig(config.sidebar);
+          const resolved = await resolveConfig(dir);
+          const config = resolved.launchConfig;
+          theme = config?.theme ?? null;
+          const sb = resolveSidebarConfig(config?.sidebar);
           if (sb.enabled) width = sb.width;
         } catch {
-          // no/invalid ide.yml — defaults are fine
+          // no/invalid project config — defaults are fine
         }
         openSidebarPane(session, dir, width, theme);
       } catch {
@@ -1429,7 +1446,6 @@ try {
         removeWorktree,
         WorktreeError,
       } = await import("../packages/daemon/src/lib/worktree.ts");
-      const { getSessionName } = await import("../packages/daemon/src/lib/yaml-io.ts");
       const { getSessionCwd, hasSession, killSession, createDetachedSession } =
         await import("../packages/tmux-bridge/src/index.ts");
 
@@ -1447,19 +1463,20 @@ try {
         }
       }
 
-      // The project identity for session names: the MAIN worktree's ide.yml name
+      // The project identity for session names: the MAIN worktree's config name
       // (or its dir basename). `git worktree list` returns the main checkout first.
       const worktrees = listWorktrees(repoDir);
       const mainPath = worktrees[0]?.path ?? repoDir;
-      const projectName = getSessionName(mainPath).name;
+      const projectName = (await resolveProjectConfigContext(mainPath)).sessionName;
 
-      // Start a session in a worktree checkout: full IDE layout when it has an
-      // ide.yml (launch under the worktree's own session name so it never
+      // Start a session in a worktree checkout: full IDE layout when it has a
+      // workspace config (launch under the worktree's own session name so it never
       // collides with the parent repo's session), else a plain adopted session.
       // Never auto-attaches — the caller may be inside tmux (the menu) — it prints
       // how to switch instead.
       async function openWorktreeSession(wtPath: string, name: string): Promise<void> {
-        if (existsSync(join(wtPath, "ide.yml"))) {
+        const worktreeContext = await resolveProjectConfigContext(wtPath);
+        if (worktreeContext.configKind !== "none") {
           await launch(wtPath, { attach: false, sessionName: name });
         } else {
           if (!hasSession(name)) createDetachedSession(name, wtPath);

@@ -2,6 +2,7 @@ import { resolve, basename } from "node:path";
 import { readFileSync, existsSync } from "node:fs";
 import { writeConfig } from "./lib/yaml-io.ts";
 import type { IdeConfig } from "./types.ts";
+import { resolveProjectConfigContext } from "./lib/config-context.ts";
 
 interface DetectedStack {
   packageManager: string | null;
@@ -201,7 +202,9 @@ export async function detect(
   targetDir: string | undefined,
   { json, write }: { json?: boolean; write?: boolean } = {},
 ): Promise<void> {
-  const dir = resolve(targetDir ?? ".");
+  const inputDir = resolve(targetDir ?? ".");
+  const context = write ? await resolveProjectConfigContext(inputDir) : null;
+  const dir = context?.configWriteRoot ?? inputDir;
   const detected = detectStack(dir);
   const suggested = suggestConfig(dir, detected);
 
@@ -214,7 +217,7 @@ export async function detect(
         detected.frameworks.length > 0
           ? detected.frameworks.join(" + ")
           : (detected.language ?? "generic project");
-      console.log(`Detected ${desc}. Created ide.yml.`);
+      console.log(`Detected ${desc}. Created .tmux-ide/workspace.yml.`);
       console.log("\nWhy this layout:");
       for (const reason of detected.reasons) {
         console.log(`  - ${reason}`);
@@ -237,7 +240,9 @@ export async function detect(
   for (const reason of detected.reasons) {
     console.log(`  - ${reason}`);
   }
-  console.log("\nRun with --write to create ide.yml, or --json to see the suggested config.");
+  console.log(
+    "\nRun with --write to create .tmux-ide/workspace.yml, or --json to see the suggested config.",
+  );
 }
 
 function pushFramework(detected: DetectedStack, framework: string, reason: string): void {

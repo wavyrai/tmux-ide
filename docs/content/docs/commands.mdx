@@ -10,16 +10,16 @@ the built-in version of this list.
 
 ## Sessions
 
-| Command                             | Description                                                 |
-| ----------------------------------- | ----------------------------------------------------------- |
-| `tmux-ide`                          | Launch `ide.yml`, or open the home cockpit if there is none |
-| `tmux-ide <path>`                   | Launch from a specific directory (cockpit if no `ide.yml`)  |
-| `tmux-ide init [--template <name>]` | Scaffold a new `ide.yml` (auto-detects stack)               |
-| `tmux-ide stop`                     | Kill the current IDE session                                |
-| `tmux-ide restart`                  | Stop and relaunch the session                               |
-| `tmux-ide attach`                   | Reattach to a running session                               |
-| `tmux-ide ls`                       | List all tmux sessions                                      |
-| `tmux-ide status [--json]`          | Show session status                                         |
+| Command                             | Description                                                                                         |
+| ----------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `tmux-ide`                          | Launch `.tmux-ide/workspace.yml` or compatible `ide.yml`, or open the home cockpit if there is none |
+| `tmux-ide <path>`                   | Launch from a specific directory (cockpit if no config is found)                                    |
+| `tmux-ide init [--template <name>]` | Scaffold `.tmux-ide/workspace.yml` (auto-detects stack)                                             |
+| `tmux-ide stop`                     | Kill the current IDE session                                                                        |
+| `tmux-ide restart`                  | Stop and relaunch the session                                                                       |
+| `tmux-ide attach`                   | Reattach to a running session                                                                       |
+| `tmux-ide ls`                       | List all tmux sessions                                                                              |
+| `tmux-ide status [--json]`          | Show session status                                                                                 |
 
 ## The dock
 
@@ -70,20 +70,20 @@ See [Worktrees](/docs/worktrees).
 
 ## Config & inspection
 
-| Command                                                          | Description                             |
-| ---------------------------------------------------------------- | --------------------------------------- |
-| `tmux-ide inspect [--json]`                                      | Show effective config and runtime state |
-| `tmux-ide doctor`                                                | Check system requirements               |
-| `tmux-ide validate [--json]`                                     | Validate `ide.yml`                      |
-| `tmux-ide detect [--json]`                                       | Detect project stack                    |
-| `tmux-ide detect --write`                                        | Detect and write `ide.yml`              |
-| `tmux-ide config [--json]`                                       | Dump config as JSON                     |
-| `tmux-ide config set <path> <value>`                             | Set a config value by dot path          |
-| `tmux-ide config add-pane --row <N> --title <T> [--command <C>]` | Add a pane                              |
-| `tmux-ide config remove-pane --row <N> --pane <M>`               | Remove a pane                           |
-| `tmux-ide config add-row [--size <percent>]`                     | Add a row                               |
-| `tmux-ide config enable-team [--name <N>]`                       | Enable agent teams                      |
-| `tmux-ide config disable-team`                                   | Disable agent teams                     |
+| Command                                                          | Description                                              |
+| ---------------------------------------------------------------- | -------------------------------------------------------- |
+| `tmux-ide inspect [--json]`                                      | Show effective config and runtime state                  |
+| `tmux-ide doctor`                                                | Check system requirements                                |
+| `tmux-ide validate [--json]`                                     | Validate the resolved project config                     |
+| `tmux-ide detect [--json]`                                       | Detect project stack                                     |
+| `tmux-ide detect --write`                                        | Detect and write `.tmux-ide/workspace.yml`               |
+| `tmux-ide migrate --dry-run [--json]`                            | Preview `ide.yml` to `.tmux-ide/workspace.yml` migration |
+| `tmux-ide migrate --write [--json]`                              | Create `.tmux-ide/workspace.yml` from `ide.yml`          |
+| `tmux-ide config [--json]`                                       | Dump config as JSON                                      |
+| `tmux-ide config set <path> <value>`                             | Set a config value by dot path                           |
+| `tmux-ide config add-pane --row <N> --title <T> [--command <C>]` | Add a pane                                               |
+| `tmux-ide config remove-pane --row <N> --pane <M>`               | Remove a pane                                            |
+| `tmux-ide config add-row [--size <percent>]`                     | Add a row                                                |
 
 ## Setup & settings
 
@@ -112,12 +112,12 @@ See [Worktrees](/docs/worktrees).
 
 ## Flags
 
-| Flag                | Description                                       |
-| ------------------- | ------------------------------------------------- |
-| `--json`            | Output as JSON (all commands)                     |
-| `--template <name>` | Use a specific template for `init`                |
-| `--write`           | Write detected config to `ide.yml`                |
-| `--verbose`         | Log all tmux commands (or set `TMUX_IDE_DEBUG=1`) |
+| Flag                | Description                                        |
+| ------------------- | -------------------------------------------------- |
+| `--json`            | Output as JSON (all commands)                      |
+| `--template <name>` | Use a specific template for `init`                 |
+| `--write`           | Write detected config to `.tmux-ide/workspace.yml` |
+| `--verbose`         | Log all tmux commands (or set `TMUX_IDE_DEBUG=1`)  |
 
 ## Key discovery
 

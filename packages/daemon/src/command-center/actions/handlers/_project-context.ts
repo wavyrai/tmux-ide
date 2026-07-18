@@ -1,6 +1,5 @@
-import { basename } from "node:path";
-import { getSessionName } from "../../../lib/yaml-io.ts";
 import { resolveProject, type ProjectResolverDeps } from "./_resolve-project.ts";
+import { resolveProjectConfigContext } from "../../../lib/config-context.ts";
 
 export interface ProjectContextDeps extends ProjectResolverDeps {
   cwd?: string;
@@ -15,16 +14,16 @@ export interface ProjectContext {
   sessionName: string;
 }
 
-export function resolveProjectContext(
+export async function resolveProjectContext(
   input: ProjectContextInput,
   deps: ProjectContextDeps = {},
-): ProjectContext {
+): Promise<ProjectContext> {
   if (input.projectName) {
     const project = resolveProject(input.projectName, deps);
     return { dir: project.dir, sessionName: project.sessionName };
   }
 
   const dir = deps.cwd ?? process.cwd();
-  const sessionName = getSessionName(dir).name || basename(dir);
+  const { sessionName } = await resolveProjectConfigContext(dir);
   return { dir, sessionName };
 }

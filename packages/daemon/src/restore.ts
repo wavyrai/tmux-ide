@@ -42,9 +42,9 @@ import {
 /**
  * One restore action per snapshot session:
  *  - `skip`    — a live session already owns the name; never clobber it.
- *  - `launch`  — the session maps to a registry project WITH an ide.yml; the
- *                config is the source of truth, so relaunch it instead of a raw
- *                rebuild.
+ *  - `launch`  — the session maps to a registry project with a project config;
+ *                the config is the source of truth, so relaunch it instead of
+ *                a raw rebuild.
  *  - `rebuild` — raw reconstruction from the snapshot (windows/panes/layout).
  */
 export type RestoreAction =
@@ -63,8 +63,8 @@ export interface RestorePlan {
  *
  * Sessions are processed in snapshot order. A name that's already live is
  * skipped. Otherwise, when `ideProjects` maps the name to a directory (a
- * registry project whose dir has an ide.yml), we prefer relaunching from that
- * config; failing that, we raw-rebuild from the recorded windows/panes.
+ * registry project whose dir has a project config), we prefer relaunching from
+ * that config; failing that, we raw-rebuild from the recorded windows/panes.
  */
 export function buildRestorePlan(
   snapshot: FleetSnapshot,
@@ -331,12 +331,17 @@ function rebuildSession(session: SessionSnapshot, opts: RebuildOptions): string[
 // io — the command
 // ---------------------------------------------------------------------------
 
-/** Registry sessions whose dir has an ide.yml → name -> dir (the launch path). */
+/** Registry sessions whose dir has a project config → name -> dir (the launch path). */
 function ideBackedProjects(): Map<string, string> {
   const map = new Map<string, string>();
   try {
     for (const project of listProjects()) {
-      if (project.hasIdeYml && project.dir) map.set(project.name, project.dir);
+      const hasProjectConfig =
+        project.configKind === "workspace" ||
+        project.configKind === "legacy" ||
+        project.hasWorkspaceConfig ||
+        project.hasIdeYml;
+      if (hasProjectConfig && project.dir) map.set(project.name, project.dir);
     }
   } catch {
     // no registry → nothing prefers a launch; everything raw-rebuilds
@@ -456,7 +461,7 @@ function safeAdopt(session: string): void {
 }
 
 /**
- * Relaunch a project from its ide.yml (config is the source of truth). Returns
+ * Relaunch a project from its resolved workspace/project config. Returns
  * false on any failure so the caller can fall back to a raw rebuild. Launch's
  * own stdout is swallowed in `--json` mode so the report stays parseable.
  */
@@ -522,7 +527,7 @@ function reportPlan(
       if (action.kind === "skip") {
         console.log(`  skip     ${action.session} (already running)`);
       } else if (action.kind === "launch") {
-        console.log(`  launch   ${action.session} (ide.yml at ${action.dir})`);
+        console.log(`  launch   ${action.session} (project config at ${action.dir})`);
       } else {
         const w = action.session.windows.length;
         const p = action.session.windows.reduce((n, win) => n + win.panes.length, 0);

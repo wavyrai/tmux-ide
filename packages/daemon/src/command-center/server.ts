@@ -22,7 +22,9 @@ import {
 } from "../widgets/lib/pane-comms.ts";
 import { resolvePane } from "../send.ts";
 import { getSessionState, killSession, stopSessionMonitor } from "@tmux-ide/tmux-bridge";
-import { readConfig, writeConfig } from "../lib/yaml-io.ts";
+import { writeConfig } from "../lib/yaml-io.ts";
+import { resolveConfig } from "../lib/resolved-config.ts";
+import { resolveProjectConfigContext } from "../lib/config-context.ts";
 import { IdeConfigSchema } from "../schemas/ide-config.ts";
 import { getLogBuffer, subscribeLogs, type LogEntry } from "../lib/log.ts";
 import { zValidator } from "@hono/zod-validator";
@@ -388,19 +390,23 @@ export function createApp(options: CreateAppOptions = {}): Hono {
     return c.json({ workspace });
   });
 
-  app.post("/api/workspaces", zValidator("json", AddWorkspaceRequestSchemaZ), (c) => {
+  app.post("/api/workspaces", zValidator("json", AddWorkspaceRequestSchemaZ), async (c) => {
     const body = c.req.valid("json");
     const registry = getDefaultWorkspaceRegistry();
     const name = body.name ?? basename(body.projectDir);
     if (!name || name.length === 0) {
       return c.json({ error: "Cannot derive workspace name from projectDir" }, 400);
     }
+    const facts = await resolveProjectConfigContext(body.projectDir);
     try {
       const workspace = registry.add({
         name,
         sessionName: body.sessionName,
         projectDir: body.projectDir,
-        ideConfigPath: body.ideConfigPath ?? null,
+        ideConfigPath: body.ideConfigPath ?? facts.ideConfigPath,
+        configKind: body.configKind ?? facts.configKind,
+        configPath: body.configPath ?? facts.configPath,
+        hasWorkspaceConfig: body.hasWorkspaceConfig ?? facts.hasWorkspaceConfig,
       });
       return c.json({ workspace }, 201);
     } catch (err) {
@@ -744,24 +750,35 @@ export function createApp(options: CreateAppOptions = {}): Hono {
     });
   });
 
-  // GET /api/project/:name/config — read parsed ide.yml + raw text. Used by
+  // GET /api/project/:name/config — read parsed workspace config. Used by
   // the v2 Config editor to hydrate the form.
-  app.get("/api/project/:name/config", (c) => {
+  app.get("/api/project/:name/config", async (c) => {
     const name = c.req.param("name");
     const sessions = discoverSessions();
     const session = sessions.find((s) => s.name === name);
     if (!session) return c.json({ error: "Session not found" }, 404);
     try {
-      const { config, configPath } = readConfig(session.dir);
-      return c.json({ ok: true, config, configPath });
+      const resolved = await resolveConfig(session.dir);
+      if (!resolved.launchConfig || !resolved.path) {
+        return c.json({ error: "Config not found" }, 404);
+      }
+      return c.json({
+        ok: true,
+        config: resolved.launchConfig,
+        configPath: resolved.path,
+        configKind: resolved.kind,
+        hasWorkspaceConfig: resolved.kind === "workspace",
+        hasIdeYml: resolved.resolution.legacyConfigPath !== null,
+        ideConfigPath: resolved.resolution.legacyConfigPath,
+      });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      return c.json({ error: "Failed to read ide.yml", detail: message }, 500);
+      return c.json({ error: "Failed to read workspace config", detail: message }, 500);
     }
   });
 
   // POST /api/project/:name/config — accept a full IdeConfig payload, validate
-  // against IdeConfigSchema, and write to ide.yml. Returns the persisted
+  // against IdeConfigSchema, and write to workspace.yml. Returns the persisted
   // config so the client can re-hydrate without a follow-up GET.
   app.post("/api/project/:name/config", async (c) => {
     const name = c.req.param("name");
@@ -779,11 +796,21 @@ export function createApp(options: CreateAppOptions = {}): Hono {
       return c.json({ error: "Invalid config", details: parsed.error.issues }, 400);
     }
     try {
-      const configPath = writeConfig(session.dir, parsed.data);
-      return c.json({ ok: true, config: parsed.data, configPath });
+      const context = await resolveProjectConfigContext(session.dir);
+      const configPath = writeConfig(context.configWriteRoot, parsed.data);
+      const resolved = await resolveConfig(session.dir);
+      return c.json({
+        ok: true,
+        config: parsed.data,
+        configPath,
+        configKind: resolved.kind,
+        hasWorkspaceConfig: resolved.kind === "workspace",
+        hasIdeYml: resolved.resolution.legacyConfigPath !== null,
+        ideConfigPath: resolved.resolution.legacyConfigPath,
+      });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      return c.json({ error: "Failed to write ide.yml", detail: message }, 500);
+      return c.json({ error: "Failed to write workspace config", detail: message }, 500);
     }
   });
 
@@ -1085,7 +1112,7 @@ export function createApp(options: CreateAppOptions = {}): Hono {
 
   // -------------------------------------------------------------------------
   // POST /api/filesystem/inspect — registry-agnostic directory inspection.
-  // POST /api/projects/onboard   — generate ide.yml + register the project.
+  // POST /api/projects/onboard   — generate workspace.yml + register the project.
   // -------------------------------------------------------------------------
 
   app.post("/api/projects/onboard", async (c) => {
@@ -1118,9 +1145,9 @@ export function createApp(options: CreateAppOptions = {}): Hono {
       throw err;
     }
 
-    // Never overwrite an existing ide.yml.
+    // Never overwrite an existing workspace or legacy config.
     try {
-      assertNoExistingIdeYml(dir);
+      await assertNoExistingIdeYml(dir);
     } catch (err) {
       if (err instanceof OnboardConflictError) {
         return c.json({ error: err.message, code: err.code }, 409);

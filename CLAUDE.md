@@ -9,7 +9,7 @@ Positioning: other tools rebuild the terminal to understand agents; tmux-ide tea
 ```bash
 tmux-ide adopt <session>            # add the dock to a session you already have
 tmux-ide integration install claude # ground-truth agent status via Claude Code hooks (+ skill sync)
-tmux-ide                            # home screen (fleet cockpit) — or launches ide.yml if present
+tmux-ide                            # home screen (fleet cockpit) — or launches project config if present
 tmux-ide restore --resume-agents    # after a tmux server death: rebuild everything, revive claudes
 tmux-ide app [session]              # the unified app: a terminal IDE over the fleet (needs bun, or update --tui-binary)
 ```
@@ -48,22 +48,23 @@ Full-screen IDE via tmux control mode (`tui/mirror/`): tmux owns PTYs/layout/per
 - Chrome: `adopt <s>` / `adopt --all` / `unadopt <s>` · `statusline` · `menu` · `cheatsheet` · `sidebar-toggle` · `popup <widget>` · `welcome`
 - Lifecycle: `restore [--dry-run] [--run-commands] [--resume-agents]` · `worktree create|open|list|remove <branch>` · `update [--dry-run]` · `skill-sync` · `integration install|uninstall|status claude` · `doctor`
 - Projects: launch (bare `tmux-ide`), `init`, `stop`, `restart`, `attach`, `ls`, `status`, `inspect`, `validate`, `detect [--write]`, `config` (get/set/add-pane/…)
-- A de-emphasized task system still exists (`tmux-ide task --help`); it is not the product's pitch.
+- Mission runtime wiring is future work; do not present task/mission orchestration as a current surface.
 
-## ide.yml (optional — adopt works without it)
+## .tmux-ide/workspace.yml (optional — adopt works without it)
 
 ```yaml
+version: 1
 name: my-project
-sidebar: true # inject the fleet nav column (or { width: "30" })
 before: pnpm install
-rows:
-  - size: 70%
-    panes:
-      - { title: Editor, command: claude, focus: true, size: 50% }
-      - { title: Shell }
-  - panes:
-      - { title: Changes, type: changes } # widget panes: explorer|changes|preview|config|sidebar
-      - { title: Dev, command: pnpm dev, dir: apps/web, env: { PORT: "3000" } }
+terminal:
+  rows:
+    - size: 70%
+      panes:
+        - { title: Editor, command: claude, focus: true, size: 50% }
+        - { title: Shell }
+    - panes:
+        - { title: Changes, type: changes } # widget panes: explorer|changes|preview|setup|config|sidebar
+        - { title: Dev, command: pnpm dev, dir: apps/web, env: { PORT: "3000" } }
 ```
 
 Always `tmux-ide validate --json` after config mutations. When helping a user design a layout, present 2–3 ASCII-diagram options first (see skill/SKILL.md).
@@ -78,10 +79,10 @@ Always `tmux-ide validate --json` after config mutations. When helping a user de
   - `tui/integrations/` — claude.ts (hooks install/uninstall, settings merge; `TMUX_IDE_CLAUDE_SETTINGS` override).
   - `tui/mirror/` — the control-mode (tmux -C) unified-render spike: proven, parked as the endgame option.
   - `tui/main.ts` + `tui/compiled.ts` + `scripts/build-tui.mjs` — the single-binary TUI (`bun build --compile` → dist/tui/tmux-ide-tui; resolution order: dev checkout → compiled binary → honest error).
-  - `widgets/` — OpenTUI/Solid panels (explorer/changes/preview/config/setup/sidebar) + lib (theme mapped to app-config tokens, grammar, help-overlay); resolve.ts maps ide.yml `type:` panes (bundle-safe paths, spawns from REPO root for the bunfig preload).
+  - `widgets/` — OpenTUI/Solid panels (explorer/changes/preview/config/setup/sidebar) + lib (theme mapped to app-config tokens, grammar, help-overlay); resolve.ts maps workspace `type:` panes (bundle-safe paths, spawns from REPO root for the bunfig preload).
   - `lib/` — app-config (THE typed config: keys/theme/updater/notifications/restore/updates/integrations; `TMUX_IDE_CONFIG` path override), restore, worktree, update(+check), agent-discovery, skill-sync, project-registry.
   - `command-center/` — HTTP API (secondary surface).
-- `packages/tmux-bridge` (process helpers) · `packages/contracts` (ide.yml schema) · `skill/SKILL.md` (the agent-facing manual, version-marked, synced to `~/.claude/skills/tmux-ide/` by postinstall / `tmux-ide update` / `tmux-ide skill-sync` / `integration install`).
+- `packages/tmux-bridge` (process helpers) · `packages/contracts` (workspace + compatibility schemas) · `skill/SKILL.md` (the agent-facing manual, version-marked, synced to `~/.claude/skills/tmux-ide/` by postinstall / `tmux-ide update` / `tmux-ide skill-sync` / `integration install`).
 - `docs/` — the website (Next/fumadocs). Gate: `pnpm docs:build`.
 
 ## Conventions & hard-won gotchas

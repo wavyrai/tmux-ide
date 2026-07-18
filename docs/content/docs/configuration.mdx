@@ -1,14 +1,19 @@
 ---
-title: ide.yml Layouts
-description: The optional ide.yml file for describing tmux layouts that tmux-ide builds and adopts for you
+title: Workspace Layouts
+description: The optional .tmux-ide/workspace.yml file for describing tmux layouts that tmux-ide builds and adopts for you
 ---
 
 ## Overview
 
-`ide.yml` is **optional**. `tmux-ide adopt` works on any session you launch
-however you like — but if you want tmux-ide to build the layout, describe it in
-`ide.yml` and run `tmux-ide`. Sessions launched from a config are adopted
-automatically, so the dock and agent detection are on from the start.
+`.tmux-ide/workspace.yml` is **optional**. `tmux-ide adopt` works on any session
+you launch however you like — but if you want tmux-ide to build the layout,
+describe it in `.tmux-ide/workspace.yml` and run `tmux-ide`. Sessions launched
+from a config are adopted automatically, so the dock and agent detection are on
+from the start.
+
+Legacy `ide.yml` files are still supported through a compatibility adapter.
+Preview migration with `tmux-ide migrate --dry-run`; write the new file with
+`tmux-ide migrate --write`.
 
 Scaffold one from your detected stack:
 
@@ -19,57 +24,60 @@ tmux-ide init          # or: tmux-ide detect --write
 ## Minimal example
 
 ```yaml
+version: 1
 name: my-app # tmux session name
-sidebar: true # nav column (prefix b / ⌥b), injected at launch
 
-rows:
-  - size: 70% # row height
-    panes:
-      - title: Claude
-        command: claude
-        focus: true
-      - title: Shell
-  - panes:
-      - title: Dev Server
-        command: pnpm dev
-      - title: Tests
-        command: pnpm test
+terminal:
+  rows:
+    - size: 70% # row height
+      panes:
+        - title: Claude
+          command: claude
+          focus: true
+        - title: Shell
+    - panes:
+        - title: Dev Server
+          command: pnpm dev
+        - title: Tests
+          command: pnpm test
 ```
 
 ## Fields
 
 ### Top level
 
-| Field     | Type                  | Notes                                                                 |
-| --------- | --------------------- | --------------------------------------------------------------------- |
-| `name`    | string                | tmux session name                                                     |
-| `before`  | string                | Optional pre-launch shell hook                                        |
-| `rows`    | array                 | Row definitions (at least one)                                        |
-| `sidebar` | `true` \| `{ width }` | Inject the nav column (`prefix b` / `⌥b`) at launch                   |
-| `theme`   | object                | Per-session color overrides (see below)                               |
-| `team`    | object                | Enable Claude Code agent teams (see [Task system](/docs/task-system)) |
+| Field       | Type   | Notes                              |
+| ----------- | ------ | ---------------------------------- |
+| `version`   | `1`    | Workspace config version           |
+| `name`      | string | tmux session name                  |
+| `before`    | string | Optional pre-launch shell hook     |
+| `terminal`  | object | Launch layout and terminal theme   |
+| `app`       | object | Optional app view configuration    |
+| `harnesses` | object | Declarative agent harness profiles |
+| `agents`    | object | Declarative agent profiles         |
+| `missions`  | object | Declarative mission defaults       |
 
 ### Rows
 
 ```yaml
-rows:
-  - size: 70% # optional row height (percent); rows split evenly if omitted
-    panes: [...] # at least one pane
+terminal:
+  rows:
+    - size: 70% # optional row height (percent); rows split evenly if omitted
+      panes: [...] # at least one pane
 ```
 
 ### Panes
 
-| Field                                | Type    | Notes                                          |
-| ------------------------------------ | ------- | ---------------------------------------------- |
-| `title`                              | string  | Pane border label                              |
-| `command`                            | string  | Command to run in the pane                     |
-| `size`                               | percent | Pane width (e.g. `50%`)                        |
-| `dir`                                | string  | Per-pane working directory                     |
-| `focus`                              | boolean | Initial focus                                  |
-| `env`                                | map     | Environment variables                          |
-| `type`                               | string  | Render a widget instead of a shell (see below) |
-| `target`                             | string  | Target path for a widget pane                  |
-| `role`, `specialty`, `skill`, `task` | string  | Agent-team metadata                            |
+| Field     | Type    | Notes                                          |
+| --------- | ------- | ---------------------------------------------- |
+| `title`   | string  | Pane border label                              |
+| `command` | string  | Command to run in the pane                     |
+| `size`    | percent | Pane width (e.g. `50%`)                        |
+| `dir`     | string  | Per-pane working directory                     |
+| `focus`   | boolean | Initial focus                                  |
+| `env`     | map     | Environment variables                          |
+| `type`    | string  | Render a widget instead of a shell (see below) |
+| `target`  | string  | Target path for a widget pane                  |
 
 ### Widget panes
 
@@ -84,33 +92,22 @@ panes:
     type: changes
 ```
 
-Available types include `explorer`, `changes`, `preview`, `config`, `tasks`, and
-`costs`. The same widgets are available as floating panels (`prefix e` / `g` /
+Available types are `explorer`, `changes`, `preview`, `setup`, `config`, and
+`sidebar`. The same widgets are available as floating panels (`prefix e` / `g` /
 `v`, or `⌥e` / `⌥g` / `⌥,`) from any adopted session — see
 [Home, sidebar & panels](/docs/app-surfaces).
 
-### Sidebar sugar
-
-```yaml
-sidebar: true # default width
-# or
-sidebar:
-  width: "30" # tmux columns
-```
-
-`sidebar: true` injects a full-height left nav column at launch. Omit it (or set
-`false`) for no sidebar. You can also toggle it at runtime with `prefix b` (or `⌥b`).
-
 ### Per-session theme
 
-The `theme` block sets colors for **this session's** panes:
+The `terminal.theme` block sets colors for **this session's** panes:
 
 ```yaml
-theme:
-  accent: colour75
-  border: colour238
-  bg: colour235
-  fg: colour248
+terminal:
+  theme:
+    accent: colour75
+    border: colour238
+    bg: colour235
+    fg: colour248
 ```
 
 For the product-wide palette that colors the dock, chips, panels, and widgets,
@@ -118,13 +115,13 @@ use `~/.tmux-ide/config.json` instead — see [Theming & config](/docs/theming).
 
 ## The global config & in-app settings
 
-`ide.yml` describes one project's layout. Product-wide behavior lives in
+`.tmux-ide/workspace.yml` describes one project's layout. Product-wide behavior lives in
 `~/.tmux-ide/config.json` (override the path with `TMUX_IDE_CONFIG`) — the same
 file that holds the shared theme. Two things worth knowing for 2.7:
 
 - **`app.frontDoor`** flips the default entry point: with `{ "app": { "frontDoor": true } }`,
   bare `tmux-ide` launches the unified app (`tmux-ide app`) instead of the home
-  cockpit. Default `false`; `ide.yml` auto-launch and `tmux-ide team` are
+  cockpit. Default `false`; project config auto-launch and `tmux-ide team` are
   unaffected.
 - **`app.detachable`** makes plain `tmux-ide app` run hosted: the app lives in
   a tmux session of its own and your terminal attaches to it, so the cockpit
@@ -164,6 +161,9 @@ See the [CLI reference](/docs/commands) for the full `config` surface, and
 
 ## Agent teams & orchestration
 
-tmux-ide can also enable Claude Code agent teams and run a task/mission
-orchestrator from `ide.yml`. That's a deliberately secondary surface now — see
-[Task system](/docs/task-system).
+The legacy `team`, pane `role`/`task` metadata, `sidebar`, and `orchestrator`
+blocks are not represented in WorkspaceConfigV1. The migration command reports
+those fields as diagnostics instead of silently dropping them.
+
+Mission runtime wiring is future work for the workspace config model. Do not add
+mission or orchestrator runtime fields to `.tmux-ide/workspace.yml` yet.

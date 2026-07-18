@@ -82,9 +82,9 @@ Every surface has a **prefix twin** (`prefix` then a letter) that works under ev
 | Sidebar — a fleet nav column                   | `prefix b`            | `⌥b`           |
 | Panels — explorer / changes / config           | `prefix e` `g` `v`    | `⌥e` `⌥g` `⌥,` |
 
-## Optional: describe a layout with ide.yml
+## Optional: describe a layout with workspace.yml
 
-Adopt works on any session. If you'd rather have tmux-ide build the layout, scaffold an `ide.yml`:
+Adopt works on any session. If you'd rather have tmux-ide build the layout, scaffold `.tmux-ide/workspace.yml`:
 
 ```bash
 tmux-ide init          # auto-detects your stack
@@ -92,24 +92,29 @@ tmux-ide               # launch (the session is adopted automatically)
 ```
 
 ```yaml
+version: 1
 name: my-app
-sidebar: true # nav column (prefix b / ⌥b)
 
-rows:
-  - size: 70%
-    panes:
-      - title: Claude
-        command: claude
-        focus: true
-      - title: Shell
-  - panes:
-      - title: Dev Server
-        command: pnpm dev
+terminal:
+  rows:
+    - size: 70%
+      panes:
+        - title: Claude
+          command: claude
+          focus: true
+        - title: Shell
+    - panes:
+        - title: Dev Server
+          command: pnpm dev
 ```
+
+Existing `ide.yml` files still launch through the compatibility adapter. Run
+`tmux-ide migrate --dry-run` to preview conversion, then `tmux-ide migrate --write`
+to create `.tmux-ide/workspace.yml`.
 
 ## More
 
-tmux-ide also has a `worktree` flow (a git worktree plus an adopted session per branch), `wait` coordination primitives, a `--json` surface on every command, and an optional task/mission orchestrator for coordinated multi-agent work. See the docs:
+tmux-ide also has a `worktree` flow (a git worktree plus an adopted session per branch), `wait` coordination primitives, and a `--json` surface on every command. See the docs:
 
 - [Getting started](https://github.com/wavyrai/tmux-ide) and the full docs site
 - Run `tmux-ide --help` for the complete command list

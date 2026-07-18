@@ -41,15 +41,9 @@ What they do:
 
 `npm publish` is guarded by `prepublishOnly`, so publishing runs `pnpm check` automatically before npm actually publishes the package.
 
-## Integration and Manual Smoke Tests
+## Manual Smoke Tests
 
-If tmux is available locally, also run:
-
-```bash
-pnpm test:integration
-```
-
-Recommended manual smoke test:
+If tmux is available locally, run a manual smoke test:
 
 ```bash
 node bin/cli.js init
@@ -81,10 +75,9 @@ Before publishing a release:
 1. Update `CHANGELOG.md` under `Unreleased`.
 2. Confirm the version in `package.json`.
 3. Run `pnpm check`.
-4. Run `pnpm test:integration` if tmux is available.
-5. Do the manual smoke test if the release includes CLI behavior changes.
-6. Move `Unreleased` notes into the final version entry.
-7. Tag and publish the release.
+4. Do the manual smoke test if the release includes CLI behavior changes.
+5. Move `Unreleased` notes into the final version entry.
+6. Tag and publish the release.
 
 The repository root also includes:
 

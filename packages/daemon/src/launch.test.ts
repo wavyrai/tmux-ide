@@ -1,5 +1,6 @@
 import { describe, it, expect } from "bun:test";
-import { buildPaneMap, waitForPaneCommand } from "./launch.ts";
+import { buildPaneMap, launchRuntimeDir, waitForPaneCommand } from "./launch.ts";
+import type { ProjectConfigContext } from "./lib/config-context.ts";
 
 describe("buildPaneMap", () => {
   it("uses returned pane ids instead of assuming sequential numbering", () => {
@@ -63,6 +64,46 @@ describe("buildPaneMap", () => {
     ]);
     expect(paneMap).toEqual([["%5"], ["%21"], ["%34"]]);
     expect([...firstPanesOfRows]).toEqual(["%5", "%21", "%34"]);
+  });
+});
+
+describe("launchRuntimeDir", () => {
+  it("uses the winning config write root instead of the git root for nested configs", () => {
+    const context = {
+      inputDir: "/repo/apps/web/src",
+      projectRoot: "/repo",
+      configWriteRoot: "/repo/apps/web",
+      sessionName: "web",
+      sessionNameSource: "config",
+      resolved: null,
+      configExists: true,
+      hasWorkspaceConfig: true,
+      hasIdeYml: false,
+      configKind: "workspace",
+      configPath: "/repo/apps/web/.tmux-ide/workspace.yml",
+      ideConfigPath: null,
+    } satisfies ProjectConfigContext;
+
+    expect(launchRuntimeDir(context)).toBe("/repo/apps/web");
+  });
+
+  it("uses the custom workspace config directory for explicit workspace files", () => {
+    const context = {
+      inputDir: "/repo",
+      projectRoot: "/repo",
+      configWriteRoot: "/repo/config",
+      sessionName: "custom",
+      sessionNameSource: "config",
+      resolved: null,
+      configExists: true,
+      hasWorkspaceConfig: true,
+      hasIdeYml: false,
+      configKind: "workspace",
+      configPath: "/repo/config/custom.yml",
+      ideConfigPath: null,
+    } satisfies ProjectConfigContext;
+
+    expect(launchRuntimeDir(context)).toBe("/repo/config");
   });
 });
 

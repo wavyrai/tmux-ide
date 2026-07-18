@@ -1,16 +1,15 @@
 import { resolve } from "node:path";
-import { existsSync } from "node:fs";
-import { getSessionName } from "./lib/yaml-io.ts";
 import { getSessionState, isProcessAlive, listPanes } from "@tmux-ide/tmux-bridge";
 import { isCanonicalDaemonAlive, readCanonicalDaemonInfo } from "./lib/canonical-daemon.ts";
+import { resolveProjectConfigContext } from "./lib/config-context.ts";
 
 export async function status(
   targetDir: string | undefined,
   { json }: { json?: boolean } = {},
 ): Promise<void> {
   const dir = resolve(targetDir ?? ".");
-  const { name: session } = getSessionName(dir);
-  const configExists = existsSync(resolve(dir, "ide.yml"));
+  const context = await resolveProjectConfigContext(dir);
+  const session = context.sessionName;
 
   const state = getSessionState(session);
   const running = state.running;
@@ -24,7 +23,11 @@ export async function status(
   const data = {
     session,
     running,
-    configExists,
+    configExists: context.configExists,
+    hasWorkspaceConfig: context.hasWorkspaceConfig,
+    hasIdeYml: context.hasIdeYml,
+    configKind: context.configKind,
+    configPath: context.configPath,
     panes,
     daemon: {
       pid: daemonInfo?.pid ?? null,
@@ -41,7 +44,9 @@ export async function status(
 
   console.log(`Session: ${session}`);
   console.log(`Running: ${running ? "yes" : "no"}`);
-  console.log(`Config:  ${configExists ? "ide.yml found" : "no ide.yml"}`);
+  console.log(
+    `Config:  ${context.configExists ? `${context.configKind} config found` : "no config"}`,
+  );
 
   if (running) {
     console.log(

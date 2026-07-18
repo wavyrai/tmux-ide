@@ -1,19 +1,21 @@
 name: my-app
+version: 1
 
 # before: pip install -r requirements.txt   # or: uv sync / poetry install
 
-rows:
-  - size: 70%
-    panes:
-      - title: Claude 1 — feature
-        command: claude
-      - title: Claude 2 — review
-        command: claude
+terminal:
+  rows:
+    - size: 70%
+      panes:
+        - title: Claude 1 — feature
+          command: claude
+        - title: Claude 2 — review
+          command: claude
 
-  - panes:
-      - title: Server
-        # command: uvicorn main:app --reload
-      - title: Changes
-        type: changes # live git changes widget
-      - title: Shell
-        focus: true
+    - panes:
+        - title: Server
+          # command: uvicorn main:app --reload
+        - title: Changes
+          type: changes # live git changes widget
+        - title: Shell
+          focus: true

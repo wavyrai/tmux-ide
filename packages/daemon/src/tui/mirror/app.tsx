@@ -2645,7 +2645,7 @@ try {
     // ── OPEN A FOLDER (M22.5) — the non-technicals' front door ───────────────
     // A filesystem picker (a DialogSelect browse loop over ASYNC readdir) →
     // create-or-attach a session in the chosen dir → openWorkspace, then two
-    // optional, skippable offers: remember the project, and (if no ide.yml) set
+    // optional, skippable offers: remember the project, and (if no project config) set
     // up a layout. Everything is async fs (the header's async-only law); the row
     // math / breadcrumb / sorting is pure in folder-picker.ts.
 
@@ -2678,9 +2678,11 @@ try {
       }
     };
 
-    /** ASYNC — whether `dir` already has an ide.yml (skip the layout offer). */
-    const hasIdeYml = async (dir: string): Promise<boolean> =>
-      (await pathKind(join(dir, "ide.yml"))) === "file";
+    /** ASYNC — whether `dir` already has a project config (skip the layout offer). */
+    const hasProjectConfig = async (dir: string): Promise<boolean> => {
+      const { resolveProjectConfigContext } = await import("../../lib/config-context.ts");
+      return (await resolveProjectConfigContext(dir)).configKind !== "none";
+    };
 
     /** The "type a path…" escape hatch: a prompt that async-validates the typed
      *  path is a real folder (sync validate can't touch fs), re-asking with a
@@ -2752,7 +2754,7 @@ try {
       }
     };
 
-    /** Write a starter ide.yml for `dir` via `tmux-ide detect --write` (async
+    /** Write a starter workspace config for `dir` via `tmux-ide detect --write` (async
      *  subprocess — the CLI resolves the layout from the project's stack). */
     const runDetectWrite = (dir: string) => {
       execFile("node", [cliPath, "detect", dir, "--write"], (err) => {
@@ -2774,7 +2776,7 @@ try {
         noLabel: "Not now",
       });
       if (remember) await rememberProject(dir);
-      if (!(await hasIdeYml(dir))) {
+      if (!(await hasProjectConfig(dir))) {
         const setup = await DialogConfirm.show({
           title: "Set up a layout?",
           body:

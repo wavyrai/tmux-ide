@@ -10,15 +10,15 @@
  */
 
 import yaml from "js-yaml";
-import { existsSync } from "node:fs";
-import { join } from "node:path";
 import type { Pane, Row, IdeConfig } from "../schemas/ide-config.ts";
+import { resolveProject, type ProjectResolution } from "./project-resolver.ts";
 
 export class OnboardConflictError extends Error {
-  readonly code = "IDE_YML_EXISTS";
-  constructor(path: string) {
-    super(`ide.yml already exists at ${path}`);
+  readonly code: string;
+  constructor(path: string, code = "IDE_YML_EXISTS") {
+    super(`project config already exists at ${path}`);
     this.name = "OnboardConflictError";
+    this.code = code;
   }
 }
 
@@ -54,8 +54,7 @@ export interface ComposeIdeYmlInput {
  * same output, no io.
  *
  * Layout shape:
- *   - Row 0 (70%): N Claude panes, first focused. When `agents > 1`, the
- *     `team:` block is added so Claude Code launches with team mode.
+ *   - Row 0 (70%): N Claude panes, first focused.
  *   - Row 1 (30%): Dev pane (if `devCommand` set) + Shell pane.
  */
 export function composeIdeYmlConfig(input: ComposeIdeYmlInput): IdeConfig {
@@ -70,7 +69,6 @@ export function composeIdeYmlConfig(input: ComposeIdeYmlInput): IdeConfig {
   }
 
   const agentsCount = input.agents;
-  const useTeam = agentsCount > 1;
 
   const customNames = input.agentNames;
   if (customNames !== undefined) {
@@ -88,15 +86,12 @@ export function composeIdeYmlConfig(input: ComposeIdeYmlInput): IdeConfig {
 
   const topPanes: Pane[] = [];
   for (let i = 0; i < agentsCount; i++) {
-    const fallback = useTeam ? (i === 0 ? "Lead" : `Teammate ${i}`) : `Claude ${i + 1}`;
+    const fallback = agentsCount > 1 ? (i === 0 ? "Lead" : `Teammate ${i}`) : `Claude ${i + 1}`;
     const customTitle = customNames?.[i]?.trim();
     const pane: Pane = {
       title: customTitle && customTitle.length > 0 ? customTitle : fallback,
       command: "claude",
     };
-    if (useTeam) {
-      pane.role = i === 0 ? "lead" : "teammate";
-    }
     if (i === 0) {
       pane.focus = true;
     }
@@ -117,10 +112,6 @@ export function composeIdeYmlConfig(input: ComposeIdeYmlInput): IdeConfig {
     rows,
   };
 
-  if (useTeam) {
-    config.team = { name: cleanName };
-  }
-
   return config;
 }
 
@@ -138,12 +129,15 @@ export function composeIdeYml(input: ComposeIdeYmlInput): string {
  * file separately via `writeConfig`; this helper exists so the route can
  * 409 cleanly without ever overwriting user content.
  */
-export function assertNoExistingIdeYml(
+export async function assertNoExistingIdeYml(
   dir: string,
-  exists: (path: string) => boolean = existsSync,
-): void {
-  const path = join(dir, "ide.yml");
-  if (exists(path)) {
-    throw new OnboardConflictError(path);
+  resolver: (dir: string) => Promise<ProjectResolution> = resolveProject,
+): Promise<void> {
+  const resolution = await resolver(dir);
+  if (resolution.config.kind === "legacy") {
+    throw new OnboardConflictError(resolution.config.path, "IDE_YML_EXISTS");
+  }
+  if (resolution.config.kind === "workspace") {
+    throw new OnboardConflictError(resolution.config.path, "WORKSPACE_CONFIG_EXISTS");
   }
 }

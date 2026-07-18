@@ -7,7 +7,7 @@ session — a fleet of tabs with live agent-status glyphs, ground-truth
 working/blocked/done detection, notifications when an agent needs a human, and a
 crash-proof restore. It's built _around_ tmux (adopt is additive tmux config, no
 wrapper process), and the whole UI is one keystroke away — one interaction
-grammar, one theme file. `ide.yml` is optional; adopt works on any session.
+grammar, one theme file. `.tmux-ide/workspace.yml` is optional; adopt works on any session.
 
 ## When to use
 
@@ -16,7 +16,7 @@ grammar, one theme file. `ide.yml` is optional; adopt works on any session.
 - **You are an agent and want to report your own status** so the dock/fleet reflects it (the agent contract, below)
 - Post-crash recovery — a tmux server died and the user wants their fleet + Claude conversations back
 - User wants a git worktree (plus an adopted session) per branch
-- User wants to set up a multi-pane dev workspace with `ide.yml`
+- User wants to set up a multi-pane dev workspace with `.tmux-ide/workspace.yml`
 
 ## The agent contract
 
@@ -206,7 +206,7 @@ Right-click any pane or the bar opens the actions menu at the pointer.
 | Panels — explorer / changes / config       | `prefix e` `g` `v`    | `⌥e` `⌥g` `⌥,` |
 
 One interaction grammar everywhere: `j`/`k` move, `enter` opens, `/` filters,
-`esc` backs out, `?` asks. Bare `tmux-ide` with no `ide.yml` opens the **home
+`esc` backs out, `?` asks. Bare `tmux-ide` with no project config opens the **home
 cockpit** (the fleet home screen). `tmux-ide cheatsheet` prints the full sheet.
 
 ## The app — `tmux-ide app` (the terminal IDE)
@@ -231,10 +231,10 @@ screen) or `tmux-ide app <session>`. Needs `bun`, or a downloaded binary:
 - State persists across launches (~/.tmux-ide/app-state.json): last tab,
   session, open file.
 
-## ide.yml (optional)
+## .tmux-ide/workspace.yml (optional)
 
 Adopt works on any session. If you'd rather have tmux-ide build the layout, describe
-it in `ide.yml` (sessions launched from a config are adopted automatically).
+it in `.tmux-ide/workspace.yml` (sessions launched from a config are adopted automatically).
 
 **Setup workflow for a user's project:**
 
@@ -286,37 +286,36 @@ it in `ide.yml` (sessions launched from a config are adopted automatically).
 **Schema:**
 
 ```yaml
+version: 1
 name: my-app # tmux session name
-sidebar: true # inject the nav column at launch (prefix b / ⌥b); or { width: "30" }
 before: pnpm install # optional pre-launch shell hook
-theme: # optional per-session pane colors
-  accent: colour75
-  border: colour238
-rows:
-  - size: 70% # row height percent (rows split evenly if omitted)
-    panes:
-      - title: Claude # pane border label
-        command: claude # command to run (optional)
-        size: 50% # pane width percent (optional)
-        dir: apps/web # per-pane working directory (optional)
-        focus: true # initial focus (optional)
-        env: # environment variables (optional)
-          PORT: "3000"
-  - panes:
-      - title: Explorer
-        type: explorer # widget pane: explorer | changes | preview | config
-        target: src/ # optional widget target path
-      - title: Shell
+terminal:
+  theme: # optional per-session pane colors
+    accent: colour75
+    border: colour238
+  rows:
+    - size: 70% # row height percent (rows split evenly if omitted)
+      panes:
+        - title: Claude # pane border label
+          command: claude # command to run (optional)
+          size: 50% # pane width percent (optional)
+          dir: apps/web # per-pane working directory (optional)
+          focus: true # initial focus (optional)
+          env: # environment variables (optional)
+            PORT: "3000"
+    - panes:
+        - title: Explorer
+          type: explorer # widget pane: explorer | changes | preview | config
+          target: src/ # optional widget target path
+        - title: Shell
 ```
 
 Read config with `tmux-ide config --json`; mutate with `config set <dot.path> <value>`,
 `add-pane`, `remove-pane`, `add-row`; apply changes to a running session with
 `tmux-ide restart`.
 
-An optional mission/goal/task orchestrator exists as a **secondary** surface,
-configured via the `team` and `orchestrator` blocks in `ide.yml` (enable teams
-with `tmux-ide config enable-team --name <n>`). It's not the headline — see the
-Task System docs if a user explicitly wants coordinated multi-agent dispatch.
+Mission runtime wiring is future work for the workspace config model. Do not add
+mission or orchestrator runtime fields to `.tmux-ide/workspace.yml` yet.
 
 ## Config — ~/.tmux-ide/config.json
 

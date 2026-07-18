@@ -1,5 +1,6 @@
 import { describe, it, beforeEach, afterEach, expect } from "bun:test";
-import { mkdtempSync, writeFileSync, readFileSync, rmSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import yaml from "js-yaml";
@@ -28,8 +29,19 @@ function writeIdeYml(obj) {
   );
 }
 
-function readIdeYml() {
-  return yaml.load(readFileSync(join(tmpDir, "ide.yml"), "utf-8"));
+function readWorkspaceYml() {
+  return yaml.load(readFileSync(join(tmpDir, ".tmux-ide", "workspace.yml"), "utf-8"));
+}
+
+function readWorkspaceYmlAt(dir) {
+  return yaml.load(readFileSync(join(dir, ".tmux-ide", "workspace.yml"), "utf-8"));
+}
+
+function legacyProjection(workspace) {
+  return {
+    name: workspace.name,
+    rows: workspace.terminal.rows,
+  };
 }
 
 describe("config dump", () => {
@@ -50,29 +62,73 @@ describe("config set", () => {
     const output = JSON.parse(logged[0]);
     expect(output.ok).toBe(true);
     expect(output.value).toBe("new-name");
-    const saved = readIdeYml();
+    const saved = legacyProjection(readWorkspaceYml());
     expect(saved.name).toBe("new-name");
   });
 
   it("updates a nested value", async () => {
     writeIdeYml({ name: "test", rows: [{ panes: [{ title: "Shell" }] }] });
     await config(tmpDir, { json: true, action: "set", args: ["rows.0.panes.0.title", "Editor"] });
-    const saved = readIdeYml();
+    const saved = legacyProjection(readWorkspaceYml());
     expect(saved.rows[0].panes[0].title).toBe("Editor");
+  });
+
+  it("writes beside the winning nested workspace config instead of creating a root config", async () => {
+    execFileSync("git", ["init"], { cwd: tmpDir, stdio: "ignore" });
+    const appDir = join(tmpDir, "apps", "web");
+    const nestedDir = join(appDir, "src");
+    mkdirSync(join(appDir, ".tmux-ide"), { recursive: true });
+    mkdirSync(nestedDir, { recursive: true });
+    writeFileSync(
+      join(appDir, ".tmux-ide", "workspace.yml"),
+      "version: 1\nname: web\nterminal:\n  rows:\n    - panes:\n        - title: Shell\n",
+    );
+
+    await config(nestedDir, { json: true, action: "set", args: ["name", "renamed-web"] });
+
+    expect(readWorkspaceYmlAt(appDir).name).toBe("renamed-web");
+    expect(existsSync(join(tmpDir, ".tmux-ide", "workspace.yml"))).toBe(false);
+  });
+
+  it("writes beside the winning nested legacy config instead of creating a root config", async () => {
+    execFileSync("git", ["init"], { cwd: tmpDir, stdio: "ignore" });
+    const appDir = join(tmpDir, "apps", "api");
+    const nestedDir = join(appDir, "src");
+    mkdirSync(nestedDir, { recursive: true });
+    writeFileSync(join(appDir, "ide.yml"), "name: api\nrows:\n  - panes:\n      - title: Shell\n");
+
+    await config(nestedDir, { json: true, action: "set", args: ["name", "renamed-api"] });
+
+    expect(readWorkspaceYmlAt(appDir).name).toBe("renamed-api");
+    expect(existsSync(join(tmpDir, ".tmux-ide", "workspace.yml"))).toBe(false);
   });
 
   it("coerces boolean strings", async () => {
     writeIdeYml({ name: "test", rows: [{ panes: [{ title: "Shell" }] }] });
     await config(tmpDir, { json: true, action: "set", args: ["rows.0.panes.0.focus", "true"] });
-    const saved = readIdeYml();
+    const saved = legacyProjection(readWorkspaceYml());
     expect(saved.rows[0].panes[0].focus).toBe(true);
   });
 
   it("coerces numeric strings", async () => {
     writeIdeYml({ name: "test", rows: [{ panes: [{ title: "Shell" }] }] });
-    await config(tmpDir, { json: true, action: "set", args: ["rows.0.panes.0.width", "120"] });
-    const saved = readIdeYml();
-    expect(saved.rows[0].panes[0].width).toBe(120);
+    await config(tmpDir, {
+      json: true,
+      action: "set",
+      args: ["rows.0.panes.0.env.PORT", "120"],
+    });
+    const saved = legacyProjection(readWorkspaceYml());
+    expect(saved.rows[0].panes[0].env.PORT).toBe(120);
+  });
+
+  it("rejects unsupported pane fields instead of reporting a lossy set", async () => {
+    writeIdeYml({ name: "test", rows: [{ panes: [{ title: "Shell" }] }] });
+
+    await expect(
+      config(tmpDir, { json: true, action: "set", args: ["rows.0.panes.0.width", "120"] }),
+    ).rejects.toMatchObject({
+      code: "LEGACY_CONFIG_MUTATION_UNSUPPORTED",
+    });
   });
 });
 
@@ -88,7 +144,7 @@ describe("config add-pane", () => {
     expect(output.ok).toBe(true);
     expect(output.pane.title).toBe("Tests");
     expect(output.pane.command).toBe("pnpm test");
-    const saved = readIdeYml();
+    const saved = legacyProjection(readWorkspaceYml());
     expect(saved.rows[0].panes.length).toBe(2);
     expect(saved.rows[0].panes[1].title).toBe("Tests");
   });
@@ -100,7 +156,7 @@ describe("config add-pane", () => {
       action: "add-pane",
       args: ["--row", "0", "--title", "Wide", "--size", "60%"],
     });
-    const saved = readIdeYml();
+    const saved = legacyProjection(readWorkspaceYml());
     expect(saved.rows[0].panes[1].size).toBe("60%");
   });
 });
@@ -119,7 +175,7 @@ describe("config remove-pane", () => {
     const output = JSON.parse(logged[0]);
     expect(output.ok).toBe(true);
     expect(output.removed.title).toBe("B");
-    const saved = readIdeYml();
+    const saved = legacyProjection(readWorkspaceYml());
     expect(saved.rows[0].panes.length).toBe(2);
     expect(saved.rows[0].panes[0].title).toBe("A");
     expect(saved.rows[0].panes[1].title).toBe("C");
@@ -133,7 +189,7 @@ describe("config add-row", () => {
     const output = JSON.parse(logged[0]);
     expect(output.ok).toBe(true);
     expect(output.row).toBe(1);
-    const saved = readIdeYml();
+    const saved = legacyProjection(readWorkspaceYml());
     expect(saved.rows.length).toBe(2);
     expect(saved.rows[1].panes).toEqual([{ title: "Shell" }]);
   });
@@ -141,20 +197,20 @@ describe("config add-row", () => {
   it("creates row with size", async () => {
     writeIdeYml({ name: "test", rows: [{ panes: [{ title: "Shell" }] }] });
     await config(tmpDir, { json: true, action: "add-row", args: ["--size", "30%"] });
-    const saved = readIdeYml();
+    const saved = legacyProjection(readWorkspaceYml());
     expect(saved.rows[1].size).toBe("30%");
   });
 
   it("initializes rows array when it doesn't exist", async () => {
     writeIdeYml({ name: "test" });
-    await config(tmpDir, { json: true, action: "add-row", args: [] });
-    const saved = readIdeYml();
-    expect(saved.rows.length).toBe(1);
+    await expect(config(tmpDir, { json: true, action: "add-row", args: [] })).rejects.toThrow(
+      /Invalid legacy ide\.yml/,
+    );
   });
 });
 
 describe("config enable-team", () => {
-  it("assigns roles to Claude panes", async () => {
+  it("rejects legacy-only team metadata instead of dropping it", async () => {
     writeIdeYml({
       name: "my-app",
       rows: [
@@ -167,19 +223,14 @@ describe("config enable-team", () => {
         },
       ],
     });
-    await config(tmpDir, { json: true, action: "enable-team", args: [] });
-    const output = JSON.parse(logged[0]);
-    expect(output.ok).toBe(true);
-    expect(output.team.name).toBe("my-app");
-    const saved = readIdeYml();
-    expect(saved.rows[0].panes[0].role).toBe("lead");
-    expect(saved.rows[0].panes[1].role).toBe("teammate");
-    expect(saved.rows[0].panes[2].role).toBe(undefined);
+    await expect(config(tmpDir, { json: true, action: "enable-team", args: [] })).rejects.toThrow(
+      /legacy-only fields/,
+    );
   });
 });
 
 describe("config disable-team", () => {
-  it("removes team and role/task fields", async () => {
+  it("rejects mutation when legacy config already contains unsupported team fields", async () => {
     writeIdeYml({
       name: "my-app",
       team: { name: "my-app" },
@@ -192,14 +243,8 @@ describe("config disable-team", () => {
         },
       ],
     });
-    await config(tmpDir, { json: true, action: "disable-team", args: [] });
-    const output = JSON.parse(logged[0]);
-    expect(output.ok).toBe(true);
-    expect(output.disabled).toBe(true);
-    const saved = readIdeYml();
-    expect(saved.team).toBe(undefined);
-    expect(saved.rows[0].panes[0].role).toBe(undefined);
-    expect(saved.rows[0].panes[1].role).toBe(undefined);
-    expect(saved.rows[0].panes[1].task).toBe(undefined);
+    await expect(config(tmpDir, { json: true, action: "disable-team", args: [] })).rejects.toThrow(
+      /unsupported fields/,
+    );
   });
 });

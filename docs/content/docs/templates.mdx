@@ -1,28 +1,29 @@
 ---
 title: Templates
-description: Pre-built ide.yml configs for common stacks
+description: Pre-built workspace.yml configs for common stacks
 ---
 
-tmux-ide ships with templates for common setups. Copy these into your project as `ide.yml` and adjust to your needs.
+tmux-ide ships with templates for common setups. `tmux-ide init --template <name>` writes them to `.tmux-ide/workspace.yml`; adjust the generated file to your needs.
 
 ## Default
 
 A minimal setup with two Claude panels and a shell.
 
 ```yaml
+version: 1
 name: my-project
 
-rows:
-  - size: 70%
-    panes:
-      - title: Claude 1
-        command: claude
-      - title: Claude 2
-        command: claude
-
-  - panes:
-      - title: Dev Server
-      - title: Shell
+terminal:
+  rows:
+    - size: 70%
+      panes:
+        - title: Claude 1
+          command: claude
+        - title: Claude 2
+          command: claude
+    - panes:
+        - title: Dev Server
+        - title: Shell
 ```
 
 ## Next.js
@@ -30,22 +31,24 @@ rows:
 Three Claude panels with a Next.js dev server.
 
 ```yaml
+version: 1
 name: my-app
+before: pnpm install
 
-rows:
-  - size: 70%
-    panes:
-      - title: Claude 1 — feature
-        command: claude
-      - title: Claude 2 — review
-        command: claude
-      - title: Claude 3 — explore
-        command: claude
-
-  - panes:
-      - title: Next.js
-        command: pnpm dev
-      - title: Shell
+terminal:
+  rows:
+    - size: 70%
+      panes:
+        - title: Claude 1 — feature
+          command: claude
+        - title: Claude 2 — review
+          command: claude
+        - title: Claude 3 — explore
+          command: claude
+    - panes:
+        - title: Next.js
+          command: pnpm dev
+        - title: Shell
 ```
 
 ## Next.js + Convex
@@ -53,24 +56,26 @@ rows:
 Full-stack setup with Next.js frontend and Convex backend.
 
 ```yaml
+version: 1
 name: my-app
+before: pnpm install
 
-rows:
-  - size: 70%
-    panes:
-      - title: Claude 1 — feature
-        command: claude
-      - title: Claude 2 — review
-        command: claude
-      - title: Claude 3 — explore
-        command: claude
-
-  - panes:
-      - title: Next.js
-        command: pnpm dev
-      - title: Convex
-        command: npx convex dev
-      - title: Shell
+terminal:
+  rows:
+    - size: 70%
+      panes:
+        - title: Claude 1 — feature
+          command: claude
+        - title: Claude 2 — review
+          command: claude
+        - title: Claude 3 — explore
+          command: claude
+    - panes:
+        - title: Next.js
+          command: pnpm dev
+        - title: Convex
+          command: npx convex dev
+        - title: Shell
 ```
 
 ## Vite
@@ -78,21 +83,23 @@ rows:
 Two Claude panels with a Vite dev server.
 
 ```yaml
+version: 1
 name: my-app
+before: pnpm install
 
-rows:
-  - size: 70%
-    panes:
-      - title: Claude 1
-        command: claude
-      - title: Claude 2
-        command: claude
-
-  - panes:
-      - title: Vite
-        command: pnpm dev
-      - title: Shell
-        focus: true
+terminal:
+  rows:
+    - size: 70%
+      panes:
+        - title: Claude 1
+          command: claude
+        - title: Claude 2
+          command: claude
+    - panes:
+        - title: Vite
+          command: pnpm dev
+        - title: Shell
+          focus: true
 ```
 
 ## Go
@@ -100,55 +107,52 @@ rows:
 Two Claude panels with a Go server.
 
 ```yaml
+version: 1
 name: my-app
+before: go mod download
 
-rows:
-  - size: 70%
-    panes:
-      - title: Claude 1
-        command: claude
-      - title: Claude 2
-        command: claude
-
-  - panes:
-      - title: Go
-        command: go run .
-      - title: Shell
-        focus: true
+terminal:
+  rows:
+    - size: 70%
+      panes:
+        - title: Claude 1
+          command: claude
+        - title: Claude 2
+          command: claude
+    - panes:
+        - title: Go
+          command: go run .
+        - title: Shell
+          focus: true
 ```
 
 ## Agent Team
 
-A lead-focused layout with two teammate-ready Claude panes. See [Task system](/docs/task-system) for how agent teams and dispatch work.
+A lead-focused layout with two teammate-ready Claude panes. Mission runtime wiring is future work for the workspace config model.
 
 ```yaml
+version: 1
 name: my-project
 
-team:
-  name: my-project
-
-rows:
-  - size: 70%
-    panes:
-      - title: Lead
-        command: claude
-        role: lead
-        focus: true
-      - title: Teammate 1
-        command: claude
-        role: teammate
-      - title: Teammate 2
-        command: claude
-        role: teammate
-
-  - panes:
-      - title: Dev Server
-      - title: Shell
+terminal:
+  rows:
+    - size: 70%
+      panes:
+        - title: Lead
+          command: claude
+          focus: true
+        - title: Teammate 1
+          command: claude
+        - title: Teammate 2
+          command: claude
+    - panes:
+        - title: Dev Server
+        - title: Shell
 ```
 
 ## Missions Template
 
-Mission-mode agent team with a lead, specialty-based workers, validation, research, and shell access.
+Mission-ready pane layout with a lead, worker panes, validation, research, and shell access. The workspace file declares layout only; mission runtime wiring is future work.
 
 ```bash
 tmux-ide init --template missions
@@ -156,8 +160,7 @@ tmux-ide init --template missions
 
 Creates:
 
-- `ide.yml` with 6 panes: Lead, Frontend, Backend, Validator, Researcher, Shell
-- `orchestrator.dispatch_mode: missions`
+- `.tmux-ide/workspace.yml` with 6 panes: Lead, Frontend, Backend, Validator, Researcher, Shell
 - `.tmux-ide/skills/` with 5 skill files
 - `.tmux-ide/library/` for shared architecture and learnings
 - `AGENTS.md` with project boundaries and agent instructions
@@ -165,47 +168,27 @@ Creates:
 Full template:
 
 ```yaml
+version: 1
 name: project-name
 
-team:
-  name: missions
-
-rows:
-  - size: 70%
-    panes:
-      - title: Lead
-        command: claude
-        role: lead
-        focus: true
-      - title: Frontend
-        command: claude
-        role: teammate
-        specialty: frontend
-      - title: Backend
-        command: claude
-        role: teammate
-        specialty: backend
-
-  - size: 30%
-    panes:
-      - title: Validator
-        command: claude
-        role: validator
-        skill: reviewer
-      - title: Researcher
-        command: claude
-        role: researcher
-        specialty: researcher
-        skill: researcher
-      - title: Shell
-
-orchestrator:
-  enabled: true
-  auto_dispatch: true
-  dispatch_mode: missions
-  poll_interval: 5000
-  stall_timeout: 300000
-  master_pane: Lead
+terminal:
+  rows:
+    - size: 70%
+      panes:
+        - title: Lead
+          command: claude
+          focus: true
+        - title: Frontend
+          command: claude
+        - title: Backend
+          command: claude
+    - size: 30%
+      panes:
+        - title: Validator
+          command: claude
+        - title: Researcher
+          command: claude
+        - title: Shell
 ```
 
 ## Agent Team — Monorepo
@@ -213,37 +196,31 @@ orchestrator:
 Specialized teammate-ready panes with per-app working directories.
 
 ```yaml
+version: 1
 name: my-monorepo
+before: pnpm install
 
-team:
-  name: my-monorepo
-
-rows:
-  - size: 70%
-    panes:
-      - title: Lead — Architect
-        command: claude
-        role: lead
-        focus: true
-      - title: Frontend Agent
-        command: claude
-        role: teammate
-        task: "Work on the frontend application"
-        dir: apps/web
-      - title: Backend Agent
-        command: claude
-        role: teammate
-        task: "Work on the backend services"
-        dir: apps/api
-
-  - panes:
-      - title: Frontend
-        command: pnpm dev
-        dir: apps/web
-      - title: Backend
-        command: pnpm dev
-        dir: apps/api
-      - title: Shell
+terminal:
+  rows:
+    - size: 70%
+      panes:
+        - title: Lead — Architect
+          command: claude
+          focus: true
+        - title: Frontend Agent
+          command: claude
+          dir: apps/web
+        - title: Backend Agent
+          command: claude
+          dir: apps/api
+    - panes:
+        - title: Frontend
+          command: pnpm dev
+          dir: apps/web
+        - title: Backend
+          command: pnpm dev
+          dir: apps/api
+        - title: Shell
 ```
 
 ## Custom Examples
@@ -251,40 +228,42 @@ rows:
 ### Python / FastAPI
 
 ```yaml
+version: 1
 name: my-api
 
-rows:
-  - size: 70%
-    panes:
-      - title: Claude 1
-        command: claude
-      - title: Claude 2
-        command: claude
-
-  - panes:
-      - title: FastAPI
-        command: uvicorn main:app --reload
-      - title: Shell
+terminal:
+  rows:
+    - size: 70%
+      panes:
+        - title: Claude 1
+          command: claude
+        - title: Claude 2
+          command: claude
+    - panes:
+        - title: FastAPI
+          command: uvicorn main:app --reload
+        - title: Shell
 ```
 
 ### Monorepo
 
 ```yaml
+version: 1
 name: my-monorepo
 
-rows:
-  - size: 60%
-    panes:
-      - title: Claude — frontend
-        command: claude
-      - title: Claude — backend
-        command: claude
-
-  - size: 40%
-    panes:
-      - title: Frontend
-        command: cd apps/web && pnpm dev
-      - title: Backend
-        command: cd apps/api && pnpm dev
-      - title: Shell
+terminal:
+  rows:
+    - size: 60%
+      panes:
+        - title: Claude — frontend
+          command: claude
+        - title: Claude — backend
+          command: claude
+    - size: 40%
+      panes:
+        - title: Frontend
+          command: cd apps/web && pnpm dev
+        - title: Backend
+          command: cd apps/api && pnpm dev
+        - title: Shell
 ```

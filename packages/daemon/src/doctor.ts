@@ -8,6 +8,7 @@ import { discoverAgents, presentAgents, type DiscoveredAgent } from "./lib/agent
 import { findCompiledTui, isBunAvailable } from "./tui/compiled.ts";
 import { claudeSettingsPath } from "./tui/integrations/claude.ts";
 import { readNotificationPrefs, resolveNativeMacosNotifierPath } from "./tui/chrome/notify.ts";
+import { resolveConfig } from "./lib/resolved-config.ts";
 
 interface CheckResult {
   label: string;
@@ -177,11 +178,25 @@ export async function doctor({
   );
 
   checks.push(
-    check("ide.yml exists", () => {
-      const path = resolve(".", "ide.yml");
-      if (!existsSync(path)) throw new Error("not found in current directory");
-      return "found";
-    }),
+    await (async (): Promise<CheckResult> => {
+      try {
+        const resolved = await resolveConfig(resolve("."));
+        if (resolved.kind === "none") throw new Error("not found in current directory");
+        return {
+          label: "workspace config exists",
+          pass: true,
+          detail: resolved.kind === "legacy" ? "legacy ide.yml compatibility" : "found",
+          optional: false,
+        };
+      } catch (e) {
+        return {
+          label: "workspace config exists",
+          pass: false,
+          detail: (e as Error).message,
+          optional: false,
+        };
+      }
+    })(),
   );
 
   checks.push(

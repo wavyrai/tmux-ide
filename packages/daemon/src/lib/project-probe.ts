@@ -12,6 +12,7 @@ import { basename, isAbsolute, resolve } from "node:path";
 import {
   defaultProjectResolverIo,
   resolveProject,
+  type ProjectConfigKind,
   type ProjectResolverIo,
 } from "./project-resolver.ts";
 
@@ -19,6 +20,10 @@ export interface ProjectProbe {
   name: string;
   dir: string;
   hasIdeYml: boolean;
+  hasWorkspaceConfig: boolean;
+  configKind: ProjectConfigKind;
+  configPath: string | null;
+  ideConfigPath: string | null;
   gitOrigin: string | null;
   gitBranch: string | null;
 }
@@ -75,6 +80,10 @@ export async function probeProject(dir: string, io: ProbeIo = realIo): Promise<P
     // caller path, while canonical roots live on ProjectResolution.
     dir: absoluteDir,
     hasIdeYml: resolution.hasLegacyConfigAtInput,
+    hasWorkspaceConfig: resolution.config.kind === "workspace",
+    configKind: resolution.config.kind,
+    configPath: resolution.config.path,
+    ideConfigPath: resolution.legacyConfigPath,
     // Treat empty string as null — branch --show-current returns "" on a
     // detached HEAD.
     gitOrigin: gitOrigin && gitOrigin.length > 0 ? gitOrigin : null,

@@ -108,39 +108,42 @@ the optional front-door flag in `~/.tmux-ide/config.json`:
 { "app": { "frontDoor": true } }
 ```
 
-It's opt-in — `ide.yml` auto-launch and `tmux-ide team` are unaffected. See
+It's opt-in — project config auto-launch and `tmux-ide team` are unaffected. See
 [Home, sidebar & panels](/docs/app-surfaces#the-unified-app--tmux-ide-app) and
 [What's new in 2.7](/docs/release-2-7-0).
 
-## Optional: describe a layout with ide.yml
+## Optional: describe a layout with workspace.yml
 
 Adopt works on sessions you launch however you like. If you'd rather have
-tmux-ide build the layout, scaffold an `ide.yml`:
+tmux-ide build the layout, scaffold `.tmux-ide/workspace.yml`:
 
 ```bash
-tmux-ide init          # auto-detects your stack and writes ide.yml
-tmux-ide               # launch the session from ide.yml
+tmux-ide init          # auto-detects your stack and writes .tmux-ide/workspace.yml
+tmux-ide               # launch the session from workspace.yml
 ```
 
 A minimal config:
 
 ```yaml
+version: 1
 name: my-app
-sidebar: true # sugar for the nav column (prefix b / ⌥b)
 
-rows:
-  - size: 70%
-    panes:
-      - title: Claude
-        command: claude
-        focus: true
-      - title: Shell
-  - panes:
-      - title: Dev Server
-        command: pnpm dev
+terminal:
+  rows:
+    - size: 70%
+      panes:
+        - title: Claude
+          command: claude
+          focus: true
+        - title: Shell
+    - panes:
+        - title: Dev Server
+          command: pnpm dev
 ```
 
-Sessions launched from `ide.yml` are adopted automatically. See
+Sessions launched from `.tmux-ide/workspace.yml` are adopted automatically. Legacy
+`ide.yml` files remain compatible; use `tmux-ide migrate --dry-run` to preview
+conversion. See
 [Configuration](/docs/configuration) for the full format.
 
 ## Where to go next

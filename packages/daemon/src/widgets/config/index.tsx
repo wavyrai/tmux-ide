@@ -15,7 +15,8 @@ import {
   validateSetupConfig,
   type TreeNode,
 } from "../lib/config-model.ts";
-import { readConfig, writeConfig } from "../../lib/yaml-io.ts";
+import { writeConfig } from "../../lib/yaml-io.ts";
+import { resolveProjectConfigContext } from "../../lib/config-context.ts";
 import { hasSession } from "@tmux-ide/tmux-bridge";
 import type { IdeConfig } from "../../schemas/ide-config.ts";
 import { ConfigTree } from "../setup/config-tree.tsx";
@@ -26,7 +27,7 @@ import { HelpOverlay, type WidgetKey } from "../lib/help-overlay.tsx";
 /** Settings keys beyond the shared grammar — listed in the `?` overlay. The
  *  layout tree adds its own j/k/enter (they follow the grammar). */
 const WIDGET_KEYS: WidgetKey[] = [
-  { key: "tab / 1–4", label: "switch tab" },
+  { key: "tab / 1–2", label: "switch tab" },
   { key: "a", label: "add pane (layout)" },
   { key: "d", label: "delete row/pane (layout)" },
   { key: "^S", label: "save" },
@@ -43,16 +44,21 @@ const { values } = parseArgs({
 
 const dir = values.dir ?? process.cwd();
 const themeConfig = values.theme ? JSON.parse(values.theme) : undefined;
+const configContext = await resolveProjectConfigContext(dir);
+const configWriteRoot = configContext.configWriteRoot;
+if (!configContext.resolved?.launchConfig) {
+  console.error("No workspace config found. Run 'tmux-ide init' first.");
+  process.exit(1);
+}
+const initialConfig = configContext.resolved.launchConfig;
 
 function toRGBA(c: RGBAType): RGBA {
   return RGBA.fromInts(c.r, c.g, c.b, c.a);
 }
 
-type Tab = "layout" | "team" | "orchestrator" | "theme";
+type Tab = "layout" | "theme";
 const TABS: { id: Tab; label: string }[] = [
   { id: "layout", label: "Layout" },
-  { id: "team", label: "Team" },
-  { id: "orchestrator", label: "Orch." },
   { id: "theme", label: "Theme" },
 ];
 
@@ -65,13 +71,11 @@ function inferFieldType(path: string[]): { type: FieldType; enumValues?: string[
   }
 
   // Enum fields
-  if (last === "role") return { type: "enum", enumValues: ["lead", "teammate", "planner"] };
   if (last === "type")
     return {
       type: "enum",
-      enumValues: ["explorer", "changes", "preview", "tasks", "costs", "config", "mission-control"],
+      enumValues: ["explorer", "changes", "preview", "setup", "config", "sidebar"],
     };
-  if (last === "dispatch_mode") return { type: "enum", enumValues: ["tasks", "goals"] };
 
   // Size fields
   if (last === "size") return { type: "size" };
@@ -110,16 +114,6 @@ render(
     const theme = createTheme(themeConfig, getAppConfig().theme);
     const dimensions = useTerminalDimensions();
 
-    // Load config
-    let initialConfig: IdeConfig;
-    try {
-      const result = readConfig(dir);
-      initialConfig = result.config;
-    } catch {
-      console.error("No ide.yml found. Run 'tmux-ide init' first.");
-      process.exit(1);
-    }
-
     const [config, setConfig] = createSignal<IdeConfig>(initialConfig);
     const [savedConfig, setSavedConfig] = createSignal(JSON.stringify(initialConfig));
     const [activeTab, setActiveTab] = createSignal<Tab>("layout");
@@ -131,7 +125,7 @@ render(
     const validation = createMemo(() => validateSetupConfig(config()));
 
     function handleSave() {
-      writeConfig(dir, config());
+      writeConfig(configWriteRoot, config());
       setSavedConfig(JSON.stringify(config()));
       setStatusMsg("Saved");
       setTimeout(() => setStatusMsg(null), 2000);
@@ -214,7 +208,7 @@ render(
         evt.preventDefault();
       } else if (evt.ctrl && evt.name === "r") {
         handleSave();
-        const sessionName = config().name ?? dir.split("/").pop() ?? "ide";
+        const sessionName = config().name ?? configContext.sessionName;
         if (hasSession(sessionName)) {
           const { execFileSync } = require("node:child_process");
           try {
@@ -228,98 +222,10 @@ render(
         setActiveTab("layout");
         evt.preventDefault();
       } else if (evt.name === "2") {
-        setActiveTab("team");
-        evt.preventDefault();
-      } else if (evt.name === "3") {
-        setActiveTab("orchestrator");
-        evt.preventDefault();
-      } else if (evt.name === "4") {
         setActiveTab("theme");
         evt.preventDefault();
       }
     });
-
-    // Team panel: simple form for team config
-    function TeamPanel() {
-      const cfg = config();
-      const teamEnabled = !!cfg.team;
-      const teamName = cfg.team?.name ?? "";
-
-      const panes: { row: number; pane: number; title: string; role: string | undefined }[] = [];
-      cfg.rows.forEach((row, ri) => {
-        row.panes.forEach((p, pi) => {
-          panes.push({ row: ri, pane: pi, title: p.title ?? `Row ${ri} Pane ${pi}`, role: p.role });
-        });
-      });
-
-      return (
-        <box paddingLeft={1}>
-          <text fg={toRGBA(theme.accent)} attributes={TextAttributes.BOLD}>
-            Team Configuration
-          </text>
-          <box paddingTop={1}>
-            <text fg={toRGBA(theme.fg)}>
-              Team: {teamEnabled ? `enabled (${teamName})` : "disabled"}
-            </text>
-          </box>
-          <box paddingTop={1}>
-            <text fg={toRGBA(theme.fgMuted)}>
-              {teamEnabled
-                ? "Use 'tmux-ide config disable-team' to disable"
-                : "Use 'tmux-ide config enable-team --name <N>' to enable"}
-            </text>
-          </box>
-          <box paddingTop={1}>
-            <text fg={toRGBA(theme.accent)} attributes={TextAttributes.BOLD}>
-              Pane Roles
-            </text>
-          </box>
-          {panes.map((p) => (
-            <box paddingLeft={1}>
-              <text fg={toRGBA(theme.fg)}>
-                {p.title}: {p.role ?? "none"}
-              </text>
-            </box>
-          ))}
-        </box>
-      );
-    }
-
-    // Orchestrator panel: display orchestrator settings
-    function OrchestratorPanel() {
-      const cfg = config();
-      const orch = cfg.orchestrator;
-      const fields: [string, string][] = [
-        ["enabled", String(orch?.enabled ?? false)],
-        ["auto_dispatch", String(orch?.auto_dispatch ?? true)],
-        ["dispatch_mode", orch?.dispatch_mode ?? "tasks"],
-        ["poll_interval", String(orch?.poll_interval ?? 5000)],
-        ["stall_timeout", String(orch?.stall_timeout ?? 300000)],
-        ["max_concurrent_agents", String(orch?.max_concurrent_agents ?? 10)],
-        ["widgets", String(orch?.widgets ?? false)],
-      ];
-
-      return (
-        <box paddingLeft={1}>
-          <text fg={toRGBA(theme.accent)} attributes={TextAttributes.BOLD}>
-            Orchestrator Settings
-          </text>
-          <box paddingTop={1}>
-            {fields.map(([key, val]) => (
-              <box flexDirection="row" gap={1}>
-                <text fg={toRGBA(theme.fgMuted)}>{key!.padEnd(24)}</text>
-                <text fg={toRGBA(theme.fg)}>{val}</text>
-              </box>
-            ))}
-          </box>
-          <box paddingTop={1}>
-            <text fg={toRGBA(theme.fgMuted)}>
-              Edit via Layout tab or: tmux-ide config set orchestrator.enabled true
-            </text>
-          </box>
-        </box>
-      );
-    }
 
     // Theme panel: display theme settings
     function ThemePanel() {
@@ -422,12 +328,6 @@ render(
                         theme={theme}
                       />
                     </Show>
-                    <Show when={activeTab() === "team"}>
-                      <TeamPanel />
-                    </Show>
-                    <Show when={activeTab() === "orchestrator"}>
-                      <OrchestratorPanel />
-                    </Show>
                     <Show when={activeTab() === "theme"}>
                       <ThemePanel />
                     </Show>
@@ -462,7 +362,7 @@ render(
               )}
               {statusMsg() ? <text fg={toRGBA(theme.accent)}>{statusMsg()}</text> : null}
               <text fg={toRGBA(theme.fgMuted)}>Tab:switch</text>
-              <text fg={toRGBA(theme.fgMuted)}>1-4:tabs</text>
+              <text fg={toRGBA(theme.fgMuted)}>1-2:tabs</text>
               <text fg={toRGBA(theme.fgMuted)}>Ctrl+R:restart</text>
               <text fg={toRGBA(theme.fgMuted)}>?:help</text>
               <text fg={toRGBA(theme.fgMuted)}>q:quit</text>

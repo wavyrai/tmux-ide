@@ -52,8 +52,8 @@ describe.skipIf(skipOnWin || isBun)("NodePtyAdapter", () => {
   it("spawn() returns a process that emits data and exit", async () => {
     const adapter = new NodePtyAdapter({ skipHelperEnsure: true });
     const proc = await adapter.spawn({
-      shell: "/bin/echo",
-      args: ["NodePtyAdapter-ok"],
+      shell: "/bin/sh",
+      args: ["-lc", "printf NodePtyAdapter-ok; sleep 0.1"],
       cwd: workDir,
       cols: 80,
       rows: 24,
@@ -61,19 +61,39 @@ describe.skipIf(skipOnWin || isBun)("NodePtyAdapter", () => {
     });
     const data: Buffer[] = [];
     const exitEvents: Array<{ exitCode: number; signal: number | null }> = [];
-    proc.onData((b) => data.push(b));
-    proc.onExit((e) => exitEvents.push(e));
-    await new Promise<void>((resolve) => {
-      const watchdog = setTimeout(() => resolve(), 2000);
-      proc.onExit(() => {
-        clearTimeout(watchdog);
-        resolve();
-      });
+    let maybeDone: (() => void) | null = null;
+    let dataSeen = false;
+    proc.onData((b) => {
+      data.push(b);
+      if (Buffer.concat(data).toString("utf8").includes("NodePtyAdapter-ok")) {
+        dataSeen = true;
+        maybeDone?.();
+      }
     });
+    proc.onExit((e) => {
+      exitEvents.push(e);
+      maybeDone?.();
+    });
+    await new Promise<void>((resolve, reject) => {
+      const watchdog = setTimeout(() => {
+        reject(
+          new Error(
+            `timed out waiting for PTY data and exit; dataSeen=${dataSeen} exitEvents=${exitEvents.length}`,
+          ),
+        );
+      }, 10_000);
+      maybeDone = () => {
+        if (dataSeen && exitEvents.length > 0) {
+          clearTimeout(watchdog);
+          resolve();
+        }
+      };
+    });
+    maybeDone = null;
     const combined = Buffer.concat(data).toString("utf8");
     expect(combined).toContain("NodePtyAdapter-ok");
     expect(exitEvents.length).toBeGreaterThanOrEqual(1);
-  });
+  }, 15_000);
 
   it("spawnSync() returns a usable process immediately", () => {
     const adapter = new NodePtyAdapter({ skipHelperEnsure: true });

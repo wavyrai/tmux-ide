@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import {
   existsSync,
+  mkdirSync,
   mkdtempSync,
   readFileSync,
   realpathSync,
@@ -216,6 +217,46 @@ describe("REST /api/projects", () => {
       .request(`/api/projects/${created.project.name}/probe`, { method: "POST" })
       .then((r) => r.json() as Promise<{ project: { hasIdeYml: boolean } }>);
     expect(probed.project.hasIdeYml).toBe(true);
+  });
+
+  it("POST /api/project/:name/config writes beside the nested winning config", async () => {
+    const root = mkdtempSync(join(tmpdir(), "tmux-ide-monorepo-"));
+    try {
+      const appDir = join(root, "apps", "api");
+      const nestedCwd = join(appDir, "src");
+      mkdirSync(nestedCwd, { recursive: true });
+      const canonicalAppDir = realpathSync(appDir);
+      writeFileSync(join(appDir, "ide.yml"), "name: api\nrows:\n  - panes:\n      - title: API\n");
+      const originalLegacy = readFileSync(join(appDir, "ide.yml"), "utf-8");
+      restoreTmux();
+      restoreTmux = _setTmuxRunner((args: string[]) => {
+        if (args[0] === "list-sessions") return "api";
+        if (args[0] === "display-message") return nestedCwd;
+        return "";
+      });
+
+      const app = createApp();
+      const res = await app.request("/api/project/api/config", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          name: "renamed-api",
+          rows: [{ panes: [{ title: "API", command: "pnpm dev" }] }],
+        }),
+      });
+
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as { configPath: string; configKind: string };
+      expect(body.configPath).toBe(join(canonicalAppDir, ".tmux-ide", "workspace.yml"));
+      expect(body.configKind).toBe("workspace");
+      expect(readFileSync(join(appDir, ".tmux-ide", "workspace.yml"), "utf-8")).toContain(
+        "name: renamed-api",
+      );
+      expect(readFileSync(join(appDir, "ide.yml"), "utf-8")).toBe(originalLegacy);
+      expect(existsSync(join(root, ".tmux-ide", "workspace.yml"))).toBe(false);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it("GET /api/projects/templates returns at least the bundled set", async () => {

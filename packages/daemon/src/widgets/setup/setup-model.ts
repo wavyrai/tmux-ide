@@ -144,40 +144,37 @@ export const PRESETS: LayoutPreset[] = [
   {
     id: "agent-team",
     label: "Agent Team",
-    description:
-      "Lead + 2 teammates on top, mission control/explorer/preview widgets below with orchestrator.",
+    description: "Lead + 2 teammates on top, changes/explorer/preview widgets below.",
     diagram: [
       "┌───────────┬───────────┬───────────┐",
       "│           │           │           │",
       "│   Lead    │ Teammate1 │ Teammate2 │  70%",
       "│           │           │           │",
       "├───────────┼───────────┴───────────┤",
-      "│  Mission  │  Explorer  │ Preview  │  30%",
-      "│  Control  │            │          │",
+      "│ Changes   │  Explorer  │ Preview  │  30%",
+      "│           │            │          │",
       "└───────────┴────────────┴──────────┘",
     ],
     buildConfig(name: string, _detected?: DetectedInfo): IdeConfig {
       return {
         name,
-        team: { name: name },
         rows: [
           {
             size: "70%",
             panes: [
-              { title: "Lead", command: "claude", role: "lead", focus: true, size: "33%" },
-              { title: "Teammate 1", command: "claude", role: "teammate", size: "34%" },
-              { title: "Teammate 2", command: "claude", role: "teammate" },
+              { title: "Lead", command: "claude", focus: true, size: "33%" },
+              { title: "Teammate 1", command: "claude", size: "34%" },
+              { title: "Teammate 2", command: "claude" },
             ],
           },
           {
             panes: [
-              { title: "Mission Control", type: "mission-control", size: "40%" },
+              { title: "Changes", type: "changes", size: "40%" },
               { title: "Explorer", type: "explorer", size: "30%" },
               { title: "Preview", type: "preview" },
             ],
           },
         ],
-        orchestrator: { enabled: true, auto_dispatch: true },
       };
     },
   },

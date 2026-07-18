@@ -452,16 +452,21 @@ render(() => {
 
   /**
    * PICKER MODE: bring a stopped project up detached, then switch to it and
-   * exit. An `ide.yml` project gets its full layout via `launch(dir, { attach:
+   * exit. A configured project gets its full layout via `launch(dir, { attach:
    * false })`; a plain project just needs a bare detached session. Mirrors
-   * ends in `pickerSwitch` (no main pane to drive). An `ide.yml` launch adopts
+   * ends in `pickerSwitch` (no main pane to drive). A configured launch adopts
    * itself; a bare detached session is adopted here.
    */
   function pickerLaunchAndSwitch(project: TeamProject) {
     // const-capture so the non-null narrowing survives into the closure below
     const dir = project.dir;
     if (!dir) return;
-    if (project.hasIdeYml) {
+    const hasProjectConfig =
+      project.configKind === "workspace" ||
+      project.configKind === "legacy" ||
+      project.hasWorkspaceConfig ||
+      project.hasIdeYml;
+    if (hasProjectConfig) {
       import("../../launch.ts")
         .then(({ launch }) => launch(dir, { attach: false }))
         .then(() => pickerSwitch(project.name))
@@ -504,7 +509,7 @@ render(() => {
   }
 
   /**
-   * Launch a project (standalone cockpit). When it has an `ide.yml`, run the
+   * Launch a project (standalone cockpit). When it has a project config, run the
    * full `tmux-ide` launch (builds the layout and attaches) — this blocks until
    * the user detaches, so we refresh and stay in the cockpit rather than exit.
    * Otherwise spin up a bare detached session so it appears in place.
@@ -513,7 +518,12 @@ render(() => {
     // const-capture so the non-null narrowing survives into the closure below
     const dir = project.dir;
     if (!dir) return;
-    if (project.hasIdeYml) {
+    const hasProjectConfig =
+      project.configKind === "workspace" ||
+      project.configKind === "legacy" ||
+      project.hasWorkspaceConfig ||
+      project.hasIdeYml;
+    if (hasProjectConfig) {
       withSuspendedTerminal(() => {
         try {
           execFileSync("tmux-ide", [], { cwd: dir, stdio: "inherit" });
@@ -1398,15 +1408,24 @@ render(() => {
                     when={activeProj()}
                     fallback={<text fg={toRGBA(theme.fgMuted)}>no project selected</text>}
                   >
-                    {/* header: name · dir · branch · ide.yml */}
+                    {/* header: name · dir · branch · config */}
                     <box flexDirection="row" gap={1} paddingRight={1}>
                       <text fg={toRGBA(theme.accent)} attributes={TextAttributes.BOLD}>
                         {activeProj()!.name}
                       </text>
                       <text fg={toRGBA(theme.fgMuted)}>{activeProj()!.dir ?? ""}</text>
                       <text fg={toRGBA(theme.fgMuted)}>{activeProj()!.gitBranch ?? ""}</text>
-                      <Show when={activeProj()!.hasIdeYml}>
-                        <text fg={toRGBA(theme.fgMuted)}>ide.yml</text>
+                      <Show
+                        when={
+                          activeProj()!.configKind === "workspace" ||
+                          activeProj()!.configKind === "legacy" ||
+                          activeProj()!.hasWorkspaceConfig ||
+                          activeProj()!.hasIdeYml
+                        }
+                      >
+                        <text fg={toRGBA(theme.fgMuted)}>
+                          {activeProj()!.configKind === "workspace" ? "workspace.yml" : "config"}
+                        </text>
                       </Show>
                     </box>
 

@@ -1,10 +1,13 @@
 import { createSignal, createMemo, Show } from "solid-js";
 import { RGBA, TextAttributes } from "@opentui/core";
 import { useKeyboard } from "@opentui/solid";
-import yaml from "js-yaml";
 import type { IdeConfig } from "../../schemas/ide-config.ts";
 import { validateConfig } from "../../validate.ts";
 import { writeConfig } from "../../lib/yaml-io.ts";
+import {
+  convertLegacyConfigToWorkspace,
+  workspaceConfigToYaml,
+} from "../../lib/legacy-config-migration.ts";
 import type { WidgetTheme, RGBA as RGBAType } from "../lib/theme.ts";
 
 function toRGBA(c: RGBAType): RGBA {
@@ -13,9 +16,13 @@ function toRGBA(c: RGBAType): RGBA {
 
 export type ReviewAction = "write" | "launch";
 
+export function reviewWorkspaceYaml(config: IdeConfig): string {
+  return workspaceConfigToYaml(convertLegacyConfigToWorkspace(config).workspace);
+}
+
 interface ReviewPanelProps {
   config: IdeConfig;
-  dir: string;
+  configWriteRoot: string;
   theme: WidgetTheme;
   onDone: (action: ReviewAction) => void;
   onBack: () => void;
@@ -26,9 +33,7 @@ export function ReviewPanel(props: ReviewPanelProps) {
 
   const theme = props.theme;
 
-  const yamlPreview = createMemo(() =>
-    yaml.dump(props.config, { lineWidth: -1, noRefs: true, quotingType: '"' }),
-  );
+  const yamlPreview = createMemo(() => reviewWorkspaceYaml(props.config));
 
   const errors = createMemo(() => validateConfig(props.config));
   const isValid = createMemo(() => errors().length === 0);
@@ -48,7 +53,7 @@ export function ReviewPanel(props: ReviewPanelProps) {
       evt.preventDefault();
     } else if (evt.name === "return") {
       if (!isValid()) return;
-      writeConfig(props.dir, props.config);
+      writeConfig(props.configWriteRoot, props.config);
       props.onDone(selectedAction() === 0 ? "write" : "launch");
       evt.preventDefault();
     }
@@ -66,7 +71,7 @@ export function ReviewPanel(props: ReviewPanelProps) {
       {/* YAML preview */}
       <box flexGrow={1} flexShrink={1}>
         <text fg={toRGBA(theme.fgMuted)} attributes={TextAttributes.BOLD}>
-          ide.yml preview:
+          workspace.yml preview:
         </text>
         <scrollbox>
           <text fg={toRGBA(theme.fg)}>{yamlPreview()}</text>
@@ -102,11 +107,11 @@ export function ReviewPanel(props: ReviewPanelProps) {
           onMouseDown={() => setSelectedAction(0)}
           onMouseUp={() => {
             if (!isValid()) return;
-            writeConfig(props.dir, props.config);
+            writeConfig(props.configWriteRoot, props.config);
             props.onDone("write");
           }}
         >
-          {selectedAction() === 0 ? ">" : " "} [ Write ide.yml ]
+          {selectedAction() === 0 ? ">" : " "} [ Write workspace.yml ]
         </text>
         <text
           fg={toRGBA(selectedAction() === 1 ? theme.accent : theme.fgMuted)}
@@ -114,7 +119,7 @@ export function ReviewPanel(props: ReviewPanelProps) {
           onMouseDown={() => setSelectedAction(1)}
           onMouseUp={() => {
             if (!isValid()) return;
-            writeConfig(props.dir, props.config);
+            writeConfig(props.configWriteRoot, props.config);
             props.onDone("launch");
           }}
         >

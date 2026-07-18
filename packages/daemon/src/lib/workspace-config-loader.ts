@@ -305,8 +305,7 @@ function validationIssues(error: {
 }
 
 /**
- * Load and validate the effective WorkspaceConfigV1 for `dir`. Legacy or
- * missing discovery is intentionally rejected until C03 adds compatibility.
+ * Load and validate the effective WorkspaceConfigV1 for `dir`.
  */
 export async function loadWorkspaceConfig(
   dir: string,
@@ -332,7 +331,7 @@ export async function loadWorkspaceConfig(
   if (resolution.config.kind !== "workspace") {
     const message =
       resolution.config.kind === "legacy"
-        ? `Found legacy config at ${resolution.config.path}; a .tmux-ide/workspace.yml config is required until C03 migration support is available`
+        ? `Found legacy config at ${resolution.config.path}; this loader requires .tmux-ide/workspace.yml`
         : `No .tmux-ide/workspace.yml config was found for ${resolution.inputDir}`;
     throw new WorkspaceConfigLoadError({
       code: "WORKSPACE_CONFIG_REQUIRED",

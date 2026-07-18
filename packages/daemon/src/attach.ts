@@ -1,14 +1,14 @@
 import { resolve } from "node:path";
-import { getSessionName } from "./lib/yaml-io.ts";
 import { outputError } from "./lib/output.ts";
 import { attachSession, getSessionState } from "@tmux-ide/tmux-bridge";
+import { resolveProjectConfigContext } from "./lib/config-context.ts";
 
 export async function attach(
   targetDir: string | undefined,
   { json: _json }: { json?: boolean } = {},
 ): Promise<void> {
   const dir = resolve(targetDir ?? ".");
-  const { name: session } = getSessionName(dir);
+  const { sessionName: session } = await resolveProjectConfigContext(dir);
   const state = getSessionState(session);
 
   if (!state.running) {
