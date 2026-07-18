@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   EventSequenceConflictError,
   createProjectRuntimeRepository,
@@ -242,6 +242,17 @@ describe("MissionRepository replay and persistence", () => {
     const detached = missions.get("mis_alpha")!;
     detached.tasks.tsk_setup!.title = "mutated";
     expect(missions.get("mis_alpha")?.tasks.tsk_setup?.title).toBe("Setup");
+  });
+
+  it("returns history and state from one event-log read in snapshot()", () => {
+    const { runtime, missions } = repository();
+    missions.create({ id: "mis_single", title: "Single", objective: "single read", actor });
+    const readEvents = vi.spyOn(runtime, "readEvents");
+    const snapshot = missions.snapshot();
+    expect(readEvents).toHaveBeenCalledTimes(1);
+    expect(snapshot.history.map((entry) => entry.sequence)).toEqual([1]);
+    expect(snapshot.state.sequence).toBe(1);
+    expect(snapshot.state.missions.mis_single?.title).toBe("Single");
   });
 
   it("reopens with byte-equivalent logical state and keeps multiple missions isolated", () => {
