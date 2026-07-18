@@ -111,7 +111,7 @@ function richHistory(): MissionHistoryEntry[] {
       agent: "agent/a",
       harness: "generic",
       model: "model/a",
-      terminal: "term-1",
+      terminal: "%7",
       session: "session-1",
       worktree: "worktrees/setup",
       actor,
@@ -220,7 +220,7 @@ function richHistory(): MissionHistoryEntry[] {
       attemptId: "att_finish",
       agent: "agent/a",
       harness: "generic",
-      terminal: "term-2",
+      terminal: "%25",
       session: "session-1",
       worktree: "worktrees/finish",
       actor,
@@ -550,7 +550,7 @@ describe("mission detail, proofs, and timeline projections", () => {
     expect(timeline).toHaveLength(26);
     expect(timeline[0]).toMatchObject({ sequence: 1, label: "Mission created", actor });
     expect(timeline.find((item) => item.attemptId === "att_setup")).toMatchObject({
-      refs: { terminal: "term-1", session: "session-1", worktree: "worktrees/setup" },
+      refs: { terminal: "%7", session: "session-1", worktree: "worktrees/setup" },
     });
     for (const item of timeline) expect(MissionTimelineEntrySchemaZ.parse(item)).toEqual(item);
   });

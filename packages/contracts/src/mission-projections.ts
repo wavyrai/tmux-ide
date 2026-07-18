@@ -9,6 +9,7 @@ import {
   MissionStatusSchemaZ,
   MissionTaskIdSchemaZ,
   MissionTaskStatusSchemaZ,
+  MissionTerminalReferenceSchemaZ,
 } from "./domain.ts";
 
 const TimestampSchemaZ = z.string().refine(
@@ -102,7 +103,7 @@ export const MissionAttemptSummarySchemaZ = z.strictObject({
   agent: MissionReferenceIdSchemaZ,
   harness: MissionReferenceIdSchemaZ,
   model: MissionReferenceIdSchemaZ.optional(),
-  terminal: MissionReferenceIdSchemaZ.optional(),
+  terminal: MissionTerminalReferenceSchemaZ.optional(),
   session: MissionReferenceIdSchemaZ.optional(),
   worktree: z.string().min(1).optional(),
   startedAt: TimestampSchemaZ,
@@ -136,7 +137,7 @@ export const TaskCardViewSchemaZ = z.strictObject({
     taskId: MissionTaskIdSchemaZ,
     attemptIds: UniqueStringArraySchemaZ(MissionAttemptIdSchemaZ),
     proofIds: UniqueStringArraySchemaZ(MissionProofIdSchemaZ),
-    terminal: MissionReferenceIdSchemaZ.optional(),
+    terminal: MissionTerminalReferenceSchemaZ.optional(),
     session: MissionReferenceIdSchemaZ.optional(),
     worktree: z.string().min(1).optional(),
   }),
@@ -203,7 +204,7 @@ export const MissionTimelineEntrySchemaZ = z.strictObject({
     taskId: MissionTaskIdSchemaZ.optional(),
     attemptId: MissionAttemptIdSchemaZ.optional(),
     proofId: MissionProofIdSchemaZ.optional(),
-    terminal: MissionReferenceIdSchemaZ.optional(),
+    terminal: MissionTerminalReferenceSchemaZ.optional(),
     session: MissionReferenceIdSchemaZ.optional(),
     worktree: z.string().min(1).optional(),
   }),

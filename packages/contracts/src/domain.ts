@@ -5,6 +5,7 @@ const TaskIdPattern = /^tsk_[A-Za-z0-9][A-Za-z0-9_-]{0,96}$/u;
 const AttemptIdPattern = /^att_[A-Za-z0-9][A-Za-z0-9_-]{0,96}$/u;
 const ProofIdPattern = /^prf_[A-Za-z0-9][A-Za-z0-9_-]{0,96}$/u;
 const ReferenceIdPattern = /^[A-Za-z0-9][A-Za-z0-9._:/@-]{0,127}$/u;
+const TmuxPaneIdPattern = /^%[0-9]{1,20}$/u;
 const TimestampSchemaZ = z.string().refine(
   (value) => {
     try {
@@ -42,6 +43,11 @@ export const MissionTaskIdSchemaZ = z.string().regex(TaskIdPattern);
 export const MissionAttemptIdSchemaZ = z.string().regex(AttemptIdPattern);
 export const MissionProofIdSchemaZ = z.string().regex(ProofIdPattern);
 export const MissionReferenceIdSchemaZ = z.string().regex(ReferenceIdPattern);
+export const MissionTerminalReferenceSchemaZ = z
+  .string()
+  .refine((value) => ReferenceIdPattern.test(value) || TmuxPaneIdPattern.test(value), {
+    message: "must be a mission reference id or canonical tmux pane id",
+  });
 
 export const MissionActorSchemaZ = z.strictObject({
   type: z.enum(["user", "system", "agent", "service"]),
@@ -270,7 +276,7 @@ const MissionEventSchemas = [
     agent: MissionReferenceIdSchemaZ,
     harness: MissionReferenceIdSchemaZ,
     model: MissionReferenceIdSchemaZ.optional(),
-    terminal: MissionReferenceIdSchemaZ.optional(),
+    terminal: MissionTerminalReferenceSchemaZ.optional(),
     session: MissionReferenceIdSchemaZ.optional(),
     worktree: z.string().min(1).optional(),
   }),
@@ -324,7 +330,7 @@ export const MissionAttemptSchemaZ = z.strictObject({
   agent: MissionReferenceIdSchemaZ,
   harness: MissionReferenceIdSchemaZ,
   model: MissionReferenceIdSchemaZ.optional(),
-  terminal: MissionReferenceIdSchemaZ.optional(),
+  terminal: MissionTerminalReferenceSchemaZ.optional(),
   session: MissionReferenceIdSchemaZ.optional(),
   worktree: z.string().min(1).optional(),
   status: MissionAttemptStatusSchemaZ,
@@ -471,6 +477,8 @@ export type MissionId = z.infer<typeof MissionIdSchemaZ>;
 export type MissionTaskId = z.infer<typeof MissionTaskIdSchemaZ>;
 export type MissionAttemptId = z.infer<typeof MissionAttemptIdSchemaZ>;
 export type MissionProofId = z.infer<typeof MissionProofIdSchemaZ>;
+export type MissionReferenceId = z.infer<typeof MissionReferenceIdSchemaZ>;
+export type MissionTerminalReference = z.infer<typeof MissionTerminalReferenceSchemaZ>;
 export type MissionActor = z.infer<typeof MissionActorSchemaZ>;
 export type MissionSource = z.infer<typeof MissionSourceSchemaZ>;
 export type MissionStatus = z.infer<typeof MissionStatusSchemaZ>;
