@@ -74,12 +74,6 @@ export const CANONICAL_PANEL_VIEWS: readonly WorkspaceFullPanelView[] = [
   { id: "missions", title: "Missions", panel: "missions" },
 ];
 
-export const MISSIONS_PLACEHOLDER_LINES = [
-  "Mission workspace view",
-  "Mission state, proof history, board, and timeline projections are ready.",
-  "The interactive Missions board arrives in C10; this placeholder does not start harnesses or read mission runtime data.",
-] as const;
-
 export const HOSTED_VIEW_SHORTCUT_KEYS = [
   "f1",
   "f2",

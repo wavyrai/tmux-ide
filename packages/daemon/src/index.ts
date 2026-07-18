@@ -18,6 +18,7 @@ export {
   type MissionAttempt,
   type MissionHistoryEntry,
   type MissionProjectState,
+  type MissionRepositorySnapshot,
   type MissionSnapshot,
   type MissionTask,
 } from "./lib/mission-repository.ts";

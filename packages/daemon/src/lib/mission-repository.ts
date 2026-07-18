@@ -70,6 +70,11 @@ export interface MissionMutationOptions {
   expectedPreviousSequence?: number;
 }
 
+export interface MissionRepositorySnapshot {
+  history: MissionHistoryEntry[];
+  state: MissionProjectState;
+}
+
 export interface CreateMissionInput {
   id?: MissionId;
   title: string;
@@ -153,6 +158,19 @@ export class MissionRepository {
 
   state(): MissionProjectState {
     return clone(replayMissionEvents(this.readHistory()));
+  }
+
+  snapshot(): MissionRepositorySnapshot {
+    const history = this.readHistory();
+    const state = replayMissionEvents(history);
+    return {
+      history: history.map(({ sequence, timestamp, payload }) => ({
+        sequence,
+        timestamp,
+        event: clone(payload),
+      })),
+      state: clone(state),
+    };
   }
 
   list(): MissionSnapshot[] {

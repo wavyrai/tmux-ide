@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import type { WorkspaceConfigV1, WorkspaceFullPanelView } from "@tmux-ide/contracts";
 import {
   CANONICAL_PANEL_VIEWS,
-  MISSIONS_PLACEHOLDER_LINES,
   PanelHostLoadGeneration,
   buildHostedPanelViews,
   findFirstHostedViewForPanel,
@@ -382,11 +381,8 @@ describe("panel-host", () => {
     });
   });
 
-  it("keeps Missions as an honest placeholder surface until C10", () => {
-    expect(MISSIONS_PLACEHOLDER_LINES.join("\n")).toContain(
-      "interactive Missions board arrives in C10",
-    );
-    expect(MISSIONS_PLACEHOLDER_LINES.join("\n")).toContain("does not start harnesses");
+  it("keeps Missions first-class but inert to hidden terminal panes", () => {
+    expect(panelMode("missions")).toBe("missions");
     expect(isHostedPanelInert("missions")).toBe(true);
     expect(isHostedPanelInert("terminals")).toBe(false);
   });
