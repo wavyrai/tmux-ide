@@ -293,6 +293,7 @@ import {
 } from "./folder-picker.ts";
 import { registerProject, ProjectAlreadyRegisteredError } from "../../lib/project-registry.ts";
 import { resolveProjectConfigContext } from "../../lib/config-context.ts";
+import { createProjectRuntimeRepository } from "../../lib/project-runtime-repository.ts";
 import { separatorAt, resizedSize, resizeCommand, type Separator } from "./resize-model.ts";
 import {
   effectiveWindowSize,
@@ -323,6 +324,7 @@ import {
   PanelHostLoadGeneration,
   findFirstHostedViewForPanel,
   findHostedViewById,
+  hostedActivationEffects,
   initialHostedSelection,
   isHostedPanelInert,
   legacyTabFromPanelKind,
@@ -339,6 +341,19 @@ import {
   type HostedPanelKind,
   type HostedPanelView,
 } from "./panel-host.ts";
+import {
+  WorkspaceUiStateController,
+  absoluteProjectPath,
+  chooseInitialWorkspaceView,
+  defaultWorkspaceUiState,
+  loadWorkspaceUiState,
+  relativeProjectPath,
+  serializeWorkspaceUiState,
+  shouldHydrateWorkspaceView,
+  viewStateFor,
+  type WorkspaceUiStateV1,
+  type WorkspaceViewState,
+} from "./workspace-ui-state.ts";
 import {
   DIALOG_W,
   DIALOG_ROWS,
@@ -904,10 +919,9 @@ try {
     // The first-run tip line — the user's ACTUAL keybindings, read once at launch
     // (loadAppConfig honors TMUX_IDE_CONFIG). Cheap + pure, computed once.
     const welcomeTip = firstRunTip(loadAppConfig().keys);
-    // C05 hosted panel views are loaded through the resolved-config pipeline.
-    // Persistence remains the legacy four-value `lastTab` until C06; the active
-    // runtime identity is the configured view ID so duplicate panel kinds switch
-    // and highlight independently.
+    // Hosted panel views are loaded through the resolved-config pipeline. C06
+    // stores per-project active view + per-view surface memory in C04 runtime
+    // state; legacy app-state remains as first-run fallback and global prefs.
     const requestedPanel: HostedPanelKind | null = startDiff
       ? "diff"
       : values.edit !== undefined
@@ -921,6 +935,14 @@ try {
     const [hostedViews, setHostedViews] = createSignal<HostedPanelView[]>(
       viewsFromResolvedConfig(null),
     );
+    const [workspaceUiState, setWorkspaceUiState] =
+      createSignal<WorkspaceUiStateV1>(defaultWorkspaceUiState());
+    const workspaceUiController = new WorkspaceUiStateController();
+    const touchedWorkspaceViewIds = new Set<string>();
+    let currentWorkspaceUiIdentity: string | null = null;
+    let workspaceUiSaveTimer: ReturnType<typeof setTimeout> | null = null;
+    let snapshotActiveWorkspaceView = () => {};
+    let hydrateActiveWorkspaceView = (_options: { firstProjectLoad?: boolean } = {}) => {};
     const initialView = initialHostedSelection(
       hostedViews(),
       requestedPanel,
@@ -1040,8 +1062,10 @@ try {
         return false;
       }
       clearSelection();
+      snapshotActiveWorkspaceView();
       runActivationEffects(plan.effects);
       setActiveViewId(plan.activeViewId);
+      hydrateActiveWorkspaceView();
       refreshFocusRecord();
       return true;
     };
@@ -1061,34 +1085,58 @@ try {
     let panelHostResolved = false;
     const loadPanelHostForDir = (dir: string) => {
       const generation = panelGeneration.next();
+      const uiGeneration = workspaceUiController.beginLoad();
       void resolveProjectConfigContext(dir)
         .then((context) => {
           if (!panelGeneration.isCurrent(generation)) return;
+          const resolved = context.resolved;
+          if (!resolved) return;
+          const repository = createProjectRuntimeRepository(resolved.resolution);
+          const loadedUi = loadWorkspaceUiState(repository);
+          if (!workspaceUiController.completeLoad(uiGeneration, repository, loadedUi)) return;
+          setWorkspaceUiState(loadedUi.state);
+          const loadDiagnostic = loadedUi.diagnostics.find((entry) => entry.code !== "MISSING");
+          if (loadDiagnostic) setStatusNote(loadDiagnostic.message);
           const previous = {
             id: activeViewId(),
             panel: activePanel(),
           };
-          const nextViews = viewsFromResolvedConfig(context.resolved);
+          const nextViews = viewsFromResolvedConfig(resolved);
           const state = {
             filesLoaded: fileNodes().length > 0,
             diffLoaded: diffEntries().length > 0,
           };
-          const nextPlan = panelHostResolved
-            ? planHostedReconciledActivation(nextViews, previous, state)
-            : planHostedInitialActivation(
-                nextViews,
-                requestedPanel,
-                bareHome ? persistedPanel : null,
-                state,
-                previous.panel,
-              );
+          const identityChanged = currentWorkspaceUiIdentity !== repository.metadata.identityKey;
+          currentWorkspaceUiIdentity = repository.metadata.identityKey;
+          const firstProjectLoad = !panelHostResolved || identityChanged;
+          const initialChoice = firstProjectLoad
+            ? chooseInitialWorkspaceView(nextViews, {
+                requestedPanel: !panelHostResolved ? requestedPanel : null,
+                persisted: loadedUi.state,
+                legacyLastTab: bareHome ? persisted.lastTab : null,
+              })
+            : null;
+          const nextPlan = initialChoice
+            ? {
+                activeViewId: initialChoice.view?.id ?? null,
+                view: initialChoice.view,
+                effects:
+                  initialChoice.view && previous.panel !== initialChoice.view.panel
+                    ? hostedActivationEffects(initialChoice.view.panel, state)
+                    : [],
+                note: null,
+              }
+            : planHostedReconciledActivation(nextViews, previous, state);
           setHostedViews(nextViews);
           runActivationEffects(nextPlan.effects);
           if (nextPlan.activeViewId) setActiveViewId(nextPlan.activeViewId);
+          hydrateActiveWorkspaceView({ firstProjectLoad });
           panelHostResolved = true;
         })
         .catch((error) => {
           if (!panelGeneration.isCurrent(generation)) return;
+          workspaceUiController.failLoad(uiGeneration);
+          setWorkspaceUiState(defaultWorkspaceUiState());
           const previous = {
             id: activeViewId(),
             panel: activePanel(),
@@ -1553,7 +1601,7 @@ try {
       setEditorMsg("");
       setEditorRev((r) => r + 1);
       setFilesFocus("editor");
-      setTab("files");
+      if (activePanel() !== "files") setTab("files");
     };
 
     const toggleEditor = () => {
@@ -2047,6 +2095,7 @@ try {
     // to restore when the filter is escaped lives beside it (not reactive).
     const [filesQuery, setFilesQuery] = createSignal<string | null>(null);
     let filesPreFilterPath: string | null = null;
+    let pendingFilesSelectionPath: string | null = null;
     // Which half of the Files tab has the keyboard: the file LIST (j/k/enter) or
     // the EDITOR (typing). Opening a file hands focus to the editor; esc hands it
     // back to the list.
@@ -2148,6 +2197,9 @@ try {
             setFileSel(0);
             setFileTop(0);
             setFilesQuery(null);
+            const pending = pendingFilesSelectionPath;
+            pendingFilesSelectionPath = null;
+            if (pending) void revealPath(pending);
           })
           .catch(() => setFileNodes([])),
       );
@@ -2273,6 +2325,87 @@ try {
       const curRel = cur ? relPath(top, cur.path) || null : null;
       const next = nextChangedPath(walk, curRel, dir);
       if (next) void revealPath(join(top, next));
+    };
+
+    const workspaceUiProjectRoot = (): string =>
+      workspaceUiController.snapshot().repository?.metadata.projectRoot ?? workspaceDir();
+    const currentWorkspaceViewState = (): WorkspaceViewState => {
+      const panel = activePanel();
+      const root = workspaceUiProjectRoot();
+      if (panel === "files") {
+        return {
+          panel,
+          openPath: relativeProjectPath(root, editorPath()),
+          selectedPath: relativeProjectPath(root, visibleFiles()[fileSel()]?.node.path ?? null),
+        };
+      }
+      if (panel === "diff") {
+        return {
+          panel,
+          selectedPath: diffVisibleFiles()[diffSel()]?.path ?? null,
+        };
+      }
+      if (panel === "missions") {
+        const existing = viewStateFor(workspaceUiState(), activeView());
+        return existing?.panel === "missions"
+          ? existing
+          : { panel, selectedMissionId: null, selectedTaskId: null };
+      }
+      return { panel };
+    };
+    const stateWithCurrentWorkspaceView = (): WorkspaceUiStateV1 => {
+      const view = activeView();
+      return {
+        version: 1,
+        active: { viewId: view.id, panel: view.panel },
+        views: {
+          ...workspaceUiState().views,
+          [view.id]: currentWorkspaceViewState(),
+        },
+      };
+    };
+    snapshotActiveWorkspaceView = () => {
+      const view = activeView();
+      touchedWorkspaceViewIds.add(view.id);
+      const next = stateWithCurrentWorkspaceView();
+      setWorkspaceUiState(next);
+    };
+    hydrateActiveWorkspaceView = ({ firstProjectLoad = false } = {}) => {
+      const view = activeView();
+      const entry = viewStateFor(workspaceUiState(), view);
+      if (!entry) return;
+      if (
+        !shouldHydrateWorkspaceView({
+          firstProjectLoad,
+          explicitEditPath: values.edit ?? null,
+          view,
+          entry,
+        })
+      ) {
+        return;
+      }
+      const root = workspaceUiProjectRoot();
+      if (entry.panel === "files") {
+        const selectedPath = absoluteProjectPath(root, entry.selectedPath);
+        pendingFilesSelectionPath = selectedPath;
+        if (fileNodes().length > 0 && selectedPath) {
+          pendingFilesSelectionPath = null;
+          void revealPath(selectedPath);
+        }
+        const openPath = absoluteProjectPath(root, entry.openPath);
+        if (openPath) openEditor(openPath);
+      } else if (entry.panel === "diff") {
+        pendingDiffFile = entry.selectedPath;
+        if (entry.selectedPath && diffVisibleFiles().length > 0) {
+          const idx = diffVisibleFiles().findIndex((file) => file.path === entry.selectedPath);
+          if (idx !== -1) {
+            pendingDiffFile = null;
+            selectDiffFile(idx);
+            return;
+          }
+        }
+        if (mode() === "diff") refreshStatus();
+      }
     };
 
     // ── WATCHER PUSH REFRESH (M24.6) ─────────────────────────────────────────
@@ -3609,6 +3742,31 @@ try {
       if (saveTimer) clearTimeout(saveTimer);
       saveTimer = setTimeout(() => void saveAppState(snapshot), 400);
     });
+    createEffect(() => {
+      activeViewId();
+      editorPath();
+      visibleFiles()[fileSel()]?.node.path;
+      diffVisibleFiles()[diffSel()]?.path;
+      workspaceUiState();
+      const controllerSnapshot = workspaceUiController.snapshot();
+      if (!controllerSnapshot.loaded || !controllerSnapshot.repository) return;
+      const next = stateWithCurrentWorkspaceView();
+      if (serializeWorkspaceUiState(next) === serializeWorkspaceUiState(controllerSnapshot.state))
+        return;
+      touchedWorkspaceViewIds.add(activeViewId());
+      const generation = controllerSnapshot.generation;
+      if (workspaceUiSaveTimer) clearTimeout(workspaceUiSaveTimer);
+      workspaceUiSaveTimer = setTimeout(() => {
+        const result = workspaceUiController.save(generation, next, touchedWorkspaceViewIds);
+        if (result.saved) {
+          touchedWorkspaceViewIds.clear();
+          setWorkspaceUiState(workspaceUiController.snapshot().state);
+        } else if (!result.skipped) {
+          const message = result.diagnostics.at(-1)?.message;
+          if (message) setStatusNote(message);
+        }
+      }, 400);
+    });
 
     onMount(() => {
       // Copy relies on the surrounding tmux capturing our OSC52: turn on
@@ -3743,6 +3901,7 @@ try {
         clearInterval(fleetTimer);
         clearInterval(diffTimer);
         if (saveTimer) clearTimeout(saveTimer);
+        if (workspaceUiSaveTimer) clearTimeout(workspaceUiSaveTimer);
         if (noteTimer) clearTimeout(noteTimer);
         mirror?.dispose();
         editBuffer?.destroy();
