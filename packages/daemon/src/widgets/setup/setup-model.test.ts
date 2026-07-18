@@ -67,15 +67,19 @@ describe("PRESETS", () => {
     expect(config.rows[1]!.panes.length).toBe(3);
   });
 
-  it("agent-team preset has team, orchestrator, and role assignments", () => {
+  it("agent-team preset uses only launch-compatible panes and existing widgets", () => {
     const config = getPreset("agent-team")!.buildConfig("my-app");
-    expect(config.team, "should have team config").toBeTruthy();
-    expect(config.orchestrator, "should have orchestrator config").toBeTruthy();
-    expect(config.orchestrator!.enabled).toBe(true);
-    expect(config.rows[0]!.panes[0]!.role).toBe("lead");
-    expect(config.rows[0]!.panes[1]!.role).toBe("teammate");
-    expect(config.rows[0]!.panes[2]!.role).toBe("teammate");
+    expect(config.team, "should not emit legacy-only team config").toBeUndefined();
+    expect(config.orchestrator, "should not emit retired orchestrator config").toBeUndefined();
+    expect(config.rows[0]!.panes[0]!.role).toBeUndefined();
+    expect(config.rows[0]!.panes[1]!.role).toBeUndefined();
+    expect(config.rows[0]!.panes[2]!.role).toBeUndefined();
     expect(config.rows[1]!.panes.length).toBe(3);
+    expect(config.rows[1]!.panes.map((pane) => pane.type)).toEqual([
+      "changes",
+      "explorer",
+      "preview",
+    ]);
   });
 
   it("presets use detected devCommand when provided", () => {

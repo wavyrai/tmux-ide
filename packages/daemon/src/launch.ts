@@ -1,7 +1,7 @@
 import { resolve } from "node:path";
 import { execSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { readConfig, getSessionName } from "./lib/yaml-io.ts";
+import { resolveProjectConfigContext, type ProjectConfigContext } from "./lib/config-context.ts";
 import { computeSizes, toSplitPercents } from "./lib/sizes.ts";
 import { outputError } from "./lib/output.ts";
 import { collectPaneStartupPlan } from "./lib/launch-plan.ts";
@@ -137,30 +137,28 @@ export function buildPaneMap(
   return { paneMap, firstPanesOfRows };
 }
 
-function loadLaunchConfig(dir: string): IdeConfig {
-  let config;
+async function loadLaunchConfig(context: ProjectConfigContext, json: boolean): Promise<IdeConfig> {
+  const config = context.resolved?.launchConfig ?? null;
 
-  try {
-    ({ config } = readConfig(dir));
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException)?.code === "ENOENT") {
-      outputError(
-        `No ide.yml found in ${dir}. Run "tmux-ide init" or "tmux-ide detect --write" to create one.`,
-        "CONFIG_NOT_FOUND",
-      );
-    }
-
-    outputError(`Cannot read ide.yml: ${(error as Error).message}`, "READ_ERROR");
+  if (!config) {
+    outputError(
+      `No workspace config found in ${context.inputDir}. Run "tmux-ide init" or "tmux-ide detect --write" to create one.`,
+      "CONFIG_NOT_FOUND",
+    );
   }
 
   const errors = validateConfig(config);
   if (errors.length > 0) {
+    const configLocation = context.configPath ?? context.inputDir ?? context.projectRoot;
     outputError(
-      `Invalid ide.yml in ${dir}. Run "tmux-ide validate" for details.`,
+      `Invalid workspace config in ${configLocation}. Run "tmux-ide validate" for details.`,
       "INVALID_CONFIG",
     );
   }
 
+  if (context.resolved?.migrationHint && !json && !process.env.TMUX_IDE_SUPPRESS_MIGRATION_HINT) {
+    console.log(context.resolved.migrationHint);
+  }
   return config;
 }
 
@@ -191,6 +189,10 @@ function runBeforeHook(command: string | undefined, dir: string): void {
   }
 }
 
+export function launchRuntimeDir(context: ProjectConfigContext): string {
+  return context.configWriteRoot;
+}
+
 export async function launch(
   targetDir: string | undefined,
   {
@@ -199,15 +201,16 @@ export async function launch(
     sessionName,
   }: { json?: boolean; attach?: boolean; sessionName?: string } = {},
 ): Promise<void> {
-  const dir = resolve(targetDir ?? ".");
-  const config = loadLaunchConfig(dir);
+  const inputDir = resolve(targetDir ?? ".");
+  const context = await resolveProjectConfigContext(inputDir);
+  const dir = launchRuntimeDir(context);
+  const config = await loadLaunchConfig(context, json);
 
-  const { name: fallbackName } = getSessionName(dir);
   // A `sessionName` override lets a worktree checkout run under its own session
   // name (e.g. `app@branch`) instead of colliding with the parent repo's
   // `config.name`; the whole flow keys off `session`, so the override threads
   // through session creation, adoption, and drift detection unchanged.
-  const session = sessionName ?? config.name ?? fallbackName;
+  const session = sessionName ?? config.name ?? context.sessionName;
   const headless = config.orchestrator?.widgets === false;
   const rows = headless ? stripWidgetPanes(config.rows) : config.rows;
   const theme = config.theme ?? {};
@@ -224,7 +227,7 @@ export async function launch(
     if (json) {
       console.log(JSON.stringify({ session, running: true, configChanged }));
     } else if (configChanged) {
-      console.log(`Session "${session}" is running but ide.yml has changed.`);
+      console.log(`Session "${session}" is running but workspace config has changed.`);
       console.log(`Run "tmux-ide restart" to apply changes.`);
     } else {
       console.log(`Session "${session}" is already running. Attaching...`);

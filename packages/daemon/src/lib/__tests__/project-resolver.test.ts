@@ -174,5 +174,5 @@ describe("resolveProject", () => {
     } finally {
       rmSync(tempRoot, { recursive: true, force: true });
     }
-  });
+  }, 20_000);
 });

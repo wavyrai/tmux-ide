@@ -1,5 +1,3 @@
-import { existsSync } from "node:fs";
-import { join } from "node:path";
 import {
   configAddPane,
   configAddRow,
@@ -12,29 +10,51 @@ import { broadcastConfigChanged as broadcastConfigChangedDefault } from "../../w
 import { ActionError } from "../errors.ts";
 import type { ActionInput, ActionResult } from "../contract.ts";
 import { resolveProjectContext, type ProjectContextDeps } from "./_project-context.ts";
+import {
+  UnsupportedLegacyConfigMutationError,
+  WorkspaceConfigWriteError,
+} from "../../../lib/resolved-config.ts";
+import { resolveProjectConfigContext } from "../../../lib/config-context.ts";
 
 interface ConfigActionDeps extends ProjectContextDeps {
   broadcastConfigChanged?: (sessionName: string) => void;
 }
 
-function mutateConfigAction<Result>(
+async function mutateConfigAction<Result>(
   input: { projectName?: string },
   deps: ConfigActionDeps,
   fn: (dir: string) => Result,
-): Result {
-  const context = resolveProjectContext(input, deps);
-  if (!existsSync(join(context.dir, "ide.yml"))) {
+): Promise<Result> {
+  const context = await resolveProjectContext(input, deps);
+  const configContext = await resolveProjectConfigContext(context.dir);
+  if (!configContext.configExists) {
     throw new ActionError({
-      code: "ide_yml_missing",
-      message: "ide.yml was not found",
+      code: "config_missing",
+      message: "workspace config was not found",
       details: { dir: context.dir },
     });
   }
   try {
-    const result = fn(context.dir);
+    const result = fn(configContext.configWriteRoot);
     (deps.broadcastConfigChanged ?? broadcastConfigChangedDefault)(context.sessionName);
     return result;
   } catch (err) {
+    if (err instanceof UnsupportedLegacyConfigMutationError) {
+      throw new ActionError({
+        code: "legacy_config_mutation_unsupported",
+        message: err.message,
+        details: { diagnostics: err.diagnostics },
+        cause: err,
+      });
+    }
+    if (err instanceof WorkspaceConfigWriteError) {
+      throw new ActionError({
+        code: err.code.toLowerCase(),
+        message: err.message,
+        details: { path: err.path },
+        cause: err,
+      });
+    }
     const message = (err as Error).message ?? String(err);
     throw new ActionError({
       code: message.toLowerCase().includes("path")
@@ -46,20 +66,20 @@ function mutateConfigAction<Result>(
   }
 }
 
-export function configSetHandler(
+export async function configSetHandler(
   input: ActionInput<"config.set">,
   deps: ConfigActionDeps = {},
-): ActionResult<"config.set"> {
-  const config = mutateConfigAction(input, deps, (dir) =>
+): Promise<ActionResult<"config.set">> {
+  const config = await mutateConfigAction(input, deps, (dir) =>
     configSetValue(dir, input.path, input.value),
   );
   return { config };
 }
 
-export function configAddPaneHandler(
+export async function configAddPaneHandler(
   input: ActionInput<"config.addPane">,
   deps: ConfigActionDeps = {},
-): ActionResult<"config.addPane"> {
+): Promise<ActionResult<"config.addPane">> {
   const pane = {
     title: input.title,
     command: input.command,
@@ -74,40 +94,44 @@ export function configAddPaneHandler(
     specialty: input.specialty,
     skill: input.skill,
   };
-  const config = mutateConfigAction(input, deps, (dir) => configAddPane(dir, input.rowIndex, pane));
+  const config = await mutateConfigAction(input, deps, (dir) =>
+    configAddPane(dir, input.rowIndex, pane),
+  );
   return { config };
 }
 
-export function configRemovePaneHandler(
+export async function configRemovePaneHandler(
   input: ActionInput<"config.removePane">,
   deps: ConfigActionDeps = {},
-): ActionResult<"config.removePane"> {
-  const config = mutateConfigAction(input, deps, (dir) =>
-    configRemovePane(dir, input.rowIndex, input.paneIndex),
+): Promise<ActionResult<"config.removePane">> {
+  const config = (
+    await mutateConfigAction(input, deps, (dir) =>
+      configRemovePane(dir, input.rowIndex, input.paneIndex),
+    )
   ).config;
   return { config };
 }
 
-export function configAddRowHandler(
+export async function configAddRowHandler(
   input: ActionInput<"config.addRow">,
   deps: ConfigActionDeps = {},
-): ActionResult<"config.addRow"> {
-  const config = mutateConfigAction(input, deps, (dir) => configAddRow(dir, input.size));
+): Promise<ActionResult<"config.addRow">> {
+  const config = await mutateConfigAction(input, deps, (dir) => configAddRow(dir, input.size));
   return { config };
 }
 
-export function configEnableTeamHandler(
+export async function configEnableTeamHandler(
   input: ActionInput<"config.enableTeam">,
   deps: ConfigActionDeps = {},
-): ActionResult<"config.enableTeam"> {
-  const config = mutateConfigAction(input, deps, (dir) => configEnableTeam(dir, input.name));
+): Promise<ActionResult<"config.enableTeam">> {
+  const config = await mutateConfigAction(input, deps, (dir) => configEnableTeam(dir, input.name));
   return { config };
 }
 
-export function configDisableTeamHandler(
+export async function configDisableTeamHandler(
   input: ActionInput<"config.disableTeam">,
   deps: ConfigActionDeps = {},
-): ActionResult<"config.disableTeam"> {
-  const config = mutateConfigAction(input, deps, (dir) => configDisableTeam(dir));
+): Promise<ActionResult<"config.disableTeam">> {
+  const config = await mutateConfigAction(input, deps, (dir) => configDisableTeam(dir));
   return { config };
 }

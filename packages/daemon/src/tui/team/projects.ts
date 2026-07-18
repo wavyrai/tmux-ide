@@ -25,6 +25,9 @@ export interface TeamProject {
   name: string;
   dir: string | null;
   hasIdeYml: boolean;
+  hasWorkspaceConfig?: boolean;
+  configKind?: "workspace" | "legacy" | "none";
+  configPath?: string | null;
   gitBranch: string | null;
   /** True when the project comes from the registry (vs. an ad-hoc session). */
   registered: boolean;
@@ -39,6 +42,9 @@ export interface ProjectInput {
   name: string;
   dir: string;
   hasIdeYml?: boolean;
+  hasWorkspaceConfig?: boolean;
+  configKind?: "workspace" | "legacy" | "none";
+  configPath?: string | null;
   gitBranch?: string | null;
 }
 
@@ -125,6 +131,9 @@ export function groupSessions(
         name: p.name,
         dir: p.dir,
         hasIdeYml: p.hasIdeYml ?? false,
+        hasWorkspaceConfig: p.hasWorkspaceConfig,
+        configKind: p.configKind,
+        configPath: p.configPath ?? null,
         gitBranch: p.gitBranch ?? null,
         registered: true,
         running: own.length > 0,
@@ -140,6 +149,9 @@ export function groupSessions(
       name: s.name,
       dir: sessionCwd(s.name) ?? null,
       hasIdeYml: false,
+      hasWorkspaceConfig: false,
+      configKind: "none",
+      configPath: null,
       gitBranch: null,
       registered: false,
       running: true,

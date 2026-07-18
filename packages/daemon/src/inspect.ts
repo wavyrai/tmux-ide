@@ -1,9 +1,11 @@
-import { resolve, basename } from "node:path";
-import { readConfig } from "./lib/yaml-io.ts";
+import { resolve } from "node:path";
 import { validateConfig } from "./validate.ts";
 import { outputError } from "./lib/output.ts";
+import { ConfigError } from "./lib/errors.ts";
 import { getSessionState, listPanes } from "@tmux-ide/tmux-bridge";
 import type { IdeConfig } from "./types.ts";
+import type { ResolvedConfigKind } from "./lib/resolved-config.ts";
+import { resolveProjectConfigContext } from "./lib/config-context.ts";
 
 interface ResolvedPane {
   index: number;
@@ -26,6 +28,8 @@ interface ResolvedRow {
 interface Inspection {
   dir: string;
   configPath: string;
+  configKind: ResolvedConfigKind;
+  ideConfigPath: string | null;
   valid: boolean;
   errors: string[];
   session: string;
@@ -46,9 +50,15 @@ export function buildInspection(
     configPath,
     running,
     panes,
+    configKind,
+    ideConfigPath,
+    session,
   }: {
     config: IdeConfig;
     configPath: string;
+    configKind: ResolvedConfigKind;
+    ideConfigPath: string | null;
+    session: string;
     running: boolean;
     panes: ReturnType<typeof listPanes>;
   },
@@ -75,11 +85,11 @@ export function buildInspection(
     resolvedRows
       .flatMap((row) => row.panes.map((pane) => ({ row: row.index, pane })))
       .find(({ pane }) => pane.focus) ?? null;
-  const session = config?.name ?? basename(dir);
-
   return {
     dir,
     configPath,
+    configKind,
+    ideConfigPath,
     valid: errors.length === 0,
     errors,
     session,
@@ -115,17 +125,39 @@ export async function inspect(
 
   let config;
   let configPath: string;
+  let configKind: ResolvedConfigKind;
+  let session: string;
   try {
-    ({ config, configPath } = readConfig(dir));
+    const context = await resolveProjectConfigContext(dir);
+    const resolved = context.resolved;
+    if (!resolved.launchConfig || !resolved.path) {
+      outputError("Cannot read workspace config: no config found", "READ_ERROR");
+      return;
+    }
+    config = resolved.launchConfig;
+    configPath = resolved.path;
+    configKind = resolved.kind;
+    session = context.sessionName;
   } catch (error) {
-    outputError(`Cannot read ide.yml: ${(error as Error).message}`, "READ_ERROR");
+    if (error instanceof ConfigError) {
+      outputError(error.message, error.code ?? "READ_ERROR");
+      return;
+    }
+    outputError(`Cannot read workspace config: ${(error as Error).message}`, "READ_ERROR");
     return;
   }
 
-  const session = config?.name ?? basename(dir);
   const state = getSessionState(session);
   const panes = state.running ? listPanes(session) : [];
-  const data = buildInspection(dir, { config, configPath, running: state.running, panes });
+  const data = buildInspection(dir, {
+    config,
+    configPath,
+    configKind,
+    ideConfigPath: configKind === "legacy" ? configPath : null,
+    session,
+    running: state.running,
+    panes,
+  });
 
   if (json) {
     console.log(JSON.stringify(data, null, 2));
@@ -134,6 +166,7 @@ export async function inspect(
 
   console.log(`Directory: ${data.dir}`);
   console.log(`Config:    ${data.configPath}`);
+  console.log(`Kind:      ${data.configKind}`);
   console.log(`Valid:     ${data.valid ? "yes" : "no"}`);
   console.log(`Session:   ${data.session}`);
   console.log(`Running:   ${data.tmux.running ? "yes" : "no"}`);

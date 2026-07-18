@@ -1,35 +1,27 @@
 name: my-app
+version: 1
 
 # Ground-truth agent status (working/blocked/done glyphs on the fleet tabs)
 # comes from Claude Code's lifecycle hooks. Wire them once with:
 #   tmux-ide integration install claude
 
-team:
-  name: my-app
-
-sidebar: true # fleet nav column — jump between agents (toggle: prefix b)
-
 before: pnpm install
 
-rows:
-  - size: 70%
-    panes:
-      - title: Lead
-        command: claude
-        role: lead
-        focus: true
-      - title: Frontend
-        command: claude
-        role: teammate
-        task: "Work on React components and pages"
-      - title: Backend
-        command: claude
-        role: teammate
-        task: "Work on API routes and server logic"
+terminal:
+  rows:
+    - size: 70%
+      panes:
+        - title: Lead
+          command: claude
+          focus: true
+        - title: Frontend
+          command: claude
+        - title: Backend
+          command: claude
 
-  - panes:
-      - title: Next.js
-        command: pnpm dev
-      - title: Changes
-        type: changes # live git changes widget
-      - title: Shell
+    - panes:
+        - title: Next.js
+          command: pnpm dev
+        - title: Changes
+          type: changes # live git changes widget
+        - title: Shell

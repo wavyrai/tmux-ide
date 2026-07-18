@@ -1,39 +1,31 @@
 name: my-monorepo
+version: 1
 
 # Ground-truth agent status (working/blocked/done glyphs on the fleet tabs)
 # comes from Claude Code's lifecycle hooks. Wire them once with:
 #   tmux-ide integration install claude
 
-team:
-  name: my-monorepo
-
-sidebar: true # fleet nav column — jump between agents (toggle: prefix b)
-
 before: pnpm install
 
-rows:
-  - size: 70%
-    panes:
-      - title: Lead — Architect
-        command: claude
-        role: lead
-        focus: true
-      - title: Frontend Agent
-        command: claude
-        role: teammate
-        task: "Work on the frontend application"
-        dir: apps/web
-      - title: Backend Agent
-        command: claude
-        role: teammate
-        task: "Work on the backend services"
-        dir: apps/api
+terminal:
+  rows:
+    - size: 70%
+      panes:
+        - title: Lead — Architect
+          command: claude
+          focus: true
+        - title: Frontend Agent
+          command: claude
+          dir: apps/web
+        - title: Backend Agent
+          command: claude
+          dir: apps/api
 
-  - panes:
-      - title: Frontend
-        command: pnpm dev
-        dir: apps/web
-      - title: Backend
-        command: pnpm dev
-        dir: apps/api
-      - title: Shell
+    - panes:
+        - title: Frontend
+          command: pnpm dev
+          dir: apps/web
+        - title: Backend
+          command: pnpm dev
+          dir: apps/api
+        - title: Shell

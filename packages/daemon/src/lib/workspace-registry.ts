@@ -43,6 +43,9 @@ export interface AddWorkspaceInput {
   sessionName?: string;
   projectDir: string;
   ideConfigPath?: string | null;
+  configKind?: "workspace" | "legacy" | "none";
+  configPath?: string | null;
+  hasWorkspaceConfig?: boolean;
   /** Override Date.now() for deterministic tests. */
   now?: () => Date;
 }
@@ -130,6 +133,9 @@ export class WorkspaceRegistry {
       sessionName: input.sessionName ?? input.name,
       projectDir: input.projectDir,
       ideConfigPath: input.ideConfigPath ?? null,
+      configKind: input.configKind,
+      configPath: input.configPath,
+      hasWorkspaceConfig: input.hasWorkspaceConfig,
       addedAt: now.toISOString(),
     };
     this.workspaces = [...this.workspaces, workspace];

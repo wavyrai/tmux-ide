@@ -11,11 +11,12 @@ import { status } from "./status.ts";
 import { inspect } from "./inspect.ts";
 import { validate } from "./validate.ts";
 import { detect } from "./detect.ts";
+import { migrate } from "./migrate.ts";
 import { config } from "./config.ts";
 import { send } from "./send.ts";
 import { IdeError, TmuxError } from "./lib/errors.ts";
 import { printCommandError } from "./lib/output.ts";
-import { getSessionName } from "./lib/yaml-io.ts";
+import { resolveProjectConfigContext } from "./lib/config-context.ts";
 import { attachSession } from "@tmux-ide/tmux-bridge";
 import { tryDispatchAction } from "./lib/cli-action-bridge.ts";
 import { startEmbeddedDaemon, type EmbeddedDaemonHandle } from "./index.ts";
@@ -39,6 +40,7 @@ interface CliFlags {
   command?: string;
   size?: string;
   write?: boolean;
+  "dry-run"?: boolean;
   template?: string;
   name?: string;
   verbose?: boolean;
@@ -87,6 +89,7 @@ export async function main(): Promise<void> {
       command: { type: "string" },
       size: { type: "string" },
       write: { type: "boolean" },
+      "dry-run": { type: "boolean" },
       template: { type: "string" },
       name: { type: "string" },
       verbose: { type: "boolean", default: false },
@@ -139,6 +142,7 @@ export async function main(): Promise<void> {
     "inspect",
     "validate",
     "detect",
+    "migrate",
     "config",
     "setup",
     "send",
@@ -181,13 +185,13 @@ export async function main(): Promise<void> {
     console.log(`${bold("tmux-ide")} — Terminal IDE powered by tmux
 
 ${bold("Usage:")}
-  ${cyan("tmux-ide")}                    ${dim("Launch IDE from ide.yml")}
+  ${cyan("tmux-ide")}                    ${dim("Launch IDE from workspace config")}
   ${cyan("tmux-ide --headless")}         ${dim("Start the canonical daemon without the app")}
   ${cyan("tmux-ide <path>")}             ${dim("Launch from a specific directory")}
   ${cyan("tmux-ide setup")}              ${dim("Interactive TUI setup wizard")}
   ${cyan("tmux-ide setup --edit")}       ${dim("Open config tree editor")}
   ${cyan("tmux-ide settings")}           ${dim("Interactive TUI config manager")}
-  ${cyan("tmux-ide init")} [--template]  ${dim("Scaffold a new ide.yml (auto-detects stack)")}
+  ${cyan("tmux-ide init")} [--template]  ${dim("Scaffold .tmux-ide/workspace.yml (auto-detects stack)")}
   ${cyan("tmux-ide stop")}               ${dim("Kill the current IDE session")}
   ${cyan("tmux-ide restart")}            ${dim("Stop and relaunch the IDE session")}
   ${cyan("tmux-ide attach")}             ${dim("Reattach to a running session")}
@@ -195,16 +199,16 @@ ${bold("Usage:")}
   ${cyan("tmux-ide status")} [--json]    ${dim("Show session status")}
   ${cyan("tmux-ide inspect")} [--json]   ${dim("Show effective config and runtime state")}
   ${cyan("tmux-ide doctor")}             ${dim("Check system requirements")}
-  ${cyan("tmux-ide validate")} [--json]  ${dim("Validate ide.yml")}
+  ${cyan("tmux-ide validate")} [--json]  ${dim("Validate workspace config")}
   ${cyan("tmux-ide detect")} [--json]    ${dim("Detect project stack")}
-  ${cyan("tmux-ide detect --write")}     ${dim("Detect and write ide.yml")}
+  ${cyan("tmux-ide detect --write")}     ${dim("Detect and write .tmux-ide/workspace.yml")}
+  ${cyan("tmux-ide migrate --dry-run")} [--json]  ${dim("Preview ide.yml migration")}
+  ${cyan("tmux-ide migrate --write")} [--json]    ${dim("Create .tmux-ide/workspace.yml")}
   ${cyan("tmux-ide config")} [--json]    ${dim("Dump config as JSON")}
   ${cyan("tmux-ide config set")} <path> <value>
   ${cyan("tmux-ide config add-pane")} --row <N> --title <T> [--command <C>]
   ${cyan("tmux-ide config remove-pane")} --row <N> --pane <M>
   ${cyan("tmux-ide config add-row")} [--size <percent>]
-  ${cyan("tmux-ide config enable-team")} [--name <N>]   ${dim("Enable agent teams")}
-  ${cyan("tmux-ide config disable-team")}               ${dim("Disable agent teams")}
 
 ${bold("Pane Messaging:")}
   ${cyan("tmux-ide send")} <target> <message>     ${dim("Send message to a pane")}
@@ -219,14 +223,16 @@ ${bold("Flags:")}
   ${cyan("--json")}                      ${dim("Output as JSON (all commands)")}
   ${cyan("--headless")}                  ${dim("Run the canonical daemon in this process")}
   ${cyan("--template <name>")}           ${dim("Use specific template for init")}
-  ${cyan("--write")}                     ${dim("Write detected config to ide.yml")}
+  ${cyan("--write")}                     ${dim("Write detected config to .tmux-ide/workspace.yml")}
+  ${cyan("--dry-run")}                   ${dim("Preview migration without writing")}
   ${cyan("--verbose")}                   ${dim("Log all tmux commands (or set TMUX_IDE_DEBUG=1)")}
   ${cyan("-h, --help")}                  ${dim("Show usage")}
       ${cyan("-v, --version")}               ${dim("Show version number")}`);
   }
 
-  function resolveProjectName(targetDir: string | undefined): string {
-    return getSessionName(resolve(targetDir ?? ".")).name;
+  async function resolveProjectName(targetDir: string | undefined): Promise<string> {
+    const dir = resolve(targetDir ?? ".");
+    return (await resolveProjectConfigContext(dir)).sessionName;
   }
 
   async function dispatchProjectLaunch(
@@ -313,7 +319,7 @@ ${bold("Flags:")}
         case "start":
           {
             const cwd = resolve(startTargetDir ?? ".");
-            const projectName = resolveProjectName(startTargetDir);
+            const projectName = await resolveProjectName(startTargetDir);
             const result = await dispatchProjectLaunch(projectName, cwd);
             if (json) {
               console.log(JSON.stringify(result));
@@ -333,7 +339,7 @@ ${bold("Flags:")}
         case "stop":
           {
             const cwd = resolve(positionals[1] ?? ".");
-            const projectName = resolveProjectName(positionals[1]);
+            const projectName = await resolveProjectName(positionals[1]);
             const result = await dispatchProjectStop(projectName, cwd);
             if (json) console.log(JSON.stringify(result));
             else
@@ -346,7 +352,7 @@ ${bold("Flags:")}
         case "attach":
           {
             const cwd = resolve(positionals[1] ?? ".");
-            const projectName = resolveProjectName(positionals[1]);
+            const projectName = await resolveProjectName(positionals[1]);
             const result = await dispatchProjectOpenTerminal(projectName, cwd);
             if (json) console.log(JSON.stringify(result));
             attachSession(result.sessionName);
@@ -356,7 +362,7 @@ ${bold("Flags:")}
         case "restart":
           {
             const cwd = resolve(positionals[1] ?? ".");
-            const projectName = resolveProjectName(positionals[1]);
+            const projectName = await resolveProjectName(positionals[1]);
             const result = await dispatchProjectRestart(projectName, cwd);
             if (json) console.log(JSON.stringify(result));
             else console.log(`Restarted "${result.sessionName}".`);
@@ -386,6 +392,10 @@ ${bold("Flags:")}
 
         case "detect":
           await detect(positionals[1], { json, write: values.write });
+          break;
+
+        case "migrate":
+          await migrate(positionals[1], { json, dryRun: values["dry-run"], write: values.write });
           break;
 
         case "config": {

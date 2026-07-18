@@ -9,7 +9,6 @@ export type ViewKind =
   | "detect"
   | "layout-picker"
   | "agent-naming"
-  | "orchestrator"
   | "review"
   | "editor-tree"
   | "editor-field";
@@ -46,12 +45,6 @@ const VIEW_HINTS: Record<ViewKind, HintDef[]> = {
   ],
   "agent-naming": [
     { label: "Tab:next field" },
-    { label: "Enter:continue", actionKey: "onConfirm" },
-    { label: "Esc:back", actionKey: "onBack" },
-    { label: "q:quit", actionKey: "onQuit" },
-  ],
-  orchestrator: [
-    { label: "Space:toggle" },
     { label: "Enter:continue", actionKey: "onConfirm" },
     { label: "Esc:back", actionKey: "onBack" },
     { label: "q:quit", actionKey: "onQuit" },

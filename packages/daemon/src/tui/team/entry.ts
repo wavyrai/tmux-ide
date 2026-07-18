@@ -3,7 +3,7 @@
  * the command with no subcommand land on?
  *
  * Three outcomes:
- *  - `"project"` — a single-project `ide.yml` is present here (and `--team`
+ *  - `"project"` — a single-project config is present here (and `--team`
  *    wasn't passed): launch that project, exactly as always (backward compatible).
  *  - `"app"` — the M22.6 front-door flip: when there's no project to launch and
  *    the user opted in (`app.frontDoor`), bare `tmux-ide` opens the unified app
@@ -12,13 +12,17 @@
  *    the flip is off, and always the target of an explicit `--team`.
  *
  * `--team` ALWAYS means the classic cockpit (an explicit request for it), so it
- * overrides both a present `ide.yml` and the front-door flip.
+ * overrides both a present project config and the front-door flip.
  */
 export type EntryTarget = "project" | "cockpit" | "app";
 
 export interface ResolveEntryOptions {
-  /** Whether an `ide.yml` is present in the target directory. */
+  /** Legacy compatibility fact retained for older callers. */
   hasIdeYml: boolean;
+  /** Whether a workspace config is present in the target directory. */
+  hasWorkspaceConfig?: boolean;
+  /** Winning config kind when available. */
+  configKind?: "workspace" | "legacy" | "none";
   /** Whether `--team` forced the cockpit. */
   teamFlag: boolean;
   /** The `app.frontDoor` config flag — flip the default no-project entry to the app. */
@@ -27,12 +31,13 @@ export interface ResolveEntryOptions {
 
 /**
  * PURE — resolve the bare-invocation target. `--team` wins (always the classic
- * cockpit); otherwise a present `ide.yml` launches the project; otherwise the
+ * cockpit); otherwise a present project config launches the project; otherwise the
  * front-door flag decides between the unified app (opted in) and the classic
  * cockpit (default).
  */
 export function resolveEntry(opts: ResolveEntryOptions): EntryTarget {
   if (opts.teamFlag) return "cockpit";
-  if (opts.hasIdeYml) return "project";
+  if (opts.configKind === "workspace" || opts.configKind === "legacy") return "project";
+  if (opts.hasWorkspaceConfig || opts.hasIdeYml) return "project";
   return opts.frontDoor ? "app" : "cockpit";
 }

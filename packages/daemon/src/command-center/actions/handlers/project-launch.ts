@@ -13,6 +13,7 @@ import { ActionError } from "../errors.ts";
 import { type ActionInput, type ActionResult } from "../contract.ts";
 import { resolveProject, type ProjectResolverDeps } from "./_resolve-project.ts";
 import { getDefaultWorkspaceRegistry } from "../../../lib/workspace-registry.ts";
+import { resolveProjectConfigContext } from "../../../lib/config-context.ts";
 
 export interface ProjectLaunchDeps extends ProjectResolverDeps {
   hasSession?: (session: string) => boolean;
@@ -26,11 +27,24 @@ export interface ProjectLaunchDeps extends ProjectResolverDeps {
  * before returning anything. Without this sync, every dashboard fetch
  * 404s for projects that weren't passed as the daemon's primary sessionName.
  */
-function ensureWorkspaceRegistered(name: string, sessionName: string, dir: string): void {
+async function ensureWorkspaceRegistered(
+  name: string,
+  sessionName: string,
+  dir: string,
+): Promise<void> {
   const reg = getDefaultWorkspaceRegistry();
   if (reg.has(name)) return;
   try {
-    reg.add({ name, sessionName, projectDir: dir });
+    const facts = await resolveProjectConfigContext(dir);
+    reg.add({
+      name,
+      sessionName,
+      projectDir: dir,
+      ideConfigPath: facts.ideConfigPath,
+      configKind: facts.configKind,
+      configPath: facts.configPath,
+      hasWorkspaceConfig: facts.hasWorkspaceConfig,
+    });
   } catch {
     // ALREADY_EXISTS or persistence error — non-fatal; the next discover
     // pass will pick it up if persistence eventually succeeds.
@@ -48,7 +62,7 @@ export async function projectLaunchHandler(
     // Session already running — but the workspace registry may still be
     // stale (e.g. tmux session created via curl, or daemon restarted).
     // Sync before returning so /api/project/:name resolves.
-    ensureWorkspaceRegistered(project.name, project.sessionName, project.dir);
+    await ensureWorkspaceRegistered(project.name, project.sessionName, project.dir);
     return { sessionName: project.sessionName, started: false };
   }
 
@@ -65,6 +79,6 @@ export async function projectLaunchHandler(
   }
 
   // Freshly launched — workspace registry definitely needs the entry.
-  ensureWorkspaceRegistered(project.name, project.sessionName, project.dir);
+  await ensureWorkspaceRegistered(project.name, project.sessionName, project.dir);
   return { sessionName: project.sessionName, started: true };
 }

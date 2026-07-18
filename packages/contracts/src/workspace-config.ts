@@ -88,6 +88,7 @@ export const WorkspaceMissionDefaultsSchemaZ = z.strictObject({
 const WorkspaceConfigV1ObjectSchemaZ = z.strictObject({
   version: z.literal(1),
   name: NonEmptyStringSchema.optional(),
+  before: z.string().optional(),
   terminal: WorkspaceTerminalConfigSchemaZ.optional(),
   app: WorkspaceAppConfigSchemaZ.optional(),
   harnesses: z.record(ProfileNameSchema, WorkspaceHarnessProfileSchemaZ).optional(),

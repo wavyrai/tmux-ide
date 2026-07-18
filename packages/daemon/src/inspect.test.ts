@@ -1,5 +1,5 @@
 import { describe, it, expect } from "bun:test";
-import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -50,17 +50,33 @@ describe("inspect command", () => {
     try {
       const result = runCli(["inspect", "--json"], dir);
 
+      expect(result.status).not.toBe(0);
+      const payload = JSON.parse(result.stderr);
+      expect(payload.code).toBe("INVALID_CONFIG");
+      expect(payload.error).toMatch(/Invalid legacy ide\.yml/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("uses the resolved config root basename for unnamed configs invoked from nested dirs", () => {
+    const dir = mkdtempSync(join(tmpdir(), "tmux-ide-inspect-root-test-"));
+    const nested = join(dir, "apps", "web");
+    mkdirSync(join(dir, ".tmux-ide"), { recursive: true });
+    mkdirSync(nested, { recursive: true });
+    writeFileSync(
+      join(dir, ".tmux-ide", "workspace.yml"),
+      "version: 1\nterminal:\n  rows:\n    - panes:\n        - title: Shell\n",
+    );
+
+    try {
+      const result = runCli(["inspect", "--json"], nested);
+
       expect(result.status).toBe(0);
       const payload = JSON.parse(result.stdout);
-      expect(payload.valid).toBe(false);
-      expect(JSON.stringify(payload.errors)).toMatch(/rows\[0\]\.panes must be an array/);
-      expect(payload.rows).toEqual([
-        {
-          index: 0,
-          size: null,
-          panes: [],
-        },
-      ]);
+      expect(payload.session).toBe(dir.split("/").pop());
+      expect(payload.session).not.toBe("web");
+      expect(payload.configKind).toBe("workspace");
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

@@ -15,8 +15,14 @@ export const WorkspaceSchemaZ = z.object({
   sessionName: z.string().min(1),
   /** Absolute project directory. */
   projectDir: z.string().min(1),
-  /** Absolute path to the ide.yml driving this workspace. */
+  /** Absolute path to the legacy ide.yml driving this workspace, when present. */
   ideConfigPath: z.string().nullable(),
+  /** Winning config kind, appended without replacing ideConfigPath. */
+  configKind: z.enum(["workspace", "legacy", "none"]).optional(),
+  /** Absolute path to the winning config, if any. */
+  configPath: z.string().nullable().optional(),
+  /** Whether the workspace has `.tmux-ide/workspace.yml`. */
+  hasWorkspaceConfig: z.boolean().optional(),
   /** ISO timestamp of when the workspace was added. */
   addedAt: z.string(),
 });
@@ -38,8 +44,14 @@ export const AddWorkspaceRequestSchemaZ = z.object({
   name: z.string().min(1).optional(),
   /** Optional override for the tmux session name (defaults to `name`). */
   sessionName: z.string().min(1).optional(),
-  /** Optional ide.yml path the workspace was launched with. */
+  /** Optional ide.yml path the workspace was launched with. Preserved for wire compatibility. */
   ideConfigPath: z.string().min(1).optional(),
+  /** Optional generalized config kind. */
+  configKind: z.enum(["workspace", "legacy", "none"]).optional(),
+  /** Optional generalized config path. */
+  configPath: z.string().min(1).optional(),
+  /** Optional workspace config presence fact. */
+  hasWorkspaceConfig: z.boolean().optional(),
 });
 export type AddWorkspaceRequest = z.infer<typeof AddWorkspaceRequestSchemaZ>;
 

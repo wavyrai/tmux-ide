@@ -1,19 +1,21 @@
 name: my-app
+version: 1
 
 before: pnpm install
 
-rows:
-  - size: 70%
-    panes:
-      - title: Claude 1 — feature
-        command: claude
-      - title: Claude 2 — review
-        command: claude
+terminal:
+  rows:
+    - size: 70%
+      panes:
+        - title: Claude 1 — feature
+          command: claude
+        - title: Claude 2 — review
+          command: claude
 
-  - panes:
-      - title: Vite
-        command: pnpm dev
-      - title: Changes
-        type: changes # live git changes widget
-      - title: Shell
-        focus: true
+    - panes:
+        - title: Vite
+          command: pnpm dev
+        - title: Changes
+          type: changes # live git changes widget
+        - title: Shell
+          focus: true

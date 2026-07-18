@@ -1,15 +1,14 @@
 import "@opentui/solid/runtime-plugin-support";
 import { parseArgs } from "node:util";
-import { existsSync } from "node:fs";
 import { execFileSync } from "node:child_process";
-import { join } from "node:path";
 import { render, useTerminalDimensions } from "@opentui/solid";
 import { RGBA } from "@opentui/core";
 import { createSignal, Switch, Match } from "solid-js";
 import { createTheme, type RGBA as RGBAType } from "../lib/theme.ts";
 import { getAppConfig } from "../../lib/app-config.ts";
 import { detectStack } from "../../detect.ts";
-import { readConfig, writeConfig } from "../../lib/yaml-io.ts";
+import { writeConfig } from "../../lib/yaml-io.ts";
+import { resolveProjectConfigContext } from "../../lib/config-context.ts";
 import {
   PRESETS,
   flattenConfigTree,
@@ -41,6 +40,10 @@ const dir = values.dir ?? process.cwd();
 const themeConfig = values.theme ? JSON.parse(values.theme) : undefined;
 const forceWizard = values.wizard ?? false;
 const forceEdit = values.edit ?? false;
+const configContext = await resolveProjectConfigContext(dir);
+const configWriteRoot = configContext.configWriteRoot;
+const resolvedConfig = configContext.resolved;
+const hasInitialConfig = resolvedConfig?.kind !== undefined && resolvedConfig.kind !== "none";
 
 function toRGBA(c: RGBAType): RGBA {
   return RGBA.fromInts(c.r, c.g, c.b, c.a);
@@ -49,13 +52,11 @@ function toRGBA(c: RGBAType): RGBA {
 // Determine field type from path for the field editor
 function inferFieldType(path: string[]): { type: FieldType; enumValues?: string[] } {
   const last = path[path.length - 1];
-  if (last === "role") return { type: "enum", enumValues: ["lead", "teammate", "planner"] };
   if (last === "type")
     return {
       type: "enum",
-      enumValues: ["explorer", "changes", "preview", "tasks", "costs", "config", "mission-control"],
+      enumValues: ["explorer", "changes", "preview", "setup", "config", "sidebar"],
     };
-  if (last === "dispatch_mode") return { type: "enum", enumValues: ["tasks", "goals"] };
   if (last === "focus" || last === "enabled" || last === "auto_dispatch" || last === "widgets")
     return { type: "boolean" };
   if (last === "size") return { type: "size" };
@@ -80,7 +81,6 @@ type View =
   | { kind: "detect" }
   | { kind: "layout-picker" }
   | { kind: "agent-naming"; config: IdeConfig }
-  | { kind: "orchestrator" }
   | { kind: "review"; config: IdeConfig }
   | { kind: "editor-tree" }
   | { kind: "editor-field"; path: string[] };
@@ -91,7 +91,7 @@ render(
     const dimensions = useTerminalDimensions();
 
     // Detect project stack once
-    const detected = detectStack(dir);
+    const detected = detectStack(configWriteRoot);
     const detectedInfo: DetectedStackInfo = {
       packageManager: detected.packageManager,
       language: detected.language,
@@ -100,7 +100,7 @@ render(
     };
 
     // Determine initial view
-    const hasConfig = existsSync(join(dir, "ide.yml"));
+    const hasConfig = hasInitialConfig;
     const initialView: View =
       forceEdit && hasConfig
         ? { kind: "editor-tree" }
@@ -111,9 +111,12 @@ render(
     const [view, setView] = createSignal<View>(initialView);
 
     // Config state — loaded from file for editor mode, built from wizard flow
-    const initialConfig: IdeConfig = hasConfig
-      ? readConfig(dir).config
-      : { name: dir.split("/").pop() ?? "project", rows: [{ panes: [{ title: "Shell" }] }] };
+    const initialConfig: IdeConfig = resolvedConfig?.launchConfig
+      ? resolvedConfig.launchConfig
+      : {
+          name: configWriteRoot.split("/").pop() ?? "project",
+          rows: [{ panes: [{ title: "Shell" }] }],
+        };
     const [config, setConfig] = createSignal<IdeConfig>(initialConfig);
 
     function viewKind(): ViewKind {
@@ -135,11 +138,6 @@ render(
         case "agent-naming":
           return {
             onBack: () => setView({ kind: "layout-picker" }),
-            onQuit: quit,
-          };
-        case "orchestrator":
-          return {
-            onBack: () => setView({ kind: "agent-naming", config: config() }),
             onQuit: quit,
           };
         case "review":
@@ -168,9 +166,9 @@ render(
     }
 
     function handleSaveAndLaunch(cfg: IdeConfig) {
-      writeConfig(dir, cfg);
+      writeConfig(configWriteRoot, cfg);
       try {
-        execFileSync("tmux-ide", [], { cwd: dir, stdio: "inherit" });
+        execFileSync("tmux-ide", [], { cwd: configWriteRoot, stdio: "inherit" });
       } catch {
         // tmux-ide may not be in PATH when running as widget
       }
@@ -178,7 +176,7 @@ render(
     }
 
     function handleSaveOnly(cfg: IdeConfig) {
-      writeConfig(dir, cfg);
+      writeConfig(configWriteRoot, cfg);
       process.exit(0);
     }
 

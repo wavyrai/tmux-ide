@@ -5,6 +5,7 @@ import { outputError } from "./lib/output.ts";
 import { IdeConfigSchema } from "./schemas/ide-config.ts";
 import type { IdeConfig, Pane, Row } from "./types.ts";
 import { CliActionInvocationError, tryDispatchAction } from "./lib/cli-action-bridge.ts";
+import { resolveProjectConfigContext } from "./lib/config-context.ts";
 
 /**
  * Read config safely (read-only, no write). Returns config or undefined on error.
@@ -14,7 +15,7 @@ function readConfigSafe(dir: string): IdeConfig | undefined {
   try {
     ({ config: cfg } = readConfig(dir));
   } catch (e) {
-    outputError(`Cannot read ide.yml: ${(e as Error).message}`, "READ_ERROR");
+    outputError(`Cannot read project config: ${(e as Error).message}`, "READ_ERROR");
     return;
   }
   return cfg;
@@ -29,7 +30,7 @@ function withConfig<T>(dir: string, mutator: (cfg: IdeConfig) => T): T | undefin
   if (cfg === undefined) return;
 
   if (!isConfigObject(cfg)) {
-    outputError("Invalid ide.yml: config root must be an object", "INVALID_CONFIG");
+    outputError("Invalid project config: config root must be an object", "INVALID_CONFIG");
     return;
   }
 
@@ -57,7 +58,7 @@ export function mutateConfig<T>(
 } {
   const { config: cfg } = readConfig(dir);
   if (!isConfigObject(cfg)) {
-    throw new Error("Invalid ide.yml: config root must be an object");
+    throw new Error("Invalid project config: config root must be an object");
   }
 
   const result = mutator(cfg);
@@ -94,13 +95,13 @@ export function configSetValue(dir: string, path: string, value: unknown): IdeCo
 export function configAddPane(dir: string, rowIndex: number, pane: Partial<Pane>): IdeConfig {
   return mutateConfig(dir, (cfg) => {
     if (!Array.isArray(cfg.rows)) {
-      throw new Error("Invalid ide.yml: 'rows' must be an array");
+      throw new Error("Invalid project config: 'rows' must be an array");
     }
     if (!cfg.rows[rowIndex]) {
       throw new Error(`Row ${rowIndex} does not exist`);
     }
     if (!Array.isArray(cfg.rows[rowIndex]!.panes)) {
-      throw new Error(`Invalid ide.yml: row ${rowIndex} panes must be an array`);
+      throw new Error(`Invalid project config: row ${rowIndex} panes must be an array`);
     }
     cfg.rows[rowIndex]!.panes.push(pane as Pane);
   }).config;
@@ -116,10 +117,10 @@ export function configRemovePane(
 } {
   const updated = mutateConfig(dir, (cfg) => {
     if (!Array.isArray(cfg.rows)) {
-      throw new Error("Invalid ide.yml: 'rows' must be an array");
+      throw new Error("Invalid project config: 'rows' must be an array");
     }
     if (!Array.isArray(cfg.rows[rowIndex]?.panes)) {
-      throw new Error(`Invalid ide.yml: row ${rowIndex} panes must be an array`);
+      throw new Error(`Invalid project config: row ${rowIndex} panes must be an array`);
     }
     const removed = cfg.rows[rowIndex]!.panes[paneIndex];
     if (!removed) {
@@ -134,7 +135,7 @@ export function configRemovePane(
 export function configAddRow(dir: string, size?: string): IdeConfig {
   return mutateConfig(dir, (cfg) => {
     if (cfg.rows !== undefined && !Array.isArray(cfg.rows)) {
-      throw new Error("Invalid ide.yml: 'rows' must be an array");
+      throw new Error("Invalid project config: 'rows' must be an array");
     }
     const row: Row = { panes: [{ title: "Shell" }] };
     if (size) row.size = size;
@@ -146,7 +147,7 @@ export function configAddRow(dir: string, size?: string): IdeConfig {
 export function configEnableTeam(dir: string, name?: string): IdeConfig {
   return mutateConfig(dir, (cfg) => {
     if (cfg.rows !== undefined && !Array.isArray(cfg.rows)) {
-      throw new Error("Invalid ide.yml: 'rows' must be an array");
+      throw new Error("Invalid project config: 'rows' must be an array");
     }
     cfg.team = { name: name ?? cfg.name ?? "my-team" };
     let leadAssigned = false;
@@ -168,7 +169,7 @@ export function configEnableTeam(dir: string, name?: string): IdeConfig {
 export function configDisableTeam(dir: string): IdeConfig {
   return mutateConfig(dir, (cfg) => {
     if (cfg.rows !== undefined && !Array.isArray(cfg.rows)) {
-      throw new Error("Invalid ide.yml: 'rows' must be an array");
+      throw new Error("Invalid project config: 'rows' must be an array");
     }
     delete cfg.team;
     for (const row of cfg.rows ?? []) {
@@ -189,23 +190,32 @@ export async function config(
 
   if (await tryDispatchConfigAction(dir, { json, action, args: args ?? [] })) return;
 
+  const configContext = await resolveProjectConfigContext(dir);
+  if (!configContext.configExists) {
+    outputError(
+      `No workspace config found in ${configContext.projectRoot}. Run "tmux-ide init" first.`,
+      "CONFIG_NOT_FOUND",
+    );
+  }
+  const configDir = configContext.configWriteRoot;
+
   switch (action) {
     case "dump":
-      return dumpConfig(dir, { json });
+      return dumpConfig(configDir, { json });
     case "set":
-      return setConfig(dir, args ?? [], { json });
+      return setConfig(configDir, args ?? [], { json });
     case "add-pane":
-      return addPane(dir, args ?? [], { json });
+      return addPane(configDir, args ?? [], { json });
     case "remove-pane":
-      return removePane(dir, args ?? [], { json });
+      return removePane(configDir, args ?? [], { json });
     case "add-row":
-      return addRow(dir, args ?? [], { json });
+      return addRow(configDir, args ?? [], { json });
     case "enable-team":
-      return enableTeam(dir, args ?? [], { json });
+      return enableTeam(configDir, args ?? [], { json });
     case "disable-team":
-      return disableTeam(dir, { json });
+      return disableTeam(configDir, { json });
     default:
-      return dumpConfig(dir, { json });
+      return dumpConfig(configDir, { json });
   }
 }
 
@@ -366,7 +376,7 @@ function addPane(dir: string, args: string[], { json }: { json?: boolean }): voi
 
   withConfig(dir, (cfg) => {
     if (!Array.isArray(cfg.rows)) {
-      outputError("Invalid ide.yml: 'rows' must be an array", "INVALID_CONFIG");
+      outputError("Invalid project config: 'rows' must be an array", "INVALID_CONFIG");
     }
 
     if (!cfg.rows[rowIdx]) {
@@ -374,7 +384,7 @@ function addPane(dir: string, args: string[], { json }: { json?: boolean }): voi
     }
 
     if (!Array.isArray(cfg.rows[rowIdx]!.panes)) {
-      outputError(`Invalid ide.yml: row ${rowIdx} panes must be an array`, "INVALID_CONFIG");
+      outputError(`Invalid project config: row ${rowIdx} panes must be an array`, "INVALID_CONFIG");
     }
 
     cfg.rows[rowIdx]!.panes.push(pane as Pane);
@@ -404,11 +414,11 @@ function removePane(dir: string, args: string[], { json }: { json?: boolean }): 
   let removed: Pane | undefined;
   withConfig(dir, (cfg) => {
     if (!Array.isArray(cfg.rows)) {
-      outputError("Invalid ide.yml: 'rows' must be an array", "INVALID_CONFIG");
+      outputError("Invalid project config: 'rows' must be an array", "INVALID_CONFIG");
     }
 
     if (!Array.isArray(cfg.rows[rowIdx]?.panes)) {
-      outputError(`Invalid ide.yml: row ${rowIdx} panes must be an array`, "INVALID_CONFIG");
+      outputError(`Invalid project config: row ${rowIdx} panes must be an array`, "INVALID_CONFIG");
     }
 
     if (!cfg.rows[rowIdx]!.panes[paneIdx]) {
@@ -431,7 +441,7 @@ function addRow(dir: string, args: string[], { json }: { json?: boolean }): void
   let rowIdx: number | undefined;
   withConfig(dir, (cfg) => {
     if (cfg.rows !== undefined && !Array.isArray(cfg.rows)) {
-      outputError("Invalid ide.yml: 'rows' must be an array", "INVALID_CONFIG");
+      outputError("Invalid project config: 'rows' must be an array", "INVALID_CONFIG");
     }
 
     const row: Row = { panes: [{ title: "Shell" }] };
@@ -455,7 +465,7 @@ function enableTeam(dir: string, args: string[], { json }: { json?: boolean }): 
   let result: { team: IdeConfig["team"]; roles: ReturnType<typeof summarizeRoles> } | undefined;
   withConfig(dir, (cfg) => {
     if (cfg.rows !== undefined && !Array.isArray(cfg.rows)) {
-      outputError("Invalid ide.yml: 'rows' must be an array", "INVALID_CONFIG");
+      outputError("Invalid project config: 'rows' must be an array", "INVALID_CONFIG");
     }
 
     teamName = name ?? cfg.name ?? "my-team";
@@ -492,7 +502,7 @@ function enableTeam(dir: string, args: string[], { json }: { json?: boolean }): 
 function disableTeam(dir: string, { json }: { json?: boolean }): void {
   withConfig(dir, (cfg) => {
     if (cfg.rows !== undefined && !Array.isArray(cfg.rows)) {
-      outputError("Invalid ide.yml: 'rows' must be an array", "INVALID_CONFIG");
+      outputError("Invalid project config: 'rows' must be an array", "INVALID_CONFIG");
     }
 
     delete cfg.team;

@@ -6,6 +6,24 @@ import {
   OnboardConflictError,
   OnboardInvalidInputError,
 } from "./project-onboard.ts";
+import type { ProjectResolution } from "./project-resolver.ts";
+
+function resolution(kind: "none" | "legacy" | "workspace", path: string | null): ProjectResolution {
+  return {
+    inputDir: "/dir",
+    projectRoot: "/dir",
+    identityKey: "path-test",
+    identitySource: "canonical-realpath",
+    identityAnchor: "/dir",
+    config:
+      kind === "none"
+        ? { kind: "none", path: null, explicit: false }
+        : { kind, path: path!, explicit: false },
+    workspaceConfigPath: kind === "workspace" ? path : null,
+    legacyConfigPath: kind === "legacy" ? path : null,
+    hasLegacyConfigAtInput: kind === "legacy",
+  };
+}
 
 describe("composeIdeYmlConfig", () => {
   it("produces a 1-agent config without a team block", () => {
@@ -23,30 +41,30 @@ describe("composeIdeYmlConfig", () => {
     expect(config.rows[0]!.panes[0]!.role).toBeUndefined();
   });
 
-  it("produces a 2-agent config with team block + lead/teammate roles", () => {
+  it("produces a 2-agent config without legacy team metadata", () => {
     const config = composeIdeYmlConfig({ name: "alpha", agents: 2 });
-    expect(config.team).toEqual({ name: "alpha" });
+    expect(config.team).toBeUndefined();
     expect(config.rows[0]!.panes).toHaveLength(2);
     expect(config.rows[0]!.panes[0]).toMatchObject({
       title: "Lead",
       command: "claude",
-      role: "lead",
       focus: true,
     });
     expect(config.rows[0]!.panes[1]).toMatchObject({
       title: "Teammate 1",
       command: "claude",
-      role: "teammate",
     });
+    expect(config.rows[0]!.panes[0]!.role).toBeUndefined();
+    expect(config.rows[0]!.panes[1]!.role).toBeUndefined();
     expect(config.rows[0]!.panes[1]!.focus).toBeUndefined();
   });
 
-  it("produces a 3-agent config with team block + 2 teammates", () => {
+  it("produces a 3-agent config without legacy pane roles", () => {
     const config = composeIdeYmlConfig({ name: "alpha", agents: 3 });
-    expect(config.team).toEqual({ name: "alpha" });
+    expect(config.team).toBeUndefined();
     expect(config.rows[0]!.panes).toHaveLength(3);
     expect(config.rows[0]!.panes.map((p) => p.title)).toEqual(["Lead", "Teammate 1", "Teammate 2"]);
-    expect(config.rows[0]!.panes.map((p) => p.role)).toEqual(["lead", "teammate", "teammate"]);
+    expect(config.rows[0]!.panes.map((p) => p.role)).toEqual([undefined, undefined, undefined]);
   });
 
   it("includes a Dev pane when devCommand is set", () => {
@@ -91,8 +109,7 @@ describe("composeIdeYmlConfig", () => {
       agentNames: ["Captain", "Frontend"],
     });
     expect(config.rows[0]!.panes.map((p) => p.title)).toEqual(["Captain", "Frontend"]);
-    // Roles stay canonical regardless of titles.
-    expect(config.rows[0]!.panes.map((p) => p.role)).toEqual(["lead", "teammate"]);
+    expect(config.rows[0]!.panes.map((p) => p.role)).toEqual([undefined, undefined]);
   });
 
   it("rejects agentNames whose length disagrees with agents", () => {
@@ -115,7 +132,8 @@ describe("composeIdeYml (yaml output)", () => {
   it("emits a parseable YAML string", () => {
     const yaml = composeIdeYml({ name: "alpha", agents: 2, devCommand: "pnpm dev" });
     expect(yaml).toContain("name: alpha");
-    expect(yaml).toContain("team:");
+    expect(yaml).not.toContain("team:");
+    expect(yaml).not.toContain("role:");
     expect(yaml).toContain("Lead");
     expect(yaml).toContain("Teammate 1");
     expect(yaml).toContain("pnpm dev");
@@ -123,11 +141,33 @@ describe("composeIdeYml (yaml output)", () => {
 });
 
 describe("assertNoExistingIdeYml", () => {
-  it("throws OnboardConflictError when ide.yml exists", () => {
-    expect(() => assertNoExistingIdeYml("/dir", () => true)).toThrow(OnboardConflictError);
+  it("throws OnboardConflictError when a legacy config resolves", async () => {
+    await expect(
+      assertNoExistingIdeYml("/dir", async () => resolution("legacy", "/dir/ide.yml")),
+    ).rejects.toMatchObject({
+      name: "OnboardConflictError",
+      code: "IDE_YML_EXISTS",
+      message: "project config already exists at /dir/ide.yml",
+    });
+    await expect(
+      assertNoExistingIdeYml("/dir", async () => resolution("legacy", "/dir/ide.yml")),
+    ).rejects.toBeInstanceOf(OnboardConflictError);
   });
 
-  it("returns silently when ide.yml is absent", () => {
-    expect(() => assertNoExistingIdeYml("/dir", () => false)).not.toThrow();
+  it("throws OnboardConflictError when a workspace config resolves", async () => {
+    await expect(
+      assertNoExistingIdeYml("/dir", async () =>
+        resolution("workspace", "/dir/.tmux-ide/workspace.yml"),
+      ),
+    ).rejects.toMatchObject({
+      code: "WORKSPACE_CONFIG_EXISTS",
+      message: "project config already exists at /dir/.tmux-ide/workspace.yml",
+    });
+  });
+
+  it("returns silently when no config resolves", async () => {
+    await expect(
+      assertNoExistingIdeYml("/dir", async () => resolution("none", null)),
+    ).resolves.toBeUndefined();
   });
 });

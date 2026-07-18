@@ -1,21 +1,23 @@
 name: my-app
+version: 1
 
 before: pnpm install
 
-rows:
-  - size: 70%
-    panes:
-      - title: Claude 1 — feature
-        command: claude
-      - title: Claude 2 — review
-        command: claude
-      - title: Claude 3 — explore
-        command: claude
+terminal:
+  rows:
+    - size: 70%
+      panes:
+        - title: Claude 1 — feature
+          command: claude
+        - title: Claude 2 — review
+          command: claude
+        - title: Claude 3 — explore
+          command: claude
 
-  - panes:
-      - title: Next.js
-        command: pnpm dev
-      - title: Convex
-        command: npx convex dev
-      - title: Shell
-        focus: true
+    - panes:
+        - title: Next.js
+          command: pnpm dev
+        - title: Convex
+          command: npx convex dev
+        - title: Shell
+          focus: true

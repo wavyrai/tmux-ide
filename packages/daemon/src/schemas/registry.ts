@@ -17,6 +17,14 @@ export const RegisteredProjectSchemaZ = z.object({
   dir: z.string(),
   /** Whether `<dir>/ide.yml` exists; refreshed on register and on `probe()`. */
   hasIdeYml: z.boolean(),
+  /** Whether `.tmux-ide/workspace.yml` exists or wins discovery. */
+  hasWorkspaceConfig: z.boolean().optional(),
+  /** Generalized winning config kind. Added without replacing `hasIdeYml`. */
+  configKind: z.enum(["workspace", "legacy", "none"]).optional(),
+  /** Generalized winning config path. */
+  configPath: z.string().nullable().optional(),
+  /** Legacy config path when an `ide.yml` is present. */
+  ideConfigPath: z.string().nullable().optional(),
   /** Git remote origin URL, or `null` if not a git repo / no origin / probe failed. */
   gitOrigin: z.string().nullable(),
   /** Current git branch, or `null` if not a git repo / detached HEAD / probe failed. */

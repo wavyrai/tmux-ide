@@ -436,9 +436,9 @@ async function startHttpServer({
 
   let authConfig = AuthConfigSchema.parse({});
   try {
-    const { readConfig } = await import("./yaml-io.ts");
-    const { config } = readConfig(dir);
-    if (config.auth) authConfig = AuthConfigSchema.parse(config.auth);
+    const { resolveConfig } = await import("./resolved-config.ts");
+    const { launchConfig } = await resolveConfig(dir);
+    if (launchConfig?.auth) authConfig = AuthConfigSchema.parse(launchConfig.auth);
   } catch {
     // Config not readable — use defaults.
   }

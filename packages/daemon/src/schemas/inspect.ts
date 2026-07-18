@@ -25,8 +25,16 @@ export const ProjectInspectSchemaZ = z.object({
   name: z.string(),
   /** Absolute, canonical path to the directory. */
   dir: z.string(),
-  /** Whether `<dir>/ide.yml` exists. */
+  /** Whether `<dir>/ide.yml` exists. Legacy compatibility fact. */
   hasIdeYml: z.boolean(),
+  /** Whether `.tmux-ide/workspace.yml` exists or wins discovery. */
+  hasWorkspaceConfig: z.boolean().optional(),
+  /** Generalized winning config kind. Added without replacing `hasIdeYml`. */
+  configKind: z.enum(["workspace", "legacy", "none"]).optional(),
+  /** Generalized winning config path. Added without replacing legacy path facts. */
+  configPath: z.string().nullable().optional(),
+  /** Legacy config path when an `ide.yml` is present. */
+  ideConfigPath: z.string().nullable().optional(),
   /** Git remote origin URL, or `null` if not a git repo / no origin / probe failed. */
   gitOrigin: z.string().nullable(),
   /** Current git branch, or `null` if not a git repo / detached HEAD / probe failed. */

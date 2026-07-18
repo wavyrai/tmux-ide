@@ -1,8 +1,10 @@
 import { describe, it, expect } from "bun:test";
-import { detectStack, suggestConfig } from "./detect.ts";
-import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { detect, detectStack, suggestConfig } from "./detect.ts";
+import { execFileSync } from "node:child_process";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import yaml from "js-yaml";
 
 describe("suggestConfig", () => {
   it("creates Next.js config with pnpm", () => {
@@ -136,6 +138,57 @@ describe("detectStack reasoning", () => {
       expect(detected.reasons.some((reason) => reason.includes('dependency "next"'))).toBeTruthy();
       expect(detected.reasons.some((reason) => reason.includes("dev command"))).toBeTruthy();
     } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("detect --write target", () => {
+  it("writes a new config at the git project root when invoked from a nested dir", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "tmux-ide-detect-write-"));
+    const origLog = console.log;
+    console.log = () => {};
+    try {
+      execFileSync("git", ["init"], { cwd: dir, stdio: "ignore" });
+      const nested = join(dir, "packages", "app", "src");
+      mkdirSync(nested, { recursive: true });
+      writeFileSync(join(dir, "package.json"), JSON.stringify({ scripts: { dev: "vite" } }));
+
+      await detect(nested, { json: true, write: true });
+
+      expect(existsSync(join(dir, ".tmux-ide", "workspace.yml"))).toBeTruthy();
+      expect(existsSync(join(nested, ".tmux-ide", "workspace.yml"))).toBeFalsy();
+    } finally {
+      console.log = origLog;
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("writes beside a winning nested config rather than creating a root config", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "tmux-ide-detect-write-"));
+    const origLog = console.log;
+    console.log = () => {};
+    try {
+      execFileSync("git", ["init"], { cwd: dir, stdio: "ignore" });
+      const app = join(dir, "apps", "web");
+      const nested = join(app, "src");
+      mkdirSync(join(app, ".tmux-ide"), { recursive: true });
+      mkdirSync(nested, { recursive: true });
+      writeFileSync(
+        join(app, ".tmux-ide", "workspace.yml"),
+        "version: 1\nname: web\nterminal:\n  rows:\n    - panes:\n        - title: Shell\n",
+      );
+      writeFileSync(join(app, "package.json"), JSON.stringify({ scripts: { dev: "vite" } }));
+
+      await detect(nested, { json: true, write: true });
+
+      const saved = yaml.load(readFileSync(join(app, ".tmux-ide", "workspace.yml"), "utf-8")) as {
+        name?: string;
+      };
+      expect(saved.name).toBe("web");
+      expect(existsSync(join(dir, ".tmux-ide", "workspace.yml"))).toBeFalsy();
+    } finally {
+      console.log = origLog;
       rmSync(dir, { recursive: true, force: true });
     }
   });

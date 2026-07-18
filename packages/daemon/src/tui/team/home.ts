@@ -1,6 +1,6 @@
 /**
  * Pure model helpers for the cockpit's HOME screen — the surface bare
- * `tmux-ide` opens when there's no single-project `ide.yml` to launch.
+ * `tmux-ide` opens when there's no single-project config to launch.
  *
  * The `.tsx` renders these plain-data shapes: the header's fleet rollup counts,
  * the empty-fleet hero actions, the in-app panel keys (e/g/,), and the footer

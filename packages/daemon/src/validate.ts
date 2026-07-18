@@ -1,7 +1,7 @@
 import { resolve } from "node:path";
-import { readConfig } from "./lib/yaml-io.ts";
 import { outputError } from "./lib/output.ts";
 import { IdeConfigSchema } from "./schemas/ide-config.ts";
+import { resolveConfig } from "./lib/resolved-config.ts";
 
 /** Minimal shape of Zod parse issues (v3/v4 compatible for our mappers). */
 interface ZodLikeIssue {
@@ -188,12 +188,11 @@ export async function validate(
   { json }: { json?: boolean } = {},
 ): Promise<void> {
   const dir = resolve(targetDir ?? ".");
-  let config;
+  const resolved = await resolveConfig(dir);
+  const config = resolved.launchConfig;
 
-  try {
-    ({ config } = readConfig(dir));
-  } catch (e) {
-    outputError(`Cannot read ide.yml: ${(e as Error).message}`, "READ_ERROR");
+  if (!config) {
+    outputError("Cannot read workspace config: no config found", "READ_ERROR");
     return;
   }
 
@@ -201,14 +200,27 @@ export async function validate(
   const valid = errors.length === 0;
 
   if (json) {
-    console.log(JSON.stringify({ valid, errors }, null, 2));
+    console.log(
+      JSON.stringify(
+        {
+          valid,
+          errors,
+          configKind: resolved.kind,
+          configPath: resolved.path,
+          legacyDiagnostics: resolved.diagnostics,
+        },
+        null,
+        2,
+      ),
+    );
     return;
   }
 
   if (valid) {
-    console.log("✓ ide.yml is valid");
+    console.log(`✓ ${resolved.kind === "legacy" ? "legacy ide.yml" : "workspace config"} is valid`);
+    if (resolved.migrationHint) console.log(resolved.migrationHint);
   } else {
-    console.log("✗ ide.yml has errors:");
+    console.log("✗ workspace config has errors:");
     for (const e of errors) {
       console.log(`  - ${e}`);
     }

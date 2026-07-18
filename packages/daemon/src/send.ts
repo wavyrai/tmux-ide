@@ -1,7 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { resolve, join } from "node:path";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
-import { getSessionName } from "./lib/yaml-io.ts";
 import { getSessionState } from "@tmux-ide/tmux-bridge";
 import {
   listSessionPanes,
@@ -12,6 +11,7 @@ import {
   type PaneBusyStatus,
 } from "./widgets/lib/pane-comms.ts";
 import { IdeError } from "./lib/errors.ts";
+import { resolveProjectConfigContext } from "./lib/config-context.ts";
 
 export const LONG_MESSAGE_THRESHOLD = 150;
 
@@ -171,7 +171,7 @@ export function deliverMessage(opts: {
 
 export async function send(targetDir: string | undefined, opts: SendOptions): Promise<void> {
   const dir = resolve(targetDir ?? ".");
-  const { name: session } = getSessionName(dir);
+  const { sessionName: session } = await resolveProjectConfigContext(dir);
   const { json, to: target, message: rawMessage, noEnter } = opts;
 
   if (!target) {

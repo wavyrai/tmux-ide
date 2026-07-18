@@ -6,6 +6,18 @@ describe("resolveEntry", () => {
     expect(resolveEntry({ hasIdeYml: true, teamFlag: false, frontDoor: false })).toBe("project");
   });
 
+  it("launches the project when a workspace config is present", () => {
+    expect(
+      resolveEntry({
+        hasIdeYml: false,
+        hasWorkspaceConfig: true,
+        configKind: "workspace",
+        teamFlag: false,
+        frontDoor: false,
+      }),
+    ).toBe("project");
+  });
+
   it("opens the cockpit when there's no ide.yml and the front door is off", () => {
     expect(resolveEntry({ hasIdeYml: false, teamFlag: false, frontDoor: false })).toBe("cockpit");
   });

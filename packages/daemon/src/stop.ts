@@ -1,14 +1,14 @@
 import { resolve } from "node:path";
-import { getSessionName } from "./lib/yaml-io.ts";
 import { outputError } from "./lib/output.ts";
 import { killSession, stopSessionMonitor } from "@tmux-ide/tmux-bridge";
+import { resolveProjectConfigContext } from "./lib/config-context.ts";
 
 export async function stop(
   targetDir: string | undefined,
   { json }: { json?: boolean } = {},
 ): Promise<void> {
   const dir = resolve(targetDir ?? ".");
-  const { name: session } = getSessionName(dir);
+  const { sessionName: session } = await resolveProjectConfigContext(dir);
 
   // Stop the session monitor before killing the session
   stopSessionMonitor(session);

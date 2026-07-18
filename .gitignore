@@ -34,8 +34,11 @@ context/
 # local task board
 .tasks/
 
-# local agent context (per-project skills + library); never ships to npm
-.tmux-ide/
+# local workspace overrides; .tmux-ide/workspace.yml is shareable project config
+.tmux-ide/workspace.local.yml
+.tmux-ide/terminals.json
+.tmux-ide/skills/
+.tmux-ide/library/
 
 # Orchestrator worktrees
 .worktrees/
