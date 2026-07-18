@@ -17,6 +17,7 @@ export * from "./lib-internal/auth.ts";
 export * from "./lib-internal/hq.ts";
 export * from "./ide-config.ts";
 export * from "./domain.ts";
+export * from "./mission-projections.ts";
 export * from "./tmux.ts";
 export * from "./workspace.ts";
 export * from "./workspace-config.ts";

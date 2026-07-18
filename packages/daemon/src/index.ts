@@ -21,3 +21,14 @@ export {
   type MissionSnapshot,
   type MissionTask,
 } from "./lib/mission-repository.ts";
+export {
+  MissionProjectionError,
+  missionStatusToBoardColumn,
+  projectMissionBoard,
+  projectMissionDetail,
+  projectMissionHistory,
+  projectMissionTimeline,
+  taskStatusToBoardColumn,
+  type MissionProjectionErrorCode,
+  type MissionProjectionOptions,
+} from "./lib/mission-projections.ts";
