@@ -19,8 +19,10 @@ import {
   relativeProjectPath,
   serializeWorkspaceUiState,
   setMissionsSelection,
+  setWorkspaceViewLayoutState,
   shouldHydrateWorkspaceView,
   viewStateFor,
+  layoutStateForView,
   writeWorkspaceUiStateWithRetry,
   type WorkspaceUiStateV1,
 } from "./workspace-ui-state.ts";
@@ -54,11 +56,51 @@ function resolution(
 
 function views(): HostedPanelView[] {
   return [
-    { id: "home", title: "Home", panel: "home", glyph: "⌂", order: 0, shortcut: null },
-    { id: "files-a", title: "Files A", panel: "files", glyph: "▤", order: 1, shortcut: null },
-    { id: "diff-a", title: "Diff A", panel: "diff", glyph: "±", order: 2, shortcut: null },
-    { id: "files-b", title: "Files B", panel: "files", glyph: "▤", order: 3, shortcut: null },
-    { id: "missions", title: "Missions", panel: "missions", glyph: "◆", order: 4, shortcut: null },
+    {
+      id: "home",
+      title: "Home",
+      panel: "home",
+      layout: null,
+      glyph: "⌂",
+      order: 0,
+      shortcut: null,
+    },
+    {
+      id: "files-a",
+      title: "Files A",
+      panel: "files",
+      layout: null,
+      glyph: "▤",
+      order: 1,
+      shortcut: null,
+    },
+    {
+      id: "diff-a",
+      title: "Diff A",
+      panel: "diff",
+      layout: null,
+      glyph: "±",
+      order: 2,
+      shortcut: null,
+    },
+    {
+      id: "files-b",
+      title: "Files B",
+      panel: "files",
+      layout: null,
+      glyph: "▤",
+      order: 3,
+      shortcut: null,
+    },
+    {
+      id: "missions",
+      title: "Missions",
+      panel: "missions",
+      layout: null,
+      glyph: "◆",
+      order: 4,
+      shortcut: null,
+    },
   ];
 }
 
@@ -174,6 +216,39 @@ describe("workspace UI-state contract", () => {
     expect(missionsSelection(state, "other")).toEqual({
       selectedMissionId: null,
       selectedTaskId: null,
+    });
+  });
+
+  it("round-trips bounded composite layout pointers without YAML/runtime state", () => {
+    const state = setWorkspaceViewLayoutState(defaultWorkspaceUiState(), views()[1]!, {
+      focusedLeafId: "files-tab",
+      activeTabs: { dock: "diff-tab" },
+      splitWeights: { root: [70, 30] },
+    });
+
+    expect(layoutStateForView(state, "files-a")).toEqual({
+      focusedLeafId: "files-tab",
+      activeTabs: { dock: "diff-tab" },
+      splitWeights: { root: [70, 30] },
+    });
+    const parsed = parseWorkspaceUiStateJson(serializeWorkspaceUiState(state));
+    expect(parsed.state.views["files-a"]).toEqual({
+      panel: "files",
+      openPath: null,
+      selectedPath: null,
+      layout: {
+        focusedLeafId: "files-tab",
+        activeTabs: { dock: "diff-tab" },
+        splitWeights: { root: [70, 30] },
+      },
+    });
+    const bad = parseWorkspaceUiStateJson(
+      '{"version":1,"active":null,"views":{"ide":{"panel":"files","layout":{"focusedLeafId":"bad\\u0000","activeTabs":{"dock":"files"},"splitWeights":{"root":[1,-1]}}}}}',
+    );
+    expect(layoutStateForView(bad.state, "ide")).toEqual({
+      focusedLeafId: null,
+      activeTabs: { dock: "files" },
+      splitWeights: {},
     });
   });
 

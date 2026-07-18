@@ -1,4 +1,7 @@
 import type {
+  WorkspaceAppLayoutNode,
+  WorkspaceAppView,
+  WorkspaceCompositeView,
   WorkspaceConfigV1,
   WorkspaceFullPanelView,
   WorkspacePanelKind,
@@ -6,6 +9,11 @@ import type {
 import stringWidth from "string-width";
 import type { ResolvedConfig } from "../../lib/resolved-config.ts";
 import type { Tab } from "./app-state.ts";
+import {
+  compositeContainsPanel,
+  findCompositePanelLeaf,
+  firstCompositePanelKind,
+} from "./composite-layout.ts";
 import type { Span } from "./spans.ts";
 
 export type HostedPanelKind = WorkspacePanelKind;
@@ -19,6 +27,7 @@ export interface HostedPanelView {
   id: string;
   title: string;
   panel: HostedPanelKind;
+  layout: WorkspaceAppLayoutNode | null;
   glyph: string;
   order: number;
   shortcut: HostedPanelShortcut | null;
@@ -109,18 +118,44 @@ export function panelSpans(views: readonly HostedPanelView[]): Span[] {
 }
 
 export function buildHostedPanelViews(
-  configuredViews: readonly WorkspaceFullPanelView[] | null | undefined,
+  configuredViews:
+    | readonly WorkspaceAppView[]
+    | readonly WorkspaceFullPanelView[]
+    | null
+    | undefined,
 ): HostedPanelView[] {
   const source =
     configuredViews && configuredViews.length > 0 ? configuredViews : CANONICAL_PANEL_VIEWS;
-  return source.map((view, index) => ({
-    id: view.id,
-    title: view.title ?? PANEL_TITLES[view.panel],
-    panel: view.panel,
-    glyph: PANEL_GLYPHS[view.panel],
-    order: index,
-    shortcut: shortcutForHostedViewIndex(index),
-  }));
+  return source.map((view, index) => {
+    if (isCompositeView(view)) {
+      const panel = firstCompositePanelKind(view.layout);
+      return {
+        id: view.id,
+        title: view.title ?? "Workspace",
+        panel,
+        layout: view.layout,
+        glyph: "◫",
+        order: index,
+        shortcut: shortcutForHostedViewIndex(index),
+      };
+    }
+    const panel = view.panel;
+    return {
+      id: view.id,
+      title: view.title ?? PANEL_TITLES[panel],
+      panel,
+      layout: null,
+      glyph: PANEL_GLYPHS[panel],
+      order: index,
+      shortcut: shortcutForHostedViewIndex(index),
+    };
+  });
+}
+
+function isCompositeView(
+  view: WorkspaceAppView | WorkspaceFullPanelView,
+): view is WorkspaceCompositeView {
+  return "layout" in view;
 }
 
 export function shortcutForHostedViewIndex(index: number): HostedPanelShortcut | null {
@@ -154,7 +189,22 @@ export function findFirstHostedViewForPanel(
   panel: HostedPanelKind | null | undefined,
 ): HostedPanelView | null {
   if (!panel) return null;
-  return views.find((view) => view.panel === panel) ?? null;
+  return (
+    views.find((view) =>
+      view.layout ? compositeContainsPanel(view.layout, panel) : view.panel === panel,
+    ) ?? null
+  );
+}
+
+export function preferredLeafForPanel(
+  view: HostedPanelView,
+  panel: HostedPanelKind,
+): string | null {
+  return view.layout
+    ? findCompositePanelLeaf(view.layout, panel)
+    : view.panel === panel
+      ? view.id
+      : null;
 }
 
 export function reconcileHostedSelection(

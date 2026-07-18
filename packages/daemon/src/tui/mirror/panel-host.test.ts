@@ -186,6 +186,42 @@ describe("panel-host", () => {
     ]);
   });
 
+  it("builds composite hosted views and resolves panel lookups through leaves", () => {
+    const views = buildHostedPanelViews([
+      {
+        id: "ide",
+        title: "IDE",
+        layout: {
+          type: "split",
+          id: "root",
+          direction: "horizontal",
+          children: [
+            { type: "panel", id: "term", panel: "terminals" },
+            {
+              type: "tabs",
+              id: "dock",
+              children: [
+                { type: "panel", id: "files", panel: "files" },
+                { type: "panel", id: "diff", panel: "diff" },
+              ],
+            },
+          ],
+        },
+      },
+      { id: "missions", panel: "missions" },
+    ]);
+
+    expect(views[0]).toMatchObject({
+      id: "ide",
+      title: "IDE",
+      panel: "terminals",
+      glyph: "◫",
+    });
+    expect(findFirstHostedViewForPanel(views, "files")?.id).toBe("ide");
+    expect(findFirstHostedViewForPanel(views, "diff")?.id).toBe("ide");
+    expect(findFirstHostedViewForPanel(views, "missions")?.id).toBe("missions");
+  });
+
   it("keeps stale async config generations from winning", () => {
     const generations = new PanelHostLoadGeneration();
     const slow = generations.next();
