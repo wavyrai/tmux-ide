@@ -320,6 +320,19 @@ import {
   type TmuxBuffer,
 } from "./palette.ts";
 import {
+  compositeHitTest,
+  compositeLeafViewport,
+  cycleCompositeFocus,
+  reconcileCompositeLayoutState,
+  resizeCompositeSeparator,
+  resolveCompositeLayout,
+  revealCompositePanel,
+  setCompositeActiveTab,
+  type CompositePanelLeaf,
+  type CompositeLayoutState,
+  type CompositeResolvedLayout,
+} from "./composite-layout.ts";
+import {
   PanelHostLoadGeneration,
   findFirstHostedViewForPanel,
   findHostedViewById,
@@ -374,9 +387,11 @@ import {
   absoluteProjectPath,
   chooseInitialWorkspaceView,
   defaultWorkspaceUiState,
+  layoutStateForView,
   loadWorkspaceUiState,
   relativeProjectPath,
   serializeWorkspaceUiState,
+  setWorkspaceViewLayoutState,
   shouldHydrateWorkspaceView,
   viewStateFor,
   type WorkspaceUiStateV1,
@@ -988,7 +1003,37 @@ try {
     const activeView = createMemo(
       () => findHostedViewById(hostedViews(), activeViewId()) ?? hostedViews()[0]!,
     );
-    const activePanel = (): HostedPanelKind => activeView().panel;
+    const mainRect = () => ({
+      x: 0,
+      y: 0,
+      width: canvasCols(),
+      height: canvasRows(),
+    });
+    const compositeStateForActiveView = (): CompositeLayoutState | null => {
+      const view = activeView();
+      if (!view.layout) return null;
+      return reconcileCompositeLayoutState(
+        view.layout,
+        layoutStateForView(workspaceUiState(), view.id),
+      );
+    };
+    const activeCompositeLayout = createMemo<CompositeResolvedLayout | null>(() => {
+      const view = activeView();
+      if (!view.layout) return null;
+      return resolveCompositeLayout(
+        view.id,
+        view.layout,
+        mainRect(),
+        layoutStateForView(workspaceUiState(), view.id),
+      );
+    });
+    const focusedCompositeLeaf = () =>
+      activeCompositeLayout()?.leaves.find(
+        (leaf) => leaf.nodeId === activeCompositeLayout()?.focusedLeafId,
+      ) ??
+      activeCompositeLayout()?.leaves[0] ??
+      null;
+    const activePanel = (): HostedPanelKind => focusedCompositeLeaf()?.panel ?? activeView().panel;
     const tab = (): Tab => legacyTabFromPanelKind(activePanel());
     const mode = (): "home" | "mirror" | "editor" | "diff" | "missions" => panelMode(activePanel());
     const surfaceSpans = createMemo(() => panelSpans(hostedViews()));
@@ -1099,13 +1144,89 @@ try {
         else if (effect === "enter-diff") prepareDiff(workspaceDir());
       }
     };
+    const activationState = () => ({
+      filesLoaded: fileNodes().length > 0,
+      diffLoaded: diffEntries().length > 0,
+    });
+    const runPanelActivation = (panel: HostedPanelKind) => {
+      runActivationEffects(hostedActivationEffects(panel, activationState()));
+      if (panel === "missions") ensureMissionsLoaded();
+    };
+    const persistCompositeLayoutState = (layout: CompositeLayoutState) => {
+      const view = activeView();
+      if (!view.layout) return;
+      touchedWorkspaceViewIds.add(view.id);
+      setWorkspaceUiState((state) => setWorkspaceViewLayoutState(state, view, layout));
+    };
+    const focusCompositeLeaf = (leafId: string) => {
+      const view = activeView();
+      if (!view.layout) return false;
+      const next = reconcileCompositeLayoutState(view.layout, {
+        ...compositeStateForActiveView(),
+        focusedLeafId: leafId,
+      });
+      persistCompositeLayoutState(next);
+      const leaf = resolveCompositeLayout(view.id, view.layout, mainRect(), next).leaves.find(
+        (item) => item.nodeId === leafId,
+      );
+      if (leaf) runPanelActivation(leaf.panel);
+      return Boolean(leaf);
+    };
+    const activateCompositeTab = (tabsNodeId: string, childId: string) => {
+      const view = activeView();
+      if (!view.layout) return false;
+      const next = setCompositeActiveTab(
+        view.layout,
+        compositeStateForActiveView(),
+        tabsNodeId,
+        childId,
+      );
+      persistCompositeLayoutState(next);
+      const leaf = resolveCompositeLayout(view.id, view.layout, mainRect(), next).leaves.find(
+        (item) => item.nodeId === next.focusedLeafId,
+      );
+      if (leaf) runPanelActivation(leaf.panel);
+      return true;
+    };
+    const cycleCompositeLeafFocus = () => {
+      const view = activeView();
+      if (!view.layout) return false;
+      const next = cycleCompositeFocus(view.layout, compositeStateForActiveView());
+      persistCompositeLayoutState(next);
+      const leaf = resolveCompositeLayout(view.id, view.layout, mainRect(), next).leaves.find(
+        (item) => item.nodeId === next.focusedLeafId,
+      );
+      if (leaf) runPanelActivation(leaf.panel);
+      return true;
+    };
+    const focusPanelInActiveComposite = (panel: HostedPanelKind): boolean => {
+      const view = activeView();
+      if (!view.layout) return false;
+      const next = revealCompositePanel(
+        view.layout,
+        compositeStateForActiveView(),
+        panel,
+        focusedCompositeLeaf()?.panel === panel ? focusedCompositeLeaf()?.nodeId : null,
+      );
+      if (!next) return false;
+      persistCompositeLayoutState(next);
+      const leaf = resolveCompositeLayout(view.id, view.layout, mainRect(), next).leaves.find(
+        (item) => item.nodeId === next.focusedLeafId,
+      );
+      if (leaf) runPanelActivation(leaf.panel);
+      return true;
+    };
+    const selectViewForPanel = (viewId: string, panel: HostedPanelKind) => {
+      if (focusPanelInActiveComposite(panel)) return;
+      if (selectView(viewId)) focusPanelInActiveComposite(panel);
+    };
     const missionLayoutSize = () => ({
       width: canvasCols(),
       height: Math.max(4, dims().height - TABBAR_H),
     });
     const persistMissionSelection = (missionId: string | null, taskId: string | null = null) => {
       const view = activeView();
-      if (view.panel !== "missions") return;
+      if (activePanel() !== "missions") return;
       touchedWorkspaceViewIds.add(view.id);
       setWorkspaceUiState((state) =>
         workspaceStateWithMissionSelection(state, view.id, missionId, taskId),
@@ -1193,14 +1314,16 @@ try {
       }
       clearSelection();
       snapshotActiveWorkspaceView();
-      if (activePanel() === "missions" && plan.view.panel !== "missions") {
+      const previousPanel = activePanel();
+      if (previousPanel === "missions" && plan.view.panel !== "missions") {
         missionWorkspaceLoader.cancel();
         currentMissionsLoadIdentity = null;
       }
       runActivationEffects(plan.effects);
       setActiveViewId(plan.activeViewId);
       hydrateActiveWorkspaceView();
-      if (plan.view.panel === "missions") ensureMissionsLoaded();
+      if (plan.view.layout) runPanelActivation(activePanel());
+      else if (plan.view.panel === "missions") ensureMissionsLoaded();
       refreshFocusRecord();
       return true;
     };
@@ -1421,6 +1544,18 @@ try {
     type DragState =
       | { kind: "sidebar" }
       | { kind: "border"; sep: Separator; originCx: number; originCy: number; lastSize: number }
+      | {
+          kind: "composite";
+          viewId: string;
+          splitNodeId: string;
+          separatorIndex: number;
+          direction: "horizontal" | "vertical";
+          axisSize: number;
+          originX: number;
+          originY: number;
+          originState: CompositeLayoutState | null;
+          lastDelta: number;
+        }
       | {
           kind: "scrollbar";
           grabOffset: number;
@@ -2486,32 +2621,37 @@ try {
 
     const workspaceUiProjectRoot = (): string =>
       workspaceUiController.snapshot().repository?.metadata.projectRoot ?? workspaceDir();
+    const currentLayoutPointer = () => layoutStateForView(workspaceUiState(), activeView().id);
+    const withCurrentLayout = <T extends WorkspaceViewState>(entry: T): T => {
+      const layout = currentLayoutPointer();
+      return layout ? ({ ...entry, layout } as T) : entry;
+    };
     const currentWorkspaceViewState = (): WorkspaceViewState => {
       const panel = activePanel();
       const root = workspaceUiProjectRoot();
       if (panel === "files") {
-        return {
+        return withCurrentLayout({
           panel,
           openPath: relativeProjectPath(root, editorPath()),
           selectedPath: relativeProjectPath(root, visibleFiles()[fileSel()]?.node.path ?? null),
-        };
+        });
       }
       if (panel === "diff") {
-        return {
+        return withCurrentLayout({
           panel,
           selectedPath: diffVisibleFiles()[diffSel()]?.path ?? null,
-        };
+        });
       }
       if (panel === "missions") {
         const existing = missionSelectionFromWorkspaceState(workspaceUiState(), activeView().id);
-        return {
+        return withCurrentLayout({
           panel,
           selectedMissionId:
             missionWorkspaceModel().selectedMissionId ?? existing.selectedMissionId,
           selectedTaskId: missionWorkspaceModel().selectedTaskId ?? existing.selectedTaskId,
-        };
+        });
       }
-      return { panel };
+      return withCurrentLayout({ panel });
     };
     const stateWithCurrentWorkspaceView = (): WorkspaceUiStateV1 => {
       const view = activeView();
@@ -2532,13 +2672,15 @@ try {
     };
     hydrateActiveWorkspaceView = ({ firstProjectLoad = false } = {}) => {
       const view = activeView();
-      const entry = viewStateFor(workspaceUiState(), view);
+      const entry = view.layout
+        ? (workspaceUiState().views[view.id] ?? null)
+        : viewStateFor(workspaceUiState(), view);
       if (!entry) return;
       if (
         !shouldHydrateWorkspaceView({
           firstProjectLoad,
           explicitEditPath: values.edit ?? null,
-          view,
+          view: view.layout ? { panel: entry.panel } : view,
           entry,
         })
       ) {
@@ -2620,7 +2762,7 @@ try {
           .then(() => {
             snapshotActiveWorkspaceView();
             setCurTarget(intent.session);
-            selectView(intent.viewId);
+            selectViewForPanel(intent.viewId, "terminals");
             attach(intent.session);
             if (intent.paneId) {
               execFile("tmux", ["select-pane", "-t", intent.paneId], (error) => {
@@ -2641,7 +2783,7 @@ try {
         void stat(intent.path)
           .then((info) => {
             snapshotActiveWorkspaceView();
-            selectView(intent.viewId);
+            selectViewForPanel(intent.viewId, "files");
             if (info.isFile() && intent.mode === "open") openEditor(intent.path);
             else void revealPath(intent.path);
           })
@@ -2651,7 +2793,7 @@ try {
       void stat(intent.path)
         .then((info) => {
           snapshotActiveWorkspaceView();
-          selectView(intent.viewId);
+          selectViewForPanel(intent.viewId, "diff");
           prepareDiff(info.isDirectory() ? intent.path : dirname(intent.path));
         })
         .catch(() => setStatusNote(`diff target unavailable: ${intent.path}`));
@@ -5271,6 +5413,7 @@ try {
         searchKey(evt);
         return;
       }
+      if (evt.ctrl && evt.name === "tab" && cycleCompositeLeafFocus()) return;
       // F5 (and ^p when it arrives) open the command palette; ⌘K is the kitty
       // fast path handled above.
       if (evt.name === "f5" || (evt.ctrl && evt.name === "p")) {
@@ -6140,6 +6283,144 @@ try {
         if (!paletteContains(g, x, y)) setPaletteOpen(false);
         return;
       }
+      const compositeLayout = activeCompositeLayout();
+      if (!dragging && compositeLayout && x >= sidebarW() && y >= TABBAR_H) {
+        const localX = x - sidebarW();
+        const localY = y - TABBAR_H;
+        const hit = compositeHitTest(compositeLayout, localX, localY);
+        if (type === "down" && hit?.kind === "tab") {
+          activateCompositeTab(hit.tabsNodeId, hit.childId);
+          return;
+        }
+        if (hit?.kind === "leaf") {
+          const leaf = compositeLayout.leaves.find((item) => item.nodeId === hit.leafId);
+          const alreadyFocused = hit.leafId === compositeLayout.focusedLeafId;
+          if (type === "down") {
+            focusCompositeLeaf(hit.leafId);
+            if (!alreadyFocused) return;
+          }
+          if (leaf?.panel === "terminals") {
+            const viewport = compositeLeafViewport(leaf.rect, 2);
+            const bodyX = localX - leaf.rect.x - viewport.bodyLeft;
+            const bodyY = localY - leaf.rect.y - viewport.bodyTop;
+            const bodyW = viewport.bodyWidth;
+            const bodyH = viewport.bodyHeight;
+            if (bodyW <= 0 || bodyH <= 0) return;
+            const pane = panes().find((candidate) => {
+              const rect = scaledPaneRect(candidate, bodyW, bodyH);
+              return (
+                bodyX >= rect.left &&
+                bodyX < rect.left + rect.width &&
+                bodyY >= rect.top &&
+                bodyY < rect.top + rect.height
+              );
+            });
+            if (!pane) return;
+            const rect = scaledPaneRect(pane, bodyW, bodyH);
+            const col = Math.max(
+              0,
+              Math.min(
+                pane.width - 1,
+                Math.floor(((bodyX - rect.left) * pane.width) / Math.max(1, rect.width)),
+              ),
+            );
+            const row = Math.max(
+              0,
+              Math.min(
+                pane.height - 1,
+                Math.floor(((bodyY - rect.top) * pane.height) / Math.max(1, rect.height)),
+              ),
+            );
+            if (type === "down") {
+              mirror?.focus(pane.id);
+              return;
+            }
+            if (type === "scroll") {
+              const dir = e.scroll?.direction;
+              if (dir === "up" || dir === "down") wheel(pane, dir, col, row);
+              return;
+            }
+          }
+          if (leaf?.panel === "files") {
+            const viewport = compositeLeafViewport(leaf.rect, 3);
+            const bodyX = localX - leaf.rect.x - viewport.bodyLeft;
+            const bodyY = localY - leaf.rect.y - viewport.bodyTop;
+            const bodyW = viewport.bodyWidth;
+            const bodyH = viewport.bodyHeight;
+            if (bodyW <= 0 || bodyH <= 0) return;
+            const listW = Math.min(bodyW, Math.max(1, Math.min(24, Math.floor(bodyW * 0.38))));
+            const overList = bodyX < listW;
+            if (type === "scroll") {
+              const dir = e.scroll?.direction;
+              if (dir !== "up" && dir !== "down") return;
+              const step = dir === "up" ? -SCROLL_STEP : SCROLL_STEP;
+              if (overList) {
+                setFileTop((top) => clampTop(top + step, visibleFiles().length, bodyH));
+              } else {
+                setEditorTop((top) => clampTop(top + step, editorLines().length, bodyH));
+              }
+              return;
+            }
+            if (type === "down" && bodyY >= 0 && bodyY < bodyH && overList) {
+              const top = clampTop(fileTop(), visibleFiles().length, bodyH);
+              const idx = top + bodyY;
+              if (idx >= 0 && idx < visibleFiles().length) {
+                clearSelection();
+                setFilesFocus("list");
+                activateFile(idx);
+              }
+              return;
+            }
+          }
+          if (leaf?.panel === "diff") {
+            const viewport = compositeLeafViewport(leaf.rect, 3);
+            const bodyX = localX - leaf.rect.x - viewport.bodyLeft;
+            const bodyY = localY - leaf.rect.y - viewport.bodyTop;
+            const bodyW = viewport.bodyWidth;
+            const bodyH = viewport.bodyHeight;
+            if (bodyW <= 0 || bodyH <= 0) return;
+            const listW = Math.min(bodyW, Math.max(1, Math.min(24, Math.floor(bodyW * 0.36))));
+            const overList = bodyX < listW;
+            if (type === "scroll") {
+              const dir = e.scroll?.direction;
+              if (dir !== "up" && dir !== "down") return;
+              const step = dir === "up" ? -SCROLL_STEP : SCROLL_STEP;
+              if (overList) {
+                setDiffFileTop((top) => clampTop(top + step, diffRows().length, bodyH));
+              } else {
+                setDiffTop((top) => clampTop(top + step, diffLines().length, bodyH));
+              }
+              return;
+            }
+            if (type === "down" && bodyY >= 0 && bodyY < bodyH && overList) {
+              const top = clampTop(diffFileTop(), diffRows().length, bodyH);
+              const row = diffRows()[top + bodyY];
+              if (row?.kind === "file") selectDiffFile(row.fileIndex);
+              return;
+            }
+          }
+          return;
+        }
+        if (type === "down" && hit?.kind === "separator") {
+          dragging = {
+            kind: "composite",
+            viewId: compositeLayout.viewId,
+            splitNodeId: hit.nodeId,
+            separatorIndex: hit.index,
+            direction: hit.direction,
+            axisSize:
+              compositeLayout.separators.find(
+                (separator) => separator.nodeId === hit.nodeId && separator.index === hit.index,
+              )?.axisSize ?? 0,
+            originX: x,
+            originY: y,
+            originState: layoutStateForView(workspaceUiState(), activeView().id),
+            lastDelta: 0,
+          };
+          setStatusNote("resizing split…");
+          return;
+        }
+      }
       if (isHostedPanelInert(activePanel())) {
         if (type === "out") {
           setHoverIf(null);
@@ -6298,7 +6579,7 @@ try {
       // sticks even when intermediate drags were dropped.
       if (dragging) {
         const isDrag = type === "drag";
-        const isEnd = type === "up" || type === "drag-end" || type === "drop";
+        const isEnd = type === "up" || type === "drag-end" || type === "drop" || type === "out";
         if (isDrag || isEnd) {
           if (dragging.kind === "sidebar") {
             setSidebarW(clampSidebarWidth(x));
@@ -6308,6 +6589,23 @@ try {
             const row = y - dragging.top0;
             const top = dragTop(row, dragging.grabOffset, dragging.contentLen, dragging.viewH);
             applyScrollTop(dragging.surface, top);
+          } else if (dragging.kind === "composite") {
+            const view = activeView();
+            if (view.id === dragging.viewId && view.layout) {
+              const delta =
+                dragging.direction === "horizontal" ? x - dragging.originX : y - dragging.originY;
+              if (delta !== dragging.lastDelta) {
+                dragging.lastDelta = delta;
+                persistCompositeLayoutState(
+                  resizeCompositeSeparator(view.layout, dragging.originState, {
+                    splitNodeId: dragging.splitNodeId,
+                    separatorIndex: dragging.separatorIndex,
+                    delta,
+                    axisSize: dragging.axisSize,
+                  }),
+                );
+              }
+            }
           } else {
             const cx = x - sidebarW();
             const cy = y - TABBAR_H - HEADER_ROWS;
@@ -6780,6 +7078,349 @@ try {
       </>
     );
 
+    const scaledPaneRect = (pane: LivePane, width: number, height: number) => {
+      if (width <= 0 || height <= 0) {
+        return { left: 0, top: 0, width: 0, height: 0 };
+      }
+      const sourceW = Math.max(1, canvasCols());
+      const sourceH = Math.max(1, canvasRows());
+      const left = Math.max(0, Math.min(width - 1, Math.floor((pane.left * width) / sourceW)));
+      const top = Math.max(0, Math.min(height - 1, Math.floor((pane.top * height) / sourceH)));
+      const right = Math.max(
+        left + 1,
+        Math.min(width, Math.ceil(((pane.left + pane.width) * width) / sourceW)),
+      );
+      const bottom = Math.max(
+        top + 1,
+        Math.min(height, Math.ceil(((pane.top + pane.height) * height) / sourceH)),
+      );
+      return { left, top, width: right - left, height: bottom - top };
+    };
+
+    const compositeMiniSplitWidth = (width: number, ratio: number) =>
+      width <= 0 ? 0 : Math.min(width, Math.max(1, Math.min(24, Math.floor(width * ratio))));
+
+    const compositeLeafChrome = (leaf: CompositePanelLeaf) => {
+      const viewport = compositeLeafViewport(leaf.rect, 0);
+      return (
+        <box
+          height={1}
+          flexDirection="row"
+          backgroundColor={leaf.focused ? TAB_ACTIVE_BG : GUTTER_BG}
+        >
+          <text fg={leaf.focused ? ACCENT : MUTED}>
+            {clipTerminal(
+              `${leaf.focused ? "●" : "○"} ${leaf.title} · ${leaf.panel}`,
+              viewport.innerWidth,
+            )}
+          </text>
+        </box>
+      );
+    };
+
+    const compositeTerminalLeaf = (leaf: CompositePanelLeaf) => {
+      const viewport = compositeLeafViewport(leaf.rect, 2);
+      const bodyW = viewport.bodyWidth;
+      const bodyH = viewport.bodyHeight;
+      return (
+        <>
+          {compositeLeafChrome(leaf)}
+          <box height={1} flexDirection="row" gap={1}>
+            <text fg={DEFAULT_FG} attributes={1}>
+              {clipTerminal(curTarget(), Math.max(0, bodyW - 10))}
+            </text>
+            <text fg={MUTED}>{clipTerminal(status(), Math.max(0, bodyW - 2))}</text>
+          </box>
+          <box position="relative" flexGrow={1} backgroundColor={DEFAULT_BG} overflow="hidden">
+            <Show
+              when={FB_PANES && mirror}
+              fallback={
+                <For each={panes()}>
+                  {(pane) => {
+                    const rect = () => scaledPaneRect(pane, bodyW, bodyH);
+                    return (
+                      <Show when={rect().width > 0 && rect().height > 0}>
+                        <box
+                          position="absolute"
+                          left={rect().left}
+                          top={rect().top}
+                          width={rect().width}
+                          height={rect().height}
+                          flexDirection="column"
+                          backgroundColor={DEFAULT_BG}
+                          overflow="hidden"
+                        >
+                          <For each={paneSelRows(pane).slice(0, rect().height)}>
+                            {(runs) => (
+                              <box flexDirection="row" height={1}>
+                                <For each={runs}>
+                                  {(run) => (
+                                    <text
+                                      fg={packedToRgba(run.fg, DEFAULT_FG)}
+                                      bg={packedToRgba(run.bg, DEFAULT_BG)}
+                                      attributes={run.attributes}
+                                    >
+                                      {run.text}
+                                    </text>
+                                  )}
+                                </For>
+                              </box>
+                            )}
+                          </For>
+                        </box>
+                      </Show>
+                    );
+                  }}
+                </For>
+              }
+            >
+              <For each={paneIds()}>
+                {(id) => {
+                  const pane = () => panesById().get(id);
+                  const rect = () => (pane() ? scaledPaneRect(pane()!, bodyW, bodyH) : null);
+                  return (
+                    <Show when={pane() && rect() && rect()!.width > 0 && rect()!.height > 0}>
+                      <box
+                        position="absolute"
+                        left={rect()!.left}
+                        top={rect()!.top}
+                        width={rect()!.width}
+                        height={rect()!.height}
+                        backgroundColor={DEFAULT_BG}
+                        overflow="hidden"
+                      >
+                        <pane_surface
+                          width={rect()!.width}
+                          height={rect()!.height}
+                          mirror={mirror!}
+                          paneId={id}
+                          defaultFg={DEFAULT_FG_PACKED}
+                          defaultBg={DEFAULT_BG_PACKED}
+                          searchHl={SEARCH_HL}
+                          searchCur={SEARCH_CUR}
+                          scrollOffset={pane()!.snapshot.scrollOffset}
+                          paneFocused={leaf.focused && pane()!.active}
+                          contentVersion={pane()!.version}
+                          selRange={leaf.focused ? mirrorSelForPane(id) : null}
+                          search={leaf.focused ? mirrorSearchForPane(pane()!) : null}
+                        />
+                      </box>
+                    </Show>
+                  );
+                }}
+              </For>
+            </Show>
+          </box>
+        </>
+      );
+    };
+
+    const compositeFilesLeaf = (leaf: CompositePanelLeaf) => {
+      const viewport = compositeLeafViewport(leaf.rect, 3);
+      const bodyW = viewport.bodyWidth;
+      const bodyH = viewport.bodyHeight;
+      const listW = compositeMiniSplitWidth(bodyW, 0.38);
+      const editorW = Math.max(0, bodyW - listW);
+      return (
+        <>
+          {compositeLeafChrome(leaf)}
+          <box height={1} flexDirection="row" gap={1}>
+            <text fg={ACCENT} attributes={1}>
+              {clipTerminal(editorPath() ? basename(editorPath()!) : "files", listW)}
+            </text>
+            <text fg={MUTED}>{clipTerminal(editorMsg(), Math.max(0, editorW - 1))}</text>
+          </box>
+          <text fg={MUTED}>{clipTerminal("─".repeat(bodyW), bodyW)}</text>
+          <box flexDirection="row" flexGrow={1} overflow="hidden">
+            <box width={listW} flexDirection="column" backgroundColor={GUTTER_BG}>
+              <For each={fileListVisible().slice(0, bodyH)}>
+                {(row) => {
+                  const n = row.node;
+                  const selected = () => row.index === fileSel();
+                  const prefix =
+                    "  ".repeat(n.depth) + (n.isDir ? (n.expanded ? "▾ " : "▸ ") : "  ");
+                  return (
+                    <box
+                      height={1}
+                      paddingLeft={1}
+                      backgroundColor={selected() ? TAB_ACTIVE_BG : GUTTER_BG}
+                    >
+                      <text fg={n.isDir ? DIR_FG : selected() ? DEFAULT_FG : MUTED}>
+                        {clipTerminal(prefix + n.name, Math.max(0, listW - 1))}
+                      </text>
+                    </box>
+                  );
+                }}
+              </For>
+            </box>
+            <box width={editorW} flexDirection="column" overflow="hidden">
+              <For each={editorVisible().slice(0, bodyH)}>
+                {(ln) => (
+                  <box height={1} flexDirection="row">
+                    <text bg={GUTTER_BG} fg={GUTTER_FG}>
+                      {formatGutter(ln.num, Math.min(4, gutterWidth(editorLines().length)))}
+                    </text>
+                    <text fg={DEFAULT_FG}>
+                      {clipTerminal(ln.text || " ", Math.max(0, editorW - 4))}
+                    </text>
+                  </box>
+                )}
+              </For>
+            </box>
+          </box>
+        </>
+      );
+    };
+
+    const compositeDiffLeaf = (leaf: CompositePanelLeaf) => {
+      const viewport = compositeLeafViewport(leaf.rect, 3);
+      const bodyW = viewport.bodyWidth;
+      const bodyH = viewport.bodyHeight;
+      const listW = compositeMiniSplitWidth(bodyW, 0.36);
+      const diffW = Math.max(0, bodyW - listW);
+      return (
+        <>
+          {compositeLeafChrome(leaf)}
+          <box height={1} flexDirection="row" gap={1}>
+            <text fg={ACCENT} attributes={1}>
+              {clipTerminal(basename(diffDir()) || "diff", listW)}
+            </text>
+            <text fg={MUTED}>
+              {clipTerminal(`${diffVisibleFiles().length} files`, Math.max(0, diffW - 1))}
+            </text>
+          </box>
+          <text fg={MUTED}>{clipTerminal("─".repeat(bodyW), bodyW)}</text>
+          <box flexDirection="row" flexGrow={1} overflow="hidden">
+            <box width={listW} flexDirection="column" backgroundColor={GUTTER_BG}>
+              <For each={fileVisible().slice(0, bodyH)}>
+                {({ row }) =>
+                  row.kind === "header" ? (
+                    <box height={1} paddingLeft={1}>
+                      <text fg={ACCENT}>{clipTerminal(row.label, Math.max(0, listW - 1))}</text>
+                    </box>
+                  ) : (
+                    <box
+                      height={1}
+                      paddingLeft={1}
+                      backgroundColor={row.fileIndex === diffSel() ? TAB_ACTIVE_BG : GUTTER_BG}
+                    >
+                      <text fg={row.fileIndex === diffSel() ? DEFAULT_FG : MUTED}>
+                        {clipTerminal(
+                          `${row.entry.status} ${row.entry.path}`,
+                          Math.max(0, listW - 1),
+                        )}
+                      </text>
+                    </box>
+                  )
+                }
+              </For>
+            </box>
+            <box width={diffW} flexDirection="column" paddingLeft={1} overflow="hidden">
+              <For each={diffVisible().slice(0, bodyH)}>
+                {(ln) => (
+                  <box height={1} backgroundColor={DIFF_LINE_BG[ln.kind] ?? DEFAULT_BG}>
+                    <text fg={DIFF_FG[ln.kind]}>
+                      {clipTerminal(ln.text || " ", Math.max(0, diffW - 1))}
+                    </text>
+                  </box>
+                )}
+              </For>
+            </box>
+          </box>
+        </>
+      );
+    };
+
+    const compositeHomeLeaf = (leaf: CompositePanelLeaf) => {
+      const viewport = compositeLeafViewport(leaf.rect, 2);
+      return (
+        <>
+          {compositeLeafChrome(leaf)}
+          <box height={1} flexDirection="row" gap={1}>
+            <text fg={ACCENT} attributes={1}>
+              tmux-ide
+            </text>
+            <text fg={MUTED}>
+              {clipTerminal(`${rollup().sessions} sessions`, Math.max(0, viewport.innerWidth - 10))}
+            </text>
+          </box>
+          <box flexDirection="column" flexGrow={1} overflow="hidden">
+            <For each={homeItems().slice(0, viewport.bodyHeight)}>
+              {(it, i) => (
+                <box
+                  height={1}
+                  paddingLeft={1}
+                  backgroundColor={i() === clampedSel() ? TAB_ACTIVE_BG : DEFAULT_BG}
+                >
+                  <text fg={it.kind === "header" ? ACCENT : MUTED}>
+                    {clipTerminal(
+                      it.kind === "session"
+                        ? `${STATUS_GLYPH[it.status]} ${it.session}`
+                        : it.kind === "project"
+                          ? `▸ ${it.name}`
+                          : it.kind === "recent"
+                            ? `↺ ${it.name}`
+                            : `· ${it.label}`,
+                      Math.max(0, viewport.bodyWidth - 1),
+                    )}
+                  </text>
+                </box>
+              )}
+            </For>
+          </box>
+        </>
+      );
+    };
+
+    const compositeMissionsLeaf = (leaf: CompositePanelLeaf) => {
+      const viewport = compositeLeafViewport(leaf.rect, 2);
+      return (
+        <>
+          {compositeLeafChrome(leaf)}
+          <box height={1} flexDirection="row" gap={1}>
+            <text fg={ACCENT} attributes={1}>
+              missions
+            </text>
+            <text fg={MUTED}>
+              {clipTerminal(
+                missionsLayout().header.labels[1] ?? "",
+                Math.max(0, viewport.innerWidth - 10),
+              )}
+            </text>
+          </box>
+          <box flexDirection="column" flexGrow={1} overflow="hidden">
+            <Show
+              when={missionWorkspaceSnapshot()}
+              fallback={<text fg={MUTED}>No mission data loaded.</text>}
+            >
+              <For each={missionsLayout().board.columns.slice(0, Math.min(3, viewport.bodyHeight))}>
+                {(column) => (
+                  <box height={1} flexDirection="row" gap={1}>
+                    <text fg={ACCENT}>{clipTerminal(column.label, 10)}</text>
+                    <text fg={MUTED}>{clipTerminal(`${column.count}`, 4)}</text>
+                    <text fg={DEFAULT_FG}>
+                      {clipTerminal(
+                        column.cards[0]?.lines[0] ?? "—",
+                        Math.max(0, viewport.bodyWidth - 18),
+                      )}
+                    </text>
+                  </box>
+                )}
+              </For>
+            </Show>
+          </box>
+        </>
+      );
+    };
+
+    const compositeLeafBody = (leaf: CompositePanelLeaf) => {
+      if (leaf.panel === "terminals") return compositeTerminalLeaf(leaf);
+      if (leaf.panel === "files") return compositeFilesLeaf(leaf);
+      if (leaf.panel === "diff") return compositeDiffLeaf(leaf);
+      if (leaf.panel === "missions") return compositeMissionsLeaf(leaf);
+      return compositeHomeLeaf(leaf);
+    };
+
     return (
       <box
         flexDirection="column"
@@ -6853,12 +7494,84 @@ try {
             onMouse={(e) => route(e as RouteEvent)}
           />
           <box
+            position="relative"
             flexDirection="column"
             flexGrow={1}
             overflow="hidden"
             onMouse={(e: RouteEvent) => route(e)}
           >
-            <Show when={mode() === "home"}>
+            <Show when={activeCompositeLayout()}>
+              {(layout) => (
+                <>
+                  <For each={layout().leaves}>
+                    {(leaf) => (
+                      <box
+                        position="absolute"
+                        left={leaf.rect.x}
+                        top={leaf.rect.y}
+                        width={leaf.rect.width}
+                        height={leaf.rect.height}
+                        flexDirection="column"
+                        backgroundColor={DEFAULT_BG}
+                        overflow="hidden"
+                        border={compositeLeafViewport(leaf.rect, 0).bordered}
+                        borderColor={leaf.focused ? ACCENT : MUTED}
+                      >
+                        {compositeLeafBody(leaf)}
+                      </box>
+                    )}
+                  </For>
+                  <For each={layout().separators}>
+                    {(separator) => (
+                      <box
+                        position="absolute"
+                        left={separator.rect.x}
+                        top={separator.rect.y}
+                        width={separator.rect.width}
+                        height={separator.rect.height}
+                      >
+                        <text fg={ACCENT}>
+                          {separator.direction === "horizontal"
+                            ? Array(separator.rect.height).fill("│").join("\n")
+                            : "─".repeat(separator.rect.width)}
+                        </text>
+                      </box>
+                    )}
+                  </For>
+                  <For each={layout().tabs}>
+                    {(tab) => (
+                      <box
+                        position="absolute"
+                        left={tab.rect.x}
+                        top={tab.rect.y}
+                        width={tab.rect.width}
+                        height={1}
+                      >
+                        <text
+                          fg={tab.active ? DEFAULT_BG : DEFAULT_FG}
+                          bg={tab.active ? ACCENT : BUTTON_BG}
+                        >
+                          {clipTerminal(tab.label, tab.rect.width)}
+                        </text>
+                      </box>
+                    )}
+                  </For>
+                  <Show when={layout().note}>
+                    <box
+                      position="absolute"
+                      left={1}
+                      top={Math.max(0, canvasRows() - 2)}
+                      height={1}
+                    >
+                      <text fg={BANNER_FG}>
+                        {clipTerminal(layout().note!, Math.max(4, canvasCols() - 2))}
+                      </text>
+                    </box>
+                  </Show>
+                </>
+              )}
+            </Show>
+            <Show when={!activeCompositeLayout() && mode() === "home"}>
               {/* HOME header (y=0) + rule (y=1); rows below start at y=2 — the
               coordinate `route` reverses for a home-row click. */}
               <box paddingLeft={1} flexDirection="row" gap={1}>
@@ -7002,7 +7715,7 @@ try {
                 {buttonRow(homeButtons)}
               </box>
             </Show>
-            <Show when={mode() === "mirror"}>
+            <Show when={!activeCompositeLayout() && mode() === "mirror"}>
               <box paddingLeft={1} flexDirection="row" gap={1}>
                 <text fg={DEFAULT_FG} attributes={1}>
                   {curTarget()}
@@ -7230,7 +7943,7 @@ try {
                 </box>
               </Show>
             </Show>
-            <Show when={mode() === "editor"}>
+            <Show when={!activeCompositeLayout() && mode() === "editor"}>
               {/* FILES tab: header (gy=0) · rule/banner (gy=1) · two-column body
               (gy=2+): the file LIST on the left, the editor on the right. `route`
               reverses this geometry for wheel + click. NO onMouse on the rows —
@@ -7360,7 +8073,7 @@ try {
                 </text>
               </box>
             </Show>
-            <Show when={mode() === "diff"}>
+            <Show when={!activeCompositeLayout() && mode() === "diff"}>
               {/* header (y=0) · rule (y=1) · two-column body (y=2+) · footer
               verbs (last row). `route` reverses this geometry: left column =
               grouped file list (headers + rows from the SAME buildDiffRows the
@@ -7473,7 +8186,7 @@ try {
                 </text>
               </box>
             </Show>
-            <Show when={mode() === "missions"}>
+            <Show when={!activeCompositeLayout() && mode() === "missions"}>
               <box width={canvasCols()} flexDirection="row" gap={1}>
                 <For each={missionsLayout().header.rows[0] ?? []}>
                   {(chip) => (

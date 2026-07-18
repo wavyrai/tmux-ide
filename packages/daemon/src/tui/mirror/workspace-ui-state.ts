@@ -10,6 +10,7 @@ import type { HostedPanelKind, HostedPanelView } from "./panel-host.ts";
 import { findFirstHostedViewForPanel, findHostedViewById } from "./panel-host.ts";
 import type { Tab } from "./app-state.ts";
 import { panelKindFromLegacyTab } from "./panel-host.ts";
+import type { CompositeLayoutState } from "./composite-layout.ts";
 
 export const WORKSPACE_UI_STATE_PATH = "ui/workspace.json";
 export const WORKSPACE_UI_STATE_VERSION = 1;
@@ -43,22 +44,28 @@ export interface WorkspaceFilesViewState {
   panel: "files";
   openPath: string | null;
   selectedPath: string | null;
+  layout?: WorkspaceCompositeLayoutViewState;
 }
 
 export interface WorkspaceDiffViewState {
   panel: "diff";
   selectedPath: string | null;
+  layout?: WorkspaceCompositeLayoutViewState;
 }
 
 export interface WorkspaceMissionsViewState {
   panel: "missions";
   selectedMissionId: string | null;
   selectedTaskId: string | null;
+  layout?: WorkspaceCompositeLayoutViewState;
 }
 
 export interface WorkspaceEmptyViewState {
   panel: "home" | "terminals";
+  layout?: WorkspaceCompositeLayoutViewState;
 }
+
+export type WorkspaceCompositeLayoutViewState = CompositeLayoutState;
 
 export type WorkspaceViewState =
   | WorkspaceFilesViewState
@@ -193,17 +200,20 @@ function cleanViewState(
     diagnostics.push(diagnostic("INVALID_FIELD", `$.views.${key}.panel`, "panel is unsupported"));
     return null;
   }
+  const layout = cleanLayoutState(value.layout, `$.views.${key}.layout`, diagnostics);
   if (panel === "files") {
     return {
       panel,
       openPath: cleanPath(value.openPath),
       selectedPath: cleanPath(value.selectedPath),
+      ...(layout ? { layout } : {}),
     };
   }
   if (panel === "diff") {
     return {
       panel,
       selectedPath: cleanPath(value.selectedPath),
+      ...(layout ? { layout } : {}),
     };
   }
   if (panel === "missions") {
@@ -211,9 +221,61 @@ function cleanViewState(
       panel,
       selectedMissionId: cleanId(value.selectedMissionId),
       selectedTaskId: cleanId(value.selectedTaskId),
+      ...(layout ? { layout } : {}),
     };
   }
-  return { panel };
+  return { panel, ...(layout ? { layout } : {}) };
+}
+
+function cleanLayoutState(
+  value: unknown,
+  path: string,
+  diagnostics: WorkspaceUiStateDiagnostic[],
+): WorkspaceCompositeLayoutViewState | null {
+  if (value === undefined || value === null) return null;
+  if (!isRecord(value)) {
+    diagnostics.push(diagnostic("INVALID_FIELD", path, "layout state must be an object"));
+    return null;
+  }
+  const focusedLeafId = cleanId(value.focusedLeafId);
+  const activeTabs: Record<string, string> = {};
+  if (isRecord(value.activeTabs)) {
+    for (const [key, raw] of Object.entries(value.activeTabs).slice(0, 64)) {
+      const id = cleanId(key);
+      const childId = cleanId(raw);
+      if (id && childId) activeTabs[id] = childId;
+    }
+  } else if (value.activeTabs !== undefined) {
+    diagnostics.push(
+      diagnostic("INVALID_FIELD", `${path}.activeTabs`, "activeTabs must be an object"),
+    );
+  }
+  const splitWeights: Record<string, number[]> = {};
+  if (isRecord(value.splitWeights)) {
+    for (const [key, raw] of Object.entries(value.splitWeights).slice(0, 64)) {
+      const id = cleanId(key);
+      if (
+        id &&
+        Array.isArray(raw) &&
+        raw.length >= 2 &&
+        raw.length <= 4 &&
+        raw.every((item) => typeof item === "number" && Number.isFinite(item) && item > 0)
+      ) {
+        splitWeights[id] = raw.map((item) => item as number);
+      }
+    }
+  } else if (value.splitWeights !== undefined) {
+    diagnostics.push(
+      diagnostic("INVALID_FIELD", `${path}.splitWeights`, "splitWeights must be an object"),
+    );
+  }
+  if (
+    !focusedLeafId &&
+    Object.keys(activeTabs).length === 0 &&
+    Object.keys(splitWeights).length === 0
+  )
+    return null;
+  return { focusedLeafId, activeTabs, splitWeights };
 }
 
 function cloneState(state: WorkspaceUiStateV1): WorkspaceUiStateV1 {
@@ -302,17 +364,26 @@ export function serializeWorkspaceUiState(state: WorkspaceUiStateV1): string {
         panel: "files",
         openPath: view.openPath,
         selectedPath: view.selectedPath,
+        ...(view.layout ? { layout: orderedLayoutState(view.layout) } : {}),
       };
     } else if (view.panel === "diff") {
-      orderedViews[id] = { panel: "diff", selectedPath: view.selectedPath };
+      orderedViews[id] = {
+        panel: "diff",
+        selectedPath: view.selectedPath,
+        ...(view.layout ? { layout: orderedLayoutState(view.layout) } : {}),
+      };
     } else if (view.panel === "missions") {
       orderedViews[id] = {
         panel: "missions",
         selectedMissionId: view.selectedMissionId,
         selectedTaskId: view.selectedTaskId,
+        ...(view.layout ? { layout: orderedLayoutState(view.layout) } : {}),
       };
     } else {
-      orderedViews[id] = { panel: view.panel };
+      orderedViews[id] = {
+        panel: view.panel,
+        ...(view.layout ? { layout: orderedLayoutState(view.layout) } : {}),
+      };
     }
   }
   const clean: WorkspaceUiStateV1 = {
@@ -321,6 +392,22 @@ export function serializeWorkspaceUiState(state: WorkspaceUiStateV1): string {
     views: orderedViews,
   };
   return `${JSON.stringify(clean, null, 2)}\n`;
+}
+
+function orderedLayoutState(
+  layout: WorkspaceCompositeLayoutViewState,
+): WorkspaceCompositeLayoutViewState {
+  const activeTabs: Record<string, string> = {};
+  for (const key of Object.keys(layout.activeTabs).sort())
+    activeTabs[key] = layout.activeTabs[key]!;
+  const splitWeights: Record<string, number[]> = {};
+  for (const key of Object.keys(layout.splitWeights).sort())
+    splitWeights[key] = [...layout.splitWeights[key]!];
+  return {
+    focusedLeafId: cleanId(layout.focusedLeafId),
+    activeTabs,
+    splitWeights,
+  };
 }
 
 export function workspaceUiStateToJsonValue(state: WorkspaceUiStateV1): JsonValue {
@@ -472,12 +559,74 @@ export function setMissionsSelection(
     views: {
       ...state.views,
       [id]: {
+        ...(state.views[id]?.layout ? { layout: state.views[id].layout } : {}),
         panel: "missions",
         selectedMissionId: cleanId(missionId),
         selectedTaskId: cleanId(taskId),
       },
     },
   };
+}
+
+export function layoutStateForView(
+  state: WorkspaceUiStateV1,
+  viewId: string,
+): WorkspaceCompositeLayoutViewState | null {
+  return state.views[viewId]?.layout ?? null;
+}
+
+function workspaceViewStateWithLayout(
+  entry: WorkspaceViewState,
+  layout: WorkspaceCompositeLayoutViewState,
+): WorkspaceViewState {
+  const cleanLayout = orderedLayoutState(layout);
+  if (entry.panel === "files") {
+    return {
+      panel: "files",
+      openPath: entry.openPath,
+      selectedPath: entry.selectedPath,
+      layout: cleanLayout,
+    };
+  }
+  if (entry.panel === "diff") {
+    return { panel: "diff", selectedPath: entry.selectedPath, layout: cleanLayout };
+  }
+  if (entry.panel === "missions") {
+    return {
+      panel: "missions",
+      selectedMissionId: entry.selectedMissionId,
+      selectedTaskId: entry.selectedTaskId,
+      layout: cleanLayout,
+    };
+  }
+  return { panel: entry.panel, layout: cleanLayout };
+}
+
+export function setWorkspaceViewLayoutState(
+  state: WorkspaceUiStateV1,
+  view: Pick<HostedPanelView, "id" | "panel">,
+  layout: WorkspaceCompositeLayoutViewState,
+): WorkspaceUiStateV1 {
+  const id = cleanId(view.id);
+  if (!id) return cloneState(state);
+  const existing = state.views[id] ?? workspaceViewStateForPanel(view.panel);
+  return {
+    version: WORKSPACE_UI_STATE_VERSION,
+    active: state.active ? { ...state.active } : null,
+    views: {
+      ...state.views,
+      [id]: workspaceViewStateWithLayout(existing, layout),
+    },
+  };
+}
+
+function workspaceViewStateForPanel(panel: HostedPanelKind): WorkspaceViewState {
+  if (panel === "files") return { panel: "files", openPath: null, selectedPath: null };
+  if (panel === "diff") return { panel: "diff", selectedPath: null };
+  if (panel === "missions") {
+    return { panel: "missions", selectedMissionId: null, selectedTaskId: null };
+  }
+  return { panel };
 }
 
 export function missionsSelection(

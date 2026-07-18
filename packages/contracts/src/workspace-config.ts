@@ -46,15 +46,72 @@ export const WorkspaceTerminalConfigSchemaZ = z.strictObject({
 
 export const WorkspacePanelKindSchemaZ = z.enum(["home", "terminals", "files", "diff", "missions"]);
 
-/** V1 views are deliberately full-panel; split/tab layout trees belong to C07. */
+const WorkspaceLayoutIdSchemaZ = NonEmptyStringSchema.max(128);
+
+type WorkspaceAppLayoutNodeInput =
+  | {
+      type: "panel";
+      id: string;
+      panel: z.infer<typeof WorkspacePanelKindSchemaZ>;
+      min_size?: number;
+    }
+  | {
+      type: "split";
+      id: string;
+      direction: "horizontal" | "vertical";
+      children: WorkspaceAppLayoutNodeInput[];
+      weights?: number[];
+    }
+  | {
+      type: "tabs";
+      id: string;
+      children: WorkspaceAppLayoutNodeInput[];
+      active?: string;
+    };
+
+export const WorkspaceAppLayoutNodeSchemaZ: z.ZodType<WorkspaceAppLayoutNodeInput> = z.lazy(() =>
+  z.discriminatedUnion("type", [
+    z.strictObject({
+      type: z.literal("panel"),
+      id: WorkspaceLayoutIdSchemaZ,
+      panel: WorkspacePanelKindSchemaZ,
+      min_size: z.number().int().positive().optional(),
+    }),
+    z.strictObject({
+      type: z.literal("split"),
+      id: WorkspaceLayoutIdSchemaZ,
+      direction: z.enum(["horizontal", "vertical"]),
+      children: z.array(WorkspaceAppLayoutNodeSchemaZ).min(2).max(4),
+      weights: z.array(z.number().positive()).optional(),
+    }),
+    z.strictObject({
+      type: z.literal("tabs"),
+      id: WorkspaceLayoutIdSchemaZ,
+      children: z.array(WorkspaceAppLayoutNodeSchemaZ).min(1).max(8),
+      active: WorkspaceLayoutIdSchemaZ.optional(),
+    }),
+  ]),
+);
+
 export const WorkspaceFullPanelViewSchemaZ = z.strictObject({
   id: NonEmptyStringSchema,
   title: NonEmptyStringSchema.optional(),
   panel: WorkspacePanelKindSchemaZ,
 });
 
+export const WorkspaceCompositeViewSchemaZ = z.strictObject({
+  id: NonEmptyStringSchema,
+  title: NonEmptyStringSchema.optional(),
+  layout: WorkspaceAppLayoutNodeSchemaZ,
+});
+
+export const WorkspaceAppViewSchemaZ = z.union([
+  WorkspaceFullPanelViewSchemaZ,
+  WorkspaceCompositeViewSchemaZ,
+]);
+
 export const WorkspaceAppConfigSchemaZ = z.strictObject({
-  views: z.array(WorkspaceFullPanelViewSchemaZ).min(1),
+  views: z.array(WorkspaceAppViewSchemaZ).min(1),
 });
 
 export const WorkspaceHarnessProfileSchemaZ = z.strictObject({
@@ -140,16 +197,88 @@ export const WorkspaceConfigV1SchemaZ = WorkspaceConfigV1ObjectSchemaZ.superRefi
         });
       }
       viewIds.add(view.id);
+      if ("layout" in view) {
+        validateWorkspaceLayoutTree(view.layout, ["app", "views", index, "layout"], context);
+      }
     }
   },
 );
+
+function validateWorkspaceLayoutTree(
+  root: WorkspaceAppLayoutNodeInput,
+  path: (string | number)[],
+  context: z.RefinementCtx,
+): void {
+  const seen = new Map<string, (string | number)[]>();
+  let count = 0;
+  const walk = (
+    node: WorkspaceAppLayoutNodeInput,
+    nodePath: (string | number)[],
+    depth: number,
+  ) => {
+    count += 1;
+    if (count > 64) {
+      context.addIssue({
+        code: "custom",
+        path,
+        message: "Composite view layout must not exceed 64 nodes",
+      });
+      return;
+    }
+    if (depth > 8) {
+      context.addIssue({
+        code: "custom",
+        path: nodePath,
+        message: "Composite view layout must not be deeper than 8 nodes",
+      });
+    }
+    const existing = seen.get(node.id);
+    if (existing) {
+      context.addIssue({
+        code: "custom",
+        path: [...nodePath, "id"],
+        message: `Duplicate layout node id "${node.id}"`,
+      });
+    } else {
+      seen.set(node.id, [...nodePath, "id"]);
+    }
+
+    if (node.type === "split") {
+      if (node.weights !== undefined && node.weights.length !== node.children.length) {
+        context.addIssue({
+          code: "custom",
+          path: [...nodePath, "weights"],
+          message: "Split weights length must match children length",
+        });
+      }
+      node.children.forEach((child, childIndex) =>
+        walk(child, [...nodePath, "children", childIndex], depth + 1),
+      );
+    } else if (node.type === "tabs") {
+      if (node.active && !node.children.some((child) => child.id === node.active)) {
+        context.addIssue({
+          code: "custom",
+          path: [...nodePath, "active"],
+          message: `Unknown active tab child "${node.active}"`,
+        });
+      }
+      node.children.forEach((child, childIndex) =>
+        walk(child, [...nodePath, "children", childIndex], depth + 1),
+      );
+    }
+  };
+  walk(root, path, 1);
+}
 
 export type WorkspaceCommand = z.infer<typeof WorkspaceCommandSchemaZ>;
 export type WorkspaceTerminalPane = z.infer<typeof WorkspaceTerminalPaneSchemaZ>;
 export type WorkspaceTerminalRow = z.infer<typeof WorkspaceTerminalRowSchemaZ>;
 export type WorkspaceTerminalConfig = z.infer<typeof WorkspaceTerminalConfigSchemaZ>;
 export type WorkspacePanelKind = z.infer<typeof WorkspacePanelKindSchemaZ>;
+export type WorkspaceAppLayoutNode = z.infer<typeof WorkspaceAppLayoutNodeSchemaZ>;
 export type WorkspaceFullPanelView = z.infer<typeof WorkspaceFullPanelViewSchemaZ>;
+export type WorkspaceCompositeView = z.infer<typeof WorkspaceCompositeViewSchemaZ>;
+export type WorkspaceAppView = z.infer<typeof WorkspaceAppViewSchemaZ>;
 export type WorkspaceAppConfig = z.infer<typeof WorkspaceAppConfigSchemaZ>;
 export type WorkspaceHarnessProfile = z.infer<typeof WorkspaceHarnessProfileSchemaZ>;
 export type WorkspaceAgentRole = z.infer<typeof WorkspaceAgentRoleSchemaZ>;
