@@ -130,7 +130,7 @@ export async function inspect(
   try {
     const context = await resolveProjectConfigContext(dir);
     const resolved = context.resolved;
-    if (!resolved.launchConfig || !resolved.path) {
+    if (!resolved?.launchConfig || !resolved.path) {
       outputError("Cannot read workspace config: no config found", "READ_ERROR");
       return;
     }
