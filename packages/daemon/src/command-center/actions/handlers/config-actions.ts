@@ -7,7 +7,7 @@ import {
   configSetValue,
 } from "../../../config.ts";
 import { broadcastConfigChanged as broadcastConfigChangedDefault } from "../../ws-events.ts";
-import { ActionError } from "../errors.ts";
+import { ActionError, type ActionErrorCode } from "../errors.ts";
 import type { ActionInput, ActionResult } from "../contract.ts";
 import { resolveProjectContext, type ProjectContextDeps } from "./_project-context.ts";
 import {
@@ -18,6 +18,12 @@ import { resolveProjectConfigContext } from "../../../lib/config-context.ts";
 
 interface ConfigActionDeps extends ProjectContextDeps {
   broadcastConfigChanged?: (sessionName: string) => void;
+}
+
+function workspaceWriteActionErrorCode(code: string | undefined): ActionErrorCode {
+  if (code === "CONFIG_EXISTS") return "config_exists";
+  if (code === "WORKSPACE_WRITE_FAILED") return "workspace_write_failed";
+  return "config_validation_failed";
 }
 
 async function mutateConfigAction<Result>(
@@ -49,7 +55,7 @@ async function mutateConfigAction<Result>(
     }
     if (err instanceof WorkspaceConfigWriteError) {
       throw new ActionError({
-        code: err.code.toLowerCase(),
+        code: workspaceWriteActionErrorCode(err.code),
         message: err.message,
         details: { path: err.path },
         cause: err,

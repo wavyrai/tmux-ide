@@ -5,11 +5,7 @@ import {
   convertLegacyConfigToWorkspace,
   workspaceConfigToYaml,
 } from "./lib/legacy-config-migration.ts";
-import {
-  createWorkspaceConfig,
-  workspaceConfigPath,
-  WorkspaceConfigWriteError,
-} from "./lib/resolved-config.ts";
+import { createWorkspaceConfig, workspaceConfigPath } from "./lib/resolved-config.ts";
 import { readLegacyConfigFile } from "./lib/legacy-config-adapter.ts";
 import { resolveProject } from "./lib/project-resolver.ts";
 import { IdeError } from "./lib/errors.ts";
@@ -130,9 +126,6 @@ export async function migrate(
     }
   } catch (error) {
     if (error instanceof IdeError) throw error;
-    if (error instanceof WorkspaceConfigWriteError) {
-      outputError(error.message, error.code);
-    }
     if (error instanceof Error && error.name === "ZodError") {
       outputError(`Invalid legacy ide.yml: ${error.message}`, "INVALID_CONFIG");
     }
