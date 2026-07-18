@@ -110,6 +110,35 @@ describe("staticPaletteActions", () => {
       staticPaletteActions([], { terminal: true }).some((a) => a.kind === "paste-buffer"),
     ).toBe(true);
   });
+
+  it("uses configured view actions with stable view IDs when hosted views are present", () => {
+    const actions = staticPaletteActions([], {
+      views: [
+        {
+          id: "term-a",
+          title: "Agent A",
+          panel: "terminals",
+          glyph: "❯",
+          order: 0,
+          shortcut: { key: "f1", label: "F1" },
+        },
+        {
+          id: "term-b",
+          title: "Agent B",
+          panel: "terminals",
+          glyph: "❯",
+          order: 1,
+          shortcut: { key: "f2", label: "F2" },
+        },
+      ],
+    });
+
+    expect(actions.slice(0, 2)).toEqual([
+      { kind: "view", viewId: "term-a", label: "Switch view: Agent A" },
+      { kind: "view", viewId: "term-b", label: "Switch view: Agent B" },
+    ]);
+    expect(paletteActionKey(actions[1]!)).toBe("view:term-b");
+  });
 });
 
 describe("parseBufferList", () => {

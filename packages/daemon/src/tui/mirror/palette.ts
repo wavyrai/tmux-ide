@@ -14,12 +14,14 @@
 import { fuzzyFilter } from "../team/fuzzy.ts";
 import type { PaletteUsageEntry, Tab } from "./app-state.ts";
 import type { AgentRowInput } from "./agent-rows.ts";
+import type { HostedPanelView } from "./panel-host.ts";
 import { SETTINGS_PALETTE_COMMANDS, type SettingsCommandId } from "./settings-model.ts";
 
 /** One runnable palette entry. `label` is what the list shows and what the
  *  fuzzy filter scores; `kind` (+ payload) is what the app dispatches on. */
 export type PaletteAction =
   | { kind: "tab"; tab: Tab; label: string }
+  | { kind: "view"; viewId: string; label: string }
   | { kind: "open-folder"; label: string }
   | { kind: "attach"; session: string; label: string }
   | { kind: "jump-agent"; paneId: string; session: string; windowIndex: number; label: string }
@@ -106,6 +108,10 @@ export interface PaletteContext {
    *  respecting, capped by the caller. A non-empty query offers fuzzy-matched
    *  "Go to file: <path>" rows via {@link goToFileActions}. */
   repoFiles?: readonly string[];
+  /** Configured first-class panel views (C05). When present, these replace the
+   *  legacy four static tab actions so duplicate panel kinds keep their stable
+   *  configured view identity. */
+  views?: readonly HostedPanelView[];
 }
 
 const TAB_LABELS: { tab: Tab; label: string }[] = [
@@ -129,7 +135,13 @@ export function staticPaletteActions(
   if (ctx.againName) {
     actions.push({ kind: "new-agent-again", label: `New agent: ${ctx.againName} (again)` });
   }
-  for (const t of TAB_LABELS) actions.push({ kind: "tab", tab: t.tab, label: t.label });
+  if (ctx.views) {
+    for (const view of ctx.views) {
+      actions.push({ kind: "view", viewId: view.id, label: `Switch view: ${view.title}` });
+    }
+  } else {
+    for (const t of TAB_LABELS) actions.push({ kind: "tab", tab: t.tab, label: t.label });
+  }
   // The non-technicals' front door (M22.5): a filesystem picker → create-or-
   // attach a session in the chosen folder. Offered on every surface.
   actions.push({ kind: "open-folder", label: "Open folder…" });
@@ -350,6 +362,8 @@ export function paletteActionKey(a: PaletteAction): string {
   switch (a.kind) {
     case "tab":
       return `tab:${a.tab}`;
+    case "view":
+      return `view:${a.viewId}`;
     case "attach":
       return `attach:${a.session}`;
     case "jump-agent":
