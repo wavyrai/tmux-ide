@@ -355,26 +355,16 @@ import {
 } from "./panel-host.ts";
 import {
   MissionWorkspaceLoader,
-  applyMissionWorkspaceHit,
-  closeMissionDetail,
   clipTerminal,
-  cycleMissionDensity,
-  cycleMissionDetailSection,
   defaultMissionWorkspaceModel,
   invalidatedMissionWorkspaceLoadState,
   missionSelectionFromWorkspaceState,
   missionTmuxPanePreflightMatches,
   missionTmuxPreflightCommands,
   missionWorkspaceHitTest,
-  missionWorkspaceLayout,
-  moveMissionSelection,
-  openMissionDetail,
   readMissionWorkspace,
   reconcileMissionWorkspaceModel,
   resolveMissionDeepLink,
-  scrollMissionWorkspace,
-  setMissionDetailSection,
-  setMissionWorkspaceMode,
   workspaceStateWithMissionSelection,
   type MissionDeepLinkKind,
   type MissionDeepLinkResolution,
@@ -382,6 +372,12 @@ import {
   type MissionWorkspaceModel,
   type MissionWorkspaceSnapshot,
 } from "./missions-workspace.ts";
+import { MissionsSurface, missionSurfaceLayout } from "./missions-surface.tsx";
+import {
+  handleMissionSurfaceKey,
+  handleMissionSurfacePointerDown,
+  handleMissionSurfaceScroll,
+} from "./missions-surface-controller.ts";
 import {
   WorkspaceUiStateController,
   absoluteProjectPath,
@@ -2804,108 +2800,22 @@ try {
       meta: boolean;
       shift: boolean;
     }): boolean => {
-      const snapshot = missionSnapshotForModel();
-      if (evt.name === "r") {
-        loadMissionsWorkspace("refresh");
-        return true;
-      }
-      if (evt.name === "t" || evt.name === "f" || evt.name === "d") {
-        followMissionDeepLink(evt.name === "t" ? "terminal" : evt.name === "f" ? "files" : "diff");
-        return true;
-      }
-      if (evt.name === "z") {
-        updateMissionModel((model) => cycleMissionDensity(model, snapshot, missionLayoutSize()));
-        return true;
-      }
-      if (!snapshot) return true;
-      if (missionWorkspaceModel().mode === "detail") {
-        if (evt.name === "escape" || evt.name === "backspace") {
-          updateMissionModel(closeMissionDetail);
-          return true;
-        }
-        if (evt.name === "tab") {
-          updateMissionModel((model) =>
-            cycleMissionDetailSection(model, snapshot, evt.shift ? -1 : 1, missionLayoutSize()),
-          );
-          return true;
-        }
-        const sectionKey =
-          evt.name === "1"
-            ? "tasks"
-            : evt.name === "2"
-              ? "timeline"
-              : evt.name === "3"
-                ? "attempts"
-                : evt.name === "4"
-                  ? "proof"
-                  : null;
-        if (sectionKey) {
-          updateMissionModel((model) =>
-            setMissionDetailSection(model, snapshot, sectionKey, missionLayoutSize()),
-          );
-          return true;
-        }
-      }
-      if (evt.name === "tab") {
-        updateMissionModel((model) =>
-          setMissionWorkspaceMode(
-            model,
-            snapshot,
-            model.mode === "board" ? "history" : "board",
-            missionLayoutSize(),
-          ),
-        );
-        return true;
-      }
-      if (evt.name === "b" || evt.name === "y") {
-        updateMissionModel((model) =>
-          setMissionWorkspaceMode(
-            model,
-            snapshot,
-            evt.name === "b" ? "board" : "history",
-            missionLayoutSize(),
-          ),
-        );
-        return true;
-      }
-      const movement =
-        evt.name === "left" || evt.name === "h"
-          ? "left"
-          : evt.name === "right" || evt.name === "l"
-            ? "right"
-            : evt.name === "up" || evt.name === "k"
-              ? "up"
-              : evt.name === "down" || evt.name === "j"
-                ? "down"
-                : evt.name === "home"
-                  ? "home"
-                  : evt.name === "end"
-                    ? "end"
-                    : null;
-      if (movement) {
-        updateMissionModel((model) =>
-          moveMissionSelection(model, snapshot, movement, missionLayoutSize()),
-        );
-        return true;
-      }
-      if (evt.name === "return") {
-        const selected = missionWorkspaceModel().selectedMissionId;
-        if (selected) {
-          persistMissionSelection(selected, missionWorkspaceModel().selectedTaskId);
-          updateMissionModel((model) =>
-            openMissionDetail(model, snapshot, {
-              persistedTaskId: missionSelectionFromWorkspaceState(
-                workspaceUiState(),
-                activeViewId(),
-              ).selectedTaskId,
-              ...missionLayoutSize(),
-            }),
-          );
-          if (snapshot.detail?.mission.id !== selected) loadMissionsWorkspace("refresh");
-        }
-        return true;
-      }
-      return true;
+      return handleMissionSurfaceKey(
+        evt,
+        {
+          model: missionWorkspaceModel(),
+          snapshot: missionSnapshotForModel(),
+          layoutSize: missionLayoutSize(),
+          persistedTaskId: missionSelectionFromWorkspaceState(workspaceUiState(), activeViewId())
+            .selectedTaskId,
+        },
+        {
+          updateModel: updateMissionModel,
+          refresh: () => loadMissionsWorkspace("refresh"),
+          followDeepLink: followMissionDeepLink,
+          persistSelection: persistMissionSelection,
+        },
+      );
     };
     const missionLoadErrorMessage = (): string => {
       const state = missionWorkspaceLoad();
@@ -2920,7 +2830,7 @@ try {
       quitHint: QUIT_HINT,
     });
     const missionsLayout = createMemo(() =>
-      missionWorkspaceLayout(
+      missionSurfaceLayout(
         canvasCols(),
         Math.max(4, dims().height - TABBAR_H),
         missionWorkspaceModel(),
@@ -6431,24 +6341,23 @@ try {
           return;
         }
         if (mode() === "missions" && type === "scroll") {
-          const snapshot = missionWorkspaceSnapshot();
-          if (!snapshot) return;
           const hit = missionHitAt(x, y);
           const direction = e.scroll?.direction;
           if (direction !== "up" && direction !== "down") return;
-          const delta = direction === "up" ? -SCROLL_STEP : SCROLL_STEP;
-          const target =
-            hit?.kind === "detail-row"
-              ? hit.section
-              : missionWorkspaceModel().mode === "detail"
-                ? missionWorkspaceModel().detailSection
-                : hit?.kind === "card" || hit?.kind === "column"
-                  ? hit.column
-                  : missionWorkspaceModel().mode === "history"
-                    ? "history"
-                    : missionWorkspaceModel().selectedColumn;
-          updateMissionModel((model) =>
-            scrollMissionWorkspace(model, snapshot, target, delta, missionLayoutSize()),
+          handleMissionSurfaceScroll(
+            hit,
+            direction,
+            {
+              model: missionWorkspaceModel(),
+              snapshot: missionWorkspaceSnapshot(),
+              layoutSize: missionLayoutSize(),
+              persistedTaskId: missionSelectionFromWorkspaceState(
+                workspaceUiState(),
+                activeViewId(),
+              ).selectedTaskId,
+            },
+            { updateModel: updateMissionModel },
+            SCROLL_STEP,
           );
           return;
         }
@@ -6486,27 +6395,25 @@ try {
           return;
         }
         if (mode() === "missions") {
-          const snapshot = missionWorkspaceSnapshot();
           const hit = missionHitAt(x, y);
-          if (hit?.kind === "refresh") {
-            loadMissionsWorkspace("refresh");
-          } else if (hit?.kind === "deep-link") {
-            followMissionDeepLink(hit.link);
-          } else if (hit?.kind === "detail-section" && snapshot) {
-            updateMissionModel((model) =>
-              setMissionDetailSection(model, snapshot, hit.section, missionLayoutSize()),
-            );
-          } else if (hit && snapshot) {
-            updateMissionModel((model) =>
-              applyMissionWorkspaceHit(model, snapshot, hit, missionLayoutSize()),
-            );
-            if (hit.kind === "card" || hit.kind === "history") {
-              updateMissionModel((model) =>
-                openMissionDetail(model, snapshot, missionLayoutSize()),
-              );
-              loadMissionsWorkspace("refresh");
-            }
-          }
+          handleMissionSurfacePointerDown(
+            hit,
+            {
+              model: missionWorkspaceModel(),
+              snapshot: missionWorkspaceSnapshot(),
+              layoutSize: missionLayoutSize(),
+              persistedTaskId: missionSelectionFromWorkspaceState(
+                workspaceUiState(),
+                activeViewId(),
+              ).selectedTaskId,
+            },
+            {
+              updateModel: updateMissionModel,
+              refresh: () => loadMissionsWorkspace("refresh"),
+              followDeepLink: followMissionDeepLink,
+              persistSelection: persistMissionSelection,
+            },
+          );
         }
         return;
       }
@@ -8187,257 +8094,22 @@ try {
               </box>
             </Show>
             <Show when={!activeCompositeLayout() && mode() === "missions"}>
-              <box width={canvasCols()} flexDirection="row" gap={1}>
-                <For each={missionsLayout().header.rows[0] ?? []}>
-                  {(chip) => (
-                    <text
-                      fg={DEFAULT_FG}
-                      bg={
-                        chip.kind === "mode" && chip.mode === missionWorkspaceModel().mode
-                          ? BUTTON_ACTIVE_BG
-                          : chip.kind === "mode" &&
-                              isHovered("missionmode", chip.mode === "board" ? 0 : 1)
-                            ? BUTTON_HOVER_BG
-                            : chip.kind === "refresh" && isHovered("missionbutton", 0)
-                              ? BUTTON_HOVER_BG
-                              : chip.kind === "density" && isHovered("missionbutton", 1)
-                                ? BUTTON_HOVER_BG
-                                : BUTTON_BG
-                      }
-                    >
-                      {chip.label}
-                    </text>
-                  )}
-                </For>
-              </box>
-              <box width={canvasCols()} flexDirection="row">
-                <text
-                  fg={BUTTON_FG}
-                  bg={isHovered("missionbutton", 2) ? BUTTON_HOVER_BG : BUTTON_BG}
-                >
-                  {"<"}
-                </text>
-                <text fg={MUTED}>
-                  {clipTerminal(
-                    missionsLayout().header.labels[1].slice(1, -1),
-                    Math.max(0, canvasCols() - 2),
-                  )}
-                </text>
-                <Show when={canvasCols() > 1}>
-                  <text
-                    fg={BUTTON_FG}
-                    bg={isHovered("missionbutton", 3) ? BUTTON_HOVER_BG : BUTTON_BG}
-                  >
-                    {">"}
-                  </text>
-                </Show>
-              </box>
-              <Show when={missionWorkspaceLoad().status === "loading"}>
-                <box flexDirection="column" flexGrow={1}>
-                  <box height={1} />
-                  <text fg={DEFAULT_FG}>Loading missions…</text>
-                  <text fg={MUTED}>Mission history is read from the active project runtime.</text>
-                </box>
-              </Show>
-              <Show when={missionWorkspaceLoad().status === "error" && !missionWorkspaceSnapshot()}>
-                <box flexDirection="column" flexGrow={1}>
-                  <box height={1} />
-                  <text fg={BANNER_FG}>Mission data could not be loaded.</text>
-                  <text fg={MUTED}>{missionLoadErrorMessage()}</text>
-                  <text fg={MUTED}>Press r to retry. Other workspace views remain available.</text>
-                </box>
-              </Show>
-              <Show when={missionWorkspaceLoad().status === "empty"}>
-                <box flexDirection="column" flexGrow={1}>
-                  <box height={1} />
-                  <text fg={DEFAULT_FG}>No missions yet.</text>
-                  <text fg={MUTED}>
-                    This read-only board will populate from durable mission history.
-                  </text>
-                </box>
-              </Show>
-              <Show
-                when={
-                  missionWorkspaceSnapshot() &&
-                  missionWorkspaceLoad().status !== "loading" &&
-                  !(missionWorkspaceLoad().status === "error" && !missionWorkspaceSnapshot()) &&
-                  missionWorkspaceLoad().status !== "empty"
-                }
-              >
-                <Show when={missionWorkspaceModel().mode === "board"}>
-                  <box flexDirection="row" flexGrow={1} gap={1}>
-                    <For each={missionsLayout().board.columns}>
-                      {(column) => (
-                        <box flexDirection="column" width={column.width}>
-                          <text fg={ACCENT}>
-                            {clipTerminal(`${column.label} (${column.count})`, column.width)}
-                          </text>
-                          <For each={column.cards}>
-                            {(cardLayout) => {
-                              const selected =
-                                missionWorkspaceModel().selectedMissionId === cardLayout.missionId;
-                              return (
-                                <box
-                                  flexDirection="column"
-                                  height={cardLayout.height}
-                                  backgroundColor={
-                                    selected
-                                      ? BADGE_BG
-                                      : isHovered("missioncard", cardLayout.hoverKey)
-                                        ? HOVER_BG
-                                        : DEFAULT_BG
-                                  }
-                                >
-                                  <For each={cardLayout.lines}>
-                                    {(line, lineIndex) => (
-                                      <text fg={lineIndex() === 0 ? DEFAULT_FG : MUTED}>
-                                        {clipTerminal(line, cardLayout.width)}
-                                      </text>
-                                    )}
-                                  </For>
-                                </box>
-                              );
-                            }}
-                          </For>
-                        </box>
-                      )}
-                    </For>
-                  </box>
-                </Show>
-                <Show when={missionWorkspaceModel().mode === "history"}>
-                  <box flexDirection="column" flexGrow={1}>
-                    <For each={missionsLayout().history.rows}>
-                      {(row) => {
-                        const selected =
-                          missionWorkspaceModel().selectedMissionId === row.missionId;
-                        return (
-                          <box
-                            flexDirection="column"
-                            height={row.height}
-                            backgroundColor={
-                              selected
-                                ? BADGE_BG
-                                : isHovered("missionhistory", row.hoverKey)
-                                  ? HOVER_BG
-                                  : DEFAULT_BG
-                            }
-                          >
-                            <For each={row.lines}>
-                              {(line, lineIndex) => (
-                                <text fg={lineIndex() === 0 ? DEFAULT_FG : MUTED}>
-                                  {clipTerminal(line, row.width)}
-                                </text>
-                              )}
-                            </For>
-                          </box>
-                        );
-                      }}
-                    </For>
-                  </box>
-                </Show>
-                <Show when={missionWorkspaceModel().mode === "detail"}>
-                  <box flexDirection="column" flexGrow={1}>
-                    <box width={canvasCols()} flexDirection="row" gap={1}>
-                      <For each={missionsLayout().detail.sections}>
-                        {(chip) => (
-                          <text
-                            fg={DEFAULT_FG}
-                            bg={
-                              chip.section === missionWorkspaceModel().detailSection ||
-                              isHovered(
-                                "missionbutton",
-                                10 + missionsLayout().detail.sections.indexOf(chip),
-                              )
-                                ? BUTTON_ACTIVE_BG
-                                : BUTTON_BG
-                            }
-                          >
-                            {chip.label}
-                          </text>
-                        )}
-                      </For>
-                      <box flexGrow={1} />
-                      <For each={missionsLayout().detail.links}>
-                        {(chip) => {
-                          const resolved = chip.link ? missionDeepLink(chip.link) : null;
-                          return (
-                            <text
-                              fg={resolved?.available ? BUTTON_FG : MUTED}
-                              bg={
-                                chip.link &&
-                                isHovered(
-                                  "missionbutton",
-                                  20 + missionsLayout().detail.links.indexOf(chip),
-                                )
-                                  ? BUTTON_HOVER_BG
-                                  : BUTTON_BG
-                              }
-                            >
-                              {chip.label}
-                            </text>
-                          );
-                        }}
-                      </For>
-                    </box>
-                    <Show
-                      when={missionWorkspaceSnapshot()?.detail}
-                      fallback={
-                        <box flexDirection="column" flexGrow={1}>
-                          <text fg={DEFAULT_FG}>Loading mission detail…</text>
-                          <text fg={MUTED}>Press r to refresh if this does not resolve.</text>
-                        </box>
-                      }
-                    >
-                      <box flexDirection="row" flexGrow={1} gap={1}>
-                        <Show when={missionsLayout().detail.wide}>
-                          <box flexDirection="column" width={missionsLayout().detail.contextWidth}>
-                            <For each={missionsLayout().detail.contextRows}>
-                              {(row) => (
-                                <For each={row.lines}>
-                                  {(line, lineIndex) => (
-                                    <text fg={lineIndex() === 0 ? ACCENT : MUTED}>{line}</text>
-                                  )}
-                                </For>
-                              )}
-                            </For>
-                          </box>
-                        </Show>
-                        <box flexDirection="column" width={missionsLayout().detail.sectionWidth}>
-                          <For each={missionsLayout().detail.rows}>
-                            {(row) => {
-                              const selected =
-                                row.kind === "tasks" &&
-                                missionWorkspaceModel().selectedTaskId === row.id;
-                              return (
-                                <box
-                                  flexDirection="column"
-                                  height={row.height}
-                                  backgroundColor={
-                                    selected
-                                      ? BADGE_BG
-                                      : isHovered("missionhistory", row.hoverKey)
-                                        ? HOVER_BG
-                                        : DEFAULT_BG
-                                  }
-                                >
-                                  <For each={row.lines}>
-                                    {(line, lineIndex) => (
-                                      <text fg={lineIndex() === 0 ? DEFAULT_FG : MUTED}>
-                                        {line}
-                                      </text>
-                                    )}
-                                  </For>
-                                </box>
-                              );
-                            }}
-                          </For>
-                        </box>
-                      </box>
-                    </Show>
-                  </box>
-                </Show>
-              </Show>
-              <text fg={MUTED}>{missionsLayout().footer.label}</text>
+              <MissionsSurface
+                width={canvasCols()}
+                layout={missionsLayout()}
+                model={missionWorkspaceModel()}
+                snapshot={missionWorkspaceSnapshot()}
+                loadState={missionWorkspaceLoad()}
+                errorMessage={missionLoadErrorMessage()}
+                resolveDeepLink={missionDeepLink}
+                isHovered={isHovered}
+                theme={{
+                  bannerFg: BANNER_FG,
+                  buttonFg: BUTTON_FG,
+                  buttonBg: BUTTON_BG,
+                  buttonActiveBg: BUTTON_ACTIVE_BG,
+                }}
+              />
             </Show>
           </box>
         </box>
