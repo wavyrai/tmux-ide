@@ -8,6 +8,8 @@ import {
   scrollMissionWorkspace,
   setMissionDetailSection,
   setMissionWorkspaceMode,
+  toggleMissionColumnCollapse,
+  toggleMissionColumnZoom,
   type MissionDeepLinkKind,
   type MissionWorkspaceHit,
   type MissionWorkspaceModel,
@@ -56,6 +58,14 @@ export function handleMissionSurfaceKey(
   }
   if (event.name === "z") {
     actions.updateModel((model) => cycleMissionDensity(model, snapshot, layoutSize));
+    return true;
+  }
+  if (event.name === "c") {
+    actions.updateModel((model) => toggleMissionColumnCollapse(model, snapshot, layoutSize));
+    return true;
+  }
+  if (event.name === "x") {
+    actions.updateModel((model) => toggleMissionColumnZoom(model, snapshot, layoutSize));
     return true;
   }
   if (!snapshot) return true;

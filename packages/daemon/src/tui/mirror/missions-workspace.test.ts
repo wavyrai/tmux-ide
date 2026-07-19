@@ -35,6 +35,7 @@ import {
   missionSelectionFromWorkspaceState,
   missionTmuxPanePreflightMatches,
   missionTmuxPreflightCommands,
+  missionModelFromWorkspaceState,
   missionWorkspaceHitTest,
   missionWorkspaceLayout,
   pinnedPrimaryLine,
@@ -46,6 +47,9 @@ import {
   scrollMissionWorkspace,
   setMissionDetailSection,
   setMissionWorkspaceMode,
+  toggleMissionColumnCollapse,
+  toggleMissionColumnZoom,
+  workspaceStateWithMissionModel,
   workspaceStateWithMissionSelection,
 } from "./missions-workspace.ts";
 import {
@@ -717,6 +721,55 @@ describe("missions workspace loader/model", () => {
     expect(clamped.historyScroll).toBe(0);
   });
 
+  it("keeps keyboard selection visible in long columns across movement, density, and resize", () => {
+    const many = Array.from({ length: 20 }, (_, index) => card(`mis_${index}`, "planned"));
+    const view = snapshot(board({ planned: many }));
+    let model = reconcileMissionWorkspaceModel(defaultMissionWorkspaceModel("mis_0"), view, {
+      width: 80,
+      height: 10,
+    });
+    for (let index = 0; index < 19; index++) {
+      model = moveMissionSelection(model, view, "down", { width: 80, height: 10 });
+    }
+    expect(model.selectedMissionId).toBe("mis_19");
+    let layout = missionWorkspaceLayout(80, 10, model, view);
+    expect(layout.board.columns[0]!.cards.map((item) => item.missionId)).toContain("mis_19");
+    model = cycleMissionDensity(model, view, { width: 80, height: 10 });
+    layout = missionWorkspaceLayout(80, 10, model, view);
+    expect(layout.board.columns[0]!.cards.map((item) => item.missionId)).toContain("mis_19");
+    model = reconcileMissionWorkspaceModel(model, view, { width: 80, height: 6 });
+    layout = missionWorkspaceLayout(80, 6, model, view);
+    expect(layout.board.columns[0]!.cards.map((item) => item.missionId)).toContain("mis_19");
+    model = moveMissionSelection(model, view, "home", { width: 80, height: 6 });
+    expect(model.selectedMissionId).toBe("mis_0");
+    expect(model.columnScroll.planned).toBe(0);
+  });
+
+  it("keeps detail task selection visible with projected scroll geometry", () => {
+    const tasks = Array.from({ length: 9 }, (_, index) => task(`tsk_${index}`, "planned"));
+    const view = snapshot(
+      board({ running: [card("mis_detail", "running")] }),
+      [],
+      detail({
+        taskBoard: {
+          columns: { planned: tasks, running: [], blocked: [], review: [], done: [] },
+          counts: { planned: 9, running: 0, blocked: 0, review: 0, done: 0, total: 9 },
+        },
+      }),
+    );
+    let model = openMissionDetail(defaultMissionWorkspaceModel("mis_detail"), view, {
+      width: 56,
+      height: 12,
+    });
+    model = moveMissionSelection(model, view, "end", { width: 56, height: 12 });
+    const layout = missionWorkspaceLayout(56, 12, model, view);
+    expect(model.selectedTaskId).toBe("tsk_8");
+    expect(layout.detail.rows.map((row) => row.id)).toContain("tsk_8");
+    for (const row of layout.detail.rows) {
+      expect(row.y + row.height).toBeLessThanOrEqual(layout.height - MISSION_FOOTER_ROWS);
+    }
+  });
+
   it("formats history projected outcome/duration/task/attempt/proof/diff/test/pr/last event fields", () => {
     const lines = missionHistoryLines(history("mis_done", "failed"), "detailed", 120).join("\n");
     expect(lines).toContain("failed");
@@ -821,6 +874,149 @@ describe("missions workspace loader/model", () => {
     expect(model.selectedMissionId).toBe("mis_c");
   });
 
+  it("projects horizontal overflow hints and header hit parity for density collapse zoom and arrows", () => {
+    const view = snapshot(board({ done: [card("mis_done", "done")] }));
+    let model = reconcileMissionWorkspaceModel(defaultMissionWorkspaceModel("mis_done"), view, {
+      width: 56,
+      height: 10,
+    });
+    let layout = missionWorkspaceLayout(56, 10, model, view);
+    expect(layout.header.labels[1]).toContain("more ◀");
+    for (const kind of ["density", "collapse", "zoom", "refresh"] as const) {
+      const chip = layout.header.rows[0]!.find((item) => item.kind === kind)!;
+      expect(missionWorkspaceHitTest(layout, chip.start, chip.row)).toEqual({ kind });
+    }
+    const left = layout.header.rows[1]!.find((item) => item.direction === -1)!;
+    model = applyMissionWorkspaceHit(
+      model,
+      view,
+      { kind: "horizontal", direction: -1 },
+      {
+        width: 56,
+        height: 10,
+      },
+    );
+    expect(model.horizontalOffset).toBe(3);
+    model = { ...model, horizontalOffset: 2 };
+    layout = missionWorkspaceLayout(56, 10, model, view);
+    expect(missionWorkspaceHitTest(layout, left.start, left.row)).toEqual({
+      kind: "horizontal",
+      direction: -1,
+    });
+    expect(layout.header.labels[1]).toContain("more ◀▶");
+  });
+
+  it("collapses and expands focused lanes without discarding mission data or bounds", () => {
+    const view = snapshot(
+      board({
+        planned: [card("mis_a", "planned")],
+        running: [card("mis_b", "running"), card("mis_c", "running")],
+      }),
+    );
+    let model = reconcileMissionWorkspaceModel(defaultMissionWorkspaceModel("mis_b"), view, {
+      width: 56,
+      height: 12,
+    });
+    model = toggleMissionColumnCollapse(model, view, { width: 56, height: 12 });
+    expect(model.collapsedColumns.running).toBe(true);
+    let layout = missionWorkspaceLayout(56, 12, model, view);
+    const running = layout.board.columns.find((column) => column.column === "running")!;
+    expect(running.collapsed).toBe(true);
+    expect(running.title).toBe("Ru 2");
+    expect(running.cards).toEqual([]);
+    expect(view.board.columns.running).toHaveLength(2);
+    expect(running.x + running.width).toBeLessThanOrEqual(layout.width);
+    model = toggleMissionColumnCollapse(model, view, { width: 56, height: 12 });
+    layout = missionWorkspaceLayout(56, 12, model, view);
+    expect(layout.board.columns.find((column) => column.column === "running")!.cards).toHaveLength(
+      2,
+    );
+  });
+
+  it("packs variable-width board windows so collapsed rails reveal additional lanes", () => {
+    const view = snapshot(
+      board({
+        planned: [card("mis_a", "planned")],
+        running: [card("mis_b", "running")],
+        blocked: [card("mis_c", "blocked")],
+        review: [card("mis_d", "review")],
+      }),
+    );
+    let model = reconcileMissionWorkspaceModel(defaultMissionWorkspaceModel("mis_a"), view, {
+      width: 56,
+      height: 12,
+    });
+    let layout = missionWorkspaceLayout(56, 12, model, view);
+    expect(layout.board.visibleColumns).toEqual(["planned", "running"]);
+    model = toggleMissionColumnCollapse(model, view, { width: 56, height: 12 });
+    layout = missionWorkspaceLayout(56, 12, model, view);
+    expect(layout.board.visibleColumns).toEqual(["planned", "running", "blocked"]);
+    expect(layout.board.columns[0]!.collapsed).toBe(true);
+    for (const column of layout.board.columns) {
+      expect(column.x + column.width).toBeLessThanOrEqual(layout.width);
+      expect(column.bodyX + column.bodyWidth).toBeLessThanOrEqual(layout.width);
+    }
+    model = toggleMissionColumnCollapse(model, view, { width: 56, height: 12 });
+    layout = missionWorkspaceLayout(56, 12, model, view);
+    expect(layout.board.visibleColumns).toEqual(["planned", "running"]);
+    expect(layout.header.labels[1]).toContain("more ▶");
+  });
+
+  it("projects compact collapsed lane titles that preserve identity and count inside body width", () => {
+    const view = snapshot(
+      board({ running: Array.from({ length: 12 }, (_, i) => card(`mis_${i}`, "running")) }),
+    );
+    let model = reconcileMissionWorkspaceModel(defaultMissionWorkspaceModel("mis_0"), view, {
+      width: 56,
+      height: 12,
+    });
+    model = toggleMissionColumnCollapse(model, view, { width: 56, height: 12 });
+    const layout = missionWorkspaceLayout(56, 12, model, view);
+    const running = layout.board.columns.find((column) => column.column === "running")!;
+    expect(running.collapsed).toBe(true);
+    expect(running.bodyWidth).toBe(6);
+    expect(running.title).toBe("Ru 12");
+    expect(terminalWidth(running.title)).toBeLessThanOrEqual(running.bodyWidth);
+  });
+
+  it("keeps shortest lane title visibility and card geometry in sync with projection", () => {
+    const view = snapshot(board({ planned: [card("mis_a", "planned")] }));
+    const model = reconcileMissionWorkspaceModel(defaultMissionWorkspaceModel("mis_a"), view, {
+      width: 56,
+      height: 4,
+    });
+    const layout = missionWorkspaceLayout(56, 4, model, view);
+    const planned = layout.board.columns[0]!;
+    expect(planned.titleRows).toBe(0);
+    expect(planned.showTitle).toBe(false);
+    expect(planned.cards).toHaveLength(1);
+    expect(planned.cards[0]!.height).toBe(1);
+    expect(planned.cards[0]!.y + planned.cards[0]!.height).toBeLessThanOrEqual(
+      layout.height - MISSION_FOOTER_ROWS,
+    );
+  });
+
+  it("zooms the focused column and restores the prior board window deterministically", () => {
+    const view = snapshot(board({ done: [card("mis_done", "done")] }));
+    let model = reconcileMissionWorkspaceModel(defaultMissionWorkspaceModel("mis_done"), view, {
+      width: 20,
+      height: 10,
+    });
+    expect(model.horizontalOffset).toBe(4);
+    model.horizontalOffset = 3;
+    model = toggleMissionColumnZoom(model, view, { width: 20, height: 10 });
+    expect(model.zoomColumn).toBe("done");
+    expect(model.zoomRestoreHorizontalOffset).toBe(3);
+    let layout = missionWorkspaceLayout(20, 10, model, view);
+    expect(layout.board.visibleColumns).toEqual(["done"]);
+    expect(layout.board.columns[0]!.width).toBe(20);
+    model = toggleMissionColumnZoom(model, view, { width: 20, height: 10 });
+    expect(model.zoomColumn).toBeNull();
+    expect(model.horizontalOffset).toBe(3);
+    layout = missionWorkspaceLayout(20, 10, model, view);
+    expect(layout.board.visibleColumns).toEqual(["review"]);
+  });
+
   it("keeps header chip spans non-overlapping at narrow, medium, and wide widths", () => {
     for (const width of [20, 56, 72, 120, 180]) {
       const layout = missionWorkspaceLayout(width, 10, defaultMissionWorkspaceModel(), snapshot());
@@ -833,6 +1029,8 @@ describe("missions workspace loader/model", () => {
           "mode",
           "mode",
           "density",
+          "collapse",
+          "zoom",
           "refresh",
         ]);
       }
@@ -1397,6 +1595,70 @@ describe("missions workspace loader/model", () => {
     expect(json).not.toContain("columns");
     expect(json).not.toContain("history");
     expect(json).not.toContain("projection");
+  });
+
+  it("persists exact-view missions navigation without projection blobs and hydrates legacy selection", () => {
+    const viewA = {
+      id: "mission-a",
+      title: "Missions A",
+      panel: "missions",
+      layout: null,
+      glyph: "◆",
+      order: 0,
+      shortcut: null,
+    } as const;
+    const viewB = { ...viewA, id: "mission-b", title: "Missions B" };
+    let model = {
+      ...defaultMissionWorkspaceModel("mis_one", "tsk_one"),
+      mode: "board" as const,
+      density: "detailed" as const,
+      selectedColumn: "done" as const,
+      preferredRow: 7,
+      columnScroll: { planned: 0, running: 2, blocked: 0, review: 0, done: 5 },
+      horizontalOffset: 3,
+      collapsedColumns: {
+        planned: false,
+        running: true,
+        blocked: false,
+        review: true,
+        done: false,
+      },
+      zoomColumn: "done" as const,
+      zoomRestoreHorizontalOffset: 2,
+    };
+    const state = workspaceStateWithMissionModel(defaultWorkspaceUiState(), viewA.id, model);
+    const isolated = workspaceStateWithMissionModel(
+      state,
+      viewB.id,
+      defaultMissionWorkspaceModel("mis_two"),
+    );
+    expect(missionModelFromWorkspaceState(isolated, viewA).selectedMissionId).toBe("mis_one");
+    expect(missionModelFromWorkspaceState(isolated, viewA).columnScroll.done).toBe(5);
+    expect(missionModelFromWorkspaceState(isolated, viewA).collapsedColumns.running).toBe(true);
+    expect(missionModelFromWorkspaceState(isolated, viewA).zoomColumn).toBe("done");
+    expect(missionModelFromWorkspaceState(isolated, viewB).selectedMissionId).toBe("mis_two");
+    const json = serializeWorkspaceUiState(isolated);
+    expect(json).toContain('"navigation"');
+    expect(json).not.toContain("columns");
+    expect(json).not.toContain("projection");
+
+    const legacy = workspaceStateWithMissionSelection(
+      defaultWorkspaceUiState(),
+      viewA.id,
+      "mis_legacy",
+      "tsk_legacy",
+    );
+    model = missionModelFromWorkspaceState(legacy, viewA, defaultMissionWorkspaceModel());
+    expect(model.selectedMissionId).toBe("mis_legacy");
+    expect(model.selectedTaskId).toBe("tsk_legacy");
+    expect(model.density).toBe("comfortable");
+    expect(model.collapsedColumns).toEqual({
+      planned: false,
+      running: false,
+      blocked: false,
+      review: false,
+      done: false,
+    });
   });
 });
 

@@ -57,7 +57,24 @@ export interface WorkspaceMissionsViewState {
   panel: "missions";
   selectedMissionId: string | null;
   selectedTaskId: string | null;
+  navigation?: WorkspaceMissionsNavigationState;
   layout?: WorkspaceCompositeLayoutViewState;
+}
+
+export interface WorkspaceMissionsNavigationState {
+  mode: "board" | "history" | "detail";
+  density: "compact" | "comfortable" | "detailed";
+  selectedColumn: "planned" | "running" | "blocked" | "review" | "done";
+  preferredRow: number;
+  columnScroll: Record<"planned" | "running" | "blocked" | "review" | "done", number>;
+  historyScroll: number;
+  horizontalOffset: number;
+  detailReturnMode: "board" | "history";
+  detailSection: "tasks" | "timeline" | "attempts" | "proof";
+  detailScroll: Record<"tasks" | "timeline" | "attempts" | "proof", number>;
+  collapsedColumns: Record<"planned" | "running" | "blocked" | "review" | "done", boolean>;
+  zoomColumn: "planned" | "running" | "blocked" | "review" | "done" | null;
+  zoomRestoreHorizontalOffset: number | null;
 }
 
 export interface WorkspaceEmptyViewState {
@@ -123,6 +140,10 @@ export interface WorkspaceUiControllerSaveResult {
 
 const PANELS: readonly HostedPanelKind[] = ["home", "terminals", "files", "diff", "missions"];
 const RESERVED_OBJECT_KEYS = new Set(["__proto__", "prototype", "constructor"]);
+const MISSION_COLUMNS = ["planned", "running", "blocked", "review", "done"] as const;
+const MISSION_MODES = ["board", "history", "detail"] as const;
+const MISSION_DENSITIES = ["compact", "comfortable", "detailed"] as const;
+const MISSION_DETAIL_SECTIONS = ["tasks", "timeline", "attempts", "proof"] as const;
 
 export const DEFAULT_WORKSPACE_UI_STATE: WorkspaceUiStateV1 = Object.freeze({
   version: WORKSPACE_UI_STATE_VERSION,
@@ -164,6 +185,73 @@ function cleanPath(value: unknown): string | null {
   if (value.length === 0 || value.length > WORKSPACE_UI_STATE_MAX_PATH_LENGTH) return null;
   if (value.includes("\0")) return null;
   return value;
+}
+
+function oneOf<T extends readonly string[]>(value: unknown, allowed: T): T[number] | null {
+  return typeof value === "string" && (allowed as readonly string[]).includes(value)
+    ? (value as T[number])
+    : null;
+}
+
+function cleanNonnegativeInt(value: unknown): number | null {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : null;
+}
+
+function cleanNumberRecord<const Keys extends readonly string[]>(
+  value: unknown,
+  keys: Keys,
+): Record<Keys[number], number> {
+  const out = Object.fromEntries(keys.map((key) => [key, 0])) as Record<Keys[number], number>;
+  if (!isRecord(value)) return out;
+  for (const key of keys as readonly Keys[number][]) {
+    const clean = cleanNonnegativeInt(value[key]);
+    if (clean !== null) out[key] = clean;
+  }
+  return out;
+}
+
+function cleanBooleanRecord<const Keys extends readonly string[]>(
+  value: unknown,
+  keys: Keys,
+): Record<Keys[number], boolean> {
+  const out = Object.fromEntries(keys.map((key) => [key, false])) as Record<Keys[number], boolean>;
+  if (!isRecord(value)) return out;
+  for (const key of keys as readonly Keys[number][]) out[key] = value[key] === true;
+  return out;
+}
+
+function cleanMissionsNavigation(
+  value: unknown,
+  path: string,
+  diagnostics: WorkspaceUiStateDiagnostic[],
+): WorkspaceMissionsNavigationState | null {
+  if (value === undefined || value === null) return null;
+  if (!isRecord(value)) {
+    diagnostics.push(diagnostic("INVALID_FIELD", path, "missions navigation must be an object"));
+    return null;
+  }
+  const mode = oneOf(value.mode, MISSION_MODES) ?? "board";
+  const density = oneOf(value.density, MISSION_DENSITIES) ?? "comfortable";
+  const selectedColumn = oneOf(value.selectedColumn, MISSION_COLUMNS) ?? "planned";
+  const detailReturnMode = oneOf(value.detailReturnMode, ["board", "history"] as const) ?? "board";
+  const detailSection = oneOf(value.detailSection, MISSION_DETAIL_SECTIONS) ?? "tasks";
+  const zoomColumn = oneOf(value.zoomColumn, MISSION_COLUMNS);
+  const zoomRestoreHorizontalOffset = cleanNonnegativeInt(value.zoomRestoreHorizontalOffset);
+  return {
+    mode,
+    density,
+    selectedColumn,
+    preferredRow: cleanNonnegativeInt(value.preferredRow) ?? 0,
+    columnScroll: cleanNumberRecord(value.columnScroll, MISSION_COLUMNS),
+    historyScroll: cleanNonnegativeInt(value.historyScroll) ?? 0,
+    horizontalOffset: cleanNonnegativeInt(value.horizontalOffset) ?? 0,
+    detailReturnMode,
+    detailSection,
+    detailScroll: cleanNumberRecord(value.detailScroll, MISSION_DETAIL_SECTIONS),
+    collapsedColumns: cleanBooleanRecord(value.collapsedColumns, MISSION_COLUMNS),
+    zoomColumn,
+    zoomRestoreHorizontalOffset,
+  };
 }
 
 function cleanActive(
@@ -217,10 +305,16 @@ function cleanViewState(
     };
   }
   if (panel === "missions") {
+    const navigation = cleanMissionsNavigation(
+      value.navigation,
+      `$.views.${key}.navigation`,
+      diagnostics,
+    );
     return {
       panel,
       selectedMissionId: cleanId(value.selectedMissionId),
       selectedTaskId: cleanId(value.selectedTaskId),
+      ...(navigation ? { navigation } : {}),
       ...(layout ? { layout } : {}),
     };
   }
@@ -377,6 +471,7 @@ export function serializeWorkspaceUiState(state: WorkspaceUiStateV1): string {
         panel: "missions",
         selectedMissionId: view.selectedMissionId,
         selectedTaskId: view.selectedTaskId,
+        ...(view.navigation ? { navigation: orderedMissionsNavigation(view.navigation) } : {}),
         ...(view.layout ? { layout: orderedLayoutState(view.layout) } : {}),
       };
     } else {
@@ -408,6 +503,44 @@ function orderedLayoutState(
     activeTabs,
     splitWeights,
   };
+}
+
+function orderedMissionsNavigation(
+  navigation: WorkspaceMissionsNavigationState,
+): WorkspaceMissionsNavigationState {
+  return {
+    mode: navigation.mode,
+    density: navigation.density,
+    selectedColumn: navigation.selectedColumn,
+    preferredRow: navigation.preferredRow,
+    columnScroll: orderedNumberRecord(navigation.columnScroll, MISSION_COLUMNS),
+    historyScroll: navigation.historyScroll,
+    horizontalOffset: navigation.horizontalOffset,
+    detailReturnMode: navigation.detailReturnMode,
+    detailSection: navigation.detailSection,
+    detailScroll: orderedNumberRecord(navigation.detailScroll, MISSION_DETAIL_SECTIONS),
+    collapsedColumns: orderedBooleanRecord(navigation.collapsedColumns, MISSION_COLUMNS),
+    zoomColumn: navigation.zoomColumn,
+    zoomRestoreHorizontalOffset: navigation.zoomRestoreHorizontalOffset,
+  };
+}
+
+function orderedNumberRecord<const Keys extends readonly string[]>(
+  record: Record<Keys[number], number>,
+  keys: Keys,
+): Record<Keys[number], number> {
+  return Object.fromEntries(
+    (keys as readonly Keys[number][]).map((key) => [key, record[key] ?? 0]),
+  ) as Record<Keys[number], number>;
+}
+
+function orderedBooleanRecord<const Keys extends readonly string[]>(
+  record: Record<Keys[number], boolean>,
+  keys: Keys,
+): Record<Keys[number], boolean> {
+  return Object.fromEntries(
+    (keys as readonly Keys[number][]).map((key) => [key, record[key] === true]),
+  ) as Record<Keys[number], boolean>;
 }
 
 export function workspaceUiStateToJsonValue(state: WorkspaceUiStateV1): JsonValue {
@@ -563,6 +696,34 @@ export function setMissionsSelection(
         panel: "missions",
         selectedMissionId: cleanId(missionId),
         selectedTaskId: cleanId(taskId),
+        ...(state.views[id]?.panel === "missions" && state.views[id].navigation
+          ? { navigation: state.views[id].navigation }
+          : {}),
+      },
+    },
+  };
+}
+
+export function setMissionsNavigation(
+  state: WorkspaceUiStateV1,
+  viewId: string,
+  selection: Pick<WorkspaceMissionsViewState, "selectedMissionId" | "selectedTaskId">,
+  navigation: WorkspaceMissionsNavigationState,
+): WorkspaceUiStateV1 {
+  const id = cleanId(viewId);
+  if (!id) return cloneState(state);
+  const existing = state.views[id];
+  return {
+    version: WORKSPACE_UI_STATE_VERSION,
+    active: state.active ? { ...state.active } : null,
+    views: {
+      ...state.views,
+      [id]: {
+        ...(existing?.layout ? { layout: existing.layout } : {}),
+        panel: "missions",
+        selectedMissionId: cleanId(selection.selectedMissionId),
+        selectedTaskId: cleanId(selection.selectedTaskId),
+        navigation: orderedMissionsNavigation(navigation),
       },
     },
   };
@@ -596,6 +757,7 @@ function workspaceViewStateWithLayout(
       panel: "missions",
       selectedMissionId: entry.selectedMissionId,
       selectedTaskId: entry.selectedTaskId,
+      ...(entry.navigation ? { navigation: orderedMissionsNavigation(entry.navigation) } : {}),
       layout: cleanLayout,
     };
   }

@@ -79,7 +79,11 @@ export function MissionsSurface(props: MissionSurfaceProps) {
                       ? BUTTON_HOVER_BG
                       : chip.kind === "density" && props.isHovered("missionbutton", 1)
                         ? BUTTON_HOVER_BG
-                        : props.theme.buttonBg
+                        : chip.kind === "collapse" && props.isHovered("missionbutton", 4)
+                          ? BUTTON_HOVER_BG
+                          : chip.kind === "zoom" && props.isHovered("missionbutton", 5)
+                            ? BUTTON_HOVER_BG
+                            : props.theme.buttonBg
               }
             >
               {chip.label}
@@ -142,9 +146,11 @@ export function MissionsSurface(props: MissionSurfaceProps) {
                   backgroundColor={DEFAULT_BG}
                   overflow="hidden"
                 >
-                  <text fg={column.active ? ACCENT : MUTED}>
-                    {clipTerminal(column.title, column.bodyWidth)}
-                  </text>
+                  <Show when={column.showTitle}>
+                    <text fg={column.active ? ACCENT : MUTED}>
+                      {clipTerminal(column.title, column.bodyWidth)}
+                    </text>
+                  </Show>
                   <For each={column.cards}>
                     {(cardLayout) => {
                       const selected = props.model.selectedMissionId === cardLayout.missionId;
