@@ -161,6 +161,11 @@ const features = [
       "wait agent-status and wait output --match block until a session hits a status or a pane matches a regex. Scriptable synchronization.",
   },
   {
+    title: "Missions workspace preview",
+    description:
+      "A durable project-scoped Missions board, history, and details surface for reviewing mission progress inside the current app.",
+  },
+  {
     title: "Crash-proof restore",
     description:
       "Continuous snapshots; tmux-ide restore rebuilds sessions, windows, layouts, cwds, and titles after a tmux server death.",
