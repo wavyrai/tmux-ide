@@ -385,6 +385,14 @@ import {
   handleMissionSurfaceScroll,
 } from "./missions-surface-controller.ts";
 import {
+  TuiCleanupRegistry,
+  createTuiLifecycleExecutor,
+  executeCtrlCCommand,
+  resolveCtrlCCommand,
+  resolveInputLayer,
+  resolveQuitLifecycleCommand,
+} from "./input-lifecycle.ts";
+import {
   WorkspaceUiStateController,
   absoluteProjectPath,
   chooseInitialWorkspaceView,
@@ -914,6 +922,8 @@ hostAutowrap = installHostAutowrapGuard((sequence) => writeSync(process.stdout.f
 
 try {
   await render(() => {
+    const cleanupRegistry = new TuiCleanupRegistry();
+    onCleanup(() => cleanupRegistry.runAll());
     // Register <pane_surface> before any is created (M21.3). An explicit call —
     // a bare side-effect import of the module gets DCE'd by the transpiler.
     if (FB_PANES) registerPaneSurface();
@@ -1437,7 +1447,7 @@ try {
     missionsRefreshTimer = setInterval(() => {
       if (mode() === "missions") loadMissionsWorkspace("cadence");
     }, 10_000);
-    onCleanup(() => {
+    cleanupRegistry.set("missions-refresh-timer", () => {
       if (missionsRefreshTimer) clearInterval(missionsRefreshTimer);
     });
 
@@ -2897,7 +2907,7 @@ try {
           // `r` / toggles / mutations refresh on demand.
         });
     };
-    onCleanup(() => void stopFilesWatch?.().catch(() => {}));
+    cleanupRegistry.set("files-watch", () => void stopFilesWatch?.().catch(() => {}));
     /** A tab switch back onto a stale Files surface catches up in one shot. */
     const catchUpFilesIfStale = () => {
       if (!filesStale) return;
@@ -2910,7 +2920,7 @@ try {
     const filesStatusPoll = setInterval(() => {
       if (mode() === "editor" && fileNodes().length > 0) refreshFileStatus();
     }, 3000);
-    onCleanup(() => clearInterval(filesStatusPoll));
+    cleanupRegistry.set("files-status-poll", () => clearInterval(filesStatusPoll));
 
     /** The project dir the fleet payload records for `session` (null if unknown). */
     const dirForSession = (name: string): string | null => {
@@ -3651,6 +3661,18 @@ try {
       loadRepoFiles(); // refresh the "Go to file:" source (async, M24.6)
       setPaletteOpen(true);
     };
+    const lifecycleExecutor = createTuiLifecycleExecutor({
+      // Renderer destruction disposes the Solid root first, so the shared
+      // onCleanup path owns mirrors/buffers and the host-mode guard restores
+      // DECAWM after OpenTUI's native terminal teardown.
+      destroyRenderer: () => appRenderer.destroy(),
+      // HOSTED (M23.2): put the cockpit away and keep running. A client that
+      // came here via switch-client bounces BACK to its last session; a plain
+      // terminal attach has no last session, so switch-client -l fails and the
+      // fallback detaches.
+      switchClientBack: (callback) => execFile("tmux", ["switch-client", "-l"], callback),
+      detachClient: () => execFile("tmux", ["detach-client"], () => {}),
+    });
     const runPaletteAction = (a: PaletteAction) => {
       // Usage history (M24.4): every dispatched action bumps its stable key —
       // count + lastUsed feed the "recent" group and the ranking tie-break.
@@ -3807,10 +3829,7 @@ try {
           void runSettingsCommand(a.id);
           break;
         case "quit":
-          // Renderer destruction disposes the Solid root first, so the shared
-          // onCleanup path owns mirrors/buffers and the host-mode guard restores
-          // DECAWM after OpenTUI's native terminal teardown.
-          appRenderer.destroy();
+          lifecycleExecutor.run(resolveQuitLifecycleCommand({ hosted: HOSTED }, "palette"));
           break;
       }
     };
@@ -4349,13 +4368,15 @@ try {
       const diffTimer = setInterval(() => {
         if (mode() === "diff") refreshStatus();
       }, 3000);
-      onCleanup(() => {
+      cleanupRegistry.set("state-and-fleet-timers", () => {
         clearInterval(t);
         clearInterval(fleetTimer);
         clearInterval(diffTimer);
         if (saveTimer) clearTimeout(saveTimer);
         if (workspaceUiSaveTimer) clearTimeout(workspaceUiSaveTimer);
         if (noteTimer) clearTimeout(noteTimer);
+      });
+      cleanupRegistry.set("terminal-and-editor", () => {
         mirror?.dispose();
         editBuffer?.destroy();
       });
@@ -5280,112 +5301,106 @@ try {
     };
 
     useKeyboard((evt) => {
-      if (evt.ctrl && evt.name === "q") {
-        // HOSTED (M23.2): put the cockpit away and keep running — the palette's
-        // "Quit" verb is the real exit. A client that came here via
-        // switch-client (launched inside tmux) bounces BACK to its last
-        // session; a client that attached from a plain terminal has no last
-        // session, so `switch-client -l` fails and it detaches instead. No -t:
-        // tmux resolves "current client" from the pane's $TMUX to the most
-        // recently active client on our session — the presser.
-        if (HOSTED) {
-          execFile("tmux", ["switch-client", "-l"], (err) => {
-            if (err) execFile("tmux", ["detach-client"], () => {});
-          });
-          return;
-        }
-        appRenderer.destroy();
+      const layer = resolveInputLayer(
+        {
+          dialogOpen: dialogStack.depth() > 0,
+          menuOpen: Boolean(menu()),
+          paletteOpen: paletteOpen(),
+          searchOpen: Boolean(search()),
+          mode: mode() === "mirror" ? "mirror" : mode(),
+          activePanelInert: isHostedPanelInert(activePanel()),
+          missionMode: missionWorkspaceModel().mode,
+          editorFocus: filesFocus(),
+          editorFilterOpen: filesQuery() !== null,
+          diffFilterOpen: diffFilter() !== null,
+          homePromptOpen: pathPrompt() !== null || sessionPrompt() !== null,
+          configuredShortcutKeys: hostedViews().flatMap((view) =>
+            view.shortcut ? [view.shortcut.key] : [],
+          ),
+          compositeCycleAvailable: Boolean(
+            activeView().layout && (activeCompositeLayout()?.leaves.length ?? 0) > 1,
+          ),
+        },
+        evt,
+        { hosted: HOSTED },
+      );
+      if (layer.kind === "lifecycle") {
+        lifecycleExecutor.run(layer.command);
         return;
       }
-      // SUPER-modified keys arrive only under the kitty keyboard protocol
-      // (M24.4). ⌘K opens the palette — suppressed while any overlay owns the
-      // keyboard (dialog/menu/palette/search), mirroring F5. Every OTHER super
-      // combo is consumed here: it must never type into a prompt/editor/query
-      // and never reach a pane (forwarding modifier-rich keys into panes is a
-      // separate card — #83).
-      if (evt.super) {
-        if (
-          evt.name === "k" &&
-          !evt.ctrl &&
-          dialogStack.depth() === 0 &&
-          !menu() &&
-          !paletteOpen() &&
-          !search()
-        ) {
-          openPalette();
-        }
-        return;
-      }
-      // A DIALOG owns the keyboard while open (M22.4) — topmost overlay, so it
-      // is checked before the menu and the palette. EVERY key is consumed here
-      // (escape pops one stack level inside dialogKey): nothing may leak to the
-      // pane/editor beneath while a settings flow is on screen.
-      if (dialogStack.depth() > 0) {
-        dialogKey(dialogStack, evt);
-        return;
-      }
-      // The context menu owns the keyboard while open (before the palette).
-      if (menu()) {
-        menuKey(evt);
-        return;
-      }
-      // The palette owns the keyboard while open (keyboard-only overlay); esc/enter
-      // inside close it.
-      if (paletteOpen()) {
-        paletteKey(evt);
-        return;
-      }
-      // The scrollback-search session owns the keyboard while open (the bottom input
-      // line + n/N navigation), so no key leaks to the pane; ^q above still works.
-      if (search()) {
-        searchKey(evt);
-        return;
-      }
-      if (evt.ctrl && evt.name === "tab" && cycleCompositeLeafFocus()) return;
-      // F5 (and ^p when it arrives) open the command palette; ⌘K is the kitty
-      // fast path handled above.
-      if (evt.name === "f5" || (evt.ctrl && evt.name === "p")) {
+      if (layer.kind === "kitty-super-palette") {
         openPalette();
         return;
       }
-      // F1..F4 then F6..F13 switch configured hosted views by position. F5 is
-      // reserved for the palette; later views remain reachable by mouse/palette.
-      const fView = hostedViews().find((view) => view.shortcut?.key === evt.name);
-      if (fView) {
-        selectView(fView.id);
+      if (layer.kind === "kitty-super-suppressed") return;
+      if (layer.kind === "dialog") {
+        dialogKey(dialogStack, evt);
         return;
       }
-      // ^g, not ^h: legacy encoding makes ctrl+h indistinguishable from
-      // backspace (0x08), which must keep flowing to the pane. Works from every
-      // hosted view, including inert Missions.
-      if (evt.ctrl && (evt.name === "g" || evt.name === "h")) {
-        if (mode() !== "home") goHome();
+      if (layer.kind === "menu") {
+        menuKey(evt);
         return;
       }
-      if (mode() === "missions") {
+      if (layer.kind === "palette") {
+        paletteKey(evt);
+        return;
+      }
+      if (layer.kind === "search") {
+        searchKey(evt);
+        return;
+      }
+      if (layer.kind === "global") {
+        switch (layer.command.kind) {
+          case "cycle-composite-focus":
+            cycleCompositeLeafFocus();
+            break;
+          case "open-palette":
+            openPalette();
+            break;
+          case "select-hosted-view": {
+            const shortcutKey = layer.command.key;
+            const fView = hostedViews().find((view) => view.shortcut?.key === shortcutKey);
+            if (fView) selectView(fView.id);
+            break;
+          }
+          case "go-home":
+            if (mode() !== "home") goHome();
+            break;
+          case "toggle-editor":
+            if (mode() === "diff") openSelectedInEditor();
+            else toggleEditor();
+            break;
+        }
+        return;
+      }
+      if (layer.kind === "missions-detail" || layer.kind === "missions-board-history") {
         handleMissionsKey(evt);
         return;
       }
-      if (isHostedPanelInert(activePanel())) return;
-      // ^e — from the diff panel, open the SELECTED file in the editor at the
-      // first changed line of the top-visible hunk (M24.5); elsewhere toggle the
-      // editor against the previous mode (no-op until a file is opened via
-      // `o`/`--edit`).
-      if (evt.ctrl && evt.name === "e") {
-        if (mode() === "diff") openSelectedInEditor();
-        else toggleEditor();
-        return;
-      }
-      if (mode() === "editor") {
+      if (layer.kind === "inert") return;
+      if (
+        layer.kind === "editor-filter" ||
+        layer.kind === "editor-list" ||
+        layer.kind === "editor-input"
+      ) {
         // ^c with an active selection copies the buffer range (exact text — no
         // trailing trim); without a selection it falls through (no pane to reach
         // from the editor). Save / undo / redo work regardless of focused half.
         if (evt.ctrl && evt.name === "c") {
           const s = selection();
-          if (s && s.surface === "editor") {
-            const { start, end } = orderCells(s.anchor, s.head);
-            copyText(extractSelection(editorLines(), start, end, false));
-          }
+          const command = resolveCtrlCCommand({
+            layer: "editor",
+            hasEditorSelection: Boolean(s && s.surface === "editor"),
+          });
+          executeCtrlCCommand(command, {
+            copyEditorSelection: () => {
+              if (!s || s.surface !== "editor") return;
+              const { start, end } = orderCells(s.anchor, s.head);
+              copyText(extractSelection(editorLines(), start, end, false));
+            },
+            copyTerminalSelection: () => {},
+            forwardTerminalCtrlC: () => {},
+          });
           return;
         }
         if (evt.ctrl && evt.name === "s") {
@@ -5409,9 +5424,9 @@ try {
         // changed files, H / I toggle hidden / gitignored visibility (M24.6).
         // Otherwise the EDITOR has focus and types; esc hands focus back to the
         // list.
-        if (filesFocus() === "list") {
+        if (layer.kind === "editor-filter" || layer.kind === "editor-list") {
           const q = filesQuery();
-          if (q !== null) {
+          if (layer.kind === "editor-filter" && q !== null) {
             // Filter input active: printable chars narrow live; arrows move in
             // the FILTERED rows; enter activates the row (exiting the filter);
             // escape restores the full list and the pre-filter selection.
@@ -5469,11 +5484,11 @@ try {
         editorKey(evt);
         return;
       }
-      if (mode() === "diff") {
+      if (layer.kind === "diff-filter" || layer.kind === "diff") {
         // The `/` filter owns the keyboard while active (M24.5): printable keys
         // narrow the grouped list live, escape/return clear + exit (widget
         // semantics), arrows still move the (filtered) selection.
-        if (diffFilter() !== null) {
+        if (layer.kind === "diff-filter") {
           if (evt.name === "escape" || evt.name === "return") {
             setDiffFilter(null);
             diffFilterReselect();
@@ -5507,9 +5522,9 @@ try {
         else if (evt.name === "r") refreshStatus();
         return;
       }
-      if (mode() === "home") {
+      if (layer.kind === "home-prompt" || layer.kind === "home") {
         // Path-input line (`o` to open); while prompting, every key feeds it.
-        if (pathPrompt() !== null) {
+        if (layer.kind === "home-prompt" && pathPrompt() !== null) {
           if (evt.name === "escape") setPathPrompt(null);
           else if (evt.name === "return") {
             const p = pathPrompt()!.trim();
@@ -5521,7 +5536,7 @@ try {
           return;
         }
         // Session-name input line (`n` / the [n new session] chip) — same shape.
-        if (sessionPrompt() !== null) {
+        if (layer.kind === "home-prompt" && sessionPrompt() !== null) {
           if (evt.name === "escape") setSessionPrompt(null);
           else if (evt.name === "return") submitSessionPrompt();
           else if (evt.name === "backspace") setSessionPrompt((s) => (s ?? "").slice(0, -1));
@@ -5613,10 +5628,27 @@ try {
       // to the pane (interrupt) exactly as before.
       if (evt.ctrl && evt.name === "c") {
         const s = selection();
-        if (s && s.surface === "mirror") {
-          commitMirrorCopy(s.paneId, s.anchor, s.head);
-          return;
-        }
+        const command = resolveCtrlCCommand({
+          layer: "terminal",
+          mirrorAvailable: Boolean(mirror),
+          hasTerminalSelection: Boolean(s && s.surface === "mirror"),
+        });
+        executeCtrlCCommand(command, {
+          copyEditorSelection: () => {},
+          copyTerminalSelection: () => {
+            if (!s || s.surface !== "mirror") return;
+            commitMirrorCopy(s.paneId, s.anchor, s.head);
+          },
+          forwardTerminalCtrlC: () => {
+            const pane = mirror?.focusedPane();
+            if (!pane || !mirror) return;
+            clearSelection();
+            snapLive(pane);
+            tapInputSent(pane); // t0: keystroke dispatched to the pane
+            mirror.sendKey("C-c");
+          },
+        });
+        return;
       }
       // Any key that reaches the pane retires a stale selection highlight.
       clearSelection();
