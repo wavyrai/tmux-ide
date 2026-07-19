@@ -37,6 +37,7 @@ import {
   missionTmuxPreflightCommands,
   missionWorkspaceHitTest,
   missionWorkspaceLayout,
+  pinnedPrimaryLine,
   moveMissionSelection,
   openMissionDetail,
   readMissionWorkspace,
@@ -511,6 +512,125 @@ describe("missions workspace loader/model", () => {
     ).toBe(true);
   });
 
+  it("projects framed board lanes with active state, title counts, and bounded bodies", () => {
+    const view = snapshot(
+      board({
+        planned: [card("mis_a", "planned"), card("mis_b", "planned")],
+        running: [card("mis_c", "running")],
+      }),
+    );
+    const model = reconcileMissionWorkspaceModel(defaultMissionWorkspaceModel("mis_c"), view, {
+      width: 56,
+      height: 12,
+    });
+    const layout = missionWorkspaceLayout(56, 12, model, view);
+    expect(
+      layout.board.columns.map((column) => [column.column, column.title, column.active]),
+    ).toEqual([
+      ["planned", "Planned · 2", false],
+      ["running", "Running · 1", true],
+    ]);
+    for (const column of layout.board.columns) {
+      expect(column.y).toBe(MISSION_HEADER_ROWS);
+      expect(column.height).toBe(layout.height - MISSION_HEADER_ROWS - MISSION_FOOTER_ROWS);
+      expect(column.x + column.width).toBeLessThanOrEqual(layout.width);
+      expect(column.bodyX).toBeGreaterThanOrEqual(column.x);
+      expect(column.bodyY).toBeGreaterThan(column.y);
+      expect(column.bodyX + column.bodyWidth).toBeLessThanOrEqual(column.x + column.width);
+      expect(column.bodyY + column.bodyHeight).toBeLessThanOrEqual(column.y + column.height);
+      for (const item of column.cards) {
+        expect(item.x).toBe(column.bodyX);
+        expect(item.width).toBe(column.bodyWidth);
+        expect(item.y).toBeGreaterThanOrEqual(column.bodyY);
+        expect(item.y + item.height).toBeLessThanOrEqual(layout.height - MISSION_FOOTER_ROWS);
+      }
+    }
+  });
+
+  it("formats dense mission rows by density with pinned status, progress, and agent", () => {
+    const latestAttempt = {
+      id: "att_a",
+      taskId: "tsk_a",
+      status: "running",
+      outcome: null,
+      agent: "worker",
+      harness: "codex",
+      model: "gpt-5",
+      terminal: "%7",
+      session: "proj",
+      worktree: "apps/api",
+      startedAt: "2026-01-01T00:01:00.000Z",
+      updatedAt: "2026-01-01T00:02:00.000Z",
+      finishedAt: null,
+      durationMs: null,
+      proofIds: [],
+    };
+    const mission = card("mis_a", "running", "Dense mission", { latestAttempt });
+    const compact = missionCardLines(mission, "compact", 80)[0]!;
+    expect(compact.startsWith("Dense mission")).toBe(true);
+    expect(compact.endsWith("started 2/4 @worker")).toBe(true);
+    expect(terminalWidth(compact)).toBe(80);
+    const comfortable = missionCardLines(mission, "comfortable", 80);
+    expect(comfortable).toHaveLength(3);
+    expect(comfortable[1]).toBe("summary mis_a");
+    expect(comfortable[2]).toBe("attempt worker/codex");
+    expect(
+      missionCardLines(mission, "detailed", 12).every((line) => terminalWidth(line) <= 12),
+    ).toBe(true);
+  });
+
+  it("pins mission and task primary metadata at realistic and narrow widths", () => {
+    const longTitle =
+      "Implement the extremely long and descriptive mission board responsive surface";
+    const latestAttempt = {
+      id: "att_a",
+      taskId: "tsk_a",
+      status: "running",
+      outcome: null,
+      agent: "coordinator",
+      harness: "codex",
+      model: "gpt-5",
+      terminal: "%7",
+      session: "proj",
+      worktree: "apps/api",
+      startedAt: "2026-01-01T00:01:00.000Z",
+      updatedAt: "2026-01-01T00:02:00.000Z",
+      finishedAt: null,
+      durationMs: null,
+      proofIds: [],
+    };
+    const mission = card("mis_a", "running", longTitle, { latestAttempt });
+    for (const width of [24, 28, 32]) {
+      const line = missionCardLines(mission, "compact", width)[0]!;
+      expect(terminalWidth(line)).toBeLessThanOrEqual(width);
+      expect(line).toMatch(/started 2\/4 @coordinator$/);
+    }
+    expect(missionCardLines(mission, "compact", 12)[0]).toBe("started 2/4");
+    expect(missionCardLines(mission, "compact", 8)[0]).toBe("started…");
+    const comfortable = missionCardLines(
+      card("mis_blocked", "running", longTitle, {
+        latestAttempt,
+        blockedBy: ["tsk_a", "tsk_b", "tsk_c", "tsk_d"],
+      }),
+      "comfortable",
+      32,
+    );
+    expect(comfortable[0]).toMatch(/started 2\/4 @coordinator$/);
+    expect(comfortable[1]).toBe("summary mis_blocked");
+    expect(comfortable[2]).toBe("blocked by 4");
+    expect(comfortable.join("\n")).not.toContain("agent coordinator");
+
+    const longTask = task("tsk_long", "running", {
+      title: "Implement a very long selected task row with stable right metadata",
+      latestAttempt,
+    });
+    const taskLine = missionDetailTaskLines(longTask, "compact", 28)[0]!;
+    expect(terminalWidth(taskLine)).toBeLessThanOrEqual(28);
+    expect(taskLine).toMatch(/started p1 @coordinator$/);
+    expect(missionDetailTaskLines(longTask, "compact", 10)[0]).toBe("started p1");
+    expect(pinnedPrimaryLine(longTitle, 0, "started 2/4", "coordinator")).toBe("");
+  });
+
   it("uses density-aware item capacity and never overflows into the footer", () => {
     const many = Array.from({ length: 8 }, (_, index) => card(`mis_${index}`, "planned"));
     const view = snapshot(
@@ -553,8 +673,16 @@ describe("missions workspace loader/model", () => {
       const layout = missionWorkspaceLayout(width, 10, model, view);
       expect(layout.board.visibleColumns.length).toBe(1);
       for (const column of layout.board.columns) {
+        expect(column.width).toBeGreaterThanOrEqual(0);
+        expect(column.height).toBeGreaterThanOrEqual(0);
+        expect(column.bodyWidth).toBeGreaterThanOrEqual(0);
+        expect(column.bodyHeight).toBeGreaterThanOrEqual(0);
         expect(column.width).toBeLessThanOrEqual(layout.width);
         expect(column.x + column.width).toBeLessThanOrEqual(layout.width);
+        expect(column.bodyX + column.bodyWidth).toBeLessThanOrEqual(layout.width);
+        expect(column.bodyY + column.bodyHeight).toBeLessThanOrEqual(
+          layout.height - MISSION_FOOTER_ROWS,
+        );
         for (const item of column.cards)
           expect(item.x + item.width).toBeLessThanOrEqual(layout.width);
       }
@@ -621,7 +749,13 @@ describe("missions workspace loader/model", () => {
       kind: "horizontal",
       direction: 1,
     });
-    expect(missionWorkspaceHitTest(layout, 1, 3)).toEqual({
+    const planned = layout.board.columns.find((column) => column.column === "planned")!;
+    expect(missionWorkspaceHitTest(layout, planned.x, planned.y)).toEqual({
+      kind: "column",
+      column: "planned",
+    });
+    const firstCard = planned.cards[0]!;
+    expect(missionWorkspaceHitTest(layout, firstCard.x, firstCard.y)).toEqual({
       kind: "card",
       missionId: "mis_a",
       column: "planned",
