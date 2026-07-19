@@ -358,6 +358,7 @@ import {
   clipTerminal,
   defaultMissionWorkspaceModel,
   invalidatedMissionWorkspaceLoadState,
+  missionModelFromWorkspaceState,
   missionSelectionFromWorkspaceState,
   missionTmuxPanePreflightMatches,
   missionTmuxPreflightCommands,
@@ -365,6 +366,7 @@ import {
   readMissionWorkspace,
   reconcileMissionWorkspaceModel,
   resolveMissionDeepLink,
+  workspaceStateWithMissionModel,
   workspaceStateWithMissionSelection,
   type MissionDeepLinkKind,
   type MissionDeepLinkResolution,
@@ -1228,6 +1230,12 @@ try {
         workspaceStateWithMissionSelection(state, view.id, missionId, taskId),
       );
     };
+    const persistMissionModel = (model: MissionWorkspaceModel) => {
+      const view = activeView();
+      if (activePanel() !== "missions") return;
+      touchedWorkspaceViewIds.add(view.id);
+      setWorkspaceUiState((state) => workspaceStateWithMissionModel(state, view.id, model));
+    };
     const updateMissionModel = (
       updater: (model: MissionWorkspaceModel) => MissionWorkspaceModel,
     ) => {
@@ -1237,11 +1245,7 @@ try {
           updated.mode !== "detail" && updated.selectedMissionId !== current.selectedMissionId
             ? { ...updated, selectedTaskId: null }
             : updated;
-        if (
-          next.selectedMissionId !== current.selectedMissionId ||
-          next.selectedTaskId !== current.selectedTaskId
-        )
-          persistMissionSelection(next.selectedMissionId, next.selectedTaskId);
+        if (next !== current) persistMissionModel(next);
         return next;
       });
     };
@@ -1273,11 +1277,15 @@ try {
           if (!accepted) return;
           setMissionWorkspaceSnapshot(snapshot);
           updateMissionModel((current) =>
-            reconcileMissionWorkspaceModel(current, snapshot, {
-              persistedMissionId: persistedSelection.selectedMissionId,
-              persistedTaskId: persistedSelection.selectedTaskId,
-              ...missionLayoutSize(),
-            }),
+            reconcileMissionWorkspaceModel(
+              missionModelFromWorkspaceState(workspaceUiState(), activeView(), current),
+              snapshot,
+              {
+                persistedMissionId: persistedSelection.selectedMissionId,
+                persistedTaskId: persistedSelection.selectedTaskId,
+                ...missionLayoutSize(),
+              },
+            ),
           );
           setMissionWorkspaceLoad(accepted);
           if (reason === "refresh") setStatusNote("missions refreshed");
@@ -2639,13 +2647,11 @@ try {
         });
       }
       if (panel === "missions") {
-        const existing = missionSelectionFromWorkspaceState(workspaceUiState(), activeView().id);
-        return withCurrentLayout({
-          panel,
-          selectedMissionId:
-            missionWorkspaceModel().selectedMissionId ?? existing.selectedMissionId,
-          selectedTaskId: missionWorkspaceModel().selectedTaskId ?? existing.selectedTaskId,
-        });
+        const model = missionWorkspaceModel();
+        const state = workspaceStateWithMissionModel(workspaceUiState(), activeView().id, model);
+        const entry = state.views[activeView().id];
+        if (entry?.panel === "missions") return withCurrentLayout(entry);
+        return withCurrentLayout({ panel, selectedMissionId: null, selectedTaskId: null });
       }
       return withCurrentLayout({ panel });
     };
@@ -2706,11 +2712,7 @@ try {
       } else if (entry.panel === "missions") {
         setMissionWorkspaceModel((current) =>
           reconcileMissionWorkspaceModel(
-            {
-              ...current,
-              selectedMissionId: entry.selectedMissionId,
-              selectedTaskId: entry.selectedTaskId,
-            },
+            missionModelFromWorkspaceState(workspaceUiState(), view, current),
             missionWorkspaceSnapshot(),
             missionLayoutSize(),
           ),
@@ -5968,12 +5970,24 @@ try {
         } else if (
           hit?.kind === "refresh" ||
           hit?.kind === "density" ||
-          hit?.kind === "horizontal"
+          hit?.kind === "horizontal" ||
+          hit?.kind === "collapse" ||
+          hit?.kind === "zoom"
         ) {
           setHoverIf({
             region: "missionbutton",
             index:
-              hit.kind === "refresh" ? 0 : hit.kind === "density" ? 1 : hit.direction < 0 ? 2 : 3,
+              hit.kind === "refresh"
+                ? 0
+                : hit.kind === "density"
+                  ? 1
+                  : hit.kind === "horizontal"
+                    ? hit.direction < 0
+                      ? 2
+                      : 3
+                    : hit.kind === "collapse"
+                      ? 4
+                      : 5,
           });
         } else if (hit?.kind === "card") {
           setHoverIf({ region: "missioncard", index: hit.hoverKey });

@@ -20,8 +20,13 @@ import { MissionRepository, MissionRepositoryError } from "../../lib/mission-rep
 import type { ProjectRuntimeRepository } from "../../lib/project-runtime-repository.ts";
 import type { HostedPanelView } from "./panel-host.ts";
 import { findFirstHostedViewForPanel, terminalDisplayWidth } from "./panel-host.ts";
-import type { WorkspaceUiStateV1 } from "./workspace-ui-state.ts";
-import { missionsSelection, setMissionsSelection } from "./workspace-ui-state.ts";
+import type { WorkspaceMissionsNavigationState, WorkspaceUiStateV1 } from "./workspace-ui-state.ts";
+import {
+  missionsSelection,
+  setMissionsNavigation,
+  setMissionsSelection,
+  viewStateFor,
+} from "./workspace-ui-state.ts";
 
 export const MISSION_BOARD_COLUMNS = ["planned", "running", "blocked", "review", "done"] as const;
 export const MISSION_COLUMN_LABELS: Readonly<Record<MissionBoardColumn, string>> = {
@@ -31,9 +36,17 @@ export const MISSION_COLUMN_LABELS: Readonly<Record<MissionBoardColumn, string>>
   review: "Review",
   done: "Done",
 };
+export const MISSION_COLUMN_SHORT_LABELS: Readonly<Record<MissionBoardColumn, string>> = {
+  planned: "Pl",
+  running: "Ru",
+  blocked: "Bl",
+  review: "Re",
+  done: "Do",
+};
 export const MISSION_DENSITIES = ["compact", "comfortable", "detailed"] as const;
 export const MISSION_MIN_COLUMN_WIDTH = 22;
 export const MISSION_MAX_COLUMN_WIDTH = 34;
+export const MISSION_COLLAPSED_COLUMN_WIDTH = 8;
 export const MISSION_COLUMN_GAP = 1;
 export const MISSION_HEADER_ROWS = 2;
 export const MISSION_FOOTER_ROWS = 1;
@@ -86,6 +99,9 @@ export interface MissionWorkspaceModel {
   selectedTaskId: string | null;
   detailSection: MissionDetailSection;
   detailScroll: Record<MissionDetailSection, number>;
+  collapsedColumns: Record<MissionBoardColumn, boolean>;
+  zoomColumn: MissionBoardColumn | null;
+  zoomRestoreHorizontalOffset: number | null;
 }
 
 export interface MissionWorkspaceLayout {
@@ -125,7 +141,15 @@ export interface MissionHeaderLayout {
 }
 
 export interface MissionHeaderChip {
-  kind: "mode" | "density" | "refresh" | "horizontal" | "section" | "deep-link";
+  kind:
+    | "mode"
+    | "density"
+    | "refresh"
+    | "horizontal"
+    | "collapse"
+    | "zoom"
+    | "section"
+    | "deep-link";
   label: string;
   row: number;
   start: number;
@@ -148,10 +172,28 @@ export interface MissionColumnLayout {
   bodyY: number;
   bodyWidth: number;
   bodyHeight: number;
+  titleRows: number;
+  showTitle: boolean;
   count: number;
   scroll: number;
   active: boolean;
+  collapsed: boolean;
+  zoomed: boolean;
   cards: MissionCardLayout[];
+}
+
+interface MissionBoardPackedColumn {
+  column: MissionBoardColumn;
+  width: number;
+  collapsed: boolean;
+}
+
+interface MissionBoardWindow {
+  offset: number;
+  columns: MissionBoardPackedColumn[];
+  hasLeft: boolean;
+  hasRight: boolean;
+  maxOffset: number;
 }
 
 export interface MissionCardLayout {
@@ -221,6 +263,8 @@ export type MissionWorkspaceHit =
   | { kind: "mode"; mode: MissionWorkspaceMode }
   | { kind: "density" }
   | { kind: "refresh" }
+  | { kind: "collapse" }
+  | { kind: "zoom" }
   | { kind: "horizontal"; direction: -1 | 1 }
   | { kind: "column"; column: MissionBoardColumn }
   | { kind: "card"; missionId: string; column: MissionBoardColumn; index: number; hoverKey: number }
@@ -330,6 +374,9 @@ export function defaultMissionWorkspaceModel(
     selectedTaskId,
     detailSection: "tasks",
     detailScroll: emptyDetailScrolls(),
+    collapsedColumns: emptyCollapsedColumns(),
+    zoomColumn: null,
+    zoomRestoreHorizontalOffset: null,
   };
 }
 
@@ -403,6 +450,7 @@ export function clampMissionWorkspaceModel(
   if (selected) {
     next.selectedColumn = selected.column;
     next.preferredRow = selected.index;
+    if (next.zoomColumn) next.zoomColumn = selected.column;
     next.columnScroll[selected.column] = scrollToIndex(
       selected.index,
       next.columnScroll[selected.column],
@@ -411,7 +459,8 @@ export function clampMissionWorkspaceModel(
     next.horizontalOffset = followColumnOffset(
       columnIndex(selected.column),
       next.horizontalOffset,
-      visibleColumnCount(options.width),
+      options.width,
+      next,
     );
   } else if (next.mode === "board") {
     const fallback = firstBoardMission(snapshot.board);
@@ -422,7 +471,8 @@ export function clampMissionWorkspaceModel(
       next.horizontalOffset = followColumnOffset(
         columnIndex(fallback.column),
         next.horizontalOffset,
-        visibleColumnCount(options.width),
+        options.width,
+        next,
       );
     }
   }
@@ -467,7 +517,7 @@ export function clampMissionWorkspaceModel(
   }
   next.horizontalOffset = Math.min(
     Math.max(0, next.horizontalOffset),
-    Math.max(0, MISSION_BOARD_COLUMNS.length - visibleColumnCount(options.width)),
+    missionBoardWindow(options.width ?? 120, next).maxOffset,
   );
   return next;
 }
@@ -552,6 +602,47 @@ export function cycleMissionDensity(
   return snapshot ? clampMissionWorkspaceModel(next, snapshot, options) : next;
 }
 
+export function toggleMissionColumnCollapse(
+  model: MissionWorkspaceModel,
+  snapshot: Pick<MissionWorkspaceSnapshot, "board" | "history" | "detail"> | null,
+  options: { width?: number; height?: number } = {},
+): MissionWorkspaceModel {
+  const next = cloneModel(model);
+  const column = next.selectedColumn;
+  next.collapsedColumns[column] = !next.collapsedColumns[column];
+  if (next.collapsedColumns[column] && next.zoomColumn === column) {
+    next.zoomColumn = null;
+    next.horizontalOffset = next.zoomRestoreHorizontalOffset ?? next.horizontalOffset;
+    next.zoomRestoreHorizontalOffset = null;
+  }
+  return snapshot ? clampMissionWorkspaceModel(next, snapshot, options) : next;
+}
+
+export function toggleMissionColumnZoom(
+  model: MissionWorkspaceModel,
+  snapshot: Pick<MissionWorkspaceSnapshot, "board" | "history" | "detail"> | null,
+  options: { width?: number; height?: number } = {},
+): MissionWorkspaceModel {
+  const next = cloneModel(model);
+  if (next.mode !== "board") return next;
+  if (next.zoomColumn) {
+    const restore = next.zoomRestoreHorizontalOffset ?? next.horizontalOffset;
+    next.zoomColumn = null;
+    next.zoomRestoreHorizontalOffset = null;
+    const clamped = snapshot ? clampMissionWorkspaceModel(next, snapshot, options) : next;
+    clamped.horizontalOffset = Math.min(
+      Math.max(0, restore),
+      missionBoardWindow(options.width ?? 120, clamped).maxOffset,
+    );
+    return clamped;
+  } else {
+    next.zoomColumn = next.selectedColumn;
+    next.zoomRestoreHorizontalOffset = next.horizontalOffset;
+    next.collapsedColumns[next.selectedColumn] = false;
+  }
+  return snapshot ? clampMissionWorkspaceModel(next, snapshot, options) : next;
+}
+
 export function scrollMissionWorkspace(
   model: MissionWorkspaceModel,
   snapshot: Pick<MissionWorkspaceSnapshot, "board" | "history" | "detail">,
@@ -574,6 +665,8 @@ export function applyMissionWorkspaceHit(
 ): MissionWorkspaceModel {
   if (hit.kind === "mode") return setMissionWorkspaceMode(model, snapshot, hit.mode, options);
   if (hit.kind === "density") return cycleMissionDensity(model, snapshot, options);
+  if (hit.kind === "collapse") return toggleMissionColumnCollapse(model, snapshot, options);
+  if (hit.kind === "zoom") return toggleMissionColumnZoom(model, snapshot, options);
   if (hit.kind === "detail-section")
     return clampMissionWorkspaceModel(
       { ...cloneModel(model), detailSection: hit.section },
@@ -670,59 +763,62 @@ export function missionWorkspaceLayout(
 ): MissionWorkspaceLayout {
   const safeWidth = Math.max(1, width);
   const safeHeight = Math.max(1, height);
-  const visibleCount = visibleColumnCount(safeWidth);
-  const horizontalOffset = Math.min(
-    Math.max(0, model.horizontalOffset),
-    Math.max(0, MISSION_BOARD_COLUMNS.length - visibleCount),
-  );
-  const visibleColumns = MISSION_BOARD_COLUMNS.slice(
-    horizontalOffset,
-    horizontalOffset + visibleCount,
-  );
-  const gapTotal = Math.max(0, visibleColumns.length - 1) * MISSION_COLUMN_GAP;
-  const columnWidth = Math.min(
-    MISSION_MAX_COLUMN_WIDTH,
-    Math.max(1, Math.floor((safeWidth - gapTotal) / Math.max(1, visibleColumns.length))),
-  );
+  const zoomColumn = model.mode === "board" ? model.zoomColumn : null;
+  const packedWindow = missionBoardWindow(safeWidth, model);
+  const visibleColumns = packedWindow.columns.map((column) => column.column);
+  const columnWidth = Math.max(1, Math.max(...packedWindow.columns.map((column) => column.width)));
   const cardHeight = missionCardHeight(model.density);
   const availableRows = boardRows(safeHeight);
   const boardCapacity = boardItemCapacity(safeHeight, model.density);
   const columns: MissionColumnLayout[] = [];
   let x = 0;
-  for (const column of visibleColumns) {
+  for (const packed of packedWindow.columns) {
+    const column = packed.column;
     const cards = snapshot?.board.columns[column] ?? [];
     const start = Math.max(0, model.columnScroll[column]);
-    const visibleCards = cards.slice(start, start + boardCapacity);
-    const lane = missionLaneRect(x, columnWidth, safeHeight);
+    const collapsed = packed.collapsed && column !== zoomColumn;
+    const widthForColumn = Math.max(1, Math.min(packed.width, safeWidth - x));
+    const visibleCards = collapsed ? [] : cards.slice(start, start + boardCapacity);
+    const lane = missionLaneRect(x, widthForColumn, safeHeight);
     const count = snapshot?.board.counts[column] ?? 0;
     columns.push({
       column,
       label: MISSION_COLUMN_LABELS[column],
-      title: `${MISSION_COLUMN_LABELS[column]} · ${count}`,
+      title: missionColumnTitle(column, count, collapsed, lane.bodyWidth),
       x,
       y: lane.y,
-      width: columnWidth,
+      width: widthForColumn,
       height: lane.height,
       bodyX: lane.bodyX,
       bodyY: lane.bodyY,
       bodyWidth: lane.bodyWidth,
       bodyHeight: lane.bodyHeight,
+      titleRows: lane.titleRows,
+      showTitle: lane.titleRows > 0,
       count,
       scroll: start,
       active: model.selectedColumn === column,
-      cards: visibleCards.map((card, visibleIndex) => ({
-        missionId: card.id,
-        column,
-        index: start + visibleIndex,
-        hoverKey: missionCardHoverKey(column, start + visibleIndex),
-        x: lane.bodyX,
-        y: lane.bodyY + visibleIndex * cardHeight,
-        width: lane.bodyWidth,
-        height: cardHeight,
-        lines: missionCardLines(card, model.density, lane.bodyWidth),
-      })),
+      collapsed,
+      zoomed: zoomColumn === column,
+      cards: visibleCards
+        .map((card, visibleIndex) => {
+          const y = lane.bodyY + visibleIndex * cardHeight;
+          const height = Math.max(0, Math.min(cardHeight, lane.bodyY + lane.bodyHeight - y));
+          return {
+            missionId: card.id,
+            column,
+            index: start + visibleIndex,
+            hoverKey: missionCardHoverKey(column, start + visibleIndex),
+            x: lane.bodyX,
+            y,
+            width: lane.bodyWidth,
+            height,
+            lines: missionCardLines(card, model.density, lane.bodyWidth).slice(0, height),
+          };
+        })
+        .filter((card) => card.height > 0),
     });
-    x += columnWidth + MISSION_COLUMN_GAP;
+    x += widthForColumn + MISSION_COLUMN_GAP;
   }
   const historyAvailableRows = historyRows(safeHeight);
   const historyStart = Math.max(0, model.historyScroll);
@@ -1127,6 +1223,71 @@ export function workspaceStateWithMissionSelection(
   return setMissionsSelection(state, viewId, missionId, taskId);
 }
 
+export function missionModelFromWorkspaceState(
+  state: WorkspaceUiStateV1,
+  view: HostedPanelView,
+  fallback: MissionWorkspaceModel = defaultMissionWorkspaceModel(),
+): MissionWorkspaceModel {
+  const entry = viewStateFor(state, view);
+  if (entry?.panel !== "missions" || !entry.navigation) {
+    const selection = missionsSelection(state, view.id);
+    return {
+      ...cloneModel(fallback),
+      selectedMissionId: selection.selectedMissionId ?? fallback.selectedMissionId,
+      selectedTaskId: selection.selectedTaskId ?? fallback.selectedTaskId,
+    };
+  }
+  return {
+    ...cloneModel(fallback),
+    mode: entry.navigation.mode,
+    density: entry.navigation.density,
+    selectedMissionId: entry.selectedMissionId,
+    selectedColumn: entry.navigation.selectedColumn,
+    preferredRow: entry.navigation.preferredRow,
+    columnScroll: { ...entry.navigation.columnScroll },
+    historyScroll: entry.navigation.historyScroll,
+    horizontalOffset: entry.navigation.horizontalOffset,
+    detailReturnMode: entry.navigation.detailReturnMode,
+    selectedTaskId: entry.selectedTaskId,
+    detailSection: entry.navigation.detailSection,
+    detailScroll: { ...entry.navigation.detailScroll },
+    collapsedColumns: { ...entry.navigation.collapsedColumns },
+    zoomColumn: entry.navigation.zoomColumn,
+    zoomRestoreHorizontalOffset: entry.navigation.zoomRestoreHorizontalOffset,
+  };
+}
+
+export function workspaceStateWithMissionModel(
+  state: WorkspaceUiStateV1,
+  viewId: string,
+  model: MissionWorkspaceModel,
+): WorkspaceUiStateV1 {
+  return setMissionsNavigation(
+    state,
+    viewId,
+    { selectedMissionId: model.selectedMissionId, selectedTaskId: model.selectedTaskId },
+    missionModelToNavigation(model),
+  );
+}
+
+function missionModelToNavigation(model: MissionWorkspaceModel): WorkspaceMissionsNavigationState {
+  return {
+    mode: model.mode,
+    density: model.density,
+    selectedColumn: model.selectedColumn,
+    preferredRow: model.preferredRow,
+    columnScroll: { ...model.columnScroll },
+    historyScroll: model.historyScroll,
+    horizontalOffset: model.horizontalOffset,
+    detailReturnMode: model.detailReturnMode,
+    detailSection: model.detailSection,
+    detailScroll: { ...model.detailScroll },
+    collapsedColumns: { ...model.collapsedColumns },
+    zoomColumn: model.zoomColumn,
+    zoomRestoreHorizontalOffset: model.zoomRestoreHorizontalOffset,
+  };
+}
+
 export function clipTerminal(text: string, width: number): string {
   if (width <= 0) return "";
   if (terminalDisplayWidth(text) <= width) return text;
@@ -1178,11 +1339,16 @@ function emptyDetailScrolls(): Record<MissionDetailSection, number> {
   return { tasks: 0, timeline: 0, attempts: 0, proof: 0 };
 }
 
+function emptyCollapsedColumns(): Record<MissionBoardColumn, boolean> {
+  return { planned: false, running: false, blocked: false, review: false, done: false };
+}
+
 function cloneModel(model: MissionWorkspaceModel): MissionWorkspaceModel {
   return {
     ...model,
     columnScroll: { ...model.columnScroll },
     detailScroll: { ...model.detailScroll },
+    collapsedColumns: { ...model.collapsedColumns },
   };
 }
 
@@ -1351,6 +1517,16 @@ function missionCardHoverKey(column: MissionBoardColumn, index: number): number 
   return index * MISSION_BOARD_COLUMNS.length + columnIndex(column);
 }
 
+function missionColumnTitle(
+  column: MissionBoardColumn,
+  count: number,
+  collapsed: boolean,
+  width: number,
+): string {
+  if (collapsed) return clipTerminal(`${MISSION_COLUMN_SHORT_LABELS[column]} ${count}`, width);
+  return `${MISSION_COLUMN_LABELS[column]} · ${count}`;
+}
+
 function missionLaneRect(x: number, width: number, height: number) {
   return missionLaneViewport(
     x,
@@ -1367,7 +1543,7 @@ function missionLaneViewport(x: number, y: number, width: number, height: number
   const inset = bordered ? 1 : 0;
   const innerWidth = Math.max(0, safeWidth - inset * 2);
   const innerHeight = Math.max(0, safeHeight - inset * 2);
-  const titleRows = innerHeight > 0 ? 1 : 0;
+  const titleRows = innerHeight >= 2 ? 1 : 0;
   return {
     x,
     y,
@@ -1377,26 +1553,115 @@ function missionLaneViewport(x: number, y: number, width: number, height: number
     bodyY: y + inset + titleRows,
     bodyWidth: innerWidth,
     bodyHeight: Math.max(0, innerHeight - titleRows),
+    titleRows,
   };
 }
 
-function visibleColumnCount(width: number | undefined): number {
+function missionBoardWindow(
+  width: number | undefined,
+  model: MissionWorkspaceModel,
+): MissionBoardWindow {
   const safeWidth = Math.max(1, width ?? 120);
-  const max = Math.floor(
-    (safeWidth + MISSION_COLUMN_GAP) / (MISSION_MIN_COLUMN_WIDTH + MISSION_COLUMN_GAP),
-  );
-  return Math.max(1, Math.min(MISSION_BOARD_COLUMNS.length, max));
+  if (model.mode === "board" && model.zoomColumn) {
+    return {
+      offset: columnIndex(model.zoomColumn),
+      columns: [{ column: model.zoomColumn, width: safeWidth, collapsed: false }],
+      hasLeft: false,
+      hasRight: false,
+      maxOffset: columnIndex(model.zoomColumn),
+    };
+  }
+  const maxOffset = missionBoardMaxOffset(safeWidth, model);
+  const offset = Math.min(Math.max(0, model.horizontalOffset), maxOffset);
+  const packed = packMissionBoardColumns(safeWidth, offset, model);
+  const last = packed.at(-1);
+  return {
+    offset,
+    columns: packed,
+    hasLeft: offset > 0,
+    hasRight: last ? columnIndex(last.column) < MISSION_BOARD_COLUMNS.length - 1 : false,
+    maxOffset,
+  };
 }
 
-function followColumnOffset(index: number, offset: number, count: number): number {
-  if (index < offset) return index;
-  if (index >= offset + count) return index - count + 1;
-  return offset;
+function missionBoardMaxOffset(width: number, model: MissionWorkspaceModel): number {
+  for (let offset = 0; offset < MISSION_BOARD_COLUMNS.length; offset++) {
+    const packed = packMissionBoardColumns(width, offset, model);
+    if (packed.some((column) => column.column === "done")) return offset;
+  }
+  return Math.max(0, MISSION_BOARD_COLUMNS.length - 1);
+}
+
+function packMissionBoardColumns(
+  width: number,
+  offset: number,
+  model: MissionWorkspaceModel,
+): MissionBoardPackedColumn[] {
+  const safeWidth = Math.max(1, width);
+  const columns: MissionBoardPackedColumn[] = [];
+  let used = 0;
+  for (
+    let index = Math.min(Math.max(0, offset), MISSION_BOARD_COLUMNS.length - 1);
+    index < MISSION_BOARD_COLUMNS.length;
+    index++
+  ) {
+    const column = MISSION_BOARD_COLUMNS[index]!;
+    const collapsed = model.collapsedColumns[column] === true;
+    const baseWidth = collapsed ? MISSION_COLLAPSED_COLUMN_WIDTH : MISSION_MIN_COLUMN_WIDTH;
+    const gap = columns.length > 0 ? MISSION_COLUMN_GAP : 0;
+    if (columns.length > 0 && used + gap + baseWidth > safeWidth) break;
+    const widthForColumn = columns.length === 0 ? Math.min(baseWidth, safeWidth) : baseWidth;
+    columns.push({ column, width: widthForColumn, collapsed });
+    used += gap + widthForColumn;
+  }
+  const expanded = columns.filter((column) => !column.collapsed);
+  let remaining = Math.max(0, safeWidth - used);
+  while (remaining > 0 && expanded.some((column) => column.width < MISSION_MAX_COLUMN_WIDTH)) {
+    for (const column of expanded) {
+      if (remaining <= 0) break;
+      if (column.width >= MISSION_MAX_COLUMN_WIDTH) continue;
+      column.width += 1;
+      remaining -= 1;
+    }
+  }
+  return columns.length > 0
+    ? columns
+    : [{ column: MISSION_BOARD_COLUMNS[0]!, width: safeWidth, collapsed: false }];
+}
+
+function followColumnOffset(
+  index: number,
+  offset: number,
+  width: number | undefined,
+  model: MissionWorkspaceModel,
+): number {
+  const maxOffset = missionBoardWindow(width ?? 120, model).maxOffset;
+  let next = Math.min(Math.max(0, offset), maxOffset);
+  if (
+    packMissionBoardColumns(width ?? 120, next, model).some(
+      (column) => columnIndex(column.column) === index,
+    )
+  )
+    return next;
+  if (index < next) return Math.min(index, maxOffset);
+  while (next < maxOffset) {
+    next += 1;
+    if (
+      packMissionBoardColumns(width ?? 120, next, model).some(
+        (column) => columnIndex(column.column) === index,
+      )
+    )
+      return next;
+  }
+  return maxOffset;
 }
 
 function boardRows(height: number | undefined): number {
   const laneHeight = Math.max(0, (height ?? 24) - MISSION_HEADER_ROWS - MISSION_FOOTER_ROWS);
-  return Math.max(0, laneHeight - 3);
+  if (laneHeight < 2) return laneHeight;
+  const innerHeight = Math.max(0, laneHeight - 2);
+  const titleRows = innerHeight >= 2 ? 1 : 0;
+  return Math.max(0, innerHeight - titleRows);
 }
 
 function historyRows(height: number | undefined): number {
@@ -1404,7 +1669,9 @@ function historyRows(height: number | undefined): number {
 }
 
 function boardItemCapacity(height: number | undefined, density: MissionWorkspaceDensity): number {
-  return Math.max(0, Math.floor(boardRows(height) / missionCardHeight(density)));
+  const rows = boardRows(height);
+  if (rows <= 0) return 0;
+  return Math.max(1, Math.floor(rows / missionCardHeight(density)));
 }
 
 function historyItemCapacity(height: number | undefined, density: MissionWorkspaceDensity): number {
@@ -1703,6 +1970,8 @@ function missionHeaderLayout(
     label: missionModeLabel("history", model.mode === "history"),
   });
   addFirst({ kind: "density", label: densityLabel(model.density) });
+  addFirst({ kind: "collapse", label: collapseLabel(model) });
+  addFirst({ kind: "zoom", label: zoomLabel(model) });
   addFirst({ kind: "refresh", label: "r refresh" });
 
   const secondRow: MissionHeaderChip[] = [];
@@ -1721,12 +1990,13 @@ function missionHeaderLayout(
       width: 1,
     });
   }
-  const secondLabel = missionSecondHeaderLabel(width, snapshot, presentation);
+  const secondLabel = missionSecondHeaderLabel(width, model, snapshot, presentation);
   return { rows: [firstRow, secondRow], labels: [clipTerminal(firstLabel, width), secondLabel] };
 }
 
 function missionSecondHeaderLabel(
   width: number,
+  model: MissionWorkspaceModel,
   snapshot: Pick<MissionWorkspaceSnapshot, "board" | "history"> | null,
   presentation: MissionWorkspacePresentationOptions,
 ): string {
@@ -1739,20 +2009,39 @@ function missionSecondHeaderLabel(
   const summary = snapshot
     ? `${status}${project} · ${snapshot.board.counts.total} total · ${snapshot.history.length} finished`
     : `${status}${project}`;
-  return `<${fitTerminal(` ${summary} `, Math.max(0, width - 2))}>`;
+  const overflow = boardOverflowHint(model, width);
+  if (overflow && width < 30) return `<${fitTerminal(` ${status} · ${overflow} `, width - 2)}>`;
+  return `<${fitTerminal(` ${summary}${overflow ? ` · ${overflow}` : ""} `, Math.max(0, width - 2))}>`;
 }
 
 function missionFooterLabel(
   width: number,
-  model: Pick<MissionWorkspaceModel, "mode">,
+  model: Pick<MissionWorkspaceModel, "mode" | "zoomColumn">,
   quitHint: string | null | undefined,
 ): string {
   const quit = quitHint?.trim() || "^q quit";
   const controls =
     model.mode === "detail"
       ? "esc back · tab sections · 1-4 section · arrows move · t/f/d open · r refresh"
-      : "tab mode · arrows move · enter details · z density · r refresh";
+      : `tab mode · arrows move · enter details · z density · c collapse · x ${model.zoomColumn ? "unzoom" : "zoom"} · r refresh`;
   return fitTerminal(`${quit} · ${controls}`, width);
+}
+
+function collapseLabel(model: MissionWorkspaceModel): string {
+  return model.collapsedColumns[model.selectedColumn] ? "c expand" : "c collapse";
+}
+
+function zoomLabel(model: MissionWorkspaceModel): string {
+  return model.zoomColumn ? "x unzoom" : "x zoom";
+}
+
+function boardOverflowHint(model: MissionWorkspaceModel, width: number): string {
+  if (model.mode !== "board" || model.zoomColumn) return "";
+  const window = missionBoardWindow(width, model);
+  if (window.hasLeft && window.hasRight) return "more ◀▶";
+  if (window.hasLeft) return "more ◀";
+  if (window.hasRight) return "more ▶";
+  return "";
 }
 
 function fitTerminal(text: string, width: number): string {
@@ -1782,6 +2071,8 @@ function missionHeaderHit(header: MissionHeaderLayout, x: number, y: number): Mi
     if (x < chip.start || x >= chip.start + chip.width) continue;
     if (chip.kind === "mode" && chip.mode) return { kind: "mode", mode: chip.mode };
     if (chip.kind === "density") return { kind: "density" };
+    if (chip.kind === "collapse") return { kind: "collapse" };
+    if (chip.kind === "zoom") return { kind: "zoom" };
     if (chip.kind === "refresh") return { kind: "refresh" };
     if (chip.kind === "horizontal" && chip.direction) {
       return { kind: "horizontal", direction: chip.direction };

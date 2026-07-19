@@ -81,8 +81,22 @@ describe("missions surface boundary", () => {
         actions,
       ),
     ).toBe(true);
+    expect(
+      handleMissionSurfaceKey(
+        { name: "c", ctrl: false, meta: false, shift: false },
+        state,
+        actions,
+      ),
+    ).toBe(true);
+    expect(
+      handleMissionSurfaceKey(
+        { name: "x", ctrl: false, meta: false, shift: false },
+        state,
+        actions,
+      ),
+    ).toBe(true);
 
-    expect(calls).toEqual(["refresh", "link:terminal", "update"]);
+    expect(calls).toEqual(["refresh", "link:terminal", "update", "update", "update"]);
   });
 
   it("keeps enter persistence/detail behavior outside JSX and refreshes missing detail", () => {

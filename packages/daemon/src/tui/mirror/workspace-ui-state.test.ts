@@ -19,6 +19,7 @@ import {
   relativeProjectPath,
   serializeWorkspaceUiState,
   setMissionsSelection,
+  setMissionsNavigation,
   setWorkspaceViewLayoutState,
   shouldHydrateWorkspaceView,
   viewStateFor,
@@ -215,6 +216,57 @@ describe("workspace UI-state contract", () => {
     });
     expect(missionsSelection(state, "other")).toEqual({
       selectedMissionId: null,
+      selectedTaskId: null,
+    });
+  });
+
+  it("round-trips bounded missions navigation and tolerates legacy selection-only state", () => {
+    const state = setMissionsNavigation(
+      defaultWorkspaceUiState(),
+      "missions",
+      { selectedMissionId: "mission-1", selectedTaskId: "task-1" },
+      {
+        mode: "board",
+        density: "detailed",
+        selectedColumn: "running",
+        preferredRow: 9,
+        columnScroll: { planned: 0, running: 7, blocked: 0, review: 0, done: 0 },
+        historyScroll: 3,
+        horizontalOffset: 1,
+        detailReturnMode: "history",
+        detailSection: "timeline",
+        detailScroll: { tasks: 2, timeline: 4, attempts: 0, proof: 0 },
+        collapsedColumns: {
+          planned: false,
+          running: false,
+          blocked: true,
+          review: false,
+          done: true,
+        },
+        zoomColumn: "running",
+        zoomRestoreHorizontalOffset: 0,
+      },
+    );
+    const parsed = parseWorkspaceUiStateJson(serializeWorkspaceUiState(state));
+    expect(parsed.state.views.missions).toMatchObject({
+      panel: "missions",
+      selectedMissionId: "mission-1",
+      selectedTaskId: "task-1",
+      navigation: {
+        density: "detailed",
+        selectedColumn: "running",
+        columnScroll: { running: 7 },
+        collapsedColumns: { blocked: true, done: true },
+        zoomColumn: "running",
+      },
+    });
+
+    const legacy = parseWorkspaceUiStateJson(
+      '{"version":1,"active":null,"views":{"missions":{"panel":"missions","selectedMissionId":"mission-legacy","selectedTaskId":null}}}',
+    );
+    expect(legacy.state.views.missions).toEqual({
+      panel: "missions",
+      selectedMissionId: "mission-legacy",
       selectedTaskId: null,
     });
   });
