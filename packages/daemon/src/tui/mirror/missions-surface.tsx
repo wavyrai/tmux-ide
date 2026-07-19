@@ -133,9 +133,17 @@ export function MissionsSurface(props: MissionSurfaceProps) {
           <box flexDirection="row" flexGrow={1} gap={1}>
             <For each={props.layout.board.columns}>
               {(column) => (
-                <box flexDirection="column" width={column.width}>
-                  <text fg={ACCENT}>
-                    {clipTerminal(`${column.label} (${column.count})`, column.width)}
+                <box
+                  flexDirection="column"
+                  width={column.width}
+                  height={column.height}
+                  border={column.width >= 2 && column.height >= 2}
+                  borderColor={column.active ? ACCENT : MUTED}
+                  backgroundColor={DEFAULT_BG}
+                  overflow="hidden"
+                >
+                  <text fg={column.active ? ACCENT : MUTED}>
+                    {clipTerminal(column.title, column.bodyWidth)}
                   </text>
                   <For each={column.cards}>
                     {(cardLayout) => {
@@ -154,7 +162,15 @@ export function MissionsSurface(props: MissionSurfaceProps) {
                         >
                           <For each={cardLayout.lines}>
                             {(line, lineIndex) => (
-                              <text fg={lineIndex() === 0 ? DEFAULT_FG : MUTED}>
+                              <text
+                                fg={
+                                  selected && lineIndex() === 0
+                                    ? ACCENT
+                                    : lineIndex() === 0
+                                      ? DEFAULT_FG
+                                      : MUTED
+                                }
+                              >
                                 {clipTerminal(line, cardLayout.width)}
                               </text>
                             )}

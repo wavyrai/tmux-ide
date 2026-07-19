@@ -139,10 +139,18 @@ export interface MissionHeaderChip {
 export interface MissionColumnLayout {
   column: MissionBoardColumn;
   label: string;
+  title: string;
   x: number;
+  y: number;
   width: number;
+  height: number;
+  bodyX: number;
+  bodyY: number;
+  bodyWidth: number;
+  bodyHeight: number;
   count: number;
   scroll: number;
+  active: boolean;
   cards: MissionCardLayout[];
 }
 
@@ -685,23 +693,33 @@ export function missionWorkspaceLayout(
     const cards = snapshot?.board.columns[column] ?? [];
     const start = Math.max(0, model.columnScroll[column]);
     const visibleCards = cards.slice(start, start + boardCapacity);
+    const lane = missionLaneRect(x, columnWidth, safeHeight);
+    const count = snapshot?.board.counts[column] ?? 0;
     columns.push({
       column,
       label: MISSION_COLUMN_LABELS[column],
+      title: `${MISSION_COLUMN_LABELS[column]} · ${count}`,
       x,
+      y: lane.y,
       width: columnWidth,
-      count: snapshot?.board.counts[column] ?? 0,
+      height: lane.height,
+      bodyX: lane.bodyX,
+      bodyY: lane.bodyY,
+      bodyWidth: lane.bodyWidth,
+      bodyHeight: lane.bodyHeight,
+      count,
       scroll: start,
+      active: model.selectedColumn === column,
       cards: visibleCards.map((card, visibleIndex) => ({
         missionId: card.id,
         column,
         index: start + visibleIndex,
         hoverKey: missionCardHoverKey(column, start + visibleIndex),
-        x,
-        y: MISSION_HEADER_ROWS + 1 + visibleIndex * cardHeight,
-        width: columnWidth,
+        x: lane.bodyX,
+        y: lane.bodyY + visibleIndex * cardHeight,
+        width: lane.bodyWidth,
         height: cardHeight,
-        lines: missionCardLines(card, model.density, columnWidth),
+        lines: missionCardLines(card, model.density, lane.bodyWidth),
       })),
     });
     x += columnWidth + MISSION_COLUMN_GAP;
@@ -756,7 +774,7 @@ export function missionWorkspaceHitTest(
   }
   if (layout.mode === "board") {
     for (const column of layout.board.columns) {
-      if (y === MISSION_HEADER_ROWS && x >= column.x && x < column.x + column.width)
+      if (x >= column.x && x < column.x + column.width && y >= column.y && y < column.bodyY)
         return { kind: "column", column: column.column };
       for (const card of column.cards) {
         if (x >= card.x && x < card.x + card.width && y >= card.y && y < card.y + card.height) {
@@ -818,8 +836,10 @@ export function missionCardLines(
 ): string[] {
   const progress =
     card.progress.total > 0 ? `${card.progress.done}/${card.progress.total}` : "no tasks";
-  const lines = [card.title, `${card.status} · ${progress}`];
+  const agent = card.latestAttempt?.agent ?? "";
+  const lines = [pinnedPrimaryLine(card.title, width, `${card.status} ${progress}`, agent)];
   if (density !== "compact") {
+    lines.push(card.summary);
     if (card.blockedBy.length > 0) lines.push(`blocked by ${card.blockedBy.length}`);
     if (card.latestAttempt)
       lines.push(`attempt ${card.latestAttempt.agent}/${card.latestAttempt.harness}`);
@@ -874,11 +894,13 @@ export function missionDetailTaskLines(
   density: MissionWorkspaceDensity,
   width: number,
 ): string[] {
+  const agent = task.latestAttempt?.agent ?? task.assignee ?? "";
   const lines = [
-    `${task.title}`,
-    `${task.column} · ${task.status} · p${task.priority}${task.assignee ? ` · ${task.assignee}` : ""}`,
+    pinnedPrimaryLine(task.title, width, `${task.status} p${task.priority}`, agent),
+    task.summary,
   ];
   if (density !== "compact") {
+    lines.push(`${task.column}${task.assignee ? ` · ${task.assignee}` : ""}`);
     if (task.dependencies.length > 0) lines.push(`depends ${task.dependencies.join(", ")}`);
     if (task.blockedBy.length > 0) lines.push(`blocked by ${task.blockedBy.join(", ")}`);
     if (task.latestAttempt)
@@ -890,7 +912,29 @@ export function missionDetailTaskLines(
   }
   if (density === "detailed")
     lines.push(`task ${task.id} · duration ${formatDuration(task.durationMs)}`);
-  return lines.slice(0, missionDetailRowHeight(density)).map((line) => clipTerminal(line, width));
+  const limit = density === "compact" ? 1 : missionDetailRowHeight(density);
+  return lines.slice(0, limit).map((line) => clipTerminal(line, width));
+}
+
+export function pinnedPrimaryLine(
+  title: string,
+  width: number,
+  requiredMeta: string,
+  agent: string | null | undefined = null,
+): string {
+  if (width <= 0) return "";
+  const compactAgent = agent ? `@${agent}` : "";
+  const required = requiredMeta.trim();
+  const fullMeta = [required, compactAgent].filter(Boolean).join(" ");
+  const meta = terminalDisplayWidth(fullMeta) <= width || !required ? fullMeta : required;
+  if (terminalDisplayWidth(meta) >= width) return clipTerminal(meta, width);
+  const metaWidth = terminalDisplayWidth(meta);
+  const minGap = meta.length > 0 ? 1 : 0;
+  const titleWidth = Math.max(0, width - metaWidth - minGap);
+  const clippedTitle = clipTerminal(title, titleWidth);
+  if (!clippedTitle) return meta;
+  const gap = " ".repeat(Math.max(minGap, width - terminalDisplayWidth(clippedTitle) - metaWidth));
+  return clipTerminal(`${clippedTitle}${gap}${meta}`, width);
 }
 
 export function missionDetailTimelineLines(entry: MissionTimelineEntry, width: number): string[] {
@@ -1307,6 +1351,35 @@ function missionCardHoverKey(column: MissionBoardColumn, index: number): number 
   return index * MISSION_BOARD_COLUMNS.length + columnIndex(column);
 }
 
+function missionLaneRect(x: number, width: number, height: number) {
+  return missionLaneViewport(
+    x,
+    MISSION_HEADER_ROWS,
+    width,
+    Math.max(0, height - MISSION_HEADER_ROWS - MISSION_FOOTER_ROWS),
+  );
+}
+
+function missionLaneViewport(x: number, y: number, width: number, height: number) {
+  const safeWidth = Math.max(0, width);
+  const safeHeight = Math.max(0, height);
+  const bordered = safeWidth >= 2 && safeHeight >= 2;
+  const inset = bordered ? 1 : 0;
+  const innerWidth = Math.max(0, safeWidth - inset * 2);
+  const innerHeight = Math.max(0, safeHeight - inset * 2);
+  const titleRows = innerHeight > 0 ? 1 : 0;
+  return {
+    x,
+    y,
+    width: safeWidth,
+    height: safeHeight,
+    bodyX: x + inset,
+    bodyY: y + inset + titleRows,
+    bodyWidth: innerWidth,
+    bodyHeight: Math.max(0, innerHeight - titleRows),
+  };
+}
+
 function visibleColumnCount(width: number | undefined): number {
   const safeWidth = Math.max(1, width ?? 120);
   const max = Math.floor(
@@ -1322,7 +1395,8 @@ function followColumnOffset(index: number, offset: number, count: number): numbe
 }
 
 function boardRows(height: number | undefined): number {
-  return Math.max(0, (height ?? 24) - MISSION_HEADER_ROWS - 1 - MISSION_FOOTER_ROWS);
+  const laneHeight = Math.max(0, (height ?? 24) - MISSION_HEADER_ROWS - MISSION_FOOTER_ROWS);
+  return Math.max(0, laneHeight - 3);
 }
 
 function historyRows(height: number | undefined): number {
@@ -1348,9 +1422,9 @@ function scrollToIndex(index: number, top: number, rows: number): number {
 }
 
 function missionCardHeight(density: MissionWorkspaceDensity): number {
-  if (density === "compact") return 2;
-  if (density === "comfortable") return 4;
-  return 6;
+  if (density === "compact") return 1;
+  if (density === "comfortable") return 3;
+  return 5;
 }
 
 function missionHistoryRowHeight(density: MissionWorkspaceDensity): number {
