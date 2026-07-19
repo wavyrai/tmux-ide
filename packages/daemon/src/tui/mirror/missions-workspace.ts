@@ -2038,9 +2038,9 @@ function zoomLabel(model: MissionWorkspaceModel): string {
 function boardOverflowHint(model: MissionWorkspaceModel, width: number): string {
   if (model.mode !== "board" || model.zoomColumn) return "";
   const window = missionBoardWindow(width, model);
-  if (window.hasLeft && window.hasRight) return "more ◀▶";
-  if (window.hasLeft) return "more ◀";
-  if (window.hasRight) return "more ▶";
+  if (window.hasLeft && window.hasRight) return "more <>";
+  if (window.hasLeft) return "more <";
+  if (window.hasRight) return "more >";
   return "";
 }
 

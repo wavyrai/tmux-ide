@@ -1,0 +1,134 @@
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
+
+exports[`MissionsSurface OpenTUI renderer renders deterministic %sx%s narrow frame within bounds 1`] = `
+"[board]  history  z comfortable c collapse x zoom r refresh
+< ready · missions-polish · 6 total · 1 finished · more >                      >
+┌────────────────────────┐ ┌────────────────────────┐ ┌────────────────────────┐
+│Planned · 1             │ │Running · 2             │ │Blocked · 1             │
+│planned lan… planned 1/6│ │M28 … started 2/6 @codex│ │blocked lan… blocked 1/6│
+│Objective for mis_plann…│ │Responsive dashboard sh…│ │Objective for mis_block…│
+│                        │ │attempt codex/tmux      │ │                        │
+│                        │ │Secondary r… started 0/3│ │                        │
+│                        │ │Objective for mis_runni…│ │                        │
+│                        │ │                        │ │                        │
+│                        │ │                        │ │                        │
+│                        │ │                        │ │                        │
+│                        │ │                        │ │                        │
+│                        │ │                        │ │                        │
+│                        │ │                        │ │                        │
+│                        │ │                        │ │                        │
+│                        │ │                        │ │                        │
+│                        │ │                        │ │                        │
+│                        │ │                        │ │                        │
+│                        │ │                        │ │                        │
+│                        │ │                        │ │                        │
+│                        │ │                        │ │                        │
+└────────────────────────┘ └────────────────────────┘ └────────────────────────┘
+^Q quit · tab mode · arrows move · enter details · z density · c collapse · x z…"
+`;
+
+exports[`MissionsSurface OpenTUI renderer renders deterministic %sx%s medium frame within bounds 1`] = `
+"[board]  history  z comfortable c collapse x zoom r refresh                                     ┌──────────────────────┐
+< ready · missions-polish · 6 total · 1 finished · more >                                     > │M28 Missions dashboar…│
+┌─────────────────────┐ ┌─────────────────────┐ ┌─────────────────────┐ ┌─────────────────────┐ │mis: mis_running      │
+│Planned · 1          │ │Running · 2          │ │Blocked · 1          │ │Review · 1           │ │status: started · 2/6 │
+│planned … planned 1/6│ │M… started 2/6 @codex│ │blocked … blocked 1/6│ │review la… review 1/6│ │task: tsk_running · s…│
+│Objective for mis_pl…│ │Responsive dashboard…│ │Objective for mis_bl…│ │Objective for mis_re…│ │attempt: started · co…│
+│                     │ │attempt codex/tmux   │ │                     │ │                     │ │term: m28-missions %7 │
+│                     │ │Secondar… started 0/3│ │                     │ │                     │ │agents: 1 relevant    │
+│                     │ │Objective for mis_ru…│ │                     │ │                     │ │working: Codex render…│
+│                     │ │                     │ │                     │ │                     │ │                      │
+│                     │ │                     │ │                     │ │                     │ │                      │
+│                     │ │                     │ │                     │ │                     │ │                      │
+│                     │ │                     │ │                     │ │                     │ │                      │
+│                     │ │                     │ │                     │ │                     │ │                      │
+│                     │ │                     │ │                     │ │                     │ │                      │
+│                     │ │                     │ │                     │ │                     │ │                      │
+│                     │ │                     │ │                     │ │                     │ │                      │
+│                     │ │                     │ │                     │ │                     │ │                      │
+│                     │ │                     │ │                     │ │                     │ │                      │
+│                     │ │                     │ │                     │ │                     │ │                      │
+│                     │ │                     │ │                     │ │                     │ │                      │
+│                     │ │                     │ │                     │ │                     │ │                      │
+│                     │ │                     │ │                     │ │                     │ │                      │
+│                     │ │                     │ │                     │ │                     │ │                      │
+│                     │ │                     │ │                     │ │                     │ │                      │
+│                     │ │                     │ │                     │ │                     │ │                      │
+│                     │ │                     │ │                     │ │                     │ │                      │
+│                     │ │                     │ │                     │ │                     │ │                      │
+│                     │ │                     │ │                     │ │                     │ │                      │
+│                     │ │                     │ │                     │ │                     │ │                      │
+│                     │ │                     │ │                     │ │                     │ │                      │
+│                     │ │                     │ │                     │ │                     │ │                      │
+│                     │ │                     │ │                     │ │                     │ │                      │
+│                     │ │                     │ │                     │ │                     │ │                      │
+│                     │ │                     │ │                     │ │                     │ │                      │
+│                     │ │                     │ │                     │ │                     │ │                      │
+│                     │ │                     │ │                     │ │                     │ │                      │
+│                     │ │                     │ │                     │ │                     │ │                      │
+└─────────────────────┘ └─────────────────────┘ └─────────────────────┘ └─────────────────────┘ │                      │
+^Q quit · tab mode · arrows move · enter details · z density · c collapse · x zoom · r refresh  └──────────────────────┘"
+`;
+
+exports[`MissionsSurface OpenTUI renderer renders deterministic %sx%s wide frame within bounds 1`] = `
+"[board]  history  z comfortable c collapse x zoom r refresh                                                                                               ┌────────────────────────────────────────────┐
+< ready · missions-polish · 6 total · 1 finished                                                                                                        > │M28 Missions dashboard polish with durable …│
+┌────────────────────────────┐ ┌────────────────────────────┐ ┌────────────────────────────┐ ┌────────────────────────────┐ ┌───────────────────────────┐ │mission: mis_running                        │
+│Planned · 1                 │ │Running · 2                 │ │Blocked · 1                 │ │Review · 1                  │ │Done · 1                   │ │status: started · 2/6                       │
+│planned lane mi… planned 1/6│ │M28 Miss… started 2/6 @codex│ │blocked lane mi… blocked 1/6│ │review lane miss… review 1/6│ │Completed mi… completed 1/6│ │task: tsk_running · started · p2            │
+│Objective for mis_planned   │ │Responsive dashboard shows …│ │Objective for mis_blocked   │ │Objective for mis_review    │ │Objective for mis_done     │ │attempt: started · codex · gpt-5            │
+│                            │ │attempt codex/tmux          │ │                            │ │                            │ │                           │ │term: m28-missions %7                       │
+│                            │ │Secondary runni… started 0/3│ │                            │ │                            │ │                           │ │agents: 1 relevant                          │
+│                            │ │Objective for mis_running_e…│ │                            │ │                            │ │                           │ │working: Codex renderer · m28-missions %7   │
+│                            │ │                            │ │                            │ │                            │ │                           │ │summary: Responsive dashboard shows board, …│
+│                            │ │                            │ │                            │ │                            │ │                           │ │proof: 1 item(s)                            │
+│                            │ │                            │ │                            │ │                            │ │                           │ │event: #3 Proof recorded                    │
+│                            │ │                            │ │                            │ │                            │ │                           │ │                                            │
+│                            │ │                            │ │                            │ │                            │ │                           │ │                                            │
+│                            │ │                            │ │                            │ │                            │ │                           │ │                                            │
+│                            │ │                            │ │                            │ │                            │ │                           │ │                                            │
+│                            │ │                            │ │                            │ │                            │ │                           │ │                                            │
+│                            │ │                            │ │                            │ │                            │ │                           │ │                                            │
+│                            │ │                            │ │                            │ │                            │ │                           │ │                                            │
+│                            │ │                            │ │                            │ │                            │ │                           │ │                                            │
+│                            │ │                            │ │                            │ │                            │ │                           │ │                                            │
+│                            │ │                            │ │                            │ │                            │ │                           │ │                                            │
+│                            │ │                            │ │                            │ │                            │ │                           │ │                                            │
+│                            │ │                            │ │                            │ │                            │ │                           │ │                                            │
+│                            │ │                            │ │                            │ │                            │ │                           │ │                                            │
+│                            │ │                            │ │                            │ │                            │ │                           │ │                                            │
+│                            │ │                            │ │                            │ │                            │ │                           │ │                                            │
+│                            │ │                            │ │                            │ │                            │ │                           │ │                                            │
+│                            │ │                            │ │                            │ │                            │ │                           │ │                                            │
+│                            │ │                            │ │                            │ │                            │ │                           │ │                                            │
+│                            │ │                            │ │                            │ │                            │ │                           │ │                                            │
+│                            │ │                            │ │                            │ │                            │ │                           │ │                                            │
+│                            │ │                            │ │                            │ │                            │ │                           │ │                                            │
+│                            │ │                            │ │                            │ │                            │ │                           │ │                                            │
+│                            │ │                            │ │                            │ │                            │ │                           │ │                                            │
+│                            │ │                            │ │                            │ │                            │ │                           │ │                                            │
+│                            │ │                            │ │                            │ │                            │ │                           │ │                                            │
+│                            │ │                            │ │                            │ │                            │ │                           │ │                                            │
+│                            │ │                            │ │                            │ │                            │ │                           │ │                                            │
+│                            │ │                            │ │                            │ │                            │ │                           │ │                                            │
+│                            │ │                            │ │                            │ │                            │ │                           │ │                                            │
+│                            │ │                            │ │                            │ │                            │ │                           │ │                                            │
+│                            │ │                            │ │                            │ │                            │ │                           │ │                                            │
+│                            │ │                            │ │                            │ │                            │ │                           │ │                                            │
+│                            │ │                            │ │                            │ │                            │ │                           │ │                                            │
+│                            │ │                            │ │                            │ │                            │ │                           │ │                                            │
+│                            │ │                            │ │                            │ │                            │ │                           │ │                                            │
+│                            │ │                            │ │                            │ │                            │ │                           │ │                                            │
+│                            │ │                            │ │                            │ │                            │ │                           │ │                                            │
+│                            │ │                            │ │                            │ │                            │ │                           │ │                                            │
+│                            │ │                            │ │                            │ │                            │ │                           │ │                                            │
+│                            │ │                            │ │                            │ │                            │ │                           │ │                                            │
+│                            │ │                            │ │                            │ │                            │ │                           │ │                                            │
+│                            │ │                            │ │                            │ │                            │ │                           │ │                                            │
+│                            │ │                            │ │                            │ │                            │ │                           │ │                                            │
+│                            │ │                            │ │                            │ │                            │ │                           │ │                                            │
+│                            │ │                            │ │                            │ │                            │ │                           │ │                                            │
+│                            │ │                            │ │                            │ │                            │ │                           │ │                                            │
+└────────────────────────────┘ └────────────────────────────┘ └────────────────────────────┘ └────────────────────────────┘ └───────────────────────────┘ │                                            │
+^Q quit · tab mode · arrows move · enter details · z density · c collapse · x zoom · r refresh                                                            └────────────────────────────────────────────┘"
+`;
