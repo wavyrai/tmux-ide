@@ -1,5 +1,6 @@
 import type { RGBA } from "@opentui/core";
 import { For, Show } from "solid-js";
+import type { MissionDashboardProjection } from "./missions-dashboard.ts";
 import {
   ACCENT,
   BADGE_BG,
@@ -35,6 +36,18 @@ export interface MissionSurfaceTheme {
 
 export interface MissionSurfaceProps {
   width: number;
+  dashboard: MissionDashboardProjection;
+  model: MissionWorkspaceModel;
+  snapshot: MissionWorkspaceSnapshot | null;
+  loadState: MissionWorkspaceLoadState;
+  errorMessage: string;
+  resolveDeepLink: (kind: MissionDeepLinkKind) => MissionDeepLinkResolution;
+  isHovered: (region: MissionSurfaceHoverRegion, index: number) => boolean;
+  theme: MissionSurfaceTheme;
+}
+
+interface MissionMainSurfaceProps {
+  width: number;
   layout: MissionWorkspaceLayout;
   model: MissionWorkspaceModel;
   snapshot: MissionWorkspaceSnapshot | null;
@@ -56,6 +69,59 @@ export function missionSurfaceLayout(
 }
 
 export function MissionsSurface(props: MissionSurfaceProps) {
+  return (
+    <box width={props.width} height={props.dashboard.height} flexDirection="row" gap={1}>
+      <box
+        width={props.dashboard.main.width}
+        height={props.dashboard.main.height}
+        flexDirection="column"
+        overflow="hidden"
+      >
+        <MissionMainSurface
+          width={props.dashboard.main.width}
+          layout={props.dashboard.main.layout}
+          model={props.model}
+          snapshot={props.snapshot}
+          loadState={props.loadState}
+          errorMessage={props.errorMessage}
+          resolveDeepLink={props.resolveDeepLink}
+          isHovered={props.isHovered}
+          theme={props.theme}
+        />
+      </box>
+      <Show when={props.dashboard.inspector}>
+        {(inspector) => (
+          <box
+            width={inspector().width}
+            height={inspector().height}
+            flexDirection="column"
+            border={inspector().width >= 2 && inspector().height >= 2}
+            borderColor={MUTED}
+            overflow="hidden"
+            backgroundColor={DEFAULT_BG}
+          >
+            <Show when={inspector().titleRows > 0}>
+              <text fg={ACCENT}>
+                {clipTerminal(inspector().title, Math.max(0, inspector().width - 2))}
+              </text>
+            </Show>
+            <For each={inspector().rows.slice(0, inspector().bodyRows)}>
+              {(row) => (
+                <box height={1} flexDirection="row" overflow="hidden">
+                  <text fg={row.emphasis ? ACCENT : MUTED}>{row.label}</text>
+                  <text fg={MUTED}>{": "}</text>
+                  <text fg={row.emphasis ? DEFAULT_FG : MUTED}>{row.value}</text>
+                </box>
+              )}
+            </For>
+          </box>
+        )}
+      </Show>
+    </box>
+  );
+}
+
+function MissionMainSurface(props: MissionMainSurfaceProps) {
   const ready = () =>
     props.snapshot &&
     props.loadState.status !== "loading" &&

@@ -362,7 +362,6 @@ import {
   missionSelectionFromWorkspaceState,
   missionTmuxPanePreflightMatches,
   missionTmuxPreflightCommands,
-  missionWorkspaceHitTest,
   readMissionWorkspace,
   reconcileMissionWorkspaceModel,
   resolveMissionDeepLink,
@@ -374,6 +373,11 @@ import {
   type MissionWorkspaceModel,
   type MissionWorkspaceSnapshot,
 } from "./missions-workspace.ts";
+import {
+  missionDashboardHitTest,
+  missionDashboardMainSize,
+  missionDashboardProjection,
+} from "./missions-dashboard.ts";
 import { MissionsSurface, missionSurfaceLayout } from "./missions-surface.tsx";
 import {
   handleMissionSurfaceKey,
@@ -1218,10 +1222,10 @@ try {
       if (focusPanelInActiveComposite(panel)) return;
       if (selectView(viewId)) focusPanelInActiveComposite(panel);
     };
-    const missionLayoutSize = () => ({
-      width: canvasCols(),
-      height: Math.max(4, dims().height - TABBAR_H),
-    });
+    const missionLayoutSize = () => {
+      const size = missionDashboardMainSize(canvasCols(), Math.max(4, dims().height - TABBAR_H));
+      return { width: size.mainWidth, height: size.height };
+    };
     const persistMissionSelection = (missionId: string | null, taskId: string | null = null) => {
       const view = activeView();
       if (activePanel() !== "missions") return;
@@ -2840,9 +2844,21 @@ try {
         missionLayoutPresentation(),
       ),
     );
+    const missionsDashboard = createMemo(() =>
+      missionDashboardProjection(
+        canvasCols(),
+        Math.max(4, dims().height - TABBAR_H),
+        missionWorkspaceModel(),
+        missionWorkspaceSnapshot(),
+        {
+          ...missionLayoutPresentation(),
+          agents: fleetAgents(),
+        },
+      ),
+    );
     const missionHitAt = (x: number, y: number) => {
       const gy = y - TABBAR_H;
-      return missionWorkspaceHitTest(missionsLayout(), x - sidebarW(), gy);
+      return missionDashboardHitTest(missionsDashboard(), x - sidebarW(), gy);
     };
 
     // ── WATCHER PUSH REFRESH (M24.6) ─────────────────────────────────────────
@@ -8110,7 +8126,7 @@ try {
             <Show when={!activeCompositeLayout() && mode() === "missions"}>
               <MissionsSurface
                 width={canvasCols()}
-                layout={missionsLayout()}
+                dashboard={missionsDashboard()}
                 model={missionWorkspaceModel()}
                 snapshot={missionWorkspaceSnapshot()}
                 loadState={missionWorkspaceLoad()}
