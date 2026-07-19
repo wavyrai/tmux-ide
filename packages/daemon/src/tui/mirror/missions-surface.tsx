@@ -1,3 +1,4 @@
+/* @jsxImportSource @opentui/solid */
 import type { RGBA } from "@opentui/core";
 import { For, Show } from "solid-js";
 import type { MissionDashboardProjection } from "./missions-dashboard.ts";

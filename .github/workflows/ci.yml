@@ -64,6 +64,10 @@ jobs:
         if: matrix.node >= 22
         run: pnpm test:unit
 
+      - name: Run TUI renderer suite
+        if: matrix.node >= 22
+        run: pnpm test:tui-renderer
+
       - name: Validate package contents
         run: pnpm pack:check
 

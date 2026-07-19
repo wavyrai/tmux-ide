@@ -881,7 +881,7 @@ describe("missions workspace loader/model", () => {
       height: 10,
     });
     let layout = missionWorkspaceLayout(56, 10, model, view);
-    expect(layout.header.labels[1]).toContain("more ◀");
+    expect(layout.header.labels[1]).toContain("more <");
     for (const kind of ["density", "collapse", "zoom", "refresh"] as const) {
       const chip = layout.header.rows[0]!.find((item) => item.kind === kind)!;
       expect(missionWorkspaceHitTest(layout, chip.start, chip.row)).toEqual({ kind });
@@ -903,7 +903,7 @@ describe("missions workspace loader/model", () => {
       kind: "horizontal",
       direction: -1,
     });
-    expect(layout.header.labels[1]).toContain("more ◀▶");
+    expect(layout.header.labels[1]).toContain("more <>");
   });
 
   it("collapses and expands focused lanes without discarding mission data or bounds", () => {
@@ -959,7 +959,7 @@ describe("missions workspace loader/model", () => {
     model = toggleMissionColumnCollapse(model, view, { width: 56, height: 12 });
     layout = missionWorkspaceLayout(56, 12, model, view);
     expect(layout.board.visibleColumns).toEqual(["planned", "running"]);
-    expect(layout.header.labels[1]).toContain("more ▶");
+    expect(layout.header.labels[1]).toContain("more >");
   });
 
   it("projects compact collapsed lane titles that preserve identity and count inside body width", () => {
