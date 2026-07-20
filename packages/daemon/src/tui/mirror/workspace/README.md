@@ -28,18 +28,22 @@ is the migration boundary between app-owned presentation and runtime adapters.
 Card 01 is intentionally behavior-neutral: it records the responsive shell
 baseline and makes architectural back-edges fail before new window behavior lands.
 
-## PaneFrame v1
+## PaneFrame window chrome
 
 `pane-frame.ts` projects one reusable window contract for terminals, files,
 changes, missions, previews, and home surfaces. It owns responsive title/status/
 action geometry and hit targets; `pane-frame.tsx` paints that projection without
 installing input hooks. Semantic status survives narrow layouts before optional
-actions, while terminal focus, attention, keyboard focus, and idle state keep
-distinct markers.
+actions, while terminal focus, attention, keyboard focus, window-edit selection,
+floating, maximized, and idle state remain orthogonal. The projection explicitly
+models border, grip, header, body, status/state chips, and action cells; hit
+testing returns only those zones so the root controller can remain the single
+keyboard, pointer, lifecycle, and tmux-command owner.
 
-The live composite workspace now uses `PaneFrameHeader`. Action descriptors are
-already represented and renderer-tested, but production command routing remains
-with the root controller and will be connected by the command-adapter card.
+Action descriptors are represented and renderer-tested, but production command
+routing and any app/root integration remain with later cards. PaneFrame must not
+consume or reflow tmux framebuffer cells unless a future integration card changes
+the root canvas geometry and tests that explicitly.
 
 ## WorkbenchShell and bottom dock
 
