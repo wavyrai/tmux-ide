@@ -9,6 +9,7 @@ import {
   type ProjectReadinessProbeIo,
   type ReadinessCommandOptions,
   type ReadinessCommandResult,
+  type ReadinessExecutableKind,
   type ReadinessPathKind,
 } from "../project-readiness-probe.ts";
 import type { Availability } from "../project-readiness.ts";
@@ -26,6 +27,7 @@ interface FakeIoOptions {
   inspectPath?: (path: string) => ReadinessPathKind;
   exists?: (path: string) => boolean;
   realpath?: (path: string) => string;
+  inspectExecutable?: (path: string) => ReadinessExecutableKind;
   isExecutable?: (path: string) => Availability;
   runCommand?: (call: CommandCall) => Promise<ReadinessCommandResult>;
 }
@@ -57,6 +59,7 @@ function createFakeIo(options: FakeIoOptions = {}): {
     "/opt/bin/codex",
     "/opt/bin/claude",
     "/opt/bin/opencode",
+    "/opt/bin/acme-agent",
     "/bin/zsh",
     "/bin/sh",
   ]);
@@ -67,6 +70,8 @@ function createFakeIo(options: FakeIoOptions = {}): {
     inspectPath: options.inspectPath ?? (() => "directory"),
     exists: options.exists ?? (() => false),
     realpath: options.realpath ?? ((path) => path),
+    inspectExecutable:
+      options.inspectExecutable ?? ((path) => (executables.has(path) ? "file" : "missing")),
     isExecutable:
       options.isExecutable ?? ((path) => (executables.has(path) ? "available" : "missing")),
     runCommand: async (executable, argv, commandOptions) => {
@@ -134,6 +139,7 @@ describe("project readiness probe adapter", () => {
       root: "/actual/project",
       name: "project",
       identitySource: "canonical-realpath",
+      pathKind: "directory",
       exists: true,
       isDirectory: true,
     });
@@ -244,7 +250,7 @@ describe("project readiness probe adapter", () => {
 
     const custom = result.harnesses.find((harness) => harness.id === "acme");
     expect(custom).toMatchObject({
-      command: ["acme-agent", "run", "--interactive"],
+      command: ["/opt/bin/acme-agent", "run", "--interactive"],
       version: "4.2.0",
       usable: true,
     });
@@ -293,5 +299,95 @@ describe("project readiness probe adapter", () => {
     expect(probe.project.registration).toBe("stale");
     expect(probe.project.root).toBeNull();
     expect(calls.some((call) => call.argv.includes("--is-inside-work-tree"))).toBe(false);
+  });
+
+  it.each([
+    ["failed", { status: "failure", stdout: "tmux error", exitCode: 1 }],
+    ["timed out", { status: "timeout" }],
+    ["returned no version", { status: "success", stdout: "\n\0\t" }],
+  ] as const)("blocks tmux when its bounded version probe %s", async (_label, tmuxResult) => {
+    const { io } = createFakeIo({
+      runCommand: async (call) =>
+        call.executable === "/usr/bin/tmux" ? tmuxResult : defaultCommand(call),
+    });
+
+    const result = await assessProjectReadiness("/project", { io });
+
+    expect(result.capabilities.tmux).toBe("unverified");
+    expect(result.blockingIssues.map((issue) => issue.code)).toContain("TMUX_UNVERIFIED");
+    expect(result.recommendedLaunchPlan.mode).toBe("unavailable");
+  });
+
+  it("does not treat an executable directory as an installed tool", async () => {
+    const { io, calls } = createFakeIo({
+      inspectExecutable: (path) => (path === "/usr/bin/tmux" ? "other" : "file"),
+    });
+
+    const result = await assessProjectReadiness("/project", { io });
+
+    expect(result.capabilities.tmux).toBe("missing");
+    expect(result.blockingIssues.map((issue) => issue.code)).toContain("TMUX_MISSING");
+    expect(calls.some((call) => call.executable === "/usr/bin/tmux")).toBe(false);
+  });
+
+  it("rejects padded executable tokens instead of checking and launching different identities", async () => {
+    const { io } = createFakeIo();
+
+    const result = await assessProjectReadiness("/project", {
+      io,
+      preferredHarnessId: "padded",
+      shellCommand: [" /bin/zsh"],
+      customHarnesses: [
+        {
+          id: "padded",
+          label: "Padded Agent",
+          command: [" codex ", "--yolo"],
+          authentication: "not-required",
+          commandReadiness: "ready",
+        },
+      ],
+    });
+
+    expect(result.harnesses.find((harness) => harness.id === "padded")?.state).toBe(
+      "command-invalid",
+    );
+    expect(result.blockingIssues.map((issue) => issue.code)).toContain("SHELL_COMMAND_INVALID");
+    expect(result.recommendedLaunchPlan.panes).toEqual([]);
+  });
+
+  it("resolves relative PATH entries against the project cwd and skips empty entries", async () => {
+    const inspected: string[] = [];
+    const { io, calls } = createFakeIo({
+      environment: { PATH: ":tools", SHELL: "/bin/zsh" },
+      inspectExecutable: (path) => {
+        inspected.push(path);
+        return path === "/project/tools/codex" || path === "/bin/zsh" ? "file" : "missing";
+      },
+      isExecutable: (path) =>
+        path === "/project/tools/codex" || path === "/bin/zsh" ? "available" : "missing",
+    });
+
+    const probe = await probeProjectReadiness("/project", { io });
+    const codex = probe.harnesses.find((harness) => harness.id === "codex");
+
+    expect(codex?.command).toEqual(["/project/tools/codex"]);
+    expect(calls).toContainEqual(
+      expect.objectContaining({ executable: "/project/tools/codex", argv: ["--version"] }),
+    );
+    expect(inspected).not.toContain("/project/codex");
+    expect(inspected).not.toContain("/cwd/tools/codex");
+  });
+
+  it("preserves an uninspectable path as an explicit blocking project fact", async () => {
+    const { io } = createFakeIo({ inspectPath: () => "unknown" });
+
+    const result = await assessProjectReadiness("/protected", { io, registration: "current" });
+
+    expect(result.project).toMatchObject({ pathKind: "unknown", registration: "current" });
+    expect(result.blockingIssues.map((issue) => issue.code)).toContain("PROJECT_PATH_UNVERIFIED");
+    expect(result.blockingIssues.map((issue) => issue.code)).not.toContain("PROJECT_NOT_FOUND");
+    expect(result.recoveryActions).toContainEqual(
+      expect.objectContaining({ kind: "refresh-project", label: "Check project path again" }),
+    );
   });
 });

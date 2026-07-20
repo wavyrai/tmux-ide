@@ -30,6 +30,7 @@ function cleanProbe(overrides: Partial<ProjectReadinessProbe> = {}): ProjectRead
       name: "tmux-ide",
       identityKey: "git-a1b2c3",
       identitySource: "git-common-dir",
+      pathKind: "directory",
       exists: true,
       isDirectory: true,
       registration: "current",
@@ -63,6 +64,7 @@ describe("classifyProjectReadiness", () => {
       name: "tmux-ide",
       identityKey: "git-a1b2c3",
       identitySource: "git-common-dir",
+      pathKind: "directory",
       registration: "current",
     });
     expect(result.capabilities).toEqual({
@@ -347,6 +349,7 @@ describe("classifyProjectReadiness", () => {
         project: {
           ...cleanProbe().project,
           root: null,
+          pathKind: "missing",
           exists: false,
           isDirectory: false,
           registration: "stale",
@@ -361,6 +364,7 @@ describe("classifyProjectReadiness", () => {
           name: null,
           identityKey: null,
           identitySource: null,
+          pathKind: "missing",
           exists: false,
           isDirectory: false,
           registration: "unregistered",
@@ -390,7 +394,9 @@ describe("classifyProjectReadiness", () => {
 
   it("blocks a file path and supplies a directory recovery action", () => {
     const result = classifyProjectReadiness(
-      cleanProbe({ project: { ...cleanProbe().project, isDirectory: false } }),
+      cleanProbe({
+        project: { ...cleanProbe().project, pathKind: "other", isDirectory: false },
+      }),
     );
 
     expect(result.canLaunch).toBe(false);
@@ -424,6 +430,7 @@ describe("classifyProjectReadiness", () => {
       cleanProbe({
         project: {
           ...cleanProbe().project,
+          pathKind: "missing",
           exists: false,
           isDirectory: false,
           registration: "stale",

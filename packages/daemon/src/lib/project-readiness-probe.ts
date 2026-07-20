@@ -17,6 +17,7 @@ import {
   type ProjectReadinessHarnessProbe,
   type ProjectReadinessProbe,
   type ProjectReadinessResult,
+  type ProjectPathKind,
   type ProjectRegistrationState,
 } from "./project-readiness.ts";
 import { sanitizeName } from "./project-probe.ts";
@@ -26,7 +27,8 @@ const DEFAULT_TIMEOUT_MS = 2_000;
 const MAX_TIMEOUT_MS = 30_000;
 const MAX_OUTPUT_BYTES = 64 * 1024;
 
-export type ReadinessPathKind = "directory" | "other" | "missing" | "unknown";
+export type ReadinessPathKind = ProjectPathKind;
+export type ReadinessExecutableKind = "file" | "other" | "missing" | "unknown";
 
 export type ReadinessCommandStatus = "success" | "failure" | "timeout" | "not-found" | "unknown";
 
@@ -50,6 +52,7 @@ export interface ProjectReadinessProbeIo {
   inspectPath(path: string): ReadinessPathKind;
   exists(path: string): boolean;
   realpath(path: string): string;
+  inspectExecutable(path: string): ReadinessExecutableKind;
   isExecutable(path: string): Availability;
   runCommand(
     executable: string,
@@ -61,7 +64,7 @@ export interface ProjectReadinessProbeIo {
 export interface CustomReadinessHarnessProfile {
   id: string;
   label: string;
-  /** Launch argv is preserved for the plan but never executed by this probe. */
+  /** Args are preserved; a verified executable is canonicalized and never launched by this probe. */
   command: readonly string[];
   source?: "workspace" | "user";
   authentication?: AuthenticationReadiness;
@@ -148,6 +151,14 @@ const defaultIo: ProjectReadinessProbeIo = {
   },
   exists: existsSync,
   realpath: realpathSync,
+  inspectExecutable: (path) => {
+    try {
+      return statSync(path).isFile() ? "file" : "other";
+    } catch (error) {
+      const code = errorCode(error);
+      return code === "ENOENT" || code === "ENOTDIR" ? "missing" : "unknown";
+    }
+  },
   isExecutable: (path) => {
     try {
       accessSync(path, constants.X_OK);
@@ -267,20 +278,40 @@ function canonicalExecutable(path: string, io: ProjectReadinessProbeIo): string 
   return isValidAbsolutePath(canonical) ? canonical : path;
 }
 
+function hasValidExecutableToken(executable: string): boolean {
+  return (
+    executable.length > 0 &&
+    executable === executable.trim() &&
+    !executable.includes("\0") &&
+    !/[\r\n]/u.test(executable)
+  );
+}
+
+function inspectExecutableCandidate(path: string, io: ProjectReadinessProbeIo): Availability {
+  const kind = safeCall(() => io.inspectExecutable(path), "unknown" as const);
+  if (kind === "missing" || kind === "other") return "missing";
+  if (kind === "unknown") return "unknown";
+  return safeCall(() => io.isExecutable(path), "unknown" as Availability);
+}
+
 function locateExecutable(
   executable: string,
   cwd: string,
   environment: Readonly<NodeJS.ProcessEnv>,
   io: ProjectReadinessProbeIo,
 ): LocatedExecutable {
-  const clean = executable.trim();
-  if (clean.length === 0 || clean.includes("\0") || /[\r\n]/u.test(clean)) {
+  if (!hasValidExecutableToken(executable)) {
     return { availability: "missing", path: null };
   }
 
-  if (isAbsolute(clean) || clean.includes(sep) || clean.includes("/") || clean.includes("\\")) {
-    const candidate = isAbsolute(clean) ? clean : resolve(cwd, clean);
-    const availability = safeCall(() => io.isExecutable(candidate), "unknown" as Availability);
+  if (
+    isAbsolute(executable) ||
+    executable.includes(sep) ||
+    executable.includes("/") ||
+    executable.includes("\\")
+  ) {
+    const candidate = isAbsolute(executable) ? executable : resolve(cwd, executable);
+    const availability = inspectExecutableCandidate(candidate, io);
     return {
       availability,
       path: availability === "available" ? canonicalExecutable(candidate, io) : null,
@@ -291,9 +322,11 @@ function locateExecutable(
   if (pathValue === null) return { availability: "unknown", path: null };
   let sawUnknown = false;
   for (const entry of pathValue.split(delimiter)) {
-    if (entry.trim().length === 0) continue;
-    const candidate = resolve(entry, clean);
-    const availability = safeCall(() => io.isExecutable(candidate), "unknown" as Availability);
+    // Empty PATH entries are intentionally ignored instead of meaning cwd.
+    if (entry.length === 0) continue;
+    const directory = isAbsolute(entry) ? entry : resolve(cwd, entry);
+    const candidate = resolve(directory, executable);
+    const availability = inspectExecutableCandidate(candidate, io);
     if (availability === "available") {
       return { availability, path: canonicalExecutable(candidate, io) };
     }
@@ -305,9 +338,17 @@ function locateExecutable(
 function versionFrom(result: ReadinessCommandResult): string | null {
   if (result.status !== "success") return null;
   const line = (result.stdout ?? "")
-    .replaceAll("\0", "")
     .split(/\r?\n/u)
-    .map((part) => part.trim())
+    .map((part) =>
+      [...part]
+        .map((character) => {
+          const code = character.codePointAt(0) ?? 0;
+          return code <= 31 || code === 127 ? " " : character;
+        })
+        .join("")
+        .replace(/\s+/gu, " ")
+        .trim(),
+    )
     .find((part) => part.length > 0);
   return line ? line.slice(0, 256) : null;
 }
@@ -350,22 +391,24 @@ async function probeHarness(
   environment: Readonly<NodeJS.ProcessEnv>,
   commandOptions: ReadinessCommandOptions,
 ): Promise<ProjectReadinessHarnessProbe> {
-  const executable = spec.command[0]?.trim() ?? "";
+  const executable = spec.command[0] ?? "";
+  const executableValid = hasValidExecutableToken(executable);
   const located = locateExecutable(executable, cwd, environment, io);
   const versionProbe =
     spec.versionArgv === null
       ? { version: spec.declaredVersion ?? null, commandReadiness: "unknown" as const }
       : await probeVersion(io, located, spec.versionArgv, commandOptions);
-  const commandReadiness =
-    executable.length === 0
-      ? "invalid"
-      : (spec.declaredCommandReadiness ?? versionProbe.commandReadiness);
+  const commandReadiness = !executableValid
+    ? "invalid"
+    : (spec.declaredCommandReadiness ?? versionProbe.commandReadiness);
+  const command = [...spec.command];
+  if (located.availability === "available" && located.path !== null) command[0] = located.path;
 
   return {
     id: spec.id,
     kind: spec.kind,
     label: spec.label,
-    command: [...spec.command],
+    command,
     installation: located.availability,
     commandReadiness,
     authentication: spec.authentication,
@@ -416,8 +459,15 @@ export async function probeProjectReadiness(
   const shellCommand =
     options.shellCommand && options.shellCommand.length > 0
       ? [...options.shellCommand]
-      : [environment.SHELL?.trim() || "/bin/sh"];
+      : [
+          typeof environment.SHELL === "string" && environment.SHELL.length > 0
+            ? environment.SHELL
+            : "/bin/sh",
+        ];
   const shellLocated = locateExecutable(shellCommand[0] ?? "", commandCwd, environment, io);
+  if (shellLocated.availability === "available" && shellLocated.path !== null) {
+    shellCommand[0] = shellLocated.path;
+  }
 
   const gitRun = async (argv: readonly string[], cwd: string): Promise<ReadinessCommandResult> => {
     if (gitLocated.availability !== "available" || gitLocated.path === null) {
@@ -482,6 +532,10 @@ export async function probeProjectReadiness(
   const requestedRegistration = options.registration ?? "unregistered";
   const registration =
     pathKind === "missing" && requestedRegistration === "current" ? "stale" : requestedRegistration;
+  const tmuxAvailability =
+    tmuxLocated.availability === "available" && tmuxVersion.commandReadiness !== "ready"
+      ? "unknown"
+      : tmuxLocated.availability;
 
   return {
     project: {
@@ -490,6 +544,7 @@ export async function probeProjectReadiness(
       name: sanitizedName || "project",
       identityKey,
       identitySource,
+      pathKind,
       exists,
       isDirectory,
       registration,
@@ -501,7 +556,7 @@ export async function probeProjectReadiness(
       repository,
     },
     tmux: {
-      availability: tmuxLocated.availability,
+      availability: tmuxAvailability,
       version: tmuxVersion.version,
     },
     shell: {

@@ -49,6 +49,7 @@ export {
   type ProjectReadinessIssueCode,
   type ProjectReadinessIssueSeverity,
   type ProjectReadinessPlatformProbe,
+  type ProjectPathKind,
   type ProjectReadinessProbe,
   type ProjectReadinessProjectProbe,
   type ProjectReadinessResult,
@@ -66,5 +67,6 @@ export {
   type ReadinessCommandOptions,
   type ReadinessCommandResult,
   type ReadinessCommandStatus,
+  type ReadinessExecutableKind,
   type ReadinessPathKind,
 } from "./lib/project-readiness-probe.ts";
