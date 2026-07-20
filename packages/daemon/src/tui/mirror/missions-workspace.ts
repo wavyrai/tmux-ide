@@ -20,7 +20,7 @@ import { MissionRepository, MissionRepositoryError } from "../../lib/mission-rep
 import type { ProjectRuntimeRepository } from "../../lib/project-runtime-repository.ts";
 import type { HostedPanelView } from "./panel-host.ts";
 import { findFirstHostedViewForPanel, terminalDisplayWidth } from "./panel-host.ts";
-import type { WorkspaceMissionsNavigationState, WorkspaceUiStateV1 } from "./workspace-ui-state.ts";
+import type { WorkspaceMissionsNavigationState, WorkspaceUiStateV2 } from "./workspace-ui-state.ts";
 import {
   missionsSelection,
   setMissionsNavigation,
@@ -1208,23 +1208,23 @@ export function densityLabel(density: MissionWorkspaceDensity): string {
 }
 
 export function missionSelectionFromWorkspaceState(
-  state: WorkspaceUiStateV1,
+  state: WorkspaceUiStateV2,
   viewId: string,
 ): { selectedMissionId: string | null; selectedTaskId: string | null } {
   return missionsSelection(state, viewId);
 }
 
 export function workspaceStateWithMissionSelection(
-  state: WorkspaceUiStateV1,
+  state: WorkspaceUiStateV2,
   viewId: string,
   missionId: string | null,
   taskId: string | null = null,
-): WorkspaceUiStateV1 {
+): WorkspaceUiStateV2 {
   return setMissionsSelection(state, viewId, missionId, taskId);
 }
 
 export function missionModelFromWorkspaceState(
-  state: WorkspaceUiStateV1,
+  state: WorkspaceUiStateV2,
   view: HostedPanelView,
   fallback: MissionWorkspaceModel = defaultMissionWorkspaceModel(),
 ): MissionWorkspaceModel {
@@ -1258,10 +1258,10 @@ export function missionModelFromWorkspaceState(
 }
 
 export function workspaceStateWithMissionModel(
-  state: WorkspaceUiStateV1,
+  state: WorkspaceUiStateV2,
   viewId: string,
   model: MissionWorkspaceModel,
-): WorkspaceUiStateV1 {
+): WorkspaceUiStateV2 {
   return setMissionsNavigation(
     state,
     viewId,

@@ -111,7 +111,7 @@ exports[`WorkbenchShell OpenTUI renderer renders the %sx%s wide agent canvas and
 
 
 
- F6  ▤ Files  F7  ± Changes  F8 ●◆ Missions  F9 !◌ Activity                                                                                                                             ▾ close   □ max
+ F3  ▤ Files  F4  ± Changes  F6 ●◆ Missions  F9 !◌ Activity                                                                                                                             ▾ close   □ max
 │● missions dock                                                                                                                                                                open · preferred 20 rows
  ○ Full application parity                                                                                                                                                                  7 / 20 cards
  ● Workbench dock projection                                                                                                                                                                 in progress

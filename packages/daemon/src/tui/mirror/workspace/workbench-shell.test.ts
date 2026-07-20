@@ -113,6 +113,22 @@ describe("WorkbenchShell projection", () => {
     expect(workbenchShellHitTest(projection, projection.canvasRail.x, 4)).toEqual({
       kind: "canvas-rail",
     });
+    expect(workbenchShellHitTest(projection, projection.canvasBody.x, 4)).toEqual({
+      kind: "canvas",
+      localX: 0,
+      localY: 4,
+    });
+    expect(
+      workbenchShellHitTest(
+        projection,
+        projection.canvasBody.x + projection.canvasBody.width - 1,
+        4,
+      ),
+    ).toEqual({
+      kind: "canvas",
+      localX: projection.canvasBody.width - 1,
+      localY: 4,
+    });
 
     const files = projection.tabs.find((tab) => tab.id === "files")!;
     expect(workbenchShellHitTest(projection, files.x, projection.dockTabs.y)).toEqual({

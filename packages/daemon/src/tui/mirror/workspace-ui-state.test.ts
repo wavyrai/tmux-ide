@@ -20,12 +20,13 @@ import {
   serializeWorkspaceUiState,
   setMissionsSelection,
   setMissionsNavigation,
+  setWorkspaceSurfaceState,
   setWorkspaceViewLayoutState,
   shouldHydrateWorkspaceView,
   viewStateFor,
   layoutStateForView,
   writeWorkspaceUiStateWithRetry,
-  type WorkspaceUiStateV1,
+  type WorkspaceUiStateV2,
 } from "./workspace-ui-state.ts";
 
 const roots: string[] = [];
@@ -110,6 +111,28 @@ function writeRaw(path: string, contents: string): void {
   writeFileSync(path, contents, "utf-8");
 }
 
+function currentState(
+  overrides: Partial<Omit<WorkspaceUiStateV2, "dock" | "surfaces">> & {
+    dock?: Partial<WorkspaceUiStateV2["dock"]>;
+    surfaces?: Partial<WorkspaceUiStateV2["surfaces"]>;
+  } = {},
+): WorkspaceUiStateV2 {
+  const base = defaultWorkspaceUiState();
+  return {
+    ...base,
+    ...overrides,
+    version: 2,
+    dock: { ...base.dock, ...overrides.dock },
+    surfaces: {
+      files: { ...base.surfaces.files, ...overrides.surfaces?.files },
+      diff: { ...base.surfaces.diff, ...overrides.surfaces?.diff },
+      missions: { ...base.surfaces.missions, ...overrides.surfaces?.missions },
+      activity: { ...base.surfaces.activity, ...overrides.surfaces?.activity },
+    },
+    views: { ...(overrides.views ?? {}) },
+  };
+}
+
 afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
@@ -117,7 +140,7 @@ afterEach(() => {
 describe("workspace UI-state contract", () => {
   it("parses defaults, malformed input, unsupported versions, caps, and mistyped fields", () => {
     expect(parseWorkspaceUiStateJson("{").state).toEqual(defaultWorkspaceUiState());
-    expect(parseWorkspaceUiStateJson('{"version":2,"active":null,"views":{}}')).toMatchObject({
+    expect(parseWorkspaceUiStateJson('{"version":3,"active":null,"views":{}}')).toMatchObject({
       state: defaultWorkspaceUiState(),
       diagnostics: [{ code: "UNSUPPORTED_VERSION", path: "$.version" }],
     });
@@ -129,68 +152,71 @@ describe("workspace UI-state contract", () => {
     oversizedViews["bad\0id"] = { panel: "diff", selectedPath: "x" };
     const parsed = parseWorkspaceUiStateJson(
       JSON.stringify({
-        version: 1,
+        version: 2,
         active: { viewId: "", panel: "files" },
+        dock: defaultWorkspaceUiState().dock,
+        surfaces: defaultWorkspaceUiState().surfaces,
         views: oversizedViews,
       }),
     );
 
     expect(Object.keys(parsed.state.views)).toHaveLength(WORKSPACE_UI_STATE_MAX_VIEWS);
-    expect(parsed.state.views["view-0"]).toEqual({
-      panel: "files",
-      openPath: "src/0.ts",
-      selectedPath: null,
-    });
+    expect(parsed.state.views["view-0"]).toEqual({ panel: "files" });
     expect(parsed.diagnostics.map((entry) => entry.code)).toContain("OVERSIZED");
     expect(parsed.diagnostics.map((entry) => entry.code)).toContain("INVALID_FIELD");
   });
 
   it("serializes with stable keys, stable field order, and detached output", () => {
-    const state: WorkspaceUiStateV1 = {
-      version: 1,
+    const state = currentState({
       active: { viewId: "z", panel: "diff" },
-      views: {
-        z: { panel: "diff", selectedPath: "z.ts" },
-        a: { panel: "missions", selectedMissionId: "m1", selectedTaskId: "t1" },
+      dock: { activeTab: "changes", focusZone: "dock-body" },
+      surfaces: {
+        diff: { selectedPath: "z.ts" },
+        missions: { selectedMissionId: "m1", selectedTaskId: "t1" },
       },
-    };
+      views: {
+        z: { panel: "diff" },
+        a: { panel: "missions" },
+      },
+    });
 
     const serialized = serializeWorkspaceUiState(state);
 
-    expect(serialized).toBe(
-      [
-        "{",
-        '  "version": 1,',
-        '  "active": {',
-        '    "viewId": "z",',
-        '    "panel": "diff"',
-        "  },",
-        '  "views": {',
-        '    "a": {',
-        '      "panel": "missions",',
-        '      "selectedMissionId": "m1",',
-        '      "selectedTaskId": "t1"',
-        "    },",
-        '    "z": {',
-        '      "panel": "diff",',
-        '      "selectedPath": "z.ts"',
-        "    }",
-        "  }",
-        "}\n",
-      ].join("\n"),
-    );
+    expect(JSON.parse(serialized)).toEqual({
+      version: 2,
+      active: { viewId: "z", panel: "diff" },
+      dock: {
+        activeTab: "changes",
+        mode: "open",
+        preferredHeight: null,
+        focusZone: "dock-body",
+      },
+      surfaces: state.surfaces,
+      views: {
+        a: { panel: "missions" },
+        z: { panel: "diff" },
+      },
+    });
 
     const reparsed = parseWorkspaceUiStateJson(serialized).state;
-    reparsed.views.z = { panel: "diff", selectedPath: "changed.ts" };
-    expect(state.views.z).toEqual({ panel: "diff", selectedPath: "z.ts" });
+    reparsed.views.z = { panel: "home" };
+    expect(state.views.z).toEqual({ panel: "diff" });
   });
 
   it("rejects hostile object keys without prototype mutation or inherited view state", () => {
     const parsed = parseWorkspaceUiStateJson(
-      '{"version":1,"active":null,"views":{"__proto__":{"panel":"files","openPath":"polluted.ts","selectedPath":null},"prototype":{"panel":"diff","selectedPath":"polluted.ts"},"constructor":{"panel":"missions","selectedMissionId":"m","selectedTaskId":"t"},"safe":{"panel":"diff","selectedPath":"safe.ts"}}}',
+      JSON.stringify({
+        version: 2,
+        active: null,
+        dock: defaultWorkspaceUiState().dock,
+        surfaces: defaultWorkspaceUiState().surfaces,
+        views: JSON.parse(
+          '{"__proto__":{"panel":"files","openPath":"polluted.ts","selectedPath":null},"prototype":{"panel":"diff","selectedPath":"polluted.ts"},"constructor":{"panel":"missions","selectedMissionId":"m","selectedTaskId":"t"},"safe":{"panel":"diff","selectedPath":"safe.ts"}}',
+        ),
+      }),
     );
 
-    expect(parsed.state.views).toEqual({ safe: { panel: "diff", selectedPath: "safe.ts" } });
+    expect(parsed.state.views).toEqual({ safe: { panel: "diff" } });
     expect(Object.prototype).not.toHaveProperty("panel");
     expect(Object.prototype).not.toHaveProperty("openPath");
     expect("polluted" in parsed.state.views).toBe(false);
@@ -214,10 +240,7 @@ describe("workspace UI-state contract", () => {
       selectedMissionId: "mission-1",
       selectedTaskId: "task-1",
     });
-    expect(missionsSelection(state, "other")).toEqual({
-      selectedMissionId: null,
-      selectedTaskId: null,
-    });
+    expect(missionsSelection(state, "other")).toEqual(missionsSelection(state, "missions"));
   });
 
   it("round-trips bounded missions navigation and tolerates legacy selection-only state", () => {
@@ -248,8 +271,7 @@ describe("workspace UI-state contract", () => {
       },
     );
     const parsed = parseWorkspaceUiStateJson(serializeWorkspaceUiState(state));
-    expect(parsed.state.views.missions).toMatchObject({
-      panel: "missions",
+    expect(parsed.state.surfaces.missions).toMatchObject({
       selectedMissionId: "mission-1",
       selectedTaskId: "task-1",
       navigation: {
@@ -264,8 +286,7 @@ describe("workspace UI-state contract", () => {
     const legacy = parseWorkspaceUiStateJson(
       '{"version":1,"active":null,"views":{"missions":{"panel":"missions","selectedMissionId":"mission-legacy","selectedTaskId":null}}}',
     );
-    expect(legacy.state.views.missions).toEqual({
-      panel: "missions",
+    expect(legacy.state.surfaces.missions).toEqual({
       selectedMissionId: "mission-legacy",
       selectedTaskId: null,
     });
@@ -286,8 +307,6 @@ describe("workspace UI-state contract", () => {
     const parsed = parseWorkspaceUiStateJson(serializeWorkspaceUiState(state));
     expect(parsed.state.views["files-a"]).toEqual({
       panel: "files",
-      openPath: null,
-      selectedPath: null,
       layout: {
         focusedLeafId: "files-tab",
         activeTabs: { dock: "diff-tab" },
@@ -308,11 +327,10 @@ describe("workspace UI-state contract", () => {
     expect(
       chooseInitialWorkspaceView(views(), {
         requestedPanel: "diff",
-        persisted: {
-          version: 1,
+        persisted: currentState({
           active: { viewId: "files-a", panel: "files" },
           views: {},
-        },
+        }),
         legacyLastTab: "files",
       }),
     ).toMatchObject({ reason: "explicit", view: { id: "diff-a" } });
@@ -320,7 +338,7 @@ describe("workspace UI-state contract", () => {
     expect(
       chooseInitialWorkspaceView(views(), {
         requestedPanel: null,
-        persisted: { version: 1, active: { viewId: "files-b", panel: "files" }, views: {} },
+        persisted: currentState({ active: { viewId: "files-b", panel: "files" } }),
         legacyLastTab: "diff",
       }),
     ).toMatchObject({ reason: "persisted-id", view: { id: "files-b" } });
@@ -328,7 +346,7 @@ describe("workspace UI-state contract", () => {
     expect(
       chooseInitialWorkspaceView(views(), {
         requestedPanel: null,
-        persisted: { version: 1, active: { viewId: "diff-a", panel: "files" }, views: {} },
+        persisted: currentState({ active: { viewId: "diff-a", panel: "files" } }),
         legacyLastTab: "diff",
       }),
     ).toMatchObject({ reason: "persisted-panel", view: { id: "files-a" } });
@@ -342,28 +360,47 @@ describe("workspace UI-state contract", () => {
     ).toMatchObject({ reason: "legacy-tab", view: { id: "diff-a" } });
   });
 
-  it("hydrates only matching per-view panel state for duplicate views", () => {
-    const state: WorkspaceUiStateV1 = {
-      version: 1,
+  it("shares each native surface state while retaining per-view layout pointers", () => {
+    const state = currentState({
+      surfaces: { files: { openPath: "src/shared.ts", selectedPath: "src" } },
       active: null,
       views: {
-        "files-a": { panel: "files", openPath: "src/a.ts", selectedPath: "src" },
-        "files-b": { panel: "files", openPath: "src/b.ts", selectedPath: "src/b.ts" },
-        "diff-a": { panel: "files", openPath: "wrong.ts", selectedPath: null },
+        "files-a": { panel: "files" },
+        "files-b": { panel: "files" },
+        "diff-a": { panel: "files" },
       },
-    };
+    });
 
     expect(viewStateFor(state, views()[1])).toEqual({
       panel: "files",
-      openPath: "src/a.ts",
+      openPath: "src/shared.ts",
       selectedPath: "src",
     });
     expect(viewStateFor(state, views()[3])).toEqual({
       panel: "files",
-      openPath: "src/b.ts",
-      selectedPath: "src/b.ts",
+      openPath: "src/shared.ts",
+      selectedPath: "src",
     });
-    expect(viewStateFor(state, views()[2])).toBeNull();
+    expect(viewStateFor(state, views()[2])).toEqual({ panel: "diff", selectedPath: null });
+  });
+
+  it("updates one hydrated surface without changing inactive dock siblings", () => {
+    const persisted = currentState({
+      surfaces: {
+        files: { openPath: "src/old.ts", selectedPath: "src" },
+        diff: { selectedPath: "src/change.ts" },
+        missions: { selectedMissionId: "mis_saved", selectedTaskId: "tsk_saved" },
+      },
+    });
+    const next = setWorkspaceSurfaceState(persisted, {
+      panel: "files",
+      openPath: "src/new.ts",
+      selectedPath: "src/new.ts",
+    });
+
+    expect(next.surfaces.files.openPath).toBe("src/new.ts");
+    expect(next.surfaces.diff).toEqual(persisted.surfaces.diff);
+    expect(next.surfaces.missions).toEqual(persisted.surfaces.missions);
   });
 
   it("converts project-relative paths safely", () => {
@@ -435,17 +472,21 @@ describe("workspace UI-state repository", () => {
       { home },
     );
 
-    const state: WorkspaceUiStateV1 = {
-      version: 1,
+    const state = currentState({
       active: { viewId: "files-a", panel: "files" },
-      views: { "files-a": { panel: "files", openPath: "src/a.ts", selectedPath: null } },
-    };
+      dock: { focusZone: "dock-body" },
+      surfaces: { files: { openPath: "src/a.ts", selectedPath: null } },
+      views: { "files-a": { panel: "files" } },
+    });
     writeWorkspaceUiStateWithRetry({
       repository: first,
       revision: null,
       current: defaultWorkspaceUiState(),
       next: state,
       touchedViewIds: new Set(["files-a"]),
+      touchedSurfaceIds: new Set(["files"]),
+      touchedDock: true,
+      touchedActiveView: true,
     });
 
     expect(existsSync(join(first.runtimeRoot, WORKSPACE_UI_STATE_PATH))).toBe(true);
@@ -460,62 +501,81 @@ describe("workspace UI-state repository", () => {
     const first = createProjectRuntimeRepository(resolution(project), { home });
     const second = createProjectRuntimeRepository(resolution(project), { home });
 
-    const firstState: WorkspaceUiStateV1 = {
-      version: 1,
+    const firstState = currentState({
       active: { viewId: "files-a", panel: "files" },
-      views: { "files-a": { panel: "files", openPath: "a.ts", selectedPath: null } },
-    };
+      dock: { focusZone: "dock-body" },
+      surfaces: { files: { openPath: "a.ts", selectedPath: null } },
+      views: { "files-a": { panel: "files" } },
+    });
     const created = writeWorkspaceUiStateWithRetry({
       repository: first,
       revision: null,
       current: defaultWorkspaceUiState(),
       next: firstState,
       touchedViewIds: new Set(["files-a"]),
+      touchedSurfaceIds: new Set(["files"]),
+      touchedDock: true,
+      touchedActiveView: true,
     });
     expect(created.revision).toBe(1);
 
     const loadedSecond = loadWorkspaceUiState(second);
-    const latestState: WorkspaceUiStateV1 = {
-      version: 1,
+    const latestState = currentState({
       active: { viewId: "diff-a", panel: "diff" },
+      dock: { activeTab: "changes", focusZone: "dock-body" },
+      surfaces: {
+        files: firstState.surfaces.files,
+        diff: { selectedPath: "b.ts" },
+      },
       views: {
         ...firstState.views,
-        "diff-a": { panel: "diff", selectedPath: "b.ts" },
+        "diff-a": { panel: "diff" },
       },
-    };
+    });
     const updated = writeWorkspaceUiStateWithRetry({
       repository: first,
       revision: created.revision,
       current: firstState,
       next: latestState,
       touchedViewIds: new Set(["diff-a"]),
+      touchedSurfaceIds: new Set(["diff"]),
+      touchedDock: true,
+      touchedActiveView: true,
     });
     expect(updated.revision).toBe(2);
 
-    const localSecond: WorkspaceUiStateV1 = {
-      version: 1,
+    const localSecond = currentState({
       active: { viewId: "files-a", panel: "files" },
+      surfaces: { files: { openPath: "a2.ts", selectedPath: "src" } },
       views: {
-        "files-a": { panel: "files", openPath: "a2.ts", selectedPath: "src" },
+        "files-a": { panel: "files" },
       },
-    };
+    });
     const retried = writeWorkspaceUiStateWithRetry({
       repository: second,
       revision: loadedSecond.revision,
       current: loadedSecond.state,
       next: localSecond,
       touchedViewIds: new Set(["files-a"]),
+      touchedSurfaceIds: new Set(["files"]),
+      touchedActiveView: true,
     });
 
     expect(retried.revision).toBe(3);
-    expect(loadWorkspaceUiState(first).state).toEqual({
-      version: 1,
-      active: { viewId: "files-a", panel: "files" },
-      views: {
-        "files-a": { panel: "files", openPath: "a2.ts", selectedPath: "src" },
-        "diff-a": { panel: "diff", selectedPath: "b.ts" },
-      },
-    });
+    expect(loadWorkspaceUiState(first).state).toEqual(
+      currentState({
+        active: { viewId: "files-a", panel: "files" },
+        dock: { activeTab: "changes", focusZone: "dock-body" },
+        surfaces: {
+          files: { openPath: "a2.ts", selectedPath: "src" },
+          diff: { selectedPath: "b.ts" },
+        },
+        views: {
+          "files-a": { panel: "files" },
+          "diff-a": { panel: "diff" },
+        },
+      }),
+    );
   });
 
   it("tolerates missing, malformed, and unreadable runtime documents", () => {
@@ -536,35 +596,76 @@ describe("workspace UI-state repository", () => {
     });
   });
 
-  it("merges untouched latest view entries only when requested", () => {
-    const merged = mergeWorkspaceUiStateForSave(
-      {
-        version: 1,
-        active: { viewId: "diff-a", panel: "diff" },
-        views: {
-          "files-a": { panel: "files", openPath: "old.ts", selectedPath: null },
-          "diff-a": { panel: "diff", selectedPath: "latest.ts" },
-        },
-      },
-      {
-        version: 1,
-        active: { viewId: "files-a", panel: "files" },
-        views: {
-          "files-a": { panel: "files", openPath: "local.ts", selectedPath: null },
-          "diff-a": { panel: "diff", selectedPath: "stale.ts" },
-        },
-      },
-      new Set(["files-a"]),
+  it("preserves unsupported future documents without writing over them", () => {
+    const home = temporaryRoot();
+    const project = temporaryRoot();
+    const repository = createProjectRuntimeRepository(resolution(project), { home });
+    repository.writeDocument(
+      WORKSPACE_UI_STATE_PATH,
+      { version: 99, future: { dock: "owned-by-newer-client" } },
+      { expectedRevision: null },
     );
+    const loaded = loadWorkspaceUiState(repository);
+    expect(loaded).toMatchObject({ revision: 1, writeProtected: true });
 
-    expect(merged).toEqual({
-      version: 1,
-      active: { viewId: "files-a", panel: "files" },
+    const result = writeWorkspaceUiStateWithRetry({
+      repository,
+      revision: loaded.revision,
+      current: loaded.state,
+      next: currentState({ dock: { activeTab: "activity" } }),
+      touchedViewIds: new Set(),
+      touchedDock: true,
+    });
+    expect(result.diagnostics.map((entry) => entry.code)).toContain("WRITE_PROTECTED");
+    expect(repository.readDocument(WORKSPACE_UI_STATE_PATH)).toMatchObject({
+      revision: 1,
+      payload: { version: 99, future: { dock: "owned-by-newer-client" } },
+    });
+  });
+
+  it("merges disjoint active, dock, layout, and surface conflict domains", () => {
+    const latest = currentState({
+      active: { viewId: "diff-a", panel: "diff" },
+      dock: { activeTab: "changes", mode: "maximized", preferredHeight: 18 },
+      surfaces: {
+        files: { openPath: "old.ts", selectedPath: null },
+        diff: { selectedPath: "latest.ts" },
+        activity: { selectedRowId: "latest-agent", scrollOffset: 4 },
+      },
       views: {
-        "files-a": { panel: "files", openPath: "local.ts", selectedPath: null },
-        "diff-a": { panel: "diff", selectedPath: "latest.ts" },
+        "files-a": { panel: "files" },
+        "diff-a": { panel: "diff" },
       },
     });
+    const local = currentState({
+      active: { viewId: "files-a", panel: "files" },
+      dock: { activeTab: "files", mode: "collapsed" },
+      surfaces: {
+        files: { openPath: "local.ts", selectedPath: null },
+        diff: { selectedPath: "stale.ts" },
+        activity: { selectedRowId: "stale-agent", scrollOffset: 0 },
+      },
+      views: {
+        "files-a": { panel: "files" },
+        "diff-a": { panel: "diff" },
+      },
+    });
+    const merged = mergeWorkspaceUiStateForSave(
+      latest,
+      local,
+      new Set(["files-a"]),
+      new Set(["files"]),
+      false,
+      true,
+    );
+
+    expect(merged.active).toEqual(local.active);
+    expect(merged.dock).toEqual(latest.dock);
+    expect(merged.surfaces.files).toEqual(local.surfaces.files);
+    expect(merged.surfaces.diff).toEqual(latest.surfaces.diff);
+    expect(merged.surfaces.activity).toEqual(latest.surfaces.activity);
+    expect(merged.views["files-a"]).toEqual(local.views["files-a"]);
+    expect(merged.views["diff-a"]).toEqual(latest.views["diff-a"]);
   });
 });
 
@@ -591,20 +692,19 @@ describe("workspace UI-state controller", () => {
 
     expect(controller.completeLoad(stale, first, loadWorkspaceUiState(first))).toBe(false);
     expect(controller.completeLoad(current, second, loadWorkspaceUiState(second))).toBe(true);
-    const next: WorkspaceUiStateV1 = {
-      version: 1,
+    const next = currentState({
       active: { viewId: "files-a", panel: "files" },
-      views: { "files-a": { panel: "files", openPath: "a.ts", selectedPath: null } },
-    };
+      surfaces: { files: { openPath: "a.ts", selectedPath: null } },
+      views: { "files-a": { panel: "files" } },
+    });
     expect(controller.save(stale, next, new Set(["files-a"]))).toMatchObject({
       saved: false,
       skipped: true,
       diagnostics: [{ code: "STALE" }],
     });
-    expect(controller.save(current, next, new Set(["files-a"]))).toMatchObject({
-      saved: true,
-      skipped: false,
-    });
+    expect(
+      controller.save(current, next, new Set(["files-a"]), new Set(["files"]), false, true),
+    ).toMatchObject({ saved: true, skipped: false });
     expect(readFileSync(join(second.runtimeRoot, WORKSPACE_UI_STATE_PATH), "utf-8")).toContain(
       "a.ts",
     );

@@ -12,13 +12,14 @@ export interface WorkbenchShellInput {
   width: number;
   height: number;
   dockMode: WorkbenchDockMode;
-  /** Last user-selected open height. Collapsing or maximizing never replaces it. */
-  persistedDockHeight: number;
+  /** Last user-selected open height; null follows the responsive 30% default. */
+  persistedDockHeight: number | null;
   activeDockTab: WorkbenchDockTabId;
   focusZone: WorkbenchFocusZone;
   hoveredDockTab?: WorkbenchDockTabId | null;
   attentionDockTabs?: ReadonlySet<WorkbenchDockTabId>;
   disabledDockTabs?: ReadonlySet<WorkbenchDockTabId>;
+  dockTabShortcuts?: Partial<Record<WorkbenchDockTabId, string>>;
 }
 
 export interface WorkbenchDockConstraints {
@@ -58,7 +59,7 @@ export interface WorkbenchShellProjection {
   variant: WorkbenchVariant;
   requestedDockMode: WorkbenchDockMode;
   dockMode: WorkbenchDockMode;
-  persistedDockHeight: number;
+  persistedDockHeight: number | null;
   focusZone: WorkbenchFocusZone;
   constraints: WorkbenchDockConstraints;
   canvas: Rect;
@@ -99,9 +100,9 @@ interface DockTabDefinition {
 }
 
 const DOCK_TABS: readonly DockTabDefinition[] = [
-  { id: "files", title: "Files", compactTitle: "Files", glyph: "▤", shortcut: "F6" },
-  { id: "changes", title: "Changes", compactTitle: "Changes", glyph: "±", shortcut: "F7" },
-  { id: "missions", title: "Missions", compactTitle: "Missions", glyph: "◆", shortcut: "F8" },
+  { id: "files", title: "Files", compactTitle: "Files", glyph: "▤", shortcut: "F3" },
+  { id: "changes", title: "Changes", compactTitle: "Changes", glyph: "±", shortcut: "F4" },
+  { id: "missions", title: "Missions", compactTitle: "Missions", glyph: "◆", shortcut: "F6" },
   { id: "activity", title: "Activity", compactTitle: "Activity", glyph: "◌", shortcut: "F9" },
 ];
 
@@ -117,7 +118,8 @@ export function workbenchVariant(width: number, height: number): WorkbenchVarian
 export function projectWorkbenchShell(input: WorkbenchShellInput): WorkbenchShellProjection {
   const width = nonNegativeInteger(input.width);
   const height = nonNegativeInteger(input.height);
-  const persistedDockHeight = nonNegativeInteger(input.persistedDockHeight);
+  const persistedDockHeight =
+    input.persistedDockHeight === null ? null : nonNegativeInteger(input.persistedDockHeight);
   const variant = workbenchVariant(width, height);
   const tabBarHeight = Math.min(TAB_BAR_ROWS, height);
   const minimumCanvasHeight = Math.min(
@@ -130,7 +132,7 @@ export function projectWorkbenchShell(input: WorkbenchShellInput): WorkbenchShel
     maximumOpenDockHeight,
   );
   const preferredOpenDockHeight = clamp(
-    persistedDockHeight,
+    persistedDockHeight ?? Math.round(height * 0.3),
     minimumOpenDockHeight,
     maximumOpenDockHeight,
   );
@@ -276,7 +278,8 @@ function projectDockTabs(
     const selected = definition.id === activeDockTab;
     const attention = input.attentionDockTabs?.has(definition.id) ?? false;
     const disabled = input.disabledDockTabs?.has(definition.id) ?? false;
-    const desired = dockTabLabel(definition, variant, selected, attention, disabled);
+    const shortcut = input.dockTabShortcuts?.[definition.id] ?? definition.shortcut;
+    const desired = dockTabLabel(definition, shortcut, variant, selected, attention, disabled);
     const remainingTabs = DOCK_TABS.length - index;
     const available = Math.max(0, rightEdge - x);
     const fairWidth = remainingTabs > 0 ? Math.floor(available / remainingTabs) : 0;
@@ -286,7 +289,7 @@ function projectDockTabs(
       id: definition.id,
       title: definition.title,
       label,
-      shortcut: definition.shortcut,
+      shortcut,
       selected,
       focused: selected && focusZone === "dock-tabs" && !disabled,
       hovered: input.hoveredDockTab === definition.id,
@@ -360,6 +363,7 @@ function projectDockActions(
 
 function dockTabLabel(
   definition: DockTabDefinition,
+  shortcut: string,
   variant: WorkbenchVariant,
   selected: boolean,
   attention: boolean,
@@ -367,8 +371,8 @@ function dockTabLabel(
 ): string {
   const marker = disabled ? "×" : attention ? "!" : selected ? "●" : " ";
   const title = variant === "compact" ? definition.compactTitle : definition.title;
-  const shortcut = variant === "wide" ? `${definition.shortcut} ` : "";
-  return ` ${shortcut}${marker}${definition.glyph} ${title} `;
+  const shortcutLabel = variant === "wide" && shortcut ? `${shortcut} ` : "";
+  return ` ${shortcutLabel}${marker}${definition.glyph} ${title} `;
 }
 
 function enabledDockTab(

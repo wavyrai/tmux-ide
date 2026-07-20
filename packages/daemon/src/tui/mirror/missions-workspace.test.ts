@@ -1574,7 +1574,7 @@ describe("missions workspace loader/model", () => {
     ).toBe(false);
   });
 
-  it("persists only selectedMissionId and selectedTaskId per exact missions view without projection blobs", () => {
+  it("persists one dock Missions selection independently of hosted view aliases", () => {
     const state = workspaceStateWithMissionSelection(
       defaultWorkspaceUiState(),
       "mission-a",
@@ -1583,8 +1583,8 @@ describe("missions workspace loader/model", () => {
     );
     const next = workspaceStateWithMissionSelection(state, "mission-b", "mis_two");
     expect(missionSelectionFromWorkspaceState(next, "mission-a")).toEqual({
-      selectedMissionId: "mis_one",
-      selectedTaskId: "tsk_one",
+      selectedMissionId: "mis_two",
+      selectedTaskId: null,
     });
     expect(missionSelectionFromWorkspaceState(next, "mission-b")).toEqual({
       selectedMissionId: "mis_two",
@@ -1597,7 +1597,7 @@ describe("missions workspace loader/model", () => {
     expect(json).not.toContain("projection");
   });
 
-  it("persists exact-view missions navigation without projection blobs and hydrates legacy selection", () => {
+  it("persists one dock Missions navigation model without projection blobs", () => {
     const viewA = {
       id: "mission-a",
       title: "Missions A",
@@ -1632,10 +1632,10 @@ describe("missions workspace loader/model", () => {
       viewB.id,
       defaultMissionWorkspaceModel("mis_two"),
     );
-    expect(missionModelFromWorkspaceState(isolated, viewA).selectedMissionId).toBe("mis_one");
-    expect(missionModelFromWorkspaceState(isolated, viewA).columnScroll.done).toBe(5);
-    expect(missionModelFromWorkspaceState(isolated, viewA).collapsedColumns.running).toBe(true);
-    expect(missionModelFromWorkspaceState(isolated, viewA).zoomColumn).toBe("done");
+    expect(missionModelFromWorkspaceState(isolated, viewA).selectedMissionId).toBe("mis_two");
+    expect(missionModelFromWorkspaceState(isolated, viewA).columnScroll.done).toBe(0);
+    expect(missionModelFromWorkspaceState(isolated, viewA).collapsedColumns.running).toBe(false);
+    expect(missionModelFromWorkspaceState(isolated, viewA).zoomColumn).toBeNull();
     expect(missionModelFromWorkspaceState(isolated, viewB).selectedMissionId).toBe("mis_two");
     const json = serializeWorkspaceUiState(isolated);
     expect(json).toContain('"navigation"');
