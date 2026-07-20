@@ -424,6 +424,16 @@ import {
   resolveQuitLifecycleCommand,
 } from "./input-lifecycle.ts";
 import {
+  RENDERER_COMMAND_IDS,
+  createRendererCommandExecutor,
+  rendererCommandInvocation,
+  rendererInvocationForCanvas,
+  rendererInvocationForDock,
+  rendererInvocationForGlobal,
+  rendererInvocationForLifecycle,
+  rendererInvocationForView,
+} from "./renderer-commands.ts";
+import {
   WorkspaceUiStateController,
   absoluteProjectPath,
   chooseInitialWorkspaceView,
@@ -3841,14 +3851,6 @@ try {
       createSession(raw, selectedHomeDir());
     };
 
-    /** Switch tabs preserving each surface's state: the editor buffer and diff
-     *  selection SURVIVE a round trip (only lazily initialized when a surface is
-     *  first shown empty). The Terminal tab never re-attaches here — the mirror is
-     *  already streaming in the background. */
-    const selectTab = (t: Tab) => {
-      setTab(t);
-    };
-
     // ── COMMAND PALETTE (M18.4, mouse-complete M21.9) ───────────────────────
     // A centered overlay (F5 / ^p / the tab bar's palette chip) — a fuzzy input
     // line + result list over the action model in palette.ts. The overlay is
@@ -3971,6 +3973,35 @@ try {
       switchClientBack: (callback) => execFile("tmux", ["switch-client", "-l"], callback),
       detachClient: () => execFile("tmux", ["detach-client"], () => {}),
     });
+    const rendererCommandExecutor = createRendererCommandExecutor({
+      context: () => ({
+        // Composite workspace views no longer own runtime pixels/input in the
+        // native workbench, so their legacy cycle command remains unavailable.
+        compositeFocusAvailable: false,
+        editorAvailable:
+          Boolean(editBuffer) || (mode() === "diff" && Boolean(diffVisibleFiles()[diffSel()])),
+      }),
+      effects: {
+        openPalette,
+        runLifecycle: (command) => lifecycleExecutor.run(command),
+        cycleCompositeFocus: () => {},
+        activateShortcut: (key) => {
+          const view = canvasHostedViews().find((candidate) => candidate.shortcut?.key === key);
+          if (view) selectView(view.id);
+        },
+        activateView: (viewId) => selectView(viewId),
+        activateCanvas: (panel) => activateCanvasPanel(panel),
+        activateDock: (tabId) => activateDockTab(tabId),
+        openHome: () => {
+          if (mode() !== "home") goHome();
+        },
+        toggleEditor: () => {
+          if (mode() === "diff") openSelectedInEditor();
+          else toggleEditor();
+        },
+      },
+    });
+    const executeRendererCommand = rendererCommandExecutor.execute;
     const runPaletteAction = (a: PaletteAction) => {
       // Usage history (M24.4): every dispatched action bumps its stable key —
       // count + lastUsed feed the "recent" group and the ranking tie-break.
@@ -3993,10 +4024,26 @@ try {
           openSearch();
           break;
         case "tab":
-          selectTab(a.tab);
+          if (a.tab === "home" || a.tab === "terminal") {
+            executeRendererCommand(
+              rendererInvocationForCanvas(a.tab === "home" ? "home" : "terminals", {
+                kind: "palette",
+                surface: "palette",
+              }),
+            );
+          } else {
+            executeRendererCommand(
+              rendererInvocationForDock(a.tab === "files" ? "files" : "changes", {
+                kind: "palette",
+                surface: "palette",
+              }),
+            );
+          }
           break;
         case "view":
-          selectView(a.viewId);
+          executeRendererCommand(
+            rendererInvocationForView(a.viewId, { kind: "palette", surface: "palette" }),
+          );
           break;
         case "open-folder":
           void openFolderFlow();
@@ -4127,7 +4174,11 @@ try {
           void runSettingsCommand(a.id);
           break;
         case "quit":
-          lifecycleExecutor.run(resolveQuitLifecycleCommand({ hosted: HOSTED }, "palette"));
+          executeRendererCommand(
+            rendererInvocationForLifecycle(
+              resolveQuitLifecycleCommand({ hosted: HOSTED }, "palette"),
+            ),
+          );
           break;
       }
     };
@@ -5637,11 +5688,17 @@ try {
         { hosted: HOSTED },
       );
       if (layer.kind === "lifecycle") {
-        lifecycleExecutor.run(layer.command);
+        executeRendererCommand(rendererInvocationForLifecycle(layer.command));
         return;
       }
       if (layer.kind === "kitty-super-palette") {
-        openPalette();
+        executeRendererCommand(
+          rendererCommandInvocation(
+            RENDERER_COMMAND_IDS.openPalette,
+            {},
+            { kind: "keyboard", surface: "workbench" },
+          ),
+        );
         return;
       }
       if (layer.kind === "kitty-super-suppressed") return;
@@ -5663,33 +5720,23 @@ try {
       }
       const canvasShortcut = workbenchCanvasPanelForShortcut(evt);
       if (canvasShortcut) {
-        activateCanvasPanel(canvasShortcut);
+        executeRendererCommand(
+          rendererInvocationForCanvas(canvasShortcut, {
+            kind: "keyboard",
+            surface: "workbench",
+          }),
+        );
         return;
       }
       const dockShortcut = workbenchDockTabForShortcut(evt);
       if (dockShortcut) {
-        activateDockTab(dockShortcut);
+        executeRendererCommand(
+          rendererInvocationForDock(dockShortcut, { kind: "keyboard", surface: "workbench" }),
+        );
         return;
       }
       if (layer.kind === "global") {
-        switch (layer.command.kind) {
-          case "open-palette":
-            openPalette();
-            break;
-          case "select-hosted-view": {
-            const shortcutKey = layer.command.key;
-            const fView = canvasHostedViews().find((view) => view.shortcut?.key === shortcutKey);
-            if (fView) selectView(fView.id);
-            break;
-          }
-          case "go-home":
-            if (mode() !== "home") goHome();
-            break;
-          case "toggle-editor":
-            if (mode() === "diff") openSelectedInEditor();
-            else toggleEditor();
-            break;
-        }
+        executeRendererCommand(rendererInvocationForGlobal(layer.command));
         return;
       }
       if (workbenchProjection().focusZone === "dock-tabs") {
@@ -6182,8 +6229,15 @@ try {
       };
     });
     const runTabbarButton = (id: string) => {
-      if (id === "tab-palette") openPalette();
-      else if (id === "tab-context" && contextSession()) switchTarget(contextSession());
+      if (id === "tab-palette") {
+        executeRendererCommand(
+          rendererCommandInvocation(
+            RENDERER_COMMAND_IDS.openPalette,
+            {},
+            { kind: "mouse", surface: "workbench" },
+          ),
+        );
+      } else if (id === "tab-context" && contextSession()) switchTarget(contextSession());
     };
     /** Which chip (if any) column `x` hits on the row for `it`. */
     const homeChipAt = (
@@ -6505,7 +6559,11 @@ try {
         }
       }
       if (hit.kind === "dock-tab") {
-        if (e.type === "down" && e.button !== 2) activateDockTab(hit.tabId);
+        if (e.type === "down" && e.button !== 2) {
+          executeRendererCommand(
+            rendererInvocationForDock(hit.tabId, { kind: "mouse", surface: "workbench" }),
+          );
+        }
         return true;
       }
       if (hit.kind === "dock-action") {
@@ -6920,14 +6978,25 @@ try {
           }
           const i = spanHit(surfaceSpans(), x);
           const view = canvasHostedViews()[i];
-          if (view?.panel === "home" || view?.panel === "terminals")
-            activateCanvasPanel(view.panel);
+          if (view?.panel === "home" || view?.panel === "terminals") {
+            executeRendererCommand(
+              rendererInvocationForCanvas(view.panel, { kind: "mouse", surface: "workbench" }),
+            );
+          }
           return;
         }
         const gy = y - TABBAR_H;
         if (x < sidebarW()) {
           if (y === dims().height - 1) {
-            if (spanHit([sidebarHint().buttonSpan], x) === 0) openPalette();
+            if (spanHit([sidebarHint().buttonSpan], x) === 0) {
+              executeRendererCommand(
+                rendererCommandInvocation(
+                  RENDERER_COMMAND_IDS.openPalette,
+                  {},
+                  { kind: "mouse", surface: "sidebar" },
+                ),
+              );
+            }
             return;
           }
           const hit = sidebarHit(gy, fleet().length, fleetAgents().length);
@@ -7179,7 +7248,11 @@ try {
         }
         const i = spanHit(surfaceSpans(), x);
         const view = canvasHostedViews()[i];
-        if (view?.panel === "home" || view?.panel === "terminals") activateCanvasPanel(view.panel);
+        if (view?.panel === "home" || view?.panel === "terminals") {
+          executeRendererCommand(
+            rendererInvocationForCanvas(view.panel, { kind: "mouse", surface: "workbench" }),
+          );
+        }
         return;
       }
       const gy = y - TABBAR_H;
@@ -7187,7 +7260,15 @@ try {
         if (type !== "down") return;
         // The footer hint's "F5 palette" segment is a chip (last screen row).
         if (y === dims().height - 1) {
-          if (spanHit([sidebarHint().buttonSpan], x) === 0) openPalette();
+          if (spanHit([sidebarHint().buttonSpan], x) === 0) {
+            executeRendererCommand(
+              rendererCommandInvocation(
+                RENDERER_COMMAND_IDS.openPalette,
+                {},
+                { kind: "mouse", surface: "sidebar" },
+              ),
+            );
+          }
           return;
         }
         // Session rows switch the workspace; agent rows JUMP to their exact pane

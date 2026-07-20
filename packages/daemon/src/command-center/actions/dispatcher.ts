@@ -18,10 +18,16 @@
 
 import type { Context } from "hono";
 import { ZodError } from "zod";
-import { isActionName, type ActionErrorEnvelope, type ActionName } from "./contract.ts";
+import {
+  COMMAND_PROTOCOL_VERSION,
+  isActionName,
+  type ActionErrorEnvelope,
+  type ActionName,
+} from "./contract.ts";
 import { ActionError, wrapInternalError } from "./errors.ts";
 import { getLooseActionEntry } from "./registry.ts";
 import { broadcastActionComplete } from "../ws-events.ts";
+import { daemonActionCommandRegistry } from "./command-definitions.ts";
 
 export interface DispatcherDeps {
   /** Override the WS broadcaster (tests / non-default daemons). */
@@ -106,20 +112,54 @@ export function createActionDispatcher(deps: DispatcherDeps = {}) {
     const actionName: ActionName = name;
     const entry = getLooseActionEntry(actionName);
 
+    // Preserve the public v2 action contract exactly: HTTP request bodies are
+    // validated by the action schema before they are adapted to commands. In
+    // particular, null/array/scalar bodies must keep the action schema's issue
+    // paths rather than gaining a command-envelope `args` prefix.
     const inputParsed = entry.inputSchema.safeParse(body);
     if (!inputParsed.success) {
       return c.json(zodErrorEnvelope(inputParsed.error) satisfies ActionErrorEnvelope, 200);
     }
 
+    const commandResolution = daemonActionCommandRegistry.resolve(
+      {
+        version: COMMAND_PROTOCOL_VERSION,
+        id: actionName,
+        source: { kind: "http" },
+        args: inputParsed.data,
+      },
+      undefined,
+    );
+    if (!commandResolution.ok) {
+      // The command adapter uses the same schema object as the action entry,
+      // so this is an internal registry drift rather than a client failure.
+      console.error("[actions] command adapter rejected action-schema-validated input", {
+        actionName,
+        error: commandResolution.error,
+      });
+      return c.json(
+        {
+          ok: false,
+          error: {
+            code: "internal",
+            message: "Action command adapter rejected validated input",
+          },
+        } satisfies ActionErrorEnvelope,
+        200,
+      );
+    }
+
     let result: unknown;
     try {
-      result = await entry.handler(inputParsed.data);
+      result = await entry.handler(commandResolution.command.input);
     } catch (err) {
       const wrapped = wrapInternalError(err);
       return c.json(errorEnvelope(wrapped) satisfies ActionErrorEnvelope, 200);
     }
 
-    const outputParsed = entry.resultSchema.safeParse(result);
+    const outputParsed = (commandResolution.command.resultSchema ?? entry.resultSchema).safeParse(
+      result,
+    );
     if (!outputParsed.success) {
       return c.json(outputZodErrorEnvelope(outputParsed.error) satisfies ActionErrorEnvelope, 200);
     }
