@@ -1,5 +1,6 @@
 /* @jsxImportSource @opentui/solid */
 import { describe, expect, it } from "bun:test";
+import { createMemo, createSignal } from "solid-js";
 import { createSemanticThemeSnapshot } from "../theme.ts";
 import { expectFrameBounds, renderForTest, stableFrame } from "../testing/renderer-harness.test.ts";
 import { projectAgentTerminalCanvas } from "./agent-terminal-canvas.ts";
@@ -10,6 +11,27 @@ import {
   terminalPaneChromeOverlapsBodies,
 } from "./terminal-pane-chrome.ts";
 import { TerminalPaneChromeLayer } from "./terminal-pane-chrome-view.tsx";
+
+interface TestRenderable {
+  getChildren(): readonly unknown[];
+}
+
+function renderableTree(node: TestRenderable): readonly unknown[] {
+  return [
+    node,
+    ...node
+      .getChildren()
+      .flatMap((child) =>
+        typeof (child as { getChildren?: unknown }).getChildren === "function"
+          ? renderableTree(child as TestRenderable)
+          : [child],
+      ),
+  ];
+}
+
+function renderableCount(node: TestRenderable): number {
+  return renderableTree(node).length;
+}
 
 describe("AgentTerminalCanvas OpenTUI renderer", () => {
   it.each([
@@ -236,4 +258,143 @@ describe("AgentTerminalCanvas OpenTUI renderer", () => {
       setup.renderer.destroy();
     },
   );
+
+  it("keeps pane and action renderables stable across fresh projection objects", async () => {
+    const width = 100;
+    const height = 14;
+    const theme = createSemanticThemeSnapshot({ mode: "dark" });
+    const canvas = projectAgentTerminalCanvas({ width, height, chromeRows: 2 });
+    const states = [
+      { active: "%1", hoveredPane: "%1", hoveredAction: 0, pressedAction: null },
+      { active: "%2", hoveredPane: "%2", hoveredAction: 1, pressedAction: null },
+      { active: "%3", hoveredPane: "%3", hoveredAction: 0, pressedAction: 0 },
+      { active: "%1", hoveredPane: "%1", hoveredAction: 0, pressedAction: null },
+    ] as const;
+    let drive!: (state: (typeof states)[number]) => void;
+
+    function Harness() {
+      const [state, setState] = createSignal<(typeof states)[number]>(states[0]);
+      drive = setState;
+      const layout = createMemo(() => {
+        const current = state();
+        // Deliberately allocate every pane, metadata map, projection, frame,
+        // chip, and action again. This is the production projection contract.
+        return projectTerminalPaneChrome({
+          canvas,
+          panes: [
+            {
+              id: "%1",
+              left: 0,
+              top: 0,
+              width: 49,
+              height: canvas.framebuffer.height,
+              active: current.active === "%1",
+              zoomed: false,
+            },
+            {
+              id: "%2",
+              left: 50,
+              top: 0,
+              width: 50,
+              height: 5,
+              active: current.active === "%2",
+              zoomed: false,
+            },
+            {
+              id: "%3",
+              left: 50,
+              top: 6,
+              width: 50,
+              height: canvas.framebuffer.height - 6,
+              active: current.active === "%3",
+              zoomed: false,
+            },
+          ],
+          metadataByPane: new Map([
+            ["%1", { title: "Codex PM", status: "working", statusTone: "working" as const }],
+            ["%2", { title: "Codex builder", status: "working", statusTone: "working" as const }],
+            ["%3", { title: "Claude review", status: "idle", statusTone: "idle" as const }],
+          ]),
+          hoveredAction: {
+            paneId: current.hoveredPane,
+            actionIndex: current.hoveredAction,
+          },
+          pressedAction:
+            current.pressedAction === null
+              ? null
+              : { paneId: current.hoveredPane, actionIndex: current.pressedAction },
+        });
+      });
+      return (
+        <box position="relative" width={width} height={height} overflow="hidden">
+          <TerminalPaneChromeLayer theme={theme} layout={layout()} layer="native" />
+          <box
+            position="absolute"
+            left={canvas.framebuffer.x}
+            top={canvas.framebuffer.y}
+            width={canvas.framebuffer.width}
+            height={canvas.framebuffer.height}
+          >
+            <TerminalPaneChromeLayer theme={theme} layout={layout()} layer="framebuffer" />
+          </box>
+        </box>
+      );
+    }
+
+    const setup = await renderForTest(() => <Harness />, { width, height });
+    await setup.renderOnce();
+    const initialCount = renderableCount(setup.renderer.root);
+    const stablePaneNodes = new Map(
+      ["%1", "%2", "%3"].map((paneId) => {
+        const layer = paneId === "%3" ? "framebuffer" : "native";
+        return [
+          paneId,
+          setup.renderer.root.findDescendantById(`terminal-pane-chrome:${layer}:${paneId}`),
+        ] as const;
+      }),
+    );
+    expect([...stablePaneNodes.values()].every(Boolean)).toBe(true);
+    const stablePaneTrees = new Map(
+      [...stablePaneNodes].map(([paneId, node]) => [
+        paneId,
+        renderableTree(node as TestRenderable),
+      ]),
+    );
+
+    const warnings: string[] = [];
+    const originalWarn = console.warn;
+    console.warn = (...args: unknown[]) => warnings.push(args.map(String).join(" "));
+    const framesByState = new Map<string, string>();
+    try {
+      for (let index = 0; index < 24; index += 1) {
+        const state = states[index % states.length]!;
+        drive({ ...state });
+        await setup.renderOnce();
+        expect(renderableCount(setup.renderer.root)).toBe(initialCount);
+        for (const [paneId, node] of stablePaneNodes) {
+          const layer = paneId === "%3" ? "framebuffer" : "native";
+          expect(
+            setup.renderer.root.findDescendantById(`terminal-pane-chrome:${layer}:${paneId}`),
+          ).toBe(node);
+          const currentTree = renderableTree(node as TestRenderable);
+          const stableTree = stablePaneTrees.get(paneId)!;
+          expect(currentTree).toHaveLength(stableTree.length);
+          currentTree.forEach((renderable, childIndex) => {
+            expect(renderable).toBe(stableTree[childIndex]);
+          });
+        }
+        const key = JSON.stringify(state);
+        const frame = stableFrame(setup.captureCharFrame());
+        const previous = framesByState.get(key);
+        if (previous) expect(frame).toBe(previous);
+        else framesByState.set(key, frame);
+      }
+    } finally {
+      console.warn = originalWarn;
+      setup.renderer.destroy();
+    }
+    expect(warnings.filter((warning) => /insertBefore|anchor|reconcil/iu.test(warning))).toEqual(
+      [],
+    );
+  });
 });

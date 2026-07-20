@@ -135,7 +135,7 @@ tmux framebuffer 200x58
 
 exports[`AgentTerminalCanvas OpenTUI renderer renders pane chrome at %sx%s without covering framebuffer sentinels 1`] = `
 " 0:agents 1:shell
-:: ▣ ❯ Codex PM          ●   ○ Z   ○ +  :: ○ ❯ Codex implementer  ●   ○ Z   ○ +
+▌: ▣ ❯ Codex PM          ●   ○ Z   ○ +  :: ○ ❯ Codex implementer  ●   ○ Z   ○ +
 A1A ·······························     A2A ································
 
 
@@ -162,7 +162,7 @@ A1A ·······························     A2A ··�
 
 exports[`AgentTerminalCanvas OpenTUI renderer renders pane chrome at %sx%s without covering framebuffer sentinels 2`] = `
 " 0:agents 1:shell
-:: ▣ ❯ Codex PM                              ●   ○ Z   ○ +  :: ○ ❯ Codex implementer                      ●   ○ Z   ○ +
+▌: ▣ ❯ Codex PM                              ●   ○ Z   ○ +  :: ○ ❯ Codex implementer                      ●   ○ Z   ○ +
 A1A ···················································     A2A ····················································
 
 
@@ -205,7 +205,7 @@ A1A ······································
 
 exports[`AgentTerminalCanvas OpenTUI renderer renders pane chrome at %sx%s without covering framebuffer sentinels 3`] = `
 " 0:agents 1:shell
-:: ▣ ❯ Codex PM                                                                      ●   ○ Z   ○ +  :: ○ ❯ Codex implementer                                                              ●   ○ Z   ○ +
+▌: ▣ ❯ Codex PM                                                                      ●   ○ Z   ○ +  :: ○ ❯ Codex implementer                                                              ●   ○ Z   ○ +
 A1A ···························································································     A2A ····························································································
 
 
