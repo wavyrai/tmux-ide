@@ -2,6 +2,8 @@
 import type { JSX } from "@opentui/solid";
 import { For, Show } from "solid-js";
 import {
+  actionChipGeometry,
+  actionChipText,
   recipePalette,
   rowParts,
   scrollbarGlyphs,
@@ -11,6 +13,9 @@ import {
 import type { SemanticThemeSnapshot } from "./theme.ts";
 import { clipTerminal } from "./missions-workspace.ts";
 import { terminalDisplayWidth } from "./panel-host.ts";
+
+const openTuiBorderStyle = (style: SemanticThemeSnapshot["borders"]["style"]) =>
+  style === "bold" ? "heavy" : style;
 
 interface ThemeProps {
   theme: SemanticThemeSnapshot;
@@ -34,7 +39,9 @@ export function Surface(props: SurfaceProps) {
       height={props.height}
       border
       borderColor={palette().border}
-      borderStyle={props.focused ? props.theme.borders.focusedStyle : props.theme.borders.style}
+      borderStyle={openTuiBorderStyle(
+        props.focused ? props.theme.borders.focusedStyle : props.theme.borders.style,
+      )}
       backgroundColor={props.theme.colors.background}
       flexDirection="column"
       overflow="hidden"
@@ -95,14 +102,12 @@ export interface ButtonProps extends ThemeProps, RecipeInteractionState {
 export function Button(props: ButtonProps) {
   const palette = () => recipePalette(props.theme, props, props.tone ?? "accent");
   const marker = () => (props.loading ? "…" : palette().marker);
-  const body = () => {
-    const width = props.width ?? props.label.length + 4;
-    return `${clipTerminal(` ${props.label}`, Math.max(0, width - 3))} `;
-  };
+  const geometry = () => actionChipGeometry(props.label, props.width);
+  const body = () => actionChipText(props.label, props.width);
   return (
     <box
       height={1}
-      width={props.width}
+      width={geometry().width}
       backgroundColor={palette().background}
       overflow="hidden"
       flexDirection="row"
