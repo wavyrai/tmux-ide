@@ -128,6 +128,21 @@ open a TUI, launch a tmux workspace, require a project config, install anything,
 or inherit remote-access authentication. `--port N` is optional; omitting it
 selects a free loopback port.
 
+The owner atomically publishes this versioned discovery shape with owner-only
+permissions:
+
+```json
+{
+  "pid": 4312,
+  "port": 4010,
+  "protocolVersion": 1,
+  "version": "2.8.0",
+  "startedAt": "2026-07-21T00:00:00.000Z",
+  "bindHostname": "127.0.0.1",
+  "authToken": null
+}
+```
+
 Startup is ready only when both checks succeed:
 
 1. `~/.tmux-ide/daemon.json` exists (or the directory selected by
@@ -138,9 +153,11 @@ Startup is ready only when both checks succeed:
 A second `tmux-ide --headless` never takes over a healthy daemon. If its wire
 protocol is compatible, the second process reports `already-running` and exits
 zero; a product-version difference is diagnostic only. An incompatible wire
-protocol exits non-zero so the host can ask the user to restart or upgrade. A
-dead PID or failed health probe is stale state: it is removed and replaced by
-the new owner.
+protocol or disagreement between discovery and health exits non-zero so the host
+can ask the user to restart or upgrade. Only a dead PID is stale state and may be
+removed. A live PID whose health endpoint is unavailable still owns the slot:
+the contender exits non-zero without clearing the record or starting another
+daemon.
 
 Send `SIGINT` or `SIGTERM` to stop the owner. The daemon shutdown action follows
 the same idempotent path. Both close HTTP/WebSocket/PTY resources, remove the

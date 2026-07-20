@@ -1,10 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { CanonicalDaemonInfo } from "../canonical-daemon.ts";
+import { DAEMON_WIRE_PROTOCOL_VERSION, DaemonHealthSchema } from "@tmux-ide/contracts";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../../../../");
 const cliPath = join(repoRoot, "bin/cli.js");
@@ -15,6 +17,7 @@ const packageVersion = (
 let tempDir: string;
 let env: NodeJS.ProcessEnv;
 const children = new Set<ChildProcessWithoutNullStreams>();
+const servers = new Set<Server>();
 const childOutput = new WeakMap<
   ChildProcessWithoutNullStreams,
   { stdout: string; stderr: string }
@@ -46,6 +49,12 @@ afterEach(async () => {
   }
   await Promise.all([...children].map((child) => waitForExit(child).catch(() => undefined)));
   children.clear();
+  await Promise.all(
+    [...servers].map(
+      (server) => new Promise<void>((resolveClose) => server.close(() => resolveClose())),
+    ),
+  );
+  servers.clear();
   rmSync(tempDir, { recursive: true, force: true });
 });
 
@@ -119,6 +128,48 @@ async function waitForDaemonInfo(
   });
 }
 
+function writeLiveDaemonInfo(port: number, protocolVersion = DAEMON_WIRE_PROTOCOL_VERSION): void {
+  writeFileSync(
+    daemonInfoPath(),
+    `${JSON.stringify({
+      pid: process.pid,
+      port,
+      protocolVersion,
+      version: protocolVersion === DAEMON_WIRE_PROTOCOL_VERSION ? packageVersion : "future",
+      startedAt: "2026-07-21T00:00:00.000Z",
+      bindHostname: "127.0.0.1",
+      authToken: null,
+    })}\n`,
+    { mode: 0o600 },
+  );
+}
+
+async function listenWithProtocol(protocolVersion: number): Promise<number> {
+  const server = createServer((request, response) => {
+    if (request.url !== "/health") {
+      response.writeHead(404).end();
+      return;
+    }
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end(
+      JSON.stringify({
+        ok: true,
+        protocolVersion,
+        version: protocolVersion === DAEMON_WIRE_PROTOCOL_VERSION ? packageVersion : "future",
+        uptime: 42,
+      }),
+    );
+  });
+  servers.add(server);
+  return await new Promise<number>((resolvePort, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      resolvePort(typeof address === "object" && address ? address.port : 0);
+    });
+  });
+}
+
 describe.sequential("shipped tmux-ide --headless entrypoint", () => {
   it("documents the real root flag and preserves the root version command", async () => {
     const help = await waitForExit(spawnCli(["--help"]));
@@ -142,6 +193,7 @@ describe.sequential("shipped tmux-ide --headless entrypoint", () => {
       `${JSON.stringify({
         pid: 999_999_999,
         port: 9,
+        protocolVersion: DAEMON_WIRE_PROTOCOL_VERSION,
         version: "stale-test",
         startedAt: "2026-07-21T00:00:00.000Z",
         bindHostname: "127.0.0.1",
@@ -155,8 +207,11 @@ describe.sequential("shipped tmux-ide --headless entrypoint", () => {
     expect(info.authToken).toBeNull();
     expect(info.version).toBe(packageVersion);
 
-    const health = await fetch(`http://127.0.0.1:${info.port}/health`);
-    expect(health.ok).toBe(true);
+    const healthResponse = await fetch(`http://127.0.0.1:${info.port}/health`);
+    expect(healthResponse.ok).toBe(true);
+    const health = DaemonHealthSchema.parse(await healthResponse.json());
+    expect(health.protocolVersion).toBe(DAEMON_WIRE_PROTOCOL_VERSION);
+    expect(info.protocolVersion).toBe(health.protocolVersion);
 
     const contender = await waitForExit(spawnCli(["--headless", "--json"]));
     expect(contender.code).toBe(0);
@@ -182,6 +237,34 @@ describe.sequential("shipped tmux-ide --headless entrypoint", () => {
     });
     await waitUntil(() => (existsSync(daemonInfoPath()) ? null : true));
   }, 15_000);
+
+  it("refuses takeover of a live daemon with an incompatible protocol", async () => {
+    const port = await listenWithProtocol(2);
+    writeLiveDaemonInfo(port, 2);
+
+    const result = await waitForExit(spawnCli(["--headless", "--json"]));
+
+    expect(result.code).toBe(2);
+    expect(JSON.parse(result.stderr)).toMatchObject({ code: "DAEMON_PROTOCOL_MISMATCH" });
+    expect(JSON.parse(readFileSync(daemonInfoPath(), "utf-8"))).toMatchObject({
+      pid: process.pid,
+      port,
+      protocolVersion: 2,
+    });
+  });
+
+  it("refuses takeover of a live owner whose health is unavailable", async () => {
+    writeLiveDaemonInfo(9);
+
+    const result = await waitForExit(spawnCli(["--headless", "--json"]));
+
+    expect(result.code).toBe(1);
+    expect(JSON.parse(result.stderr)).toMatchObject({ code: "DAEMON_UNHEALTHY" });
+    expect(JSON.parse(readFileSync(daemonInfoPath(), "utf-8"))).toMatchObject({
+      pid: process.pid,
+      port: 9,
+    });
+  });
 
   it("cleans canonical state and exits zero on SIGTERM", async () => {
     const owner = spawnCli(["--headless", "--json"]);

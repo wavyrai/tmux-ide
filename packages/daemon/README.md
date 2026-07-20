@@ -33,7 +33,8 @@ command:
 The command is deliberately foreground and config-free. The child it creates
 is the canonical daemon owner; readiness is the published `daemon.json` plus a
 successful `/health` probe. A compatible live owner is reused, stale metadata
-is replaced, and an incompatible wire protocol is rejected without takeover.
+for a dead PID is replaced, and an incompatible or live-but-unhealthy owner is
+rejected without takeover.
 `SIGINT`, `SIGTERM`, and the daemon shutdown action all await the same cleanup
 path before the process exits.
 

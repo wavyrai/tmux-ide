@@ -75,8 +75,17 @@ try {
   if (info.authToken !== null) {
     throw new Error("Headless loopback daemon unexpectedly inherited an auth token");
   }
+  if (!Number.isInteger(info.protocolVersion) || info.protocolVersion < 1) {
+    throw new Error(`daemon.json has invalid protocolVersion: ${info.protocolVersion}`);
+  }
   const health = await fetch(`http://127.0.0.1:${info.port}/health`);
   if (!health.ok) throw new Error(`Headless daemon health returned HTTP ${health.status}`);
+  const healthBody = await health.json();
+  if (healthBody.protocolVersion !== info.protocolVersion) {
+    throw new Error(
+      `daemon.json protocol ${info.protocolVersion} disagrees with health ${healthBody.protocolVersion}`,
+    );
+  }
 
   const contender = run(installedCli, ["--headless", "--json"], { cwd: projectDir });
   const contenderStatus = JSON.parse(contender.stdout.trim());

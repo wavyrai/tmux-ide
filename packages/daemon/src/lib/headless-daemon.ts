@@ -1,10 +1,16 @@
 import {
   clearCanonicalDaemonInfo,
   isCanonicalDaemonAlive,
+  probeCanonicalDaemonHealth,
   readCanonicalDaemonInfo,
   warnOnDaemonVersionSkew,
   type CanonicalDaemonInfo,
 } from "./canonical-daemon.ts";
+import {
+  DAEMON_WIRE_PROTOCOL_VERSION,
+  isDaemonWireProtocolCompatible,
+  type DaemonHealth,
+} from "@tmux-ide/contracts";
 import {
   startEmbeddedDaemon,
   type EmbeddedDaemonHandle,
@@ -19,17 +25,13 @@ export interface HeadlessDaemonOptions {
   readonly sessionName?: string;
   /** Product version is diagnostic only; protocol compatibility is authoritative. */
   readonly expectedVersion?: string;
-  /**
-   * Supplied by the canonical wire contract. It must throw an IdeError when an
-   * already-running daemon is not compatible with this client.
-   */
-  readonly assertCompatible?: (info: CanonicalDaemonInfo) => void;
 }
 
 export interface HeadlessDaemonDependencies {
   readonly readCanonicalDaemonInfo: () => CanonicalDaemonInfo | null;
   readonly clearCanonicalDaemonInfo: () => void;
   readonly isCanonicalDaemonAlive: (info: CanonicalDaemonInfo) => Promise<boolean>;
+  readonly probeCanonicalDaemonHealth: (info: CanonicalDaemonInfo) => Promise<DaemonHealth | null>;
   readonly startEmbeddedDaemon: (opts: EmbeddedDaemonOptions) => Promise<EmbeddedDaemonHandle>;
   readonly writeStdout: (line: string) => void;
   readonly onSignal: (signal: NodeJS.Signals, listener: () => void) => void;
@@ -40,6 +42,7 @@ const defaultDependencies: HeadlessDaemonDependencies = {
   readCanonicalDaemonInfo,
   clearCanonicalDaemonInfo,
   isCanonicalDaemonAlive,
+  probeCanonicalDaemonHealth,
   startEmbeddedDaemon,
   writeStdout: (line) => process.stdout.write(`${line}\n`),
   onSignal: (signal, listener) => process.on(signal, listener),
@@ -77,9 +80,45 @@ function emitStatus(
   }
 }
 
-function assertExistingDaemon(info: CanonicalDaemonInfo, options: HeadlessDaemonOptions): void {
-  options.assertCompatible?.(info);
+function assertProtocolCompatible(info: CanonicalDaemonInfo, health: DaemonHealth): void {
+  if (info.protocolVersion !== health.protocolVersion) {
+    throw new IdeError(
+      `Canonical daemon protocol disagreement: daemon.json reports ${info.protocolVersion}, ` +
+        `/health reports ${health.protocolVersion}. Refusing takeover.`,
+      { code: "DAEMON_PROTOCOL_MISMATCH", exitCode: 2 },
+    );
+  }
+  if (!isDaemonWireProtocolCompatible(info.protocolVersion)) {
+    throw new IdeError(
+      `Canonical daemon protocol ${info.protocolVersion} is incompatible with ` +
+        `this CLI (expected ${DAEMON_WIRE_PROTOCOL_VERSION}). Refusing takeover.`,
+      { code: "DAEMON_PROTOCOL_MISMATCH", exitCode: 2 },
+    );
+  }
+}
+
+async function assertAttachableDaemon(
+  deps: HeadlessDaemonDependencies,
+  info: CanonicalDaemonInfo,
+  options: HeadlessDaemonOptions,
+): Promise<void> {
+  const health = await deps.probeCanonicalDaemonHealth(info);
+  if (!health) {
+    throw new IdeError(
+      `Canonical daemon PID ${info.pid} is alive but its health endpoint is unavailable. ` +
+        `Refusing takeover.`,
+      { code: "DAEMON_UNHEALTHY", exitCode: 1 },
+    );
+  }
+  assertProtocolCompatible(info, health);
   if (options.expectedVersion) warnOnDaemonVersionSkew(info, options.expectedVersion);
+  if (health.version !== info.version) {
+    console.warn(
+      `[tmux-ide] canonical daemon version metadata differs: daemon.json reports ` +
+        `"${info.version}" but /health reports "${health.version}". ` +
+        `Wire compatibility is governed independently by protocolVersion.`,
+    );
+  }
 }
 
 async function findLiveCanonicalDaemon(
@@ -92,7 +131,7 @@ async function findLiveCanonicalDaemon(
     deps.clearCanonicalDaemonInfo();
     return null;
   }
-  assertExistingDaemon(existing, options);
+  await assertAttachableDaemon(deps, existing, options);
   return existing;
 }
 
@@ -109,74 +148,92 @@ export async function runHeadlessDaemon(
   deps: HeadlessDaemonDependencies = defaultDependencies,
 ): Promise<"stopped" | "already-running"> {
   const port = parsePort(options.port);
-  const existing = await findLiveCanonicalDaemon(deps, options);
-  if (existing) {
-    emitStatus(deps, options.json === true, "already-running", existing);
-    return "already-running";
-  }
-
-  let handle: EmbeddedDaemonHandle;
-  try {
-    handle = await deps.startEmbeddedDaemon({
-      port,
-      bindHostname: "127.0.0.1",
-      authToken: null,
-      silent: true,
-      ...(options.sessionName ? { sessionName: options.sessionName } : {}),
-      ...(options.expectedVersion ? { productVersion: options.expectedVersion } : {}),
-    });
-  } catch (error) {
-    // Another owner can become visible between our preflight and the embedded
-    // daemon's guard. Re-resolve it as reuse; never request implicit takeover.
-    if (error instanceof DaemonStartupError && error.reason === "canonical_already_running") {
-      const winner = await findLiveCanonicalDaemon(deps, options);
-      if (winner) {
-        emitStatus(deps, options.json === true, "already-running", winner);
-        return "already-running";
-      }
-    }
-    throw error;
-  }
-
-  const info = deps.readCanonicalDaemonInfo();
-  if (!info) {
-    await handle.stop().catch(() => undefined);
-    throw new IdeError("Canonical daemon started without publishing daemon.json", {
-      code: "DAEMON_INFO_MISSING",
-      exitCode: 1,
-    });
-  }
-
-  let resolveStopped!: () => void;
-  const stopped = new Promise<void>((resolve) => {
-    resolveStopped = resolve;
-  });
-  let stopFailure: unknown;
-  const originalStop = handle.stop.bind(handle);
-  const mutableHandle = handle as { stop: EmbeddedDaemonHandle["stop"] };
-  mutableHandle.stop = async (stopOptions) => {
-    try {
-      await originalStop(stopOptions);
-    } catch (error) {
-      stopFailure = error;
-      throw error;
-    } finally {
-      resolveStopped();
-    }
-  };
-
+  let handle: EmbeddedDaemonHandle | null = null;
+  let signalRequested = false;
   const requestStop = (): void => {
-    void handle.stop().catch(() => undefined);
+    signalRequested = true;
+    if (handle) void handle.stop().catch(() => undefined);
   };
   deps.onSignal("SIGINT", requestStop);
   deps.onSignal("SIGTERM", requestStop);
-  emitStatus(deps, options.json === true, "ready", info);
   try {
+    const existing = await findLiveCanonicalDaemon(deps, options);
+    if (existing) {
+      emitStatus(deps, options.json === true, "already-running", existing);
+      return "already-running";
+    }
+
+    try {
+      handle = await deps.startEmbeddedDaemon({
+        port,
+        bindHostname: "127.0.0.1",
+        authToken: null,
+        silent: true,
+        ...(options.sessionName ? { sessionName: options.sessionName } : {}),
+        ...(options.expectedVersion ? { productVersion: options.expectedVersion } : {}),
+      });
+    } catch (error) {
+      // Another owner can become visible between our preflight and the embedded
+      // daemon's guard. Re-resolve it as reuse; never request implicit takeover.
+      if (error instanceof DaemonStartupError && error.reason === "canonical_already_running") {
+        const winner = await findLiveCanonicalDaemon(deps, options);
+        if (winner) {
+          emitStatus(deps, options.json === true, "already-running", winner);
+          return "already-running";
+        }
+      }
+      throw error;
+    }
+
+    let resolveStopped!: () => void;
+    const stopped = new Promise<void>((resolve) => {
+      resolveStopped = resolve;
+    });
+    let stopFailure: unknown;
+    const originalStop = handle.stop.bind(handle);
+    const mutableHandle = handle as { stop: EmbeddedDaemonHandle["stop"] };
+    mutableHandle.stop = async (stopOptions) => {
+      try {
+        await originalStop(stopOptions);
+      } catch (error) {
+        stopFailure = error;
+        throw error;
+      } finally {
+        resolveStopped();
+      }
+    };
+
+    if (signalRequested) {
+      await handle.stop();
+      if (stopFailure) throw stopFailure;
+      return "stopped";
+    }
+
+    const info = deps.readCanonicalDaemonInfo();
+    if (!info) {
+      await handle.stop().catch(() => undefined);
+      throw new IdeError("Canonical daemon started without publishing daemon.json", {
+        code: "DAEMON_INFO_MISSING",
+        exitCode: 1,
+      });
+    }
+    try {
+      await assertAttachableDaemon(deps, info, options);
+    } catch (error) {
+      await handle.stop().catch(() => undefined);
+      if (signalRequested) {
+        if (stopFailure) throw stopFailure;
+        return "stopped";
+      }
+      throw error;
+    }
+
+    emitStatus(deps, options.json === true, "ready", info);
     await stopped;
+    if (stopFailure) throw stopFailure;
+    return "stopped";
   } finally {
     deps.offSignal("SIGINT", requestStop);
     deps.offSignal("SIGTERM", requestStop);
   }
-  if (stopFailure) throw stopFailure;
-  return "stopped";
 }

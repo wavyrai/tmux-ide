@@ -8,9 +8,7 @@ import {
   isDaemonWireProtocolCompatible,
 } from "../daemon-wire.ts";
 
-const fixturePath = fileURLToPath(
-  new URL("./fixtures/daemon-wire-v1.json", import.meta.url),
-);
+const fixturePath = fileURLToPath(new URL("./fixtures/daemon-wire-v1.json", import.meta.url));
 
 describe("daemon wire protocol", () => {
   it("validates the shared Swift/TypeScript v1 fixture", () => {
