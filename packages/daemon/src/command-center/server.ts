@@ -33,7 +33,7 @@ import {
   WorkspaceAlreadyExistsError,
   WorkspaceNotFoundError,
 } from "../lib/workspace-registry.ts";
-import { AddWorkspaceRequestSchemaZ } from "@tmux-ide/contracts";
+import { AddWorkspaceRequestSchemaZ, DAEMON_WIRE_PROTOCOL_VERSION } from "@tmux-ide/contracts";
 import { sendCommandSchema } from "./schemas.ts";
 import {
   createScriptTerminalId,
@@ -359,6 +359,7 @@ export function createApp(options: CreateAppOptions = {}): Hono {
   app.get("/healthz", (c) => {
     return c.json({
       ok: true,
+      protocolVersion: DAEMON_WIRE_PROTOCOL_VERSION,
       version: process.env.npm_package_version ?? "dev",
       uptimeMs: Date.now() - HEALTHZ_BOOTED_AT,
     });
@@ -979,6 +980,7 @@ export function createApp(options: CreateAppOptions = {}): Hono {
   app.get("/health", (c) => {
     return c.json({
       ok: true,
+      protocolVersion: DAEMON_WIRE_PROTOCOL_VERSION,
       uptime: Math.round(process.uptime()),
       version: pkgVersion,
     });

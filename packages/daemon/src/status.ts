@@ -1,6 +1,6 @@
 import { resolve } from "node:path";
 import { getSessionState, isProcessAlive, listPanes } from "@tmux-ide/tmux-bridge";
-import { isCanonicalDaemonAlive, readCanonicalDaemonInfo } from "./lib/canonical-daemon.ts";
+import { probeCanonicalDaemonHealth, readCanonicalDaemonInfo } from "./lib/canonical-daemon.ts";
 import { resolveProjectConfigContext } from "./lib/config-context.ts";
 
 export async function status(
@@ -18,7 +18,7 @@ export async function status(
   if (running) panes = listPanes(session);
 
   const daemonInfo = readCanonicalDaemonInfo();
-  const healthy = daemonInfo ? await isCanonicalDaemonAlive(daemonInfo) : false;
+  const healthy = daemonInfo ? (await probeCanonicalDaemonHealth(daemonInfo)) !== null : false;
 
   const data = {
     session,

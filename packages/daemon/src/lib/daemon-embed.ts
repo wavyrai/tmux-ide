@@ -11,6 +11,7 @@ import { createServer, type Server } from "node:http";
 import { createRequire } from "node:module";
 import type { Socket } from "node:net";
 import { WebSocket, WebSocketServer } from "ws";
+import { DAEMON_WIRE_PROTOCOL_VERSION } from "@tmux-ide/contracts";
 import { computeAgentStates, computePortPanes } from "./session-monitor.ts";
 import { DaemonShutdownError, DaemonStartupError } from "./errors.ts";
 import { handlePtyWebSocket, shutdownPtyBridges } from "../server/ws-route.ts";
@@ -614,6 +615,7 @@ export async function startEmbeddedDaemon(
   writeCanonicalDaemonInfo({
     pid: process.pid,
     port,
+    protocolVersion: DAEMON_WIRE_PROTOCOL_VERSION,
     version: productVersion,
     startedAt: new Date().toISOString(),
     bindHostname,

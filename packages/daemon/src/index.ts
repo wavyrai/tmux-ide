@@ -6,6 +6,7 @@ export {
 export {
   clearCanonicalDaemonInfo,
   isCanonicalDaemonAlive,
+  probeCanonicalDaemonHealth,
   readCanonicalDaemonInfo,
   writeCanonicalDaemonInfo,
 } from "./canonical.ts";

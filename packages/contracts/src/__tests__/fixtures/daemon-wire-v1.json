@@ -1,0 +1,20 @@
+{
+  "canonical": {
+    "pid": 4312,
+    "port": 4010,
+    "protocolVersion": 1,
+    "version": "0.0.1",
+    "startedAt": "2026-07-20T12:34:56.123Z",
+    "bindHostname": "127.0.0.1",
+    "authToken": "fixture-token"
+  },
+  "health": {
+    "ok": true,
+    "protocolVersion": 1,
+    "version": "0.0.1",
+    "uptime": 42
+  },
+  "sessions": {
+    "sessions": [{ "name": "fixture-project", "dir": "/work/fixture-project" }]
+  }
+}
