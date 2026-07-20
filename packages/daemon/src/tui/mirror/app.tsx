@@ -217,8 +217,6 @@ import { Sidebar } from "./sidebar.tsx";
 import {
   ACCENT,
   BADGE_BG,
-  BUTTON_HOVER_BG,
-  CHIP_ATTN_BG,
   DEFAULT_BG,
   DEFAULT_FG,
   FOCUS_BORDER_FG,
@@ -353,6 +351,16 @@ import {
   projectAgentTerminalCanvas,
 } from "./workspace/agent-terminal-canvas.ts";
 import { AgentTerminalCanvas } from "./workspace/agent-terminal-canvas-view.tsx";
+import {
+  dispatchTerminalPaneChromePointerIntent,
+  projectTerminalPaneChrome,
+  reconcileTerminalPaneChromeActionTarget,
+  terminalPaneChromeMotionState,
+  terminalPaneChromePointerIntent,
+  type TerminalPaneChromeActionTarget,
+  type TerminalPaneChromeMetadata,
+} from "./workspace/terminal-pane-chrome.ts";
+import { TerminalPaneChromeLayer } from "./workspace/terminal-pane-chrome-view.tsx";
 import {
   resolveWorkbenchPasteTarget,
   workbenchCanvasPanelForShortcut,
@@ -543,7 +551,6 @@ import {
   AGENTS_GAP_ROWS,
   type AgentRowInput,
 } from "./agent-rows.ts";
-import { STATUS_COLOR, STATUS_GLYPH } from "./status-grammar.ts";
 import {
   findMatches,
   visitOrder,
@@ -605,7 +612,7 @@ import {
   type SpawnWhere,
 } from "./agent-lifecycle.ts";
 import { getManifests } from "../detect/manifest-loader.ts";
-import { agentsByPane, chipLabel } from "./agent-chip.ts";
+import { agentsByPane } from "./agent-chip.ts";
 import { focusStrips } from "./focus-border.ts";
 import { scrollThumb, trackZone, pageTop, dragTop } from "./scrollbar-model.ts";
 import {
@@ -1171,6 +1178,9 @@ try {
     const panesById = createMemo(() => new Map(panes().map((p) => [p.id, p])));
     const [windowTabs, setWindowTabs] = createSignal<WindowTab[]>([]);
     const [projectsData, setProjectsData] = createSignal<FleetProject[]>([]);
+    // The fleet payload's per-pane entries join directly to tmux's live %pane_id.
+    // Drag policy and pane chrome consume this same authority-derived map.
+    const agentByPane = createMemo(() => agentsByPane(projectsData()));
     // Pointer-hover feedback. One nullable signal names the hovered target as a
     // {region, index}; the same coordinate math that routes clicks resolves it on
     // motion events, and each hoverable render reads it for a subtle HOVER_BG. It
@@ -1667,6 +1677,66 @@ try {
         footerRows: search() ? 1 : 0,
       }),
     );
+    const [hoveredTerminalPaneAction, setHoveredTerminalPaneAction] =
+      createSignal<TerminalPaneChromeActionTarget | null>(null);
+    const [pressedTerminalPaneAction, setPressedTerminalPaneAction] =
+      createSignal<TerminalPaneChromeActionTarget | null>(null);
+    const clearTerminalPaneActionState = () => {
+      if (hoveredTerminalPaneAction() !== null) setHoveredTerminalPaneAction(null);
+      if (pressedTerminalPaneAction() !== null) setPressedTerminalPaneAction(null);
+    };
+    const terminalPaneChromeMetadata = createMemo(() => {
+      const metadata = new Map<string, TerminalPaneChromeMetadata>();
+      const appStatus = status();
+      const appStatusTone: TerminalPaneChromeMetadata["statusTone"] = appStatus.startsWith("error")
+        ? "blocked"
+        : appStatus === "live"
+          ? "done"
+          : "working";
+      for (const pane of panes()) {
+        const agent = agentByPane().get(pane.id);
+        metadata.set(pane.id, {
+          // SessionMirror may add title/currentCommand descriptors later. Null
+          // deliberately leaves that seam to the pure projection, which falls
+          // back to the always-distinct live %pane_id today.
+          title: agent?.displayName ?? agent?.kind ?? null,
+          subtitle: agent
+            ? `${agent.displayName ? `${agent.kind} · ` : ""}${curTarget()} · ${pane.id}`
+            : `${curTarget()} · ${pane.id}`,
+          status: agent?.statusText ?? agent?.state ?? appStatus,
+          statusTone: agent?.state ?? appStatusTone,
+          attention: agent?.state === "blocked" || (!agent && appStatusTone === "blocked"),
+        });
+      }
+      return metadata;
+    });
+    const terminalPaneChromeLayout = createMemo(() =>
+      projectTerminalPaneChrome({
+        canvas: terminalCanvasProjection(),
+        panes: panes(),
+        metadataByPane: terminalPaneChromeMetadata(),
+        hoveredAction: hoveredTerminalPaneAction(),
+        pressedAction: pressedTerminalPaneAction(),
+      }),
+    );
+    createEffect(() => {
+      const paneIds = new Set(panes().map((pane) => pane.id));
+      const terminalsActive = canvasPanel() === "terminals";
+      const hovered = hoveredTerminalPaneAction();
+      const pressed = pressedTerminalPaneAction();
+      const nextHovered = reconcileTerminalPaneChromeActionTarget(
+        hovered,
+        paneIds,
+        terminalsActive,
+      );
+      const nextPressed = reconcileTerminalPaneChromeActionTarget(
+        pressed,
+        paneIds,
+        terminalsActive,
+      );
+      if (nextHovered !== hovered) setHoveredTerminalPaneAction(nextHovered);
+      if (nextPressed !== pressed) setPressedTerminalPaneAction(nextPressed);
+    });
     /** Exact tmux framebuffer dimensions, excluding shell tab chrome, focus rail,
      *  terminal chrome, and native workbench dock. Search overlays the last row. */
     const canvasCols = () => terminalCanvasProjection().framebuffer.width;
@@ -5304,13 +5374,13 @@ try {
           diffPath: join(diffDir(), row.entry.path),
         };
       }
-      // mirror: gy=0 is the target/status row (no menu); gy=1 is the WINDOW STRIP —
+      // mirror: gy=0 is the WINDOW STRIP; gy=1 is per-pane native chrome —
       // a right-click there opens the window menu. The window under a label span is
       // the target; an empty-area / button right-click (span miss) falls back to the
       // ACTIVE window. This dual targeting means the menu still opens even if the
       // strip's known label-cell click swallow (see windowStripParts) eats the hit,
       // because the empty area to the right of the labels always routes.
-      if (gy === 1) {
+      if (gy === 0) {
         const i = spanHit(windowSpans(), x);
         const tabs = windowTabs();
         const w = i >= 0 ? tabs[i] : tabs.find((t) => t.active);
@@ -5322,7 +5392,7 @@ try {
           windowIndex: w.index,
         };
       }
-      // The pane canvas lives below the header (gy=0) + window strip (gy=1).
+      // The pane canvas lives below the window strip (gy=0) + pane chrome (gy=1).
       if (gy < HEADER_ROWS) return null;
       const cx = x - sidebarW();
       const cy = gy - HEADER_ROWS;
@@ -5387,8 +5457,13 @@ try {
     };
 
     /** Open the context menu at the pointer, clamped fully on-screen. */
-    const openMenu = (targetX: number, y: number, screenX = targetX) => {
-      const t = resolveMenuTarget(targetX, y);
+    const openMenu = (
+      targetX: number,
+      y: number,
+      screenX = targetX,
+      explicitTarget?: Omit<MenuState, "left" | "top" | "width" | "height">,
+    ) => {
+      const t = explicitTarget ?? resolveMenuTarget(targetX, y);
       if (!t) {
         closeMenu();
         return;
@@ -6120,26 +6195,6 @@ try {
     // reports the same value; reading the focused pane keeps the intent clear).
     const focusedLivePane = () => panes().find((p) => p.active);
     const isZoomed = () => focusedLivePane()?.zoomed ?? false;
-    /** Buttons on the terminal window-strip row (gy=1): zoom-toggle then a vertical
-     *  split of the focused pane. Placed on the far right, clear of the window-label
-     *  cells. The zoom chip renders active-tinted while the window is zoomed. */
-    const stripButtons = createMemo<{ defs: HeaderButton[]; spans: Span[] }>(() => {
-      const defs: HeaderButton[] =
-        mode() === "mirror" && panes().length > 0
-          ? [
-              { id: "zoom", label: "[⛶]", active: isZoomed() },
-              { id: "split", label: "[+ split]" },
-            ]
-          : [];
-      return {
-        defs,
-        spans: spansFromRight(
-          defs.map((d) => d.label),
-          buttonRightEdge(),
-          1,
-        ),
-      };
-    });
     const runHomeAction = (id: HomeActionId, itemIndex = clampedSel()) => {
       if (id === "open-folder") void openFolderFlow();
       else if (id === "new-agent") newAgentFromHome(homeItems()[itemIndex] ?? selectedHomeItem());
@@ -6172,22 +6227,10 @@ try {
       else if (id === "refresh") refreshTree();
     };
 
-    /** Run a header/strip button by id. Reload re-reads the open file from disk
-     *  (discarding unsaved edits — the ● dot warns first); split forks the focused
-     *  pane via the control client, same command the context menu issues. */
-    const runButton = (id: string) => {
-      if (id === "save") saveEditor();
-      else if (id === "reload") {
-        const p = editorPath();
-        if (p) openEditor(p);
-      } else if (id === "refresh") refreshStatus();
-      else if (id === "split") {
-        const pid = mirror?.focusedPane();
-        if (pid) void mirror?.command(`split-window -h -t ${pid}`).catch(() => {});
-      } else if (id === "zoom") {
-        const pid = mirror?.focusedPane();
-        if (pid) void mirror?.command(`resize-pane -Z -t ${pid}`).catch(() => {});
-      }
+    /** The root pane-chrome dispatcher focuses before calling this command edge. */
+    const runTerminalPaneAction = (paneId: string, id: string) => {
+      if (id === "split") void mirror?.command(`split-window -h -t ${paneId}`).catch(() => {});
+      else if (id === "zoom") void mirror?.command(`resize-pane -Z -t ${paneId}`).catch(() => {});
     };
 
     /** The strip as THREE static texts (pre/active/post) whose STRINGS update.
@@ -6469,14 +6512,9 @@ try {
         }
         return;
       }
-      // mirror mode: the per-window strip lives on gy=1, with the [+ split] button
-      // on its right (checked first, matching the click router's precedence).
-      if (gy === 1) {
-        const bi = spanHit(stripButtons().spans, x);
-        if (bi >= 0) {
-          setHoverIf({ region: "button", index: bi });
-          return;
-        }
+      // mirror mode: the per-window strip lives on gy=0. Pane actions occupy the
+      // segmented native row immediately above each framebuffer on gy=1.
+      if (gy === 0) {
         const i = spanHit(windowSpans(), x);
         setHoverIf(i >= 0 ? { region: "windowtab", index: i } : null);
         return;
@@ -6511,17 +6549,75 @@ try {
      *  rail), and every dock event is consumed so wheel/right-click/drag can
      *  never leak into the terminal transport beneath it. */
     const routeWorkbenchPointer = (e: RouteEvent): boolean => {
-      if (e.y < TABBAR_H || e.x < sidebarW()) return false;
+      if (e.y < TABBAR_H || e.x < sidebarW()) {
+        clearTerminalPaneActionState();
+        return false;
+      }
       const hit = workbenchShellHitTest(workbenchProjection(), e.x - sidebarW(), e.y - TABBAR_H);
-      if (!hit) return false;
+      if (!hit) {
+        clearTerminalPaneActionState();
+        return false;
+      }
+      if (hit.kind !== "canvas") clearTerminalPaneActionState();
       const releaseAtBoundary =
         hit.kind !== "canvas" &&
         (e.type === "up" || e.type === "drag-end" || e.type === "drop" || e.type === "out");
       if (releaseAtBoundary) {
+        setPressedTerminalPaneAction(null);
         settleTerminalGestureBoundary(e);
         return true;
       }
       if (hit.kind === "canvas") {
+        if (e.type === "up" || e.type === "drag-end" || e.type === "drop" || e.type === "out") {
+          setPressedTerminalPaneAction(null);
+        }
+        if (canvasPanel() === "terminals") {
+          const paneChromeIntent = terminalPaneChromePointerIntent(
+            terminalPaneChromeLayout(),
+            hit.localX,
+            hit.localY,
+            e.type,
+            e.button ?? 0,
+          );
+          if (e.type === "move" || e.type === "over" || e.type === "drag") {
+            const motion = terminalPaneChromeMotionState(
+              paneChromeIntent,
+              pressedTerminalPaneAction(),
+            );
+            setHoveredTerminalPaneAction(motion.hovered);
+            setPressedTerminalPaneAction(motion.pressed);
+          }
+          if (paneChromeIntent) {
+            setWorkbenchFocusZone("canvas");
+            touchedWorkspaceDock = true;
+            dispatchTerminalPaneChromePointerIntent(paneChromeIntent, {
+              hover: setHoveredTerminalPaneAction,
+              focus: (paneId) => mirror?.focus(paneId),
+              action: (paneId, actionId, actionIndex) => {
+                setPressedTerminalPaneAction({ paneId, actionIndex });
+                runTerminalPaneAction(paneId, actionId);
+              },
+              menu: (paneId) => {
+                const pane = panesById().get(paneId);
+                if (!pane) return;
+                openMenu(hit.localX, e.y, e.x, {
+                  region: "pane",
+                  title: pane.id,
+                  items: paneMenuItems(
+                    pane.appMouse,
+                    selectModePane() === pane.id,
+                    paneDrag(pane.id),
+                  ),
+                  paneId: pane.id,
+                });
+              },
+              settle: () => settleTerminalGestureBoundary(e),
+            });
+            return true;
+          }
+        } else {
+          clearTerminalPaneActionState();
+        }
         const terminalPolicy =
           canvasPanel() === "terminals"
             ? agentTerminalCanvasPointerPolicy(
@@ -7404,18 +7500,10 @@ try {
         selectDiffFile(hit.fileIndex);
         return;
       }
-      // The per-window strip (gy=1) — resolved by the SAME x-span math the render
+      // The per-window strip (gy=0) — resolved by the SAME x-span math the render
       // lays out, so the formerly-swallowed segment clicks now land.
-      if (gy === 1) {
+      if (gy === 0) {
         if (type !== "down") return;
-        // The right side of the strip carries the [+ split] button (clear of the
-        // window-label cells); it wins the hit test over the window spans.
-        const sbtn = stripButtons();
-        const bi = spanHit(sbtn.spans, x);
-        if (bi >= 0) {
-          runButton(sbtn.defs[bi]!.id);
-          return;
-        }
         const i = spanHit(windowSpans(), x);
         const w = windowTabs()[i];
         if (w) mirror?.switchWindow(w.index);
@@ -7492,53 +7580,6 @@ try {
       }
     };
 
-    // ── Per-pane agent chips (M22.3) ─────────────────────────────────────────
-    // The fleet payload's per-pane agent entries (M22.1), joined by tmux pane id
-    // (the mirror's pane ids are the same %N ids). Consumes the 3s fleet poll's
-    // signal as-is; staleness is already applied by the report, and a missing
-    // `agents` field (older payload) degrades to an empty map.
-    const agentByPane = createMemo(() => agentsByPane(projectsData()));
-    // A pane's agent chip: glyph + kind at the pane's TOP-LEFT (the scroll badge
-    // owns the top-right), colored by the app's status grammar — reference sites:
-    // STATUS_GLYPH + STATUS_COLOR (this file). PASSIVE by design: no handler, and
-    // the label is a TEXT run covering its wrapper box, so a press lands on text
-    // and bubbles to the router (same law as the scrollbar cells above) — pane
-    // forwarding and the right-click menu are untouched. Blocked is the only
-    // attention state: bold, attention bg, and the label spells `blocked` plus
-    // the authority age ("blocked 4m"). The label re-derives on every fleet tick;
-    // width changes re-truncate (chipLabel degrades label → glyph → hidden). The
-    // chip is anchored to the pane box, so zoom/resize/focus moves ride along.
-    const agentChipOverlay = (pane: () => { id: string; width: number } | undefined) => {
-      const entry = () => {
-        const p = pane();
-        return p ? agentByPane().get(p.id) : undefined;
-      };
-      const label = () => {
-        const e = entry();
-        const p = pane();
-        if (!e || !p) return null;
-        // Budget: pane width minus the left inset (1) + padding (2), capped so a
-        // wide pane's chip stays a chip (and clears the top-right scroll badge).
-        // A self-reported status text earns a wider cap (M25.4) — "● claude ·
-        // refactoring auth" needs the room; chipLabel still truncates to fit.
-        const cap = e.statusText ? 44 : 28;
-        return chipLabel(e, STATUS_GLYPH[e.state], Date.now(), Math.min(p.width - 3, cap));
-      };
-      return (
-        <Show when={label()}>
-          <box position="absolute" left={1} top={0} flexDirection="row">
-            <text
-              fg={STATUS_COLOR[entry()!.state]}
-              bg={entry()!.state === "blocked" ? CHIP_ATTN_BG : BADGE_BG}
-              attributes={entry()!.state === "blocked" ? 1 : 0}
-            >
-              {` ${label()} `}
-            </text>
-          </box>
-        </Show>
-      );
-    };
-
     // A 1-col scrollbar drawn in an always-present container's right column: a
     // faint track with a brighter thumb, both single-cell bg fills. Each cell is a
     // TEXT run (not a box) so a click lands on text and bubbles to the router —
@@ -7557,27 +7598,6 @@ try {
         </box>
       </Show>
     );
-    /** The right-aligned affordance-button run for a header/strip row: a flexGrow
-     *  spacer pushes the chips flush to the container right edge, matching the
-     *  `spansFromRight` layout the router hit-tests. Hover lifts the chip. */
-    const buttonRow = (buttons: () => { defs: HeaderButton[]; spans: Span[] }) => (
-      <>
-        <box flexGrow={1} />
-        <For each={buttons().defs}>
-          {(b, i) => (
-            <text
-              fg={BUTTON_FG}
-              bg={
-                b.active ? BUTTON_ACTIVE_BG : isHovered("button", i()) ? BUTTON_HOVER_BG : BUTTON_BG
-              }
-            >
-              {b.label}
-            </text>
-          )}
-        </For>
-      </>
-    );
-
     return (
       <box
         flexDirection="column"
@@ -7643,13 +7663,7 @@ try {
                       projection={terminalCanvasProjection()}
                       chrome={
                         <>
-                          <box paddingLeft={1} flexDirection="row" gap={1}>
-                            <text fg={DEFAULT_FG} attributes={1}>
-                              {curTarget()}
-                            </text>
-                            <text fg={MUTED}>{status()}</text>
-                          </box>
-                          {/* The per-window strip (gy=1). Rendered as bare styled TEXT runs (no
+                          {/* The per-window strip (gy=0). Rendered as bare styled TEXT runs (no
                 per-window <box> wrapper) so the late-mounted segments bubble
                 clicks to the main-column router instead of swallowing them the
                 way late-mounted boxes do; `route` hit-tests `windowSpans`, whose
@@ -7661,27 +7675,30 @@ try {
                               {windowStripParts().active}
                             </text>
                             <text fg={MUTED}>{windowStripParts().post}</text>
-                            {/* Zoomed indicator: the focused pane's id + a [Z] chip, shown only
-                  while the window is zoomed. Left-aligned after the labels; the
-                  button row's flexGrow spacer keeps the [⛶]/[+ split] chips pinned
-                  right regardless, and windowSpans are measured from the left, so
-                  neither the click routing nor the button spans shift. */}
+                            {/* Window-level indicators remain on row zero; pane-level
+                  zoom/split controls now live in each pane's own chrome row. */}
                             <Show when={isZoomed()}>
                               <text fg={ACCENT} bg={TAB_ACTIVE_BG} attributes={1}>
                                 {` ${focusedLivePane()?.id ?? ""} [Z] `}
                               </text>
                             </Show>
                             {/* Synchronize-panes indicator (M20.2): shown while the active
-                  window's synchronize-panes option is on. Left-aligned after the
-                  labels like [Z]; the button row's flexGrow spacer keeps the
-                  right-pinned chips and their spans unaffected. */}
+                  window's synchronize-panes option is on, left-aligned after the
+                  labels like [Z]. */}
                             <Show when={syncOn()}>
                               <text fg={BUTTON_FG} bg={BUTTON_ACTIVE_BG} attributes={1}>
                                 {" [SYNC] "}
                               </text>
                             </Show>
-                            {buttonRow(stripButtons)}
                           </box>
+                          {/* Segmented pane chrome occupies gy=1, immediately above
+                  the exact tmux framebuffer. The layer is passive; root routing
+                  owns every action and lifecycle effect. */}
+                          <TerminalPaneChromeLayer
+                            theme={semanticTheme()}
+                            layout={terminalPaneChromeLayout()}
+                            layer="native"
+                          />
                         </>
                       }
                       framebuffer={
@@ -7750,7 +7767,6 @@ try {
                                         </text>
                                       </Show>
                                     </box>
-                                    {agentChipOverlay(() => pane)}
                                     {/* Right-edge scrollbar — only while scrolled up, so a live
                             terminal stays clean (mirrorScrollGeom gates on offset). */}
                                     {scrollbarOverlay(() => mirrorScrollGeom(pane))}
@@ -7817,7 +7833,6 @@ try {
                                           </text>
                                         </Show>
                                       </box>
-                                      {agentChipOverlay(pane)}
                                       {scrollbarOverlay(() => mirrorScrollGeom(pane()!))}
                                     </box>
                                   </Show>
@@ -7860,6 +7875,15 @@ try {
                               </box>
                             )}
                           </For>
+                          {/* Lower-pane headers reuse only tmux's existing horizontal
+                  separator cells. Render after focus strips so semantic pane
+                  chrome wins visually, while the pure projection proves no
+                  emitted rectangle intersects a pane framebuffer. */}
+                          <TerminalPaneChromeLayer
+                            theme={semanticTheme()}
+                            layout={terminalPaneChromeLayout()}
+                            layer="framebuffer"
+                          />
                           {/* Size-truth hint (M22.8): quiet, dismiss-free, shown ONLY while
                   a co-attached terminal has sized the window away from our canvas
                   (the letterboxed grid is centered beneath it). It states the
