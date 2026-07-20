@@ -18,11 +18,12 @@ is the migration boundary between app-owned presentation and runtime adapters.
 
 1. Application boundary and shared renderer harness.
 2. `PaneFrame` v1 with focus, attention, metadata, and action chrome.
-3. Named workspace layouts and persisted restore.
-4. Keyboard/mouse move, resize, dock, and float interactions.
-5. New-pane templates and project lifecycle actions.
-6. Command descriptors and a contribution registry.
-7. Harness-neutral mission runtime, followed by the native desktop host.
+3. Application-owned agent canvas and persistent bottom-dock projection.
+4. Named workspace layouts and persisted restore.
+5. Keyboard/mouse move, resize, dock, and float interactions.
+6. New-pane templates and project lifecycle actions.
+7. Command descriptors and a contribution registry.
+8. Harness-neutral mission runtime, followed by the native desktop host.
 
 Card 01 is intentionally behavior-neutral: it records the responsive shell
 baseline and makes architectural back-edges fail before new window behavior lands.
@@ -39,3 +40,16 @@ distinct markers.
 The live composite workspace now uses `PaneFrameHeader`. Action descriptors are
 already represented and renderer-tested, but production command routing remains
 with the root controller and will be connected by the command-adapter card.
+
+## WorkbenchShell and bottom dock
+
+`workbench-shell.ts` projects the agent canvas and the application-owned bottom
+dock without reading runtime state. The dock exposes Files, Changes, Missions,
+and Activity tabs; collapsed, open, and maximized geometry; a separately
+preserved preferred open height; effective focus zones; responsive minimums;
+and exact tab, action, canvas, and dock-body hit cells.
+
+`workbench-shell.tsx` only paints that projection. Card 03 deliberately does not
+move live surfaces, persist state, or install keyboard, paste, pointer, or
+renderer lifecycle owners. Those effects remain with the root controller until
+the workspace-state and command-adapter cards land.

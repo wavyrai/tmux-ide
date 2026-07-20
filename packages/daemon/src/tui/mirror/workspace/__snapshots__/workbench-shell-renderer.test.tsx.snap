@@ -1,0 +1,134 @@
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
+
+exports[`WorkbenchShell OpenTUI renderer renders the %sx%s compact agent canvas and bottom dock 1`] = `
+"▌● Agent canvas                                               compact · 3 agents
+ › Fable · project manager                                               working
+ ○ Codex implementer 1 · terminal %7                                  task M31.3
+ ○ Codex implementer 2 · ready                                           gpt-5.5
+
+
+
+
+
+
+
+
+
+
+  ▤ Files   ± Changes  ●◆ Missions  !◌ Activity                           ▾   □
+│● missions dock                                        open · preferred 10 rows
+ ○ Full application parity                                          7 / 20 cards
+ ● Workbench dock projection                                         in progress
+
+
+
+
+
+"
+`;
+
+exports[`WorkbenchShell OpenTUI renderer renders the %sx%s standard agent canvas and bottom dock 1`] = `
+"▌● Agent canvas                                                                                      standard · 3 agents
+ › Fable · project manager                                                                                       working
+ ○ Codex implementer 1 · terminal %7                                                                          task M31.3
+ ○ Codex implementer 2 · ready                                                                                   gpt-5.5
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  ▤ Files   ± Changes  ●◆ Missions  !◌ Activity                                                         ▾ close   □ max
+│● missions dock                                                                                open · preferred 14 rows
+ ○ Full application parity                                                                                  7 / 20 cards
+ ● Workbench dock projection                                                                                 in progress
+
+
+
+
+
+
+
+
+
+"
+`;
+
+exports[`WorkbenchShell OpenTUI renderer renders the %sx%s wide agent canvas and bottom dock 1`] = `
+"▌● Agent canvas                                                                                                                                                                          wide · 3 agents
+ › Fable · project manager                                                                                                                                                                       working
+ ○ Codex implementer 1 · terminal %7                                                                                                                                                          task M31.3
+ ○ Codex implementer 2 · ready                                                                                                                                                                   gpt-5.5
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ F6  ▤ Files  F7  ± Changes  F8 ●◆ Missions  F9 !◌ Activity                                                                                                                             ▾ close   □ max
+│● missions dock                                                                                                                                                                open · preferred 20 rows
+ ○ Full application parity                                                                                                                                                                  7 / 20 cards
+ ● Workbench dock projection                                                                                                                                                                 in progress
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+"
+`;
