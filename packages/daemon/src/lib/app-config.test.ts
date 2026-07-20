@@ -46,10 +46,19 @@ describe("parseAppConfig — deep partial merge", () => {
     expect(cfg.keys.cheatsheet).toBe("M-k");
     expect(cfg.keys.menu).toBe("M-m");
     expect(cfg.keys.panels).toEqual(DEFAULT_APP_CONFIG.keys.panels);
+    expect(cfg.theme.mode).toBe("dark");
     expect(cfg.theme.muted).toBe("colour240");
     expect(cfg.theme.status.working).toBe("colour221");
     expect(cfg.theme.glyphs).toEqual(DEFAULT_APP_CONFIG.theme.glyphs);
     expect(cfg.updater).toEqual(DEFAULT_APP_CONFIG.updater);
+  });
+
+  it("persists valid theme modes and falls back for invalid values", () => {
+    expect(parseAppConfig({ theme: { mode: "light" } }).theme.mode).toBe("light");
+    expect(parseAppConfig({ theme: { mode: "system" } }).theme.mode).toBe("system");
+    expect(parseAppConfig({ theme: { mode: "sepia" } }).theme.mode).toBe(
+      DEFAULT_APP_CONFIG.theme.mode,
+    );
   });
 
   it("defaults the sidebar toggle key to M-b", () => {
@@ -122,8 +131,15 @@ describe("parseAppConfig — mistyped fields fall back to default", () => {
 
   it("theme — non-string colors/glyphs become defaults", () => {
     const cfg = parseAppConfig({
-      theme: { accent: 1, fg: [], status: { done: {}, idle: "colour10" }, glyphs: { active: 7 } },
+      theme: {
+        mode: 1,
+        accent: 1,
+        fg: [],
+        status: { done: {}, idle: "colour10" },
+        glyphs: { active: 7 },
+      },
     });
+    expect(cfg.theme.mode).toBe(DEFAULT_APP_CONFIG.theme.mode);
     expect(cfg.theme.accent).toBe(DEFAULT_APP_CONFIG.theme.accent);
     expect(cfg.theme.fg).toBe(DEFAULT_APP_CONFIG.theme.fg);
     expect(cfg.theme.status.done).toBe(DEFAULT_APP_CONFIG.theme.status.done);

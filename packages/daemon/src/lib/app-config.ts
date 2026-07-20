@@ -24,6 +24,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import type { AgentStatus } from "../tui/detect/classify.ts";
+import type { ThemeModeSetting } from "../tui/mirror/theme.ts";
 
 // ---------------------------------------------------------------------------
 // Shape
@@ -76,6 +77,8 @@ export interface AppThemeGlyphs {
  * reads as one system.
  */
 export interface AppTheme {
+  /** Explicit palette mode or terminal-following mode. Default keeps legacy dark visuals. */
+  mode: ThemeModeSetting;
   /** Primary/brand accent (default `colour75`). */
   accent: string;
   /** Muted/secondary foreground for dim text (default `colour240`). */
@@ -251,6 +254,7 @@ export const DEFAULT_APP_CONFIG: AppConfig = {
     panels: { explorer: "M-e", changes: "M-g", config: "M-," },
   },
   theme: {
+    mode: "dark",
     accent: "colour75",
     muted: "colour240",
     fg: "colour250",
@@ -359,6 +363,7 @@ export function parseAppConfig(input: unknown): AppConfig {
       },
     },
     theme: {
+      mode: pickChoice(theme.mode, ["dark", "light", "system"], D.theme.mode),
       accent: pickString(theme.accent, D.theme.accent),
       muted: pickString(theme.muted, D.theme.muted),
       fg: pickString(theme.fg, D.theme.fg),
