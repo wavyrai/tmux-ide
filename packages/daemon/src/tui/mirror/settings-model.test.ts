@@ -42,6 +42,8 @@ import {
   settingsRootItems,
   snapshotEveryPatch,
   themeItems,
+  themeModeItems,
+  themeModePatch,
   themePatch,
   tickMsPatch,
   updatesCheckPatch,
@@ -82,6 +84,16 @@ describe("theme", () => {
     expect(themePatch("colour203")).toEqual({ theme: { accent: "colour203" } });
     expect(presetRgb("colour203")).toEqual([255, 95, 95]);
     expect(presetRgb("colour99")).toBeNull();
+  });
+  it("offers dark/light/system mode rows and persists only theme.mode", () => {
+    expect(themeModeItems(CFG).map((row) => [row.id, row.current, row.detail])).toEqual([
+      ["dark", true, "dark palette"],
+      ["light", false, "light palette"],
+      ["system", false, "follow terminal theme_mode"],
+    ]);
+    const system = parseAppConfig({ theme: { mode: "system" } });
+    expect(themeModeItems(system).find((row) => row.current)?.id).toBe("system");
+    expect(themeModePatch("light")).toEqual({ theme: { mode: "light" } });
   });
 });
 

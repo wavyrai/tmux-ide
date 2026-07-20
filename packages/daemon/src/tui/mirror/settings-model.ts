@@ -12,6 +12,7 @@
  * never left guessing.
  */
 import type { AppConfig, AppConfigPatch, AppKeys } from "../../lib/app-config.ts";
+import type { ThemeModeSetting } from "./theme.ts";
 import { parseHHMM, type NotificationPrefs } from "../chrome/notify-prefs.ts";
 import type { DialogSelectItem } from "./dialog-model.ts";
 
@@ -103,6 +104,25 @@ export function presetRgb(accent: string): [number, number, number] | null {
 /** PURE — the patch persisting a picked accent. */
 export function themePatch(accent: string): AppConfigPatch {
   return { theme: { accent } };
+}
+
+export const THEME_MODE_LABELS: Readonly<Record<ThemeModeSetting, string>> = {
+  dark: "Dark",
+  light: "Light",
+  system: "System",
+};
+
+export function themeModeItems(cfg: AppConfig): DialogSelectItem[] {
+  return (["dark", "light", "system"] as const).map((mode) => ({
+    id: mode,
+    label: THEME_MODE_LABELS[mode],
+    detail: mode === "system" ? "follow terminal theme_mode" : `${mode} palette`,
+    current: cfg.theme.mode === mode,
+  }));
+}
+
+export function themeModePatch(mode: ThemeModeSetting): AppConfigPatch {
+  return { theme: { mode } };
 }
 
 // ── Notifications ────────────────────────────────────────────────────────────
