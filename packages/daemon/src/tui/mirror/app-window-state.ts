@@ -92,7 +92,7 @@ export function stableAppWindowInstanceId(source: AppWindowSource, ordinal = 0):
   const sourceKey =
     parsed.kind === "terminal"
       ? `terminal:${parsed.terminalSourceId}`
-      : `native:${parsed.surface}:${parsed.resourceId ?? "default"}`;
+      : `native:${parsed.surface}:${parsed.resourceId === null ? "null" : `id:${parsed.resourceId}`}`;
   const slug = sourceKey
     .toLowerCase()
     .replace(/[^a-z0-9._-]+/gu, "-")

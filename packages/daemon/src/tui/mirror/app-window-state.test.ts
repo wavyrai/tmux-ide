@@ -112,6 +112,31 @@ describe("app window state contract", () => {
     ).toBe(false);
   });
 
+  it("distinguishes the default native instance from a resource literally named default", () => {
+    const singleton = stableAppWindowInstanceId({
+      kind: "native",
+      surface: "files",
+      resourceId: null,
+    });
+    const namedDefault = stableAppWindowInstanceId({
+      kind: "native",
+      surface: "files",
+      resourceId: "default",
+    });
+
+    expect(singleton).not.toBe(namedDefault);
+    expect(singleton).toBe(
+      stableAppWindowInstanceId({ kind: "native", surface: "files", resourceId: null }),
+    );
+    expect(namedDefault).toBe(
+      stableAppWindowInstanceId({
+        kind: "native",
+        surface: "files",
+        resourceId: "default",
+      }),
+    );
+  });
+
   it("validates dock membership, placement memory, floating rects, z-order, and focus", () => {
     const valid = floatingDocument();
     expect(AppWindowDocumentV1SchemaZ.safeParse(valid).success).toBe(true);
@@ -337,6 +362,39 @@ describe("WorkspaceUiStateV2 app-window migration", () => {
         focusedTerminalSourceId: "agent-missing",
       }),
     ).toThrow(/must belong/u);
+  });
+
+  it("keeps a full-panel view named default distinct from the singleton dock surface", () => {
+    const migrated = migrateWorkspaceUiStateV2ToAppWindowDocument(
+      currentWorkspaceUiState({
+        active: { viewId: "default", panel: "files" },
+        views: { default: { panel: "files" } },
+        dock: {
+          activeTab: "files",
+          mode: "open",
+          preferredHeight: null,
+          focusZone: "canvas",
+        },
+      }),
+      { migratedAt: NOW },
+    );
+    const fileWindows = Object.values(migrated.document.windows).filter(
+      (window) => window.source.kind === "native" && window.source.surface === "files",
+    );
+
+    expect(fileWindows).toHaveLength(2);
+    expect(new Set(fileWindows.map((window) => window.id)).size).toBe(2);
+    expect(fileWindows.map((window) => window.source)).toEqual(
+      expect.arrayContaining([
+        { kind: "native", surface: "files", resourceId: null },
+        { kind: "native", surface: "files", resourceId: "default" },
+      ]),
+    );
+    expect(migrated.document.windows[migrated.document.focusedWindowId!]?.source).toEqual({
+      kind: "native",
+      surface: "files",
+      resourceId: "default",
+    });
   });
 
   it("preserves dock focus and reports composite layout state instead of silently flattening it", () => {
