@@ -395,4 +395,57 @@ describe("PaneFrame OpenTUI renderer", () => {
     expect(stableFrame(setup.captureCharFrame())).not.toContain("◆ native");
     setup.renderer.destroy();
   });
+
+  it("pins native icon base, hover, disabled, pressed, and hidden states", async () => {
+    const theme = createSemanticThemeSnapshot({ mode: "dark" });
+    const iconActions = [
+      { id: "maximize", label: "maximize", icon: "maximize", description: "Maximize" },
+      { id: "menu", label: "more", icon: "more", description: "More actions" },
+      { id: "close", label: "close", icon: "close", description: "Close", disabled: true },
+      { id: "resize", label: "resize", icon: "resize", description: "Resize" },
+      { id: "dock", label: "dock", icon: "dock", description: "Dock", hidden: true },
+    ] as const;
+    const projection = projectPaneFrame({
+      width: 120,
+      height: 8,
+      title: "Icon action state matrix",
+      kind: "terminals",
+      focused: true,
+      terminalFocused: true,
+      hoveredActionIndex: 1,
+      pressedActionIndex: 3,
+      actions: iconActions,
+    });
+    const setup = await renderForTest(
+      () => (
+        <PaneFrame theme={theme} projection={projection}>
+          <text> icon state evidence</text>
+        </PaneFrame>
+      ),
+      { width: 120, height: 8 },
+    );
+    await setup.renderOnce();
+
+    const base = spanContaining(setup, "□", projection.header.y)!;
+    const hovered = spanContaining(setup, "⋯", projection.header.y)!;
+    const disabled = spanContaining(setup, "×", projection.header.y)!;
+    const pressed = spanContaining(setup, "◲", projection.header.y)!;
+    expect(colorKey(base.bg)).toBe(colorKey(theme.colors.accentMuted));
+    expect(colorKey(base.fg)).toBe(colorKey(theme.colors.mutedForeground));
+    expect(colorKey(hovered.bg)).toBe(colorKey(recipePalette(theme, { hovered: true }).background));
+    expect(colorKey(disabled.fg)).toBe(
+      colorKey(recipePalette(theme, { disabled: true }).foreground),
+    );
+    expect(colorKey(pressed.bg)).toBe(colorKey(recipePalette(theme, { pressed: true }).background));
+    expect(stableFrame(setup.captureCharFrame())).not.toContain("▤");
+    const hidden = projection.actions.find((action) => action.id === "dock")!;
+    expect(
+      paneFrameHitTest(
+        projection,
+        hidden.start + Math.floor(hidden.width / 2),
+        projection.header.y,
+      ),
+    ).toMatchObject({ area: "action", actionId: "dock" });
+    setup.renderer.destroy();
+  });
 });

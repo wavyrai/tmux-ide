@@ -1,5 +1,5 @@
 import { terminalDisplayWidth } from "../panel-host.ts";
-import { actionChipWidth, type RecipeTone, type Rect } from "../recipes.ts";
+import { iconButtonWidth, type RecipeTone, type Rect } from "../recipes.ts";
 import type { AgentTerminalCanvasProjection } from "./agent-terminal-canvas.ts";
 import {
   paneFrameHitTest,
@@ -9,6 +9,7 @@ import {
   type PaneFrameProjection,
 } from "./pane-frame.ts";
 import { clipWorkspaceText } from "./text.ts";
+import { workspaceIcon } from "./icons.ts";
 
 export interface TerminalPaneChromePane {
   id: string;
@@ -34,6 +35,11 @@ export interface TerminalPaneChromeMetadata {
 export interface TerminalPaneChromeActionTarget {
   paneId: string;
   actionIndex: number;
+}
+
+export interface TerminalPaneChromeHoverTarget {
+  paneId: string;
+  actionIndex: number | null;
 }
 
 export type TerminalPaneChromePlacement =
@@ -64,7 +70,7 @@ export interface TerminalPaneChromeInput {
   canvas: AgentTerminalCanvasProjection;
   panes: readonly TerminalPaneChromePane[];
   metadataByPane?: ReadonlyMap<string, TerminalPaneChromeMetadata>;
-  hoveredAction?: TerminalPaneChromeActionTarget | null;
+  hoveredAction?: TerminalPaneChromeHoverTarget | null;
   pressedAction?: TerminalPaneChromeActionTarget | null;
 }
 
@@ -75,7 +81,7 @@ export interface TerminalPaneChromeHit {
 }
 
 export type TerminalPaneChromePointerIntent =
-  | { kind: "hover"; target: TerminalPaneChromeActionTarget | null }
+  | { kind: "hover"; target: TerminalPaneChromeHoverTarget | null }
   | { kind: "focus"; paneId: string }
   | { kind: "action"; paneId: string; actionId: string; actionIndex: number }
   | { kind: "menu"; paneId: string }
@@ -84,7 +90,7 @@ export type TerminalPaneChromePointerIntent =
   | null;
 
 export interface TerminalPaneChromePointerEffects {
-  hover(target: TerminalPaneChromeActionTarget | null): void;
+  hover(target: TerminalPaneChromeHoverTarget | null): void;
   focus(paneId: string): void;
   action(paneId: string, actionId: string, actionIndex: number): void;
   menu(paneId: string): void;
@@ -92,7 +98,7 @@ export interface TerminalPaneChromePointerEffects {
 }
 
 export interface TerminalPaneChromeMotionState {
-  hovered: TerminalPaneChromeActionTarget | null;
+  hovered: TerminalPaneChromeHoverTarget | null;
   pressed: TerminalPaneChromeActionTarget | null;
 }
 
@@ -236,18 +242,30 @@ export function terminalPaneChromePointerIntent(
   if (!result) return null;
   const gutterPassThrough = result.placement !== "native-header" && result.hit.area !== "action";
   if (eventType === "down" && button === 2) return { kind: "menu", paneId: result.paneId };
-  // Lower headers paint the existing resize separator. Only their concrete
-  // action chips capture left-pointer input; title/grip cells retain tmux's
-  // established separator-resize path.
-  if (gutterPassThrough) return null;
-  if (isRelease(eventType)) return { kind: "settle", paneId: result.paneId };
-  if (eventType === "move" || eventType === "over" || eventType === "drag") {
+  // Passive motion may reveal reserved controls across the whole titlebar,
+  // including lower headers that share a tmux resize separator. Press/drag and
+  // release on those non-action gutter cells still fall through to tmux.
+  if (eventType === "move" || eventType === "over") {
     return {
       kind: "hover",
       target:
         result.hit.area === "action"
           ? { paneId: result.paneId, actionIndex: result.hit.actionIndex }
-          : null,
+          : { paneId: result.paneId, actionIndex: null },
+    };
+  }
+  // Lower headers paint the existing resize separator. Only their concrete
+  // action chips capture left-pointer input; title/grip cells retain tmux's
+  // established separator-resize path.
+  if (gutterPassThrough) return null;
+  if (isRelease(eventType)) return { kind: "settle", paneId: result.paneId };
+  if (eventType === "drag") {
+    return {
+      kind: "hover",
+      target:
+        result.hit.area === "action"
+          ? { paneId: result.paneId, actionIndex: result.hit.actionIndex }
+          : { paneId: result.paneId, actionIndex: null },
     };
   }
   if (eventType === "down" && result.hit.area === "action") {
@@ -295,11 +313,11 @@ export function terminalPaneChromeMotionState(
 }
 
 /** Drop transient action state when its pane dies or Terminals stops being active. */
-export function reconcileTerminalPaneChromeActionTarget(
-  target: TerminalPaneChromeActionTarget | null,
+export function reconcileTerminalPaneChromeActionTarget<T extends { paneId: string }>(
+  target: T | null,
   paneIds: ReadonlySet<string>,
   terminalsActive: boolean,
-): TerminalPaneChromeActionTarget | null {
+): T | null {
   return target && terminalsActive && paneIds.has(target.paneId) ? target : null;
 }
 
@@ -321,23 +339,28 @@ function paneHeaderFrame(
   pane: TerminalPaneChromePane,
   metadata: TerminalPaneChromeMetadata | undefined,
   width: number,
-  hovered: TerminalPaneChromeActionTarget | null | undefined,
+  hovered: TerminalPaneChromeHoverTarget | null | undefined,
   pressed: TerminalPaneChromeActionTarget | null | undefined,
 ): PaneFrameProjection {
   const title = terminalPaneChromeTitle(pane, metadata);
+  const actionsVisible = pane.active || hovered?.paneId === pane.id || pressed?.paneId === pane.id;
   const actions = [
     {
       id: "zoom",
       label: pane.zoomed ? "restore" : "zoom",
       compactLabel: pane.zoomed ? "R" : "Z",
+      icon: pane.zoomed ? "restore" : "maximize",
       description: pane.zoomed ? "Restore pane layout" : "Zoom this pane",
       active: pane.zoomed,
+      hidden: !actionsVisible,
     },
     {
-      id: "split",
-      label: "split",
-      compactLabel: "+",
-      description: "Split this pane",
+      id: "menu",
+      label: "more",
+      compactLabel: ".",
+      icon: "more",
+      description: "Open pane actions",
+      hidden: !actionsVisible,
     },
   ] as const;
   const input = {
@@ -358,7 +381,7 @@ function paneHeaderFrame(
   const full = projectPaneFrame(input);
   if (
     full.actions.some((action) => action.id === "zoom") &&
-    full.actions.some((action) => action.id === "split")
+    full.actions.some((action) => action.id === "menu")
   )
     return full;
 
@@ -367,12 +390,12 @@ function paneHeaderFrame(
   // safety contract: zoom is its guaranteed escape hatch. Build a compact
   // action-first projection, then spend whatever remains on the pane identity.
   const base = projectPaneFrame({ ...input, status: null, actions: [] });
-  const zoomNaturalWidth = actionChipWidth(actions[0].compactLabel);
+  const zoomNaturalWidth = iconButtonWidth();
   const zoomWidth = Math.min(width, zoomNaturalWidth);
-  const splitWidth = actionChipWidth(actions[1].compactLabel);
+  const menuWidth = iconButtonWidth();
   const minimumIdentityWidth = 2;
-  const showSplit = width >= zoomWidth + 1 + splitWidth + minimumIdentityWidth;
-  const actionWidth = zoomWidth + (showSplit ? 1 + splitWidth : 0);
+  const showMenu = width >= zoomWidth + 1 + menuWidth + minimumIdentityWidth;
+  const actionWidth = zoomWidth + (showMenu ? 1 + menuWidth : 0);
   let actionX = Math.max(0, width - actionWidth);
   const projectedActions: PaneFrameActionChip[] = [];
   const pushAction = (index: number, chipWidth: number) => {
@@ -380,7 +403,8 @@ function paneHeaderFrame(
     projectedActions.push({
       ...action,
       kind: "action",
-      label: action.compactLabel,
+      appearance: "icon",
+      label: workspaceIcon(action.icon),
       fullLabel: action.label,
       start: actionX,
       width: chipWidth,
@@ -390,7 +414,7 @@ function paneHeaderFrame(
     actionX += chipWidth + 1;
   };
   pushAction(0, zoomWidth);
-  if (showSplit) pushAction(1, splitWidth);
+  if (showMenu) pushAction(1, menuWidth);
 
   const identityBudget = projectedActions[0]?.start ?? width;
   const titleText = clipWorkspaceText(title, identityBudget);
@@ -464,7 +488,7 @@ function cell(value: number): number {
 }
 
 function sameActionTarget(
-  left: TerminalPaneChromeActionTarget | null,
+  left: TerminalPaneChromeHoverTarget | null,
   right: TerminalPaneChromeActionTarget | null,
 ): boolean {
   return (

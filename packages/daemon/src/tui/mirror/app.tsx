@@ -357,6 +357,7 @@ import {
   terminalPaneChromeMotionState,
   terminalPaneChromePointerIntent,
   type TerminalPaneChromeActionTarget,
+  type TerminalPaneChromeHoverTarget,
   type TerminalPaneChromeMetadata,
 } from "./workspace/terminal-pane-chrome.ts";
 import { TerminalPaneChromeLayer } from "./workspace/terminal-pane-chrome-view.tsx";
@@ -1676,7 +1677,7 @@ try {
       }),
     );
     const [hoveredTerminalPaneAction, setHoveredTerminalPaneAction] =
-      createSignal<TerminalPaneChromeActionTarget | null>(null);
+      createSignal<TerminalPaneChromeHoverTarget | null>(null);
     const [pressedTerminalPaneAction, setPressedTerminalPaneAction] =
       createSignal<TerminalPaneChromeActionTarget | null>(null);
     const clearTerminalPaneActionState = () => {
@@ -5409,6 +5410,7 @@ try {
     };
 
     const closeMenu = () => {
+      clearTerminalPaneActionState();
       setMenuConfirm(null);
       setMenuInput(null);
       setMenuSub(null);
@@ -6227,8 +6229,7 @@ try {
 
     /** The root pane-chrome dispatcher focuses before calling this command edge. */
     const runTerminalPaneAction = (paneId: string, id: string) => {
-      if (id === "split") void mirror?.command(`split-window -h -t ${paneId}`).catch(() => {});
-      else if (id === "zoom") void mirror?.command(`resize-pane -Z -t ${paneId}`).catch(() => {});
+      if (id === "zoom") void mirror?.command(`resize-pane -Z -t ${paneId}`).catch(() => {});
     };
 
     /** The strip as THREE static texts (pre/active/post) whose STRINGS update.
@@ -6588,27 +6589,29 @@ try {
           if (paneChromeIntent) {
             setWorkbenchFocusZone("canvas");
             touchedWorkspaceDock = true;
+            const openPaneActions = (paneId: string) => {
+              const pane = panesById().get(paneId);
+              if (!pane) return;
+              openMenu(hit.localX, e.y, e.x, {
+                region: "pane",
+                title: pane.id,
+                items: paneMenuItems(
+                  pane.appMouse,
+                  selectModePane() === pane.id,
+                  paneDrag(pane.id),
+                ),
+                paneId: pane.id,
+              });
+            };
             dispatchTerminalPaneChromePointerIntent(paneChromeIntent, {
               hover: setHoveredTerminalPaneAction,
               focus: (paneId) => mirror?.focus(paneId),
               action: (paneId, actionId, actionIndex) => {
                 setPressedTerminalPaneAction({ paneId, actionIndex });
-                runTerminalPaneAction(paneId, actionId);
+                if (actionId === "menu") openPaneActions(paneId);
+                else runTerminalPaneAction(paneId, actionId);
               },
-              menu: (paneId) => {
-                const pane = panesById().get(paneId);
-                if (!pane) return;
-                openMenu(hit.localX, e.y, e.x, {
-                  region: "pane",
-                  title: pane.id,
-                  items: paneMenuItems(
-                    pane.appMouse,
-                    selectModePane() === pane.id,
-                    paneDrag(pane.id),
-                  ),
-                  paneId: pane.id,
-                });
-              },
+              menu: openPaneActions,
               settle: () => settleTerminalGestureBoundary(e),
             });
             return true;
