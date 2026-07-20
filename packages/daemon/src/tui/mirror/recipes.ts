@@ -54,6 +54,51 @@ export interface Rect {
   height: number;
 }
 
+export interface ActionChipGeometry {
+  label: string;
+  width: number;
+  markerWidth: number;
+  bodyWidth: number;
+}
+
+export function actionChipWidth(label: string, width?: number): number {
+  return Math.max(0, Math.floor(width ?? terminalDisplayWidth(label) + 4));
+}
+
+export function actionChipGeometry(label: string, width?: number): ActionChipGeometry {
+  const resolved = actionChipWidth(label, width);
+  const markerWidth = Math.min(2, resolved);
+  return {
+    label,
+    width: resolved,
+    markerWidth,
+    bodyWidth: Math.max(0, resolved - markerWidth),
+  };
+}
+
+export function actionChipText(label: string, width?: number): string {
+  const geometry = actionChipGeometry(label, width);
+  if (geometry.bodyWidth <= 0) return "";
+  return clipTerminal(` ${label}`, Math.max(0, geometry.bodyWidth - 1)) + " ";
+}
+
+export function actionChipSpansFromRight<T extends { label: string }>(
+  actions: readonly T[],
+  rightEdge: number,
+  gap: number,
+): (T & { start: number; width: number })[] {
+  const widths = actions.map((action) => actionChipWidth(action.label));
+  const total =
+    widths.reduce((sum, width) => sum + width, 0) + gap * Math.max(0, widths.length - 1);
+  let x = Math.max(0, rightEdge - total);
+  return actions.map((action, index) => {
+    const width = widths[index] ?? 0;
+    const out = { ...action, start: x, width };
+    x += width + gap;
+    return out;
+  });
+}
+
 export interface RecipeGalleryItem extends Rect {
   id: string;
   kind:

@@ -1,0 +1,267 @@
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
+
+exports[`Home and Files surfaces OpenTUI renderer renders deterministic %sx%s home first-run frame 1`] = `
+" Home · undefined sessions · undefined projects ● 0 ● 0 ● 0 ○ 0
+────────────────────────────────────────────────────────────────────────────────
+
+                              Welcome to tmux-ide
+
+                          ○ ▸ open a folder — press f
+
+                                press f to open
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ open a folder to start
+ j/k enter ○ [f folder] ^ ○ [n session]   ○ [a agent]   ○ [o open]   ○ [d diff]"
+`;
+
+exports[`Home and Files surfaces OpenTUI renderer renders deterministic %sx%s home populated frame 1`] = `
+" tmux-ide Home · Sessions, registered projects, and recent folders ● 0 ● 1 ● 0 ○ 0
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+● workspace                                                                      2w · working ○ [+ agent]   ○ [± diff]
+○ docs                                                                           /repo/docs ○ [+ agent]   ○ [▸ launch]
+○ playground                                                                                /tmp/playground ○ [▸ open]
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ workspace · 2 windows
+ enter open · n new session · ^q quit ○ [f open folder]   ○ [n new session]   ○ [a new agent]   ○ [o open]   ○ [d diff]"
+`;
+
+exports[`Home and Files surfaces OpenTUI renderer renders deterministic %sx%s home populated frame 2`] = `
+" tmux-ide Home · Sessions, registered projects, and recent folders ● 0 ● 1 ● 0 ○ 0
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+● workspace                                                                                                                                                      2w · working ○ [+ agent]   ○ [± diff]
+○ docs                                                                                                                                                           /repo/docs ○ [+ agent]   ○ [▸ launch]
+○ playground                                                                                                                                                                /tmp/playground ○ [▸ open]
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ workspace · 2 windows
+ enter open · n new session · ^q quit                                                                                 ○ [f open folder]   ○ [n new session]   ○ [a new agent]   ○ [o open]   ○ [d diff]"
+`;
+
+exports[`Home and Files surfaces OpenTUI renderer renders deterministic %sx%s files filtered frame 1`] = `
+" Files 1:8 2L ready │ app▏         │             ○ save   ○ reload   ○ / filter
+ /repo/workspace/src/app.ts
+● ▾ src                            1 export const app = true;
+○     app.ts M                     2 console.log(app);
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ enter open · / filter · esc list"
+`;
+
+exports[`Home and Files surfaces OpenTUI renderer renders deterministic %sx%s files empty frame 1`] = `
+" Files 1:8 0L ready                                                ○ / filter   ○ H dot:off   ○ I ign:off   ○ r refresh
+ no files visible — try H or I
+ ○ No files                              ○ No file open
+   no files visible — try H or I           Select a file from the list.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ enter open · / filter · ^q quit"
+`;
+
+exports[`Home and Files surfaces OpenTUI renderer renders deterministic %sx%s files error frame 1`] = `
+" Files 1:8 2L read failed                                                                                                               ○ reload   ○ / filter   ○ H dot:off   ○ I ign:off   ○ r refresh
+ outside workspace
+● ▾ src                                       1 export const app = true;
+○     app.ts M                                2 console.log(app);
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ enter open · / filter · ^q quit"
+`;

@@ -228,7 +228,7 @@ import {
   TAB_ACTIVE_BG,
   createSemanticThemeStore,
 } from "./theme.ts";
-import { rollupChips, homeFooterHints, type FleetRollup } from "../team/home.ts";
+import { homeFooterHints, type FleetRollup } from "../team/home.ts";
 import {
   isBinary,
   classifyFile,
@@ -380,6 +380,15 @@ import {
   missionDashboardProjection,
 } from "./missions-dashboard.ts";
 import { MissionsSurface, missionSurfaceLayout } from "./missions-surface.tsx";
+import { HomeSurface, homeActionAtProjection } from "./home-surface.tsx";
+import {
+  homeItemIndexAtProjection,
+  projectHomeSurface,
+  type HomeActionId,
+} from "./home-surface.ts";
+import { FilesSurface } from "./files-surface.tsx";
+import { filesHitTest, filesListWidth, projectFilesSurface } from "./files-surface.ts";
+import type { FilesActionId } from "./files-surface.ts";
 import {
   handleMissionSurfaceKey,
   handleMissionSurfacePointerDown,
@@ -484,10 +493,8 @@ import {
 } from "./attention.ts";
 import {
   buildHomeItems,
-  centerPad,
   clampSelectable,
   firstRunTip,
-  isFirstRun,
   stepSelectable,
   sessionNameFor,
   isValidSessionName,
@@ -805,17 +812,6 @@ const HEADER_ROWS = 2;
 // router subtracts it once (`gy = y - TABBAR_H`) before the per-mode math.
 const TABBAR_H = 1;
 const PALETTE_ROWS = 10;
-// ── M21.9 clickable-chip labels ─────────────────────────────────────────────
-// Fixed strings so the x-span math is constant (every glyph single-width). The
-// home chips sit flush right on their row (trailing space = a 1-cell inset);
-// the tab-bar labels are the EXACT strings the bar renders, so `spansFromRight`
-// lands cell-for-cell on what's drawn.
-const HOME_CHIP_SESSION = "[± diff] ";
-const HOME_CHIP_PROJECT = "[▸ launch] ";
-const HOME_CHIP_RECENT = "[▸ open] ";
-// The spawn verb's home entry (M23.1): session/project rows carry a second
-// chip left of the primary one; `a` is its keyboard twin.
-const HOME_CHIP_AGENT = "[+ agent] ";
 // ── M24.4 kitty keyboard protocol ───────────────────────────────────────────
 // One config read at boot (the dragSelect discipline): when on, the renderer
 // requests kitty's disambiguated key encoding from the host terminal, which is
@@ -835,13 +831,10 @@ const PALETTE_ROW_KEYCAPS: Readonly<Record<string, string>> = Object.fromEntries
 );
 // ── M22.5 first-run welcome ─────────────────────────────────────────────────
 // A centered greeting shown only on a truly empty fleet (no sessions, no
-// registered projects). WELCOME_ROWS rows in the content area (gy 2…); the
-// clickable "open a folder" action sits at WELCOME_ACTION_ROW. The render
-// centers each line with the same centerPad the router hit-tests with.
+// registered projects). Geometry now lives in the Home surface projection so
+// render and pointer routing consume the same model.
 const WELCOME_LINE = "Welcome to tmux-ide — a cockpit for the tmux sessions you already have.";
 const WELCOME_ACTION_LABEL = "▸ open a folder — press f";
-const WELCOME_ROWS = 6;
-const WELCOME_ACTION_ROW = 3; // 0-based within the welcome block
 // HOSTED mode (M23.2): the detachable-cockpit launcher stamps this marker on
 // the app's pane command inside `_tmux-ide-app`. ^q then detaches the tmux
 // client instead of exiting (the cockpit survives the terminal); every "^q
@@ -1777,28 +1770,16 @@ try {
       );
     };
     const homeItems = createMemo<HomeItem[]>(() => buildHomeItems(projectsData(), recentFolders()));
-    // First-run (M22.5): a truly empty fleet gets a centered welcome. It reserves
-    // WELCOME_ROWS at the top of the content area, so the home row math shifts by
-    // that offset while it shows (shared by render, hover and click routing).
-    const firstRun = () => isFirstRun(projectsData());
-    const welcomeOffset = () => (firstRun() ? WELCOME_ROWS : 0);
-    /** The centered x-span [start, end) of the welcome's clickable action — the
-     *  render draws the label after the same centerPad, so a click lands on it. */
-    const welcomeActionSpan = (): [number, number] => {
-      const start = sidebarW() + centerPad(canvasCols(), WELCOME_ACTION_LABEL.length);
-      return [start, start + WELCOME_ACTION_LABEL.length];
-    };
     /** Whether (gy, x) hits the welcome action row (only while first-run). */
     const welcomeActionHit = (gy: number, x: number): boolean => {
-      if (!firstRun() || gy - 2 !== WELCOME_ACTION_ROW) return false;
-      const [x0, x1] = welcomeActionSpan();
-      return x >= x0 && x < x1;
+      return (
+        homeActionAtProjection(homeSurfaceProjection(), x, gy, sidebarW(), 0)?.source === "welcome"
+      );
     };
     /** The home item index under content-row gy (accounting for the welcome
      *  offset), or -1 when gy is above the first row / on the welcome block. */
     const homeItemIndexAt = (gy: number): number => {
-      const idx = gy - 2 - welcomeOffset();
-      return idx >= 0 ? idx : -1;
+      return homeItemIndexAtProjection(homeSurfaceProjection(), sidebarW(), gy, sidebarW(), 0);
     };
     const rollup = (): FleetRollup => {
       const r: FleetRollup = {
@@ -1839,6 +1820,39 @@ try {
       homeFooterHints()
         .map((h) => `${h.keys} ${h.label}`)
         .join("   ");
+    // A path-input line on HOME (`o` to open). null = not prompting.
+    const [pathPrompt, setPathPrompt] = createSignal<string | null>(null);
+    // A session-name input line on HOME (`n` / the [n new session] chip).
+    const [sessionPrompt, setSessionPrompt] = createSignal<string | null>(null);
+    const homeSurfaceProjection = createMemo(() =>
+      projectHomeSurface({
+        width: canvasCols(),
+        height: dims().height - TABBAR_H,
+        projects: projectsData(),
+        items: homeItems(),
+        selectedIndex: clampedSel(),
+        hovered:
+          hover()?.region === "home" ||
+          hover()?.region === "homechip" ||
+          hover()?.region === "homeagentchip" ||
+          hover()?.region === "welcomeopen" ||
+          hover()?.region === "button"
+            ? (hover() as {
+                region: "home" | "homechip" | "homeagentchip" | "welcomeopen" | "button";
+                index: number;
+              })
+            : null,
+        rollup: rollup(),
+        detail: detailLine(),
+        footerHint: homeFooter(),
+        sessionPrompt: sessionPrompt(),
+        pathPrompt: pathPrompt(),
+        quitHint: QUIT_HINT,
+        welcomeLine: WELCOME_LINE,
+        welcomeActionLabel: WELCOME_ACTION_LABEL,
+        welcomeTip,
+      }),
+    );
     const scrollOffsets = new Map<string, number>();
     let dirty = false;
     const markDirty = () => {
@@ -1856,10 +1870,6 @@ try {
     const [editorModified, setEditorModified] = createSignal(false);
     const [editorReadOnly, setEditorReadOnly] = createSignal<ReadOnlyReason>(null);
     const [editorMsg, setEditorMsg] = createSignal("");
-    // A path-input line on HOME (`o` to open). null = not prompting.
-    const [pathPrompt, setPathPrompt] = createSignal<string | null>(null);
-    // A session-name input line on HOME (`n` / the [n new session] chip).
-    const [sessionPrompt, setSessionPrompt] = createSignal<string | null>(null);
 
     // Visible text rows = full height minus tab bar (1) + header (1) + rule/banner
     // (1) + footer (1).
@@ -2425,7 +2435,7 @@ try {
     // the EDITOR (typing). Opening a file hands focus to the editor; esc hands it
     // back to the list.
     const [filesFocus, setFilesFocus] = createSignal<"list" | "editor">("list");
-    const filesListW = () => Math.max(20, Math.min(44, Math.floor(canvasCols() * 0.34)));
+    const filesListW = () => filesListWidth(canvasCols());
     /** The workspace directory driving both the file list and the diff panel. */
     const workspaceDir = () => contextDir() || invokeCwd;
     const fileStatusMap = createMemo(() => statusMapFromEntries(fileStatusEntries()));
@@ -2448,6 +2458,39 @@ try {
       const rel = relPath(top, n.path);
       return rel ? (fileStatusMap().get(rel) ?? null) : null;
     };
+    const filesSurfaceProjection = createMemo(() =>
+      projectFilesSurface({
+        width: canvasCols(),
+        height: dims().height - TABBAR_H,
+        workspaceDir: workspaceDir(),
+        editorPath: editorPath(),
+        editorModified: editorModified(),
+        editorCursor: editorCursor(),
+        editorLineCount: editorLines().length,
+        editorMessage: editorMsg(),
+        readOnly: editorReadOnly(),
+        filterQuery: filesQuery(),
+        focus: filesFocus(),
+        showHidden: showHiddenFiles(),
+        showIgnored: showIgnoredFiles(),
+        visibleRows: fileListVisible(),
+        totalRows: visibleFiles().length,
+        fileSelection: fileSel(),
+        fileTop: fileTop(),
+        editorVisible: editorVisible(),
+        editorTop: editorTop(),
+        editorTotalLines: editorLines().length,
+        hovered:
+          hover()?.region === "files" || hover()?.region === "button"
+            ? (hover() as { region: "files" | "button"; index: number })
+            : null,
+        statusFor: fileStatusFor,
+        readOnlyBanner: readOnlyBanner(editorReadOnly()),
+        footerBase: `j/k · enter open · [/] change · / filter · H dot:${
+          showHiddenFiles() ? "on" : "off"
+        } · I ign:${showIgnoredFiles() ? "on" : "off"} · ^s save · esc list · ^g home · ${QUIT_HINT}`,
+      }),
+    );
 
     // The gitignore matcher for the CURRENT workspace root (reloaded when the
     // root changes or the tree refreshes — cheap: one small file read).
@@ -5560,35 +5603,30 @@ try {
           return;
         }
         if (evt.name === "o") {
-          setPathPrompt("");
+          runHomeAction("open-file");
           return;
         }
         // `f` — open a folder (M22.5): the [f open folder] chip / welcome action /
         // palette command's keyboard twin. Launches the filesystem picker.
         if (evt.name === "f") {
-          void openFolderFlow();
+          runHomeAction("open-folder");
           return;
         }
         // `n` — the [n new session] chip's keyboard twin.
         if (evt.name === "n") {
-          setSessionPrompt("");
+          runHomeAction("new-session");
           return;
         }
         // `a` — the row [+ agent] chip's keyboard twin (M23.1): spawn an agent
         // for the selected row (or a fresh session when nothing is selected).
         if (evt.name === "a") {
-          newAgentFromHome(selectedHomeItem());
+          runHomeAction("new-agent");
           return;
         }
         // `d` — open the diff panel for the selected row's project dir (the
         // home item carries it via the team payload), adopting it as context.
         if (evt.name === "d") {
-          const r = selectedHomeItem();
-          if (r && r.kind === "session") {
-            setContextSession(r.session);
-            setContextDir(r.dir ?? invokeCwd);
-          }
-          enterDiff(selectedHomeDir() ?? invokeCwd);
+          runHomeAction("open-diff");
           return;
         }
         if (evt.name === "j" || evt.name === "down") {
@@ -5737,31 +5775,6 @@ try {
         ),
       };
     });
-    /** Buttons on the home footer (the last screen row): the app-handled home
-     *  keys (`n` new session, `o` open-file, `d` diff) as clickable chips. The
-     *  other footer hints advertise tmux-chrome binds this app's keyboard
-     *  doesn't own, so they stay plain text rather than dead buttons.
-     *  Right-aligned to the fixed edge. */
-    const homeButtons = createMemo<{ defs: HeaderButton[]; spans: Span[] }>(() => {
-      const defs: HeaderButton[] =
-        mode() === "home"
-          ? [
-              { id: "home-openfolder", label: "[f open folder]" },
-              { id: "home-new", label: "[n new session]" },
-              { id: "home-agent", label: "[a new agent]" },
-              { id: "home-open", label: "[o open]" },
-              { id: "home-diff", label: "[d diff]" },
-            ]
-          : [];
-      return {
-        defs,
-        spans: spansFromRight(
-          defs.map((d) => d.label),
-          buttonRightEdge(),
-          1,
-        ),
-      };
-    });
     // The focused pane and its window's zoom state, derived from the live geometry
     // (window_zoomed_flag is a window property, so every pane of the active window
     // reports the same value; reading the focused pane keeps the intent clear).
@@ -5787,6 +5800,38 @@ try {
         ),
       };
     });
+    const runHomeAction = (id: HomeActionId, itemIndex = clampedSel()) => {
+      if (id === "open-folder") void openFolderFlow();
+      else if (id === "new-agent") newAgentFromHome(homeItems()[itemIndex] ?? selectedHomeItem());
+      else if (id === "open-file") setPathPrompt("");
+      else if (id === "new-session") setSessionPrompt("");
+      else if (id === "primary") runHomeChip(itemIndex);
+      else if (id === "open-diff") {
+        const r = homeItems()[itemIndex] ?? selectedHomeItem();
+        const dir = r && r.kind !== "header" ? (r.dir ?? invokeCwd) : invokeCwd;
+        if (r && r.kind === "session") {
+          setContextSession(r.session);
+          setContextDir(dir);
+        }
+        enterDiff(dir);
+      }
+    };
+
+    const runFilesAction = (id: FilesActionId) => {
+      if (id === "save") saveEditor();
+      else if (id === "reload") {
+        const p = editorPath();
+        if (p) openEditor(p);
+      } else if (id === "filter") {
+        filesPreFilterPath = visibleFiles()[fileSel()]?.node.path ?? null;
+        setFilesQuery("");
+        setFileSel(0);
+        setFileTop(0);
+      } else if (id === "toggle-hidden") toggleHiddenFiles();
+      else if (id === "toggle-ignored") toggleIgnoredFiles();
+      else if (id === "refresh") refreshTree();
+    };
+
     /** Run a header/strip button by id. Reload re-reads the open file from disk
      *  (discarding unsaved edits — the ● dot warns first); split forks the focused
      *  pane via the control client, same command the context menu issues. */
@@ -5802,19 +5847,6 @@ try {
       } else if (id === "zoom") {
         const pid = mirror?.focusedPane();
         if (pid) void mirror?.command(`resize-pane -Z -t ${pid}`).catch(() => {});
-      } else if (id === "home-openfolder") void openFolderFlow();
-      else if (id === "home-agent") newAgentFromHome(selectedHomeItem());
-      else if (id === "home-open") setPathPrompt("");
-      else if (id === "home-new") setSessionPrompt("");
-      else if (id === "home-diff") {
-        // Mirror the home `d` key: adopt the selected session's dir as context and
-        // open its diff.
-        const r = selectedHomeItem();
-        if (r && r.kind === "session") {
-          setContextSession(r.session);
-          setContextDir(r.dir ?? invokeCwd);
-        }
-        enterDiff(selectedHomeDir() ?? invokeCwd);
       }
     };
 
@@ -5860,60 +5892,27 @@ try {
       if (id === "tab-palette") openPalette();
       else if (id === "tab-context" && contextSession()) switchTarget(contextSession());
     };
-    /** A home row's right-aligned verb chip span (sessions/projects only). The
-     *  row box runs flush to the terminal's right edge, so the span anchors
-     *  there — same for every row of a kind. */
-    const homeChipLabel = (it: HomeItem | undefined): string =>
-      it?.kind === "session"
-        ? HOME_CHIP_SESSION
-        : it?.kind === "project"
-          ? HOME_CHIP_PROJECT
-          : it?.kind === "recent"
-            ? HOME_CHIP_RECENT
-            : "";
-    /** A home row's chip list, left to right: session/project rows lead with
-     *  the [+ agent] spawn chip (M23.1), then every row's PRIMARY verb chip.
-     *  The render walks these defs and the hit-test lays the SAME labels out
-     *  from the right edge, so clicks land exactly on what's drawn. */
-    const homeRowChips = (
-      it: HomeItem | undefined,
-    ): { id: "agent" | "primary"; label: string }[] => {
-      const defs: { id: "agent" | "primary"; label: string }[] = [];
-      if (it?.kind === "session" || it?.kind === "project") {
-        defs.push({ id: "agent", label: HOME_CHIP_AGENT });
-      }
-      const primary = homeChipLabel(it);
-      if (primary) defs.push({ id: "primary", label: primary });
-      return defs;
-    };
     /** Which chip (if any) column `x` hits on the row for `it`. */
-    const homeChipAt = (it: HomeItem | undefined, x: number): "agent" | "primary" | null => {
-      const defs = homeRowChips(it);
-      if (defs.length === 0) return null;
-      const i = spanHit(
-        spansFromRight(
-          defs.map((d) => d.label),
-          buttonRightEdge(),
-          0,
-        ),
-        x,
+    const homeChipAt = (
+      it: HomeItem | undefined,
+      x: number,
+      itemIndex: number,
+    ): "agent" | "primary" | null => {
+      if (!it) return null;
+      const localX = x - sidebarW();
+      const row = homeSurfaceProjection().rows.find(
+        (candidate) => candidate.itemIndex === itemIndex,
       );
-      return i >= 0 ? defs[i]!.id : null;
+      const action = row?.actionSpans.find(
+        (span) => localX >= span.start && localX < span.start + span.width,
+      );
+      if (!action) return null;
+      return action.id === "new-agent" ? "agent" : action.id === "primary" ? "primary" : null;
     };
     /** The `[+ agent]` chip's x-span on the sidebar's AGENTS header row and the
      *  empty-state row (M24.1) — right-anchored flush to the sidebar's edge; the
      *  render (label · flexGrow spacer · chip) lays out the same cells. */
     const agentsChipSpans = createMemo(() => spansFromRight([AGENTS_ADD_CHIP], sidebarW(), 0));
-    /** A home row's muted meta text — sessions keep the exact `3w · project`
-     *  string the panel always showed; projects show their dir + origin. */
-    const homeRowMeta = (it: HomeItem): string =>
-      it.kind === "session"
-        ? `${it.windows}w${it.project === it.session ? "" : ` · ${it.project}`}`
-        : it.kind === "project"
-          ? `${it.dir ?? ""} · registered`
-          : it.kind === "recent"
-            ? `${dirname(it.dir)} · recent`
-            : "";
 
     /** Resolve the hovered {region, index} from pointer coords with the SAME
      *  geometry the click router uses, then update `hover` (no-op unless changed).
@@ -5959,9 +5958,13 @@ try {
       }
       const m = mode();
       if (m === "home") {
-        if (y === dims().height - 1) {
-          const i = spanHit(homeButtons().spans, x);
-          setHoverIf(i >= 0 ? { region: "button", index: i } : null);
+        const action = homeActionAtProjection(homeSurfaceProjection(), x, gy, sidebarW(), 0);
+        if (action?.source === "footer") {
+          setHoverIf(
+            action.actionIndex !== undefined
+              ? { region: "button", index: action.actionIndex }
+              : null,
+          );
           return;
         }
         if (welcomeActionHit(gy, x)) {
@@ -5974,7 +5977,7 @@ try {
           setHoverIf(null);
           return;
         }
-        const chip = homeChipAt(it, x);
+        const chip = homeChipAt(it, x, idx);
         setHoverIf({
           region: chip === "agent" ? "homeagentchip" : chip === "primary" ? "homechip" : "home",
           index: idx,
@@ -5983,8 +5986,12 @@ try {
       }
       if (m === "editor") {
         if (gy === 0) {
-          const i = spanHit(headerButtons().spans, x);
-          setHoverIf(i >= 0 ? { region: "button", index: i } : null);
+          const hit = filesHitTest(filesSurfaceProjection(), x - sidebarW(), gy);
+          setHoverIf(
+            hit?.area === "header" && hit.actionIndex !== undefined
+              ? { region: "button", index: hit.actionIndex }
+              : null,
+          );
           return;
         }
         const contentY = gy - HEADER_ROWS;
@@ -6754,17 +6761,9 @@ try {
       // (gy=0) + rule (gy=1), so a click at row gy hits home item `gy - 2`.
       if (mode() === "home") {
         if (type !== "down") return;
-        // The footer occupies the last screen row; its right-aligned chips
-        // ([n new session] / [o open] / [d diff]) are hit-tested there first.
-        if (y === dims().height - 1) {
-          const hb = homeButtons();
-          const i = spanHit(hb.spans, x);
-          if (i >= 0) runButton(hb.defs[i]!.id);
-          return;
-        }
-        // The first-run welcome's "open a folder" action (M22.5).
-        if (welcomeActionHit(gy, x)) {
-          void openFolderFlow();
+        const action = homeActionAtProjection(homeSurfaceProjection(), x, gy, sidebarW(), 0);
+        if (action?.source === "footer" || action?.source === "welcome") {
+          runHomeAction(action.id, action.itemIndex);
           return;
         }
         // A row click: the right-aligned verb chips win over the row body
@@ -6773,12 +6772,12 @@ try {
         const idx = homeItemIndexAt(gy);
         const it = homeItems()[idx];
         if (!it || it.kind === "header") return;
-        const chip = homeChipAt(it, x);
-        if (chip === "agent") {
+        if (action?.source === "row") {
           setSel(idx);
-          newAgentFromHome(it);
-        } else if (chip === "primary") runHomeChip(idx);
-        else activateHomeItem(idx);
+          runHomeAction(action.id, idx);
+          return;
+        }
+        activateHomeItem(idx);
         return;
       }
       // FILES (editor) mode: header (gy=0) + rule/banner (gy=1), then a two-column
@@ -6797,11 +6796,10 @@ try {
           return;
         }
         if (type !== "down") return;
-        // The header row (gy=0) carries the right-aligned save/reload buttons.
+        // The header row (gy=0) carries the projected Files actions.
         if (gy === 0) {
-          const hb = headerButtons();
-          const i = spanHit(hb.spans, x);
-          if (i >= 0) runButton(hb.defs[i]!.id);
+          const hit = filesHitTest(filesSurfaceProjection(), x - sidebarW(), gy);
+          if (hit?.area === "header" && hit.actionId) runFilesAction(hit.actionId);
           return;
         }
         const contentY = gy - HEADER_ROWS;
@@ -7526,148 +7524,11 @@ try {
               )}
             </Show>
             <Show when={!activeCompositeLayout() && mode() === "home"}>
-              {/* HOME header (y=0) + rule (y=1); rows below start at y=2 — the
-              coordinate `route` reverses for a home-row click. */}
-              <box paddingLeft={1} flexDirection="row" gap={1}>
-                <text fg={ACCENT} attributes={1}>
-                  tmux-ide
-                </text>
-                <text fg={MUTED}>{`· ${rollup().sessions} sessions ·`}</text>
-                <For each={rollupChips(rollup())}>
-                  {(c) => (
-                    <text
-                      fg={STATUS_COLOR[c.status]}
-                    >{`${STATUS_GLYPH[c.status]} ${c.count}`}</text>
-                  )}
-                </For>
-              </box>
-              <text fg={MUTED}>{"─".repeat(Math.max(4, canvasCols() - 2))}</text>
-              {/* FIRST-RUN welcome (M22.5): exactly WELCOME_ROWS rows so the home
-                row math below simply shifts by welcomeOffset(). Each line is
-                centered with the SAME centerPad the click router hit-tests, so
-                the "open a folder" action lands where it's drawn. */}
-              <Show when={firstRun()}>
-                <box flexDirection="column">
-                  <box height={1} />
-                  <box flexDirection="row">
-                    <text>{" ".repeat(centerPad(canvasCols(), WELCOME_LINE.length))}</text>
-                    <text fg={DEFAULT_FG}>{WELCOME_LINE}</text>
-                  </box>
-                  <box height={1} />
-                  <box flexDirection="row">
-                    <text>{" ".repeat(centerPad(canvasCols(), WELCOME_ACTION_LABEL.length))}</text>
-                    <text
-                      fg={BUTTON_FG}
-                      bg={isHovered("welcomeopen", 0) ? BUTTON_HOVER_BG : BUTTON_BG}
-                    >
-                      {WELCOME_ACTION_LABEL}
-                    </text>
-                  </box>
-                  <box height={1} />
-                  <box flexDirection="row">
-                    <text>{" ".repeat(centerPad(canvasCols(), welcomeTip.length))}</text>
-                    <text fg={MUTED}>{welcomeTip}</text>
-                  </box>
-                </box>
-              </Show>
-              {/* HOME items (M21.9): live-session rows, then the registry
-                section (header + launchable project rows), then (M22.5) the
-                recently-opened folders. One uniform selectable-row layout —
-                status glyph / title / meta — plus a right-aligned verb CHIP the
-                router hit-tests by the same right-anchored span math
-                (homeChipHit). Headers are inert. */}
-              <box flexDirection="column">
-                <For each={homeItems()}>
-                  {(it, i) => (
-                    <Show
-                      when={it.kind !== "header"}
-                      fallback={
-                        <box height={1} paddingLeft={1}>
-                          <text fg={MUTED}>{it.kind === "header" ? `· ${it.label}` : ""}</text>
-                        </box>
-                      }
-                    >
-                      <box
-                        flexDirection="row"
-                        gap={1}
-                        paddingLeft={1}
-                        height={1}
-                        backgroundColor={
-                          i() === clampedSel()
-                            ? TAB_ACTIVE_BG
-                            : isHovered("home", i())
-                              ? HOVER_BG
-                              : DEFAULT_BG
-                        }
-                      >
-                        <text fg={it.kind === "session" ? STATUS_COLOR[it.status] : DIR_FG}>
-                          {it.kind === "session"
-                            ? STATUS_GLYPH[it.status]
-                            : it.kind === "recent"
-                              ? "↺"
-                              : "▸"}
-                        </text>
-                        <text fg={i() === clampedSel() ? DEFAULT_FG : MUTED} attributes={1}>
-                          {it.kind === "session"
-                            ? it.session
-                            : it.kind === "project"
-                              ? it.name
-                              : it.kind === "recent"
-                                ? it.name
-                                : ""}
-                        </text>
-                        <text fg={MUTED}>{homeRowMeta(it)}</text>
-                        <box flexGrow={1} />
-                        {/* The row's chips (M23.1: [+ agent] before the primary
-                          verb) — the SAME defs homeChipAt lays out from the
-                          right edge, so hover/click match cell-for-cell. */}
-                        <For each={homeRowChips(it)}>
-                          {(c) => (
-                            <text
-                              fg={BUTTON_FG}
-                              bg={
-                                isHovered(c.id === "agent" ? "homeagentchip" : "homechip", i())
-                                  ? BUTTON_HOVER_BG
-                                  : BUTTON_BG
-                              }
-                            >
-                              {c.label}
-                            </text>
-                          )}
-                        </For>
-                      </box>
-                    </Show>
-                  )}
-                </For>
-              </box>
-              <box flexGrow={1} />
-              <Show
-                when={sessionPrompt() !== null}
-                fallback={
-                  <Show
-                    when={pathPrompt() !== null}
-                    fallback={
-                      <box paddingLeft={1}>
-                        <text fg={ACCENT}>{detailLine()}</text>
-                      </box>
-                    }
-                  >
-                    <box paddingLeft={1} flexDirection="row">
-                      <text fg={ACCENT}>{"open file: "}</text>
-                      <text fg={DEFAULT_FG}>{`${pathPrompt() ?? ""}▏`}</text>
-                    </box>
-                  </Show>
-                }
-              >
-                <box paddingLeft={1} flexDirection="row">
-                  <text fg={ACCENT}>{"new session: "}</text>
-                  <text fg={DEFAULT_FG}>{`${sessionPrompt() ?? ""}▏`}</text>
-                </box>
-              </Show>
-              <box paddingLeft={1} flexDirection="row" gap={1}>
-                <text fg={MUTED}>{homeFooter()}</text>
-                {buttonRow(homeButtons)}
-              </box>
+              <HomeSurface
+                theme={semanticTheme()}
+                projection={homeSurfaceProjection()}
+                rollup={rollup()}
+              />
             </Show>
             <Show when={!activeCompositeLayout() && mode() === "mirror"}>
               <box paddingLeft={1} flexDirection="row" gap={1}>
@@ -7898,134 +7759,17 @@ try {
               </Show>
             </Show>
             <Show when={!activeCompositeLayout() && mode() === "editor"}>
-              {/* FILES tab: header (gy=0) · rule/banner (gy=1) · two-column body
-              (gy=2+): the file LIST on the left, the editor on the right. `route`
-              reverses this geometry for wheel + click. NO onMouse on the rows —
-              the main column container routes everything. */}
-              <box paddingLeft={1} flexDirection="row" gap={1}>
-                <text fg={ACCENT} attributes={1}>
-                  {editorPath() ? basename(editorPath()!) : "files"}
-                </text>
-                <Show when={editorModified()}>
-                  <text fg={MODIFIED_FG}>●</text>
-                </Show>
-                <text fg={MUTED}>{`${editorCursor().row + 1}:${editorCursor().col + 1}`}</text>
-                <text fg={MUTED}>{`${editorLines().length}L`}</text>
-                <text fg={MUTED}>{editorMsg()}</text>
-                <Show when={filesQuery() !== null}>
-                  <text fg={ACCENT}>{`/${filesQuery()}▏`}</text>
-                </Show>
-                {buttonRow(headerButtons)}
-              </box>
-              <Show
-                when={readOnlyBanner(editorReadOnly())}
-                fallback={<text fg={MUTED}>{"─".repeat(Math.max(4, canvasCols() - 2))}</text>}
-              >
-                <box paddingLeft={1}>
-                  <text fg={BANNER_FG}>{readOnlyBanner(editorReadOnly())}</text>
-                </box>
-              </Show>
-              <box flexDirection="row" flexGrow={1}>
-                {/* Left: the workspace file list (one-level expandable). */}
-                <box width={filesListW()} flexDirection="column" backgroundColor={GUTTER_BG}>
-                  <For each={fileListVisible()}>
-                    {(row) => {
-                      const n = row.node;
-                      const selected = () => row.index === fileSel() && filesFocus() === "list";
-                      // Reactive: the status map refreshes on the watcher/poll.
-                      const letter = () => fileStatusFor(n);
-                      const prefix =
-                        "  ".repeat(n.depth) + (n.isDir ? (n.expanded ? "▾ " : "▸ ") : "  ");
-                      const label = (prefix + n.name).slice(0, filesListW() - 4);
-                      return (
-                        <box
-                          paddingLeft={1}
-                          height={1}
-                          flexDirection="row"
-                          backgroundColor={
-                            selected()
-                              ? TAB_ACTIVE_BG
-                              : isHovered("files", row.index)
-                                ? HOVER_BG
-                                : GUTTER_BG
-                          }
-                        >
-                          <text
-                            flexGrow={1}
-                            fg={
-                              n.ignored
-                                ? DIFF_META_FG // gitignored: dimmed when shown
-                                : n.isDir
-                                  ? DIR_FG
-                                  : selected()
-                                    ? DEFAULT_FG
-                                    : MUTED
-                            }
-                          >
-                            {label}
-                          </text>
-                          <Show when={letter()}>
-                            <text fg={STATUS_LETTER_FG[letter()!] ?? DEFAULT_FG}>
-                              {` ${letter()!}`}
-                            </text>
-                          </Show>
-                        </box>
-                      );
-                    }}
-                  </For>
-                </box>
-                {/* Right: the editor viewport (gutter + text runs + cursor) with a
-                  right-edge scrollbar overlaid on the last column. */}
-                <box position="relative" flexGrow={1} flexDirection="column">
-                  {scrollbarOverlay(editorScrollGeom)}
-                  <For each={editorVisible()}>
-                    {(ln) => {
-                      const gw = gutterWidth(editorLines().length);
-                      // An active selection on this line inverse-tints its span
-                      // (and wins over the cursor cell, which sits at the drag head
-                      // on the selection boundary anyway).
-                      const selR = editorSelRange(ln.num - 1, ln.text.length);
-                      return (
-                        <box flexDirection="row" height={1}>
-                          <text bg={GUTTER_BG} fg={GUTTER_FG}>
-                            {formatGutter(ln.num, gw)}
-                          </text>
-                          <Show
-                            when={selR}
-                            fallback={
-                              <Show
-                                when={ln.cursorCol !== null}
-                                fallback={<text fg={DEFAULT_FG}>{ln.text}</text>}
-                              >
-                                <text fg={DEFAULT_FG}>{ln.text.slice(0, ln.cursorCol!)}</text>
-                                <text fg={DEFAULT_BG} bg={CURSOR_BG}>
-                                  {ln.text[ln.cursorCol!] ?? " "}
-                                </text>
-                                <text fg={DEFAULT_FG}>{ln.text.slice(ln.cursorCol! + 1)}</text>
-                              </Show>
-                            }
-                          >
-                            <text fg={DEFAULT_FG}>{ln.text.slice(0, selR!.from)}</text>
-                            <text fg={DEFAULT_FG} attributes={ATTR_INVERSE}>
-                              {ln.text.slice(selR!.from, selR!.to + 1) || " "}
-                            </text>
-                            <text fg={DEFAULT_FG}>{ln.text.slice(selR!.to + 1)}</text>
-                          </Show>
-                        </box>
-                      );
-                    }}
-                  </For>
-                </box>
-              </box>
-              <box paddingLeft={1}>
-                <text fg={MUTED}>
-                  {`j/k · enter open · [/] change · / filter · H dot:${
-                    showHiddenFiles() ? "on" : "off"
-                  } · I ign:${
-                    showIgnoredFiles() ? "on" : "off"
-                  } · ^s save · esc list · ^g home · ${QUIT_HINT}`}
-                </text>
-              </box>
+              <FilesSurface
+                theme={semanticTheme()}
+                projection={filesSurfaceProjection()}
+                colors={{
+                  gutterBg: GUTTER_BG,
+                  gutterFg: GUTTER_FG,
+                  cursorBg: CURSOR_BG,
+                  modifiedFg: MODIFIED_FG,
+                  statusLetterFg: STATUS_LETTER_FG,
+                }}
+              />
             </Show>
             <Show when={!activeCompositeLayout() && mode() === "diff"}>
               {/* header (y=0) · rule (y=1) · two-column body (y=2+) · footer
