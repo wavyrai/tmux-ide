@@ -1,0 +1,141 @@
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
+
+exports[`RecipesGallery OpenTUI renderer renders deterministic %sx%s dark gallery frame 1`] = `
+" tmux-ide recipe gallery · dark
+ ready
+┌─────────────────────────────────────┐  Board  History  Detail
+│ ○ Panel                             │  segmented control
+└─────────────────────────────────────┘
+ ○ SectionHeader · detail               │ Search…                              │
+○ consistent spacing               pure  shell only; app owns text
+
+● Blocked selected row keeps s… blocked t toggle theme
+! Attention beats pointer hover   flash enter activate focused recipe
+× Disabled row                   locked
+ › Run action                            ○ Nothing here
+ … Loading                                 empty/loading states stay explicit
+ × Disabled
+ blocked    done    idle                Scroll content                        █
+                                        top follows model                     ░
+                                                                              ░
+
+
+
+
+
+
+ tab/j move · enter/space activate · t theme · mouse selects"
+`;
+
+exports[`RecipesGallery OpenTUI renderer renders deterministic %sx%s light gallery frame 1`] = `
+" tmux-ide recipe gallery · light
+ ready
+┌─────────────────────────────────────┐  Board  History  Detail
+│ ○ Panel                             │  segmented control
+└─────────────────────────────────────┘
+ ○ SectionHeader · detail               │ Search…                              │
+○ consistent spacing               pure  shell only; app owns text
+
+● Blocked selected row keeps s… blocked t toggle theme
+! Attention beats pointer hover   flash enter activate focused recipe
+× Disabled row                   locked
+ › Run action                            ○ Nothing here
+ … Loading                                 empty/loading states stay explicit
+ × Disabled
+ blocked    done    idle                Scroll content                        █
+                                        top follows model                     ░
+                                                                              ░
+
+
+
+
+
+
+ tab/j move · enter/space activate · t theme · mouse selects"
+`;
+
+exports[`RecipesGallery OpenTUI renderer renders deterministic %sx%s dark gallery frame 2`] = `
+" tmux-ide recipe gallery · dark
+ ready
+┌─────────────────────────────────────────────────────────┐   Board  History  Detail
+│ ○ Panel                                                 │   segmented control
+└─────────────────────────────────────────────────────────┘
+ ○ SectionHeader · detail                                    │ Search…                                                 │
+○ consistent spacing                                   pure   shell only; app owns text
+
+● Blocked selected row keeps status marker          blocked  t toggle theme
+! Attention beats pointer hover                       flash  enter activate focused recipe
+× Disabled row                                       locked
+ › Run action                                                 ○ Nothing here
+ … Loading                                                      empty/loading states stay explicit
+ × Disabled
+ blocked    done    idle                                     Scroll content                                           █
+                                                             top follows model                                        ░
+                                                                                                                      ░
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ tab/j move · enter/space activate · t theme · mouse selects"
+`;
+
+exports[`RecipesGallery OpenTUI renderer renders deterministic %sx%s light gallery frame 2`] = `
+" tmux-ide recipe gallery · light
+ ready
+┌─────────────────────────────────────────────────────────┐   Board  History  Detail
+│ ○ Panel                                                 │   segmented control
+└─────────────────────────────────────────────────────────┘
+ ○ SectionHeader · detail                                    │ Search…                                                 │
+○ consistent spacing                                   pure   shell only; app owns text
+
+● Blocked selected row keeps status marker          blocked  t toggle theme
+! Attention beats pointer hover                       flash  enter activate focused recipe
+× Disabled row                                       locked
+ › Run action                                                 ○ Nothing here
+ … Loading                                                      empty/loading states stay explicit
+ × Disabled
+ blocked    done    idle                                     Scroll content                                           █
+                                                             top follows model                                        ░
+                                                                                                                      ░
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ tab/j move · enter/space activate · t theme · mouse selects"
+`;
