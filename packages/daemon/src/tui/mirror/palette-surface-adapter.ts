@@ -11,10 +11,49 @@ export interface PaletteSurfaceAdapterContext {
   currentViewId?: string | null;
   currentSession?: string | null;
   syncOn?: boolean;
-  editorAvailable?: boolean;
+  saveState?: PaletteSaveState;
   /** Return a reason to disable an otherwise offered action. */
   disabledReason?: (action: PaletteAction) => string | null | undefined;
   fallbackGroup?: string;
+}
+
+export interface PaletteSaveState {
+  hasBuffer: boolean;
+  hasPath: boolean;
+  readOnlyReason: string | null;
+}
+
+export interface PaletteActionLevelRestore {
+  selectedCommandId: string | null;
+  scrollTop: number;
+}
+
+/**
+ * Single-writer authority for the asynchronous tmux paste-buffer picker.
+ * Leaving/reopening the palette invalidates all prior request generations, and
+ * starting a newer request prevents an older completion from winning.
+ */
+export class PaletteBufferLoadGate {
+  #generation = 0;
+
+  begin(): number {
+    this.#generation += 1;
+    return this.#generation;
+  }
+
+  invalidate(): void {
+    this.#generation += 1;
+  }
+
+  isCurrent(generation: number): boolean {
+    return generation === this.#generation;
+  }
+
+  commit(generation: number, effect: () => void): boolean {
+    if (!this.isCurrent(generation)) return false;
+    effect();
+    return true;
+  }
 }
 
 export interface PaletteSurfaceEntry {
@@ -240,7 +279,10 @@ function disabledReason(
 ): string | null {
   const explicit = context.disabledReason?.(action)?.trim();
   if (explicit) return explicit;
-  if (action.kind === "save" && context.editorAvailable === false) return "No file is open";
+  if (action.kind === "save" && context.saveState) {
+    if (!context.saveState.hasBuffer || !context.saveState.hasPath) return "No file is open";
+    if (context.saveState.readOnlyReason) return "File is read-only";
+  }
   return null;
 }
 
@@ -312,6 +354,18 @@ export function paletteActionForCommand(
   return entry && !entry.descriptor.disabledReason ? entry.action : null;
 }
 
+/** The only action-level activation gate; disabled/missing rows never reach app effects. */
+export function dispatchPaletteCommand(
+  entries: readonly PaletteSurfaceEntry[],
+  commandId: string | null,
+  execute: (action: PaletteAction) => void,
+): boolean {
+  const action = paletteActionForCommand(entries, commandId);
+  if (!action) return false;
+  execute(action);
+  return true;
+}
+
 export function ensurePaletteSelectionVisible(
   projection: CommandPaletteProjection,
   entries: readonly PaletteSurfaceEntry[],
@@ -324,6 +378,21 @@ export function ensurePaletteSelectionVisible(
   const entry = entries.find((candidate) => candidate.id === commandId);
   if (!entry) return projection.scrollTop;
   return Math.max(0, Math.min(entry.candidateIndex, Math.max(0, projection.contentRowCount - 1)));
+}
+
+/** Return from the tmux buffer picker to its visible, selected parent action. */
+export function restorePaletteActionLevelFromBuffers(
+  projection: CommandPaletteProjection,
+  entries: readonly PaletteSurfaceEntry[],
+): PaletteActionLevelRestore {
+  const parent = entries.find(
+    (entry) => entry.action.kind === "paste-buffer" && !entry.descriptor.disabledReason,
+  );
+  const selectedCommandId = parent?.id ?? firstEnabledPaletteCommandId(entries);
+  return {
+    selectedCommandId,
+    scrollTop: ensurePaletteSelectionVisible(projection, entries, selectedCommandId),
+  };
 }
 
 export function appendPalettePaste(query: string, text: string): string {

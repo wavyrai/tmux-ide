@@ -3,10 +3,13 @@ import type { PaletteAction, PaletteRow } from "./palette.ts";
 import {
   adaptPaletteRowsToCommands,
   appendPalettePaste,
+  dispatchPaletteCommand,
   ensurePaletteSelectionVisible,
   firstEnabledPaletteCommandId,
+  PaletteBufferLoadGate,
   paletteActionForCommand,
   paletteCommandId,
+  restorePaletteActionLevelFromBuffers,
   stepEnabledPaletteCommandId,
 } from "./palette-surface-adapter.ts";
 import {
@@ -28,6 +31,11 @@ const terminals: PaletteAction = {
   label: "Switch tab: Terminal",
 };
 const quit: PaletteAction = { kind: "quit", label: "Quit" };
+const writableSaveState = {
+  hasBuffer: true,
+  hasPath: true,
+  readOnlyReason: null,
+};
 
 describe("live command palette adapter", () => {
   it("preserves ranked groups while projecting semantic command metadata", () => {
@@ -41,7 +49,10 @@ describe("live command palette adapter", () => {
         actionRow(home, "F1"),
         actionRow(quit, "⌘Q"),
       ],
-      { currentTab: "terminal", editorAvailable: false },
+      {
+        currentTab: "terminal",
+        saveState: { hasBuffer: false, hasPath: false, readOnlyReason: null },
+      },
     );
 
     expect(entries.map((entry) => entry.action)).toEqual([terminals, save, home, quit]);
@@ -104,7 +115,7 @@ describe("live command palette adapter", () => {
         actionRow(home),
         actionRow(quit),
       ],
-      { editorAvailable: false },
+      { saveState: { hasBuffer: false, hasPath: false, readOnlyReason: null } },
     );
     const selected = firstEnabledPaletteCommandId(entries);
     expect(selected).toBe(paletteCommandId(terminals));
@@ -112,6 +123,37 @@ describe("live command palette adapter", () => {
     expect(stepEnabledPaletteCommandId(entries, paletteCommandId(home), -1)).toBe(selected);
     expect(paletteActionForCommand(entries, paletteCommandId(save))).toBeNull();
     expect(paletteActionForCommand(entries, paletteCommandId(quit))).toBe(quit);
+
+    const executed: PaletteAction[] = [];
+    expect(
+      dispatchPaletteCommand(entries, paletteCommandId(save), (action) => executed.push(action)),
+    ).toBe(false);
+    expect(executed).toEqual([]);
+    expect(
+      dispatchPaletteCommand(entries, paletteCommandId(quit), (action) => executed.push(action)),
+    ).toBe(true);
+    expect(executed).toEqual([quit]);
+  });
+
+  it.each([
+    [
+      "missing buffer",
+      { hasBuffer: false, hasPath: true, readOnlyReason: null },
+      "No file is open",
+    ],
+    ["missing path", { hasBuffer: true, hasPath: false, readOnlyReason: null }, "No file is open"],
+    [
+      "read-only file",
+      { hasBuffer: true, hasPath: true, readOnlyReason: "binary" },
+      "File is read-only",
+    ],
+    ["writable editor", writableSaveState, null],
+  ] as const)("maps the %s Save executor preconditions exactly", (_label, saveState, reason) => {
+    const entries = adaptPaletteRowsToCommands([actionRow(save), actionRow(quit)], { saveState });
+    const saveEntry = entries[0]!;
+
+    expect(saveEntry.descriptor.disabledReason).toBe(reason);
+    expect(paletteActionForCommand(entries, saveEntry.id)).toBe(reason ? null : save);
   });
 
   it("keeps keyboard selection visible after grouped overflow", () => {
@@ -155,9 +197,77 @@ describe("live command palette adapter", () => {
     );
   });
 
+  it("returns from paste buffers with the parent selected and visible", () => {
+    const actions: PaletteAction[] = [
+      ...Array.from(
+        { length: 10 },
+        (_, index): PaletteAction => ({
+          kind: "go-file",
+          path: `src/before-${index}.ts`,
+          label: `Before ${index}`,
+        }),
+      ),
+      { kind: "paste-buffer", label: "Paste buffer…" },
+      quit,
+    ];
+    const entries = adaptPaletteRowsToCommands(
+      actions.map((action) => actionRow(action)),
+      { fallbackGroup: "Commands", saveState: writableSaveState },
+    );
+    const parentId = entries.find((entry) => entry.action.kind === "paste-buffer")!.id;
+    const atTop = projectCommandPalette({
+      width: 120,
+      height: 40,
+      query: "",
+      commands: entries.map((entry) => entry.descriptor),
+      selectedCommandId: parentId,
+      scrollTop: 0,
+    });
+    expect(atTop.rows.some((row) => row.kind === "command" && row.commandId === parentId)).toBe(
+      false,
+    );
+
+    const restore = restorePaletteActionLevelFromBuffers(atTop, entries);
+    const restored = projectCommandPalette({
+      width: 120,
+      height: 40,
+      query: "",
+      commands: entries.map((entry) => entry.descriptor),
+      selectedCommandId: restore.selectedCommandId,
+      scrollTop: restore.scrollTop,
+    });
+
+    expect(restore.selectedCommandId).toBe(parentId);
+    expect(restored.rows).toContainEqual(
+      expect.objectContaining({ kind: "command", commandId: parentId, selected: true }),
+    );
+  });
+
+  it("rejects stale, closed, reopened, and overlapping buffer loads", () => {
+    const gate = new PaletteBufferLoadGate();
+    const committed: string[] = [];
+    const slow = gate.begin();
+    const fast = gate.begin();
+
+    expect(gate.commit(slow, () => committed.push("slow"))).toBe(false);
+    expect(gate.commit(fast, () => committed.push("fast"))).toBe(true);
+    expect(committed).toEqual(["fast"]);
+
+    const closed = gate.begin();
+    gate.invalidate();
+    expect(gate.commit(closed, () => committed.push("closed"))).toBe(false);
+
+    const beforeReopen = gate.begin();
+    gate.invalidate();
+    const afterReopen = gate.begin();
+    expect(gate.commit(beforeReopen, () => committed.push("before-reopen"))).toBe(false);
+    expect(gate.commit(afterReopen, () => committed.push("after-reopen"))).toBe(true);
+    expect(committed).toEqual(["fast", "after-reopen"]);
+  });
+
   it("routes command, disabled, retry, and outside pointer hits semantically", () => {
     const entries = adaptPaletteRowsToCommands([actionRow(save), actionRow(quit)], {
-      editorAvailable: false,
+      saveState: { hasBuffer: false, hasPath: false, readOnlyReason: null },
     });
     const projection = projectCommandPalette({
       width: 120,

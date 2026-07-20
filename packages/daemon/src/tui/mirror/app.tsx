@@ -316,9 +316,11 @@ import {
 import {
   adaptPaletteRowsToCommands,
   appendPalettePaste,
+  dispatchPaletteCommand,
   ensurePaletteSelectionVisible,
   firstEnabledPaletteCommandId,
-  paletteActionForCommand,
+  PaletteBufferLoadGate,
+  restorePaletteActionLevelFromBuffers,
   stepEnabledPaletteCommandId,
 } from "./palette-surface-adapter.ts";
 import {
@@ -3937,6 +3939,8 @@ try {
     // mouse hits, lifecycle, and execution through the existing action executor.
     const [paletteOpen, setPaletteOpen] = createSignal(false);
     const [paletteQuery, setPaletteQuery] = createSignal("");
+    const paletteBufferLoadGate = new PaletteBufferLoadGate();
+    onCleanup(() => paletteBufferLoadGate.invalidate());
     // "Go to file:" source (M24.6): the workspace's ignore-respecting file list,
     // repo-relative, capped, refreshed on each palette open (async — the rows
     // appear as soon as the list lands). `git ls-files -co --exclude-standard`
@@ -4027,8 +4031,11 @@ try {
         currentViewId: activeViewId(),
         currentSession: contextSession(),
         syncOn: syncOn(),
-        editorAvailable:
-          Boolean(editBuffer) || (mode() === "diff" && Boolean(diffVisibleFiles()[diffSel()])),
+        saveState: {
+          hasBuffer: Boolean(editBuffer),
+          hasPath: Boolean(editorPath()),
+          readOnlyReason: editorReadOnly(),
+        },
         fallbackGroup: paletteQuery().trim() ? "Results" : "Commands",
       });
     });
@@ -4067,7 +4074,21 @@ try {
         ensurePaletteSelectionVisible(paletteProjection(), paletteEntries(), commandId),
       );
     };
+    const closePalette = () => {
+      paletteBufferLoadGate.invalidate();
+      setPaletteBuffers(null);
+      setPaletteOpen(false);
+    };
+    const returnFromPaletteBuffers = () => {
+      paletteBufferLoadGate.invalidate();
+      const restore = restorePaletteActionLevelFromBuffers(paletteProjection(), paletteEntries());
+      setPaletteBuffers(null);
+      setPaletteSel(0);
+      setPaletteSelectedCommandId(restore.selectedCommandId);
+      setPaletteTop(restore.scrollTop);
+    };
     const openPalette = () => {
+      paletteBufferLoadGate.invalidate();
       setPaletteQuery("");
       setPaletteBuffers(null); // always open on the action list, never mid-picker
       resetPaletteSelection();
@@ -4130,7 +4151,7 @@ try {
         loadBuffers();
         return;
       }
-      setPaletteOpen(false);
+      closePalette();
       switch (a.kind) {
         case "search-scrollback":
           // The live-prompt entry to scrollback search — `/` only works while
@@ -4310,9 +4331,7 @@ try {
       const bufs = paletteBuffers();
       if (bufs !== null) {
         if (evt.name === "escape") {
-          setPaletteBuffers(null);
-          setPaletteSel(0);
-          setPaletteTop(0);
+          returnFromPaletteBuffers();
         } else if (evt.name === "return") {
           const b = bufs[Math.min(paletteSel(), bufs.length - 1)];
           if (b) pasteBuffer(b.name);
@@ -4324,10 +4343,9 @@ try {
         return;
       }
       if (evt.name === "escape") {
-        setPaletteOpen(false);
+        closePalette();
       } else if (evt.name === "return") {
-        const action = paletteActionForCommand(paletteEntries(), paletteSelectedCommandId());
-        if (action) runPaletteAction(action);
+        dispatchPaletteCommand(paletteEntries(), paletteSelectedCommandId(), runPaletteAction);
       } else if (evt.name === "up") {
         selectPaletteCommand(
           stepEnabledPaletteCommandId(paletteEntries(), paletteSelectedCommandId(), -1),
@@ -4988,22 +5006,28 @@ try {
      *  over the control client when a session is mirrored, else a plain execFile —
      *  buffers are global tmux state, so either reaches them. */
     const loadBuffers = () => {
+      const generation = paletteBufferLoadGate.begin();
       setPaletteBuffers([]); // loading / empty placeholder
       const fmt = `#{buffer_name}\t#{buffer_sample}`;
       const done = (lines: string[]) => {
-        setPaletteBuffers(parseBufferList(lines));
-        setPaletteSel(0);
-        setPaletteTop(0);
+        paletteBufferLoadGate.commit(generation, () => {
+          setPaletteBuffers(parseBufferList(lines));
+          setPaletteSel(0);
+          setPaletteTop(0);
+        });
+      };
+      const failed = () => {
+        paletteBufferLoadGate.commit(generation, () => setPaletteBuffers([]));
       };
       if (mirror) {
         void mirror
           .command(`list-buffers -F ${tmuxQuote(fmt)}`)
           .then(done)
-          .catch(() => setPaletteBuffers([]));
+          .catch(failed);
         return;
       }
       execFile("tmux", ["list-buffers", "-F", fmt], (err, stdout) => {
-        if (err) return setPaletteBuffers([]);
+        if (err) return failed();
         done(stdout.split("\n").filter((l) => l.length > 0));
       });
     };
@@ -5011,8 +5035,7 @@ try {
      *  latin1 (byte-per-char) so multibyte glyphs must be re-encoded latin1→utf8
      *  (the same fix the pane seed uses) before hitting the paste path. */
     const pasteBuffer = (name: string) => {
-      setPaletteOpen(false);
-      setPaletteBuffers(null);
+      closePalette();
       setPaletteSel(0);
       setPaletteTop(0);
       if (mirror) {
@@ -7059,15 +7082,14 @@ try {
           if (hit?.kind === "command") {
             if (e.button === 2 || hit.disabled) return;
             setPaletteSelectedCommandId(hit.commandId);
-            const action = paletteActionForCommand(paletteEntries(), hit.commandId);
-            if (action) runPaletteAction(action);
+            dispatchPaletteCommand(paletteEntries(), hit.commandId, runPaletteAction);
             return;
           }
           if (hit?.kind === "retry") {
             if (e.button !== 2) openPalette();
             return;
           }
-          if (hit === null) setPaletteOpen(false);
+          if (hit === null) closePalette();
           return;
         }
 
@@ -7100,7 +7122,7 @@ try {
           if (b) pasteBuffer(b.name);
           return;
         }
-        if (!paletteContains(g, x, y)) setPaletteOpen(false);
+        if (!paletteContains(g, x, y)) closePalette();
         return;
       }
       if (!dragging && routeWorkbenchPointer(e)) return;
