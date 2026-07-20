@@ -20,6 +20,26 @@ const handle = await startEmbeddedDaemon({ port: 6060 });
 await handle.stop();
 ```
 
+## Installed CLI ownership
+
+Native and desktop hosts should execute the installed root CLI with an argv
+array, not import this private workspace package and not construct a shell
+command:
+
+```text
+/resolved/path/to/tmux-ide  --headless
+```
+
+The command is deliberately foreground and config-free. The child it creates
+is the canonical daemon owner; readiness is the published `daemon.json` plus a
+successful `/health` probe. A compatible live owner is reused, stale metadata
+is replaced, and an incompatible wire protocol is rejected without takeover.
+`SIGINT`, `SIGTERM`, and the daemon shutdown action all await the same cleanup
+path before the process exits.
+
+See the user-facing [CLI reference](../../docs/content/docs/commands.mdx) for the
+complete native handoff and lifecycle contract.
+
 ## Subpath exports
 
 - `@tmux-ide/daemon` — embedded daemon entry, chat store, canonical-info helpers

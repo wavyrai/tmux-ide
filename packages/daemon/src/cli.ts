@@ -19,7 +19,7 @@ import { printCommandError } from "./lib/output.ts";
 import { resolveProjectConfigContext } from "./lib/config-context.ts";
 import { attachSession } from "@tmux-ide/tmux-bridge";
 import { tryDispatchAction } from "./lib/cli-action-bridge.ts";
-import { startEmbeddedDaemon, type EmbeddedDaemonHandle } from "./index.ts";
+import { runHeadlessDaemon } from "./lib/headless-daemon.ts";
 import type { ActionResult } from "./command-center/actions/contract.ts";
 
 /**
@@ -291,29 +291,21 @@ ${bold("Flags:")}
     return result;
   }
 
-  async function runHeadlessDaemon(): Promise<void> {
-    let handle: EmbeddedDaemonHandle | null = null;
-    let stopping = false;
-    const stop = async () => {
-      if (stopping) return;
-      stopping = true;
-      if (handle) await handle.stop();
-    };
-    process.on("SIGINT", () => {
-      void stop().finally(() => process.exit(0));
-    });
-    process.on("SIGTERM", () => {
-      void stop().finally(() => process.exit(0));
-    });
-
-    handle = await startEmbeddedDaemon({ bindHostname: "127.0.0.1" });
-    console.log(`Canonical daemon: ${handle.apiBaseUrl}`);
-    await new Promise<void>(() => undefined);
-  }
-
   try {
     if (values.headless) {
-      await runHeadlessDaemon();
+      if (positionals.length > 0) {
+        throw new IdeError("--headless cannot be combined with a command or project path", {
+          code: "USAGE",
+          exitCode: 2,
+        });
+      }
+      const pkg = await import("../../../package.json");
+      const outcome = await runHeadlessDaemon({
+        port: values.port,
+        json,
+        expectedVersion: pkg.default.version,
+      });
+      if (outcome === "stopped") process.exit(0);
     } else
       switch (command) {
         case "start":

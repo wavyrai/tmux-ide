@@ -105,16 +105,53 @@ See [Worktrees](/docs/worktrees).
 
 ## Server
 
-| Command                              | Description                       |
-| ------------------------------------ | --------------------------------- |
-| `tmux-ide command-center [--port N]` | Start the command-center HTTP API |
-| `tmux-ide server [--port N]`         | Start HTTP + PTY WebSocket server |
+| Command                              | Description                                         |
+| ------------------------------------ | --------------------------------------------------- |
+| `tmux-ide --headless [--port N]`     | Own the canonical daemon in this foreground process |
+| `tmux-ide command-center [--port N]` | Start the legacy command-center HTTP API            |
+| `tmux-ide server [--port N]`         | Start the legacy HTTP + PTY WebSocket server        |
+
+### Native and desktop handoff
+
+`--headless` is the config-free daemon entry point for the native app and other
+process hosts. Launch the installed executable directly with an argv array:
+
+```text
+executable: /resolved/path/to/tmux-ide
+argv:       ["--headless"]
+```
+
+Do not wrap that invocation in a shell and do not append `&`, `nohup`, or a
+second daemonizer. `tmux-ide --headless` stays in the foreground; the spawned
+process is the daemon owner even when the host detaches its stdio. It does not
+open a TUI, launch a tmux workspace, require a project config, install anything,
+or inherit remote-access authentication. `--port N` is optional; omitting it
+selects a free loopback port.
+
+Startup is ready only when both checks succeed:
+
+1. `~/.tmux-ide/daemon.json` exists (or the directory selected by
+   `TMUX_IDE_DAEMON_INFO_DIR`) and names the child PID and port.
+2. `GET http://127.0.0.1:<port>/health` succeeds and reports the compatible
+   daemon wire protocol.
+
+A second `tmux-ide --headless` never takes over a healthy daemon. If its wire
+protocol is compatible, the second process reports `already-running` and exits
+zero; a product-version difference is diagnostic only. An incompatible wire
+protocol exits non-zero so the host can ask the user to restart or upgrade. A
+dead PID or failed health probe is stale state: it is removed and replaced by
+the new owner.
+
+Send `SIGINT` or `SIGTERM` to stop the owner. The daemon shutdown action follows
+the same idempotent path. Both close HTTP/WebSocket/PTY resources, remove the
+canonical record, and let the owner exit zero; a cleanup failure exits non-zero.
 
 ## Flags
 
 | Flag                | Description                                        |
 | ------------------- | -------------------------------------------------- |
 | `--json`            | Output as JSON (all commands)                      |
+| `--headless`        | Run only the canonical daemon in this process      |
 | `--template <name>` | Use a specific template for `init`                 |
 | `--write`           | Write detected config to `.tmux-ide/workspace.yml` |
 | `--verbose`         | Log all tmux commands (or set `TMUX_IDE_DEBUG=1`)  |

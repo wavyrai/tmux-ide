@@ -41,6 +41,8 @@ export interface EmbeddedDaemonOptions {
   localBypassToken?: string | null;
   takeoverIfRunning?: boolean;
   silent?: boolean;
+  /** Diagnostic product version advertised by daemon.json. */
+  productVersion?: string;
   /** @deprecated Use bindHostname. */
   hostname?: string;
 }
@@ -415,6 +417,7 @@ async function startHttpServer({
   authToken,
   localBypassToken,
   silent,
+  readProjectAuth,
 }: {
   sessionName: string;
   requestedPort: number;
@@ -423,6 +426,7 @@ async function startHttpServer({
   authToken?: string | null;
   localBypassToken?: string | null;
   silent?: boolean;
+  readProjectAuth?: boolean;
 }): Promise<{
   server: Server;
   sockets: Set<Socket>;
@@ -435,12 +439,14 @@ async function startHttpServer({
   const { AuthConfigSchema } = await import("./auth/types.ts");
 
   let authConfig = AuthConfigSchema.parse({});
-  try {
-    const { resolveConfig } = await import("./resolved-config.ts");
-    const { launchConfig } = await resolveConfig(dir);
-    if (launchConfig?.auth) authConfig = AuthConfigSchema.parse(launchConfig.auth);
-  } catch {
-    // Config not readable — use defaults.
+  if (readProjectAuth !== false) {
+    try {
+      const { resolveConfig } = await import("./resolved-config.ts");
+      const { launchConfig } = await resolveConfig(dir);
+      if (launchConfig?.auth) authConfig = AuthConfigSchema.parse(launchConfig.auth);
+    } catch {
+      // Config not readable — use defaults.
+    }
   }
 
   const authService = new AuthService(authConfig.secret);
@@ -522,7 +528,12 @@ export async function startEmbeddedDaemon(
       : null;
   const bindHostname =
     opts.bindHostname ?? opts.hostname ?? (persistedRemoteAccess ? "0.0.0.0" : DEFAULT_HOSTNAME);
-  const authToken = opts.authToken ?? persistedRemoteAccess?.token ?? null;
+  // Explicit null means "no auth". This is important for the native app's
+  // loopback-only `tmux-ide --headless` child: persisted remote-access settings
+  // must not silently change the process contract it requested.
+  const authToken = Object.prototype.hasOwnProperty.call(opts, "authToken")
+    ? (opts.authToken ?? null)
+    : (persistedRemoteAccess?.token ?? null);
   const localBypassToken = opts.localBypassToken ?? generateLocalBypassToken();
   const existingCanonical = readCanonicalDaemonInfo();
   if (existingCanonical) {
@@ -590,12 +601,20 @@ export async function startEmbeddedDaemon(
     authToken,
     localBypassToken,
     silent: opts.silent,
+    readProjectAuth: !sessionless,
   });
-  const pkg = requireFromHere("../../package.json") as { version?: string };
+  // The shipped root CLI is an esbuild bundle, so import.meta.url points at
+  // bin/cli.js and the daemon package's relative package.json does not exist.
+  // Process hosts pass their product version explicitly; standalone embedders
+  // retain the package-local fallback.
+  const productVersion =
+    opts.productVersion ??
+    (requireFromHere("../../package.json") as { version?: string }).version ??
+    "0.0.0";
   writeCanonicalDaemonInfo({
     pid: process.pid,
     port,
-    version: pkg.version ?? "0.0.0",
+    version: productVersion,
     startedAt: new Date().toISOString(),
     bindHostname,
     authToken,
