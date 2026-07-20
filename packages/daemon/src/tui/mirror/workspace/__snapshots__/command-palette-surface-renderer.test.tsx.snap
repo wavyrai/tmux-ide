@@ -1,0 +1,255 @@
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
+
+exports[`CommandPaletteSurface OpenTUI renderer renders the %sx%s compact command surface 1`] = `
+"
+
+        ╭──────────────────────────────────────────────────────────────╮
+        │ › Command palette                                           7│
+        │ ⌕ Search commands…                                           │
+        │──────────────────────────────────────────────────────────────│
+        │ — Navigation                                                 │
+        │  ⌂ Open Home                                               F1│
+        │› ❯ Open Terminals                                3 agents  F2│
+        │ — Files                                                      │
+        │  ▤ Open File…                                              ⌘P│
+        │× ▤ Save File — No file is open                             ⌘S│
+        │  ± Review Changes                                    12 files│
+        │ — Window                                                     │
+        │  □ Maximize Active Pane                                    ⌘↵│
+        │  │ Split Pane Right                                        ⌘D│
+        │                                                              │
+        │                                                              │
+        │                                                              │
+        │                                                              │
+        │↑↓  ↵  esc                                          7 commands│
+        ╰──────────────────────────────────────────────────────────────╯
+
+"
+`;
+
+exports[`CommandPaletteSurface OpenTUI renderer renders the %sx%s standard command surface 1`] = `
+"
+
+
+
+
+
+
+                   ╭────────────────────────────────────────────────────────────────────────────────╮
+                   │ › Command palette                                                             7│
+                   │ ⌕ Search commands…                                                             │
+                   │────────────────────────────────────────────────────────────────────────────────│
+                   │ — Navigation                                                                   │
+                   │  ⌂ Open Home                                                                 F1│
+                   │    Browse projects, recent workspaces, and onboarding                          │
+                   │› ❯ Open Terminals                                                  3 agents  F2│
+                   │    Return to the live tmux agent canvas                                        │
+                   │ — Files                                                                        │
+                   │  ▤ Open File…                                                                ⌘P│
+                   │    Find a workspace file by name or path                                       │
+                   │× ▤ Save File                                                                 ⌘S│
+                   │    No file is open                                                             │
+                   │  ± Review Changes                                                      12 files│
+                   │    Open the native diff surface                                                │
+                   │ — Window                                                                       │
+                   │  □ Maximize Active Pane                                                      ⌘↵│
+                   │    Focus one agent while preserving tmux pane identity                         │
+                   │  │ Split Pane Right                                                          ⌘D│
+                   │    Create a terminal beside the active agent                                   │
+                   │                                                                                │
+                   │                                                                                │
+                   │                                                                                │
+                   │↑↓ navigate   ↵ run   esc close                                       7 commands│
+                   ╰────────────────────────────────────────────────────────────────────────────────╯
+
+
+
+
+
+
+"
+`;
+
+exports[`CommandPaletteSurface OpenTUI renderer renders the %sx%s wide command surface 1`] = `
+"
+
+
+
+
+
+
+
+
+
+
+
+
+                                                    ╭──────────────────────────────────────────────────────────────────────────────────────────────╮
+                                                    │ › Command palette                                                                           7│
+                                                    │ ⌕ Search commands…                                                                           │
+                                                    │──────────────────────────────────────────────────────────────────────────────────────────────│
+                                                    │ — Navigation                                                                                 │
+                                                    │  ⌂ Open Home                                                                               F1│
+                                                    │    Browse projects, recent workspaces, and onboarding                                        │
+                                                    │› ❯ Open Terminals                                                                3 agents  F2│
+                                                    │    Return to the live tmux agent canvas                                                      │
+                                                    │ — Files                                                                                      │
+                                                    │  ▤ Open File…                                                                              ⌘P│
+                                                    │    Find a workspace file by name or path                                                     │
+                                                    │× ▤ Save File                                                                               ⌘S│
+                                                    │    No file is open                                                                           │
+                                                    │  ± Review Changes                                                                    12 files│
+                                                    │    Open the native diff surface                                                              │
+                                                    │ — Window                                                                                     │
+                                                    │  □ Maximize Active Pane                                                                    ⌘↵│
+                                                    │    Focus one agent while preserving tmux pane identity                                       │
+                                                    │  │ Split Pane Right                                                                        ⌘D│
+                                                    │    Create a terminal beside the active agent                                                 │
+                                                    │                                                                                              │
+                                                    │                                                                                              │
+                                                    │                                                                                              │
+                                                    │                                                                                              │
+                                                    │                                                                                              │
+                                                    │                                                                                              │
+                                                    │                                                                                              │
+                                                    │                                                                                              │
+                                                    │                                                                                              │
+                                                    │                                                                                              │
+                                                    │                                                                                              │
+                                                    │↑↓ navigate   ↵ run   esc close                                                     7 commands│
+                                                    ╰──────────────────────────────────────────────────────────────────────────────────────────────╯
+
+
+
+
+
+
+
+
+
+
+
+
+"
+`;
+
+exports[`CommandPaletteSurface OpenTUI renderer renders the loading /  visual state 1`] = `
+"
+
+        ╭──────────────────────────────────────────────────────────────╮
+        │ › Command palette                                           0│
+        │ ⌕ Search commands…                                           │
+        │──────────────────────────────────────────────────────────────│
+        │  ⋯ Loading commands…                                         │
+        │    Collecting actions from the workspace                     │
+        │                                                              │
+        │                                                              │
+        │                                                              │
+        │                                                              │
+        │                                                              │
+        │                                                              │
+        │                                                              │
+        │                                                              │
+        │                                                              │
+        │                                                              │
+        │                                                              │
+        │                                                              │
+        │↑↓  ↵  esc                                             loading│
+        ╰──────────────────────────────────────────────────────────────╯
+
+"
+`;
+
+exports[`CommandPaletteSurface OpenTUI renderer renders the ready /  visual state 1`] = `
+"
+
+        ╭──────────────────────────────────────────────────────────────╮
+        │ › Command palette                                           0│
+        │ ⌕ Search commands…                                           │
+        │──────────────────────────────────────────────────────────────│
+        │  › No commands yet                                           │
+        │    Contributions appear here                                 │
+        │                                                              │
+        │                                                              │
+        │                                                              │
+        │                                                              │
+        │                                                              │
+        │                                                              │
+        │                                                              │
+        │                                                              │
+        │                                                              │
+        │                                                              │
+        │                                                              │
+        │                                                              │
+        │↑↓  ↵  esc                                               ready│
+        ╰──────────────────────────────────────────────────────────────╯
+
+"
+`;
+
+exports[`CommandPaletteSurface OpenTUI renderer renders the ready / gibberish visual state 1`] = `
+"
+
+        ╭──────────────────────────────────────────────────────────────╮
+        │ › Command palette                                           0│
+        │ ⌕ gibberish▏                                                 │
+        │──────────────────────────────────────────────────────────────│
+        │  ⌕ No matching commands                                      │
+        │    Try another name, category, or shortcut                   │
+        │                                                              │
+        │                                                              │
+        │                                                              │
+        │                                                              │
+        │                                                              │
+        │                                                              │
+        │                                                              │
+        │                                                              │
+        │                                                              │
+        │                                                              │
+        │                                                              │
+        │                                                              │
+        │↑↓  ↵  esc                                               ready│
+        ╰──────────────────────────────────────────────────────────────╯
+
+"
+`;
+
+exports[`CommandPaletteSurface OpenTUI renderer renders the error /  visual state 1`] = `
+"
+
+        ╭──────────────────────────────────────────────────────────────╮
+        │ › Command palette                                           0│
+        │ ⌕ Search commands…                                           │
+        │──────────────────────────────────────────────────────────────│
+        │  ! Commands unavailable                                      │
+        │    Command discovery timed out                               │
+        │› ↻ Retry                                                     │
+        │                                                              │
+        │                                                              │
+        │                                                              │
+        │                                                              │
+        │                                                              │
+        │                                                              │
+        │                                                              │
+        │                                                              │
+        │                                                              │
+        │                                                              │
+        │                                                              │
+        │↑↓  ↵  esc                                               error│
+        ╰──────────────────────────────────────────────────────────────╯
+
+"
+`;
+
+exports[`CommandPaletteSurface OpenTUI renderer clips safely in a narrow viewport 1`] = `
+"
+  ╭──────────────────────╮
+  │ › Command palette   7│
+  │ ⌕ maximize▏          │
+  │──────────────────────│
+  │ — Navigation         │
+  │  ⌂ Open Home       F1│
+  │↑↓  ↵  esc    1–2 / 10│
+  ╰──────────────────────╯
+"
+`;

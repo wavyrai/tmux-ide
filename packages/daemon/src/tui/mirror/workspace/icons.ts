@@ -27,6 +27,7 @@ export const WORKSPACE_ICONS = {
   resize: { glyph: "◲", fallback: "R", label: "Resize" },
   popOut: { glyph: "⇱", fallback: "^", label: "Pop out" },
   search: { glyph: "⌕", fallback: "/", label: "Search" },
+  refresh: { glyph: "↻", fallback: "r", label: "Refresh" },
   command: { glyph: "›", fallback: ">", label: "Command" },
 } as const;
 
