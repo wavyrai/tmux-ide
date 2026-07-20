@@ -34,6 +34,46 @@ export {
   type MissionProjectionOptions,
 } from "./lib/mission-projections.ts";
 export {
+  APP_WINDOW_DOCUMENT_PATH,
+  AppWindowRepositoryError,
+  AppWindowService,
+  type AppWindowRepositoryDiagnostic,
+  type AppWindowRepositoryErrorCode,
+  type AppWindowServiceMigrationOptions,
+  type AppWindowServiceOptions,
+  type AppWindowWriterLockOptions,
+  type ExecuteAppWindowCommandOptions,
+  type LoadedAppWindowDocument,
+  type ResetAppWindowDocumentRequest,
+  type ResetAppWindowDocumentResult,
+} from "./lib/app-window-repository.ts";
+export {
+  APP_WINDOW_FLOAT_MIN_HEIGHT,
+  APP_WINDOW_FLOAT_MIN_WIDTH,
+  AppWindowKernelError,
+  type AppWindowCommand,
+  type AppWindowKernelErrorCode,
+} from "./lib/app-window-kernel.ts";
+export {
+  CorruptRuntimeDocumentError,
+  MissingRuntimeDocumentError,
+  ProjectRuntimeRepository,
+  ProjectRuntimeRepositoryError,
+  ProjectRuntimeWriterLockTimeoutError,
+  RevisionConflictError,
+  createProjectRuntimeRepository,
+  openProjectRuntimeRepository,
+  type OpenProjectRuntimeRepositoryOptions,
+  type ProjectRuntimeDocument,
+  type ProjectRuntimeMetadata,
+  type ProjectRuntimeRepositoryOptions,
+  type ProjectRuntimeWriterLockOptions,
+  type RecoverDocumentOptions,
+  type RecoverDocumentResult,
+  type WriteDocumentOptions,
+  type WriteDocumentResult,
+} from "./lib/project-runtime-repository.ts";
+export {
   classifyProjectReadiness,
   type AuthenticationReadiness,
   type Availability,

@@ -191,7 +191,8 @@ describe("ProjectRuntimeRepository documents", () => {
       ),
     ).toMatchObject({ code: "IO_ERROR", path: "bindings.json" });
     const directory = join(home, "projects", IDENTITY_KEY);
-    expect(readdirSync(directory)).toEqual([]);
+    expect(readdirSync(directory)).toEqual(["workspace"]);
+    expect(readdirSync(join(directory, "workspace"))).toEqual([]);
     expect(operations[0]).toContain("write:");
     expect(operations[0]).toContain(".tmp-");
     expect(operations[1]).toContain("rename:");
@@ -277,7 +278,7 @@ describe("ProjectRuntimeRepository documents", () => {
     const repository = createProjectRuntimeRepository(resolution(temporaryRoot()), {
       home: temporaryRoot(),
       io: {
-        readFile: () => {
+        readBytes: () => {
           throw Object.assign(new Error("permission denied"), { code: "EACCES" });
         },
       },
@@ -313,6 +314,63 @@ describe("ProjectRuntimeRepository documents", () => {
       code: "DOCUMENT_CORRUPT",
       path: "bad-revision.json",
     });
+  });
+
+  it("hashes and preserves invalid UTF-8 as exact recovery bytes", () => {
+    const home = temporaryRoot("tmux-ide-home-");
+    const repository = createProjectRuntimeRepository(resolution(temporaryRoot()), { home });
+    const target = join(repository.runtimeRoot, "invalid-utf8.json");
+    mkdirSync(dirname(target), { recursive: true });
+    const firstRaw = Buffer.from([0xff, 0x0a]);
+    const secondRaw = Buffer.from([0xfe, 0x0a]);
+    writeFileSync(target, firstRaw);
+    const firstToken = repository.documentRecoveryToken("invalid-utf8.json");
+    writeFileSync(target, secondRaw);
+    const secondToken = repository.documentRecoveryToken("invalid-utf8.json");
+
+    expect(firstToken).not.toBe(secondToken);
+    expect(caughtError(() => repository.readDocument("invalid-utf8.json"))).toMatchObject({
+      code: "DOCUMENT_CORRUPT",
+      path: "invalid-utf8.json",
+    });
+
+    const recovered = repository.recoverDocument(
+      "invalid-utf8.json",
+      { recovered: true },
+      {
+        expectedRawSha256: secondToken!,
+        reason: "operator confirmed invalid UTF-8 test fixture",
+      },
+    );
+    expect(readFileSync(join(repository.runtimeRoot, recovered.backupPath))).toEqual(secondRaw);
+    expect(
+      JSON.parse(readFileSync(join(repository.runtimeRoot, recovered.metadataPath), "utf-8")),
+    ).toMatchObject({ status: "completed", previousRawSha256: secondToken });
+  });
+
+  it("preserves distinct audits when identical corrupt bytes are recovered twice", () => {
+    const home = temporaryRoot("tmux-ide-home-");
+    const repository = createProjectRuntimeRepository(resolution(temporaryRoot()), { home });
+    const target = join(repository.runtimeRoot, "repeat-corrupt.json");
+    const corrupt = Buffer.from([0xff, 0x7b, 0x0a]);
+    mkdirSync(dirname(target), { recursive: true });
+    writeFileSync(target, corrupt);
+    const token = repository.documentRecoveryToken("repeat-corrupt.json")!;
+    const first = repository.recoverDocument(
+      "repeat-corrupt.json",
+      { attempt: 1 },
+      { expectedRawSha256: token, reason: "first recovery" },
+    );
+    writeFileSync(target, corrupt);
+    const second = repository.recoverDocument(
+      "repeat-corrupt.json",
+      { attempt: 2 },
+      { expectedRawSha256: token, reason: "second recovery" },
+    );
+
+    expect(second.backupPath).not.toBe(first.backupPath);
+    expect(readFileSync(join(repository.runtimeRoot, first.backupPath))).toEqual(corrupt);
+    expect(readFileSync(join(repository.runtimeRoot, second.backupPath))).toEqual(corrupt);
   });
 
   it.each([

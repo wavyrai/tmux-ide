@@ -1,5 +1,16 @@
-import { randomUUID } from "node:crypto";
-import { lstatSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { createHash, randomUUID } from "node:crypto";
+import {
+  closeSync,
+  fsyncSync,
+  lstatSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  renameSync,
+  rmdirSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { isAbsolute, join, relative, resolve, sep, win32 } from "node:path";
 
 import type { ProjectResolution, ResolveProjectOptions } from "./project-resolver.js";
@@ -9,6 +20,8 @@ import { stateHome } from "./state-home.js";
 const DOCUMENT_ENVELOPE_VERSION = 1;
 const EVENT_ENVELOPE_VERSION = 1;
 const SAFE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+const PROJECT_RUNTIME_WRITER_LOCK_FILENAME = "workspace/.state.lock";
+const PROJECT_RUNTIME_PROCESS_INSTANCE_ID = randomUUID();
 
 export type JsonPrimitive = string | number | boolean | null;
 export type JsonValue = JsonPrimitive | JsonValue[] | { [key: string]: JsonValue };
@@ -22,11 +35,16 @@ export type ProjectRuntimeErrorCode =
   | "REVISION_CONFLICT"
   | "EVENT_SEQUENCE_CONFLICT"
   | "EVENT_LOG_CORRUPT"
+  | "WRITER_LOCK_TIMEOUT"
   | "IO_ERROR";
 
 export interface ProjectRuntimeRepositoryIo {
   readFile(path: string): string;
   writeFile(path: string, data: string): void;
+  readBytes(path: string): Uint8Array;
+  writeBytes(path: string, data: Uint8Array): void;
+  fsyncFile(path: string): void;
+  fsyncDirectory(path: string): void;
   mkdir(path: string): void;
   rename(from: string, to: string): void;
   unlink(path: string): void;
@@ -78,6 +96,43 @@ export interface WriteDocumentResult<T> {
   version: typeof DOCUMENT_ENVELOPE_VERSION;
   revision: number;
   payload: T;
+}
+
+export interface RecoverDocumentOptions {
+  /** Exact token returned by `documentRecoveryToken`; prevents stale recovery. */
+  expectedRawSha256: string;
+  /** Required operator-facing explanation for the destructive reset. */
+  reason: string;
+  /** Optional JSON audit context persisted beside the exact-byte backup. */
+  details?: JsonValue;
+}
+
+export interface RecoverDocumentResult<T> extends WriteDocumentResult<T> {
+  previousRawSha256: string;
+  backupPath: string;
+  metadataPath: string;
+  reason: string;
+}
+
+export interface ProjectRuntimeWriterLockOptions {
+  timeoutMs?: number;
+  pollMs?: number;
+}
+
+export interface ProjectRuntimeWriterLockOutcome<T> {
+  value: T;
+  releaseError: Error | null;
+}
+
+/** Short-lived capability valid only while the project writer lock is held. */
+export interface ProjectRuntimeLockedWriter {
+  writeDocument<T>(path: string, payload: T, options: WriteDocumentOptions): WriteDocumentResult<T>;
+  recoverDocument<T>(
+    path: string,
+    payload: T,
+    options: RecoverDocumentOptions,
+  ): RecoverDocumentResult<T>;
+  appendEvent<T>(stream: string, payload: T, options?: AppendEventOptions): RuntimeEvent<T>;
 }
 
 export interface RuntimeEvent<T> {
@@ -183,6 +238,21 @@ export class RevisionConflictError extends ProjectRuntimeRepositoryError {
   }
 }
 
+export class ProjectRuntimeWriterLockTimeoutError extends ProjectRuntimeRepositoryError {
+  readonly lockPath: string;
+  readonly timeoutMs: number;
+
+  constructor(lockPath: string, timeoutMs: number) {
+    super(
+      "WRITER_LOCK_TIMEOUT",
+      `Timed out after ${timeoutMs}ms waiting for project runtime writer lock`,
+    );
+    this.name = "ProjectRuntimeWriterLockTimeoutError";
+    this.lockPath = lockPath;
+    this.timeoutMs = timeoutMs;
+  }
+}
+
 export class EventSequenceConflictError extends ProjectRuntimeRepositoryError {
   readonly stream: string;
   readonly expectedPreviousSequence: number;
@@ -239,6 +309,24 @@ interface EventEnvelope {
 const defaultIo: ProjectRuntimeRepositoryIo = {
   readFile: (path) => readFileSync(path, "utf-8"),
   writeFile: (path, data) => writeFileSync(path, data, "utf-8"),
+  readBytes: (path) => readFileSync(path),
+  writeBytes: (path, data) => writeFileSync(path, data),
+  fsyncFile: (path) => {
+    const descriptor = openSync(path, "r");
+    try {
+      fsyncSync(descriptor);
+    } finally {
+      closeSync(descriptor);
+    }
+  },
+  fsyncDirectory: (path) => {
+    const descriptor = openSync(path, "r");
+    try {
+      fsyncSync(descriptor);
+    } finally {
+      closeSync(descriptor);
+    }
+  },
   mkdir: (path) => mkdirSync(path, { recursive: true }),
   rename: renameSync,
   unlink: unlinkSync,
@@ -283,7 +371,8 @@ export class ProjectRuntimeRepository {
 
   readDocument<T = JsonValue>(path: string): ProjectRuntimeDocument<T> {
     const target = this.resolveRuntimePath(path);
-    const raw = this.readOptionalFile(target, path);
+    const bytes = this.readOptionalBytes(target, path);
+    const raw = bytes === null ? null : decodeUtf8Strict(bytes, path);
     if (raw === null) return { found: false, path, revision: null };
     const envelope = parseDocumentEnvelope(path, raw);
     return {
@@ -311,6 +400,99 @@ export class ProjectRuntimeRepository {
     payload: T,
     options: WriteDocumentOptions,
   ): WriteDocumentResult<T> {
+    return this.withWriterLock(undefined, (writer) => writer.writeDocument(path, payload, options));
+  }
+
+  /**
+   * Serialize a compound read/check/write transaction with every other
+   * compliant project-runtime writer, including writers in other processes.
+   * The supplied capability expires as soon as the callback returns.
+   */
+  withWriterLock<T>(
+    options: ProjectRuntimeWriterLockOptions | undefined,
+    action: (writer: ProjectRuntimeLockedWriter) => T,
+  ): T {
+    const outcome = this.withWriterLockOutcome(options, action);
+    if (outcome.releaseError) throw outcome.releaseError;
+    return outcome.value;
+  }
+
+  withWriterLockOutcome<T>(
+    options: ProjectRuntimeWriterLockOptions | undefined,
+    action: (writer: ProjectRuntimeLockedWriter) => T,
+  ): ProjectRuntimeWriterLockOutcome<T> {
+    const release = this.acquireWriterLock(options);
+    let active = true;
+    const assertActive = (): void => {
+      if (!active) {
+        throw new ProjectRuntimeRepositoryError(
+          "IO_ERROR",
+          "Project runtime locked-writer capability is no longer active",
+        );
+      }
+    };
+    const writer: ProjectRuntimeLockedWriter = {
+      writeDocument: <TValue>(
+        path: string,
+        payload: TValue,
+        writeOptions: WriteDocumentOptions,
+      ): WriteDocumentResult<TValue> => {
+        assertActive();
+        return this.writeDocumentUnlocked(path, payload, writeOptions);
+      },
+      recoverDocument: <TValue>(
+        path: string,
+        payload: TValue,
+        recoverOptions: RecoverDocumentOptions,
+      ): RecoverDocumentResult<TValue> => {
+        assertActive();
+        return this.recoverDocumentUnlocked(path, payload, recoverOptions);
+      },
+      appendEvent: <TValue>(
+        stream: string,
+        payload: TValue,
+        appendOptions: AppendEventOptions = {},
+      ): RuntimeEvent<TValue> => {
+        assertActive();
+        return this.appendEventUnlocked(stream, payload, appendOptions);
+      },
+    };
+    let value: T;
+    try {
+      value = action(writer);
+      if (isPromiseLike(value)) {
+        throw new ProjectRuntimeRepositoryError(
+          "IO_ERROR",
+          "Project runtime writer transactions must be synchronous",
+        );
+      }
+    } catch (error) {
+      active = false;
+      try {
+        release();
+      } catch {
+        // Preserve the operation error; an abandoned lock is inspectable and
+        // must be recovered explicitly rather than hiding the original cause.
+      }
+      throw error;
+    }
+    active = false;
+    try {
+      release();
+      return { value, releaseError: null };
+    } catch (error) {
+      return {
+        value,
+        releaseError: error instanceof Error ? error : new Error(String(error)),
+      };
+    }
+  }
+
+  private writeDocumentUnlocked<T>(
+    path: string,
+    payload: T,
+    options: WriteDocumentOptions,
+  ): WriteDocumentResult<T> {
     if (
       options.expectedRevision !== null &&
       (!Number.isSafeInteger(options.expectedRevision) || options.expectedRevision < 1)
@@ -318,7 +500,8 @@ export class ProjectRuntimeRepository {
       throw new RevisionConflictError(path, options.expectedRevision, null);
     }
     const target = this.resolveRuntimePath(path);
-    const existing = this.readOptionalFile(target, path);
+    const existingBytes = this.readOptionalBytes(target, path);
+    const existing = existingBytes === null ? null : decodeUtf8Strict(existingBytes, path);
     const current = existing === null ? null : parseDocumentEnvelope(path, existing);
     const actualRevision = current?.revision ?? null;
 
@@ -341,14 +524,149 @@ export class ProjectRuntimeRepository {
     };
   }
 
+  /**
+   * Token for explicit recovery of a document whose envelope or payload cannot
+   * be safely written through normal revision CAS. No bytes are exposed.
+   */
+  documentRecoveryToken(path: string): string | null {
+    const target = this.resolveRuntimePath(path);
+    const raw = this.readOptionalBytes(target, path);
+    return raw === null ? null : sha256(raw);
+  }
+
+  /**
+   * Explicit destructive recovery. The exact prior bytes are atomically copied
+   * beneath `recovery/` before the target is replaced. Normal writes must never
+   * call this path.
+   */
+  recoverDocument<T>(
+    path: string,
+    payload: T,
+    options: RecoverDocumentOptions,
+  ): RecoverDocumentResult<T> {
+    return this.withWriterLock(undefined, (writer) =>
+      writer.recoverDocument(path, payload, options),
+    );
+  }
+
+  private recoverDocumentUnlocked<T>(
+    path: string,
+    payload: T,
+    options: RecoverDocumentOptions,
+  ): RecoverDocumentResult<T> {
+    const reason = options.reason.trim();
+    if (reason.length === 0 || reason.length > 512 || reason.includes("\0")) {
+      throw new InvalidJsonValueError(
+        "$.reason",
+        "recovery reason must contain 1-512 non-NUL characters",
+      );
+    }
+    if (!/^[a-f0-9]{64}$/u.test(options.expectedRawSha256)) {
+      throw new InvalidJsonValueError("$.expectedRawSha256", "recovery token must be SHA-256");
+    }
+    const target = this.resolveRuntimePath(path);
+    const raw = this.readOptionalBytes(target, path);
+    if (raw === null) throw new MissingRuntimeDocumentError(path);
+    const actualToken = sha256(raw);
+    if (actualToken !== options.expectedRawSha256) {
+      throw new RevisionConflictError(path, null, null);
+    }
+    const serializedPayload = serializeJsonPayload(payload);
+    let priorRevision = 0;
+    try {
+      priorRevision = parseDocumentEnvelope(path, decodeUtf8(raw)).revision;
+    } catch {
+      // Corrupt/unsupported envelopes restart at revision 1 after backup.
+    }
+    const recoveredAt = this.io.now();
+    if (!Number.isFinite(recoveredAt.getTime())) {
+      throw new InvalidJsonValueError("$.recoveredAt", "recovery timestamp must be valid");
+    }
+    const envelope: DocumentEnvelope = {
+      version: DOCUMENT_ENVELOPE_VERSION,
+      revision: priorRevision + 1,
+      payload: serializedPayload,
+    };
+    const replacement = encodeUtf8(`${JSON.stringify(envelope, null, 2)}\n`);
+    const recovery = this.reserveRecoveryOperation(path, actualToken);
+    const backupPath = `${recovery.relativePath}/previous.bak`;
+    const metadataPath = `${recovery.relativePath}/audit.json`;
+    const preparedMetadata = {
+      version: 1,
+      status: "prepared",
+      operationId: recovery.operationId,
+      path,
+      backupPath,
+      previousRawSha256: actualToken,
+      replacementRawSha256: sha256(replacement),
+      replacementRevision: envelope.revision,
+      reason,
+      recoveredAt: recoveredAt.toISOString(),
+      details: options.details ?? null,
+    } as const;
+    const backupTarget = this.resolveRuntimePath(backupPath);
+    try {
+      this.atomicWriteBytes(backupTarget, raw, backupPath, true);
+    } catch (error) {
+      try {
+        rmdirSync(recovery.target);
+        this.io.fsyncDirectory(resolve(recovery.target, ".."));
+      } catch {
+        // Preserve the backup failure; a non-empty artifact remains inspectable.
+      }
+      throw error;
+    }
+    this.atomicWriteBytes(
+      this.resolveRuntimePath(metadataPath),
+      encodeUtf8(`${JSON.stringify(serializeJsonPayload(preparedMetadata), null, 2)}\n`),
+      metadataPath,
+      true,
+    );
+    const recheckedRaw = this.readOptionalBytes(target, path);
+    if (recheckedRaw === null || sha256(recheckedRaw) !== actualToken) {
+      throw new RevisionConflictError(path, null, null);
+    }
+    this.atomicWriteBytes(target, replacement, path, true);
+    const completedMetadata = serializeJsonPayload({
+      ...preparedMetadata,
+      status: "completed",
+      completedAt: this.io.now().toISOString(),
+    });
+    this.atomicWriteBytes(
+      this.resolveRuntimePath(metadataPath),
+      encodeUtf8(`${JSON.stringify(completedMetadata, null, 2)}\n`),
+      metadataPath,
+      true,
+    );
+    return {
+      path,
+      version: DOCUMENT_ENVELOPE_VERSION,
+      revision: envelope.revision,
+      payload: cloneJson(serializedPayload) as T,
+      previousRawSha256: actualToken,
+      backupPath,
+      metadataPath,
+      reason,
+    };
+  }
+
   readEvents<T = JsonValue>(stream: string): RuntimeEvent<T>[] {
     const target = this.resolveEventPath(stream);
-    const raw = this.readOptionalFile(target, `events/${stream}.jsonl`);
+    const bytes = this.readOptionalBytes(target, `events/${stream}.jsonl`);
+    const raw = bytes === null ? null : decodeUtf8Strict(bytes, `events/${stream}.jsonl`);
     if (raw === null) return [];
     return parseEventLog<T>(stream, raw);
   }
 
   appendEvent<T>(stream: string, payload: T, options: AppendEventOptions = {}): RuntimeEvent<T> {
+    return this.withWriterLock(undefined, (writer) => writer.appendEvent(stream, payload, options));
+  }
+
+  private appendEventUnlocked<T>(
+    stream: string,
+    payload: T,
+    options: AppendEventOptions = {},
+  ): RuntimeEvent<T> {
     if (
       options.expectedPreviousSequence !== undefined &&
       (!Number.isSafeInteger(options.expectedPreviousSequence) ||
@@ -357,7 +675,8 @@ export class ProjectRuntimeRepository {
       throw new EventSequenceConflictError(stream, options.expectedPreviousSequence, 0);
     }
     const target = this.resolveEventPath(stream);
-    const raw = this.readOptionalFile(target, `events/${stream}.jsonl`);
+    const bytes = this.readOptionalBytes(target, `events/${stream}.jsonl`);
+    const raw = bytes === null ? null : decodeUtf8Strict(bytes, `events/${stream}.jsonl`);
     const events = raw === null ? [] : parseEventLog<JsonValue>(stream, raw);
     const actualPreviousSequence = events.at(-1)?.sequence ?? 0;
 
@@ -434,12 +753,12 @@ export class ProjectRuntimeRepository {
     }
   }
 
-  private readOptionalFile(path: string, displayPath: string): string | null {
+  private readOptionalBytes(path: string, displayPath: string): Uint8Array | null {
     try {
-      return this.io.readFile(path);
+      return this.io.readBytes(path);
     } catch (error) {
       if (isNodeError(error) && error.code === "ENOENT") return null;
-      throw new ProjectRuntimeIoError(displayPath, "read", error);
+      throw new ProjectRuntimeIoError(displayPath, "read exact bytes from", error);
     }
   }
 
@@ -452,7 +771,9 @@ export class ProjectRuntimeRepository {
     );
     try {
       this.io.writeFile(tempPath, data);
+      this.io.fsyncFile(tempPath);
       this.io.rename(tempPath, target);
+      this.io.fsyncDirectory(destinationDir);
     } catch (error) {
       try {
         this.io.unlink(tempPath);
@@ -463,6 +784,165 @@ export class ProjectRuntimeRepository {
       }
       throw new ProjectRuntimeIoError(displayPath, "atomically write", error);
     }
+  }
+
+  private atomicWriteBytes(
+    target: string,
+    data: Uint8Array,
+    displayPath: string,
+    durable: boolean,
+  ): void {
+    const destinationDir = resolve(target, "..");
+    this.io.mkdir(destinationDir);
+    const tempPath = join(
+      destinationDir,
+      `.tmp-${process.pid}-${tempCounter++}-${safeTempId(this.io.randomId())}`,
+    );
+    try {
+      this.io.writeBytes(tempPath, data);
+      if (durable) this.io.fsyncFile(tempPath);
+      this.io.rename(tempPath, target);
+      if (durable) {
+        this.io.fsyncFile(target);
+        this.io.fsyncDirectory(destinationDir);
+      }
+    } catch (error) {
+      try {
+        this.io.unlink(tempPath);
+      } catch (cleanupError) {
+        if (!isNodeError(cleanupError) || cleanupError.code !== "ENOENT") {
+          // Preserve the write/rename/fsync failure; cleanup is best-effort.
+        }
+      }
+      throw new ProjectRuntimeIoError(displayPath, "durably atomically write", error);
+    }
+  }
+
+  private acquireWriterLock(options: ProjectRuntimeWriterLockOptions | undefined): () => void {
+    const timeoutMs = normalizeLockDuration(options?.timeoutMs, 2_000, 0, 60_000, "timeoutMs");
+    const pollMs = normalizeLockDuration(options?.pollMs, 10, 1, 250, "pollMs");
+    const lockPath = join(this.runtimeRoot, PROJECT_RUNTIME_WRITER_LOCK_FILENAME);
+    const lockDirectory = resolve(lockPath, "..");
+    this.io.mkdir(this.runtimeRoot);
+    assertLockDirectory(this.runtimeRoot);
+    this.io.mkdir(lockDirectory);
+    assertLockDirectory(lockDirectory);
+    const token = randomUUID();
+    const owner = `${JSON.stringify({
+      version: 1,
+      token,
+      processInstanceId: PROJECT_RUNTIME_PROCESS_INSTANCE_ID,
+      pid: process.pid,
+      createdAtMs: Date.now(),
+    })}\n`;
+    const startedAt = Date.now();
+    let installedIdentity: { device: number; inode: number } | null = null;
+
+    for (;;) {
+      let descriptor: number | null = null;
+      let created = false;
+      try {
+        descriptor = openSync(lockPath, "wx", 0o600);
+        created = true;
+        writeFileSync(descriptor, owner, "utf-8");
+        fsyncSync(descriptor);
+        closeSync(descriptor);
+        descriptor = null;
+        const installed = lstatSync(lockPath);
+        installedIdentity = { device: installed.dev, inode: installed.ino };
+        this.io.fsyncDirectory(lockDirectory);
+        break;
+      } catch (error) {
+        if (descriptor !== null) {
+          try {
+            closeSync(descriptor);
+          } catch {
+            // Preserve the acquisition failure.
+          }
+        }
+        if (created) {
+          try {
+            unlinkSync(lockPath);
+            this.io.fsyncDirectory(lockDirectory);
+          } catch {
+            // Cleanup is best effort; the lock remains visible for recovery.
+          }
+        }
+        if (!isNodeError(error) || error.code !== "EEXIST") {
+          throw new ProjectRuntimeIoError(PROJECT_RUNTIME_WRITER_LOCK_FILENAME, "acquire", error);
+        }
+        if (Date.now() - startedAt >= timeoutMs) {
+          throw new ProjectRuntimeWriterLockTimeoutError(lockPath, timeoutMs);
+        }
+        sleepSync(Math.min(pollMs, Math.max(1, timeoutMs - (Date.now() - startedAt))));
+      }
+    }
+
+    return () => {
+      try {
+        const before = lstatSync(lockPath);
+        if (
+          !installedIdentity ||
+          before.dev !== installedIdentity.device ||
+          before.ino !== installedIdentity.inode ||
+          !before.isFile() ||
+          before.isSymbolicLink()
+        ) {
+          throw new Error("writer lock filesystem identity changed before release");
+        }
+        const currentOwner = readFileSync(lockPath, "utf-8");
+        const afterRead = lstatSync(lockPath);
+        const parsed = JSON.parse(currentOwner) as {
+          token?: unknown;
+          processInstanceId?: unknown;
+        };
+        if (
+          afterRead.dev !== before.dev ||
+          afterRead.ino !== before.ino ||
+          parsed.token !== token ||
+          parsed.processInstanceId !== PROJECT_RUNTIME_PROCESS_INSTANCE_ID
+        ) {
+          throw new Error("writer lock ownership changed before release");
+        }
+        const releasedPath = `${lockPath}.released-${token}`;
+        renameSync(lockPath, releasedPath);
+        const moved = lstatSync(releasedPath);
+        if (moved.dev !== before.dev || moved.ino !== before.ino) {
+          throw new Error("writer lock filesystem identity changed while releasing");
+        }
+        unlinkSync(releasedPath);
+        this.io.fsyncDirectory(lockDirectory);
+      } catch (error) {
+        throw new ProjectRuntimeIoError(PROJECT_RUNTIME_WRITER_LOCK_FILENAME, "release", error);
+      }
+    };
+  }
+
+  private reserveRecoveryOperation(
+    path: string,
+    rawToken: string,
+  ): { operationId: string; relativePath: string; target: string } {
+    const recoveryRoot = this.resolveRuntimePath("recovery");
+    this.io.mkdir(recoveryRoot);
+    this.io.fsyncDirectory(resolve(recoveryRoot, ".."));
+    for (let attempt = 0; attempt < 16; attempt += 1) {
+      const operationId = safeTempId(this.io.randomId());
+      const relativePath = `recovery/${sha256(path)}-${rawToken}-${operationId}`;
+      const target = this.resolveRuntimePath(relativePath);
+      try {
+        mkdirSync(target, { mode: 0o700 });
+        this.io.fsyncDirectory(recoveryRoot);
+        return { operationId, relativePath, target };
+      } catch (error) {
+        if (isNodeError(error) && error.code === "EEXIST") continue;
+        throw new ProjectRuntimeIoError(relativePath, "reserve recovery operation", error);
+      }
+    }
+    throw new ProjectRuntimeIoError(
+      "recovery",
+      "reserve recovery operation",
+      new Error("recovery operation id collided too many times"),
+    );
   }
 }
 
@@ -508,6 +988,64 @@ function parseDocumentEnvelope(path: string, raw: string): DocumentEnvelope {
     revision,
     payload: cloneJson(value.payload),
   };
+}
+
+function sha256(value: string | Uint8Array): string {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+function encodeUtf8(value: string): Uint8Array {
+  return Buffer.from(value, "utf-8");
+}
+
+function decodeUtf8(value: Uint8Array): string {
+  return Buffer.from(value).toString("utf-8");
+}
+
+function decodeUtf8Strict(value: Uint8Array, path: string): string {
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(value);
+  } catch {
+    throw new CorruptRuntimeDocumentError(path, "document is not valid UTF-8");
+  }
+}
+
+function isPromiseLike(value: unknown): value is PromiseLike<unknown> {
+  return (
+    (typeof value === "object" || typeof value === "function") &&
+    value !== null &&
+    "then" in value &&
+    typeof (value as { then?: unknown }).then === "function"
+  );
+}
+
+function normalizeLockDuration(
+  value: number | undefined,
+  fallback: number,
+  minimum: number,
+  maximum: number,
+  field: string,
+): number {
+  const resolved = value ?? fallback;
+  if (!Number.isSafeInteger(resolved) || resolved < minimum || resolved > maximum) {
+    throw new InvalidJsonValueError(
+      `$.${field}`,
+      `${field} must be an integer between ${minimum} and ${maximum}`,
+    );
+  }
+  return resolved;
+}
+
+function sleepSync(milliseconds: number): void {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, milliseconds);
+}
+
+function assertLockDirectory(path: string): void {
+  const stat = lstatSync(path);
+  if (stat.isSymbolicLink())
+    throw new InvalidRuntimePathError(path, "symbolic links are not allowed");
+  if (!stat.isDirectory())
+    throw new InvalidRuntimePathError(path, "writer lock parent must be a directory");
 }
 
 function parseEventLog<T>(stream: string, raw: string): RuntimeEvent<T>[] {
