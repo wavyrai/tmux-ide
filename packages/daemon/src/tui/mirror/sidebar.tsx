@@ -44,6 +44,7 @@ import {
   TAB_ACTIVE_BG,
 } from "./theme.ts";
 import type { AgentStatus } from "../detect/classify.ts";
+import type { ShellChromeVariant } from "./shell-chrome.ts";
 
 /** A session row: the fleet's name + its rolled-up status. */
 export interface SidebarSession {
@@ -71,6 +72,7 @@ export interface SidebarMouseEvent {
 export interface SidebarProps {
   /** Column width in cells. */
   width: number;
+  variant?: ShellChromeVariant;
   sessions: SidebarSession[];
   /** Pre-sorted, attention-first (see the note above). */
   agents: AgentRowInput[];
@@ -100,7 +102,7 @@ export function Sidebar(props: SidebarProps) {
       onMouse={(e: SidebarMouseEvent) => props.onMouse?.(e)}
     >
       <text fg={ACCENT} attributes={1}>
-        tmux-ide
+        {props.variant === "compact" ? "tmux" : "tmux-ide"}
       </text>
       <text fg={MUTED}>{"─".repeat(props.width - 2)}</text>
       <box flexDirection="column">
@@ -119,7 +121,7 @@ export function Sidebar(props: SidebarProps) {
             >
               <text fg={STATUS_COLOR[s.status]}>{STATUS_GLYPH[s.status]}</text>
               <text fg={s.name === props.current ? DEFAULT_FG : MUTED}>
-                {s.name.slice(0, props.width - 5)}
+                {s.name.slice(0, Math.max(1, props.width - (props.variant === "compact" ? 3 : 5)))}
               </text>
             </box>
           )}
@@ -206,7 +208,7 @@ export function Sidebar(props: SidebarProps) {
       {/* Footer hint — its middle segment is a CHIP (M21.9): the router
         hit-tests SIDEBAR_HINT_SPAN on the last screen row, and these three runs
         render the exact same cells. */}
-      <box flexDirection="row">
+      <box width={props.width} flexDirection="row" overflow="hidden">
         <text fg={MUTED}>{props.hint.pre}</text>
         <text fg={MUTED} bg={props.isHovered("sidebtn", 0) ? BUTTON_HOVER_BG : SIDEBAR_BG}>
           {props.hint.btn}

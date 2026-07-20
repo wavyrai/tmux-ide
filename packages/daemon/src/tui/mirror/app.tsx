@@ -226,6 +226,7 @@ import {
   MUTED,
   SIDEBAR_BG,
   TAB_ACTIVE_BG,
+  createSemanticThemeStore,
 } from "./theme.ts";
 import { rollupChips, homeFooterHints, type FleetRollup } from "../team/home.ts";
 import {
@@ -341,10 +342,8 @@ import {
   isHostedPanelInert,
   legacyTabFromPanelKind,
   navigateHostedPanel,
-  panelCell,
   panelKindFromLegacyTab,
   panelMode,
-  panelSpans,
   planHostedInitialActivation,
   planHostedReconciledActivation,
   planHostedViewActivation,
@@ -353,6 +352,8 @@ import {
   type HostedPanelKind,
   type HostedPanelView,
 } from "./panel-host.ts";
+import { ShellCompositeLeafChrome, ShellTabBar } from "./shell-chrome.tsx";
+import { shellChromeLayout, shellSidebarHint, shellSurfaceTabSpans } from "./shell-chrome.ts";
 import {
   MissionWorkspaceLoader,
   clipTerminal,
@@ -408,7 +409,6 @@ import {
   type WorkspaceViewState,
 } from "./workspace-ui-state.ts";
 import {
-  DIALOG_W,
   DIALOG_ROWS,
   dialogPos,
   dialogHeaderRows,
@@ -804,7 +804,6 @@ const HEADER_ROWS = 2;
 // sidebar + main region). Its height offsets every region's global y, so the
 // router subtracts it once (`gy = y - TABBAR_H`) before the per-mode math.
 const TABBAR_H = 1;
-const PALETTE_W = 60;
 const PALETTE_ROWS = 10;
 // ── M21.9 clickable-chip labels ─────────────────────────────────────────────
 // Fixed strings so the x-span math is constant (every glyph single-width). The
@@ -849,12 +848,6 @@ const WELCOME_ACTION_ROW = 3; // 0-based within the welcome block
 // quit" hint reads "detach" so the keycap tells the truth.
 const HOSTED = process.env.TMUX_IDE_HOSTED === "1";
 const QUIT_HINT = HOSTED ? "^q detach" : "^q quit";
-// The sidebar footer hint, split so its "F5 palette" segment is a chip: the
-// span starts after paddingLeft (1) + the pre text.
-const SIDEBAR_HINT_PRE = "F1-4/F6-13 views · ";
-const SIDEBAR_HINT_BTN = "F5 palette";
-const SIDEBAR_HINT_POST = ` · ${QUIT_HINT}`;
-const SIDEBAR_HINT_SPAN = { start: 1 + SIDEBAR_HINT_PRE.length, width: SIDEBAR_HINT_BTN.length };
 // Scrollback-search highlight backgrounds (M20.3), packed 0xRRGGBB to sit in a
 // run's `bg` (search paints a bg, distinct from selection's inverse video, so
 // the two coexist). Every visible match gets the dim accent; the CURRENT match
@@ -928,6 +921,24 @@ try {
     // a bare side-effect import of the module gets DCE'd by the transpiler.
     if (FB_PANES) registerPaneSurface();
     const dims = useTerminalDimensions();
+    const semanticThemeStore = createSemanticThemeStore(loadAppConfig().theme, {
+      rendererMode: appRenderer.themeMode,
+    });
+    const [semanticTheme, setSemanticTheme] = createSignal(semanticThemeStore.getSnapshot());
+    const disposeSemanticThemeStore = semanticThemeStore.subscribe(() =>
+      setSemanticTheme(semanticThemeStore.getSnapshot()),
+    );
+    const disposeRendererThemeMode = semanticThemeStore.followRendererThemeMode(appRenderer);
+    onCleanup(() => {
+      disposeRendererThemeMode();
+      disposeSemanticThemeStore();
+    });
+    const shellLayout = () => shellChromeLayout(dims().width, dims().height, preferredSidebarW());
+    const sidebarW = () => shellLayout().sidebar.width;
+    const sidebarHint = () => shellSidebarHint(shellLayout().variant, QUIT_HINT, sidebarW());
+    const paletteW = () => shellLayout().paletteWidth;
+    const dialogW = () => shellLayout().dialogWidth;
+    const dialogInnerWidth = () => dialogInnerW(dialogW());
     const canvasCols = () => Math.max(20, dims().width - sidebarW());
     const canvasRows = () => Math.max(4, dims().height - HEADER_ROWS - TABBAR_H);
 
@@ -958,7 +969,9 @@ try {
     // window-strip spans, the router's region math, the render widths) reads
     // `sidebarW()` so a boundary drag reflows the whole app. Restored from
     // app-state (clamped), re-clamped defensively, re-persisted on release.
-    const [sidebarW, setSidebarW] = createSignal(clampSidebarWidth(persisted.sidebarW));
+    const [preferredSidebarW, setPreferredSidebarW] = createSignal(
+      clampSidebarWidth(persisted.sidebarW),
+    );
     // Recently-opened folders (M22.5) — restored from app-state, prepended-to on
     // every folder open, persisted with the rest of the app state. Home renders
     // them under a "recent" header (deduped against sessions + the registry).
@@ -1048,7 +1061,9 @@ try {
     const activePanel = (): HostedPanelKind => focusedCompositeLeaf()?.panel ?? activeView().panel;
     const tab = (): Tab => legacyTabFromPanelKind(activePanel());
     const mode = (): "home" | "mirror" | "editor" | "diff" | "missions" => panelMode(activePanel());
-    const surfaceSpans = createMemo(() => panelSpans(hostedViews()));
+    const surfaceSpans = createMemo(() =>
+      shellSurfaceTabSpans(hostedViews(), shellLayout().variant),
+    );
     const [missionWorkspaceLoad, setMissionWorkspaceLoad] = createSignal<MissionWorkspaceLoadState>(
       {
         status: "loading",
@@ -3642,11 +3657,11 @@ try {
     const paletteCount = () => paletteBuffers()?.length ?? paletteRowList().length;
     /** The palette box geometry as placed by the render, for the router. */
     const paletteGeom = (): PaletteGeom => {
-      const { left, top } = palettePos(dims().width, dims().height, PALETTE_W);
+      const { left, top } = palettePos(dims().width, dims().height, paletteW());
       return {
         left,
         top,
-        width: PALETTE_W,
+        width: paletteW(),
         visibleRows: Math.min(PALETTE_ROWS, Math.max(0, paletteCount() - paletteTop())),
       };
     };
@@ -3917,7 +3932,7 @@ try {
     const dlgSelectSpec = () => dlgSelect()!.spec as DialogSelectSpec;
     const dlgPromptSpec = () => dlgPrompt()!.spec as DialogPromptSpec;
     const dlgConfirmSpec = () => dlgConfirm()!.spec as DialogConfirmSpec;
-    const DLG_INNER_W = dialogInnerW(DIALOG_W);
+
     /** The visible window of the top select's filtered rows (render + router). */
     const dlgVisibleItems = () => {
       dialogRev();
@@ -3929,7 +3944,7 @@ try {
      *  hit-tests the router (the palette's law). */
     const dialogGeomNow = (): DialogGeom => {
       const e = dialogStack.top()!;
-      const { left, top } = dialogPos(dims().width, dims().height, DIALOG_W);
+      const { left, top } = dialogPos(dims().width, dims().height, dialogW());
       const visibleRows =
         e.spec.kind === "select"
           ? Math.min(DIALOG_ROWS, Math.max(0, dialogStack.filtered().length - e.state.top))
@@ -3939,8 +3954,8 @@ try {
       return {
         left,
         top,
-        width: DIALOG_W,
-        headerRows: dialogHeaderRows(e.spec),
+        width: dialogW(),
+        headerRows: dialogHeaderRows(e.spec, dialogW()),
         visibleRows,
         footerRows: 1,
       };
@@ -4203,7 +4218,7 @@ try {
         contextSession: contextSession() || null,
         openFile: editorPath(),
         diffFile: diffVisibleFiles()[diffSel()]?.path ?? null,
-        sidebarW: sidebarW(),
+        sidebarW: preferredSidebarW(),
         recentFolders: recentFolders(),
         lastSpawns: lastSpawns(),
         customCommands: customCommands(),
@@ -5920,7 +5935,7 @@ try {
         // The sidebar footer's "F5 palette" segment is a chip (last screen row).
         if (y === dims().height - 1) {
           setHoverIf(
-            spanHit([SIDEBAR_HINT_SPAN], x) === 0 ? { region: "sidebtn", index: 0 } : null,
+            spanHit([sidebarHint().buttonSpan], x) === 0 ? { region: "sidebtn", index: 0 } : null,
           );
           return;
         }
@@ -6438,7 +6453,7 @@ try {
         const gy = y - TABBAR_H;
         if (x < sidebarW()) {
           if (y === dims().height - 1) {
-            if (spanHit([SIDEBAR_HINT_SPAN], x) === 0) openPalette();
+            if (spanHit([sidebarHint().buttonSpan], x) === 0) openPalette();
             return;
           }
           const hit = sidebarHit(gy, fleet().length, fleetAgents().length);
@@ -6551,7 +6566,7 @@ try {
         const isEnd = type === "up" || type === "drag-end" || type === "drop" || type === "out";
         if (isDrag || isEnd) {
           if (dragging.kind === "sidebar") {
-            setSidebarW(clampSidebarWidth(x));
+            setPreferredSidebarW(clampSidebarWidth(x));
           } else if (dragging.kind === "scrollbar") {
             // Absolute scroll: the pointer's row within the track maps to a top,
             // honoring the grab offset so the thumb tracks the cursor 1:1.
@@ -6713,7 +6728,7 @@ try {
         if (type !== "down") return;
         // The footer hint's "F5 palette" segment is a chip (last screen row).
         if (y === dims().height - 1) {
-          if (spanHit([SIDEBAR_HINT_SPAN], x) === 0) openPalette();
+          if (spanHit([sidebarHint().buttonSpan], x) === 0) openPalette();
           return;
         }
         // Session rows switch the workspace; agent rows JUMP to their exact pane
@@ -7072,18 +7087,14 @@ try {
     const compositeLeafChrome = (leaf: CompositePanelLeaf) => {
       const viewport = compositeLeafViewport(leaf.rect, 0);
       return (
-        <box
-          height={1}
-          flexDirection="row"
-          backgroundColor={leaf.focused ? TAB_ACTIVE_BG : GUTTER_BG}
-        >
-          <text fg={leaf.focused ? ACCENT : MUTED}>
-            {clipTerminal(
-              `${leaf.focused ? "●" : "○"} ${leaf.title} · ${leaf.panel}`,
-              viewport.innerWidth,
-            )}
-          </text>
-        </box>
+        <ShellCompositeLeafChrome
+          theme={semanticTheme()}
+          title={leaf.title}
+          panel={leaf.panel}
+          width={viewport.innerWidth}
+          focused={leaf.focused}
+          terminalFocused={leaf.panel === "terminals" && leaf.focused}
+        />
       );
     };
 
@@ -7407,44 +7418,21 @@ try {
           backgroundColor={TABBAR_BG}
           onMouse={(e: RouteEvent) => route(e)}
         >
-          <For each={hostedViews()}>
-            {(view, i) => (
-              <box
-                backgroundColor={
-                  activeViewId() === view.id
-                    ? ACCENT
-                    : isHovered("surfacetab", i())
-                      ? HOVER_BG
-                      : TABBAR_BG
-                }
-              >
-                <text
-                  fg={activeViewId() === view.id ? DEFAULT_BG : MUTED}
-                  attributes={activeViewId() === view.id ? 1 : 0}
-                >
-                  {panelCell(view)}
-                </text>
-              </box>
-            )}
-          </For>
-          <box flexGrow={1} />
-          <Show when={note()}>
-            <text fg={ACCENT} attributes={1}>{`${note()} `}</text>
-          </Show>
-          {/* Right-aligned CHIPS (M21.9): the workspace-context chip (click →
-            its Terminal) and the palette hint (click → open the palette). The
-            router hit-tests `tabbarButtons().spans` — the same defs walked
-            here, right-anchored, so the cells match exactly. */}
-          <For each={tabbarButtons().defs}>
-            {(b, i) => (
-              <text
-                fg={b.id === "tab-context" ? ACCENT : MUTED}
-                bg={isHovered("tabbtn", i()) ? BUTTON_HOVER_BG : TABBAR_BG}
-              >
-                {b.label}
-              </text>
-            )}
-          </For>
+          <ShellTabBar
+            theme={semanticTheme()}
+            width={dims().width}
+            variant={shellLayout().variant}
+            views={hostedViews()}
+            activeViewId={activeViewId()}
+            hoveredIndex={hover()?.region === "surfacetab" ? hover()!.index : null}
+            note={note()}
+            rightChips={tabbarButtons().defs.map((button, index) => ({
+              id: button.id,
+              label: button.label,
+              hovered: isHovered("tabbtn", index),
+              context: button.id === "tab-context",
+            }))}
+          />
         </box>
         <box flexDirection="row" flexGrow={1} backgroundColor={DEFAULT_BG} overflow="hidden">
           <Sidebar
@@ -7455,11 +7443,8 @@ try {
             nowSec={Math.floor(Date.now() / 1000)}
             isHovered={isHovered}
             flashed={(paneId: string) => attnFlash().has(paneId)}
-            hint={{
-              pre: SIDEBAR_HINT_PRE,
-              btn: SIDEBAR_HINT_BTN,
-              post: SIDEBAR_HINT_POST,
-            }}
+            variant={shellLayout().variant}
+            hint={sidebarHint()}
             onMouse={(e) => route(e as RouteEvent)}
           />
           <box
@@ -8185,9 +8170,9 @@ try {
         <Show when={paletteOpen()}>
           <box
             position="absolute"
-            left={palettePos(dims().width, dims().height, PALETTE_W).left}
-            top={palettePos(dims().width, dims().height, PALETTE_W).top}
-            width={PALETTE_W}
+            left={palettePos(dims().width, dims().height, paletteW()).left}
+            top={palettePos(dims().width, dims().height, paletteW()).top}
+            width={paletteW()}
             flexDirection="column"
             backgroundColor={PALETTE_BG}
             border
@@ -8208,7 +8193,7 @@ try {
                     </text>
                     <text fg={DEFAULT_FG}>{`${paletteQuery()}▏`}</text>
                   </box>
-                  <text fg={MUTED}>{"─".repeat(PALETTE_W - 4)}</text>
+                  <text fg={MUTED}>{"─".repeat(paletteW() - 4)}</text>
                   {/* Rows (M24.4): group headers render as inert muted lines;
                     action rows carry the selection prefix + a right-aligned
                     keycap (paletteRowText keeps the keycap inside the width
@@ -8235,7 +8220,7 @@ try {
                               paletteRowText(
                                 r.type === "action" ? r.action.label : "",
                                 r.type === "action" ? r.shortcut : null,
-                                PALETTE_W - 6,
+                                paletteW() - 6,
                               )}
                           </text>
                         </Show>
@@ -8255,7 +8240,7 @@ try {
                 <box flexGrow={1} />
                 <text fg={MUTED}>{"esc back"}</text>
               </box>
-              <text fg={MUTED}>{"─".repeat(PALETTE_W - 4)}</text>
+              <text fg={MUTED}>{"─".repeat(paletteW() - 4)}</text>
               <For each={paletteBuffers()!.slice(paletteTop(), paletteTop() + PALETTE_ROWS)}>
                 {(b, i) => (
                   <box
@@ -8390,9 +8375,9 @@ try {
         <Show when={dlgSelect()}>
           <box
             position="absolute"
-            left={dialogPos(dims().width, dims().height, DIALOG_W).left}
-            top={dialogPos(dims().width, dims().height, DIALOG_W).top}
-            width={DIALOG_W}
+            left={dialogPos(dims().width, dims().height, dialogW()).left}
+            top={dialogPos(dims().width, dims().height, dialogW()).top}
+            width={dialogW()}
             flexDirection="column"
             backgroundColor={PALETTE_BG}
             border
@@ -8401,7 +8386,7 @@ try {
             paddingRight={1}
           >
             <text fg={dlgAccent()} attributes={1}>
-              {dlgSelectSpec().title.slice(0, DLG_INNER_W).padEnd(DLG_INNER_W)}
+              {dlgSelectSpec().title.slice(0, dialogInnerWidth()).padEnd(dialogInnerWidth())}
             </text>
             <Show when={dlgSelectSpec().filterable !== false}>
               <box flexDirection="row">
@@ -8411,7 +8396,7 @@ try {
                 <text fg={DEFAULT_FG}>{`${dlgSelect()!.state.query}▏`}</text>
               </box>
             </Show>
-            <text fg={MUTED}>{"─".repeat(DLG_INNER_W)}</text>
+            <text fg={MUTED}>{"─".repeat(dialogInnerWidth())}</text>
             <For each={dlgVisibleItems()}>
               {(item, i) => {
                 const abs = () => dlgSelect()!.state.top + i();
@@ -8424,7 +8409,7 @@ try {
                   dialogRowText(item, {
                     selected: selected(),
                     armed: armed(),
-                    innerW: item.swatch ? DLG_INNER_W - 2 : DLG_INNER_W,
+                    innerW: item.swatch ? dialogInnerWidth() - 2 : dialogInnerWidth(),
                   }).slice(2);
                 const markerFg = () =>
                   item.current ? dlgAccent() : selected() ? DEFAULT_FG : MUTED;
@@ -8451,15 +8436,15 @@ try {
             <Show when={dlgVisibleItems().length === 0}>
               <text fg={MUTED}>{"  no matches"}</text>
             </Show>
-            <text fg={MUTED}>{selectFooter(dlgSelectSpec()).slice(0, DLG_INNER_W)}</text>
+            <text fg={MUTED}>{selectFooter(dlgSelectSpec()).slice(0, dialogInnerWidth())}</text>
           </box>
         </Show>
         <Show when={dlgPrompt()}>
           <box
             position="absolute"
-            left={dialogPos(dims().width, dims().height, DIALOG_W).left}
-            top={dialogPos(dims().width, dims().height, DIALOG_W).top}
-            width={DIALOG_W}
+            left={dialogPos(dims().width, dims().height, dialogW()).left}
+            top={dialogPos(dims().width, dims().height, dialogW()).top}
+            width={dialogW()}
             flexDirection="column"
             backgroundColor={PALETTE_BG}
             border
@@ -8468,9 +8453,9 @@ try {
             paddingRight={1}
           >
             <text fg={ACCENT} attributes={1}>
-              {dlgPromptSpec().title.slice(0, DLG_INNER_W).padEnd(DLG_INNER_W)}
+              {dlgPromptSpec().title.slice(0, dialogInnerWidth()).padEnd(dialogInnerWidth())}
             </text>
-            <text fg={MUTED}>{"─".repeat(DLG_INNER_W)}</text>
+            <text fg={MUTED}>{"─".repeat(dialogInnerWidth())}</text>
             <box flexDirection="row">
               <text fg={ACCENT} attributes={1}>
                 {"▸ "}
@@ -8486,16 +8471,16 @@ try {
             <text
               fg={promptFooter(dlgPromptSpec(), dlgPrompt()!.state).error ? DIFF_DEL_FG : MUTED}
             >
-              {promptFooter(dlgPromptSpec(), dlgPrompt()!.state).text.slice(0, DLG_INNER_W)}
+              {promptFooter(dlgPromptSpec(), dlgPrompt()!.state).text.slice(0, dialogInnerWidth())}
             </text>
           </box>
         </Show>
         <Show when={dlgConfirm()}>
           <box
             position="absolute"
-            left={dialogPos(dims().width, dims().height, DIALOG_W).left}
-            top={dialogPos(dims().width, dims().height, DIALOG_W).top}
-            width={DIALOG_W}
+            left={dialogPos(dims().width, dims().height, dialogW()).left}
+            top={dialogPos(dims().width, dims().height, dialogW()).top}
+            width={dialogW()}
             flexDirection="column"
             backgroundColor={PALETTE_BG}
             border
@@ -8504,10 +8489,14 @@ try {
             paddingRight={1}
           >
             <text fg={ACCENT} attributes={1}>
-              {dlgConfirmSpec().title.slice(0, DLG_INNER_W).padEnd(DLG_INNER_W)}
+              {dlgConfirmSpec().title.slice(0, dialogInnerWidth()).padEnd(dialogInnerWidth())}
             </text>
-            <text fg={MUTED}>{"─".repeat(DLG_INNER_W)}</text>
-            <For each={dlgConfirmSpec().body ? wrapText(dlgConfirmSpec().body!, DLG_INNER_W) : []}>
+            <text fg={MUTED}>{"─".repeat(dialogInnerWidth())}</text>
+            <For
+              each={
+                dlgConfirmSpec().body ? wrapText(dlgConfirmSpec().body!, dialogInnerWidth()) : []
+              }
+            >
               {(line) => <text fg={MUTED}>{line || " "}</text>}
             </For>
             <For each={confirmOptions(dlgConfirmSpec())}>
@@ -8516,7 +8505,7 @@ try {
                 return (
                   <box height={1} backgroundColor={selected() ? TAB_ACTIVE_BG : PALETTE_BG}>
                     <text fg={selected() ? DEFAULT_FG : MUTED}>
-                      {`${selected() ? "› " : "  "}${label}`.slice(0, DLG_INNER_W)}
+                      {`${selected() ? "› " : "  "}${label}`.slice(0, dialogInnerWidth())}
                     </text>
                   </box>
                 );

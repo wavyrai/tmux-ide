@@ -1,0 +1,134 @@
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
+
+exports[`ShellChrome OpenTUI renderer renders deterministic %sx%s compact shell chrome 1`] = `
+" ⌂  !  ▤  ±  ◆                                 ready ⧉ web  !blocked F5 palette
+  tmux              ┌──────────────────────────────────────────────────────────┐
+ ● web              │ › compact workspace                                      │
+ ○ api              │● Active view and keyboard focus are selected     terminal│
+ ○ docs             │! Agent attention keeps blocked status             blocked│
+                    │· Pointer hover is a separate surface                hover│
+                    │▣ Terminal · terminals                                    │
+                    ││ Palette query…▏                  │                      │
+                    │                                                          │
+                    │                                                          │
+                    │                                                          │
+                    │                                                          │
+                    │                                                          │
+                    │                                                          │
+                    │                                                          │
+                    │                                                          │
+                    │                                                          │
+                    │                                                          │
+                    │                                                          │
+                    │                                                          │
+                    │                                                          │
+                    │                                                          │
+                    └──────────────────────────────────────────────────────────┘
+  F5 · ^q quit       terminal · ready · F5 palette"
+`;
+
+exports[`ShellChrome OpenTUI renderer renders deterministic %sx%s standard shell chrome 1`] = `
+" ⌂ Home  ! Terminal  ▤ Files  ± Diff  ◆ Missions                                       ready ⧉ web  !blocked F5 palette
+  tmux-ide                  ┌──────────────────────────────────────────────────────────────────────────────────────────┐
+ ● web                      │ › standard workspace                                                                     │
+ ○ api                      │● Active view and keyboard focus are selected                                     terminal│
+ ○ docs                     │! Agent attention keeps blocked status                                             blocked│
+                            │· Pointer hover is a separate surface                                                hover│
+                            │▣ Terminal · terminals                                                                    │
+                            ││ Palette query…▏                  │                                                      │
+                            │                                                                                          │
+                            │                                                                                          │
+                            │                                                                                          │
+                            │                                                                                          │
+                            │                                                                                          │
+                            │                                                                                          │
+                            │                                                                                          │
+                            │                                                                                          │
+                            │                                                                                          │
+                            │                                                                                          │
+                            │                                                                                          │
+                            │                                                                                          │
+                            │                                                                                          │
+                            │                                                                                          │
+                            │                                                                                          │
+                            │                                                                                          │
+                            │                                                                                          │
+                            │                                                                                          │
+                            │                                                                                          │
+                            │                                                                                          │
+                            │                                                                                          │
+                            │                                                                                          │
+                            │                                                                                          │
+                            │                                                                                          │
+                            │                                                                                          │
+                            │                                                                                          │
+                            │                                                                                          │
+                            │                                                                                          │
+                            │                                                                                          │
+                            │                                                                                          │
+                            └──────────────────────────────────────────────────────────────────────────────────────────┘
+  F5 palette · ^q quit       tmux-ide · terminal · ready · F5 palette · arrows move · ^q quit"
+`;
+
+exports[`ShellChrome OpenTUI renderer renders deterministic %sx%s wide shell chrome 1`] = `
+" F1 ⌂ Home  F2 ! Terminal  F3 ▤ Files  F4 ± Diff  F6 ◆ Missions                                                                                                        ready ⧉ web  !blocked F5 palette
+  tmux-ide                  ┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+ ● web                      │ › wide workspace                                                                                                                                                         │
+ ○ api                      │● Active view and keyboard focus are selected                                                                                                                     terminal│
+ ○ docs                     │! Agent attention keeps blocked status                                                                                                                             blocked│
+                            │· Pointer hover is a separate surface                                                                                                                                hover│
+                            │▣ Terminal · terminals                                                                                                                                                    │
+                            ││ Palette query…▏                  │                                                                                                                                      │
+                            │                                                                                                                                                                          │
+                            │                                                                                                                                                                          │
+                            │                                                                                                                                                                          │
+                            │                                                                                                                                                                          │
+                            │                                                                                                                                                                          │
+                            │                                                                                                                                                                          │
+                            │                                                                                                                                                                          │
+                            │                                                                                                                                                                          │
+                            │                                                                                                                                                                          │
+                            │                                                                                                                                                                          │
+                            │                                                                                                                                                                          │
+                            │                                                                                                                                                                          │
+                            │                                                                                                                                                                          │
+                            │                                                                                                                                                                          │
+                            │                                                                                                                                                                          │
+                            │                                                                                                                                                                          │
+                            │                                                                                                                                                                          │
+                            │                                                                                                                                                                          │
+                            │                                                                                                                                                                          │
+                            │                                                                                                                                                                          │
+                            │                                                                                                                                                                          │
+                            │                                                                                                                                                                          │
+                            │                                                                                                                                                                          │
+                            │                                                                                                                                                                          │
+                            │                                                                                                                                                                          │
+                            │                                                                                                                                                                          │
+                            │                                                                                                                                                                          │
+                            │                                                                                                                                                                          │
+                            │                                                                                                                                                                          │
+                            │                                                                                                                                                                          │
+                            │                                                                                                                                                                          │
+                            │                                                                                                                                                                          │
+                            │                                                                                                                                                                          │
+                            │                                                                                                                                                                          │
+                            │                                                                                                                                                                          │
+                            │                                                                                                                                                                          │
+                            │                                                                                                                                                                          │
+                            │                                                                                                                                                                          │
+                            │                                                                                                                                                                          │
+                            │                                                                                                                                                                          │
+                            │                                                                                                                                                                          │
+                            │                                                                                                                                                                          │
+                            │                                                                                                                                                                          │
+                            │                                                                                                                                                                          │
+                            │                                                                                                                                                                          │
+                            │                                                                                                                                                                          │
+                            │                                                                                                                                                                          │
+                            │                                                                                                                                                                          │
+                            │                                                                                                                                                                          │
+                            │                                                                                                                                                                          │
+                            └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  F5 palette · ^q quit       tmux-ide · terminal · ready · F5 palette · arrows move · ^q quit"
+`;

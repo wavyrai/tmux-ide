@@ -214,11 +214,11 @@ export function dialogInnerW(width: number): number {
 }
 
 /** PURE — chrome rows above the first hit-testable row, per kind. */
-export function dialogHeaderRows(spec: DialogSpec): number {
+export function dialogHeaderRows(spec: DialogSpec, width = DIALOG_W): number {
   // top border + title + rule = 3 …
   if (spec.kind === "select") return spec.filterable === false ? 3 : 4; // … + filter input
   if (spec.kind === "prompt") return 3;
-  return 3 + (spec.body ? wrapText(spec.body, dialogInnerW(DIALOG_W)).length : 0);
+  return 3 + (spec.body ? wrapText(spec.body, dialogInnerW(width)).length : 0);
 }
 
 /** PURE — total box height for a geometry (empty lists still show one
