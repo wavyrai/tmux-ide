@@ -30,8 +30,8 @@ export interface ProjectReadinessProjectProbe {
    */
   identityKey: string | null;
   identitySource: "git-common-dir" | "canonical-realpath" | null;
-  /** Result of inspecting the requested path; `unknown` must never mean missing. */
-  pathKind: ProjectPathKind;
+  /** Result of inspecting the requested path; omitted by pre-pathKind callers. */
+  pathKind?: ProjectPathKind;
   exists: boolean;
   isDirectory: boolean;
   registration: ProjectRegistrationState;
@@ -502,14 +502,17 @@ function createLaunchPlan(
 export function classifyProjectReadiness(probe: ProjectReadinessProbe): ProjectReadinessResult {
   const state: MutableClassification = { issues: [], actions: [] };
   const platformSupported = SUPPORTED_PLATFORMS.has(probe.platform.os);
+  const projectPathKind: ProjectPathKind =
+    probe.project.pathKind ??
+    (probe.project.exists ? (probe.project.isDirectory ? "directory" : "other") : "missing");
   const projectDirectoryPresent =
-    probe.project.pathKind === "directory" && probe.project.exists && probe.project.isDirectory;
+    projectPathKind === "directory" && probe.project.exists && probe.project.isDirectory;
   const hasProjectRoot = probe.project.root !== null && probe.project.root.trim().length > 0;
   const hasIdentityKey =
     probe.project.identityKey !== null && probe.project.identityKey.trim().length > 0;
   const hasIdentitySource = probe.project.identitySource !== null;
 
-  if (probe.project.pathKind === "unknown") {
+  if (projectPathKind === "unknown") {
     addIssue(
       state,
       {
@@ -535,7 +538,7 @@ export function classifyProjectReadiness(probe: ProjectReadinessProbe): ProjectR
         },
       ],
     );
-  } else if (probe.project.pathKind === "missing") {
+  } else if (projectPathKind === "missing") {
     if (probe.project.registration === "stale") {
       addIssue(
         state,
@@ -582,7 +585,7 @@ export function classifyProjectReadiness(probe: ProjectReadinessProbe): ProjectR
         ],
       );
     }
-  } else if (probe.project.pathKind === "other") {
+  } else if (projectPathKind === "other") {
     addIssue(
       state,
       {
@@ -992,7 +995,7 @@ export function classifyProjectReadiness(probe: ProjectReadinessProbe): ProjectR
       name: probe.project.name,
       identityKey: probe.project.identityKey,
       identitySource: probe.project.identitySource,
-      pathKind: probe.project.pathKind,
+      pathKind: projectPathKind,
       registration: probe.project.registration,
     },
     capabilities: {

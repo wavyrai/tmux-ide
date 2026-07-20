@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { classifyProjectReadiness as publicClassifyProjectReadiness } from "../../index.ts";
+import {
+  classifyProjectReadiness as publicClassifyProjectReadiness,
+  type ProjectReadinessProbe as PublicProjectReadinessProbe,
+} from "../../index.ts";
 import {
   classifyProjectReadiness,
   type ProjectReadinessHarnessProbe,
@@ -48,9 +51,66 @@ function issueCodes(result: ReturnType<typeof classifyProjectReadiness>): string
   return result.issues.map((issue) => issue.code);
 }
 
+function legacyPublicProbe(
+  projectOverrides: Partial<PublicProjectReadinessProbe["project"]> = {},
+): PublicProjectReadinessProbe {
+  return {
+    project: {
+      requestedPath: "/work/legacy",
+      root: "/work/legacy",
+      name: "legacy",
+      identityKey: "legacy-identity",
+      identitySource: "canonical-realpath",
+      exists: true,
+      isDirectory: true,
+      registration: "unregistered",
+      ...projectOverrides,
+    },
+    platform: { os: "darwin", arch: "arm64" },
+    git: { availability: "available", version: "2.50.0", repository: true },
+    tmux: { availability: "available", version: "3.5a" },
+    shell: { availability: "available", command: ["/bin/zsh"] },
+    harnesses: [harness()],
+  };
+}
+
 describe("classifyProjectReadiness", () => {
   it("is exported through the public daemon package entry point", () => {
     expect(publicClassifyProjectReadiness).toBe(classifyProjectReadiness);
+  });
+
+  it("normalizes pre-pathKind public probe shapes without changing legacy readiness", () => {
+    const ready = publicClassifyProjectReadiness(legacyPublicProbe());
+    const missing = publicClassifyProjectReadiness(
+      legacyPublicProbe({
+        root: null,
+        name: null,
+        identityKey: null,
+        identitySource: null,
+        exists: false,
+        isDirectory: false,
+      }),
+    );
+    const file = publicClassifyProjectReadiness(
+      legacyPublicProbe({
+        root: null,
+        identityKey: null,
+        identitySource: null,
+        exists: true,
+        isDirectory: false,
+      }),
+    );
+
+    expect(ready).toMatchObject({
+      status: "ready",
+      canLaunch: true,
+      project: { pathKind: "directory" },
+      recommendedLaunchPlan: { mode: "agent-workbench" },
+    });
+    expect(missing.project.pathKind).toBe("missing");
+    expect(issueCodes(missing)).toContain("PROJECT_NOT_FOUND");
+    expect(file.project.pathKind).toBe("other");
+    expect(issueCodes(file)).toContain("PROJECT_NOT_DIRECTORY");
   });
 
   it("classifies a clean project and recommends a config-free agent workbench", () => {
