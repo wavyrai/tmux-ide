@@ -181,6 +181,26 @@ describe("command palette surface projection", () => {
     }
   });
 
+  it("keeps presentation groups separate from semantic command categories", () => {
+    const projection = projectCommandPalette({
+      width: 120,
+      height: 40,
+      query: "",
+      commands: [
+        { ...commands[0]!, group: "Recent" },
+        { ...commands[2]!, group: "Suggested" },
+      ],
+    });
+    expect(
+      projection.rows.filter((row) => row.kind === "group").map((row) => row.category),
+    ).toEqual(["Recent", "Suggested"]);
+    expect(
+      projection.rows
+        .filter((row) => row.kind === "command")
+        .map((row) => (row.kind === "command" ? row.category : "")),
+    ).toEqual(["Navigation", "Files"]);
+  });
+
   it("keeps semantic row ids stable across fresh descriptors and transient selection", () => {
     const first = projectCommandPalette({
       width: 120,

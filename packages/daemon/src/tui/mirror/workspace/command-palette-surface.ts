@@ -17,6 +17,12 @@ export interface CommandPaletteDescriptor {
   label: string;
   description?: string;
   detail?: string;
+  /**
+   * Optional presentation group. `category` remains the command's semantic
+   * category (Files, Window, …), while adapters can preserve ranked sections
+   * such as Recent/Suggested without lying about command semantics.
+   */
+  group?: string;
   category: string;
   shortcut?: string | null;
   status?: string | null;
@@ -241,7 +247,7 @@ function uniqueCommands(commands: readonly CommandPaletteDescriptor[]): CommandP
 function commandCandidates(commands: readonly CommandPaletteDescriptor[]): CandidateRow[] {
   const categories = new Map<string, CommandPaletteDescriptor[]>();
   for (const command of commands) {
-    const category = command.category.trim() || "Commands";
+    const category = command.group?.trim() || command.category.trim() || "Commands";
     const group = categories.get(category);
     if (group) group.push(command);
     else categories.set(category, [command]);
