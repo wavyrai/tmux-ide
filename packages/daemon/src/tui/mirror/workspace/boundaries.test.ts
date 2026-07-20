@@ -10,6 +10,7 @@ const FORBIDDEN_IMPORTS = [
   /(?:^|\/)session-mirror\.ts$/u,
   /(?:^|\/)pane-mirror\.ts$/u,
   /(?:^|\/)control-client\.ts$/u,
+  /(?:^|\/)missions-workspace\.ts$/u,
   /(?:^|\/)command-center(?:\/|$)/u,
   /(?:^|\/)server(?:\/|$)/u,
   /(?:^|\/)lib(?:\/|$)/u,

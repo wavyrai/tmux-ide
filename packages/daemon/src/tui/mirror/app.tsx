@@ -352,8 +352,10 @@ import {
   type HostedPanelKind,
   type HostedPanelView,
 } from "./panel-host.ts";
-import { ShellCompositeLeafChrome, ShellTabBar } from "./shell-chrome.tsx";
+import { ShellTabBar } from "./shell-chrome.tsx";
 import { shellChromeLayout, shellSidebarHint, shellSurfaceTabSpans } from "./shell-chrome.ts";
+import { projectPaneFrame } from "./workspace/pane-frame.ts";
+import { PaneFrameHeader } from "./workspace/pane-frame.tsx";
 import {
   MissionWorkspaceLoader,
   clipTerminal,
@@ -7046,16 +7048,16 @@ try {
 
     const compositeLeafChrome = (leaf: CompositePanelLeaf) => {
       const viewport = compositeLeafViewport(leaf.rect, 0);
-      return (
-        <ShellCompositeLeafChrome
-          theme={semanticTheme()}
-          title={leaf.title}
-          panel={leaf.panel}
-          width={viewport.innerWidth}
-          focused={leaf.focused}
-          terminalFocused={leaf.panel === "terminals" && leaf.focused}
-        />
-      );
+      const projection = projectPaneFrame({
+        width: viewport.innerWidth,
+        height: viewport.innerHeight,
+        title: leaf.title,
+        kind: leaf.panel,
+        subtitle: leaf.nodeId,
+        focused: leaf.focused,
+        terminalFocused: leaf.panel === "terminals" && leaf.focused,
+      });
+      return <PaneFrameHeader theme={semanticTheme()} projection={projection} />;
     };
 
     const compositeTerminalLeaf = (leaf: CompositePanelLeaf) => {
