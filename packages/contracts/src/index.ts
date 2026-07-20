@@ -20,6 +20,7 @@ export * from "./domain.ts";
 export * from "./mission-projections.ts";
 export * from "./tmux.ts";
 export * from "./workspace.ts";
+export * from "./workspace-state.ts";
 export * from "./workspace-config.ts";
 export * from "./actions-contract.ts";
 export * from "./actions-errors.ts";
