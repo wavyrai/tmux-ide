@@ -321,41 +321,23 @@ import {
   type TmuxBuffer,
 } from "./palette.ts";
 import {
-  compositeHitTest,
-  compositeLeafViewport,
-  cycleCompositeFocus,
-  reconcileCompositeLayoutState,
-  resizeCompositeSeparator,
-  resolveCompositeLayout,
-  revealCompositePanel,
-  setCompositeActiveTab,
-  type CompositePanelLeaf,
-  type CompositeLayoutState,
-  type CompositeResolvedLayout,
-} from "./composite-layout.ts";
-import {
   PanelHostLoadGeneration,
-  findFirstHostedViewForPanel,
   findHostedViewById,
   hostedActivationEffects,
   initialHostedSelection,
   isHostedPanelInert,
   legacyTabFromPanelKind,
-  navigateHostedPanel,
   panelKindFromLegacyTab,
   panelMode,
   planHostedInitialActivation,
   planHostedReconciledActivation,
   planHostedViewActivation,
-  reconcileHostedSelection,
   viewsFromResolvedConfig,
   type HostedPanelKind,
   type HostedPanelView,
 } from "./panel-host.ts";
 import { ShellTabBar } from "./shell-chrome.tsx";
 import { shellChromeLayout, shellSidebarHint, shellSurfaceTabSpans } from "./shell-chrome.ts";
-import { projectPaneFrame } from "./workspace/pane-frame.ts";
-import { PaneFrameHeader } from "./workspace/pane-frame.tsx";
 import {
   projectWorkbenchShell,
   moveWorkbenchDockTab,
@@ -366,7 +348,15 @@ import {
 } from "./workspace/workbench-shell.ts";
 import { WorkbenchShell } from "./workspace/workbench-shell.tsx";
 import {
+  agentTerminalCanvasPointerPolicy,
+  agentTerminalCanvasRouteX,
+  projectAgentTerminalCanvas,
+} from "./workspace/agent-terminal-canvas.ts";
+import { AgentTerminalCanvas } from "./workspace/agent-terminal-canvas-view.tsx";
+import {
   resolveWorkbenchPasteTarget,
+  workbenchCanvasPanelForShortcut,
+  workbenchCanvasShortcutForPanel,
   workbenchDockTabForShortcut,
 } from "./workspace/workbench-controller.ts";
 import {
@@ -438,13 +428,11 @@ import {
   absoluteProjectPath,
   chooseInitialWorkspaceView,
   defaultWorkspaceUiState,
-  layoutStateForView,
   loadWorkspaceUiState,
   relativeProjectPath,
   serializeWorkspaceUiState,
   setWorkspaceDockState,
   setWorkspaceSurfaceState,
-  setWorkspaceViewLayoutState,
   shouldHydrateWorkspaceView,
   viewStateFor,
   type WorkspaceUiStateV2,
@@ -950,8 +938,7 @@ try {
     const paletteW = () => shellLayout().paletteWidth;
     const dialogW = () => shellLayout().dialogWidth;
     const dialogInnerWidth = () => dialogInnerW(dialogW());
-    const canvasCols = () => Math.max(20, dims().width - sidebarW());
-    const canvasRows = () => Math.max(4, dims().height - HEADER_ROWS - TABBAR_H);
+    const mainColumnCols = () => Math.max(0, dims().width - sidebarW());
 
     // Persisted state (one-shot read at launch — NOT on the render loop). The tab
     // and context restore below; the open editor file / diff selection restore in
@@ -1018,6 +1005,25 @@ try {
     const [hostedViews, setHostedViews] = createSignal<HostedPanelView[]>(
       viewsFromResolvedConfig(null),
     );
+    const fallbackHostedViews = viewsFromResolvedConfig(null);
+    const nativeHostedViewForPanel = (
+      views: readonly HostedPanelView[],
+      panel: HostedPanelKind,
+    ): HostedPanelView =>
+      views.find((view) => !view.layout && view.panel === panel) ??
+      fallbackHostedViews.find((view) => !view.layout && view.panel === panel)!;
+    const canvasHostedViews = createMemo(() => {
+      return (["home", "terminals"] as const).map((panel) => ({
+        ...nativeHostedViewForPanel(hostedViews(), panel),
+        // The top shell is a canonical product surface even when compatibility
+        // app.views supplied different list-position shortcuts.
+        shortcut: workbenchCanvasShortcutForPanel(panel),
+      }));
+    });
+    const canvasViewForPanel = (
+      views: readonly HostedPanelView[],
+      panel: "home" | "terminals",
+    ): HostedPanelView => nativeHostedViewForPanel(views, panel);
     const [workspaceUiState, setWorkspaceUiState] =
       createSignal<WorkspaceUiStateV2>(defaultWorkspaceUiState());
     const workspaceUiController = new WorkspaceUiStateController();
@@ -1043,10 +1049,15 @@ try {
       requestedPanel,
       bareHome ? persistedPanel : null,
     )!;
-    const initialTab = legacyTabFromPanelKind(initialView.panel);
-    const [activeViewId, setActiveViewId] = createSignal(initialView.id);
+    const initialCanvasPanel: "home" | "terminals" =
+      bareHome && !persisted.contextSession && !requestedPanel ? "home" : "terminals";
+    const initialCanvasView = canvasViewForPanel(hostedViews(), initialCanvasPanel);
+    const [activeViewId, setActiveViewId] = createSignal(initialCanvasView.id);
     const activeView = createMemo(
-      () => findHostedViewById(hostedViews(), activeViewId()) ?? hostedViews()[0]!,
+      () =>
+        findHostedViewById(canvasHostedViews(), activeViewId()) ??
+        findHostedViewById(hostedViews(), activeViewId()) ??
+        canvasHostedViews()[0]!,
     );
     const dockTabForPanel = (panel: HostedPanelKind): WorkbenchDockTabId | null => {
       if (panel === "files") return "files";
@@ -1061,9 +1072,10 @@ try {
       return "activity";
     };
     const initialDockTab = dockTabForPanel(initialView.panel) ?? "files";
-    const [canvasPanel, setCanvasPanel] = createSignal<"home" | "terminals">(
-      initialView.panel === "home" ? "home" : "terminals",
-    );
+    // Card05 makes an active workspace canvas a process surface: tmux-backed
+    // agent and shell terminals only. Native Home remains the empty/front-door
+    // state for Card06 onboarding, but is never a composite/tile peer.
+    const [canvasPanel, setCanvasPanel] = createSignal<"home" | "terminals">(initialCanvasPanel);
     const [activeDockTab, setActiveDockTab] = createSignal<WorkbenchDockTabId>(initialDockTab);
     const [dockMode, setDockMode] = createSignal<WorkbenchDockMode>("open");
     const [preferredDockHeight, setPreferredDockHeight] = createSignal<number | null>(null);
@@ -1075,7 +1087,7 @@ try {
     const [activityScrollOffset, setActivityScrollOffset] = createSignal(0);
     const workbenchProjection = createMemo(() =>
       projectWorkbenchShell({
-        width: canvasCols(),
+        width: mainColumnCols(),
         height: Math.max(0, dims().height - TABBAR_H),
         dockMode: dockMode(),
         persistedDockHeight: preferredDockHeight(),
@@ -1088,39 +1100,9 @@ try {
     );
     const dockSurfaceWidth = () => workbenchProjection().dockBodyContent.width;
     const dockSurfaceHeight = () => workbenchProjection().dockBodyContent.height;
-    const mainRect = () => ({
-      x: 0,
-      y: 0,
-      width: workbenchProjection().canvasBody.width,
-      height: workbenchProjection().canvasBody.height,
-    });
-    const compositeStateForActiveView = (): CompositeLayoutState | null => {
-      const view = activeView();
-      if (!view.layout) return null;
-      return reconcileCompositeLayoutState(
-        view.layout,
-        layoutStateForView(workspaceUiState(), view.id),
-      );
-    };
-    const activeCompositeLayout = createMemo<CompositeResolvedLayout | null>(() => {
-      const view = activeView();
-      if (!view.layout) return null;
-      return resolveCompositeLayout(
-        view.id,
-        view.layout,
-        mainRect(),
-        layoutStateForView(workspaceUiState(), view.id),
-      );
-    });
-    const focusedCompositeLeaf = () =>
-      activeCompositeLayout()?.leaves.find(
-        (leaf) => leaf.nodeId === activeCompositeLayout()?.focusedLeafId,
-      ) ??
-      activeCompositeLayout()?.leaves[0] ??
-      null;
     const focusedWorkbenchPanel = (): HostedPanelKind | "activity" => {
       if (workbenchProjection().focusZone === "canvas") {
-        return focusedCompositeLeaf()?.panel ?? canvasPanel();
+        return canvasPanel();
       }
       return panelForDockTab(activeDockTab());
     };
@@ -1131,7 +1113,7 @@ try {
     const tab = (): Tab => legacyTabFromPanelKind(activePanel());
     const mode = (): "home" | "mirror" | "editor" | "diff" | "missions" => panelMode(activePanel());
     const surfaceSpans = createMemo(() =>
-      shellSurfaceTabSpans(hostedViews(), shellLayout().variant),
+      shellSurfaceTabSpans(canvasHostedViews(), shellLayout().variant),
     );
     const [missionWorkspaceLoad, setMissionWorkspaceLoad] = createSignal<MissionWorkspaceLoadState>(
       {
@@ -1248,80 +1230,23 @@ try {
       runActivationEffects(hostedActivationEffects(panel, activationState()));
       if (panel === "missions") ensureMissionsLoaded();
     };
-    const persistCompositeLayoutState = (layout: CompositeLayoutState) => {
-      const view = activeView();
-      if (!view.layout) return;
-      touchedWorkspaceViewIds.add(view.id);
-      setWorkspaceUiState((state) => setWorkspaceViewLayoutState(state, view, layout));
-    };
-    const focusCompositeLeaf = (leafId: string) => {
-      const view = activeView();
-      if (!view.layout) return false;
-      const next = reconcileCompositeLayoutState(view.layout, {
-        ...compositeStateForActiveView(),
-        focusedLeafId: leafId,
-      });
-      persistCompositeLayoutState(next);
-      const leaf = resolveCompositeLayout(view.id, view.layout, mainRect(), next).leaves.find(
-        (item) => item.nodeId === leafId,
-      );
-      if (leaf) runPanelActivation(leaf.panel);
-      return Boolean(leaf);
-    };
-    const activateCompositeTab = (tabsNodeId: string, childId: string) => {
-      const view = activeView();
-      if (!view.layout) return false;
-      const next = setCompositeActiveTab(
-        view.layout,
-        compositeStateForActiveView(),
-        tabsNodeId,
-        childId,
-      );
-      persistCompositeLayoutState(next);
-      const leaf = resolveCompositeLayout(view.id, view.layout, mainRect(), next).leaves.find(
-        (item) => item.nodeId === next.focusedLeafId,
-      );
-      if (leaf) runPanelActivation(leaf.panel);
-      return true;
-    };
-    const cycleCompositeLeafFocus = () => {
-      const view = activeView();
-      if (!view.layout) return false;
-      const next = cycleCompositeFocus(view.layout, compositeStateForActiveView());
-      persistCompositeLayoutState(next);
-      const leaf = resolveCompositeLayout(view.id, view.layout, mainRect(), next).leaves.find(
-        (item) => item.nodeId === next.focusedLeafId,
-      );
-      if (leaf) runPanelActivation(leaf.panel);
-      return true;
-    };
-    const focusPanelInActiveComposite = (panel: HostedPanelKind): boolean => {
-      const view = activeView();
-      if (!view.layout) return false;
-      const next = revealCompositePanel(
-        view.layout,
-        compositeStateForActiveView(),
-        panel,
-        focusedCompositeLeaf()?.panel === panel ? focusedCompositeLeaf()?.nodeId : null,
-      );
-      if (!next) return false;
-      persistCompositeLayoutState(next);
-      const leaf = resolveCompositeLayout(view.id, view.layout, mainRect(), next).leaves.find(
-        (item) => item.nodeId === next.focusedLeafId,
-      );
-      if (leaf) runPanelActivation(leaf.panel);
-      return true;
-    };
+    const missionHostedView = () => nativeHostedViewForPanel(hostedViews(), "missions");
+    const missionViewId = () => missionHostedView().id;
     const selectViewForPanel = (viewId: string, panel: HostedPanelKind) => {
-      if (focusPanelInActiveComposite(panel)) return;
-      if (selectView(viewId)) focusPanelInActiveComposite(panel);
+      if (panel === "home" || panel === "terminals") {
+        activateCanvasPanel(panel);
+        return;
+      }
+      const dockTab = dockTabForPanel(panel);
+      if (dockTab) activateDockTab(dockTab);
+      else selectView(viewId);
     };
     const missionLayoutSize = () => {
       const size = missionDashboardMainSize(dockSurfaceWidth(), Math.max(1, dockSurfaceHeight()));
       return { width: size.mainWidth, height: size.height };
     };
     const persistMissionSelection = (missionId: string | null, taskId: string | null = null) => {
-      const view = activeView();
+      const view = missionHostedView();
       if (activePanel() !== "missions") return;
       touchedWorkspaceViewIds.add(view.id);
       setWorkspaceUiState((state) =>
@@ -1329,7 +1254,7 @@ try {
       );
     };
     const persistMissionModel = (model: MissionWorkspaceModel) => {
-      const view = activeView();
+      const view = missionHostedView();
       if (activePanel() !== "missions") return;
       touchedWorkspaceViewIds.add(view.id);
       setWorkspaceUiState((state) => workspaceStateWithMissionModel(state, view.id, model));
@@ -1362,7 +1287,7 @@ try {
       const projectKey = repository.metadata.identityKey;
       const persistedSelection = missionSelectionFromWorkspaceState(
         workspaceUiState(),
-        activeViewId(),
+        missionViewId(),
       );
       const selectedForDetail =
         missionWorkspaceModel().mode === "detail"
@@ -1377,7 +1302,7 @@ try {
           setMissionWorkspaceSnapshot(snapshot);
           updateMissionModel((current) =>
             reconcileMissionWorkspaceModel(
-              missionModelFromWorkspaceState(workspaceUiState(), activeView(), current),
+              missionModelFromWorkspaceState(workspaceUiState(), missionHostedView(), current),
               snapshot,
               {
                 persistedMissionId: persistedSelection.selectedMissionId,
@@ -1407,6 +1332,20 @@ try {
         return;
       loadMissionsWorkspace("activation");
     };
+    const activateCanvasPanel = (panel: "home" | "terminals"): boolean => {
+      clearSelection();
+      snapshotActiveWorkspaceView();
+      const view = canvasViewForPanel(hostedViews(), panel);
+      setActiveViewId(view.id);
+      setCanvasPanel(panel);
+      if (dockMode() === "maximized") setDockMode("open");
+      setWorkbenchFocusZone("canvas");
+      touchedWorkspaceActiveView = true;
+      touchedWorkspaceDock = true;
+      hydrateWorkspaceView(view);
+      refreshFocusRecord();
+      return true;
+    };
     const selectView = (viewId: string) => {
       const plan = planHostedViewActivation(hostedViews(), viewId, {
         filesLoaded: fileNodes().length > 0,
@@ -1416,6 +1355,8 @@ try {
         setStatusNote(plan.note ?? "that view is no longer configured");
         return false;
       }
+      const dockAlias = plan.view.layout ? null : dockTabForPanel(plan.view.panel);
+      if (dockAlias) return activateDockTab(dockAlias);
       clearSelection();
       snapshotActiveWorkspaceView();
       const previousPanel = activePanel();
@@ -1424,22 +1365,16 @@ try {
         currentMissionsLoadIdentity = null;
       }
       runActivationEffects(plan.effects);
-      setActiveViewId(plan.activeViewId);
+      const panel: "home" | "terminals" =
+        plan.view.panel === "home" && !plan.view.layout ? "home" : "terminals";
+      const canvasView = canvasViewForPanel(hostedViews(), panel);
+      setActiveViewId(canvasView.id);
       touchedWorkspaceActiveView = true;
-      const selectedDockTab = dockTabForPanel(plan.view.panel);
-      if (selectedDockTab) {
-        setActiveDockTab(selectedDockTab);
-        setDockMode("open");
-        setWorkbenchFocusZone("dock-body");
-        touchedWorkspaceDock = true;
-      } else if (plan.view.panel === "home" || plan.view.panel === "terminals") {
-        setCanvasPanel(plan.view.panel);
-        setWorkbenchFocusZone("canvas");
-        touchedWorkspaceDock = true;
-      }
-      hydrateActiveWorkspaceView();
-      if (plan.view.layout) runPanelActivation(activePanel());
-      else if (plan.view.panel === "missions") ensureMissionsLoaded();
+      setCanvasPanel(panel);
+      if (dockMode() === "maximized") setDockMode("open");
+      setWorkbenchFocusZone("canvas");
+      touchedWorkspaceDock = true;
+      hydrateWorkspaceView(canvasView);
       refreshFocusRecord();
       return true;
     };
@@ -1459,24 +1394,20 @@ try {
       }
       const panel: HostedPanelKind =
         tabId === "files" ? "files" : tabId === "changes" ? "diff" : "missions";
-      const view = findFirstHostedViewForPanel(hostedViews(), panel);
-      if (!view) {
-        setActiveDockTab(tabId);
-        setDockMode("open");
-        setWorkbenchFocusZone("dock-body");
-        touchedWorkspaceDock = true;
-        runPanelActivation(panel);
-        return true;
-      }
-      return selectView(view.id);
+      const view = nativeHostedViewForPanel(hostedViews(), panel);
+      snapshotActiveWorkspaceView();
+      setActiveDockTab(tabId);
+      setDockMode("open");
+      setWorkbenchFocusZone("dock-body");
+      touchedWorkspaceDock = true;
+      runPanelActivation(panel);
+      hydrateWorkspaceView(view);
+      return true;
     };
     const selectPanel = (panel: HostedPanelKind) => {
-      const result = navigateHostedPanel(hostedViews(), activeViewId(), panel);
-      if (result.note) {
-        setStatusNote(result.note);
-        return false;
-      }
-      return selectView(result.activeViewId);
+      if (panel === "home" || panel === "terminals") return activateCanvasPanel(panel);
+      const dockTab = dockTabForPanel(panel);
+      return dockTab ? activateDockTab(dockTab) : false;
     };
     const setTab = (next: Tab) => {
       const panel = panelKindFromLegacyTab(next);
@@ -1547,9 +1478,17 @@ try {
                 note: null,
               }
             : planHostedReconciledActivation(nextViews, previous, state);
+          const nextCanvasPanel: "home" | "terminals" =
+            curTarget() || requestedPanel
+              ? "terminals"
+              : nextPlan.view?.panel === "terminals" || nextPlan.view?.layout
+                ? "terminals"
+                : "home";
+          const nextCanvasView = canvasViewForPanel(nextViews, nextCanvasPanel);
           setHostedViews(nextViews);
           runActivationEffects(nextPlan.effects);
-          if (nextPlan.activeViewId) setActiveViewId(nextPlan.activeViewId);
+          setActiveViewId(nextCanvasView.id);
+          setCanvasPanel(nextCanvasPanel);
           const explicitDockTab = requestedPanel ? dockTabForPanel(requestedPanel) : null;
           const restoredDock = hasPersistedWorkspaceUi
             ? loadedUi.state.dock
@@ -1568,15 +1507,12 @@ try {
           setActivitySelectedId(loadedUi.state.surfaces.activity.selectedRowId);
           setActivityScrollOffset(loadedUi.state.surfaces.activity.scrollOffset);
           hydratedWorkspaceSurfaceIds.add("activity");
-          if (nextPlan.view?.panel === "home" || nextPlan.view?.panel === "terminals") {
-            setCanvasPanel(nextPlan.view.panel);
-          }
           hydrateActiveWorkspaceView({ firstProjectLoad });
           const restoredDockPanel = panelForDockTab(restoredActiveDockTab);
           if (restoredDockPanel !== "activity") {
             runPanelActivation(restoredDockPanel);
-            const restoredDockView = findFirstHostedViewForPanel(nextViews, restoredDockPanel);
-            if (restoredDockView && restoredDockView.id !== nextPlan.view?.id) {
+            const restoredDockView = nativeHostedViewForPanel(nextViews, restoredDockPanel);
+            if (restoredDockView.id !== nextPlan.view?.id) {
               hydrateWorkspaceView(restoredDockView, { firstProjectLoad });
             }
           }
@@ -1593,14 +1529,10 @@ try {
           if (!panelGeneration.isCurrent(generation)) return;
           workspaceUiController.failLoad(uiGeneration);
           setWorkspaceUiState(defaultWorkspaceUiState());
-          const previous = {
-            id: activeViewId(),
-            panel: activePanel(),
-          };
           const nextViews = viewsFromResolvedConfig(null);
-          const nextActive = reconcileHostedSelection(nextViews, previous);
+          const nextActive = canvasViewForPanel(nextViews, canvasPanel());
           setHostedViews(nextViews);
-          if (nextActive) setActiveViewId(nextActive.id);
+          setActiveViewId(nextActive.id);
           panelHostResolved = true;
           setStatusNote(`config views unavailable: ${(error as Error).message}`);
         });
@@ -1717,6 +1649,18 @@ try {
     }
     const [search, setSearch] = createSignal<{ query: string; editing: boolean } | null>(null);
     const [paneSearches, setPaneSearches] = createSignal<Map<string, PaneSearch>>(new Map());
+    const terminalCanvasProjection = createMemo(() =>
+      projectAgentTerminalCanvas({
+        width: workbenchProjection().canvasBody.width,
+        height: workbenchProjection().canvasBody.height,
+        chromeRows: HEADER_ROWS,
+        footerRows: search() ? 1 : 0,
+      }),
+    );
+    /** Exact tmux framebuffer dimensions, excluding shell tab chrome, focus rail,
+     *  terminal chrome, and native workbench dock. Search overlays the last row. */
+    const canvasCols = () => terminalCanvasProjection().framebuffer.width;
+    const canvasRows = () => terminalCanvasProjection().framebuffer.height;
 
     // ── PASTE-BUFFER PICKER (M20.3) ──────────────────────────────────────────
     // The palette's second level: "Paste buffer…" swaps the action list for this
@@ -1745,18 +1689,6 @@ try {
     type DragState =
       | { kind: "sidebar" }
       | { kind: "border"; sep: Separator; originCx: number; originCy: number; lastSize: number }
-      | {
-          kind: "composite";
-          viewId: string;
-          splitNodeId: string;
-          separatorIndex: number;
-          direction: "horizontal" | "vertical";
-          axisSize: number;
-          originX: number;
-          originY: number;
-          originState: CompositeLayoutState | null;
-          lastDelta: number;
-        }
       | {
           kind: "scrollbar";
           grabOffset: number;
@@ -2069,8 +2001,8 @@ try {
     const [sessionPrompt, setSessionPrompt] = createSignal<string | null>(null);
     const homeSurfaceProjection = createMemo(() =>
       projectHomeSurface({
-        width: canvasCols(),
-        height: dims().height - TABBAR_H,
+        width: workbenchProjection().canvasBody.width,
+        height: workbenchProjection().canvasBody.height,
         projects: projectsData(),
         items: homeItems(),
         selectedIndex: clampedSel(),
@@ -2572,32 +2504,31 @@ try {
     };
     let mirror: SessionMirror | null = null;
     // ── EVENT-DRIVEN RE-PIN (M23.5) ──────────────────────────────────────────
-    // The 200ms canvas size poll is gone: a createEffect on the renderer dims
-    // signal (canvasCols/canvasRows read dims() + sidebarW()) re-pins the
-    // mirror the moment the size actually changes. `lastPin` is what we last
-    // asked tmux for; `repinInFlight` gates the size-truth hint while tmux
-    // confirms (D4b — see the tick).
-    let lastPin: Size = { cols: canvasCols(), rows: canvasRows() };
+    // The native Workbench projection is the sole pin source. `lastPin` remains
+    // null until a non-zero framebuffer exists; a hidden/maximized dock never
+    // shrinks the real tmux window to a destructive synthetic 1x1 size.
+    let lastPin: Size | null = terminalCanvasProjection().tmuxSize;
     let repinInFlight: RepinState | null = null;
-    createEffect(() => {
-      const next: Size = { cols: canvasCols(), rows: canvasRows() };
-      if (next.cols === lastPin.cols && next.rows === lastPin.rows) return;
-      repinInFlight = { prev: lastPin, at: performance.now() };
-      lastPin = next;
-      void mirror?.resize(next.cols, next.rows);
-    });
+    let pendingAttachTarget: string | null = null;
     const attach = (name: string) => {
+      const pin = terminalCanvasProjection().tmuxSize ?? lastPin;
+      if (!pin) {
+        pendingAttachTarget = name;
+        setStatus(`waiting for terminal canvas to attach ${name}…`);
+        return;
+      }
+      pendingAttachTarget = null;
       mirror?.dispose();
       scrollOffsets.clear();
       setPanes([]);
       setStatus(`attaching ${name}…`);
       // A fresh mirror pins at the current canvas size — no re-pin in flight.
-      lastPin = { cols: canvasCols(), rows: canvasRows() };
+      lastPin = pin;
       repinInFlight = null;
       const m = new SessionMirror({
         target: name,
-        cols: lastPin.cols,
-        rows: lastPin.rows,
+        cols: pin.cols,
+        rows: pin.rows,
         onDirty: markDirty,
         onStatus: () => {
           markDirty();
@@ -2614,6 +2545,22 @@ try {
         })
         .catch((e) => setStatus(`error: ${(e as Error).message}`));
     };
+    createEffect(() => {
+      const next = terminalCanvasProjection().tmuxSize;
+      // A maximized layout can hide the framebuffer entirely. Keep the live
+      // tmux window at its last visible size until the canvas returns.
+      if (!next) return;
+      if (pendingAttachTarget && !mirror) {
+        const targetName = pendingAttachTarget;
+        lastPin = next;
+        attach(targetName);
+        return;
+      }
+      if (lastPin && next.cols === lastPin.cols && next.rows === lastPin.rows) return;
+      if (lastPin) repinInFlight = { prev: lastPin, at: performance.now() };
+      lastPin = next;
+      void mirror?.resize(next.cols, next.rows);
+    });
     /** Re-query the mirrored session's windows into `windowTabs` — used after a
      *  NON-structural change tmux won't notify us about (a `synchronize-panes`
      *  toggle) so the `[SYNC]` chip and the menu checkbox reflect it promptly. */
@@ -2627,10 +2574,6 @@ try {
      *  a pure tab flip; only a DIFFERENT session (re)attaches. */
     const switchTarget = (name: string) => {
       clearSelection();
-      if (!findFirstHostedViewForPanel(hostedViews(), "terminals")) {
-        selectPanel("terminals");
-        return;
-      }
       if (name === curTarget() && mirror) {
         selectPanel("terminals");
         refreshFocusRecord();
@@ -2955,7 +2898,7 @@ try {
           selectedPath: diffVisibleFiles()[diffSel()]?.path ?? null,
         });
       } else if (activeDockTab() === "missions" && hydratedWorkspaceSurfaceIds.has("missions")) {
-        next = workspaceStateWithMissionModel(next, activeView().id, missionWorkspaceModel());
+        next = workspaceStateWithMissionModel(next, missionViewId(), missionWorkspaceModel());
       } else if (activeDockTab() === "activity" && hydratedWorkspaceSurfaceIds.has("activity")) {
         next = setWorkspaceSurfaceState(next, {
           panel: "activity",
@@ -2971,7 +2914,7 @@ try {
       });
       return {
         ...next,
-        active: { viewId: view.id, panel: view.panel },
+        active: { viewId: view.id, panel: canvasPanel() },
       };
     };
     const markWorkspaceUiDomainsTouched = (
@@ -3092,7 +3035,11 @@ try {
         missionWorkspaceModel(),
         {
           projectRoot: workspaceUiProjectRoot(),
-          views: hostedViews(),
+          // Deep links target semantic native surfaces, which exist even when
+          // compatibility app.views omitted them or only exposed a composite.
+          views: (["terminals", "files", "diff"] as const).map((panel) =>
+            nativeHostedViewForPanel(hostedViews(), panel),
+          ),
           resolveProjectPath: absoluteProjectPath,
         },
       );
@@ -3173,7 +3120,7 @@ try {
           model: missionWorkspaceModel(),
           snapshot: missionSnapshotForModel(),
           layoutSize: missionLayoutSize(),
-          persistedTaskId: missionSelectionFromWorkspaceState(workspaceUiState(), activeViewId())
+          persistedTaskId: missionSelectionFromWorkspaceState(workspaceUiState(), missionViewId())
             .selectedTaskId,
         },
         {
@@ -3983,7 +3930,7 @@ try {
           againName: currentAgainName(),
           usage: paletteUsage(),
           keycaps: PALETTE_ROW_KEYCAPS,
-          views: hostedViews(),
+          views: canvasHostedViews(),
           // "Go to file:" rows (M24.6) — appended after everything.
           repoFiles: repoFiles(),
         },
@@ -4604,7 +4551,9 @@ try {
       if (values.edit) openEditor(values.edit);
       if (mode() === "editor" && fileNodes().length === 0) loadFileList(workspaceDir());
       if (mode() === "diff") refreshStatus();
-      if (mode() === "mirror" && curTarget()) attach(curTarget());
+      // The mirror follows workspace identity, not which native surface owns
+      // keyboard focus. Dock restore must not leave the terminal canvas blank.
+      if (curTarget()) attach(curTarget());
       const t = setInterval(() => {
         // Edge auto-scroll (M25.6): while a mirror drag parks the pointer at
         // the pane's top/bottom content row, extend ~1 row per state tick —
@@ -4641,7 +4590,11 @@ try {
         // -C and tmux's %layout-change the stale size is expected, and honest-
         // hinting it flashed "window sized by another terminal" + a letterbox
         // jump on every grow (measured).
-        const pinned: Size = { cols: canvasCols(), rows: canvasRows() };
+        const pinned = lastPin;
+        if (!pinned) {
+          setPanes(raw);
+          return;
+        }
         const effective = mirror.windowSize() ?? effectiveWindowSize(raw);
         const mm = effective
           ? detectSizeMismatchWithRepin(pinned, effective, repinInFlight, performance.now())
@@ -5383,14 +5336,14 @@ try {
     };
 
     /** Open the context menu at the pointer, clamped fully on-screen. */
-    const openMenu = (x: number, y: number) => {
-      const t = resolveMenuTarget(x, y);
+    const openMenu = (targetX: number, y: number, screenX = targetX) => {
+      const t = resolveMenuTarget(targetX, y);
       if (!t) {
         closeMenu();
         return;
       }
       const { width, height } = menuDims(t.title, t.items);
-      const { left, top } = clampMenuPos(x, y, width, height, dims().width, dims().height);
+      const { left, top } = clampMenuPos(screenX, y, width, height, dims().width, dims().height);
       clearSelection();
       setMenuSel(0);
       setMenuConfirm(null);
@@ -5675,12 +5628,10 @@ try {
           editorFilterOpen: filesQuery() !== null,
           diffFilterOpen: diffFilter() !== null,
           homePromptOpen: pathPrompt() !== null || sessionPrompt() !== null,
-          configuredShortcutKeys: hostedViews().flatMap((view) =>
+          configuredShortcutKeys: canvasHostedViews().flatMap((view) =>
             view.shortcut ? [view.shortcut.key] : [],
           ),
-          compositeCycleAvailable: Boolean(
-            activeView().layout && (activeCompositeLayout()?.leaves.length ?? 0) > 1,
-          ),
+          compositeCycleAvailable: false,
         },
         evt,
         { hosted: HOSTED },
@@ -5710,6 +5661,11 @@ try {
         searchKey(evt);
         return;
       }
+      const canvasShortcut = workbenchCanvasPanelForShortcut(evt);
+      if (canvasShortcut) {
+        activateCanvasPanel(canvasShortcut);
+        return;
+      }
       const dockShortcut = workbenchDockTabForShortcut(evt);
       if (dockShortcut) {
         activateDockTab(dockShortcut);
@@ -5717,15 +5673,12 @@ try {
       }
       if (layer.kind === "global") {
         switch (layer.command.kind) {
-          case "cycle-composite-focus":
-            cycleCompositeLeafFocus();
-            break;
           case "open-palette":
             openPalette();
             break;
           case "select-hosted-view": {
             const shortcutKey = layer.command.key;
-            const fView = hostedViews().find((view) => view.shortcut?.key === shortcutKey);
+            const fView = canvasHostedViews().find((view) => view.shortcut?.key === shortcutKey);
             if (fView) selectView(fView.id);
             break;
           }
@@ -6477,6 +6430,28 @@ try {
       setHoverIf(null);
     };
 
+    const terminalRouteX = (screenX: number) =>
+      agentTerminalCanvasRouteX(screenX, workbenchProjection().canvasBody.x);
+
+    /** Finish a terminal gesture that crosses into app-native chrome. Selection
+     *  is committed, deferred clicks are cancelled, and forwarded app-mouse
+     *  presses receive exactly one rail-corrected release. */
+    const settleTerminalGestureBoundary = (e: RouteEvent) => {
+      const activeSelection = selection();
+      if (activeSelection?.surface === "mirror" && selecting?.surface === "mirror") {
+        commitMirrorCopy(activeSelection.paneId, activeSelection.anchor, activeSelection.head);
+      }
+      selecting = null;
+      dragAutoScroll = null;
+      pendingPress = null;
+      if (!forwardedDown) return;
+      const pane = panesById().get(forwardedDown);
+      forwardedDown = null;
+      if (pane && selectModePane() !== pane.id) {
+        forwardPress(pane, terminalRouteX(e.x), e.y - TABBAR_H, true);
+      }
+    };
+
     /** Route the native workbench seam before any legacy surface or tmux pane
      *  routing. Dock coordinates are content-local (after the one-cell focus
      *  rail), and every dock event is consumed so wheel/right-click/drag can
@@ -6489,24 +6464,25 @@ try {
         hit.kind !== "canvas" &&
         (e.type === "up" || e.type === "drag-end" || e.type === "drop" || e.type === "out");
       if (releaseAtBoundary) {
-        const activeSelection = selection();
-        if (activeSelection?.surface === "mirror" && selecting?.surface === "mirror") {
-          commitMirrorCopy(activeSelection.paneId, activeSelection.anchor, activeSelection.head);
-        }
-        selecting = null;
-        dragAutoScroll = null;
-        pendingPress = null;
-        if (forwardedDown) {
-          const pane = panesById().get(forwardedDown);
-          forwardedDown = null;
-          if (pane && selectModePane() !== pane.id) {
-            forwardPress(pane, e.x, e.y - TABBAR_H, true);
-          }
-        }
+        settleTerminalGestureBoundary(e);
         return true;
       }
       if (hit.kind === "canvas") {
-        if (e.type === "down") {
+        const terminalPolicy =
+          canvasPanel() === "terminals"
+            ? agentTerminalCanvasPointerPolicy(
+                terminalCanvasProjection(),
+                hit.localX,
+                hit.localY,
+                e.type,
+              )
+            : "route";
+        if (terminalPolicy === "settle-boundary") {
+          settleTerminalGestureBoundary(e);
+          return true;
+        }
+        if (terminalPolicy === "consume") return true;
+        if (e.type === "down" || terminalPolicy === "focus-route") {
           setWorkbenchFocusZone("canvas");
           touchedWorkspaceDock = true;
         }
@@ -6665,7 +6641,7 @@ try {
                 layoutSize: missionLayoutSize(),
                 persistedTaskId: missionSelectionFromWorkspaceState(
                   workspaceUiState(),
-                  activeViewId(),
+                  missionViewId(),
                 ).selectedTaskId,
               },
               { updateModel: updateMissionModel },
@@ -6684,7 +6660,7 @@ try {
               layoutSize: missionLayoutSize(),
               persistedTaskId: missionSelectionFromWorkspaceState(
                 workspaceUiState(),
-                activeViewId(),
+                missionViewId(),
               ).selectedTaskId,
             },
             {
@@ -6754,6 +6730,7 @@ try {
 
     const route = (e: RouteEvent) => {
       const { type, y } = e;
+      const screenX = e.x;
       let { x } = e;
       zzlog(`${type} ${x},${y}${e.button !== undefined ? ` b${e.button}` : ""}`);
       // The FIRST handler in the bubble chain owns the event — stop here so a click
@@ -6901,145 +6878,7 @@ try {
           e.x - sidebarW(),
           e.y - TABBAR_H,
         );
-        if (shellHit?.kind === "canvas") x = sidebarW() + shellHit.localX;
-      }
-      const compositeLayout = activeCompositeLayout();
-      if (!dragging && compositeLayout && x >= sidebarW() && y >= TABBAR_H) {
-        const localX = x - sidebarW();
-        const localY = y - TABBAR_H;
-        const hit = compositeHitTest(compositeLayout, localX, localY);
-        if (type === "down" && hit?.kind === "tab") {
-          activateCompositeTab(hit.tabsNodeId, hit.childId);
-          return;
-        }
-        if (hit?.kind === "leaf") {
-          const leaf = compositeLayout.leaves.find((item) => item.nodeId === hit.leafId);
-          const alreadyFocused = hit.leafId === compositeLayout.focusedLeafId;
-          if (type === "down") {
-            focusCompositeLeaf(hit.leafId);
-            if (!alreadyFocused) return;
-          }
-          if (leaf?.panel === "terminals") {
-            const viewport = compositeLeafViewport(leaf.rect, 2);
-            const bodyX = localX - leaf.rect.x - viewport.bodyLeft;
-            const bodyY = localY - leaf.rect.y - viewport.bodyTop;
-            const bodyW = viewport.bodyWidth;
-            const bodyH = viewport.bodyHeight;
-            if (bodyW <= 0 || bodyH <= 0) return;
-            const pane = panes().find((candidate) => {
-              const rect = scaledPaneRect(candidate, bodyW, bodyH);
-              return (
-                bodyX >= rect.left &&
-                bodyX < rect.left + rect.width &&
-                bodyY >= rect.top &&
-                bodyY < rect.top + rect.height
-              );
-            });
-            if (!pane) return;
-            const rect = scaledPaneRect(pane, bodyW, bodyH);
-            const col = Math.max(
-              0,
-              Math.min(
-                pane.width - 1,
-                Math.floor(((bodyX - rect.left) * pane.width) / Math.max(1, rect.width)),
-              ),
-            );
-            const row = Math.max(
-              0,
-              Math.min(
-                pane.height - 1,
-                Math.floor(((bodyY - rect.top) * pane.height) / Math.max(1, rect.height)),
-              ),
-            );
-            if (type === "down") {
-              mirror?.focus(pane.id);
-              return;
-            }
-            if (type === "scroll") {
-              const dir = e.scroll?.direction;
-              if (dir === "up" || dir === "down") wheel(pane, dir, col, row);
-              return;
-            }
-          }
-          if (leaf?.panel === "files") {
-            const viewport = compositeLeafViewport(leaf.rect, 3);
-            const bodyX = localX - leaf.rect.x - viewport.bodyLeft;
-            const bodyY = localY - leaf.rect.y - viewport.bodyTop;
-            const bodyW = viewport.bodyWidth;
-            const bodyH = viewport.bodyHeight;
-            if (bodyW <= 0 || bodyH <= 0) return;
-            const listW = Math.min(bodyW, Math.max(1, Math.min(24, Math.floor(bodyW * 0.38))));
-            const overList = bodyX < listW;
-            if (type === "scroll") {
-              const dir = e.scroll?.direction;
-              if (dir !== "up" && dir !== "down") return;
-              const step = dir === "up" ? -SCROLL_STEP : SCROLL_STEP;
-              if (overList) {
-                setFileTop((top) => clampTop(top + step, visibleFiles().length, bodyH));
-              } else {
-                setEditorTop((top) => clampTop(top + step, editorLines().length, bodyH));
-              }
-              return;
-            }
-            if (type === "down" && bodyY >= 0 && bodyY < bodyH && overList) {
-              const top = clampTop(fileTop(), visibleFiles().length, bodyH);
-              const idx = top + bodyY;
-              if (idx >= 0 && idx < visibleFiles().length) {
-                clearSelection();
-                setFilesFocus("list");
-                activateFile(idx);
-              }
-              return;
-            }
-          }
-          if (leaf?.panel === "diff") {
-            const viewport = compositeLeafViewport(leaf.rect, 3);
-            const bodyX = localX - leaf.rect.x - viewport.bodyLeft;
-            const bodyY = localY - leaf.rect.y - viewport.bodyTop;
-            const bodyW = viewport.bodyWidth;
-            const bodyH = viewport.bodyHeight;
-            if (bodyW <= 0 || bodyH <= 0) return;
-            const listW = Math.min(bodyW, Math.max(1, Math.min(24, Math.floor(bodyW * 0.36))));
-            const overList = bodyX < listW;
-            if (type === "scroll") {
-              const dir = e.scroll?.direction;
-              if (dir !== "up" && dir !== "down") return;
-              const step = dir === "up" ? -SCROLL_STEP : SCROLL_STEP;
-              if (overList) {
-                setDiffFileTop((top) => clampTop(top + step, diffRows().length, bodyH));
-              } else {
-                setDiffTop((top) => clampTop(top + step, diffLines().length, bodyH));
-              }
-              return;
-            }
-            if (type === "down" && bodyY >= 0 && bodyY < bodyH && overList) {
-              const top = clampTop(diffFileTop(), diffRows().length, bodyH);
-              const row = diffRows()[top + bodyY];
-              if (row?.kind === "file") selectDiffFile(row.fileIndex);
-              return;
-            }
-          }
-          return;
-        }
-        if (type === "down" && hit?.kind === "separator") {
-          dragging = {
-            kind: "composite",
-            viewId: compositeLayout.viewId,
-            splitNodeId: hit.nodeId,
-            separatorIndex: hit.index,
-            direction: hit.direction,
-            axisSize:
-              compositeLayout.separators.find(
-                (separator) => separator.nodeId === hit.nodeId && separator.index === hit.index,
-              )?.axisSize ?? 0,
-            originX: x,
-            originY: y,
-            originState: layoutStateForView(workspaceUiState(), activeView().id),
-            lastDelta: 0,
-          };
-          setStatusNote("resizing split…");
-          return;
-        }
+        if (shellHit?.kind === "canvas") x = terminalRouteX(e.x);
       }
       if (isHostedPanelInert(activePanel())) {
         if (type === "out") {
@@ -7063,7 +6902,7 @@ try {
               layoutSize: missionLayoutSize(),
               persistedTaskId: missionSelectionFromWorkspaceState(
                 workspaceUiState(),
-                activeViewId(),
+                missionViewId(),
               ).selectedTaskId,
             },
             { updateModel: updateMissionModel },
@@ -7080,7 +6919,9 @@ try {
             return;
           }
           const i = spanHit(surfaceSpans(), x);
-          if (i >= 0) selectView(hostedViews()[i]!.id);
+          const view = canvasHostedViews()[i];
+          if (view?.panel === "home" || view?.panel === "terminals")
+            activateCanvasPanel(view.panel);
           return;
         }
         const gy = y - TABBAR_H;
@@ -7114,7 +6955,7 @@ try {
               layoutSize: missionLayoutSize(),
               persistedTaskId: missionSelectionFromWorkspaceState(
                 workspaceUiState(),
-                activeViewId(),
+                missionViewId(),
               ).selectedTaskId,
             },
             {
@@ -7130,7 +6971,7 @@ try {
       // A right-button press (SGR button 2) opens the context menu at the pointer.
       // Left/middle presses fall through to the normal click routing below.
       if (type === "down" && e.button === 2) {
-        openMenu(x, y);
+        openMenu(x, y, screenX);
         return;
       }
       // A left-button "down" may START a resize drag (M19.3) — checked BEFORE the
@@ -7206,23 +7047,6 @@ try {
             const row = y - dragging.top0;
             const top = dragTop(row, dragging.grabOffset, dragging.contentLen, dragging.viewH);
             applyScrollTop(dragging.surface, top);
-          } else if (dragging.kind === "composite") {
-            const view = activeView();
-            if (view.id === dragging.viewId && view.layout) {
-              const delta =
-                dragging.direction === "horizontal" ? x - dragging.originX : y - dragging.originY;
-              if (delta !== dragging.lastDelta) {
-                dragging.lastDelta = delta;
-                persistCompositeLayoutState(
-                  resizeCompositeSeparator(view.layout, dragging.originState, {
-                    splitNodeId: dragging.splitNodeId,
-                    separatorIndex: dragging.separatorIndex,
-                    delta,
-                    axisSize: dragging.axisSize,
-                  }),
-                );
-              }
-            }
           } else {
             const cx = x - sidebarW();
             const cy = y - TABBAR_H - HEADER_ROWS;
@@ -7337,7 +7161,8 @@ try {
         if (forwardedDown) {
           const pane = panesById().get(forwardedDown);
           forwardedDown = null;
-          if (pane && selectModePane() !== pane.id) forwardPress(pane, x, y - TABBAR_H, true);
+          if (pane && selectModePane() !== pane.id)
+            forwardPress(pane, terminalRouteX(screenX), y - TABBAR_H, true);
           return;
         }
       }
@@ -7353,7 +7178,8 @@ try {
           return;
         }
         const i = spanHit(surfaceSpans(), x);
-        if (i >= 0) selectView(hostedViews()[i]!.id);
+        const view = canvasHostedViews()[i];
+        if (view?.panel === "home" || view?.panel === "terminals") activateCanvasPanel(view.panel);
         return;
       }
       const gy = y - TABBAR_H;
@@ -7671,345 +7497,6 @@ try {
       </>
     );
 
-    const scaledPaneRect = (pane: LivePane, width: number, height: number) => {
-      if (width <= 0 || height <= 0) {
-        return { left: 0, top: 0, width: 0, height: 0 };
-      }
-      const sourceW = Math.max(1, canvasCols());
-      const sourceH = Math.max(1, canvasRows());
-      const left = Math.max(0, Math.min(width - 1, Math.floor((pane.left * width) / sourceW)));
-      const top = Math.max(0, Math.min(height - 1, Math.floor((pane.top * height) / sourceH)));
-      const right = Math.max(
-        left + 1,
-        Math.min(width, Math.ceil(((pane.left + pane.width) * width) / sourceW)),
-      );
-      const bottom = Math.max(
-        top + 1,
-        Math.min(height, Math.ceil(((pane.top + pane.height) * height) / sourceH)),
-      );
-      return { left, top, width: right - left, height: bottom - top };
-    };
-
-    const compositeMiniSplitWidth = (width: number, ratio: number) =>
-      width <= 0 ? 0 : Math.min(width, Math.max(1, Math.min(24, Math.floor(width * ratio))));
-
-    const compositeLeafChrome = (leaf: CompositePanelLeaf) => {
-      const viewport = compositeLeafViewport(leaf.rect, 0);
-      const projection = projectPaneFrame({
-        width: viewport.innerWidth,
-        height: viewport.innerHeight,
-        title: leaf.title,
-        kind: leaf.panel,
-        subtitle: leaf.nodeId,
-        focused: leaf.focused,
-        terminalFocused: leaf.panel === "terminals" && leaf.focused,
-      });
-      return <PaneFrameHeader theme={semanticTheme()} projection={projection} />;
-    };
-
-    const compositeTerminalLeaf = (leaf: CompositePanelLeaf) => {
-      const viewport = compositeLeafViewport(leaf.rect, 2);
-      const bodyW = viewport.bodyWidth;
-      const bodyH = viewport.bodyHeight;
-      return (
-        <>
-          {compositeLeafChrome(leaf)}
-          <box height={1} flexDirection="row" gap={1}>
-            <text fg={DEFAULT_FG} attributes={1}>
-              {clipTerminal(curTarget(), Math.max(0, bodyW - 10))}
-            </text>
-            <text fg={MUTED}>{clipTerminal(status(), Math.max(0, bodyW - 2))}</text>
-          </box>
-          <box position="relative" flexGrow={1} backgroundColor={DEFAULT_BG} overflow="hidden">
-            <Show
-              when={FB_PANES && mirror}
-              fallback={
-                <For each={panes()}>
-                  {(pane) => {
-                    const rect = () => scaledPaneRect(pane, bodyW, bodyH);
-                    return (
-                      <Show when={rect().width > 0 && rect().height > 0}>
-                        <box
-                          position="absolute"
-                          left={rect().left}
-                          top={rect().top}
-                          width={rect().width}
-                          height={rect().height}
-                          flexDirection="column"
-                          backgroundColor={DEFAULT_BG}
-                          overflow="hidden"
-                        >
-                          <For each={paneSelRows(pane).slice(0, rect().height)}>
-                            {(runs) => (
-                              <box flexDirection="row" height={1}>
-                                <For each={runs}>
-                                  {(run) => (
-                                    <text
-                                      fg={packedToRgba(run.fg, DEFAULT_FG)}
-                                      bg={packedToRgba(run.bg, DEFAULT_BG)}
-                                      attributes={run.attributes}
-                                    >
-                                      {run.text}
-                                    </text>
-                                  )}
-                                </For>
-                              </box>
-                            )}
-                          </For>
-                        </box>
-                      </Show>
-                    );
-                  }}
-                </For>
-              }
-            >
-              <For each={paneIds()}>
-                {(id) => {
-                  const pane = () => panesById().get(id);
-                  const rect = () => (pane() ? scaledPaneRect(pane()!, bodyW, bodyH) : null);
-                  return (
-                    <Show when={pane() && rect() && rect()!.width > 0 && rect()!.height > 0}>
-                      <box
-                        position="absolute"
-                        left={rect()!.left}
-                        top={rect()!.top}
-                        width={rect()!.width}
-                        height={rect()!.height}
-                        backgroundColor={DEFAULT_BG}
-                        overflow="hidden"
-                      >
-                        <pane_surface
-                          width={rect()!.width}
-                          height={rect()!.height}
-                          mirror={mirror!}
-                          paneId={id}
-                          defaultFg={DEFAULT_FG_PACKED}
-                          defaultBg={DEFAULT_BG_PACKED}
-                          searchHl={SEARCH_HL}
-                          searchCur={SEARCH_CUR}
-                          scrollOffset={pane()!.snapshot.scrollOffset}
-                          paneFocused={leaf.focused && pane()!.active}
-                          contentVersion={pane()!.version}
-                          selRange={leaf.focused ? mirrorSelForPane(id) : null}
-                          search={leaf.focused ? mirrorSearchForPane(pane()!) : null}
-                        />
-                      </box>
-                    </Show>
-                  );
-                }}
-              </For>
-            </Show>
-          </box>
-        </>
-      );
-    };
-
-    const compositeFilesLeaf = (leaf: CompositePanelLeaf) => {
-      const viewport = compositeLeafViewport(leaf.rect, 3);
-      const bodyW = viewport.bodyWidth;
-      const bodyH = viewport.bodyHeight;
-      const listW = compositeMiniSplitWidth(bodyW, 0.38);
-      const editorW = Math.max(0, bodyW - listW);
-      return (
-        <>
-          {compositeLeafChrome(leaf)}
-          <box height={1} flexDirection="row" gap={1}>
-            <text fg={ACCENT} attributes={1}>
-              {clipTerminal(editorPath() ? basename(editorPath()!) : "files", listW)}
-            </text>
-            <text fg={MUTED}>{clipTerminal(editorMsg(), Math.max(0, editorW - 1))}</text>
-          </box>
-          <text fg={MUTED}>{clipTerminal("─".repeat(bodyW), bodyW)}</text>
-          <box flexDirection="row" flexGrow={1} overflow="hidden">
-            <box width={listW} flexDirection="column" backgroundColor={GUTTER_BG}>
-              <For each={fileListVisible().slice(0, bodyH)}>
-                {(row) => {
-                  const n = row.node;
-                  const selected = () => row.index === fileSel();
-                  const prefix =
-                    "  ".repeat(n.depth) + (n.isDir ? (n.expanded ? "▾ " : "▸ ") : "  ");
-                  return (
-                    <box
-                      height={1}
-                      paddingLeft={1}
-                      backgroundColor={selected() ? TAB_ACTIVE_BG : GUTTER_BG}
-                    >
-                      <text fg={n.isDir ? DIR_FG : selected() ? DEFAULT_FG : MUTED}>
-                        {clipTerminal(prefix + n.name, Math.max(0, listW - 1))}
-                      </text>
-                    </box>
-                  );
-                }}
-              </For>
-            </box>
-            <box width={editorW} flexDirection="column" overflow="hidden">
-              <For each={editorVisible().slice(0, bodyH)}>
-                {(ln) => (
-                  <box height={1} flexDirection="row">
-                    <text bg={GUTTER_BG} fg={GUTTER_FG}>
-                      {formatGutter(ln.num, Math.min(4, gutterWidth(editorLines().length)))}
-                    </text>
-                    <text fg={DEFAULT_FG}>
-                      {clipTerminal(ln.text || " ", Math.max(0, editorW - 4))}
-                    </text>
-                  </box>
-                )}
-              </For>
-            </box>
-          </box>
-        </>
-      );
-    };
-
-    const compositeDiffLeaf = (leaf: CompositePanelLeaf) => {
-      const viewport = compositeLeafViewport(leaf.rect, 3);
-      const bodyW = viewport.bodyWidth;
-      const bodyH = viewport.bodyHeight;
-      const listW = compositeMiniSplitWidth(bodyW, 0.36);
-      const diffW = Math.max(0, bodyW - listW);
-      return (
-        <>
-          {compositeLeafChrome(leaf)}
-          <box height={1} flexDirection="row" gap={1}>
-            <text fg={ACCENT} attributes={1}>
-              {clipTerminal(basename(diffDir()) || "diff", listW)}
-            </text>
-            <text fg={MUTED}>
-              {clipTerminal(`${diffVisibleFiles().length} files`, Math.max(0, diffW - 1))}
-            </text>
-          </box>
-          <text fg={MUTED}>{clipTerminal("─".repeat(bodyW), bodyW)}</text>
-          <box flexDirection="row" flexGrow={1} overflow="hidden">
-            <box width={listW} flexDirection="column" backgroundColor={GUTTER_BG}>
-              <For each={fileVisible().slice(0, bodyH)}>
-                {({ row }) =>
-                  row.kind === "header" ? (
-                    <box height={1} paddingLeft={1}>
-                      <text fg={ACCENT}>{clipTerminal(row.label, Math.max(0, listW - 1))}</text>
-                    </box>
-                  ) : (
-                    <box
-                      height={1}
-                      paddingLeft={1}
-                      backgroundColor={row.fileIndex === diffSel() ? TAB_ACTIVE_BG : GUTTER_BG}
-                    >
-                      <text fg={row.fileIndex === diffSel() ? DEFAULT_FG : MUTED}>
-                        {clipTerminal(
-                          `${row.entry.status} ${row.entry.path}`,
-                          Math.max(0, listW - 1),
-                        )}
-                      </text>
-                    </box>
-                  )
-                }
-              </For>
-            </box>
-            <box width={diffW} flexDirection="column" paddingLeft={1} overflow="hidden">
-              <For each={diffVisible().slice(0, bodyH)}>
-                {(ln) => (
-                  <box height={1} backgroundColor={DIFF_LINE_BG[ln.kind] ?? DEFAULT_BG}>
-                    <text fg={DIFF_FG[ln.kind]}>
-                      {clipTerminal(ln.text || " ", Math.max(0, diffW - 1))}
-                    </text>
-                  </box>
-                )}
-              </For>
-            </box>
-          </box>
-        </>
-      );
-    };
-
-    const compositeHomeLeaf = (leaf: CompositePanelLeaf) => {
-      const viewport = compositeLeafViewport(leaf.rect, 2);
-      return (
-        <>
-          {compositeLeafChrome(leaf)}
-          <box height={1} flexDirection="row" gap={1}>
-            <text fg={ACCENT} attributes={1}>
-              tmux-ide
-            </text>
-            <text fg={MUTED}>
-              {clipTerminal(`${rollup().sessions} sessions`, Math.max(0, viewport.innerWidth - 10))}
-            </text>
-          </box>
-          <box flexDirection="column" flexGrow={1} overflow="hidden">
-            <For each={homeItems().slice(0, viewport.bodyHeight)}>
-              {(it, i) => (
-                <box
-                  height={1}
-                  paddingLeft={1}
-                  backgroundColor={i() === clampedSel() ? TAB_ACTIVE_BG : DEFAULT_BG}
-                >
-                  <text fg={it.kind === "header" ? ACCENT : MUTED}>
-                    {clipTerminal(
-                      it.kind === "session"
-                        ? `${STATUS_GLYPH[it.status]} ${it.session}`
-                        : it.kind === "project"
-                          ? `▸ ${it.name}`
-                          : it.kind === "recent"
-                            ? `↺ ${it.name}`
-                            : `· ${it.label}`,
-                      Math.max(0, viewport.bodyWidth - 1),
-                    )}
-                  </text>
-                </box>
-              )}
-            </For>
-          </box>
-        </>
-      );
-    };
-
-    const compositeMissionsLeaf = (leaf: CompositePanelLeaf) => {
-      const viewport = compositeLeafViewport(leaf.rect, 2);
-      return (
-        <>
-          {compositeLeafChrome(leaf)}
-          <box height={1} flexDirection="row" gap={1}>
-            <text fg={ACCENT} attributes={1}>
-              missions
-            </text>
-            <text fg={MUTED}>
-              {clipTerminal(
-                missionsLayout().header.labels[1] ?? "",
-                Math.max(0, viewport.innerWidth - 10),
-              )}
-            </text>
-          </box>
-          <box flexDirection="column" flexGrow={1} overflow="hidden">
-            <Show
-              when={missionWorkspaceSnapshot()}
-              fallback={<text fg={MUTED}>No mission data loaded.</text>}
-            >
-              <For each={missionsLayout().board.columns.slice(0, Math.min(3, viewport.bodyHeight))}>
-                {(column) => (
-                  <box height={1} flexDirection="row" gap={1}>
-                    <text fg={ACCENT}>{clipTerminal(column.label, 10)}</text>
-                    <text fg={MUTED}>{clipTerminal(`${column.count}`, 4)}</text>
-                    <text fg={DEFAULT_FG}>
-                      {clipTerminal(
-                        column.cards[0]?.lines[0] ?? "—",
-                        Math.max(0, viewport.bodyWidth - 18),
-                      )}
-                    </text>
-                  </box>
-                )}
-              </For>
-            </Show>
-          </box>
-        </>
-      );
-    };
-
-    const compositeLeafBody = (leaf: CompositePanelLeaf) => {
-      if (leaf.panel === "terminals") return compositeTerminalLeaf(leaf);
-      if (leaf.panel === "files") return compositeFilesLeaf(leaf);
-      if (leaf.panel === "diff") return compositeDiffLeaf(leaf);
-      if (leaf.panel === "missions") return compositeMissionsLeaf(leaf);
-      return compositeHomeLeaf(leaf);
-    };
-
     return (
       <box
         flexDirection="column"
@@ -8031,8 +7518,8 @@ try {
             theme={semanticTheme()}
             width={dims().width}
             variant={shellLayout().variant}
-            views={hostedViews()}
-            activeViewId={activeViewId()}
+            views={canvasHostedViews()}
+            activeViewId={canvasViewForPanel(canvasHostedViews(), canvasPanel()).id}
             hoveredIndex={hover()?.region === "surfacetab" ? hover()!.index : null}
             note={note()}
             rightChips={tabbarButtons().defs.map((button, index) => ({
@@ -8067,332 +7554,274 @@ try {
               theme={semanticTheme()}
               projection={workbenchProjection()}
               canvas={
-                <box
-                  position="relative"
-                  width={workbenchProjection().canvasBody.width}
-                  height={workbenchProjection().canvasBody.height}
-                  flexDirection="column"
-                  backgroundColor={DEFAULT_BG}
-                  overflow="hidden"
-                >
-                  <Show when={activeCompositeLayout()}>
-                    {(layout) => (
-                      <>
-                        <For each={layout().leaves}>
-                          {(leaf) => (
-                            <box
-                              position="absolute"
-                              left={leaf.rect.x}
-                              top={leaf.rect.y}
-                              width={leaf.rect.width}
-                              height={leaf.rect.height}
-                              flexDirection="column"
-                              backgroundColor={DEFAULT_BG}
-                              overflow="hidden"
-                              border={compositeLeafViewport(leaf.rect, 0).bordered}
-                              borderColor={leaf.focused ? ACCENT : MUTED}
-                            >
-                              {compositeLeafBody(leaf)}
-                            </box>
-                          )}
-                        </For>
-                        <For each={layout().separators}>
-                          {(separator) => (
-                            <box
-                              position="absolute"
-                              left={separator.rect.x}
-                              top={separator.rect.y}
-                              width={separator.rect.width}
-                              height={separator.rect.height}
-                            >
-                              <text fg={ACCENT}>
-                                {separator.direction === "horizontal"
-                                  ? Array(separator.rect.height).fill("│").join("\n")
-                                  : "─".repeat(separator.rect.width)}
-                              </text>
-                            </box>
-                          )}
-                        </For>
-                        <For each={layout().tabs}>
-                          {(tab) => (
-                            <box
-                              position="absolute"
-                              left={tab.rect.x}
-                              top={tab.rect.y}
-                              width={tab.rect.width}
-                              height={1}
-                            >
-                              <text
-                                fg={tab.active ? DEFAULT_BG : DEFAULT_FG}
-                                bg={tab.active ? ACCENT : BUTTON_BG}
-                              >
-                                {clipTerminal(tab.label, tab.rect.width)}
-                              </text>
-                            </box>
-                          )}
-                        </For>
-                        <Show when={layout().note}>
-                          <box
-                            position="absolute"
-                            left={1}
-                            top={Math.max(0, canvasRows() - 2)}
-                            height={1}
-                          >
-                            <text fg={BANNER_FG}>
-                              {clipTerminal(layout().note!, Math.max(4, canvasCols() - 2))}
-                            </text>
-                          </box>
-                        </Show>
-                      </>
-                    )}
-                  </Show>
-                  <Show when={!activeCompositeLayout() && canvasPanel() === "home"}>
-                    <HomeSurface
+                <Show
+                  when={canvasPanel() === "home"}
+                  fallback={
+                    <AgentTerminalCanvas
                       theme={semanticTheme()}
-                      projection={homeSurfaceProjection()}
-                      rollup={rollup()}
-                    />
-                  </Show>
-                  <Show when={!activeCompositeLayout() && canvasPanel() === "terminals"}>
-                    <box paddingLeft={1} flexDirection="row" gap={1}>
-                      <text fg={DEFAULT_FG} attributes={1}>
-                        {curTarget()}
-                      </text>
-                      <text fg={MUTED}>{status()}</text>
-                    </box>
-                    {/* The per-window strip (gy=1). Rendered as bare styled TEXT runs (no
+                      projection={terminalCanvasProjection()}
+                      chrome={
+                        <>
+                          <box paddingLeft={1} flexDirection="row" gap={1}>
+                            <text fg={DEFAULT_FG} attributes={1}>
+                              {curTarget()}
+                            </text>
+                            <text fg={MUTED}>{status()}</text>
+                          </box>
+                          {/* The per-window strip (gy=1). Rendered as bare styled TEXT runs (no
                 per-window <box> wrapper) so the late-mounted segments bubble
                 clicks to the main-column router instead of swallowing them the
                 way late-mounted boxes do; `route` hit-tests `windowSpans`, whose
                 labels equal these run strings. Active = accent+tint, hover =
                 subtle tint. */}
-                    <box paddingLeft={1} flexDirection="row" gap={1}>
-                      <text fg={MUTED}>{windowStripParts().pre}</text>
-                      <text fg={ACCENT} bg={TAB_ACTIVE_BG}>
-                        {windowStripParts().active}
-                      </text>
-                      <text fg={MUTED}>{windowStripParts().post}</text>
-                      {/* Zoomed indicator: the focused pane's id + a [Z] chip, shown only
+                          <box paddingLeft={1} flexDirection="row" gap={1}>
+                            <text fg={MUTED}>{windowStripParts().pre}</text>
+                            <text fg={ACCENT} bg={TAB_ACTIVE_BG}>
+                              {windowStripParts().active}
+                            </text>
+                            <text fg={MUTED}>{windowStripParts().post}</text>
+                            {/* Zoomed indicator: the focused pane's id + a [Z] chip, shown only
                   while the window is zoomed. Left-aligned after the labels; the
                   button row's flexGrow spacer keeps the [⛶]/[+ split] chips pinned
                   right regardless, and windowSpans are measured from the left, so
                   neither the click routing nor the button spans shift. */}
-                      <Show when={isZoomed()}>
-                        <text fg={ACCENT} bg={TAB_ACTIVE_BG} attributes={1}>
-                          {` ${focusedLivePane()?.id ?? ""} [Z] `}
-                        </text>
-                      </Show>
-                      {/* Synchronize-panes indicator (M20.2): shown while the active
+                            <Show when={isZoomed()}>
+                              <text fg={ACCENT} bg={TAB_ACTIVE_BG} attributes={1}>
+                                {` ${focusedLivePane()?.id ?? ""} [Z] `}
+                              </text>
+                            </Show>
+                            {/* Synchronize-panes indicator (M20.2): shown while the active
                   window's synchronize-panes option is on. Left-aligned after the
                   labels like [Z]; the button row's flexGrow spacer keeps the
                   right-pinned chips and their spans unaffected. */}
-                      <Show when={syncOn()}>
-                        <text fg={BUTTON_FG} bg={BUTTON_ACTIVE_BG} attributes={1}>
-                          {" [SYNC] "}
-                        </text>
-                      </Show>
-                      {buttonRow(stripButtons)}
-                    </box>
-                    <box
-                      position="relative"
-                      flexGrow={1}
-                      backgroundColor={GUTTER_BG}
-                      overflow="hidden"
-                    >
-                      {/* M21.3 — framebuffer blit (flagged). ONE <pane_surface> per
+                            <Show when={syncOn()}>
+                              <text fg={BUTTON_FG} bg={BUTTON_ACTIVE_BG} attributes={1}>
+                                {" [SYNC] "}
+                              </text>
+                            </Show>
+                            {buttonRow(stripButtons)}
+                          </box>
+                        </>
+                      }
+                      framebuffer={
+                        <box
+                          position="relative"
+                          width={terminalCanvasProjection().framebuffer.width}
+                          height={terminalCanvasProjection().framebuffer.height}
+                          backgroundColor={GUTTER_BG}
+                          overflow="hidden"
+                        >
+                          {/* M21.3 — framebuffer blit (flagged). ONE <pane_surface> per
                   pane blits the grid straight into packed buffers; the For keys
                   on the stable id list so a content tick reuses each surface (and
                   its framebuffer) instead of tearing it down. Chrome (badge +
                   scrollbar) stays Solid JSX layered over the surface. The old
                   StyledRun path is the fallback, unchanged, default for A/B. */}
-                      <Show
-                        when={FB_PANES}
-                        fallback={
-                          <For each={panes()}>
-                            {(pane) => (
-                              <box
-                                position="absolute"
-                                left={pane.left}
-                                top={pane.top}
-                                width={pane.width}
-                                height={pane.height}
-                                flexDirection="column"
-                                backgroundColor={DEFAULT_BG}
-                                overflow="hidden"
-                              >
-                                <For each={paneSelRows(pane)}>
-                                  {(runs) => (
-                                    <box flexDirection="row" height={1}>
-                                      <For each={runs}>
-                                        {(run) => (
-                                          <text
-                                            fg={packedToRgba(run.fg, DEFAULT_FG)}
-                                            bg={packedToRgba(run.bg, DEFAULT_BG)}
-                                            attributes={run.attributes}
-                                          >
-                                            {run.text}
-                                          </text>
-                                        )}
-                                      </For>
-                                    </box>
-                                  )}
-                                </For>
-                                {/* Top-right badge family: the select-mode chip (M22.9,
+                          <Show
+                            when={FB_PANES}
+                            fallback={
+                              <For each={panes()}>
+                                {(pane) => (
+                                  <box
+                                    position="absolute"
+                                    left={pane.left}
+                                    top={pane.top}
+                                    width={pane.width}
+                                    height={pane.height}
+                                    flexDirection="column"
+                                    backgroundColor={DEFAULT_BG}
+                                    overflow="hidden"
+                                  >
+                                    <For each={paneSelRows(pane)}>
+                                      {(runs) => (
+                                        <box flexDirection="row" height={1}>
+                                          <For each={runs}>
+                                            {(run) => (
+                                              <text
+                                                fg={packedToRgba(run.fg, DEFAULT_FG)}
+                                                bg={packedToRgba(run.bg, DEFAULT_BG)}
+                                                attributes={run.attributes}
+                                              >
+                                                {run.text}
+                                              </text>
+                                            )}
+                                          </For>
+                                        </box>
+                                      )}
+                                    </For>
+                                    {/* Top-right badge family: the select-mode chip (M22.9,
                             passive text runs — presses bubble to the router) then
                             the scroll badge. */}
-                                <box position="absolute" right={1} top={0} flexDirection="row">
-                                  <Show
-                                    when={
-                                      selectModePane() === pane.id && selectBadgeLabel(pane.width)
-                                    }
-                                  >
-                                    <text fg={DEFAULT_FG} bg={BUTTON_ACTIVE_BG} attributes={1}>
-                                      {selectBadgeLabel(pane.width)!}
-                                    </text>
-                                  </Show>
-                                  <Show when={pane.snapshot.scrollOffset > 0}>
-                                    <text fg={DEFAULT_FG} bg={BADGE_BG}>
-                                      {` ↑${pane.snapshot.scrollOffset}/${pane.scrollbackDepth} `}
-                                    </text>
-                                  </Show>
-                                </box>
-                                {agentChipOverlay(() => pane)}
-                                {/* Right-edge scrollbar — only while scrolled up, so a live
+                                    <box position="absolute" right={1} top={0} flexDirection="row">
+                                      <Show
+                                        when={
+                                          selectModePane() === pane.id &&
+                                          selectBadgeLabel(pane.width)
+                                        }
+                                      >
+                                        <text fg={DEFAULT_FG} bg={BUTTON_ACTIVE_BG} attributes={1}>
+                                          {selectBadgeLabel(pane.width)!}
+                                        </text>
+                                      </Show>
+                                      <Show when={pane.snapshot.scrollOffset > 0}>
+                                        <text fg={DEFAULT_FG} bg={BADGE_BG}>
+                                          {` ↑${pane.snapshot.scrollOffset}/${pane.scrollbackDepth} `}
+                                        </text>
+                                      </Show>
+                                    </box>
+                                    {agentChipOverlay(() => pane)}
+                                    {/* Right-edge scrollbar — only while scrolled up, so a live
                             terminal stays clean (mirrorScrollGeom gates on offset). */}
-                                {scrollbarOverlay(() => mirrorScrollGeom(pane))}
-                              </box>
-                            )}
-                          </For>
-                        }
-                      >
-                        <For each={paneIds()}>
-                          {(id) => {
-                            const pane = () => panesById().get(id);
-                            return (
-                              <Show when={pane()}>
-                                <box
-                                  position="absolute"
-                                  left={pane()!.left}
-                                  top={pane()!.top}
-                                  width={pane()!.width}
-                                  height={pane()!.height}
-                                  backgroundColor={DEFAULT_BG}
-                                  overflow="hidden"
-                                >
-                                  <pane_surface
-                                    width={pane()!.width}
-                                    height={pane()!.height}
-                                    mirror={mirror!}
-                                    paneId={id}
-                                    defaultFg={DEFAULT_FG_PACKED}
-                                    defaultBg={DEFAULT_BG_PACKED}
-                                    searchHl={SEARCH_HL}
-                                    searchCur={SEARCH_CUR}
-                                    scrollOffset={pane()!.snapshot.scrollOffset}
-                                    paneFocused={pane()!.active}
-                                    contentVersion={pane()!.version}
-                                    selRange={mirrorSelForPane(id)}
-                                    search={mirrorSearchForPane(pane()!)}
-                                  />
-                                  {/* Top-right badge family: the select-mode chip
+                                    {scrollbarOverlay(() => mirrorScrollGeom(pane))}
+                                  </box>
+                                )}
+                              </For>
+                            }
+                          >
+                            <For each={paneIds()}>
+                              {(id) => {
+                                const pane = () => panesById().get(id);
+                                return (
+                                  <Show when={pane()}>
+                                    <box
+                                      position="absolute"
+                                      left={pane()!.left}
+                                      top={pane()!.top}
+                                      width={pane()!.width}
+                                      height={pane()!.height}
+                                      backgroundColor={DEFAULT_BG}
+                                      overflow="hidden"
+                                    >
+                                      <pane_surface
+                                        width={pane()!.width}
+                                        height={pane()!.height}
+                                        mirror={mirror!}
+                                        paneId={id}
+                                        defaultFg={DEFAULT_FG_PACKED}
+                                        defaultBg={DEFAULT_BG_PACKED}
+                                        searchHl={SEARCH_HL}
+                                        searchCur={SEARCH_CUR}
+                                        scrollOffset={pane()!.snapshot.scrollOffset}
+                                        paneFocused={pane()!.active}
+                                        contentVersion={pane()!.version}
+                                        selRange={mirrorSelForPane(id)}
+                                        search={mirrorSearchForPane(pane()!)}
+                                      />
+                                      {/* Top-right badge family: the select-mode chip
                               (M22.9, passive text runs — presses bubble to the
                               router) then the scroll badge. */}
-                                  <box position="absolute" right={1} top={0} flexDirection="row">
-                                    <Show
-                                      when={
-                                        selectModePane() === id && selectBadgeLabel(pane()!.width)
-                                      }
-                                    >
-                                      <text fg={DEFAULT_FG} bg={BUTTON_ACTIVE_BG} attributes={1}>
-                                        {selectBadgeLabel(pane()!.width)!}
-                                      </text>
-                                    </Show>
-                                    <Show when={pane()!.snapshot.scrollOffset > 0}>
-                                      <text fg={DEFAULT_FG} bg={BADGE_BG}>
-                                        {` ↑${pane()!.snapshot.scrollOffset}/${pane()!.scrollbackDepth} `}
-                                      </text>
-                                    </Show>
-                                  </box>
-                                  {agentChipOverlay(pane)}
-                                  {scrollbarOverlay(() => mirrorScrollGeom(pane()!))}
-                                </box>
-                              </Show>
-                            );
-                          }}
-                        </For>
-                      </Show>
-                      {/* Focused-pane border (M22.7): accent strips in the GUTTER cells
+                                      <box
+                                        position="absolute"
+                                        right={1}
+                                        top={0}
+                                        flexDirection="row"
+                                      >
+                                        <Show
+                                          when={
+                                            selectModePane() === id &&
+                                            selectBadgeLabel(pane()!.width)
+                                          }
+                                        >
+                                          <text
+                                            fg={DEFAULT_FG}
+                                            bg={BUTTON_ACTIVE_BG}
+                                            attributes={1}
+                                          >
+                                            {selectBadgeLabel(pane()!.width)!}
+                                          </text>
+                                        </Show>
+                                        <Show when={pane()!.snapshot.scrollOffset > 0}>
+                                          <text fg={DEFAULT_FG} bg={BADGE_BG}>
+                                            {` ↑${pane()!.snapshot.scrollOffset}/${pane()!.scrollbackDepth} `}
+                                          </text>
+                                        </Show>
+                                      </box>
+                                      {agentChipOverlay(pane)}
+                                      {scrollbarOverlay(() => mirrorScrollGeom(pane()!))}
+                                    </box>
+                                  </Show>
+                                );
+                              }}
+                            </For>
+                          </Show>
+                          {/* Focused-pane border (M22.7): accent strips in the GUTTER cells
                   around the active pane — the strips live outside every pane rect
                   so no terminal cell is consumed or tinted, and they're
                   handler-less boxes (gutter presses still bubble to the router,
                   border drags keep working). Single-pane and zoomed windows paint
                   nothing (focusStrips returns [] when the rect fills the canvas
                   or the window has one pane). */}
-                      <For
-                        each={(() => {
-                          const focused = panes().find((p) => p.active);
-                          return focused
-                            ? focusStrips(focused, canvasCols(), canvasRows(), panes().length)
-                            : [];
-                        })()}
-                      >
-                        {(strip) => (
-                          // A HAIRLINE, not a filled bar (user feedback: bars read as
-                          // extra gutter padding): line glyphs in accent fg on the
-                          // normal canvas bg keep the gutter visually thin. One text
-                          // per strip — newline-joined glyphs render as a column.
-                          <box
-                            position="absolute"
-                            left={strip.left}
-                            top={strip.top}
-                            width={strip.width}
-                            height={strip.height}
+                          <For
+                            each={(() => {
+                              const focused = panes().find((p) => p.active);
+                              return focused
+                                ? focusStrips(focused, canvasCols(), canvasRows(), panes().length)
+                                : [];
+                            })()}
                           >
-                            <text fg={FOCUS_BORDER_FG}>
-                              {strip.height === 1
-                                ? "─".repeat(strip.width)
-                                : Array(strip.height).fill("│").join("\n")}
-                            </text>
-                          </box>
-                        )}
-                      </For>
-                      {/* Size-truth hint (M22.8): quiet, dismiss-free, shown ONLY while
+                            {(strip) => (
+                              // A HAIRLINE, not a filled bar (user feedback: bars read as
+                              // extra gutter padding): line glyphs in accent fg on the
+                              // normal canvas bg keep the gutter visually thin. One text
+                              // per strip — newline-joined glyphs render as a column.
+                              <box
+                                position="absolute"
+                                left={strip.left}
+                                top={strip.top}
+                                width={strip.width}
+                                height={strip.height}
+                              >
+                                <text fg={FOCUS_BORDER_FG}>
+                                  {strip.height === 1
+                                    ? "─".repeat(strip.width)
+                                    : Array(strip.height).fill("│").join("\n")}
+                                </text>
+                              </box>
+                            )}
+                          </For>
+                          {/* Size-truth hint (M22.8): quiet, dismiss-free, shown ONLY while
                   a co-attached terminal has sized the window away from our canvas
                   (the letterboxed grid is centered beneath it). It states the
                   honest actual size — the iTerm2-style answer — and disappears the
                   moment the sizes agree. A handler-less box in the top gutter, so
                   no pointer routing changes. */}
-                      <Show when={windowMismatch()}>
-                        <box position="absolute" left={1} top={0} backgroundColor={BADGE_BG}>
-                          <text fg={MUTED}>{` ${formatSizeHint(windowMismatch()!)} `}</text>
+                          <Show when={windowMismatch()}>
+                            <box position="absolute" left={1} top={0} backgroundColor={BADGE_BG}>
+                              <text fg={MUTED}>{` ${formatSizeHint(windowMismatch()!)} `}</text>
+                            </box>
+                          </Show>
                         </box>
-                      </Show>
-                    </box>
-                    {/* Scrollback-search input (M20.3) — a bottom-of-canvas line, like the
-                palette's input but inline. A normal-flow row after the pane canvas
-                (keyboard-only, no mouse handler — search owns the keyboard while
-                open); it steals the canvas's last row only while open, so the pane
-                grid is untouched the rest of the time. `editing` shows a "/query▏"
-                cursor; navigation shows the query + the "3/17 matches" tally. */}
-                    <Show when={search()}>
-                      <box
-                        flexDirection="row"
-                        backgroundColor={PALETTE_BG}
-                        paddingLeft={1}
-                        paddingRight={1}
-                      >
-                        <text fg={ACCENT} attributes={1}>
-                          {search()!.editing ? "/" : "search "}
-                        </text>
-                        <text
-                          fg={DEFAULT_FG}
-                        >{`${search()!.query}${search()!.editing ? "▏" : ""}`}</text>
-                        <box flexGrow={1} />
-                        <text fg={MUTED}>{searchStatus()}</text>
-                      </box>
-                    </Show>
-                  </Show>
-                </box>
+                      }
+                      footer={
+                        search() ? (
+                          <box
+                            width={terminalCanvasProjection().footer.width}
+                            height={terminalCanvasProjection().footer.height}
+                            flexDirection="row"
+                            backgroundColor={PALETTE_BG}
+                            paddingLeft={1}
+                            paddingRight={1}
+                          >
+                            <text fg={ACCENT} attributes={1}>
+                              {search()!.editing ? "/" : "search "}
+                            </text>
+                            <text
+                              fg={DEFAULT_FG}
+                            >{`${search()!.query}${search()!.editing ? "▏" : ""}`}</text>
+                            <box flexGrow={1} />
+                            <text fg={MUTED}>{searchStatus()}</text>
+                          </box>
+                        ) : undefined
+                      }
+                    />
+                  }
+                >
+                  <HomeSurface
+                    theme={semanticTheme()}
+                    projection={homeSurfaceProjection()}
+                    rollup={rollup()}
+                  />
+                </Show>
               }
               dockBody={
                 <>

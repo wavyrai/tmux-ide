@@ -142,6 +142,15 @@ describe("input lifecycle boundary", () => {
         },
       ).kind,
     ).toBe("terminal");
+    for (const modifiers of [{ ctrl: true }, { meta: true }, { shift: true }] as const) {
+      expect(
+        resolveInputLayer(
+          context({ configuredShortcutKeys: ["f2"] }),
+          key({ name: "f2", ...modifiers }),
+          { hosted: false },
+        ).kind,
+      ).toBe("terminal");
+    }
   });
 
   it("resolves concrete global commands", () => {
