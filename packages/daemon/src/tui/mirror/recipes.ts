@@ -82,6 +82,20 @@ export function actionChipText(label: string, width?: number): string {
   return clipTerminal(` ${label}`, Math.max(0, geometry.bodyWidth - 1)) + " ";
 }
 
+/** Gloomberb-style line icon centered in a compact, exact-width hit target. */
+export function iconButtonWidth(width?: number): number {
+  return Math.max(0, Math.floor(width ?? 3));
+}
+
+export function iconButtonText(icon: string, width?: number): string {
+  const resolved = iconButtonWidth(width);
+  if (resolved <= 0) return "";
+  const glyph = clipTerminal(icon, 1);
+  if (resolved === 1) return glyph;
+  const left = Math.floor((resolved - 1) / 2);
+  return `${" ".repeat(left)}${glyph}${" ".repeat(Math.max(0, resolved - left - 1))}`;
+}
+
 export function actionChipSpansFromRight<T extends { label: string }>(
   actions: readonly T[],
   rightEdge: number,

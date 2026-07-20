@@ -84,9 +84,39 @@ describe("terminal pane chrome projection", () => {
     const before = canvas.tmuxSize;
     const layout = projectTerminalPaneChrome({ canvas, panes });
     const zoom = layout.native[0]!.frame!.actions.find((action) => action.id === "zoom")!;
-    expect(zoom).toMatchObject({ fullLabel: "restore", label: "R", active: true });
+    expect(zoom).toMatchObject({
+      fullLabel: "restore",
+      label: "▣",
+      appearance: "icon",
+      active: true,
+    });
     expect(canvas.tmuxSize).toEqual(before);
     expect(layout.framebuffer).toEqual([]);
+  });
+
+  it("keeps fixed icon hit spans while hiding inactive chrome until hover", () => {
+    const panes = [
+      pane({ id: "%1", width: 59 }),
+      pane({ id: "%2", left: 60, width: 60, active: false }),
+    ];
+    const idle = projectTerminalPaneChrome({ canvas, panes });
+    const idleActions = idle.native[1]!.frame!.actions;
+    expect(idleActions.map((action) => [action.id, action.label, action.hidden])).toEqual([
+      ["zoom", "□", true],
+      ["menu", "⋯", true],
+    ]);
+
+    const hovered = projectTerminalPaneChrome({
+      canvas,
+      panes,
+      hoveredAction: { paneId: "%2", actionIndex: null },
+    });
+    const hoveredActions = hovered.native[1]!.frame!.actions;
+    expect(hoveredActions.map((action) => [action.id, action.start, action.width])).toEqual(
+      idleActions.map((action) => [action.id, action.start, action.width]),
+    );
+    expect(hoveredActions.every((action) => action.hidden === false)).toBe(true);
+    expect(hoveredActions.every((action) => action.hovered === false)).toBe(true);
   });
 
   it.each([1, 2, 3, 4, 5, 8, 12, 13, 16])(
@@ -187,6 +217,14 @@ describe("terminal pane chrome projection", () => {
       kind: "focus",
       paneId: "%2",
     });
+    expect(
+      terminalPaneChromePointerIntent(
+        layout,
+        second.canvasRect.x + second.frame!.titleSpan.x,
+        y,
+        "move",
+      ),
+    ).toEqual({ kind: "hover", target: { paneId: "%2", actionIndex: null } });
     expect(terminalPaneChromePointerIntent(layout, x, y, "up")).toEqual({
       kind: "settle",
       paneId: "%2",
@@ -234,6 +272,22 @@ describe("terminal pane chrome projection", () => {
         "down",
       ),
     ).toBeNull();
+    expect(
+      terminalPaneChromePointerIntent(
+        layout,
+        lower.canvasRect.x + lower.frame!.grip!.x,
+        lower.canvasRect.y,
+        "move",
+      ),
+    ).toEqual({ kind: "hover", target: { paneId: "%2", actionIndex: null } });
+    expect(
+      terminalPaneChromePointerIntent(
+        layout,
+        lower.canvasRect.x + lower.frame!.grip!.x,
+        lower.canvasRect.y,
+        "drag",
+      ),
+    ).toBeNull();
   });
 
   it("clears motion and lifecycle state outside live terminal chrome", () => {
@@ -241,6 +295,12 @@ describe("terminal pane chrome projection", () => {
     expect(terminalPaneChromeMotionState({ kind: "hover", target: { ...target } }, target)).toEqual(
       { hovered: target, pressed: target },
     );
+    expect(
+      terminalPaneChromeMotionState(
+        { kind: "hover", target: { paneId: "%2", actionIndex: null } },
+        target,
+      ),
+    ).toEqual({ hovered: { paneId: "%2", actionIndex: null }, pressed: null });
     expect(terminalPaneChromeMotionState(null, target)).toEqual({ hovered: null, pressed: null });
     expect(reconcileTerminalPaneChromeActionTarget(target, new Set(["%2"]), true)).toBe(target);
     expect(reconcileTerminalPaneChromeActionTarget(target, new Set(["%1"]), true)).toBeNull();

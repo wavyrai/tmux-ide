@@ -4,6 +4,8 @@ import { For, Show } from "solid-js";
 import {
   actionChipGeometry,
   actionChipText,
+  iconButtonText,
+  iconButtonWidth,
   recipePalette,
   rowParts,
   scrollbarGlyphs,
@@ -119,6 +121,34 @@ export function Button(props: ButtonProps) {
 }
 
 export const ActionChip = Button;
+
+export interface IconButtonProps extends ThemeProps, RecipeInteractionState {
+  icon: string;
+  tone?: RecipeTone;
+  width?: number;
+  hidden?: boolean;
+}
+
+/** Presentation-only icon control; the owning surface keeps all input policy. */
+export function IconButton(props: IconButtonProps) {
+  const palette = () => recipePalette(props.theme, props, props.tone ?? "accent");
+  const content = () => iconButtonText(props.hidden ? " " : props.icon, props.width);
+  const paintsState = () => !props.hidden && palette().state !== "base";
+  return (
+    <box
+      height={1}
+      width={iconButtonWidth(props.width)}
+      backgroundColor={paintsState() ? palette().background : undefined}
+      overflow="hidden"
+    >
+      <text
+        fg={palette().state === "base" ? props.theme.colors.mutedForeground : palette().foreground}
+      >
+        {content()}
+      </text>
+    </box>
+  );
+}
 
 export interface BadgeProps extends ThemeProps {
   label: string;

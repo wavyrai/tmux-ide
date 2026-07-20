@@ -1,7 +1,7 @@
 /* @jsxImportSource @opentui/solid */
 import { describe, expect, it } from "bun:test";
 import { createMemo, createSignal } from "solid-js";
-import { createSemanticThemeSnapshot } from "../theme.ts";
+import { colorToThemeBytes, createSemanticThemeSnapshot } from "../theme.ts";
 import { expectFrameBounds, renderForTest, stableFrame } from "../testing/renderer-harness.test.ts";
 import { projectAgentTerminalCanvas } from "./agent-terminal-canvas.ts";
 import { AgentTerminalCanvas } from "./agent-terminal-canvas-view.tsx";
@@ -31,6 +31,10 @@ function renderableTree(node: TestRenderable): readonly unknown[] {
 
 function renderableCount(node: TestRenderable): number {
   return renderableTree(node).length;
+}
+
+function colorKey(color: Parameters<typeof colorToThemeBytes>[0]): string {
+  return colorToThemeBytes(color).join(",");
 }
 
 describe("AgentTerminalCanvas OpenTUI renderer", () => {
@@ -201,6 +205,12 @@ describe("AgentTerminalCanvas OpenTUI renderer", () => {
         expect(stable).toContain(`Z${id}Z`);
       }
       expect(stable).toContain("Claude reviewer");
+      const maximizeSpan = setup
+        .captureSpans()
+        .lines[projection.chrome.height - 1]!.spans.find((span) => span.text.includes("□"));
+      expect(maximizeSpan).toBeDefined();
+      expect(colorKey(maximizeSpan!.bg)).toBe(colorKey(theme.colors.accentMuted));
+      expect(colorKey(maximizeSpan!.fg)).toBe(colorKey(theme.colors.mutedForeground));
       setup.renderer.destroy();
     },
   );
@@ -243,7 +253,7 @@ describe("AgentTerminalCanvas OpenTUI renderer", () => {
       const header = layout.native[0]!;
       const zoom = header.frame!.actions.find((action) => action.id === "zoom")!;
       expect(stable).toMatchSnapshot();
-      expect(stable).toContain(zoomed ? "R" : "Z");
+      expect(stable).toContain(zoom.label);
       expect(stable).toContain("B");
       expect(
         terminalPaneChromeHitTest(

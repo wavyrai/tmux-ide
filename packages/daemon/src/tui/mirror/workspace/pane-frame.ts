@@ -1,6 +1,7 @@
 import { terminalDisplayWidth } from "../panel-host.ts";
-import { actionChipWidth, type RecipeTone, type Rect } from "../recipes.ts";
+import { actionChipWidth, iconButtonWidth, type RecipeTone, type Rect } from "../recipes.ts";
 import { clipWorkspaceText } from "./text.ts";
+import { workspaceIcon, type WorkspaceIconId } from "./icons.ts";
 
 export type PaneFrameVariant = "compact" | "standard" | "wide";
 export type PaneFrameKind =
@@ -17,11 +18,13 @@ export interface PaneFrameAction {
   id: string;
   label: string;
   compactLabel?: string;
+  icon?: WorkspaceIconId;
   description: string;
   active?: boolean;
   disabled?: boolean;
   attention?: boolean;
   pressed?: boolean;
+  hidden?: boolean;
 }
 
 export interface PaneFrameInput {
@@ -71,6 +74,7 @@ export interface PaneFrameStateChip {
 
 export interface PaneFrameActionChip extends PaneFrameAction {
   kind: "action";
+  appearance: "label" | "icon";
   label: string;
   fullLabel: string;
   start: number;
@@ -117,15 +121,15 @@ export type PaneFrameHit =
   | { area: "border" }
   | null;
 
-const KIND_GLYPHS: Readonly<Record<PaneFrameKind, string>> = {
-  home: "⌂",
-  terminals: "❯",
-  files: "▤",
-  diff: "±",
-  missions: "◆",
-  activity: "◷",
-  preview: "◫",
-  native: "▣",
+const KIND_ICONS: Readonly<Record<PaneFrameKind, WorkspaceIconId>> = {
+  home: "home",
+  terminals: "terminals",
+  files: "files",
+  diff: "diff",
+  missions: "missions",
+  activity: "activity",
+  preview: "preview",
+  native: "native",
 };
 
 const STATUS_GLYPHS: Readonly<Record<Exclude<RecipeTone, "neutral" | "accent">, string>> = {
@@ -172,7 +176,12 @@ export function projectPaneFrame(input: PaneFrameInput): PaneFrameProjection {
     ...action,
     kind: "action" as const,
     fullLabel: action.label,
-    label: variant === "compact" ? (action.compactLabel ?? action.label) : action.label,
+    appearance: action.icon ? ("icon" as const) : ("label" as const),
+    label: action.icon
+      ? workspaceIcon(action.icon)
+      : variant === "compact"
+        ? (action.compactLabel ?? action.label)
+        : action.label,
     hovered: input.hoveredActionIndex === index,
     pressed: input.pressedActionIndex === index || action.pressed === true,
   }));
@@ -187,7 +196,8 @@ export function projectPaneFrame(input: PaneFrameInput): PaneFrameProjection {
   const titleStart = header.x + (grip ? grip.width + 1 : 0);
   const titleBudget = Math.max(0, firstChip - titleStart - (chips.length > 0 ? 1 : 0));
   const dirty = input.dirty ? " •" : "";
-  const titlePrefix = `${marker} ${KIND_GLYPHS[input.kind]} `;
+  const kindGlyph = workspaceIcon(KIND_ICONS[input.kind]);
+  const titlePrefix = `${marker} ${kindGlyph} `;
   const requestedTitle = `${titlePrefix}${input.title}${dirty}`;
   const showSubtitle = variant !== "compact" && !!input.subtitle;
   const subtitleDividerWidth = showSubtitle ? 3 : 0;
@@ -232,7 +242,7 @@ export function projectPaneFrame(input: PaneFrameInput): PaneFrameProjection {
     },
     subtitleSpan,
     marker,
-    glyph: KIND_GLYPHS[input.kind],
+    glyph: kindGlyph,
     title: titleText,
     subtitle: subtitleText,
     focused: input.focused,
@@ -302,7 +312,9 @@ function chipWidth(
     | Omit<PaneFrameActionChip, "start" | "width">,
 ): number {
   return chip.kind === "action"
-    ? actionChipWidth(chip.label)
+    ? chip.appearance === "icon"
+      ? iconButtonWidth()
+      : actionChipWidth(chip.label)
     : terminalDisplayWidth(chip.label) + 2;
 }
 

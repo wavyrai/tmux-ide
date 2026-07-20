@@ -1,7 +1,7 @@
 /* @jsxImportSource @opentui/solid */
 import type { JSX } from "@opentui/solid";
 import { createMemo, For, Show } from "solid-js";
-import { ActionChip, Badge, StatusChip } from "../recipes.tsx";
+import { ActionChip, Badge, IconButton, StatusChip } from "../recipes.tsx";
 import { recipePalette } from "../recipes.ts";
 import type { SemanticThemeSnapshot } from "../theme.ts";
 import type { PaneFrameChip, PaneFrameProjection } from "./pane-frame.ts";
@@ -76,16 +76,35 @@ function Chip(props: { theme: SemanticThemeSnapshot; chip: PaneFrameChip }) {
         </Show>
       }
     >
-      <ActionChip
-        theme={props.theme}
-        label={action()!.label}
-        width={action()!.width}
-        hovered={action()!.hovered}
-        pressed={action()!.pressed}
-        selected={action()!.active}
-        disabled={action()!.disabled}
-        attention={action()!.attention}
-      />
+      <Show
+        when={action()!.appearance === "icon"}
+        fallback={
+          <ActionChip
+            theme={props.theme}
+            label={action()!.label}
+            width={action()!.width}
+            hovered={action()!.hovered}
+            pressed={action()!.pressed}
+            selected={action()!.active}
+            disabled={action()!.disabled}
+            attention={action()!.attention}
+          />
+        }
+      >
+        <IconButton
+          theme={props.theme}
+          icon={action()!.label}
+          width={action()!.width}
+          hovered={action()!.hovered}
+          pressed={action()!.pressed}
+          // Icon identity (□/▣) communicates toggle state. Keep the idle
+          // control transparent like native window chrome.
+          selected={false}
+          disabled={action()!.disabled}
+          attention={action()!.attention}
+          hidden={action()!.hidden}
+        />
+      </Show>
     </Show>
   );
 }
@@ -122,7 +141,7 @@ export function PaneFrameHeader(props: PaneFrameHeaderProps) {
           height={1}
         >
           <text fg={nativeFocused() ? props.theme.colors.focus : props.theme.colors.border}>
-            {nativeFocused() ? "▌:" : props.projection.grip!.text}
+            {props.projection.grip!.text}
           </text>
         </box>
       </Show>

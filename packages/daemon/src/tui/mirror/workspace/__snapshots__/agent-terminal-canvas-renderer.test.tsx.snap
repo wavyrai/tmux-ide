@@ -135,7 +135,7 @@ tmux framebuffer 200x58
 
 exports[`AgentTerminalCanvas OpenTUI renderer renders pane chrome at %sx%s without covering framebuffer sentinels 1`] = `
 " 0:agents 1:shell
-▌: ▣ ❯ Codex PM          ●   ○ Z   ○ +  :: ○ ❯ Codex implementer  ●   ○ Z   ○ +
+:: ▣ ❯ Codex PM              ●   □   ⋯  :: ○ ❯ Codex implementer      ●
 A1A ·······························     A2A ································
 
 
@@ -146,7 +146,7 @@ A1A ·······························     A2A ··�
 
                                         │
                                                                             Z2Z
-                                        :: ! ❯ Claude reviewer    !   ○ Z   ○ +
+                                        :: ! ❯ Claude reviewer        !
                                         A3A ································
 
 
@@ -162,7 +162,7 @@ A1A ·······························     A2A ··�
 
 exports[`AgentTerminalCanvas OpenTUI renderer renders pane chrome at %sx%s without covering framebuffer sentinels 2`] = `
 " 0:agents 1:shell
-▌: ▣ ❯ Codex PM                              ●   ○ Z   ○ +  :: ○ ❯ Codex implementer                      ●   ○ Z   ○ +
+:: ▣ ❯ Codex PM                                  ●   □   ⋯  :: ○ ❯ Codex implementer                          ●
 A1A ···················································     A2A ····················································
 
 
@@ -181,7 +181,7 @@ A1A ······································
 
                                                             │
                                                                                                                     Z2Z
-                                                            :: ! ❯ Claude reviewer                        !   ○ Z   ○ +
+                                                            :: ! ❯ Claude reviewer                            !
                                                             A3A ····················································
 
 
@@ -205,7 +205,7 @@ A1A ······································
 
 exports[`AgentTerminalCanvas OpenTUI renderer renders pane chrome at %sx%s without covering framebuffer sentinels 3`] = `
 " 0:agents 1:shell
-▌: ▣ ❯ Codex PM                                                                      ●   ○ Z   ○ +  :: ○ ❯ Codex implementer                                                              ●   ○ Z   ○ +
+:: ▣ ❯ Codex PM                                                                          ●   □   ⋯  :: ○ ❯ Codex implementer                                                                  ●
 A1A ···························································································     A2A ····························································································
 
 
@@ -234,7 +234,7 @@ A1A ······································
 
                                                                                                     │
                                                                                                                                                                                                     Z2Z
-                                                                                                    :: ! ❯ Claude reviewer                                                                !   ○ Z   ○ +
+                                                                                                    :: ! ❯ Claude reviewer                                                                    !
                                                                                                     A3A ····························································································
 
 
@@ -268,7 +268,7 @@ A1A ······································
 
 exports[`AgentTerminalCanvas OpenTUI renderer keeps compact zoom chrome visible at width %s 1`] = `
 "
-Z
+□
 B
 
 
@@ -277,7 +277,7 @@ B
 
 exports[`AgentTerminalCanvas OpenTUI renderer keeps compact zoom chrome visible at width %s 2`] = `
 "
-R
+▣
 B
 
 
@@ -286,7 +286,7 @@ B
 
 exports[`AgentTerminalCanvas OpenTUI renderer keeps compact zoom chrome visible at width %s 3`] = `
 "
-Z
+ □
 B
 
 
@@ -295,7 +295,7 @@ B
 
 exports[`AgentTerminalCanvas OpenTUI renderer keeps compact zoom chrome visible at width %s 4`] = `
 "
-R
+… ▣
 B
 
 
@@ -304,7 +304,7 @@ B
 
 exports[`AgentTerminalCanvas OpenTUI renderer keeps compact zoom chrome visible at width %s 5`] = `
 "
- ○ Z
+%7 □
 B
 
 
@@ -313,7 +313,7 @@ B
 
 exports[`AgentTerminalCanvas OpenTUI renderer keeps compact zoom chrome visible at width %s 6`] = `
 " window
-%7  ○ Z
+%7    □
 B
 
 
@@ -322,7 +322,7 @@ B
 
 exports[`AgentTerminalCanvas OpenTUI renderer keeps compact zoom chrome visible at width %s 7`] = `
 " window
-%7      ○ Z
+%7    □   ⋯
 B
 
 
@@ -331,7 +331,7 @@ B
 
 exports[`AgentTerminalCanvas OpenTUI renderer keeps compact zoom chrome visible at width %s 8`] = `
 " window
-%7 ○ Z   ○ +
+%7     □   ⋯
 B
 
 
@@ -340,7 +340,7 @@ B
 
 exports[`AgentTerminalCanvas OpenTUI renderer keeps compact zoom chrome visible at width %s 9`] = `
 " window
-%7    ○ Z   ○ +
+:: ▣ ❯ …  □   ⋯
 B
 
 
