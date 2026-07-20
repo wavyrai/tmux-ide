@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { classifyProjectReadiness as publicClassifyProjectReadiness } from "../../index.ts";
 import {
   classifyProjectReadiness,
   type ProjectReadinessHarnessProbe,
@@ -47,6 +48,10 @@ function issueCodes(result: ReturnType<typeof classifyProjectReadiness>): string
 }
 
 describe("classifyProjectReadiness", () => {
+  it("is exported through the public daemon package entry point", () => {
+    expect(publicClassifyProjectReadiness).toBe(classifyProjectReadiness);
+  });
+
   it("classifies a clean project and recommends a config-free agent workbench", () => {
     const result = classifyProjectReadiness(cleanProbe());
 
@@ -233,6 +238,63 @@ describe("classifyProjectReadiness", () => {
     );
   });
 
+  it("uses Codex, Claude, OpenCode, then custom as the deterministic default order", () => {
+    const result = classifyProjectReadiness(
+      cleanProbe({
+        harnesses: [
+          harness({
+            id: "custom",
+            kind: "custom",
+            label: "Custom",
+            command: ["custom-agent"],
+          }),
+          harness({
+            id: "opencode",
+            kind: "opencode",
+            label: "OpenCode",
+            command: ["opencode"],
+          }),
+          harness({
+            id: "claude",
+            kind: "claude",
+            label: "Claude Code",
+            command: ["claude"],
+          }),
+          harness(),
+        ],
+      }),
+    );
+
+    expect(result.recommendedLaunchPlan.selectedHarnessId).toBe("codex");
+  });
+
+  it("falls back to the default order when the preferred harness is unavailable", () => {
+    const result = classifyProjectReadiness(
+      cleanProbe({
+        preferredHarnessId: "claude",
+        harnesses: [
+          harness({
+            id: "claude",
+            kind: "claude",
+            label: "Claude Code",
+            command: ["claude"],
+            authentication: "required",
+          }),
+          harness({
+            id: "opencode",
+            kind: "opencode",
+            label: "OpenCode",
+            command: ["opencode"],
+          }),
+          harness(),
+        ],
+      }),
+    );
+
+    expect(result.recommendedLaunchPlan.selectedHarnessId).toBe("codex");
+    expect(issueCodes(result)).toContain("HARNESS_AUTH_REQUIRED");
+  });
+
   it("classifies install, authentication, command, and verification failures independently", () => {
     const result = classifyProjectReadiness(
       cleanProbe({
@@ -338,6 +400,95 @@ describe("classifyProjectReadiness", () => {
     );
   });
 
+  it("blocks a present directory whose canonical project root is unresolved", () => {
+    for (const root of [null, "   "]) {
+      const result = classifyProjectReadiness(
+        cleanProbe({ project: { ...cleanProbe().project, root } }),
+      );
+
+      expect(result.status).toBe("blocked");
+      expect(result.canLaunch).toBe(false);
+      expect(issueCodes(result)).toContain("PROJECT_ROOT_UNRESOLVED");
+      expect(result.recoveryActions).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ kind: "refresh-project", target: "project" }),
+          expect.objectContaining({ kind: "choose-project", target: "project" }),
+        ]),
+      );
+      expect(result.recommendedLaunchPlan).toMatchObject({ mode: "unavailable", panes: [] });
+    }
+  });
+
+  it("rejects a canonical root paired with a missing or non-directory path", () => {
+    const result = classifyProjectReadiness(
+      cleanProbe({
+        project: {
+          ...cleanProbe().project,
+          exists: false,
+          isDirectory: false,
+          registration: "stale",
+        },
+      }),
+    );
+
+    expect(result.status).toBe("blocked");
+    expect(issueCodes(result)).toEqual(
+      expect.arrayContaining(["PROJECT_REGISTRATION_STALE", "PROJECT_ROOT_INCONSISTENT"]),
+    );
+    expect(result.recoveryActions).toContainEqual(
+      expect.objectContaining({ kind: "refresh-project", label: "Refresh project facts" }),
+    );
+  });
+
+  it("requires a complete identity for every present project directory", () => {
+    const unresolved = classifyProjectReadiness(
+      cleanProbe({
+        project: {
+          ...cleanProbe().project,
+          identityKey: null,
+          identitySource: null,
+        },
+      }),
+    );
+    const missingSource = classifyProjectReadiness(
+      cleanProbe({
+        project: {
+          ...cleanProbe().project,
+          identitySource: null,
+        },
+      }),
+    );
+    const missingKey = classifyProjectReadiness(
+      cleanProbe({
+        project: {
+          ...cleanProbe().project,
+          identityKey: null,
+        },
+      }),
+    );
+    const blankKey = classifyProjectReadiness(
+      cleanProbe({
+        project: {
+          ...cleanProbe().project,
+          identityKey: "   ",
+        },
+      }),
+    );
+
+    expect(unresolved.status).toBe("blocked");
+    expect(issueCodes(unresolved)).toContain("PROJECT_IDENTITY_UNRESOLVED");
+    expect(unresolved.recoveryActions).toContainEqual(
+      expect.objectContaining({ kind: "refresh-project", label: "Resolve project identity again" }),
+    );
+    for (const inconsistent of [missingSource, missingKey, blankKey]) {
+      expect(inconsistent.status).toBe("blocked");
+      expect(issueCodes(inconsistent)).toContain("PROJECT_IDENTITY_INCONSISTENT");
+      expect(inconsistent.recoveryActions).toContainEqual(
+        expect.objectContaining({ kind: "refresh-project", label: "Rebuild project identity" }),
+      );
+    }
+  });
+
   it("makes unsupported platforms and missing tmux hard launch constraints", () => {
     const unsupported = classifyProjectReadiness(
       cleanProbe({ platform: { os: "win32", arch: "x64" } }),
@@ -370,19 +521,34 @@ describe("classifyProjectReadiness", () => {
     expect(result.recommendedLaunchPlan.panes).toEqual([]);
   });
 
-  it("reserves the shell identity and reports duplicate harness profiles deterministically", () => {
+  it("reserves shell and gives every repeated duplicate a stable unique issue/action id", () => {
     const result = classifyProjectReadiness(
       cleanProbe({
         harnesses: [
           harness({ id: "shell", kind: "custom", label: "Not Shell", command: ["agent"] }),
           harness(),
           harness({ id: "codex", label: "Duplicate Codex" }),
+          harness({ id: "codex", label: "Third Codex" }),
         ],
       }),
     );
 
     expect(result.harnesses.map((item) => item.id)).toEqual(["shell", "codex"]);
-    expect(issueCodes(result)).toEqual(["DUPLICATE_HARNESS_ID", "DUPLICATE_HARNESS_ID"]);
+    expect(issueCodes(result)).toEqual([
+      "DUPLICATE_HARNESS_ID",
+      "DUPLICATE_HARNESS_ID",
+      "DUPLICATE_HARNESS_ID",
+    ]);
+    expect(result.issues.map((issue) => issue.id)).toEqual([
+      "issue:duplicate_harness_id:shell:2",
+      "issue:duplicate_harness_id:codex:2",
+      "issue:duplicate_harness_id:codex:3",
+    ]);
+    expect(new Set(result.issues.map((issue) => issue.id)).size).toBe(3);
+    expect(new Set(result.recoveryActions.map((action) => action.id)).size).toBe(3);
+    expect(result.recoveryActions.map((action) => action.issueId)).toEqual(
+      result.issues.map((issue) => issue.id),
+    );
     expect(result.recommendedLaunchPlan.selectedHarnessId).toBe("codex");
   });
 });

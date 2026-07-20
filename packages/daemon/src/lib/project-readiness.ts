@@ -15,9 +15,18 @@ export type ProjectRegistrationState = "unregistered" | "current" | "stale";
 export type HarnessKind = "codex" | "claude" | "opencode" | "shell" | "custom";
 
 export interface ProjectReadinessProjectProbe {
+  /** User- or registry-supplied path before canonical project resolution. */
   requestedPath: string;
+  /**
+   * Canonical project root. Every present directory must resolve a non-empty
+   * root before launch; null is valid only while a missing path is repaired.
+   */
   root: string | null;
   name: string | null;
+  /**
+   * Stable identity facts are a pair: key and source must either both be
+   * present or both be absent. A present directory requires the complete pair.
+   */
   identityKey: string | null;
   identitySource: "git-common-dir" | "canonical-realpath" | null;
   exists: boolean;
@@ -73,6 +82,10 @@ export type ProjectReadinessIssueCode =
   | "PROJECT_NOT_FOUND"
   | "PROJECT_NOT_DIRECTORY"
   | "PROJECT_REGISTRATION_STALE"
+  | "PROJECT_ROOT_UNRESOLVED"
+  | "PROJECT_ROOT_INCONSISTENT"
+  | "PROJECT_IDENTITY_UNRESOLVED"
+  | "PROJECT_IDENTITY_INCONSISTENT"
   | "PLATFORM_UNSUPPORTED"
   | "TMUX_MISSING"
   | "TMUX_UNVERIFIED"
@@ -102,6 +115,7 @@ export interface ProjectReadinessIssue {
 
 export type ProjectRecoveryActionKind =
   | "choose-project"
+  | "refresh-project"
   | "relink-project"
   | "remove-stale-project"
   | "view-platform-support"
@@ -468,6 +482,11 @@ function createLaunchPlan(
 export function classifyProjectReadiness(probe: ProjectReadinessProbe): ProjectReadinessResult {
   const state: MutableClassification = { issues: [], actions: [] };
   const platformSupported = SUPPORTED_PLATFORMS.has(probe.platform.os);
+  const projectDirectoryPresent = probe.project.exists && probe.project.isDirectory;
+  const hasProjectRoot = probe.project.root !== null && probe.project.root.trim().length > 0;
+  const hasIdentityKey =
+    probe.project.identityKey !== null && probe.project.identityKey.trim().length > 0;
+  const hasIdentitySource = probe.project.identitySource !== null;
 
   if (!probe.project.exists) {
     if (probe.project.registration === "stale") {
@@ -529,6 +548,100 @@ export function classifyProjectReadiness(probe: ProjectReadinessProbe): ProjectR
         {
           kind: "choose-project",
           label: "Choose a project directory",
+          target: "project",
+          harnessId: null,
+          command: null,
+        },
+      ],
+    );
+  }
+
+  if (projectDirectoryPresent && !hasProjectRoot) {
+    addIssue(
+      state,
+      {
+        code: "PROJECT_ROOT_UNRESOLVED",
+        severity: "blocking",
+        message: `Project root could not be resolved for ${probe.project.requestedPath}.`,
+        harnessId: null,
+      },
+      [
+        {
+          kind: "refresh-project",
+          label: "Resolve project root again",
+          target: "project",
+          harnessId: null,
+          command: null,
+        },
+        {
+          kind: "choose-project",
+          label: "Choose another project",
+          target: "project",
+          harnessId: null,
+          command: null,
+        },
+      ],
+    );
+  } else if (!projectDirectoryPresent && hasProjectRoot) {
+    addIssue(
+      state,
+      {
+        code: "PROJECT_ROOT_INCONSISTENT",
+        severity: "blocking",
+        message: "A canonical project root was supplied for a path that is not a directory.",
+        harnessId: null,
+      },
+      [
+        {
+          kind: "refresh-project",
+          label: "Refresh project facts",
+          target: "project",
+          harnessId: null,
+          command: null,
+        },
+        {
+          kind: "choose-project",
+          label: "Choose a project directory",
+          target: "project",
+          harnessId: null,
+          command: null,
+        },
+      ],
+    );
+  }
+
+  if (hasIdentityKey !== hasIdentitySource) {
+    addIssue(
+      state,
+      {
+        code: "PROJECT_IDENTITY_INCONSISTENT",
+        severity: "blocking",
+        message: "Project identity key and source must be resolved together.",
+        harnessId: null,
+      },
+      [
+        {
+          kind: "refresh-project",
+          label: "Rebuild project identity",
+          target: "project",
+          harnessId: null,
+          command: null,
+        },
+      ],
+    );
+  } else if (projectDirectoryPresent && !hasIdentityKey) {
+    addIssue(
+      state,
+      {
+        code: "PROJECT_IDENTITY_UNRESOLVED",
+        severity: "blocking",
+        message: `Project identity could not be resolved for ${probe.project.requestedPath}.`,
+        harnessId: null,
+      },
+      [
+        {
+          kind: "refresh-project",
+          label: "Resolve project identity again",
           target: "project",
           harnessId: null,
           command: null,
@@ -749,17 +862,19 @@ export function classifyProjectReadiness(probe: ProjectReadinessProbe): ProjectR
     },
     ...probe.harnesses,
   ];
-  const seenHarnessIds = new Set<string>();
+  const harnessIdOccurrences = new Map<string, number>();
   const uniqueHarnessProbes: ProjectReadinessHarnessProbe[] = [];
   for (const harness of rawHarnesses) {
-    if (seenHarnessIds.has(harness.id)) {
+    const occurrence = (harnessIdOccurrences.get(harness.id) ?? 0) + 1;
+    harnessIdOccurrences.set(harness.id, occurrence);
+    if (occurrence > 1) {
       addIssue(
         state,
         {
-          id: `issue:duplicate_harness_id:${harness.id}`,
+          id: `issue:duplicate_harness_id:${harness.id}:${occurrence}`,
           code: "DUPLICATE_HARNESS_ID",
           severity: "recoverable",
-          message: `Duplicate harness id ignored: ${harness.id}`,
+          message: `Duplicate harness id ignored: ${harness.id} (occurrence ${occurrence}).`,
           harnessId: harness.id,
         },
         [
@@ -774,7 +889,6 @@ export function classifyProjectReadiness(probe: ProjectReadinessProbe): ProjectR
       );
       continue;
     }
-    seenHarnessIds.add(harness.id);
     uniqueHarnessProbes.push(harness);
   }
 
