@@ -83,6 +83,7 @@ function floatingDocument(): AppWindowDocumentV1 {
       },
     },
     dockRoot: null,
+    dockState: { mode: "open", preferredHeight: null, focusZone: "canvas" },
     floatingOrder: [firstId, secondId],
     focusedWindowId: secondId,
     activeLayoutId: null,
@@ -128,6 +129,44 @@ describe("app window state contract", () => {
     expect(AppWindowDocumentV1SchemaZ.safeParse(unknownFocus).success).toBe(false);
   });
 
+  it("never treats prototype properties as owned window, layout, dock, or floating ids", () => {
+    for (const inheritedId of ["toString", "hasOwnProperty"]) {
+      const inheritedFocus = { ...emptyAppWindowDocument(NOW), focusedWindowId: inheritedId };
+      const inheritedLayout = { ...emptyAppWindowDocument(NOW), activeLayoutId: inheritedId };
+      const inheritedDock = {
+        ...emptyAppWindowDocument(NOW),
+        dockRoot: {
+          type: "stack",
+          id: "stack",
+          windowIds: [inheritedId],
+          activeWindowId: inheritedId,
+        },
+      };
+      const inheritedFloat = {
+        ...emptyAppWindowDocument(NOW),
+        floatingOrder: [inheritedId],
+      };
+
+      expect(AppWindowDocumentV1SchemaZ.safeParse(inheritedFocus).success).toBe(false);
+      expect(AppWindowDocumentV1SchemaZ.safeParse(inheritedLayout).success).toBe(false);
+      expect(AppWindowDocumentV1SchemaZ.safeParse(inheritedDock).success).toBe(false);
+      expect(AppWindowDocumentV1SchemaZ.safeParse(inheritedFloat).success).toBe(false);
+      expect(() => focusAppWindow(emptyAppWindowDocument(NOW), inheritedId, LATER)).toThrow(
+        /unknown app window/u,
+      );
+      expect(() =>
+        restoreAppWindowNamedLayout(emptyAppWindowDocument(NOW), inheritedId, LATER),
+      ).toThrow(/unknown app window layout/u);
+    }
+  });
+
+  it("requires focused floating windows to be top-most", () => {
+    const invalid = structuredClone(floatingDocument());
+    invalid.focusedWindowId = invalid.floatingOrder[0]!;
+
+    expect(AppWindowDocumentV1SchemaZ.safeParse(invalid).success).toBe(false);
+  });
+
   it("sanitizes invalid V1 and write-protects future documents", () => {
     const invalid = parseAppWindowDocument(
       {
@@ -149,7 +188,7 @@ describe("app window state contract", () => {
     expect(invalid.diagnostics).toEqual(
       expect.arrayContaining([expect.objectContaining({ code: "INVALID_FIELD" })]),
     );
-    expect(invalid.writeProtected).toBe(false);
+    expect(invalid.writeProtected).toBe(true);
     expect(future.writeProtected).toBe(true);
     expect(future.diagnostics[0]?.code).toBe("UNSUPPORTED_VERSION");
   });
@@ -169,7 +208,7 @@ describe("WorkspaceUiStateV2 app-window migration", () => {
     expect(serializeAppWindowDocument(first.document)).toBe(
       serializeAppWindowDocument(second.document),
     );
-    expect(Object.values(first.document.windows)).toHaveLength(6);
+    expect(Object.values(first.document.windows)).toHaveLength(9);
     expect(
       Object.values(first.document.windows).filter((window) => window.source.kind === "terminal"),
     ).toHaveLength(2);
@@ -192,13 +231,22 @@ describe("WorkspaceUiStateV2 app-window migration", () => {
   });
 
   it("never invents a durable terminal identity from the legacy canvas", () => {
-    const migrated = migrateWorkspaceUiStateV2ToAppWindowDocument(currentWorkspaceUiState(), {
-      migratedAt: NOW,
-    });
+    const migrated = migrateWorkspaceUiStateV2ToAppWindowDocument(
+      currentWorkspaceUiState({
+        dock: {
+          activeTab: "files",
+          mode: "open",
+          preferredHeight: null,
+          focusZone: "canvas",
+        },
+      }),
+      { migratedAt: NOW },
+    );
 
     expect(
       Object.values(migrated.document.windows).some((window) => window.source.kind === "terminal"),
     ).toBe(false);
+    expect(migrated.document.focusedWindowId).toBeNull();
     expect(migrated.diagnostics).toEqual(
       expect.arrayContaining([expect.objectContaining({ code: "TERMINAL_SOURCE_REQUIRED" })]),
     );
@@ -212,6 +260,116 @@ describe("WorkspaceUiStateV2 app-window migration", () => {
         terminalSourceIds: ["%42"],
       }),
     ).toThrow();
+  });
+
+  it.each([
+    ["home", "home", "home-view"],
+    ["files", "files", "files-view"],
+    ["diff", "changes", "diff-view"],
+    ["missions", "missions", "mission-view"],
+  ] as const)(
+    "preserves active %s full-panel view identity as a native %s instance",
+    (panel, surface, viewId) => {
+      const migrated = migrateWorkspaceUiStateV2ToAppWindowDocument(
+        currentWorkspaceUiState({
+          active: { viewId, panel },
+          dock: {
+            activeTab: "missions",
+            mode: "maximized",
+            preferredHeight: 22,
+            focusZone: "canvas",
+          },
+          views: { [viewId]: { panel } },
+        }),
+        { migratedAt: NOW },
+      );
+      const focused = migrated.document.windows[migrated.document.focusedWindowId!];
+
+      expect(focused?.source).toEqual({ kind: "native", surface, resourceId: viewId });
+      expect(migrated.document.dockState).toEqual({
+        mode: "maximized",
+        preferredHeight: 22,
+        focusZone: "canvas",
+      });
+      expect(AppWindowDocumentV1SchemaZ.safeParse(migrated.document).success).toBe(true);
+    },
+  );
+
+  it("uses explicit semantic terminal focus and keeps dock selection independent", () => {
+    const migrated = migrateWorkspaceUiStateV2ToAppWindowDocument(
+      currentWorkspaceUiState({
+        dock: {
+          activeTab: "activity",
+          mode: "collapsed",
+          preferredHeight: 7,
+          focusZone: "canvas",
+        },
+      }),
+      {
+        migratedAt: NOW,
+        terminalSourceIds: ["agent-lead", "agent-reviewer"],
+        focusedTerminalSourceId: "agent-reviewer",
+      },
+    );
+    const focused = migrated.document.windows[migrated.document.focusedWindowId!];
+    const root = migrated.document.dockRoot;
+
+    expect(focused?.source).toEqual({
+      kind: "terminal",
+      terminalSourceId: "agent-reviewer",
+    });
+    expect(root).toMatchObject({
+      type: "split",
+      children: [
+        { type: "stack", activeWindowId: migrated.document.focusedWindowId },
+        { type: "stack" },
+      ],
+    });
+    expect(migrated.document.dockState).toEqual({
+      mode: "collapsed",
+      preferredHeight: 7,
+      focusZone: "canvas",
+    });
+    expect(() =>
+      migrateWorkspaceUiStateV2ToAppWindowDocument(currentWorkspaceUiState(), {
+        migratedAt: NOW,
+        terminalSourceIds: ["agent-lead", "agent-reviewer"],
+        focusedTerminalSourceId: "agent-missing",
+      }),
+    ).toThrow(/must belong/u);
+  });
+
+  it("preserves dock focus and reports composite layout state instead of silently flattening it", () => {
+    const migrated = migrateWorkspaceUiStateV2ToAppWindowDocument(
+      currentWorkspaceUiState({
+        active: { viewId: "workspace-composite", panel: "files" },
+        views: {
+          "workspace-composite": {
+            panel: "files",
+            layout: { focusedLeafId: "files-leaf", activeTabs: {}, splitWeights: {} },
+          },
+        },
+        dock: {
+          activeTab: "missions",
+          mode: "open",
+          preferredHeight: null,
+          focusZone: "dock-tabs",
+        },
+      }),
+      { migratedAt: NOW },
+    );
+    const focused = migrated.document.windows[migrated.document.focusedWindowId!];
+
+    expect(focused?.source).toEqual({ kind: "native", surface: "missions", resourceId: null });
+    expect(migrated.diagnostics).toEqual(
+      expect.arrayContaining([expect.objectContaining({ code: "COMPOSITE_LAYOUT_DEFERRED" })]),
+    );
+    expect(
+      Object.values(migrated.document.windows).some(
+        (window) =>
+          window.source.kind === "native" && window.source.resourceId === "workspace-composite",
+      ),
+    ).toBe(false);
   });
 });
 
@@ -256,5 +414,46 @@ describe("app window layout kernel", () => {
       createdAt: NOW,
       updatedAt: LATER,
     });
+  });
+
+  it("activates a focused docked window recursively and rejects backwards time", () => {
+    const migrated = migrateWorkspaceUiStateV2ToAppWindowDocument(
+      currentWorkspaceUiState({
+        active: { viewId: "files-a", panel: "files" },
+        views: {
+          "files-a": { panel: "files" },
+          "missions-a": { panel: "missions" },
+        },
+        dock: {
+          activeTab: "files",
+          mode: "open",
+          preferredHeight: null,
+          focusZone: "canvas",
+        },
+      }),
+      { migratedAt: NOW },
+    ).document;
+    const missionsId = Object.values(migrated.windows).find(
+      (window) => window.source.kind === "native" && window.source.resourceId === "missions-a",
+    )!.id;
+    const invalid = structuredClone(migrated);
+    invalid.focusedWindowId = missionsId;
+
+    expect(AppWindowDocumentV1SchemaZ.safeParse(invalid).success).toBe(false);
+    const focused = focusAppWindow(migrated, missionsId, LATER);
+    expect(focused.focusedWindowId).toBe(missionsId);
+    expect(focused.dockRoot).toMatchObject({
+      type: "split",
+      children: [{ type: "stack", activeWindowId: missionsId }, { type: "stack" }],
+    });
+    expect(AppWindowDocumentV1SchemaZ.safeParse(focused).success).toBe(true);
+    expect(() => focusAppWindow(focused, missionsId, NOW)).toThrow(/must not move backwards/u);
+    expect(() =>
+      saveAppWindowNamedLayout(focused, {
+        id: "older",
+        name: "Older",
+        updatedAt: NOW,
+      }),
+    ).toThrow(/must not move backwards/u);
   });
 });

@@ -106,6 +106,16 @@ export const AppWindowPlacementSchemaZ = z
   });
 export type AppWindowPlacement = z.infer<typeof AppWindowPlacementSchemaZ>;
 
+/** Presentation memory for the native bottom dock, independent from the dock tree. */
+export const AppWindowDockStateSchemaZ = z
+  .object({
+    mode: z.enum(["collapsed", "open", "maximized"]),
+    preferredHeight: z.number().int().nonnegative().max(1_000_000).nullable(),
+    focusZone: z.enum(["canvas", "dock-tabs", "dock-body"]),
+  })
+  .strict();
+export type AppWindowDockState = z.infer<typeof AppWindowDockStateSchemaZ>;
+
 export const AppWindowInstanceSchemaZ = z
   .object({
     id: AppWindowIdSchemaZ,
@@ -211,6 +221,7 @@ const AppWindowSceneShapeSchemaZ = z
   .object({
     windows: z.record(AppWindowIdSchemaZ, AppWindowInstanceSchemaZ),
     dockRoot: AppWindowDockNodeSchemaZ.nullable(),
+    dockState: AppWindowDockStateSchemaZ,
     /** Back-to-front order. The last id is the top-most floating window. */
     floatingOrder: z.array(AppWindowIdSchemaZ).max(APP_WINDOW_MAX_WINDOWS),
     focusedWindowId: AppWindowIdSchemaZ.nullable(),
@@ -239,7 +250,10 @@ function refineScene(
     }
   }
 
-  const dockMembership = new Map<string, { stackId: string; index: number }>();
+  const dockMembership = new Map<
+    string,
+    { stackId: string; index: number; activeWindowId: string }
+  >();
   const nodeIds = new Set<string>();
   const visit = (node: AppWindowDockNodeShape): void => {
     if (nodeIds.has(node.id)) {
@@ -262,7 +276,11 @@ function refineScene(
           path: ["dockRoot"],
         });
       }
-      dockMembership.set(windowId, { stackId: node.id, index });
+      dockMembership.set(windowId, {
+        stackId: node.id,
+        index,
+        activeWindowId: node.activeWindowId,
+      });
     }
   };
   if (scene.dockRoot) visit(scene.dockRoot);
@@ -305,7 +323,7 @@ function refineScene(
     }
   }
   for (const windowId of dockMembership.keys()) {
-    if (!scene.windows[windowId]) {
+    if (!Object.hasOwn(scene.windows, windowId)) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         message: "dock tree references an unknown window",
@@ -314,7 +332,7 @@ function refineScene(
     }
   }
   for (const windowId of floatingSet) {
-    if (!scene.windows[windowId]) {
+    if (!Object.hasOwn(scene.windows, windowId)) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         message: "floating z-order references an unknown window",
@@ -322,12 +340,34 @@ function refineScene(
       });
     }
   }
-  if (scene.focusedWindowId && !scene.windows[scene.focusedWindowId]) {
+  if (scene.focusedWindowId && !Object.hasOwn(scene.windows, scene.focusedWindowId)) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       message: "focused window must exist",
       path: ["focusedWindowId"],
     });
+  } else if (scene.focusedWindowId) {
+    const focused = scene.windows[scene.focusedWindowId]!;
+    if (
+      focused.placement.mode === "floating" &&
+      scene.floatingOrder.at(-1) !== scene.focusedWindowId
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "focused floating window must be top-most",
+        path: ["focusedWindowId"],
+      });
+    }
+    if (focused.placement.mode === "docked") {
+      const membership = dockMembership.get(scene.focusedWindowId);
+      if (membership && membership.activeWindowId !== scene.focusedWindowId) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "focused docked window must be the active window in its stack",
+          path: ["focusedWindowId"],
+        });
+      }
+    }
   }
 }
 
@@ -377,12 +417,21 @@ export const AppWindowDocumentV1SchemaZ = AppWindowSceneShapeSchemaZ.extend({
         });
       }
     }
-    if (document.activeLayoutId && !document.layouts[document.activeLayoutId]) {
+    if (document.activeLayoutId && !Object.hasOwn(document.layouts, document.activeLayoutId)) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         message: "active layout must exist",
         path: ["activeLayoutId"],
       });
+    }
+    for (const [key, layout] of Object.entries(document.layouts)) {
+      if (Date.parse(layout.updatedAt) > Date.parse(document.updatedAt)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "layout updatedAt must not exceed document updatedAt",
+          path: ["layouts", key, "updatedAt"],
+        });
+      }
     }
   });
 export type AppWindowDocumentV1 = z.infer<typeof AppWindowDocumentV1SchemaZ>;
