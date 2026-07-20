@@ -388,6 +388,14 @@ import {
 } from "./home-surface.ts";
 import { FilesSurface } from "./files-surface.tsx";
 import { filesHitTest, filesListWidth, projectFilesSurface } from "./files-surface.ts";
+import { ChangesSurface } from "./changes-surface.tsx";
+import {
+  changesBodyRows,
+  changesHitTest,
+  changesListWidth,
+  projectChangesSurface,
+  type ChangesActionId,
+} from "./changes-surface.ts";
 import type { FilesActionId } from "./files-surface.ts";
 import {
   handleMissionSurfaceKey,
@@ -712,8 +720,7 @@ type HoverRegion =
   | "windowtab"
   | "files"
   | "diff"
-  // M24.5: the diff footer's clickable [s stage]/[u unstage]/[S all]/[U all]
-  // verb chips (index into DIFF_VERBS).
+  // Changes view file/action rows.
   | "diffverb"
   | "button"
   | "tabbtn"
@@ -792,20 +799,6 @@ const STATUS_LETTER_FG: Record<string, RGBA> = {
 const DIFF_ADD_BG = RGBA.fromInts(20, 60, 30, 255);
 const DIFF_DEL_BG = RGBA.fromInts(60, 20, 20, 255);
 const DIFF_LINE_BG: Partial<Record<DiffLineKind, RGBA>> = { add: DIFF_ADD_BG, del: DIFF_DEL_BG };
-// The diff footer's clickable stage/unstage verbs (M24.5) — fixed labels so
-// the x-span math is constant. Laid out from the main column's first content
-// cell (sidebarW()+paddingLeft 1) with the render's gap={1}; the spans memo and
-// the footer render walk this SAME list, so a click lands where it's drawn.
-const DIFF_VERBS: { id: "stage" | "unstage" | "stage-all" | "unstage-all"; label: string }[] = [
-  { id: "stage", label: "[s stage]" },
-  { id: "unstage", label: "[u unstage]" },
-  { id: "stage-all", label: "[S all]" },
-  { id: "unstage-all", label: "[U all]" },
-];
-// A diff file row's right-anchored stage/unstage chip (shown on the selected
-// and hovered rows) — trailing space = a 1-cell inset from the list edge.
-const DIFF_ROW_CHIP_STAGE = "[s stage] ";
-const DIFF_ROW_CHIP_UNSTAGE = "[u unstage] ";
 const HEADER_ROWS = 2;
 // The persistent surface-tab row is one screen row at the very top (above the
 // sidebar + main region). Its height offsets every region's global y, so the
@@ -2042,8 +2035,8 @@ try {
 
     // Body rows below header (1) + rule (1), above the footer (1) — shared by both
     // columns. The left column width is a capped fraction of the canvas.
-    const diffBodyRows = () => Math.max(1, dims().height - 3 - TABBAR_H);
-    const diffListW = () => Math.max(20, Math.min(48, Math.floor(canvasCols() * 0.34)));
+    const diffBodyRows = () => Math.max(1, changesBodyRows(dims().height - TABBAR_H));
+    const diffListW = () => changesListWidth(canvasCols());
     const diffLines = createMemo(() => classifyDiff(diffText()));
     // Grouped rows (section headers + files) and the flat selectable-file order,
     // both from ONE buildDiffRows pass over the filtered entries: the render,
@@ -2067,6 +2060,30 @@ try {
       const top = clampTop(diffFileTop(), rows.length, view);
       return rows.slice(top, top + view).map((row, i) => ({ row, rowIndex: top + i }));
     });
+    const changesSurfaceProjection = createMemo(() =>
+      projectChangesSurface({
+        width: canvasCols(),
+        height: dims().height - TABBAR_H,
+        dir: diffDir(),
+        fileCount: diffVisibleFiles().length,
+        totals: diffTotals(),
+        filterQuery: diffFilter(),
+        message: diffMsg(),
+        listRows: fileVisible(),
+        selectedFileIndex: diffSel(),
+        diffLines: diffVisible(),
+        hovered:
+          hover()?.region === "diff" ||
+          hover()?.region === "diffverb" ||
+          hover()?.region === "button"
+            ? (hover() as
+                | { region: "diff"; index: number }
+                | { region: "diffverb"; index: number }
+                | { region: "button"; index: number })
+            : null,
+        footerHint: `]/[ hunk · ^e edit · / filter · r refresh · ^g home · ${QUIT_HINT}`,
+      }),
+    );
 
     const runGit = (args: string[], cb: (out: string) => void) => {
       execFile(
@@ -2292,42 +2309,17 @@ try {
       setTab("diff");
     };
 
-    /** The diff footer's clickable verb chips — laid out from the main column's
-     *  first content cell, exactly matching the rendered `paddingLeft={1}
-     *  gap={1}` row (shared render↔router). */
-    const diffVerbSpans = createMemo(() =>
-      spans(
-        DIFF_VERBS.map((v) => v.label),
-        sidebarW() + 1,
-        1,
-      ),
-    );
-    const runDiffVerb = (id: (typeof DIFF_VERBS)[number]["id"]) => {
-      const cur = diffVisibleFiles()[diffSel()];
-      if (id === "stage-all") stageAll();
+    const runChangesAction = (id: ChangesActionId, fileIndex = diffSel()) => {
+      if (id === "refresh") refreshStatus();
+      else if (id === "stage-all") stageAll();
       else if (id === "unstage-all") unstageAll();
-      else if (cur && id === "stage") stageEntry(cur);
-      else if (cur && id === "unstage") unstageEntry(cur);
+      else {
+        const entry = diffVisibleFiles()[fileIndex];
+        if (!entry) return;
+        if (id === "stage" || id === "row-stage") stageEntry(entry);
+        else if (id === "unstage" || id === "row-unstage") unstageEntry(entry);
+      }
     };
-    /** A diff file row's right-anchored [s stage]/[u unstage] chip: label by
-     *  group, span pinned to the list column's right edge — the same
-     *  spansFromRight math the render's flexGrow spacer produces. */
-    const diffRowChipLabel = (e: DiffEntry) =>
-      e.group === "staged" ? DIFF_ROW_CHIP_UNSTAGE : DIFF_ROW_CHIP_STAGE;
-    const diffRowChipSpan = (e: DiffEntry): Span =>
-      spansFromRight([diffRowChipLabel(e)], sidebarW() + diffListW(), 0)[0]!;
-    /** Truncate a diff row's path (keeping the tail — the filename is the
-     *  signal) so status + ± counts + the chip (when shown) fit the column. */
-    const diffRowPath = (e: DiffEntry, chip: boolean): string => {
-      const addW = (e.additions ?? 0) > 0 ? `+${e.additions}`.length + 1 : 0;
-      const delW = (e.deletions ?? 0) > 0 ? `-${e.deletions}`.length + 1 : 0;
-      const budget = Math.max(
-        4,
-        diffListW() - 4 - addW - delW - (chip ? diffRowChipLabel(e).length + 1 : 0),
-      );
-      return e.path.length > budget ? "…" + e.path.slice(-(budget - 1)) : e.path;
-    };
-
     let mirror: SessionMirror | null = null;
     // ── EVENT-DRIVEN RE-PIN (M23.5) ──────────────────────────────────────────
     // The 200ms canvas size poll is gone: a createEffect on the renderer dims
@@ -6008,29 +6000,14 @@ try {
         return;
       }
       if (m === "diff") {
-        if (gy === 0) {
-          const i = spanHit(headerButtons().spans, x);
-          setHoverIf(i >= 0 ? { region: "button", index: i } : null);
-          return;
-        }
-        // The footer's stage/unstage verb chips (last screen row).
-        if (y === dims().height - 1) {
-          const i = spanHit(diffVerbSpans(), x);
-          setHoverIf(i >= 0 ? { region: "diffverb", index: i } : null);
-          return;
-        }
-        const contentY = gy - HEADER_ROWS;
-        const overList = x < sidebarW() + diffListW();
-        if (!overList || contentY < 0) {
-          setHoverIf(null);
-          return;
-        }
-        // Only FILE rows are hoverable (section headers are inert); the hover
-        // index is the ROW index, matching the render's slice.
-        const rows = diffRows();
-        const top = clampTop(diffFileTop(), rows.length, diffBodyRows());
-        const idx = top + contentY;
-        setHoverIf(rows[idx]?.kind === "file" ? { region: "diff", index: idx } : null);
+        const hit = changesHitTest(changesSurfaceProjection(), x - sidebarW(), gy);
+        if (hit?.area === "header" && hit.actionIndex !== undefined)
+          setHoverIf({ region: "button", index: hit.actionIndex });
+        else if (hit?.area === "footer" && hit.actionIndex !== undefined)
+          setHoverIf({ region: "diffverb", index: hit.actionIndex });
+        else if (hit?.area === "list" && hit.fileIndex !== undefined && hit.rowIndex !== undefined)
+          setHoverIf({ region: "diff", index: hit.rowIndex });
+        else setHoverIf(null);
         return;
       }
       if (m === "missions") {
@@ -6846,12 +6823,12 @@ try {
       // left-column click selects that file ROW (headers are inert), and the
       // row's right-anchored [s stage]/[u unstage] chip wins over selection.
       if (mode() === "diff") {
-        const overList = x < sidebarW() + diffListW();
+        const hit = changesHitTest(changesSurfaceProjection(), x - sidebarW(), gy);
         if (type === "scroll") {
           const dir = e.scroll?.direction;
           if (dir !== "up" && dir !== "down") return;
           const step = dir === "up" ? -SCROLL_STEP : SCROLL_STEP;
-          if (overList) {
+          if (hit?.area === "list") {
             setDiffFileTop((t) => clampTop(t + step, diffRows().length, diffBodyRows()));
           } else {
             setDiffTop((t) => clampTop(t + step, diffLines().length, diffBodyRows()));
@@ -6859,31 +6836,16 @@ try {
           return;
         }
         if (type !== "down") return;
-        // The header row (gy=0) carries the right-aligned refresh button.
-        if (gy === 0) {
-          const hb = headerButtons();
-          const i = spanHit(hb.spans, x);
-          if (i >= 0) runButton(hb.defs[i]!.id);
+        if ((hit?.area === "header" || hit?.area === "footer") && hit.actionId) {
+          runChangesAction(hit.actionId);
           return;
         }
-        // The footer's stage/unstage verb chips (same spans the render draws).
-        if (y === dims().height - 1) {
-          const i = spanHit(diffVerbSpans(), x);
-          if (i >= 0) runDiffVerb(DIFF_VERBS[i]!.id);
+        if (hit?.area !== "list" || hit.fileIndex === undefined) return;
+        if (hit.actionId) {
+          runChangesAction(hit.actionId, hit.fileIndex);
           return;
         }
-        const contentY = gy - HEADER_ROWS;
-        if (contentY < 0 || !overList) return;
-        const rows = diffRows();
-        const top = clampTop(diffFileTop(), rows.length, diffBodyRows());
-        const row = rows[top + contentY];
-        if (!row || row.kind !== "file") return;
-        const chip = diffRowChipSpan(row.entry);
-        if (x >= chip.start && x < chip.start + chip.width) {
-          toggleStageEntry(row.entry);
-          return;
-        }
-        selectDiffFile(row.fileIndex);
+        selectDiffFile(hit.fileIndex);
         return;
       }
       // The per-window strip (gy=1) — resolved by the SAME x-span math the render
@@ -7772,117 +7734,17 @@ try {
               />
             </Show>
             <Show when={!activeCompositeLayout() && mode() === "diff"}>
-              {/* header (y=0) · rule (y=1) · two-column body (y=2+) · footer
-              verbs (last row). `route` reverses this geometry: left column =
-              grouped file list (headers + rows from the SAME buildDiffRows the
-              router walks), right = diff. NO onMouse on the rows — the main
-              column container routes everything. */}
-              <box paddingLeft={1} flexDirection="row" gap={1}>
-                <text fg={ACCENT} attributes={1}>
-                  {basename(diffDir()) || "diff"}
-                </text>
-                <text fg={MUTED}>{`${diffVisibleFiles().length} files`}</text>
-                <Show when={diffTotals().additions > 0}>
-                  <text fg={DIFF_ADD_FG}>{`+${diffTotals().additions}`}</text>
-                </Show>
-                <Show when={diffTotals().deletions > 0}>
-                  <text fg={DIFF_DEL_FG}>{`-${diffTotals().deletions}`}</text>
-                </Show>
-                <Show when={diffFilter() !== null}>
-                  <text fg={ACCENT}>{`/${diffFilter()}▏`}</text>
-                </Show>
-                <Show when={diffMsg()}>
-                  <text fg={MUTED}>{`· ${diffMsg()}`}</text>
-                </Show>
-                {buttonRow(headerButtons)}
-              </box>
-              <text fg={MUTED}>{"─".repeat(Math.max(4, canvasCols() - 2))}</text>
-              <box flexDirection="row" flexGrow={1}>
-                {/* Left: the grouped changed-file list (Staged / Unstaged /
-                  Untracked). Section headers are inert; file rows show ±
-                  counts and, when selected or hovered, a right-anchored
-                  stage/unstage chip the router hit-tests with the SAME
-                  spansFromRight math. */}
-                <box width={diffListW()} flexDirection="column" backgroundColor={GUTTER_BG}>
-                  <For each={fileVisible()}>
-                    {({ row, rowIndex }) =>
-                      row.kind === "header" ? (
-                        <box height={1} paddingLeft={1} backgroundColor={GUTTER_BG}>
-                          <text fg={ACCENT} attributes={1}>
-                            {row.label}
-                          </text>
-                        </box>
-                      ) : (
-                        <box
-                          height={1}
-                          flexDirection="row"
-                          gap={1}
-                          paddingLeft={1}
-                          backgroundColor={
-                            row.fileIndex === diffSel()
-                              ? TAB_ACTIVE_BG
-                              : isHovered("diff", rowIndex)
-                                ? HOVER_BG
-                                : GUTTER_BG
-                          }
-                        >
-                          <text fg={STATUS_LETTER_FG[row.entry.status] ?? DEFAULT_FG}>
-                            {row.entry.status}
-                          </text>
-                          <text fg={row.fileIndex === diffSel() ? DEFAULT_FG : MUTED}>
-                            {diffRowPath(
-                              row.entry,
-                              row.fileIndex === diffSel() || isHovered("diff", rowIndex),
-                            )}
-                          </text>
-                          <Show when={(row.entry.additions ?? 0) > 0}>
-                            <text fg={DIFF_ADD_FG}>{`+${row.entry.additions}`}</text>
-                          </Show>
-                          <Show when={(row.entry.deletions ?? 0) > 0}>
-                            <text fg={DIFF_DEL_FG}>{`-${row.entry.deletions}`}</text>
-                          </Show>
-                          <Show when={row.fileIndex === diffSel() || isHovered("diff", rowIndex)}>
-                            <box flexGrow={1} />
-                            <text fg={BUTTON_FG} bg={BUTTON_BG}>
-                              {diffRowChipLabel(row.entry)}
-                            </text>
-                          </Show>
-                        </box>
-                      )
-                    }
-                  </For>
-                </box>
-                {/* Right: unified diff of the selected file — add/del rows carry
-                  the widget-derived background fills under the fg classes — with
-                  a right-edge scrollbar overlaid on the last column. */}
-                <box position="relative" flexGrow={1} flexDirection="column" paddingLeft={1}>
-                  {scrollbarOverlay(diffScrollGeom)}
-                  <For each={diffVisible()}>
-                    {(ln) => (
-                      <box height={1} backgroundColor={DIFF_LINE_BG[ln.kind] ?? DEFAULT_BG}>
-                        <text fg={DIFF_FG[ln.kind]}>{ln.text || " "}</text>
-                      </box>
-                    )}
-                  </For>
-                </box>
-              </box>
-              {/* Footer: clickable stage/unstage verbs (the spans the router
-                hit-tests) followed by plain keyboard hints. */}
-              <box paddingLeft={1} flexDirection="row" gap={1}>
-                <For each={DIFF_VERBS}>
-                  {(v, i) => (
-                    <text
-                      fg={BUTTON_FG}
-                      bg={isHovered("diffverb", i()) ? BUTTON_HOVER_BG : BUTTON_BG}
-                    >
-                      {v.label}
-                    </text>
-                  )}
-                </For>
-                <text fg={MUTED}>
-                  {`]/[ hunk · ^e edit · / filter · r refresh · ^g home · ${QUIT_HINT}`}
-                </text>
-              </box>
+              <ChangesSurface
+                theme={semanticTheme()}
+                projection={changesSurfaceProjection()}
+                colors={{
+                  gutterBg: GUTTER_BG,
+                  gutterFg: GUTTER_FG,
+                  statusLetterFg: STATUS_LETTER_FG,
+                  diffFg: DIFF_FG,
+                  diffLineBg: DIFF_LINE_BG,
+                }}
+              />
             </Show>
             <Show when={!activeCompositeLayout() && mode() === "missions"}>
               <MissionsSurface
