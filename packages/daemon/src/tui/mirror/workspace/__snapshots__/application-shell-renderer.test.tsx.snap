@@ -1,0 +1,134 @@
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
+
+exports[`ApplicationShell OpenTUI renderer records the %sx%s compact acceptance baseline 1`] = `
+" ⌂  ❯  ▤  ±  !                 M31 application workspace ⧉ tmux-ide  !1 blocked
+  tmux              ┌──────────────────────────────────────────────────────────┐
+ ● tmux-ide         │ › compact workspace                                      │
+ ○ website          │● Persistent application shell                    terminal│
+ ○ docs             │› PaneFrame lands in the next card                   M31.2│
+                    │! Mission runtime stays harness-neutral           contract│
+                    │                                                          │
+                    │                                                          │
+                    │                                                          │
+                    │                                                          │
+                    │                                                          │
+                    │                                                          │
+                    │                                                          │
+                    │                                                          │
+                    │                                                          │
+                    │                                                          │
+                    │                                                          │
+                    │                                                          │
+                    │                                                          │
+                    │                                                          │
+                    │                                                          │
+                    │                                                          │
+                    └──────────────────────────────────────────────────────────┘
+  F5 · ^q quit       terminal · ready · F5 palette"
+`;
+
+exports[`ApplicationShell OpenTUI renderer records the %sx%s standard acceptance baseline 1`] = `
+" ⌂ Home  ❯ Terminal  ▤ Files  ± Changes  ! Missions                    M31 application workspace ⧉ tmux-ide  !1 blocked
+  tmux-ide                  ┌──────────────────────────────────────────────────────────────────────────────────────────┐
+ ● tmux-ide                 │ › standard workspace                                                                     │
+ ○ website                  │● Persistent application shell                                                    terminal│
+ ○ docs                     │› PaneFrame lands in the next card                                                   M31.2│
+                            │! Mission runtime stays harness-neutral                                           contract│
+                            │                                                                                          │
+                            │                                                                                          │
+                            │                                                                                          │
+                            │                                                                                          │
+                            │                                                                                          │
+                            │                                                                                          │
+                            │                                                                                          │
+                            │                                                                                          │
+                            │                                                                                          │
+                            │                                                                                          │
+                            │                                                                                          │
+                            │                                                                                          │
+                            │                                                                                          │
+                            │                                                                                          │
+                            │                                                                                          │
+                            │                                                                                          │
+                            │                                                                                          │
+                            │                                                                                          │
+                            │                                                                                          │
+                            │                                                                                          │
+                            │                                                                                          │
+                            │                                                                                          │
+                            │                                                                                          │
+                            │                                                                                          │
+                            │                                                                                          │
+                            │                                                                                          │
+                            │                                                                                          │
+                            │                                                                                          │
+                            │                                                                                          │
+                            │                                                                                          │
+                            │                                                                                          │
+                            │                                                                                          │
+                            └──────────────────────────────────────────────────────────────────────────────────────────┘
+  F5 palette · ^q quit       tmux-ide · terminal · ready · F5 palette · arrows move · ^q quit"
+`;
+
+exports[`ApplicationShell OpenTUI renderer records the %sx%s wide acceptance baseline 1`] = `
+" F1 ⌂ Home  F2 ❯ Terminal  F3 ▤ Files  F4 ± Changes  F6 ! Missions                                                                                     M31 application workspace ⧉ tmux-ide  !1 blocked
+  tmux-ide                  ┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+ ● tmux-ide                 │ › wide workspace                                                                                                                                                         │
+ ○ website                  │● Persistent application shell                                                                                                                                    terminal│
+ ○ docs                     │› PaneFrame lands in the next card                                                                                                                                   M31.2│
+                            │! Mission runtime stays harness-neutral                                                                                                                           contract│
+                            │                                                                                                                                                                          │
+                            │                                                                                                                                                                          │
+                            │                                                                                                                                                                          │
+                            │                                                                                                                                                                          │
+                            │                                                                                                                                                                          │
+                            │                                                                                                                                                                          │
+                            │                                                                                                                                                                          │
+                            │                                                                                                                                                                          │
+                            │                                                                                                                                                                          │
+                            │                                                                                                                                                                          │
+                            │                                                                                                                                                                          │
+                            │                                                                                                                                                                          │
+                            │                                                                                                                                                                          │
+                            │                                                                                                                                                                          │
+                            │                                                                                                                                                                          │
+                            │                                                                                                                                                                          │
+                            │                                                                                                                                                                          │
+                            │                                                                                                                                                                          │
+                            │                                                                                                                                                                          │
+                            │                                                                                                                                                                          │
+                            │                                                                                                                                                                          │
+                            │                                                                                                                                                                          │
+                            │                                                                                                                                                                          │
+                            │                                                                                                                                                                          │
+                            │                                                                                                                                                                          │
+                            │                                                                                                                                                                          │
+                            │                                                                                                                                                                          │
+                            │                                                                                                                                                                          │
+                            │                                                                                                                                                                          │
+                            │                                                                                                                                                                          │
+                            │                                                                                                                                                                          │
+                            │                                                                                                                                                                          │
+                            │                                                                                                                                                                          │
+                            │                                                                                                                                                                          │
+                            │                                                                                                                                                                          │
+                            │                                                                                                                                                                          │
+                            │                                                                                                                                                                          │
+                            │                                                                                                                                                                          │
+                            │                                                                                                                                                                          │
+                            │                                                                                                                                                                          │
+                            │                                                                                                                                                                          │
+                            │                                                                                                                                                                          │
+                            │                                                                                                                                                                          │
+                            │                                                                                                                                                                          │
+                            │                                                                                                                                                                          │
+                            │                                                                                                                                                                          │
+                            │                                                                                                                                                                          │
+                            │                                                                                                                                                                          │
+                            │                                                                                                                                                                          │
+                            │                                                                                                                                                                          │
+                            │                                                                                                                                                                          │
+                            │                                                                                                                                                                          │
+                            └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  F5 palette · ^q quit       tmux-ide · terminal · ready · F5 palette · arrows move · ^q quit"
+`;

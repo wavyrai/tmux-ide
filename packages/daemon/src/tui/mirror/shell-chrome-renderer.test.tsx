@@ -1,10 +1,9 @@
 /* @jsxImportSource @opentui/solid */
-import { MouseButtons } from "@opentui/core/testing";
-import { testRender, useKeyboard } from "@opentui/solid";
+import { MouseButtons, type TestRendererSetup } from "@opentui/core/testing";
+import { useKeyboard } from "@opentui/solid";
 import { createSignal, onCleanup } from "solid-js";
-import { afterEach, describe, expect, it } from "bun:test";
+import { describe, expect, it } from "bun:test";
 import { buildHostedPanelViews } from "./panel-host.ts";
-import { terminalDisplayWidth } from "./panel-host.ts";
 import {
   ShellCompositeLeafChrome,
   ShellMiniSidebar,
@@ -25,15 +24,16 @@ import {
 } from "./theme.ts";
 import { Surface, SelectableRow, InputShell } from "./recipes.tsx";
 import { colorToThemeBytes } from "./theme.ts";
+import {
+  expectFrameBounds,
+  frameLines,
+  renderForTest,
+  stableFrame,
+} from "./testing/renderer-harness.test.ts";
 
-type TestSetup = Awaited<ReturnType<typeof testRender>>;
+type TestSetup = TestRendererSetup;
 
 let setup: TestSetup | null = null;
-
-afterEach(() => {
-  setup?.renderer.destroy();
-  setup = null;
-});
 
 const views = buildHostedPanelViews([
   { id: "home", title: "Home", panel: "home" },
@@ -42,23 +42,6 @@ const views = buildHostedPanelViews([
   { id: "diff", title: "Diff", panel: "diff" },
   { id: "missions", title: "Missions", panel: "missions" },
 ]);
-
-function frameLines(frame: string): string[] {
-  const lines = frame.endsWith("\n") ? frame.slice(0, -1).split("\n") : frame.split("\n");
-  return lines.map((line) => line.replace(/\r$/u, ""));
-}
-
-function stableFrame(frame: string): string {
-  return frameLines(frame)
-    .map((line) => line.replace(/\s+$/u, ""))
-    .join("\n");
-}
-
-function expectFrameBounds(frame: string, width: number, height: number): void {
-  const lines = frameLines(frame);
-  expect(lines).toHaveLength(height);
-  for (const line of lines) expect(terminalDisplayWidth(line)).toBeLessThanOrEqual(width);
-}
 
 function colorKey(color: Parameters<typeof colorToThemeBytes>[0]): string {
   return colorToThemeBytes(color).join(",");
@@ -233,7 +216,7 @@ function ShellChromeHarness(props: { width: number; height: number }) {
 }
 
 async function renderShell(width: number, height: number) {
-  setup = await testRender(() => <ShellChromeHarness width={width} height={height} />, {
+  setup = await renderForTest(() => <ShellChromeHarness width={width} height={height} />, {
     width,
     height,
   });
@@ -337,7 +320,7 @@ describe("ShellChrome OpenTUI renderer", () => {
       );
     }
 
-    setup = await testRender(() => <ThemeModeShell />, { width: 80, height: 4 });
+    setup = await renderForTest(() => <ThemeModeShell />, { width: 80, height: 4 });
     await setup.renderOnce();
     const darkBg = setup
       .captureSpans()
