@@ -1,10 +1,30 @@
 import { describe, expect, it } from "vitest";
 import {
+  workbenchCanvasPanelForShortcut,
+  workbenchCanvasShortcutForPanel,
   resolveWorkbenchPasteTarget,
   workbenchDockTabForShortcut,
 } from "./workbench-controller.ts";
 
 describe("workbench root controller boundary", () => {
+  it.each([
+    ["f1", "home"],
+    ["f2", "terminals"],
+  ] as const)("maps %s to the canonical %s canvas", (name, panel) => {
+    expect(workbenchCanvasPanelForShortcut({ name })).toBe(panel);
+  });
+
+  it("keeps modified and dock keys out of the canvas shortcut map", () => {
+    expect(workbenchCanvasPanelForShortcut({ name: "f1", shift: true })).toBeNull();
+    expect(workbenchCanvasPanelForShortcut({ name: "f2", ctrl: true })).toBeNull();
+    expect(workbenchCanvasPanelForShortcut({ name: "f3" })).toBeNull();
+  });
+
+  it("projects canonical top-shell labels independently of configured view order", () => {
+    expect(workbenchCanvasShortcutForPanel("home")).toEqual({ key: "f1", label: "F1" });
+    expect(workbenchCanvasShortcutForPanel("terminals")).toEqual({ key: "f2", label: "F2" });
+  });
+
   it.each([
     ["f3", "files"],
     ["f4", "changes"],

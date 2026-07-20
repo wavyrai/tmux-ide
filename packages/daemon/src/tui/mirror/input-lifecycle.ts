@@ -126,7 +126,12 @@ export function resolveGlobalCommand(
   if (event.name === "f5" || (event.ctrl && event.name === "p")) {
     return { kind: "open-palette" };
   }
-  if (context.configuredShortcutKeys.includes(event.name)) {
+  if (
+    !event.ctrl &&
+    !event.meta &&
+    !event.shift &&
+    context.configuredShortcutKeys.includes(event.name)
+  ) {
     return { kind: "select-hosted-view", key: event.name };
   }
   if (event.ctrl && (event.name === "g" || event.name === "h")) {
