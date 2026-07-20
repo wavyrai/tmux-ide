@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { lstatSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { isAbsolute, join, relative, resolve, sep, win32 } from "node:path";
 
@@ -78,6 +78,22 @@ export interface WriteDocumentResult<T> {
   version: typeof DOCUMENT_ENVELOPE_VERSION;
   revision: number;
   payload: T;
+}
+
+export interface RecoverDocumentOptions {
+  /** Exact token returned by `documentRecoveryToken`; prevents stale recovery. */
+  expectedRawSha256: string;
+  /** Required operator-facing explanation for the destructive reset. */
+  reason: string;
+  /** Optional JSON audit context persisted beside the exact-byte backup. */
+  details?: JsonValue;
+}
+
+export interface RecoverDocumentResult<T> extends WriteDocumentResult<T> {
+  previousRawSha256: string;
+  backupPath: string;
+  metadataPath: string;
+  reason: string;
 }
 
 export interface RuntimeEvent<T> {
@@ -341,6 +357,94 @@ export class ProjectRuntimeRepository {
     };
   }
 
+  /**
+   * Token for explicit recovery of a document whose envelope or payload cannot
+   * be safely written through normal revision CAS. No bytes are exposed.
+   */
+  documentRecoveryToken(path: string): string | null {
+    const target = this.resolveRuntimePath(path);
+    const raw = this.readOptionalFile(target, path);
+    return raw === null ? null : sha256(raw);
+  }
+
+  /**
+   * Explicit destructive recovery. The exact prior bytes are atomically copied
+   * beneath `recovery/` before the target is replaced. Normal writes must never
+   * call this path.
+   */
+  recoverDocument<T>(
+    path: string,
+    payload: T,
+    options: RecoverDocumentOptions,
+  ): RecoverDocumentResult<T> {
+    const reason = options.reason.trim();
+    if (reason.length === 0 || reason.length > 512 || reason.includes("\0")) {
+      throw new InvalidJsonValueError(
+        "$.reason",
+        "recovery reason must contain 1-512 non-NUL characters",
+      );
+    }
+    if (!/^[a-f0-9]{64}$/u.test(options.expectedRawSha256)) {
+      throw new InvalidJsonValueError("$.expectedRawSha256", "recovery token must be SHA-256");
+    }
+    const target = this.resolveRuntimePath(path);
+    const raw = this.readOptionalFile(target, path);
+    if (raw === null) throw new MissingRuntimeDocumentError(path);
+    const actualToken = sha256(raw);
+    if (actualToken !== options.expectedRawSha256) {
+      throw new RevisionConflictError(path, null, null);
+    }
+    const serializedPayload = serializeJsonPayload(payload);
+    let priorRevision = 0;
+    try {
+      priorRevision = parseDocumentEnvelope(path, raw).revision;
+    } catch {
+      // Corrupt/unsupported envelopes restart at revision 1 after backup.
+    }
+    const recoveredAt = this.io.now();
+    if (!Number.isFinite(recoveredAt.getTime())) {
+      throw new InvalidJsonValueError("$.recoveredAt", "recovery timestamp must be valid");
+    }
+    const metadata = serializeJsonPayload({
+      version: 1,
+      path,
+      previousRawSha256: actualToken,
+      reason,
+      recoveredAt: recoveredAt.toISOString(),
+      details: options.details ?? null,
+    });
+    const safePath = sha256(path);
+    const backupPath = `recovery/${safePath}-${actualToken}.bak`;
+    const metadataPath = `recovery/${safePath}-${actualToken}.json`;
+    const backupTarget = this.resolveRuntimePath(backupPath);
+    this.atomicWrite(backupTarget, raw, backupPath);
+    this.atomicWrite(
+      this.resolveRuntimePath(metadataPath),
+      `${JSON.stringify(metadata, null, 2)}\n`,
+      metadataPath,
+    );
+    const recheckedRaw = this.readOptionalFile(target, path);
+    if (recheckedRaw === null || sha256(recheckedRaw) !== actualToken) {
+      throw new RevisionConflictError(path, null, null);
+    }
+    const envelope: DocumentEnvelope = {
+      version: DOCUMENT_ENVELOPE_VERSION,
+      revision: priorRevision + 1,
+      payload: serializedPayload,
+    };
+    this.atomicWrite(target, `${JSON.stringify(envelope, null, 2)}\n`, path);
+    return {
+      path,
+      version: DOCUMENT_ENVELOPE_VERSION,
+      revision: envelope.revision,
+      payload: cloneJson(serializedPayload) as T,
+      previousRawSha256: actualToken,
+      backupPath,
+      metadataPath,
+      reason,
+    };
+  }
+
   readEvents<T = JsonValue>(stream: string): RuntimeEvent<T>[] {
     const target = this.resolveEventPath(stream);
     const raw = this.readOptionalFile(target, `events/${stream}.jsonl`);
@@ -508,6 +612,10 @@ function parseDocumentEnvelope(path: string, raw: string): DocumentEnvelope {
     revision,
     payload: cloneJson(value.payload),
   };
+}
+
+function sha256(value: string): string {
+  return createHash("sha256").update(value).digest("hex");
 }
 
 function parseEventLog<T>(stream: string, raw: string): RuntimeEvent<T>[] {
