@@ -357,6 +357,19 @@ import { shellChromeLayout, shellSidebarHint, shellSurfaceTabSpans } from "./she
 import { projectPaneFrame } from "./workspace/pane-frame.ts";
 import { PaneFrameHeader } from "./workspace/pane-frame.tsx";
 import {
+  projectWorkbenchShell,
+  moveWorkbenchDockTab,
+  workbenchShellHitTest,
+  type WorkbenchDockMode,
+  type WorkbenchDockTabId,
+  type WorkbenchFocusZone,
+} from "./workspace/workbench-shell.ts";
+import { WorkbenchShell } from "./workspace/workbench-shell.tsx";
+import {
+  resolveWorkbenchPasteTarget,
+  workbenchDockTabForShortcut,
+} from "./workspace/workbench-controller.ts";
+import {
   MissionWorkspaceLoader,
   clipTerminal,
   defaultMissionWorkspaceModel,
@@ -400,6 +413,14 @@ import {
 } from "./changes-surface.ts";
 import type { FilesActionId } from "./files-surface.ts";
 import {
+  activityOrderSequence,
+  activityRowHitTest,
+  orderActivityRows,
+  projectActivitySurface,
+  type ActivityRowDto,
+} from "./activity-surface.ts";
+import { ActivitySurface } from "./activity-surface.tsx";
+import {
   handleMissionSurfaceKey,
   handleMissionSurfacePointerDown,
   handleMissionSurfaceScroll,
@@ -421,11 +442,13 @@ import {
   loadWorkspaceUiState,
   relativeProjectPath,
   serializeWorkspaceUiState,
+  setWorkspaceDockState,
+  setWorkspaceSurfaceState,
   setWorkspaceViewLayoutState,
   shouldHydrateWorkspaceView,
   viewStateFor,
-  type WorkspaceUiStateV1,
-  type WorkspaceViewState,
+  type WorkspaceUiStateV2,
+  type WorkspaceSurfaceStates,
 } from "./workspace-ui-state.ts";
 import {
   DIALOG_ROWS,
@@ -996,16 +1019,25 @@ try {
       viewsFromResolvedConfig(null),
     );
     const [workspaceUiState, setWorkspaceUiState] =
-      createSignal<WorkspaceUiStateV1>(defaultWorkspaceUiState());
+      createSignal<WorkspaceUiStateV2>(defaultWorkspaceUiState());
     const workspaceUiController = new WorkspaceUiStateController();
     const touchedWorkspaceViewIds = new Set<string>();
+    const touchedWorkspaceSurfaceIds = new Set<keyof WorkspaceSurfaceStates>();
+    const hydratedWorkspaceSurfaceIds = new Set<keyof WorkspaceSurfaceStates>();
+    let touchedWorkspaceDock = false;
+    let touchedWorkspaceActiveView = false;
     const missionWorkspaceLoader = new MissionWorkspaceLoader();
     let currentWorkspaceUiIdentity: string | null = null;
     let currentMissionsLoadIdentity: string | null = null;
     let workspaceUiSaveTimer: ReturnType<typeof setTimeout> | null = null;
     let missionsRefreshTimer: ReturnType<typeof setInterval> | null = null;
+    let flushWorkspaceUiState = () => {};
     let snapshotActiveWorkspaceView = () => {};
     let hydrateActiveWorkspaceView = (_options: { firstProjectLoad?: boolean } = {}) => {};
+    let hydrateWorkspaceView = (
+      _view: HostedPanelView,
+      _options: { firstProjectLoad?: boolean } = {},
+    ) => {};
     const initialView = initialHostedSelection(
       hostedViews(),
       requestedPanel,
@@ -1016,11 +1048,51 @@ try {
     const activeView = createMemo(
       () => findHostedViewById(hostedViews(), activeViewId()) ?? hostedViews()[0]!,
     );
+    const dockTabForPanel = (panel: HostedPanelKind): WorkbenchDockTabId | null => {
+      if (panel === "files") return "files";
+      if (panel === "diff") return "changes";
+      if (panel === "missions") return "missions";
+      return null;
+    };
+    const panelForDockTab = (dockTab: WorkbenchDockTabId): HostedPanelKind | "activity" => {
+      if (dockTab === "files") return "files";
+      if (dockTab === "changes") return "diff";
+      if (dockTab === "missions") return "missions";
+      return "activity";
+    };
+    const initialDockTab = dockTabForPanel(initialView.panel) ?? "files";
+    const [canvasPanel, setCanvasPanel] = createSignal<"home" | "terminals">(
+      initialView.panel === "home" ? "home" : "terminals",
+    );
+    const [activeDockTab, setActiveDockTab] = createSignal<WorkbenchDockTabId>(initialDockTab);
+    const [dockMode, setDockMode] = createSignal<WorkbenchDockMode>("open");
+    const [preferredDockHeight, setPreferredDockHeight] = createSignal<number | null>(null);
+    const [workbenchFocusZone, setWorkbenchFocusZone] = createSignal<WorkbenchFocusZone>(
+      dockTabForPanel(initialView.panel) ? "dock-body" : "canvas",
+    );
+    const [hoveredDockTab, setHoveredDockTab] = createSignal<WorkbenchDockTabId | null>(null);
+    const [activitySelectedId, setActivitySelectedId] = createSignal<string | null>(null);
+    const [activityScrollOffset, setActivityScrollOffset] = createSignal(0);
+    const workbenchProjection = createMemo(() =>
+      projectWorkbenchShell({
+        width: canvasCols(),
+        height: Math.max(0, dims().height - TABBAR_H),
+        dockMode: dockMode(),
+        persistedDockHeight: preferredDockHeight(),
+        activeDockTab: activeDockTab(),
+        focusZone: workbenchFocusZone(),
+        hoveredDockTab: hoveredDockTab(),
+        attentionDockTabs: new Set(),
+        dockTabShortcuts: { files: "F3", changes: "F4", missions: "F6", activity: "F9" },
+      }),
+    );
+    const dockSurfaceWidth = () => workbenchProjection().dockBodyContent.width;
+    const dockSurfaceHeight = () => workbenchProjection().dockBodyContent.height;
     const mainRect = () => ({
       x: 0,
       y: 0,
-      width: canvasCols(),
-      height: canvasRows(),
+      width: workbenchProjection().canvasBody.width,
+      height: workbenchProjection().canvasBody.height,
     });
     const compositeStateForActiveView = (): CompositeLayoutState | null => {
       const view = activeView();
@@ -1046,7 +1118,16 @@ try {
       ) ??
       activeCompositeLayout()?.leaves[0] ??
       null;
-    const activePanel = (): HostedPanelKind => focusedCompositeLeaf()?.panel ?? activeView().panel;
+    const focusedWorkbenchPanel = (): HostedPanelKind | "activity" => {
+      if (workbenchProjection().focusZone === "canvas") {
+        return focusedCompositeLeaf()?.panel ?? canvasPanel();
+      }
+      return panelForDockTab(activeDockTab());
+    };
+    const activePanel = (): HostedPanelKind => {
+      const panel = focusedWorkbenchPanel();
+      return panel === "activity" ? "home" : panel;
+    };
     const tab = (): Tab => legacyTabFromPanelKind(activePanel());
     const mode = (): "home" | "mirror" | "editor" | "diff" | "missions" => panelMode(activePanel());
     const surfaceSpans = createMemo(() =>
@@ -1236,7 +1317,7 @@ try {
       if (selectView(viewId)) focusPanelInActiveComposite(panel);
     };
     const missionLayoutSize = () => {
-      const size = missionDashboardMainSize(canvasCols(), Math.max(4, dims().height - TABBAR_H));
+      const size = missionDashboardMainSize(dockSurfaceWidth(), Math.max(1, dockSurfaceHeight()));
       return { width: size.mainWidth, height: size.height };
     };
     const persistMissionSelection = (missionId: string | null, taskId: string | null = null) => {
@@ -1267,7 +1348,8 @@ try {
       });
     };
     const loadMissionsWorkspace = (reason: "activation" | "refresh" | "cadence" | "project") => {
-      if (mode() !== "missions") return;
+      if (activeDockTab() !== "missions" && activeDockTab() !== "activity" && mode() !== "missions")
+        return;
       const repository = workspaceUiController.snapshot().repository;
       if (!repository) {
         setMissionWorkspaceLoad({ status: "loading", generation: 0, projectKey: null });
@@ -1321,7 +1403,8 @@ try {
         });
     };
     const ensureMissionsLoaded = () => {
-      if (mode() !== "missions") return;
+      if (activeDockTab() !== "missions" && activeDockTab() !== "activity" && mode() !== "missions")
+        return;
       loadMissionsWorkspace("activation");
     };
     const selectView = (viewId: string) => {
@@ -1342,11 +1425,50 @@ try {
       }
       runActivationEffects(plan.effects);
       setActiveViewId(plan.activeViewId);
+      touchedWorkspaceActiveView = true;
+      const selectedDockTab = dockTabForPanel(plan.view.panel);
+      if (selectedDockTab) {
+        setActiveDockTab(selectedDockTab);
+        setDockMode("open");
+        setWorkbenchFocusZone("dock-body");
+        touchedWorkspaceDock = true;
+      } else if (plan.view.panel === "home" || plan.view.panel === "terminals") {
+        setCanvasPanel(plan.view.panel);
+        setWorkbenchFocusZone("canvas");
+        touchedWorkspaceDock = true;
+      }
       hydrateActiveWorkspaceView();
       if (plan.view.layout) runPanelActivation(activePanel());
       else if (plan.view.panel === "missions") ensureMissionsLoaded();
       refreshFocusRecord();
       return true;
+    };
+    const activateDockTab = (tabId: WorkbenchDockTabId): boolean => {
+      if (tabId === "activity") {
+        // Activity is dock-only, so it does not travel through `selectView` (the
+        // hosted-view activation path that normally snapshots the surface being
+        // left). Capture it explicitly before the active-tab effect replaces a
+        // pending debounced save with Activity's state.
+        snapshotActiveWorkspaceView();
+        setActiveDockTab("activity");
+        setDockMode("open");
+        setWorkbenchFocusZone("dock-body");
+        touchedWorkspaceDock = true;
+        loadMissionsWorkspace("activation");
+        return true;
+      }
+      const panel: HostedPanelKind =
+        tabId === "files" ? "files" : tabId === "changes" ? "diff" : "missions";
+      const view = findFirstHostedViewForPanel(hostedViews(), panel);
+      if (!view) {
+        setActiveDockTab(tabId);
+        setDockMode("open");
+        setWorkbenchFocusZone("dock-body");
+        touchedWorkspaceDock = true;
+        runPanelActivation(panel);
+        return true;
+      }
+      return selectView(view.id);
     };
     const selectPanel = (panel: HostedPanelKind) => {
       const result = navigateHostedPanel(hostedViews(), activeViewId(), panel);
@@ -1364,6 +1486,18 @@ try {
     let panelHostResolved = false;
     const loadPanelHostForDir = (dir: string) => {
       const generation = panelGeneration.next();
+      // Finish the old project's pending debounce against its still-live
+      // repository before `beginLoad` invalidates that controller generation.
+      flushWorkspaceUiState();
+      if (workspaceUiSaveTimer) {
+        clearTimeout(workspaceUiSaveTimer);
+        workspaceUiSaveTimer = null;
+      }
+      touchedWorkspaceViewIds.clear();
+      touchedWorkspaceSurfaceIds.clear();
+      touchedWorkspaceDock = false;
+      touchedWorkspaceActiveView = false;
+      hydratedWorkspaceSurfaceIds.clear();
       const uiGeneration = workspaceUiController.beginLoad();
       missionWorkspaceLoader.cancel();
       currentMissionsLoadIdentity = null;
@@ -1378,6 +1512,9 @@ try {
           const loadedUi = loadWorkspaceUiState(repository);
           if (!workspaceUiController.completeLoad(uiGeneration, repository, loadedUi)) return;
           setWorkspaceUiState(loadedUi.state);
+          const hasPersistedWorkspaceUi = !loadedUi.diagnostics.some((entry) =>
+            ["MISSING", "READ_FAILED", "MALFORMED", "UNSUPPORTED_VERSION"].includes(entry.code),
+          );
           const loadDiagnostic = loadedUi.diagnostics.find((entry) => entry.code !== "MISSING");
           if (loadDiagnostic) setStatusNote(loadDiagnostic.message);
           const previous = {
@@ -1413,8 +1550,43 @@ try {
           setHostedViews(nextViews);
           runActivationEffects(nextPlan.effects);
           if (nextPlan.activeViewId) setActiveViewId(nextPlan.activeViewId);
+          const explicitDockTab = requestedPanel ? dockTabForPanel(requestedPanel) : null;
+          const restoredDock = hasPersistedWorkspaceUi
+            ? loadedUi.state.dock
+            : {
+                ...loadedUi.state.dock,
+                activeTab: dockTabForPanel(nextPlan.view?.panel ?? "home") ?? "files",
+                focusZone: dockTabForPanel(nextPlan.view?.panel ?? "home")
+                  ? ("dock-body" as const)
+                  : ("canvas" as const),
+              };
+          const restoredActiveDockTab = explicitDockTab ?? restoredDock.activeTab;
+          setActiveDockTab(restoredActiveDockTab);
+          setDockMode(explicitDockTab ? "open" : restoredDock.mode);
+          setPreferredDockHeight(restoredDock.preferredHeight);
+          setWorkbenchFocusZone(explicitDockTab ? "dock-body" : restoredDock.focusZone);
+          setActivitySelectedId(loadedUi.state.surfaces.activity.selectedRowId);
+          setActivityScrollOffset(loadedUi.state.surfaces.activity.scrollOffset);
+          hydratedWorkspaceSurfaceIds.add("activity");
+          if (nextPlan.view?.panel === "home" || nextPlan.view?.panel === "terminals") {
+            setCanvasPanel(nextPlan.view.panel);
+          }
           hydrateActiveWorkspaceView({ firstProjectLoad });
-          if (nextPlan.view?.panel === "missions") loadMissionsWorkspace("project");
+          const restoredDockPanel = panelForDockTab(restoredActiveDockTab);
+          if (restoredDockPanel !== "activity") {
+            runPanelActivation(restoredDockPanel);
+            const restoredDockView = findFirstHostedViewForPanel(nextViews, restoredDockPanel);
+            if (restoredDockView && restoredDockView.id !== nextPlan.view?.id) {
+              hydrateWorkspaceView(restoredDockView, { firstProjectLoad });
+            }
+          }
+          if (
+            restoredActiveDockTab === "missions" ||
+            restoredActiveDockTab === "activity" ||
+            nextPlan.view?.panel === "missions"
+          ) {
+            loadMissionsWorkspace("project");
+          }
           panelHostResolved = true;
         })
         .catch((error) => {
@@ -1440,7 +1612,9 @@ try {
       workspaceUiState();
       const repository = workspaceUiController.snapshot().repository;
       if (
-        mode() === "missions" &&
+        (activeDockTab() === "missions" ||
+          activeDockTab() === "activity" ||
+          mode() === "missions") &&
         repository &&
         repository.metadata.identityKey !== currentMissionsLoadIdentity
       ) {
@@ -1448,7 +1622,13 @@ try {
       }
     });
     missionsRefreshTimer = setInterval(() => {
-      if (mode() === "missions") loadMissionsWorkspace("cadence");
+      if (
+        activeDockTab() === "missions" ||
+        activeDockTab() === "activity" ||
+        mode() === "missions"
+      ) {
+        loadMissionsWorkspace("cadence");
+      }
     }, 10_000);
     cleanupRegistry.set("missions-refresh-timer", () => {
       if (missionsRefreshTimer) clearInterval(missionsRefreshTimer);
@@ -1675,6 +1855,74 @@ try {
           .filter((a, i, arr) => arr.findIndex((b) => b.paneId === a.paneId) === i),
       ),
     );
+    const activityRows = createMemo<ActivityRowDto[]>(() => {
+      const agentRows: ActivityRowDto[] = fleetAgents().map((agent, index) => ({
+        kind: "agent",
+        id: `agent:${agent.paneId}`,
+        sequence: activityOrderSequence(agent.since, index + 1),
+        timestampText: agent.since
+          ? (agentAgeLabel(agent.state, agent.since, Math.floor(Date.now() / 1000)) ?? "now")
+          : "now",
+        agent: agentDisplayKind(agent),
+        message: agent.statusText ?? agent.state,
+        detail: `${agent.session} · ${agent.paneId}`,
+        status: agent.state,
+        attention: agent.state === "blocked",
+      }));
+      const missionRows: ActivityRowDto[] = (missionWorkspaceSnapshot()?.history ?? [])
+        .filter((entry) => entry.lastEvent !== null)
+        .map((entry) => ({
+          kind: "event" as const,
+          id: `mission:${entry.mission.id}:${entry.lastEvent!.sequence}`,
+          sequence: activityOrderSequence(entry.lastEvent!.timestamp, entry.lastEvent!.sequence),
+          timestampText: entry.lastEvent!.timestamp.slice(11, 16),
+          source: entry.mission.title,
+          message: entry.lastEvent!.label,
+          detail: entry.lastEvent!.reason,
+          status:
+            entry.outcome === "completed"
+              ? ("done" as const)
+              : entry.outcome === "failed"
+                ? ("blocked" as const)
+                : ("idle" as const),
+          attention: entry.outcome === "failed",
+        }));
+      return [...agentRows, ...missionRows];
+    });
+    const activityProjection = createMemo(() => {
+      const rows = activityRows();
+      const load = missionWorkspaceLoad();
+      return projectActivitySurface({
+        width: dockSurfaceWidth(),
+        height: dockSurfaceHeight(),
+        state:
+          rows.length > 0
+            ? "ready"
+            : load.status === "loading"
+              ? "loading"
+              : load.status === "error"
+                ? "error"
+                : "empty",
+        rows,
+        selectedRowId: activitySelectedId(),
+        scrollOffset: activityScrollOffset(),
+        message: load.status === "error" ? load.message : undefined,
+      });
+    });
+    const moveActivitySelection = (delta: -1 | 1) => {
+      const rows = orderActivityRows(activityRows());
+      if (rows.length === 0) return;
+      const current = rows.findIndex((row) => row.id === activitySelectedId());
+      const nextIndex =
+        current < 0
+          ? delta > 0
+            ? 0
+            : rows.length - 1
+          : Math.max(0, Math.min(rows.length - 1, current + delta));
+      setActivitySelectedId(rows[nextIndex]!.id);
+      hydratedWorkspaceSurfaceIds.add("activity");
+      touchedWorkspaceSurfaceIds.add("activity");
+    };
 
     // ── IN-APP ATTENTION (M25.1) ─────────────────────────────────────────────
     // The 3s fleet poll diffs the previous per-pane agent states against the
@@ -1868,7 +2116,7 @@ try {
 
     // Visible text rows = full height minus tab bar (1) + header (1) + rule/banner
     // (1) + footer (1).
-    const editorRows = () => Math.max(1, dims().height - 3 - TABBAR_H);
+    const editorRows = () => Math.max(1, dockSurfaceHeight() - 3);
     const editorLines = createMemo<string[]>(() => {
       editorRev();
       if (!editBuffer) return [""];
@@ -2032,13 +2280,13 @@ try {
     // A diff file to re-select once `git status` repopulates the list: the
     // persisted path on restore, or a verb's follow target — path + preferred
     // group, so a just-staged file is re-selected in its NEW section.
-    let pendingDiffFile: string | null = persisted.diffFile;
+    let pendingDiffFile: string | null = null;
     let pendingDiffGroup: DiffGroup | null = null;
 
     // Body rows below header (1) + rule (1), above the footer (1) — shared by both
     // columns. The left column width is a capped fraction of the canvas.
-    const diffBodyRows = () => Math.max(1, changesBodyRows(dims().height - TABBAR_H));
-    const diffListW = () => changesListWidth(canvasCols());
+    const diffBodyRows = () => Math.max(1, changesBodyRows(dockSurfaceHeight()));
+    const diffListW = () => changesListWidth(dockSurfaceWidth());
     const diffLines = createMemo(() => classifyDiff(diffText()));
     // Grouped rows (section headers + files) and the flat selectable-file order,
     // both from ONE buildDiffRows pass over the filtered entries: the render,
@@ -2064,8 +2312,8 @@ try {
     });
     const changesSurfaceProjection = createMemo(() =>
       projectChangesSurface({
-        width: canvasCols(),
-        height: dims().height - TABBAR_H,
+        width: dockSurfaceWidth(),
+        height: dockSurfaceHeight(),
         dir: diffDir(),
         fileCount: diffVisibleFiles().length,
         totals: diffTotals(),
@@ -2429,7 +2677,7 @@ try {
     // the EDITOR (typing). Opening a file hands focus to the editor; esc hands it
     // back to the list.
     const [filesFocus, setFilesFocus] = createSignal<"list" | "editor">("list");
-    const filesListW = () => filesListWidth(canvasCols());
+    const filesListW = () => filesListWidth(dockSurfaceWidth());
     /** The workspace directory driving both the file list and the diff panel. */
     const workspaceDir = () => contextDir() || invokeCwd;
     const fileStatusMap = createMemo(() => statusMapFromEntries(fileStatusEntries()));
@@ -2454,8 +2702,8 @@ try {
     };
     const filesSurfaceProjection = createMemo(() =>
       projectFilesSurface({
-        width: canvasCols(),
-        height: dims().height - TABBAR_H,
+        width: dockSurfaceWidth(),
+        height: dockSurfaceHeight(),
         workspaceDir: workspaceDir(),
         editorPath: editorPath(),
         editorModified: editorModified(),
@@ -2691,46 +2939,96 @@ try {
 
     const workspaceUiProjectRoot = (): string =>
       workspaceUiController.snapshot().repository?.metadata.projectRoot ?? workspaceDir();
-    const currentLayoutPointer = () => layoutStateForView(workspaceUiState(), activeView().id);
-    const withCurrentLayout = <T extends WorkspaceViewState>(entry: T): T => {
-      const layout = currentLayoutPointer();
-      return layout ? ({ ...entry, layout } as T) : entry;
-    };
-    const currentWorkspaceViewState = (): WorkspaceViewState => {
-      const panel = activePanel();
+    const stateWithCurrentWorkspaceView = (): WorkspaceUiStateV2 => {
+      const view = activeView();
       const root = workspaceUiProjectRoot();
-      if (panel === "files") {
-        return withCurrentLayout({
-          panel,
+      let next = workspaceUiState();
+      if (activeDockTab() === "files" && hydratedWorkspaceSurfaceIds.has("files")) {
+        next = setWorkspaceSurfaceState(next, {
+          panel: "files",
           openPath: relativeProjectPath(root, editorPath()),
           selectedPath: relativeProjectPath(root, visibleFiles()[fileSel()]?.node.path ?? null),
         });
-      }
-      if (panel === "diff") {
-        return withCurrentLayout({
-          panel,
+      } else if (activeDockTab() === "changes" && hydratedWorkspaceSurfaceIds.has("diff")) {
+        next = setWorkspaceSurfaceState(next, {
+          panel: "diff",
           selectedPath: diffVisibleFiles()[diffSel()]?.path ?? null,
         });
+      } else if (activeDockTab() === "missions" && hydratedWorkspaceSurfaceIds.has("missions")) {
+        next = workspaceStateWithMissionModel(next, activeView().id, missionWorkspaceModel());
+      } else if (activeDockTab() === "activity" && hydratedWorkspaceSurfaceIds.has("activity")) {
+        next = setWorkspaceSurfaceState(next, {
+          panel: "activity",
+          selectedRowId: activitySelectedId(),
+          scrollOffset: activityScrollOffset(),
+        });
       }
-      if (panel === "missions") {
-        const model = missionWorkspaceModel();
-        const state = workspaceStateWithMissionModel(workspaceUiState(), activeView().id, model);
-        const entry = state.views[activeView().id];
-        if (entry?.panel === "missions") return withCurrentLayout(entry);
-        return withCurrentLayout({ panel, selectedMissionId: null, selectedTaskId: null });
-      }
-      return withCurrentLayout({ panel });
-    };
-    const stateWithCurrentWorkspaceView = (): WorkspaceUiStateV1 => {
-      const view = activeView();
+      next = setWorkspaceDockState(next, {
+        activeTab: activeDockTab(),
+        mode: dockMode(),
+        preferredHeight: preferredDockHeight(),
+        focusZone: workbenchProjection().focusZone,
+      });
       return {
-        version: 1,
+        ...next,
         active: { viewId: view.id, panel: view.panel },
-        views: {
-          ...workspaceUiState().views,
-          [view.id]: currentWorkspaceViewState(),
-        },
       };
+    };
+    const markWorkspaceUiDomainsTouched = (
+      next: WorkspaceUiStateV2,
+      current: WorkspaceUiStateV2,
+    ) => {
+      for (const surfaceId of ["files", "diff", "missions", "activity"] as const) {
+        if (
+          JSON.stringify(next.surfaces[surfaceId]) !== JSON.stringify(current.surfaces[surfaceId])
+        ) {
+          touchedWorkspaceSurfaceIds.add(surfaceId);
+        }
+      }
+      if (JSON.stringify(next.dock) !== JSON.stringify(current.dock)) {
+        touchedWorkspaceDock = true;
+      }
+      if (JSON.stringify(next.active) !== JSON.stringify(current.active)) {
+        touchedWorkspaceActiveView = true;
+      }
+    };
+    const commitWorkspaceUiState = (generation: number, next: WorkspaceUiStateV2) => {
+      const result = workspaceUiController.save(
+        generation,
+        next,
+        touchedWorkspaceViewIds,
+        touchedWorkspaceSurfaceIds,
+        touchedWorkspaceDock,
+        touchedWorkspaceActiveView,
+      );
+      if (result.saved) {
+        touchedWorkspaceViewIds.clear();
+        touchedWorkspaceSurfaceIds.clear();
+        touchedWorkspaceDock = false;
+        touchedWorkspaceActiveView = false;
+        setWorkspaceUiState(workspaceUiController.snapshot().state);
+      } else if (!result.skipped) {
+        const message = result.diagnostics.at(-1)?.message;
+        if (message) setStatusNote(message);
+      }
+    };
+    flushWorkspaceUiState = () => {
+      const controllerSnapshot = workspaceUiController.snapshot();
+      if (!controllerSnapshot.loaded || !controllerSnapshot.repository) return;
+      if (workspaceUiSaveTimer) {
+        clearTimeout(workspaceUiSaveTimer);
+        workspaceUiSaveTimer = null;
+      }
+      const next = stateWithCurrentWorkspaceView();
+      if (serializeWorkspaceUiState(next) === serializeWorkspaceUiState(controllerSnapshot.state)) {
+        touchedWorkspaceViewIds.clear();
+        touchedWorkspaceSurfaceIds.clear();
+        touchedWorkspaceDock = false;
+        touchedWorkspaceActiveView = false;
+        return;
+      }
+      markWorkspaceUiDomainsTouched(next, controllerSnapshot.state);
+      commitWorkspaceUiState(controllerSnapshot.generation, next);
     };
     snapshotActiveWorkspaceView = () => {
       const view = activeView();
@@ -2738,11 +3036,8 @@ try {
       const next = stateWithCurrentWorkspaceView();
       setWorkspaceUiState(next);
     };
-    hydrateActiveWorkspaceView = ({ firstProjectLoad = false } = {}) => {
-      const view = activeView();
-      const entry = view.layout
-        ? (workspaceUiState().views[view.id] ?? null)
-        : viewStateFor(workspaceUiState(), view);
+    hydrateWorkspaceView = (view, { firstProjectLoad = false } = {}) => {
+      const entry = viewStateFor(workspaceUiState(), view);
       if (!entry) return;
       if (
         !shouldHydrateWorkspaceView({
@@ -2756,6 +3051,7 @@ try {
       }
       const root = workspaceUiProjectRoot();
       if (entry.panel === "files") {
+        hydratedWorkspaceSurfaceIds.add("files");
         const selectedPath = absoluteProjectPath(root, entry.selectedPath);
         pendingFilesSelectionPath = selectedPath;
         if (fileNodes().length > 0 && selectedPath) {
@@ -2765,6 +3061,7 @@ try {
         const openPath = absoluteProjectPath(root, entry.openPath);
         if (openPath) openEditor(openPath);
       } else if (entry.panel === "diff") {
+        hydratedWorkspaceSurfaceIds.add("diff");
         pendingDiffFile = entry.selectedPath;
         if (entry.selectedPath && diffVisibleFiles().length > 0) {
           const idx = diffVisibleFiles().findIndex((file) => file.path === entry.selectedPath);
@@ -2776,6 +3073,7 @@ try {
         }
         if (mode() === "diff") refreshStatus();
       } else if (entry.panel === "missions") {
+        hydratedWorkspaceSurfaceIds.add("missions");
         setMissionWorkspaceModel((current) =>
           reconcileMissionWorkspaceModel(
             missionModelFromWorkspaceState(workspaceUiState(), view, current),
@@ -2785,6 +3083,7 @@ try {
         );
       }
     };
+    hydrateActiveWorkspaceView = (options = {}) => hydrateWorkspaceView(activeView(), options);
     const missionSnapshotForModel = () => missionWorkspaceSnapshot();
     const missionDeepLink = (kind: MissionDeepLinkKind): MissionDeepLinkResolution =>
       resolveMissionDeepLink(
@@ -2899,8 +3198,8 @@ try {
     });
     const missionsLayout = createMemo(() =>
       missionSurfaceLayout(
-        canvasCols(),
-        Math.max(4, dims().height - TABBAR_H),
+        dockSurfaceWidth(),
+        Math.max(1, dockSurfaceHeight()),
         missionWorkspaceModel(),
         missionWorkspaceSnapshot(),
         missionLayoutPresentation(),
@@ -2908,8 +3207,8 @@ try {
     );
     const missionsDashboard = createMemo(() =>
       missionDashboardProjection(
-        canvasCols(),
-        Math.max(4, dims().height - TABBAR_H),
+        dockSurfaceWidth(),
+        Math.max(1, dockSurfaceHeight()),
         missionWorkspaceModel(),
         missionWorkspaceSnapshot(),
         {
@@ -4268,6 +4567,10 @@ try {
     });
     createEffect(() => {
       activeViewId();
+      activeDockTab();
+      dockMode();
+      preferredDockHeight();
+      workbenchFocusZone();
       editorPath();
       visibleFiles()[fileSel()]?.node.path;
       diffVisibleFiles()[diffSel()]?.path;
@@ -4277,18 +4580,12 @@ try {
       const next = stateWithCurrentWorkspaceView();
       if (serializeWorkspaceUiState(next) === serializeWorkspaceUiState(controllerSnapshot.state))
         return;
-      touchedWorkspaceViewIds.add(activeViewId());
+      markWorkspaceUiDomainsTouched(next, controllerSnapshot.state);
       const generation = controllerSnapshot.generation;
       if (workspaceUiSaveTimer) clearTimeout(workspaceUiSaveTimer);
       workspaceUiSaveTimer = setTimeout(() => {
-        const result = workspaceUiController.save(generation, next, touchedWorkspaceViewIds);
-        if (result.saved) {
-          touchedWorkspaceViewIds.clear();
-          setWorkspaceUiState(workspaceUiController.snapshot().state);
-        } else if (!result.skipped) {
-          const message = result.diagnostics.at(-1)?.message;
-          if (message) setStatusNote(message);
-        }
+        workspaceUiSaveTimer = null;
+        commitWorkspaceUiState(generation, next);
       }, 400);
     });
 
@@ -4305,10 +4602,6 @@ try {
       // openFile restores the buffer WITHOUT stealing the restored tab (post-render
       // so the native EditBuffer FFI is loaded).
       if (values.edit) openEditor(values.edit);
-      else if (persisted.openFile) {
-        openEditor(persisted.openFile);
-        setTab(initialTab);
-      }
       if (mode() === "editor" && fileNodes().length === 0) loadFileList(workspaceDir());
       if (mode() === "diff") refreshStatus();
       if (mode() === "mirror" && curTarget()) attach(curTarget());
@@ -4546,8 +4839,15 @@ try {
      *  input and the buffer picker both funnel here. */
     const pasteIntoFocused = (text: string) => {
       if (!text) return;
-      if (isHostedPanelInert(activePanel())) return;
-      if (mode() === "editor" && filesFocus() === "editor" && editBuffer && !editorReadOnly()) {
+      const target = resolveWorkbenchPasteTarget({
+        focusZone: workbenchProjection().focusZone,
+        focusedPanel: focusedWorkbenchPanel(),
+        filesEditorFocused: filesFocus() === "editor",
+        filesEditorWritable: Boolean(editBuffer && !editorReadOnly()),
+        terminalAvailable: Boolean(mirror),
+      });
+      if (target === "consume") return;
+      if (target === "files-editor" && editBuffer) {
         editBuffer.insertText(text); // single insertText call = one undo unit
         setEditorModified(true);
         editorSyncScroll();
@@ -4555,7 +4855,7 @@ try {
         setStatusNote(`pasted ${text.length} chars`);
         return;
       }
-      if (mirror) {
+      if (target === "terminal" && mirror) {
         const pane = mirror.focusedPane();
         if (!pane) return;
         // Chunking under tmux's per-command cap happens in the input coalescer
@@ -4687,6 +4987,14 @@ try {
       clickToCursor({
         cx: x - sidebarW() - filesListW(),
         contentY: gy - HEADER_ROWS,
+        gutterW: gutterWidth(editorLines().length),
+        top: editorTop(),
+        lines: editorLines(),
+      });
+    const editorCellAtDock = (localX: number, localY: number): { line: number; col: number } =>
+      clickToCursor({
+        cx: localX - filesListW(),
+        contentY: localY - HEADER_ROWS,
         gutterW: gutterWidth(editorLines().length),
         top: editorTop(),
         lines: editorLines(),
@@ -4918,6 +5226,7 @@ try {
       if (y === 0) return null; // the surface tab bar owns row 0
       const gy = y - TABBAR_H;
       if (x < sidebarW()) {
+        setHoveredDockTab(null);
         // SESSION rows carry the session menu; AGENT rows carry the lifecycle
         // menu (M23.1 — left-click still jumps). The gap, header, and
         // empty-state line have none. Route through the same sidebarHit the
@@ -5401,6 +5710,11 @@ try {
         searchKey(evt);
         return;
       }
+      const dockShortcut = workbenchDockTabForShortcut(evt);
+      if (dockShortcut) {
+        activateDockTab(dockShortcut);
+        return;
+      }
       if (layer.kind === "global") {
         switch (layer.command.kind) {
           case "cycle-composite-focus":
@@ -5422,6 +5736,38 @@ try {
             if (mode() === "diff") openSelectedInEditor();
             else toggleEditor();
             break;
+        }
+        return;
+      }
+      if (workbenchProjection().focusZone === "dock-tabs") {
+        if (evt.name === "left" || evt.name === "h" || evt.name === "right" || evt.name === "l") {
+          const next = moveWorkbenchDockTab(
+            activeDockTab(),
+            evt.name === "left" || evt.name === "h" ? "previous" : "next",
+          );
+          activateDockTab(next);
+          setWorkbenchFocusZone("dock-tabs");
+          return;
+        }
+        if (evt.name === "return" || evt.name === "enter" || evt.name === "down") {
+          setDockMode("open");
+          setWorkbenchFocusZone("dock-body");
+          touchedWorkspaceDock = true;
+          return;
+        }
+        if (evt.name === "escape" || evt.name === "up") {
+          setWorkbenchFocusZone("canvas");
+          touchedWorkspaceDock = true;
+          return;
+        }
+        return;
+      }
+      if (workbenchProjection().focusZone === "dock-body" && activeDockTab() === "activity") {
+        if (evt.name === "j" || evt.name === "down") moveActivitySelection(1);
+        else if (evt.name === "k" || evt.name === "up") moveActivitySelection(-1);
+        else if (evt.name === "escape") {
+          setWorkbenchFocusZone("dock-tabs");
+          touchedWorkspaceDock = true;
         }
         return;
       }
@@ -5950,6 +6296,55 @@ try {
         } else setHoverIf(null);
         return;
       }
+      const workbenchHit = workbenchShellHitTest(workbenchProjection(), x - sidebarW(), gy);
+      if (workbenchHit?.kind === "canvas-rail" || workbenchHit?.kind === "dock-body-rail") {
+        setHoveredDockTab(null);
+        setHoverIf(null);
+        return;
+      }
+      if (workbenchHit?.kind === "dock-tab") {
+        setHoveredDockTab(workbenchHit.tabId);
+        setHoverIf(null);
+        return;
+      }
+      setHoveredDockTab(null);
+      if (workbenchHit?.kind === "dock-action" || workbenchHit?.kind === "dock-tabs") {
+        setHoverIf(null);
+        return;
+      }
+      if (workbenchHit?.kind === "dock-body") {
+        const localX = workbenchHit.localX;
+        const localY = workbenchHit.localY;
+        if (activeDockTab() === "files") {
+          const hit = filesHitTest(filesSurfaceProjection(), localX, localY);
+          if (hit?.area === "header" && hit.actionIndex !== undefined)
+            setHoverIf({ region: "button", index: hit.actionIndex });
+          else if (hit?.area === "list" && hit.rowIndex !== undefined)
+            setHoverIf({ region: "files", index: hit.rowIndex });
+          else setHoverIf(null);
+        } else if (activeDockTab() === "changes") {
+          const hit = changesHitTest(changesSurfaceProjection(), localX, localY);
+          if (hit?.area === "header" && hit.actionIndex !== undefined)
+            setHoverIf({ region: "button", index: hit.actionIndex });
+          else if (hit?.area === "footer" && hit.actionIndex !== undefined)
+            setHoverIf({ region: "diffverb", index: hit.actionIndex });
+          else if (hit?.area === "list" && hit.rowIndex !== undefined)
+            setHoverIf({ region: "diff", index: hit.rowIndex });
+          else setHoverIf(null);
+        } else if (activeDockTab() === "missions") {
+          const hit = missionDashboardHitTest(missionsDashboard(), localX, localY);
+          if (hit?.kind === "card") setHoverIf({ region: "missioncard", index: hit.hoverKey });
+          else if (hit?.kind === "history" || hit?.kind === "detail-row")
+            setHoverIf({ region: "missionhistory", index: hit.hoverKey });
+          else setHoverIf(null);
+        } else setHoverIf(null);
+        return;
+      }
+      if (workbenchHit?.kind === "canvas") {
+        // Canvas content begins after the shell's one-cell focus rail. The
+        // legacy canvas hover routers expect body-local main-column x values.
+        x = sidebarW() + workbenchHit.localX;
+      }
       const m = mode();
       if (m === "home") {
         const action = homeActionAtProjection(homeSurfaceProjection(), x, gy, sidebarW(), 0);
@@ -6082,6 +6477,248 @@ try {
       setHoverIf(null);
     };
 
+    /** Route the native workbench seam before any legacy surface or tmux pane
+     *  routing. Dock coordinates are content-local (after the one-cell focus
+     *  rail), and every dock event is consumed so wheel/right-click/drag can
+     *  never leak into the terminal transport beneath it. */
+    const routeWorkbenchPointer = (e: RouteEvent): boolean => {
+      if (e.y < TABBAR_H || e.x < sidebarW()) return false;
+      const hit = workbenchShellHitTest(workbenchProjection(), e.x - sidebarW(), e.y - TABBAR_H);
+      if (!hit) return false;
+      const releaseAtBoundary =
+        hit.kind !== "canvas" &&
+        (e.type === "up" || e.type === "drag-end" || e.type === "drop" || e.type === "out");
+      if (releaseAtBoundary) {
+        const activeSelection = selection();
+        if (activeSelection?.surface === "mirror" && selecting?.surface === "mirror") {
+          commitMirrorCopy(activeSelection.paneId, activeSelection.anchor, activeSelection.head);
+        }
+        selecting = null;
+        dragAutoScroll = null;
+        pendingPress = null;
+        if (forwardedDown) {
+          const pane = panesById().get(forwardedDown);
+          forwardedDown = null;
+          if (pane && selectModePane() !== pane.id) {
+            forwardPress(pane, e.x, e.y - TABBAR_H, true);
+          }
+        }
+        return true;
+      }
+      if (hit.kind === "canvas") {
+        if (e.type === "down") {
+          setWorkbenchFocusZone("canvas");
+          touchedWorkspaceDock = true;
+        }
+        return false;
+      }
+      if (hit.kind === "canvas-rail") {
+        setHoveredDockTab(null);
+        setHoverIf(null);
+        if (e.type === "down") {
+          setWorkbenchFocusZone("canvas");
+          touchedWorkspaceDock = true;
+        }
+        return true;
+      }
+
+      if (e.type === "move" || e.type === "over" || e.type === "drag") {
+        if (!(e.type === "drag" && selecting?.surface === "editor")) {
+          resolveHover(e.x, e.y);
+          return true;
+        }
+      }
+      if (hit.kind === "dock-tab") {
+        if (e.type === "down" && e.button !== 2) activateDockTab(hit.tabId);
+        return true;
+      }
+      if (hit.kind === "dock-action") {
+        if (e.type === "down" && e.button !== 2) {
+          setDockMode(hit.nextMode);
+          setWorkbenchFocusZone(hit.nextMode === "collapsed" ? "dock-tabs" : "dock-body");
+          touchedWorkspaceDock = true;
+        }
+        return true;
+      }
+      if (hit.kind === "dock-tabs" || hit.kind === "dock-body-rail") {
+        if (e.type === "down") {
+          setWorkbenchFocusZone(hit.kind === "dock-tabs" ? "dock-tabs" : "dock-body");
+          touchedWorkspaceDock = true;
+        }
+        return true;
+      }
+      if (hit.kind !== "dock-body") return true;
+
+      if (e.type === "down" || e.type === "scroll") {
+        setWorkbenchFocusZone("dock-body");
+        touchedWorkspaceDock = true;
+      }
+      const { localX, localY } = hit;
+      if (activeDockTab() === "files") {
+        const surfaceHit = filesHitTest(filesSurfaceProjection(), localX, localY);
+        if (e.type === "scroll") {
+          const direction = e.scroll?.direction;
+          if (direction === "up" || direction === "down") {
+            const step = direction === "up" ? -SCROLL_STEP : SCROLL_STEP;
+            if (surfaceHit?.area === "list") {
+              setFileTop((top) => clampTop(top + step, visibleFiles().length, editorRows()));
+            } else if (surfaceHit?.area === "editor") {
+              setEditorTop((top) => clampTop(top + step, editorLines().length, editorRows()));
+            }
+          }
+          return true;
+        }
+        if (e.type === "drag" && selecting?.surface === "editor" && editBuffer) {
+          const cell = editorCellAtDock(localX, localY);
+          setSelection({
+            surface: "editor",
+            anchor: selAnchor,
+            head: { row: cell.line, col: cell.col },
+          });
+          editBuffer.setCursor(cell.line, cell.col);
+          setEditorRev((revision) => revision + 1);
+          return true;
+        }
+        if (e.type === "up" || e.type === "drag-end" || e.type === "drop") {
+          if (selecting?.surface === "editor") selecting = null;
+          return true;
+        }
+        if (e.type !== "down" || e.button === 2) return true;
+        hydratedWorkspaceSurfaceIds.add("files");
+        if (surfaceHit?.area === "header" && surfaceHit.actionId) {
+          runFilesAction(surfaceHit.actionId);
+          return true;
+        }
+        if (surfaceHit?.area === "list" && surfaceHit.rowIndex !== undefined) {
+          clearSelection();
+          setFilesFocus("list");
+          activateFile(surfaceHit.rowIndex);
+          return true;
+        }
+        if (surfaceHit?.area !== "editor" || !editBuffer) return true;
+        const { line, col } = editorCellAtDock(localX, localY);
+        setFilesFocus("editor");
+        const now = Date.now();
+        const count = clickCount(lastClick, { row: line, col }, now, CLICK_MS);
+        lastClick = { row: line, col, ts: now, count };
+        if (count >= 2) {
+          const text = editorLines()[line] ?? "";
+          const range = count === 2 ? wordRangeAt(text, col) : lineRangeAt(text);
+          setSelection({
+            surface: "editor",
+            anchor: { row: line, col: range.from },
+            head: { row: line, col: range.to },
+          });
+          editBuffer.setCursor(line, range.to);
+          selecting = null;
+        } else {
+          editBuffer.setCursor(line, col);
+          selAnchor = { row: line, col };
+          selecting = { surface: "editor" };
+          setSelection(null);
+        }
+        setEditorRev((revision) => revision + 1);
+        return true;
+      }
+
+      if (activeDockTab() === "changes") {
+        const surfaceHit = changesHitTest(changesSurfaceProjection(), localX, localY);
+        if (e.type === "scroll") {
+          const direction = e.scroll?.direction;
+          if (direction === "up" || direction === "down") {
+            const step = direction === "up" ? -SCROLL_STEP : SCROLL_STEP;
+            if (surfaceHit?.area === "list") {
+              setDiffFileTop((top) => clampTop(top + step, diffRows().length, diffBodyRows()));
+            } else if (surfaceHit?.area === "diff") {
+              setDiffTop((top) => clampTop(top + step, diffLines().length, diffBodyRows()));
+            }
+          }
+          return true;
+        }
+        if (e.type !== "down" || e.button === 2) return true;
+        hydratedWorkspaceSurfaceIds.add("diff");
+        if (
+          (surfaceHit?.area === "header" || surfaceHit?.area === "footer") &&
+          surfaceHit.actionId
+        ) {
+          runChangesAction(surfaceHit.actionId);
+          return true;
+        }
+        if (surfaceHit?.area === "list" && surfaceHit.fileIndex !== undefined) {
+          if (surfaceHit.actionId) runChangesAction(surfaceHit.actionId, surfaceHit.fileIndex);
+          else selectDiffFile(surfaceHit.fileIndex);
+        }
+        return true;
+      }
+
+      if (activeDockTab() === "missions") {
+        const missionHit = missionDashboardHitTest(missionsDashboard(), localX, localY);
+        if (e.type === "scroll") {
+          const direction = e.scroll?.direction;
+          if (direction === "up" || direction === "down") {
+            handleMissionSurfaceScroll(
+              missionHit,
+              direction,
+              {
+                model: missionWorkspaceModel(),
+                snapshot: missionWorkspaceSnapshot(),
+                layoutSize: missionLayoutSize(),
+                persistedTaskId: missionSelectionFromWorkspaceState(
+                  workspaceUiState(),
+                  activeViewId(),
+                ).selectedTaskId,
+              },
+              { updateModel: updateMissionModel },
+              SCROLL_STEP,
+            );
+          }
+          return true;
+        }
+        if (e.type === "down" && e.button !== 2) {
+          hydratedWorkspaceSurfaceIds.add("missions");
+          handleMissionSurfacePointerDown(
+            missionHit,
+            {
+              model: missionWorkspaceModel(),
+              snapshot: missionWorkspaceSnapshot(),
+              layoutSize: missionLayoutSize(),
+              persistedTaskId: missionSelectionFromWorkspaceState(
+                workspaceUiState(),
+                activeViewId(),
+              ).selectedTaskId,
+            },
+            {
+              updateModel: updateMissionModel,
+              refresh: () => loadMissionsWorkspace("refresh"),
+              followDeepLink: followMissionDeepLink,
+              persistSelection: persistMissionSelection,
+            },
+          );
+        }
+        return true;
+      }
+
+      if (e.type === "scroll") {
+        const direction = e.scroll?.direction;
+        if (direction === "up" || direction === "down") {
+          const delta = direction === "up" ? -SCROLL_STEP : SCROLL_STEP;
+          setActivityScrollOffset((offset) =>
+            Math.max(0, Math.min(activityProjection().maximumScrollOffset, offset + delta)),
+          );
+          hydratedWorkspaceSurfaceIds.add("activity");
+          touchedWorkspaceSurfaceIds.add("activity");
+        }
+        return true;
+      }
+      if (e.type === "down" && e.button !== 2) {
+        const row = activityRowHitTest(activityProjection(), localX, localY);
+        if (row) setActivitySelectedId(row.rowId);
+        hydratedWorkspaceSurfaceIds.add("activity");
+        touchedWorkspaceSurfaceIds.add("activity");
+      }
+      return true;
+    };
+
     /** One router, fed by the three always-present region containers (tab bar,
      *  sidebar, main). Geometry is ours. The tab bar is the top screen row; every
      *  other region is offset below it, so we subtract TABBAR_H once (`gy`) and the
@@ -6116,7 +6753,8 @@ try {
     };
 
     const route = (e: RouteEvent) => {
-      const { type, x, y } = e;
+      const { type, y } = e;
+      let { x } = e;
       zzlog(`${type} ${x},${y}${e.button !== undefined ? ` b${e.button}` : ""}`);
       // The FIRST handler in the bubble chain owns the event — stop here so a click
       // on a leaf container isn't re-processed by the root catch-all (and the
@@ -6255,6 +6893,15 @@ try {
         }
         if (!paletteContains(g, x, y)) setPaletteOpen(false);
         return;
+      }
+      if (!dragging && routeWorkbenchPointer(e)) return;
+      if (e.y >= TABBAR_H && e.x >= sidebarW()) {
+        const shellHit = workbenchShellHitTest(
+          workbenchProjection(),
+          e.x - sidebarW(),
+          e.y - TABBAR_H,
+        );
+        if (shellHit?.kind === "canvas") x = sidebarW() + shellHit.localX;
       }
       const compositeLayout = activeCompositeLayout();
       if (!dragging && compositeLayout && x >= sidebarW() && y >= TABBAR_H) {
@@ -6400,7 +7047,7 @@ try {
           return;
         }
         if (type === "move" || type === "over" || type === "drag") {
-          resolveHover(x, y);
+          resolveHover(e.x, y);
           return;
         }
         if (mode() === "missions" && type === "scroll") {
@@ -6669,7 +7316,7 @@ try {
         return;
       }
       if (type === "move" || type === "over" || type === "drag") {
-        resolveHover(x, y);
+        resolveHover(e.x, y);
         return;
       }
       // Release ends a live selection: the mirror copies what was dragged; the
@@ -7416,356 +8063,389 @@ try {
             overflow="hidden"
             onMouse={(e: RouteEvent) => route(e)}
           >
-            <Show when={activeCompositeLayout()}>
-              {(layout) => (
-                <>
-                  <For each={layout().leaves}>
-                    {(leaf) => (
-                      <box
-                        position="absolute"
-                        left={leaf.rect.x}
-                        top={leaf.rect.y}
-                        width={leaf.rect.width}
-                        height={leaf.rect.height}
-                        flexDirection="column"
-                        backgroundColor={DEFAULT_BG}
-                        overflow="hidden"
-                        border={compositeLeafViewport(leaf.rect, 0).bordered}
-                        borderColor={leaf.focused ? ACCENT : MUTED}
-                      >
-                        {compositeLeafBody(leaf)}
-                      </box>
+            <WorkbenchShell
+              theme={semanticTheme()}
+              projection={workbenchProjection()}
+              canvas={
+                <box
+                  position="relative"
+                  width={workbenchProjection().canvasBody.width}
+                  height={workbenchProjection().canvasBody.height}
+                  flexDirection="column"
+                  backgroundColor={DEFAULT_BG}
+                  overflow="hidden"
+                >
+                  <Show when={activeCompositeLayout()}>
+                    {(layout) => (
+                      <>
+                        <For each={layout().leaves}>
+                          {(leaf) => (
+                            <box
+                              position="absolute"
+                              left={leaf.rect.x}
+                              top={leaf.rect.y}
+                              width={leaf.rect.width}
+                              height={leaf.rect.height}
+                              flexDirection="column"
+                              backgroundColor={DEFAULT_BG}
+                              overflow="hidden"
+                              border={compositeLeafViewport(leaf.rect, 0).bordered}
+                              borderColor={leaf.focused ? ACCENT : MUTED}
+                            >
+                              {compositeLeafBody(leaf)}
+                            </box>
+                          )}
+                        </For>
+                        <For each={layout().separators}>
+                          {(separator) => (
+                            <box
+                              position="absolute"
+                              left={separator.rect.x}
+                              top={separator.rect.y}
+                              width={separator.rect.width}
+                              height={separator.rect.height}
+                            >
+                              <text fg={ACCENT}>
+                                {separator.direction === "horizontal"
+                                  ? Array(separator.rect.height).fill("│").join("\n")
+                                  : "─".repeat(separator.rect.width)}
+                              </text>
+                            </box>
+                          )}
+                        </For>
+                        <For each={layout().tabs}>
+                          {(tab) => (
+                            <box
+                              position="absolute"
+                              left={tab.rect.x}
+                              top={tab.rect.y}
+                              width={tab.rect.width}
+                              height={1}
+                            >
+                              <text
+                                fg={tab.active ? DEFAULT_BG : DEFAULT_FG}
+                                bg={tab.active ? ACCENT : BUTTON_BG}
+                              >
+                                {clipTerminal(tab.label, tab.rect.width)}
+                              </text>
+                            </box>
+                          )}
+                        </For>
+                        <Show when={layout().note}>
+                          <box
+                            position="absolute"
+                            left={1}
+                            top={Math.max(0, canvasRows() - 2)}
+                            height={1}
+                          >
+                            <text fg={BANNER_FG}>
+                              {clipTerminal(layout().note!, Math.max(4, canvasCols() - 2))}
+                            </text>
+                          </box>
+                        </Show>
+                      </>
                     )}
-                  </For>
-                  <For each={layout().separators}>
-                    {(separator) => (
-                      <box
-                        position="absolute"
-                        left={separator.rect.x}
-                        top={separator.rect.y}
-                        width={separator.rect.width}
-                        height={separator.rect.height}
-                      >
-                        <text fg={ACCENT}>
-                          {separator.direction === "horizontal"
-                            ? Array(separator.rect.height).fill("│").join("\n")
-                            : "─".repeat(separator.rect.width)}
-                        </text>
-                      </box>
-                    )}
-                  </For>
-                  <For each={layout().tabs}>
-                    {(tab) => (
-                      <box
-                        position="absolute"
-                        left={tab.rect.x}
-                        top={tab.rect.y}
-                        width={tab.rect.width}
-                        height={1}
-                      >
-                        <text
-                          fg={tab.active ? DEFAULT_BG : DEFAULT_FG}
-                          bg={tab.active ? ACCENT : BUTTON_BG}
-                        >
-                          {clipTerminal(tab.label, tab.rect.width)}
-                        </text>
-                      </box>
-                    )}
-                  </For>
-                  <Show when={layout().note}>
-                    <box
-                      position="absolute"
-                      left={1}
-                      top={Math.max(0, canvasRows() - 2)}
-                      height={1}
-                    >
-                      <text fg={BANNER_FG}>
-                        {clipTerminal(layout().note!, Math.max(4, canvasCols() - 2))}
-                      </text>
-                    </box>
                   </Show>
-                </>
-              )}
-            </Show>
-            <Show when={!activeCompositeLayout() && mode() === "home"}>
-              <HomeSurface
-                theme={semanticTheme()}
-                projection={homeSurfaceProjection()}
-                rollup={rollup()}
-              />
-            </Show>
-            <Show when={!activeCompositeLayout() && mode() === "mirror"}>
-              <box paddingLeft={1} flexDirection="row" gap={1}>
-                <text fg={DEFAULT_FG} attributes={1}>
-                  {curTarget()}
-                </text>
-                <text fg={MUTED}>{status()}</text>
-              </box>
-              {/* The per-window strip (gy=1). Rendered as bare styled TEXT runs (no
+                  <Show when={!activeCompositeLayout() && canvasPanel() === "home"}>
+                    <HomeSurface
+                      theme={semanticTheme()}
+                      projection={homeSurfaceProjection()}
+                      rollup={rollup()}
+                    />
+                  </Show>
+                  <Show when={!activeCompositeLayout() && canvasPanel() === "terminals"}>
+                    <box paddingLeft={1} flexDirection="row" gap={1}>
+                      <text fg={DEFAULT_FG} attributes={1}>
+                        {curTarget()}
+                      </text>
+                      <text fg={MUTED}>{status()}</text>
+                    </box>
+                    {/* The per-window strip (gy=1). Rendered as bare styled TEXT runs (no
                 per-window <box> wrapper) so the late-mounted segments bubble
                 clicks to the main-column router instead of swallowing them the
                 way late-mounted boxes do; `route` hit-tests `windowSpans`, whose
                 labels equal these run strings. Active = accent+tint, hover =
                 subtle tint. */}
-              <box paddingLeft={1} flexDirection="row" gap={1}>
-                <text fg={MUTED}>{windowStripParts().pre}</text>
-                <text fg={ACCENT} bg={TAB_ACTIVE_BG}>
-                  {windowStripParts().active}
-                </text>
-                <text fg={MUTED}>{windowStripParts().post}</text>
-                {/* Zoomed indicator: the focused pane's id + a [Z] chip, shown only
+                    <box paddingLeft={1} flexDirection="row" gap={1}>
+                      <text fg={MUTED}>{windowStripParts().pre}</text>
+                      <text fg={ACCENT} bg={TAB_ACTIVE_BG}>
+                        {windowStripParts().active}
+                      </text>
+                      <text fg={MUTED}>{windowStripParts().post}</text>
+                      {/* Zoomed indicator: the focused pane's id + a [Z] chip, shown only
                   while the window is zoomed. Left-aligned after the labels; the
                   button row's flexGrow spacer keeps the [⛶]/[+ split] chips pinned
                   right regardless, and windowSpans are measured from the left, so
                   neither the click routing nor the button spans shift. */}
-                <Show when={isZoomed()}>
-                  <text fg={ACCENT} bg={TAB_ACTIVE_BG} attributes={1}>
-                    {` ${focusedLivePane()?.id ?? ""} [Z] `}
-                  </text>
-                </Show>
-                {/* Synchronize-panes indicator (M20.2): shown while the active
+                      <Show when={isZoomed()}>
+                        <text fg={ACCENT} bg={TAB_ACTIVE_BG} attributes={1}>
+                          {` ${focusedLivePane()?.id ?? ""} [Z] `}
+                        </text>
+                      </Show>
+                      {/* Synchronize-panes indicator (M20.2): shown while the active
                   window's synchronize-panes option is on. Left-aligned after the
                   labels like [Z]; the button row's flexGrow spacer keeps the
                   right-pinned chips and their spans unaffected. */}
-                <Show when={syncOn()}>
-                  <text fg={BUTTON_FG} bg={BUTTON_ACTIVE_BG} attributes={1}>
-                    {" [SYNC] "}
-                  </text>
-                </Show>
-                {buttonRow(stripButtons)}
-              </box>
-              <box position="relative" flexGrow={1} backgroundColor={GUTTER_BG} overflow="hidden">
-                {/* M21.3 — framebuffer blit (flagged). ONE <pane_surface> per
+                      <Show when={syncOn()}>
+                        <text fg={BUTTON_FG} bg={BUTTON_ACTIVE_BG} attributes={1}>
+                          {" [SYNC] "}
+                        </text>
+                      </Show>
+                      {buttonRow(stripButtons)}
+                    </box>
+                    <box
+                      position="relative"
+                      flexGrow={1}
+                      backgroundColor={GUTTER_BG}
+                      overflow="hidden"
+                    >
+                      {/* M21.3 — framebuffer blit (flagged). ONE <pane_surface> per
                   pane blits the grid straight into packed buffers; the For keys
                   on the stable id list so a content tick reuses each surface (and
                   its framebuffer) instead of tearing it down. Chrome (badge +
                   scrollbar) stays Solid JSX layered over the surface. The old
                   StyledRun path is the fallback, unchanged, default for A/B. */}
-                <Show
-                  when={FB_PANES}
-                  fallback={
-                    <For each={panes()}>
-                      {(pane) => (
-                        <box
-                          position="absolute"
-                          left={pane.left}
-                          top={pane.top}
-                          width={pane.width}
-                          height={pane.height}
-                          flexDirection="column"
-                          backgroundColor={DEFAULT_BG}
-                          overflow="hidden"
-                        >
-                          <For each={paneSelRows(pane)}>
-                            {(runs) => (
-                              <box flexDirection="row" height={1}>
-                                <For each={runs}>
-                                  {(run) => (
-                                    <text
-                                      fg={packedToRgba(run.fg, DEFAULT_FG)}
-                                      bg={packedToRgba(run.bg, DEFAULT_BG)}
-                                      attributes={run.attributes}
-                                    >
-                                      {run.text}
-                                    </text>
+                      <Show
+                        when={FB_PANES}
+                        fallback={
+                          <For each={panes()}>
+                            {(pane) => (
+                              <box
+                                position="absolute"
+                                left={pane.left}
+                                top={pane.top}
+                                width={pane.width}
+                                height={pane.height}
+                                flexDirection="column"
+                                backgroundColor={DEFAULT_BG}
+                                overflow="hidden"
+                              >
+                                <For each={paneSelRows(pane)}>
+                                  {(runs) => (
+                                    <box flexDirection="row" height={1}>
+                                      <For each={runs}>
+                                        {(run) => (
+                                          <text
+                                            fg={packedToRgba(run.fg, DEFAULT_FG)}
+                                            bg={packedToRgba(run.bg, DEFAULT_BG)}
+                                            attributes={run.attributes}
+                                          >
+                                            {run.text}
+                                          </text>
+                                        )}
+                                      </For>
+                                    </box>
                                   )}
                                 </For>
+                                {/* Top-right badge family: the select-mode chip (M22.9,
+                            passive text runs — presses bubble to the router) then
+                            the scroll badge. */}
+                                <box position="absolute" right={1} top={0} flexDirection="row">
+                                  <Show
+                                    when={
+                                      selectModePane() === pane.id && selectBadgeLabel(pane.width)
+                                    }
+                                  >
+                                    <text fg={DEFAULT_FG} bg={BUTTON_ACTIVE_BG} attributes={1}>
+                                      {selectBadgeLabel(pane.width)!}
+                                    </text>
+                                  </Show>
+                                  <Show when={pane.snapshot.scrollOffset > 0}>
+                                    <text fg={DEFAULT_FG} bg={BADGE_BG}>
+                                      {` ↑${pane.snapshot.scrollOffset}/${pane.scrollbackDepth} `}
+                                    </text>
+                                  </Show>
+                                </box>
+                                {agentChipOverlay(() => pane)}
+                                {/* Right-edge scrollbar — only while scrolled up, so a live
+                            terminal stays clean (mirrorScrollGeom gates on offset). */}
+                                {scrollbarOverlay(() => mirrorScrollGeom(pane))}
                               </box>
                             )}
                           </For>
-                          {/* Top-right badge family: the select-mode chip (M22.9,
-                            passive text runs — presses bubble to the router) then
-                            the scroll badge. */}
-                          <box position="absolute" right={1} top={0} flexDirection="row">
-                            <Show
-                              when={selectModePane() === pane.id && selectBadgeLabel(pane.width)}
-                            >
-                              <text fg={DEFAULT_FG} bg={BUTTON_ACTIVE_BG} attributes={1}>
-                                {selectBadgeLabel(pane.width)!}
-                              </text>
-                            </Show>
-                            <Show when={pane.snapshot.scrollOffset > 0}>
-                              <text fg={DEFAULT_FG} bg={BADGE_BG}>
-                                {` ↑${pane.snapshot.scrollOffset}/${pane.scrollbackDepth} `}
-                              </text>
-                            </Show>
-                          </box>
-                          {agentChipOverlay(() => pane)}
-                          {/* Right-edge scrollbar — only while scrolled up, so a live
-                            terminal stays clean (mirrorScrollGeom gates on offset). */}
-                          {scrollbarOverlay(() => mirrorScrollGeom(pane))}
-                        </box>
-                      )}
-                    </For>
-                  }
-                >
-                  <For each={paneIds()}>
-                    {(id) => {
-                      const pane = () => panesById().get(id);
-                      return (
-                        <Show when={pane()}>
-                          <box
-                            position="absolute"
-                            left={pane()!.left}
-                            top={pane()!.top}
-                            width={pane()!.width}
-                            height={pane()!.height}
-                            backgroundColor={DEFAULT_BG}
-                            overflow="hidden"
-                          >
-                            <pane_surface
-                              width={pane()!.width}
-                              height={pane()!.height}
-                              mirror={mirror!}
-                              paneId={id}
-                              defaultFg={DEFAULT_FG_PACKED}
-                              defaultBg={DEFAULT_BG_PACKED}
-                              searchHl={SEARCH_HL}
-                              searchCur={SEARCH_CUR}
-                              scrollOffset={pane()!.snapshot.scrollOffset}
-                              paneFocused={pane()!.active}
-                              contentVersion={pane()!.version}
-                              selRange={mirrorSelForPane(id)}
-                              search={mirrorSearchForPane(pane()!)}
-                            />
-                            {/* Top-right badge family: the select-mode chip
+                        }
+                      >
+                        <For each={paneIds()}>
+                          {(id) => {
+                            const pane = () => panesById().get(id);
+                            return (
+                              <Show when={pane()}>
+                                <box
+                                  position="absolute"
+                                  left={pane()!.left}
+                                  top={pane()!.top}
+                                  width={pane()!.width}
+                                  height={pane()!.height}
+                                  backgroundColor={DEFAULT_BG}
+                                  overflow="hidden"
+                                >
+                                  <pane_surface
+                                    width={pane()!.width}
+                                    height={pane()!.height}
+                                    mirror={mirror!}
+                                    paneId={id}
+                                    defaultFg={DEFAULT_FG_PACKED}
+                                    defaultBg={DEFAULT_BG_PACKED}
+                                    searchHl={SEARCH_HL}
+                                    searchCur={SEARCH_CUR}
+                                    scrollOffset={pane()!.snapshot.scrollOffset}
+                                    paneFocused={pane()!.active}
+                                    contentVersion={pane()!.version}
+                                    selRange={mirrorSelForPane(id)}
+                                    search={mirrorSearchForPane(pane()!)}
+                                  />
+                                  {/* Top-right badge family: the select-mode chip
                               (M22.9, passive text runs — presses bubble to the
                               router) then the scroll badge. */}
-                            <box position="absolute" right={1} top={0} flexDirection="row">
-                              <Show
-                                when={selectModePane() === id && selectBadgeLabel(pane()!.width)}
-                              >
-                                <text fg={DEFAULT_FG} bg={BUTTON_ACTIVE_BG} attributes={1}>
-                                  {selectBadgeLabel(pane()!.width)!}
-                                </text>
+                                  <box position="absolute" right={1} top={0} flexDirection="row">
+                                    <Show
+                                      when={
+                                        selectModePane() === id && selectBadgeLabel(pane()!.width)
+                                      }
+                                    >
+                                      <text fg={DEFAULT_FG} bg={BUTTON_ACTIVE_BG} attributes={1}>
+                                        {selectBadgeLabel(pane()!.width)!}
+                                      </text>
+                                    </Show>
+                                    <Show when={pane()!.snapshot.scrollOffset > 0}>
+                                      <text fg={DEFAULT_FG} bg={BADGE_BG}>
+                                        {` ↑${pane()!.snapshot.scrollOffset}/${pane()!.scrollbackDepth} `}
+                                      </text>
+                                    </Show>
+                                  </box>
+                                  {agentChipOverlay(pane)}
+                                  {scrollbarOverlay(() => mirrorScrollGeom(pane()!))}
+                                </box>
                               </Show>
-                              <Show when={pane()!.snapshot.scrollOffset > 0}>
-                                <text fg={DEFAULT_FG} bg={BADGE_BG}>
-                                  {` ↑${pane()!.snapshot.scrollOffset}/${pane()!.scrollbackDepth} `}
-                                </text>
-                              </Show>
-                            </box>
-                            {agentChipOverlay(pane)}
-                            {scrollbarOverlay(() => mirrorScrollGeom(pane()!))}
-                          </box>
-                        </Show>
-                      );
-                    }}
-                  </For>
-                </Show>
-                {/* Focused-pane border (M22.7): accent strips in the GUTTER cells
+                            );
+                          }}
+                        </For>
+                      </Show>
+                      {/* Focused-pane border (M22.7): accent strips in the GUTTER cells
                   around the active pane — the strips live outside every pane rect
                   so no terminal cell is consumed or tinted, and they're
                   handler-less boxes (gutter presses still bubble to the router,
                   border drags keep working). Single-pane and zoomed windows paint
                   nothing (focusStrips returns [] when the rect fills the canvas
                   or the window has one pane). */}
-                <For
-                  each={(() => {
-                    const focused = panes().find((p) => p.active);
-                    return focused
-                      ? focusStrips(focused, canvasCols(), canvasRows(), panes().length)
-                      : [];
-                  })()}
-                >
-                  {(strip) => (
-                    // A HAIRLINE, not a filled bar (user feedback: bars read as
-                    // extra gutter padding): line glyphs in accent fg on the
-                    // normal canvas bg keep the gutter visually thin. One text
-                    // per strip — newline-joined glyphs render as a column.
-                    <box
-                      position="absolute"
-                      left={strip.left}
-                      top={strip.top}
-                      width={strip.width}
-                      height={strip.height}
-                    >
-                      <text fg={FOCUS_BORDER_FG}>
-                        {strip.height === 1
-                          ? "─".repeat(strip.width)
-                          : Array(strip.height).fill("│").join("\n")}
-                      </text>
-                    </box>
-                  )}
-                </For>
-                {/* Size-truth hint (M22.8): quiet, dismiss-free, shown ONLY while
+                      <For
+                        each={(() => {
+                          const focused = panes().find((p) => p.active);
+                          return focused
+                            ? focusStrips(focused, canvasCols(), canvasRows(), panes().length)
+                            : [];
+                        })()}
+                      >
+                        {(strip) => (
+                          // A HAIRLINE, not a filled bar (user feedback: bars read as
+                          // extra gutter padding): line glyphs in accent fg on the
+                          // normal canvas bg keep the gutter visually thin. One text
+                          // per strip — newline-joined glyphs render as a column.
+                          <box
+                            position="absolute"
+                            left={strip.left}
+                            top={strip.top}
+                            width={strip.width}
+                            height={strip.height}
+                          >
+                            <text fg={FOCUS_BORDER_FG}>
+                              {strip.height === 1
+                                ? "─".repeat(strip.width)
+                                : Array(strip.height).fill("│").join("\n")}
+                            </text>
+                          </box>
+                        )}
+                      </For>
+                      {/* Size-truth hint (M22.8): quiet, dismiss-free, shown ONLY while
                   a co-attached terminal has sized the window away from our canvas
                   (the letterboxed grid is centered beneath it). It states the
                   honest actual size — the iTerm2-style answer — and disappears the
                   moment the sizes agree. A handler-less box in the top gutter, so
                   no pointer routing changes. */}
-                <Show when={windowMismatch()}>
-                  <box position="absolute" left={1} top={0} backgroundColor={BADGE_BG}>
-                    <text fg={MUTED}>{` ${formatSizeHint(windowMismatch()!)} `}</text>
-                  </box>
-                </Show>
-              </box>
-              {/* Scrollback-search input (M20.3) — a bottom-of-canvas line, like the
+                      <Show when={windowMismatch()}>
+                        <box position="absolute" left={1} top={0} backgroundColor={BADGE_BG}>
+                          <text fg={MUTED}>{` ${formatSizeHint(windowMismatch()!)} `}</text>
+                        </box>
+                      </Show>
+                    </box>
+                    {/* Scrollback-search input (M20.3) — a bottom-of-canvas line, like the
                 palette's input but inline. A normal-flow row after the pane canvas
                 (keyboard-only, no mouse handler — search owns the keyboard while
                 open); it steals the canvas's last row only while open, so the pane
                 grid is untouched the rest of the time. `editing` shows a "/query▏"
                 cursor; navigation shows the query + the "3/17 matches" tally. */}
-              <Show when={search()}>
-                <box
-                  flexDirection="row"
-                  backgroundColor={PALETTE_BG}
-                  paddingLeft={1}
-                  paddingRight={1}
-                >
-                  <text fg={ACCENT} attributes={1}>
-                    {search()!.editing ? "/" : "search "}
-                  </text>
-                  <text fg={DEFAULT_FG}>{`${search()!.query}${search()!.editing ? "▏" : ""}`}</text>
-                  <box flexGrow={1} />
-                  <text fg={MUTED}>{searchStatus()}</text>
+                    <Show when={search()}>
+                      <box
+                        flexDirection="row"
+                        backgroundColor={PALETTE_BG}
+                        paddingLeft={1}
+                        paddingRight={1}
+                      >
+                        <text fg={ACCENT} attributes={1}>
+                          {search()!.editing ? "/" : "search "}
+                        </text>
+                        <text
+                          fg={DEFAULT_FG}
+                        >{`${search()!.query}${search()!.editing ? "▏" : ""}`}</text>
+                        <box flexGrow={1} />
+                        <text fg={MUTED}>{searchStatus()}</text>
+                      </box>
+                    </Show>
+                  </Show>
                 </box>
-              </Show>
-            </Show>
-            <Show when={!activeCompositeLayout() && mode() === "editor"}>
-              <FilesSurface
-                theme={semanticTheme()}
-                projection={filesSurfaceProjection()}
-                colors={{
-                  gutterBg: GUTTER_BG,
-                  gutterFg: GUTTER_FG,
-                  cursorBg: CURSOR_BG,
-                  modifiedFg: MODIFIED_FG,
-                  statusLetterFg: STATUS_LETTER_FG,
-                }}
-              />
-            </Show>
-            <Show when={!activeCompositeLayout() && mode() === "diff"}>
-              <ChangesSurface
-                theme={semanticTheme()}
-                projection={changesSurfaceProjection()}
-                colors={{
-                  gutterBg: GUTTER_BG,
-                  gutterFg: GUTTER_FG,
-                  statusLetterFg: STATUS_LETTER_FG,
-                  diffFg: DIFF_FG,
-                  diffLineBg: DIFF_LINE_BG,
-                }}
-              />
-            </Show>
-            <Show when={!activeCompositeLayout() && mode() === "missions"}>
-              <MissionsSurface
-                width={canvasCols()}
-                dashboard={missionsDashboard()}
-                model={missionWorkspaceModel()}
-                snapshot={missionWorkspaceSnapshot()}
-                loadState={missionWorkspaceLoad()}
-                errorMessage={missionLoadErrorMessage()}
-                resolveDeepLink={missionDeepLink}
-                isHovered={isHovered}
-                theme={{
-                  bannerFg: BANNER_FG,
-                  buttonFg: BUTTON_FG,
-                  buttonBg: BUTTON_BG,
-                  buttonActiveBg: BUTTON_ACTIVE_BG,
-                }}
-              />
-            </Show>
+              }
+              dockBody={
+                <>
+                  <Show when={activeDockTab() === "files"}>
+                    <FilesSurface
+                      theme={semanticTheme()}
+                      projection={filesSurfaceProjection()}
+                      colors={{
+                        gutterBg: GUTTER_BG,
+                        gutterFg: GUTTER_FG,
+                        cursorBg: CURSOR_BG,
+                        modifiedFg: MODIFIED_FG,
+                        statusLetterFg: STATUS_LETTER_FG,
+                      }}
+                    />
+                  </Show>
+                  <Show when={activeDockTab() === "changes"}>
+                    <ChangesSurface
+                      theme={semanticTheme()}
+                      projection={changesSurfaceProjection()}
+                      colors={{
+                        gutterBg: GUTTER_BG,
+                        gutterFg: GUTTER_FG,
+                        statusLetterFg: STATUS_LETTER_FG,
+                        diffFg: DIFF_FG,
+                        diffLineBg: DIFF_LINE_BG,
+                      }}
+                    />
+                  </Show>
+                  <Show when={activeDockTab() === "missions"}>
+                    <MissionsSurface
+                      width={dockSurfaceWidth()}
+                      dashboard={missionsDashboard()}
+                      model={missionWorkspaceModel()}
+                      snapshot={missionWorkspaceSnapshot()}
+                      loadState={missionWorkspaceLoad()}
+                      errorMessage={missionLoadErrorMessage()}
+                      resolveDeepLink={missionDeepLink}
+                      isHovered={isHovered}
+                      theme={{
+                        bannerFg: BANNER_FG,
+                        buttonFg: BUTTON_FG,
+                        buttonBg: BUTTON_BG,
+                        buttonActiveBg: BUTTON_ACTIVE_BG,
+                      }}
+                    />
+                  </Show>
+                  <Show when={activeDockTab() === "activity"}>
+                    <ActivitySurface theme={semanticTheme()} projection={activityProjection()} />
+                  </Show>
+                </>
+              }
+            />
           </box>
         </box>
         {/* COMMAND PALETTE overlay (M18.4; mouse-complete M21.9) — centered.

@@ -1,0 +1,42 @@
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
+
+exports[`ActivitySurface OpenTUI renderer records the %sx%s compact native dock-body baseline 1`] = `
+" Activity · 6 updates · 1 attention · 1 blocked · 1 working
+● Codex 5.5: Building native Activity        12:48 working█
+● mission M31: Files surface verified           12:47 done█
+● ! review: Card 04 needs attention            now blocked░
+● Claude: Waiting for integration               12:44 idle░
+ 1-4 of 6"
+`;
+
+exports[`ActivitySurface OpenTUI renderer records the %sx%s standard native dock-body baseline 1`] = `
+" Activity · 6 updates · 1 attention · 1 blocked · 1 working
+● agent Codex 5.5 · Building native Activity                                12:48 · working
+● event mission M31 · Files surface verified                                   12:47 · done
+● ! event review · Card 04 needs attention                                    now · blocked
+● agent Claude · Waiting for integration                                       12:44 · idle
+● event workspace · Activity feed refreshed                                 12:42 · unknown
+● agent 設計 agent · Checked responsive rows                                   12:40 · done
+
+
+ j/k select · 1-6 of 6"
+`;
+
+exports[`ActivitySurface OpenTUI renderer records the %sx%s wide native dock-body baseline 1`] = `
+" Activity · 6 updates · 1 attention · 1 blocked · 1 working
+● agent Codex 5.5 · Building native Activity — projection and renderer                                                                                      12:48 · working
+● event mission M31 · Files surface verified — 47 tests passed                                                                                                 12:47 · done
+● ! event review · Card 04 needs attention — one renderer snapshot changed                                                                                    now · blocked
+● agent Claude · Waiting for integration                                                                                                                       12:44 · idle
+● event workspace · Activity feed refreshed                                                                                                                 12:42 · unknown
+● agent 設計 agent · Checked responsive rows — compact, standard, and wide                                                                                     12:40 · done
+
+
+
+
+
+
+
+
+ j/k select · enter inspect · 1-6 of 6"
+`;

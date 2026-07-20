@@ -11,9 +11,15 @@ import { findFirstHostedViewForPanel, findHostedViewById } from "./panel-host.ts
 import type { Tab } from "./app-state.ts";
 import { panelKindFromLegacyTab } from "./panel-host.ts";
 import type { CompositeLayoutState } from "./composite-layout.ts";
+import type {
+  WorkbenchDockMode,
+  WorkbenchDockTabId,
+  WorkbenchFocusZone,
+} from "./workspace/workbench-shell.ts";
 
 export const WORKSPACE_UI_STATE_PATH = "ui/workspace.json";
-export const WORKSPACE_UI_STATE_VERSION = 1;
+export const WORKSPACE_UI_STATE_VERSION = 2;
+export const LEGACY_WORKSPACE_UI_STATE_VERSION = 1;
 export const WORKSPACE_UI_STATE_MAX_VIEWS = 64;
 export const WORKSPACE_UI_STATE_MAX_ID_LENGTH = 128;
 export const WORKSPACE_UI_STATE_MAX_PATH_LENGTH = 4096;
@@ -22,12 +28,14 @@ export type WorkspaceUiStateDiagnosticCode =
   | "MISSING"
   | "MALFORMED"
   | "UNSUPPORTED_VERSION"
+  | "MIGRATED"
   | "OVERSIZED"
   | "INVALID_FIELD"
   | "READ_FAILED"
   | "WRITE_FAILED"
   | "STALE"
-  | "NOT_LOADED";
+  | "NOT_LOADED"
+  | "WRITE_PROTECTED";
 
 export interface WorkspaceUiStateDiagnostic {
   code: WorkspaceUiStateDiagnosticCode;
@@ -90,23 +98,58 @@ export type WorkspaceViewState =
   | WorkspaceMissionsViewState
   | WorkspaceEmptyViewState;
 
-export interface WorkspaceUiStateV1 {
+/** V2 keeps view-scoped composite layout only; dock surface memory lives in `surfaces`. */
+export interface WorkspaceLayoutViewState {
+  panel: HostedPanelKind;
+  layout?: WorkspaceCompositeLayoutViewState;
+}
+
+export interface WorkspaceActivitySurfaceState {
+  selectedRowId: string | null;
+  scrollOffset: number;
+}
+
+export interface WorkspaceSurfaceStates {
+  files: Omit<WorkspaceFilesViewState, "panel" | "layout">;
+  diff: Omit<WorkspaceDiffViewState, "panel" | "layout">;
+  missions: Omit<WorkspaceMissionsViewState, "panel" | "layout">;
+  activity: WorkspaceActivitySurfaceState;
+}
+
+export interface WorkspaceDockState {
+  activeTab: WorkbenchDockTabId;
+  mode: WorkbenchDockMode;
+  preferredHeight: number | null;
+  focusZone: WorkbenchFocusZone;
+}
+
+export interface WorkspaceUiStateV2 {
   version: typeof WORKSPACE_UI_STATE_VERSION;
+  active: WorkspaceActiveViewState | null;
+  dock: WorkspaceDockState;
+  surfaces: WorkspaceSurfaceStates;
+  views: Record<string, WorkspaceLayoutViewState>;
+}
+
+/** Exact legacy payload accepted only by the deterministic V1 migration path. */
+export interface WorkspaceUiStateV1 {
+  version: typeof LEGACY_WORKSPACE_UI_STATE_VERSION;
   active: WorkspaceActiveViewState | null;
   views: Record<string, WorkspaceViewState>;
 }
 
 export interface ParsedWorkspaceUiState {
-  state: WorkspaceUiStateV1;
+  state: WorkspaceUiStateV2;
   diagnostics: WorkspaceUiStateDiagnostic[];
 }
 
 export interface LoadedWorkspaceUiState extends ParsedWorkspaceUiState {
   revision: number | null;
+  writeProtected: boolean;
 }
 
 export interface WriteWorkspaceUiStateResult {
-  state: WorkspaceUiStateV1;
+  state: WorkspaceUiStateV2;
   revision: number | null;
   diagnostics: WorkspaceUiStateDiagnostic[];
 }
@@ -119,16 +162,19 @@ export interface WorkspaceViewRestoreChoice {
 export interface WorkspaceUiSaveRequest {
   repository: ProjectRuntimeRepository;
   revision: number | null;
-  current: WorkspaceUiStateV1;
-  next: WorkspaceUiStateV1;
+  current: WorkspaceUiStateV2;
+  next: WorkspaceUiStateV2;
   touchedViewIds: ReadonlySet<string>;
+  touchedSurfaceIds?: ReadonlySet<keyof WorkspaceSurfaceStates>;
+  touchedDock?: boolean;
+  touchedActiveView?: boolean;
 }
 
 export interface WorkspaceUiControllerSnapshot {
   loaded: boolean;
   repository: ProjectRuntimeRepository | null;
   revision: number | null;
-  state: WorkspaceUiStateV1;
+  state: WorkspaceUiStateV2;
   generation: number;
 }
 
@@ -144,10 +190,25 @@ const MISSION_COLUMNS = ["planned", "running", "blocked", "review", "done"] as c
 const MISSION_MODES = ["board", "history", "detail"] as const;
 const MISSION_DENSITIES = ["compact", "comfortable", "detailed"] as const;
 const MISSION_DETAIL_SECTIONS = ["tasks", "timeline", "attempts", "proof"] as const;
+const DOCK_TABS = ["files", "changes", "missions", "activity"] as const;
+const DOCK_MODES = ["collapsed", "open", "maximized"] as const;
+const FOCUS_ZONES = ["canvas", "dock-tabs", "dock-body"] as const;
 
-export const DEFAULT_WORKSPACE_UI_STATE: WorkspaceUiStateV1 = Object.freeze({
+export const DEFAULT_WORKSPACE_UI_STATE: WorkspaceUiStateV2 = Object.freeze({
   version: WORKSPACE_UI_STATE_VERSION,
   active: null,
+  dock: Object.freeze({
+    activeTab: "files",
+    mode: "open",
+    preferredHeight: null,
+    focusZone: "canvas",
+  }),
+  surfaces: Object.freeze({
+    files: Object.freeze({ openPath: null, selectedPath: null }),
+    diff: Object.freeze({ selectedPath: null }),
+    missions: Object.freeze({ selectedMissionId: null, selectedTaskId: null }),
+    activity: Object.freeze({ selectedRowId: null, scrollOffset: 0 }),
+  }),
   views: Object.freeze({}),
 });
 
@@ -195,6 +256,64 @@ function oneOf<T extends readonly string[]>(value: unknown, allowed: T): T[numbe
 
 function cleanNonnegativeInt(value: unknown): number | null {
   return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : null;
+}
+
+function cleanDockState(
+  value: unknown,
+  diagnostics: WorkspaceUiStateDiagnostic[],
+): WorkspaceDockState {
+  if (!isRecord(value)) {
+    if (value !== undefined) {
+      diagnostics.push(diagnostic("INVALID_FIELD", "$.dock", "dock state must be an object"));
+    }
+    return { ...DEFAULT_WORKSPACE_UI_STATE.dock };
+  }
+  return {
+    activeTab: oneOf(value.activeTab, DOCK_TABS) ?? "files",
+    mode: oneOf(value.mode, DOCK_MODES) ?? "open",
+    preferredHeight:
+      value.preferredHeight === null ? null : cleanNonnegativeInt(value.preferredHeight),
+    focusZone: oneOf(value.focusZone, FOCUS_ZONES) ?? "canvas",
+  };
+}
+
+function cleanSurfaceStates(
+  value: unknown,
+  diagnostics: WorkspaceUiStateDiagnostic[],
+): WorkspaceSurfaceStates {
+  if (!isRecord(value)) {
+    if (value !== undefined) {
+      diagnostics.push(
+        diagnostic("INVALID_FIELD", "$.surfaces", "surface state must be an object"),
+      );
+    }
+    return defaultWorkspaceSurfaceStates();
+  }
+  const files = isRecord(value.files) ? value.files : {};
+  const diff = isRecord(value.diff) ? value.diff : {};
+  const missions = isRecord(value.missions) ? value.missions : {};
+  const activity = isRecord(value.activity) ? value.activity : {};
+  const navigation = cleanMissionsNavigation(
+    missions.navigation,
+    "$.surfaces.missions.navigation",
+    diagnostics,
+  );
+  return {
+    files: {
+      openPath: cleanPath(files.openPath),
+      selectedPath: cleanPath(files.selectedPath),
+    },
+    diff: { selectedPath: cleanPath(diff.selectedPath) },
+    missions: {
+      selectedMissionId: cleanId(missions.selectedMissionId),
+      selectedTaskId: cleanId(missions.selectedTaskId),
+      ...(navigation ? { navigation } : {}),
+    },
+    activity: {
+      selectedRowId: cleanId(activity.selectedRowId),
+      scrollOffset: cleanNonnegativeInt(activity.scrollOffset) ?? 0,
+    },
+  };
 }
 
 function cleanNumberRecord<const Keys extends readonly string[]>(
@@ -321,6 +440,24 @@ function cleanViewState(
   return { panel, ...(layout ? { layout } : {}) };
 }
 
+function cleanLayoutViewState(
+  key: string,
+  value: unknown,
+  diagnostics: WorkspaceUiStateDiagnostic[],
+): WorkspaceLayoutViewState | null {
+  if (!isRecord(value)) {
+    diagnostics.push(diagnostic("INVALID_FIELD", `$.views.${key}`, "view state must be an object"));
+    return null;
+  }
+  const panel = value.panel;
+  if (!isPanel(panel)) {
+    diagnostics.push(diagnostic("INVALID_FIELD", `$.views.${key}.panel`, "panel is unsupported"));
+    return null;
+  }
+  const layout = cleanLayoutState(value.layout, `$.views.${key}.layout`, diagnostics);
+  return { panel, ...(layout ? { layout } : {}) };
+}
+
 function cleanLayoutState(
   value: unknown,
   path: string,
@@ -372,12 +509,27 @@ function cleanLayoutState(
   return { focusedLeafId, activeTabs, splitWeights };
 }
 
-function cloneState(state: WorkspaceUiStateV1): WorkspaceUiStateV1 {
+function cloneState(state: WorkspaceUiStateV2): WorkspaceUiStateV2 {
   return parseWorkspaceUiStateJson(serializeWorkspaceUiState(state)).state;
 }
 
-export function defaultWorkspaceUiState(): WorkspaceUiStateV1 {
-  return { version: WORKSPACE_UI_STATE_VERSION, active: null, views: {} };
+function defaultWorkspaceSurfaceStates(): WorkspaceSurfaceStates {
+  return {
+    files: { openPath: null, selectedPath: null },
+    diff: { selectedPath: null },
+    missions: { selectedMissionId: null, selectedTaskId: null },
+    activity: { selectedRowId: null, scrollOffset: 0 },
+  };
+}
+
+export function defaultWorkspaceUiState(): WorkspaceUiStateV2 {
+  return {
+    version: WORKSPACE_UI_STATE_VERSION,
+    active: null,
+    dock: { ...DEFAULT_WORKSPACE_UI_STATE.dock },
+    surfaces: defaultWorkspaceSurfaceStates(),
+    views: {},
+  };
 }
 
 export function parseWorkspaceUiStateJson(raw: string): ParsedWorkspaceUiState {
@@ -402,6 +554,9 @@ export function parseWorkspaceUiStateValue(
     diagnostics.push(diagnostic("MALFORMED", "$", "workspace UI state must be an object"));
     return { state: defaultWorkspaceUiState(), diagnostics };
   }
+  if (value.version === LEGACY_WORKSPACE_UI_STATE_VERSION) {
+    return migrateWorkspaceUiStateV1(value, diagnostics);
+  }
   if (value.version !== WORKSPACE_UI_STATE_VERSION) {
     diagnostics.push(
       diagnostic(
@@ -413,7 +568,7 @@ export function parseWorkspaceUiStateValue(
     return { state: defaultWorkspaceUiState(), diagnostics };
   }
 
-  const views: Record<string, WorkspaceViewState> = {};
+  const views: Record<string, WorkspaceLayoutViewState> = {};
   if (isRecord(value.views)) {
     const entries = Object.entries(value.views);
     if (entries.length > WORKSPACE_UI_STATE_MAX_VIEWS) {
@@ -431,7 +586,7 @@ export function parseWorkspaceUiStateValue(
         diagnostics.push(diagnostic("INVALID_FIELD", "$.views", "dropped invalid view id"));
         continue;
       }
-      const clean = cleanViewState(id, rawView, diagnostics);
+      const clean = cleanLayoutViewState(id, rawView, diagnostics);
       if (clean) views[id] = clean;
     }
   } else if (value.views !== undefined) {
@@ -442,48 +597,118 @@ export function parseWorkspaceUiStateValue(
     state: {
       version: WORKSPACE_UI_STATE_VERSION,
       active: cleanActive(value.active, diagnostics),
+      dock: cleanDockState(value.dock, diagnostics),
+      surfaces: cleanSurfaceStates(value.surfaces, diagnostics),
       views,
     },
     diagnostics,
   };
 }
 
-export function serializeWorkspaceUiState(state: WorkspaceUiStateV1): string {
-  const parsed = parseWorkspaceUiStateValue(state).state;
-  const orderedViews: Record<string, WorkspaceViewState> = {};
-  for (const id of Object.keys(parsed.views).sort()) {
-    const view = parsed.views[id]!;
-    if (view.panel === "files") {
-      orderedViews[id] = {
-        panel: "files",
-        openPath: view.openPath,
-        selectedPath: view.selectedPath,
-        ...(view.layout ? { layout: orderedLayoutState(view.layout) } : {}),
-      };
-    } else if (view.panel === "diff") {
-      orderedViews[id] = {
-        panel: "diff",
-        selectedPath: view.selectedPath,
-        ...(view.layout ? { layout: orderedLayoutState(view.layout) } : {}),
-      };
-    } else if (view.panel === "missions") {
-      orderedViews[id] = {
-        panel: "missions",
-        selectedMissionId: view.selectedMissionId,
-        selectedTaskId: view.selectedTaskId,
-        ...(view.navigation ? { navigation: orderedMissionsNavigation(view.navigation) } : {}),
-        ...(view.layout ? { layout: orderedLayoutState(view.layout) } : {}),
-      };
-    } else {
-      orderedViews[id] = {
-        panel: view.panel,
-        ...(view.layout ? { layout: orderedLayoutState(view.layout) } : {}),
-      };
+function migrateWorkspaceUiStateV1(
+  value: Record<string, unknown>,
+  diagnostics: WorkspaceUiStateDiagnostic[],
+): ParsedWorkspaceUiState {
+  const legacyViews: Record<string, WorkspaceViewState> = {};
+  if (isRecord(value.views)) {
+    for (const [key, rawView] of Object.entries(value.views).slice(
+      0,
+      WORKSPACE_UI_STATE_MAX_VIEWS,
+    )) {
+      const id = cleanId(key);
+      if (!id) continue;
+      const clean = cleanViewState(id, rawView, diagnostics);
+      if (clean) legacyViews[id] = clean;
     }
   }
-  const clean: WorkspaceUiStateV1 = {
+  const active = cleanActive(value.active, diagnostics);
+  const pick = <Panel extends WorkspaceViewState["panel"]>(panel: Panel) => {
+    const activeEntry = active?.panel === panel ? legacyViews[active.viewId] : null;
+    if (activeEntry?.panel === panel) return activeEntry;
+    return Object.keys(legacyViews)
+      .sort()
+      .map((id) => legacyViews[id]!)
+      .find((entry) => entry.panel === panel);
+  };
+  const files = pick("files") as WorkspaceFilesViewState | undefined;
+  const diff = pick("diff") as WorkspaceDiffViewState | undefined;
+  const missions = pick("missions") as WorkspaceMissionsViewState | undefined;
+  const activeTab = dockTabFromPanel(active?.panel) ?? "files";
+  diagnostics.push(
+    diagnostic("MIGRATED", "$.version", "workspace UI state migrated from version 1 to version 2"),
+  );
+  return {
+    state: {
+      version: WORKSPACE_UI_STATE_VERSION,
+      active,
+      dock: {
+        activeTab,
+        mode: "open",
+        preferredHeight: null,
+        focusZone: dockTabFromPanel(active?.panel) ? "dock-body" : "canvas",
+      },
+      surfaces: {
+        files: {
+          openPath: files?.openPath ?? null,
+          selectedPath: files?.selectedPath ?? null,
+        },
+        diff: { selectedPath: diff?.selectedPath ?? null },
+        missions: {
+          selectedMissionId: missions?.selectedMissionId ?? null,
+          selectedTaskId: missions?.selectedTaskId ?? null,
+          ...(missions?.navigation
+            ? { navigation: orderedMissionsNavigation(missions.navigation) }
+            : {}),
+        },
+        activity: { selectedRowId: null, scrollOffset: 0 },
+      },
+      views: Object.fromEntries(
+        Object.entries(legacyViews).map(([id, entry]) => [
+          id,
+          {
+            panel: entry.panel,
+            ...(entry.layout ? { layout: orderedLayoutState(entry.layout) } : {}),
+          },
+        ]),
+      ),
+    },
+    diagnostics,
+  };
+}
+
+function dockTabFromPanel(panel: HostedPanelKind | null | undefined): WorkbenchDockTabId | null {
+  if (panel === "files") return "files";
+  if (panel === "diff") return "changes";
+  if (panel === "missions") return "missions";
+  return null;
+}
+
+export function serializeWorkspaceUiState(state: WorkspaceUiStateV2): string {
+  const parsed = parseWorkspaceUiStateValue(state).state;
+  const orderedViews: Record<string, WorkspaceLayoutViewState> = {};
+  for (const id of Object.keys(parsed.views).sort()) {
+    const view = parsed.views[id]!;
+    orderedViews[id] = {
+      panel: view.panel,
+      ...(view.layout ? { layout: orderedLayoutState(view.layout) } : {}),
+    };
+  }
+  const clean: WorkspaceUiStateV2 = {
     version: WORKSPACE_UI_STATE_VERSION,
     active: parsed.active ? { viewId: parsed.active.viewId, panel: parsed.active.panel } : null,
+    dock: { ...parsed.dock },
+    surfaces: {
+      files: { ...parsed.surfaces.files },
+      diff: { ...parsed.surfaces.diff },
+      missions: {
+        selectedMissionId: parsed.surfaces.missions.selectedMissionId,
+        selectedTaskId: parsed.surfaces.missions.selectedTaskId,
+        ...(parsed.surfaces.missions.navigation
+          ? { navigation: orderedMissionsNavigation(parsed.surfaces.missions.navigation) }
+          : {}),
+      },
+      activity: { ...parsed.surfaces.activity },
+    },
     views: orderedViews,
   };
   return `${JSON.stringify(clean, null, 2)}\n`;
@@ -543,7 +768,7 @@ function orderedBooleanRecord<const Keys extends readonly string[]>(
   ) as Record<Keys[number], boolean>;
 }
 
-export function workspaceUiStateToJsonValue(state: WorkspaceUiStateV1): JsonValue {
+export function workspaceUiStateToJsonValue(state: WorkspaceUiStateV2): JsonValue {
   return JSON.parse(serializeWorkspaceUiState(state)) as JsonValue;
 }
 
@@ -555,6 +780,7 @@ export function loadWorkspaceUiState(repository: ProjectRuntimeRepository): Load
     return {
       state: defaultWorkspaceUiState(),
       revision: null,
+      writeProtected: false,
       diagnostics: [
         diagnostic(
           "READ_FAILED",
@@ -568,26 +794,61 @@ export function loadWorkspaceUiState(repository: ProjectRuntimeRepository): Load
     return {
       state: defaultWorkspaceUiState(),
       revision: null,
+      writeProtected: false,
       diagnostics: [diagnostic("MISSING", WORKSPACE_UI_STATE_PATH, "workspace UI state is absent")],
     };
   }
   const parsed = parseWorkspaceUiStateValue(document.payload);
-  return { ...parsed, revision: document.revision };
+  return {
+    ...parsed,
+    revision: document.revision,
+    writeProtected: parsed.diagnostics.some((entry) => entry.code === "UNSUPPORTED_VERSION"),
+  };
 }
 
 export function mergeWorkspaceUiStateForSave(
-  latest: WorkspaceUiStateV1,
-  local: WorkspaceUiStateV1,
+  latest: WorkspaceUiStateV2,
+  local: WorkspaceUiStateV2,
   touchedViewIds: ReadonlySet<string>,
-): WorkspaceUiStateV1 {
-  const views: Record<string, WorkspaceViewState> = { ...latest.views };
+  touchedSurfaceIds: ReadonlySet<keyof WorkspaceSurfaceStates> = new Set(),
+  touchedDock = false,
+  touchedActiveView = false,
+): WorkspaceUiStateV2 {
+  const views: Record<string, WorkspaceLayoutViewState> = { ...latest.views };
   for (const id of touchedViewIds) {
     const localView = local.views[id];
     if (localView) views[id] = localView;
   }
+  const missions = touchedSurfaceIds.has("missions")
+    ? local.surfaces.missions
+    : latest.surfaces.missions;
   return {
     version: WORKSPACE_UI_STATE_VERSION,
-    active: local.active ? { ...local.active } : null,
+    active: touchedActiveView
+      ? local.active
+        ? { ...local.active }
+        : null
+      : latest.active
+        ? { ...latest.active }
+        : null,
+    dock: { ...(touchedDock ? local.dock : latest.dock) },
+    surfaces: {
+      files: {
+        ...(touchedSurfaceIds.has("files") ? local.surfaces.files : latest.surfaces.files),
+      },
+      diff: {
+        ...(touchedSurfaceIds.has("diff") ? local.surfaces.diff : latest.surfaces.diff),
+      },
+      missions: {
+        ...missions,
+        ...(missions.navigation
+          ? { navigation: orderedMissionsNavigation(missions.navigation) }
+          : {}),
+      },
+      activity: {
+        ...(touchedSurfaceIds.has("activity") ? local.surfaces.activity : latest.surfaces.activity),
+      },
+    },
     views,
   };
 }
@@ -596,7 +857,24 @@ export function writeWorkspaceUiStateWithRetry(
   request: WorkspaceUiSaveRequest,
 ): WriteWorkspaceUiStateResult {
   const diagnostics: WorkspaceUiStateDiagnostic[] = [];
-  const writePayload = (state: WorkspaceUiStateV1, revision: number | null) =>
+  if (request.revision !== null) {
+    const existing = loadWorkspaceUiState(request.repository);
+    if (existing.writeProtected) {
+      return {
+        state: request.current,
+        revision: request.revision,
+        diagnostics: [
+          ...existing.diagnostics,
+          diagnostic(
+            "WRITE_PROTECTED",
+            WORKSPACE_UI_STATE_PATH,
+            "newer workspace UI state was preserved without writing",
+          ),
+        ],
+      };
+    }
+  }
+  const writePayload = (state: WorkspaceUiStateV2, revision: number | null) =>
     request.repository.writeDocument(WORKSPACE_UI_STATE_PATH, workspaceUiStateToJsonValue(state), {
       expectedRevision: revision,
     });
@@ -621,7 +899,28 @@ export function writeWorkspaceUiStateWithRetry(
 
   const latest = loadWorkspaceUiState(request.repository);
   diagnostics.push(...latest.diagnostics.filter((entry) => entry.code !== "MISSING"));
-  const merged = mergeWorkspaceUiStateForSave(latest.state, request.next, request.touchedViewIds);
+  if (latest.writeProtected) {
+    return {
+      state: request.current,
+      revision: request.revision,
+      diagnostics: [
+        ...diagnostics,
+        diagnostic(
+          "WRITE_PROTECTED",
+          WORKSPACE_UI_STATE_PATH,
+          "newer workspace UI state was preserved without writing",
+        ),
+      ],
+    };
+  }
+  const merged = mergeWorkspaceUiStateForSave(
+    latest.state,
+    request.next,
+    request.touchedViewIds,
+    request.touchedSurfaceIds,
+    request.touchedDock,
+    request.touchedActiveView,
+  );
   try {
     const written = writePayload(merged, latest.revision);
     return { state: cloneState(merged), revision: written.revision, diagnostics };
@@ -645,7 +944,7 @@ export function chooseInitialWorkspaceView(
   views: readonly HostedPanelView[],
   options: {
     requestedPanel: HostedPanelKind | null | undefined;
-    persisted: WorkspaceUiStateV1 | null | undefined;
+    persisted: WorkspaceUiStateV2 | null | undefined;
     legacyLastTab: Tab | null | undefined;
   },
 ): WorkspaceViewRestoreChoice {
@@ -670,111 +969,141 @@ export function chooseInitialWorkspaceView(
 }
 
 export function viewStateFor(
-  state: WorkspaceUiStateV1,
+  state: WorkspaceUiStateV2,
   view: Pick<HostedPanelView, "id" | "panel"> | null | undefined,
 ): WorkspaceViewState | null {
   if (!view) return null;
-  const entry = state.views[view.id];
-  return entry && entry.panel === view.panel ? entry : null;
+  const layout = state.views[view.id]?.layout;
+  if (view.panel === "files")
+    return { panel: "files", ...state.surfaces.files, ...(layout ? { layout } : {}) };
+  if (view.panel === "diff")
+    return { panel: "diff", ...state.surfaces.diff, ...(layout ? { layout } : {}) };
+  if (view.panel === "missions") {
+    return { panel: "missions", ...state.surfaces.missions, ...(layout ? { layout } : {}) };
+  }
+  return view.panel === "home"
+    ? { panel: "home", ...(layout ? { layout } : {}) }
+    : { panel: "terminals", ...(layout ? { layout } : {}) };
+}
+
+export function workspaceSurfaceState(
+  state: WorkspaceUiStateV2,
+  panel: "files" | "diff" | "missions" | "activity",
+):
+  | WorkspaceFilesViewState
+  | WorkspaceDiffViewState
+  | WorkspaceMissionsViewState
+  | WorkspaceActivitySurfaceState {
+  if (panel === "files") return { panel: "files", ...state.surfaces.files };
+  if (panel === "diff") return { panel: "diff", ...state.surfaces.diff };
+  if (panel === "missions") return { panel: "missions", ...state.surfaces.missions };
+  return { ...state.surfaces.activity };
+}
+
+export function setWorkspaceSurfaceState(
+  state: WorkspaceUiStateV2,
+  entry:
+    | WorkspaceFilesViewState
+    | WorkspaceDiffViewState
+    | WorkspaceMissionsViewState
+    | ({ panel: "activity" } & WorkspaceActivitySurfaceState),
+): WorkspaceUiStateV2 {
+  const next = cloneState(state);
+  if (entry.panel === "files") {
+    next.surfaces.files = {
+      openPath: cleanPath(entry.openPath),
+      selectedPath: cleanPath(entry.selectedPath),
+    };
+  } else if (entry.panel === "diff") {
+    next.surfaces.diff = { selectedPath: cleanPath(entry.selectedPath) };
+  } else if (entry.panel === "missions") {
+    next.surfaces.missions = {
+      selectedMissionId: cleanId(entry.selectedMissionId),
+      selectedTaskId: cleanId(entry.selectedTaskId),
+      ...(entry.navigation ? { navigation: orderedMissionsNavigation(entry.navigation) } : {}),
+    };
+  } else {
+    next.surfaces.activity = {
+      selectedRowId: cleanId(entry.selectedRowId),
+      scrollOffset: cleanNonnegativeInt(entry.scrollOffset) ?? 0,
+    };
+  }
+  return next;
+}
+
+export function setWorkspaceDockState(
+  state: WorkspaceUiStateV2,
+  dock: WorkspaceDockState,
+): WorkspaceUiStateV2 {
+  const next = cloneState(state);
+  next.dock = cleanDockState(dock, []);
+  return next;
 }
 
 export function setMissionsSelection(
-  state: WorkspaceUiStateV1,
+  state: WorkspaceUiStateV2,
   viewId: string,
   missionId: string | null,
   taskId: string | null,
-): WorkspaceUiStateV1 {
+): WorkspaceUiStateV2 {
   const id = cleanId(viewId);
   if (!id) return cloneState(state);
-  return {
-    version: WORKSPACE_UI_STATE_VERSION,
-    active: state.active ? { ...state.active } : null,
-    views: {
-      ...state.views,
-      [id]: {
-        ...(state.views[id]?.layout ? { layout: state.views[id].layout } : {}),
-        panel: "missions",
-        selectedMissionId: cleanId(missionId),
-        selectedTaskId: cleanId(taskId),
-        ...(state.views[id]?.panel === "missions" && state.views[id].navigation
-          ? { navigation: state.views[id].navigation }
-          : {}),
-      },
-    },
+  const next = cloneState(state);
+  next.surfaces.missions = {
+    selectedMissionId: cleanId(missionId),
+    selectedTaskId: cleanId(taskId),
+    ...(state.surfaces.missions.navigation
+      ? { navigation: orderedMissionsNavigation(state.surfaces.missions.navigation) }
+      : {}),
   };
+  return next;
 }
 
 export function setMissionsNavigation(
-  state: WorkspaceUiStateV1,
+  state: WorkspaceUiStateV2,
   viewId: string,
   selection: Pick<WorkspaceMissionsViewState, "selectedMissionId" | "selectedTaskId">,
   navigation: WorkspaceMissionsNavigationState,
-): WorkspaceUiStateV1 {
+): WorkspaceUiStateV2 {
   const id = cleanId(viewId);
   if (!id) return cloneState(state);
-  const existing = state.views[id];
-  return {
-    version: WORKSPACE_UI_STATE_VERSION,
-    active: state.active ? { ...state.active } : null,
-    views: {
-      ...state.views,
-      [id]: {
-        ...(existing?.layout ? { layout: existing.layout } : {}),
-        panel: "missions",
-        selectedMissionId: cleanId(selection.selectedMissionId),
-        selectedTaskId: cleanId(selection.selectedTaskId),
-        navigation: orderedMissionsNavigation(navigation),
-      },
-    },
+  const next = cloneState(state);
+  next.surfaces.missions = {
+    selectedMissionId: cleanId(selection.selectedMissionId),
+    selectedTaskId: cleanId(selection.selectedTaskId),
+    navigation: orderedMissionsNavigation(navigation),
   };
+  return next;
 }
 
 export function layoutStateForView(
-  state: WorkspaceUiStateV1,
+  state: WorkspaceUiStateV2,
   viewId: string,
 ): WorkspaceCompositeLayoutViewState | null {
   return state.views[viewId]?.layout ?? null;
 }
 
 function workspaceViewStateWithLayout(
-  entry: WorkspaceViewState,
+  entry: WorkspaceLayoutViewState,
   layout: WorkspaceCompositeLayoutViewState,
-): WorkspaceViewState {
+): WorkspaceLayoutViewState {
   const cleanLayout = orderedLayoutState(layout);
-  if (entry.panel === "files") {
-    return {
-      panel: "files",
-      openPath: entry.openPath,
-      selectedPath: entry.selectedPath,
-      layout: cleanLayout,
-    };
-  }
-  if (entry.panel === "diff") {
-    return { panel: "diff", selectedPath: entry.selectedPath, layout: cleanLayout };
-  }
-  if (entry.panel === "missions") {
-    return {
-      panel: "missions",
-      selectedMissionId: entry.selectedMissionId,
-      selectedTaskId: entry.selectedTaskId,
-      ...(entry.navigation ? { navigation: orderedMissionsNavigation(entry.navigation) } : {}),
-      layout: cleanLayout,
-    };
-  }
   return { panel: entry.panel, layout: cleanLayout };
 }
 
 export function setWorkspaceViewLayoutState(
-  state: WorkspaceUiStateV1,
+  state: WorkspaceUiStateV2,
   view: Pick<HostedPanelView, "id" | "panel">,
   layout: WorkspaceCompositeLayoutViewState,
-): WorkspaceUiStateV1 {
+): WorkspaceUiStateV2 {
   const id = cleanId(view.id);
   if (!id) return cloneState(state);
   const existing = state.views[id] ?? workspaceViewStateForPanel(view.panel);
   return {
     version: WORKSPACE_UI_STATE_VERSION,
     active: state.active ? { ...state.active } : null,
+    dock: { ...state.dock },
+    surfaces: cloneState(state).surfaces,
     views: {
       ...state.views,
       [id]: workspaceViewStateWithLayout(existing, layout),
@@ -782,22 +1111,19 @@ export function setWorkspaceViewLayoutState(
   };
 }
 
-function workspaceViewStateForPanel(panel: HostedPanelKind): WorkspaceViewState {
-  if (panel === "files") return { panel: "files", openPath: null, selectedPath: null };
-  if (panel === "diff") return { panel: "diff", selectedPath: null };
-  if (panel === "missions") {
-    return { panel: "missions", selectedMissionId: null, selectedTaskId: null };
-  }
+function workspaceViewStateForPanel(panel: HostedPanelKind): WorkspaceLayoutViewState {
   return { panel };
 }
 
 export function missionsSelection(
-  state: WorkspaceUiStateV1,
+  state: WorkspaceUiStateV2,
   viewId: string,
 ): Pick<WorkspaceMissionsViewState, "selectedMissionId" | "selectedTaskId"> {
-  const entry = state.views[viewId];
-  if (entry?.panel !== "missions") return { selectedMissionId: null, selectedTaskId: null };
-  return { selectedMissionId: entry.selectedMissionId, selectedTaskId: entry.selectedTaskId };
+  void viewId;
+  return {
+    selectedMissionId: state.surfaces.missions.selectedMissionId,
+    selectedTaskId: state.surfaces.missions.selectedTaskId,
+  };
 }
 
 export function relativeProjectPath(projectRoot: string, path: string | null): string | null {
@@ -843,8 +1169,9 @@ export class WorkspaceUiStateController {
   #generation = 0;
   #repository: ProjectRuntimeRepository | null = null;
   #revision: number | null = null;
-  #state: WorkspaceUiStateV1 = defaultWorkspaceUiState();
+  #state: WorkspaceUiStateV2 = defaultWorkspaceUiState();
   #loaded = false;
+  #writeProtected = false;
 
   beginLoad(): number {
     this.#generation += 1;
@@ -852,6 +1179,7 @@ export class WorkspaceUiStateController {
     this.#repository = null;
     this.#revision = null;
     this.#state = defaultWorkspaceUiState();
+    this.#writeProtected = false;
     return this.#generation;
   }
 
@@ -865,6 +1193,7 @@ export class WorkspaceUiStateController {
     this.#revision = loaded.revision;
     this.#state = cloneState(loaded.state);
     this.#loaded = true;
+    this.#writeProtected = loaded.writeProtected;
     return true;
   }
 
@@ -874,6 +1203,7 @@ export class WorkspaceUiStateController {
     this.#revision = null;
     this.#state = defaultWorkspaceUiState();
     this.#loaded = true;
+    this.#writeProtected = false;
     return true;
   }
 
@@ -889,8 +1219,11 @@ export class WorkspaceUiStateController {
 
   save(
     generation: number,
-    next: WorkspaceUiStateV1,
+    next: WorkspaceUiStateV2,
     touchedViewIds: ReadonlySet<string>,
+    touchedSurfaceIds: ReadonlySet<keyof WorkspaceSurfaceStates> = new Set(),
+    touchedDock = false,
+    touchedActiveView = false,
   ): WorkspaceUiControllerSaveResult {
     if (generation !== this.#generation) {
       return {
@@ -908,14 +1241,34 @@ export class WorkspaceUiStateController {
         ],
       };
     }
+    if (this.#writeProtected) {
+      return {
+        saved: false,
+        skipped: false,
+        diagnostics: [
+          diagnostic(
+            "WRITE_PROTECTED",
+            WORKSPACE_UI_STATE_PATH,
+            "newer workspace UI state was preserved without writing",
+          ),
+        ],
+      };
+    }
     const result = writeWorkspaceUiStateWithRetry({
       repository: this.#repository,
       revision: this.#revision,
       current: this.#state,
       next,
       touchedViewIds,
+      touchedSurfaceIds,
+      touchedDock,
+      touchedActiveView,
     });
-    if (result.diagnostics.some((entry) => entry.code === "WRITE_FAILED")) {
+    if (
+      result.diagnostics.some(
+        (entry) => entry.code === "WRITE_FAILED" || entry.code === "WRITE_PROTECTED",
+      )
+    ) {
       return { saved: false, skipped: false, diagnostics: result.diagnostics };
     }
     this.#state = cloneState(result.state);
