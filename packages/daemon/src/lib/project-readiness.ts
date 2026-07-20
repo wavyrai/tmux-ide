@@ -12,6 +12,7 @@ export type Availability = "available" | "missing" | "unknown";
 export type CommandReadiness = "ready" | "invalid" | "unknown";
 export type AuthenticationReadiness = "ready" | "required" | "not-required" | "unknown";
 export type ProjectRegistrationState = "unregistered" | "current" | "stale";
+export type ProjectPathKind = "directory" | "other" | "missing" | "unknown";
 export type HarnessKind = "codex" | "claude" | "opencode" | "shell" | "custom";
 
 export interface ProjectReadinessProjectProbe {
@@ -29,6 +30,8 @@ export interface ProjectReadinessProjectProbe {
    */
   identityKey: string | null;
   identitySource: "git-common-dir" | "canonical-realpath" | null;
+  /** Result of inspecting the requested path; omitted by pre-pathKind callers. */
+  pathKind?: ProjectPathKind;
   exists: boolean;
   isDirectory: boolean;
   registration: ProjectRegistrationState;
@@ -60,6 +63,8 @@ export interface ProjectReadinessHarnessProbe {
   commandReadiness: CommandReadiness;
   authentication: AuthenticationReadiness;
   source: "detected" | "workspace" | "user";
+  /** Version reported by a read-only probe, when one completed successfully. */
+  version?: string | null;
   /** Optional recovery commands supplied by the effectful probe adapter. */
   installCommand?: readonly string[] | null;
   authCommand?: readonly string[] | null;
@@ -80,6 +85,7 @@ export type ProjectReadinessIssueSeverity = "blocking" | "recoverable";
 
 export type ProjectReadinessIssueCode =
   | "PROJECT_NOT_FOUND"
+  | "PROJECT_PATH_UNVERIFIED"
   | "PROJECT_NOT_DIRECTORY"
   | "PROJECT_REGISTRATION_STALE"
   | "PROJECT_ROOT_UNRESOLVED"
@@ -155,6 +161,7 @@ export interface ProjectHarnessReadiness {
   label: string;
   command: readonly string[];
   source: ProjectReadinessHarnessProbe["source"];
+  version: string | null;
   state: HarnessReadinessState;
   usable: boolean;
   agentCapable: boolean;
@@ -188,6 +195,7 @@ export interface ProjectReadinessResult {
     name: string | null;
     identityKey: string | null;
     identitySource: ProjectReadinessProjectProbe["identitySource"];
+    pathKind: ProjectPathKind;
     registration: ProjectRegistrationState;
   };
   capabilities: {
@@ -245,9 +253,20 @@ function commandOrNull(command: readonly string[] | null | undefined): readonly 
   return command && command.length > 0 ? [...command] : null;
 }
 
+function hasValidExecutableToken(command: readonly string[]): boolean {
+  const executable = command[0];
+  return (
+    executable !== undefined &&
+    executable.length > 0 &&
+    executable === executable.trim() &&
+    !executable.includes("\0") &&
+    !/[\r\n]/u.test(executable)
+  );
+}
+
 function classifyHarness(probe: ProjectReadinessHarnessProbe): ProjectHarnessReadiness {
   let state: HarnessReadinessState;
-  if (probe.command.length === 0 || probe.commandReadiness === "invalid") {
+  if (!hasValidExecutableToken(probe.command) || probe.commandReadiness === "invalid") {
     state = "command-invalid";
   } else if (probe.installation === "missing") {
     state = "install-required";
@@ -269,6 +288,7 @@ function classifyHarness(probe: ProjectReadinessHarnessProbe): ProjectHarnessRea
     label: probe.label,
     command: [...probe.command],
     source: probe.source,
+    version: probe.version ?? null,
     state,
     usable: state === "ready",
     agentCapable: probe.kind !== "shell",
@@ -482,13 +502,43 @@ function createLaunchPlan(
 export function classifyProjectReadiness(probe: ProjectReadinessProbe): ProjectReadinessResult {
   const state: MutableClassification = { issues: [], actions: [] };
   const platformSupported = SUPPORTED_PLATFORMS.has(probe.platform.os);
-  const projectDirectoryPresent = probe.project.exists && probe.project.isDirectory;
+  const projectPathKind: ProjectPathKind =
+    probe.project.pathKind ??
+    (probe.project.exists ? (probe.project.isDirectory ? "directory" : "other") : "missing");
+  const projectDirectoryPresent =
+    projectPathKind === "directory" && probe.project.exists && probe.project.isDirectory;
   const hasProjectRoot = probe.project.root !== null && probe.project.root.trim().length > 0;
   const hasIdentityKey =
     probe.project.identityKey !== null && probe.project.identityKey.trim().length > 0;
   const hasIdentitySource = probe.project.identitySource !== null;
 
-  if (!probe.project.exists) {
+  if (projectPathKind === "unknown") {
+    addIssue(
+      state,
+      {
+        code: "PROJECT_PATH_UNVERIFIED",
+        severity: "blocking",
+        message: `Project path could not be inspected: ${probe.project.requestedPath}`,
+        harnessId: null,
+      },
+      [
+        {
+          kind: "refresh-project",
+          label: "Check project path again",
+          target: "project",
+          harnessId: null,
+          command: null,
+        },
+        {
+          kind: "choose-project",
+          label: "Choose another project",
+          target: "project",
+          harnessId: null,
+          command: null,
+        },
+      ],
+    );
+  } else if (projectPathKind === "missing") {
     if (probe.project.registration === "stale") {
       addIssue(
         state,
@@ -535,7 +585,7 @@ export function classifyProjectReadiness(probe: ProjectReadinessProbe): ProjectR
         ],
       );
     }
-  } else if (!probe.project.isDirectory) {
+  } else if (projectPathKind === "other") {
     addIssue(
       state,
       {
@@ -711,7 +761,7 @@ export function classifyProjectReadiness(probe: ProjectReadinessProbe): ProjectR
     );
   }
 
-  const shellCommandInvalid = probe.shell.command.length === 0;
+  const shellCommandInvalid = !hasValidExecutableToken(probe.shell.command);
   if (shellCommandInvalid) {
     addIssue(
       state,
@@ -945,6 +995,7 @@ export function classifyProjectReadiness(probe: ProjectReadinessProbe): ProjectR
       name: probe.project.name,
       identityKey: probe.project.identityKey,
       identitySource: probe.project.identitySource,
+      pathKind: projectPathKind,
       registration: probe.project.registration,
     },
     capabilities: {
