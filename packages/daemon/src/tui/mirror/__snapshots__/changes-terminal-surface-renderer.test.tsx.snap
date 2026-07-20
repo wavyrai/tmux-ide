@@ -1,0 +1,267 @@
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
+
+exports[`Changes and terminal surfaces OpenTUI renderer renders Changes %sx%s with projected chip parity 1`] = `
+" Changes 3 files · +18 -3 │ app▏                     │                    ○ [r]
+ ready
+  ○ Staged (1)                   diff --git a/src/app.ts b/src/app.ts
+M○  README.md +2                 @@ -1 +1 @@
+  ○ Unstaged (1)                 -old
+M●  src/app.… +12 -3 · [s stage] +new
+  ○ Untracked (1)                 context
+?○  notes/todo.md +4
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ ]/[ hunk · / filter · ^e e ○ [s stage]   ○ [u unstage]   ○ [S all]   ○ [U all]"
+`;
+
+exports[`Changes and terminal surfaces OpenTUI renderer renders Changes %sx%s with projected chip parity 2`] = `
+" Changes 3 files · +18 -3 │ app▏                     │                                                    ○ [r refresh]
+ ready
+  ○ Staged (1)                          diff --git a/src/app.ts b/src/app.ts
+M○  README.md +2                        @@ -1 +1 @@
+  ○ Unstaged (1)                        -old
+M●  src/app.ts +12 -3       · [s stage] +new
+  ○ Untracked (1)                        context
+?○  notes/todo.md +4
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ ]/[ hunk · ^e edit · / filter · r refresh · ^g home · ^q quit      ○ [s stage]   ○ [u unstage]   ○ [S all]   ○ [U all]"
+`;
+
+exports[`Changes and terminal surfaces OpenTUI renderer renders Changes %sx%s with projected chip parity 3`] = `
+" Changes 3 files · +18 -3 │ app▏                     │                                                                                                                                    ○ [r refresh]
+ ready
+  ○ Staged (1)                                      diff --git a/src/app.ts b/src/app.ts
+M○  README.md +2                                    @@ -1 +1 @@
+  ○ Unstaged (1)                                    -old
+M●  src/app.ts +12 -3                   · [s stage] +new
+  ○ Untracked (1)                                    context
+?○  notes/todo.md +4
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ ]/[ hunk · ^e edit · / filter · r refresh · ^g home · ^q quit                                                                                      ○ [s stage]   ○ [u unstage]   ○ [S all]   ○ [U all]"
+`;
+
+exports[`Changes and terminal surfaces OpenTUI renderer renders terminal chrome %sx%s without expanding body cells 1`] = `
+" api server                  ● [⛶ zoom]   ○ [+ split]   ● [/ search]   ● [SYNC]
+framebuffer body stays opaque
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ focused · attention · zoomed · ↑12/120 · workspace %7"
+`;
+
+exports[`Changes and terminal surfaces OpenTUI renderer renders terminal chrome %sx%s without expanding body cells 2`] = `
+" api server                                                          ● [⛶ zoom]   ○ [+ split]   ● [/ search]   ● [SYNC]
+framebuffer body stays opaque
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ focused · attention · zoomed · ↑12/120 · workspace %7"
+`;
+
+exports[`Changes and terminal surfaces OpenTUI renderer renders terminal chrome %sx%s without expanding body cells 3`] = `
+" api server                                                                                                                                          ● [⛶ zoom]   ○ [+ split]   ● [/ search]   ● [SYNC]
+framebuffer body stays opaque
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ focused · attention · zoomed · ↑12/120 · workspace %7"
+`;
