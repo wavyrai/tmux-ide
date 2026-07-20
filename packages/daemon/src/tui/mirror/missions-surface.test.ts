@@ -7,6 +7,8 @@ import {
   handleMissionSurfaceKey,
   handleMissionSurfacePointerDown,
   handleMissionSurfaceScroll,
+  missionSurfaceCommandsForHit,
+  missionSurfaceCommandsForKey,
   type MissionSurfaceControllerActions,
 } from "./missions-surface-controller.ts";
 
@@ -51,6 +53,83 @@ function actionsFor(modelRef: { model: ReturnType<typeof defaultMissionWorkspace
 }
 
 describe("missions surface boundary", () => {
+  it("exposes stable local command descriptors for keyboard and mouse actions", () => {
+    const state = {
+      model: defaultMissionWorkspaceModel("mis_demo", "tsk_demo"),
+      snapshot: snapshot(),
+      layoutSize,
+      persistedTaskId: "tsk_saved",
+    };
+
+    expect(
+      missionSurfaceCommandsForKey(
+        { name: "return", ctrl: false, meta: false, shift: false },
+        state,
+      ),
+    ).toEqual([
+      expect.objectContaining({
+        id: "mission.detail.open",
+        label: "Open mission detail",
+        role: "open",
+        disabled: false,
+        payload: {
+          type: "open-detail",
+          persist: true,
+          selectedMissionId: "mis_demo",
+          selectedTaskId: "tsk_demo",
+        },
+        metadata: { source: "keyboard", target: undefined },
+      }),
+    ]);
+
+    expect(
+      missionSurfaceCommandsForHit(
+        { kind: "card", missionId: "mis_demo", column: "planned", index: 0, hoverKey: 0 },
+        state,
+      ),
+    ).toEqual([
+      expect.objectContaining({
+        id: "mission.select.card",
+        role: "navigate",
+        payload: expect.objectContaining({ type: "select-hit" }),
+        metadata: { source: "mouse", target: "card" },
+      }),
+      expect.objectContaining({
+        id: "mission.detail.open",
+        role: "open",
+        payload: expect.objectContaining({
+          type: "open-detail",
+          persist: false,
+          selectedMissionId: "mis_demo",
+        }),
+        metadata: { source: "mouse", target: undefined },
+      }),
+    ]);
+  });
+
+  it("marks snapshot-dependent commands disabled while keeping global commands available", () => {
+    const state = {
+      model: defaultMissionWorkspaceModel(),
+      snapshot: null,
+      layoutSize,
+      persistedTaskId: null,
+    };
+
+    expect(
+      missionSurfaceCommandsForKey(
+        { name: "down", ctrl: false, meta: false, shift: false },
+        state,
+      )[0],
+    ).toMatchObject({
+      id: "mission.selection.down",
+      disabled: true,
+      disabledReason: "mission snapshot is not loaded",
+    });
+    expect(
+      missionSurfaceCommandsForKey({ name: "r", ctrl: false, meta: false, shift: false }, state)[0],
+    ).toMatchObject({ id: "mission.refresh", disabled: false });
+  });
+
   it("maps keys to explicit navigation and action dependencies", () => {
     const state = {
       model: defaultMissionWorkspaceModel("mis_demo"),
