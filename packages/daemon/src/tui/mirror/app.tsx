@@ -304,19 +304,23 @@ import {
 import {
   paletteRows,
   paletteActionKey,
-  paletteRowText,
-  firstPaletteAction,
-  stepPaletteRow,
   parseBufferList,
   palettePos,
   paletteRowAt,
   paletteContains,
   clampPaletteTop,
   type PaletteAction,
-  type PaletteRow,
   type PaletteGeom,
   type TmuxBuffer,
 } from "./palette.ts";
+import {
+  adaptPaletteRowsToCommands,
+  appendPalettePaste,
+  ensurePaletteSelectionVisible,
+  firstEnabledPaletteCommandId,
+  paletteActionForCommand,
+  stepEnabledPaletteCommandId,
+} from "./palette-surface-adapter.ts";
 import {
   PanelHostLoadGeneration,
   findHostedViewById,
@@ -350,6 +354,11 @@ import {
   projectAgentTerminalCanvas,
 } from "./workspace/agent-terminal-canvas.ts";
 import { AgentTerminalCanvas } from "./workspace/agent-terminal-canvas-view.tsx";
+import {
+  commandPaletteHitTest,
+  projectCommandPalette,
+} from "./workspace/command-palette-surface.ts";
+import { CommandPaletteSurface } from "./workspace/command-palette-surface.tsx";
 import {
   dispatchTerminalPaneChromePointerIntent,
   projectTerminalPaneChrome,
@@ -3920,16 +3929,12 @@ try {
       createSession(raw, selectedHomeDir());
     };
 
-    // ── COMMAND PALETTE (M18.4, mouse-complete M21.9) ───────────────────────
-    // A centered overlay (F5 / ^p / the tab bar's palette chip) — a fuzzy input
-    // line + result list over the action model in palette.ts. The overlay is
-    // late-mounted inside <Show> and carries NO per-node handlers (central-
-    // routing discipline): `route` checks `paletteOpen()` right after the menu
-    // and hit-tests rows with the pure palette geometry (palettePos/paletteRowAt
-    // — the same math the render places the box with). Motion moves the
-    // selection (the selection highlight IS the hover feedback, like the context
-    // menu), a left press on a row runs it, the wheel scrolls `paletteTop`, and
-    // a press outside dismisses. Keyboard behavior is unchanged.
+    // ── COMMAND PALETTE (native surface; root-owned input) ──────────────────
+    // F5 / ^p / host-aware ⌘K opens the native CommandPaletteSurface. The
+    // existing ranked PaletteAction catalog remains canonical; the pure adapter
+    // adds semantic icons/details/availability and stable selection ids. The
+    // component owns no handlers: this root routes keyboard, paste, projected
+    // mouse hits, lifecycle, and execution through the existing action executor.
     const [paletteOpen, setPaletteOpen] = createSignal(false);
     const [paletteQuery, setPaletteQuery] = createSignal("");
     // "Go to file:" source (M24.6): the workspace's ignore-respecting file list,
@@ -3976,7 +3981,13 @@ try {
           .catch(() => setRepoFiles([]));
       });
     };
+    // Buffer selection remains a compact numeric second-level concern. The
+    // command list uses stable semantic ids so re-ranking/query edits never
+    // accidentally execute a different row at the same screen coordinate.
     const [paletteSel, setPaletteSel] = createSignal(0);
+    const [paletteSelectedCommandId, setPaletteSelectedCommandId] = createSignal<string | null>(
+      null,
+    );
     // The wheel-scrolled window top of the result list (0 unless scrolled — the
     // keyboard never moves it, so keyboard-only sessions render exactly as
     // before). Reset wherever the list identity changes (query edits, level
@@ -4007,25 +4018,59 @@ try {
         },
       ),
     );
-    /** The current palette LIST length — buffers level when open, else rows. */
-    const paletteCount = () => paletteBuffers()?.length ?? paletteRowList().length;
-    /** The palette box geometry as placed by the render, for the router. */
+    const paletteEntries = createMemo(() => {
+      // EditBuffer is an imperative native object, so subscribe to its explicit
+      // revision before deriving availability for Save.
+      editorRev();
+      return adaptPaletteRowsToCommands(paletteRowList(), {
+        currentTab: tab(),
+        currentViewId: activeViewId(),
+        currentSession: contextSession(),
+        syncOn: syncOn(),
+        editorAvailable:
+          Boolean(editBuffer) || (mode() === "diff" && Boolean(diffVisibleFiles()[diffSel()])),
+        fallbackGroup: paletteQuery().trim() ? "Results" : "Commands",
+      });
+    });
+    const paletteProjection = createMemo(() =>
+      projectCommandPalette({
+        width: dims().width,
+        height: dims().height,
+        query: paletteQuery(),
+        commands: paletteEntries().map((entry) => entry.descriptor),
+        selectedCommandId: paletteSelectedCommandId(),
+        scrollTop: paletteTop(),
+      }),
+    );
+    /** The legacy centered geometry is now exclusively the paste-buffer level. */
     const paletteGeom = (): PaletteGeom => {
       const { left, top } = palettePos(dims().width, dims().height, paletteW());
+      const count = paletteBuffers()?.length ?? 0;
       return {
         left,
         top,
         width: paletteW(),
-        visibleRows: Math.min(PALETTE_ROWS, Math.max(0, paletteCount() - paletteTop())),
+        visibleRows: Math.min(PALETTE_ROWS, Math.max(0, count - paletteTop())),
       };
+    };
+    const resetPaletteSelection = () => {
+      setPaletteTop(0);
+      setPaletteSelectedCommandId(firstEnabledPaletteCommandId(paletteEntries()));
+    };
+    const setPaletteQueryAndReset = (next: string) => {
+      setPaletteQuery(next);
+      resetPaletteSelection();
+    };
+    const selectPaletteCommand = (commandId: string | null) => {
+      setPaletteSelectedCommandId(commandId);
+      setPaletteTop(
+        ensurePaletteSelectionVisible(paletteProjection(), paletteEntries(), commandId),
+      );
     };
     const openPalette = () => {
       setPaletteQuery("");
-      setPaletteTop(0);
       setPaletteBuffers(null); // always open on the action list, never mid-picker
-      // The selection starts on the first ACTION row — under grouping that is
-      // the row after the "recent" header, keeping F5 → Enter one gesture.
-      setPaletteSel(Math.max(0, firstPaletteAction(paletteRowList())));
+      resetPaletteSelection();
       setHoverIf(null); // the overlay owns the pointer; drop any underlying tint
       loadRepoFiles(); // refresh the "Go to file:" source (async, M24.6)
       setPaletteOpen(true);
@@ -4278,24 +4323,23 @@ try {
         }
         return;
       }
-      const rows = paletteRowList();
       if (evt.name === "escape") {
         setPaletteOpen(false);
       } else if (evt.name === "return") {
-        const r = rows[Math.min(paletteSel(), rows.length - 1)];
-        if (r?.type === "action") runPaletteAction(r.action);
+        const action = paletteActionForCommand(paletteEntries(), paletteSelectedCommandId());
+        if (action) runPaletteAction(action);
       } else if (evt.name === "up") {
-        setPaletteSel((s) => stepPaletteRow(rows, s, -1));
+        selectPaletteCommand(
+          stepEnabledPaletteCommandId(paletteEntries(), paletteSelectedCommandId(), -1),
+        );
       } else if (evt.name === "down") {
-        setPaletteSel((s) => stepPaletteRow(rows, s, 1));
+        selectPaletteCommand(
+          stepEnabledPaletteCommandId(paletteEntries(), paletteSelectedCommandId(), 1),
+        );
       } else if (evt.name === "backspace") {
-        setPaletteQuery((q) => q.slice(0, -1));
-        setPaletteSel(Math.max(0, firstPaletteAction(paletteRowList())));
-        setPaletteTop(0);
+        setPaletteQueryAndReset(paletteQuery().slice(0, -1));
       } else if (evt.name.length === 1 && !evt.ctrl && !evt.meta) {
-        setPaletteQuery((q) => q + (evt.shift ? evt.name.toUpperCase() : evt.name));
-        setPaletteSel(Math.max(0, firstPaletteAction(paletteRowList())));
-        setPaletteTop(0);
+        setPaletteQueryAndReset(paletteQuery() + (evt.shift ? evt.name.toUpperCase() : evt.name));
       }
     };
 
@@ -6143,7 +6187,19 @@ try {
     // EDITOR inserts at the cursor as ONE undo unit; the TERMINAL forwards it to
     // the focused pane re-wrapped in bracketed markers (so apps see a paste, not
     // keystrokes); the input coalescer chunks it under tmux's per-command cap.
-    usePaste((e) => pasteIntoFocused(decodePasteBytes(e.bytes)));
+    usePaste((e) => {
+      const text = decodePasteBytes(e.bytes);
+      if (paletteOpen()) {
+        // The root remains the only paste listener. An action-level paste edits
+        // the query; the buffer picker consumes it. Neither can leak bytes into
+        // a terminal hidden underneath the modal surface.
+        if (paletteBuffers() === null) {
+          setPaletteQueryAndReset(appendPalettePaste(paletteQuery(), text));
+        }
+        return;
+      }
+      pasteIntoFocused(text);
+    });
 
     /** The per-window strip's x-spans — one segment per tmux window, laid out from
      *  the main column's first cell (SIDEBAR_W + paddingLeft 1) with a 1-cell gap,
@@ -6975,20 +7031,52 @@ try {
         else if (!pointInMenu(parentGeom, x, y)) closeMenu();
         return;
       }
-      // While the PALETTE is open it owns pointer routing (M21.9), mirroring the
-      // menu above: motion over a result row moves the selection (the selection
-      // highlight is the hover feedback), the wheel scrolls the visible window,
-      // a left press on a row runs it (action list or paste-buffer level), a
-      // press anywhere else inside the box is a no-op, and a press OUTSIDE
-      // dismisses. Geometry comes from the same pure math the render places the
-      // box with (palettePos/paletteRowAt/paletteContains).
+      // While the PALETTE is open it owns pointer routing. Action-level hits use
+      // the native surface projection; the retained paste-buffer second level
+      // uses its smaller legacy geometry. Both stay handler-free and modal.
       if (paletteOpen()) {
+        const bufs = paletteBuffers();
+        if (bufs === null) {
+          const projection = paletteProjection();
+          if (type === "scroll") {
+            const dir = e.scroll?.direction;
+            if (dir === "up" || dir === "down") {
+              const step = dir === "up" ? -1 : 1;
+              setPaletteTop((top) =>
+                Math.max(0, Math.min(top + step, Math.max(0, projection.contentRowCount - 1))),
+              );
+            }
+            return;
+          }
+          const hit = commandPaletteHitTest(projection, x, y);
+          if (type === "move" || type === "over" || type === "drag") {
+            if (hit?.kind === "command" && !hit.disabled) {
+              setPaletteSelectedCommandId(hit.commandId);
+            }
+            return;
+          }
+          if (type !== "down") return;
+          if (hit?.kind === "command") {
+            if (e.button === 2 || hit.disabled) return;
+            setPaletteSelectedCommandId(hit.commandId);
+            const action = paletteActionForCommand(paletteEntries(), hit.commandId);
+            if (action) runPaletteAction(action);
+            return;
+          }
+          if (hit?.kind === "retry") {
+            if (e.button !== 2) openPalette();
+            return;
+          }
+          if (hit === null) setPaletteOpen(false);
+          return;
+        }
+
         const g = paletteGeom();
         if (type === "scroll") {
           const dir = e.scroll?.direction;
           if (dir === "up" || dir === "down") {
             const step = dir === "up" ? -1 : 1;
-            setPaletteTop((t) => clampPaletteTop(t + step, paletteCount(), PALETTE_ROWS));
+            setPaletteTop((t) => clampPaletteTop(t + step, bufs.length, PALETTE_ROWS));
           }
           return;
         }
@@ -6998,9 +7086,7 @@ try {
           // selection where it was, like the box chrome.
           if (ri >= 0) {
             const abs = paletteTop() + ri;
-            if (paletteBuffers() !== null || paletteRowList()[abs]?.type === "action") {
-              setPaletteSel(abs);
-            }
+            setPaletteSel(abs);
           }
           return;
         }
@@ -7009,18 +7095,9 @@ try {
         if (ri >= 0) {
           if (e.button === 2) return; // right press on a row: no-op, stay open
           const abs = paletteTop() + ri;
-          const bufs = paletteBuffers();
-          if (bufs !== null) {
-            setPaletteSel(abs);
-            const b = bufs[abs];
-            if (b) pasteBuffer(b.name);
-          } else {
-            const r = paletteRowList()[abs];
-            if (r?.type === "action") {
-              setPaletteSel(abs);
-              runPaletteAction(r.action);
-            } // a header click is a no-op — the palette stays open
-          }
+          setPaletteSel(abs);
+          const b = bufs[abs];
+          if (b) pasteBuffer(b.name);
           return;
         }
         if (!paletteContains(g, x, y)) setPaletteOpen(false);
@@ -7948,78 +8025,27 @@ try {
             />
           </box>
         </box>
-        {/* COMMAND PALETTE overlay (M18.4; mouse-complete M21.9) — centered.
-          Late-mounted inside <Show> and still carries NO per-node handlers:
-          clicks bubble to the root box, whose `route` checks `paletteOpen()`
-          and hit-tests rows against the SAME pure geometry placing this box
-          (palettePos). Type to fuzzy-filter; up/down or pointer motion move;
-          enter or a row click runs; wheel scrolls (`paletteTop` windows the
-          slice); esc or an outside click closes. */}
+        {/* Native COMMAND PALETTE overlay. Presentation stays handler-free;
+          the root uses the same projection for render and pointer hit-testing.
+          The original tmux paste-buffer picker remains the second level. */}
         <Show when={paletteOpen()}>
-          <box
-            position="absolute"
-            left={palettePos(dims().width, dims().height, paletteW()).left}
-            top={palettePos(dims().width, dims().height, paletteW()).top}
-            width={paletteW()}
-            flexDirection="column"
-            backgroundColor={PALETTE_BG}
-            border
-            borderColor={PALETTE_BORDER}
-            paddingLeft={1}
-            paddingRight={1}
+          <Show
+            when={paletteBuffers() !== null}
+            fallback={
+              <CommandPaletteSurface theme={semanticTheme()} projection={paletteProjection()} />
+            }
           >
-            {/* Second level (paste-buffer picker) when `paletteBuffers` is set;
-              otherwise the normal fuzzy action list. Same late-mount discipline —
-              no per-row handlers; paletteKey drives both. */}
-            <Show
-              when={paletteBuffers() !== null}
-              fallback={
-                <>
-                  <box flexDirection="row">
-                    <text fg={ACCENT} attributes={1}>
-                      {"⌘ "}
-                    </text>
-                    <text fg={DEFAULT_FG}>{`${paletteQuery()}▏`}</text>
-                  </box>
-                  <text fg={MUTED}>{"─".repeat(paletteW() - 4)}</text>
-                  {/* Rows (M24.4): group headers render as inert muted lines;
-                    action rows carry the selection prefix + a right-aligned
-                    keycap (paletteRowText keeps the keycap inside the width
-                    however long the label). Hit-testing stays row-level — the
-                    router skips headers by row type. */}
-                  <For each={paletteRowList().slice(paletteTop(), paletteTop() + PALETTE_ROWS)}>
-                    {(r, i) => (
-                      <box
-                        height={1}
-                        backgroundColor={
-                          r.type === "action" && paletteTop() + i() === paletteSel()
-                            ? TAB_ACTIVE_BG
-                            : PALETTE_BG
-                        }
-                      >
-                        <Show
-                          when={r.type === "action"}
-                          fallback={
-                            <text fg={MUTED}>{`— ${r.type === "header" ? r.label : ""}`}</text>
-                          }
-                        >
-                          <text fg={paletteTop() + i() === paletteSel() ? DEFAULT_FG : MUTED}>
-                            {(paletteTop() + i() === paletteSel() ? "› " : "  ") +
-                              paletteRowText(
-                                r.type === "action" ? r.action.label : "",
-                                r.type === "action" ? r.shortcut : null,
-                                paletteW() - 6,
-                              )}
-                          </text>
-                        </Show>
-                      </box>
-                    )}
-                  </For>
-                  <Show when={paletteRowList().length === 0}>
-                    <text fg={MUTED}>{"  no matches"}</text>
-                  </Show>
-                </>
-              }
+            <box
+              position="absolute"
+              left={palettePos(dims().width, dims().height, paletteW()).left}
+              top={palettePos(dims().width, dims().height, paletteW()).top}
+              width={paletteW()}
+              flexDirection="column"
+              backgroundColor={PALETTE_BG}
+              border
+              borderColor={PALETTE_BORDER}
+              paddingLeft={1}
+              paddingRight={1}
             >
               <box flexDirection="row">
                 <text fg={ACCENT} attributes={1}>
@@ -8048,8 +8074,8 @@ try {
               <Show when={paletteBuffers()!.length === 0}>
                 <text fg={MUTED}>{"  no buffers"}</text>
               </Show>
-            </Show>
-          </box>
+            </box>
+          </Show>
         </Show>
         {/* RIGHT-CLICK CONTEXT MENU overlay (M19.2) — opened at the pointer,
           clamped on-screen. Late-mounted inside <Show>, so it carries NO mouse

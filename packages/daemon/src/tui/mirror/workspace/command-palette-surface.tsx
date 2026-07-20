@@ -259,7 +259,9 @@ export function CommandPaletteSurface(props: CommandPaletteSurfaceProps) {
     <box
       width={props.projection.width}
       height={props.projection.height}
-      position="relative"
+      position="absolute"
+      left={0}
+      top={0}
       overflow="hidden"
     >
       <box
