@@ -23,6 +23,7 @@ import {
 } from "@tmux-ide/contracts";
 
 import {
+  ProjectRuntimeWriterLockTimeoutError,
   RevisionConflictError,
   type ProjectRuntimeRepository,
 } from "./project-runtime-repository.ts";
@@ -510,123 +511,119 @@ export function writeWorkspaceStateWithRetry(
   }
 
   try {
-    const outcome = withWorkspaceStateLockOutcome<WriteWorkspaceStateResult>(
-      request.repository,
-      request.lock,
-      () => {
-        const diagnostics: WorkspaceStateRepositoryDiagnostic[] = [];
-        const retries = boundedInteger(request.maxRevisionRetries, 2, 0, 8);
-        for (let attempt = 0; attempt <= retries; attempt += 1) {
-          const latest = loadWorkspaceState(request.repository);
-          if (latest.writeProtected) {
-            return {
-              ...latest,
-              saved: false,
-              diagnostics: [
-                ...latest.diagnostics,
-                diagnostic(
-                  "WRITE_PROTECTED",
-                  WORKSPACE_STATE_PATH,
-                  "workspace state was preserved because its current payload is not safe to overwrite",
-                ),
-              ],
-            };
-          }
-          if (
-            request.revision !== latest.revision &&
-            !diagnostics.some((entry) => entry.code === "STALE")
-          ) {
-            diagnostics.push(
+    const outcome = request.repository.withWriterLockOutcome(request.lock, (writer) => {
+      const diagnostics: WorkspaceStateRepositoryDiagnostic[] = [];
+      const retries = boundedInteger(request.maxRevisionRetries, 2, 0, 8);
+      for (let attempt = 0; attempt <= retries; attempt += 1) {
+        const latest = loadWorkspaceState(request.repository);
+        if (latest.writeProtected) {
+          return {
+            ...latest,
+            saved: false,
+            diagnostics: [
+              ...latest.diagnostics,
               diagnostic(
-                "STALE",
+                "WRITE_PROTECTED",
                 WORKSPACE_STATE_PATH,
-                `merged stale revision ${String(request.revision)} with current revision ${String(
-                  latest.revision,
-                )}`,
+                "workspace state was preserved because its current payload is not safe to overwrite",
               ),
-            );
-          }
-          let merged: WorkspaceStateV1;
-          try {
-            merged = mergeWorkspaceStateForSave(
-              latest.state,
-              validation.data,
-              request.touchedLayoutIds,
-              request.deletedLayoutIds,
-              request.touchedCheckoutKeys,
-              {
-                checkoutIntents: request.checkoutIntents,
-                deletedCheckoutKeys: request.deletedCheckoutKeys,
-                layoutBaseRevisions: request.layoutBaseRevisions,
-                documentIsStale: request.revision !== latest.revision,
-              },
-            );
-          } catch (error) {
-            if (error instanceof WorkspaceStateMergeConflictError) {
-              return {
-                ...latest,
-                saved: false,
-                diagnostics: [
-                  ...latest.diagnostics,
-                  ...diagnostics,
-                  diagnostic("CONFLICT", error.path, error.message),
-                ],
-              };
-            }
-            throw error;
-          }
-          const mergedValidation = WorkspaceStateV1SchemaZ.safeParse(merged);
-          if (!mergedValidation.success) {
-            return {
-              ...latest,
-              saved: false,
-              diagnostics: [
-                ...latest.diagnostics,
-                ...diagnostics,
-                diagnostic(
-                  "INVALID_STATE",
-                  WORKSPACE_STATE_PATH,
-                  mergedValidation.error.issues.map((issue) => issue.message).join("; "),
-                ),
-              ],
-            };
-          }
-          try {
-            const written = request.repository.writeDocument(
-              WORKSPACE_STATE_PATH,
-              JSON.parse(serializeWorkspaceState(mergedValidation.data)),
-              { expectedRevision: latest.revision },
-            );
-            return {
-              state: mergedValidation.data,
-              revision: written.revision,
-              writeProtected: false,
-              saved: true,
-              diagnostics: [
-                ...latest.diagnostics.filter((entry) => entry.code !== "MISSING"),
-                ...diagnostics,
-              ],
-            };
-          } catch (error) {
-            if (error instanceof RevisionConflictError && attempt < retries) continue;
-            return {
-              ...latest,
-              saved: false,
-              diagnostics: [
-                ...latest.diagnostics,
-                ...diagnostics,
-                diagnostic(
-                  "WRITE_FAILED",
-                  WORKSPACE_STATE_PATH,
-                  `workspace state could not be written: ${(error as Error).message}`,
-                ),
-              ],
-            };
-          }
+            ],
+          };
         }
-        throw new Error("unreachable workspace-state retry exhaustion");
-      },
-    );
+        if (
+          request.revision !== latest.revision &&
+          !diagnostics.some((entry) => entry.code === "STALE")
+        ) {
+          diagnostics.push(
+            diagnostic(
+              "STALE",
+              WORKSPACE_STATE_PATH,
+              `merged stale revision ${String(request.revision)} with current revision ${String(
+                latest.revision,
+              )}`,
+            ),
+          );
+        }
+        let merged: WorkspaceStateV1;
+        try {
+          merged = mergeWorkspaceStateForSave(
+            latest.state,
+            validation.data,
+            request.touchedLayoutIds,
+            request.deletedLayoutIds,
+            request.touchedCheckoutKeys,
+            {
+              checkoutIntents: request.checkoutIntents,
+              deletedCheckoutKeys: request.deletedCheckoutKeys,
+              layoutBaseRevisions: request.layoutBaseRevisions,
+              documentIsStale: request.revision !== latest.revision,
+            },
+          );
+        } catch (error) {
+          if (error instanceof WorkspaceStateMergeConflictError) {
+            return {
+              ...latest,
+              saved: false,
+              diagnostics: [
+                ...latest.diagnostics,
+                ...diagnostics,
+                diagnostic("CONFLICT", error.path, error.message),
+              ],
+            };
+          }
+          throw error;
+        }
+        const mergedValidation = WorkspaceStateV1SchemaZ.safeParse(merged);
+        if (!mergedValidation.success) {
+          return {
+            ...latest,
+            saved: false,
+            diagnostics: [
+              ...latest.diagnostics,
+              ...diagnostics,
+              diagnostic(
+                "INVALID_STATE",
+                WORKSPACE_STATE_PATH,
+                mergedValidation.error.issues.map((issue) => issue.message).join("; "),
+              ),
+            ],
+          };
+        }
+        try {
+          const written = writer.writeDocument(
+            WORKSPACE_STATE_PATH,
+            JSON.parse(serializeWorkspaceState(mergedValidation.data)),
+            { expectedRevision: latest.revision },
+          );
+          return {
+            state: mergedValidation.data,
+            revision: written.revision,
+            writeProtected: false,
+            saved: true,
+            diagnostics: [
+              ...latest.diagnostics.filter((entry) => entry.code !== "MISSING"),
+              ...diagnostics,
+            ],
+          };
+        } catch (error) {
+          if (error instanceof RevisionConflictError && attempt < retries) continue;
+          return {
+            ...latest,
+            saved: false,
+            diagnostics: [
+              ...latest.diagnostics,
+              ...diagnostics,
+              diagnostic(
+                "WRITE_FAILED",
+                WORKSPACE_STATE_PATH,
+                `workspace state could not be written: ${(error as Error).message}`,
+              ),
+            ],
+          };
+        }
+      }
+      throw new Error("unreachable workspace-state retry exhaustion");
+    });
     if (!outcome.releaseError) return outcome.value;
     return {
       ...outcome.value,
@@ -641,7 +638,11 @@ export function writeWorkspaceStateWithRetry(
     };
   } catch (error) {
     const loaded = loadWorkspaceState(request.repository);
-    const code = error instanceof WorkspaceStateLockTimeoutError ? "LOCK_TIMEOUT" : "WRITE_FAILED";
+    const code =
+      error instanceof WorkspaceStateLockTimeoutError ||
+      error instanceof ProjectRuntimeWriterLockTimeoutError
+        ? "LOCK_TIMEOUT"
+        : "WRITE_FAILED";
     return {
       ...loaded,
       saved: false,

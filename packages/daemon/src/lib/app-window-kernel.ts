@@ -115,6 +115,137 @@ export function applyAppWindowCommand(
   }
 }
 
+/**
+ * True when reapplying a semantic command would only repeat an outcome already
+ * visible in the durable document. This is used after a CAS retry so commands
+ * such as delete/dock do not fail merely because another writer completed the
+ * same intent first.
+ */
+export function isAppWindowCommandSatisfied(
+  document: AppWindowDocumentV1,
+  command: AppWindowCommand,
+): boolean {
+  const current = requireDocument(document);
+  switch (command.type) {
+    case "window.focus": {
+      if (command.windowId === null) return current.focusedWindowId === null;
+      const id = requireWindowId(current, command.windowId);
+      if (current.focusedWindowId !== id) return false;
+      const window = current.windows[id]!;
+      if (window.placement.mode === "floating") return current.floatingOrder.at(-1) === id;
+      const stack = window.placement.docked
+        ? findStack(current.dockRoot, window.placement.docked.stackId)
+        : null;
+      return stack?.activeWindowId === id;
+    }
+    case "window.float": {
+      const id = requireWindowId(current, command.windowId);
+      const window = current.windows[id]!;
+      if (
+        window.placement.mode !== "floating" ||
+        !window.placement.floating ||
+        current.focusedWindowId !== id ||
+        current.floatingOrder.at(-1) !== id
+      ) {
+        return false;
+      }
+      return command.rect === undefined
+        ? true
+        : sameRect(window.placement.floating, normalizeRect(command.rect));
+    }
+    case "window.dock": {
+      const id = requireWindowId(current, command.windowId);
+      const window = current.windows[id]!;
+      if (window.placement.mode !== "docked" || !window.placement.docked) return false;
+      if (command.stackId !== undefined) {
+        const stackId = requireId(command.stackId, "$.stackId");
+        if (!findStack(current.dockRoot, stackId)) {
+          throw new AppWindowKernelError(
+            "STACK_NOT_FOUND",
+            `$.dockRoot.${stackId}`,
+            `unknown app window stack "${stackId}"`,
+          );
+        }
+        if (window.placement.docked.stackId !== stackId) return false;
+      }
+      const stack = findStack(current.dockRoot, window.placement.docked.stackId);
+      if (!stack || stack.activeWindowId !== id || current.focusedWindowId !== id) return false;
+      if (command.index === undefined) return true;
+      requireNonnegativeIndex(command.index, "$.index", "dock index must be nonnegative");
+      return stack.windowIds.indexOf(id) === Math.min(command.index, stack.windowIds.length - 1);
+    }
+    case "window.move": {
+      const [, , rect] = requireFloatingWindow(current, command.windowId);
+      return (
+        rect.x === boundedCoordinate(command.x, "$.x") &&
+        rect.y === boundedCoordinate(command.y, "$.y")
+      );
+    }
+    case "window.resize": {
+      const [, , rect] = requireFloatingWindow(current, command.windowId);
+      return (
+        rect.width === boundedExtent(command.width, APP_WINDOW_FLOAT_MIN_WIDTH, "$.width") &&
+        rect.height === boundedExtent(command.height, APP_WINDOW_FLOAT_MIN_HEIGHT, "$.height")
+      );
+    }
+    case "stack.activate": {
+      const stackId = requireId(command.stackId, "$.stackId");
+      const windowId = requireWindowId(current, command.windowId);
+      const stack = requireStack(current.dockRoot, stackId);
+      if (!stack.windowIds.includes(windowId)) {
+        throw new AppWindowKernelError(
+          "WINDOW_NOT_IN_STACK",
+          `$.dockRoot.${stackId}`,
+          `window "${windowId}" is not in stack "${stackId}"`,
+        );
+      }
+      return stack.activeWindowId === windowId && current.focusedWindowId === windowId;
+    }
+    case "stack.reorder": {
+      const stackId = requireId(command.stackId, "$.stackId");
+      const windowId = requireWindowId(current, command.windowId);
+      const stack = requireStack(current.dockRoot, stackId);
+      if (!stack.windowIds.includes(windowId)) {
+        throw new AppWindowKernelError(
+          "WINDOW_NOT_IN_STACK",
+          `$.dockRoot.${stackId}`,
+          `window "${windowId}" is not in stack "${stackId}"`,
+        );
+      }
+      requireNonnegativeIndex(command.index, "$.index", "index must be nonnegative");
+      return (
+        stack.windowIds.indexOf(windowId) === Math.min(command.index, stack.windowIds.length - 1)
+      );
+    }
+    case "layout.save": {
+      const id = requireId(command.layoutId, "$.layoutId");
+      const layout = Object.hasOwn(current.layouts, id) ? current.layouts[id] : null;
+      return Boolean(
+        layout &&
+        layout.name === command.name &&
+        layout.description === (command.description ?? null) &&
+        current.activeLayoutId === id &&
+        sameScene(layout.scene, current),
+      );
+    }
+    case "layout.restore": {
+      const id = requireId(command.layoutId, "$.layoutId");
+      const layout = Object.hasOwn(current.layouts, id) ? current.layouts[id] : null;
+      if (!layout) return false;
+      return current.activeLayoutId === id && sameScene(layout.scene, current);
+    }
+    case "layout.rename": {
+      const id = requireId(command.layoutId, "$.layoutId");
+      const layout = Object.hasOwn(current.layouts, id) ? current.layouts[id] : null;
+      return layout?.name === command.name;
+    }
+    case "layout.delete": {
+      const id = requireId(command.layoutId, "$.layoutId");
+      return !Object.hasOwn(current.layouts, id);
+    }
+  }
+}
+
 function floatWindow(
   current: AppWindowDocumentV1,
   command: Extract<AppWindowCommand, { type: "window.float" }>,
@@ -122,13 +253,6 @@ function floatWindow(
 ): AppWindowDocumentV1 {
   const id = requireWindowId(current, command.windowId);
   const window = current.windows[id]!;
-  if (window.placement.mode !== "docked") {
-    throw new AppWindowKernelError(
-      "INVALID_PLACEMENT",
-      `$.windows.${id}.placement`,
-      `window "${id}" is already floating`,
-    );
-  }
   const rect = normalizeRect(
     command.rect ?? window.placement.floating ?? { x: 2, y: 2, width: 80, height: 24 },
   );
@@ -158,13 +282,6 @@ function dockWindow(
 ): AppWindowDocumentV1 {
   const id = requireWindowId(current, command.windowId);
   const window = current.windows[id]!;
-  if (window.placement.mode !== "floating") {
-    throw new AppWindowKernelError(
-      "INVALID_PLACEMENT",
-      `$.windows.${id}.placement`,
-      `window "${id}" is already docked`,
-    );
-  }
   const requestedStackId =
     command.stackId !== undefined
       ? requireId(command.stackId, "$.stackId")
@@ -176,11 +293,16 @@ function dockWindow(
       `unknown app window stack "${requestedStackId}"`,
     );
   }
-  const existingFallback = firstStackId(current.dockRoot);
+  const dockRootWithoutWindow = removeDockWindow(current.dockRoot, id);
+  const existingFallback = firstStackId(dockRootWithoutWindow);
+  const removedFromRequestedStack =
+    window.placement.mode === "docked" && window.placement.docked?.stackId === requestedStackId;
   const targetStackId =
-    (requestedStackId && findStack(current.dockRoot, requestedStackId)
+    (requestedStackId && findStack(dockRootWithoutWindow, requestedStackId)
       ? requestedStackId
-      : existingFallback) ?? uniqueRootStackId(current.dockRoot);
+      : removedFromRequestedStack
+        ? requestedStackId
+        : existingFallback) ?? uniqueRootStackId(dockRootWithoutWindow);
   const rememberedIndex =
     command.index ?? window.placement.docked?.index ?? Number.MAX_SAFE_INTEGER;
   if (!Number.isInteger(rememberedIndex) || rememberedIndex < 0) {
@@ -199,8 +321,8 @@ function dockWindow(
       floating: window.placement.floating,
     },
   };
-  let dockRoot = current.dockRoot
-    ? insertDockWindow(current.dockRoot, targetStackId, id, rememberedIndex)
+  let dockRoot = dockRootWithoutWindow
+    ? insertDockWindow(dockRootWithoutWindow, targetStackId, id, rememberedIndex)
     : {
         type: "stack" as const,
         id: targetStackId,
@@ -538,6 +660,49 @@ function normalizeRect(rect: AppWindowRect): AppWindowRect {
     width: boundedExtent(rect.width, APP_WINDOW_FLOAT_MIN_WIDTH, "$.rect.width"),
     height: boundedExtent(rect.height, APP_WINDOW_FLOAT_MIN_HEIGHT, "$.rect.height"),
   };
+}
+
+function sameRect(left: AppWindowRect, right: AppWindowRect): boolean {
+  return (
+    left.x === right.x &&
+    left.y === right.y &&
+    left.width === right.width &&
+    left.height === right.height
+  );
+}
+
+function sameScene(
+  left: {
+    windows: AppWindowDocumentV1["windows"];
+    dockRoot: AppWindowDocumentV1["dockRoot"];
+    dockState: AppWindowDocumentV1["dockState"];
+    floatingOrder: AppWindowDocumentV1["floatingOrder"];
+    focusedWindowId: AppWindowDocumentV1["focusedWindowId"];
+  },
+  right: AppWindowDocumentV1,
+): boolean {
+  return (
+    JSON.stringify({
+      windows: left.windows,
+      dockRoot: left.dockRoot,
+      dockState: left.dockState,
+      floatingOrder: left.floatingOrder,
+      focusedWindowId: left.focusedWindowId,
+    }) ===
+    JSON.stringify({
+      windows: right.windows,
+      dockRoot: right.dockRoot,
+      dockState: right.dockState,
+      floatingOrder: right.floatingOrder,
+      focusedWindowId: right.focusedWindowId,
+    })
+  );
+}
+
+function requireNonnegativeIndex(value: number, path: string, message: string): void {
+  if (!Number.isInteger(value) || value < 0) {
+    throw new AppWindowKernelError("INVALID_INPUT", path, message);
+  }
 }
 
 function boundedCoordinate(value: number, path: string): number {

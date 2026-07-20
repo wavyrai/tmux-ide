@@ -13,7 +13,6 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { ProjectResolution } from "../project-resolver.ts";
 import { createProjectRuntimeRepository } from "../project-runtime-repository.ts";
-import { applyAppWindowCommand } from "../app-window-kernel.ts";
 import {
   APP_WINDOW_DOCUMENT_PATH,
   AppWindowService,
@@ -132,46 +131,42 @@ describe("app window repository migration and CAS", () => {
     expect(a.load().document.layouts.external?.name).toBe("External");
   });
 
-  it("re-reads and reapplies a semantic command after a bounded write race", () => {
+  it("reconciles repeated semantic commands without advancing revisions", () => {
     const { first } = repositoryPair();
     writeAppWindowDocument(first, null, emptyAppWindowDocument(NOW));
-    const current = loadAppWindowDocument(first, { loadedAt: NOW });
-    const external = applyAppWindowCommand(
-      current.document,
-      { type: "layout.save", layoutId: "external", name: "External" },
-      LATER,
-    );
-    const externalPayload = JSON.parse(serializeAppWindowDocument(external));
-    const originalWrite = first.writeDocument.bind(first);
-    vi.spyOn(first, "writeDocument").mockImplementationOnce(((path, payload, options) => {
-      originalWrite(path, externalPayload, { expectedRevision: current.revision });
-      return originalWrite(path, payload, options);
-    }) as typeof first.writeDocument);
     const service = new AppWindowService(first, { now: () => LATER });
+    const command = { type: "layout.save", layoutId: "local", name: "Local" } as const;
+    const saved = service.execute(command, { maxRetries: 2 });
+    const repeated = service.execute(command, { maxRetries: 2 });
 
-    const saved = service.execute(
-      { type: "layout.save", layoutId: "local", name: "Local" },
-      { maxRetries: 2 },
-    );
-
-    expect(saved.revision).toBe(3);
-    expect(Object.keys(saved.document.layouts)).toEqual(["external", "local"]);
-    expect(saved.document.revision).toBe(2);
+    expect(saved.revision).toBe(2);
+    expect(repeated).toEqual(saved);
+    expect(Object.keys(saved.document.layouts)).toEqual(["local"]);
   });
 
   it("keeps the winner of a concurrent first-migration create race", () => {
-    const { first, second } = repositoryPair();
-    first.writeDocument("ui/workspace.json", legacyWorkspaceUiState(), {
+    const { home, first, second } = repositoryPair();
+    second.writeDocument("ui/workspace.json", legacyWorkspaceUiState(), {
       expectedRevision: null,
     });
     const winner = emptyAppWindowDocument(NOW);
-    const originalWrite = first.writeDocument.bind(first);
-    vi.spyOn(first, "writeDocument").mockImplementationOnce(((path, payload, options) => {
-      writeAppWindowDocument(second, null, winner);
-      return originalWrite(path, payload, options);
-    }) as typeof first.writeDocument);
+    const target = join(first.runtimeRoot, APP_WINDOW_DOCUMENT_PATH);
+    let staleReadInjected = false;
+    const racing = createProjectRuntimeRepository(first.resolution, {
+      home,
+      io: {
+        readBytes: (path) => {
+          if (path === target && !staleReadInjected) {
+            staleReadInjected = true;
+            writeAppWindowDocument(second, null, winner);
+            throw Object.assign(new Error("stale initial absence"), { code: "ENOENT" });
+          }
+          return readFileSync(path);
+        },
+      },
+    });
 
-    const loaded = new AppWindowService(first, {
+    const loaded = new AppWindowService(racing, {
       now: () => NOW,
       migration: { terminalSourceIds: ["agent-lead"] },
     }).load();
@@ -181,38 +176,56 @@ describe("app window repository migration and CAS", () => {
     expect(loaded.diagnostics).toEqual([]);
   });
 
-  it("stops after the configured retry budget without partially applying the losing command", () => {
-    const { first } = repositoryPair();
+  it("treats an already-deleted layout as a reconciled command result", () => {
+    const { first, second } = repositoryPair();
     writeAppWindowDocument(first, null, emptyAppWindowDocument(NOW));
-    const originalWrite = first.writeDocument.bind(first);
-    let races = 0;
-    vi.spyOn(first, "writeDocument").mockImplementation(((path, payload, options) => {
-      if (path !== APP_WINDOW_DOCUMENT_PATH) return originalWrite(path, payload, options);
-      const current = loadAppWindowDocument(first, { loadedAt: LATER, migrateLegacy: false });
-      races += 1;
-      const external = applyAppWindowCommand(
-        current.document,
-        { type: "layout.save", layoutId: `external-${races}`, name: `External ${races}` },
-        LATER,
-      );
-      originalWrite(path, JSON.parse(serializeAppWindowDocument(external)), {
-        expectedRevision: current.revision,
-      });
-      return originalWrite(path, payload, options);
-    }) as typeof first.writeDocument);
+    const external = new AppWindowService(second, { now: () => LATER });
+    external.execute({ type: "layout.save", layoutId: "shared", name: "Shared" });
+    const deleted = external.execute({ type: "layout.delete", layoutId: "shared" });
 
+    const reconciled = new AppWindowService(first, { now: () => LATER }).execute(
+      { type: "layout.delete", layoutId: "shared" },
+      { maxRetries: 2 },
+    );
+
+    expect(reconciled).toEqual(deleted);
+    expect(reconciled.document.layouts.shared).toBeUndefined();
+  });
+
+  it("write-protects failed legacy migration unless an explicit reason opts out", () => {
+    const { first } = repositoryPair();
+    first.writeDocument("ui/workspace.json", { version: 99 }, { expectedRevision: null });
+    const service = new AppWindowService(first, { now: () => NOW });
+
+    const protectedLoad = service.load();
+    expect(protectedLoad).toMatchObject({ writeProtected: true, revision: null });
+    expect(protectedLoad.diagnostics).toContainEqual(
+      expect.objectContaining({ code: "MIGRATION_FAILED" }),
+    );
     expect(() =>
-      new AppWindowService(first, { now: () => LATER }).execute(
-        { type: "layout.save", layoutId: "local", name: "Local" },
-        { maxRetries: 2 },
-      ),
-    ).toThrowError(expect.objectContaining({ code: "REVISION_CONFLICT" }));
+      service.execute({ type: "layout.save", layoutId: "unsafe", name: "Unsafe" }),
+    ).toThrowError(expect.objectContaining({ code: "WRITE_PROTECTED" }));
+    expect(first.readDocument(APP_WINDOW_DOCUMENT_PATH).found).toBe(false);
 
-    const final = loadAppWindowDocument(first, { loadedAt: LATER, migrateLegacy: false });
-    expect(races).toBe(3);
-    expect(final.document.revision).toBe(3);
-    expect(final.document.layouts.local).toBeUndefined();
-    expect(Object.keys(final.document.layouts)).toEqual(["external-1", "external-2", "external-3"]);
+    const attemptedBooleanBypass = new AppWindowService(first, {
+      now: () => NOW,
+      migration: { migrateLegacy: false } as never,
+    });
+    expect(attemptedBooleanBypass.load()).toMatchObject({ writeProtected: true, revision: null });
+    expect(() =>
+      attemptedBooleanBypass.execute({
+        type: "layout.save",
+        layoutId: "still-unsafe",
+        name: "Still unsafe",
+      }),
+    ).toThrowError(expect.objectContaining({ code: "WRITE_PROTECTED" }));
+    expect(first.readDocument(APP_WINDOW_DOCUMENT_PATH).found).toBe(false);
+
+    const optedOut = new AppWindowService(first, {
+      now: () => NOW,
+      migration: { migrationFailureOptOut: { reason: "legacy state intentionally discarded" } },
+    }).execute({ type: "layout.save", layoutId: "fresh", name: "Fresh" });
+    expect(optedOut.document.layouts.fresh?.name).toBe("Fresh");
   });
 
   it("rejects skipped domain revisions and backwards timestamps even with a matching envelope CAS", () => {
@@ -306,6 +319,7 @@ describe("app window write protection and recovery", () => {
     const metadata = JSON.parse(readFileSync(join(first.runtimeRoot, reset.metadataPath), "utf-8"));
     expect(metadata).toMatchObject({
       version: 1,
+      status: "completed",
       path: APP_WINDOW_DOCUMENT_PATH,
       previousRawSha256: loaded.recoveryToken,
       reason: "future test payload requires explicit downgrade",
@@ -394,14 +408,14 @@ describe("app window write protection and recovery", () => {
     const racing = createProjectRuntimeRepository(first.resolution, {
       home,
       io: {
-        readFile: (path) => {
+        readBytes: (path) => {
           if (path === target) {
             targetReads += 1;
             if (targetReads === 4) {
               writeFileSync(target, "{ concurrent corrupt value\n", "utf-8");
             }
           }
-          return readFileSync(path, "utf-8");
+          return readFileSync(path);
         },
       },
     });
@@ -509,10 +523,15 @@ describe("app window atomic failure", () => {
       }),
     ).toThrowError(expect.objectContaining({ code: "WRITE_FAILED" }));
     expect(readFileSync(target, "utf-8")).toBe(before);
-    const backups = readdirSync(join(first.runtimeRoot, "recovery")).filter((name) =>
-      name.endsWith(".bak"),
-    );
-    expect(backups).toHaveLength(1);
-    expect(readFileSync(join(first.runtimeRoot, "recovery", backups[0]!), "utf-8")).toBe(before);
+    const operations = readdirSync(join(first.runtimeRoot, "recovery"));
+    expect(operations).toHaveLength(1);
+    expect(
+      readFileSync(join(first.runtimeRoot, "recovery", operations[0]!, "previous.bak"), "utf-8"),
+    ).toBe(before);
+    expect(
+      JSON.parse(
+        readFileSync(join(first.runtimeRoot, "recovery", operations[0]!, "audit.json"), "utf-8"),
+      ),
+    ).toMatchObject({ status: "prepared" });
   });
 });

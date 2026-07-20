@@ -3,14 +3,15 @@ import { AppWindowDocumentV1SchemaZ, type AppWindowDocumentV1 } from "@tmux-ide/
 import {
   RevisionConflictError,
   type JsonValue,
+  type ProjectRuntimeLockedWriter,
   type ProjectRuntimeRepository,
 } from "./project-runtime-repository.ts";
 import {
   AppWindowKernelError,
   applyAppWindowCommand,
+  isAppWindowCommandSatisfied,
   type AppWindowCommand,
 } from "./app-window-kernel.ts";
-import { withWorkspaceStateLock } from "./workspace-state-repository.ts";
 import {
   emptyAppWindowDocument,
   migrateWorkspaceUiStateV2ToAppWindowDocument,
@@ -55,6 +56,8 @@ export interface LoadAppWindowDocumentOptions {
   migratedAt?: string;
   terminalSourceIds?: readonly string[];
   focusedTerminalSourceId?: string | null;
+  /** Explicitly permits a fresh document after a failed legacy migration. */
+  migrationFailureOptOut?: { reason: string };
 }
 
 export type AppWindowRepositoryErrorCode =
@@ -100,8 +103,14 @@ export interface ResetAppWindowDocumentResult extends LoadedAppWindowDocument {
 
 export interface AppWindowServiceOptions {
   now?: () => string;
-  migration?: Omit<LoadAppWindowDocumentOptions, "loadedAt" | "migratedAt">;
+  migration?: AppWindowServiceMigrationOptions;
   writerLock?: AppWindowWriterLockOptions;
+}
+
+export interface AppWindowServiceMigrationOptions {
+  terminalSourceIds?: readonly string[];
+  focusedTerminalSourceId?: string | null;
+  migrationFailureOptOut?: { reason: string };
 }
 
 export interface AppWindowWriterLockOptions {
@@ -124,7 +133,13 @@ export class AppWindowService {
   constructor(runtime: ProjectRuntimeRepository, options: AppWindowServiceOptions = {}) {
     this.#runtime = runtime;
     this.#now = options.now ?? (() => new Date().toISOString());
-    this.#migration = options.migration;
+    this.#migration = options.migration
+      ? {
+          terminalSourceIds: options.migration.terminalSourceIds,
+          focusedTerminalSourceId: options.migration.focusedTerminalSourceId,
+          migrationFailureOptOut: options.migration.migrationFailureOptOut,
+        }
+      : undefined;
     this.#writerLock = options.writerLock;
   }
 
@@ -142,22 +157,32 @@ export class AppWindowService {
     options: ExecuteAppWindowCommandOptions = {},
   ): LoadedAppWindowDocument {
     const expectedRevision = validateExpectedRevision(options.expectedRevision);
-    return withAppWindowWriterLock(this.#runtime, this.#writerLock, () => {
+    return withAppWindowWriterLock(this.#runtime, this.#writerLock, (writer) => {
       const retries = boundedRetries(options.maxRetries);
       for (let attempt = 0; attempt <= retries; attempt += 1) {
-        const loaded = this.load();
+        const timestamp = this.#now();
+        const loaded = loadAppWindowDocumentInternal(
+          this.#runtime,
+          {
+            loadedAt: timestamp,
+            migratedAt: timestamp,
+            ...this.#migration,
+          },
+          writer,
+        );
         assertWritable(loaded);
         if (expectedRevision !== undefined && expectedRevision !== loaded.revision) {
           throw revisionError(expectedRevision, loaded.revision);
         }
+        if (isAppWindowCommandSatisfied(loaded.document, command)) return loaded;
         const clock = this.#now();
-        const timestamp =
+        const commandTimestamp =
           Date.parse(clock) < Date.parse(loaded.document.updatedAt)
             ? loaded.document.updatedAt
             : clock;
-        const next = applyAppWindowCommand(loaded.document, command, timestamp);
+        const next = applyAppWindowCommand(loaded.document, command, commandTimestamp);
         try {
-          return writeAppWindowDocument(this.#runtime, loaded.revision, next);
+          return writeAppWindowDocumentLocked(this.#runtime, writer, loaded.revision, next);
         } catch (error) {
           if (
             error instanceof AppWindowRepositoryError &&
@@ -175,8 +200,8 @@ export class AppWindowService {
   }
 
   reset(request: ResetAppWindowDocumentRequest): ResetAppWindowDocumentResult {
-    return withAppWindowWriterLock(this.#runtime, this.#writerLock, () =>
-      resetAppWindowDocument(this.#runtime, request),
+    return withAppWindowWriterLock(this.#runtime, this.#writerLock, (writer) =>
+      resetAppWindowDocumentLocked(this.#runtime, writer, request),
     );
   }
 }
@@ -184,6 +209,14 @@ export class AppWindowService {
 export function loadAppWindowDocument(
   repository: ProjectRuntimeRepository,
   options: LoadAppWindowDocumentOptions,
+): LoadedAppWindowDocument {
+  return loadAppWindowDocumentInternal(repository, options);
+}
+
+function loadAppWindowDocumentInternal(
+  repository: ProjectRuntimeRepository,
+  options: LoadAppWindowDocumentOptions,
+  writer?: ProjectRuntimeLockedWriter,
 ): LoadedAppWindowDocument {
   let runtimeDocument;
   try {
@@ -193,7 +226,9 @@ export function loadAppWindowDocument(
   }
   if (!runtimeDocument.found) {
     if (options.migrateLegacy !== false) {
-      const migration = attemptFirstMigration(repository, options);
+      const migration = writer
+        ? attemptFirstMigrationLocked(repository, writer, options)
+        : attemptFirstMigration(repository, options);
       if (migration) return migration;
     }
     return {
@@ -222,6 +257,17 @@ export function writeAppWindowDocument(
   expectedRevision: number | null,
   document: AppWindowDocumentV1,
 ): LoadedAppWindowDocument {
+  return withAppWindowWriterLock(repository, undefined, (writer) =>
+    writeAppWindowDocumentLocked(repository, writer, expectedRevision, document),
+  );
+}
+
+function writeAppWindowDocumentLocked(
+  repository: ProjectRuntimeRepository,
+  writer: ProjectRuntimeLockedWriter,
+  expectedRevision: number | null,
+  document: AppWindowDocumentV1,
+): LoadedAppWindowDocument {
   const validation = AppWindowDocumentV1SchemaZ.safeParse(document);
   if (!validation.success) {
     throw new AppWindowRepositoryError(
@@ -238,7 +284,7 @@ export function writeAppWindowDocument(
   assertNextDocumentRevision(loaded, validation.data);
   try {
     const payload = JSON.parse(serializeAppWindowDocument(validation.data)) as JsonValue;
-    const written = repository.writeDocument(APP_WINDOW_DOCUMENT_PATH, payload, {
+    const written = writer.writeDocument(APP_WINDOW_DOCUMENT_PATH, payload, {
       expectedRevision,
     });
     return {
@@ -263,6 +309,16 @@ export function writeAppWindowDocument(
 
 export function resetAppWindowDocument(
   repository: ProjectRuntimeRepository,
+  request: ResetAppWindowDocumentRequest,
+): ResetAppWindowDocumentResult {
+  return withAppWindowWriterLock(repository, undefined, (writer) =>
+    resetAppWindowDocumentLocked(repository, writer, request),
+  );
+}
+
+function resetAppWindowDocumentLocked(
+  repository: ProjectRuntimeRepository,
+  writer: ProjectRuntimeLockedWriter,
   request: ResetAppWindowDocumentRequest,
 ): ResetAppWindowDocumentResult {
   const loaded = loadAppWindowDocument(repository, {
@@ -304,7 +360,7 @@ export function resetAppWindowDocument(
   const document = validation.data;
   try {
     const payload = JSON.parse(serializeAppWindowDocument(document)) as JsonValue;
-    const recovered = repository.recoverDocument(APP_WINDOW_DOCUMENT_PATH, payload, {
+    const recovered = writer.recoverDocument(APP_WINDOW_DOCUMENT_PATH, payload, {
       expectedRawSha256: request.expectedRecoveryToken,
       reason: request.reason,
       details: {
@@ -373,10 +429,10 @@ function assertNextDocumentRevision(
 function withAppWindowWriterLock<T>(
   repository: ProjectRuntimeRepository,
   options: AppWindowWriterLockOptions | undefined,
-  action: () => T,
+  action: (writer: ProjectRuntimeLockedWriter) => T,
 ): T {
   try {
-    return withWorkspaceStateLock(repository, options, action);
+    return repository.withWriterLock(options, action);
   } catch (error) {
     if (error instanceof AppWindowRepositoryError || error instanceof AppWindowKernelError) {
       throw error;
@@ -394,23 +450,44 @@ function attemptFirstMigration(
   repository: ProjectRuntimeRepository,
   options: LoadAppWindowDocumentOptions,
 ): LoadedAppWindowDocument | null {
+  try {
+    return withAppWindowWriterLock(repository, undefined, (writer) =>
+      attemptFirstMigrationLocked(repository, writer, options),
+    );
+  } catch (error) {
+    return migrationFailure(
+      repository,
+      options,
+      error,
+      "legacy migration lock could not be acquired",
+    );
+  }
+}
+
+function attemptFirstMigrationLocked(
+  repository: ProjectRuntimeRepository,
+  writer: ProjectRuntimeLockedWriter,
+  options: LoadAppWindowDocumentOptions,
+): LoadedAppWindowDocument | null {
+  let current;
+  try {
+    current = repository.readDocument<unknown>(APP_WINDOW_DOCUMENT_PATH);
+  } catch (error) {
+    return protectedReadFailure(repository, options.loadedAt, error);
+  }
+  if (current.found) {
+    return loadAppWindowDocumentInternal(repository, { ...options, migrateLegacy: false }, writer);
+  }
   let legacy;
   try {
     legacy = repository.readDocument<unknown>(LEGACY_WORKSPACE_UI_PATH);
   } catch (error) {
-    return {
-      document: emptyAppWindowDocument(options.loadedAt),
-      revision: null,
-      writeProtected: false,
-      diagnostics: [
-        diagnostic(
-          "MIGRATION_FAILED",
-          LEGACY_WORKSPACE_UI_PATH,
-          `legacy workspace UI state could not be read: ${(error as Error).message}`,
-        ),
-      ],
-      recoveryToken: null,
-    };
+    return migrationFailure(
+      repository,
+      options,
+      error,
+      "legacy workspace UI state could not be read",
+    );
   }
   if (!legacy.found) return null;
   try {
@@ -420,7 +497,7 @@ function attemptFirstMigration(
       focusedTerminalSourceId: options.focusedTerminalSourceId,
     });
     const payload = JSON.parse(serializeAppWindowDocument(migrated.document)) as JsonValue;
-    const written = repository.writeDocument(APP_WINDOW_DOCUMENT_PATH, payload, {
+    const written = writer.writeDocument(APP_WINDOW_DOCUMENT_PATH, payload, {
       expectedRevision: null,
     });
     return {
@@ -432,22 +509,51 @@ function attemptFirstMigration(
     };
   } catch (error) {
     if (error instanceof RevisionConflictError) {
-      return loadAppWindowDocument(repository, { ...options, migrateLegacy: false });
+      return loadAppWindowDocumentInternal(
+        repository,
+        { ...options, migrateLegacy: false },
+        writer,
+      );
     }
-    return {
-      document: emptyAppWindowDocument(options.loadedAt),
-      revision: null,
-      writeProtected: false,
-      diagnostics: [
-        diagnostic(
-          "MIGRATION_FAILED",
-          LEGACY_WORKSPACE_UI_PATH,
-          `legacy workspace UI state was not migrated: ${(error as Error).message}`,
-        ),
-      ],
-      recoveryToken: null,
-    };
+    return migrationFailure(
+      repository,
+      options,
+      error,
+      "legacy workspace UI state was not migrated",
+    );
   }
+}
+
+function migrationFailure(
+  repository: ProjectRuntimeRepository,
+  options: LoadAppWindowDocumentOptions,
+  error: unknown,
+  context: string,
+): LoadedAppWindowDocument {
+  const optOut = validateMigrationFailureOptOut(options.migrationFailureOptOut);
+  const suffix = optOut
+    ? `; explicit migration opt-out accepted: ${optOut}`
+    : "; writes remain protected until an explicit migration opt-out reason is supplied";
+  return {
+    document: emptyAppWindowDocument(options.loadedAt),
+    revision: null,
+    writeProtected: optOut === null,
+    diagnostics: [
+      diagnostic(
+        "MIGRATION_FAILED",
+        LEGACY_WORKSPACE_UI_PATH,
+        `${context}: ${(error as Error).message}${suffix}`,
+      ),
+    ],
+    recoveryToken: safeRecoveryToken(repository),
+  };
+}
+
+function validateMigrationFailureOptOut(value: { reason: string } | undefined): string | null {
+  if (value === undefined) return null;
+  const reason = value.reason.trim();
+  if (reason.length === 0 || reason.length > 512 || reason.includes("\0")) return null;
+  return reason;
 }
 
 function protectedReadFailure(

@@ -39,6 +39,7 @@ export {
   AppWindowService,
   type AppWindowRepositoryDiagnostic,
   type AppWindowRepositoryErrorCode,
+  type AppWindowServiceMigrationOptions,
   type AppWindowServiceOptions,
   type AppWindowWriterLockOptions,
   type ExecuteAppWindowCommandOptions,
@@ -53,6 +54,25 @@ export {
   type AppWindowCommand,
   type AppWindowKernelErrorCode,
 } from "./lib/app-window-kernel.ts";
+export {
+  CorruptRuntimeDocumentError,
+  MissingRuntimeDocumentError,
+  ProjectRuntimeRepository,
+  ProjectRuntimeRepositoryError,
+  ProjectRuntimeWriterLockTimeoutError,
+  RevisionConflictError,
+  createProjectRuntimeRepository,
+  openProjectRuntimeRepository,
+  type OpenProjectRuntimeRepositoryOptions,
+  type ProjectRuntimeDocument,
+  type ProjectRuntimeMetadata,
+  type ProjectRuntimeRepositoryOptions,
+  type ProjectRuntimeWriterLockOptions,
+  type RecoverDocumentOptions,
+  type RecoverDocumentResult,
+  type WriteDocumentOptions,
+  type WriteDocumentResult,
+} from "./lib/project-runtime-repository.ts";
 export {
   classifyProjectReadiness,
   type AuthenticationReadiness,
