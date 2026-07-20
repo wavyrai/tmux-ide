@@ -69,7 +69,11 @@ function CommandRow(props: {
         width={props.row.iconSpan.width}
         height={1}
       >
-        <text fg={props.row.current ? props.theme.colors.focus : palette().accent}>
+        <text
+          fg={
+            props.row.current && !props.row.disabled ? props.theme.colors.focus : palette().accent
+          }
+        >
           {props.row.iconSpan.text}
         </text>
       </box>

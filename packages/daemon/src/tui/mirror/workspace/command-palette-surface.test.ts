@@ -53,6 +53,16 @@ const commands: readonly CommandPaletteDescriptor[] = [
   },
 ];
 
+function overflowCommands(category: string, count: number, start = 0): CommandPaletteDescriptor[] {
+  return Array.from({ length: count }, (_, index) => ({
+    id: `overflow.${category.toLowerCase()}.${start + index}`,
+    icon: "command" as const,
+    label: `${category} command ${start + index + 1}`,
+    description: `Two-line ${category.toLowerCase()} command ${start + index + 1}`,
+    category,
+  }));
+}
+
 function expectRectInProjection(
   projection: CommandPaletteProjection,
   rect: { x: number; y: number; width: number; height: number },
@@ -198,6 +208,104 @@ describe("command palette surface projection", () => {
     });
     expect(duplicate.commandCount).toBe(commands.length);
     expect(new Set(duplicate.rowIds).size).toBe(duplicate.rowIds.length);
+  });
+
+  it.each([
+    [120, 28, "standard", 9],
+    [200, 44, "wide", 13],
+  ] as const)(
+    "only publishes full two-line rows at the %sx%s %s overflow boundary",
+    (width, height, variant, visibleCommands) => {
+      const projection = projectCommandPalette({
+        width,
+        height,
+        query: "",
+        commands: overflowCommands("Overflow", visibleCommands + 3),
+      });
+      const commandRows = projection.rows.filter((row) => row.kind === "command");
+
+      expect(projection.variant).toBe(variant);
+      expect(commandRows).toHaveLength(visibleCommands);
+      expect(commandRows.every((row) => row.rect.height === 2)).toBe(true);
+      expect(projection.rows.at(-1)?.kind).toBe("command");
+      expect(projection.visibleEnd - projection.visibleStart).toBe(projection.rows.length);
+      expect(projection.hasMoreAfter).toBe(true);
+      expect(projection.rows.at(-1)!.rect.y + projection.rows.at(-1)!.rect.height).toBe(
+        projection.list.y + projection.list.height - 1,
+      );
+    },
+  );
+
+  it("reserves a category header and its first command atomically", () => {
+    const firstCategory = overflowCommands("Alpha", 9);
+    const nextCategory = overflowCommands("Beta", 1, 9);
+    const firstPage = projectCommandPalette({
+      width: 120,
+      height: 28,
+      query: "",
+      commands: [...firstCategory, ...nextCategory],
+    });
+
+    expect(firstPage.rows.map((row) => row.id)).toEqual([
+      "group:Alpha",
+      ...firstCategory.map((command) => `command:${command.id}`),
+    ]);
+    expect(firstPage.rowIds).not.toContain("group:Beta");
+    expect(firstPage.visibleEnd).toBe(firstPage.rows.length);
+    expect(firstPage.hasMoreAfter).toBe(true);
+
+    const nextPage = projectCommandPalette({
+      width: 120,
+      height: 28,
+      query: "",
+      commands: [...firstCategory, ...nextCategory],
+      scrollTop: firstPage.visibleEnd,
+    });
+    expect(nextPage.rowIds).toEqual(["group:Beta", `command:${nextCategory[0]!.id}`]);
+  });
+
+  it("keeps scrollTop page continuity and final visible-row hit geometry exact", () => {
+    const allCommands = overflowCommands("Overflow", 10);
+    const firstPage = projectCommandPalette({
+      width: 120,
+      height: 28,
+      query: "",
+      commands: allCommands,
+    });
+    const secondPage = projectCommandPalette({
+      width: 120,
+      height: 28,
+      query: "",
+      commands: allCommands,
+      scrollTop: firstPage.visibleEnd,
+    });
+    const expectedIds = [
+      "group:Overflow",
+      ...allCommands.map((command) => `command:${command.id}`),
+    ];
+
+    expect(firstPage.visibleEnd).toBe(secondPage.visibleStart);
+    expect([...firstPage.rowIds, ...secondPage.rowIds]).toEqual(expectedIds);
+    expect(new Set([...firstPage.rowIds, ...secondPage.rowIds]).size).toBe(expectedIds.length);
+
+    const last = firstPage.rows.at(-1)!;
+    expect(last.kind).toBe("command");
+    if (last.kind === "command") {
+      expect(
+        commandPaletteHitTest(
+          firstPage,
+          last.rect.x + last.rect.width - 1,
+          last.rect.y + last.rect.height - 1,
+        ),
+      ).toEqual({ kind: "command", commandId: last.commandId, disabled: false });
+    }
+    expect(
+      commandPaletteHitTest(
+        firstPage,
+        firstPage.list.x,
+        firstPage.list.y + firstPage.list.height - 1,
+      ),
+    ).toEqual({ kind: "palette" });
   });
 
   it.each([

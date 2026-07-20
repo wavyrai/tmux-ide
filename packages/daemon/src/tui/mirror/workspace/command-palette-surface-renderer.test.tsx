@@ -2,7 +2,8 @@
 import { useKeyboard } from "@opentui/solid";
 import { createSignal } from "solid-js";
 import { describe, expect, it } from "bun:test";
-import { createSemanticThemeSnapshot } from "../theme.ts";
+import { recipePalette } from "../recipes.ts";
+import { colorToThemeBytes, createSemanticThemeSnapshot } from "../theme.ts";
 import { expectFrameBounds, renderForTest, stableFrame } from "../testing/renderer-harness.test.ts";
 import {
   projectCommandPalette,
@@ -10,6 +11,10 @@ import {
   type CommandPalettePhase,
 } from "./command-palette-surface.ts";
 import { CommandPaletteSurface } from "./command-palette-surface.tsx";
+
+function colorKey(color: Parameters<typeof colorToThemeBytes>[0]): string {
+  return colorToThemeBytes(color).join(",");
+}
 
 const commands: readonly CommandPaletteDescriptor[] = [
   {
@@ -172,6 +177,55 @@ describe("CommandPaletteSurface OpenTUI renderer", () => {
     await setup.renderOnce();
     expect(ids).toEqual(beforeIds);
     expect(stableFrame(setup.captureCharFrame())).toContain("› ❯ Open Terminals");
+  });
+
+  it("lets disabled fully override simultaneous current and selected icon chrome", async () => {
+    const width = 120;
+    const height = 40;
+    const theme = createSemanticThemeSnapshot({ mode: "dark" });
+    const disabledCurrent: CommandPaletteDescriptor = {
+      id: "workspace.files.disabled-current",
+      icon: "files",
+      label: "Disabled current command",
+      description: "Must never inherit focused icon color",
+      category: "Files",
+      disabledReason: "No file is open",
+      current: true,
+    };
+    const projection = projectCommandPalette({
+      width,
+      height,
+      query: "",
+      commands: [disabledCurrent],
+      selectedCommandId: disabledCurrent.id,
+    });
+    const setup = await renderForTest(
+      () => <CommandPaletteSurface theme={theme} projection={projection} />,
+      { width, height },
+    );
+    await setup.renderOnce();
+
+    const row = projection.rows.find((candidate) => candidate.kind === "command")!;
+    expect(row).toMatchObject({ disabled: true, current: true, selected: true });
+    const spans = setup.captureSpans().lines[row.rect.y]!.spans;
+    const marker = spans.find((candidate) => candidate.text.includes("×"));
+    const icon = spans.find((candidate) => candidate.text.includes("▤"));
+    const label = spans.find((candidate) => candidate.text.includes("Disabled current command"));
+    const disabledPalette = recipePalette(theme, {
+      disabled: true,
+      focused: true,
+      selected: true,
+    });
+
+    expect(stableFrame(setup.captureCharFrame())).toContain("× ▤ Disabled current command");
+    expect(marker).toBeDefined();
+    expect(icon).toBeDefined();
+    expect(label).toBeDefined();
+    expect(colorKey(marker!.fg)).toBe(colorKey(disabledPalette.accent));
+    expect(colorKey(icon!.fg)).toBe(colorKey(disabledPalette.accent));
+    expect(colorKey(icon!.fg)).not.toBe(colorKey(theme.colors.focus));
+    expect(colorKey(label!.fg)).toBe(colorKey(disabledPalette.foreground));
+    expect(colorKey(label!.bg)).toBe(colorKey(disabledPalette.background));
   });
 
   it("clips safely in a narrow viewport", async () => {

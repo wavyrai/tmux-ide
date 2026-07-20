@@ -318,6 +318,22 @@ function rowHeight(candidate: CandidateRow, variant: CommandPaletteVariant): num
   return variant === "compact" ? 1 : 2;
 }
 
+/** A category header and its first command are one pagination atom. */
+function requiredCandidateHeight(
+  candidates: readonly CandidateRow[],
+  index: number,
+  variant: CommandPaletteVariant,
+): number {
+  const candidate = candidates[index];
+  if (!candidate) return 0;
+  const preferredHeight = rowHeight(candidate, variant);
+  if (candidate.kind !== "group") return preferredHeight;
+  const firstCommand = candidates[index + 1];
+  return firstCommand?.kind === "command"
+    ? preferredHeight + rowHeight(firstCommand, variant)
+    : preferredHeight;
+}
+
 function trailingText(command: CommandPaletteDescriptor, width: number): string {
   const values = [command.status?.trim(), command.shortcut?.trim()].filter(
     (value): value is string => !!value,
@@ -450,9 +466,13 @@ export function projectCommandPalette(input: CommandPaletteInput): CommandPalett
     const candidate = candidates[index]!;
     const preferredHeight = rowHeight(candidate, variant);
     const heightBudget = geometry.list.y + geometry.list.height - y;
-    const heightForRow = Math.min(preferredHeight, heightBudget);
-    if (heightForRow <= 0) break;
-    const rect: Rect = { x: geometry.list.x, y, width: geometry.list.width, height: heightForRow };
+    if (requiredCandidateHeight(candidates, index, variant) > heightBudget) break;
+    const rect: Rect = {
+      x: geometry.list.x,
+      y,
+      width: geometry.list.width,
+      height: preferredHeight,
+    };
     if (candidate.kind === "group") {
       visible.push({
         kind: "group",
@@ -471,7 +491,7 @@ export function projectCommandPalette(input: CommandPaletteInput): CommandPalett
     } else {
       visible.push(projectStateRow(candidate, rect, selectedCommandId, retryCommandId));
     }
-    y += heightForRow;
+    y += preferredHeight;
     end = index + 1;
   }
 
