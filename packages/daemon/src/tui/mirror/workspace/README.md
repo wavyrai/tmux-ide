@@ -24,5 +24,18 @@ is the migration boundary between app-owned presentation and runtime adapters.
 6. Command descriptors and a contribution registry.
 7. Harness-neutral mission runtime, followed by the native desktop host.
 
-The first card is intentionally behavior-neutral: it records the responsive
-shell baseline and makes architectural back-edges fail before `PaneFrame` lands.
+Card 01 is intentionally behavior-neutral: it records the responsive shell
+baseline and makes architectural back-edges fail before new window behavior lands.
+
+## PaneFrame v1
+
+`pane-frame.ts` projects one reusable window contract for terminals, files,
+changes, missions, previews, and home surfaces. It owns responsive title/status/
+action geometry and hit targets; `pane-frame.tsx` paints that projection without
+installing input hooks. Semantic status survives narrow layouts before optional
+actions, while terminal focus, attention, keyboard focus, and idle state keep
+distinct markers.
+
+The live composite workspace now uses `PaneFrameHeader`. Action descriptors are
+already represented and renderer-tested, but production command routing remains
+with the root controller and will be connected by the command-adapter card.

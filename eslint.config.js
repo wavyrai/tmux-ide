@@ -142,6 +142,8 @@ export default [
                 "**/mirror/pane-mirror.ts",
                 "../control-client.ts",
                 "**/mirror/control-client.ts",
+                "../missions-workspace.ts",
+                "**/mirror/missions-workspace.ts",
                 "**/command-center/**",
                 "**/server/**",
                 "**/lib/**",

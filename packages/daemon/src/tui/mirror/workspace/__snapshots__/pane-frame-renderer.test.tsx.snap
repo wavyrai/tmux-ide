@@ -1,0 +1,134 @@
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
+
+exports[`PaneFrame OpenTUI renderer renders the %sx%s standard window chrome 1`] = `
+" ▣ ❯ Codex implementer • · %7 · task/142-…  working   ○ zoom   ○ split   ○ more
+● Mission: ship application-grade window chrome                              M31
+› Task: PaneFrame projection and renderer                                running
+● Harness: Codex                                                         gpt-5.5
+ terminal framebuffer remains opaque
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+"
+`;
+
+exports[`PaneFrame OpenTUI renderer renders the %sx%s wide window chrome 1`] = `
+" ▣ ❯ Codex implementer • · %7 · task/142-pane-frame                                 working   ○ zoom   ○ split   ○ more
+● Mission: ship application-grade window chrome                                                                      M31
+› Task: PaneFrame projection and renderer                                                                        running
+● Harness: Codex                                                                                                 gpt-5.5
+ terminal framebuffer remains opaque
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+"
+`;
+
+exports[`PaneFrame OpenTUI renderer renders the %sx%s wide window chrome 2`] = `
+" ▣ ❯ Codex implementer • · %7 · task/142-pane-frame                                                                                                                 working   ○ zoom   ○ split   ○ more
+● Mission: ship application-grade window chrome                                                                                                                                                      M31
+› Task: PaneFrame projection and renderer                                                                                                                                                        running
+● Harness: Codex                                                                                                                                                                                 gpt-5.5
+ terminal framebuffer remains opaque
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+"
+`;
