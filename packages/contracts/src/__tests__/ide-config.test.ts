@@ -44,3 +44,21 @@ describe("IdeConfigSchema — sidebar", () => {
     expect(cfg.rows[0]!.panes[0]!.type).toBe("sidebar");
   });
 });
+
+describe("IdeConfigSchema — pane identity", () => {
+  it("accepts workspace-safe explicit pane ids", () => {
+    const config = IdeConfigSchema.parse({
+      rows: [{ panes: [{ id: "agent.lead-1", title: "Lead" }] }],
+    });
+    expect(config.rows[0]!.panes[0]!.id).toBe("agent.lead-1");
+  });
+
+  it("rejects invalid and duplicate explicit pane ids", () => {
+    expect(() => IdeConfigSchema.parse({ rows: [{ panes: [{ id: "bad id" }] }] })).toThrow();
+    expect(() =>
+      IdeConfigSchema.parse({
+        rows: [{ panes: [{ id: "agent" }] }, { panes: [{ id: "agent" }] }],
+      }),
+    ).toThrow(/Duplicate pane id/u);
+  });
+});

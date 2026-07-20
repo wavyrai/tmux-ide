@@ -11,21 +11,27 @@ terminal:
   rows:
     - size: 70%
       panes:
-        - title: Lead — Architect
+        - id: agent-lead
+          title: Lead — Architect
           command: claude
           focus: true
-        - title: Frontend Agent
+        - id: agent-frontend
+          title: Frontend Agent
           command: claude
           dir: apps/web
-        - title: Backend Agent
+        - id: agent-backend
+          title: Backend Agent
           command: claude
           dir: apps/api
 
     - panes:
-        - title: Frontend
+        - id: dev-frontend
+          title: Frontend
           command: pnpm dev
           dir: apps/web
-        - title: Backend
+        - id: dev-backend
+          title: Backend
           command: pnpm dev
           dir: apps/api
-        - title: Shell
+        - id: shell
+          title: Shell

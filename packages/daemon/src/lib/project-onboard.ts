@@ -89,6 +89,7 @@ export function composeIdeYmlConfig(input: ComposeIdeYmlInput): IdeConfig {
     const fallback = agentsCount > 1 ? (i === 0 ? "Lead" : `Teammate ${i}`) : `Claude ${i + 1}`;
     const customTitle = customNames?.[i]?.trim();
     const pane: Pane = {
+      id: `agent-${i + 1}`,
       title: customTitle && customTitle.length > 0 ? customTitle : fallback,
       command: "claude",
     };
@@ -101,9 +102,9 @@ export function composeIdeYmlConfig(input: ComposeIdeYmlInput): IdeConfig {
   const bottomPanes: Pane[] = [];
   const devCommand = input.devCommand?.trim();
   if (devCommand) {
-    bottomPanes.push({ title: "Dev", command: devCommand });
+    bottomPanes.push({ id: "dev", title: "Dev", command: devCommand });
   }
-  bottomPanes.push({ title: "Shell" });
+  bottomPanes.push({ id: "shell", title: "Shell" });
 
   const rows: Row[] = [{ size: "70%", panes: topPanes }, { panes: bottomPanes }];
 

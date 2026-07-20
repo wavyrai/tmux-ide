@@ -24,6 +24,7 @@ export const WorkspaceCommandSchemaZ = z.union([
  * role/task/specialty/skill metadata into the new workspace contract.
  */
 export const WorkspaceTerminalPaneSchemaZ = PaneSchema.pick({
+  id: true,
   title: true,
   command: true,
   type: true,
@@ -159,6 +160,21 @@ const WorkspaceConfigV1ObjectSchemaZ = z.strictObject({
  */
 export const WorkspaceConfigV1SchemaZ = WorkspaceConfigV1ObjectSchemaZ.superRefine(
   (config, context) => {
+    const explicitPaneIds = new Set<string>();
+    for (const [rowIndex, row] of (config.terminal?.rows ?? []).entries()) {
+      for (const [paneIndex, pane] of row.panes.entries()) {
+        if (!pane.id) continue;
+        if (explicitPaneIds.has(pane.id)) {
+          context.addIssue({
+            code: "custom",
+            path: ["terminal", "rows", rowIndex, "panes", paneIndex, "id"],
+            message: `Duplicate pane id "${pane.id}"`,
+          });
+        }
+        explicitPaneIds.add(pane.id);
+      }
+    }
+
     const harnessNames = new Set(Object.keys(config.harnesses ?? {}));
     for (const [agentName, agent] of Object.entries(config.agents ?? {})) {
       if (!harnessNames.has(agent.harness)) {

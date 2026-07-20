@@ -7,6 +7,23 @@ describe("WorkspaceConfigV1SchemaZ", () => {
     expect(WorkspaceConfigV1SchemaZ.parse({ version: 1 })).toEqual({ version: 1 });
   });
 
+  it("accepts unique workspace-safe pane ids and rejects duplicates", () => {
+    expect(
+      WorkspaceConfigV1SchemaZ.parse({
+        version: 1,
+        terminal: { rows: [{ panes: [{ id: "agent-1" }, { id: "shell" }] }] },
+      }).terminal?.rows[0]?.panes.map((pane) => pane.id),
+    ).toEqual(["agent-1", "shell"]);
+    expect(() =>
+      WorkspaceConfigV1SchemaZ.parse({
+        version: 1,
+        terminal: {
+          rows: [{ panes: [{ id: "duplicate" }] }, { panes: [{ id: "duplicate" }] }],
+        },
+      }),
+    ).toThrow(/Duplicate pane id/u);
+  });
+
   it("keeps harnesses, adapters, commands, and models provider-neutral", () => {
     const result = WorkspaceConfigV1SchemaZ.parse({
       version: 1,

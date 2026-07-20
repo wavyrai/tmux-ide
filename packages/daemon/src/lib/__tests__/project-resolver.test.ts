@@ -121,6 +121,61 @@ describe("resolveProject", () => {
     expect(result.config).toEqual({ kind: "none", path: null, explicit: false });
   });
 
+  it("lets a workspace boundary outrank a nearer nested package manifest", async () => {
+    const io = fakeIo({ files: ["/repo/apps/web/package.json", "/repo/pnpm-workspace.yaml"] });
+
+    const source = await resolveWithIo("/repo/apps/web/src/components", io);
+    const tests = await resolveWithIo("/repo/apps/web/test/unit", io);
+
+    expect(source.projectRoot).toBe("/repo");
+    expect(tests.projectRoot).toBe("/repo");
+    expect(source.identityKey).toBe(tests.identityKey);
+  });
+
+  it("uses the nearest package manifest when no workspace boundary exists", async () => {
+    const io = fakeIo({ files: ["/repo/apps/web/package.json"] });
+
+    expect((await resolveWithIo("/repo/apps/web/src/components", io)).projectRoot).toBe(
+      "/repo/apps/web",
+    );
+  });
+
+  it("ignores generic unrelated ancestor files as project evidence", async () => {
+    const io = fakeIo({ files: ["/README.md", "/Makefile"] });
+
+    expect((await resolveWithIo("/repo/apps/web", io)).projectRoot).toBe("/repo/apps/web");
+  });
+
+  it("uses a containing explicit root hint before ancestor markers outside Git/config", async () => {
+    const io = fakeIo({ files: ["/repo/apps/web/package.json"] });
+    const result = await resolveWithIo("/repo/apps/web/src", io, {
+      projectRootHint: "../../..",
+    });
+
+    expect(result.projectRoot).toBe("/repo");
+    expect(result.identityAnchor).toBe("/repo");
+  });
+
+  it("rejects a root hint that does not contain the canonical input", async () => {
+    await expect(
+      resolveWithIo("/repo/apps/web", fakeIo(), { projectRootHint: "/another/project" }),
+    ).rejects.toThrow(/does not contain input directory/u);
+  });
+
+  it("keeps Git and config roots authoritative over an explicit root hint", async () => {
+    const git = await resolveWithIo("/repo/apps/web", gitIo("/repo", ".git"), {
+      projectRootHint: "/repo/apps",
+    });
+    const configured = await resolveWithIo(
+      "/repo/apps/web/src",
+      fakeIo({ files: ["/repo/apps/web/.tmux-ide/workspace.yml"] }),
+      { projectRootHint: "/repo" },
+    );
+
+    expect(git.projectRoot).toBe("/repo");
+    expect(configured.projectRoot).toBe("/repo/apps/web");
+  });
+
   it("handles unavailable Git and malformed output safely and deterministically", async () => {
     const unavailable = fakeIo({
       runGit: async () => {

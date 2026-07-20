@@ -1,5 +1,11 @@
 import { describe, it, expect } from "bun:test";
-import { buildPaneCommand, collectPaneStartupPlan } from "./launch-plan.ts";
+import { WORKSPACE_SEMANTIC_PANE_OPTION } from "@tmux-ide/contracts";
+import {
+  buildPaneCommand,
+  collectPaneStartupPlan,
+  paneIdentityOptions,
+  semanticPaneIdForPane,
+} from "./launch-plan.ts";
 import type { Row } from "../types.ts";
 
 describe("buildPaneCommand", () => {
@@ -20,12 +26,25 @@ describe("collectPaneStartupPlan", () => {
     const rows = [
       {
         panes: [
-          { title: "Lead", command: "claude", role: "lead", focus: true, env: { PORT: 3000 } },
-          { title: "Worker", command: "claude", role: "teammate", task: "Review" },
+          {
+            id: "agent-lead",
+            title: "Lead",
+            command: "claude",
+            role: "lead",
+            focus: true,
+            env: { PORT: 3000 },
+          },
+          {
+            id: "agent-worker",
+            title: "Worker",
+            command: "claude",
+            role: "teammate",
+            task: "Review",
+          },
         ],
       },
       {
-        panes: [{ title: "Shell", dir: "apps/web" }],
+        panes: [{ id: "shell-main", title: "Shell", dir: "apps/web" }],
       },
     ];
 
@@ -40,6 +59,7 @@ describe("collectPaneStartupPlan", () => {
     expect(result.paneActions).toEqual([
       {
         targetPane: "%1",
+        semanticPaneId: "agent-lead",
         title: "Lead",
         chdir: null,
         exports: [`export 'PORT'='3000'`],
@@ -51,6 +71,7 @@ describe("collectPaneStartupPlan", () => {
       },
       {
         targetPane: "%2",
+        semanticPaneId: "agent-worker",
         title: "Worker",
         chdir: null,
         exports: [],
@@ -62,6 +83,7 @@ describe("collectPaneStartupPlan", () => {
       },
       {
         targetPane: "%3",
+        semanticPaneId: "shell-main",
         title: "Shell",
         chdir: "/workspace/apps/web",
         exports: [],
@@ -71,6 +93,83 @@ describe("collectPaneStartupPlan", () => {
         paneRole: "shell",
         paneType: "shell",
       },
+    ]);
+  });
+
+  it("uses explicit ids and deterministic metadata ids instead of row/column positions", () => {
+    expect(semanticPaneIdForPane({ id: "agent-lead", title: "Renamed" })).toBe("agent-lead");
+    const derived = semanticPaneIdForPane({ title: "Lead", command: "claude" });
+    expect(derived).toMatch(/^pane-lead-[a-f0-9]{16}$/u);
+    expect(
+      semanticPaneIdForPane({
+        title: "Lead",
+        command: "claude",
+        env: { B: "2", A: "1" },
+      }),
+    ).toBe(
+      semanticPaneIdForPane({
+        title: "Lead",
+        command: "claude",
+        env: { A: "1", B: "2" },
+      }),
+    );
+
+    expect(
+      paneIdentityOptions({
+        semanticPaneId: "agent-lead",
+        paneRole: "lead",
+        paneType: "agent",
+        title: "Lead",
+      }),
+    ).toEqual([
+      [WORKSPACE_SEMANTIC_PANE_OPTION, "agent-lead"],
+      ["@ide_role", "lead"],
+      ["@ide_name", "Lead"],
+      ["@ide_type", "agent"],
+    ]);
+  });
+
+  it("keeps derived identities stable across insert, reorder, and delete", () => {
+    const original: Row[] = [
+      {
+        panes: [
+          { title: "Planner", command: "claude" },
+          { title: "Implementer", command: "codex" },
+        ],
+      },
+    ];
+    const changed: Row[] = [
+      {
+        panes: [
+          { title: "Reviewer", command: "claude" },
+          { title: "Implementer", command: "codex" },
+          { title: "Planner", command: "claude" },
+        ],
+      },
+    ];
+    const deleted: Row[] = [{ panes: [{ title: "Planner", command: "claude" }] }];
+    const first = collectPaneStartupPlan(original, [["%1", "%2"]], new Set(["%1"]), "/repo");
+    const second = collectPaneStartupPlan(changed, [["%3", "%4", "%5"]], new Set(["%3"]), "/repo");
+    const third = collectPaneStartupPlan(deleted, [["%6"]], new Set(["%6"]), "/repo");
+    const byTitle = (plan: typeof first) =>
+      new Map(plan.paneActions.map((action) => [action.title, action.semanticPaneId]));
+
+    expect(byTitle(second).get("Planner")).toBe(byTitle(first).get("Planner"));
+    expect(byTitle(second).get("Implementer")).toBe(byTitle(first).get("Implementer"));
+    expect(byTitle(third).get("Planner")).toBe(byTitle(first).get("Planner"));
+  });
+
+  it("keeps identical implicit legacy panes launchable but diagnoses durable ambiguity", () => {
+    const result = collectPaneStartupPlan(
+      [{ panes: [{ command: "zsh" }, { command: "zsh" }] }],
+      [["%1", "%2"]],
+      new Set(["%1"]),
+      "/repo",
+    );
+
+    expect(new Set(result.paneActions.map((action) => action.semanticPaneId)).size).toBe(2);
+    expect(result.diagnostics).toEqual([
+      expect.objectContaining({ code: "AMBIGUOUS_IMPLICIT_PANE_ID" }),
     ]);
   });
 

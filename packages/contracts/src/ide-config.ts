@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { AuthConfigSchema } from "./lib-internal/auth.ts";
 import { HQConfigSchema } from "./lib-internal/hq.ts";
+import { WorkspaceIdSchemaZ } from "./workspace-state.ts";
 
 const sizeField = z
   .string()
@@ -15,6 +16,8 @@ export const ThemeConfigSchema = z.object({
 });
 
 export const PaneSchema = z.object({
+  /** Stable semantic identity. Strongly recommended for long-lived agent panes. */
+  id: WorkspaceIdSchemaZ.optional(),
   title: z.string().optional(),
   command: z.string().optional(),
   type: z
@@ -120,26 +123,43 @@ export const SidebarConfigSchema = z.union([
   z.object({ width: z.string().optional() }),
 ]);
 
-export const IdeConfigSchema = z.object({
-  name: z.string().optional(),
-  before: z.string().optional(),
-  team: z
-    .object({
-      name: z.string(),
-      model: z.string().optional(),
-      permissions: z.array(z.string()).optional(),
-    })
-    .optional(),
-  rows: z.array(RowSchema).min(1),
-  sidebar: SidebarConfigSchema.optional(),
-  theme: ThemeConfigSchema.optional(),
-  orchestrator: OrchestratorYamlConfigSchema.optional(),
-  command_center: CommandCenterConfigSchema.optional(),
-  dashboard: DashboardConfigSchema.optional(),
-  auth: AuthConfigSchema.optional(),
-  tunnel: TunnelConfigSchema.optional(),
-  hq: HQConfigSchema.optional(),
-});
+export const IdeConfigSchema = z
+  .object({
+    name: z.string().optional(),
+    before: z.string().optional(),
+    team: z
+      .object({
+        name: z.string(),
+        model: z.string().optional(),
+        permissions: z.array(z.string()).optional(),
+      })
+      .optional(),
+    rows: z.array(RowSchema).min(1),
+    sidebar: SidebarConfigSchema.optional(),
+    theme: ThemeConfigSchema.optional(),
+    orchestrator: OrchestratorYamlConfigSchema.optional(),
+    command_center: CommandCenterConfigSchema.optional(),
+    dashboard: DashboardConfigSchema.optional(),
+    auth: AuthConfigSchema.optional(),
+    tunnel: TunnelConfigSchema.optional(),
+    hq: HQConfigSchema.optional(),
+  })
+  .superRefine((config, context) => {
+    const explicitPaneIds = new Set<string>();
+    for (const [rowIndex, row] of config.rows.entries()) {
+      for (const [paneIndex, pane] of row.panes.entries()) {
+        if (!pane.id) continue;
+        if (explicitPaneIds.has(pane.id)) {
+          context.addIssue({
+            code: "custom",
+            path: ["rows", rowIndex, "panes", paneIndex, "id"],
+            message: `Duplicate pane id "${pane.id}"`,
+          });
+        }
+        explicitPaneIds.add(pane.id);
+      }
+    }
+  });
 
 export const PaneActionSchema = z.object({
   targetPane: z.string(),

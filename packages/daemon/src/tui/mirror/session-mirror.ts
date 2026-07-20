@@ -45,6 +45,19 @@ import {
   type LayoutLeaf,
 } from "./layout-parse.ts";
 import { effectiveWindowSize, type Size } from "./size-truth.ts";
+import {
+  SESSION_PANE_DESCRIPTOR_FORMAT,
+  SessionDescriptorDiscovery,
+  type SessionDescriptorDiscoveryDiagnostic,
+  type SessionPaneDescriptor,
+} from "./session-descriptor-discovery.ts";
+
+export {
+  decodeTmuxArgument,
+  parseSessionPaneDescriptors,
+  type SessionDescriptorDiscoveryDiagnostic,
+  type SessionPaneDescriptor,
+} from "./session-descriptor-discovery.ts";
 
 /** One pane's geometry inside the window, in cells (tmux coordinates). */
 export interface PaneGeometry {
@@ -145,7 +158,13 @@ export interface SessionMirrorOptions {
   /** Called whenever any pane's content or the layout changed (coalesce upstream). */
   onDirty?: () => void;
   onStatus?: (msg: string) => void;
+  onDescriptorStatus?: (status: SessionDescriptorDiscoveryDiagnostic | null) => void;
   onExit?: () => void;
+  descriptorRetry?: {
+    maxAttempts?: number;
+    baseDelayMs?: number;
+    schedule?: (callback: () => void, delayMs: number) => () => void;
+  };
 }
 
 /** Control-mode notifications (sans `%`) that still fall back to the slow
@@ -162,6 +181,9 @@ const STRUCTURAL_NOTIFICATIONS = new Set([
 export class SessionMirror {
   private readonly client: ControlModeClient;
   private readonly mirrors = new Map<string, PaneMirror>();
+  private readonly descriptorsByPane = new Map<string, SessionPaneDescriptor>();
+  private readonly descriptorDiscovery: SessionDescriptorDiscovery;
+  private descriptorDiagnostic: SessionDescriptorDiscoveryDiagnostic | null = null;
   private geometry: PaneGeometry[] = [];
   private focused = "";
   private syncQueued = false;
@@ -243,6 +265,27 @@ export class SessionMirror {
         else if (STRUCTURAL_NOTIFICATIONS.has(name)) this.queueSync();
       },
       onExit: () => opts.onExit?.(),
+    });
+    this.descriptorDiscovery = new SessionDescriptorDiscovery({
+      query: () =>
+        this.client.command(
+          `list-panes -t ${this.opts.target} -F "${SESSION_PANE_DESCRIPTOR_FORMAT}"`,
+        ),
+      onDescriptors: (descriptors, listed) => {
+        this.descriptorsByPane.clear();
+        for (const descriptor of descriptors) {
+          if (listed.has(descriptor.runtimePaneId)) {
+            this.descriptorsByPane.set(descriptor.runtimePaneId, descriptor);
+          }
+        }
+        this.opts.onDirty?.();
+      },
+      onStatus: (status) => {
+        this.descriptorDiagnostic = status ? { ...status } : null;
+        this.opts.onDescriptorStatus?.(status ? { ...status } : null);
+        this.opts.onDirty?.();
+      },
+      ...opts.descriptorRetry,
     });
   }
 
@@ -396,6 +439,10 @@ export class SessionMirror {
     if (!ev) return;
     this.activeWindow = ev.windowId;
     this.lastVisibleLayout = "";
+    // Descriptor rows belong to the old window until the queued discovery
+    // lands. Empty is safer than exposing stale semantic identity meanwhile.
+    this.descriptorDiscovery.invalidate();
+    this.descriptorsByPane.clear();
     this.queueSync();
   }
 
@@ -424,6 +471,16 @@ export class SessionMirror {
           ({ rows: [], cursorX: 0, cursorY: 0, scrollOffset: 0 } as const),
       };
     });
+  }
+
+  /** Detached snapshot of active-window descriptor discovery. */
+  paneDescriptors(): SessionPaneDescriptor[] {
+    return [...this.descriptorsByPane.values()].map((descriptor) => ({ ...descriptor }));
+  }
+
+  /** Latest bounded discovery retry/failure status, detached for observers. */
+  paneDescriptorDiagnostic(): SessionDescriptorDiscoveryDiagnostic | null {
+    return this.descriptorDiagnostic ? { ...this.descriptorDiagnostic } : null;
   }
 
   /** Blit a pane's visible grid into a framebuffer's packed arrays (M21.3) — the
@@ -610,8 +667,11 @@ export class SessionMirror {
       this.sizeMode = "auto";
     }
     this.client.dispose();
+    this.descriptorDiscovery.dispose();
+    this.descriptorDiagnostic = null;
     for (const m of this.mirrors.values()) m.dispose();
     this.mirrors.clear();
+    this.descriptorsByPane.clear();
   }
 
   /** Queue the SLOW path (M23.5: reconciler, flag source, seed driver, sole
@@ -677,6 +737,14 @@ export class SessionMirror {
     // pane is visible, and its listed rect is the full window.
     this.geometry = this.zoomedNow ? all.filter((p) => p.active) : all;
     this.winSize = effectiveWindowSize(all) ?? this.winSize;
+
+    // Drop descriptors for closed panes synchronously, then refresh remaining
+    // metadata out-of-band so this extra discovery never delays geometry,
+    // content seeding, or input. Failed discovery preserves surviving facts.
+    for (const runtimePaneId of this.descriptorsByPane.keys()) {
+      if (!listed.has(runtimePaneId)) this.descriptorsByPane.delete(runtimePaneId);
+    }
+    this.descriptorDiscovery.discover(listed);
     this.opts.onStatus?.(`${this.geometry.length} panes`);
     this.opts.onDirty?.();
 
