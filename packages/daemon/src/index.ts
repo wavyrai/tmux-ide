@@ -57,3 +57,14 @@ export {
   type ProjectRecoveryActionKind,
   type ProjectRegistrationState,
 } from "./lib/project-readiness.ts";
+export {
+  assessProjectReadiness,
+  probeProjectReadiness,
+  type CustomReadinessHarnessProfile,
+  type ProjectReadinessProbeIo,
+  type ProjectReadinessProbeOptions,
+  type ReadinessCommandOptions,
+  type ReadinessCommandResult,
+  type ReadinessCommandStatus,
+  type ReadinessPathKind,
+} from "./lib/project-readiness-probe.ts";

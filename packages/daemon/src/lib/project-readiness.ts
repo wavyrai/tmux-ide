@@ -60,6 +60,8 @@ export interface ProjectReadinessHarnessProbe {
   commandReadiness: CommandReadiness;
   authentication: AuthenticationReadiness;
   source: "detected" | "workspace" | "user";
+  /** Version reported by a read-only probe, when one completed successfully. */
+  version?: string | null;
   /** Optional recovery commands supplied by the effectful probe adapter. */
   installCommand?: readonly string[] | null;
   authCommand?: readonly string[] | null;
@@ -155,6 +157,7 @@ export interface ProjectHarnessReadiness {
   label: string;
   command: readonly string[];
   source: ProjectReadinessHarnessProbe["source"];
+  version: string | null;
   state: HarnessReadinessState;
   usable: boolean;
   agentCapable: boolean;
@@ -269,6 +272,7 @@ function classifyHarness(probe: ProjectReadinessHarnessProbe): ProjectHarnessRea
     label: probe.label,
     command: [...probe.command],
     source: probe.source,
+    version: probe.version ?? null,
     state,
     usable: state === "ready",
     agentCapable: probe.kind !== "shell",
