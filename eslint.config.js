@@ -125,4 +125,33 @@ export default [
       ],
     },
   },
+  {
+    files: ["packages/daemon/src/tui/mirror/workspace/**/*.ts"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            {
+              group: [
+                "../app.tsx",
+                "**/mirror/app.tsx",
+                "../session-mirror.ts",
+                "**/mirror/session-mirror.ts",
+                "../pane-mirror.ts",
+                "**/mirror/pane-mirror.ts",
+                "../control-client.ts",
+                "**/mirror/control-client.ts",
+                "**/command-center/**",
+                "**/server/**",
+                "**/lib/**",
+              ],
+              message:
+                "the application-workspace layer is presentational; runtime adapters stay in the root controller",
+            },
+          ],
+        },
+      ],
+    },
+  },
 ];

@@ -18,6 +18,7 @@ export default defineConfig({
       "src/tui/detect/*.test.ts",
       "src/tui/team/*.test.ts",
       "src/tui/mirror/*.test.ts",
+      "src/tui/mirror/workspace/**/*.test.ts",
       "src/tui/chrome/*.test.ts",
       "src/tui/integrations/*.test.ts",
       "src/widgets/lib/grammar.test.ts",
