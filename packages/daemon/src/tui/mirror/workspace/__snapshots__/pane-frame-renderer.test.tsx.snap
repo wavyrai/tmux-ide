@@ -2,7 +2,7 @@
 
 exports[`PaneFrame OpenTUI renderer renders the %sx%s compact window chrome 1`] = `
 "┌──────────────────────────────────────────────────────────────────────────────┐
-│:: ▣ ❯ Codex implementer •                            ●   M   ○ A   ○ M   ○ N │
+│▌: ▣ ❯ Codex implementer •                            ●   M   ○ A   ○ M   ○ N │
 │● Mission: ship application-grade window chrome                            M31│
 │› Task: PaneFrame projection and renderer                              running│
 │● Harness: Codex                                                       gpt-5.5│
@@ -29,7 +29,7 @@ exports[`PaneFrame OpenTUI renderer renders the %sx%s compact window chrome 1`] 
 
 exports[`PaneFrame OpenTUI renderer renders the %sx%s standard window chrome 1`] = `
 "┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
-│:: ▣ ❯ Codex implementer • · %7 · task/142-pane-frame                  working   max   ○ agent   ○ mission   ○ native │
+│▌: ▣ ❯ Codex implementer • · %7 · task/142-pane-frame                  working   max   ○ agent   ○ mission   ○ native │
 │● Mission: ship application-grade window chrome                                                                    M31│
 │› Task: PaneFrame projection and renderer                                                                      running│
 │● Harness: Codex                                                                                               gpt-5.5│
@@ -72,7 +72,7 @@ exports[`PaneFrame OpenTUI renderer renders the %sx%s standard window chrome 1`]
 
 exports[`PaneFrame OpenTUI renderer renders the %sx%s wide window chrome 1`] = `
 "┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
-│:: ▣ ❯ Codex implementer • · %7 · task/142-pane-frame                                                                                                  working   max   ○ agent   ○ mission   ○ native │
+│▌: ▣ ❯ Codex implementer • · %7 · task/142-pane-frame                                                                                                  working   max   ○ agent   ○ mission   ○ native │
 │● Mission: ship application-grade window chrome                                                                                                                                                    M31│
 │› Task: PaneFrame projection and renderer                                                                                                                                                      running│
 │● Harness: Codex                                                                                                                                                                               gpt-5.5│
@@ -178,7 +178,7 @@ exports[`PaneFrame OpenTUI renderer pins rendered state-matrix glyphs, borders, 
 
 exports[`PaneFrame OpenTUI renderer pins rendered state-matrix glyphs, borders, and semantic header colors 2`] = `
 "┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
-│:: ! ◆ Keyboard mission attention                                                                             blocked │
+│▌: ! ◆ Keyboard mission attention                                                                             blocked │
 │ body keeps framebuffer ownership elsewhere                                                                           │
 │                                                                                                                      │
 │                                                                                                                      │
@@ -221,7 +221,7 @@ exports[`PaneFrame OpenTUI renderer pins rendered state-matrix glyphs, borders, 
 
 exports[`PaneFrame OpenTUI renderer pins rendered state-matrix glyphs, borders, and semantic header colors 3`] = `
 "┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
-│:: ▣ ❯ Terminal agent attention                                                                               blocked │
+│▌: ▣ ❯ Terminal agent attention                                                                               blocked │
 │ body keeps framebuffer ownership elsewhere                                                                           │
 │                                                                                                                      │
 │                                                                                                                      │
@@ -264,7 +264,7 @@ exports[`PaneFrame OpenTUI renderer pins rendered state-matrix glyphs, borders, 
 
 exports[`PaneFrame OpenTUI renderer pins rendered state-matrix glyphs, borders, and semantic header colors 4`] = `
 "┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
-┃:: ◇ ▣ Mission native surface                           blocked   edit   float   max   ○ agent   ○ mission   ○ native ┃
+┃▌: ◇ ▣ Mission native surface                           blocked   edit   float   max   ○ agent   ○ mission   ○ native ┃
 ┃ body keeps framebuffer ownership elsewhere                                                                           ┃
 ┃                                                                                                                      ┃
 ┃                                                                                                                      ┃
@@ -307,7 +307,7 @@ exports[`PaneFrame OpenTUI renderer pins rendered state-matrix glyphs, borders, 
 
 exports[`PaneFrame OpenTUI renderer pins disabled, hovered, and mouse-down pressed action states before release 1`] = `
 "┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
-│:: ● ▣ Action state matrix                                                             · agent   × mission   ◆ native │
+│▌: ● ▣ Action state matrix                                                             · agent   × mission   ◆ native │
 │ action state evidence                                                                                                │
 │                                                                                                                      │
 │                                                                                                                      │

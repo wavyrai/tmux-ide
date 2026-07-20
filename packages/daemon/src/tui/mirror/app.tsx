@@ -219,7 +219,6 @@ import {
   BADGE_BG,
   DEFAULT_BG,
   DEFAULT_FG,
-  FOCUS_BORDER_FG,
   HOVER_BG,
   MUTED,
   SIDEBAR_BG,
@@ -613,7 +612,6 @@ import {
 } from "./agent-lifecycle.ts";
 import { getManifests } from "../detect/manifest-loader.ts";
 import { agentsByPane } from "./agent-chip.ts";
-import { focusStrips } from "./focus-border.ts";
 import { scrollThumb, trackZone, pageTop, dragTop } from "./scrollbar-model.ts";
 import {
   MENU_ITEMS,
@@ -7840,45 +7838,10 @@ try {
                               }}
                             </For>
                           </Show>
-                          {/* Focused-pane border (M22.7): accent strips in the GUTTER cells
-                  around the active pane — the strips live outside every pane rect
-                  so no terminal cell is consumed or tinted, and they're
-                  handler-less boxes (gutter presses still bubble to the router,
-                  border drags keep working). Single-pane and zoomed windows paint
-                  nothing (focusStrips returns [] when the rect fills the canvas
-                  or the window has one pane). */}
-                          <For
-                            each={(() => {
-                              const focused = panes().find((p) => p.active);
-                              return focused
-                                ? focusStrips(focused, canvasCols(), canvasRows(), panes().length)
-                                : [];
-                            })()}
-                          >
-                            {(strip) => (
-                              // A HAIRLINE, not a filled bar (user feedback: bars read as
-                              // extra gutter padding): line glyphs in accent fg on the
-                              // normal canvas bg keep the gutter visually thin. One text
-                              // per strip — newline-joined glyphs render as a column.
-                              <box
-                                position="absolute"
-                                left={strip.left}
-                                top={strip.top}
-                                width={strip.width}
-                                height={strip.height}
-                              >
-                                <text fg={FOCUS_BORDER_FG}>
-                                  {strip.height === 1
-                                    ? "─".repeat(strip.width)
-                                    : Array(strip.height).fill("│").join("\n")}
-                                </text>
-                              </box>
-                            )}
-                          </For>
                           {/* Lower-pane headers reuse only tmux's existing horizontal
-                  separator cells. Render after focus strips so semantic pane
-                  chrome wins visually, while the pure projection proves no
-                  emitted rectangle intersects a pane framebuffer. */}
+                  separator cells. Focus belongs to this semantic pane chrome,
+                  while the pure projection proves no emitted rectangle
+                  intersects a pane framebuffer. */}
                           <TerminalPaneChromeLayer
                             theme={semanticTheme()}
                             layout={terminalPaneChromeLayout()}

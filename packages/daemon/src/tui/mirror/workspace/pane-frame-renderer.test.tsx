@@ -281,8 +281,13 @@ describe("PaneFrame OpenTUI renderer", () => {
       expect(colorKey(borderSpan.fg), label).toBe(colorKey(palette.border));
       const titleSpan = spanContaining(setup, projection.titleSpan.text, projection.header.y);
       expect(titleSpan, label).toBeDefined();
-      expect(colorKey(titleSpan!.fg), label).toBe(colorKey(palette.foreground));
-      expect(colorKey(titleSpan!.bg), label).toBe(colorKey(palette.background));
+      const nativeFocused = projection.focused || projection.terminalFocused;
+      expect(colorKey(titleSpan!.fg), label).toBe(
+        colorKey(nativeFocused ? theme.colors.selectionForeground : theme.colors.mutedForeground),
+      );
+      expect(colorKey(titleSpan!.bg), label).toBe(
+        colorKey(nativeFocused ? theme.colors.accentMuted : palette.background),
+      );
       if (label === "edit-floating-maximized") {
         expect(stable).toContain("edit");
         expect(stable).toContain("float");
