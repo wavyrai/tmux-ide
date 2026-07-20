@@ -33,6 +33,7 @@ describe("composeIdeYmlConfig", () => {
     expect(config.rows).toHaveLength(2);
     expect(config.rows[0]!.panes).toHaveLength(1);
     expect(config.rows[0]!.panes[0]).toMatchObject({
+      id: "agent-1",
       title: "Claude 1",
       command: "claude",
       focus: true,
@@ -46,11 +47,13 @@ describe("composeIdeYmlConfig", () => {
     expect(config.team).toBeUndefined();
     expect(config.rows[0]!.panes).toHaveLength(2);
     expect(config.rows[0]!.panes[0]).toMatchObject({
+      id: "agent-1",
       title: "Lead",
       command: "claude",
       focus: true,
     });
     expect(config.rows[0]!.panes[1]).toMatchObject({
+      id: "agent-2",
       title: "Teammate 1",
       command: "claude",
     });
@@ -74,20 +77,20 @@ describe("composeIdeYmlConfig", () => {
       devCommand: "pnpm dev",
     });
     expect(config.rows[1]!.panes).toEqual([
-      { title: "Dev", command: "pnpm dev" },
-      { title: "Shell" },
+      { id: "dev", title: "Dev", command: "pnpm dev" },
+      { id: "shell", title: "Shell" },
     ]);
   });
 
   it("omits the Dev pane when devCommand is null/undefined/empty", () => {
     expect(
       composeIdeYmlConfig({ name: "alpha", agents: 1, devCommand: null }).rows[1]!.panes,
-    ).toEqual([{ title: "Shell" }]);
+    ).toEqual([{ id: "shell", title: "Shell" }]);
     expect(
       composeIdeYmlConfig({ name: "alpha", agents: 1, devCommand: "  " }).rows[1]!.panes,
-    ).toEqual([{ title: "Shell" }]);
+    ).toEqual([{ id: "shell", title: "Shell" }]);
     expect(composeIdeYmlConfig({ name: "alpha", agents: 1 }).rows[1]!.panes).toEqual([
-      { title: "Shell" },
+      { id: "shell", title: "Shell" },
     ]);
   });
 

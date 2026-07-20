@@ -11,17 +11,23 @@ terminal:
   rows:
     - size: 70%
       panes:
-        - title: Lead
+        - id: agent-lead
+          title: Lead
           command: claude
           focus: true
-        - title: Frontend
+        - id: agent-frontend
+          title: Frontend
           command: claude
-        - title: Backend
+        - id: agent-backend
+          title: Backend
           command: claude
 
     - panes:
-        - title: Next.js
+        - id: dev
+          title: Next.js
           command: pnpm dev
-        - title: Changes
+        - id: changes
+          title: Changes
           type: changes # live git changes widget
-        - title: Shell
+        - id: shell
+          title: Shell

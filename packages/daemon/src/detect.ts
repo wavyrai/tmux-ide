@@ -143,8 +143,8 @@ export function suggestConfig(dir: string, detected: DetectedStack): IdeConfig {
       {
         size: "70%",
         panes: [
-          { title: "Claude 1", command: "claude" },
-          { title: "Claude 2", command: "claude" },
+          { id: "agent-1", title: "Claude 1", command: "claude" },
+          { id: "agent-2", title: "Claude 2", command: "claude" },
         ],
       },
       {
@@ -158,42 +158,42 @@ export function suggestConfig(dir: string, detected: DetectedStack): IdeConfig {
 
   // Add 3rd claude pane for complex stacks
   if (frameworks.length >= 2) {
-    config.rows[0]!.panes.push({ title: "Claude 3", command: "claude" });
+    config.rows[0]!.panes.push({ id: "agent-3", title: "Claude 3", command: "claude" });
   }
 
   // Add dev servers
   if (frameworks.includes("next")) {
-    bottom.push({ title: "Next.js", command: `${run} dev` });
+    bottom.push({ id: "dev", title: "Next.js", command: `${run} dev` });
   } else if (frameworks.includes("vite")) {
-    bottom.push({ title: "Vite", command: `${run} dev` });
+    bottom.push({ id: "dev", title: "Vite", command: `${run} dev` });
   } else if (frameworks.includes("nuxt")) {
-    bottom.push({ title: "Nuxt", command: `${run} dev` });
+    bottom.push({ id: "dev", title: "Nuxt", command: `${run} dev` });
   } else if (frameworks.includes("remix")) {
-    bottom.push({ title: "Remix", command: `${run} dev` });
+    bottom.push({ id: "dev", title: "Remix", command: `${run} dev` });
   } else if (frameworks.includes("astro")) {
-    bottom.push({ title: "Astro", command: `${run} dev` });
+    bottom.push({ id: "dev", title: "Astro", command: `${run} dev` });
   } else if (frameworks.includes("svelte")) {
-    bottom.push({ title: "SvelteKit", command: `${run} dev` });
+    bottom.push({ id: "dev", title: "SvelteKit", command: `${run} dev` });
   } else if (frameworks.includes("fastapi")) {
-    bottom.push({ title: "FastAPI", command: "uvicorn main:app --reload" });
+    bottom.push({ id: "dev", title: "FastAPI", command: "uvicorn main:app --reload" });
   } else if (frameworks.includes("django")) {
-    bottom.push({ title: "Django", command: "python manage.py runserver" });
+    bottom.push({ id: "dev", title: "Django", command: "python manage.py runserver" });
   } else if (frameworks.includes("flask")) {
-    bottom.push({ title: "Flask", command: "flask run --reload" });
+    bottom.push({ id: "dev", title: "Flask", command: "flask run --reload" });
   } else if (frameworks.includes("cargo")) {
-    bottom.push({ title: "Cargo", command: "cargo watch -x run" });
+    bottom.push({ id: "dev", title: "Cargo", command: "cargo watch -x run" });
   } else if (frameworks.includes("go")) {
-    bottom.push({ title: "Go", command: "go run ." });
+    bottom.push({ id: "dev", title: "Go", command: "go run ." });
   } else if (detected.devCommand) {
-    bottom.push({ title: "Dev Server", command: detected.devCommand });
+    bottom.push({ id: "dev", title: "Dev Server", command: detected.devCommand });
   }
 
   if (frameworks.includes("convex")) {
-    bottom.push({ title: "Convex", command: "npx convex dev" });
+    bottom.push({ id: "convex", title: "Convex", command: "npx convex dev" });
   }
 
   // Always add shell
-  bottom.push({ title: "Shell" });
+  bottom.push({ id: "shell", title: "Shell" });
 
   return config;
 }

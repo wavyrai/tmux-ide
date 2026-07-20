@@ -109,4 +109,18 @@ describe("resolveProjectConfigContext", () => {
       configWriteRoot: realpathSync(dir),
     });
   });
+
+  it("threads a config-free project root hint through the normal config context path", async () => {
+    const dir = tempDir();
+    const nested = join(dir, "packages", "app", "src");
+    mkdirSync(nested, { recursive: true });
+
+    await expect(
+      resolveProjectConfigContext(nested, { resolveOptions: { projectRootHint: dir } }),
+    ).resolves.toMatchObject({
+      configKind: "none",
+      projectRoot: realpathSync(dir),
+      configWriteRoot: realpathSync(dir),
+    });
+  });
 });

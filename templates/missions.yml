@@ -9,18 +9,24 @@ terminal:
   rows:
     - size: 70%
       panes:
-        - title: Lead
+        - id: agent-lead
+          title: Lead
           command: claude
           focus: true
-        - title: Frontend
+        - id: agent-frontend
+          title: Frontend
           command: claude
-        - title: Backend
+        - id: agent-backend
+          title: Backend
           command: claude
 
     - size: 30%
       panes:
-        - title: Validator
+        - id: agent-validator
+          title: Validator
           command: claude
-        - title: Researcher
+        - id: agent-researcher
+          title: Researcher
           command: claude
-        - title: Shell
+        - id: shell
+          title: Shell

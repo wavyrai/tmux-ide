@@ -3,9 +3,12 @@
  *
  * A working tree keeps its own project root, while linked Git worktrees share
  * an identity through Git's common directory. Non-Git projects use the root
- * selected by their nearest config (or the canonical input directory when no
- * config exists). All filesystem and process I/O is injectable for focused,
- * deterministic tests.
+ * selected by their nearest config, an explicit root hint, an ancestor
+ * workspace/lock boundary, or the nearest package manifest (in that order).
+ * A truly markerless tree cannot be inferred safely, so it deliberately falls
+ * back to the canonical input directory.
+ * All filesystem and process I/O is injectable for focused, deterministic
+ * tests.
  */
 
 import { execFile } from "node:child_process";
@@ -14,6 +17,40 @@ import { existsSync, realpathSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
 const GIT_TIMEOUT_MS = 2_000;
+
+/** Explicit workspace/lock boundaries outrank nested package manifests. */
+export const WORKSPACE_ROOT_MARKERS = [
+  ".tmux-ide",
+  "pnpm-workspace.yaml",
+  "pnpm-lock.yaml",
+  "yarn.lock",
+  "package-lock.json",
+  "bun.lock",
+  "bun.lockb",
+  "uv.lock",
+  "go.work",
+  "Cargo.lock",
+  "settings.gradle",
+  "settings.gradle.kts",
+] as const;
+
+/** Nearest language/package manifest when no workspace boundary exists. */
+export const PACKAGE_ROOT_MARKERS = [
+  "deno.json",
+  "deno.jsonc",
+  "package.json",
+  "Cargo.toml",
+  "go.mod",
+  "pyproject.toml",
+  "Gemfile",
+  "composer.json",
+  "mix.exs",
+  "Package.swift",
+  "pom.xml",
+] as const;
+
+/** All intentionally strong markers; generic README/Makefile files are omitted. */
+export const PROJECT_ROOT_MARKERS = [...WORKSPACE_ROOT_MARKERS, ...PACKAGE_ROOT_MARKERS] as const;
 
 export type ProjectIdentitySource = "git-common-dir" | "canonical-realpath";
 export type ProjectConfigKind = "workspace" | "legacy" | "none";
@@ -52,6 +89,12 @@ export interface ProjectResolverIo {
 export interface ResolveProjectOptions {
   /** Caller-selected config. Relative paths resolve from the canonical input directory. */
   explicitConfigPath?: string | null;
+  /**
+   * Explicit config-free project boundary. It is considered only outside Git
+   * and when no workspace/legacy config was discovered, and must contain the
+   * canonical input directory.
+   */
+  projectRootHint?: string | null;
   /** Override any subset of filesystem/process operations. */
   io?: Partial<ProjectResolverIo>;
 }
@@ -218,6 +261,38 @@ function configProjectRoot(config: ProjectConfigSource, inputDir: string): strin
   return configDir;
 }
 
+function hintedProjectRoot(
+  hint: string | null | undefined,
+  inputDir: string,
+  io: ProjectResolverIo,
+): string | null {
+  if (!hint || hint.trim().length === 0) return null;
+  const root = canonicalize(isAbsolute(hint) ? hint : resolve(inputDir, hint), io);
+  if (!isWithin(inputDir, root)) {
+    throw new Error(`Project root hint "${root}" does not contain input directory "${inputDir}"`);
+  }
+  return root;
+}
+
+function markedProjectRoot(inputDir: string, io: ProjectResolverIo): string | null {
+  let current = inputDir;
+  let nearestPackageRoot: string | null = null;
+  while (true) {
+    if (WORKSPACE_ROOT_MARKERS.some((marker) => safeExists(join(current, marker), io))) {
+      return current;
+    }
+    if (
+      nearestPackageRoot === null &&
+      PACKAGE_ROOT_MARKERS.some((marker) => safeExists(join(current, marker), io))
+    ) {
+      nearestPackageRoot = current;
+    }
+    const parent = dirname(current);
+    if (parent === current) return nearestPackageRoot;
+    current = parent;
+  }
+}
+
 function projectIdentityKey(source: ProjectIdentitySource, anchor: string): string {
   const prefix = source === "git-common-dir" ? "git" : "path";
   const digest = createHash("sha256").update(source).update("\0").update(anchor).digest("hex");
@@ -227,7 +302,11 @@ function projectIdentityKey(source: ProjectIdentitySource, anchor: string): stri
 /**
  * Resolve the canonical project root, shared identity, and winning config for
  * `dir`. Git failures (including missing executables and malformed output)
- * degrade to canonical-realpath identity without throwing.
+ * degrade to canonical-realpath identity without throwing. For a config-free,
+ * non-Git tree, a validated explicit root hint wins over marker inference;
+ * workspace/lock markers then outrank nearer package manifests. With neither,
+ * the canonical input directory remains the honest fallback: there is no safe
+ * evidence that its parent is the project.
  */
 export async function resolveProject(
   dir: string,
@@ -245,7 +324,13 @@ export async function resolveProject(
 
   const discovered = discoverConfigs(inputDir, gitProjectRoot, io);
   const config = chooseConfig(options.explicitConfigPath, inputDir, discovered, io);
-  const projectRoot = gitProjectRoot ?? configProjectRoot(config, inputDir);
+  const configuredRoot = config.kind === "none" ? null : configProjectRoot(config, inputDir);
+  const inferredRoot =
+    gitProjectRoot || configuredRoot
+      ? null
+      : (hintedProjectRoot(options.projectRootHint, inputDir, io) ??
+        markedProjectRoot(inputDir, io));
+  const projectRoot = gitProjectRoot ?? configuredRoot ?? inferredRoot ?? inputDir;
   const identitySource: ProjectIdentitySource = gitCommonDir
     ? "git-common-dir"
     : "canonical-realpath";

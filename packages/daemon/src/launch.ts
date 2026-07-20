@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 import { resolveProjectConfigContext, type ProjectConfigContext } from "./lib/config-context.ts";
 import { computeSizes, toSplitPercents } from "./lib/sizes.ts";
 import { outputError } from "./lib/output.ts";
-import { collectPaneStartupPlan } from "./lib/launch-plan.ts";
+import { collectPaneStartupPlan, paneIdentityOptions } from "./lib/launch-plan.ts";
 import { buildSessionOptions } from "./lib/session-options.ts";
 import {
   attachSession,
@@ -260,17 +260,26 @@ export async function launch(
     ({ targetPane, direction, cwd, percent }) => splitPane(targetPane, direction, cwd, percent),
   );
 
-  const { focusPane, paneActions } = collectPaneStartupPlan(rows, paneMap, firstPanesOfRows, dir);
+  const {
+    focusPane,
+    paneActions,
+    diagnostics: launchDiagnostics,
+  } = collectPaneStartupPlan(rows, paneMap, firstPanesOfRows, dir);
+  for (const diagnostic of launchDiagnostics) {
+    console.error(`tmux-ide: warning: ${diagnostic.message}`);
+  }
 
   for (const action of paneActions) {
     if (action.title) {
       setPaneTitle(action.targetPane, action.title);
     }
 
-    // Set pane identity options for discovery by orchestrator/widgets
-    setPaneOption(action.targetPane, "@ide_role", action.paneRole ?? "shell");
-    setPaneOption(action.targetPane, "@ide_name", action.title ?? "");
-    setPaneOption(action.targetPane, "@ide_type", action.paneType ?? "shell");
+    // Stamp semantic identity before compatibility metadata. `%pane_id` remains
+    // a live tmux address only; this durable option is what workspace restore
+    // correlates across app and tmux-server restarts.
+    for (const [option, value] of paneIdentityOptions(action)) {
+      setPaneOption(action.targetPane, option, value);
+    }
 
     // Lock agent pane titles so Claude Code can't overwrite them
     if (action.paneRole === "lead" || action.paneRole === "teammate") {

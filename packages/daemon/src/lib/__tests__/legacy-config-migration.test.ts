@@ -5,7 +5,10 @@ import { tmpdir } from "node:os";
 import yaml from "js-yaml";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { IdeConfig } from "../../types.ts";
-import { convertLegacyConfigToWorkspace } from "../legacy-config-migration.ts";
+import {
+  convertLegacyConfigToWorkspace,
+  workspaceConfigToLegacyProjection,
+} from "../legacy-config-migration.ts";
 import {
   resolveConfig,
   UnsupportedLegacyConfigMutationError,
@@ -52,6 +55,7 @@ describe("legacy config migration", () => {
           size: "70%",
           panes: [
             {
+              id: "app-dev",
               title: "App",
               command: "pnpm dev",
               dir: "apps/web",
@@ -80,6 +84,7 @@ describe("legacy config migration", () => {
             size: "70%",
             panes: [
               {
+                id: "app-dev",
                 title: "App",
                 command: "pnpm dev",
                 dir: "apps/web",
@@ -101,6 +106,14 @@ describe("legacy config migration", () => {
       "diff",
       "missions",
     ]);
+  });
+
+  it("round-trips explicit pane identity through workspace projection", () => {
+    const legacy: IdeConfig = { rows: [{ panes: [{ id: "agent-lead", title: "Lead" }] }] };
+    const migrated = convertLegacyConfigToWorkspace(legacy).workspace;
+
+    expect(migrated.terminal?.rows[0]?.panes[0]?.id).toBe("agent-lead");
+    expect(workspaceConfigToLegacyProjection(migrated).rows[0]?.panes[0]?.id).toBe("agent-lead");
   });
 
   it("reports every unsupported root section and pane metadata field with stable codes and paths", () => {

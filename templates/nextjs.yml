@@ -7,17 +7,23 @@ terminal:
   rows:
     - size: 70%
       panes:
-        - title: Claude 1 — feature
+        - id: agent-1
+          title: Claude 1 — feature
           command: claude
-        - title: Claude 2 — review
+        - id: agent-2
+          title: Claude 2 — review
           command: claude
-        - title: Claude 3 — explore
+        - id: agent-3
+          title: Claude 3 — explore
           command: claude
 
     - panes:
-        - title: Next.js
+        - id: dev
+          title: Next.js
           command: pnpm dev
-        - title: Changes
+        - id: changes
+          title: Changes
           type: changes # live git changes widget
-        - title: Shell
+        - id: shell
+          title: Shell
           focus: true

@@ -146,6 +146,7 @@ export async function resolveConfig(
 ): Promise<ResolvedConfig> {
   const resolution = await resolveProject(dir, {
     explicitConfigPath: options.explicitConfigPath ?? options.resolveOptions?.explicitConfigPath,
+    projectRootHint: options.resolveOptions?.projectRootHint,
     io: options.resolverIo ?? options.resolveOptions?.io,
   });
 
@@ -291,6 +292,7 @@ const LAUNCH_CONFIG_KEYS = new Set([
 ]);
 const ROW_KEYS = new Set(["size", "panes"]);
 const PANE_KEYS = new Set([
+  "id",
   "title",
   "command",
   "type",

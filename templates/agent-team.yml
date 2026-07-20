@@ -11,17 +11,23 @@ terminal:
   rows:
     - size: 70%
       panes:
-        - title: Lead
+        - id: agent-lead
+          title: Lead
           command: claude
           focus: true
-        - title: Teammate 1
+        - id: agent-1
+          title: Teammate 1
           command: claude
-        - title: Teammate 2
+        - id: agent-2
+          title: Teammate 2
           command: claude
 
     - panes:
-        - title: Changes
+        - id: changes
+          title: Changes
           type: changes # live git changes widget
-        - title: Dev Server
+        - id: dev
+          title: Dev Server
           # command: npm run dev
-        - title: Shell
+        - id: shell
+          title: Shell

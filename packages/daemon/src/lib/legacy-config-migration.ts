@@ -63,6 +63,7 @@ function cloneTerminalPane(
   pane: Pane,
 ): NonNullable<WorkspaceConfigV1["terminal"]>["rows"][number]["panes"][number] {
   const result: NonNullable<WorkspaceConfigV1["terminal"]>["rows"][number]["panes"][number] = {};
+  if (pane.id !== undefined) result.id = pane.id;
   if (pane.title !== undefined) result.title = pane.title;
   if (pane.command !== undefined) result.command = pane.command;
   if (pane.type !== undefined) result.type = pane.type;
@@ -124,6 +125,7 @@ export function workspaceConfigToLegacyProjection(workspace: WorkspaceConfigV1):
     rows: (workspace.terminal?.rows ?? [{ panes: [{ title: "Shell" }] }]).map((row) => ({
       ...(row.size === undefined ? {} : { size: row.size }),
       panes: row.panes.map((pane) => ({
+        ...(pane.id === undefined ? {} : { id: pane.id }),
         ...(pane.title === undefined ? {} : { title: pane.title }),
         ...(pane.command === undefined ? {} : { command: pane.command }),
         ...(pane.type === undefined ? {} : { type: pane.type }),

@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { parsePaneGeometry, geometryFromLeaves, type PaneGeometry } from "./session-mirror.ts";
+import {
+  parsePaneGeometry,
+  geometryFromLeaves,
+  parseSessionPaneDescriptors,
+  type PaneGeometry,
+} from "./session-mirror.ts";
 import { parseLayout } from "./layout-parse.ts";
 
 const g = (id: string, left: number, top: number, w: number, h: number, active = false) =>
@@ -24,6 +29,51 @@ describe("parsePaneGeometry", () => {
   });
   it("ignores extra trailing fields (the sync format appends window_id)", () => {
     expect(parsePaneGeometry(["%1 0 0 80 20 1 0 0 @387"])).toEqual([g("%1", 0, 0, 80, 20, true)]);
+  });
+});
+
+describe("parseSessionPaneDescriptors", () => {
+  it("discovers semantic identity, role/type, process, cwd, title, and window facts", () => {
+    expect(
+      parseSessionPaneDescriptors([
+        "%42\tagent-alpha\tlead\tagent\tcodex\t/repo/apps/web\t3\tmission one\t@9\tImplement home page",
+      ]),
+    ).toEqual([
+      {
+        runtimePaneId: "%42",
+        semanticPaneId: "agent-alpha",
+        role: "lead",
+        type: "agent",
+        currentCommand: "codex",
+        cwd: "/repo/apps/web",
+        title: "Implement home page",
+        windowIndex: 3,
+        windowName: "mission one",
+        windowId: "@9",
+      },
+    ]);
+  });
+
+  it("preserves raw invalid stamps for reconciliation and degrades malformed optional facts", () => {
+    expect(
+      parseSessionPaneDescriptors([
+        "%7\tbad stamp\t\t\tzsh\t/tmp\\twith-tab\tnan\tmain\tnot-a-window\tShell\\twith tab",
+        "not-a-pane\tignored",
+      ]),
+    ).toEqual([
+      {
+        runtimePaneId: "%7",
+        semanticPaneId: "bad stamp",
+        role: null,
+        type: null,
+        currentCommand: "zsh",
+        cwd: "/tmp\twith-tab",
+        title: "Shell\twith tab",
+        windowIndex: null,
+        windowName: "main",
+        windowId: null,
+      },
+    ]);
   });
 });
 
