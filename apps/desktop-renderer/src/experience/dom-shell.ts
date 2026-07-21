@@ -38,6 +38,16 @@ export interface DomPaletteEntry {
   readonly commands: readonly SurfaceCommandTemplate[];
 }
 
+export interface DomApplicationShellProjection extends Omit<
+  ApplicationShellProjectionV1,
+  "sidebar"
+> {
+  readonly sidebar: ApplicationShellProjectionV1["sidebar"] & {
+    /** Canonical local selection, independent from the daemon's active tmux session. */
+    readonly selectedResourceId: string | null;
+  };
+}
+
 const TITLEBAR_HEIGHT = 28;
 const STATUS_HEIGHT = 18;
 const DOCK_STRIP_HEIGHT = 28;
@@ -64,15 +74,116 @@ export function createDomShellReplayState(
   });
 }
 
+function sameDomShellIdentity(
+  left: ApplicationShellProjectionInputV1,
+  right: ApplicationShellProjectionInputV1,
+): boolean {
+  return left.project.id === right.project.id && left.workspace.id === right.workspace.id;
+}
+
+function availablePaneIds(input: ApplicationShellProjectionInputV1): ReadonlySet<string> {
+  return new Set([
+    ...input.workspace.sidebar.agents.flatMap((agent) =>
+      agent.paneId === null ? [] : [agent.paneId],
+    ),
+    ...[
+      input.focus.appFocusedPaneId,
+      input.focus.terminalInputPaneId,
+      input.focus.layoutSelectedPaneId,
+    ].flatMap((paneId) => (paneId === null ? [] : [paneId])),
+  ]);
+}
+
+function focusTargetIsAvailable(
+  target: ApplicationShellReplayStateV1["focus"]["overlays"][number]["focusReturnTarget"],
+  paneIds: ReadonlySet<string>,
+): boolean {
+  return target.kind !== "pane" || paneIds.has(target.paneId);
+}
+
+function focusIsAvailable(
+  focus: ApplicationShellReplayStateV1["focus"],
+  input: ApplicationShellProjectionInputV1,
+): boolean {
+  const paneIds = availablePaneIds(input);
+  const referencedPaneIds = [
+    focus.appFocusedPaneId,
+    focus.terminalInputPaneId,
+    focus.layoutSelectedPaneId,
+  ];
+  return (
+    referencedPaneIds.every((paneId) => paneId === null || paneIds.has(paneId)) &&
+    focus.overlays.every((overlay) => focusTargetIsAvailable(overlay.focusReturnTarget, paneIds))
+  );
+}
+
+function availableDockTool(
+  preferred: DockToolId,
+  input: ApplicationShellProjectionInputV1,
+): DockToolId {
+  const preferredTool = input.dock.tools.find((tool) => tool.id === preferred);
+  if (preferredTool?.disabledReason === null) return preferred;
+  const snapshotTool = input.dock.tools.find((tool) => tool.id === input.dock.activeTool);
+  if (snapshotTool?.disabledReason === null) return input.dock.activeTool;
+  return input.dock.tools.find((tool) => tool.disabledReason === null)?.id ?? input.dock.activeTool;
+}
+
+function reconcileResourceSelections(
+  state: ApplicationShellReplayStateV1,
+  input: ApplicationShellProjectionInputV1,
+): ApplicationShellReplayStateV1["selectedResources"] {
+  const terminalResourceIds = new Set([
+    ...input.workspace.sidebar.sessions.map(({ id }) => id),
+    ...input.workspace.sidebar.agents.map(({ id }) => id),
+  ]);
+  return state.selectedResources.filter(
+    (selection) =>
+      selection.surface !== "terminals" || terminalResourceIds.has(selection.resourceId),
+  );
+}
+
+/**
+ * Reconcile a fresh immutable host snapshot with renderer-owned interaction
+ * state. Local mode, dock, focus, and selection survive only for the same
+ * project/workspace identity and only while their targets remain available.
+ */
+export function reconcileDomShellReplayState(
+  previousInput: ApplicationShellProjectionInputV1,
+  nextInput: ApplicationShellProjectionInputV1,
+  current: ApplicationShellReplayStateV1,
+): ApplicationShellReplayStateV1 {
+  const snapshotState = createDomShellReplayState(nextInput);
+  if (!sameDomShellIdentity(previousInput, nextInput)) {
+    return ApplicationShellReplayStateV1SchemaZ.parse({
+      ...snapshotState,
+      activeDockTool: availableDockTool(snapshotState.activeDockTool, nextInput),
+    });
+  }
+  return ApplicationShellReplayStateV1SchemaZ.parse({
+    ...current,
+    activeDockTool: availableDockTool(current.activeDockTool, nextInput),
+    focus: focusIsAvailable(current.focus, nextInput) ? current.focus : snapshotState.focus,
+    selectedResources: reconcileResourceSelections(current, nextInput),
+  });
+}
+
 export function projectDomApplicationShell(
   input: ApplicationShellProjectionInputV1,
   state: ApplicationShellReplayStateV1,
-): ApplicationShellProjectionV1 {
-  return projectApplicationShellV1({
+): DomApplicationShellProjection {
+  const shell = projectApplicationShellV1({
     ...input,
     workspace: { ...input.workspace, activeMode: state.activeMode },
     dock: { ...input.dock, mode: state.dockMode, activeTool: state.activeDockTool },
     focus: state.focus,
+  });
+  return Object.freeze({
+    ...shell,
+    sidebar: Object.freeze({
+      ...shell.sidebar,
+      selectedResourceId:
+        state.selectedResources.find(({ surface }) => surface === "terminals")?.resourceId ?? null,
+    }),
   });
 }
 

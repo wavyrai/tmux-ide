@@ -1,12 +1,18 @@
 import { describe, expect, it } from "vitest";
 
-import { applicationShellActionTraceV1, type ApplicationShellDockMode } from "@tmux-ide/contracts";
+import {
+  ApplicationShellProjectionInputV1SchemaZ,
+  ApplicationShellReplayStateV1SchemaZ,
+  applicationShellActionTraceV1,
+  type ApplicationShellDockMode,
+} from "@tmux-ide/contracts";
 import {
   createDefaultDomShellInput,
   createDomShellReplayState,
   domShellVariant,
   projectDomApplicationShell,
   projectDomWorkbenchDock,
+  reconcileDomShellReplayState,
 } from "./dom-shell.ts";
 
 function projection(mode: ApplicationShellDockMode = "open") {
@@ -85,5 +91,93 @@ describe("DOM application-shell projection", () => {
       "activity",
     ]);
     expect(applicationShellActionTraceV1(input).invocations).toHaveLength(20);
+  });
+
+  it("preserves valid local state for fresh snapshots of the same project and workspace", () => {
+    const previous = createDefaultDomShellInput();
+    const current = ApplicationShellReplayStateV1SchemaZ.parse({
+      ...createDomShellReplayState(previous),
+      activeMode: "home",
+      dockMode: "maximized",
+      activeDockTool: "files",
+      focus: { ...previous.focus, focusZone: "dock-tabs", terminalInputPaneId: null },
+      selectedResources: [{ surface: "terminals", resourceId: "session.docs" }],
+    });
+    const next = ApplicationShellProjectionInputV1SchemaZ.parse({
+      ...previous,
+      project: { ...previous.project, name: "Fresh project data" },
+      workspace: { ...previous.workspace, name: "Fresh workspace data" },
+      connection: { ...previous.connection, message: "Fresh connection data" },
+    });
+
+    expect(reconcileDomShellReplayState(previous, next, current)).toEqual(current);
+  });
+
+  it("falls back from unavailable local targets and resets renderer state on identity change", () => {
+    const previous = createDefaultDomShellInput();
+    const current = ApplicationShellReplayStateV1SchemaZ.parse({
+      ...createDomShellReplayState(previous),
+      activeMode: "home",
+      dockMode: "maximized",
+      activeDockTool: "files",
+      focus: {
+        ...previous.focus,
+        focusZone: "canvas",
+        appFocusedPaneId: "pane.reviewer",
+        terminalInputPaneId: null,
+        layoutSelectedPaneId: "pane.reviewer",
+      },
+      selectedResources: [{ surface: "terminals", resourceId: "session.docs" }],
+    });
+    const next = ApplicationShellProjectionInputV1SchemaZ.parse({
+      ...previous,
+      workspace: {
+        ...previous.workspace,
+        sidebar: {
+          sessions: previous.workspace.sidebar.sessions.filter(
+            (session) => session.id !== "session.docs",
+          ),
+          agents: previous.workspace.sidebar.agents.filter(
+            (agent) => agent.id !== "agent.reviewer",
+          ),
+        },
+      },
+      dock: {
+        ...previous.dock,
+        activeTool: "activity",
+        tools: previous.dock.tools.map((tool) =>
+          tool.id === "files" ? { ...tool, disabledReason: "Files are unavailable" } : tool,
+        ),
+      },
+      focus: {
+        ...previous.focus,
+        appFocusedPaneId: "pane.implementer",
+        terminalInputPaneId: "pane.implementer",
+        layoutSelectedPaneId: "pane.implementer",
+      },
+    });
+    const reconciled = reconcileDomShellReplayState(previous, next, current);
+
+    expect(reconciled).toMatchObject({
+      activeMode: "home",
+      dockMode: "maximized",
+      activeDockTool: "activity",
+      focus: next.focus,
+      selectedResources: [],
+    });
+
+    const replacement = ApplicationShellProjectionInputV1SchemaZ.parse({
+      ...next,
+      project: { ...next.project, id: "project.replacement" },
+      workspace: {
+        ...next.workspace,
+        id: "workspace.replacement",
+        activeMode: "terminals",
+      },
+      dock: { ...next.dock, mode: "collapsed" },
+    });
+    expect(reconcileDomShellReplayState(next, replacement, reconciled)).toEqual(
+      createDomShellReplayState(replacement),
+    );
   });
 });

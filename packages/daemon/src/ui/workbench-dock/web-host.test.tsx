@@ -74,6 +74,10 @@ function action(root: HTMLElement, id: string): HTMLButtonElement {
   return root.querySelector<HTMLButtonElement>(`[data-action="${id}"]`)!;
 }
 
+function pointerClick(element: Element): void {
+  element.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 1 }));
+}
+
 describe("shared WorkbenchDockPresenter DOM host", () => {
   it("renders semantic state and records the same activation trace as OpenTUI", () => {
     const { root, trace } = renderDock();
@@ -140,6 +144,76 @@ describe("shared WorkbenchDockPresenter DOM host", () => {
       "tab:activity",
       "tab:files",
     ]);
+  });
+
+  it("preserves exact mouse and keyboard sources across semantic tab and action activation", () => {
+    const calls: string[] = [];
+    const root = document.createElement("div");
+    installCanonicalFixtureVariables(root);
+    document.body.append(root);
+    disposers.push(
+      render(
+        () => (
+          <WebWorkbenchDock
+            projection={createWorkbenchDockHostFixture()}
+            onTabActivate={(tabId, source) => calls.push(`tab:${tabId}:${source}`)}
+            onActionActivate={(actionId, nextMode, source) =>
+              calls.push(`action:${actionId}:${nextMode}:${source}`)
+            }
+          />
+        ),
+        root,
+      ),
+    );
+
+    pointerClick(tab(root, "files"));
+    tab(root, "missions").focus();
+    for (const key of ["ArrowLeft", "ArrowRight", "End", "Home", "Enter", " "]) {
+      (document.activeElement as HTMLButtonElement).dispatchEvent(
+        new KeyboardEvent("keydown", { key, bubbles: true }),
+      );
+    }
+    pointerClick(action(root, "toggle-collapse"));
+    action(root, "toggle-maximize").click();
+
+    expect(calls).toEqual([
+      "tab:files:mouse",
+      "tab:files:keyboard",
+      "tab:missions:keyboard",
+      "tab:activity:keyboard",
+      "tab:files:keyboard",
+      "tab:files:keyboard",
+      "tab:files:keyboard",
+      "action:toggle-collapse:collapsed:mouse",
+      "action:toggle-maximize:maximized:keyboard",
+    ]);
+  });
+
+  it("reactively falls back to the first enabled tab stop when the selected tab is disabled", () => {
+    const [projection, setProjection] = createSignal(createWorkbenchDockHostFixture());
+    const root = document.createElement("div");
+    installCanonicalFixtureVariables(root);
+    document.body.append(root);
+    disposers.push(render(() => <WebWorkbenchDock projection={projection()} />, root));
+
+    expect(tab(root, "missions").tabIndex).toBe(0);
+    const fresh = createWorkbenchDockHostFixture();
+    setProjection({
+      ...fresh,
+      tabs: fresh.tabs.map((candidate) =>
+        candidate.id === "missions"
+          ? { ...candidate, selected: true, disabled: true, disabledReason: "Unavailable" }
+          : candidate.id === "changes"
+            ? { ...candidate, selected: false, disabled: true }
+            : { ...candidate, selected: false },
+      ),
+    });
+
+    const tabStops = [...root.querySelectorAll<HTMLButtonElement>('[role="tab"]')].filter(
+      (candidate) => candidate.tabIndex === 0,
+    );
+    expect(tab(root, "missions").disabled).toBe(true);
+    expect(tabStops.map((candidate) => candidate.dataset.tabId)).toEqual(["files"]);
   });
 
   it("preserves host leaf identity across fresh immutable projections", () => {

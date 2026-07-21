@@ -1,5 +1,6 @@
 import {
   APPLICATION_SHELL_COMMAND_IDS,
+  ApplicationShellProjectionInputV1SchemaZ,
   applyApplicationShellInvocationV1,
   applicationShellCommandInvocation,
   commandsToOpenSurface,
@@ -19,6 +20,7 @@ import {
   Match,
   Show,
   Switch,
+  createEffect,
   createMemo,
   createSignal,
   onCleanup,
@@ -41,6 +43,7 @@ import {
   invocationFromSurfaceCommand,
   projectDomApplicationShell,
   projectDomWorkbenchDock,
+  reconcileDomShellReplayState,
   type DomPaletteEntry,
   type DomViewport,
 } from "./dom-shell.ts";
@@ -53,6 +56,7 @@ export interface DomApplicationShellProps {
   readonly platform?: string;
   readonly windowState?: DesktopWindowState | null;
   readonly input?: ApplicationShellProjectionInputV1;
+  readonly dataMode?: "runtime" | "preview";
   readonly onCommand?: (invocation: ApplicationShellCommandInvocation) => void;
 }
 
@@ -104,6 +108,11 @@ export function PrimaryNavigation(props: PrimaryNavigationProps) {
             role="tab"
             aria-selected={item().active}
             aria-disabled={item().disabledReason !== null}
+            aria-label={
+              item().disabledReason
+                ? `${item().label}, unavailable: ${item().disabledReason}`
+                : undefined
+            }
             aria-controls={`workspace-panel-${item().id}`}
             disabled={item().disabledReason !== null}
             tabIndex={item().id === tabStopId() ? 0 : -1}
@@ -145,15 +154,48 @@ function activityTone(activity: string): string {
 }
 
 export function DomApplicationShell(props: DomApplicationShellProps) {
-  const input = props.input ?? createDefaultDomShellInput();
-  const [state, setState] = createSignal(createDomShellReplayState(input));
+  const fallbackInput = createDefaultDomShellInput();
+  const input = createMemo(() =>
+    ApplicationShellProjectionInputV1SchemaZ.parse(props.input ?? fallbackInput),
+  );
+  const dataMode = createMemo<"runtime" | "preview">(() =>
+    props.input === undefined ? "preview" : (props.dataMode ?? "runtime"),
+  );
+  const [state, setState] = createSignal(createDomShellReplayState(input()));
   const [viewport, setViewport] = createSignal(initialViewport());
+  let previousInput = input();
+  let previousDataMode = dataMode();
   let returnFocusElement: HTMLElement | null = null;
   let returnFocusId: string | null = null;
 
-  const shell = createMemo(() => projectDomApplicationShell(input, state()));
+  const shell = createMemo(() => projectDomApplicationShell(input(), state()));
   const dock = createMemo(() => projectDomWorkbenchDock(shell(), viewport()));
   const paletteEntries = createMemo(() => createDomPaletteEntries(shell()));
+  const statusStrip = createMemo(() =>
+    dataMode() === "preview"
+      ? {
+          state: "disconnected" as const,
+          message: "Preview workspace — no daemon connection",
+          safeState: "Illustrative data only",
+          nextAction: "Connect the desktop host to load a workspace",
+        }
+      : shell().statusStrip,
+  );
+
+  createEffect(() => {
+    const nextInput = input();
+    const nextDataMode = dataMode();
+    if (nextInput === previousInput && nextDataMode === previousDataMode) return;
+    const currentInput = previousInput;
+    const currentDataMode = previousDataMode;
+    previousInput = nextInput;
+    previousDataMode = nextDataMode;
+    setState((current) =>
+      currentDataMode === nextDataMode
+        ? reconcileDomShellReplayState(currentInput, nextInput, current)
+        : createDomShellReplayState(nextInput),
+    );
+  });
 
   const dispatch = (invocation: ApplicationShellCommandInvocation): void => {
     setState((current) => applyApplicationShellInvocationV1(current, invocation));
@@ -246,7 +288,7 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
   });
 
   const renderDockBody = () => {
-    const tool = input.dock.tools.find(
+    const tool = input().dock.tools.find(
       (candidate) => candidate.id === shell().bottomDock.activeTool,
     )!;
     return (
@@ -310,6 +352,9 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
           <strong>tmux-ide</strong>
           <span>{shell().project.name}</span>
         </div>
+        <Show when={dataMode() === "preview"}>
+          <span class="titlebar__preview-badge">Preview data</span>
+        </Show>
         <PrimaryNavigation
           items={shell().primaryNavigation.items}
           onActivate={(surface, kind) =>
@@ -354,7 +399,7 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
         </Show>
       </header>
 
-      <div class="shell-workbench">
+      <div class="shell-workbench" data-shell-source={dataMode()}>
         <aside class="workspace-sidebar" aria-label="Workspace overview" data-focus-zone="sidebar">
           <div class="workspace-sidebar__project">
             <span class="project-monogram" aria-hidden="true">
@@ -373,14 +418,24 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
                   id={`sidebar-session-${session().id}`}
                   type="button"
                   class="sidebar-row"
-                  classList={{ "sidebar-row--active": session().active }}
-                  aria-pressed={session().active}
-                  onClick={() =>
+                  classList={{
+                    "sidebar-row--active":
+                      (shell().sidebar.selectedResourceId ?? shell().sidebar.activeSessionId) ===
+                      session().id,
+                  }}
+                  aria-pressed={
+                    (shell().sidebar.selectedResourceId ?? shell().sidebar.activeSessionId) ===
+                    session().id
+                  }
+                  onClick={(event) =>
                     dispatch(
                       applicationShellCommandInvocation(
                         APPLICATION_SHELL_COMMAND_IDS.selectResource,
                         { surface: "terminals", resourceId: session().id },
-                        { kind: "mouse", surface: "sidebar" },
+                        {
+                          kind: event.detail === 0 ? "keyboard" : "mouse",
+                          surface: "sidebar",
+                        },
                       ),
                     )
                   }
@@ -401,13 +456,20 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
                   id={`sidebar-agent-${agent().id}`}
                   type="button"
                   class="sidebar-row sidebar-row--agent"
-                  aria-label={`${agent().name}, ${agent().activity}`}
-                  onClick={() =>
+                  classList={{
+                    "sidebar-row--active": shell().sidebar.selectedResourceId === agent().id,
+                  }}
+                  aria-label={`${agent().name}, ${agent().activity}${agent().attention ? ", needs attention" : ""}`}
+                  aria-pressed={shell().sidebar.selectedResourceId === agent().id}
+                  onClick={(event) =>
                     dispatch(
                       applicationShellCommandInvocation(
                         APPLICATION_SHELL_COMMAND_IDS.selectResource,
                         { surface: "terminals", resourceId: agent().id },
-                        { kind: "mouse", surface: "sidebar" },
+                        {
+                          kind: event.detail === 0 ? "keyboard" : "mouse",
+                          surface: "sidebar",
+                        },
                       ),
                     )
                   }
@@ -476,7 +538,8 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
           >
             <header class="canvas-toolbar">
               <span>
-                <strong>{shell().workspace.name}</strong> <small>preview snapshot</small>
+                <strong>{shell().workspace.name}</strong>{" "}
+                <small>{dataMode() === "preview" ? "preview data" : "workspace snapshot"}</small>
               </span>
               <span>{shell().sidebar.agents.length} agents</span>
             </header>
@@ -505,13 +568,14 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
           <div class="workspace-dock" data-focus-zone="dock-tabs">
             <WebWorkbenchDock
               projection={dock()}
-              onTabActivate={(tabId: WorkbenchDockHostTabId) =>
-                dispatchSurface(tabId, { kind: "mouse", surface: "bottom-dock" })
+              onTabActivate={(tabId: WorkbenchDockHostTabId, source) =>
+                dispatchSurface(tabId, { kind: source, surface: "bottom-dock" })
               }
               onActionActivate={(
                 _actionId: WorkbenchDockHostActionId,
                 nextMode: WorkbenchDockHostMode,
-              ) => setDockMode(nextMode, { kind: "mouse", surface: "bottom-dock" })}
+                source,
+              ) => setDockMode(nextMode, { kind: source, surface: "bottom-dock" })}
               renderTabIcon={(tab) => <DomIcon id={dockToolIcon(shell(), tab.id)} usage="tab" />}
               renderActionIcon={(action) => (
                 <DomIcon
@@ -532,20 +596,25 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
         </main>
       </div>
 
-      <footer class="status-strip" role="status" data-focus-zone="status-strip">
+      <footer
+        class="status-strip"
+        role="status"
+        data-focus-zone="status-strip"
+        data-shell-source={dataMode()}
+      >
         <span
           class="status-strip__connection"
-          data-state={shell().statusStrip.state}
-          title={shell().statusStrip.message}
+          data-state={statusStrip().state}
+          title={statusStrip().message}
         >
           <i />
-          <span>{shell().statusStrip.message}</span>
+          <span>{statusStrip().message}</span>
         </span>
-        <span class="status-strip__safe" title={shell().statusStrip.safeState}>
-          {shell().statusStrip.safeState}
+        <span class="status-strip__safe" title={statusStrip().safeState}>
+          {statusStrip().safeState}
         </span>
-        <span class="status-strip__guidance" title={shell().statusStrip.nextAction}>
-          {shell().statusStrip.nextAction}
+        <span class="status-strip__guidance" title={statusStrip().nextAction}>
+          {statusStrip().nextAction}
         </span>
       </footer>
 

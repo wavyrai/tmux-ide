@@ -5,6 +5,7 @@ export type WorkbenchDockHostTabId = WorkbenchDockNavigationTabId;
 export type WorkbenchDockHostActionId = "toggle-collapse" | "toggle-maximize";
 export type WorkbenchDockHostMode = "collapsed" | "open" | "maximized";
 export type WorkbenchDockHostVariant = "compact" | "standard" | "wide";
+export type WorkbenchDockHostActivationSource = "keyboard" | "mouse";
 
 export const WORKBENCH_DOCK_HOST_TAB_ORDER = Object.freeze([
   "files",
@@ -86,7 +87,8 @@ export type WorkbenchDockTabListLeafProps = ParentProps<{
 
 export interface WorkbenchDockTabLeafProps {
   tab: WorkbenchDockHostTab;
-  onActivate?: () => void;
+  tabStop: boolean;
+  onActivate?: (source: WorkbenchDockHostActivationSource) => void;
 }
 
 export interface WorkbenchDockActionListLeafProps {
@@ -96,7 +98,7 @@ export interface WorkbenchDockActionListLeafProps {
 export interface WorkbenchDockActionLeafProps {
   action: WorkbenchDockHostAction;
   activeTabId: WorkbenchDockHostTabId;
-  onActivate?: () => void;
+  onActivate?: (source: WorkbenchDockHostActivationSource) => void;
 }
 
 export type WorkbenchDockBodyLeafProps = ParentProps<{
@@ -122,8 +124,15 @@ export interface WorkbenchDockPresenterProps {
   projection: WorkbenchDockHostProjection;
   host: WorkbenchDockHostLeaves;
   body?: JSX.Element;
-  onTabActivate?: (tabId: WorkbenchDockHostTabId) => void;
-  onActionActivate?: (actionId: WorkbenchDockHostActionId, nextMode: WorkbenchDockHostMode) => void;
+  onTabActivate?: (
+    tabId: WorkbenchDockHostTabId,
+    source: WorkbenchDockHostActivationSource,
+  ) => void;
+  onActionActivate?: (
+    actionId: WorkbenchDockHostActionId,
+    nextMode: WorkbenchDockHostMode,
+    source: WorkbenchDockHostActivationSource,
+  ) => void;
 }
 
 /** Positional host leaves are safe only while the canonical fixed order holds. */
@@ -163,6 +172,9 @@ export function WorkbenchDockPresenter(props: WorkbenchDockPresenterProps) {
     assertWorkbenchDockHostOrder(props.projection);
     return props.projection;
   };
+  const tabStopId = (): WorkbenchDockHostTabId | undefined =>
+    projection().tabs.find((tab) => tab.selected && !tab.disabled)?.id ??
+    projection().tabs.find((tab) => !tab.disabled)?.id;
 
   return (
     <Root projection={projection()}>
@@ -182,7 +194,10 @@ export function WorkbenchDockPresenter(props: WorkbenchDockPresenterProps) {
             {(tab) => (
               <Tab
                 tab={tab()}
-                onActivate={tab().disabled ? undefined : () => props.onTabActivate?.(tab().id)}
+                tabStop={tab().id === tabStopId()}
+                onActivate={
+                  tab().disabled ? undefined : (source) => props.onTabActivate?.(tab().id, source)
+                }
               />
             )}
           </Index>
@@ -193,7 +208,9 @@ export function WorkbenchDockPresenter(props: WorkbenchDockPresenterProps) {
               <Action
                 action={action()}
                 activeTabId={projection().activeDockTab}
-                onActivate={() => props.onActionActivate?.(action().id, action().nextMode)}
+                onActivate={(source) =>
+                  props.onActionActivate?.(action().id, action().nextMode, source)
+                }
               />
             )}
           </Index>

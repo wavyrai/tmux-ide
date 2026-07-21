@@ -5,6 +5,7 @@ import {
   type WorkbenchDockHostProjection,
   type WorkbenchDockHostTabId,
   type WorkbenchDockHostActionId,
+  type WorkbenchDockHostActivationSource,
   type WorkbenchDockHostMode,
 } from "./presenter.js";
 import { workbenchDockNavigationTarget } from "./navigation.js";
@@ -19,8 +20,15 @@ const TAB_GLYPHS: Readonly<Record<WorkbenchDockHostTabId, string>> = {
 
 export type WebWorkbenchDockProps = ParentProps<{
   projection: WorkbenchDockHostProjection;
-  onTabActivate?: (tabId: WorkbenchDockHostTabId) => void;
-  onActionActivate?: (actionId: WorkbenchDockHostActionId, nextMode: WorkbenchDockHostMode) => void;
+  onTabActivate?: (
+    tabId: WorkbenchDockHostTabId,
+    source: WorkbenchDockHostActivationSource,
+  ) => void;
+  onActionActivate?: (
+    actionId: WorkbenchDockHostActionId,
+    nextMode: WorkbenchDockHostMode,
+    source: WorkbenchDockHostActivationSource,
+  ) => void;
   renderTabIcon?: (tab: WorkbenchDockHostProjection["tabs"][number]) => JSX.Element;
   renderActionIcon?: (action: WorkbenchDockHostProjection["actions"][number]) => JSX.Element;
 }>;
@@ -127,12 +135,12 @@ export const WEB_WORKBENCH_DOCK_HOST: WorkbenchDockHostLeaves = {
         aria-selected={props.tab.selected}
         aria-disabled={props.tab.disabled}
         disabled={props.tab.disabled}
-        tabIndex={props.tab.selected && !props.tab.disabled ? 0 : -1}
+        tabIndex={props.tabStop ? 0 : -1}
         title={`${props.tab.title}${props.tab.shortcut ? ` (${props.tab.shortcut})` : ""}${props.tab.disabledReason ? ` — ${props.tab.disabledReason}` : ""}`}
         data-attention={props.tab.attention ? "true" : "false"}
         data-focused={props.tab.focused ? "true" : "false"}
         data-hovered={props.tab.hovered ? "true" : "false"}
-        onClick={() => props.onActivate?.()}
+        onClick={(event) => props.onActivate?.(event.detail === 0 ? "keyboard" : "mouse")}
       >
         <span class="workbench-dock__shortcut" aria-hidden="true">
           {props.tab.shortcut}
@@ -167,7 +175,7 @@ export const WEB_WORKBENCH_DOCK_HOST: WorkbenchDockHostLeaves = {
         aria-pressed={collapse() ? undefined : props.action.active}
         data-action={props.action.id}
         title={props.action.description}
-        onClick={() => props.onActivate?.()}
+        onClick={(event) => props.onActivate?.(event.detail === 0 ? "keyboard" : "mouse")}
       >
         {renderers.actionIcon?.(props.action) ?? props.action.label.trim()}
       </button>

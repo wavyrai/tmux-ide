@@ -51,6 +51,7 @@ export function App(props: AppProps = {}) {
       data-reduced-motion={String(experience().accessibility.reducedMotion)}
       data-increased-contrast={String(experience().accessibility.increasedContrast)}
       data-accessibility-conflicts={experience().accessibility.conflicts.join(" ") || undefined}
+      data-shell-source={props.shellInput === undefined ? "preview" : "runtime"}
       style={experience().variables}
     >
       <DomApplicationShell
@@ -59,6 +60,7 @@ export function App(props: AppProps = {}) {
         platform={bootstrap()?.platform}
         windowState={effectiveWindow()}
         input={props.shellInput}
+        dataMode={props.shellInput === undefined ? "preview" : "runtime"}
         onCommand={props.onCommand}
       />
     </div>

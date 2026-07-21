@@ -10,9 +10,11 @@ import {
   type HostCapabilities,
 } from "@tmux-ide/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { createSignal } from "solid-js";
 import { render } from "solid-js/web";
 
 import { DomApplicationShell, PrimaryNavigation } from "./application-shell.tsx";
+import { DOM_EXPERIENCE_VARIABLE, createDomExperience } from "./dom-experience.ts";
 import {
   createDefaultDomShellInput,
   createDomShellReplayState,
@@ -88,6 +90,7 @@ function renderShell(
           platform={platform}
           windowState={WINDOW_STATE}
           input={input}
+          dataMode="runtime"
           onCommand={onCommand}
         />
       ),
@@ -99,6 +102,51 @@ function renderShell(
 
 function pointerClick(element: Element): void {
   element.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 1 }));
+}
+
+function installApplicationStyles(root: HTMLElement) {
+  const experience = createDomExperience({ hostTheme: { mode: "dark" } });
+  for (const [name, value] of Object.entries(experience.variables)) {
+    root.style.setProperty(name, value);
+  }
+  const sheet = document.createElement("style");
+  sheet.textContent = styles;
+  document.head.append(sheet);
+  disposers.push(() => sheet.remove());
+  return experience;
+}
+
+function updatedSameWorkspace(
+  input: ApplicationShellProjectionInputV1,
+): ApplicationShellProjectionInputV1 {
+  return ApplicationShellProjectionInputV1SchemaZ.parse({
+    ...input,
+    project: { ...input.project, name: "tmux-ide reactive", rootLabel: "reactive/root" },
+    workspace: {
+      ...input.workspace,
+      name: "Reactive workspace",
+      sidebar: {
+        sessions: input.workspace.sidebar.sessions.map((session) =>
+          session.id === "session.docs" ? { ...session, label: "Fresh documentation" } : session,
+        ),
+        agents: input.workspace.sidebar.agents.map((agent) =>
+          agent.id === "agent.implementer" ? { ...agent, name: "Codex refreshed" } : agent,
+        ),
+      },
+    },
+    dock: {
+      ...input.dock,
+      tools: input.dock.tools.map((tool) =>
+        tool.data.kind === "files" ? { ...tool, data: { ...tool.data, fileCount: 999 } } : tool,
+      ),
+    },
+    connection: {
+      state: "connected",
+      message: "Connected from fresh host snapshot",
+      safeState: "Runtime workspace synchronized",
+      nextAction: "No action needed",
+    },
+  });
 }
 
 afterEach(() => {
@@ -120,7 +168,11 @@ describe("visible DOM application shell", () => {
     expect(root.querySelectorAll('[role="tabpanel"]')).toHaveLength(6);
     expect(root.textContent).toContain("Sessions");
     expect(root.textContent).toContain("Agents");
-    expect(root.textContent).toContain("preview snapshot");
+    expect(root.textContent).toContain("workspace snapshot");
+    expect(root.textContent).not.toContain("Preview data");
+    expect(root.querySelector(".shell-workbench")?.getAttribute("data-shell-source")).toBe(
+      "runtime",
+    );
     expect(root.textContent).not.toMatch(/\blive\b/u);
     expect(root.querySelector(".status-strip button")).toBeNull();
     expect(root.querySelector(".status-strip__guidance")?.textContent).toContain("Retry");
@@ -129,6 +181,9 @@ describe("visible DOM application shell", () => {
     );
     expect(root.querySelector(".status-strip__guidance")?.getAttribute("title")).toContain("Retry");
     expect(root.querySelector(".palette-trigger kbd")?.textContent).toBe("⌘K");
+    expect(root.querySelector("#sidebar-agent-agent\\.pm")?.getAttribute("aria-label")).toBe(
+      "Fable, waiting, needs attention",
+    );
     for (const tab of root.querySelectorAll<HTMLButtonElement>('.primary-tabs [role="tab"]')) {
       expect(tab.getAttribute("aria-disabled")).toBe("false");
     }
@@ -168,11 +223,36 @@ describe("visible DOM application shell", () => {
     expect(styles).not.toMatch(
       /\.command-palette(?:-overlay)?(?:--open)?\s*\{[^}]*(?:transition|transform)\s*:/gu,
     );
+    expect(styles).toContain('.status-strip__connection[data-state="recovering"] > i');
+    expect(styles).toContain('.agent-pane[data-state="running"] header i');
+    expect(styles).not.toMatch(/^\[data-state=/mu);
   });
 
   it("uses Ctrl K outside Darwin", () => {
     const root = renderShell(createDefaultDomShellInput(), undefined, "linux");
     expect(root.querySelector(".palette-trigger kbd")?.textContent).toBe("Ctrl K");
+  });
+
+  it("applies state tones to explicit indicators without recoloring their parent surfaces", () => {
+    const root = renderShell();
+    const experience = installApplicationStyles(root);
+    const connection = root.querySelector<HTMLElement>(".status-strip__connection")!;
+    const connectionIndicator = connection.querySelector<HTMLElement>("i")!;
+    const runningPane = root.querySelector<HTMLElement>('.agent-pane[data-state="running"]')!;
+    const runningIndicator = runningPane.querySelector<HTMLElement>("header i")!;
+
+    expect(getComputedStyle(connectionIndicator).backgroundColor).toBe(
+      experience.variables[DOM_EXPERIENCE_VARIABLE.status.warning],
+    );
+    expect(getComputedStyle(connection).backgroundColor).not.toBe(
+      experience.variables[DOM_EXPERIENCE_VARIABLE.status.warning],
+    );
+    expect(getComputedStyle(runningIndicator).backgroundColor).toBe(
+      experience.variables[DOM_EXPERIENCE_VARIABLE.status.info],
+    );
+    expect(getComputedStyle(runningPane).backgroundColor).toBe(
+      experience.variables[DOM_EXPERIENCE_VARIABLE.surface.terminal],
+    );
   });
 
   it("makes an unavailable primary surface both explanatory and inert", () => {
@@ -203,6 +283,7 @@ describe("visible DOM application shell", () => {
     expect(home.tabIndex).toBe(-1);
     expect(root.querySelector<HTMLButtonElement>("#primary-tab-terminals")?.tabIndex).toBe(0);
     expect(home.title).toBe("Home is unavailable during recovery");
+    expect(home.getAttribute("aria-label")).toContain("Home is unavailable during recovery");
     pointerClick(home);
     expect(activate).not.toHaveBeenCalled();
   });
@@ -231,11 +312,20 @@ describe("visible DOM application shell", () => {
     await vi.waitFor(() => expect(document.activeElement).toBe(paletteInput));
     paletteInput.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
 
-    const expected = applicationShellActionTraceV1(input).invocations;
-    expect(invocations.map(({ id, args }) => ({ id, args }))).toEqual(
-      expected.map(({ id, args }) => ({ id, args })),
+    const expected = applicationShellActionTraceV1(input).invocations.map(
+      (invocation, index): ApplicationShellCommandInvocation => ({
+        ...invocation,
+        source:
+          index < 2
+            ? { kind: "mouse", surface: "primary-navigation" }
+            : index < 17
+              ? { kind: "mouse", surface: "bottom-dock" }
+              : index < 19
+                ? { kind: "keyboard", surface: "application-shell" }
+                : { kind: "keyboard", surface: "command-palette" },
+      }),
     );
-    expect(invocations[0]?.source.kind).toBe("mouse");
+    expect(invocations).toEqual(expected);
     expect(invocations.at(-2)?.id).toBe(APPLICATION_SHELL_COMMAND_IDS.openPalette);
     expect(invocations.at(-2)?.source.kind).toBe("keyboard");
     expect(invocations.at(-1)?.id).toBe(APPLICATION_SHELL_COMMAND_IDS.closePalette);
@@ -253,5 +343,116 @@ describe("visible DOM application shell", () => {
       args: { mode: "home" },
       source: { kind: "keyboard", surface: "application-shell" },
     });
+  });
+
+  it("marks fallback data as preview-only and never claims fixture recovery is live", () => {
+    const root = document.createElement("div");
+    document.body.append(root);
+    disposers.push(
+      render(
+        () => (
+          <DomApplicationShell
+            host={host()}
+            runtime="browser"
+            platform="darwin"
+            windowState={WINDOW_STATE}
+            dataMode="preview"
+          />
+        ),
+        root,
+      ),
+    );
+
+    expect(root.querySelector(".titlebar__preview-badge")?.textContent).toBe("Preview data");
+    expect(root.querySelector(".shell-workbench")?.getAttribute("data-shell-source")).toBe(
+      "preview",
+    );
+    expect(root.querySelector(".status-strip")?.getAttribute("data-shell-source")).toBe("preview");
+    expect(root.querySelector(".status-strip__connection")?.textContent).toContain(
+      "Preview workspace — no daemon connection",
+    );
+    expect(root.querySelector(".status-strip__safe")?.textContent).toBe("Illustrative data only");
+    expect(root.textContent).not.toContain("agent processes remain active");
+    expect(root.textContent).not.toContain("Retry the attachment");
+  });
+
+  it("reacts to replacement snapshots while preserving valid local state and stable leaves", async () => {
+    const initial = createDefaultDomShellInput();
+    const [input, setInput] = createSignal(initial);
+    const root = document.createElement("div");
+    document.body.append(root);
+    disposers.push(
+      render(
+        () => (
+          <DomApplicationShell
+            host={host()}
+            runtime="browser"
+            platform="darwin"
+            windowState={WINDOW_STATE}
+            input={input()}
+            dataMode="runtime"
+          />
+        ),
+        root,
+      ),
+    );
+
+    pointerClick(root.querySelector("#workbench-dock-tab-files")!);
+    pointerClick(root.querySelector('[data-action="toggle-maximize"]')!);
+    pointerClick(root.querySelector("#sidebar-session-session\\.docs")!);
+    pointerClick(root.querySelector("#primary-tab-home")!);
+    const homeLeaf = root.querySelector("#primary-tab-home");
+    const filesLeaf = root.querySelector("#workbench-dock-tab-files");
+    const docsLeaf = root.querySelector("#sidebar-session-session\\.docs");
+
+    setInput(updatedSameWorkspace(initial));
+    await vi.waitFor(() =>
+      expect(root.querySelector(".titlebar__brand")?.textContent).toContain("tmux-ide reactive"),
+    );
+
+    expect(root.querySelector("#primary-tab-home")).toBe(homeLeaf);
+    expect(root.querySelector("#workbench-dock-tab-files")).toBe(filesLeaf);
+    expect(root.querySelector("#sidebar-session-session\\.docs")).toBe(docsLeaf);
+    expect(root.querySelector("#primary-tab-home")?.getAttribute("aria-selected")).toBe("true");
+    expect(root.querySelector("#workbench-dock-tab-files")?.getAttribute("aria-selected")).toBe(
+      "true",
+    );
+    expect(root.querySelector(".workspace-main")?.getAttribute("data-dock-mode")).toBe("maximized");
+    expect(docsLeaf?.getAttribute("aria-pressed")).toBe("true");
+    expect(root.textContent).toContain("Reactive workspace");
+    expect(root.textContent).toContain("Fresh documentation");
+    expect(root.textContent).toContain("Codex refreshed");
+    expect(root.textContent).toContain("999 indexed files");
+    expect(root.textContent).toContain("Connected from fresh host snapshot");
+  });
+
+  it("selects session and agent rows visibly while emitting canonical resource commands", () => {
+    const invocations: ApplicationShellCommandInvocation[] = [];
+    const root = renderShell(createDefaultDomShellInput(), (invocation) =>
+      invocations.push(invocation),
+    );
+    const product = root.querySelector<HTMLButtonElement>("#sidebar-session-session\\.product")!;
+    const docs = root.querySelector<HTMLButtonElement>("#sidebar-session-session\\.docs")!;
+    const reviewer = root.querySelector<HTMLButtonElement>("#sidebar-agent-agent\\.reviewer")!;
+
+    expect(product.getAttribute("aria-pressed")).toBe("true");
+    pointerClick(docs);
+    expect(product.getAttribute("aria-pressed")).toBe("false");
+    expect(docs.getAttribute("aria-pressed")).toBe("true");
+    pointerClick(reviewer);
+    expect(docs.getAttribute("aria-pressed")).toBe("false");
+    expect(reviewer.getAttribute("aria-pressed")).toBe("true");
+    expect(invocations).toEqual([
+      expect.objectContaining({
+        id: APPLICATION_SHELL_COMMAND_IDS.selectResource,
+        args: { surface: "terminals", resourceId: "session.docs" },
+        source: { kind: "mouse", surface: "sidebar" },
+      }),
+      expect.objectContaining({
+        id: APPLICATION_SHELL_COMMAND_IDS.selectResource,
+        args: { surface: "terminals", resourceId: "agent.reviewer" },
+        source: { kind: "mouse", surface: "sidebar" },
+      }),
+    ]);
   });
 });

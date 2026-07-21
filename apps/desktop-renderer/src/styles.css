@@ -104,6 +104,19 @@ input:focus-visible,
   text-overflow: ellipsis;
 }
 
+.titlebar__preview-badge {
+  align-self: center;
+  margin-left: 8px;
+  padding: 0 5px;
+  border: 1px solid var(--tmux-ide-border-attention);
+  border-radius: var(--tmux-ide-shape-status-radius);
+  color: var(--tmux-ide-status-warning);
+  font-size: 9px;
+  line-height: 16px;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
 .primary-tabs {
   -webkit-app-region: no-drag;
   display: flex;
@@ -315,21 +328,32 @@ kbd {
   border-radius: 50%;
 }
 
-[data-state="connected"],
-[data-state="complete"] {
+.sidebar-row i[data-state="connected"],
+.sidebar-row i[data-state="complete"],
+.status-strip__connection[data-state="connected"] > i,
+.agent-pane[data-state="complete"] header i {
   border-color: var(--tmux-ide-status-success) !important;
   background: var(--tmux-ide-status-success);
 }
 
-[data-state="running"] {
+.sidebar-row i[data-state="running"],
+.status-strip__connection[data-state="running"] > i,
+.agent-pane[data-state="running"] header i {
   border-color: var(--tmux-ide-status-info) !important;
   background: var(--tmux-ide-status-info);
 }
 
-[data-state="reconnecting"],
-[data-state="recovery"],
-[data-state="recovering"],
-[data-state="warning"] {
+.sidebar-row i[data-state="reconnecting"],
+.sidebar-row i[data-state="recovery"],
+.sidebar-row i[data-state="recovering"],
+.sidebar-row i[data-state="warning"],
+.status-strip__connection[data-state="reconnecting"] > i,
+.status-strip__connection[data-state="recovery"] > i,
+.status-strip__connection[data-state="recovering"] > i,
+.status-strip__connection[data-state="warning"] > i,
+.status-strip__connection[data-state="disconnected"] > i,
+.agent-pane[data-state="recovery"] header i,
+.readiness-card header span[data-state="warning"] {
   border-color: var(--tmux-ide-status-warning) !important;
   background: var(--tmux-ide-status-warning);
 }
