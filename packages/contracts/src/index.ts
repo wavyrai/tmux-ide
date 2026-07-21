@@ -28,3 +28,4 @@ export * from "./actions-errors.ts";
 export * from "./terminals.ts";
 export * from "./control.ts";
 export * from "./commands.ts";
+export * from "./desktop-host.ts";

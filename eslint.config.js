@@ -24,7 +24,13 @@ export default [
   },
   js.configs.recommended,
   {
-    files: ["bin/**/*.{js,mjs}", "scripts/**/*.{js,mjs}", "src/**/*.{js,mjs}", "*.{js,mjs}"],
+    files: [
+      "bin/**/*.{js,mjs}",
+      "scripts/**/*.{js,mjs}",
+      "apps/**/scripts/**/*.{js,mjs}",
+      "src/**/*.{js,mjs}",
+      "*.{js,mjs}",
+    ],
     languageOptions: {
       ecmaVersion: "latest",
       sourceType: "module",
@@ -46,6 +52,7 @@ export default [
       "packages/contracts/src/**/*.ts",
       "packages/daemon/src/**/*.ts",
       "packages/tmux-bridge/src/**/*.ts",
+      "apps/**/*.{ts,tsx}",
     ],
     languageOptions: {
       ecmaVersion: "latest",
@@ -66,6 +73,35 @@ export default [
       "no-undef": "off",
       "no-unused-vars": "off",
       "@typescript-eslint/no-unused-vars": ["error", { argsIgnorePattern: "^_" }],
+    },
+  },
+
+  {
+    files: ["apps/desktop-renderer/src/**/*.{ts,tsx}"],
+    languageOptions: {
+      globals: {
+        ...globals.browser,
+      },
+    },
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            {
+              group: [
+                "electron",
+                "electron/*",
+                "node:*",
+                "@tmux-ide/electron-shell",
+                "**/electron-shell/**",
+              ],
+              message:
+                "the desktop renderer is browser-native; desktop access goes through HostCapabilities",
+            },
+          ],
+        },
+      ],
     },
   },
 
