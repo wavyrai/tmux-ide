@@ -89,9 +89,18 @@
 
 .workbench-dock__tab:disabled {
   cursor: not-allowed;
-  color: var(--dock-muted);
-  background: var(--tmux-ide-selection-disabled);
-  opacity: var(--tmux-ide-window-activity-inactive-opacity);
+  color: var(--tmux-ide-control-disabled-foreground);
+  background: var(--tmux-ide-control-disabled-background);
+  opacity: 1;
+}
+
+.workbench-dock__tab:disabled .workbench-dock__shortcut,
+.workbench-dock__tab:disabled .workbench-dock__attention {
+  color: inherit;
+}
+
+[data-increased-contrast="true"] .workbench-dock__tab:disabled {
+  color: var(--tmux-ide-control-disabled-foreground-high-contrast);
 }
 
 .workbench-dock__shortcut {

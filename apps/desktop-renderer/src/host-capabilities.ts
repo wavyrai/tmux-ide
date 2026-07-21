@@ -31,6 +31,20 @@ function browserTheme(): DesktopThemeState {
   };
 }
 
+const FALLBACK_INITIAL_THEME: DesktopThemeState = Object.freeze({
+  mode: "dark",
+  highContrast: false,
+  reducedMotion: false,
+});
+
+/** Synchronous paint seed; async host bootstrap remains the authoritative state. */
+export function readInitialThemeState(): DesktopThemeState {
+  if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
+    return FALLBACK_INITIAL_THEME;
+  }
+  return browserTheme();
+}
+
 function browserWindowState(): DesktopWindowState {
   return {
     maximized: false,
@@ -110,7 +124,9 @@ function hasNarrowFacade(value: unknown): value is HostCapabilities {
   );
 }
 
-export function resolveHostCapabilities(candidate: unknown = window.tmuxIdeHost): HostCapabilities {
+export function resolveHostCapabilities(
+  candidate: unknown = typeof window === "undefined" ? undefined : window.tmuxIdeHost,
+): HostCapabilities {
   return hasNarrowFacade(candidate) ? candidate : createBrowserHostCapabilities();
 }
 

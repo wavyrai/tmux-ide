@@ -48,6 +48,11 @@ export const DOM_EXPERIENCE_VARIABLE = Object.freeze({
   selection: Object.fromEntries(
     SELECTION_TOKEN_ROLES.map((role) => [role, `--tmux-ide-selection-${toKebabCase(role)}`]),
   ) as Record<(typeof SELECTION_TOKEN_ROLES)[number], `--tmux-ide-selection-${string}`>,
+  control: {
+    disabledBackground: "--tmux-ide-control-disabled-background",
+    disabledForeground: "--tmux-ide-control-disabled-foreground",
+    disabledForegroundHighContrast: "--tmux-ide-control-disabled-foreground-high-contrast",
+  } as const,
   density: Object.fromEntries(
     DENSITY_TOKEN_ROLES.map((role) => [role, `--tmux-ide-density-${toKebabCase(role)}`]),
   ) as Record<(typeof DENSITY_TOKEN_ROLES)[number], `--tmux-ide-density-${string}`>,
@@ -113,6 +118,10 @@ function colorToCss(value: RendererNeutralColor): string {
   return `rgb(${value.red} ${value.green} ${value.blue} / ${formatNumber(value.alpha / 255)})`;
 }
 
+function colorToCssWithAlpha(value: RendererNeutralColor, alpha: number): string {
+  return `rgb(${value.red} ${value.green} ${value.blue} / ${formatNumber(alpha)})`;
+}
+
 function formatNumber(value: number): string {
   return String(Math.round(value * 1_000) / 1_000);
 }
@@ -127,12 +136,23 @@ function easingToCss(value: "linear" | "standard" | "decelerate"): string {
   return "cubic-bezier(0.2, 0, 0, 1)";
 }
 
-function elevationToCss(value: ElevationValue): string {
+const BENCHMARK_ELEVATION = Object.freeze({
+  floating: { y: 18, blur: 38, alpha: 0.46 },
+  palette: { y: 10, blur: 18, alpha: 0.34 },
+  windowMode: { y: 18, blur: 40, alpha: 0.5 },
+} satisfies Record<
+  (typeof ELEVATION_TOKEN_ROLES)[number],
+  { readonly y: number; readonly blur: number; readonly alpha: number }
+>);
+
+function elevationToCss(
+  role: (typeof ELEVATION_TOKEN_ROLES)[number],
+  value: ElevationValue,
+  canvas: RendererNeutralColor,
+): string {
   if (value.level === 0 || value.intent === "flat") return "none";
-  const y = value.level * 4 + 4;
-  const blur = value.level * 12 + 12;
-  const alpha = value.intent === "overlay" ? 0.34 : 0.22;
-  return `0 ${y}px ${blur}px rgb(0 0 0 / ${alpha})`;
+  const benchmark = BENCHMARK_ELEVATION[role];
+  return `0 ${benchmark.y}px ${benchmark.blur}px ${colorToCssWithAlpha(canvas, benchmark.alpha)}`;
 }
 
 function typographyFamily(value: TypographyValue["family"]): string {
@@ -189,6 +209,14 @@ function createVariables(input: ReturnType<typeof resolveVisualTheme>): DomExper
   for (const role of SELECTION_TOKEN_ROLES) {
     variables[DOM_EXPERIENCE_VARIABLE.selection[role]] = colorToCss(tokens.selection[role]);
   }
+  variables[DOM_EXPERIENCE_VARIABLE.control.disabledBackground] = colorToCss(tokens.surfaces.panel);
+  variables[DOM_EXPERIENCE_VARIABLE.control.disabledForeground] = colorToCssWithAlpha(
+    tokens.text.muted,
+    0.55,
+  );
+  variables[DOM_EXPERIENCE_VARIABLE.control.disabledForegroundHighContrast] = colorToCss(
+    tokens.text.muted,
+  );
   for (const role of DENSITY_TOKEN_ROLES) {
     variables[DOM_EXPERIENCE_VARIABLE.density[role]] = rhythmToCss(tokens.density[role].value);
   }
@@ -197,7 +225,11 @@ function createVariables(input: ReturnType<typeof resolveVisualTheme>): DomExper
   }
   for (const role of ELEVATION_TOKEN_ROLES) {
     const name = DOM_EXPERIENCE_VARIABLE.elevation[role];
-    variables[`${name}-shadow`] = elevationToCss(tokens.elevation[role]);
+    variables[`${name}-shadow`] = elevationToCss(
+      role,
+      tokens.elevation[role],
+      tokens.surfaces.canvas,
+    );
     variables[`${name}-level`] = String(tokens.elevation[role].level);
     variables[`${name}-intent`] = tokens.elevation[role].intent;
   }

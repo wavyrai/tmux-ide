@@ -78,8 +78,8 @@ button {
   background: transparent;
   cursor: default;
   transition:
-    color var(--tmux-ide-motion-fast) var(--tmux-ide-motion-easing-standard),
-    background-color var(--tmux-ide-motion-fast) var(--tmux-ide-motion-easing-standard);
+    color var(--tmux-ide-motion-fast) linear,
+    background-color var(--tmux-ide-motion-fast) linear;
 }
 .window-controls button:hover {
   color: var(--tmux-ide-text-bright);

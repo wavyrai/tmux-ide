@@ -104,6 +104,9 @@ importers:
         specifier: 1.9.12
         version: 1.9.12
     devDependencies:
+      happy-dom:
+        specifier: ^20.8.4
+        version: 20.8.4
       typescript:
         specifier: ^5.9.3
         version: 5.9.3

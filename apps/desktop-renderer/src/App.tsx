@@ -1,15 +1,14 @@
 import { Show, createMemo, createResource, createSignal, onCleanup, onMount } from "solid-js";
-import type { DesktopThemeState, DesktopWindowState } from "@tmux-ide/contracts";
+import type { DesktopThemeState, DesktopWindowState, HostCapabilities } from "@tmux-ide/contracts";
 
 import {
   parseThemeState,
   parseWindowState,
   readHostBootstrap,
+  readInitialThemeState,
   resolveHostCapabilities,
 } from "./host-capabilities.ts";
 import { createDomExperience } from "./experience/index.ts";
-
-const host = resolveHostCapabilities();
 
 function daemonLabel(status: string): string {
   if (status === "ready") return "Daemon ready";
@@ -18,7 +17,14 @@ function daemonLabel(status: string): string {
   return "Daemon integration deferred";
 }
 
-export function App() {
+export interface AppProps {
+  readonly host?: HostCapabilities;
+  readonly initialTheme?: DesktopThemeState;
+}
+
+export function App(props: AppProps = {}) {
+  const host = props.host ?? resolveHostCapabilities();
+  const initialTheme = props.initialTheme ?? readInitialThemeState();
   const [bootstrap] = createResource(() => readHostBootstrap(host));
   const [theme, setTheme] = createSignal<DesktopThemeState | null>(null);
   const [windowState, setWindowState] = createSignal<DesktopWindowState | null>(null);
@@ -32,7 +38,7 @@ export function App() {
     });
   });
 
-  const effectiveTheme = () => theme() ?? bootstrap()?.theme ?? null;
+  const effectiveTheme = () => theme() ?? bootstrap()?.theme ?? initialTheme;
   const effectiveWindow = () => windowState() ?? bootstrap()?.window ?? null;
   const experience = createMemo(() => createDomExperience({ hostTheme: effectiveTheme() }));
 

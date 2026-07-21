@@ -1,14 +1,33 @@
 import { SEMANTIC_ICON_IDS, type SemanticIconId } from "@tmux-ide/contracts";
 
+export const DOM_ICON_USAGE_SIZES = Object.freeze({
+  pane: 12,
+  tab: 12,
+  rail: 12,
+  action: 12,
+  nativeWindow: 10,
+} as const);
+
+export type DomIconUsage = keyof typeof DOM_ICON_USAGE_SIZES;
+export type DomIconSize = (typeof DOM_ICON_USAGE_SIZES)[DomIconUsage];
+
 export interface DomIconMetadata {
   readonly id: SemanticIconId;
   readonly label: string;
   readonly viewBox: "0 0 16 16";
-  readonly size: 16;
+  readonly size: 12;
+  readonly usageSizes: Readonly<Record<DomIconUsage, DomIconSize>>;
   readonly strokeWidth: 1.5;
+  readonly strokeLinecap: "round";
+  readonly strokeLinejoin: "round";
   readonly fill: "none";
   readonly stroke: "currentColor";
   readonly paths: readonly string[];
+}
+
+export interface ResolvedDomIconMetadata extends Omit<DomIconMetadata, "size"> {
+  readonly usage: DomIconUsage;
+  readonly size: DomIconSize;
 }
 
 type DomIconSpec = Pick<DomIconMetadata, "label" | "paths">;
@@ -46,7 +65,7 @@ const ICON_SPECS = {
     label: "Native window",
     paths: ["M2 3h12v10H2Z", "M2 5.5h12", "M4 4.25h.01", "M5.5 4.25h.01"],
   },
-  more: { label: "More", paths: ["M3 8h.01M8 8h.01M13 8h.01"] },
+  more: { label: "More", paths: ["M2.75 8h.5M7.75 8h.5M12.75 8h.5"] },
   close: { label: "Close", paths: ["m3.5 3.5 9 9", "m12.5 3.5-9 9"] },
   minimize: { label: "Minimize", paths: ["M3 11.5h10"] },
   maximize: { label: "Maximize", paths: ["M3 3h10v10H3Z"] },
@@ -118,8 +137,11 @@ export const DOM_ICON_METADATA: Readonly<Record<SemanticIconId, DomIconMetadata>
           id,
           label: spec.label,
           viewBox: "0 0 16 16" as const,
-          size: 16 as const,
+          size: 12 as const,
+          usageSizes: DOM_ICON_USAGE_SIZES,
           strokeWidth: 1.5 as const,
+          strokeLinecap: "round" as const,
+          strokeLinejoin: "round" as const,
           fill: "none" as const,
           stroke: "currentColor" as const,
           paths: Object.freeze([...spec.paths]),
@@ -129,6 +151,10 @@ export const DOM_ICON_METADATA: Readonly<Record<SemanticIconId, DomIconMetadata>
   ) as Record<SemanticIconId, DomIconMetadata>,
 );
 
-export function resolveDomIcon(id: SemanticIconId): DomIconMetadata {
-  return DOM_ICON_METADATA[id];
+export function resolveDomIcon(
+  id: SemanticIconId,
+  usage: DomIconUsage = "action",
+): ResolvedDomIconMetadata {
+  const metadata = DOM_ICON_METADATA[id];
+  return Object.freeze({ ...metadata, usage, size: metadata.usageSizes[usage] });
 }

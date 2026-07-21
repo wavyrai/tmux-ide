@@ -8,6 +8,94 @@ import {
 import { DOM_EXPERIENCE_VARIABLE, createDomExperience } from "./dom-experience.ts";
 import { resolveDomIcon } from "./dom-icons.ts";
 
+const EXPECTED_DOM_EXPERIENCE_VARIABLE_NAMES = [
+  "--tmux-ide-border-attention",
+  "--tmux-ide-border-danger",
+  "--tmux-ide-border-default",
+  "--tmux-ide-border-focused",
+  "--tmux-ide-border-selected",
+  "--tmux-ide-border-subtle",
+  "--tmux-ide-control-disabled-background",
+  "--tmux-ide-control-disabled-foreground",
+  "--tmux-ide-control-disabled-foreground-high-contrast",
+  "--tmux-ide-density-cell-height",
+  "--tmux-ide-density-control-padding",
+  "--tmux-ide-density-header-height",
+  "--tmux-ide-density-inline-gap",
+  "--tmux-ide-density-section-gap",
+  "--tmux-ide-density-status-height",
+  "--tmux-ide-elevation-floating-intent",
+  "--tmux-ide-elevation-floating-level",
+  "--tmux-ide-elevation-floating-shadow",
+  "--tmux-ide-elevation-palette-intent",
+  "--tmux-ide-elevation-palette-level",
+  "--tmux-ide-elevation-palette-shadow",
+  "--tmux-ide-elevation-window-mode-intent",
+  "--tmux-ide-elevation-window-mode-level",
+  "--tmux-ide-elevation-window-mode-shadow",
+  "--tmux-ide-focus-focus-contrast",
+  "--tmux-ide-focus-high-contrast-outline",
+  "--tmux-ide-focus-outline",
+  "--tmux-ide-focus-outline-offset",
+  "--tmux-ide-motion-easing-emphasized",
+  "--tmux-ide-motion-easing-standard",
+  "--tmux-ide-motion-emphasized",
+  "--tmux-ide-motion-fast",
+  "--tmux-ide-motion-instant",
+  "--tmux-ide-motion-standard",
+  "--tmux-ide-selection-disabled",
+  "--tmux-ide-selection-hover",
+  "--tmux-ide-selection-pressed",
+  "--tmux-ide-selection-selection",
+  "--tmux-ide-selection-selection-text",
+  "--tmux-ide-shape-control-radius",
+  "--tmux-ide-shape-docked-radius",
+  "--tmux-ide-shape-floating-radius",
+  "--tmux-ide-shape-status-radius",
+  "--tmux-ide-status-danger",
+  "--tmux-ide-status-info",
+  "--tmux-ide-status-neutral",
+  "--tmux-ide-status-success",
+  "--tmux-ide-status-warning",
+  "--tmux-ide-surface-canvas",
+  "--tmux-ide-surface-command",
+  "--tmux-ide-surface-header",
+  "--tmux-ide-surface-header-active",
+  "--tmux-ide-surface-panel",
+  "--tmux-ide-surface-panel-raised",
+  "--tmux-ide-surface-terminal",
+  "--tmux-ide-text-bright",
+  "--tmux-ide-text-inverse",
+  "--tmux-ide-text-link",
+  "--tmux-ide-text-muted",
+  "--tmux-ide-text-primary",
+  "--tmux-ide-text-secondary",
+  "--tmux-ide-typography-code-family",
+  "--tmux-ide-typography-code-line-height",
+  "--tmux-ide-typography-code-truncation",
+  "--tmux-ide-typography-code-weight",
+  "--tmux-ide-typography-label-family",
+  "--tmux-ide-typography-label-line-height",
+  "--tmux-ide-typography-label-truncation",
+  "--tmux-ide-typography-label-weight",
+  "--tmux-ide-typography-metadata-family",
+  "--tmux-ide-typography-metadata-line-height",
+  "--tmux-ide-typography-metadata-truncation",
+  "--tmux-ide-typography-metadata-weight",
+  "--tmux-ide-typography-title-family",
+  "--tmux-ide-typography-title-line-height",
+  "--tmux-ide-typography-title-truncation",
+  "--tmux-ide-typography-title-weight",
+  "--tmux-ide-typography-workspace-family",
+  "--tmux-ide-typography-workspace-line-height",
+  "--tmux-ide-typography-workspace-truncation",
+  "--tmux-ide-typography-workspace-weight",
+  "--tmux-ide-window-activity-active-contrast",
+  "--tmux-ide-window-activity-active-opacity",
+  "--tmux-ide-window-activity-inactive-contrast",
+  "--tmux-ide-window-activity-inactive-opacity",
+] as const;
+
 function color(red: number, green: number, blue: number): RendererNeutralColor {
   return { space: "srgb", red, green, blue, alpha: 255 };
 }
@@ -23,7 +111,7 @@ describe("DOM experience adapter", () => {
     expect(light.appearance).toBe("light");
     expect(light.variables[DOM_EXPERIENCE_VARIABLE.surface.canvas]).toBe("rgb(245 245 247)");
     expect(light.variables[DOM_EXPERIENCE_VARIABLE.text.primary]).toBe("rgb(32 32 39)");
-    expect(Object.keys(dark.variables).length).toBeGreaterThanOrEqual(80);
+    expect(Object.keys(dark.variables).sort()).toEqual(EXPECTED_DOM_EXPERIENCE_VARIABLE_NAMES);
     expect(Object.values(dark.variables).every((value) => value.length > 0)).toBe(true);
     expect({
       panel: DOM_EXPERIENCE_VARIABLE.surface.panel,
@@ -40,6 +128,28 @@ describe("DOM experience adapter", () => {
       selected: "--tmux-ide-selection-selection",
       disabled: "--tmux-ide-selection-disabled",
     });
+    expect(dark.variables["--tmux-ide-elevation-floating-shadow"]).toBe(
+      "0 18px 38px rgb(14 14 18 / 0.46)",
+    );
+    expect(dark.variables["--tmux-ide-elevation-palette-shadow"]).toBe(
+      "0 10px 18px rgb(14 14 18 / 0.34)",
+    );
+    expect(dark.variables["--tmux-ide-elevation-window-mode-shadow"]).toBe(
+      "0 18px 40px rgb(14 14 18 / 0.5)",
+    );
+    expect(light.variables["--tmux-ide-elevation-floating-shadow"]).toBe(
+      "0 18px 38px rgb(245 245 247 / 0.46)",
+    );
+    expect(dark.variables[DOM_EXPERIENCE_VARIABLE.control.disabledBackground]).toBe(
+      "rgb(19 19 26)",
+    );
+    expect(dark.variables[DOM_EXPERIENCE_VARIABLE.control.disabledForeground]).toBe(
+      "rgb(123 123 138 / 0.55)",
+    );
+    expect(dark.variables[DOM_EXPERIENCE_VARIABLE.control.disabledForegroundHighContrast]).toBe(
+      "rgb(123 123 138)",
+    );
+    expect(dark.variables[DOM_EXPERIENCE_VARIABLE.motion.fast]).toBe("90ms");
   });
 
   it("applies high contrast and reduced motion before producing host values", () => {
@@ -95,11 +205,19 @@ describe("DOM experience adapter", () => {
       expect(resolveDomIcon(id)).toMatchObject({
         id,
         viewBox: "0 0 16 16",
+        size: 12,
+        usage: "action",
+        usageSizes: { pane: 12, tab: 12, rail: 12, action: 12, nativeWindow: 10 },
+        strokeWidth: 1.5,
+        strokeLinecap: "round",
+        strokeLinejoin: "round",
         fill: "none",
         stroke: "currentColor",
       });
       expect(resolveDomIcon(id).label.length).toBeGreaterThan(0);
       expect(resolveDomIcon(id).paths.length).toBeGreaterThan(0);
     }
+    expect(resolveDomIcon("close", "nativeWindow").size).toBe(10);
+    expect(resolveDomIcon("more").paths).toEqual(["M2.75 8h.5M7.75 8h.5M12.75 8h.5"]);
   });
 });
