@@ -33,6 +33,8 @@ export default defineConfig({
       "src/tui/chrome/*.test.ts",
       "src/tui/integrations/*.test.ts",
       "src/widgets/lib/grammar.test.ts",
+      "src/ui/pane-frame/**/*.test.ts",
+      "src/ui/pane-frame/**/*.test.tsx",
       "src/ui/workbench-dock/**/*.test.ts",
       "src/ui/workbench-dock/**/*.test.tsx",
     ],

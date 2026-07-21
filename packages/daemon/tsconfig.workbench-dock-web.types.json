@@ -6,5 +6,11 @@
     "emitDeclarationOnly": true,
     "rootDir": "src/ui/workbench-dock",
     "declarationDir": "dist/ui/workbench-dock"
-  }
+  },
+  "include": [
+    "src/ui/workbench-dock/presenter.tsx",
+    "src/ui/workbench-dock/navigation.ts",
+    "src/ui/workbench-dock/web-host.tsx",
+    "src/ui/workbench-dock/web-entry.tsx"
+  ]
 }
