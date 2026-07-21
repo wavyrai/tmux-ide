@@ -295,7 +295,7 @@ function inspectCanonicalDaemonInfoPath(path: string): CanonicalDaemonInfoState 
     if (
       !openedStat.isFile() ||
       !sameObservation(pathObservation, openedObservation) ||
-      !sameObservation(observation(parentStat), observation(reopenedParentStat)) ||
+      !sameFileIdentity(parentStat, reopenedParentStat) ||
       !reopenedParentStat.isDirectory() ||
       (typeof process.getuid === "function" && openedStat.uid !== process.getuid()) ||
       (openedStat.mode & 0o077) !== 0 ||

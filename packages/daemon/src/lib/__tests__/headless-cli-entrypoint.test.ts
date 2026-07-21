@@ -43,7 +43,8 @@ beforeEach(() => {
   const home = join(tempDir, "home");
   const state = join(tempDir, "state");
   mkdirSync(home, { recursive: true });
-  mkdirSync(state, { recursive: true });
+  mkdirSync(state, { recursive: true, mode: 0o700 });
+  chmodSync(state, 0o700);
   writeFileSync(
     join(state, "app-settings.json"),
     `${JSON.stringify({ remoteAccess: { enabled: true, token: "must-not-be-inherited" } })}\n`,
@@ -299,7 +300,7 @@ describe.sequential("shipped tmux-ide --headless entrypoint", () => {
     const losers = contenders.filter((child) => child !== owner);
     const loserResults = await Promise.all(losers.map((child) => waitForExit(child, 20_000)));
     for (const result of loserResults) {
-      expect(result.code).toBe(0);
+      expect(result, result.stderr).toMatchObject({ code: 0, signal: null });
       expect(JSON.parse(result.stdout.trim())).toMatchObject({
         status: "already-running",
         pid: info.pid,
