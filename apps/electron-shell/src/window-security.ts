@@ -18,14 +18,19 @@ export function secureWebPreferences(
 }
 
 export interface RestrictedWebContents {
-  on(event: "will-navigate", listener: (event: { preventDefault(): void }) => void): unknown;
-  on(event: "will-attach-webview", listener: (event: { preventDefault(): void }) => void): unknown;
+  on(
+    event: "will-navigate" | "will-redirect" | "will-attach-webview",
+    listener: (event: { preventDefault(): void }) => void,
+  ): unknown;
   setWindowOpenHandler(handler: () => { action: "deny" }): void;
 }
 
-/** Renderer content cannot navigate, create windows, or attach webviews. */
+/** Renderer content cannot navigate, follow server redirects, create windows, or attach webviews. */
 export function denyRendererEscapes(webContents: RestrictedWebContents): void {
   webContents.on("will-navigate", (event) => event.preventDefault());
+  // `will-navigate` is not the interception point for an HTTP 3xx response.
+  // Blocking `will-redirect` prevents the redirected document from committing.
+  webContents.on("will-redirect", (event) => event.preventDefault());
   webContents.on("will-attach-webview", (event) => event.preventDefault());
   webContents.setWindowOpenHandler(() => ({ action: "deny" }));
 }

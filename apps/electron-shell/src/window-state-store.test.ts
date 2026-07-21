@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
+  captureDesktopWindowNormalBounds,
   DesktopWindowStateStore,
   parseDesktopWindowBounds,
   restoreDesktopWindowBounds,
@@ -36,6 +37,38 @@ describe("desktop window state", () => {
         { x: 0, y: 0, width: 1440, height: 900 },
       ]),
     ).toEqual({ x: 80, y: 40, width: 1280, height: 820 });
+  });
+
+  it("retains a resize through immediate maximize, fullscreen, and quit", () => {
+    const restored = { x: 40, y: 50, width: 1000, height: 700 };
+    const resized = { x: 80, y: 90, width: 1180, height: 760 };
+    const displayBounds = { x: 0, y: 0, width: 1512, height: 982 };
+    let destroyed = false;
+    let maximized = false;
+    let fullscreen = false;
+    let currentBounds = restored;
+    let normalBounds = restored;
+    const window = {
+      isDestroyed: () => destroyed,
+      isMaximized: () => maximized,
+      isFullScreen: () => fullscreen,
+      getBounds: () => currentBounds,
+      getNormalBounds: () => normalBounds,
+    };
+
+    let retained = captureDesktopWindowNormalBounds(window, restored);
+    currentBounds = resized;
+    normalBounds = resized;
+    retained = captureDesktopWindowNormalBounds(window, retained);
+
+    maximized = true;
+    currentBounds = displayBounds;
+    retained = captureDesktopWindowNormalBounds(window, retained);
+    fullscreen = true;
+    retained = captureDesktopWindowNormalBounds(window, retained);
+    destroyed = true;
+
+    expect(captureDesktopWindowNormalBounds(window, retained)).toEqual(resized);
   });
 
   it("round-trips valid state and ignores corrupt files", async () => {

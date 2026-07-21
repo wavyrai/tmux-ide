@@ -20,6 +20,24 @@ export interface HostIpcDependencies {
   requestQuit: () => void;
   selectProjectDirectory: (window: BrowserWindow) => Promise<string | null>;
   getTheme: () => DesktopThemeState;
+  trustedRendererLocation: TrustedRendererLocation;
+}
+
+export type TrustedRendererLocation =
+  | { kind: "packaged-url"; url: string }
+  | { kind: "development-origin"; origin: string };
+
+export function rendererLocationIsTrusted(
+  frameUrl: string,
+  trusted: TrustedRendererLocation,
+): boolean {
+  try {
+    const location = new URL(frameUrl);
+    if (trusted.kind === "packaged-url") return location.toString() === trusted.url;
+    return location.origin === trusted.origin;
+  } catch {
+    return false;
+  }
 }
 
 export function snapshotWindow(window: BrowserWindow | null): DesktopWindowState {
@@ -33,13 +51,15 @@ export function snapshotWindow(window: BrowserWindow | null): DesktopWindowState
 function trustedWindow(
   event: IpcMainInvokeEvent,
   getWindow: () => BrowserWindow | null,
+  trustedRendererLocation: TrustedRendererLocation,
 ): BrowserWindow {
   const window = getWindow();
   if (
     !window ||
     window.isDestroyed() ||
     event.sender.id !== window.webContents.id ||
-    event.senderFrame !== window.webContents.mainFrame
+    event.senderFrame !== window.webContents.mainFrame ||
+    !rendererLocationIsTrusted(event.senderFrame.url, trustedRendererLocation)
   ) {
     throw new Error("desktop host request came from an untrusted renderer");
   }
@@ -56,7 +76,7 @@ export function registerHostIpc(deps: HostIpcDependencies): () => void {
   };
 
   handle(HOST_IPC.bootstrap, (event): DesktopHostBootstrap => {
-    const window = trustedWindow(event, deps.getWindow);
+    const window = trustedWindow(event, deps.getWindow, deps.trustedRendererLocation);
     const bootstrap: DesktopHostBootstrap = {
       apiVersion: DESKTOP_HOST_API_VERSION,
       runtime: "electron",
@@ -70,35 +90,37 @@ export function registerHostIpc(deps: HostIpcDependencies): () => void {
     return bootstrap;
   });
   handle(HOST_IPC.lifecycleQuit, (event) => {
-    trustedWindow(event, deps.getWindow);
+    trustedWindow(event, deps.getWindow, deps.trustedRendererLocation);
     deps.requestQuit();
   });
-  handle(HOST_IPC.windowGetState, (event) => snapshotWindow(trustedWindow(event, deps.getWindow)));
+  handle(HOST_IPC.windowGetState, (event) =>
+    snapshotWindow(trustedWindow(event, deps.getWindow, deps.trustedRendererLocation)),
+  );
   handle(HOST_IPC.windowMinimize, (event) => {
-    const window = trustedWindow(event, deps.getWindow);
+    const window = trustedWindow(event, deps.getWindow, deps.trustedRendererLocation);
     window.minimize();
     return snapshotWindow(window);
   });
   handle(HOST_IPC.windowToggleMaximized, (event) => {
-    const window = trustedWindow(event, deps.getWindow);
+    const window = trustedWindow(event, deps.getWindow, deps.trustedRendererLocation);
     if (window.isMaximized()) window.unmaximize();
     else window.maximize();
     return snapshotWindow(window);
   });
   handle(HOST_IPC.windowClose, (event) => {
-    trustedWindow(event, deps.getWindow).close();
+    trustedWindow(event, deps.getWindow, deps.trustedRendererLocation).close();
   });
   handle(HOST_IPC.menuShowApplication, (event) => {
-    trustedWindow(event, deps.getWindow);
+    trustedWindow(event, deps.getWindow, deps.trustedRendererLocation);
     return { status: "unavailable" as const };
   });
   handle(HOST_IPC.dialogSelectProjectDirectory, async (event) => {
-    const window = trustedWindow(event, deps.getWindow);
+    const window = trustedWindow(event, deps.getWindow, deps.trustedRendererLocation);
     const path = await deps.selectProjectDirectory(window);
     return path ? { path } : null;
   });
   handle(HOST_IPC.themeGetState, (event) => {
-    trustedWindow(event, deps.getWindow);
+    trustedWindow(event, deps.getWindow, deps.trustedRendererLocation);
     return deps.getTheme();
   });
 

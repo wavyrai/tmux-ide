@@ -1,15 +1,7 @@
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 
-import {
-  app,
-  BrowserWindow,
-  dialog,
-  ipcMain,
-  nativeTheme,
-  screen,
-  session,
-  type Rectangle,
-} from "electron";
+import { app, BrowserWindow, dialog, ipcMain, nativeTheme, screen, session } from "electron";
 import type { DesktopPlatform, DesktopThemeState } from "@tmux-ide/contracts";
 
 import {
@@ -17,13 +9,20 @@ import {
   runDaemonPreflight,
   type DaemonPreflight,
 } from "./daemon-preflight.ts";
-import { publishTheme, publishWindowState, registerHostIpc } from "./host-ipc.ts";
+import {
+  publishTheme,
+  publishWindowState,
+  registerHostIpc,
+  type TrustedRendererLocation,
+} from "./host-ipc.ts";
 import { ShutdownBarrier } from "./shutdown-barrier.ts";
 import { loadHiddenWindow } from "./window-loader.ts";
 import { denyRendererEscapes, secureWebPreferences } from "./window-security.ts";
 import {
   DesktopWindowStateStore,
+  captureDesktopWindowNormalBounds,
   restoreDesktopWindowBounds,
+  type DesktopWindowBounds,
   type DesktopDisplayWorkArea,
 } from "./window-state-store.ts";
 
@@ -68,11 +67,6 @@ function trustedDevelopmentUrl(): string | null {
   return url.toString();
 }
 
-function normalBounds(window: BrowserWindow): Rectangle | null {
-  if (window.isDestroyed() || window.isMaximized() || window.isFullScreen()) return null;
-  return window.getBounds();
-}
-
 export async function runDesktopApp(deps: DesktopAppDependencies = {}): Promise<void> {
   if (!app.requestSingleInstanceLock()) {
     app.quit();
@@ -85,6 +79,7 @@ export async function runDesktopApp(deps: DesktopAppDependencies = {}): Promise<
   let persistTimer: ReturnType<typeof setTimeout> | null = null;
   let lastBoundsWrite = Promise.resolve();
   let rendererDidBootstrap: (() => void) | null = null;
+  let latestNormalBounds: DesktopWindowBounds | null = null;
   const shutdown = new ShutdownBarrier();
 
   await app.whenReady();
@@ -99,16 +94,22 @@ export async function runDesktopApp(deps: DesktopAppDependencies = {}): Promise<
     join(app.getPath("userData"), "window-state.json"),
   );
   const daemon = await runDaemonPreflight(deps.daemonPreflight ?? deferredDaemonPreflight);
+  const developmentUrl = trustedDevelopmentUrl();
+  const packagedRendererPath = join(__dirname, "renderer", "index.html");
+  const trustedRendererLocation: TrustedRendererLocation = developmentUrl
+    ? { kind: "development-origin", origin: new URL(developmentUrl).origin }
+    : { kind: "packaged-url", url: pathToFileURL(packagedRendererPath).toString() };
 
   const persistBounds = async (): Promise<void> => {
-    if (!currentWindow) return lastBoundsWrite;
-    const bounds = normalBounds(currentWindow);
-    if (!bounds) return lastBoundsWrite;
+    latestNormalBounds = captureDesktopWindowNormalBounds(currentWindow, latestNormalBounds);
+    if (!latestNormalBounds) return lastBoundsWrite;
+    const bounds = latestNormalBounds;
     lastBoundsWrite = lastBoundsWrite.catch(() => undefined).then(() => stateStore.write(bounds));
     return lastBoundsWrite;
   };
 
   const scheduleBoundsPersistence = (): void => {
+    latestNormalBounds = captureDesktopWindowNormalBounds(currentWindow, latestNormalBounds);
     if (persistTimer) clearTimeout(persistTimer);
     persistTimer = setTimeout(() => {
       persistTimer = null;
@@ -124,6 +125,7 @@ export async function runDesktopApp(deps: DesktopAppDependencies = {}): Promise<
     });
     const savedBounds = await stateStore.read();
     const bounds = restoreDesktopWindowBounds(savedBounds, displayWorkAreas());
+    latestNormalBounds = bounds;
     const window = new BrowserWindow({
       ...bounds,
       show: false,
@@ -151,7 +153,6 @@ export async function runDesktopApp(deps: DesktopAppDependencies = {}): Promise<
       if (currentWindow === window) currentWindow = null;
     });
 
-    const developmentUrl = trustedDevelopmentUrl();
     try {
       await loadHiddenWindow(window, {
         timeoutMs: deps.loadTimeoutMs,
@@ -159,7 +160,7 @@ export async function runDesktopApp(deps: DesktopAppDependencies = {}): Promise<
         rendererReady,
         load: async () => {
           if (developmentUrl) await window.loadURL(developmentUrl);
-          else await window.loadFile(join(__dirname, "renderer", "index.html"));
+          else await window.loadFile(packagedRendererPath);
         },
       });
     } finally {
@@ -184,6 +185,7 @@ export async function runDesktopApp(deps: DesktopAppDependencies = {}): Promise<
       return result.canceled ? null : (result.filePaths[0] ?? null);
     },
     getTheme: themeState,
+    trustedRendererLocation,
   });
 
   const onThemeUpdated = (): void => publishTheme(currentWindow, themeState());
@@ -233,7 +235,7 @@ export async function runDesktopApp(deps: DesktopAppDependencies = {}): Promise<
       app.quit();
     }
   } catch (error) {
-    dialog.showErrorBox("tmux-ide could not start", String(error));
+    if (!smokeTest) dialog.showErrorBox("tmux-ide could not start", String(error));
     process.exitCode = 1;
     app.quit();
   }

@@ -10,6 +10,14 @@ export interface DesktopWindowBounds {
 
 export type DesktopDisplayWorkArea = DesktopWindowBounds;
 
+export interface DesktopWindowBoundsSource {
+  isDestroyed(): boolean;
+  isMaximized(): boolean;
+  isFullScreen(): boolean;
+  getBounds(): DesktopWindowBounds;
+  getNormalBounds(): DesktopWindowBounds;
+}
+
 export const DEFAULT_DESKTOP_WINDOW_BOUNDS: DesktopWindowBounds = {
   x: 96,
   y: 72,
@@ -45,6 +53,20 @@ export function parseDesktopWindowBounds(value: unknown): DesktopWindowBounds | 
     return null;
   }
   return { x: record.x, y: record.y, width: record.width, height: record.height };
+}
+
+/**
+ * Retains the last valid normal rectangle across maximize/fullscreen and teardown.
+ * Electron's getNormalBounds() deliberately reports the pre-transition rectangle.
+ */
+export function captureDesktopWindowNormalBounds(
+  window: DesktopWindowBoundsSource | null,
+  previous: DesktopWindowBounds | null,
+): DesktopWindowBounds | null {
+  if (!window || window.isDestroyed()) return previous ? { ...previous } : null;
+  const candidate =
+    window.isMaximized() || window.isFullScreen() ? window.getNormalBounds() : window.getBounds();
+  return parseDesktopWindowBounds(candidate) ?? (previous ? { ...previous } : null);
 }
 
 function visibleOnDisplay(bounds: DesktopWindowBounds, display: DesktopDisplayWorkArea): boolean {

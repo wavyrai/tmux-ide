@@ -1,4 +1,5 @@
 import { readFile, readdir } from "node:fs/promises";
+import { builtinModules } from "node:module";
 import { dirname, extname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -7,6 +8,19 @@ import { describe, expect, it } from "vitest";
 import { HOST_INVOKE_CHANNELS, HOST_IPC } from "./ipc-channels.ts";
 
 const packageRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
+const nodeBuiltins = new Set(builtinModules.map((specifier) => specifier.replace(/^node:/u, "")));
+
+function importedSpecifiers(source: string): string[] {
+  const matches = source.matchAll(
+    /(?:\bfrom\s*|\bimport\s*(?:\(\s*)?|\brequire\s*\(\s*)["']([^"']+)["']/gu,
+  );
+  return [...matches].map((match) => match[1]).filter((value): value is string => !!value);
+}
+
+function isNodeBuiltin(specifier: string): boolean {
+  const normalized = specifier.replace(/^node:/u, "");
+  return nodeBuiltins.has(normalized) || nodeBuiltins.has(normalized.split("/")[0] ?? "");
+}
 
 async function sourceFiles(directory: string): Promise<string[]> {
   const entries = await readdir(directory, { withFileTypes: true });
@@ -24,9 +38,11 @@ describe("desktop process boundaries", () => {
     const rendererSource = join(packageRoot, "..", "desktop-renderer", "src");
     for (const path of await sourceFiles(rendererSource)) {
       const source = await readFile(path, "utf8");
-      expect(source, path).not.toMatch(
-        /(?:from\s*|import\s*\()["'](?:electron(?:\/|["'])|node:|@tmux-ide\/electron-shell)/u,
-      );
+      for (const specifier of importedSpecifiers(source)) {
+        expect(isNodeBuiltin(specifier), `${path} imports Node built-in ${specifier}`).toBe(false);
+        expect(specifier, path).not.toMatch(/^electron(?:\/|$)/u);
+        expect(specifier, path).not.toMatch(/^@tmux-ide\/electron-shell(?:\/|$)/u);
+      }
     }
   });
 
