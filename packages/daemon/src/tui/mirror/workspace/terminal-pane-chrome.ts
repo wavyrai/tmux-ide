@@ -439,6 +439,7 @@ function paneHeaderFrame(
     {
       id: "zoom",
       commandId: "workspace.windowMode.maximize.toggle" as const,
+      behavior: "toggle" as const,
       label: pane.zoomed ? "restore" : "zoom",
       compactLabel: pane.zoomed ? "R" : "Z",
       icon: pane.zoomed ? "restore" : "maximize",
@@ -449,6 +450,7 @@ function paneHeaderFrame(
     {
       id: "menu",
       commandId: "workspace.pane.menu.open" as const,
+      behavior: "action" as const,
       label: "more",
       compactLabel: ".",
       icon: "more",

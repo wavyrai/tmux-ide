@@ -1,7 +1,11 @@
 /* @jsxImportSource @opentui/solid */
 import { MouseButtons } from "@opentui/core/testing";
 import { useKeyboard } from "@opentui/solid";
-import type { PaneVisualStateV1 } from "@tmux-ide/contracts";
+import {
+  COHESION_FIXTURE_V1,
+  projectApplicationShellV1,
+  type PaneVisualStateV1,
+} from "@tmux-ide/contracts";
 import { createSignal } from "solid-js";
 import { describe, expect, it } from "bun:test";
 import { SelectableRow } from "../recipes.tsx";
@@ -13,6 +17,7 @@ import {
   PANE_FRAME_FIXTURE_EXPECTED_TRACE,
   PANE_FRAME_FIXTURE_MODEL,
 } from "../../../ui/pane-frame/fixture.ts";
+import { paneFrameModelsFromApplicationShellAgents } from "../../../ui/pane-frame/model.ts";
 import type { PaneFrameInput } from "./pane-frame.ts";
 import { paneFrameHitTest, projectPaneFrame, projectSemanticPaneFrame } from "./pane-frame.ts";
 import { PaneFrame } from "./pane-frame.tsx";
@@ -52,6 +57,34 @@ function canonicalActionVisualState(
 
 function colorKey(color: Parameters<typeof colorToThemeBytes>[0]): string {
   return colorToThemeBytes(color).join(",");
+}
+
+function liveApplicationShellAgentModel(structure: "docked" | "maximized" = "docked") {
+  const projection = projectApplicationShellV1({
+    project: COHESION_FIXTURE_V1.project,
+    workspace: {
+      ...COHESION_FIXTURE_V1.workspace,
+      sidebar: {
+        ...COHESION_FIXTURE_V1.workspace.sidebar,
+        agents: COHESION_FIXTURE_V1.workspace.sidebar.agents.map((agent) =>
+          agent.paneId === "pane.implementer"
+            ? { ...agent, activity: "running" as const, attention: false }
+            : agent,
+        ),
+      },
+    },
+    dock: COHESION_FIXTURE_V1.dock,
+    focus: { ...COHESION_FIXTURE_V1.focus, overlays: [] },
+    connection: {
+      state: "connected",
+      message: "Live",
+      safeState: "No attachment is open",
+      nextAction: "Choose an agent terminal",
+    },
+  });
+  return paneFrameModelsFromApplicationShellAgents(projection, {
+    localStateByPaneId: new Map([["pane.implementer", { structure }]]),
+  }).find((model) => model.pane.id === "pane.implementer")!;
 }
 
 function spanContaining(
@@ -256,6 +289,51 @@ describe("PaneFrame OpenTUI renderer", () => {
     expect(stableFrame(frame)).toContain(variant === "compact" ? "A" : "agent");
     harness.setup.renderer.destroy();
   });
+
+  it.each([
+    [80, 24, "compact"],
+    [120, 40, "standard"],
+    [200, 60, "wide"],
+  ] as const)(
+    "renders the live application-shell agent adapter at %sx%s as %s",
+    async (width, height, variant) => {
+      const theme = createSemanticThemeSnapshot({ mode: "dark" });
+      const maximized = width === 200;
+      const model = liveApplicationShellAgentModel(maximized ? "maximized" : "docked");
+      const projection = projectSemanticPaneFrame({ width, height, model });
+      const setup = await renderForTest(
+        () => (
+          <PaneFrame theme={theme} projection={projection}>
+            <text fg={theme.colors.mutedForeground}> opaque terminal body</text>
+          </PaneFrame>
+        ),
+        { width, height },
+      );
+      await setup.renderOnce();
+      const frame = stableFrame(setup.captureCharFrame());
+
+      expectFrameBounds(setup.captureCharFrame(), width, height);
+      expect(projection.variant).toBe(variant);
+      expect(projection.model.pane.id).toBe("pane.implementer");
+      expect(projection.actions.map(({ id }) => id)).toEqual(["zoom", "menu"]);
+      expect(
+        projection.model.actions.map(({ id, behavior, pressed }) => ({ id, behavior, pressed })),
+      ).toEqual([
+        { id: "zoom", behavior: "toggle", pressed: maximized },
+        { id: "menu", behavior: "action", pressed: false },
+      ]);
+      expect(projection.actions[0]).toMatchObject({
+        id: "zoom",
+        icon: maximized ? "restore" : "maximize",
+        pressed: maximized,
+      });
+      expect(frame).toContain(model.title);
+      expect(frame).toContain("opaque terminal body");
+      expect(frame).not.toMatch(/%\d+/u);
+      expect(frame).toMatchSnapshot();
+      setup.renderer.destroy();
+    },
+  );
 
   it("routes projected action spans and keeps keyboard ownership in the harness", async () => {
     const harness = await renderPane(120, 40);

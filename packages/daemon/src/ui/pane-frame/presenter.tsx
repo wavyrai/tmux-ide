@@ -42,6 +42,8 @@ export interface PaneFrameChip {
 export interface PaneFrameAction {
   readonly id: SemanticProductId;
   readonly commandId: CommandId;
+  /** Interaction semantics are explicit; hosts must not infer these from ids or labels. */
+  readonly behavior: "action" | "toggle";
   readonly icon: SemanticIconId;
   readonly label: string;
   readonly description?: string;

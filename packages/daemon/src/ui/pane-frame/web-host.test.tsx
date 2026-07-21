@@ -1,9 +1,17 @@
 /* @vitest-environment happy-dom */
-import { COHESION_FIXTURE_V1 } from "@tmux-ide/contracts";
+import {
+  COHESION_FIXTURE_V1,
+  projectApplicationShellV1,
+  type AgentActivity,
+  type PaneStructure,
+} from "@tmux-ide/contracts";
 import { createSignal } from "solid-js";
 import { render } from "solid-js/web";
 import { afterEach, describe, expect, it } from "vitest";
-import { paneFrameModelFromCohesionPane } from "./model.js";
+import {
+  paneFrameModelFromCohesionPane,
+  paneFrameModelsFromApplicationShellAgents,
+} from "./model.js";
 import type {
   PaneFrameActionIntent,
   PaneFrameActivationSource,
@@ -40,6 +48,36 @@ function freshModel(): PaneFrameModel {
     chips: model.chips.map((chip) => ({ ...chip })),
     actions: model.actions.map((action) => ({ ...action, pressed: false })),
   };
+}
+
+function liveAgentModel(
+  activity: AgentActivity,
+  attention = false,
+  structure: PaneStructure = "docked",
+): PaneFrameModel {
+  const input = {
+    project: COHESION_FIXTURE_V1.project,
+    workspace: {
+      ...COHESION_FIXTURE_V1.workspace,
+      sidebar: {
+        ...COHESION_FIXTURE_V1.workspace.sidebar,
+        agents: COHESION_FIXTURE_V1.workspace.sidebar.agents.map((agent) =>
+          agent.paneId === "pane.implementer" ? { ...agent, activity, attention } : agent,
+        ),
+      },
+    },
+    dock: COHESION_FIXTURE_V1.dock,
+    focus: { ...COHESION_FIXTURE_V1.focus, overlays: [] },
+    connection: {
+      state: "connected" as const,
+      message: "Live",
+      safeState: "No attachment is open",
+      nextAction: "Choose an agent terminal",
+    },
+  };
+  return paneFrameModelsFromApplicationShellAgents(projectApplicationShellV1(input), {
+    localStateByPaneId: new Map([["pane.implementer", { structure }]]),
+  }).find((model) => model.pane.id === "pane.implementer")!;
 }
 
 function renderFrame(initial = freshModel()) {
@@ -211,6 +249,51 @@ describe("WebPaneFrame", () => {
 
     setModel({ ...base, pane: { ...base.pane, id: "pane.replacement" } });
     expect(root.querySelector('[data-body-sentinel="stable"]')).not.toBe(body);
+  });
+
+  it("keeps an application-shell agent terminal body mounted while live status changes", () => {
+    const running = liveAgentModel("running");
+    const { root, setModel } = renderFrame(running);
+    const frame = root.querySelector<HTMLElement>(".web-pane-frame")!;
+    const body = root.querySelector('[data-body-sentinel="stable"]');
+    const zoom = action(root, "zoom");
+    const menu = action(root, "menu");
+
+    expect(frame.dataset.paneId).toBe("pane.implementer");
+    expect(frame.dataset.terminalInputOwner).toBe("true");
+    expect(root.querySelector(".web-pane-frame__subtitle")?.textContent).toBe("Codex");
+    expect(root.querySelector('[data-item-kind="status"]')?.textContent).toContain("Running");
+    expect(zoom.getAttribute("aria-pressed")).toBe("false");
+    expect(zoom.getAttribute("aria-label")).toBe("Maximize this pane");
+    expect(zoom.getAttribute("title")).toBe("Maximize this pane");
+    expect(zoom.querySelector('[data-action-icon="maximize"]')).not.toBeNull();
+
+    setModel(liveAgentModel("running", false, "maximized"));
+
+    expect(action(root, "zoom")).toBe(zoom);
+    expect(action(root, "menu")).toBe(menu);
+    expect(zoom.getAttribute("aria-pressed")).toBe("true");
+    expect(zoom.getAttribute("aria-label")).toBe("Restore pane layout");
+    expect(zoom.getAttribute("title")).toBe("Restore pane layout");
+    expect(zoom.querySelector('[data-action-icon="restore"]')).not.toBeNull();
+    expect(menu.hasAttribute("aria-pressed")).toBe(false);
+
+    setModel(liveAgentModel("complete", false, "maximized"));
+
+    expect(root.querySelector('[data-body-sentinel="stable"]')).toBe(body);
+    expect(action(root, "zoom")).toBe(zoom);
+    expect(action(root, "menu")).toBe(menu);
+    expect(root.querySelector('[data-item-kind="status"]')?.textContent).toContain(
+      "Unread · complete",
+    );
+    expect(
+      Array.from(
+        root.querySelectorAll<HTMLElement>("[data-action-id]"),
+        (item) => item.dataset.actionId,
+      ),
+    ).toEqual(["zoom", "menu"]);
+    expect(root.innerHTML).not.toMatch(/%\d+/u);
+    expect(root.innerHTML).not.toContain("attachment-ticket");
   });
 
   it("projects floating/maximized geometry and carries compact/reduced-motion CSS policy", () => {

@@ -216,7 +216,6 @@ export const WEB_PANE_FRAME_HOST: PaneFrameHostLeaves = {
       props.onActivate === undefined && !effective().loading ? "disabled" : effective().state;
     const description = () =>
       props.action.disabledReason ?? props.action.description ?? props.action.label;
-    const isToggle = () => props.action.id.endsWith("-toggle");
     return (
       <button
         class="web-pane-frame__action"
@@ -224,7 +223,7 @@ export const WEB_PANE_FRAME_HOST: PaneFrameHostLeaves = {
         aria-label={description()}
         aria-disabled={disabled()}
         aria-busy={effective().loading}
-        aria-pressed={isToggle() ? props.action.pressed : undefined}
+        aria-pressed={props.action.behavior === "toggle" ? props.action.pressed : undefined}
         disabled={disabled()}
         title={description()}
         data-action-id={props.action.id}
