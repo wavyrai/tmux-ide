@@ -392,6 +392,6 @@ describe.sequential("shipped tmux-ide --headless entrypoint", () => {
 
     const result = await waitForExit(owner);
     expect(result).toMatchObject({ code: 0, signal: null });
-    expect(existsSync(daemonInfoPath())).toBe(false);
+    await waitUntil(() => (existsSync(daemonInfoPath()) ? null : true));
   }, 15_000);
 });
