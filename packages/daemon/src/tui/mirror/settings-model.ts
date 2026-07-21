@@ -343,10 +343,12 @@ export function prefixTwinFor(altKey: string): string | null {
  *  key ({@link ./palette.ts}'s paletteActionKey) a keycap attaches to. */
 const APP_KEY_ROWS: ReadonlyArray<{ label: string; keycap: string; paletteAction?: string }> = [
   { label: "Command palette", keycap: "F5 · ^p" },
-  { label: "Home tab", keycap: "F1", paletteAction: "tab:home" },
-  { label: "Terminal tab", keycap: "F2", paletteAction: "tab:terminal" },
-  { label: "Files tab", keycap: "F3", paletteAction: "tab:files" },
-  { label: "Diff tab", keycap: "F4", paletteAction: "tab:diff" },
+  { label: "Home", keycap: "F1", paletteAction: "surface:home" },
+  { label: "Terminals", keycap: "F2", paletteAction: "surface:terminals" },
+  { label: "Files", keycap: "F3", paletteAction: "surface:files" },
+  { label: "Changes", keycap: "F4", paletteAction: "surface:changes" },
+  { label: "Missions", keycap: "F6", paletteAction: "surface:missions" },
+  { label: "Activity", keycap: "F9", paletteAction: "surface:activity" },
   { label: "Save file", keycap: "^s", paletteAction: "save" },
   { label: "Back to Home", keycap: "^g" },
   { label: "Toggle editor", keycap: "^e" },

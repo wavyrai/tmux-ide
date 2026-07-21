@@ -16,13 +16,15 @@ import {
 } from "./palette.ts";
 
 describe("staticPaletteActions", () => {
-  it("offers the four tab switches, one attach per session, then save/refresh/paste/settings/quit", () => {
+  it("offers the canonical six surfaces in registry order before the remaining commands", () => {
     const actions = staticPaletteActions(["alpha", "beta"]);
     expect(actions.map((a) => a.label)).toEqual([
-      "Switch tab: Home",
-      "Switch tab: Terminal",
-      "Switch tab: Files",
-      "Switch tab: Diff",
+      "Open Home",
+      "Open Terminals",
+      "Open Files",
+      "Open Changes",
+      "Open Missions",
+      "Open Activity",
       "Open folder…",
       "New agent…",
       "Manage team…",
@@ -118,6 +120,7 @@ describe("staticPaletteActions", () => {
           id: "term-a",
           title: "Agent A",
           panel: "terminals",
+          layout: null,
           glyph: "❯",
           order: 0,
           shortcut: { key: "f1", label: "F1" },
@@ -126,6 +129,7 @@ describe("staticPaletteActions", () => {
           id: "term-b",
           title: "Agent B",
           panel: "terminals",
+          layout: null,
           glyph: "❯",
           order: 1,
           shortcut: { key: "f2", label: "F2" },
@@ -133,11 +137,14 @@ describe("staticPaletteActions", () => {
       ],
     });
 
-    expect(actions.slice(0, 2)).toEqual([
+    expect(
+      actions.slice(0, 6).map((action) => action.kind === "surface" && action.surface),
+    ).toEqual(["home", "terminals", "files", "changes", "missions", "activity"]);
+    expect(actions.slice(6, 8)).toEqual([
       { kind: "view", viewId: "term-a", label: "Switch view: Agent A" },
       { kind: "view", viewId: "term-b", label: "Switch view: Agent B" },
     ]);
-    expect(paletteActionKey(actions[1]!)).toBe("view:term-b");
+    expect(paletteActionKey(actions[7]!)).toBe("view:term-b");
   });
 });
 
@@ -164,7 +171,7 @@ describe("filterPaletteActions", () => {
   it("returns every static action for an empty query, no open-file entry", () => {
     const actions = filterPaletteActions("", ["alpha"]);
     expect(actions.some((a) => a.kind === "open-file")).toBe(false);
-    expect(actions).toHaveLength(20);
+    expect(actions).toHaveLength(22);
   });
 
   it("fuzzy-ranks matches and appends an open-file action for a plain word", () => {
@@ -289,6 +296,9 @@ describe("palette overlay geometry (M21.9)", () => {
 
 describe("paletteActionKey (M24.4)", () => {
   it("keys on kind + restart-stable payload, never the label or pane id", () => {
+    expect(paletteActionKey({ kind: "surface", surface: "files", label: "Open Files" })).toBe(
+      "surface:files",
+    );
     expect(paletteActionKey({ kind: "tab", tab: "files", label: "Switch tab: Files" })).toBe(
       "tab:files",
     );
@@ -377,14 +387,14 @@ describe("paletteRows (M24.4 — grouped empty query)", () => {
 
   it("shows recent-then-suggested-then-commands; a twice-used action outranks a once-used", () => {
     const usage = {
-      "tab:diff": { count: 1, lastUsed: 999 }, // once, most recently
+      "surface:changes": { count: 1, lastUsed: 999 }, // once, most recently
       save: { count: 2, lastUsed: 100 }, // twice, earlier — frequency wins
     };
     const rows = paletteRows("", ["alpha"], { usage, surface: "files" });
     const ls = labels(rows);
     expect(ls[0]).toBe("#recent");
     expect(ls[1]).toBe("Save file");
-    expect(ls[2]).toBe("Switch tab: Diff");
+    expect(ls[2]).toBe("Open Changes");
     const sug = ls.indexOf("#suggested");
     expect(sug).toBeGreaterThan(2);
     // Files surface suggests save + open-folder; save is already RECENT, so
@@ -456,10 +466,12 @@ describe("paletteRows (M24.4 — grouped empty query)", () => {
   });
 
   it("attaches the keycap to rows whose action key has one", () => {
-    const rows = paletteRows("", ["a"], { keycaps: { save: "^s", "tab:home": "F1" } });
+    const rows = paletteRows("", ["a"], {
+      keycaps: { save: "^s", "surface:home": "F1" },
+    });
     const save = rows.find((r) => r.type === "action" && r.action.kind === "save");
     const home = rows.find(
-      (r) => r.type === "action" && r.action.kind === "tab" && r.action.tab === "home",
+      (r) => r.type === "action" && r.action.kind === "surface" && r.action.surface === "home",
     );
     const quit = rows.find((r) => r.type === "action" && r.action.kind === "quit");
     expect(save?.type === "action" && save.shortcut).toBe("^s");

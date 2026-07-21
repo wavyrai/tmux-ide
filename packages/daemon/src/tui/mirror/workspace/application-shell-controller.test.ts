@@ -11,20 +11,27 @@ import {
 } from "@tmux-ide/contracts";
 import {
   applicationShellPaletteInvocation,
-  applicationShellSurfaceInvocation,
+  applicationShellSurfaceInvocations,
   openTuiRuntimePaneId,
   openTuiSemanticPaneId,
   projectOpenTuiApplicationShell,
   reduceOpenTuiApplicationShellCommand,
+  reduceOpenTuiApplicationShellCommands,
 } from "./application-shell-controller.ts";
 
-function projection(overrides: { paletteOpen?: boolean; focusZone?: "canvas" | "dock-tabs" } = {}) {
+function projection(
+  overrides: {
+    paletteOpen?: boolean;
+    focusZone?: "canvas" | "dock-tabs";
+    dockMode?: "collapsed" | "open" | "maximized";
+  } = {},
+) {
   return projectOpenTuiApplicationShell({
     projectName: "tmux-ide",
     rootLabel: "/workspace/tmux-ide",
     workspaceName: "main",
     activeMode: "terminals",
-    dockMode: "open",
+    dockMode: overrides.dockMode ?? "open",
     activeDockTool: "missions",
     focusZone: overrides.focusZone ?? "dock-tabs",
     focusedPaneId: null,
@@ -66,34 +73,39 @@ describe("OpenTUI canonical application-shell controller", () => {
     expect(shell.sidebar.agents.map(({ harness }) => harness)).toEqual(["codex", "claude-code"]);
   });
 
-  it("reduces canonical surface commands before adapting to existing renderer effects", () => {
-    const shell = projection();
-    const canvas = reduceOpenTuiApplicationShellCommand(
-      shell,
-      applicationShellSurfaceInvocation(shell, "home", {
-        kind: "keyboard",
-        surface: "application-bar",
-      }),
-    );
-    expect(canvas.next.activeMode).toBe("home");
-    expect(canvas.effect).toMatchObject({
-      kind: "renderer-command",
-      invocation: { id: "workspace.canvas.activate", args: { panel: "home" } },
-    });
+  it.each(["collapsed", "maximized"] as const)(
+    "opens every canonical surface from a %s dock through the complete semantic transaction",
+    (dockMode) => {
+      const shell = projection({ dockMode });
+      for (const surface of CANONICAL_SURFACE_REGISTRY) {
+        const source = { kind: "palette" as const, surface: "command-palette" };
+        const invocations = applicationShellSurfaceInvocations(shell, surface.id, source);
+        expect(invocations.map(({ id }) => id)).toEqual(
+          surface.kind === "primary-mode"
+            ? [APPLICATION_SHELL_COMMAND_IDS.activateMode, APPLICATION_SHELL_COMMAND_IDS.moveFocus]
+            : [
+                APPLICATION_SHELL_COMMAND_IDS.activateMode,
+                APPLICATION_SHELL_COMMAND_IDS.setDockMode,
+                APPLICATION_SHELL_COMMAND_IDS.activateDockTool,
+                APPLICATION_SHELL_COMMAND_IDS.moveFocus,
+              ],
+        );
+        expect(invocations.map(({ source: invocationSource }) => invocationSource)).toEqual(
+          invocations.map(() => source),
+        );
 
-    const dock = reduceOpenTuiApplicationShellCommand(
-      shell,
-      applicationShellSurfaceInvocation(shell, "changes", {
-        kind: "mouse",
-        surface: "bottom-dock",
-      }),
-    );
-    expect(dock.next.activeDockTool).toBe("changes");
-    expect(dock.effect).toMatchObject({
-      kind: "renderer-command",
-      invocation: { id: "workspace.dock.activate", args: { tab: "changes" } },
-    });
-  });
+        const reduced = reduceOpenTuiApplicationShellCommands(shell, invocations);
+        expect(reduced.next.activeMode).toBe(surface.owningMode);
+        if (surface.kind === "primary-mode") {
+          expect(reduced.next.focus.focusZone).toBe("canvas");
+        } else {
+          expect(reduced.next.dockMode).toBe("open");
+          expect(reduced.next.activeDockTool).toBe(surface.id);
+          expect(reduced.next.focus.focusZone).toBe("dock-body");
+        }
+      }
+    },
+  );
 
   it("opens the palette as the sole overlay owner and restores focus on close", () => {
     const closed = projection({ focusZone: "dock-tabs" });
@@ -123,12 +135,16 @@ describe("OpenTUI canonical application-shell controller", () => {
     expect(closedAgain.next.focus.overlays).toEqual([]);
     expect(closedAgain.effect).toEqual({
       kind: "palette-close",
-      restore: { kind: "zone", zone: "dock-tabs" },
+      restore: { kind: "dock-tool", tool: "missions" },
     });
   });
 
   it("correlates terminal palette return to the same live pane and rejects stale panes", () => {
-    const terminalProjection = (paletteOpen: boolean) =>
+    const terminalProjection = (
+      paletteOpen: boolean,
+      paneId: string,
+      paletteFocusReturnTarget?: { kind: "pane"; paneId: string; input: "terminal" },
+    ) =>
       projectOpenTuiApplicationShell({
         projectName: "tmux-ide",
         rootLabel: "/workspace/tmux-ide",
@@ -137,14 +153,15 @@ describe("OpenTUI canonical application-shell controller", () => {
         dockMode: "open",
         activeDockTool: "files",
         focusZone: "terminal",
-        focusedPaneId: "%7",
-        terminalInputPaneId: "%7",
+        focusedPaneId: paneId,
+        terminalInputPaneId: paneId,
         paletteOpen,
+        paletteFocusReturnTarget,
         sessions: [{ name: "main", status: "working" }],
         activeSession: "main",
         agents: [],
       });
-    const closed = terminalProjection(false);
+    const closed = terminalProjection(false, "%7");
     const opened = reduceOpenTuiApplicationShellCommand(
       closed,
       applicationShellPaletteInvocation(closed, true, {
@@ -158,7 +175,14 @@ describe("OpenTUI canonical application-shell controller", () => {
       input: "terminal",
     });
 
-    const open = terminalProjection(true);
+    const captured = opened.next.focus.overlays[0]!.focusReturnTarget as {
+      kind: "pane";
+      paneId: string;
+      input: "terminal";
+    };
+    // tmux focus moved while the modal was open; close still targets the pane
+    // captured at open, never the newly focused pane.
+    const open = terminalProjection(true, "%8", captured);
     const close = reduceOpenTuiApplicationShellCommand(
       open,
       applicationShellPaletteInvocation(open, false, {

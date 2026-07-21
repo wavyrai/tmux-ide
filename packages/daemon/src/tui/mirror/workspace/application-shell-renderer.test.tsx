@@ -3,6 +3,9 @@ import { MouseButtons } from "@opentui/core/testing";
 import { useKeyboard } from "@opentui/solid";
 import { Show, createSignal, onCleanup } from "solid-js";
 import { describe, expect, it } from "bun:test";
+import type { SemanticFocusTarget } from "@tmux-ide/contracts";
+import type { CommandSource, ProductSurfaceId } from "@tmux-ide/contracts";
+import { TuiCleanupRegistry } from "../input-lifecycle.ts";
 import { SelectableRow } from "../recipes.tsx";
 import { createSemanticThemeSnapshot } from "../theme.ts";
 import {
@@ -14,11 +17,10 @@ import {
 import { applicationShellHitTest, projectApplicationShell } from "./application-shell.ts";
 import { ApplicationShell } from "./application-shell.tsx";
 import {
-  applicationShellPaletteInvocation,
-  applicationShellSurfaceInvocation,
   projectOpenTuiApplicationShell,
-  reduceOpenTuiApplicationShellCommand,
+  type OpenTuiApplicationShellEffect,
 } from "./application-shell-controller.ts";
+import { createApplicationRootController } from "./application-root-controller.ts";
 import {
   projectWorkbenchShell,
   workbenchShellHitTest,
@@ -40,6 +42,7 @@ async function renderProductionShell(
   let focusValue: WorkbenchFocusZone = "canvas";
   let paletteValue = false;
   let drivePalette = (_open: boolean) => {};
+  let driveSurface = (_surface: ProductSurfaceId, _source: CommandSource) => {};
   let driveFocus = () => {};
 
   function Harness() {
@@ -47,6 +50,9 @@ async function renderProductionShell(
     const [dockMode, setDockMode] = createSignal(dockModeValue);
     const [focus, setFocus] = createSignal(focusValue);
     const [palette, setPalette] = createSignal(paletteValue);
+    const [paletteFocusReturn, setPaletteFocusReturn] = createSignal<SemanticFocusTarget | null>(
+      null,
+    );
     const semantic = () =>
       projectOpenTuiApplicationShell({
         projectName: "tmux-ide",
@@ -60,6 +66,7 @@ async function renderProductionShell(
         focusedPaneId: null,
         terminalInputPaneId: null,
         paletteOpen: palette(),
+        paletteFocusReturnTarget: paletteFocusReturn(),
         sessions: [
           { name: "main", status: "working" },
           { name: "website", status: "blocked" },
@@ -87,29 +94,54 @@ async function renderProductionShell(
         focusZone: focus(),
         dockTools: semantic().bottomDock.tools,
       });
-    const activate = (surface: "home" | "terminals") => {
-      const result = reduceOpenTuiApplicationShellCommand(
-        semantic(),
-        applicationShellSurfaceInvocation(semantic(), surface, {
-          kind: "keyboard",
-          surface: "application-bar",
-        }),
-      );
-      activeValue = result.next.activeMode;
-      setActive(activeValue);
-      events.push(`surface:${surface}`);
+    const cleanupRegistry = new TuiCleanupRegistry();
+    cleanupRegistry.set("solid-root", () => disposed?.());
+    const applyEffect = (effect: OpenTuiApplicationShellEffect) => {
+      if (effect.kind === "renderer-command") {
+        if (effect.invocation.id === "workspace.canvas.activate") {
+          activeValue = effect.invocation.args.panel;
+          setActive(activeValue);
+          events.push(`surface:${activeValue}:${effect.invocation.source.kind}`);
+        } else if (effect.invocation.id === "workspace.dock.activate") {
+          events.push(`surface:${effect.invocation.args.tab}:${effect.invocation.source.kind}`);
+        } else if (effect.invocation.id === "app.palette.open") {
+          paletteValue = true;
+          setPalette(true);
+          events.push("palette:open");
+        }
+      } else if (effect.kind === "dock-mode") {
+        dockModeValue = effect.mode;
+        setDockMode(dockModeValue);
+      } else if (effect.kind === "focus") {
+        const zone = effect.target.kind === "zone" ? effect.target.zone : "canvas";
+        focusValue = zone === "dock-tabs" || zone === "dock-body" ? zone : "canvas";
+        setFocus(focusValue);
+      } else if (effect.kind === "palette-close") {
+        paletteValue = false;
+        setPalette(false);
+        events.push("palette:close");
+      }
     };
+    const controller = createApplicationRootController({
+      projection: semantic,
+      applyEffect,
+      capturePaletteFocusReturn: setPaletteFocusReturn,
+      pasteTerminal: () => {},
+      pasteFilesEditor: () => {},
+      ctrlC: {
+        copyEditorSelection: () => {},
+        copyTerminalSelection: () => {},
+        forwardTerminalCtrlC: () => {},
+      },
+      runLifecycle: () => {},
+      cleanupRegistry,
+    });
+    const activate = (surface: ProductSurfaceId, source: CommandSource) =>
+      controller.openSurface(surface, source);
+    driveSurface = activate;
     const setPaletteOpen = (open: boolean) => {
-      reduceOpenTuiApplicationShellCommand(
-        semantic(),
-        applicationShellPaletteInvocation(semantic(), open, {
-          kind: "keyboard",
-          surface: open ? "application-bar" : "command-palette",
-        }),
-      );
-      paletteValue = open;
-      setPalette(open);
-      events.push(open ? "palette:open" : "palette:close");
+      if (open) controller.openPalette({ kind: "keyboard", surface: "application-bar" });
+      else controller.closePalette({ kind: "keyboard", surface: "command-palette" });
     };
     drivePalette = setPaletteOpen;
     driveFocus = () => {
@@ -118,12 +150,12 @@ async function renderProductionShell(
     };
     useKeyboard((event) => {
       const key = event.name.toLowerCase();
-      if (key === "left") activate("home");
+      if (key === "left") activate("home", { kind: "keyboard", surface: "application-bar" });
       else if (key === "f5") setPaletteOpen(true);
       else if (key === "escape" && palette()) setPaletteOpen(false);
       else if (key === "tab") driveFocus();
     });
-    onCleanup(() => disposed?.());
+    onCleanup(() => controller.dispose());
     return (
       <box
         width={width}
@@ -131,7 +163,8 @@ async function renderProductionShell(
         overflow="hidden"
         onMouseDown={(event) => {
           const shellHit = applicationShellHitTest(shell(), event.x, event.y);
-          if (shellHit?.kind === "view") activate(shellHit.viewId);
+          if (shellHit?.kind === "view")
+            activate(shellHit.viewId, { kind: "mouse", surface: "application-bar" });
           if (shellHit?.kind === "palette") setPaletteOpen(true);
           const dockHit = workbenchShellHitTest(
             workbench(),
@@ -201,6 +234,8 @@ async function renderProductionShell(
     focus: () => focusValue,
     palette: () => paletteValue,
     setPaletteOpen: (open: boolean) => drivePalette(open),
+    openSurface: (surface: ProductSurfaceId, source: CommandSource) =>
+      driveSurface(surface, source),
     toggleFocus: () => driveFocus(),
     shell: () =>
       projectApplicationShell({
@@ -248,6 +283,19 @@ describe("production ApplicationShell → WorkbenchShell OpenTUI renderer", () =
     expect(stableFrame(frame)).toContain("production application");
     expect(stableFrame(frame)).toContain("F5 palette");
     expect(harness.dockMode()).toBe(dockMode);
+
+    harness.openSurface("terminals", { kind: "keyboard", surface: "workbench" });
+    harness.openSurface("files", { kind: "palette", surface: "command-palette" });
+    await harness.setup.renderOnce();
+    const home = harness.shell().tabs.find(({ id }) => id === "home")!;
+    await harness.setup.mockMouse.click(
+      home.span.start + Math.floor(home.span.width / 2),
+      0,
+      MouseButtons.LEFT,
+    );
+    expect(harness.events).toContain("surface:terminals:keyboard");
+    expect(harness.events).toContain("surface:files:palette");
+    expect(harness.events).toContain("surface:home:mouse");
   });
 
   it("routes palette open/close, focus, and canonical surface pointer input", async () => {
@@ -271,7 +319,7 @@ describe("production ApplicationShell → WorkbenchShell OpenTUI renderer", () =
     );
     await harness.setup.renderOnce();
     expect(harness.active()).toBe("home");
-    expect(harness.events).toEqual(["palette:open", "palette:close", "surface:home"]);
+    expect(harness.events).toEqual(["palette:open", "palette:close", "surface:home:mouse"]);
   });
 
   it("destroys the renderer and disposes the Solid root", async () => {

@@ -1,3 +1,4 @@
+import { CANONICAL_SURFACE_REGISTRY, type ProductSurfaceId } from "@tmux-ide/contracts";
 import type { Tab } from "./app-state.ts";
 import type { PaletteAction, PaletteRow } from "./palette.ts";
 import type {
@@ -7,6 +8,7 @@ import type {
 import type { WorkspaceIconId } from "./workspace/icons.ts";
 
 export interface PaletteSurfaceAdapterContext {
+  currentSurface?: ProductSurfaceId;
   currentTab?: Tab;
   currentViewId?: string | null;
   currentSession?: string | null;
@@ -66,6 +68,8 @@ export interface PaletteSurfaceEntry {
 
 function actionPayload(action: PaletteAction): string {
   switch (action.kind) {
+    case "surface":
+      return action.surface;
     case "tab":
       return action.tab;
     case "view":
@@ -99,6 +103,8 @@ export function paletteCommandId(action: PaletteAction): string {
 
 function iconForAction(action: PaletteAction): WorkspaceIconId {
   switch (action.kind) {
+    case "surface":
+      return CANONICAL_SURFACE_REGISTRY.find(({ id }) => id === action.surface)!.icon;
     case "tab":
       return action.tab === "home"
         ? "home"
@@ -153,6 +159,7 @@ function iconForAction(action: PaletteAction): WorkspaceIconId {
 
 function categoryForAction(action: PaletteAction): string {
   switch (action.kind) {
+    case "surface":
     case "tab":
     case "view":
     case "open-folder":
@@ -196,6 +203,7 @@ function categoryForAction(action: PaletteAction): string {
 
 function detailForAction(action: PaletteAction): string {
   switch (action.kind) {
+    case "surface":
     case "tab":
     case "view":
       return "Switch the active workspace surface";
@@ -256,6 +264,7 @@ function detailForAction(action: PaletteAction): string {
 }
 
 function isCurrent(action: PaletteAction, context: PaletteSurfaceAdapterContext): boolean {
+  if (action.kind === "surface") return action.surface === context.currentSurface;
   if (action.kind === "tab") return action.tab === context.currentTab;
   if (action.kind === "view") return action.viewId === context.currentViewId;
   if (action.kind === "attach") return action.session === context.currentSession;

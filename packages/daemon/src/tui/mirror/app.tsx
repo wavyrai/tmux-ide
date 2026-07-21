@@ -214,13 +214,7 @@ import { installHostAutowrapGuard, type HostAutowrapGuard } from "./host-termina
 import { execFile, spawn } from "node:child_process";
 import type { AgentStatus } from "../detect/classify.ts";
 import { Sidebar } from "./sidebar.tsx";
-import {
-  APPLICATION_SHELL_COMMAND_IDS,
-  applicationShellCommandInvocation,
-  type ApplicationShellCommandInvocation,
-  type CommandSource,
-  type SemanticFocusTarget,
-} from "@tmux-ide/contracts";
+import { type CommandSource, type SemanticFocusTarget } from "@tmux-ide/contracts";
 import {
   ACCENT,
   BADGE_BG,
@@ -357,13 +351,14 @@ import { WorkbenchShell } from "./workspace/workbench-shell.tsx";
 import { applicationShellHitTest, projectApplicationShell } from "./workspace/application-shell.ts";
 import { ApplicationShell } from "./workspace/application-shell.tsx";
 import {
-  applicationShellPaletteInvocation,
-  applicationShellSurfaceInvocation,
   openTuiRuntimePaneId,
   projectOpenTuiApplicationShell,
-  reduceOpenTuiApplicationShellCommand,
   type OpenTuiApplicationShellEffect,
 } from "./workspace/application-shell-controller.ts";
+import {
+  applicationSidebarResizePointerPhase,
+  createApplicationRootController,
+} from "./workspace/application-root-controller.ts";
 import {
   agentTerminalCanvasPointerPolicy,
   agentTerminalCanvasRouteX,
@@ -387,7 +382,6 @@ import {
 } from "./workspace/terminal-pane-chrome.ts";
 import { TerminalPaneChromeLayer } from "./workspace/terminal-pane-chrome-view.tsx";
 import {
-  resolveWorkbenchPasteTarget,
   workbenchCanvasPanelForShortcut,
   workbenchCanvasShortcutForPanel,
   workbenchDockTabForShortcut,
@@ -451,15 +445,11 @@ import {
 import {
   TuiCleanupRegistry,
   createTuiLifecycleExecutor,
-  executeCtrlCCommand,
-  resolveCtrlCCommand,
   resolveInputLayer,
-  resolveQuitLifecycleCommand,
 } from "./input-lifecycle.ts";
 import {
   createRendererCommandExecutor,
   rendererInvocationForGlobal,
-  rendererInvocationForLifecycle,
   rendererInvocationForView,
 } from "./renderer-commands.ts";
 import {
@@ -951,7 +941,6 @@ hostAutowrap = installHostAutowrapGuard((sequence) => writeSync(process.stdout.f
 try {
   await render(() => {
     const cleanupRegistry = new TuiCleanupRegistry();
-    onCleanup(() => cleanupRegistry.runAll());
     // Register <pane_surface> before any is created (M21.3). An explicit call —
     // a bare side-effect import of the module gets DCE'd by the transpiler.
     if (FB_PANES) registerPaneSurface();
@@ -1005,6 +994,8 @@ try {
     );
     const [status, setStatus] = createSignal(bareHome ? "home" : "attaching…");
     const [paletteOpen, setPaletteOpen] = createSignal(false);
+    const [paletteFocusReturnTarget, setPaletteFocusReturnTarget] =
+      createSignal<SemanticFocusTarget | null>(null);
     const [hover, setHover] = createSignal<{ region: HoverRegion; index: number } | null>(null);
     const [panes, setPanes] = createSignal<LivePane[]>([]);
     let mirror: SessionMirror | null = null;
@@ -1171,6 +1162,7 @@ try {
             ? (panes().find((pane) => pane.active)?.id ?? null)
             : null,
         paletteOpen: paletteOpen(),
+        paletteFocusReturnTarget: paletteFocusReturnTarget(),
         sessions: fleet(),
         activeSession: contextSession() || target || "tmux-ide",
         agents: fleetAgents().map((agent) => ({
@@ -1431,18 +1423,22 @@ try {
         return;
       loadMissionsWorkspace("activation");
     };
-    const activateCanvasPanel = (panel: "home" | "terminals"): boolean => {
+    const activateCanvasPanelContent = (panel: "home" | "terminals"): boolean => {
       clearSelection();
       snapshotActiveWorkspaceView();
       const view = canvasViewForPanel(hostedViews(), panel);
       setActiveViewId(view.id);
       setCanvasPanel(panel);
-      if (dockMode() === "maximized") setDockMode("open");
-      setWorkbenchFocusZone("canvas");
       touchedWorkspaceActiveView = true;
-      touchedWorkspaceDock = true;
       hydrateWorkspaceView(view);
       refreshFocusRecord();
+      return true;
+    };
+    const activateCanvasPanel = (panel: "home" | "terminals"): boolean => {
+      activateCanvasPanelContent(panel);
+      if (dockMode() === "maximized") setDockMode("open");
+      setWorkbenchFocusZone("canvas");
+      touchedWorkspaceDock = true;
       return true;
     };
     const selectView = (viewId: string) => {
@@ -1477,7 +1473,7 @@ try {
       refreshFocusRecord();
       return true;
     };
-    const activateDockTab = (tabId: WorkbenchDockTabId): boolean => {
+    const activateDockTabContent = (tabId: WorkbenchDockTabId): boolean => {
       if (tabId === "activity") {
         // Activity is dock-only, so it does not travel through `selectView` (the
         // hosted-view activation path that normally snapshots the surface being
@@ -1485,9 +1481,6 @@ try {
         // pending debounced save with Activity's state.
         snapshotActiveWorkspaceView();
         setActiveDockTab("activity");
-        setDockMode("open");
-        setWorkbenchFocusZone("dock-body");
-        touchedWorkspaceDock = true;
         loadMissionsWorkspace("activation");
         return true;
       }
@@ -1496,11 +1489,15 @@ try {
       const view = nativeHostedViewForPanel(hostedViews(), panel);
       snapshotActiveWorkspaceView();
       setActiveDockTab(tabId);
+      runPanelActivation(panel);
+      hydrateWorkspaceView(view);
+      return true;
+    };
+    const activateDockTab = (tabId: WorkbenchDockTabId): boolean => {
+      activateDockTabContent(tabId);
       setDockMode("open");
       setWorkbenchFocusZone("dock-body");
       touchedWorkspaceDock = true;
-      runPanelActivation(panel);
-      hydrateWorkspaceView(view);
       return true;
     };
     const selectPanel = (panel: HostedPanelKind) => {
@@ -4063,7 +4060,7 @@ try {
           againName: currentAgainName(),
           usage: paletteUsage(),
           keycaps: PALETTE_ROW_KEYCAPS,
-          views: canvasHostedViews(),
+          views: hostedViews(),
           // "Go to file:" rows (M24.6) — appended after everything.
           repoFiles: repoFiles(),
         },
@@ -4074,6 +4071,7 @@ try {
       // revision before deriving availability for Save.
       editorRev();
       return adaptPaletteRowsToCommands(paletteRowList(), {
+        currentSurface: workbenchFocusZone() === "canvas" ? canvasPanel() : activeDockTab(),
         currentTab: tab(),
         currentViewId: activeViewId(),
         currentSession: contextSession(),
@@ -4172,8 +4170,8 @@ try {
           if (view) selectView(view.id);
         },
         activateView: (viewId) => selectView(viewId),
-        activateCanvas: (panel) => activateCanvasPanel(panel),
-        activateDock: (tabId) => activateDockTab(tabId),
+        activateCanvas: (panel) => activateCanvasPanelContent(panel),
+        activateDock: (tabId) => activateDockTabContent(tabId),
         openHome: () => {
           if (mode() !== "home") goHome();
         },
@@ -4229,38 +4227,63 @@ try {
           break;
       }
     };
-    const executeApplicationShellCommand = (invocation: ApplicationShellCommandInvocation) => {
-      const reduced = reduceOpenTuiApplicationShellCommand(semanticApplicationShell(), invocation);
-      executeApplicationShellEffect(reduced.effect);
-      return reduced.next;
-    };
+    const applicationRootController = createApplicationRootController({
+      projection: semanticApplicationShell,
+      applyEffect: executeApplicationShellEffect,
+      capturePaletteFocusReturn: setPaletteFocusReturnTarget,
+      pasteFilesEditor: (text) => {
+        if (!editBuffer) return;
+        editBuffer.insertText(text);
+        setEditorModified(true);
+        editorSyncScroll();
+        setEditorRev((revision) => revision + 1);
+        setStatusNote(`pasted ${text.length} chars`);
+      },
+      pasteTerminal: (text) => {
+        const pane = mirror?.focusedPane();
+        if (!pane || !mirror) return;
+        mirror.sendTextTo(pane, "\x1b[200~");
+        mirror.sendTextTo(pane, text);
+        mirror.sendTextTo(pane, "\x1b[201~");
+        setStatusNote(`pasted ${text.length} chars`);
+      },
+      ctrlC: {
+        copyEditorSelection: () => {
+          const current = selection();
+          if (!current || current.surface !== "editor") return;
+          const { start, end } = orderCells(current.anchor, current.head);
+          copyText(extractSelection(editorLines(), start, end, false));
+        },
+        copyTerminalSelection: () => {
+          const current = selection();
+          if (!current || current.surface !== "mirror") return;
+          commitMirrorCopy(current.paneId, current.anchor, current.head);
+        },
+        forwardTerminalCtrlC: () => {
+          const pane = mirror?.focusedPane();
+          if (!pane || !mirror) return;
+          clearSelection();
+          snapLive(pane);
+          tapInputSent(pane);
+          mirror.sendKey("C-c");
+        },
+      },
+      runLifecycle: (command) => lifecycleExecutor.run(command),
+      cleanupRegistry,
+    });
+    onCleanup(() => applicationRootController.dispose());
     const executeSurfaceCommand = (
       surface: "home" | "terminals" | WorkbenchDockTabId,
       source: CommandSource,
-    ) =>
-      executeApplicationShellCommand(
-        applicationShellSurfaceInvocation(semanticApplicationShell(), surface, source),
-      );
+    ) => applicationRootController.openSurface(surface, source);
     const executePaletteCommand = (open: boolean, source: CommandSource) =>
-      executeApplicationShellCommand(
-        applicationShellPaletteInvocation(semanticApplicationShell(), open, source),
-      );
+      open
+        ? applicationRootController.openPalette(source)
+        : applicationRootController.closePalette(source);
     const executeDockModeCommand = (nextMode: WorkbenchDockMode, source: CommandSource) =>
-      executeApplicationShellCommand(
-        applicationShellCommandInvocation(
-          APPLICATION_SHELL_COMMAND_IDS.setDockMode,
-          { mode: nextMode },
-          source,
-        ),
-      );
+      applicationRootController.setDockMode(nextMode, source);
     const executeFocusCommand = (target: SemanticFocusTarget, source: CommandSource) =>
-      executeApplicationShellCommand(
-        applicationShellCommandInvocation(
-          APPLICATION_SHELL_COMMAND_IDS.moveFocus,
-          { target },
-          source,
-        ),
-      );
+      applicationRootController.moveFocus(target, source);
     const runPaletteAction = (a: PaletteAction) => {
       // Usage history (M24.4): every dispatched action bumps its stable key —
       // count + lastUsed feed the "recent" group and the ranking tie-break.
@@ -4282,6 +4305,12 @@ try {
           // scrolled (it belongs to the pane's agent at the bottom).
           openSearch();
           break;
+        case "surface":
+          executeSurfaceCommand(a.surface, {
+            kind: "palette",
+            surface: "command-palette",
+          });
+          break;
         case "tab":
           if (a.tab === "home" || a.tab === "terminal") {
             executeSurfaceCommand(a.tab === "home" ? "home" : "terminals", {
@@ -4297,7 +4326,10 @@ try {
           break;
         case "view":
           executeRendererCommand(
-            rendererInvocationForView(a.viewId, { kind: "palette", surface: "palette" }),
+            rendererInvocationForView(a.viewId, {
+              kind: "palette",
+              surface: "command-palette",
+            }),
           );
           break;
         case "open-folder":
@@ -4429,11 +4461,7 @@ try {
           void runSettingsCommand(a.id);
           break;
         case "quit":
-          executeRendererCommand(
-            rendererInvocationForLifecycle(
-              resolveQuitLifecycleCommand({ hosted: HOSTED }, "palette"),
-            ),
-          );
+          applicationRootController.quit({ hosted: HOSTED }, "palette");
           break;
       }
     };
@@ -5094,33 +5122,13 @@ try {
      *  input and the buffer picker both funnel here. */
     const pasteIntoFocused = (text: string) => {
       if (!text) return;
-      const target = resolveWorkbenchPasteTarget({
+      applicationRootController.paste(text, {
         focusZone: workbenchProjection().focusZone,
         focusedPanel: focusedWorkbenchPanel(),
         filesEditorFocused: filesFocus() === "editor",
         filesEditorWritable: Boolean(editBuffer && !editorReadOnly()),
         terminalAvailable: Boolean(mirror),
       });
-      if (target === "consume") return;
-      if (target === "files-editor" && editBuffer) {
-        editBuffer.insertText(text); // single insertText call = one undo unit
-        setEditorModified(true);
-        editorSyncScroll();
-        setEditorRev((r) => r + 1);
-        setStatusNote(`pasted ${text.length} chars`);
-        return;
-      }
-      if (target === "terminal" && mirror) {
-        const pane = mirror.focusedPane();
-        if (!pane) return;
-        // Chunking under tmux's per-command cap happens in the input coalescer
-        // (SEND_KEYS_CHUNK_BYTES, input-coalescer.ts) — one path for typing,
-        // mouse and paste keeps the byte order a single-writer problem.
-        mirror.sendTextTo(pane, "\x1b[200~");
-        mirror.sendTextTo(pane, text);
-        mirror.sendTextTo(pane, "\x1b[201~");
-        setStatusNote(`pasted ${text.length} chars`);
-      }
     };
     /** Load the tmux paste buffers into the picker (name + sanitized sample). Runs
      *  over the control client when a session is mirrored, else a plain execFile —
@@ -5950,7 +5958,7 @@ try {
         { hosted: HOSTED },
       );
       if (layer.kind === "lifecycle") {
-        executeRendererCommand(rendererInvocationForLifecycle(layer.command));
+        applicationRootController.runLifecycle(layer.command);
         return;
       }
       if (layer.kind === "kitty-super-palette") {
@@ -6049,18 +6057,9 @@ try {
         // from the editor). Save / undo / redo work regardless of focused half.
         if (evt.ctrl && evt.name === "c") {
           const s = selection();
-          const command = resolveCtrlCCommand({
+          applicationRootController.handleCtrlC({
             layer: "editor",
             hasEditorSelection: Boolean(s && s.surface === "editor"),
-          });
-          executeCtrlCCommand(command, {
-            copyEditorSelection: () => {
-              if (!s || s.surface !== "editor") return;
-              const { start, end } = orderCells(s.anchor, s.head);
-              copyText(extractSelection(editorLines(), start, end, false));
-            },
-            copyTerminalSelection: () => {},
-            forwardTerminalCtrlC: () => {},
           });
           return;
         }
@@ -6284,25 +6283,10 @@ try {
       // to the pane (interrupt) exactly as before.
       if (evt.ctrl && evt.name === "c") {
         const s = selection();
-        const command = resolveCtrlCCommand({
+        applicationRootController.handleCtrlC({
           layer: "terminal",
           mirrorAvailable: Boolean(mirror),
           hasTerminalSelection: Boolean(s && s.surface === "mirror"),
-        });
-        executeCtrlCCommand(command, {
-          copyEditorSelection: () => {},
-          copyTerminalSelection: () => {
-            if (!s || s.surface !== "mirror") return;
-            commitMirrorCopy(s.paneId, s.anchor, s.head);
-          },
-          forwardTerminalCtrlC: () => {
-            const pane = mirror?.focusedPane();
-            if (!pane || !mirror) return;
-            clearSelection();
-            snapLive(pane);
-            tapInputSent(pane); // t0: keystroke dispatched to the pane
-            mirror.sendKey("C-c");
-          },
         });
         return;
       }
@@ -7269,6 +7253,34 @@ try {
         }
         return;
       }
+      // Both cells of the sidebar seam own the pointer before the workbench's
+      // canvas rail can see them. This prevents a resize press/drag/release from
+      // leaking into an agent terminal at any responsive width.
+      const sidebarResizePhase = applicationSidebarResizePointerPhase({
+        type,
+        active: dragging?.kind === "sidebar",
+        x: e.x,
+        y: e.y,
+        button: e.button,
+        sidebarWidth: sidebarW(),
+        tabbarHeight: TABBAR_H,
+      });
+      if (sidebarResizePhase === "start") {
+        setHoverIf(null);
+        dragging = { kind: "sidebar" };
+        setStatusNote("resizing…");
+        return;
+      }
+      if (sidebarResizePhase) {
+        if (sidebarResizePhase === "update" || sidebarResizePhase === "end") {
+          setPreferredSidebarW(clampSidebarWidth(e.x));
+        }
+        if (sidebarResizePhase === "end") {
+          dragging = null;
+          setNote("");
+        }
+        return;
+      }
       if (!dragging && routeWorkbenchPointer(e)) return;
       if (e.y >= TABBAR_H && e.x >= sidebarW()) {
         const shellHit = workbenchShellHitTest(
@@ -7381,15 +7393,6 @@ try {
       // starts a border drag. Neither fights selection: selection begins only from
       // an in-pane down, never a boundary/gutter cell.
       if (type === "down" && e.button !== 2) {
-        // The boundary only exists BELOW the tab bar (row 0 is the full-width
-        // surface bar — a press there must reach the tab spans, found live:
-        // the Files tab's left cells sat exactly on the boundary columns).
-        if (y >= TABBAR_H && (x === sidebarW() - 1 || x === sidebarW())) {
-          setHoverIf(null);
-          dragging = { kind: "sidebar" };
-          setStatusNote("resizing…");
-          return;
-        }
         if (mode() === "mirror" && x > sidebarW()) {
           const dgy = y - TABBAR_H;
           if (dgy >= HEADER_ROWS) {
@@ -7440,7 +7443,7 @@ try {
         const isEnd = type === "up" || type === "drag-end" || type === "drop" || type === "out";
         if (isDrag || isEnd) {
           if (dragging.kind === "sidebar") {
-            setPreferredSidebarW(clampSidebarWidth(x));
+            return; // owned by applicationSidebarResizePointerPhase above
           } else if (dragging.kind === "scrollbar") {
             // Absolute scroll: the pointer's row within the track maps to a top,
             // honoring the grab offset so the thumb tracks the cursor 1:1.

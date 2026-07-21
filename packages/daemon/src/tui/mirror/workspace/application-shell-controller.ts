@@ -3,6 +3,7 @@ import {
   CANONICAL_SURFACE_REGISTRY,
   applicationShellCommandInvocation,
   applyApplicationShellInvocationV1,
+  commandsToOpenSurface,
   projectApplicationShellV1,
   type ApplicationShellCommandInvocation,
   type ApplicationShellProjectionV1,
@@ -13,6 +14,7 @@ import {
   type DockToolId,
   type FocusZone,
   type PrimaryWorkspaceModeId,
+  type ProductSurfaceId,
   type SemanticFocusTarget,
 } from "@tmux-ide/contracts";
 import {
@@ -35,6 +37,8 @@ export interface OpenTuiApplicationShellInput {
   focusedPaneId: string | null;
   terminalInputPaneId: string | null;
   paletteOpen: boolean;
+  /** Captured when the palette opens. While it is open, live tmux focus may move. */
+  paletteFocusReturnTarget?: SemanticFocusTarget | null;
   sessions: readonly { name: string; status: OpenTuiSessionStatus }[];
   activeSession: string;
   agents: readonly {
@@ -132,7 +136,7 @@ export function projectOpenTuiApplicationShell(
   const terminalInputPaneId = input.terminalInputPaneId
     ? openTuiSemanticPaneId(input.terminalInputPaneId)
     : null;
-  const returnTarget = focusReturnTarget(input);
+  const returnTarget = input.paletteFocusReturnTarget ?? focusReturnTarget(input);
   const notification = input.notification?.trim() || "Workspace ready";
 
   return projectApplicationShellV1({
@@ -266,6 +270,7 @@ export type OpenTuiApplicationShellEffect =
 export function applicationShellEffect(
   invocation: ApplicationShellCommandInvocation,
   next: ApplicationShellReplayStateV1,
+  previous: ApplicationShellReplayStateV1,
 ): OpenTuiApplicationShellEffect {
   switch (invocation.id) {
     case APPLICATION_SHELL_COMMAND_IDS.activateMode:
@@ -294,14 +299,8 @@ export function applicationShellEffect(
     case APPLICATION_SHELL_COMMAND_IDS.closePalette:
       return {
         kind: "palette-close",
-        restore:
-          next.focus.terminalInputPaneId && next.focus.appFocusedPaneId
-            ? {
-                kind: "pane",
-                paneId: next.focus.appFocusedPaneId,
-                input: "terminal",
-              }
-            : { kind: "zone", zone: next.focus.focusZone },
+        restore: previous.focus.overlays.find(({ id }) => id === invocation.args.overlayId)!
+          .focusReturnTarget,
       };
     case APPLICATION_SHELL_COMMAND_IDS.selectResource:
       return {
@@ -317,23 +316,55 @@ export function reduceOpenTuiApplicationShellCommand(
   projection: ApplicationShellProjectionV1,
   invocation: ApplicationShellCommandInvocation,
 ): { next: ApplicationShellReplayStateV1; effect: OpenTuiApplicationShellEffect } {
-  const next = applyApplicationShellInvocationV1(
-    applicationShellReplayState(projection),
-    invocation,
-  );
-  return { next, effect: applicationShellEffect(invocation, next) };
+  const previous = applicationShellReplayState(projection);
+  const next = applyApplicationShellInvocationV1(previous, invocation);
+  return { next, effect: applicationShellEffect(invocation, next, previous) };
 }
 
-export function applicationShellSurfaceInvocation(
+/** Reduce a semantic command transaction in order and expose host effects in the same order. */
+export function reduceOpenTuiApplicationShellCommands(
   projection: ApplicationShellProjectionV1,
-  surfaceId: PrimaryWorkspaceModeId | DockToolId,
+  invocations: readonly ApplicationShellCommandInvocation[],
+): { next: ApplicationShellReplayStateV1; effects: readonly OpenTuiApplicationShellEffect[] } {
+  let next = applicationShellReplayState(projection);
+  const effects: OpenTuiApplicationShellEffect[] = [];
+  for (const invocation of invocations) {
+    const previous = next;
+    next = applyApplicationShellInvocationV1(previous, invocation);
+    effects.push(applicationShellEffect(invocation, next, previous));
+  }
+  return { next, effects };
+}
+
+/**
+ * The canonical open-surface transaction. Activation never owns focus or dock
+ * visibility implicitly; those changes are explicit semantic commands.
+ */
+export function applicationShellSurfaceInvocations(
+  projection: ApplicationShellProjectionV1,
+  surfaceId: ProductSurfaceId,
   source: CommandSource,
-): ApplicationShellCommandInvocation {
+): readonly ApplicationShellCommandInvocation[] {
   const surface = [...projection.primaryNavigation.items, ...projection.bottomDock.tools].find(
     ({ id }) => id === surfaceId,
   );
   if (!surface) throw new Error(`unknown canonical application surface: ${surfaceId}`);
-  return applicationShellCommandInvocation(surface.activation.id, surface.activation.args, source);
+  const open = commandsToOpenSurface({ surface: surfaceId }).map((command) =>
+    applicationShellCommandInvocation(command.id, command.args, source),
+  );
+  return [
+    ...open,
+    applicationShellCommandInvocation(
+      APPLICATION_SHELL_COMMAND_IDS.moveFocus,
+      {
+        target:
+          surface.kind === "primary-mode"
+            ? { kind: "zone", zone: "canvas" }
+            : { kind: "zone", zone: "dock-body" },
+      },
+      source,
+    ),
+  ];
 }
 
 export function applicationShellPaletteInvocation(
