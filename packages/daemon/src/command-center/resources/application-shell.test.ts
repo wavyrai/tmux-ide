@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from "bun:test";
 import {
   ApplicationShellProjectionInputV1SchemaZ,
+  ApplicationShellResourceV1SchemaZ,
   projectApplicationShellV1,
 } from "@tmux-ide/contracts";
 import { _setTmuxRunner } from "../discovery.ts";
@@ -152,6 +153,11 @@ describe("GET /api/project/:name/application-shell", () => {
     );
     const app = createApp({
       remoteAccess: { bindHostname: "0.0.0.0", token: "secret" },
+      daemonIdentity: {
+        productVersion: "2.8.0",
+        instanceId: "9bcf33b0-c837-4a94-b5e8-c0977f54464f",
+        startedAt: "2026-07-21T00:00:00.000Z",
+      },
     });
 
     const denied = await app.request("/api/project/product/application-shell", {
@@ -167,9 +173,14 @@ describe("GET /api/project/:name/application-shell", () => {
     });
     expect(response.status).toBe(200);
     expect(response.headers.get("access-control-allow-origin")).toBe("*");
-    const body = await response.json();
-    expect(ApplicationShellProjectionInputV1SchemaZ.parse(body)).toEqual(body);
-    expect(body.workspace.sidebar.agents[0]).toEqual(
+    const body = ApplicationShellResourceV1SchemaZ.parse(await response.json());
+    expect(body.daemon).toEqual({
+      protocolVersion: 1,
+      productVersion: "2.8.0",
+      instanceId: "9bcf33b0-c837-4a94-b5e8-c0977f54464f",
+      startedAt: "2026-07-21T00:00:00.000Z",
+    });
+    expect(body.resource.workspace.sidebar.agents[0]).toEqual(
       expect.objectContaining({ name: "Codex", paneId: "pane.implementer" }),
     );
     expect(JSON.stringify(body)).not.toContain("%7");

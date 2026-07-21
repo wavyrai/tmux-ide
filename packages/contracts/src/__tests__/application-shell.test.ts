@@ -13,6 +13,7 @@ import {
   projectApplicationShellV1,
   replayApplicationShellActionTraceV1,
 } from "../application-shell.ts";
+import { ApplicationShellResourceV1SchemaZ } from "../application-shell-resource.ts";
 import { COHESION_FIXTURE_V1 } from "../cohesion-fixture.ts";
 import {
   APPLICATION_SHELL_COMMAND_IDS,
@@ -50,6 +51,32 @@ const closedOverlayFixture = {
 };
 
 describe("semantic application shell", () => {
+  it("binds the REST resource to one strict daemon generation", () => {
+    const envelope = {
+      version: 1,
+      daemon: {
+        protocolVersion: 1,
+        productVersion: "2.8.0",
+        instanceId: "9bcf33b0-c837-4a94-b5e8-c0977f54464f",
+        startedAt: "2026-07-21T00:00:00.000Z",
+      },
+      resource: {
+        project: COHESION_FIXTURE_V1.project,
+        workspace: COHESION_FIXTURE_V1.workspace,
+        dock: COHESION_FIXTURE_V1.dock,
+        focus: COHESION_FIXTURE_V1.focus,
+        connection: COHESION_FIXTURE_V1.connection,
+      },
+    };
+    expect(ApplicationShellResourceV1SchemaZ.parse(envelope)).toEqual(envelope);
+    expect(
+      ApplicationShellResourceV1SchemaZ.safeParse({
+        ...envelope,
+        daemon: { ...envelope.daemon, token: "secret" },
+      }).success,
+    ).toBe(false);
+  });
+
   it("projects navigation and dock identity only from the canonical surface registry", () => {
     const projection = projectApplicationShellV1(COHESION_FIXTURE_V1);
     const projectedSurfaces = [

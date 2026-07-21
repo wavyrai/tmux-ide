@@ -35,7 +35,11 @@ import {
 } from "../lib/workspace-registry.ts";
 import {
   AddWorkspaceRequestSchemaZ,
+  APPLICATION_SHELL_RESOURCE_VERSION,
   DAEMON_WIRE_PROTOCOL_VERSION,
+  DaemonInstanceIdentitySchemaZ,
+  type ApplicationShellResourceV1,
+  type DaemonInstanceIdentity,
   type DaemonPanesResponse,
   type DaemonProjectResponse,
   type DaemonProjectsResponse,
@@ -265,6 +269,10 @@ export function createApp(options: CreateAppOptions = {}): Hono {
     instanceId: randomUUID(),
     startedAt: new Date().toISOString(),
   };
+  const daemonInstanceIdentity = DaemonInstanceIdentitySchemaZ.parse({
+    protocolVersion: DAEMON_WIRE_PROTOCOL_VERSION,
+    ...daemonIdentity,
+  });
   const healthBootedAt = Date.now();
 
   const app = new Hono();
@@ -468,7 +476,11 @@ export function createApp(options: CreateAppOptions = {}): Hono {
     const name = c.req.param("name");
     const session = discoverSessions().find((candidate) => candidate.name === name);
     if (!session) return c.json({ error: "Session not found" }, 404);
-    return c.json(projectApplicationShellResource(session));
+    return c.json({
+      version: APPLICATION_SHELL_RESOURCE_VERSION,
+      daemon: daemonInstanceIdentity,
+      resource: projectApplicationShellResource(session),
+    } satisfies ApplicationShellResourceV1);
   });
 
   app.get("/api/project/:name/panes", (c) => {
@@ -1285,7 +1297,10 @@ function listAvailableTemplates(): ProjectTemplate[] {
  * SSE endpoints (`/api/events`, `/api/project/<name>/stream`) continue to
  * work alongside this — they will be retired in a follow-up slice.
  */
-export function attachWsEvents(server: import("node:http").Server): {
+export function attachWsEvents(
+  server: import("node:http").Server,
+  daemonIdentity: DaemonInstanceIdentity,
+): {
   close: () => void;
 } {
   const wss = new WebSocketServer({ noServer: true });
@@ -1299,7 +1314,7 @@ export function attachWsEvents(server: import("node:http").Server): {
     const pathname = url.split("?")[0];
     if (pathname !== "/ws/events") return;
     wss.handleUpgrade(req, socket, head, (ws) => {
-      handleWsEventsConnection(ws);
+      handleWsEventsConnection(ws, daemonIdentity);
     });
   };
 

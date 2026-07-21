@@ -4,6 +4,7 @@ import {
   DaemonSessionOverviewSchemaZ,
   DaemonWorkspaceSchemaZ,
 } from "./daemon-resources.ts";
+import { DaemonInstanceIdentitySchemaZ } from "./daemon-wire.ts";
 
 /** Shared, browser-safe protocol for the daemon's unified /ws/events socket. */
 
@@ -42,6 +43,7 @@ export type DaemonSessionSnapshot = z.infer<typeof DaemonSessionSnapshotSchemaZ>
 export const DaemonEventHelloFrameSchemaZ = z
   .object({
     type: z.literal("hello"),
+    daemon: DaemonInstanceIdentitySchemaZ,
     sessions: z.array(DaemonSessionOverviewSchemaZ),
   })
   .strict();

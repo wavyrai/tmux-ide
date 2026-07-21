@@ -24,6 +24,12 @@ import { makePane } from "../__tests__/support.ts";
 import type { ServerFrame } from "../schemas/ws-events.ts";
 
 const REGISTRY_DIR_ENV = "TMUX_IDE_REGISTRY_DIR";
+const TEST_DAEMON_IDENTITY = {
+  protocolVersion: 1,
+  productVersion: "2.8.0",
+  instanceId: "9bcf33b0-c837-4a94-b5e8-c0977f54464f",
+  startedAt: "2026-07-21T00:00:00.000Z",
+} as const;
 
 class MockWebSocket extends EventEmitter {
   readyState = 1;
@@ -277,7 +283,7 @@ describe("WS broadcast — projects.changed", () => {
   it("connected clients receive projects.changed when a project is registered", async () => {
     const app = createApp();
     const ws = new MockWebSocket();
-    handleWsEventsConnection(ws);
+    handleWsEventsConnection(ws, TEST_DAEMON_IDENTITY);
     ws.sent.length = 0;
 
     const res = await app.request("/api/projects", {
@@ -298,7 +304,7 @@ describe("WS broadcast — projects.changed", () => {
     const before = projectRegistryEmitter.listenerCount("change");
 
     const ws = new MockWebSocket();
-    handleWsEventsConnection(ws);
+    handleWsEventsConnection(ws, TEST_DAEMON_IDENTITY);
     expect(projectRegistryEmitter.listenerCount("change")).toBe(before + 1);
 
     ws.clientClose();

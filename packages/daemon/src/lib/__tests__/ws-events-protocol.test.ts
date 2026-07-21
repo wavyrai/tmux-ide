@@ -7,6 +7,13 @@ import {
   handleWsEventsConnection,
 } from "../../command-center/ws-events.ts";
 
+const daemonIdentity = {
+  protocolVersion: 1,
+  productVersion: "2.8.0",
+  instanceId: "9bcf33b0-c837-4a94-b5e8-c0977f54464f",
+  startedAt: "2026-07-21T00:00:00.000Z",
+} as const;
+
 class ProtocolWebSocket extends EventEmitter {
   readyState = 1;
   readonly sent: string[] = [];
@@ -35,9 +42,17 @@ afterEach(() => {
 });
 
 describe("/ws/events client frame protocol", () => {
+  it("binds the initial hello to the supplied daemon generation", () => {
+    const socket = new ProtocolWebSocket();
+    handleWsEventsConnection(socket, daemonIdentity);
+
+    expect(frames(socket)[0]).toMatchObject({ type: "hello", daemon: daemonIdentity });
+    socket.disconnect();
+  });
+
   it("reports malformed JSON deterministically and keeps the socket usable", () => {
     const socket = new ProtocolWebSocket();
-    handleWsEventsConnection(socket);
+    handleWsEventsConnection(socket, daemonIdentity);
     socket.sent.length = 0;
 
     socket.receive("not-json");
@@ -56,7 +71,7 @@ describe("/ws/events client frame protocol", () => {
 
   it("rejects malformed subscribe frames without throwing or changing subscription state", () => {
     const socket = new ProtocolWebSocket();
-    handleWsEventsConnection(socket);
+    handleWsEventsConnection(socket, daemonIdentity);
     socket.sent.length = 0;
 
     expect(() => socket.receive(JSON.stringify({ type: "subscribe" }))).not.toThrow();
@@ -83,7 +98,7 @@ describe("/ws/events client frame protocol", () => {
 
   it("rejects unknown and extra client fields rather than accepting structural lookalikes", () => {
     const socket = new ProtocolWebSocket();
-    handleWsEventsConnection(socket);
+    handleWsEventsConnection(socket, daemonIdentity);
     socket.sent.length = 0;
 
     socket.receive(JSON.stringify({ type: "ping", extra: true }));

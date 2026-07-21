@@ -19,6 +19,7 @@ import {
   DaemonEventClientFrameSchemaZ,
   type DaemonEventClientFrame,
   type DaemonEventServerFrame,
+  type DaemonInstanceIdentity,
   type DaemonSessionSnapshot,
   type Workspace,
 } from "@tmux-ide/contracts";
@@ -159,7 +160,10 @@ export function buildSessionSnapshot(sessionName: string): DaemonSessionSnapshot
  * Wire a single WebSocket connection. Tracks per-session subscriptions and
  * tears all listeners down on close — no leaks.
  */
-export function handleWsEventsConnection(socket: WebSocket | WsLike): void {
+export function handleWsEventsConnection(
+  socket: WebSocket | WsLike,
+  daemonIdentity: DaemonInstanceIdentity,
+): void {
   const ws = socket as WsLike;
   const subscriptions = new Set<string>();
   let closed = false;
@@ -307,9 +311,9 @@ export function handleWsEventsConnection(socket: WebSocket | WsLike): void {
   // a separate REST round-trip.
   try {
     const sessions = discoverSessions();
-    send({ type: "hello", sessions: buildOverviews(sessions) });
+    send({ type: "hello", daemon: daemonIdentity, sessions: buildOverviews(sessions) });
   } catch {
-    send({ type: "hello", sessions: [] });
+    send({ type: "hello", daemon: daemonIdentity, sessions: [] });
   }
 }
 

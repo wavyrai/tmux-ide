@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   DESKTOP_HOST_API_VERSION,
+  DesktopApplicationShellTargetSchemaZ,
   DesktopDaemonPreflightSchemaZ,
   DesktopDaemonHostDescriptorSchemaZ,
   DesktopHostBootstrapSchemaZ,
@@ -65,5 +66,22 @@ describe("desktop host contract", () => {
         authToken: "must-not-cross-ipc",
       }).success,
     ).toBe(false);
+  });
+
+  it("rejects malformed or secret-bearing application-shell targets", () => {
+    const target = {
+      daemon: {
+        protocolVersion: 1,
+        productVersion: "2.8.0",
+        instanceId: "9bcf33b0-c837-4a94-b5e8-c0977f54464f",
+        startedAt: "2026-07-21T00:00:00.000Z",
+      },
+      workspaceName: " project ",
+    };
+    expect(DesktopApplicationShellTargetSchemaZ.parse(target).workspaceName).toBe("project");
+    expect(
+      DesktopApplicationShellTargetSchemaZ.safeParse({ ...target, token: "secret" }).success,
+    ).toBe(false);
+    expect(DesktopApplicationShellTargetSchemaZ.safeParse(null).success).toBe(false);
   });
 });

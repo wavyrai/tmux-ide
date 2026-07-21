@@ -9,6 +9,13 @@ import {
 import { handleWsEventsConnection } from "./ws-events.ts";
 import { createApp } from "./server.ts";
 
+const TEST_DAEMON_IDENTITY = {
+  protocolVersion: 1,
+  productVersion: "2.8.0",
+  instanceId: "9bcf33b0-c837-4a94-b5e8-c0977f54464f",
+  startedAt: "2026-07-21T00:00:00.000Z",
+} as const;
+
 let tmpDir: string;
 let registry: WorkspaceRegistry;
 
@@ -150,7 +157,7 @@ function makeFakeWs(): FakeWs {
 describe("WS frames — workspace.added / workspace.removed", () => {
   it("emits workspace.added when a workspace is added via the registry", () => {
     const ws = makeFakeWs();
-    handleWsEventsConnection(ws as never);
+    handleWsEventsConnection(ws as never, TEST_DAEMON_IDENTITY);
 
     registry.add({ name: "alpha", projectDir: "/tmp/alpha" });
 
@@ -165,7 +172,7 @@ describe("WS frames — workspace.added / workspace.removed", () => {
   it("emits workspace.removed when a workspace is removed", () => {
     registry.add({ name: "alpha", projectDir: "/tmp/alpha" });
     const ws = makeFakeWs();
-    handleWsEventsConnection(ws as never);
+    handleWsEventsConnection(ws as never, TEST_DAEMON_IDENTITY);
     ws.sent = []; // reset; the connection may have already sent a hello
 
     registry.remove("alpha");
@@ -191,7 +198,7 @@ describe("WS frames — workspace.added / workspace.removed", () => {
     _setDefaultWorkspaceRegistryForTests(reg2);
 
     const ws = makeFakeWs();
-    handleWsEventsConnection(ws as never);
+    handleWsEventsConnection(ws as never, TEST_DAEMON_IDENTITY);
     ws.sent = [];
 
     // load() prunes beta from disk; we simulate the same behavior by directly
