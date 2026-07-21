@@ -21,7 +21,13 @@ import {
   type TextTokenRole,
   type ThemeAccessibilityPreferences,
   type ThemeDiagnostic,
+  type VisualTokensV1,
 } from "@tmux-ide/contracts";
+import {
+  LEGACY_THEME_OVERRIDE_PROVENANCE,
+  type LegacyThemeOverrideId,
+  type LegacyThemeOverrideProvenance,
+} from "../../lib/legacy-theme-compat.ts";
 
 export type ResolvedThemeMode = "dark" | "light";
 export type ThemeModeSetting = ResolvedThemeMode | "system";
@@ -97,6 +103,8 @@ export interface SemanticThemeTokens {
 export interface SemanticThemeSnapshot extends SemanticThemeTokens {
   readonly mode: ResolvedThemeMode;
   readonly setting: ThemeModeSetting;
+  /** Full renderer-neutral source tokens. Host projections may consume additional groups later. */
+  readonly canonical: VisualTokensV1;
   readonly roles: OpenTuiSemanticColorRoles;
   readonly derived: OpenTuiDerivedColors;
   readonly accessibility: ThemeAccessibilityPreferences;
@@ -114,6 +122,8 @@ export interface ThemeConfigInput {
   fg?: string;
   status?: Partial<Record<keyof SemanticThemeColors["status"], string>>;
   glyphs?: Partial<Pick<SemanticThemeTokens["glyphs"], "active" | "inactive">>;
+  /** Present on resolved app config; absent means direct callers supplied explicit legacy values. */
+  [LEGACY_THEME_OVERRIDE_PROVENANCE]?: LegacyThemeOverrideProvenance;
 }
 
 export interface ThemeStoreOptions {
@@ -309,7 +319,20 @@ function freezeSnapshot(snapshot: SemanticThemeSnapshot): SemanticThemeSnapshot 
   ]) {
     Object.freeze(colors);
   }
+  deepFreeze(snapshot.canonical);
   return Object.freeze(snapshot);
+}
+
+function deepFreeze<T>(value: T): T {
+  if (!value || typeof value !== "object" || Object.isFrozen(value)) return value;
+  for (const child of Object.values(value as Record<string, unknown>)) deepFreeze(child);
+  return Object.freeze(value);
+}
+
+function cloneCanonicalTokens(tokens: VisualTokensV1): VisualTokensV1 {
+  // The contract is JSON data by design. Clone before freezing so the facade
+  // never freezes the shared built-in token registry owned by contracts.
+  return JSON.parse(JSON.stringify(tokens)) as VisualTokensV1;
 }
 
 const DEFAULT_ACCESSIBILITY: ThemeAccessibilityPreferences = Object.freeze({
@@ -400,6 +423,7 @@ function snapshotFromResolvedTheme(
   return freezeSnapshot({
     mode: resolved.appearance,
     setting,
+    canonical: cloneCanonicalTokens(resolved.tokens),
     roles,
     derived,
     colors,
@@ -437,18 +461,34 @@ function withAppThemeConfig(
   setting: ThemeModeSetting,
   config: ThemeConfigInput | undefined,
 ): SemanticThemeSnapshot {
-  const accent = parseThemeColor(config?.accent, base.colors.accent);
-  const foreground = parseThemeColor(config?.fg, base.colors.foreground);
-  const muted = parseThemeColor(config?.muted, base.colors.mutedForeground);
+  const legacyValue = (id: LegacyThemeOverrideId, value: string | undefined) => {
+    const provenance = config?.[LEGACY_THEME_OVERRIDE_PROVENANCE];
+    return provenance === undefined || provenance[id] ? value : undefined;
+  };
+  const accentInput = legacyValue("accent", config?.accent);
+  const foregroundInput = legacyValue("fg", config?.fg);
+  const mutedInput = legacyValue("muted", config?.muted);
+  const statusInput = {
+    blocked: legacyValue("status.blocked", config?.status?.blocked),
+    working: legacyValue("status.working", config?.status?.working),
+    done: legacyValue("status.done", config?.status?.done),
+    idle: legacyValue("status.idle", config?.status?.idle),
+    unknown: legacyValue("status.unknown", config?.status?.unknown),
+  };
+  const activeGlyph = legacyValue("glyphs.active", config?.glyphs?.active);
+  const inactiveGlyph = legacyValue("glyphs.inactive", config?.glyphs?.inactive);
+  const accent = parseThemeColor(accentInput, base.colors.accent);
+  const foreground = parseThemeColor(foregroundInput, base.colors.foreground);
+  const muted = parseThemeColor(mutedInput, base.colors.mutedForeground);
   const white = rgba(255, 255, 255);
   const black = rgba(0, 0, 0);
   const contrast = base.mode === "dark" ? white : black;
   const status = {
-    blocked: parseThemeColor(config?.status?.blocked, base.colors.status.blocked),
-    working: parseThemeColor(config?.status?.working, base.colors.status.working),
-    done: parseThemeColor(config?.status?.done, base.colors.status.done),
-    idle: parseThemeColor(config?.status?.idle, base.colors.status.idle),
-    unknown: parseThemeColor(config?.status?.unknown, base.colors.status.unknown),
+    blocked: parseThemeColor(statusInput.blocked, base.colors.status.blocked),
+    working: parseThemeColor(statusInput.working, base.colors.status.working),
+    done: parseThemeColor(statusInput.done, base.colors.status.done),
+    idle: parseThemeColor(statusInput.idle, base.colors.status.idle),
+    unknown: parseThemeColor(statusInput.unknown, base.colors.status.unknown),
   };
   const statusColors = Object.values(status);
   const accentCollidesWithStatus = collidesWithAny(accent, statusColors);
@@ -464,33 +504,34 @@ function withAppThemeConfig(
   const roles: OpenTuiSemanticColorRoles = {
     surfaces: {
       ...base.roles.surfaces,
-      ...(config?.accent ? { headerActive: accentMuted } : {}),
+      ...(accentInput ? { headerActive: accentMuted } : {}),
     },
     text: {
       ...base.roles.text,
-      ...(config?.fg ? { primary: foreground } : {}),
-      ...(config?.muted ? { secondary: muted, muted } : {}),
-      ...(config?.accent ? { link: accent } : {}),
+      ...(foregroundInput ? { primary: foreground } : {}),
+      ...(mutedInput ? { secondary: muted, muted } : {}),
+      ...(accentInput ? { link: accent } : {}),
     },
     borders: {
       ...base.roles.borders,
-      ...(config?.accent && !base.accessibility.increasedContrast ? { focused: focus } : {}),
+      ...(accentInput && !base.accessibility.increasedContrast ? { focused: focus } : {}),
     },
     statusTone: {
       ...base.roles.statusTone,
-      ...(config?.status?.blocked ? { warning: status.blocked } : {}),
-      ...(config?.status?.working ? { info: status.working } : {}),
-      ...(config?.status?.done ? { success: status.done } : {}),
-      ...(config?.status?.idle ? { neutral: status.idle } : {}),
+      ...(statusInput.blocked ? { warning: status.blocked } : {}),
+      ...(statusInput.working ? { info: status.working } : {}),
+      ...(statusInput.done ? { success: status.done } : {}),
+      ...(statusInput.idle ? { neutral: status.idle } : {}),
     },
     selection: {
       ...base.roles.selection,
-      ...(config?.accent ? { selection, hover, pressed } : {}),
+      ...(accentInput ? { selection, hover, pressed } : {}),
     },
   };
   return freezeSnapshot({
     mode: base.mode,
     setting,
+    canonical: base.canonical,
     roles,
     derived: base.derived,
     accessibility: base.accessibility,
@@ -518,8 +559,8 @@ function withAppThemeConfig(
     borders: { ...base.borders },
     glyphs: {
       ...base.glyphs,
-      active: config?.glyphs?.active ?? base.glyphs.active,
-      inactive: config?.glyphs?.inactive ?? base.glyphs.inactive,
+      active: activeGlyph ?? base.glyphs.active,
+      inactive: inactiveGlyph ?? base.glyphs.inactive,
     },
   });
 }
@@ -615,6 +656,7 @@ function sameSnapshot(a: SemanticThemeSnapshot, b: SemanticThemeSnapshot): boole
     JSON.stringify({
       mode: snapshot.mode,
       setting: snapshot.setting,
+      canonical: snapshot.canonical,
       colors: {
         background: rgbaKey(snapshot.colors.background),
         surface: rgbaKey(snapshot.colors.surface),
@@ -652,6 +694,16 @@ function sameSnapshot(a: SemanticThemeSnapshot, b: SemanticThemeSnapshot): boole
 }
 
 const compatibilityTheme = DARK_THEME;
+
+/**
+ * Card 22.3b owns these root-composition writes. Keeping the list executable
+ * prevents optional DARK_THEME fallbacks from becoming an undocumented public
+ * contract while this adapter card deliberately leaves app.tsx untouched.
+ */
+export const CARD_22_3B_LIVE_THEME_WIRING_DEFERRALS = [
+  { component: "Sidebar", prop: "theme", owner: "app.tsx" },
+  { component: "MissionsSurface", prop: "semanticTheme", owner: "app.tsx" },
+] as const;
 
 /**
  * Temporary names retained for app.tsx and pre-Card-22 leaves. Card 22.3 owns

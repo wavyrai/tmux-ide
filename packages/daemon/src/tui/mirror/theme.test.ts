@@ -9,6 +9,7 @@ import {
 } from "@tmux-ide/contracts";
 import {
   ACCENT,
+  CARD_22_3B_LIVE_THEME_WIRING_DEFERRALS,
   DARK_THEME,
   DEFAULT_BG,
   LIGHT_THEME,
@@ -20,6 +21,7 @@ import {
   type ThemeModeSource,
 } from "./theme.ts";
 import { THEME_PRESETS } from "./settings-model.ts";
+import { parseAppConfig } from "../../lib/app-config.ts";
 
 function rgbaKey(color: { r: number; g: number; b: number; a: number }): string {
   return colorToThemeBytes(color as Parameters<typeof colorToThemeBytes>[0]).join(",");
@@ -115,6 +117,57 @@ describe("semantic theme snapshots", () => {
       expectCanonicalColorProjection(createSemanticThemeSnapshot(config), expected);
     }
     expect(Object.isFrozen(COHESION_FIXTURE_V1)).toBe(true);
+  });
+
+  it("does not treat parser-filled legacy defaults as canonical theme overrides", () => {
+    const cases = [
+      { mode: "dark" as const, rendererMode: null, accessibility: undefined },
+      { mode: "light" as const, rendererMode: null, accessibility: undefined },
+      { mode: "system" as const, rendererMode: "light" as const, accessibility: undefined },
+      {
+        mode: "dark" as const,
+        rendererMode: null,
+        accessibility: { reducedMotion: true, increasedContrast: true },
+      },
+    ];
+
+    for (const testCase of cases) {
+      const parsed = parseAppConfig({ theme: { mode: testCase.mode } }).theme;
+      const config = { ...parsed, accessibility: testCase.accessibility };
+      const expectedMode =
+        testCase.mode === "system" ? (testCase.rendererMode ?? "dark") : testCase.mode;
+      const expected = resolveVisualTheme({
+        appearance: expectedMode,
+        accessibility: testCase.accessibility,
+      });
+      const snapshot = createSemanticThemeSnapshot(config, testCase.rendererMode);
+      expectCanonicalColorProjection(snapshot, expected);
+      expect(snapshot.canonical).toEqual(expected.tokens);
+    }
+  });
+
+  it("preserves only legacy theme leaves explicitly present in parsed app config", () => {
+    const parsed = parseAppConfig({
+      theme: {
+        mode: "light",
+        accent: "#123456",
+        status: { blocked: "#654321" },
+        glyphs: { active: "◆" },
+      },
+    }).theme;
+    const snapshot = createSemanticThemeSnapshot(parsed);
+    const canonical = resolveVisualTheme({ appearance: "light" });
+
+    expect(rgbaKey(snapshot.colors.accent)).toBe("18,52,86,255");
+    expect(rgbaKey(snapshot.roles.statusTone.warning)).toBe("101,67,33,255");
+    expect(rgbaKey(snapshot.roles.text.primary)).toBe(
+      rendererNeutralKey(canonical.tokens.text.primary),
+    );
+    expect(rgbaKey(snapshot.roles.text.muted)).toBe(
+      rendererNeutralKey(canonical.tokens.text.muted),
+    );
+    expect(snapshot.glyphs.active).toBe("◆");
+    expect(snapshot.glyphs.inactive).toBe(DARK_THEME.glyphs.inactive);
   });
 
   it("keeps the explicit compatibility export list mapped to the canonical dark facade", () => {
@@ -237,6 +290,9 @@ describe("semantic theme snapshots", () => {
     expect(Object.isFrozen(first.density)).toBe(true);
     expect(Object.isFrozen(first.borders)).toBe(true);
     expect(Object.isFrozen(first.glyphs)).toBe(true);
+    expect(Object.isFrozen(first.canonical)).toBe(true);
+    expect(Object.isFrozen(first.canonical.motion)).toBe(true);
+    expect(Object.isFrozen(first.canonical.motion.fast)).toBe(true);
   });
 
   it("keeps compatibility focus signals distinct from semantic status colors", () => {
@@ -309,5 +365,44 @@ describe("semantic theme store", () => {
     expect(snapshots).toHaveLength(2);
     expect(rgbaKey(snapshots[0]!.colors.accent)).toBe("95,175,255,255");
     expect(rgbaKey(snapshots[1]!.colors.accent)).toBe("255,95,95,255");
+  });
+
+  it("retains and notifies on canonical non-color token changes", () => {
+    const projectTheme = (fast: number) => ({
+      version: 1 as const,
+      id: "motion-reactivity",
+      name: "Motion reactivity",
+      appearance: "dark" as const,
+      overrides: { motion: { fast: { unit: "ms" as const, value: fast } } },
+    });
+    const store = createSemanticThemeStore({ mode: "dark", projectTheme: projectTheme(10) });
+    const first = store.getSnapshot();
+    let notifications = 0;
+    store.subscribe(() => notifications++);
+
+    store.configure({ mode: "dark", projectTheme: projectTheme(20) });
+    expect(notifications).toBe(1);
+    expect(store.getSnapshot()).not.toBe(first);
+    expect(store.getSnapshot().canonical.motion.fast.value).toBe(20);
+
+    store.configure({ mode: "dark", projectTheme: projectTheme(20) });
+    expect(notifications).toBe(1);
+  });
+});
+
+describe("Card 22.3b live-theme wiring deferrals", () => {
+  it("keeps the two root-composition writes explicit until app.tsx owns them", () => {
+    expect(CARD_22_3B_LIVE_THEME_WIRING_DEFERRALS).toEqual([
+      { component: "Sidebar", prop: "theme", owner: "app.tsx" },
+      { component: "MissionsSurface", prop: "semanticTheme", owner: "app.tsx" },
+    ]);
+
+    const app = readFileSync(fileURLToPath(new URL("./app.tsx", import.meta.url)), "utf-8");
+    const sidebarCall = app.match(/<Sidebar[\s\S]*?\/>/u)?.[0];
+    const missionsCall = app.match(/<MissionsSurface[\s\S]*?\/>/u)?.[0];
+    expect(sidebarCall).toBeDefined();
+    expect(sidebarCall).not.toContain("theme={semanticTheme()}");
+    expect(missionsCall).toBeDefined();
+    expect(missionsCall).not.toContain("semanticTheme={semanticTheme()}");
   });
 });
