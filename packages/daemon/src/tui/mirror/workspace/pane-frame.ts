@@ -37,6 +37,7 @@ export type PaneFrameKind =
 export interface PaneFrameAction {
   id: string;
   commandId?: CommandId;
+  behavior?: "action" | "toggle";
   label: string;
   compactLabel?: string;
   icon?: WorkspaceIconId;
@@ -313,6 +314,7 @@ export function paneFrameModel(input: PaneFrameInput): PaneFrameModel {
   const actions: SemanticPaneFrameAction[] = (input.actions ?? []).map((action) => ({
     id: semanticId(action.id, "action.activate"),
     commandId: commandIdForAction(action),
+    behavior: action.behavior ?? "action",
     icon: action.icon ?? "command",
     label: action.label,
     description: action.description,
@@ -400,6 +402,7 @@ export function projectSemanticPaneFrame(
     const action: PaneFrameAction = {
       id: semanticAction.id,
       commandId: semanticAction.commandId,
+      behavior: semanticAction.behavior,
       label: semanticAction.label,
       compactLabel: presentation?.compactLabel,
       icon: presentation ? presentation.icon : semanticAction.icon,
