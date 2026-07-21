@@ -68,7 +68,14 @@ function authenticateSocket(socket: FakeSocket, daemon: unknown = daemonIdentity
 }
 
 async function settle(): Promise<void> {
-  for (let index = 0; index < 8; index += 1) await Promise.resolve();
+  // Response.json() may finish on a later event-loop turn rather than in the
+  // current microtask queue. CI runs the renderer beside the daemon and
+  // Electron suites, so microtask-only draining can observe the store while it
+  // is still legitimately loading. Keep this bounded, but yield real turns.
+  for (let index = 0; index < 4; index += 1) {
+    await Promise.resolve();
+    await new Promise<void>((resolve) => globalThis.setTimeout(resolve, 0));
+  }
 }
 
 function deferred<T>(): {
