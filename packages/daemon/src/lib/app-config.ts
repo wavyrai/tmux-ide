@@ -25,6 +25,12 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import type { AgentStatus } from "../tui/detect/classify.ts";
 import type { ThemeModeSetting } from "../tui/mirror/theme.ts";
+import {
+  LEGACY_THEME_OVERRIDE_PROVENANCE,
+  legacyThemeOverrideProvenance,
+  type LegacyThemeOverrideId,
+  type LegacyThemeOverrideProvenance,
+} from "./legacy-theme-compat.ts";
 
 // ---------------------------------------------------------------------------
 // Shape
@@ -89,6 +95,8 @@ export interface AppTheme {
   status: AppThemeStatus;
   /** The filled/hollow state glyphs. */
   glyphs: AppThemeGlyphs;
+  /** Internal, non-serializing record of legacy leaves genuinely present in the raw config. */
+  [LEGACY_THEME_OVERRIDE_PROVENANCE]?: LegacyThemeOverrideProvenance;
 }
 
 /** Chrome updater cadence. */
@@ -266,6 +274,7 @@ export const DEFAULT_APP_CONFIG: AppConfig = {
       unknown: "colour244",
     },
     glyphs: { active: "●", inactive: "○" },
+    [LEGACY_THEME_OVERRIDE_PROVENANCE]: legacyThemeOverrideProvenance(),
   },
   updater: { tickMs: 2000, snapshotEvery: 15 },
   notifications: { toast: true, macos: false, terminal: true, delaySeconds: 2, sound: "blocked" },
@@ -327,6 +336,28 @@ function pickChoice<T extends string>(value: unknown, allowed: readonly T[], fal
     : fallback;
 }
 
+function isExplicitString(value: unknown): value is string {
+  return typeof value === "string" && value.length > 0;
+}
+
+function appThemeOverrideProvenance(
+  theme: Record<string, unknown>,
+  status: Record<string, unknown>,
+  glyphs: Record<string, unknown>,
+): LegacyThemeOverrideProvenance {
+  const explicit = new Set<LegacyThemeOverrideId>();
+  if (isExplicitString(theme.accent)) explicit.add("accent");
+  if (isExplicitString(theme.muted)) explicit.add("muted");
+  if (isExplicitString(theme.fg)) explicit.add("fg");
+  for (const id of ["blocked", "working", "done", "idle", "unknown"] as const) {
+    if (isExplicitString(status[id])) explicit.add(`status.${id}`);
+  }
+  for (const id of ["active", "inactive"] as const) {
+    if (isExplicitString(glyphs[id])) explicit.add(`glyphs.${id}`);
+  }
+  return legacyThemeOverrideProvenance(explicit);
+}
+
 /**
  * PURE — merge an unknown (typically parsed JSON) over {@link DEFAULT_APP_CONFIG}.
  * Every block/leaf is validated independently: a missing or mistyped field falls
@@ -378,6 +409,7 @@ export function parseAppConfig(input: unknown): AppConfig {
         active: pickString(glyphs.active, D.theme.glyphs.active),
         inactive: pickString(glyphs.inactive, D.theme.glyphs.inactive),
       },
+      [LEGACY_THEME_OVERRIDE_PROVENANCE]: appThemeOverrideProvenance(theme, status, glyphs),
     },
     updater: {
       tickMs: pickPosInt(updater.tickMs, D.updater.tickMs),

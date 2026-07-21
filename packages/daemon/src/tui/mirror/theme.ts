@@ -10,6 +10,24 @@
  * verbatim, aliasing @opentui/core to a browser shim that only exposes RGBA.
  */
 import { RGBA } from "@opentui/core";
+import {
+  deriveAttentionBlend,
+  resolveVisualTheme,
+  type BorderTokenRole,
+  type RendererNeutralColor,
+  type SelectionTokenRole,
+  type StatusToneRole,
+  type SurfaceTokenRole,
+  type TextTokenRole,
+  type ThemeAccessibilityPreferences,
+  type ThemeDiagnostic,
+  type VisualTokensV1,
+} from "@tmux-ide/contracts";
+import {
+  LEGACY_THEME_OVERRIDE_PROVENANCE,
+  type LegacyThemeOverrideId,
+  type LegacyThemeOverrideProvenance,
+} from "../../lib/legacy-theme-compat.ts";
 
 export type ResolvedThemeMode = "dark" | "light";
 export type ThemeModeSetting = ResolvedThemeMode | "system";
@@ -45,6 +63,20 @@ export interface SemanticThemeColors {
   };
 }
 
+/** OpenTUI's RGBA projection of the renderer-neutral product color vocabulary. */
+export interface OpenTuiSemanticColorRoles {
+  readonly surfaces: Readonly<Record<SurfaceTokenRole, RGBA>>;
+  readonly text: Readonly<Record<TextTokenRole, RGBA>>;
+  readonly borders: Readonly<Record<BorderTokenRole, RGBA>>;
+  readonly statusTone: Readonly<Record<StatusToneRole, RGBA>>;
+  readonly selection: Readonly<Record<SelectionTokenRole, RGBA>>;
+}
+
+export interface OpenTuiDerivedColors {
+  /** Terminal-cell background derived from canonical panel + attention tokens. */
+  readonly attentionSurface: RGBA;
+}
+
 export interface SemanticThemeTokens {
   readonly colors: SemanticThemeColors;
   readonly density: {
@@ -71,15 +103,27 @@ export interface SemanticThemeTokens {
 export interface SemanticThemeSnapshot extends SemanticThemeTokens {
   readonly mode: ResolvedThemeMode;
   readonly setting: ThemeModeSetting;
+  /** Full renderer-neutral source tokens. Host projections may consume additional groups later. */
+  readonly canonical: VisualTokensV1;
+  readonly roles: OpenTuiSemanticColorRoles;
+  readonly derived: OpenTuiDerivedColors;
+  readonly accessibility: ThemeAccessibilityPreferences;
+  readonly diagnostics: readonly ThemeDiagnostic[];
+  readonly futureSources: readonly ThemeDiagnostic["source"][];
 }
 
 export interface ThemeConfigInput {
   mode?: ThemeModeSetting;
+  userTheme?: unknown;
+  projectTheme?: unknown;
+  accessibility?: Partial<ThemeAccessibilityPreferences>;
   accent?: string;
   muted?: string;
   fg?: string;
   status?: Partial<Record<keyof SemanticThemeColors["status"], string>>;
   glyphs?: Partial<Pick<SemanticThemeTokens["glyphs"], "active" | "inactive">>;
+  /** Present on resolved app config; absent means direct callers supplied explicit legacy values. */
+  [LEGACY_THEME_OVERRIDE_PROVENANCE]?: LegacyThemeOverrideProvenance;
 }
 
 export interface ThemeStoreOptions {
@@ -122,6 +166,10 @@ type RgbaWithOptionalToInts = RGBA & { toInts?: () => [number, number, number, n
 
 function rgba(r: number, g: number, b: number, a = 255): RGBA {
   return RGBA.fromInts(r, g, b, a);
+}
+
+function rgbaFromRendererNeutral(color: RendererNeutralColor): RGBA {
+  return rgba(color.red, color.green, color.blue, color.alpha);
 }
 
 function byteChannel(channel: number): number {
@@ -255,45 +303,139 @@ function freezeSnapshot(snapshot: SemanticThemeSnapshot): SemanticThemeSnapshot 
   for (const colors of [
     snapshot.colors,
     snapshot.colors.status,
+    snapshot.roles,
+    snapshot.roles.surfaces,
+    snapshot.roles.text,
+    snapshot.roles.borders,
+    snapshot.roles.statusTone,
+    snapshot.roles.selection,
+    snapshot.derived,
     snapshot.density,
     snapshot.borders,
     snapshot.glyphs,
+    snapshot.accessibility,
+    snapshot.diagnostics,
+    snapshot.futureSources,
   ]) {
     Object.freeze(colors);
   }
+  deepFreeze(snapshot.canonical);
   return Object.freeze(snapshot);
 }
 
-function darkPalette(): SemanticThemeSnapshot {
-  const accent = rgba(130, 170, 255);
-  return freezeSnapshot({
-    mode: "dark",
-    setting: "dark",
-    colors: {
-      background: rgba(16, 16, 22),
-      surface: rgba(22, 22, 30),
-      surfaceRaised: rgba(30, 30, 40),
-      foreground: rgba(212, 212, 216),
-      mutedForeground: rgba(110, 110, 130),
-      border: rgba(60, 60, 80),
-      accent,
-      accentMuted: rgba(60, 66, 92),
-      focus: rgba(130, 170, 255),
-      focusBorder: rgba(110, 145, 230),
-      selection: rgba(40, 46, 66),
-      selectionForeground: rgba(255, 255, 255),
-      hover: rgba(30, 34, 48),
-      buttonHover: rgba(52, 60, 86),
-      attention: rgba(92, 44, 48),
-      status: {
-        blocked: rgba(255, 95, 95),
-        working: rgba(255, 215, 95),
-        done: rgba(135, 175, 255),
-        idle: rgba(135, 215, 135),
-        unknown: rgba(128, 128, 128),
-      },
+function deepFreeze<T>(value: T): T {
+  if (!value || typeof value !== "object" || Object.isFrozen(value)) return value;
+  for (const child of Object.values(value as Record<string, unknown>)) deepFreeze(child);
+  return Object.freeze(value);
+}
+
+function cloneCanonicalTokens(tokens: VisualTokensV1): VisualTokensV1 {
+  // The contract is JSON data by design. Clone before freezing so the facade
+  // never freezes the shared built-in token registry owned by contracts.
+  return JSON.parse(JSON.stringify(tokens)) as VisualTokensV1;
+}
+
+const DEFAULT_ACCESSIBILITY: ThemeAccessibilityPreferences = Object.freeze({
+  reducedMotion: false,
+  increasedContrast: false,
+});
+
+function projectColorRoles(
+  tokens: ReturnType<typeof resolveVisualTheme>["tokens"],
+): OpenTuiSemanticColorRoles {
+  const surfaces: Record<SurfaceTokenRole, RGBA> = {
+    canvas: rgbaFromRendererNeutral(tokens.surfaces.canvas),
+    panel: rgbaFromRendererNeutral(tokens.surfaces.panel),
+    panelRaised: rgbaFromRendererNeutral(tokens.surfaces.panelRaised),
+    terminal: rgbaFromRendererNeutral(tokens.surfaces.terminal),
+    header: rgbaFromRendererNeutral(tokens.surfaces.header),
+    headerActive: rgbaFromRendererNeutral(tokens.surfaces.headerActive),
+    command: rgbaFromRendererNeutral(tokens.surfaces.command),
+  };
+  const text: Record<TextTokenRole, RGBA> = {
+    primary: rgbaFromRendererNeutral(tokens.text.primary),
+    secondary: rgbaFromRendererNeutral(tokens.text.secondary),
+    muted: rgbaFromRendererNeutral(tokens.text.muted),
+    bright: rgbaFromRendererNeutral(tokens.text.bright),
+    inverse: rgbaFromRendererNeutral(tokens.text.inverse),
+    link: rgbaFromRendererNeutral(tokens.text.link),
+  };
+  const borders: Record<BorderTokenRole, RGBA> = {
+    subtle: rgbaFromRendererNeutral(tokens.borders.subtle),
+    default: rgbaFromRendererNeutral(tokens.borders.default),
+    focused: rgbaFromRendererNeutral(tokens.borders.focused),
+    selected: rgbaFromRendererNeutral(tokens.borders.selected),
+    attention: rgbaFromRendererNeutral(tokens.borders.attention),
+    danger: rgbaFromRendererNeutral(tokens.borders.danger),
+  };
+  const statusTone: Record<StatusToneRole, RGBA> = {
+    neutral: rgbaFromRendererNeutral(tokens.statusTone.neutral),
+    info: rgbaFromRendererNeutral(tokens.statusTone.info),
+    warning: rgbaFromRendererNeutral(tokens.statusTone.warning),
+    danger: rgbaFromRendererNeutral(tokens.statusTone.danger),
+    success: rgbaFromRendererNeutral(tokens.statusTone.success),
+  };
+  const selection: Record<SelectionTokenRole, RGBA> = {
+    selection: rgbaFromRendererNeutral(tokens.selection.selection),
+    selectionText: rgbaFromRendererNeutral(tokens.selection.selectionText),
+    hover: rgbaFromRendererNeutral(tokens.selection.hover),
+    pressed: rgbaFromRendererNeutral(tokens.selection.pressed),
+    disabled: rgbaFromRendererNeutral(tokens.selection.disabled),
+  };
+  return { surfaces, text, borders, statusTone, selection };
+}
+
+function snapshotFromResolvedTheme(
+  resolved: ReturnType<typeof resolveVisualTheme>,
+  setting: ThemeModeSetting,
+  accessibility: ThemeAccessibilityPreferences,
+): SemanticThemeSnapshot {
+  const roles = projectColorRoles(resolved.tokens);
+  const derived = {
+    attentionSurface: rgbaFromRendererNeutral(
+      deriveAttentionBlend(resolved.tokens.surfaces.panel, resolved.tokens.borders.attention),
+    ),
+  };
+  const colors: SemanticThemeColors = {
+    background: roles.surfaces.canvas,
+    surface: roles.surfaces.panel,
+    surfaceRaised: roles.surfaces.panelRaised,
+    foreground: roles.text.primary,
+    mutedForeground: roles.text.muted,
+    border: roles.borders.default,
+    accent: roles.borders.focused,
+    accentMuted: roles.surfaces.headerActive,
+    focus: roles.borders.focused,
+    focusBorder: roles.borders.focused,
+    selection: roles.selection.selection,
+    selectionForeground: roles.selection.selectionText,
+    hover: roles.selection.hover,
+    buttonHover: roles.selection.pressed,
+    attention: derived.attentionSurface,
+    status: {
+      blocked: roles.statusTone.warning,
+      working: roles.statusTone.info,
+      done: roles.statusTone.success,
+      idle: roles.statusTone.neutral,
+      unknown: roles.statusTone.neutral,
     },
-    density: { compactGap: 0, comfortableGap: 1, detailedGap: 2, paddingX: 1 },
+  };
+  return freezeSnapshot({
+    mode: resolved.appearance,
+    setting,
+    canonical: cloneCanonicalTokens(resolved.tokens),
+    roles,
+    derived,
+    colors,
+    accessibility: { ...accessibility },
+    diagnostics: [...resolved.diagnostics],
+    futureSources: [...resolved.futureSources],
+    density: {
+      compactGap: Math.floor(resolved.tokens.density.inlineGap.value),
+      comfortableGap: Math.max(1, Math.round(resolved.tokens.density.sectionGap.value)),
+      detailedGap: Math.max(2, Math.round(resolved.tokens.density.sectionGap.value) + 1),
+      paddingX: Math.max(0, Math.round(resolved.tokens.density.controlPadding.value)),
+    },
     borders: { style: "single", focusedStyle: "single" },
     glyphs: {
       active: "●",
@@ -305,56 +447,6 @@ function darkPalette(): SemanticThemeSnapshot {
       scrollTrack: "░",
     },
   });
-}
-
-function lightPalette(): SemanticThemeSnapshot {
-  const accent = rgba(45, 105, 220);
-  return freezeSnapshot({
-    mode: "light",
-    setting: "light",
-    colors: {
-      background: rgba(248, 248, 250),
-      surface: rgba(238, 240, 246),
-      surfaceRaised: rgba(255, 255, 255),
-      foreground: rgba(28, 32, 42),
-      mutedForeground: rgba(92, 99, 118),
-      border: rgba(188, 196, 214),
-      accent,
-      accentMuted: rgba(212, 224, 255),
-      focus: rgba(45, 105, 220),
-      focusBorder: rgba(20, 80, 190),
-      selection: rgba(218, 228, 252),
-      selectionForeground: rgba(15, 25, 45),
-      hover: rgba(228, 234, 246),
-      buttonHover: rgba(208, 220, 246),
-      attention: rgba(255, 224, 224),
-      status: {
-        blocked: rgba(210, 52, 72),
-        working: rgba(176, 120, 0),
-        done: rgba(66, 92, 210),
-        idle: rgba(38, 135, 82),
-        unknown: rgba(112, 118, 130),
-      },
-    },
-    density: { compactGap: 0, comfortableGap: 1, detailedGap: 2, paddingX: 1 },
-    borders: { style: "single", focusedStyle: "single" },
-    glyphs: {
-      active: "●",
-      inactive: "○",
-      focusHorizontal: "─",
-      focusVertical: "│",
-      check: "✓",
-      scrollThumb: "█",
-      scrollTrack: "░",
-    },
-  });
-}
-
-export const DARK_THEME = darkPalette();
-export const LIGHT_THEME = lightPalette();
-
-function baseFor(mode: ResolvedThemeMode): SemanticThemeSnapshot {
-  return mode === "dark" ? DARK_THEME : LIGHT_THEME;
 }
 
 function resolvedMode(
@@ -369,18 +461,34 @@ function withAppThemeConfig(
   setting: ThemeModeSetting,
   config: ThemeConfigInput | undefined,
 ): SemanticThemeSnapshot {
-  const accent = parseThemeColor(config?.accent, base.colors.accent);
-  const foreground = parseThemeColor(config?.fg, base.colors.foreground);
-  const muted = parseThemeColor(config?.muted, base.colors.mutedForeground);
+  const legacyValue = (id: LegacyThemeOverrideId, value: string | undefined) => {
+    const provenance = config?.[LEGACY_THEME_OVERRIDE_PROVENANCE];
+    return provenance === undefined || provenance[id] ? value : undefined;
+  };
+  const accentInput = legacyValue("accent", config?.accent);
+  const foregroundInput = legacyValue("fg", config?.fg);
+  const mutedInput = legacyValue("muted", config?.muted);
+  const statusInput = {
+    blocked: legacyValue("status.blocked", config?.status?.blocked),
+    working: legacyValue("status.working", config?.status?.working),
+    done: legacyValue("status.done", config?.status?.done),
+    idle: legacyValue("status.idle", config?.status?.idle),
+    unknown: legacyValue("status.unknown", config?.status?.unknown),
+  };
+  const activeGlyph = legacyValue("glyphs.active", config?.glyphs?.active);
+  const inactiveGlyph = legacyValue("glyphs.inactive", config?.glyphs?.inactive);
+  const accent = parseThemeColor(accentInput, base.colors.accent);
+  const foreground = parseThemeColor(foregroundInput, base.colors.foreground);
+  const muted = parseThemeColor(mutedInput, base.colors.mutedForeground);
   const white = rgba(255, 255, 255);
   const black = rgba(0, 0, 0);
   const contrast = base.mode === "dark" ? white : black;
   const status = {
-    blocked: parseThemeColor(config?.status?.blocked, base.colors.status.blocked),
-    working: parseThemeColor(config?.status?.working, base.colors.status.working),
-    done: parseThemeColor(config?.status?.done, base.colors.status.done),
-    idle: parseThemeColor(config?.status?.idle, base.colors.status.idle),
-    unknown: parseThemeColor(config?.status?.unknown, base.colors.status.unknown),
+    blocked: parseThemeColor(statusInput.blocked, base.colors.status.blocked),
+    working: parseThemeColor(statusInput.working, base.colors.status.working),
+    done: parseThemeColor(statusInput.done, base.colors.status.done),
+    idle: parseThemeColor(statusInput.idle, base.colors.status.idle),
+    unknown: parseThemeColor(statusInput.unknown, base.colors.status.unknown),
   };
   const statusColors = Object.values(status);
   const accentCollidesWithStatus = collidesWithAny(accent, statusColors);
@@ -389,9 +497,46 @@ function withAppThemeConfig(
     ? base.colors.focusBorder
     : mix(accent, contrast, base.mode === "dark" ? 0.18 : 0.14);
   const focusBorder = safeFocusBorderColor(focus, preferredFocusBorder, base, statusColors);
+  const accentMuted = mix(base.colors.surface, accent, base.mode === "dark" ? 0.34 : 0.18);
+  const selection = mix(base.colors.background, accent, base.mode === "dark" ? 0.22 : 0.16);
+  const hover = mix(base.colors.background, accent, base.mode === "dark" ? 0.08 : 0.06);
+  const pressed = mix(base.colors.background, accent, base.mode === "dark" ? 0.24 : 0.16);
+  const roles: OpenTuiSemanticColorRoles = {
+    surfaces: {
+      ...base.roles.surfaces,
+      ...(accentInput ? { headerActive: accentMuted } : {}),
+    },
+    text: {
+      ...base.roles.text,
+      ...(foregroundInput ? { primary: foreground } : {}),
+      ...(mutedInput ? { secondary: muted, muted } : {}),
+      ...(accentInput ? { link: accent } : {}),
+    },
+    borders: {
+      ...base.roles.borders,
+      ...(accentInput && !base.accessibility.increasedContrast ? { focused: focus } : {}),
+    },
+    statusTone: {
+      ...base.roles.statusTone,
+      ...(statusInput.blocked ? { warning: status.blocked } : {}),
+      ...(statusInput.working ? { info: status.working } : {}),
+      ...(statusInput.done ? { success: status.done } : {}),
+      ...(statusInput.idle ? { neutral: status.idle } : {}),
+    },
+    selection: {
+      ...base.roles.selection,
+      ...(accentInput ? { selection, hover, pressed } : {}),
+    },
+  };
   return freezeSnapshot({
     mode: base.mode,
     setting,
+    canonical: base.canonical,
+    roles,
+    derived: base.derived,
+    accessibility: base.accessibility,
+    diagnostics: base.diagnostics,
+    futureSources: base.futureSources,
     colors: {
       background: cloneColor(base.colors.background),
       surface: cloneColor(base.colors.surface),
@@ -400,13 +545,13 @@ function withAppThemeConfig(
       mutedForeground: muted,
       border: cloneColor(base.colors.border),
       accent,
-      accentMuted: mix(base.colors.surface, accent, base.mode === "dark" ? 0.34 : 0.18),
+      accentMuted,
       focus,
       focusBorder,
-      selection: mix(base.colors.background, accent, base.mode === "dark" ? 0.22 : 0.16),
+      selection,
       selectionForeground: cloneColor(base.colors.selectionForeground),
-      hover: mix(base.colors.background, accent, base.mode === "dark" ? 0.08 : 0.06),
-      buttonHover: mix(base.colors.background, accent, base.mode === "dark" ? 0.24 : 0.16),
+      hover,
+      buttonHover: pressed,
       attention: cloneColor(base.colors.attention),
       status,
     },
@@ -414,8 +559,8 @@ function withAppThemeConfig(
     borders: { ...base.borders },
     glyphs: {
       ...base.glyphs,
-      active: config?.glyphs?.active ?? base.glyphs.active,
-      inactive: config?.glyphs?.inactive ?? base.glyphs.inactive,
+      active: activeGlyph ?? base.glyphs.active,
+      inactive: inactiveGlyph ?? base.glyphs.inactive,
     },
   });
 }
@@ -425,8 +570,26 @@ export function createSemanticThemeSnapshot(
   rendererMode: ResolvedThemeMode | null = null,
 ): SemanticThemeSnapshot {
   const setting = config?.mode ?? "dark";
-  return withAppThemeConfig(baseFor(resolvedMode(setting, rendererMode)), setting, config);
+  const accessibility = {
+    reducedMotion: config?.accessibility?.reducedMotion ?? DEFAULT_ACCESSIBILITY.reducedMotion,
+    increasedContrast:
+      config?.accessibility?.increasedContrast ?? DEFAULT_ACCESSIBILITY.increasedContrast,
+  };
+  const resolved = resolveVisualTheme({
+    appearance: resolvedMode(setting, rendererMode),
+    userTheme: config?.userTheme,
+    projectTheme: config?.projectTheme,
+    accessibility,
+  });
+  return withAppThemeConfig(
+    snapshotFromResolvedTheme(resolved, setting, accessibility),
+    setting,
+    config,
+  );
 }
+
+export const DARK_THEME = createSemanticThemeSnapshot({ mode: "dark" });
+export const LIGHT_THEME = createSemanticThemeSnapshot({ mode: "light" });
 
 export function createSemanticThemeStore(
   config: ThemeConfigInput | undefined = undefined,
@@ -487,23 +650,78 @@ export function createSemanticThemeStore(
 }
 
 function sameSnapshot(a: SemanticThemeSnapshot, b: SemanticThemeSnapshot): boolean {
-  return (
-    a.mode === b.mode &&
-    a.setting === b.setting &&
-    rgbaKey(a.colors.accent) === rgbaKey(b.colors.accent) &&
-    rgbaKey(a.colors.foreground) === rgbaKey(b.colors.foreground) &&
-    rgbaKey(a.colors.mutedForeground) === rgbaKey(b.colors.mutedForeground) &&
-    rgbaKey(a.colors.status.blocked) === rgbaKey(b.colors.status.blocked) &&
-    rgbaKey(a.colors.status.working) === rgbaKey(b.colors.status.working) &&
-    rgbaKey(a.colors.status.done) === rgbaKey(b.colors.status.done) &&
-    rgbaKey(a.colors.status.idle) === rgbaKey(b.colors.status.idle) &&
-    rgbaKey(a.colors.status.unknown) === rgbaKey(b.colors.status.unknown) &&
-    a.glyphs.active === b.glyphs.active &&
-    a.glyphs.inactive === b.glyphs.inactive
-  );
+  const colorGroup = (group: Readonly<Record<string, RGBA>>) =>
+    Object.entries(group).map(([role, color]) => [role, rgbaKey(color)] as const);
+  const key = (snapshot: SemanticThemeSnapshot) =>
+    JSON.stringify({
+      mode: snapshot.mode,
+      setting: snapshot.setting,
+      canonical: snapshot.canonical,
+      colors: {
+        background: rgbaKey(snapshot.colors.background),
+        surface: rgbaKey(snapshot.colors.surface),
+        surfaceRaised: rgbaKey(snapshot.colors.surfaceRaised),
+        foreground: rgbaKey(snapshot.colors.foreground),
+        mutedForeground: rgbaKey(snapshot.colors.mutedForeground),
+        border: rgbaKey(snapshot.colors.border),
+        accent: rgbaKey(snapshot.colors.accent),
+        accentMuted: rgbaKey(snapshot.colors.accentMuted),
+        focus: rgbaKey(snapshot.colors.focus),
+        focusBorder: rgbaKey(snapshot.colors.focusBorder),
+        selection: rgbaKey(snapshot.colors.selection),
+        selectionForeground: rgbaKey(snapshot.colors.selectionForeground),
+        hover: rgbaKey(snapshot.colors.hover),
+        buttonHover: rgbaKey(snapshot.colors.buttonHover),
+        attention: rgbaKey(snapshot.colors.attention),
+        status: colorGroup(snapshot.colors.status),
+      },
+      roles: {
+        surfaces: colorGroup(snapshot.roles.surfaces),
+        text: colorGroup(snapshot.roles.text),
+        borders: colorGroup(snapshot.roles.borders),
+        statusTone: colorGroup(snapshot.roles.statusTone),
+        selection: colorGroup(snapshot.roles.selection),
+      },
+      derived: { attentionSurface: rgbaKey(snapshot.derived.attentionSurface) },
+      accessibility: snapshot.accessibility,
+      diagnostics: snapshot.diagnostics,
+      futureSources: snapshot.futureSources,
+      density: snapshot.density,
+      borders: snapshot.borders,
+      glyphs: snapshot.glyphs,
+    });
+  return key(a) === key(b);
 }
 
 const compatibilityTheme = DARK_THEME;
+
+/**
+ * Card 22.3b owns these root-composition writes. Keeping the list executable
+ * prevents optional DARK_THEME fallbacks from becoming an undocumented public
+ * contract while this adapter card deliberately leaves app.tsx untouched.
+ */
+export const CARD_22_3B_LIVE_THEME_WIRING_DEFERRALS = [
+  { component: "Sidebar", prop: "theme", owner: "app.tsx" },
+  { component: "MissionsSurface", prop: "semanticTheme", owner: "app.tsx" },
+] as const;
+
+/**
+ * Temporary names retained for app.tsx and pre-Card-22 leaves. Card 22.3 owns
+ * their removal after every consumer receives a live SemanticThemeSnapshot.
+ */
+export const LEGACY_THEME_ALIAS_IDS = [
+  "DEFAULT_FG",
+  "DEFAULT_BG",
+  "SIDEBAR_BG",
+  "ACCENT",
+  "MUTED",
+  "BADGE_BG",
+  "FOCUS_BORDER_FG",
+  "TAB_ACTIVE_BG",
+  "HOVER_BG",
+  "BUTTON_HOVER_BG",
+  "CHIP_ATTN_BG",
+] as const;
 
 export const DEFAULT_FG = compatibilityTheme.colors.foreground;
 export const DEFAULT_BG = compatibilityTheme.colors.background;

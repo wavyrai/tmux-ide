@@ -1,11 +1,17 @@
 import { describe, expect, it } from "vitest";
 import {
+  COHESION_FIXTURE_V1,
+  VISUAL_RECIPE_REGISTRY,
+  type VisualRecipeId,
+} from "@tmux-ide/contracts";
+import {
   applyRecipeGalleryCommand,
   createRecipeGalleryModel,
   recipeGalleryCommandForKey,
   recipeGalleryHitTest,
   recipeGalleryLayout,
   recipeGalleryTheme,
+  openTuiRecipeColors,
   recipePalette,
   resolveRecipeState,
   rowText,
@@ -49,9 +55,9 @@ describe("visual recipes", () => {
       status: "blocked",
     });
     expect(blockedSelected.state).toBe("selected");
-    expect(colorKey(blockedSelected.background)).toBe(colorKey(theme.colors.selection));
-    expect(colorKey(blockedSelected.border)).toBe(colorKey(theme.colors.focusBorder));
-    expect(colorKey(blockedSelected.accent)).toBe(colorKey(theme.colors.status.blocked));
+    expect(colorKey(blockedSelected.background)).toBe(colorKey(theme.roles.selection.selection));
+    expect(colorKey(blockedSelected.border)).toBe(colorKey(theme.roles.borders.selected));
+    expect(colorKey(blockedSelected.accent)).toBe(colorKey(theme.roles.statusTone.warning));
   });
 
   it("derives palettes from the semantic theme without a second hard-coded palette", () => {
@@ -60,10 +66,36 @@ describe("visual recipes", () => {
     const focused = recipePalette(theme, { focused: true });
     const blocked = recipePalette(theme, { status: "blocked" });
 
-    expect(colorKey(selected.background)).toBe(colorKey(theme.colors.selection));
-    expect(colorKey(selected.border)).toBe(colorKey(theme.colors.focusBorder));
-    expect(colorKey(focused.accent)).toBe(colorKey(theme.colors.focus));
-    expect(colorKey(blocked.accent)).toBe(colorKey(theme.colors.status.blocked));
+    expect(colorKey(selected.background)).toBe(colorKey(theme.roles.selection.selection));
+    expect(colorKey(selected.border)).toBe(colorKey(theme.roles.borders.selected));
+    expect(colorKey(focused.accent)).toBe(colorKey(theme.roles.borders.focused));
+    expect(colorKey(blocked.accent)).toBe(colorKey(theme.roles.statusTone.warning));
+  });
+
+  it("maps canonical recipes through the common fixture in dark, light, and high contrast", () => {
+    const fixtureTheme = createSemanticThemeSnapshot({
+      mode: "dark",
+      userTheme: COHESION_FIXTURE_V1.theme.user,
+      projectTheme: COHESION_FIXTURE_V1.theme.project ?? undefined,
+      accessibility: COHESION_FIXTURE_V1.theme.accessibility,
+    });
+    const themes = [
+      fixtureTheme,
+      createSemanticThemeSnapshot({ mode: "light" }),
+      createSemanticThemeSnapshot({
+        mode: "dark",
+        accessibility: { reducedMotion: false, increasedContrast: true },
+      }),
+    ];
+    for (const theme of themes) {
+      for (const recipeId of Object.keys(VISUAL_RECIPE_REGISTRY) as VisualRecipeId[]) {
+        const recipe = VISUAL_RECIPE_REGISTRY[recipeId];
+        const colors = openTuiRecipeColors(theme, recipeId);
+        expect(colorKey(colors.background)).toBe(colorKey(theme.roles.surfaces[recipe.surface]));
+        expect(colorKey(colors.foreground)).toBe(colorKey(theme.roles.text[recipe.text]));
+        expect(colorKey(colors.border)).toBe(colorKey(theme.roles.borders[recipe.border]));
+      }
+    }
   });
 
   it("pins row metadata within the requested terminal width", () => {

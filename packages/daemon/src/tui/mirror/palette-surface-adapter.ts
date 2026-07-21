@@ -106,7 +106,7 @@ function iconForAction(action: PaletteAction): WorkspaceIconId {
           ? "terminals"
           : action.tab === "files"
             ? "files"
-            : "diff";
+            : "changes";
     case "view":
       return "native";
     case "open-folder":
@@ -126,9 +126,9 @@ function iconForAction(action: PaletteAction): WorkspaceIconId {
     case "select-text":
       return "terminals";
     case "refresh-diff":
-      return "diff";
+      return "changes";
     case "new-window":
-      return "popOut";
+      return "pop-out";
     case "rename-window":
       return "command";
     case "kill-window":
@@ -140,7 +140,7 @@ function iconForAction(action: PaletteAction): WorkspaceIconId {
     case "rotate-window":
       return "move";
     case "break-pane":
-      return "splitRight";
+      return "split-right";
     case "select-layout":
     case "resize-window":
       return "resize";

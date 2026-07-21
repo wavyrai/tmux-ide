@@ -15,6 +15,10 @@ import {
   parseAppConfig,
   updateAppConfig,
 } from "./app-config.ts";
+import {
+  LEGACY_THEME_OVERRIDE_IDS,
+  LEGACY_THEME_OVERRIDE_PROVENANCE,
+} from "./legacy-theme-compat.ts";
 
 describe("parseAppConfig — defaults", () => {
   it("returns the full defaults for undefined / null / non-objects / arrays", () => {
@@ -29,6 +33,33 @@ describe("parseAppConfig — defaults", () => {
   it("never throws on hostile input", () => {
     expect(() => parseAppConfig({ theme: 5, keys: "x", updater: [] })).not.toThrow();
     expect(parseAppConfig({ theme: 5, keys: "x", updater: [] })).toEqual(DEFAULT_APP_CONFIG);
+  });
+
+  it("records legacy theme provenance without serializing internal metadata", () => {
+    const defaults = parseAppConfig(undefined).theme[LEGACY_THEME_OVERRIDE_PROVENANCE]!;
+    expect(Object.keys(defaults)).toEqual([...LEGACY_THEME_OVERRIDE_IDS]);
+    expect(Object.values(defaults).every((explicit) => !explicit)).toBe(true);
+
+    const custom = parseAppConfig({
+      theme: {
+        accent: "colour75",
+        fg: "#123456",
+        muted: "",
+        status: { blocked: "colour99", working: 42 },
+        glyphs: { active: "◆" },
+      },
+    }).theme[LEGACY_THEME_OVERRIDE_PROVENANCE]!;
+    expect(custom.accent).toBe(true);
+    expect(custom.fg).toBe(true);
+    expect(custom.muted).toBe(false);
+    expect(custom["status.blocked"]).toBe(true);
+    expect(custom["status.working"]).toBe(false);
+    expect(custom["glyphs.active"]).toBe(true);
+    expect(custom["glyphs.inactive"]).toBe(false);
+
+    expect(JSON.stringify(parseAppConfig(undefined))).not.toContain(
+      "legacy-theme-override-provenance",
+    );
   });
 });
 

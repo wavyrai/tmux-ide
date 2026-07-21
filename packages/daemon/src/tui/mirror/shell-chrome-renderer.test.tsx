@@ -281,11 +281,11 @@ describe("ShellChrome OpenTUI renderer", () => {
       .find((span) => span.text.includes("⧉ web"));
     expect(contextChip).toBeDefined();
     expect(colorKey(contextChip!.bg)).toBe(colorKey(contextPalette.bg));
-    expect(colorKey(contextChip!.bg)).not.toBe(colorKey(theme.colors.attention));
+    expect(colorKey(contextChip!.bg)).not.toBe(colorKey(theme.derived.attentionSurface));
 
     const tabAttentionMarker = spans.lines[0]!.spans.find((span) => span.text === "!");
     expect(tabAttentionMarker).toBeDefined();
-    expect(colorKey(tabAttentionMarker!.fg)).toBe(colorKey(theme.colors.status.blocked));
+    expect(colorKey(tabAttentionMarker!.fg)).toBe(colorKey(theme.roles.statusTone.warning));
     expect(colorKey(tabAttentionMarker!.bg)).toBe(colorKey(selectedAttention.bg));
 
     const attentionLine = spans.lines.find((line) =>

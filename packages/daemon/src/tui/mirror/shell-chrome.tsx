@@ -44,7 +44,7 @@ export function ShellTabBar(props: ShellTabBarProps) {
       height={1}
       width={props.width}
       flexDirection="row"
-      backgroundColor={props.theme.colors.surface}
+      backgroundColor={props.theme.roles.surfaces.header}
       overflow="hidden"
     >
       <For each={tabs()}>
@@ -75,7 +75,7 @@ export function ShellTabBar(props: ShellTabBarProps) {
                       <text fg={palette().fg} attributes={palette().attributes}>
                         {before}
                       </text>
-                      <text fg={props.theme.colors.status.blocked} attributes={1}>
+                      <text fg={props.theme.roles.statusTone.warning} attributes={1}>
                         !
                       </text>
                       <text fg={palette().fg} attributes={palette().attributes}>
@@ -91,7 +91,7 @@ export function ShellTabBar(props: ShellTabBarProps) {
       </For>
       <box flexGrow={1} />
       <Show when={props.note}>
-        <text fg={props.theme.colors.focus} attributes={1}>
+        <text fg={props.theme.roles.text.link} attributes={1}>
           {clipTerminal(`${props.note} `, Math.max(0, Math.floor(props.width / 3)))}
         </text>
       </Show>
@@ -122,7 +122,11 @@ export function ShellTabBar(props: ShellTabBarProps) {
                       <text fg={palette().fg} bg={palette().bg} attributes={palette().attributes}>
                         {before}
                       </text>
-                      <text fg={props.theme.colors.status.blocked} bg={palette().bg} attributes={1}>
+                      <text
+                        fg={props.theme.roles.statusTone.warning}
+                        bg={palette().bg}
+                        attributes={1}
+                      >
                         !
                       </text>
                       <text fg={palette().fg} bg={palette().bg} attributes={palette().attributes}>
@@ -154,10 +158,10 @@ export function ShellStatusStrip(props: ShellStatusStripProps) {
     <box
       height={props.layout.status.height}
       width={props.layout.status.width}
-      backgroundColor={props.theme.colors.surface}
+      backgroundColor={props.theme.roles.surfaces.header}
       overflow="hidden"
     >
-      <text fg={props.theme.colors.mutedForeground}>
+      <text fg={props.theme.roles.text.muted}>
         {shellStatusLine(
           props.layout.variant,
           {
@@ -212,16 +216,26 @@ export interface ShellMiniSidebarProps {
   hint: ShellSidebarHint;
 }
 
+function shellSessionStatusColor(
+  theme: SemanticThemeSnapshot,
+  status: ShellMiniSidebarProps["sessions"][number]["status"],
+) {
+  if (status === "blocked") return theme.roles.statusTone.warning;
+  if (status === "working") return theme.roles.statusTone.info;
+  if (status === "done") return theme.roles.statusTone.success;
+  return theme.roles.statusTone.neutral;
+}
+
 export function ShellMiniSidebar(props: ShellMiniSidebarProps) {
   return (
     <box
       width={props.width}
       flexDirection="column"
-      backgroundColor={props.theme.colors.surface}
+      backgroundColor={props.theme.roles.surfaces.panel}
       paddingLeft={1}
       overflow="hidden"
     >
-      <text fg={props.theme.colors.focus} attributes={1}>
+      <text fg={props.theme.roles.text.link} attributes={1}>
         {props.variant === "compact" ? " tmux" : " tmux-ide"}
       </text>
       <For each={props.sessions}>
@@ -230,7 +244,9 @@ export function ShellMiniSidebar(props: ShellMiniSidebarProps) {
           const palette = () => shellVisualPalette(props.theme, { selected: selected() });
           return (
             <box height={1} flexDirection="row" backgroundColor={palette().bg}>
-              <text fg={props.theme.colors.status[session.status]}>{selected() ? "●" : "○"}</text>
+              <text fg={shellSessionStatusColor(props.theme, session.status)}>
+                {selected() ? "●" : "○"}
+              </text>
               <text fg={palette().fg}>
                 {clipTerminal(` ${session.name}`, Math.max(0, props.width - 1))}
               </text>
@@ -240,11 +256,11 @@ export function ShellMiniSidebar(props: ShellMiniSidebarProps) {
       </For>
       <box flexGrow={1} />
       <box height={1} width={props.width} flexDirection="row" overflow="hidden">
-        <text fg={props.theme.colors.mutedForeground}>{props.hint.pre}</text>
-        <text fg={props.theme.colors.foreground} bg={props.theme.colors.hover}>
+        <text fg={props.theme.roles.text.muted}>{props.hint.pre}</text>
+        <text fg={props.theme.roles.text.primary} bg={props.theme.roles.selection.hover}>
           {props.hint.btn}
         </text>
-        <text fg={props.theme.colors.mutedForeground}>{props.hint.post}</text>
+        <text fg={props.theme.roles.text.muted}>{props.hint.post}</text>
       </box>
     </box>
   );

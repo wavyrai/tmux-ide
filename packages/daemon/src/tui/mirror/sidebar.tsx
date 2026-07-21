@@ -22,7 +22,7 @@
  * move together; that's why AGENTS_GAP_ROWS is shared rather than a literal here.
  */
 import { For, Show } from "solid-js";
-import { STATUS_COLOR, STATUS_GLYPH } from "./status-grammar.ts";
+import { STATUS_GLYPH } from "./status-grammar.ts";
 import {
   AGENTS_ADD_CHIP,
   AGENTS_EMPTY_LINE,
@@ -33,16 +33,7 @@ import {
   agentsHeaderLabel,
   type AgentRowInput,
 } from "./agent-rows.ts";
-import {
-  ACCENT,
-  BUTTON_HOVER_BG,
-  CHIP_ATTN_BG,
-  DEFAULT_FG,
-  HOVER_BG,
-  MUTED,
-  SIDEBAR_BG,
-  TAB_ACTIVE_BG,
-} from "./theme.ts";
+import { DARK_THEME, type SemanticThemeSnapshot } from "./theme.ts";
 import type { AgentStatus } from "../detect/classify.ts";
 import type { ShellChromeVariant } from "./shell-chrome.ts";
 
@@ -70,6 +61,8 @@ export interface SidebarMouseEvent {
 }
 
 export interface SidebarProps {
+  /** Card 22 adapter input. Optional until app.tsx switches in Card 22.3. */
+  theme?: SemanticThemeSnapshot;
   /** Column width in cells. */
   width: number;
   variant?: ShellChromeVariant;
@@ -92,19 +85,26 @@ export interface SidebarProps {
 }
 
 export function Sidebar(props: SidebarProps) {
+  const theme = () => props.theme ?? DARK_THEME;
+  const statusColor = (status: AgentStatus) => {
+    if (status === "blocked") return theme().roles.statusTone.warning;
+    if (status === "working") return theme().roles.statusTone.info;
+    if (status === "done") return theme().roles.statusTone.success;
+    return theme().roles.statusTone.neutral;
+  };
   return (
     <box
       width={props.width}
       flexDirection="column"
-      backgroundColor={SIDEBAR_BG}
+      backgroundColor={theme().roles.surfaces.panel}
       paddingLeft={1}
       overflow="hidden"
       onMouse={(e: SidebarMouseEvent) => props.onMouse?.(e)}
     >
-      <text fg={ACCENT} attributes={1}>
+      <text fg={theme().roles.text.link} attributes={1}>
         {props.variant === "compact" ? "tmux" : "tmux-ide"}
       </text>
-      <text fg={MUTED}>{"─".repeat(props.width - 2)}</text>
+      <text fg={theme().roles.text.muted}>{"─".repeat(props.width - 2)}</text>
       <box flexDirection="column">
         <For each={props.sessions}>
           {(s, i) => (
@@ -113,14 +113,18 @@ export function Sidebar(props: SidebarProps) {
               gap={1}
               backgroundColor={
                 s.name === props.current
-                  ? TAB_ACTIVE_BG
+                  ? theme().roles.selection.selection
                   : props.isHovered("sidebar", i())
-                    ? HOVER_BG
-                    : SIDEBAR_BG
+                    ? theme().roles.selection.hover
+                    : theme().roles.surfaces.panel
               }
             >
-              <text fg={STATUS_COLOR[s.status]}>{STATUS_GLYPH[s.status]}</text>
-              <text fg={s.name === props.current ? DEFAULT_FG : MUTED}>
+              <text fg={statusColor(s.status)}>{STATUS_GLYPH[s.status]}</text>
+              <text
+                fg={
+                  s.name === props.current ? theme().roles.text.primary : theme().roles.text.muted
+                }
+              >
                 {s.name.slice(0, Math.max(1, props.width - (props.variant === "compact" ? 3 : 5)))}
               </text>
             </box>
@@ -139,16 +143,27 @@ export function Sidebar(props: SidebarProps) {
           before any agent runs. */}
         <box
           flexDirection="row"
-          backgroundColor={props.isHovered("agentshdr", 0) ? HOVER_BG : SIDEBAR_BG}
+          backgroundColor={
+            props.isHovered("agentshdr", 0)
+              ? theme().roles.selection.hover
+              : theme().roles.surfaces.panel
+          }
         >
-          <text fg={MUTED} attributes={1}>
+          <text fg={theme().roles.text.muted} attributes={1}>
             {agentsHeaderLabel(
               props.agents.length,
               Math.max(1, props.width - AGENTS_ADD_CHIP.length - 2),
             )}
           </text>
           <box flexGrow={1} />
-          <text fg={MUTED} bg={props.isHovered("agentschip", 0) ? BUTTON_HOVER_BG : SIDEBAR_BG}>
+          <text
+            fg={theme().roles.text.muted}
+            bg={
+              props.isHovered("agentschip", 0)
+                ? theme().roles.selection.hover
+                : theme().roles.surfaces.panel
+            }
+          >
             {AGENTS_ADD_CHIP}
           </text>
         </box>
@@ -156,11 +171,18 @@ export function Sidebar(props: SidebarProps) {
           when={props.agents.length > 0}
           fallback={
             <box flexDirection="row">
-              <text fg={MUTED}>
+              <text fg={theme().roles.text.muted}>
                 {AGENTS_EMPTY_LINE.slice(0, Math.max(1, props.width - AGENTS_ADD_CHIP.length - 2))}
               </text>
               <box flexGrow={1} />
-              <text fg={MUTED} bg={props.isHovered("agentschip", 1) ? BUTTON_HOVER_BG : SIDEBAR_BG}>
+              <text
+                fg={theme().roles.text.muted}
+                bg={
+                  props.isHovered("agentschip", 1)
+                    ? theme().roles.selection.hover
+                    : theme().roles.surfaces.panel
+                }
+              >
                 {AGENTS_ADD_CHIP}
               </text>
             </box>
@@ -183,20 +205,30 @@ export function Sidebar(props: SidebarProps) {
                 <box
                   flexDirection="row"
                   gap={1}
-                  backgroundColor={flashed() ? CHIP_ATTN_BG : hovered() ? HOVER_BG : SIDEBAR_BG}
+                  backgroundColor={
+                    flashed()
+                      ? theme().derived.attentionSurface
+                      : hovered()
+                        ? theme().roles.selection.hover
+                        : theme().roles.surfaces.panel
+                  }
                 >
-                  <text fg={STATUS_COLOR[a.state]} attributes={attn()}>
+                  <text fg={statusColor(a.state)} attributes={attn()}>
                     {STATUS_GLYPH[a.state]}
                   </text>
                   <text
-                    fg={a.state === "blocked" ? STATUS_COLOR.blocked : MUTED}
+                    fg={
+                      a.state === "blocked"
+                        ? theme().roles.statusTone.warning
+                        : theme().roles.text.muted
+                    }
                     attributes={attn()}
                   >
                     {agentRowLabel(agentDisplayKind(a), a.session, labelBudget())}
                   </text>
                   <Show when={ageShown()}>
                     <box flexGrow={1} />
-                    <text fg={MUTED}>{ageShown()}</text>
+                    <text fg={theme().roles.text.muted}>{ageShown()}</text>
                   </Show>
                 </box>
               );
@@ -209,11 +241,18 @@ export function Sidebar(props: SidebarProps) {
         hit-tests SIDEBAR_HINT_SPAN on the last screen row, and these three runs
         render the exact same cells. */}
       <box width={props.width} flexDirection="row" overflow="hidden">
-        <text fg={MUTED}>{props.hint.pre}</text>
-        <text fg={MUTED} bg={props.isHovered("sidebtn", 0) ? BUTTON_HOVER_BG : SIDEBAR_BG}>
+        <text fg={theme().roles.text.muted}>{props.hint.pre}</text>
+        <text
+          fg={theme().roles.text.muted}
+          bg={
+            props.isHovered("sidebtn", 0)
+              ? theme().roles.selection.hover
+              : theme().roles.surfaces.panel
+          }
+        >
           {props.hint.btn}
         </text>
-        <text fg={MUTED}>{props.hint.post}</text>
+        <text fg={theme().roles.text.muted}>{props.hint.post}</text>
       </box>
     </box>
   );

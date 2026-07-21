@@ -222,62 +222,62 @@ export function shellVisualPalette(
   const attention = Boolean(state.attention);
   if (state.terminalFocus) {
     return {
-      fg: theme.colors.background,
-      bg: theme.colors.focus,
-      border: attention ? theme.colors.status.blocked : theme.colors.focusBorder,
+      fg: theme.roles.text.inverse,
+      bg: theme.roles.borders.focused,
+      border: attention ? theme.roles.statusTone.warning : theme.roles.borders.focused,
       marker: attention ? "!" : "▣",
       attributes: 1,
     };
   }
   if (state.selected) {
     return {
-      fg: theme.colors.selectionForeground,
-      bg: theme.colors.selection,
-      border: attention ? theme.colors.status.blocked : theme.colors.focusBorder,
+      fg: theme.roles.selection.selectionText,
+      bg: theme.roles.selection.selection,
+      border: attention ? theme.roles.statusTone.warning : theme.roles.borders.selected,
       marker: attention ? "!" : theme.glyphs.active,
       attributes: state.focused ? 1 : 0,
     };
   }
   if (attention) {
     return {
-      fg: theme.colors.foreground,
-      bg: theme.colors.attention,
-      border: theme.colors.status.blocked,
+      fg: theme.roles.text.primary,
+      bg: theme.derived.attentionSurface,
+      border: theme.roles.statusTone.warning,
       marker: "!",
       attributes: 1,
     };
   }
   if (state.context) {
     return {
-      fg: theme.colors.accent,
-      bg: theme.colors.surfaceRaised,
-      border: theme.colors.accentMuted,
+      fg: theme.roles.text.link,
+      bg: theme.roles.surfaces.panelRaised,
+      border: theme.roles.borders.subtle,
       marker: "⧉",
       attributes: 0,
     };
   }
   if (state.hovered) {
     return {
-      fg: theme.colors.foreground,
-      bg: theme.colors.hover,
-      border: theme.colors.border,
+      fg: theme.roles.text.primary,
+      bg: theme.roles.selection.hover,
+      border: theme.roles.borders.default,
       marker: "·",
       attributes: 0,
     };
   }
   if (state.focused) {
     return {
-      fg: theme.colors.foreground,
-      bg: theme.colors.surfaceRaised,
-      border: theme.colors.focusBorder,
+      fg: theme.roles.text.primary,
+      bg: theme.roles.surfaces.panelRaised,
+      border: theme.roles.borders.focused,
       marker: "›",
       attributes: 0,
     };
   }
   return {
-    fg: theme.colors.mutedForeground,
-    bg: theme.colors.surface,
-    border: theme.colors.border,
+    fg: theme.roles.text.muted,
+    bg: theme.roles.surfaces.panel,
+    border: theme.roles.borders.subtle,
     marker: theme.glyphs.inactive,
     attributes: 0,
   };

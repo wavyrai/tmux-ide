@@ -72,8 +72,8 @@ function expectSemanticMarkerSpan(mode: "dark" | "light"): void {
   expect(blockedLine).toBeDefined();
   const marker = blockedLine!.spans.find((span) => span.text === theme.glyphs.active);
   expect(marker).toBeDefined();
-  expect(colorKey(marker!.fg)).toBe(colorKey(theme.colors.status.blocked));
-  expect(colorKey(marker!.bg)).toBe(colorKey(theme.colors.selection));
+  expect(colorKey(marker!.fg)).toBe(colorKey(theme.roles.statusTone.warning));
+  expect(colorKey(marker!.bg)).toBe(colorKey(theme.roles.selection.selection));
 }
 
 function expectInputPlaceholderSpan(mode: "dark" | "light"): void {
@@ -85,7 +85,7 @@ function expectInputPlaceholderSpan(mode: "dark" | "light"): void {
   expect(inputLine).toBeDefined();
   const placeholder = inputLine!.spans.find((span) => span.text.includes("Search…"));
   expect(placeholder).toBeDefined();
-  expect(colorKey(placeholder!.fg)).toBe(colorKey(theme.colors.mutedForeground));
+  expect(colorKey(placeholder!.fg)).toBe(colorKey(theme.roles.text.muted));
 }
 
 async function renderGallery(width: number, height: number, initial: RecipeGalleryModel) {

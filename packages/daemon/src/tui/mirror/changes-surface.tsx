@@ -28,7 +28,7 @@ export function ChangesSurface(props: ChangesSurfaceProps) {
       width={props.projection.width}
       height={props.projection.height}
       position="relative"
-      backgroundColor={props.theme.colors.background}
+      backgroundColor={props.theme.roles.surfaces.canvas}
       overflow="hidden"
     >
       <ChangesHeader theme={props.theme} projection={props.projection} />
@@ -44,8 +44,8 @@ export function ChangesSurface(props: ChangesSurfaceProps) {
         <text
           fg={
             props.projection.state === "error"
-              ? props.theme.colors.status.blocked
-              : props.theme.colors.mutedForeground
+              ? props.theme.roles.statusTone.danger
+              : props.theme.roles.text.muted
           }
         >
           {props.projection.message}
@@ -111,7 +111,7 @@ export function ChangesSurface(props: ChangesSurfaceProps) {
                 <box
                   height={1}
                   backgroundColor={
-                    props.colors.diffLineBg[line.kind] ?? props.theme.colors.background
+                    props.colors.diffLineBg[line.kind] ?? props.theme.roles.surfaces.canvas
                   }
                   overflow="hidden"
                 >
@@ -130,7 +130,7 @@ export function ChangesSurface(props: ChangesSurfaceProps) {
         height={props.projection.footer.height}
         overflow="hidden"
       >
-        <text fg={props.theme.colors.mutedForeground}>{` ${props.projection.footerHint}`}</text>
+        <text fg={props.theme.roles.text.muted}>{` ${props.projection.footerHint}`}</text>
         <For each={props.projection.footerActions}>
           {(action) => (
             <box position="absolute" left={action.start} top={0} width={action.width} height={1}>
@@ -172,10 +172,10 @@ function ChangesHeader(props: {
         gap={1}
         overflow="hidden"
       >
-        <text fg={props.theme.colors.accent} attributes={1}>
+        <text fg={props.theme.roles.text.link} attributes={1}>
           {props.projection.title}
         </text>
-        <text fg={props.theme.colors.mutedForeground}>{props.projection.totals}</text>
+        <text fg={props.theme.roles.text.muted}>{props.projection.totals}</text>
         <Show when={props.projection.filter.active}>
           <InputShell
             theme={props.theme}
@@ -224,7 +224,7 @@ function ChangesFileRow(props: {
     Math.max(1, props.row.width - countWidth() - (props.row.action?.width ?? 0));
   return (
     <box height={1} flexDirection="row" backgroundColor={palette().background} overflow="hidden">
-      <text fg={props.colors.statusLetterFg[props.row.status] ?? props.theme.colors.foreground}>
+      <text fg={props.colors.statusLetterFg[props.row.status] ?? props.theme.roles.text.primary}>
         {props.row.status}
       </text>
       <SelectableRow
@@ -236,7 +236,7 @@ function ChangesFileRow(props: {
         tone="neutral"
       />
       <Show when={props.row.countText}>
-        {(count) => <text fg={props.theme.colors.mutedForeground}>{` ${count()}`}</text>}
+        {(count) => <text fg={props.theme.roles.text.muted}>{` ${count()}`}</text>}
       </Show>
       <Show when={props.row.action}>
         {(action) => (

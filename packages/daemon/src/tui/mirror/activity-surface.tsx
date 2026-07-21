@@ -21,7 +21,7 @@ export function ActivitySurface(props: ActivitySurfaceProps) {
       width={props.projection.width}
       height={props.projection.height}
       position="relative"
-      backgroundColor={props.theme.colors.surface}
+      backgroundColor={props.theme.roles.surfaces.panel}
       overflow="hidden"
     >
       <Show when={props.projection.header.height > 0}>
@@ -51,9 +51,7 @@ export function ActivitySurface(props: ActivitySurfaceProps) {
               width={props.projection.scrollbar.width}
               height={1}
             >
-              <text
-                fg={glyph === "█" ? props.theme.colors.accent : props.theme.colors.mutedForeground}
-              >
+              <text fg={glyph === "█" ? props.theme.roles.text.link : props.theme.roles.text.muted}>
                 {glyph}
               </text>
             </box>
@@ -69,10 +67,10 @@ export function ActivitySurface(props: ActivitySurfaceProps) {
           width={props.projection.footer.width}
           height={props.projection.footer.height}
           paddingLeft={1}
-          backgroundColor={props.theme.colors.background}
+          backgroundColor={props.theme.roles.surfaces.canvas}
           overflow="hidden"
         >
-          <text fg={props.theme.colors.mutedForeground}>{props.projection.footerText}</text>
+          <text fg={props.theme.roles.text.muted}>{props.projection.footerText}</text>
         </box>
       </Show>
     </box>
@@ -93,13 +91,13 @@ function ActivityHeader(props: {
       paddingLeft={1}
       flexDirection="row"
       gap={1}
-      backgroundColor={props.theme.colors.surfaceRaised}
+      backgroundColor={props.theme.roles.surfaces.panelRaised}
       overflow="hidden"
     >
-      <text fg={props.theme.colors.accent} attributes={1}>
+      <text fg={props.theme.roles.text.link} attributes={1}>
         {props.projection.title}
       </text>
-      <text fg={props.theme.colors.mutedForeground}>{`· ${props.projection.summary}`}</text>
+      <text fg={props.theme.roles.text.muted}>{`· ${props.projection.summary}`}</text>
     </box>
   );
 }
@@ -163,7 +161,7 @@ function ActivityStateMessage(props: {
           <text fg={palette().foreground}>{` ${title()}`}</text>
         </box>
         <Show when={props.projection.body.height > 1}>
-          <text fg={props.theme.colors.mutedForeground}>{`  ${props.message}`}</text>
+          <text fg={props.theme.roles.text.muted}>{`  ${props.message}`}</text>
         </Show>
       </box>
     </Show>

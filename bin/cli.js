@@ -2309,7 +2309,7 @@ var init_control = __esm({
 
 // packages/contracts/src/commands.ts
 import { z as z14 } from "zod";
-var COMMAND_PROTOCOL_VERSION, CommandIdSchemaZ, CommandOwnerSchemaZ, CommandSourceKindSchemaZ, CommandSourceSchemaZ, CommandSchemaReferencesSchemaZ, CommandConfirmationSchemaZ, CommandDescriptorSchemaZ, CommandArgumentsSchemaZ, CommandInvocationSchemaZ, CommandAvailabilitySchemaZ, CommandResolutionErrorCodeSchemaZ, CommandResolutionErrorSchemaZ;
+var COMMAND_PROTOCOL_VERSION, CommandIdSchemaZ, CommandOwnerSchemaZ, CommandSourceKindSchemaZ, CommandSourceSchemaZ, CommandSchemaReferencesSchemaZ, CommandConfirmationSchemaZ, CommandDescriptorSchemaZ, CommandArgumentsSchemaZ, CommandInvocationSchemaZ, CommandAvailabilitySchemaZ, CommandResolutionErrorCodeSchemaZ, CommandResolutionErrorSchemaZ, APPLICATION_SHELL_COMMAND_IDS, ApplicationShellCommandIdSchemaZ;
 var init_commands = __esm({
   "packages/contracts/src/commands.ts"() {
     "use strict";
@@ -2376,6 +2376,18 @@ var init_commands = __esm({
       commandId: CommandIdSchemaZ.optional(),
       details: z14.json().optional()
     }).strict();
+    APPLICATION_SHELL_COMMAND_IDS = Object.freeze({
+      activateMode: "application.shell.mode.activate",
+      activateDockTool: "application.shell.dock.activate",
+      setDockMode: "application.shell.dock.mode.set",
+      moveFocus: "application.shell.focus.move",
+      openPalette: "application.shell.palette.open",
+      closePalette: "application.shell.palette.close",
+      selectResource: "application.shell.resource.select"
+    });
+    ApplicationShellCommandIdSchemaZ = z14.enum(
+      Object.values(APPLICATION_SHELL_COMMAND_IDS)
+    );
   }
 });
 
@@ -2466,15 +2478,91 @@ var init_experience_identifiers = __esm({
   }
 });
 
-// packages/contracts/src/experience-shell.ts
+// packages/contracts/src/pane-appearance.ts
 import { z as z17 } from "zod";
-var ShellAreaIdSchemaZ, PRIMARY_WORKSPACE_MODE_IDS, PrimaryWorkspaceModeIdSchemaZ, DOCK_TOOL_IDS, DockToolIdSchemaZ, PRODUCT_SURFACE_IDS, ProductSurfaceIdSchemaZ, CANONICAL_SHELL_AREAS, SurfaceKindSchemaZ, modeCommand, dockCommand, CANONICAL_SURFACE_REGISTRY, surfaceById;
+var SemanticProductIdSchemaZ, PANE_STRUCTURE_IDS, PaneStructureSchemaZ, AGENT_ACTIVITY_IDS, AgentActivitySchemaZ, CANONICAL_DOMAIN_STATUS_IDS, CanonicalDomainStatusSchemaZ, PANE_ATTENTION_IDS, PaneAttentionSchemaZ, PaneVisualStateV1SchemaZ, DOMAIN_STATUS_TONES;
+var init_pane_appearance = __esm({
+  "packages/contracts/src/pane-appearance.ts"() {
+    "use strict";
+    SemanticProductIdSchemaZ = z17.string().min(1).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/u, "semantic id contains a transport-only character");
+    PANE_STRUCTURE_IDS = ["docked", "floating", "maximized"];
+    PaneStructureSchemaZ = z17.enum(PANE_STRUCTURE_IDS);
+    AGENT_ACTIVITY_IDS = [
+      "idle",
+      "running",
+      "waiting",
+      "complete",
+      "failed",
+      "disconnected"
+    ];
+    AgentActivitySchemaZ = z17.enum(AGENT_ACTIVITY_IDS);
+    CANONICAL_DOMAIN_STATUS_IDS = [
+      "idle",
+      "running",
+      "blocked",
+      "review",
+      "done",
+      "disconnected",
+      "recovering"
+    ];
+    CanonicalDomainStatusSchemaZ = z17.enum(CANONICAL_DOMAIN_STATUS_IDS);
+    PANE_ATTENTION_IDS = [
+      "none",
+      "unread",
+      "requested",
+      "warning",
+      "destructive",
+      "recovery"
+    ];
+    PaneAttentionSchemaZ = z17.enum(PANE_ATTENTION_IDS);
+    PaneVisualStateV1SchemaZ = z17.object({
+      structure: PaneStructureSchemaZ,
+      applicationFocus: z17.object({ pane: z17.boolean(), terminalInput: z17.boolean(), windowActive: z17.boolean() }).strict(),
+      agentActivity: AgentActivitySchemaZ,
+      domainStatus: CanonicalDomainStatusSchemaZ,
+      attention: PaneAttentionSchemaZ,
+      layoutInteraction: z17.object({
+        editable: z17.boolean(),
+        selected: z17.boolean(),
+        dragging: z17.boolean(),
+        resizing: z17.boolean(),
+        previewing: z17.boolean()
+      }).strict(),
+      controlInteraction: z17.object({
+        hover: z17.boolean(),
+        focusVisible: z17.boolean(),
+        pressed: z17.boolean(),
+        disabled: z17.boolean(),
+        loading: z17.boolean()
+      }).strict()
+    }).strict();
+    DOMAIN_STATUS_TONES = Object.freeze({
+      idle: "neutral",
+      running: "info",
+      blocked: "warning",
+      review: "info",
+      done: "success",
+      disconnected: "danger",
+      recovering: "danger"
+    });
+  }
+});
+
+// packages/contracts/src/experience-shell.ts
+import { z as z18 } from "zod";
+function deepFreezeData(value) {
+  if (value === null || typeof value !== "object" || Object.isFrozen(value)) return value;
+  for (const child of Object.values(value)) deepFreezeData(child);
+  return Object.freeze(value);
+}
+var ShellAreaIdSchemaZ, PRIMARY_WORKSPACE_MODE_IDS, PrimaryWorkspaceModeIdSchemaZ, DOCK_TOOL_IDS, DockToolIdSchemaZ, PRODUCT_SURFACE_IDS, ProductSurfaceIdSchemaZ, CANONICAL_SHELL_AREAS, SurfaceKindSchemaZ, ApplicationShellDockModeSchemaZ, SurfaceCommandTemplateSchemaZ, ProductSurfaceDefinitionSchemaZ, modeCommand, dockCommand, CANONICAL_SURFACE_REGISTRY, surfaceById;
 var init_experience_shell = __esm({
   "packages/contracts/src/experience-shell.ts"() {
     "use strict";
     init_commands();
     init_experience_identifiers();
-    ShellAreaIdSchemaZ = z17.enum([
+    init_pane_appearance();
+    ShellAreaIdSchemaZ = z18.enum([
       "application-bar",
       "sidebar",
       "primary-navigation",
@@ -2483,13 +2571,16 @@ var init_experience_shell = __esm({
       "bottom-dock",
       "status-strip"
     ]);
-    PRIMARY_WORKSPACE_MODE_IDS = ["home", "terminals"];
-    PrimaryWorkspaceModeIdSchemaZ = z17.enum(PRIMARY_WORKSPACE_MODE_IDS);
-    DOCK_TOOL_IDS = ["files", "changes", "missions", "activity"];
-    DockToolIdSchemaZ = z17.enum(DOCK_TOOL_IDS);
-    PRODUCT_SURFACE_IDS = [...PRIMARY_WORKSPACE_MODE_IDS, ...DOCK_TOOL_IDS];
-    ProductSurfaceIdSchemaZ = z17.enum(PRODUCT_SURFACE_IDS);
-    CANONICAL_SHELL_AREAS = Object.freeze([
+    PRIMARY_WORKSPACE_MODE_IDS = Object.freeze(["home", "terminals"]);
+    PrimaryWorkspaceModeIdSchemaZ = z18.enum(PRIMARY_WORKSPACE_MODE_IDS);
+    DOCK_TOOL_IDS = Object.freeze(["files", "changes", "missions", "activity"]);
+    DockToolIdSchemaZ = z18.enum(DOCK_TOOL_IDS);
+    PRODUCT_SURFACE_IDS = Object.freeze([
+      ...PRIMARY_WORKSPACE_MODE_IDS,
+      ...DOCK_TOOL_IDS
+    ]);
+    ProductSurfaceIdSchemaZ = z18.enum(PRODUCT_SURFACE_IDS);
+    CANONICAL_SHELL_AREAS = deepFreezeData([
       { id: "application-bar", label: "Application bar", order: 0 },
       { id: "sidebar", label: "Workspace sidebar", order: 1 },
       { id: "primary-navigation", label: "Workspace modes", order: 2 },
@@ -2498,93 +2589,221 @@ var init_experience_shell = __esm({
       { id: "bottom-dock", label: "Bottom dock", order: 5 },
       { id: "status-strip", label: "Status and recovery", order: 6 }
     ]);
-    SurfaceKindSchemaZ = z17.enum(["primary-mode", "dock-tool"]);
-    modeCommand = (mode) => ({
-      id: "workspace.mode.activate",
+    SurfaceKindSchemaZ = z18.enum(["primary-mode", "dock-tool"]);
+    ApplicationShellDockModeSchemaZ = z18.enum(["collapsed", "open", "maximized"]);
+    SurfaceCommandTemplateSchemaZ = z18.discriminatedUnion("id", [
+      z18.object({
+        id: z18.literal(APPLICATION_SHELL_COMMAND_IDS.activateMode),
+        args: z18.object({ mode: PrimaryWorkspaceModeIdSchemaZ }).strict()
+      }).strict(),
+      z18.object({
+        id: z18.literal(APPLICATION_SHELL_COMMAND_IDS.activateDockTool),
+        args: z18.object({ tool: DockToolIdSchemaZ }).strict()
+      }).strict(),
+      z18.object({
+        id: z18.literal(APPLICATION_SHELL_COMMAND_IDS.setDockMode),
+        args: z18.object({ mode: ApplicationShellDockModeSchemaZ }).strict()
+      }).strict(),
+      z18.object({
+        id: z18.literal(APPLICATION_SHELL_COMMAND_IDS.selectResource),
+        args: z18.object({ surface: ProductSurfaceIdSchemaZ, resourceId: SemanticProductIdSchemaZ }).strict()
+      }).strict()
+    ]);
+    ProductSurfaceDefinitionSchemaZ = z18.object({
+      id: ProductSurfaceIdSchemaZ,
+      icon: SemanticIconIdSchemaZ,
+      label: z18.string().min(1).max(160),
+      kind: SurfaceKindSchemaZ,
+      area: z18.enum(["workspace-canvas", "bottom-dock"]),
+      order: z18.number().int().nonnegative(),
+      owningMode: PrimaryWorkspaceModeIdSchemaZ,
+      shortcut: z18.string().min(1).max(32),
+      activation: SurfaceCommandTemplateSchemaZ
+    }).strict().superRefine((surface, ctx) => {
+      if (surface.kind === "primary-mode" && surface.activation.id !== APPLICATION_SHELL_COMMAND_IDS.activateMode) {
+        ctx.addIssue({
+          code: "custom",
+          message: "primary modes require a mode activation command",
+          path: ["activation", "id"]
+        });
+      }
+      if (surface.kind === "dock-tool" && surface.activation.id !== APPLICATION_SHELL_COMMAND_IDS.activateDockTool) {
+        ctx.addIssue({
+          code: "custom",
+          message: "dock tools require a dock activation command",
+          path: ["activation", "id"]
+        });
+      }
+    });
+    modeCommand = (mode) => deepFreezeData({
+      id: APPLICATION_SHELL_COMMAND_IDS.activateMode,
       args: { mode }
     });
-    dockCommand = (tool) => ({
-      id: "workspace.dock.activate",
+    dockCommand = (tool) => deepFreezeData({
+      id: APPLICATION_SHELL_COMMAND_IDS.activateDockTool,
       args: { tool }
     });
-    CANONICAL_SURFACE_REGISTRY = Object.freeze([
-      {
-        id: "home",
-        icon: "home",
-        label: "Home",
-        kind: "primary-mode",
-        area: "workspace-canvas",
-        order: 0,
-        owningMode: "home",
-        shortcut: "F1",
-        activation: modeCommand("home")
-      },
-      {
-        id: "terminals",
-        icon: "terminals",
-        label: "Terminals",
-        kind: "primary-mode",
-        area: "workspace-canvas",
-        order: 1,
-        owningMode: "terminals",
-        shortcut: "F2",
-        activation: modeCommand("terminals")
-      },
-      {
-        id: "files",
-        icon: "files",
-        label: "Files",
-        kind: "dock-tool",
-        area: "bottom-dock",
-        order: 0,
-        owningMode: "terminals",
-        shortcut: "F3",
-        activation: dockCommand("files")
-      },
-      {
-        id: "changes",
-        icon: "changes",
-        label: "Changes",
-        kind: "dock-tool",
-        area: "bottom-dock",
-        order: 1,
-        owningMode: "terminals",
-        shortcut: "F4",
-        activation: dockCommand("changes")
-      },
-      {
-        id: "missions",
-        icon: "missions",
-        label: "Missions",
-        kind: "dock-tool",
-        area: "bottom-dock",
-        order: 2,
-        owningMode: "terminals",
-        shortcut: "F6",
-        activation: dockCommand("missions")
-      },
-      {
-        id: "activity",
-        icon: "activity",
-        label: "Activity",
-        kind: "dock-tool",
-        area: "bottom-dock",
-        order: 3,
-        owningMode: "terminals",
-        shortcut: "F9",
-        activation: dockCommand("activity")
-      }
-    ]);
+    CANONICAL_SURFACE_REGISTRY = deepFreezeData(
+      ProductSurfaceDefinitionSchemaZ.array().parse([
+        {
+          id: "home",
+          icon: "home",
+          label: "Home",
+          kind: "primary-mode",
+          area: "workspace-canvas",
+          order: 0,
+          owningMode: "home",
+          shortcut: "F1",
+          activation: modeCommand("home")
+        },
+        {
+          id: "terminals",
+          icon: "terminals",
+          label: "Terminals",
+          kind: "primary-mode",
+          area: "workspace-canvas",
+          order: 1,
+          owningMode: "terminals",
+          shortcut: "F2",
+          activation: modeCommand("terminals")
+        },
+        {
+          id: "files",
+          icon: "files",
+          label: "Files",
+          kind: "dock-tool",
+          area: "bottom-dock",
+          order: 0,
+          owningMode: "terminals",
+          shortcut: "F3",
+          activation: dockCommand("files")
+        },
+        {
+          id: "changes",
+          icon: "changes",
+          label: "Changes",
+          kind: "dock-tool",
+          area: "bottom-dock",
+          order: 1,
+          owningMode: "terminals",
+          shortcut: "F4",
+          activation: dockCommand("changes")
+        },
+        {
+          id: "missions",
+          icon: "missions",
+          label: "Missions",
+          kind: "dock-tool",
+          area: "bottom-dock",
+          order: 2,
+          owningMode: "terminals",
+          shortcut: "F6",
+          activation: dockCommand("missions")
+        },
+        {
+          id: "activity",
+          icon: "activity",
+          label: "Activity",
+          kind: "dock-tool",
+          area: "bottom-dock",
+          order: 3,
+          owningMode: "terminals",
+          shortcut: "F9",
+          activation: dockCommand("activity")
+        }
+      ])
+    );
     surfaceById = new Map(CANONICAL_SURFACE_REGISTRY.map((surface) => [surface.id, surface]));
     for (const surface of CANONICAL_SURFACE_REGISTRY) {
-      CommandIdSchemaZ.parse(surface.activation.id);
       SemanticIconIdSchemaZ.parse(surface.icon);
     }
   }
 });
 
+// packages/contracts/src/focus-overlay.ts
+import { z as z19 } from "zod";
+function resolveSemanticInputLayer(state) {
+  const parsed = FocusOverlayStateV1SchemaZ.parse(state);
+  let winner = null;
+  for (const overlay of parsed.overlays) {
+    if (!winner || overlayPriority[overlay.kind] >= overlayPriority[winner.kind]) winner = overlay;
+  }
+  if (winner) return { kind: winner.kind, overlayId: winner.id };
+  if (parsed.terminalInputPaneId !== null && parsed.focusZone === "terminal") {
+    return { kind: "terminal", paneId: parsed.terminalInputPaneId };
+  }
+  return { kind: "app", zone: parsed.focusZone };
+}
+var FocusZoneSchemaZ, SemanticFocusTargetSchemaZ, OverlayKindSchemaZ, SemanticOverlaySchemaZ, FocusOverlayStateV1SchemaZ, overlayPriority;
+var init_focus_overlay = __esm({
+  "packages/contracts/src/focus-overlay.ts"() {
+    "use strict";
+    init_experience_shell();
+    init_pane_appearance();
+    FocusZoneSchemaZ = z19.enum([
+      "application-bar",
+      "sidebar",
+      "primary-navigation",
+      "canvas",
+      "dock-tabs",
+      "dock-body",
+      "status-strip",
+      "terminal"
+    ]);
+    SemanticFocusTargetSchemaZ = z19.discriminatedUnion("kind", [
+      z19.object({ kind: z19.literal("zone"), zone: FocusZoneSchemaZ }).strict(),
+      z19.object({
+        kind: z19.literal("pane"),
+        paneId: SemanticProductIdSchemaZ,
+        input: z19.enum(["chrome", "terminal"])
+      }).strict(),
+      z19.object({ kind: z19.literal("dock-tool"), tool: DockToolIdSchemaZ }).strict(),
+      z19.object({
+        kind: z19.literal("control"),
+        controlId: SemanticProductIdSchemaZ,
+        zone: FocusZoneSchemaZ
+      }).strict()
+    ]);
+    OverlayKindSchemaZ = z19.enum(["modal-dialog", "command-palette", "context-menu"]);
+    SemanticOverlaySchemaZ = z19.object({
+      id: SemanticProductIdSchemaZ,
+      kind: OverlayKindSchemaZ,
+      focusReturnTarget: SemanticFocusTargetSchemaZ
+    }).strict();
+    FocusOverlayStateV1SchemaZ = z19.object({
+      windowActivity: z19.enum(["active", "inactive"]),
+      focusZone: FocusZoneSchemaZ,
+      appFocusedPaneId: SemanticProductIdSchemaZ.nullable(),
+      terminalInputPaneId: SemanticProductIdSchemaZ.nullable(),
+      layoutSelectedPaneId: SemanticProductIdSchemaZ.nullable(),
+      overlays: z19.array(SemanticOverlaySchemaZ).max(16)
+    }).strict().superRefine((state, ctx) => {
+      const ids = state.overlays.map((overlay) => overlay.id);
+      if (new Set(ids).size !== ids.length) {
+        ctx.addIssue({
+          code: z19.ZodIssueCode.custom,
+          message: "overlay ids must be unique",
+          path: ["overlays"]
+        });
+      }
+      if (state.terminalInputPaneId !== null && state.appFocusedPaneId !== state.terminalInputPaneId) {
+        ctx.addIssue({
+          code: z19.ZodIssueCode.custom,
+          message: "terminal input owner must also be the app-focused pane",
+          path: ["terminalInputPaneId"]
+        });
+      }
+    });
+    overlayPriority = {
+      "context-menu": 1,
+      "command-palette": 2,
+      "modal-dialog": 3
+    };
+  }
+});
+
 // packages/contracts/src/visual-tokens.ts
-import { z as z18 } from "zod";
+import { z as z20 } from "zod";
 function color(hex) {
   const normalized = hex.replace(/^#/u, "");
   return {
@@ -2746,32 +2965,32 @@ var init_visual_tokens = __esm({
     MOTION_DURATION_ROLES = ["instant", "fast", "standard", "emphasized"];
     TYPOGRAPHY_TOKEN_ROLES = ["workspace", "label", "title", "metadata", "code"];
     WINDOW_ACTIVITY_TOKEN_ROLES = ["active", "inactive"];
-    RendererNeutralColorSchemaZ = z18.object({
-      space: z18.literal("srgb"),
-      red: z18.number().int().min(0).max(255),
-      green: z18.number().int().min(0).max(255),
-      blue: z18.number().int().min(0).max(255),
-      alpha: z18.number().int().min(0).max(255)
+    RendererNeutralColorSchemaZ = z20.object({
+      space: z20.literal("srgb"),
+      red: z20.number().int().min(0).max(255),
+      green: z20.number().int().min(0).max(255),
+      blue: z20.number().int().min(0).max(255),
+      alpha: z20.number().int().min(0).max(255)
     }).strict();
-    RhythmValueSchemaZ = z18.object({ unit: z18.literal("rhythm"), value: z18.number().finite().min(0).max(16) }).strict();
-    RatioValueSchemaZ = z18.object({ unit: z18.literal("ratio"), value: z18.number().finite().min(0).max(20) }).strict();
-    DurationValueSchemaZ = z18.object({ unit: z18.literal("ms"), value: z18.number().finite().min(0).max(1e4) }).strict();
-    ElevationValueSchemaZ = z18.object({
-      level: z18.number().int().min(0).max(4),
-      intent: z18.enum(["flat", "raised", "overlay"])
+    RhythmValueSchemaZ = z20.object({ unit: z20.literal("rhythm"), value: z20.number().finite().min(0).max(16) }).strict();
+    RatioValueSchemaZ = z20.object({ unit: z20.literal("ratio"), value: z20.number().finite().min(0).max(20) }).strict();
+    DurationValueSchemaZ = z20.object({ unit: z20.literal("ms"), value: z20.number().finite().min(0).max(1e4) }).strict();
+    ElevationValueSchemaZ = z20.object({
+      level: z20.number().int().min(0).max(4),
+      intent: z20.enum(["flat", "raised", "overlay"])
     }).strict();
-    TypographyValueSchemaZ = z18.object({
-      family: z18.enum(["monospace", "system"]),
-      weight: z18.enum(["regular", "medium", "semibold", "bold"]),
+    TypographyValueSchemaZ = z20.object({
+      family: z20.enum(["monospace", "system"]),
+      weight: z20.enum(["regular", "medium", "semibold", "bold"]),
       lineHeight: RatioValueSchemaZ,
-      truncation: z18.enum(["ellipsis", "clip", "wrap"])
+      truncation: z20.enum(["ellipsis", "clip", "wrap"])
     }).strict();
-    MotionEasingSchemaZ = z18.object({
-      standard: z18.enum(["linear", "standard", "decelerate"]),
-      emphasized: z18.enum(["linear", "standard", "decelerate"])
+    MotionEasingSchemaZ = z20.object({
+      standard: z20.enum(["linear", "standard", "decelerate"]),
+      emphasized: z20.enum(["linear", "standard", "decelerate"])
     }).strict();
-    WindowActivityValueSchemaZ = z18.object({ opacity: RatioValueSchemaZ, contrast: RatioValueSchemaZ }).strict();
-    SurfacesSchemaZ = z18.object({
+    WindowActivityValueSchemaZ = z20.object({ opacity: RatioValueSchemaZ, contrast: RatioValueSchemaZ }).strict();
+    SurfacesSchemaZ = z20.object({
       canvas: RendererNeutralColorSchemaZ,
       panel: RendererNeutralColorSchemaZ,
       panelRaised: RendererNeutralColorSchemaZ,
@@ -2780,7 +2999,7 @@ var init_visual_tokens = __esm({
       headerActive: RendererNeutralColorSchemaZ,
       command: RendererNeutralColorSchemaZ
     }).strict();
-    TextSchemaZ = z18.object({
+    TextSchemaZ = z20.object({
       primary: RendererNeutralColorSchemaZ,
       secondary: RendererNeutralColorSchemaZ,
       muted: RendererNeutralColorSchemaZ,
@@ -2788,7 +3007,7 @@ var init_visual_tokens = __esm({
       inverse: RendererNeutralColorSchemaZ,
       link: RendererNeutralColorSchemaZ
     }).strict();
-    BordersSchemaZ = z18.object({
+    BordersSchemaZ = z20.object({
       subtle: RendererNeutralColorSchemaZ,
       default: RendererNeutralColorSchemaZ,
       focused: RendererNeutralColorSchemaZ,
@@ -2796,21 +3015,21 @@ var init_visual_tokens = __esm({
       attention: RendererNeutralColorSchemaZ,
       danger: RendererNeutralColorSchemaZ
     }).strict();
-    StatusToneSchemaZ = z18.object({
+    StatusToneSchemaZ = z20.object({
       neutral: RendererNeutralColorSchemaZ,
       info: RendererNeutralColorSchemaZ,
       warning: RendererNeutralColorSchemaZ,
       danger: RendererNeutralColorSchemaZ,
       success: RendererNeutralColorSchemaZ
     }).strict();
-    SelectionSchemaZ = z18.object({
+    SelectionSchemaZ = z20.object({
       selection: RendererNeutralColorSchemaZ,
       selectionText: RendererNeutralColorSchemaZ,
       hover: RendererNeutralColorSchemaZ,
       pressed: RendererNeutralColorSchemaZ,
       disabled: RendererNeutralColorSchemaZ
     }).strict();
-    DensitySchemaZ = z18.object({
+    DensitySchemaZ = z20.object({
       cellHeight: RhythmValueSchemaZ,
       headerHeight: RhythmValueSchemaZ,
       statusHeight: RhythmValueSchemaZ,
@@ -2818,39 +3037,39 @@ var init_visual_tokens = __esm({
       sectionGap: RhythmValueSchemaZ,
       controlPadding: RhythmValueSchemaZ
     }).strict();
-    ShapeSchemaZ = z18.object({
+    ShapeSchemaZ = z20.object({
       dockedRadius: RhythmValueSchemaZ,
       floatingRadius: RhythmValueSchemaZ,
       controlRadius: RhythmValueSchemaZ,
       statusRadius: RhythmValueSchemaZ
     }).strict();
-    ElevationSchemaZ = z18.object({
+    ElevationSchemaZ = z20.object({
       floating: ElevationValueSchemaZ,
       palette: ElevationValueSchemaZ,
       windowMode: ElevationValueSchemaZ
     }).strict();
-    MotionSchemaZ = z18.object({
+    MotionSchemaZ = z20.object({
       instant: DurationValueSchemaZ,
       fast: DurationValueSchemaZ,
       standard: DurationValueSchemaZ,
       emphasized: DurationValueSchemaZ,
       easing: MotionEasingSchemaZ
     }).strict();
-    TypographySchemaZ = z18.object({
+    TypographySchemaZ = z20.object({
       workspace: TypographyValueSchemaZ,
       label: TypographyValueSchemaZ,
       title: TypographyValueSchemaZ,
       metadata: TypographyValueSchemaZ,
       code: TypographyValueSchemaZ
     }).strict();
-    FocusSchemaZ = z18.object({
+    FocusSchemaZ = z20.object({
       outline: RhythmValueSchemaZ,
       outlineOffset: RhythmValueSchemaZ,
       focusContrast: RatioValueSchemaZ,
       highContrastOutline: RendererNeutralColorSchemaZ
     }).strict();
-    WindowActivitySchemaZ = z18.object({ active: WindowActivityValueSchemaZ, inactive: WindowActivityValueSchemaZ }).strict();
-    VisualTokensV1SchemaZ = z18.object({
+    WindowActivitySchemaZ = z20.object({ active: WindowActivityValueSchemaZ, inactive: WindowActivityValueSchemaZ }).strict();
+    VisualTokensV1SchemaZ = z20.object({
       surfaces: SurfacesSchemaZ,
       text: TextSchemaZ,
       borders: BordersSchemaZ,
@@ -2864,7 +3083,7 @@ var init_visual_tokens = __esm({
       focus: FocusSchemaZ,
       windowActivity: WindowActivitySchemaZ
     }).strict();
-    VisualTokenOverridesV1SchemaZ = z18.object({
+    VisualTokenOverridesV1SchemaZ = z20.object({
       surfaces: SurfacesSchemaZ.partial().optional(),
       text: TextSchemaZ.partial().optional(),
       borders: BordersSchemaZ.partial().optional(),
@@ -2878,24 +3097,24 @@ var init_visual_tokens = __esm({
       focus: FocusSchemaZ.partial().optional(),
       windowActivity: WindowActivitySchemaZ.partial().optional()
     }).strict();
-    ThemeIdSchemaZ = z18.string().min(1).max(80).regex(/^[a-z0-9][a-z0-9._-]*$/u);
-    ThemeNameSchemaZ = z18.string().min(1).max(120);
-    ThemeAppearanceSchemaZ = z18.enum(["dark", "light"]);
-    VisualThemeDocumentV1SchemaZ = z18.object({
-      version: z18.literal(VISUAL_THEME_VERSION),
+    ThemeIdSchemaZ = z20.string().min(1).max(80).regex(/^[a-z0-9][a-z0-9._-]*$/u);
+    ThemeNameSchemaZ = z20.string().min(1).max(120);
+    ThemeAppearanceSchemaZ = z20.enum(["dark", "light"]);
+    VisualThemeDocumentV1SchemaZ = z20.object({
+      version: z20.literal(VISUAL_THEME_VERSION),
       id: ThemeIdSchemaZ,
       name: ThemeNameSchemaZ,
       appearance: ThemeAppearanceSchemaZ.optional(),
       overrides: VisualTokenOverridesV1SchemaZ
     }).strict();
-    VisualThemeDocumentV0SchemaZ = z18.object({
-      version: z18.literal(0),
+    VisualThemeDocumentV0SchemaZ = z20.object({
+      version: z20.literal(0),
       id: ThemeIdSchemaZ,
       name: ThemeNameSchemaZ,
       appearance: ThemeAppearanceSchemaZ.optional(),
       tokens: VisualTokenOverridesV1SchemaZ
     }).strict();
-    ThemeAccessibilityPreferencesSchemaZ = z18.object({ reducedMotion: z18.boolean(), increasedContrast: z18.boolean() }).strict();
+    ThemeAccessibilityPreferencesSchemaZ = z20.object({ reducedMotion: z20.boolean(), increasedContrast: z20.boolean() }).strict();
     groupSchemas = {
       surfaces: {
         canvas: RendererNeutralColorSchemaZ,
@@ -2960,243 +3179,6 @@ var init_visual_tokens = __esm({
     ratio = (value) => ({ unit: "ratio", value });
     duration = (value) => ({ unit: "ms", value });
     BUILTIN_VISUAL_THEMES = Object.freeze({ dark: baseTokens("dark"), light: baseTokens("light") });
-  }
-});
-
-// packages/contracts/src/visual-recipes.ts
-var VISUAL_RECIPE_REGISTRY;
-var init_visual_recipes = __esm({
-  "packages/contracts/src/visual-recipes.ts"() {
-    "use strict";
-    VISUAL_RECIPE_REGISTRY = Object.freeze(
-      {
-        "application-bar": {
-          id: "application-bar",
-          surface: "header",
-          text: "bright",
-          border: "subtle",
-          typography: "label",
-          shape: "dockedRadius",
-          elevation: null
-        },
-        sidebar: {
-          id: "sidebar",
-          surface: "panel",
-          text: "secondary",
-          border: "subtle",
-          typography: "metadata",
-          shape: "dockedRadius",
-          elevation: null
-        },
-        "primary-navigation": {
-          id: "primary-navigation",
-          surface: "header",
-          text: "primary",
-          border: "subtle",
-          typography: "label",
-          shape: "controlRadius",
-          elevation: null
-        },
-        "context-actions": {
-          id: "context-actions",
-          surface: "header",
-          text: "secondary",
-          border: "subtle",
-          typography: "label",
-          shape: "controlRadius",
-          elevation: null
-        },
-        "workspace-canvas": {
-          id: "workspace-canvas",
-          surface: "canvas",
-          text: "primary",
-          border: "subtle",
-          typography: "workspace",
-          shape: "dockedRadius",
-          elevation: null
-        },
-        "bottom-dock": {
-          id: "bottom-dock",
-          surface: "panel",
-          text: "primary",
-          border: "default",
-          typography: "workspace",
-          shape: "dockedRadius",
-          elevation: null
-        },
-        "status-strip": {
-          id: "status-strip",
-          surface: "header",
-          text: "muted",
-          border: "subtle",
-          typography: "metadata",
-          shape: "statusRadius",
-          elevation: null
-        },
-        "pane-docked": {
-          id: "pane-docked",
-          surface: "terminal",
-          text: "primary",
-          border: "default",
-          typography: "workspace",
-          shape: "dockedRadius",
-          elevation: null
-        },
-        "pane-floating": {
-          id: "pane-floating",
-          surface: "panelRaised",
-          text: "primary",
-          border: "default",
-          typography: "workspace",
-          shape: "floatingRadius",
-          elevation: "floating"
-        },
-        "command-palette": {
-          id: "command-palette",
-          surface: "command",
-          text: "primary",
-          border: "focused",
-          typography: "workspace",
-          shape: "floatingRadius",
-          elevation: "palette"
-        }
-      }
-    );
-  }
-});
-
-// packages/contracts/src/pane-appearance.ts
-import { z as z19 } from "zod";
-var SemanticProductIdSchemaZ, PANE_STRUCTURE_IDS, PaneStructureSchemaZ, AGENT_ACTIVITY_IDS, AgentActivitySchemaZ, CANONICAL_DOMAIN_STATUS_IDS, CanonicalDomainStatusSchemaZ, PANE_ATTENTION_IDS, PaneAttentionSchemaZ, PaneVisualStateV1SchemaZ, DOMAIN_STATUS_TONES;
-var init_pane_appearance = __esm({
-  "packages/contracts/src/pane-appearance.ts"() {
-    "use strict";
-    SemanticProductIdSchemaZ = z19.string().min(1).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/u, "semantic id contains a transport-only character");
-    PANE_STRUCTURE_IDS = ["docked", "floating", "maximized"];
-    PaneStructureSchemaZ = z19.enum(PANE_STRUCTURE_IDS);
-    AGENT_ACTIVITY_IDS = [
-      "idle",
-      "running",
-      "waiting",
-      "complete",
-      "failed",
-      "disconnected"
-    ];
-    AgentActivitySchemaZ = z19.enum(AGENT_ACTIVITY_IDS);
-    CANONICAL_DOMAIN_STATUS_IDS = [
-      "idle",
-      "running",
-      "blocked",
-      "review",
-      "done",
-      "disconnected",
-      "recovering"
-    ];
-    CanonicalDomainStatusSchemaZ = z19.enum(CANONICAL_DOMAIN_STATUS_IDS);
-    PANE_ATTENTION_IDS = [
-      "none",
-      "unread",
-      "requested",
-      "warning",
-      "destructive",
-      "recovery"
-    ];
-    PaneAttentionSchemaZ = z19.enum(PANE_ATTENTION_IDS);
-    PaneVisualStateV1SchemaZ = z19.object({
-      structure: PaneStructureSchemaZ,
-      applicationFocus: z19.object({ pane: z19.boolean(), terminalInput: z19.boolean(), windowActive: z19.boolean() }).strict(),
-      agentActivity: AgentActivitySchemaZ,
-      domainStatus: CanonicalDomainStatusSchemaZ,
-      attention: PaneAttentionSchemaZ,
-      layoutInteraction: z19.object({
-        editable: z19.boolean(),
-        selected: z19.boolean(),
-        dragging: z19.boolean(),
-        resizing: z19.boolean(),
-        previewing: z19.boolean()
-      }).strict(),
-      controlInteraction: z19.object({
-        hover: z19.boolean(),
-        focusVisible: z19.boolean(),
-        pressed: z19.boolean(),
-        disabled: z19.boolean(),
-        loading: z19.boolean()
-      }).strict()
-    }).strict();
-    DOMAIN_STATUS_TONES = Object.freeze({
-      idle: "neutral",
-      running: "info",
-      blocked: "warning",
-      review: "info",
-      done: "success",
-      disconnected: "danger",
-      recovering: "danger"
-    });
-  }
-});
-
-// packages/contracts/src/focus-overlay.ts
-import { z as z20 } from "zod";
-var FocusZoneSchemaZ, SemanticFocusTargetSchemaZ, OverlayKindSchemaZ, SemanticOverlaySchemaZ, FocusOverlayStateV1SchemaZ;
-var init_focus_overlay = __esm({
-  "packages/contracts/src/focus-overlay.ts"() {
-    "use strict";
-    init_experience_shell();
-    init_pane_appearance();
-    FocusZoneSchemaZ = z20.enum([
-      "application-bar",
-      "sidebar",
-      "primary-navigation",
-      "canvas",
-      "dock-tabs",
-      "dock-body",
-      "status-strip",
-      "terminal"
-    ]);
-    SemanticFocusTargetSchemaZ = z20.discriminatedUnion("kind", [
-      z20.object({ kind: z20.literal("zone"), zone: FocusZoneSchemaZ }).strict(),
-      z20.object({
-        kind: z20.literal("pane"),
-        paneId: SemanticProductIdSchemaZ,
-        input: z20.enum(["chrome", "terminal"])
-      }).strict(),
-      z20.object({ kind: z20.literal("dock-tool"), tool: DockToolIdSchemaZ }).strict(),
-      z20.object({
-        kind: z20.literal("control"),
-        controlId: SemanticProductIdSchemaZ,
-        zone: FocusZoneSchemaZ
-      }).strict()
-    ]);
-    OverlayKindSchemaZ = z20.enum(["modal-dialog", "command-palette", "context-menu"]);
-    SemanticOverlaySchemaZ = z20.object({
-      id: SemanticProductIdSchemaZ,
-      kind: OverlayKindSchemaZ,
-      focusReturnTarget: SemanticFocusTargetSchemaZ
-    }).strict();
-    FocusOverlayStateV1SchemaZ = z20.object({
-      windowActivity: z20.enum(["active", "inactive"]),
-      focusZone: FocusZoneSchemaZ,
-      appFocusedPaneId: SemanticProductIdSchemaZ.nullable(),
-      terminalInputPaneId: SemanticProductIdSchemaZ.nullable(),
-      layoutSelectedPaneId: SemanticProductIdSchemaZ.nullable(),
-      overlays: z20.array(SemanticOverlaySchemaZ).max(16)
-    }).strict().superRefine((state, ctx) => {
-      const ids = state.overlays.map((overlay) => overlay.id);
-      if (new Set(ids).size !== ids.length) {
-        ctx.addIssue({
-          code: z20.ZodIssueCode.custom,
-          message: "overlay ids must be unique",
-          path: ["overlays"]
-        });
-      }
-      if (state.terminalInputPaneId !== null && state.appFocusedPaneId !== state.terminalInputPaneId) {
-        ctx.addIssue({
-          code: z20.ZodIssueCode.custom,
-          message: "terminal input owner must also be the app-focused pane",
-          path: ["terminalInputPaneId"]
-        });
-      }
-    });
   }
 });
 
@@ -3779,8 +3761,423 @@ var init_cohesion_fixture = __esm({
   }
 });
 
-// packages/contracts/src/daemon-wire.ts
+// packages/contracts/src/application-shell.ts
 import { z as z22 } from "zod";
+function deepFreeze2(value) {
+  if (value === null || typeof value !== "object" || Object.isFrozen(value)) return value;
+  for (const child of Object.values(value)) deepFreeze2(child);
+  return Object.freeze(value);
+}
+function applyFocusTarget(focus, target) {
+  if (target.kind === "pane") {
+    return {
+      ...focus,
+      focusZone: target.input === "terminal" ? "terminal" : "canvas",
+      appFocusedPaneId: target.paneId,
+      terminalInputPaneId: target.input === "terminal" ? target.paneId : null
+    };
+  }
+  if (target.kind === "dock-tool") {
+    return { ...focus, focusZone: "dock-tabs", terminalInputPaneId: null };
+  }
+  return {
+    ...focus,
+    focusZone: target.zone,
+    terminalInputPaneId: null
+  };
+}
+function replaceResourceSelection(selections, next) {
+  const order = new Map(CANONICAL_SURFACE_REGISTRY.map((surface, index) => [surface.id, index]));
+  return [...selections.filter(({ surface }) => surface !== next.surface), next].sort(
+    (left, right) => order.get(left.surface) - order.get(right.surface)
+  );
+}
+function applyApplicationShellInvocationV1(state, rawInvocation) {
+  const current = ApplicationShellReplayStateV1SchemaZ.parse(state);
+  const invocation = ApplicationShellCommandInvocationSchemaZ.parse(rawInvocation);
+  const inputLayer = resolveSemanticInputLayer(current.focus);
+  const overlayOwnsInput = inputLayer.kind === "modal-dialog" || inputLayer.kind === "command-palette" || inputLayer.kind === "context-menu";
+  if (overlayOwnsInput) {
+    if (invocation.id !== APPLICATION_SHELL_COMMAND_IDS.closePalette || inputLayer.kind !== "command-palette" || inputLayer.overlayId !== invocation.args.overlayId) {
+      throw new Error(`semantic input is owned by overlay: ${inputLayer.overlayId}`);
+    }
+  } else if (invocation.id === APPLICATION_SHELL_COMMAND_IDS.closePalette) {
+    throw new Error(`cannot close absent command palette: ${invocation.args.overlayId}`);
+  }
+  let next;
+  switch (invocation.id) {
+    case APPLICATION_SHELL_COMMAND_IDS.activateMode:
+      next = { ...current, activeMode: invocation.args.mode };
+      break;
+    case APPLICATION_SHELL_COMMAND_IDS.activateDockTool:
+      next = { ...current, activeDockTool: invocation.args.tool };
+      break;
+    case APPLICATION_SHELL_COMMAND_IDS.setDockMode:
+      next = { ...current, dockMode: invocation.args.mode };
+      break;
+    case APPLICATION_SHELL_COMMAND_IDS.moveFocus:
+      next = { ...current, focus: applyFocusTarget(current.focus, invocation.args.target) };
+      break;
+    case APPLICATION_SHELL_COMMAND_IDS.openPalette: {
+      const overlay = {
+        id: invocation.args.overlayId,
+        kind: "command-palette",
+        focusReturnTarget: invocation.args.focusReturnTarget
+      };
+      next = {
+        ...current,
+        focus: { ...current.focus, overlays: [...current.focus.overlays, overlay] }
+      };
+      break;
+    }
+    case APPLICATION_SHELL_COMMAND_IDS.closePalette: {
+      const overlay = current.focus.overlays.find(({ id }) => id === invocation.args.overlayId);
+      if (!overlay || overlay.kind !== "command-palette") {
+        throw new Error(`command palette overlay is not open: ${invocation.args.overlayId}`);
+      }
+      const withoutClosed = {
+        ...current.focus,
+        overlays: current.focus.overlays.filter(({ id }) => id !== overlay.id)
+      };
+      next = { ...current, focus: applyFocusTarget(withoutClosed, overlay.focusReturnTarget) };
+      break;
+    }
+    case APPLICATION_SHELL_COMMAND_IDS.selectResource:
+      next = {
+        ...current,
+        selectedResources: replaceResourceSelection(current.selectedResources, invocation.args)
+      };
+      break;
+  }
+  return deepFreeze2(ApplicationShellReplayStateV1SchemaZ.parse(next));
+}
+function replayInvocations(initialState, invocations) {
+  return invocations.reduce(
+    (state, invocation) => applyApplicationShellInvocationV1(state, invocation),
+    deepFreeze2(ApplicationShellReplayStateV1SchemaZ.parse(initialState))
+  );
+}
+var APPLICATION_SHELL_PROJECTION_VERSION, APPLICATION_SHELL_TRACE_VERSION, ApplicationShellProjectionInputV1SchemaZ, WorkspaceFixtureSchemaZ, ApplicationShellSurfaceProjectionSchemaZ, ApplicationShellProjectionV1SchemaZ, ApplicationShellActivateModeArgumentsSchemaZ, ApplicationShellActivateDockToolArgumentsSchemaZ, ApplicationShellSetDockModeArgumentsSchemaZ, ApplicationShellMoveFocusArgumentsSchemaZ, ApplicationShellOpenPaletteArgumentsSchemaZ, ApplicationShellClosePaletteArgumentsSchemaZ, ApplicationShellSelectResourceArgumentsSchemaZ, APPLICATION_SHELL_COMMAND_ARGUMENT_SCHEMAS, ApplicationShellCommandInvocationSchemaZ, descriptor, APPLICATION_SHELL_COMMAND_DESCRIPTORS, descriptorById, APPLICATION_SHELL_COMMAND_DEFINITIONS, ApplicationShellResourceSelectionSchemaZ, ApplicationShellReplayStateV1SchemaZ, ApplicationShellActionTraceV1BaseSchemaZ, ApplicationShellActionTraceV1SchemaZ;
+var init_application_shell = __esm({
+  "packages/contracts/src/application-shell.ts"() {
+    "use strict";
+    init_cohesion_fixture();
+    init_commands();
+    init_experience_shell();
+    init_experience_identifiers();
+    init_focus_overlay();
+    init_pane_appearance();
+    APPLICATION_SHELL_PROJECTION_VERSION = 1;
+    APPLICATION_SHELL_TRACE_VERSION = 1;
+    ApplicationShellProjectionInputV1SchemaZ = z22.object({
+      project: CohesionFixtureV1SchemaZ.shape.project,
+      workspace: CohesionFixtureV1SchemaZ.shape.workspace,
+      dock: CohesionFixtureV1SchemaZ.shape.dock,
+      focus: FocusOverlayStateV1SchemaZ,
+      connection: CohesionFixtureV1SchemaZ.shape.connection
+    }).strict();
+    WorkspaceFixtureSchemaZ = CohesionFixtureV1SchemaZ.shape.workspace;
+    ApplicationShellSurfaceProjectionSchemaZ = z22.object({
+      id: ProductSurfaceIdSchemaZ,
+      icon: SemanticIconIdSchemaZ,
+      label: z22.string().min(1).max(160),
+      kind: z22.enum(["primary-mode", "dock-tool"]),
+      area: z22.enum(["workspace-canvas", "bottom-dock"]),
+      order: z22.number().int().nonnegative(),
+      owningMode: PrimaryWorkspaceModeIdSchemaZ,
+      shortcut: z22.string().min(1).max(32),
+      activation: SurfaceCommandTemplateSchemaZ,
+      active: z22.boolean(),
+      attention: z22.boolean(),
+      disabledReason: z22.string().min(1).max(240).nullable()
+    }).strict();
+    ApplicationShellProjectionV1SchemaZ = z22.object({
+      version: z22.literal(APPLICATION_SHELL_PROJECTION_VERSION),
+      project: CohesionFixtureV1SchemaZ.shape.project,
+      workspace: z22.object({
+        id: SemanticProductIdSchemaZ,
+        name: z22.string().min(1).max(160)
+      }).strict(),
+      sidebar: z22.object({
+        activeSessionId: SemanticProductIdSchemaZ,
+        sessions: WorkspaceFixtureSchemaZ.shape.sidebar.shape.sessions,
+        agents: WorkspaceFixtureSchemaZ.shape.sidebar.shape.agents
+      }).strict(),
+      primaryNavigation: z22.object({
+        activeMode: PrimaryWorkspaceModeIdSchemaZ,
+        items: z22.array(ApplicationShellSurfaceProjectionSchemaZ)
+      }).strict(),
+      workspaceCanvas: z22.object({ activeMode: PrimaryWorkspaceModeIdSchemaZ }).strict(),
+      bottomDock: z22.object({
+        mode: ApplicationShellDockModeSchemaZ,
+        activeTool: DockToolIdSchemaZ,
+        tools: z22.array(ApplicationShellSurfaceProjectionSchemaZ)
+      }).strict(),
+      statusStrip: CohesionFixtureV1SchemaZ.shape.connection,
+      focus: z22.object({
+        windowActivity: z22.enum(["active", "inactive"]),
+        zone: FocusZoneSchemaZ,
+        appFocusedPaneId: SemanticProductIdSchemaZ.nullable(),
+        terminalInputPaneId: SemanticProductIdSchemaZ.nullable(),
+        layoutSelectedPaneId: SemanticProductIdSchemaZ.nullable(),
+        overlays: z22.array(SemanticOverlaySchemaZ).max(16),
+        palette: z22.object({
+          open: z22.boolean(),
+          overlayId: SemanticProductIdSchemaZ.nullable(),
+          focusReturnTarget: SemanticFocusTargetSchemaZ.nullable()
+        }).strict()
+      }).strict()
+    }).strict();
+    ApplicationShellActivateModeArgumentsSchemaZ = z22.object({ mode: PrimaryWorkspaceModeIdSchemaZ }).strict();
+    ApplicationShellActivateDockToolArgumentsSchemaZ = z22.object({ tool: DockToolIdSchemaZ }).strict();
+    ApplicationShellSetDockModeArgumentsSchemaZ = z22.object({ mode: ApplicationShellDockModeSchemaZ }).strict();
+    ApplicationShellMoveFocusArgumentsSchemaZ = z22.object({ target: SemanticFocusTargetSchemaZ }).strict();
+    ApplicationShellOpenPaletteArgumentsSchemaZ = z22.object({
+      overlayId: SemanticProductIdSchemaZ,
+      focusReturnTarget: SemanticFocusTargetSchemaZ
+    }).strict();
+    ApplicationShellClosePaletteArgumentsSchemaZ = z22.object({ overlayId: SemanticProductIdSchemaZ }).strict();
+    ApplicationShellSelectResourceArgumentsSchemaZ = z22.object({
+      surface: ProductSurfaceIdSchemaZ,
+      resourceId: SemanticProductIdSchemaZ
+    }).strict();
+    APPLICATION_SHELL_COMMAND_ARGUMENT_SCHEMAS = Object.freeze({
+      [APPLICATION_SHELL_COMMAND_IDS.activateMode]: ApplicationShellActivateModeArgumentsSchemaZ,
+      [APPLICATION_SHELL_COMMAND_IDS.activateDockTool]: ApplicationShellActivateDockToolArgumentsSchemaZ,
+      [APPLICATION_SHELL_COMMAND_IDS.setDockMode]: ApplicationShellSetDockModeArgumentsSchemaZ,
+      [APPLICATION_SHELL_COMMAND_IDS.moveFocus]: ApplicationShellMoveFocusArgumentsSchemaZ,
+      [APPLICATION_SHELL_COMMAND_IDS.openPalette]: ApplicationShellOpenPaletteArgumentsSchemaZ,
+      [APPLICATION_SHELL_COMMAND_IDS.closePalette]: ApplicationShellClosePaletteArgumentsSchemaZ,
+      [APPLICATION_SHELL_COMMAND_IDS.selectResource]: ApplicationShellSelectResourceArgumentsSchemaZ
+    });
+    ApplicationShellCommandInvocationSchemaZ = z22.discriminatedUnion("id", [
+      z22.object({
+        version: z22.literal(COMMAND_PROTOCOL_VERSION),
+        id: z22.literal(APPLICATION_SHELL_COMMAND_IDS.activateMode),
+        source: CommandSourceSchemaZ,
+        args: ApplicationShellActivateModeArgumentsSchemaZ
+      }).strict(),
+      z22.object({
+        version: z22.literal(COMMAND_PROTOCOL_VERSION),
+        id: z22.literal(APPLICATION_SHELL_COMMAND_IDS.activateDockTool),
+        source: CommandSourceSchemaZ,
+        args: ApplicationShellActivateDockToolArgumentsSchemaZ
+      }).strict(),
+      z22.object({
+        version: z22.literal(COMMAND_PROTOCOL_VERSION),
+        id: z22.literal(APPLICATION_SHELL_COMMAND_IDS.setDockMode),
+        source: CommandSourceSchemaZ,
+        args: ApplicationShellSetDockModeArgumentsSchemaZ
+      }).strict(),
+      z22.object({
+        version: z22.literal(COMMAND_PROTOCOL_VERSION),
+        id: z22.literal(APPLICATION_SHELL_COMMAND_IDS.moveFocus),
+        source: CommandSourceSchemaZ,
+        args: ApplicationShellMoveFocusArgumentsSchemaZ
+      }).strict(),
+      z22.object({
+        version: z22.literal(COMMAND_PROTOCOL_VERSION),
+        id: z22.literal(APPLICATION_SHELL_COMMAND_IDS.openPalette),
+        source: CommandSourceSchemaZ,
+        args: ApplicationShellOpenPaletteArgumentsSchemaZ
+      }).strict(),
+      z22.object({
+        version: z22.literal(COMMAND_PROTOCOL_VERSION),
+        id: z22.literal(APPLICATION_SHELL_COMMAND_IDS.closePalette),
+        source: CommandSourceSchemaZ,
+        args: ApplicationShellClosePaletteArgumentsSchemaZ
+      }).strict(),
+      z22.object({
+        version: z22.literal(COMMAND_PROTOCOL_VERSION),
+        id: z22.literal(APPLICATION_SHELL_COMMAND_IDS.selectResource),
+        source: CommandSourceSchemaZ,
+        args: ApplicationShellSelectResourceArgumentsSchemaZ
+      }).strict()
+    ]);
+    descriptor = (id, label, category) => deepFreeze2(
+      CommandDescriptorSchemaZ.parse({
+        version: COMMAND_PROTOCOL_VERSION,
+        id,
+        owner: "renderer",
+        label,
+        category,
+        schemas: { input: `${id}.input.v1` },
+        dangerous: false,
+        confirmation: "none"
+      })
+    );
+    APPLICATION_SHELL_COMMAND_DESCRIPTORS = deepFreeze2([
+      descriptor(APPLICATION_SHELL_COMMAND_IDS.activateMode, "Activate workspace mode", "workspace"),
+      descriptor(APPLICATION_SHELL_COMMAND_IDS.activateDockTool, "Activate dock tool", "workspace"),
+      descriptor(APPLICATION_SHELL_COMMAND_IDS.setDockMode, "Set dock mode", "workspace"),
+      descriptor(APPLICATION_SHELL_COMMAND_IDS.moveFocus, "Move workspace focus", "workspace"),
+      descriptor(APPLICATION_SHELL_COMMAND_IDS.openPalette, "Open command palette", "application"),
+      descriptor(APPLICATION_SHELL_COMMAND_IDS.closePalette, "Close command palette", "application"),
+      descriptor(
+        APPLICATION_SHELL_COMMAND_IDS.selectResource,
+        "Select workspace resource",
+        "workspace"
+      )
+    ]);
+    descriptorById = new Map(
+      APPLICATION_SHELL_COMMAND_DESCRIPTORS.map((item) => [item.id, item])
+    );
+    APPLICATION_SHELL_COMMAND_DEFINITIONS = Object.freeze(
+      APPLICATION_SHELL_COMMAND_DESCRIPTORS.map(
+        (item) => Object.freeze({
+          descriptor: item,
+          inputSchema: APPLICATION_SHELL_COMMAND_ARGUMENT_SCHEMAS[item.id]
+        })
+      )
+    );
+    ApplicationShellResourceSelectionSchemaZ = z22.object({ surface: ProductSurfaceIdSchemaZ, resourceId: SemanticProductIdSchemaZ }).strict();
+    ApplicationShellReplayStateV1SchemaZ = z22.object({
+      activeMode: PrimaryWorkspaceModeIdSchemaZ,
+      dockMode: ApplicationShellDockModeSchemaZ,
+      activeDockTool: DockToolIdSchemaZ,
+      focus: FocusOverlayStateV1SchemaZ,
+      selectedResources: z22.array(ApplicationShellResourceSelectionSchemaZ)
+    }).strict().superRefine((state, ctx) => {
+      const surfaces = state.selectedResources.map(({ surface }) => surface);
+      if (new Set(surfaces).size !== surfaces.length) {
+        ctx.addIssue({
+          code: "custom",
+          message: "selected resources must be unique by surface",
+          path: ["selectedResources"]
+        });
+      }
+    });
+    ApplicationShellActionTraceV1BaseSchemaZ = z22.object({
+      version: z22.literal(APPLICATION_SHELL_TRACE_VERSION),
+      initialState: ApplicationShellReplayStateV1SchemaZ,
+      invocations: z22.array(ApplicationShellCommandInvocationSchemaZ),
+      finalState: ApplicationShellReplayStateV1SchemaZ
+    }).strict();
+    ApplicationShellActionTraceV1SchemaZ = ApplicationShellActionTraceV1BaseSchemaZ.superRefine((trace, ctx) => {
+      try {
+        const replayed = replayInvocations(trace.initialState, trace.invocations);
+        if (JSON.stringify(replayed) !== JSON.stringify(trace.finalState)) {
+          ctx.addIssue({
+            code: "custom",
+            message: "final state does not match sequential command replay",
+            path: ["finalState"]
+          });
+        }
+      } catch (error) {
+        ctx.addIssue({
+          code: "custom",
+          message: error instanceof Error ? error.message : "command replay failed",
+          path: ["invocations"]
+        });
+      }
+    });
+  }
+});
+
+// packages/contracts/src/visual-recipes.ts
+var VISUAL_RECIPE_REGISTRY;
+var init_visual_recipes = __esm({
+  "packages/contracts/src/visual-recipes.ts"() {
+    "use strict";
+    VISUAL_RECIPE_REGISTRY = Object.freeze(
+      {
+        "application-bar": {
+          id: "application-bar",
+          surface: "header",
+          text: "bright",
+          border: "subtle",
+          typography: "label",
+          shape: "dockedRadius",
+          elevation: null
+        },
+        sidebar: {
+          id: "sidebar",
+          surface: "panel",
+          text: "secondary",
+          border: "subtle",
+          typography: "metadata",
+          shape: "dockedRadius",
+          elevation: null
+        },
+        "primary-navigation": {
+          id: "primary-navigation",
+          surface: "header",
+          text: "primary",
+          border: "subtle",
+          typography: "label",
+          shape: "controlRadius",
+          elevation: null
+        },
+        "context-actions": {
+          id: "context-actions",
+          surface: "header",
+          text: "secondary",
+          border: "subtle",
+          typography: "label",
+          shape: "controlRadius",
+          elevation: null
+        },
+        "workspace-canvas": {
+          id: "workspace-canvas",
+          surface: "canvas",
+          text: "primary",
+          border: "subtle",
+          typography: "workspace",
+          shape: "dockedRadius",
+          elevation: null
+        },
+        "bottom-dock": {
+          id: "bottom-dock",
+          surface: "panel",
+          text: "primary",
+          border: "default",
+          typography: "workspace",
+          shape: "dockedRadius",
+          elevation: null
+        },
+        "status-strip": {
+          id: "status-strip",
+          surface: "header",
+          text: "muted",
+          border: "subtle",
+          typography: "metadata",
+          shape: "statusRadius",
+          elevation: null
+        },
+        "pane-docked": {
+          id: "pane-docked",
+          surface: "terminal",
+          text: "primary",
+          border: "default",
+          typography: "workspace",
+          shape: "dockedRadius",
+          elevation: null
+        },
+        "pane-floating": {
+          id: "pane-floating",
+          surface: "panelRaised",
+          text: "primary",
+          border: "default",
+          typography: "workspace",
+          shape: "floatingRadius",
+          elevation: "floating"
+        },
+        "command-palette": {
+          id: "command-palette",
+          surface: "command",
+          text: "primary",
+          border: "focused",
+          typography: "workspace",
+          shape: "floatingRadius",
+          elevation: "palette"
+        }
+      }
+    );
+  }
+});
+
+// packages/contracts/src/daemon-wire.ts
+import { z as z23 } from "zod";
 function isDaemonWireProtocolCompatible(protocolVersion) {
   return protocolVersion === DAEMON_WIRE_PROTOCOL_VERSION;
 }
@@ -3789,37 +4186,37 @@ var init_daemon_wire = __esm({
   "packages/contracts/src/daemon-wire.ts"() {
     "use strict";
     DAEMON_WIRE_PROTOCOL_VERSION = 1;
-    DaemonWireProtocolVersionSchema = z22.number().int().positive();
-    DaemonInstanceIdSchema = z22.uuid();
-    CanonicalDaemonInfoSchema = z22.object({
-      pid: z22.number().int().positive(),
-      port: z22.number().int().min(1).max(65535),
+    DaemonWireProtocolVersionSchema = z23.number().int().positive();
+    DaemonInstanceIdSchema = z23.uuid();
+    CanonicalDaemonInfoSchema = z23.object({
+      pid: z23.number().int().positive(),
+      port: z23.number().int().min(1).max(65535),
       protocolVersion: DaemonWireProtocolVersionSchema,
-      productVersion: z22.string().trim().min(1),
+      productVersion: z23.string().trim().min(1),
       instanceId: DaemonInstanceIdSchema,
-      startedAt: z22.iso.datetime({ offset: true }),
-      bindHostname: z22.string().trim().min(1),
-      authToken: z22.string().min(1).nullable()
+      startedAt: z23.iso.datetime({ offset: true }),
+      bindHostname: z23.string().trim().min(1),
+      authToken: z23.string().min(1).nullable()
     });
-    DaemonHealthSchema = z22.object({
-      ok: z22.literal(true),
+    DaemonHealthSchema = z23.object({
+      ok: z23.literal(true),
       protocolVersion: DaemonWireProtocolVersionSchema,
-      productVersion: z22.string().trim().min(1),
-      uptime: z22.number().nonnegative()
+      productVersion: z23.string().trim().min(1),
+      uptime: z23.number().nonnegative()
     });
-    DaemonHealthzSchema = z22.object({
-      ok: z22.literal(true),
+    DaemonHealthzSchema = z23.object({
+      ok: z23.literal(true),
       protocolVersion: DaemonWireProtocolVersionSchema,
-      productVersion: z22.string().trim().min(1),
-      uptimeMs: z22.number().nonnegative()
+      productVersion: z23.string().trim().min(1),
+      uptimeMs: z23.number().nonnegative()
     });
-    DaemonIdentitySchema = z22.object({
-      ok: z22.literal(true),
-      pid: z22.number().int().positive(),
+    DaemonIdentitySchema = z23.object({
+      ok: z23.literal(true),
+      pid: z23.number().int().positive(),
       protocolVersion: DaemonWireProtocolVersionSchema,
-      productVersion: z22.string().trim().min(1),
+      productVersion: z23.string().trim().min(1),
       instanceId: DaemonInstanceIdSchema,
-      startedAt: z22.iso.datetime({ offset: true })
+      startedAt: z23.iso.datetime({ offset: true })
     });
   }
 });
@@ -3846,6 +4243,7 @@ var init_src = __esm({
     init_desktop_host();
     init_experience_identifiers();
     init_experience_shell();
+    init_application_shell();
     init_visual_tokens();
     init_visual_recipes();
     init_pane_appearance();
@@ -7123,6 +7521,34 @@ var init_sessions2 = __esm({
   }
 });
 
+// packages/daemon/src/lib/legacy-theme-compat.ts
+function legacyThemeOverrideProvenance(explicitIds = /* @__PURE__ */ new Set()) {
+  return Object.freeze(
+    Object.fromEntries(LEGACY_THEME_OVERRIDE_IDS.map((id) => [id, explicitIds.has(id)]))
+  );
+}
+var LEGACY_THEME_OVERRIDE_IDS, LEGACY_THEME_OVERRIDE_PROVENANCE;
+var init_legacy_theme_compat = __esm({
+  "packages/daemon/src/lib/legacy-theme-compat.ts"() {
+    "use strict";
+    LEGACY_THEME_OVERRIDE_IDS = [
+      "accent",
+      "muted",
+      "fg",
+      "status.blocked",
+      "status.working",
+      "status.done",
+      "status.idle",
+      "status.unknown",
+      "glyphs.active",
+      "glyphs.inactive"
+    ];
+    LEGACY_THEME_OVERRIDE_PROVENANCE = /* @__PURE__ */ Symbol.for(
+      "tmux-ide.legacy-theme-override-provenance"
+    );
+  }
+});
+
 // packages/daemon/src/lib/app-config.ts
 var app_config_exports = {};
 __export(app_config_exports, {
@@ -7158,6 +7584,22 @@ function pickNonNegInt(value, fallback) {
 }
 function pickChoice(value, allowed, fallback) {
   return typeof value === "string" && allowed.includes(value) ? value : fallback;
+}
+function isExplicitString(value) {
+  return typeof value === "string" && value.length > 0;
+}
+function appThemeOverrideProvenance(theme, status2, glyphs) {
+  const explicit = /* @__PURE__ */ new Set();
+  if (isExplicitString(theme.accent)) explicit.add("accent");
+  if (isExplicitString(theme.muted)) explicit.add("muted");
+  if (isExplicitString(theme.fg)) explicit.add("fg");
+  for (const id of ["blocked", "working", "done", "idle", "unknown"]) {
+    if (isExplicitString(status2[id])) explicit.add(`status.${id}`);
+  }
+  for (const id of ["active", "inactive"]) {
+    if (isExplicitString(glyphs[id])) explicit.add(`glyphs.${id}`);
+  }
+  return legacyThemeOverrideProvenance(explicit);
 }
 function parseAppConfig(input) {
   const D = DEFAULT_APP_CONFIG;
@@ -7203,7 +7645,8 @@ function parseAppConfig(input) {
       glyphs: {
         active: pickString(glyphs.active, D.theme.glyphs.active),
         inactive: pickString(glyphs.inactive, D.theme.glyphs.inactive)
-      }
+      },
+      [LEGACY_THEME_OVERRIDE_PROVENANCE]: appThemeOverrideProvenance(theme, status2, glyphs)
     },
     updater: {
       tickMs: pickPosInt(updater.tickMs, D.updater.tickMs),
@@ -7295,6 +7738,7 @@ var DEFAULT_APP_CONFIG, DEFAULT_THEME, DEFAULT_KEYS, cached;
 var init_app_config = __esm({
   "packages/daemon/src/lib/app-config.ts"() {
     "use strict";
+    init_legacy_theme_compat();
     DEFAULT_APP_CONFIG = {
       keys: {
         popup: "M-p",
@@ -7316,7 +7760,8 @@ var init_app_config = __esm({
           idle: "colour114",
           unknown: "colour244"
         },
-        glyphs: { active: "\u25CF", inactive: "\u25CB" }
+        glyphs: { active: "\u25CF", inactive: "\u25CB" },
+        [LEGACY_THEME_OVERRIDE_PROVENANCE]: legacyThemeOverrideProvenance()
       },
       updater: { tickMs: 2e3, snapshotEvery: 15 },
       notifications: { toast: true, macos: false, terminal: true, delaySeconds: 2, sound: "blocked" },
@@ -9004,45 +9449,45 @@ var init_session_id = __esm({
 });
 
 // packages/daemon/src/schemas/registry.ts
-import { z as z23 } from "zod";
+import { z as z24 } from "zod";
 var RegisteredProjectSchemaZ, RegisterProjectRequestSchemaZ, InitProjectRequestSchemaZ, ProjectTemplateSchemaZ;
 var init_registry = __esm({
   "packages/daemon/src/schemas/registry.ts"() {
     "use strict";
-    RegisteredProjectSchemaZ = z23.object({
+    RegisteredProjectSchemaZ = z24.object({
       /** Unique registry key. Defaults to `basename(dir)`; collisions resolved by appending `-2`, `-3`, … */
-      name: z23.string(),
+      name: z24.string(),
       /** Absolute path to the project directory. */
-      dir: z23.string(),
+      dir: z24.string(),
       /** Whether `<dir>/ide.yml` exists; refreshed on register and on `probe()`. */
-      hasIdeYml: z23.boolean(),
+      hasIdeYml: z24.boolean(),
       /** Whether `.tmux-ide/workspace.yml` exists or wins discovery. */
-      hasWorkspaceConfig: z23.boolean().optional(),
+      hasWorkspaceConfig: z24.boolean().optional(),
       /** Generalized winning config kind. Added without replacing `hasIdeYml`. */
-      configKind: z23.enum(["workspace", "legacy", "none"]).optional(),
+      configKind: z24.enum(["workspace", "legacy", "none"]).optional(),
       /** Generalized winning config path. */
-      configPath: z23.string().nullable().optional(),
+      configPath: z24.string().nullable().optional(),
       /** Legacy config path when an `ide.yml` is present. */
-      ideConfigPath: z23.string().nullable().optional(),
+      ideConfigPath: z24.string().nullable().optional(),
       /** Git remote origin URL, or `null` if not a git repo / no origin / probe failed. */
-      gitOrigin: z23.string().nullable(),
+      gitOrigin: z24.string().nullable(),
       /** Current git branch, or `null` if not a git repo / detached HEAD / probe failed. */
-      gitBranch: z23.string().nullable(),
+      gitBranch: z24.string().nullable(),
       /** ISO-8601 timestamp the project was first registered. */
-      registeredAt: z23.string()
+      registeredAt: z24.string()
     });
-    RegisterProjectRequestSchemaZ = z23.object({
-      dir: z23.string().min(1),
-      name: z23.string().min(1).optional()
+    RegisterProjectRequestSchemaZ = z24.object({
+      dir: z24.string().min(1),
+      name: z24.string().min(1).optional()
     });
-    InitProjectRequestSchemaZ = z23.object({
-      dir: z23.string().min(1),
-      template: z23.string().min(1).optional()
+    InitProjectRequestSchemaZ = z24.object({
+      dir: z24.string().min(1),
+      template: z24.string().min(1).optional()
     });
-    ProjectTemplateSchemaZ = z23.object({
-      id: z23.string(),
-      label: z23.string(),
-      description: z23.string()
+    ProjectTemplateSchemaZ = z24.object({
+      id: z24.string(),
+      label: z24.string(),
+      description: z24.string()
     });
   }
 });
@@ -9104,7 +9549,7 @@ import { EventEmitter } from "node:events";
 import { existsSync as existsSync15, mkdirSync as mkdirSync9, readFileSync as readFileSync11, renameSync as renameSync5, writeFileSync as writeFileSync9 } from "node:fs";
 import { homedir as homedir10 } from "node:os";
 import { dirname as dirname15, isAbsolute as isAbsolute3, join as join14, resolve as resolve11 } from "node:path";
-import { z as z24 } from "zod";
+import { z as z25 } from "zod";
 function applyAction(state, action) {
   switch (action.type) {
     case "register":
@@ -9243,9 +9688,9 @@ var init_project_registry = __esm({
     init_registry();
     init_project_probe();
     REGISTRY_DIR_ENV = "TMUX_IDE_REGISTRY_DIR";
-    RegistryFileSchemaZ = z24.object({
-      version: z24.literal(1),
-      projects: z24.array(RegisteredProjectSchemaZ)
+    RegistryFileSchemaZ = z25.object({
+      version: z25.literal(1),
+      projects: z25.array(RegisteredProjectSchemaZ)
     });
     ProjectRegistryError = class extends Error {
       code;
@@ -10017,7 +10462,7 @@ var init_notify_state = __esm({
 import { existsSync as existsSync19, mkdirSync as mkdirSync12, readFileSync as readFileSync14, renameSync as renameSync7, writeFileSync as writeFileSync11 } from "node:fs";
 import { homedir as homedir12 } from "node:os";
 import { dirname as dirname17, join as join18 } from "node:path";
-import { z as z25 } from "zod";
+import { z as z26 } from "zod";
 function isBareShell(cmd) {
   return /^-?(zsh|bash|sh|fish|dash|ksh|tcsh|csh|nu)$/.test(cmd.trim());
 }
@@ -10189,32 +10634,32 @@ var init_snapshot2 = __esm({
     init_src2();
     init_process_tree();
     init_sessions2();
-    PaneSnapshotSchemaZ = z25.object({
-      index: z25.number(),
-      cwd: z25.string(),
-      command: z25.string().nullable(),
-      agent: z25.string().nullable(),
-      agentSessionId: z25.string().nullable(),
-      agentState: z25.string().nullable(),
-      title: z25.string()
+    PaneSnapshotSchemaZ = z26.object({
+      index: z26.number(),
+      cwd: z26.string(),
+      command: z26.string().nullable(),
+      agent: z26.string().nullable(),
+      agentSessionId: z26.string().nullable(),
+      agentState: z26.string().nullable(),
+      title: z26.string()
     });
-    WindowSnapshotSchemaZ = z25.object({
-      index: z25.number(),
-      name: z25.string(),
-      active: z25.boolean(),
-      layout: z25.string(),
-      panes: z25.array(PaneSnapshotSchemaZ)
+    WindowSnapshotSchemaZ = z26.object({
+      index: z26.number(),
+      name: z26.string(),
+      active: z26.boolean(),
+      layout: z26.string(),
+      panes: z26.array(PaneSnapshotSchemaZ)
     });
-    SessionSnapshotSchemaZ = z25.object({
-      name: z25.string(),
-      cwd: z25.string(),
-      adopted: z25.boolean(),
-      windows: z25.array(WindowSnapshotSchemaZ)
+    SessionSnapshotSchemaZ = z26.object({
+      name: z26.string(),
+      cwd: z26.string(),
+      adopted: z26.boolean(),
+      windows: z26.array(WindowSnapshotSchemaZ)
     });
-    FleetSnapshotSchemaZ = z25.object({
-      version: z25.literal(1),
-      savedAt: z25.string(),
-      sessions: z25.array(SessionSnapshotSchemaZ)
+    FleetSnapshotSchemaZ = z26.object({
+      version: z26.literal(1),
+      savedAt: z26.string(),
+      sessions: z26.array(SessionSnapshotSchemaZ)
     });
     SNAPSHOT_PANE_FORMAT = [
       "#{session_name}",
@@ -10933,7 +11378,7 @@ function ownerPidFromRaw(raw) {
   return typeof pid === "number" && Number.isInteger(pid) && pid > 0 ? pid : null;
 }
 function inspectCanonicalDaemonInfoPath(path2) {
-  let descriptor;
+  let descriptor2;
   try {
     const pathStat = lstatSync(path2);
     const pathObservation = observation(pathStat);
@@ -10972,8 +11417,8 @@ function inspectCanonicalDaemonInfoPath(path2) {
         pathObservation
       );
     }
-    descriptor = openSync2(path2, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
-    const openedStat = fstatSync(descriptor);
+    descriptor2 = openSync2(path2, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+    const openedStat = fstatSync(descriptor2);
     const openedObservation = observation(openedStat);
     if (!openedStat.isFile() || !sameObservation(pathObservation, openedObservation) || typeof process.getuid === "function" && openedStat.uid !== process.getuid() || (openedStat.mode & 63) !== 0) {
       return invalidState(
@@ -10985,7 +11430,7 @@ function inspectCanonicalDaemonInfoPath(path2) {
     }
     let raw;
     try {
-      raw = JSON.parse(readFileSync15(descriptor, "utf-8"));
+      raw = JSON.parse(readFileSync15(descriptor2, "utf-8"));
     } catch (error) {
       return invalidState(
         "malformed-json",
@@ -11011,11 +11456,11 @@ function inspectCanonicalDaemonInfoPath(path2) {
       error instanceof Error ? error.message : "daemon.json could not be read"
     );
   } finally {
-    if (descriptor !== void 0) closeSync2(descriptor);
+    if (descriptor2 !== void 0) closeSync2(descriptor2);
   }
 }
 function inspectCanonicalDaemonClaimPath(path2) {
-  let descriptor;
+  let descriptor2;
   try {
     const claimStat = lstatSync(path2);
     if (claimStat.isSymbolicLink() || !claimStat.isDirectory()) {
@@ -11041,12 +11486,12 @@ function inspectCanonicalDaemonClaimPath(path2) {
     if ((ownerStat.mode & 63) !== 0) {
       return { status: "invalid", detail: "daemon claim owner is not owner-only" };
     }
-    descriptor = openSync2(ownerPath, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
-    const openedStat = fstatSync(descriptor);
+    descriptor2 = openSync2(ownerPath, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+    const openedStat = fstatSync(descriptor2);
     if (!openedStat.isFile() || openedStat.dev !== ownerStat.dev || openedStat.ino !== ownerStat.ino || openedStat.size !== ownerStat.size) {
       return { status: "invalid", detail: "daemon claim changed while it was opened" };
     }
-    const raw = JSON.parse(readFileSync15(descriptor, "utf-8"));
+    const raw = JSON.parse(readFileSync15(descriptor2, "utf-8"));
     if (typeof raw.claimId !== "string" || !/^[0-9a-f-]{36}$/iu.test(raw.claimId) || typeof raw.pid !== "number" || !Number.isInteger(raw.pid) || raw.pid <= 0 || typeof raw.acquiredAt !== "string" || !Number.isFinite(Date.parse(raw.acquiredAt))) {
       return { status: "invalid", detail: "daemon claim owner has invalid metadata" };
     }
@@ -11061,7 +11506,7 @@ function inspectCanonicalDaemonClaimPath(path2) {
       detail: error instanceof Error ? error.message : "daemon claim could not be read"
     };
   } finally {
-    if (descriptor !== void 0) closeSync2(descriptor);
+    if (descriptor2 !== void 0) closeSync2(descriptor2);
   }
 }
 function restoreCapturedFile(capturedPath, canonicalPath) {
@@ -13163,7 +13608,7 @@ import { EventEmitter as EventEmitter3 } from "node:events";
 import { existsSync as existsSync26, mkdirSync as mkdirSync17, readFileSync as readFileSync20, renameSync as renameSync9, writeFileSync as writeFileSync16 } from "node:fs";
 import { homedir as homedir16 } from "node:os";
 import { dirname as dirname24, join as join24 } from "node:path";
-import { z as z26 } from "zod";
+import { z as z27 } from "zod";
 function getDefaultWorkspaceRegistry() {
   if (!_default) _default = new WorkspaceRegistry();
   return _default;
@@ -13186,9 +13631,9 @@ var init_workspace_registry = __esm({
     "use strict";
     init_src();
     REGISTRY_DIR_ENV3 = "TMUX_IDE_REGISTRY_DIR";
-    RegistryFileSchemaZ2 = z26.object({
-      version: z26.literal(1),
-      workspaces: z26.array(WorkspaceSchemaZ)
+    RegistryFileSchemaZ2 = z27.object({
+      version: z27.literal(1),
+      workspaces: z27.array(WorkspaceSchemaZ)
     });
     WorkspaceAlreadyExistsError = class extends Error {
       code = "ALREADY_EXISTS";
@@ -14000,74 +14445,74 @@ var init_log = __esm({
 });
 
 // packages/daemon/src/command-center/schemas.ts
-import { z as z27 } from "zod";
+import { z as z28 } from "zod";
 var updateTaskSchema, createTaskSchema, savePlanSchema, savePlanContentSchema, sendCommandSchema, createMilestoneSchema, updateMilestoneSchema, updateAssertionSchema, triggerResearchSchema, launchSchema, stopSchema, skillNameRegex, createSkillSchema, updateSkillSchema;
 var init_schemas = __esm({
   "packages/daemon/src/command-center/schemas.ts"() {
     "use strict";
-    updateTaskSchema = z27.object({
-      status: z27.enum(["todo", "in-progress", "review", "done"]).optional(),
-      assignee: z27.string().optional(),
-      title: z27.string().optional(),
-      description: z27.string().optional(),
-      priority: z27.number().optional()
+    updateTaskSchema = z28.object({
+      status: z28.enum(["todo", "in-progress", "review", "done"]).optional(),
+      assignee: z28.string().optional(),
+      title: z28.string().optional(),
+      description: z28.string().optional(),
+      priority: z28.number().optional()
     });
-    createTaskSchema = z27.object({
-      title: z27.string().trim().min(1, "Title is required"),
-      description: z27.string().optional(),
-      priority: z27.number().optional(),
-      goal: z27.string().optional(),
-      tags: z27.array(z27.string()).optional()
+    createTaskSchema = z28.object({
+      title: z28.string().trim().min(1, "Title is required"),
+      description: z28.string().optional(),
+      priority: z28.number().optional(),
+      goal: z28.string().optional(),
+      tags: z28.array(z28.string()).optional()
     });
-    savePlanSchema = z27.object({
-      content: z27.string().max(1e6, "Plan content is too large")
+    savePlanSchema = z28.object({
+      content: z28.string().max(1e6, "Plan content is too large")
     });
-    savePlanContentSchema = z27.object({
-      content: z27.string().max(1e6, "Plan content is too large")
+    savePlanContentSchema = z28.object({
+      content: z28.string().max(1e6, "Plan content is too large")
     });
-    sendCommandSchema = z27.object({
-      target: z27.string().min(1, "Target pane is required"),
-      message: z27.string().min(1, "Message is required"),
-      noEnter: z27.boolean().optional()
+    sendCommandSchema = z28.object({
+      target: z28.string().min(1, "Target pane is required"),
+      message: z28.string().min(1, "Message is required"),
+      noEnter: z28.boolean().optional()
     });
-    createMilestoneSchema = z27.object({
-      title: z27.string().trim().min(1, "Title is required"),
-      sequence: z27.number().int().positive(),
-      description: z27.string().optional()
+    createMilestoneSchema = z28.object({
+      title: z28.string().trim().min(1, "Title is required"),
+      sequence: z28.number().int().positive(),
+      description: z28.string().optional()
     });
-    updateMilestoneSchema = z27.object({
-      status: z27.enum(["locked", "active", "done", "validating"]).optional(),
-      title: z27.string().optional(),
-      description: z27.string().optional()
+    updateMilestoneSchema = z28.object({
+      status: z28.enum(["locked", "active", "done", "validating"]).optional(),
+      title: z28.string().optional(),
+      description: z28.string().optional()
     });
-    updateAssertionSchema = z27.object({
-      status: z27.enum(["pending", "passing", "failing", "blocked"]),
-      evidence: z27.string().optional(),
-      verifiedBy: z27.string().optional()
+    updateAssertionSchema = z28.object({
+      status: z28.enum(["pending", "passing", "failing", "blocked"]),
+      evidence: z28.string().optional(),
+      verifiedBy: z28.string().optional()
     });
-    triggerResearchSchema = z27.object({
-      type: z27.string().trim().min(1, "Research type is required")
+    triggerResearchSchema = z28.object({
+      type: z28.string().trim().min(1, "Research type is required")
     });
-    launchSchema = z27.object({
-      attach: z27.boolean().optional()
+    launchSchema = z28.object({
+      attach: z28.boolean().optional()
     }).optional();
-    stopSchema = z27.object({}).optional();
+    stopSchema = z28.object({}).optional();
     skillNameRegex = /^[A-Za-z0-9._ -]+$/;
-    createSkillSchema = z27.object({
-      name: z27.string().trim().min(1, "Skill name is required").regex(
+    createSkillSchema = z28.object({
+      name: z28.string().trim().min(1, "Skill name is required").regex(
         skillNameRegex,
         "Skill name may only contain letters, digits, dot, dash, underscore, or space"
       ),
-      role: z27.string().trim().optional(),
-      description: z27.string().optional(),
-      specialties: z27.array(z27.string()).optional(),
-      body: z27.string().optional()
+      role: z28.string().trim().optional(),
+      description: z28.string().optional(),
+      specialties: z28.array(z28.string()).optional(),
+      body: z28.string().optional()
     });
-    updateSkillSchema = z27.object({
-      role: z27.string().trim().optional(),
-      description: z27.string().optional(),
-      specialties: z27.array(z27.string()).optional(),
-      body: z27.string().optional()
+    updateSkillSchema = z28.object({
+      role: z28.string().trim().optional(),
+      description: z28.string().optional(),
+      specialties: z28.array(z28.string()).optional(),
+      body: z28.string().optional()
     });
   }
 });
@@ -14934,10 +15379,10 @@ function recoverCommandId(value) {
   return parsed.success ? parsed.data : void 0;
 }
 function immutableDescriptor(rawDescriptor) {
-  const descriptor = CommandDescriptorSchemaZ.parse(rawDescriptor);
+  const descriptor2 = CommandDescriptorSchemaZ.parse(rawDescriptor);
   return Object.freeze({
-    ...descriptor,
-    schemas: Object.freeze({ ...descriptor.schemas })
+    ...descriptor2,
+    schemas: Object.freeze({ ...descriptor2.schemas })
   });
 }
 var CommandRegistry;
@@ -14951,13 +15396,13 @@ var init_command_registry = __esm({
         for (const definition of definitions) this.register(definition);
       }
       register(definition) {
-        const descriptor = immutableDescriptor(definition.descriptor);
-        if (this.definitions.has(descriptor.id)) {
-          throw new Error(`duplicate command id: ${descriptor.id}`);
+        const descriptor2 = immutableDescriptor(definition.descriptor);
+        if (this.definitions.has(descriptor2.id)) {
+          throw new Error(`duplicate command id: ${descriptor2.id}`);
         }
-        this.definitions.set(descriptor.id, {
+        this.definitions.set(descriptor2.id, {
           ...definition,
-          descriptor: Object.freeze(descriptor)
+          descriptor: Object.freeze(descriptor2)
         });
       }
       has(id) {
@@ -15312,64 +15757,64 @@ var init_project_init_runner = __esm({
 });
 
 // packages/daemon/src/schemas/inspect.ts
-import { z as z28 } from "zod";
+import { z as z29 } from "zod";
 var ProjectInspectDetectedSchemaZ, ProjectInspectSchemaZ, InspectFilesystemRequestSchemaZ, OnboardProjectRequestSchemaZ;
 var init_inspect = __esm({
   "packages/daemon/src/schemas/inspect.ts"() {
     "use strict";
-    ProjectInspectDetectedSchemaZ = z28.object({
+    ProjectInspectDetectedSchemaZ = z29.object({
       /** Detected package manager from lockfile, or `null`. */
-      packageManager: z28.enum(["pnpm", "npm", "yarn", "bun"]).nullable(),
+      packageManager: z29.enum(["pnpm", "npm", "yarn", "bun"]).nullable(),
       /** Detected frameworks (e.g. `["next", "convex"]`). Empty array when none. */
-      frameworks: z28.array(z28.string()),
+      frameworks: z29.array(z29.string()),
       /** Suggested dev command (e.g. `pnpm dev`). `null` if no dev script found. */
-      devCommand: z28.string().nullable(),
+      devCommand: z29.string().nullable(),
       /** Suggested test command (e.g. `pnpm test`). `null` if no test script found. */
-      testCommand: z28.string().nullable()
+      testCommand: z29.string().nullable()
     });
-    ProjectInspectSchemaZ = z28.object({
+    ProjectInspectSchemaZ = z29.object({
       /** Sanitized basename of the directory — safe to use as a tmux session name. */
-      name: z28.string(),
+      name: z29.string(),
       /** Absolute, canonical path to the directory. */
-      dir: z28.string(),
+      dir: z29.string(),
       /** Whether `<dir>/ide.yml` exists. Legacy compatibility fact. */
-      hasIdeYml: z28.boolean(),
+      hasIdeYml: z29.boolean(),
       /** Whether `.tmux-ide/workspace.yml` exists or wins discovery. */
-      hasWorkspaceConfig: z28.boolean().optional(),
+      hasWorkspaceConfig: z29.boolean().optional(),
       /** Generalized winning config kind. Added without replacing `hasIdeYml`. */
-      configKind: z28.enum(["workspace", "legacy", "none"]).optional(),
+      configKind: z29.enum(["workspace", "legacy", "none"]).optional(),
       /** Generalized winning config path. Added without replacing legacy path facts. */
-      configPath: z28.string().nullable().optional(),
+      configPath: z29.string().nullable().optional(),
       /** Legacy config path when an `ide.yml` is present. */
-      ideConfigPath: z28.string().nullable().optional(),
+      ideConfigPath: z29.string().nullable().optional(),
       /** Git remote origin URL, or `null` if not a git repo / no origin / probe failed. */
-      gitOrigin: z28.string().nullable(),
+      gitOrigin: z29.string().nullable(),
       /** Current git branch, or `null` if not a git repo / detached HEAD / probe failed. */
-      gitBranch: z28.string().nullable(),
+      gitBranch: z29.string().nullable(),
       /** Detected stack signals (reuses `tmux-ide detect` logic). */
       detected: ProjectInspectDetectedSchemaZ
     });
-    InspectFilesystemRequestSchemaZ = z28.object({
-      dir: z28.string().min(1)
+    InspectFilesystemRequestSchemaZ = z29.object({
+      dir: z29.string().min(1)
     });
-    OnboardProjectRequestSchemaZ = z28.object({
-      dir: z28.string().min(1),
+    OnboardProjectRequestSchemaZ = z29.object({
+      dir: z29.string().min(1),
       /** Optional override for the project name — defaults to inspect.name. */
-      name: z28.string().min(1).optional(),
+      name: z29.string().min(1).optional(),
       /** 1, 2, or 3 — how many Claude panes to scaffold in the top row. */
-      agents: z28.number().int().min(1).max(3),
+      agents: z29.number().int().min(1).max(3),
       /**
        * Optional per-agent pane titles. When provided, length must equal
        * `agents`; the server uses these as `title:` for the Claude panes
        * instead of the canonical `Lead`/`Teammate N`/`Claude N` defaults.
        */
-      agentNames: z28.array(z28.string().min(1)).optional(),
+      agentNames: z29.array(z29.string().min(1)).optional(),
       /** Dev server command (e.g. `pnpm dev`). Omit / null to skip the dev pane. */
-      devCommand: z28.string().min(1).nullable().optional(),
+      devCommand: z29.string().min(1).nullable().optional(),
       /** Test command (e.g. `pnpm test`). Currently informational; stored for later. */
-      testCommand: z28.string().min(1).nullable().optional(),
+      testCommand: z29.string().min(1).nullable().optional(),
       /** Lint command (e.g. `pnpm lint`). Currently informational; stored for later. */
-      lintCommand: z28.string().min(1).nullable().optional()
+      lintCommand: z29.string().min(1).nullable().optional()
     });
   }
 });
@@ -17309,7 +17754,7 @@ var init_daemon_embed = __esm({
 
 // packages/daemon/src/lib/cli-action-bridge.ts
 import { createRequire as createRequire3 } from "node:module";
-import { z as z29 } from "zod";
+import { z as z30 } from "zod";
 function timeoutSignal3(ms) {
   const controller = new AbortController();
   setTimeout(() => controller.abort(), ms).unref?.();
@@ -17408,7 +17853,7 @@ async function tryDispatchAction(name, input, options = {}) {
       details: failure.data.error.details
     });
   }
-  const success = z29.object({ ok: z29.literal(true), result: contract.result }).safeParse(body);
+  const success = z30.object({ ok: z30.literal(true), result: contract.result }).safeParse(body);
   if (!success.success) return null;
   return success.data.result;
 }
@@ -17419,12 +17864,12 @@ var init_cli_action_bridge = __esm({
     init_contract();
     init_canonical_daemon();
     init_daemon_embed();
-    FailureEnvelopeZ = z29.object({
-      ok: z29.literal(false),
-      error: z29.object({
-        code: z29.string(),
-        message: z29.string(),
-        details: z29.unknown().optional()
+    FailureEnvelopeZ = z30.object({
+      ok: z30.literal(false),
+      error: z30.object({
+        code: z30.string(),
+        message: z30.string(),
+        details: z30.unknown().optional()
       })
     });
     deps = {
