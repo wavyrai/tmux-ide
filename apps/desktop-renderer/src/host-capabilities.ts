@@ -53,6 +53,11 @@ function browserWindowState(): DesktopWindowState {
   };
 }
 
+const PREVIEW_DAEMON_ERROR = Object.freeze({
+  code: "preview-only" as const,
+  reason: "Live daemon resources are unavailable in browser preview.",
+});
+
 function subscribeMedia(listener: (state: DesktopThemeState) => void): () => void {
   const queries = [
     window.matchMedia("(prefers-color-scheme: dark)"),
@@ -102,6 +107,11 @@ export function createBrowserHostCapabilities(): HostCapabilities {
       getState: async () => browserTheme(),
       onChanged: subscribeMedia,
     },
+    daemon: {
+      listWorkspaces: async () => ({ status: "error", error: PREVIEW_DAEMON_ERROR }),
+      fetchApplicationShell: async () => ({ status: "error", error: PREVIEW_DAEMON_ERROR }),
+      subscribe: async () => ({ status: "error", error: PREVIEW_DAEMON_ERROR }),
+    },
   };
   return capabilities;
 }
@@ -121,14 +131,21 @@ function hasNarrowFacade(value: unknown): value is HostCapabilities {
     typeof candidate.menu?.showApplicationMenu === "function" &&
     typeof candidate.dialog?.selectProjectDirectory === "function" &&
     typeof candidate.theme?.getState === "function" &&
-    typeof candidate.theme?.onChanged === "function"
+    typeof candidate.theme?.onChanged === "function" &&
+    typeof candidate.daemon?.listWorkspaces === "function" &&
+    typeof candidate.daemon?.fetchApplicationShell === "function" &&
+    typeof candidate.daemon?.subscribe === "function"
   );
 }
 
 export function resolveHostCapabilities(
   candidate: unknown = typeof window === "undefined" ? undefined : window.tmuxIdeHost,
 ): HostCapabilities {
-  return hasNarrowFacade(candidate) ? candidate : createBrowserHostCapabilities();
+  if (candidate == null) return createBrowserHostCapabilities();
+  if (!hasNarrowFacade(candidate)) {
+    throw new Error("Desktop host bridge is present but incompatible with this renderer.");
+  }
+  return candidate;
 }
 
 export async function readHostBootstrap(host: HostCapabilities) {

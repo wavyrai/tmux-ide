@@ -9,10 +9,12 @@ import {
   runDaemonPreflight,
   type DaemonPreflight,
 } from "./daemon-preflight.ts";
+import { DaemonResourceBroker } from "./daemon-resource-broker.ts";
 import {
   publishTheme,
   publishWindowState,
   registerHostIpc,
+  type RegisteredHostIpc,
   type TrustedRendererLocation,
 } from "./host-ipc.ts";
 import { ShutdownBarrier } from "./shutdown-barrier.ts";
@@ -74,7 +76,7 @@ export async function runDesktopApp(deps: DesktopAppDependencies = {}): Promise<
   }
 
   let currentWindow: BrowserWindow | null = null;
-  let unregisterIpc: (() => void) | null = null;
+  let hostIpc: RegisteredHostIpc | null = null;
   let quittingAfterBarrier = false;
   let persistTimer: ReturnType<typeof setTimeout> | null = null;
   let lastBoundsWrite = Promise.resolve();
@@ -94,6 +96,7 @@ export async function runDesktopApp(deps: DesktopAppDependencies = {}): Promise<
     join(app.getPath("userData"), "window-state.json"),
   );
   const daemon = await runDaemonPreflight(deps.daemonPreflight ?? canonicalDaemonPreflight);
+  const daemonResources = new DaemonResourceBroker({ daemon });
   const developmentUrl = trustedDevelopmentUrl();
   const packagedRendererPath = join(__dirname, "renderer", "index.html");
   const trustedRendererLocation: TrustedRendererLocation = developmentUrl
@@ -139,6 +142,7 @@ export async function runDesktopApp(deps: DesktopAppDependencies = {}): Promise<
     });
     currentWindow = window;
     denyRendererEscapes(window.webContents);
+    hostIpc?.bindWindow(window);
 
     window.on("maximize", () => publishWindowState(window));
     window.on("unmaximize", () => publishWindowState(window));
@@ -150,7 +154,10 @@ export async function runDesktopApp(deps: DesktopAppDependencies = {}): Promise<
     window.on("resize", scheduleBoundsPersistence);
     window.on("close", () => void persistBounds());
     window.on("closed", () => {
-      if (currentWindow === window) currentWindow = null;
+      if (currentWindow === window) {
+        currentWindow = null;
+        hostIpc?.releaseRenderer();
+      }
     });
 
     try {
@@ -169,12 +176,13 @@ export async function runDesktopApp(deps: DesktopAppDependencies = {}): Promise<
     return window;
   };
 
-  unregisterIpc = registerHostIpc({
+  hostIpc = registerHostIpc({
     ipcMain,
     getWindow: () => currentWindow,
     appVersion: app.getVersion(),
     platform: platform(),
     daemon,
+    daemonResources,
     rendererDidBootstrap: () => rendererDidBootstrap?.(),
     requestQuit: () => app.quit(),
     selectProjectDirectory: async (window) => {
@@ -217,7 +225,8 @@ export async function runDesktopApp(deps: DesktopAppDependencies = {}): Promise<
         persistBounds,
         () => {
           if (persistTimer) clearTimeout(persistTimer);
-          unregisterIpc?.();
+          hostIpc?.dispose();
+          daemonResources.dispose();
           nativeTheme.removeListener("updated", onThemeUpdated);
         },
       ])

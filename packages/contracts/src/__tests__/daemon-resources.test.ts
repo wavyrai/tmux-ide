@@ -7,6 +7,17 @@ import {
   DaemonSessionsResponseSchemaZ,
   DaemonWorkspacesResponseSchemaZ,
 } from "../daemon-resources.ts";
+import {
+  WORKSPACE_CATALOG_RESOURCE_VERSION,
+  WorkspaceCatalogResourceV1SchemaZ,
+} from "../workspace-catalog-resource.ts";
+
+const daemon = {
+  protocolVersion: 1,
+  productVersion: "2.8.0",
+  instanceId: "9bcf33b0-c837-4a94-b5e8-c0977f54464f",
+  startedAt: "2026-07-21T12:00:00.000Z",
+};
 
 const pane = {
   id: "%7",
@@ -108,6 +119,24 @@ describe("daemon REST resources", () => {
             typo: true,
           },
         ],
+      }).success,
+    ).toBe(false);
+  });
+
+  it("strictly parses the generation-stamped workspace catalog resource", () => {
+    const resource = {
+      version: WORKSPACE_CATALOG_RESOURCE_VERSION,
+      daemon,
+      workspaces: [{ workspaceName: "tmux-ide", sessionName: "tmux-ide-live" }],
+    };
+    expect(WorkspaceCatalogResourceV1SchemaZ.parse(resource)).toEqual(resource);
+    expect(
+      WorkspaceCatalogResourceV1SchemaZ.safeParse({ ...resource, apiBaseUrl: "secret" }).success,
+    ).toBe(false);
+    expect(
+      WorkspaceCatalogResourceV1SchemaZ.safeParse({
+        ...resource,
+        workspaces: [{ ...resource.workspaces[0], projectDir: "/private/project" }],
       }).success,
     ).toBe(false);
   });

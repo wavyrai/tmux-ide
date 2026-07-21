@@ -11,6 +11,11 @@ export const HOST_IPC = {
   dialogSelectProjectDirectory: "tmux-ide:host/dialog/select-project-directory",
   themeGetState: "tmux-ide:host/theme/get-state",
   themeChanged: "tmux-ide:host/theme/changed",
+  daemonListWorkspaces: "tmux-ide:host/daemon/list-workspaces",
+  daemonFetchApplicationShell: "tmux-ide:host/daemon/fetch-application-shell",
+  daemonSubscribe: "tmux-ide:host/daemon/subscribe",
+  daemonUnsubscribe: "tmux-ide:host/daemon/unsubscribe",
+  daemonEvent: "tmux-ide:host/daemon/event",
 } as const;
 
 export const HOST_INVOKE_CHANNELS = [
@@ -23,4 +28,8 @@ export const HOST_INVOKE_CHANNELS = [
   HOST_IPC.menuShowApplication,
   HOST_IPC.dialogSelectProjectDirectory,
   HOST_IPC.themeGetState,
+  HOST_IPC.daemonListWorkspaces,
+  HOST_IPC.daemonFetchApplicationShell,
+  HOST_IPC.daemonSubscribe,
+  HOST_IPC.daemonUnsubscribe,
 ] as const;

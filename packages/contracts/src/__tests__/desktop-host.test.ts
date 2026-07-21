@@ -3,6 +3,10 @@ import { describe, expect, it } from "vitest";
 import {
   DESKTOP_HOST_API_VERSION,
   DesktopApplicationShellTargetSchemaZ,
+  DesktopDaemonCapabilityStateSchemaZ,
+  DesktopDaemonEventSubscriptionRequestSchemaZ,
+  DesktopDaemonFetchApplicationShellRequestSchemaZ,
+  DesktopDaemonListWorkspacesResultSchemaZ,
   DesktopDaemonPreflightSchemaZ,
   DesktopDaemonHostDescriptorSchemaZ,
   DesktopHostBootstrapSchemaZ,
@@ -20,7 +24,7 @@ describe("desktop host contract", () => {
         window: { maximized: false, fullscreen: false, focused: true },
         daemon: { status: "unavailable", code: "record-missing", reason: "owner not installed" },
       }),
-    ).toMatchObject({ apiVersion: 2, runtime: "electron" });
+    ).toMatchObject({ apiVersion: 3, runtime: "electron" });
   });
 
   it("does not permit unversioned daemon metadata to leak into the facade", () => {
@@ -83,5 +87,60 @@ describe("desktop host contract", () => {
       DesktopApplicationShellTargetSchemaZ.safeParse({ ...target, token: "secret" }).success,
     ).toBe(false);
     expect(DesktopApplicationShellTargetSchemaZ.safeParse(null).success).toBe(false);
+  });
+
+  it("keeps the renderer-visible connected state identity-only", () => {
+    const identity = {
+      protocolVersion: 1,
+      productVersion: "2.8.0",
+      instanceId: "9bcf33b0-c837-4a94-b5e8-c0977f54464f",
+      startedAt: "2026-07-21T00:00:00.000Z",
+    };
+    expect(DesktopDaemonCapabilityStateSchemaZ.parse({ status: "connected", identity })).toEqual({
+      status: "connected",
+      identity,
+    });
+    for (const forbidden of [
+      { apiBaseUrl: "http://127.0.0.1:6060" },
+      { token: "secret" },
+      { sessionName: "raw-session" },
+    ]) {
+      expect(
+        DesktopDaemonCapabilityStateSchemaZ.safeParse({
+          status: "connected",
+          identity,
+          ...forbidden,
+        }).success,
+      ).toBe(false);
+    }
+  });
+
+  it("accepts only bounded semantic daemon capability messages", () => {
+    expect(
+      DesktopDaemonFetchApplicationShellRequestSchemaZ.parse({ workspaceName: " product " }),
+    ).toEqual({ workspaceName: "product" });
+    expect(
+      DesktopDaemonFetchApplicationShellRequestSchemaZ.safeParse({
+        workspaceName: "product",
+        sessionName: "raw-session",
+      }).success,
+    ).toBe(false);
+    expect(
+      DesktopDaemonEventSubscriptionRequestSchemaZ.safeParse({
+        workspaceNames: ["product", "product"],
+      }).success,
+    ).toBe(false);
+    expect(
+      DesktopDaemonListWorkspacesResultSchemaZ.safeParse({
+        status: "ok",
+        daemon: {
+          protocolVersion: 1,
+          productVersion: "2.8.0",
+          instanceId: "9bcf33b0-c837-4a94-b5e8-c0977f54464f",
+          startedAt: "2026-07-21T00:00:00.000Z",
+        },
+        workspaces: [{ workspaceName: "product", projectDir: "/private/leak" }],
+      }).success,
+    ).toBe(false);
   });
 });

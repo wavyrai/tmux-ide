@@ -24,11 +24,22 @@ describe("renderer host capabilities", () => {
       runtime: "browser",
       platform: "darwin",
     });
+    await expect(host.daemon.listWorkspaces()).resolves.toMatchObject({
+      status: "error",
+      error: { code: "preview-only" },
+    });
+    await expect(
+      host.daemon.fetchApplicationShell({ workspaceName: "preview" }),
+    ).resolves.toMatchObject({ status: "error", error: { code: "preview-only" } });
+    await expect(
+      host.daemon.subscribe({ workspaceNames: ["preview"] }, vi.fn()),
+    ).resolves.toMatchObject({ status: "error", error: { code: "preview-only" } });
   });
 
-  it("rejects a broad or incomplete preload object", async () => {
-    const host = resolveHostCapabilities({ apiVersion: 1, send: () => undefined });
-    expect((await host.bootstrap()).runtime).toBe("browser");
+  it("does not silently downgrade a present incompatible preload object", () => {
+    expect(() => resolveHostCapabilities({ apiVersion: 2, send: () => undefined })).toThrow(
+      "present but incompatible",
+    );
   });
 
   it("validates payloads returned by an otherwise typed preload", async () => {

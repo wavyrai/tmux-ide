@@ -99,7 +99,7 @@ describe("daemon event contracts", () => {
     }
   });
 
-  it("requires a strict daemon generation on hello", () => {
+  it("requires a strict non-secret daemon generation on hello", () => {
     expect(
       DaemonEventServerFrameSchemaZ.safeParse({ type: "hello", daemon, sessions: [] }).success,
     ).toBe(true);

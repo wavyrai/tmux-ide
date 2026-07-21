@@ -62,6 +62,20 @@ function host(): HostCapabilities {
       getState: async () => ({ mode: "dark", highContrast: false, reducedMotion: false }),
       onChanged: () => () => undefined,
     },
+    daemon: {
+      listWorkspaces: async () => ({
+        status: "error",
+        error: { code: "preview-only", reason: "fixture only" },
+      }),
+      fetchApplicationShell: async () => ({
+        status: "error",
+        error: { code: "preview-only", reason: "fixture only" },
+      }),
+      subscribe: async () => ({
+        status: "error",
+        error: { code: "preview-only", reason: "fixture only" },
+      }),
+    },
   };
 }
 
@@ -494,8 +508,7 @@ describe("visible DOM application shell", () => {
     {
       state: {
         status: "connected" as const,
-        descriptor: {
-          apiBaseUrl: "http://127.0.0.1:6060",
+        identity: {
           protocolVersion: 1,
           productVersion: "2.8.0",
           instanceId: "9bcf33b0-c837-4a94-b5e8-c0977f54464f",

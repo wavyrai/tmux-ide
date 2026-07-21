@@ -87,6 +87,20 @@ describe("desktop App host lifecycle", () => {
           return stopTheme;
         },
       },
+      daemon: {
+        listWorkspaces: async () => ({
+          status: "error",
+          error: { code: "preview-only", reason: "test boundary" },
+        }),
+        fetchApplicationShell: async () => ({
+          status: "error",
+          error: { code: "preview-only", reason: "test boundary" },
+        }),
+        subscribe: async () => ({
+          status: "error",
+          error: { code: "preview-only", reason: "test boundary" },
+        }),
+      },
     };
     const root = document.createElement("div");
     document.body.append(root);

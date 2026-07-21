@@ -36,9 +36,11 @@ import {
 import {
   AddWorkspaceRequestSchemaZ,
   APPLICATION_SHELL_RESOURCE_VERSION,
+  WORKSPACE_CATALOG_RESOURCE_VERSION,
   DAEMON_WIRE_PROTOCOL_VERSION,
   DaemonInstanceIdentitySchemaZ,
   type ApplicationShellResourceV1,
+  type WorkspaceCatalogResourceV1,
   type DaemonInstanceIdentity,
   type DaemonPanesResponse,
   type DaemonProjectResponse,
@@ -407,6 +409,17 @@ export function createApp(options: CreateAppOptions = {}): Hono {
   app.get("/api/workspaces", (c) => {
     const registry = getDefaultWorkspaceRegistry();
     return c.json({ workspaces: registry.list() } satisfies DaemonWorkspacesResponse);
+  });
+
+  app.get("/api/resources/workspace-catalog", (c) => {
+    const registry = getDefaultWorkspaceRegistry();
+    return c.json({
+      version: WORKSPACE_CATALOG_RESOURCE_VERSION,
+      daemon: daemonInstanceIdentity,
+      workspaces: registry
+        .list()
+        .map(({ name, sessionName }) => ({ workspaceName: name, sessionName })),
+    } satisfies WorkspaceCatalogResourceV1);
   });
 
   app.get("/api/workspaces/:name", (c) => {

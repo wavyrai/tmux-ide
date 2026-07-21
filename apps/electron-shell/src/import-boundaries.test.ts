@@ -57,6 +57,10 @@ describe("desktop process boundaries", () => {
       HOST_IPC.menuShowApplication,
       HOST_IPC.dialogSelectProjectDirectory,
       HOST_IPC.themeGetState,
+      HOST_IPC.daemonListWorkspaces,
+      HOST_IPC.daemonFetchApplicationShell,
+      HOST_IPC.daemonSubscribe,
+      HOST_IPC.daemonUnsubscribe,
     ]);
     expect(Object.values(HOST_IPC)).not.toContain("tmux-ide:host/send");
     expect(Object.values(HOST_IPC)).not.toContain("tmux-ide:host/eval");
@@ -73,6 +77,8 @@ describe("desktop process boundaries", () => {
       false,
     );
     expect(importedSpecifiers(preload).some(isNodeBuiltin)).toBe(false);
+    expect(preload).not.toContain("apiBaseUrl");
+    expect(preload).not.toMatch(/\bfetch\s*\(|new\s+WebSocket\b/u);
   });
 
   it("ships a strict browser renderer policy", async () => {
@@ -80,6 +86,16 @@ describe("desktop process boundaries", () => {
     expect(html).toContain("default-src 'self'");
     expect(html).toContain("object-src 'none'");
     expect(html).toContain("frame-ancestors 'none'");
+    expect(html).toContain("connect-src 'self'");
+    expect(html).not.toMatch(/connect-src[^;]*(?:127\.0\.0\.1|localhost|\[::1\]|https?:|wss?:)/u);
+    expect(html).not.toMatch(/connect-src[^;]*\*/u);
     expect(html).not.toMatch(/unsafe-(?:inline|eval)/u);
+
+    const vite = await readFile(
+      join(packageRoot, "..", "desktop-renderer", "vite.config.ts"),
+      "utf8",
+    );
+    expect(vite).toContain('apply: "serve"');
+    expect(vite).toContain("ws://127.0.0.1:5173");
   });
 });
