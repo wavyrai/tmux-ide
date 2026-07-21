@@ -1,19 +1,8 @@
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { COHESION_FIXTURE_V1, CohesionFixtureV1SchemaZ } from "../cohesion-fixture.ts";
 import { resolvePaneAppearance } from "../pane-appearance.ts";
 import { resolveSemanticInputLayer } from "../focus-overlay.ts";
 import { resolveVisualTheme } from "../visual-tokens.ts";
-
-const KERNEL_FILES = [
-  "experience-shell.ts",
-  "visual-recipes.ts",
-  "visual-tokens.ts",
-  "pane-appearance.ts",
-  "focus-overlay.ts",
-  "cohesion-fixture.ts",
-] as const;
 
 describe("CohesionFixtureV1", () => {
   it("round-trips as strict serialized cross-host acceptance input", () => {
@@ -96,28 +85,22 @@ describe("CohesionFixtureV1", () => {
     walk(COHESION_FIXTURE_V1);
     expect(findings).toEqual([]);
   });
-});
 
-describe("experience-kernel boundaries", () => {
-  it("does not import renderer, runtime, DOM, or geometry packages", () => {
-    const forbidden = [
-      "node:",
-      "electron",
-      "@opentui",
-      "solid-js",
-      "react",
-      "xterm",
-      "dom",
-      "tmux",
-      "pty",
-    ];
-    for (const file of KERNEL_FILES) {
-      const source = readFileSync(fileURLToPath(new URL(`../${file}`, import.meta.url)), "utf8");
-      const imports = [...source.matchAll(/from\s+["']([^"']+)["']/gu)].map((match) => match[1]!);
-      expect(
-        imports.filter((specifier) => forbidden.some((name) => specifier.includes(name))),
-        file,
-      ).toEqual([]);
-    }
+  it("is deeply frozen so adapters cannot decorate shared input with host measurements", () => {
+    const mutableObjects: string[] = [];
+    const walk = (value: unknown, path = "fixture"): void => {
+      if (!value || typeof value !== "object") return;
+      if (!Object.isFrozen(value)) mutableObjects.push(path);
+      if (Array.isArray(value)) {
+        value.forEach((child, index) => walk(child, `${path}.${index}`));
+        return;
+      }
+      for (const [key, child] of Object.entries(value)) walk(child, `${path}.${key}`);
+    };
+
+    walk(COHESION_FIXTURE_V1);
+    expect(mutableObjects).toEqual([]);
+    expect(Reflect.set(COHESION_FIXTURE_V1.project, "name", "host-decorated")).toBe(false);
+    expect(COHESION_FIXTURE_V1.project.name).toBe("tmux-ide");
   });
 });

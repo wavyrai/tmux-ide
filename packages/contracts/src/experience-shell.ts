@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { CommandIdSchemaZ, type CommandArguments, type CommandId } from "./commands.ts";
+import { SemanticIconIdSchemaZ, type SemanticIconId } from "./experience-identifiers.ts";
 
 /** Canonical product information architecture. Hosts may change placement, never identity/order. */
 export const EXPERIENCE_KERNEL_VERSION = 1 as const;
@@ -15,13 +16,16 @@ export const ShellAreaIdSchemaZ = z.enum([
 ]);
 export type ShellAreaId = z.infer<typeof ShellAreaIdSchemaZ>;
 
-export const PrimaryWorkspaceModeIdSchemaZ = z.enum(["home", "terminals"]);
+export const PRIMARY_WORKSPACE_MODE_IDS = ["home", "terminals"] as const;
+export const PrimaryWorkspaceModeIdSchemaZ = z.enum(PRIMARY_WORKSPACE_MODE_IDS);
 export type PrimaryWorkspaceModeId = z.infer<typeof PrimaryWorkspaceModeIdSchemaZ>;
 
-export const DockToolIdSchemaZ = z.enum(["files", "changes", "missions", "activity"]);
+export const DOCK_TOOL_IDS = ["files", "changes", "missions", "activity"] as const;
+export const DockToolIdSchemaZ = z.enum(DOCK_TOOL_IDS);
 export type DockToolId = z.infer<typeof DockToolIdSchemaZ>;
 
-export const ProductSurfaceIdSchemaZ = z.union([PrimaryWorkspaceModeIdSchemaZ, DockToolIdSchemaZ]);
+export const PRODUCT_SURFACE_IDS = [...PRIMARY_WORKSPACE_MODE_IDS, ...DOCK_TOOL_IDS] as const;
+export const ProductSurfaceIdSchemaZ = z.enum(PRODUCT_SURFACE_IDS);
 export type ProductSurfaceId = z.infer<typeof ProductSurfaceIdSchemaZ>;
 
 export interface ShellAreaDefinition {
@@ -50,6 +54,7 @@ export interface SurfaceCommandTemplate {
 
 export interface ProductSurfaceDefinition {
   readonly id: ProductSurfaceId;
+  readonly icon: SemanticIconId;
   readonly label: string;
   readonly kind: SurfaceKind;
   readonly area: "workspace-canvas" | "bottom-dock";
@@ -72,6 +77,7 @@ const dockCommand = (tool: DockToolId): SurfaceCommandTemplate => ({
 export const CANONICAL_SURFACE_REGISTRY: readonly ProductSurfaceDefinition[] = Object.freeze([
   {
     id: "home",
+    icon: "home",
     label: "Home",
     kind: "primary-mode",
     area: "workspace-canvas",
@@ -82,6 +88,7 @@ export const CANONICAL_SURFACE_REGISTRY: readonly ProductSurfaceDefinition[] = O
   },
   {
     id: "terminals",
+    icon: "terminals",
     label: "Terminals",
     kind: "primary-mode",
     area: "workspace-canvas",
@@ -92,6 +99,7 @@ export const CANONICAL_SURFACE_REGISTRY: readonly ProductSurfaceDefinition[] = O
   },
   {
     id: "files",
+    icon: "files",
     label: "Files",
     kind: "dock-tool",
     area: "bottom-dock",
@@ -102,6 +110,7 @@ export const CANONICAL_SURFACE_REGISTRY: readonly ProductSurfaceDefinition[] = O
   },
   {
     id: "changes",
+    icon: "changes",
     label: "Changes",
     kind: "dock-tool",
     area: "bottom-dock",
@@ -112,6 +121,7 @@ export const CANONICAL_SURFACE_REGISTRY: readonly ProductSurfaceDefinition[] = O
   },
   {
     id: "missions",
+    icon: "missions",
     label: "Missions",
     kind: "dock-tool",
     area: "bottom-dock",
@@ -122,6 +132,7 @@ export const CANONICAL_SURFACE_REGISTRY: readonly ProductSurfaceDefinition[] = O
   },
   {
     id: "activity",
+    icon: "activity",
     label: "Activity",
     kind: "dock-tool",
     area: "bottom-dock",
@@ -168,4 +179,5 @@ export function commandsToOpenSurface(
 
 for (const surface of CANONICAL_SURFACE_REGISTRY) {
   CommandIdSchemaZ.parse(surface.activation.id);
+  SemanticIconIdSchemaZ.parse(surface.icon);
 }

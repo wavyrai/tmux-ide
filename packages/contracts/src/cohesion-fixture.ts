@@ -5,6 +5,7 @@ import {
   PrimaryWorkspaceModeIdSchemaZ,
   CANONICAL_SURFACE_REGISTRY,
 } from "./experience-shell.ts";
+import { PaneRoleIdSchemaZ, SemanticIconIdSchemaZ } from "./experience-identifiers.ts";
 import { FocusOverlayStateV1SchemaZ } from "./focus-overlay.ts";
 import {
   AgentActivitySchemaZ,
@@ -60,6 +61,7 @@ const PaneActionSchemaZ = z
       "maximize-toggle",
       "detach",
     ]),
+    icon: SemanticIconIdSchemaZ,
     label: LabelSchemaZ,
     commandId: CommandIdSchemaZ,
     available: z.boolean(),
@@ -74,6 +76,7 @@ const PaneActionSchemaZ = z
 const PaneFixtureSchemaZ = z
   .object({
     id: SemanticProductIdSchemaZ,
+    role: PaneRoleIdSchemaZ,
     title: LabelSchemaZ,
     subtitle: OptionalLabelSchemaZ,
     terminalSourceId: SemanticProductIdSchemaZ.nullable(),
@@ -321,6 +324,7 @@ export type CohesionFixtureV1 = z.infer<typeof CohesionFixtureV1SchemaZ>;
 const paneActions = (canSplit: boolean) => [
   {
     id: "focus-terminal" as const,
+    icon: "terminals" as const,
     label: "Focus terminal",
     commandId: "pane.terminal.focus",
     available: true,
@@ -328,6 +332,7 @@ const paneActions = (canSplit: boolean) => [
   },
   {
     id: "split" as const,
+    icon: "split-right" as const,
     label: "Split pane",
     commandId: "pane.split",
     available: canSplit,
@@ -335,6 +340,7 @@ const paneActions = (canSplit: boolean) => [
   },
   {
     id: "duplicate" as const,
+    icon: "duplicate" as const,
     label: "Duplicate pane",
     commandId: "pane.duplicate",
     available: canSplit,
@@ -342,6 +348,7 @@ const paneActions = (canSplit: boolean) => [
   },
   {
     id: "float-toggle" as const,
+    icon: "float" as const,
     label: "Float or dock",
     commandId: "pane.float.toggle",
     available: true,
@@ -349,6 +356,7 @@ const paneActions = (canSplit: boolean) => [
   },
   {
     id: "maximize-toggle" as const,
+    icon: "maximize" as const,
     label: "Maximize or restore",
     commandId: "pane.maximize.toggle",
     available: true,
@@ -356,6 +364,7 @@ const paneActions = (canSplit: boolean) => [
   },
   {
     id: "detach" as const,
+    icon: "pop-out" as const,
     label: "Detach pane",
     commandId: "pane.detach",
     available: true,
@@ -363,8 +372,17 @@ const paneActions = (canSplit: boolean) => [
   },
 ];
 
-/** Canonical serialized cross-host acceptance input; contains no live transport or geometry. */
-export const COHESION_FIXTURE_V1: CohesionFixtureV1 = CohesionFixtureV1SchemaZ.parse({
+function deepFreeze<T>(value: T): T {
+  if (value === null || typeof value !== "object" || Object.isFrozen(value)) return value;
+  for (const child of Object.values(value)) deepFreeze(child);
+  return Object.freeze(value);
+}
+
+/**
+ * Canonical immutable cross-host acceptance input; contains no live transport or geometry.
+ * Card 22.2 host adapters consume this value but must never decorate or mutate it.
+ */
+const COHESION_FIXTURE_V1_INPUT: CohesionFixtureV1 = CohesionFixtureV1SchemaZ.parse({
   version: COHESION_FIXTURE_VERSION,
   project: {
     id: "project.tmux-ide",
@@ -425,6 +443,7 @@ export const COHESION_FIXTURE_V1: CohesionFixtureV1 = CohesionFixtureV1SchemaZ.p
   panes: [
     {
       id: "pane.pm",
+      role: "terminal",
       title: "Project manager",
       subtitle: "Fable",
       terminalSourceId: "terminal.pm",
@@ -454,6 +473,7 @@ export const COHESION_FIXTURE_V1: CohesionFixtureV1 = CohesionFixtureV1SchemaZ.p
     },
     {
       id: "pane.implementer",
+      role: "terminal",
       title: "Implementer",
       subtitle: "Codex",
       terminalSourceId: "terminal.implementer",
@@ -483,6 +503,7 @@ export const COHESION_FIXTURE_V1: CohesionFixtureV1 = CohesionFixtureV1SchemaZ.p
     },
     {
       id: "pane.reviewer",
+      role: "terminal",
       title: "Reviewer",
       subtitle: "Completed review",
       terminalSourceId: "terminal.reviewer",
@@ -512,6 +533,7 @@ export const COHESION_FIXTURE_V1: CohesionFixtureV1 = CohesionFixtureV1SchemaZ.p
     },
     {
       id: "pane.recovery",
+      role: "terminal",
       title: "Recovery",
       subtitle: "Connection lost",
       terminalSourceId: "terminal.recovery",
@@ -621,3 +643,5 @@ export const COHESION_FIXTURE_V1: CohesionFixtureV1 = CohesionFixtureV1SchemaZ.p
     nextAction: "Retry the attachment or open recovery details",
   },
 });
+
+export const COHESION_FIXTURE_V1: CohesionFixtureV1 = deepFreeze(COHESION_FIXTURE_V1_INPUT);

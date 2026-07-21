@@ -14,16 +14,18 @@ export const SemanticProductIdSchemaZ = z
   .regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/u, "semantic id contains a transport-only character");
 export type SemanticProductId = z.infer<typeof SemanticProductIdSchemaZ>;
 
-export const PaneStructureSchemaZ = z.enum(["docked", "floating", "maximized"]);
-export const AgentActivitySchemaZ = z.enum([
+export const PANE_STRUCTURE_IDS = ["docked", "floating", "maximized"] as const;
+export const PaneStructureSchemaZ = z.enum(PANE_STRUCTURE_IDS);
+export const AGENT_ACTIVITY_IDS = [
   "idle",
   "running",
   "waiting",
   "complete",
   "failed",
   "disconnected",
-]);
-export const CanonicalDomainStatusSchemaZ = z.enum([
+] as const;
+export const AgentActivitySchemaZ = z.enum(AGENT_ACTIVITY_IDS);
+export const CANONICAL_DOMAIN_STATUS_IDS = [
   "idle",
   "running",
   "blocked",
@@ -31,15 +33,17 @@ export const CanonicalDomainStatusSchemaZ = z.enum([
   "done",
   "disconnected",
   "recovering",
-]);
-export const PaneAttentionSchemaZ = z.enum([
+] as const;
+export const CanonicalDomainStatusSchemaZ = z.enum(CANONICAL_DOMAIN_STATUS_IDS);
+export const PANE_ATTENTION_IDS = [
   "none",
   "unread",
   "requested",
   "warning",
   "destructive",
   "recovery",
-]);
+] as const;
+export const PaneAttentionSchemaZ = z.enum(PANE_ATTENTION_IDS);
 export type PaneStructure = z.infer<typeof PaneStructureSchemaZ>;
 export type AgentActivity = z.infer<typeof AgentActivitySchemaZ>;
 export type CanonicalDomainStatus = z.infer<typeof CanonicalDomainStatusSchemaZ>;
