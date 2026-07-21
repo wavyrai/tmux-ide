@@ -6,7 +6,8 @@ import {
   type WorkbenchDockHostTabId,
   type WorkbenchDockHostActionId,
   type WorkbenchDockHostMode,
-} from "./presenter.tsx";
+} from "./presenter.js";
+import { workbenchDockNavigationTarget } from "./navigation.js";
 import "./web-host.css";
 
 const TAB_GLYPHS: Readonly<Record<WorkbenchDockHostTabId, string>> = {
@@ -65,15 +66,21 @@ export const WEB_WORKBENCH_DOCK_HOST: WorkbenchDockHostLeaves = {
         return;
       }
 
-      const currentIndex = tabs.indexOf(current);
-      let nextIndex: number | null = null;
-      if (event.key === "ArrowRight") nextIndex = (currentIndex + 1) % tabs.length;
-      if (event.key === "ArrowLeft") nextIndex = (currentIndex - 1 + tabs.length) % tabs.length;
-      if (event.key === "Home") nextIndex = 0;
-      if (event.key === "End") nextIndex = tabs.length - 1;
-      if (nextIndex === null) return;
+      const currentId = current.dataset.tabId as WorkbenchDockHostTabId | undefined;
+      if (!currentId) return;
+      const targetId = workbenchDockNavigationTarget(props.tabs, currentId, {
+        name: event.key,
+        ctrl: event.ctrlKey,
+        meta: event.metaKey,
+        shift: event.shiftKey,
+      });
+      const next = targetId
+        ? tabs.find((candidate) => candidate.dataset.tabId === targetId)
+        : undefined;
+      if (!next) return;
       event.preventDefault();
-      tabs[nextIndex]?.focus();
+      next.focus();
+      next.click();
     };
 
     return (
@@ -96,6 +103,7 @@ export const WEB_WORKBENCH_DOCK_HOST: WorkbenchDockHostLeaves = {
       <button
         class="workbench-dock__tab"
         id={`workbench-dock-tab-${props.tab.id}`}
+        data-tab-id={props.tab.id}
         type="button"
         role="tab"
         aria-label={accessibleLabel()}
@@ -131,12 +139,15 @@ export const WEB_WORKBENCH_DOCK_HOST: WorkbenchDockHostLeaves = {
     );
   },
   Action(props) {
+    const collapse = () => props.action.id === "toggle-collapse";
     return (
       <button
         class="workbench-dock__action"
         type="button"
         aria-label={props.action.description}
-        aria-pressed={props.action.active}
+        aria-controls={collapse() ? `workbench-dock-panel-${props.activeTabId}` : undefined}
+        aria-expanded={collapse() ? props.action.active : undefined}
+        aria-pressed={collapse() ? undefined : props.action.active}
         data-action={props.action.id}
         title={props.action.description}
         onClick={() => props.onActivate?.()}
@@ -149,10 +160,12 @@ export const WEB_WORKBENCH_DOCK_HOST: WorkbenchDockHostLeaves = {
     return (
       <section
         class="workbench-dock__body"
-        id={`workbench-dock-panel-${props.activeTabId}`}
+        id={`workbench-dock-panel-${props.tabId}`}
         role="tabpanel"
-        aria-labelledby={`workbench-dock-tab-${props.activeTabId}`}
-        tabIndex={0}
+        aria-labelledby={`workbench-dock-tab-${props.tabId}`}
+        aria-hidden={!props.visible}
+        hidden={!props.visible}
+        tabIndex={props.visible ? 0 : -1}
         data-focused={props.focused ? "true" : "false"}
       >
         {props.children}

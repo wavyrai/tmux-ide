@@ -1,5 +1,6 @@
 /* @jsxImportSource @opentui/solid */
 import type { JSX } from "@opentui/solid";
+import { Show } from "solid-js";
 import {
   WorkbenchDockPresenter,
   type WorkbenchDockHostLeaves,
@@ -93,28 +94,30 @@ export function createOpenTuiWorkbenchDockHost(
     },
     Body(props) {
       return (
-        <box
-          width={props.projection.dockBody.width}
-          height={props.projection.dockBody.height}
-          flexDirection="row"
-          backgroundColor={theme().colors.surface}
-          overflow="hidden"
-        >
-          <DockFocusRail
-            theme={theme()}
-            width={props.projection.dockBodyRail.width}
-            height={props.projection.dockBodyRail.height}
-            focused={props.focused}
-          />
+        <Show when={props.active && props.visible}>
           <box
-            width={props.projection.dockBodyContent.width}
-            height={props.projection.dockBodyContent.height}
-            flexDirection="column"
+            width={props.projection.dockBody.width}
+            height={props.projection.dockBody.height}
+            flexDirection="row"
+            backgroundColor={theme().colors.surface}
             overflow="hidden"
           >
-            {props.children}
+            <DockFocusRail
+              theme={theme()}
+              width={props.projection.dockBodyRail.width}
+              height={props.projection.dockBodyRail.height}
+              focused={props.focused}
+            />
+            <box
+              width={props.projection.dockBodyContent.width}
+              height={props.projection.dockBodyContent.height}
+              flexDirection="column"
+              overflow="hidden"
+            >
+              {props.children}
+            </box>
           </box>
-        </box>
+        </Show>
       );
     },
   };

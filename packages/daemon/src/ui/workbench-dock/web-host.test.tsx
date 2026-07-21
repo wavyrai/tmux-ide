@@ -5,6 +5,7 @@ import {
   createWorkbenchDockHostFixture,
   createWorkbenchDockHostTrace,
   EXPECTED_WORKBENCH_DOCK_HOST_TRACE,
+  EXPECTED_WORKBENCH_DOCK_KEYBOARD_TRACE,
 } from "./fixture.ts";
 import { WebWorkbenchDock } from "./web-host.tsx";
 
@@ -51,14 +52,25 @@ describe("shared WorkbenchDockPresenter DOM host", () => {
     expect(dock.dataset.mode).toBe("open");
     expect(dock.dataset.variant).toBe("compact");
     expect(root.querySelector('[role="tablist"]')).not.toBeNull();
-    expect(root.querySelector('[role="tabpanel"]')?.textContent).toContain("shared dock body");
+    expect(root.querySelector('[role="tabpanel"]:not([hidden])')?.textContent).toContain(
+      "shared dock body",
+    );
 
     expect(tab(root, "missions").getAttribute("aria-selected")).toBe("true");
     expect(tab(root, "missions").tabIndex).toBe(0);
     expect(tab(root, "changes").disabled).toBe(true);
     expect(tab(root, "changes").getAttribute("aria-disabled")).toBe("true");
     expect(tab(root, "activity").getAttribute("aria-label")).toContain("needs attention");
-    expect(action(root, "toggle-collapse").getAttribute("aria-pressed")).toBe("true");
+    for (const tabId of ["files", "changes", "missions", "activity"]) {
+      const controlId = tab(root, tabId).getAttribute("aria-controls");
+      expect(controlId).not.toBeNull();
+      expect(root.querySelector(`#${controlId}`)).not.toBeNull();
+    }
+    expect(action(root, "toggle-collapse").getAttribute("aria-pressed")).toBeNull();
+    expect(action(root, "toggle-collapse").getAttribute("aria-expanded")).toBe("true");
+    expect(action(root, "toggle-collapse").getAttribute("aria-controls")).toBe(
+      "workbench-dock-panel-missions",
+    );
     expect(action(root, "toggle-maximize").getAttribute("aria-pressed")).toBe("false");
 
     tab(root, "files").click();
@@ -84,15 +96,21 @@ describe("shared WorkbenchDockPresenter DOM host", () => {
 
     missions.dispatchEvent(new KeyboardEvent("keydown", { key: "End", bubbles: true }));
     expect(document.activeElement).toBe(tab(root, "activity"));
+    expect(trace.calls).toEqual(EXPECTED_WORKBENCH_DOCK_KEYBOARD_TRACE);
     tab(root, "activity").dispatchEvent(
       new KeyboardEvent("keydown", { key: "Enter", bubbles: true }),
     );
-    expect(trace.calls).toEqual(["tab:activity"]);
+    expect(trace.calls).toEqual([...EXPECTED_WORKBENCH_DOCK_KEYBOARD_TRACE, "tab:activity"]);
 
     tab(root, "activity").dispatchEvent(
       new KeyboardEvent("keydown", { key: "Home", bubbles: true }),
     );
     expect(document.activeElement).toBe(tab(root, "files"));
+    expect(trace.calls).toEqual([
+      ...EXPECTED_WORKBENCH_DOCK_KEYBOARD_TRACE,
+      "tab:activity",
+      "tab:files",
+    ]);
   });
 
   it("keeps every surface and dock control discoverable in a narrow collapsed layout", () => {
@@ -107,7 +125,17 @@ describe("shared WorkbenchDockPresenter DOM host", () => {
     expect(dock.dataset.mode).toBe("collapsed");
     expect(root.querySelectorAll('[role="tab"]')).toHaveLength(4);
     expect(root.querySelectorAll(".workbench-dock__action")).toHaveLength(2);
-    expect(root.querySelector('[role="tabpanel"]')).toBeNull();
+    expect(root.querySelectorAll('[role="tabpanel"]')).toHaveLength(4);
+    expect(root.querySelectorAll('[role="tabpanel"][hidden]')).toHaveLength(4);
+    for (const tabId of ["files", "changes", "missions", "activity"]) {
+      const controlId = tab(root, tabId).getAttribute("aria-controls");
+      expect(root.querySelector(`#${controlId}`)?.getAttribute("aria-hidden")).toBe("true");
+    }
+    expect(action(root, "toggle-collapse").getAttribute("aria-expanded")).toBe("false");
+    expect(action(root, "toggle-collapse").getAttribute("aria-pressed")).toBeNull();
+    expect(
+      root.querySelector(`#${action(root, "toggle-collapse").getAttribute("aria-controls")}`),
+    ).not.toBeNull();
     expect(tab(root, "missions").title).toContain("Missions");
   });
 });

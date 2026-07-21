@@ -5,5 +5,5 @@
     "outDir": "dist"
   },
   "include": ["src/**/*.ts"],
-  "exclude": ["src/**/*.test.ts", "src/ui/**", "src/command-center/web/**"]
+  "exclude": ["src/**/*.test.ts", "src/ui/**", "src/command-center/web/**", "src/tui/main.ts"]
 }

@@ -139,6 +139,10 @@
   box-shadow: inset 3px 0 0 var(--dock-accent);
 }
 
+.workbench-dock__body[hidden] {
+  display: none;
+}
+
 .workbench-dock[data-mode="collapsed"] .workbench-dock__bar {
   border-bottom: 0;
 }

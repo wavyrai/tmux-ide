@@ -4,7 +4,6 @@
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "module": "ESNext",
     "moduleResolution": "Bundler",
-    "allowImportingTsExtensions": true,
     "noEmit": true,
     "strict": true,
     "noUncheckedIndexedAccess": true,
@@ -15,6 +14,7 @@
   },
   "include": [
     "src/ui/workbench-dock/presenter.tsx",
+    "src/ui/workbench-dock/navigation.ts",
     "src/ui/workbench-dock/web-host.tsx",
     "src/ui/workbench-dock/web-entry.tsx"
   ]

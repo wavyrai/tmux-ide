@@ -1,0 +1,10 @@
+{
+  "extends": "./tsconfig.workbench-dock-web.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "declaration": true,
+    "emitDeclarationOnly": true,
+    "rootDir": "src/ui/workbench-dock",
+    "declarationDir": "dist/ui/workbench-dock"
+  }
+}

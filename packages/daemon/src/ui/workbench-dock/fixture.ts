@@ -38,6 +38,12 @@ export const EXPECTED_WORKBENCH_DOCK_HOST_TRACE = [
   "action:toggle-maximize:maximized",
 ] as const;
 
+export const EXPECTED_WORKBENCH_DOCK_KEYBOARD_TRACE = [
+  "tab:files",
+  "tab:missions",
+  "tab:activity",
+] as const;
+
 export function createWorkbenchDockHostTrace() {
   const calls: string[] = [];
   return {

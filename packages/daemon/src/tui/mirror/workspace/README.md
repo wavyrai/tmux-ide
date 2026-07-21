@@ -61,8 +61,12 @@ host. `workbench-shell.ts` remains the single geometry/state projection and
 derives a second dock model.
 
 The OpenTUI leaves preserve the existing cell tree and root-owned event routing.
-The DOM leaves expose a semantic tablist, tab and action buttons, and a tabpanel
-with roving keyboard focus. The two hosts share one fixture/action trace and
-have separate JSX typecheck/build lanes plus transitive import-DAG guards.
+The DOM leaves expose a semantic tablist, tab and action buttons, and stable
+tabpanels whose IDs remain present while inactive or collapsed. Horizontal
+arrows use automatic activation in both hosts: they skip disabled tabs and emit
+the same semantic tab command as pointer activation. Collapse is a disclosure
+(`aria-expanded`/`aria-controls`) while maximize remains a toggle. The two hosts
+share fixture, pointer, and real-keyboard traces and have separate JSX
+typecheck/build lanes plus transitive import-DAG guards.
 Browser/Electron renderers can consume `@tmux-ide/daemon/workbench-dock-web`
 and its explicit `@tmux-ide/daemon/workbench-dock-web.css` style export.

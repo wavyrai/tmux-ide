@@ -1,6 +1,7 @@
 import { For, Show, type Component, type JSX, type ParentProps } from "solid-js";
+import type { WorkbenchDockNavigationTabId } from "./navigation.js";
 
-export type WorkbenchDockHostTabId = "files" | "changes" | "missions" | "activity";
+export type WorkbenchDockHostTabId = WorkbenchDockNavigationTabId;
 export type WorkbenchDockHostActionId = "toggle-collapse" | "toggle-maximize";
 export type WorkbenchDockHostMode = "collapsed" | "open" | "maximized";
 export type WorkbenchDockHostVariant = "compact" | "standard" | "wide";
@@ -65,6 +66,7 @@ export type WorkbenchDockTabBarLeafProps = ParentProps<{
 
 export type WorkbenchDockTabListLeafProps = ParentProps<{
   activeTabId: WorkbenchDockHostTabId;
+  tabs: readonly WorkbenchDockHostTab[];
   focused: boolean;
 }>;
 
@@ -79,12 +81,15 @@ export interface WorkbenchDockActionListLeafProps {
 
 export interface WorkbenchDockActionLeafProps {
   action: WorkbenchDockHostAction;
+  activeTabId: WorkbenchDockHostTabId;
   onActivate?: () => void;
 }
 
 export type WorkbenchDockBodyLeafProps = ParentProps<{
   projection: WorkbenchDockHostProjection;
-  activeTabId: WorkbenchDockHostTabId;
+  tabId: WorkbenchDockHostTabId;
+  active: boolean;
+  visible: boolean;
   focused: boolean;
 }>;
 
@@ -128,6 +133,7 @@ export function WorkbenchDockPresenter(props: WorkbenchDockPresenterProps) {
       <TabBar projection={props.projection}>
         <TabList
           activeTabId={props.projection.activeDockTab}
+          tabs={props.projection.tabs}
           focused={props.projection.focusZone === "dock-tabs"}
         >
           <For each={props.projection.tabs}>
@@ -144,6 +150,7 @@ export function WorkbenchDockPresenter(props: WorkbenchDockPresenterProps) {
             {(action) => (
               <Action
                 action={action}
+                activeTabId={props.projection.activeDockTab}
                 onActivate={() => props.onActionActivate?.(action.id, action.nextMode)}
               />
             )}
@@ -151,15 +158,19 @@ export function WorkbenchDockPresenter(props: WorkbenchDockPresenterProps) {
         </ActionList>
       </TabBar>
 
-      <Show when={props.projection.dockBody.height > 0}>
-        <Body
-          projection={props.projection}
-          activeTabId={props.projection.activeDockTab}
-          focused={props.projection.focusZone === "dock-body"}
-        >
-          {props.body}
-        </Body>
-      </Show>
+      <For each={props.projection.tabs}>
+        {(tab) => (
+          <Body
+            projection={props.projection}
+            tabId={tab.id}
+            active={tab.selected}
+            visible={tab.selected && props.projection.dockBody.height > 0}
+            focused={tab.selected && props.projection.focusZone === "dock-body"}
+          >
+            <Show when={tab.selected}>{props.body}</Show>
+          </Body>
+        )}
+      </For>
     </Root>
   );
 }

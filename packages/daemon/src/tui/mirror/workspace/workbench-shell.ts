@@ -1,11 +1,16 @@
 import { terminalDisplayWidth } from "../panel-host.ts";
 import type { Rect } from "../recipes.ts";
 import { clipWorkspaceText } from "./text.ts";
+import {
+  workbenchDockNavigationTarget,
+  type WorkbenchDockNavigationTabId,
+} from "../../../ui/workbench-dock/navigation.ts";
 
 export type WorkbenchVariant = "compact" | "standard" | "wide";
 export type WorkbenchDockMode = "collapsed" | "open" | "maximized";
 export type WorkbenchFocusZone = "canvas" | "dock-tabs" | "dock-body";
-export type WorkbenchDockTabId = "files" | "changes" | "missions" | "activity";
+export type WorkbenchDockTabId = WorkbenchDockNavigationTabId;
+export { workbenchDockNavigationTarget } from "../../../ui/workbench-dock/navigation.ts";
 export type WorkbenchDockActionId = "toggle-collapse" | "toggle-maximize";
 
 export interface WorkbenchShellInput {
@@ -198,17 +203,13 @@ export function moveWorkbenchDockTab(
   direction: "next" | "previous",
   disabled: ReadonlySet<WorkbenchDockTabId> = new Set(),
 ): WorkbenchDockTabId {
-  const current = Math.max(
-    0,
-    DOCK_TABS.findIndex((tab) => tab.id === active),
+  return (
+    workbenchDockNavigationTarget(
+      DOCK_TABS.map((tab) => ({ id: tab.id, disabled: disabled.has(tab.id) })),
+      active,
+      { name: direction === "next" ? "right" : "left" },
+    ) ?? active
   );
-  const delta = direction === "next" ? 1 : -1;
-  for (let step = 1; step <= DOCK_TABS.length; step += 1) {
-    const index = (current + delta * step + DOCK_TABS.length) % DOCK_TABS.length;
-    const candidate = DOCK_TABS[index]!.id;
-    if (!disabled.has(candidate)) return candidate;
-  }
-  return active;
 }
 
 export function workbenchShellHitTest(
