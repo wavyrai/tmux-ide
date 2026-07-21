@@ -142,7 +142,25 @@ describe("Electron main daemon resource broker", () => {
     });
   });
 
-  it("rejects workspace collisions after semantic name normalization", async () => {
+  it.each([" docs ", "docs "])(
+    "rejects a non-canonical raw catalog workspace name %j",
+    async (workspaceName) => {
+      const broker = new DaemonResourceBroker({
+        daemon: CONNECTED,
+        fetch: async () =>
+          json({
+            ...WORKSPACE_CATALOG,
+            workspaces: [{ workspaceName, sessionName: "docs-one" }],
+          }),
+      });
+      await expect(broker.listWorkspaces()).resolves.toMatchObject({
+        status: "error",
+        error: { code: "invalid-response" },
+      });
+    },
+  );
+
+  it("rejects duplicate canonical raw catalog identities", async () => {
     const broker = new DaemonResourceBroker({
       daemon: CONNECTED,
       fetch: async () =>
@@ -150,7 +168,7 @@ describe("Electron main daemon resource broker", () => {
           ...WORKSPACE_CATALOG,
           workspaces: [
             { workspaceName: "docs", sessionName: "docs-one" },
-            { workspaceName: " docs ", sessionName: "docs-two" },
+            { workspaceName: "docs", sessionName: "docs-two" },
           ],
         }),
     });
@@ -347,22 +365,10 @@ describe("Electron main daemon resource broker", () => {
     expect(first.filter((event) => event.type === "connection.changed")).toHaveLength(1);
   });
 
-  it("normalizes workspace event updates into the same single catalog mapping", async () => {
-    const socket = new FakeSocket();
-    const events: DesktopDaemonEvent[] = [];
-    const broker = new DaemonResourceBroker({
-      daemon: CONNECTED,
-      fetch: async () => json(WORKSPACE_CATALOG),
-      createWebSocket: () => socket,
-    });
-    expect((await broker.subscribe(["docs"], (event) => events.push(event))).status).toBe(
-      "subscribed",
-    );
-    socket.emit("open");
-    socket.emit("message", JSON.stringify({ type: "hello", daemon: IDENTITY, sessions: [] }));
-    socket.emit(
-      "message",
-      JSON.stringify({
+  it.each([
+    {
+      name: "padded add",
+      frame: {
         type: "workspace.added",
         workspace: {
           name: " docs ",
@@ -371,22 +377,77 @@ describe("Electron main daemon resource broker", () => {
           ideConfigPath: null,
           addedAt: "2026-07-21T00:00:00.000Z",
         },
-      }),
-    );
-    events.length = 0;
-    socket.emit(
-      "message",
-      JSON.stringify({ type: "terminals.changed", sessionName: "durable-docs" }),
-    );
-    socket.emit(
-      "message",
-      JSON.stringify({ type: "terminals.changed", sessionName: "docs-replaced" }),
-    );
-    expect(events).toEqual([{ type: "application-shell.changed", workspaceName: "docs" }]);
+      },
+    },
+    { name: "padded remove", frame: { type: "workspace.removed", name: " docs " } },
+    {
+      name: "canonical add collision",
+      frame: {
+        type: "workspace.added",
+        workspace: {
+          name: "docs",
+          sessionName: "docs-replaced",
+          projectDir: "/private/replaced",
+          ideConfigPath: null,
+          addedAt: "2026-07-21T00:00:00.000Z",
+        },
+      },
+    },
+  ])(
+    "rejects $name, reloads the stamped catalog, and preserves the original subscription",
+    async ({ frame }) => {
+      const originalSocket = new FakeSocket();
+      const refreshedSocket = new FakeSocket();
+      const sockets = [originalSocket, refreshedSocket];
+      const fetch = vi.fn(async () => json(WORKSPACE_CATALOG));
+      const createWebSocket = vi.fn(() => sockets.shift()!);
+      const events: DesktopDaemonEvent[] = [];
+      const broker = new DaemonResourceBroker({
+        daemon: CONNECTED,
+        fetch,
+        createWebSocket,
+      });
+      expect((await broker.subscribe(["docs"], (event) => events.push(event))).status).toBe(
+        "subscribed",
+      );
+      originalSocket.emit("open");
+      originalSocket.emit(
+        "message",
+        JSON.stringify({ type: "hello", daemon: IDENTITY, sessions: [] }),
+      );
+      events.length = 0;
 
-    socket.emit("message", JSON.stringify({ type: "workspace.removed", name: " docs " }));
-    expect(socket.close).toHaveBeenCalledWith(1000, "renderer released");
-  });
+      originalSocket.emit("message", JSON.stringify(frame));
+      expect(originalSocket.close).toHaveBeenCalledWith(1002, expect.any(String));
+      expect(events.at(-1)).toMatchObject({
+        type: "connection.changed",
+        state: "degraded",
+        error: { code: "invalid-response" },
+      });
+      await vi.waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
+      await vi.waitFor(() => expect(createWebSocket).toHaveBeenCalledTimes(2));
+
+      refreshedSocket.emit("open");
+      refreshedSocket.emit(
+        "message",
+        JSON.stringify({ type: "hello", daemon: IDENTITY, sessions: [] }),
+      );
+      expect(refreshedSocket.sent.map((value) => JSON.parse(value))).toContainEqual({
+        type: "subscribe",
+        sessions: ["durable-docs"],
+      });
+      events.length = 0;
+      refreshedSocket.emit(
+        "message",
+        JSON.stringify({ type: "terminals.changed", sessionName: "durable-docs" }),
+      );
+      refreshedSocket.emit(
+        "message",
+        JSON.stringify({ type: "terminals.changed", sessionName: "docs-replaced" }),
+      );
+      expect(events).toEqual([{ type: "application-shell.changed", workspaceName: "docs" }]);
+    },
+  );
 
   it.each([false, true])(
     "bounds the event handshake when socket open=%s and clears it on release",

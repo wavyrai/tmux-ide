@@ -384,8 +384,8 @@ export class DaemonResourceBroker {
       throw new BrokerFailure(daemonCapabilityError("daemon-identity-mismatch"));
     }
     const catalog = parsed.data.workspaces.map((entry) => this.#normalizeCatalogEntry(entry));
-    const normalizedNames = catalog.map(({ workspaceName }) => workspaceName);
-    if (new Set(normalizedNames).size !== normalizedNames.length) {
+    const canonicalNames = catalog.map(({ workspaceName }) => workspaceName);
+    if (new Set(canonicalNames).size !== canonicalNames.length) {
       throw new BrokerFailure(daemonCapabilityError("invalid-response"));
     }
     this.#workspaceCatalog = new Map(catalog.map((entry) => [entry.workspaceName, entry]));
@@ -403,7 +403,7 @@ export class DaemonResourceBroker {
         const code = character.charCodeAt(0);
         return code >= 32 && code !== 127;
       });
-    if (!workspaceName.success || !validSessionName) {
+    if (!workspaceName.success || workspaceName.data !== entry.workspaceName || !validSessionName) {
       throw new BrokerFailure(daemonCapabilityError("invalid-response"));
     }
     return { workspaceName: workspaceName.data, sessionName: entry.sessionName };
@@ -598,9 +598,13 @@ export class DaemonResourceBroker {
             workspaceName: frame.workspace.name,
             sessionName: frame.workspace.sessionName,
           });
+          if (this.#workspaceCatalog.has(entry.workspaceName)) {
+            this.#rejectWorkspaceUpdate("workspace identity collision");
+            return;
+          }
           this.#workspaceCatalog.set(entry.workspaceName, entry);
         } catch {
-          this.#rejectSocketFrame("invalid workspace update");
+          this.#rejectWorkspaceUpdate("invalid workspace update");
           return;
         }
         this.#emit({ type: "workspaces.changed" });
@@ -609,11 +613,15 @@ export class DaemonResourceBroker {
       case "workspace.removed":
         {
           const name = DesktopWorkspaceNameSchemaZ.safeParse(frame.name);
-          if (!name.success) {
-            this.#rejectSocketFrame("invalid workspace update");
+          if (
+            !name.success ||
+            name.data !== frame.name ||
+            !this.#workspaceCatalog.has(frame.name)
+          ) {
+            this.#rejectWorkspaceUpdate("invalid workspace update");
             return;
           }
-          this.#workspaceCatalog.delete(name.data);
+          this.#workspaceCatalog.delete(frame.name);
         }
         this.#emit({ type: "workspaces.changed" });
         this.#synchronizeSocket();
@@ -745,6 +753,25 @@ export class DaemonResourceBroker {
       error: daemonCapabilityError("invalid-response"),
     });
     this.#closeSocket(1002, reason);
+  }
+
+  #rejectWorkspaceUpdate(reason: string): void {
+    this.#rejectSocketFrame(reason);
+    void this.#refreshCatalogAfterRejectedUpdate();
+  }
+
+  async #refreshCatalogAfterRejectedUpdate(): Promise<void> {
+    try {
+      await this.#loadWorkspaceCatalog();
+      if (!this.#disposed) this.#synchronizeSocket();
+    } catch (error) {
+      if (this.#disposed) return;
+      this.#emit({
+        type: "connection.changed",
+        state: "degraded",
+        error: this.#boundedError(error),
+      });
+    }
   }
 
   #closeSocket(code = 1000, reason = "renderer released"): void {
