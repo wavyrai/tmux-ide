@@ -1,5 +1,6 @@
 import { defineConfig } from "vitest/config";
 import solid from "vite-plugin-solid";
+import { fileURLToPath } from "node:url";
 
 /**
  * Vitest config for the daemon package. Scoped to the suites that have
@@ -8,6 +9,12 @@ import solid from "vite-plugin-solid";
  */
 export default defineConfig({
   plugins: [solid()],
+  // vite-plugin-solid adds the `browser` export condition in test mode so DOM
+  // host tests compile with the client Solid runtime. Pin ws to its Node ESM
+  // entry so embedded-daemon tests retain WebSocketServer under that condition.
+  resolve: {
+    alias: [{ find: /^ws$/, replacement: fileURLToPath(import.meta.resolve("ws")) }],
+  },
   test: {
     environment: "node",
     include: [

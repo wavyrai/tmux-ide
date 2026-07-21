@@ -2379,8 +2379,1408 @@ var init_commands = __esm({
   }
 });
 
-// packages/contracts/src/daemon-wire.ts
+// packages/contracts/src/desktop-host.ts
 import { z as z15 } from "zod";
+var DESKTOP_HOST_API_VERSION, DesktopRuntimeKindSchemaZ, DesktopPlatformSchemaZ, DesktopThemeModeSchemaZ, DesktopThemeStateSchemaZ, DesktopWindowStateSchemaZ, DesktopDaemonPreflightSchemaZ, DesktopHostBootstrapSchemaZ, DesktopMenuResultSchemaZ, DesktopDirectorySelectionSchemaZ;
+var init_desktop_host = __esm({
+  "packages/contracts/src/desktop-host.ts"() {
+    "use strict";
+    DESKTOP_HOST_API_VERSION = 1;
+    DesktopRuntimeKindSchemaZ = z15.enum(["browser", "electron"]);
+    DesktopPlatformSchemaZ = z15.enum(["darwin", "linux", "win32", "unknown"]);
+    DesktopThemeModeSchemaZ = z15.enum(["light", "dark"]);
+    DesktopThemeStateSchemaZ = z15.object({
+      mode: DesktopThemeModeSchemaZ,
+      highContrast: z15.boolean(),
+      reducedMotion: z15.boolean()
+    }).strict();
+    DesktopWindowStateSchemaZ = z15.object({
+      maximized: z15.boolean(),
+      fullscreen: z15.boolean(),
+      focused: z15.boolean()
+    }).strict();
+    DesktopDaemonPreflightSchemaZ = z15.discriminatedUnion("status", [
+      z15.object({ status: z15.literal("ready"), apiBaseUrl: z15.string().url() }).strict(),
+      z15.object({ status: z15.literal("absent") }).strict(),
+      z15.object({ status: z15.literal("deferred"), reason: z15.string().min(1) }).strict(),
+      z15.object({ status: z15.literal("unavailable"), reason: z15.string().min(1) }).strict()
+    ]);
+    DesktopHostBootstrapSchemaZ = z15.object({
+      apiVersion: z15.literal(DESKTOP_HOST_API_VERSION),
+      runtime: DesktopRuntimeKindSchemaZ,
+      platform: DesktopPlatformSchemaZ,
+      appVersion: z15.string().min(1),
+      theme: DesktopThemeStateSchemaZ,
+      window: DesktopWindowStateSchemaZ,
+      daemon: DesktopDaemonPreflightSchemaZ
+    }).strict();
+    DesktopMenuResultSchemaZ = z15.object({ status: z15.literal("unavailable") }).strict();
+    DesktopDirectorySelectionSchemaZ = z15.object({ path: z15.string().min(1) }).strict();
+  }
+});
+
+// packages/contracts/src/experience-identifiers.ts
+import { z as z16 } from "zod";
+var SEMANTIC_ICON_IDS, SemanticIconIdSchemaZ, PANE_ROLE_IDS, PaneRoleIdSchemaZ;
+var init_experience_identifiers = __esm({
+  "packages/contracts/src/experience-identifiers.ts"() {
+    "use strict";
+    SEMANTIC_ICON_IDS = [
+      "home",
+      "terminals",
+      "files",
+      "changes",
+      "missions",
+      "activity",
+      "preview",
+      "native",
+      "more",
+      "close",
+      "minimize",
+      "maximize",
+      "restore",
+      "split-right",
+      "split-down",
+      "duplicate",
+      "dock",
+      "float",
+      "move",
+      "resize",
+      "pop-out",
+      "search",
+      "refresh",
+      "command"
+    ];
+    SemanticIconIdSchemaZ = z16.enum(SEMANTIC_ICON_IDS);
+    PANE_ROLE_IDS = [
+      "home",
+      "terminal",
+      "files",
+      "changes",
+      "missions",
+      "activity",
+      "preview",
+      "native"
+    ];
+    PaneRoleIdSchemaZ = z16.enum(PANE_ROLE_IDS);
+  }
+});
+
+// packages/contracts/src/experience-shell.ts
+import { z as z17 } from "zod";
+var ShellAreaIdSchemaZ, PRIMARY_WORKSPACE_MODE_IDS, PrimaryWorkspaceModeIdSchemaZ, DOCK_TOOL_IDS, DockToolIdSchemaZ, PRODUCT_SURFACE_IDS, ProductSurfaceIdSchemaZ, CANONICAL_SHELL_AREAS, SurfaceKindSchemaZ, modeCommand, dockCommand, CANONICAL_SURFACE_REGISTRY, surfaceById;
+var init_experience_shell = __esm({
+  "packages/contracts/src/experience-shell.ts"() {
+    "use strict";
+    init_commands();
+    init_experience_identifiers();
+    ShellAreaIdSchemaZ = z17.enum([
+      "application-bar",
+      "sidebar",
+      "primary-navigation",
+      "context-actions",
+      "workspace-canvas",
+      "bottom-dock",
+      "status-strip"
+    ]);
+    PRIMARY_WORKSPACE_MODE_IDS = ["home", "terminals"];
+    PrimaryWorkspaceModeIdSchemaZ = z17.enum(PRIMARY_WORKSPACE_MODE_IDS);
+    DOCK_TOOL_IDS = ["files", "changes", "missions", "activity"];
+    DockToolIdSchemaZ = z17.enum(DOCK_TOOL_IDS);
+    PRODUCT_SURFACE_IDS = [...PRIMARY_WORKSPACE_MODE_IDS, ...DOCK_TOOL_IDS];
+    ProductSurfaceIdSchemaZ = z17.enum(PRODUCT_SURFACE_IDS);
+    CANONICAL_SHELL_AREAS = Object.freeze([
+      { id: "application-bar", label: "Application bar", order: 0 },
+      { id: "sidebar", label: "Workspace sidebar", order: 1 },
+      { id: "primary-navigation", label: "Workspace modes", order: 2 },
+      { id: "context-actions", label: "Context actions", order: 3 },
+      { id: "workspace-canvas", label: "Workspace canvas", order: 4 },
+      { id: "bottom-dock", label: "Bottom dock", order: 5 },
+      { id: "status-strip", label: "Status and recovery", order: 6 }
+    ]);
+    SurfaceKindSchemaZ = z17.enum(["primary-mode", "dock-tool"]);
+    modeCommand = (mode) => ({
+      id: "workspace.mode.activate",
+      args: { mode }
+    });
+    dockCommand = (tool) => ({
+      id: "workspace.dock.activate",
+      args: { tool }
+    });
+    CANONICAL_SURFACE_REGISTRY = Object.freeze([
+      {
+        id: "home",
+        icon: "home",
+        label: "Home",
+        kind: "primary-mode",
+        area: "workspace-canvas",
+        order: 0,
+        owningMode: "home",
+        shortcut: "F1",
+        activation: modeCommand("home")
+      },
+      {
+        id: "terminals",
+        icon: "terminals",
+        label: "Terminals",
+        kind: "primary-mode",
+        area: "workspace-canvas",
+        order: 1,
+        owningMode: "terminals",
+        shortcut: "F2",
+        activation: modeCommand("terminals")
+      },
+      {
+        id: "files",
+        icon: "files",
+        label: "Files",
+        kind: "dock-tool",
+        area: "bottom-dock",
+        order: 0,
+        owningMode: "terminals",
+        shortcut: "F3",
+        activation: dockCommand("files")
+      },
+      {
+        id: "changes",
+        icon: "changes",
+        label: "Changes",
+        kind: "dock-tool",
+        area: "bottom-dock",
+        order: 1,
+        owningMode: "terminals",
+        shortcut: "F4",
+        activation: dockCommand("changes")
+      },
+      {
+        id: "missions",
+        icon: "missions",
+        label: "Missions",
+        kind: "dock-tool",
+        area: "bottom-dock",
+        order: 2,
+        owningMode: "terminals",
+        shortcut: "F6",
+        activation: dockCommand("missions")
+      },
+      {
+        id: "activity",
+        icon: "activity",
+        label: "Activity",
+        kind: "dock-tool",
+        area: "bottom-dock",
+        order: 3,
+        owningMode: "terminals",
+        shortcut: "F9",
+        activation: dockCommand("activity")
+      }
+    ]);
+    surfaceById = new Map(CANONICAL_SURFACE_REGISTRY.map((surface) => [surface.id, surface]));
+    for (const surface of CANONICAL_SURFACE_REGISTRY) {
+      CommandIdSchemaZ.parse(surface.activation.id);
+      SemanticIconIdSchemaZ.parse(surface.icon);
+    }
+  }
+});
+
+// packages/contracts/src/visual-tokens.ts
+import { z as z18 } from "zod";
+function color(hex) {
+  const normalized = hex.replace(/^#/u, "");
+  return {
+    space: "srgb",
+    red: Number.parseInt(normalized.slice(0, 2), 16),
+    green: Number.parseInt(normalized.slice(2, 4), 16),
+    blue: Number.parseInt(normalized.slice(4, 6), 16),
+    alpha: 255
+  };
+}
+function mixSrgbColors(left, right, rightWeight) {
+  const weight = Math.max(0, Math.min(1, rightWeight));
+  const channel = (a, b) => Math.round(a * (1 - weight) + b * weight);
+  return {
+    space: "srgb",
+    red: channel(left.red, right.red),
+    green: channel(left.green, right.green),
+    blue: channel(left.blue, right.blue),
+    alpha: channel(left.alpha, right.alpha)
+  };
+}
+function deriveFocusedHeader(header, focus) {
+  return mixSrgbColors(header, focus, 0.16);
+}
+function baseTokens(appearance) {
+  const dark = appearance === "dark";
+  const header = color(dark ? "17171f" : "ececf1");
+  const focus = color(dark ? "68a8ff" : "1769d2");
+  return VisualTokensV1SchemaZ.parse({
+    surfaces: {
+      canvas: color(dark ? "0e0e12" : "f5f5f7"),
+      panel: color(dark ? "13131a" : "ffffff"),
+      panelRaised: color(dark ? "1b1b24" : "ffffff"),
+      terminal: color(dark ? "0b0b10" : "fbfbfd"),
+      header,
+      headerActive: deriveFocusedHeader(header, focus),
+      command: color(dark ? "181821" : "ffffff")
+    },
+    text: {
+      primary: color(dark ? "dedee6" : "202027"),
+      secondary: color(dark ? "a5a5b3" : "555563"),
+      muted: color(dark ? "7b7b8a" : "72727f"),
+      bright: color(dark ? "ffffff" : "09090d"),
+      inverse: color(dark ? "101015" : "ffffff"),
+      link: color(dark ? "62d9e8" : "006c7a")
+    },
+    borders: {
+      subtle: color(dark ? "242430" : "dedee5"),
+      default: color(dark ? "343445" : "c3c3ce"),
+      focused: focus,
+      selected: color(dark ? "d77cff" : "7d35a8"),
+      attention: color(dark ? "f0bd5c" : "8d5c00"),
+      danger: color(dark ? "ff6475" : "b42334")
+    },
+    statusTone: {
+      neutral: color(dark ? "8b8b99" : "61616c"),
+      info: color(dark ? "62b9ff" : "1769d2"),
+      warning: color(dark ? "f0bd5c" : "8d5c00"),
+      danger: color(dark ? "ff6475" : "b42334"),
+      success: color(dark ? "62d49a" : "18764b")
+    },
+    selection: {
+      selection: color(dark ? "315f89" : "cce4ff"),
+      selectionText: color(dark ? "ffffff" : "172334"),
+      hover: color(dark ? "222b38" : "e8eef6"),
+      pressed: color(dark ? "2c394a" : "dbe5f1"),
+      disabled: color(dark ? "1a1a20" : "ececf0")
+    },
+    density: {
+      cellHeight: rhythm(1),
+      headerHeight: rhythm(1),
+      statusHeight: rhythm(1),
+      inlineGap: rhythm(0.33),
+      sectionGap: rhythm(1),
+      controlPadding: rhythm(0.45)
+    },
+    shape: {
+      dockedRadius: rhythm(0),
+      floatingRadius: rhythm(0.33),
+      controlRadius: rhythm(0.22),
+      statusRadius: rhythm(0.44)
+    },
+    elevation: {
+      floating: { level: 1, intent: "raised" },
+      palette: { level: 3, intent: "overlay" },
+      windowMode: { level: 2, intent: "overlay" }
+    },
+    motion: {
+      instant: duration(0),
+      fast: duration(90),
+      standard: duration(150),
+      emphasized: duration(220),
+      easing: { standard: "standard", emphasized: "decelerate" }
+    },
+    typography: {
+      workspace: {
+        family: "monospace",
+        weight: "regular",
+        lineHeight: ratio(1.5),
+        truncation: "ellipsis"
+      },
+      label: {
+        family: "monospace",
+        weight: "medium",
+        lineHeight: ratio(1.35),
+        truncation: "ellipsis"
+      },
+      title: {
+        family: "monospace",
+        weight: "semibold",
+        lineHeight: ratio(1.35),
+        truncation: "ellipsis"
+      },
+      metadata: {
+        family: "monospace",
+        weight: "regular",
+        lineHeight: ratio(1.35),
+        truncation: "ellipsis"
+      },
+      code: {
+        family: "monospace",
+        weight: "regular",
+        lineHeight: ratio(1.5),
+        truncation: "clip"
+      }
+    },
+    focus: {
+      outline: rhythm(0.12),
+      outlineOffset: rhythm(0.05),
+      focusContrast: ratio(4.5),
+      highContrastOutline: color(dark ? "ffffff" : "000000")
+    },
+    windowActivity: {
+      active: { opacity: ratio(1), contrast: ratio(1) },
+      inactive: { opacity: ratio(0.82), contrast: ratio(0.88) }
+    }
+  });
+}
+var VISUAL_THEME_VERSION, DENSITY_TOKEN_ROLES, SHAPE_TOKEN_ROLES, ELEVATION_TOKEN_ROLES, MOTION_DURATION_ROLES, TYPOGRAPHY_TOKEN_ROLES, WINDOW_ACTIVITY_TOKEN_ROLES, RendererNeutralColorSchemaZ, RhythmValueSchemaZ, RatioValueSchemaZ, DurationValueSchemaZ, ElevationValueSchemaZ, TypographyValueSchemaZ, MotionEasingSchemaZ, WindowActivityValueSchemaZ, SurfacesSchemaZ, TextSchemaZ, BordersSchemaZ, StatusToneSchemaZ, SelectionSchemaZ, DensitySchemaZ, ShapeSchemaZ, ElevationSchemaZ, MotionSchemaZ, TypographySchemaZ, FocusSchemaZ, WindowActivitySchemaZ, VisualTokensV1SchemaZ, VisualTokenOverridesV1SchemaZ, ThemeIdSchemaZ, ThemeNameSchemaZ, ThemeAppearanceSchemaZ, VisualThemeDocumentV1SchemaZ, VisualThemeDocumentV0SchemaZ, ThemeAccessibilityPreferencesSchemaZ, groupSchemas, rhythm, ratio, duration, BUILTIN_VISUAL_THEMES;
+var init_visual_tokens = __esm({
+  "packages/contracts/src/visual-tokens.ts"() {
+    "use strict";
+    VISUAL_THEME_VERSION = 1;
+    DENSITY_TOKEN_ROLES = [
+      "cellHeight",
+      "headerHeight",
+      "statusHeight",
+      "inlineGap",
+      "sectionGap",
+      "controlPadding"
+    ];
+    SHAPE_TOKEN_ROLES = [
+      "dockedRadius",
+      "floatingRadius",
+      "controlRadius",
+      "statusRadius"
+    ];
+    ELEVATION_TOKEN_ROLES = ["floating", "palette", "windowMode"];
+    MOTION_DURATION_ROLES = ["instant", "fast", "standard", "emphasized"];
+    TYPOGRAPHY_TOKEN_ROLES = ["workspace", "label", "title", "metadata", "code"];
+    WINDOW_ACTIVITY_TOKEN_ROLES = ["active", "inactive"];
+    RendererNeutralColorSchemaZ = z18.object({
+      space: z18.literal("srgb"),
+      red: z18.number().int().min(0).max(255),
+      green: z18.number().int().min(0).max(255),
+      blue: z18.number().int().min(0).max(255),
+      alpha: z18.number().int().min(0).max(255)
+    }).strict();
+    RhythmValueSchemaZ = z18.object({ unit: z18.literal("rhythm"), value: z18.number().finite().min(0).max(16) }).strict();
+    RatioValueSchemaZ = z18.object({ unit: z18.literal("ratio"), value: z18.number().finite().min(0).max(20) }).strict();
+    DurationValueSchemaZ = z18.object({ unit: z18.literal("ms"), value: z18.number().finite().min(0).max(1e4) }).strict();
+    ElevationValueSchemaZ = z18.object({
+      level: z18.number().int().min(0).max(4),
+      intent: z18.enum(["flat", "raised", "overlay"])
+    }).strict();
+    TypographyValueSchemaZ = z18.object({
+      family: z18.enum(["monospace", "system"]),
+      weight: z18.enum(["regular", "medium", "semibold", "bold"]),
+      lineHeight: RatioValueSchemaZ,
+      truncation: z18.enum(["ellipsis", "clip", "wrap"])
+    }).strict();
+    MotionEasingSchemaZ = z18.object({
+      standard: z18.enum(["linear", "standard", "decelerate"]),
+      emphasized: z18.enum(["linear", "standard", "decelerate"])
+    }).strict();
+    WindowActivityValueSchemaZ = z18.object({ opacity: RatioValueSchemaZ, contrast: RatioValueSchemaZ }).strict();
+    SurfacesSchemaZ = z18.object({
+      canvas: RendererNeutralColorSchemaZ,
+      panel: RendererNeutralColorSchemaZ,
+      panelRaised: RendererNeutralColorSchemaZ,
+      terminal: RendererNeutralColorSchemaZ,
+      header: RendererNeutralColorSchemaZ,
+      headerActive: RendererNeutralColorSchemaZ,
+      command: RendererNeutralColorSchemaZ
+    }).strict();
+    TextSchemaZ = z18.object({
+      primary: RendererNeutralColorSchemaZ,
+      secondary: RendererNeutralColorSchemaZ,
+      muted: RendererNeutralColorSchemaZ,
+      bright: RendererNeutralColorSchemaZ,
+      inverse: RendererNeutralColorSchemaZ,
+      link: RendererNeutralColorSchemaZ
+    }).strict();
+    BordersSchemaZ = z18.object({
+      subtle: RendererNeutralColorSchemaZ,
+      default: RendererNeutralColorSchemaZ,
+      focused: RendererNeutralColorSchemaZ,
+      selected: RendererNeutralColorSchemaZ,
+      attention: RendererNeutralColorSchemaZ,
+      danger: RendererNeutralColorSchemaZ
+    }).strict();
+    StatusToneSchemaZ = z18.object({
+      neutral: RendererNeutralColorSchemaZ,
+      info: RendererNeutralColorSchemaZ,
+      warning: RendererNeutralColorSchemaZ,
+      danger: RendererNeutralColorSchemaZ,
+      success: RendererNeutralColorSchemaZ
+    }).strict();
+    SelectionSchemaZ = z18.object({
+      selection: RendererNeutralColorSchemaZ,
+      selectionText: RendererNeutralColorSchemaZ,
+      hover: RendererNeutralColorSchemaZ,
+      pressed: RendererNeutralColorSchemaZ,
+      disabled: RendererNeutralColorSchemaZ
+    }).strict();
+    DensitySchemaZ = z18.object({
+      cellHeight: RhythmValueSchemaZ,
+      headerHeight: RhythmValueSchemaZ,
+      statusHeight: RhythmValueSchemaZ,
+      inlineGap: RhythmValueSchemaZ,
+      sectionGap: RhythmValueSchemaZ,
+      controlPadding: RhythmValueSchemaZ
+    }).strict();
+    ShapeSchemaZ = z18.object({
+      dockedRadius: RhythmValueSchemaZ,
+      floatingRadius: RhythmValueSchemaZ,
+      controlRadius: RhythmValueSchemaZ,
+      statusRadius: RhythmValueSchemaZ
+    }).strict();
+    ElevationSchemaZ = z18.object({
+      floating: ElevationValueSchemaZ,
+      palette: ElevationValueSchemaZ,
+      windowMode: ElevationValueSchemaZ
+    }).strict();
+    MotionSchemaZ = z18.object({
+      instant: DurationValueSchemaZ,
+      fast: DurationValueSchemaZ,
+      standard: DurationValueSchemaZ,
+      emphasized: DurationValueSchemaZ,
+      easing: MotionEasingSchemaZ
+    }).strict();
+    TypographySchemaZ = z18.object({
+      workspace: TypographyValueSchemaZ,
+      label: TypographyValueSchemaZ,
+      title: TypographyValueSchemaZ,
+      metadata: TypographyValueSchemaZ,
+      code: TypographyValueSchemaZ
+    }).strict();
+    FocusSchemaZ = z18.object({
+      outline: RhythmValueSchemaZ,
+      outlineOffset: RhythmValueSchemaZ,
+      focusContrast: RatioValueSchemaZ,
+      highContrastOutline: RendererNeutralColorSchemaZ
+    }).strict();
+    WindowActivitySchemaZ = z18.object({ active: WindowActivityValueSchemaZ, inactive: WindowActivityValueSchemaZ }).strict();
+    VisualTokensV1SchemaZ = z18.object({
+      surfaces: SurfacesSchemaZ,
+      text: TextSchemaZ,
+      borders: BordersSchemaZ,
+      statusTone: StatusToneSchemaZ,
+      selection: SelectionSchemaZ,
+      density: DensitySchemaZ,
+      shape: ShapeSchemaZ,
+      elevation: ElevationSchemaZ,
+      motion: MotionSchemaZ,
+      typography: TypographySchemaZ,
+      focus: FocusSchemaZ,
+      windowActivity: WindowActivitySchemaZ
+    }).strict();
+    VisualTokenOverridesV1SchemaZ = z18.object({
+      surfaces: SurfacesSchemaZ.partial().optional(),
+      text: TextSchemaZ.partial().optional(),
+      borders: BordersSchemaZ.partial().optional(),
+      statusTone: StatusToneSchemaZ.partial().optional(),
+      selection: SelectionSchemaZ.partial().optional(),
+      density: DensitySchemaZ.partial().optional(),
+      shape: ShapeSchemaZ.partial().optional(),
+      elevation: ElevationSchemaZ.partial().optional(),
+      motion: MotionSchemaZ.partial().optional(),
+      typography: TypographySchemaZ.partial().optional(),
+      focus: FocusSchemaZ.partial().optional(),
+      windowActivity: WindowActivitySchemaZ.partial().optional()
+    }).strict();
+    ThemeIdSchemaZ = z18.string().min(1).max(80).regex(/^[a-z0-9][a-z0-9._-]*$/u);
+    ThemeNameSchemaZ = z18.string().min(1).max(120);
+    ThemeAppearanceSchemaZ = z18.enum(["dark", "light"]);
+    VisualThemeDocumentV1SchemaZ = z18.object({
+      version: z18.literal(VISUAL_THEME_VERSION),
+      id: ThemeIdSchemaZ,
+      name: ThemeNameSchemaZ,
+      appearance: ThemeAppearanceSchemaZ.optional(),
+      overrides: VisualTokenOverridesV1SchemaZ
+    }).strict();
+    VisualThemeDocumentV0SchemaZ = z18.object({
+      version: z18.literal(0),
+      id: ThemeIdSchemaZ,
+      name: ThemeNameSchemaZ,
+      appearance: ThemeAppearanceSchemaZ.optional(),
+      tokens: VisualTokenOverridesV1SchemaZ
+    }).strict();
+    ThemeAccessibilityPreferencesSchemaZ = z18.object({ reducedMotion: z18.boolean(), increasedContrast: z18.boolean() }).strict();
+    groupSchemas = {
+      surfaces: {
+        canvas: RendererNeutralColorSchemaZ,
+        panel: RendererNeutralColorSchemaZ,
+        panelRaised: RendererNeutralColorSchemaZ,
+        terminal: RendererNeutralColorSchemaZ,
+        header: RendererNeutralColorSchemaZ,
+        headerActive: RendererNeutralColorSchemaZ,
+        command: RendererNeutralColorSchemaZ
+      },
+      text: {
+        primary: RendererNeutralColorSchemaZ,
+        secondary: RendererNeutralColorSchemaZ,
+        muted: RendererNeutralColorSchemaZ,
+        bright: RendererNeutralColorSchemaZ,
+        inverse: RendererNeutralColorSchemaZ,
+        link: RendererNeutralColorSchemaZ
+      },
+      borders: {
+        subtle: RendererNeutralColorSchemaZ,
+        default: RendererNeutralColorSchemaZ,
+        focused: RendererNeutralColorSchemaZ,
+        selected: RendererNeutralColorSchemaZ,
+        attention: RendererNeutralColorSchemaZ,
+        danger: RendererNeutralColorSchemaZ
+      },
+      statusTone: {
+        neutral: RendererNeutralColorSchemaZ,
+        info: RendererNeutralColorSchemaZ,
+        warning: RendererNeutralColorSchemaZ,
+        danger: RendererNeutralColorSchemaZ,
+        success: RendererNeutralColorSchemaZ
+      },
+      selection: {
+        selection: RendererNeutralColorSchemaZ,
+        selectionText: RendererNeutralColorSchemaZ,
+        hover: RendererNeutralColorSchemaZ,
+        pressed: RendererNeutralColorSchemaZ,
+        disabled: RendererNeutralColorSchemaZ
+      },
+      density: Object.fromEntries(DENSITY_TOKEN_ROLES.map((role) => [role, RhythmValueSchemaZ])),
+      shape: Object.fromEntries(SHAPE_TOKEN_ROLES.map((role) => [role, RhythmValueSchemaZ])),
+      elevation: Object.fromEntries(ELEVATION_TOKEN_ROLES.map((role) => [role, ElevationValueSchemaZ])),
+      motion: {
+        ...Object.fromEntries(MOTION_DURATION_ROLES.map((role) => [role, DurationValueSchemaZ])),
+        easing: MotionEasingSchemaZ
+      },
+      typography: Object.fromEntries(
+        TYPOGRAPHY_TOKEN_ROLES.map((role) => [role, TypographyValueSchemaZ])
+      ),
+      focus: {
+        outline: RhythmValueSchemaZ,
+        outlineOffset: RhythmValueSchemaZ,
+        focusContrast: RatioValueSchemaZ,
+        highContrastOutline: RendererNeutralColorSchemaZ
+      },
+      windowActivity: Object.fromEntries(
+        WINDOW_ACTIVITY_TOKEN_ROLES.map((role) => [role, WindowActivityValueSchemaZ])
+      )
+    };
+    rhythm = (value) => ({ unit: "rhythm", value });
+    ratio = (value) => ({ unit: "ratio", value });
+    duration = (value) => ({ unit: "ms", value });
+    BUILTIN_VISUAL_THEMES = Object.freeze({ dark: baseTokens("dark"), light: baseTokens("light") });
+  }
+});
+
+// packages/contracts/src/visual-recipes.ts
+var VISUAL_RECIPE_REGISTRY;
+var init_visual_recipes = __esm({
+  "packages/contracts/src/visual-recipes.ts"() {
+    "use strict";
+    VISUAL_RECIPE_REGISTRY = Object.freeze(
+      {
+        "application-bar": {
+          id: "application-bar",
+          surface: "header",
+          text: "bright",
+          border: "subtle",
+          typography: "label",
+          shape: "dockedRadius",
+          elevation: null
+        },
+        sidebar: {
+          id: "sidebar",
+          surface: "panel",
+          text: "secondary",
+          border: "subtle",
+          typography: "metadata",
+          shape: "dockedRadius",
+          elevation: null
+        },
+        "primary-navigation": {
+          id: "primary-navigation",
+          surface: "header",
+          text: "primary",
+          border: "subtle",
+          typography: "label",
+          shape: "controlRadius",
+          elevation: null
+        },
+        "context-actions": {
+          id: "context-actions",
+          surface: "header",
+          text: "secondary",
+          border: "subtle",
+          typography: "label",
+          shape: "controlRadius",
+          elevation: null
+        },
+        "workspace-canvas": {
+          id: "workspace-canvas",
+          surface: "canvas",
+          text: "primary",
+          border: "subtle",
+          typography: "workspace",
+          shape: "dockedRadius",
+          elevation: null
+        },
+        "bottom-dock": {
+          id: "bottom-dock",
+          surface: "panel",
+          text: "primary",
+          border: "default",
+          typography: "workspace",
+          shape: "dockedRadius",
+          elevation: null
+        },
+        "status-strip": {
+          id: "status-strip",
+          surface: "header",
+          text: "muted",
+          border: "subtle",
+          typography: "metadata",
+          shape: "statusRadius",
+          elevation: null
+        },
+        "pane-docked": {
+          id: "pane-docked",
+          surface: "terminal",
+          text: "primary",
+          border: "default",
+          typography: "workspace",
+          shape: "dockedRadius",
+          elevation: null
+        },
+        "pane-floating": {
+          id: "pane-floating",
+          surface: "panelRaised",
+          text: "primary",
+          border: "default",
+          typography: "workspace",
+          shape: "floatingRadius",
+          elevation: "floating"
+        },
+        "command-palette": {
+          id: "command-palette",
+          surface: "command",
+          text: "primary",
+          border: "focused",
+          typography: "workspace",
+          shape: "floatingRadius",
+          elevation: "palette"
+        }
+      }
+    );
+  }
+});
+
+// packages/contracts/src/pane-appearance.ts
+import { z as z19 } from "zod";
+var SemanticProductIdSchemaZ, PANE_STRUCTURE_IDS, PaneStructureSchemaZ, AGENT_ACTIVITY_IDS, AgentActivitySchemaZ, CANONICAL_DOMAIN_STATUS_IDS, CanonicalDomainStatusSchemaZ, PANE_ATTENTION_IDS, PaneAttentionSchemaZ, PaneVisualStateV1SchemaZ, DOMAIN_STATUS_TONES;
+var init_pane_appearance = __esm({
+  "packages/contracts/src/pane-appearance.ts"() {
+    "use strict";
+    SemanticProductIdSchemaZ = z19.string().min(1).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/u, "semantic id contains a transport-only character");
+    PANE_STRUCTURE_IDS = ["docked", "floating", "maximized"];
+    PaneStructureSchemaZ = z19.enum(PANE_STRUCTURE_IDS);
+    AGENT_ACTIVITY_IDS = [
+      "idle",
+      "running",
+      "waiting",
+      "complete",
+      "failed",
+      "disconnected"
+    ];
+    AgentActivitySchemaZ = z19.enum(AGENT_ACTIVITY_IDS);
+    CANONICAL_DOMAIN_STATUS_IDS = [
+      "idle",
+      "running",
+      "blocked",
+      "review",
+      "done",
+      "disconnected",
+      "recovering"
+    ];
+    CanonicalDomainStatusSchemaZ = z19.enum(CANONICAL_DOMAIN_STATUS_IDS);
+    PANE_ATTENTION_IDS = [
+      "none",
+      "unread",
+      "requested",
+      "warning",
+      "destructive",
+      "recovery"
+    ];
+    PaneAttentionSchemaZ = z19.enum(PANE_ATTENTION_IDS);
+    PaneVisualStateV1SchemaZ = z19.object({
+      structure: PaneStructureSchemaZ,
+      applicationFocus: z19.object({ pane: z19.boolean(), terminalInput: z19.boolean(), windowActive: z19.boolean() }).strict(),
+      agentActivity: AgentActivitySchemaZ,
+      domainStatus: CanonicalDomainStatusSchemaZ,
+      attention: PaneAttentionSchemaZ,
+      layoutInteraction: z19.object({
+        editable: z19.boolean(),
+        selected: z19.boolean(),
+        dragging: z19.boolean(),
+        resizing: z19.boolean(),
+        previewing: z19.boolean()
+      }).strict(),
+      controlInteraction: z19.object({
+        hover: z19.boolean(),
+        focusVisible: z19.boolean(),
+        pressed: z19.boolean(),
+        disabled: z19.boolean(),
+        loading: z19.boolean()
+      }).strict()
+    }).strict();
+    DOMAIN_STATUS_TONES = Object.freeze({
+      idle: "neutral",
+      running: "info",
+      blocked: "warning",
+      review: "info",
+      done: "success",
+      disconnected: "danger",
+      recovering: "danger"
+    });
+  }
+});
+
+// packages/contracts/src/focus-overlay.ts
+import { z as z20 } from "zod";
+var FocusZoneSchemaZ, SemanticFocusTargetSchemaZ, OverlayKindSchemaZ, SemanticOverlaySchemaZ, FocusOverlayStateV1SchemaZ;
+var init_focus_overlay = __esm({
+  "packages/contracts/src/focus-overlay.ts"() {
+    "use strict";
+    init_experience_shell();
+    init_pane_appearance();
+    FocusZoneSchemaZ = z20.enum([
+      "application-bar",
+      "sidebar",
+      "primary-navigation",
+      "canvas",
+      "dock-tabs",
+      "dock-body",
+      "status-strip",
+      "terminal"
+    ]);
+    SemanticFocusTargetSchemaZ = z20.discriminatedUnion("kind", [
+      z20.object({ kind: z20.literal("zone"), zone: FocusZoneSchemaZ }).strict(),
+      z20.object({
+        kind: z20.literal("pane"),
+        paneId: SemanticProductIdSchemaZ,
+        input: z20.enum(["chrome", "terminal"])
+      }).strict(),
+      z20.object({ kind: z20.literal("dock-tool"), tool: DockToolIdSchemaZ }).strict(),
+      z20.object({
+        kind: z20.literal("control"),
+        controlId: SemanticProductIdSchemaZ,
+        zone: FocusZoneSchemaZ
+      }).strict()
+    ]);
+    OverlayKindSchemaZ = z20.enum(["modal-dialog", "command-palette", "context-menu"]);
+    SemanticOverlaySchemaZ = z20.object({
+      id: SemanticProductIdSchemaZ,
+      kind: OverlayKindSchemaZ,
+      focusReturnTarget: SemanticFocusTargetSchemaZ
+    }).strict();
+    FocusOverlayStateV1SchemaZ = z20.object({
+      windowActivity: z20.enum(["active", "inactive"]),
+      focusZone: FocusZoneSchemaZ,
+      appFocusedPaneId: SemanticProductIdSchemaZ.nullable(),
+      terminalInputPaneId: SemanticProductIdSchemaZ.nullable(),
+      layoutSelectedPaneId: SemanticProductIdSchemaZ.nullable(),
+      overlays: z20.array(SemanticOverlaySchemaZ).max(16)
+    }).strict().superRefine((state, ctx) => {
+      const ids = state.overlays.map((overlay) => overlay.id);
+      if (new Set(ids).size !== ids.length) {
+        ctx.addIssue({
+          code: z20.ZodIssueCode.custom,
+          message: "overlay ids must be unique",
+          path: ["overlays"]
+        });
+      }
+      if (state.terminalInputPaneId !== null && state.appFocusedPaneId !== state.terminalInputPaneId) {
+        ctx.addIssue({
+          code: z20.ZodIssueCode.custom,
+          message: "terminal input owner must also be the app-focused pane",
+          path: ["terminalInputPaneId"]
+        });
+      }
+    });
+  }
+});
+
+// packages/contracts/src/cohesion-fixture.ts
+import { z as z21 } from "zod";
+function deepFreeze(value) {
+  if (value === null || typeof value !== "object" || Object.isFrozen(value)) return value;
+  for (const child of Object.values(value)) deepFreeze(child);
+  return Object.freeze(value);
+}
+var COHESION_FIXTURE_VERSION, LabelSchemaZ, OptionalLabelSchemaZ, ReadinessSchemaZ, SessionSidebarItemSchemaZ, AgentSidebarItemSchemaZ, PaneActionSchemaZ, PaneFixtureSchemaZ, DockToolDataSchemaZ, DockToolFixtureSchemaZ, ConnectionRecoverySchemaZ, CohesionFixtureV1SchemaZ, paneActions, COHESION_FIXTURE_V1_INPUT, COHESION_FIXTURE_V1;
+var init_cohesion_fixture = __esm({
+  "packages/contracts/src/cohesion-fixture.ts"() {
+    "use strict";
+    init_commands();
+    init_experience_shell();
+    init_experience_identifiers();
+    init_focus_overlay();
+    init_pane_appearance();
+    init_visual_tokens();
+    COHESION_FIXTURE_VERSION = 1;
+    LabelSchemaZ = z21.string().min(1).max(160);
+    OptionalLabelSchemaZ = z21.string().min(1).max(240).nullable();
+    ReadinessSchemaZ = z21.object({
+      state: z21.enum(["ready", "warning", "blocked"]),
+      facts: z21.array(LabelSchemaZ).max(24),
+      warnings: z21.array(LabelSchemaZ).max(24)
+    }).strict();
+    SessionSidebarItemSchemaZ = z21.object({
+      id: SemanticProductIdSchemaZ,
+      label: LabelSchemaZ,
+      state: z21.enum(["connected", "reconnecting", "disconnected"]),
+      active: z21.boolean()
+    }).strict();
+    AgentSidebarItemSchemaZ = z21.object({
+      id: SemanticProductIdSchemaZ,
+      name: LabelSchemaZ,
+      harness: z21.enum(["codex", "claude-code", "custom"]),
+      activity: AgentActivitySchemaZ,
+      paneId: SemanticProductIdSchemaZ.nullable(),
+      attention: z21.boolean()
+    }).strict();
+    PaneActionSchemaZ = z21.object({
+      id: z21.enum([
+        "focus-terminal",
+        "split",
+        "duplicate",
+        "float-toggle",
+        "maximize-toggle",
+        "detach"
+      ]),
+      icon: SemanticIconIdSchemaZ,
+      label: LabelSchemaZ,
+      commandId: CommandIdSchemaZ,
+      available: z21.boolean(),
+      disabledReason: OptionalLabelSchemaZ
+    }).strict().refine((action) => action.available === (action.disabledReason === null), {
+      message: "available actions must not have a disabled reason and unavailable actions must",
+      path: ["disabledReason"]
+    });
+    PaneFixtureSchemaZ = z21.object({
+      id: SemanticProductIdSchemaZ,
+      role: PaneRoleIdSchemaZ,
+      title: LabelSchemaZ,
+      subtitle: OptionalLabelSchemaZ,
+      terminalSourceId: SemanticProductIdSchemaZ.nullable(),
+      agentId: SemanticProductIdSchemaZ.nullable(),
+      state: PaneVisualStateV1SchemaZ,
+      actions: z21.array(PaneActionSchemaZ).min(1).max(6)
+    }).strict().superRefine((pane, ctx) => {
+      const expectedOrder = [
+        "focus-terminal",
+        "split",
+        "duplicate",
+        "float-toggle",
+        "maximize-toggle",
+        "detach"
+      ];
+      let last = -1;
+      for (const [index, action] of pane.actions.entries()) {
+        const order = expectedOrder.indexOf(action.id);
+        if (order <= last) {
+          ctx.addIssue({
+            code: z21.ZodIssueCode.custom,
+            message: "pane actions must follow canonical action order",
+            path: ["actions", index, "id"]
+          });
+        }
+        last = order;
+      }
+    });
+    DockToolDataSchemaZ = z21.discriminatedUnion("kind", [
+      z21.object({
+        kind: z21.literal("files"),
+        selectedResourceId: SemanticProductIdSchemaZ.nullable(),
+        fileCount: z21.number().int().nonnegative()
+      }).strict(),
+      z21.object({
+        kind: z21.literal("changes"),
+        selectedResourceId: SemanticProductIdSchemaZ.nullable(),
+        changeCount: z21.number().int().nonnegative()
+      }).strict(),
+      z21.object({
+        kind: z21.literal("missions"),
+        missionId: SemanticProductIdSchemaZ,
+        title: LabelSchemaZ,
+        status: CanonicalDomainStatusSchemaZ,
+        goalCount: z21.number().int().nonnegative(),
+        taskCount: z21.number().int().nonnegative()
+      }).strict(),
+      z21.object({
+        kind: z21.literal("activity"),
+        eventCount: z21.number().int().nonnegative(),
+        latestEventLabel: OptionalLabelSchemaZ
+      }).strict()
+    ]);
+    DockToolFixtureSchemaZ = z21.object({
+      id: DockToolIdSchemaZ,
+      label: LabelSchemaZ,
+      shortcut: LabelSchemaZ,
+      unreadCount: z21.number().int().nonnegative(),
+      disabledReason: OptionalLabelSchemaZ,
+      data: DockToolDataSchemaZ
+    }).strict().refine((tool) => tool.id === tool.data.kind, {
+      message: "dock tool data kind must match its canonical tool id",
+      path: ["data", "kind"]
+    });
+    ConnectionRecoverySchemaZ = z21.object({
+      state: z21.enum(["connected", "reconnecting", "disconnected", "recovering"]),
+      message: LabelSchemaZ,
+      safeState: LabelSchemaZ,
+      nextAction: LabelSchemaZ
+    }).strict();
+    CohesionFixtureV1SchemaZ = z21.object({
+      version: z21.literal(COHESION_FIXTURE_VERSION),
+      project: z21.object({
+        id: SemanticProductIdSchemaZ,
+        name: LabelSchemaZ,
+        rootLabel: LabelSchemaZ,
+        readiness: ReadinessSchemaZ
+      }).strict(),
+      workspace: z21.object({
+        id: SemanticProductIdSchemaZ,
+        name: LabelSchemaZ,
+        activeMode: PrimaryWorkspaceModeIdSchemaZ,
+        session: SessionSidebarItemSchemaZ,
+        sidebar: z21.object({
+          sessions: z21.array(SessionSidebarItemSchemaZ).min(1).max(32),
+          agents: z21.array(AgentSidebarItemSchemaZ).max(64)
+        }).strict()
+      }).strict(),
+      panes: z21.array(PaneFixtureSchemaZ).min(1).max(32),
+      dock: z21.object({
+        mode: z21.enum(["collapsed", "open", "maximized"]),
+        activeTool: DockToolIdSchemaZ,
+        tools: z21.array(DockToolFixtureSchemaZ).length(4)
+      }).strict(),
+      focus: FocusOverlayStateV1SchemaZ,
+      theme: z21.object({
+        user: VisualThemeDocumentV1SchemaZ.nullable(),
+        project: VisualThemeDocumentV1SchemaZ.nullable(),
+        accessibility: ThemeAccessibilityPreferencesSchemaZ
+      }).strict(),
+      connection: ConnectionRecoverySchemaZ
+    }).strict().superRefine((fixture, ctx) => {
+      const paneIds = fixture.panes.map((pane) => pane.id);
+      const paneIdSet = new Set(paneIds);
+      if (paneIdSet.size !== paneIds.length) {
+        ctx.addIssue({
+          code: z21.ZodIssueCode.custom,
+          message: "pane ids must be unique",
+          path: ["panes"]
+        });
+      }
+      const agentIds = fixture.workspace.sidebar.agents.map((agent) => agent.id);
+      if (new Set(agentIds).size !== agentIds.length) {
+        ctx.addIssue({
+          code: z21.ZodIssueCode.custom,
+          message: "agent ids must be unique",
+          path: ["workspace", "sidebar", "agents"]
+        });
+      }
+      const sessionIds = fixture.workspace.sidebar.sessions.map((session) => session.id);
+      if (new Set(sessionIds).size !== sessionIds.length) {
+        ctx.addIssue({
+          code: z21.ZodIssueCode.custom,
+          message: "session ids must be unique",
+          path: ["workspace", "sidebar", "sessions"]
+        });
+      }
+      if (!fixture.workspace.sidebar.sessions.some(
+        (session) => session.id === fixture.workspace.session.id
+      )) {
+        ctx.addIssue({
+          code: z21.ZodIssueCode.custom,
+          message: "active session must be present in the sidebar",
+          path: ["workspace", "session", "id"]
+        });
+      }
+      for (const [index, agent] of fixture.workspace.sidebar.agents.entries()) {
+        if (agent.paneId !== null && !paneIdSet.has(agent.paneId)) {
+          ctx.addIssue({
+            code: z21.ZodIssueCode.custom,
+            message: "agent pane must exist in fixture panes",
+            path: ["workspace", "sidebar", "agents", index, "paneId"]
+          });
+        }
+      }
+      const focusReferences = [
+        fixture.focus.appFocusedPaneId,
+        fixture.focus.terminalInputPaneId,
+        fixture.focus.layoutSelectedPaneId
+      ];
+      for (const paneId of focusReferences) {
+        if (paneId !== null && !paneIdSet.has(paneId)) {
+          ctx.addIssue({
+            code: z21.ZodIssueCode.custom,
+            message: "focus state references an unknown pane",
+            path: ["focus"]
+          });
+        }
+      }
+      for (const [index, pane] of fixture.panes.entries()) {
+        const shouldBeFocused = pane.id === fixture.focus.appFocusedPaneId;
+        const shouldOwnTerminal = pane.id === fixture.focus.terminalInputPaneId;
+        const shouldBeSelected = pane.id === fixture.focus.layoutSelectedPaneId;
+        if (pane.state.applicationFocus.pane !== shouldBeFocused) {
+          ctx.addIssue({
+            code: z21.ZodIssueCode.custom,
+            message: "pane focus channel must match canonical focus state",
+            path: ["panes", index, "state", "applicationFocus", "pane"]
+          });
+        }
+        if (pane.state.applicationFocus.terminalInput !== shouldOwnTerminal) {
+          ctx.addIssue({
+            code: z21.ZodIssueCode.custom,
+            message: "terminal input channel must match canonical focus state",
+            path: ["panes", index, "state", "applicationFocus", "terminalInput"]
+          });
+        }
+        if (pane.state.layoutInteraction.selected !== shouldBeSelected) {
+          ctx.addIssue({
+            code: z21.ZodIssueCode.custom,
+            message: "layout selection channel must match canonical focus state",
+            path: ["panes", index, "state", "layoutInteraction", "selected"]
+          });
+        }
+        if (pane.state.applicationFocus.windowActive !== (fixture.focus.windowActivity === "active")) {
+          ctx.addIssue({
+            code: z21.ZodIssueCode.custom,
+            message: "pane window activity must match canonical focus state",
+            path: ["panes", index, "state", "applicationFocus", "windowActive"]
+          });
+        }
+      }
+      const expectedDockOrder = CANONICAL_SURFACE_REGISTRY.filter(
+        (surface) => surface.kind === "dock-tool"
+      ).map((surface) => surface.id);
+      const actualDockOrder = fixture.dock.tools.map((tool) => tool.id);
+      if (actualDockOrder.some((tool, index) => tool !== expectedDockOrder[index])) {
+        ctx.addIssue({
+          code: z21.ZodIssueCode.custom,
+          message: "dock tools must use canonical identity and order",
+          path: ["dock", "tools"]
+        });
+      }
+    });
+    paneActions = (canSplit) => [
+      {
+        id: "focus-terminal",
+        icon: "terminals",
+        label: "Focus terminal",
+        commandId: "pane.terminal.focus",
+        available: true,
+        disabledReason: null
+      },
+      {
+        id: "split",
+        icon: "split-right",
+        label: "Split pane",
+        commandId: "pane.split",
+        available: canSplit,
+        disabledReason: canSplit ? null : "This pane cannot be split while recovering"
+      },
+      {
+        id: "duplicate",
+        icon: "duplicate",
+        label: "Duplicate pane",
+        commandId: "pane.duplicate",
+        available: canSplit,
+        disabledReason: canSplit ? null : "This pane cannot be duplicated while recovering"
+      },
+      {
+        id: "float-toggle",
+        icon: "float",
+        label: "Float or dock",
+        commandId: "pane.float.toggle",
+        available: true,
+        disabledReason: null
+      },
+      {
+        id: "maximize-toggle",
+        icon: "maximize",
+        label: "Maximize or restore",
+        commandId: "pane.maximize.toggle",
+        available: true,
+        disabledReason: null
+      },
+      {
+        id: "detach",
+        icon: "pop-out",
+        label: "Detach pane",
+        commandId: "pane.detach",
+        available: true,
+        disabledReason: null
+      }
+    ];
+    COHESION_FIXTURE_V1_INPUT = CohesionFixtureV1SchemaZ.parse({
+      version: COHESION_FIXTURE_VERSION,
+      project: {
+        id: "project.tmux-ide",
+        name: "tmux-ide",
+        rootLabel: "tmux-ide",
+        readiness: {
+          state: "warning",
+          facts: ["pnpm workspace detected", "Codex and Claude Code are available"],
+          warnings: ["Desktop terminal attachment is reconnecting"]
+        }
+      },
+      workspace: {
+        id: "workspace.product",
+        name: "Product workspace",
+        activeMode: "terminals",
+        session: { id: "session.product", label: "Product", state: "reconnecting", active: true },
+        sidebar: {
+          sessions: [
+            { id: "session.product", label: "Product", state: "reconnecting", active: true },
+            { id: "session.docs", label: "Documentation", state: "connected", active: false }
+          ],
+          agents: [
+            {
+              id: "agent.pm",
+              name: "Fable",
+              harness: "claude-code",
+              activity: "waiting",
+              paneId: "pane.pm",
+              attention: true
+            },
+            {
+              id: "agent.implementer",
+              name: "Codex",
+              harness: "codex",
+              activity: "running",
+              paneId: "pane.implementer",
+              attention: false
+            },
+            {
+              id: "agent.reviewer",
+              name: "Review",
+              harness: "codex",
+              activity: "complete",
+              paneId: "pane.reviewer",
+              attention: false
+            },
+            {
+              id: "agent.recovery",
+              name: "Recovery",
+              harness: "custom",
+              activity: "disconnected",
+              paneId: "pane.recovery",
+              attention: true
+            }
+          ]
+        }
+      },
+      panes: [
+        {
+          id: "pane.pm",
+          role: "terminal",
+          title: "Project manager",
+          subtitle: "Fable",
+          terminalSourceId: "terminal.pm",
+          agentId: "agent.pm",
+          state: {
+            structure: "docked",
+            applicationFocus: { pane: false, terminalInput: false, windowActive: true },
+            agentActivity: "waiting",
+            domainStatus: "blocked",
+            attention: "requested",
+            layoutInteraction: {
+              editable: true,
+              selected: false,
+              dragging: false,
+              resizing: false,
+              previewing: false
+            },
+            controlInteraction: {
+              hover: false,
+              focusVisible: false,
+              pressed: false,
+              disabled: false,
+              loading: false
+            }
+          },
+          actions: paneActions(true)
+        },
+        {
+          id: "pane.implementer",
+          role: "terminal",
+          title: "Implementer",
+          subtitle: "Codex",
+          terminalSourceId: "terminal.implementer",
+          agentId: "agent.implementer",
+          state: {
+            structure: "maximized",
+            applicationFocus: { pane: true, terminalInput: true, windowActive: true },
+            agentActivity: "running",
+            domainStatus: "running",
+            attention: "unread",
+            layoutInteraction: {
+              editable: false,
+              selected: false,
+              dragging: false,
+              resizing: false,
+              previewing: false
+            },
+            controlInteraction: {
+              hover: true,
+              focusVisible: true,
+              pressed: true,
+              disabled: false,
+              loading: false
+            }
+          },
+          actions: paneActions(true)
+        },
+        {
+          id: "pane.reviewer",
+          role: "terminal",
+          title: "Reviewer",
+          subtitle: "Completed review",
+          terminalSourceId: "terminal.reviewer",
+          agentId: "agent.reviewer",
+          state: {
+            structure: "floating",
+            applicationFocus: { pane: false, terminalInput: false, windowActive: true },
+            agentActivity: "complete",
+            domainStatus: "review",
+            attention: "none",
+            layoutInteraction: {
+              editable: true,
+              selected: true,
+              dragging: false,
+              resizing: false,
+              previewing: true
+            },
+            controlInteraction: {
+              hover: false,
+              focusVisible: false,
+              pressed: false,
+              disabled: false,
+              loading: false
+            }
+          },
+          actions: paneActions(true)
+        },
+        {
+          id: "pane.recovery",
+          role: "terminal",
+          title: "Recovery",
+          subtitle: "Connection lost",
+          terminalSourceId: "terminal.recovery",
+          agentId: "agent.recovery",
+          state: {
+            structure: "docked",
+            applicationFocus: { pane: false, terminalInput: false, windowActive: true },
+            agentActivity: "disconnected",
+            domainStatus: "recovering",
+            attention: "recovery",
+            layoutInteraction: {
+              editable: false,
+              selected: false,
+              dragging: false,
+              resizing: false,
+              previewing: false
+            },
+            controlInteraction: {
+              hover: false,
+              focusVisible: true,
+              pressed: true,
+              disabled: true,
+              loading: true
+            }
+          },
+          actions: paneActions(false)
+        }
+      ],
+      dock: {
+        mode: "open",
+        activeTool: "missions",
+        tools: [
+          {
+            id: "files",
+            label: "Files",
+            shortcut: "F3",
+            unreadCount: 0,
+            disabledReason: null,
+            data: { kind: "files", selectedResourceId: "src.index", fileCount: 214 }
+          },
+          {
+            id: "changes",
+            label: "Changes",
+            shortcut: "F4",
+            unreadCount: 4,
+            disabledReason: null,
+            data: { kind: "changes", selectedResourceId: "src.chrome", changeCount: 4 }
+          },
+          {
+            id: "missions",
+            label: "Missions",
+            shortcut: "F6",
+            unreadCount: 1,
+            disabledReason: null,
+            data: {
+              kind: "missions",
+              missionId: "mission.m31",
+              title: "Native agent workbench",
+              status: "running",
+              goalCount: 4,
+              taskCount: 22
+            }
+          },
+          {
+            id: "activity",
+            label: "Activity",
+            shortcut: "F9",
+            unreadCount: 2,
+            disabledReason: null,
+            data: { kind: "activity", eventCount: 18, latestEventLabel: "Reviewer completed" }
+          }
+        ]
+      },
+      focus: {
+        windowActivity: "active",
+        focusZone: "terminal",
+        appFocusedPaneId: "pane.implementer",
+        terminalInputPaneId: "pane.implementer",
+        layoutSelectedPaneId: "pane.reviewer",
+        overlays: [
+          {
+            id: "overlay.palette",
+            kind: "command-palette",
+            focusReturnTarget: {
+              kind: "pane",
+              paneId: "pane.implementer",
+              input: "terminal"
+            }
+          }
+        ]
+      },
+      theme: {
+        user: {
+          version: 1,
+          id: "tmux-ide-dark",
+          name: "tmux-ide Dark",
+          appearance: "dark",
+          overrides: {}
+        },
+        project: null,
+        accessibility: { reducedMotion: false, increasedContrast: false }
+      },
+      connection: {
+        state: "recovering",
+        message: "Desktop terminal attachment is reconnecting",
+        safeState: "The tmux session and agent processes remain active",
+        nextAction: "Retry the attachment or open recovery details"
+      }
+    });
+    COHESION_FIXTURE_V1 = deepFreeze(COHESION_FIXTURE_V1_INPUT);
+  }
+});
+
+// packages/contracts/src/daemon-wire.ts
+import { z as z22 } from "zod";
 function isDaemonWireProtocolCompatible(protocolVersion) {
   return protocolVersion === DAEMON_WIRE_PROTOCOL_VERSION;
 }
@@ -2389,37 +3789,37 @@ var init_daemon_wire = __esm({
   "packages/contracts/src/daemon-wire.ts"() {
     "use strict";
     DAEMON_WIRE_PROTOCOL_VERSION = 1;
-    DaemonWireProtocolVersionSchema = z15.number().int().positive();
-    DaemonInstanceIdSchema = z15.uuid();
-    CanonicalDaemonInfoSchema = z15.object({
-      pid: z15.number().int().positive(),
-      port: z15.number().int().min(1).max(65535),
+    DaemonWireProtocolVersionSchema = z22.number().int().positive();
+    DaemonInstanceIdSchema = z22.uuid();
+    CanonicalDaemonInfoSchema = z22.object({
+      pid: z22.number().int().positive(),
+      port: z22.number().int().min(1).max(65535),
       protocolVersion: DaemonWireProtocolVersionSchema,
-      productVersion: z15.string().trim().min(1),
+      productVersion: z22.string().trim().min(1),
       instanceId: DaemonInstanceIdSchema,
-      startedAt: z15.iso.datetime({ offset: true }),
-      bindHostname: z15.string().trim().min(1),
-      authToken: z15.string().min(1).nullable()
+      startedAt: z22.iso.datetime({ offset: true }),
+      bindHostname: z22.string().trim().min(1),
+      authToken: z22.string().min(1).nullable()
     });
-    DaemonHealthSchema = z15.object({
-      ok: z15.literal(true),
+    DaemonHealthSchema = z22.object({
+      ok: z22.literal(true),
       protocolVersion: DaemonWireProtocolVersionSchema,
-      productVersion: z15.string().trim().min(1),
-      uptime: z15.number().nonnegative()
+      productVersion: z22.string().trim().min(1),
+      uptime: z22.number().nonnegative()
     });
-    DaemonHealthzSchema = z15.object({
-      ok: z15.literal(true),
+    DaemonHealthzSchema = z22.object({
+      ok: z22.literal(true),
       protocolVersion: DaemonWireProtocolVersionSchema,
-      productVersion: z15.string().trim().min(1),
-      uptimeMs: z15.number().nonnegative()
+      productVersion: z22.string().trim().min(1),
+      uptimeMs: z22.number().nonnegative()
     });
-    DaemonIdentitySchema = z15.object({
-      ok: z15.literal(true),
-      pid: z15.number().int().positive(),
+    DaemonIdentitySchema = z22.object({
+      ok: z22.literal(true),
+      pid: z22.number().int().positive(),
       protocolVersion: DaemonWireProtocolVersionSchema,
-      productVersion: z15.string().trim().min(1),
+      productVersion: z22.string().trim().min(1),
       instanceId: DaemonInstanceIdSchema,
-      startedAt: z15.iso.datetime({ offset: true })
+      startedAt: z22.iso.datetime({ offset: true })
     });
   }
 });
@@ -2443,6 +3843,14 @@ var init_src = __esm({
     init_terminals();
     init_control();
     init_commands();
+    init_desktop_host();
+    init_experience_identifiers();
+    init_experience_shell();
+    init_visual_tokens();
+    init_visual_recipes();
+    init_pane_appearance();
+    init_focus_overlay();
+    init_cohesion_fixture();
     init_daemon_wire();
   }
 });
@@ -4094,7 +5502,7 @@ function buildPaneCommand(pane) {
 }
 function collectPaneStartupPlan(rows, paneMap, firstPanesOfRows, dir) {
   let focusPane = paneMap[0][0];
-  const paneActions = [];
+  const paneActions2 = [];
   const diagnostics = [];
   const paneIdentities = assignPaneIdentities(rows, diagnostics);
   for (let rowIdx = 0; rowIdx < rows.length; rowIdx++) {
@@ -4151,10 +5559,10 @@ function collectPaneStartupPlan(rows, paneMap, firstPanesOfRows, dir) {
       if (pane.focus) {
         focusPane = tmuxPane;
       }
-      paneActions.push(action);
+      paneActions2.push(action);
     }
   }
-  return { focusPane, paneActions, diagnostics };
+  return { focusPane, paneActions: paneActions2, diagnostics };
 }
 function assignPaneIdentities(rows, diagnostics) {
   const bases = rows.map((row) => row.panes.map(semanticPaneIdForPane));
@@ -6736,7 +8144,7 @@ function tokenCode(token) {
 }
 function legendMark(token, glyph) {
   const code = tokenCode(token);
-  return code === null ? dim(glyph) : color(code, glyph);
+  return code === null ? dim(glyph) : color2(code, glyph);
 }
 function renderKey(tmuxKey) {
   return tmuxKey.replace(/M-/g, "\u2325").replace(/C-/g, "^").replace(/S-/g, "\u21E7");
@@ -6869,7 +8277,7 @@ function cheatsheetBindCommand(cheatsheetCmd = "tmux-ide cheatsheet", key = CHEA
 function cheatsheetUnbindCommand(key = CHEATSHEET_KEY) {
   return ["unbind-key", "-n", key];
 }
-var CHEATSHEET_KEY, bold, dim, cyan, head, color;
+var CHEATSHEET_KEY, bold, dim, cyan, head, color2;
 var init_cheatsheet = __esm({
   "packages/daemon/src/tui/chrome/cheatsheet.ts"() {
     "use strict";
@@ -6882,7 +8290,7 @@ var init_cheatsheet = __esm({
     dim = (s) => `\x1B[2m${s}\x1B[22m`;
     cyan = (s) => `\x1B[36m${s}\x1B[39m`;
     head = (s) => `\x1B[1;36m${s}\x1B[0m`;
-    color = (code, s) => `\x1B[38;5;${code}m${s}\x1B[39m`;
+    color2 = (code, s) => `\x1B[38;5;${code}m${s}\x1B[39m`;
   }
 });
 
@@ -7596,45 +9004,45 @@ var init_session_id = __esm({
 });
 
 // packages/daemon/src/schemas/registry.ts
-import { z as z16 } from "zod";
+import { z as z23 } from "zod";
 var RegisteredProjectSchemaZ, RegisterProjectRequestSchemaZ, InitProjectRequestSchemaZ, ProjectTemplateSchemaZ;
 var init_registry = __esm({
   "packages/daemon/src/schemas/registry.ts"() {
     "use strict";
-    RegisteredProjectSchemaZ = z16.object({
+    RegisteredProjectSchemaZ = z23.object({
       /** Unique registry key. Defaults to `basename(dir)`; collisions resolved by appending `-2`, `-3`, … */
-      name: z16.string(),
+      name: z23.string(),
       /** Absolute path to the project directory. */
-      dir: z16.string(),
+      dir: z23.string(),
       /** Whether `<dir>/ide.yml` exists; refreshed on register and on `probe()`. */
-      hasIdeYml: z16.boolean(),
+      hasIdeYml: z23.boolean(),
       /** Whether `.tmux-ide/workspace.yml` exists or wins discovery. */
-      hasWorkspaceConfig: z16.boolean().optional(),
+      hasWorkspaceConfig: z23.boolean().optional(),
       /** Generalized winning config kind. Added without replacing `hasIdeYml`. */
-      configKind: z16.enum(["workspace", "legacy", "none"]).optional(),
+      configKind: z23.enum(["workspace", "legacy", "none"]).optional(),
       /** Generalized winning config path. */
-      configPath: z16.string().nullable().optional(),
+      configPath: z23.string().nullable().optional(),
       /** Legacy config path when an `ide.yml` is present. */
-      ideConfigPath: z16.string().nullable().optional(),
+      ideConfigPath: z23.string().nullable().optional(),
       /** Git remote origin URL, or `null` if not a git repo / no origin / probe failed. */
-      gitOrigin: z16.string().nullable(),
+      gitOrigin: z23.string().nullable(),
       /** Current git branch, or `null` if not a git repo / detached HEAD / probe failed. */
-      gitBranch: z16.string().nullable(),
+      gitBranch: z23.string().nullable(),
       /** ISO-8601 timestamp the project was first registered. */
-      registeredAt: z16.string()
+      registeredAt: z23.string()
     });
-    RegisterProjectRequestSchemaZ = z16.object({
-      dir: z16.string().min(1),
-      name: z16.string().min(1).optional()
+    RegisterProjectRequestSchemaZ = z23.object({
+      dir: z23.string().min(1),
+      name: z23.string().min(1).optional()
     });
-    InitProjectRequestSchemaZ = z16.object({
-      dir: z16.string().min(1),
-      template: z16.string().min(1).optional()
+    InitProjectRequestSchemaZ = z23.object({
+      dir: z23.string().min(1),
+      template: z23.string().min(1).optional()
     });
-    ProjectTemplateSchemaZ = z16.object({
-      id: z16.string(),
-      label: z16.string(),
-      description: z16.string()
+    ProjectTemplateSchemaZ = z23.object({
+      id: z23.string(),
+      label: z23.string(),
+      description: z23.string()
     });
   }
 });
@@ -7696,7 +9104,7 @@ import { EventEmitter } from "node:events";
 import { existsSync as existsSync15, mkdirSync as mkdirSync9, readFileSync as readFileSync11, renameSync as renameSync5, writeFileSync as writeFileSync9 } from "node:fs";
 import { homedir as homedir10 } from "node:os";
 import { dirname as dirname15, isAbsolute as isAbsolute3, join as join14, resolve as resolve11 } from "node:path";
-import { z as z17 } from "zod";
+import { z as z24 } from "zod";
 function applyAction(state, action) {
   switch (action.type) {
     case "register":
@@ -7835,9 +9243,9 @@ var init_project_registry = __esm({
     init_registry();
     init_project_probe();
     REGISTRY_DIR_ENV = "TMUX_IDE_REGISTRY_DIR";
-    RegistryFileSchemaZ = z17.object({
-      version: z17.literal(1),
-      projects: z17.array(RegisteredProjectSchemaZ)
+    RegistryFileSchemaZ = z24.object({
+      version: z24.literal(1),
+      projects: z24.array(RegisteredProjectSchemaZ)
     });
     ProjectRegistryError = class extends Error {
       code;
@@ -8609,7 +10017,7 @@ var init_notify_state = __esm({
 import { existsSync as existsSync19, mkdirSync as mkdirSync12, readFileSync as readFileSync14, renameSync as renameSync7, writeFileSync as writeFileSync11 } from "node:fs";
 import { homedir as homedir12 } from "node:os";
 import { dirname as dirname17, join as join18 } from "node:path";
-import { z as z18 } from "zod";
+import { z as z25 } from "zod";
 function isBareShell(cmd) {
   return /^-?(zsh|bash|sh|fish|dash|ksh|tcsh|csh|nu)$/.test(cmd.trim());
 }
@@ -8781,32 +10189,32 @@ var init_snapshot2 = __esm({
     init_src2();
     init_process_tree();
     init_sessions2();
-    PaneSnapshotSchemaZ = z18.object({
-      index: z18.number(),
-      cwd: z18.string(),
-      command: z18.string().nullable(),
-      agent: z18.string().nullable(),
-      agentSessionId: z18.string().nullable(),
-      agentState: z18.string().nullable(),
-      title: z18.string()
+    PaneSnapshotSchemaZ = z25.object({
+      index: z25.number(),
+      cwd: z25.string(),
+      command: z25.string().nullable(),
+      agent: z25.string().nullable(),
+      agentSessionId: z25.string().nullable(),
+      agentState: z25.string().nullable(),
+      title: z25.string()
     });
-    WindowSnapshotSchemaZ = z18.object({
-      index: z18.number(),
-      name: z18.string(),
-      active: z18.boolean(),
-      layout: z18.string(),
-      panes: z18.array(PaneSnapshotSchemaZ)
+    WindowSnapshotSchemaZ = z25.object({
+      index: z25.number(),
+      name: z25.string(),
+      active: z25.boolean(),
+      layout: z25.string(),
+      panes: z25.array(PaneSnapshotSchemaZ)
     });
-    SessionSnapshotSchemaZ = z18.object({
-      name: z18.string(),
-      cwd: z18.string(),
-      adopted: z18.boolean(),
-      windows: z18.array(WindowSnapshotSchemaZ)
+    SessionSnapshotSchemaZ = z25.object({
+      name: z25.string(),
+      cwd: z25.string(),
+      adopted: z25.boolean(),
+      windows: z25.array(WindowSnapshotSchemaZ)
     });
-    FleetSnapshotSchemaZ = z18.object({
-      version: z18.literal(1),
-      savedAt: z18.string(),
-      sessions: z18.array(SessionSnapshotSchemaZ)
+    FleetSnapshotSchemaZ = z25.object({
+      version: z25.literal(1),
+      savedAt: z25.string(),
+      sessions: z25.array(SessionSnapshotSchemaZ)
     });
     SNAPSHOT_PANE_FORMAT = [
       "#{session_name}",
@@ -9228,8 +10636,8 @@ __export(statusline_exports, {
   updatePopupCommand: () => updatePopupCommand
 });
 function statusStyle(status2, theme) {
-  const color2 = theme.status[status2];
-  return status2 === "blocked" ? `#[fg=${color2},bold]` : `#[fg=${color2}]`;
+  const color3 = theme.status[status2];
+  return status2 === "blocked" ? `#[fg=${color3},bold]` : `#[fg=${color3}]`;
 }
 function statusGlyph(status2, theme) {
   return status2 === "unknown" ? "\xB7" : theme.glyphs.active;
@@ -10067,13 +11475,13 @@ async function launch(targetDir, {
   );
   const {
     focusPane,
-    paneActions,
+    paneActions: paneActions2,
     diagnostics: launchDiagnostics
   } = collectPaneStartupPlan(rows, paneMap, firstPanesOfRows, dir);
   for (const diagnostic of launchDiagnostics) {
     console.error(`tmux-ide: warning: ${diagnostic.message}`);
   }
-  for (const action of paneActions) {
+  for (const action of paneActions2) {
     if (action.title) {
       setPaneTitle(action.targetPane, action.title);
     }
@@ -11755,7 +13163,7 @@ import { EventEmitter as EventEmitter3 } from "node:events";
 import { existsSync as existsSync26, mkdirSync as mkdirSync17, readFileSync as readFileSync20, renameSync as renameSync9, writeFileSync as writeFileSync16 } from "node:fs";
 import { homedir as homedir16 } from "node:os";
 import { dirname as dirname24, join as join24 } from "node:path";
-import { z as z19 } from "zod";
+import { z as z26 } from "zod";
 function getDefaultWorkspaceRegistry() {
   if (!_default) _default = new WorkspaceRegistry();
   return _default;
@@ -11778,9 +13186,9 @@ var init_workspace_registry = __esm({
     "use strict";
     init_src();
     REGISTRY_DIR_ENV3 = "TMUX_IDE_REGISTRY_DIR";
-    RegistryFileSchemaZ2 = z19.object({
-      version: z19.literal(1),
-      workspaces: z19.array(WorkspaceSchemaZ)
+    RegistryFileSchemaZ2 = z26.object({
+      version: z26.literal(1),
+      workspaces: z26.array(WorkspaceSchemaZ)
     });
     WorkspaceAlreadyExistsError = class extends Error {
       code = "ALREADY_EXISTS";
@@ -12592,74 +14000,74 @@ var init_log = __esm({
 });
 
 // packages/daemon/src/command-center/schemas.ts
-import { z as z20 } from "zod";
+import { z as z27 } from "zod";
 var updateTaskSchema, createTaskSchema, savePlanSchema, savePlanContentSchema, sendCommandSchema, createMilestoneSchema, updateMilestoneSchema, updateAssertionSchema, triggerResearchSchema, launchSchema, stopSchema, skillNameRegex, createSkillSchema, updateSkillSchema;
 var init_schemas = __esm({
   "packages/daemon/src/command-center/schemas.ts"() {
     "use strict";
-    updateTaskSchema = z20.object({
-      status: z20.enum(["todo", "in-progress", "review", "done"]).optional(),
-      assignee: z20.string().optional(),
-      title: z20.string().optional(),
-      description: z20.string().optional(),
-      priority: z20.number().optional()
+    updateTaskSchema = z27.object({
+      status: z27.enum(["todo", "in-progress", "review", "done"]).optional(),
+      assignee: z27.string().optional(),
+      title: z27.string().optional(),
+      description: z27.string().optional(),
+      priority: z27.number().optional()
     });
-    createTaskSchema = z20.object({
-      title: z20.string().trim().min(1, "Title is required"),
-      description: z20.string().optional(),
-      priority: z20.number().optional(),
-      goal: z20.string().optional(),
-      tags: z20.array(z20.string()).optional()
+    createTaskSchema = z27.object({
+      title: z27.string().trim().min(1, "Title is required"),
+      description: z27.string().optional(),
+      priority: z27.number().optional(),
+      goal: z27.string().optional(),
+      tags: z27.array(z27.string()).optional()
     });
-    savePlanSchema = z20.object({
-      content: z20.string().max(1e6, "Plan content is too large")
+    savePlanSchema = z27.object({
+      content: z27.string().max(1e6, "Plan content is too large")
     });
-    savePlanContentSchema = z20.object({
-      content: z20.string().max(1e6, "Plan content is too large")
+    savePlanContentSchema = z27.object({
+      content: z27.string().max(1e6, "Plan content is too large")
     });
-    sendCommandSchema = z20.object({
-      target: z20.string().min(1, "Target pane is required"),
-      message: z20.string().min(1, "Message is required"),
-      noEnter: z20.boolean().optional()
+    sendCommandSchema = z27.object({
+      target: z27.string().min(1, "Target pane is required"),
+      message: z27.string().min(1, "Message is required"),
+      noEnter: z27.boolean().optional()
     });
-    createMilestoneSchema = z20.object({
-      title: z20.string().trim().min(1, "Title is required"),
-      sequence: z20.number().int().positive(),
-      description: z20.string().optional()
+    createMilestoneSchema = z27.object({
+      title: z27.string().trim().min(1, "Title is required"),
+      sequence: z27.number().int().positive(),
+      description: z27.string().optional()
     });
-    updateMilestoneSchema = z20.object({
-      status: z20.enum(["locked", "active", "done", "validating"]).optional(),
-      title: z20.string().optional(),
-      description: z20.string().optional()
+    updateMilestoneSchema = z27.object({
+      status: z27.enum(["locked", "active", "done", "validating"]).optional(),
+      title: z27.string().optional(),
+      description: z27.string().optional()
     });
-    updateAssertionSchema = z20.object({
-      status: z20.enum(["pending", "passing", "failing", "blocked"]),
-      evidence: z20.string().optional(),
-      verifiedBy: z20.string().optional()
+    updateAssertionSchema = z27.object({
+      status: z27.enum(["pending", "passing", "failing", "blocked"]),
+      evidence: z27.string().optional(),
+      verifiedBy: z27.string().optional()
     });
-    triggerResearchSchema = z20.object({
-      type: z20.string().trim().min(1, "Research type is required")
+    triggerResearchSchema = z27.object({
+      type: z27.string().trim().min(1, "Research type is required")
     });
-    launchSchema = z20.object({
-      attach: z20.boolean().optional()
+    launchSchema = z27.object({
+      attach: z27.boolean().optional()
     }).optional();
-    stopSchema = z20.object({}).optional();
+    stopSchema = z27.object({}).optional();
     skillNameRegex = /^[A-Za-z0-9._ -]+$/;
-    createSkillSchema = z20.object({
-      name: z20.string().trim().min(1, "Skill name is required").regex(
+    createSkillSchema = z27.object({
+      name: z27.string().trim().min(1, "Skill name is required").regex(
         skillNameRegex,
         "Skill name may only contain letters, digits, dot, dash, underscore, or space"
       ),
-      role: z20.string().trim().optional(),
-      description: z20.string().optional(),
-      specialties: z20.array(z20.string()).optional(),
-      body: z20.string().optional()
+      role: z27.string().trim().optional(),
+      description: z27.string().optional(),
+      specialties: z27.array(z27.string()).optional(),
+      body: z27.string().optional()
     });
-    updateSkillSchema = z20.object({
-      role: z20.string().trim().optional(),
-      description: z20.string().optional(),
-      specialties: z20.array(z20.string()).optional(),
-      body: z20.string().optional()
+    updateSkillSchema = z27.object({
+      role: z27.string().trim().optional(),
+      description: z27.string().optional(),
+      specialties: z27.array(z27.string()).optional(),
+      body: z27.string().optional()
     });
   }
 });
@@ -13904,64 +15312,64 @@ var init_project_init_runner = __esm({
 });
 
 // packages/daemon/src/schemas/inspect.ts
-import { z as z21 } from "zod";
+import { z as z28 } from "zod";
 var ProjectInspectDetectedSchemaZ, ProjectInspectSchemaZ, InspectFilesystemRequestSchemaZ, OnboardProjectRequestSchemaZ;
 var init_inspect = __esm({
   "packages/daemon/src/schemas/inspect.ts"() {
     "use strict";
-    ProjectInspectDetectedSchemaZ = z21.object({
+    ProjectInspectDetectedSchemaZ = z28.object({
       /** Detected package manager from lockfile, or `null`. */
-      packageManager: z21.enum(["pnpm", "npm", "yarn", "bun"]).nullable(),
+      packageManager: z28.enum(["pnpm", "npm", "yarn", "bun"]).nullable(),
       /** Detected frameworks (e.g. `["next", "convex"]`). Empty array when none. */
-      frameworks: z21.array(z21.string()),
+      frameworks: z28.array(z28.string()),
       /** Suggested dev command (e.g. `pnpm dev`). `null` if no dev script found. */
-      devCommand: z21.string().nullable(),
+      devCommand: z28.string().nullable(),
       /** Suggested test command (e.g. `pnpm test`). `null` if no test script found. */
-      testCommand: z21.string().nullable()
+      testCommand: z28.string().nullable()
     });
-    ProjectInspectSchemaZ = z21.object({
+    ProjectInspectSchemaZ = z28.object({
       /** Sanitized basename of the directory — safe to use as a tmux session name. */
-      name: z21.string(),
+      name: z28.string(),
       /** Absolute, canonical path to the directory. */
-      dir: z21.string(),
+      dir: z28.string(),
       /** Whether `<dir>/ide.yml` exists. Legacy compatibility fact. */
-      hasIdeYml: z21.boolean(),
+      hasIdeYml: z28.boolean(),
       /** Whether `.tmux-ide/workspace.yml` exists or wins discovery. */
-      hasWorkspaceConfig: z21.boolean().optional(),
+      hasWorkspaceConfig: z28.boolean().optional(),
       /** Generalized winning config kind. Added without replacing `hasIdeYml`. */
-      configKind: z21.enum(["workspace", "legacy", "none"]).optional(),
+      configKind: z28.enum(["workspace", "legacy", "none"]).optional(),
       /** Generalized winning config path. Added without replacing legacy path facts. */
-      configPath: z21.string().nullable().optional(),
+      configPath: z28.string().nullable().optional(),
       /** Legacy config path when an `ide.yml` is present. */
-      ideConfigPath: z21.string().nullable().optional(),
+      ideConfigPath: z28.string().nullable().optional(),
       /** Git remote origin URL, or `null` if not a git repo / no origin / probe failed. */
-      gitOrigin: z21.string().nullable(),
+      gitOrigin: z28.string().nullable(),
       /** Current git branch, or `null` if not a git repo / detached HEAD / probe failed. */
-      gitBranch: z21.string().nullable(),
+      gitBranch: z28.string().nullable(),
       /** Detected stack signals (reuses `tmux-ide detect` logic). */
       detected: ProjectInspectDetectedSchemaZ
     });
-    InspectFilesystemRequestSchemaZ = z21.object({
-      dir: z21.string().min(1)
+    InspectFilesystemRequestSchemaZ = z28.object({
+      dir: z28.string().min(1)
     });
-    OnboardProjectRequestSchemaZ = z21.object({
-      dir: z21.string().min(1),
+    OnboardProjectRequestSchemaZ = z28.object({
+      dir: z28.string().min(1),
       /** Optional override for the project name — defaults to inspect.name. */
-      name: z21.string().min(1).optional(),
+      name: z28.string().min(1).optional(),
       /** 1, 2, or 3 — how many Claude panes to scaffold in the top row. */
-      agents: z21.number().int().min(1).max(3),
+      agents: z28.number().int().min(1).max(3),
       /**
        * Optional per-agent pane titles. When provided, length must equal
        * `agents`; the server uses these as `title:` for the Claude panes
        * instead of the canonical `Lead`/`Teammate N`/`Claude N` defaults.
        */
-      agentNames: z21.array(z21.string().min(1)).optional(),
+      agentNames: z28.array(z28.string().min(1)).optional(),
       /** Dev server command (e.g. `pnpm dev`). Omit / null to skip the dev pane. */
-      devCommand: z21.string().min(1).nullable().optional(),
+      devCommand: z28.string().min(1).nullable().optional(),
       /** Test command (e.g. `pnpm test`). Currently informational; stored for later. */
-      testCommand: z21.string().min(1).nullable().optional(),
+      testCommand: z28.string().min(1).nullable().optional(),
       /** Lint command (e.g. `pnpm lint`). Currently informational; stored for later. */
-      lintCommand: z21.string().min(1).nullable().optional()
+      lintCommand: z28.string().min(1).nullable().optional()
     });
   }
 });
@@ -15901,7 +17309,7 @@ var init_daemon_embed = __esm({
 
 // packages/daemon/src/lib/cli-action-bridge.ts
 import { createRequire as createRequire3 } from "node:module";
-import { z as z22 } from "zod";
+import { z as z29 } from "zod";
 function timeoutSignal3(ms) {
   const controller = new AbortController();
   setTimeout(() => controller.abort(), ms).unref?.();
@@ -16000,7 +17408,7 @@ async function tryDispatchAction(name, input, options = {}) {
       details: failure.data.error.details
     });
   }
-  const success = z22.object({ ok: z22.literal(true), result: contract.result }).safeParse(body);
+  const success = z29.object({ ok: z29.literal(true), result: contract.result }).safeParse(body);
   if (!success.success) return null;
   return success.data.result;
 }
@@ -16011,12 +17419,12 @@ var init_cli_action_bridge = __esm({
     init_contract();
     init_canonical_daemon();
     init_daemon_embed();
-    FailureEnvelopeZ = z22.object({
-      ok: z22.literal(false),
-      error: z22.object({
-        code: z22.string(),
-        message: z22.string(),
-        details: z22.unknown().optional()
+    FailureEnvelopeZ = z29.object({
+      ok: z29.literal(false),
+      error: z29.object({
+        code: z29.string(),
+        message: z29.string(),
+        details: z29.unknown().optional()
       })
     });
     deps = {
@@ -16536,23 +17944,25 @@ var require_package = __commonJS({
         prepublishOnly: "pnpm build:cli && pnpm check && node scripts/prepublish-check.mjs",
         typecheck: 'echo "root typecheck deferred to per-package turbo run"',
         dev: "node bin/cli.js",
-        test: "pnpm -r --filter @tmux-ide/daemon --filter @tmux-ide/contracts run test",
-        "test:unit": "pnpm -r --filter @tmux-ide/daemon --filter @tmux-ide/contracts run test",
+        test: "pnpm -r --filter @tmux-ide/daemon --filter @tmux-ide/contracts --filter @tmux-ide/desktop-renderer --filter @tmux-ide/electron-shell run test",
+        "test:unit": "pnpm -r --filter @tmux-ide/daemon --filter @tmux-ide/contracts --filter @tmux-ide/desktop-renderer --filter @tmux-ide/electron-shell run test",
         "test:daemon-bun": "bun test ./packages/daemon/src/lib/canonical-daemon.test.ts ./packages/daemon/src/lib/auth/middleware.test.ts ./packages/daemon/src/command-center/actions/handlers/daemon-shutdown.test.ts",
         lint: "eslint bin scripts packages/contracts/src packages/tmux-bridge/src packages/daemon/src",
         "lint:workspace": "turbo run lint",
         format: "prettier --write .",
         "format:check": "prettier --check .",
         "build:workspace": "turbo run build",
+        "build:workbench-dock-web": "pnpm --filter @tmux-ide/daemon run build:workbench-dock-web",
+        "test:workbench-dock-package": "pnpm --filter @tmux-ide/daemon run test:workbench-dock-package",
         "typecheck:workspace": "turbo run typecheck",
         "docs:build": "turbo run build --filter=@tmux-ide/docs",
         "pack:check": "npm pack --dry-run --cache /tmp/tmux-ide-npm-cache > /dev/null",
         "test:pack-installed": "node scripts/pack-check-run.mjs",
         "check:native-deps": "node packages/daemon/scripts/check-native-deps.mjs",
-        check: "pnpm run lint:workspace && pnpm run format:check && pnpm run typecheck:workspace && pnpm run test:unit && pnpm run test:daemon-bun && pnpm run test:tui-renderer && pnpm run docs:build && pnpm run pack:check && pnpm run test:pack-installed && pnpm run check:native-deps",
+        check: "pnpm run lint:workspace && pnpm run format:check && pnpm run typecheck:workspace && pnpm run test:unit && pnpm run test:daemon-bun && pnpm run test:tui-renderer && pnpm run test:workbench-dock-package && pnpm run docs:build && pnpm run pack:check && pnpm run test:pack-installed && pnpm run check:native-deps",
         postinstall: "node scripts/postinstall.js",
         docs: "turbo run dev --filter=@tmux-ide/docs",
-        "test:tui-renderer": "bun test --preload @opentui/solid/preload ./packages/daemon/src/tui/mirror/missions-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/recipes-gallery-renderer.test.tsx ./packages/daemon/src/tui/mirror/shell-chrome-renderer.test.tsx ./packages/daemon/src/tui/mirror/home-files-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/changes-terminal-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/activity-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/application-shell-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/pane-frame-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/workbench-shell-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/agent-terminal-canvas-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/command-palette-surface-renderer.test.tsx",
+        "test:tui-renderer": "bun test --preload @opentui/solid/preload ./packages/daemon/src/tui/mirror/missions-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/recipes-gallery-renderer.test.tsx ./packages/daemon/src/tui/mirror/shell-chrome-renderer.test.tsx ./packages/daemon/src/tui/mirror/home-files-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/changes-terminal-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/activity-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/application-shell-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/pane-frame-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/workbench-shell-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/workbench-dock-dual-host-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/agent-terminal-canvas-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/command-palette-surface-renderer.test.tsx",
         "test:tui-smoke": "node scripts/smoke-tui-missions.mjs"
       },
       keywords: [
@@ -16890,8 +18300,8 @@ function buildReport(target) {
   };
 }
 function renderReport(r, opts = {}) {
-  const color2 = opts.color ?? !("NO_COLOR" in process.env);
-  const c = (code, s) => color2 ? `${code}${s}\x1B[0m` : s;
+  const color3 = opts.color ?? !("NO_COLOR" in process.env);
+  const c = (code, s) => color3 ? `${code}${s}\x1B[0m` : s;
   const bold4 = (s) => c("\x1B[1m", s);
   const dim4 = (s) => c("\x1B[2m", s);
   const label = (s) => c("\x1B[36m", s);
@@ -18482,8 +19892,8 @@ async function doctor({
   }
   for (const c of checks) {
     const icon = c.pass ? "\u2713" : c.optional ? "\u25CB" : "\u2717";
-    const color2 = c.pass ? "\x1B[32m" : c.optional ? "\x1B[33m" : "\x1B[31m";
-    console.log(`${color2}${icon}\x1B[0m ${c.label} \u2014 ${c.detail}`);
+    const color3 = c.pass ? "\x1B[32m" : c.optional ? "\x1B[33m" : "\x1B[31m";
+    console.log(`${color3}${icon}\x1B[0m ${c.label} \u2014 ${c.detail}`);
   }
   if (!allPass) process.exitCode = 1;
 }
