@@ -30,7 +30,7 @@
     "dev": "node bin/cli.js",
     "test": "pnpm -r --filter @tmux-ide/daemon --filter @tmux-ide/contracts --filter @tmux-ide/desktop-renderer --filter @tmux-ide/electron-shell run test",
     "test:unit": "pnpm -r --filter @tmux-ide/daemon --filter @tmux-ide/contracts --filter @tmux-ide/desktop-renderer --filter @tmux-ide/electron-shell run test",
-    "test:daemon-bun": "bun test ./packages/daemon/src/lib/canonical-daemon.test.ts ./packages/daemon/src/lib/auth/middleware.test.ts",
+    "test:daemon-bun": "bun test ./packages/daemon/src/lib/canonical-daemon.test.ts ./packages/daemon/src/lib/auth/middleware.test.ts ./packages/daemon/src/command-center/actions/handlers/daemon-shutdown.test.ts",
     "lint": "eslint bin scripts packages/contracts/src packages/tmux-bridge/src packages/daemon/src",
     "lint:workspace": "turbo run lint",
     "format": "prettier --write .",

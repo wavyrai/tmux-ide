@@ -28,11 +28,13 @@ import {
   inspectCanonicalDaemonInfo,
   isCanonicalDaemonAlive,
   isCanonicalDaemonRecordOwnerProvenDead,
+  probeCanonicalDaemonHealth,
+  probeCanonicalDaemonIdentity,
   releaseCanonicalDaemonClaim,
   tryAcquireCanonicalDaemonClaim,
   writeCanonicalDaemonInfo,
   type CanonicalDaemonClaim,
-  type CanonicalDaemonInfoState,
+  type CanonicalDaemonInfo,
 } from "./canonical-daemon.ts";
 
 const requireFromHere = createRequire(import.meta.url);
@@ -40,6 +42,9 @@ const DEFAULT_HOSTNAME = "127.0.0.1";
 const DEFAULT_GRACEFUL_MS = 2000;
 const MONITOR_INTERVAL_MS = 1000;
 const EMBEDDED_SESSION_NAME = "__embedded__";
+const TAKEOVER_REQUEST_TIMEOUT_MS = 1_000;
+const TAKEOVER_RELEASE_TIMEOUT_MS = 10_000;
+const TAKEOVER_POLL_MS = 50;
 
 type PackageVersionLoader = () => unknown;
 
@@ -374,62 +379,177 @@ function timeoutSignal(ms: number): AbortSignal {
   return controller.signal;
 }
 
-async function healthGone(port: number, bindHostname: string): Promise<boolean> {
-  try {
-    const res = await fetch(canonicalDaemonUrl("http", bindHostname, port, "/health"), {
-      signal: timeoutSignal(500),
-    });
-    return !res.ok;
-  } catch {
-    return true;
-  }
+function sameCanonicalInstance(left: CanonicalDaemonInfo, right: CanonicalDaemonInfo): boolean {
+  return (
+    left.pid === right.pid &&
+    left.port === right.port &&
+    left.protocolVersion === right.protocolVersion &&
+    left.instanceId === right.instanceId &&
+    left.startedAt === right.startedAt &&
+    left.bindHostname === right.bindHostname
+  );
 }
 
-async function requestDaemonShutdown(port: number, bindHostname: string): Promise<void> {
-  try {
-    await fetch(canonicalDaemonUrl("http", bindHostname, port, "/api/v2/action/daemon.shutdown"), {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ reason: "takeover" }),
-      signal: timeoutSignal(1_000),
-    });
-  } catch {
-    // The existing daemon may predate the action or be mid-shutdown. Polling
-    // and the final PID kill below handle both cases.
+async function requestValidatedDaemonShutdown(info: CanonicalDaemonInfo): Promise<void> {
+  const identity = await probeCanonicalDaemonIdentity(info);
+  if (
+    !identity ||
+    identity.pid !== info.pid ||
+    identity.protocolVersion !== info.protocolVersion ||
+    identity.protocolVersion !== DAEMON_WIRE_PROTOCOL_VERSION ||
+    identity.instanceId !== info.instanceId ||
+    identity.startedAt !== info.startedAt
+  ) {
+    throw new DaemonStartupError(
+      "Canonical daemon identity changed before takeover",
+      "canonical_takeover_identity_mismatch",
+    );
   }
-}
-
-async function takeoverCanonicalDaemon(
-  state: Extract<CanonicalDaemonInfoState, { status: "valid" }>,
-  claim: CanonicalDaemonClaim,
-): Promise<void> {
-  const info = state.info;
-  await requestDaemonShutdown(info.port, info.bindHostname);
-  const deadline = Date.now() + 10_000;
-  while (Date.now() < deadline) {
-    const current = inspectCanonicalDaemonInfo();
-    const fileGone =
-      current.status === "missing" ||
-      (current.status === "valid" &&
-        (current.info.pid !== info.pid || current.info.port !== info.port));
-    const serverGone = await healthGone(info.port, info.bindHostname);
-    if (fileGone && serverGone) return;
-    await delay(150);
-  }
-
-  try {
-    process.kill(info.pid, "SIGTERM");
-  } catch {
-    // Already gone or not ours.
-  }
-  await delay(500);
-  try {
-    process.kill(info.pid, "SIGKILL");
-  } catch {
-    // Already gone or not ours.
+  const health = await probeCanonicalDaemonHealth(info);
+  if (
+    !health ||
+    health.protocolVersion !== info.protocolVersion ||
+    health.protocolVersion !== DAEMON_WIRE_PROTOCOL_VERSION
+  ) {
+    throw new DaemonStartupError(
+      "Canonical daemon protocol or health is incompatible with takeover",
+      "canonical_takeover_refused",
+    );
   }
   const current = inspectCanonicalDaemonInfo();
-  if (current.status !== "missing") clearCanonicalDaemonInfoIfUnchanged(current, claim);
+  if (current.status !== "valid" || !sameCanonicalInstance(current.info, info)) {
+    throw new DaemonStartupError(
+      "Canonical daemon generation changed before takeover",
+      "canonical_takeover_identity_mismatch",
+    );
+  }
+
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (info.authToken) headers.Authorization = `Bearer ${info.authToken}`;
+
+  let response: Response;
+  try {
+    response = await fetch(
+      canonicalDaemonUrl("http", info.bindHostname, info.port, "/api/v2/action/daemon.shutdown"),
+      {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ reason: "takeover", expectedInstanceId: info.instanceId }),
+        signal: timeoutSignal(TAKEOVER_REQUEST_TIMEOUT_MS),
+      },
+    );
+  } catch (error) {
+    if (error instanceof Error && error.name === "AbortError") {
+      throw new DaemonStartupError(
+        "Canonical daemon did not answer the takeover request in time",
+        "canonical_takeover_timeout",
+        { cause: error },
+      );
+    }
+    throw new DaemonStartupError(
+      "Canonical daemon did not accept the takeover request",
+      "canonical_takeover_refused",
+      { cause: error as Error },
+    );
+  }
+
+  const envelope = (await response.json().catch(() => null)) as {
+    ok?: unknown;
+    result?: { stopping?: unknown };
+    error?: { code?: unknown };
+  } | null;
+  if (envelope?.error?.code === "daemon_instance_mismatch") {
+    throw new DaemonStartupError(
+      "Canonical daemon generation changed before shutdown",
+      "canonical_takeover_identity_mismatch",
+    );
+  }
+  if (!response.ok || envelope?.ok !== true || envelope.result?.stopping !== true) {
+    throw new DaemonStartupError(
+      `Canonical daemon refused takeover (HTTP ${response.status})`,
+      "canonical_takeover_refused",
+    );
+  }
+}
+
+async function waitForTakeoverQuiescence(
+  info: CanonicalDaemonInfo,
+  deadline: number,
+): Promise<void> {
+  while (Date.now() < deadline) {
+    const current = inspectCanonicalDaemonInfo();
+    if (current.status === "valid" && !sameCanonicalInstance(current.info, info)) {
+      throw new DaemonStartupError(
+        "Another daemon generation won the takeover race",
+        "canonical_already_running",
+      );
+    }
+    const recordOwnerGone =
+      current.status === "missing" || (await isCanonicalDaemonRecordOwnerProvenDead(current));
+    const [identity, health] = await Promise.all([
+      probeCanonicalDaemonIdentity(info),
+      probeCanonicalDaemonHealth(info),
+    ]);
+    if (recordOwnerGone && identity === null && health === null) return;
+    await delay(TAKEOVER_POLL_MS);
+  }
+  throw new DaemonStartupError(
+    "Canonical daemon retained its generation after accepting takeover",
+    "canonical_takeover_timeout",
+  );
+}
+
+async function acquireCanonicalDaemonClaimAfterTakeover(
+  info: CanonicalDaemonInfo,
+): Promise<CanonicalDaemonClaim> {
+  const deadline = Date.now() + TAKEOVER_RELEASE_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    const current = inspectCanonicalDaemonInfo();
+    if (current.status === "valid" && !sameCanonicalInstance(current.info, info)) {
+      throw new DaemonStartupError(
+        "Another daemon generation won the takeover race",
+        "canonical_already_running",
+      );
+    }
+    const attempt = tryAcquireCanonicalDaemonClaim();
+    if (attempt.status === "acquired") {
+      try {
+        await waitForTakeoverQuiescence(info, deadline);
+        return attempt.claim;
+      } catch (error) {
+        releaseCanonicalDaemonClaim(attempt.claim);
+        throw error;
+      }
+    }
+    if (attempt.status === "invalid") {
+      throw new DaemonStartupError(
+        `Canonical daemon claim is invalid: ${attempt.detail}`,
+        "canonical_record_invalid",
+      );
+    }
+    await delay(TAKEOVER_POLL_MS);
+  }
+  throw new DaemonStartupError(
+    "Canonical daemon did not release its startup claim after accepting takeover",
+    "canonical_takeover_timeout",
+  );
+}
+
+function acquireCanonicalDaemonClaim(): CanonicalDaemonClaim {
+  const attempt = tryAcquireCanonicalDaemonClaim();
+  if (attempt.status === "busy") {
+    throw new DaemonStartupError(
+      `Canonical daemon startup is owned by PID ${attempt.owner.pid}`,
+      "canonical_claim_busy",
+    );
+  }
+  if (attempt.status === "invalid") {
+    throw new DaemonStartupError(
+      `Canonical daemon claim is invalid: ${attempt.detail}`,
+      "canonical_record_invalid",
+    );
+  }
+  return attempt.claim;
 }
 
 function closeWsGoingAway(ws: WebSocket): void {
@@ -579,20 +699,17 @@ export async function startEmbeddedDaemon(
     ? (opts.authToken ?? null)
     : (persistedRemoteAccess?.token ?? null);
   const localBypassToken = opts.localBypassToken ?? generateLocalBypassToken();
-  const claimAttempt = tryAcquireCanonicalDaemonClaim();
-  if (claimAttempt.status === "busy") {
-    throw new DaemonStartupError(
-      `Canonical daemon startup is owned by PID ${claimAttempt.owner.pid}`,
-      "canonical_claim_busy",
-    );
+  let takeoverTarget: CanonicalDaemonInfo | null = null;
+  if (opts.takeoverIfRunning) {
+    const state = inspectCanonicalDaemonInfo();
+    if (state.status === "valid" && (await isCanonicalDaemonAlive(state.info))) {
+      await requestValidatedDaemonShutdown(state.info);
+      takeoverTarget = state.info;
+    }
   }
-  if (claimAttempt.status === "invalid") {
-    throw new DaemonStartupError(
-      `Canonical daemon claim is invalid: ${claimAttempt.detail}`,
-      "canonical_record_invalid",
-    );
-  }
-  const claim = claimAttempt.claim;
+  const claim = takeoverTarget
+    ? await acquireCanonicalDaemonClaimAfterTakeover(takeoverTarget)
+    : acquireCanonicalDaemonClaim();
   try {
     const existingCanonical = inspectCanonicalDaemonInfo();
     if (existingCanonical.status === "invalid") {
@@ -612,14 +729,10 @@ export async function startEmbeddedDaemon(
       }
     } else if (existingCanonical.status === "valid") {
       if (await isCanonicalDaemonAlive(existingCanonical.info)) {
-        if (opts.takeoverIfRunning) {
-          await takeoverCanonicalDaemon(existingCanonical, claim);
-        } else {
-          throw new DaemonStartupError(
-            `Canonical daemon is already running on port ${existingCanonical.info.port}`,
-            "canonical_already_running",
-          );
-        }
+        throw new DaemonStartupError(
+          `Canonical daemon is already running on port ${existingCanonical.info.port}`,
+          "canonical_already_running",
+        );
       } else {
         if (!clearCanonicalDaemonInfoIfUnchanged(existingCanonical, claim)) {
           throw new DaemonStartupError(
@@ -856,7 +969,7 @@ export async function startEmbeddedDaemon(
     };
     setDaemonShutdownBackend(async () => {
       await handle.stop({ gracefulMs: 500 });
-    });
+    }, instanceId);
     setRemoteAccessRestartBackend((request) => {
       setTimeout(() => {
         void (async () => {

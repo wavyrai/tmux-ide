@@ -2089,7 +2089,8 @@ var init_actions_contract = __esm({
       qrPayload: z11.string().nullable()
     });
     DaemonShutdownInputZ = z11.object({
-      reason: z11.string().optional()
+      reason: z11.string().optional(),
+      expectedInstanceId: z11.uuid().optional()
     });
     DaemonShutdownResultZ = z11.object({
       stopping: z11.literal(true)
@@ -12341,11 +12342,20 @@ var init_errors3 = __esm({
 });
 
 // packages/daemon/src/command-center/actions/handlers/daemon-shutdown.ts
-function setDaemonShutdownBackend(backend2) {
+function setDaemonShutdownBackend(backend2, instanceId = null) {
   shutdownBackend = backend2;
+  daemonInstanceId = backend2 ? instanceId : null;
   if (!backend2) shutdownInProgress = false;
 }
 function daemonShutdownHandler(input, deps2 = {}) {
+  const expectedInstanceId = input.expectedInstanceId;
+  const currentInstanceId = deps2.instanceId ?? daemonInstanceId;
+  if (expectedInstanceId && expectedInstanceId !== currentInstanceId) {
+    throw new ActionError({
+      code: "daemon_instance_mismatch",
+      message: "Daemon instance changed before shutdown"
+    });
+  }
   if (shutdownInProgress) {
     throw new ActionError({
       code: "shutdown_already_in_progress",
@@ -12361,12 +12371,13 @@ function daemonShutdownHandler(input, deps2 = {}) {
   });
   return { stopping: true };
 }
-var shutdownBackend, shutdownInProgress;
+var shutdownBackend, daemonInstanceId, shutdownInProgress;
 var init_daemon_shutdown = __esm({
   "packages/daemon/src/command-center/actions/handlers/daemon-shutdown.ts"() {
     "use strict";
     init_errors3();
     shutdownBackend = null;
+    daemonInstanceId = null;
     shutdownInProgress = false;
   }
 });
@@ -15349,49 +15360,142 @@ function timeoutSignal2(ms) {
   setTimeout(() => controller.abort(), ms).unref?.();
   return controller.signal;
 }
-async function healthGone(port, bindHostname) {
-  try {
-    const res = await fetch(canonicalDaemonUrl("http", bindHostname, port, "/health"), {
-      signal: timeoutSignal2(500)
-    });
-    return !res.ok;
-  } catch {
-    return true;
-  }
+function sameCanonicalInstance(left, right) {
+  return left.pid === right.pid && left.port === right.port && left.protocolVersion === right.protocolVersion && left.instanceId === right.instanceId && left.startedAt === right.startedAt && left.bindHostname === right.bindHostname;
 }
-async function requestDaemonShutdown(port, bindHostname) {
-  try {
-    await fetch(canonicalDaemonUrl("http", bindHostname, port, "/api/v2/action/daemon.shutdown"), {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ reason: "takeover" }),
-      signal: timeoutSignal2(1e3)
-    });
-  } catch {
+async function requestValidatedDaemonShutdown(info) {
+  const identity = await probeCanonicalDaemonIdentity(info);
+  if (!identity || identity.pid !== info.pid || identity.protocolVersion !== info.protocolVersion || identity.protocolVersion !== DAEMON_WIRE_PROTOCOL_VERSION || identity.instanceId !== info.instanceId || identity.startedAt !== info.startedAt) {
+    throw new DaemonStartupError(
+      "Canonical daemon identity changed before takeover",
+      "canonical_takeover_identity_mismatch"
+    );
   }
-}
-async function takeoverCanonicalDaemon(state, claim) {
-  const info = state.info;
-  await requestDaemonShutdown(info.port, info.bindHostname);
-  const deadline = Date.now() + 1e4;
-  while (Date.now() < deadline) {
-    const current2 = inspectCanonicalDaemonInfo();
-    const fileGone = current2.status === "missing" || current2.status === "valid" && (current2.info.pid !== info.pid || current2.info.port !== info.port);
-    const serverGone = await healthGone(info.port, info.bindHostname);
-    if (fileGone && serverGone) return;
-    await delay(150);
-  }
-  try {
-    process.kill(info.pid, "SIGTERM");
-  } catch {
-  }
-  await delay(500);
-  try {
-    process.kill(info.pid, "SIGKILL");
-  } catch {
+  const health = await probeCanonicalDaemonHealth(info);
+  if (!health || health.protocolVersion !== info.protocolVersion || health.protocolVersion !== DAEMON_WIRE_PROTOCOL_VERSION) {
+    throw new DaemonStartupError(
+      "Canonical daemon protocol or health is incompatible with takeover",
+      "canonical_takeover_refused"
+    );
   }
   const current = inspectCanonicalDaemonInfo();
-  if (current.status !== "missing") clearCanonicalDaemonInfoIfUnchanged(current, claim);
+  if (current.status !== "valid" || !sameCanonicalInstance(current.info, info)) {
+    throw new DaemonStartupError(
+      "Canonical daemon generation changed before takeover",
+      "canonical_takeover_identity_mismatch"
+    );
+  }
+  const headers = { "Content-Type": "application/json" };
+  if (info.authToken) headers.Authorization = `Bearer ${info.authToken}`;
+  let response;
+  try {
+    response = await fetch(
+      canonicalDaemonUrl("http", info.bindHostname, info.port, "/api/v2/action/daemon.shutdown"),
+      {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ reason: "takeover", expectedInstanceId: info.instanceId }),
+        signal: timeoutSignal2(TAKEOVER_REQUEST_TIMEOUT_MS)
+      }
+    );
+  } catch (error) {
+    if (error instanceof Error && error.name === "AbortError") {
+      throw new DaemonStartupError(
+        "Canonical daemon did not answer the takeover request in time",
+        "canonical_takeover_timeout",
+        { cause: error }
+      );
+    }
+    throw new DaemonStartupError(
+      "Canonical daemon did not accept the takeover request",
+      "canonical_takeover_refused",
+      { cause: error }
+    );
+  }
+  const envelope = await response.json().catch(() => null);
+  if (envelope?.error?.code === "daemon_instance_mismatch") {
+    throw new DaemonStartupError(
+      "Canonical daemon generation changed before shutdown",
+      "canonical_takeover_identity_mismatch"
+    );
+  }
+  if (!response.ok || envelope?.ok !== true || envelope.result?.stopping !== true) {
+    throw new DaemonStartupError(
+      `Canonical daemon refused takeover (HTTP ${response.status})`,
+      "canonical_takeover_refused"
+    );
+  }
+}
+async function waitForTakeoverQuiescence(info, deadline) {
+  while (Date.now() < deadline) {
+    const current = inspectCanonicalDaemonInfo();
+    if (current.status === "valid" && !sameCanonicalInstance(current.info, info)) {
+      throw new DaemonStartupError(
+        "Another daemon generation won the takeover race",
+        "canonical_already_running"
+      );
+    }
+    const recordOwnerGone = current.status === "missing" || await isCanonicalDaemonRecordOwnerProvenDead(current);
+    const [identity, health] = await Promise.all([
+      probeCanonicalDaemonIdentity(info),
+      probeCanonicalDaemonHealth(info)
+    ]);
+    if (recordOwnerGone && identity === null && health === null) return;
+    await delay(TAKEOVER_POLL_MS);
+  }
+  throw new DaemonStartupError(
+    "Canonical daemon retained its generation after accepting takeover",
+    "canonical_takeover_timeout"
+  );
+}
+async function acquireCanonicalDaemonClaimAfterTakeover(info) {
+  const deadline = Date.now() + TAKEOVER_RELEASE_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    const current = inspectCanonicalDaemonInfo();
+    if (current.status === "valid" && !sameCanonicalInstance(current.info, info)) {
+      throw new DaemonStartupError(
+        "Another daemon generation won the takeover race",
+        "canonical_already_running"
+      );
+    }
+    const attempt = tryAcquireCanonicalDaemonClaim();
+    if (attempt.status === "acquired") {
+      try {
+        await waitForTakeoverQuiescence(info, deadline);
+        return attempt.claim;
+      } catch (error) {
+        releaseCanonicalDaemonClaim(attempt.claim);
+        throw error;
+      }
+    }
+    if (attempt.status === "invalid") {
+      throw new DaemonStartupError(
+        `Canonical daemon claim is invalid: ${attempt.detail}`,
+        "canonical_record_invalid"
+      );
+    }
+    await delay(TAKEOVER_POLL_MS);
+  }
+  throw new DaemonStartupError(
+    "Canonical daemon did not release its startup claim after accepting takeover",
+    "canonical_takeover_timeout"
+  );
+}
+function acquireCanonicalDaemonClaim() {
+  const attempt = tryAcquireCanonicalDaemonClaim();
+  if (attempt.status === "busy") {
+    throw new DaemonStartupError(
+      `Canonical daemon startup is owned by PID ${attempt.owner.pid}`,
+      "canonical_claim_busy"
+    );
+  }
+  if (attempt.status === "invalid") {
+    throw new DaemonStartupError(
+      `Canonical daemon claim is invalid: ${attempt.detail}`,
+      "canonical_record_invalid"
+    );
+  }
+  return attempt.claim;
 }
 function closeWsGoingAway(ws) {
   const reason = Buffer.from("going away");
@@ -15500,20 +15604,15 @@ async function startEmbeddedDaemon(opts) {
   const bindHostname = opts.bindHostname ?? opts.hostname ?? (persistedRemoteAccess ? "0.0.0.0" : DEFAULT_HOSTNAME);
   const authToken = Object.prototype.hasOwnProperty.call(opts, "authToken") ? opts.authToken ?? null : persistedRemoteAccess?.token ?? null;
   const localBypassToken = opts.localBypassToken ?? generateLocalBypassToken();
-  const claimAttempt = tryAcquireCanonicalDaemonClaim();
-  if (claimAttempt.status === "busy") {
-    throw new DaemonStartupError(
-      `Canonical daemon startup is owned by PID ${claimAttempt.owner.pid}`,
-      "canonical_claim_busy"
-    );
+  let takeoverTarget = null;
+  if (opts.takeoverIfRunning) {
+    const state = inspectCanonicalDaemonInfo();
+    if (state.status === "valid" && await isCanonicalDaemonAlive(state.info)) {
+      await requestValidatedDaemonShutdown(state.info);
+      takeoverTarget = state.info;
+    }
   }
-  if (claimAttempt.status === "invalid") {
-    throw new DaemonStartupError(
-      `Canonical daemon claim is invalid: ${claimAttempt.detail}`,
-      "canonical_record_invalid"
-    );
-  }
-  const claim = claimAttempt.claim;
+  const claim = takeoverTarget ? await acquireCanonicalDaemonClaimAfterTakeover(takeoverTarget) : acquireCanonicalDaemonClaim();
   try {
     const existingCanonical = inspectCanonicalDaemonInfo();
     if (existingCanonical.status === "invalid") {
@@ -15532,14 +15631,10 @@ async function startEmbeddedDaemon(opts) {
       }
     } else if (existingCanonical.status === "valid") {
       if (await isCanonicalDaemonAlive(existingCanonical.info)) {
-        if (opts.takeoverIfRunning) {
-          await takeoverCanonicalDaemon(existingCanonical, claim);
-        } else {
-          throw new DaemonStartupError(
-            `Canonical daemon is already running on port ${existingCanonical.info.port}`,
-            "canonical_already_running"
-          );
-        }
+        throw new DaemonStartupError(
+          `Canonical daemon is already running on port ${existingCanonical.info.port}`,
+          "canonical_already_running"
+        );
       } else {
         if (!clearCanonicalDaemonInfoIfUnchanged(existingCanonical, claim)) {
           throw new DaemonStartupError(
@@ -15733,7 +15828,7 @@ async function startEmbeddedDaemon(opts) {
     };
     setDaemonShutdownBackend(async () => {
       await handle.stop({ gracefulMs: 500 });
-    });
+    }, instanceId);
     setRemoteAccessRestartBackend((request) => {
       setTimeout(() => {
         void (async () => {
@@ -15778,7 +15873,7 @@ async function startEmbeddedDaemon(opts) {
     throw error;
   }
 }
-var requireFromHere, DEFAULT_HOSTNAME, DEFAULT_GRACEFUL_MS, MONITOR_INTERVAL_MS, EMBEDDED_SESSION_NAME;
+var requireFromHere, DEFAULT_HOSTNAME, DEFAULT_GRACEFUL_MS, MONITOR_INTERVAL_MS, EMBEDDED_SESSION_NAME, TAKEOVER_REQUEST_TIMEOUT_MS, TAKEOVER_RELEASE_TIMEOUT_MS, TAKEOVER_POLL_MS;
 var init_daemon_embed = __esm({
   "packages/daemon/src/lib/daemon-embed.ts"() {
     "use strict";
@@ -15798,6 +15893,9 @@ var init_daemon_embed = __esm({
     DEFAULT_GRACEFUL_MS = 2e3;
     MONITOR_INTERVAL_MS = 1e3;
     EMBEDDED_SESSION_NAME = "__embedded__";
+    TAKEOVER_REQUEST_TIMEOUT_MS = 1e3;
+    TAKEOVER_RELEASE_TIMEOUT_MS = 1e4;
+    TAKEOVER_POLL_MS = 50;
   }
 });
 
@@ -16440,7 +16538,7 @@ var require_package = __commonJS({
         dev: "node bin/cli.js",
         test: "pnpm -r --filter @tmux-ide/daemon --filter @tmux-ide/contracts run test",
         "test:unit": "pnpm -r --filter @tmux-ide/daemon --filter @tmux-ide/contracts run test",
-        "test:daemon-bun": "bun test ./packages/daemon/src/lib/canonical-daemon.test.ts ./packages/daemon/src/lib/auth/middleware.test.ts",
+        "test:daemon-bun": "bun test ./packages/daemon/src/lib/canonical-daemon.test.ts ./packages/daemon/src/lib/auth/middleware.test.ts ./packages/daemon/src/command-center/actions/handlers/daemon-shutdown.test.ts",
         lint: "eslint bin scripts packages/contracts/src packages/tmux-bridge/src packages/daemon/src",
         "lint:workspace": "turbo run lint",
         format: "prettier --write .",

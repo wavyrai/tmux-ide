@@ -20,6 +20,13 @@ const handle = await startEmbeddedDaemon({ port: 6060 });
 await handle.stop();
 ```
 
+`takeoverIfRunning: true` performs a cooperative, bounded handoff. It pins the
+shutdown request to the discovered `instanceId`, validates identity and wire
+protocol, sends the record's bearer credential when present, and waits for the
+old lifetime claim and endpoint to disappear before acquiring ownership. A
+refusing, unresponsive, incompatible, or changed owner is left running; the
+embedder never escalates takeover to PID signals.
+
 ## Installed CLI ownership
 
 Native and desktop hosts should execute the installed root CLI with an argv

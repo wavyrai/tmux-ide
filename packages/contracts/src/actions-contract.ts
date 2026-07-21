@@ -186,6 +186,7 @@ export const AppSetRemoteAccessResultZ = z.object({
 
 export const DaemonShutdownInputZ = z.object({
   reason: z.string().optional(),
+  expectedInstanceId: z.uuid().optional(),
 });
 export const DaemonShutdownResultZ = z.object({
   stopping: z.literal(true),

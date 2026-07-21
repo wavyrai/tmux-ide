@@ -50,7 +50,10 @@ export type DaemonStartupReason =
   | "canonical_already_running"
   | "canonical_record_invalid"
   | "canonical_claim_busy"
-  | "canonical_publication_lost";
+  | "canonical_publication_lost"
+  | "canonical_takeover_refused"
+  | "canonical_takeover_timeout"
+  | "canonical_takeover_identity_mismatch";
 
 export class DaemonStartupError extends IdeError {
   readonly reason: DaemonStartupReason;
