@@ -1,13 +1,45 @@
 import { describe, expect, it } from "vitest";
 import type { PaneVisualStateV1 } from "@tmux-ide/contracts";
 import { terminalDisplayWidth } from "../panel-host.ts";
-import { paneFrameHitTest, paneFrameVariant, projectPaneFrame } from "./pane-frame.ts";
+import {
+  paneFrameHitTest,
+  paneFrameVariant,
+  projectPaneFrame,
+  projectSemanticPaneFrame,
+} from "./pane-frame.ts";
 
 const actions = [
   { id: "agent", label: "agent", compactLabel: "A", description: "Open agent controls" },
   { id: "mission", label: "mission", compactLabel: "M", description: "Open mission proof" },
   { id: "native", label: "native", compactLabel: "N", description: "Open native surface" },
 ] as const;
+
+function canonicalVisualState(
+  controlInteraction: Partial<PaneVisualStateV1["controlInteraction"]> = {},
+): PaneVisualStateV1 {
+  return {
+    structure: "docked",
+    applicationFocus: { pane: true, terminalInput: false, windowActive: true },
+    agentActivity: "idle",
+    domainStatus: "idle",
+    attention: "none",
+    layoutInteraction: {
+      editable: true,
+      selected: false,
+      dragging: false,
+      resizing: false,
+      previewing: false,
+    },
+    controlInteraction: {
+      hover: false,
+      focusVisible: false,
+      pressed: false,
+      disabled: false,
+      loading: false,
+      ...controlInteraction,
+    },
+  };
+}
 
 describe("PaneFrame projection", () => {
   it.each([
@@ -216,6 +248,144 @@ describe("PaneFrame projection", () => {
     expect(projection.chips).toEqual([
       expect.objectContaining({ kind: "status", label: "idle", tone: "idle" }),
     ]);
+  });
+
+  it.each([
+    ["disabled", { disabled: true }, { disabled: true, loading: false, state: "disabled" }],
+    ["loading", { loading: true }, { disabled: false, loading: true, state: "loading" }],
+  ] as const)(
+    "makes canonical %s actions noninteractive in rendering and hit testing",
+    (_, state, expected) => {
+      const projection = projectPaneFrame({
+        width: 120,
+        height: 40,
+        title: "Canonical action state",
+        kind: "native",
+        focused: true,
+        visualState: canonicalVisualState(state),
+        actions: [actions[0]],
+      });
+      const action = projection.actions[0]!;
+      expect(action).toMatchObject({ ...expected, interactive: false });
+      expect(
+        paneFrameHitTest(
+          projection,
+          action.start + Math.floor(action.width / 2),
+          projection.header.y,
+        ),
+      ).toMatchObject({ area: "header" });
+    },
+  );
+
+  it.each([
+    ["hover", { hover: true }, { hovered: true, pressed: false, focused: false, state: "hovered" }],
+    [
+      "pressed",
+      { pressed: true },
+      { hovered: false, pressed: true, focused: false, state: "pressed" },
+    ],
+    [
+      "focus-visible",
+      { focusVisible: true },
+      { hovered: false, pressed: false, focused: true, state: "focused" },
+    ],
+  ] as const)("projects canonical %s into explicit OpenTUI action state", (_, state, expected) => {
+    const projection = projectPaneFrame({
+      width: 120,
+      height: 40,
+      title: "Canonical action state",
+      kind: "native",
+      focused: true,
+      visualState: canonicalVisualState(state),
+      actions: [actions[0]],
+    });
+    const action = projection.actions[0]!;
+    expect(action).toMatchObject({
+      ...expected,
+      interactive: true,
+      disabled: false,
+      loading: false,
+    });
+    expect(
+      paneFrameHitTest(
+        projection,
+        action.start + Math.floor(action.width / 2),
+        projection.header.y,
+      ),
+    ).toMatchObject({ area: "action", actionId: "agent" });
+  });
+
+  it("applies disabled then loading before simultaneous transient action states", () => {
+    const project = (controlInteraction: Partial<PaneVisualStateV1["controlInteraction"]>) =>
+      projectPaneFrame({
+        width: 120,
+        height: 40,
+        title: "Canonical precedence",
+        kind: "native",
+        focused: true,
+        visualState: canonicalVisualState(controlInteraction),
+        hoveredActionIndex: 0,
+        pressedActionIndex: 0,
+        actions: [actions[0]],
+      }).actions[0]!;
+    expect(
+      project({
+        hover: true,
+        focusVisible: true,
+        pressed: true,
+        disabled: true,
+        loading: true,
+      }),
+    ).toMatchObject({
+      disabled: true,
+      loading: false,
+      pressed: false,
+      focused: false,
+      hovered: false,
+      interactive: false,
+      state: "disabled",
+    });
+    expect(
+      project({ hover: true, focusVisible: true, pressed: true, loading: true }),
+    ).toMatchObject({
+      disabled: false,
+      loading: true,
+      pressed: false,
+      focused: false,
+      hovered: false,
+      interactive: false,
+      state: "loading",
+    });
+  });
+
+  it("renders a busy semantic action as loading and removes its cell target", () => {
+    const base = projectPaneFrame({
+      width: 120,
+      height: 40,
+      title: "Busy semantic action",
+      kind: "native",
+      focused: true,
+      actions: [actions[0]],
+    });
+    const model = {
+      ...base.model,
+      actions: base.model.actions.map((action) => ({ ...action, busy: true })),
+    };
+    const projection = projectSemanticPaneFrame({ width: 120, height: 40, model });
+    const action = projection.actions[0]!;
+    expect(action).toMatchObject({
+      loading: true,
+      disabled: false,
+      interactive: false,
+      state: "loading",
+    });
+    expect(
+      paneFrameHitTest(
+        projection,
+        action.start + Math.floor(action.width / 2),
+        projection.header.y,
+      ),
+    ).toMatchObject({ area: "header" });
   });
 
   it("keeps semantic status while progressively dropping actions then state on narrow panes", () => {

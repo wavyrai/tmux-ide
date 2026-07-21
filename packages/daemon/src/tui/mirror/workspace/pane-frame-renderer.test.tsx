@@ -1,6 +1,7 @@
 /* @jsxImportSource @opentui/solid */
 import { MouseButtons } from "@opentui/core/testing";
 import { useKeyboard } from "@opentui/solid";
+import type { PaneVisualStateV1 } from "@tmux-ide/contracts";
 import { createSignal } from "solid-js";
 import { describe, expect, it } from "bun:test";
 import { SelectableRow } from "../recipes.tsx";
@@ -21,6 +22,33 @@ const actions = [
   { id: "mission", label: "mission", compactLabel: "M", description: "Open mission proof" },
   { id: "native", label: "native", compactLabel: "N", description: "Open native surface" },
 ] as const;
+
+function canonicalActionVisualState(
+  controlInteraction: Partial<PaneVisualStateV1["controlInteraction"]> = {},
+): PaneVisualStateV1 {
+  return {
+    structure: "docked",
+    applicationFocus: { pane: true, terminalInput: false, windowActive: true },
+    agentActivity: "idle",
+    domainStatus: "idle",
+    attention: "none",
+    layoutInteraction: {
+      editable: true,
+      selected: false,
+      dragging: false,
+      resizing: false,
+      previewing: false,
+    },
+    controlInteraction: {
+      hover: false,
+      focusVisible: false,
+      pressed: false,
+      disabled: false,
+      loading: false,
+      ...controlInteraction,
+    },
+  };
+}
 
 function colorKey(color: Parameters<typeof colorToThemeBytes>[0]): string {
   return colorToThemeBytes(color).join(",");
@@ -432,6 +460,133 @@ describe("PaneFrame OpenTUI renderer", () => {
     expect(pressedValue).toBeNull();
     expect(stableFrame(setup.captureCharFrame())).not.toContain("◆ native");
     setup.renderer.destroy();
+  });
+
+  it("maps canonical action interaction to exact OpenTUI glyphs, spans, and activation", async () => {
+    const theme = createSemanticThemeSnapshot({ mode: "dark" });
+    const cases = [
+      {
+        label: "disabled",
+        control: { disabled: true },
+        recipe: { disabled: true },
+        glyph: "×",
+        interactive: false,
+        state: "disabled",
+      },
+      {
+        label: "loading",
+        control: { loading: true },
+        recipe: { loading: true },
+        glyph: "…",
+        interactive: false,
+        state: "loading",
+      },
+      {
+        label: "pressed",
+        control: { pressed: true },
+        recipe: { pressed: true },
+        glyph: "◆",
+        interactive: true,
+        state: "pressed",
+      },
+      {
+        label: "focus-visible",
+        control: { focusVisible: true },
+        recipe: { focused: true },
+        glyph: "›",
+        interactive: true,
+        state: "focused",
+      },
+      {
+        label: "hover",
+        control: { hover: true },
+        recipe: { hovered: true },
+        glyph: "·",
+        interactive: true,
+        state: "hovered",
+      },
+    ] as const;
+
+    for (const testCase of cases) {
+      const calls: string[] = [];
+      const projection = projectPaneFrame({
+        width: 120,
+        height: 40,
+        title: `Canonical ${testCase.label}`,
+        kind: "native",
+        focused: true,
+        visualState: canonicalActionVisualState(testCase.control),
+        actions: [actions[0]],
+      });
+      const setup = await renderForTest(
+        () => (
+          <PaneFrame
+            theme={theme}
+            projection={projection}
+            inputOwner
+            onActionActivate={(intent) => calls.push(intent.actionId)}
+          />
+        ),
+        { width: 120, height: 40 },
+      );
+      await setup.renderOnce();
+      const palette = recipePalette(theme, testCase.recipe);
+      const labelSpan = spanContaining(setup, " agent ", projection.header.y);
+      const markerSpan = spanContaining(setup, testCase.glyph, projection.header.y);
+      expect(labelSpan, testCase.label).toBeDefined();
+      expect(markerSpan, testCase.label).toBeDefined();
+      expect(colorKey(labelSpan!.fg), testCase.label).toBe(colorKey(palette.foreground));
+      expect(colorKey(labelSpan!.bg), testCase.label).toBe(colorKey(palette.background));
+      expect(colorKey(markerSpan!.fg), testCase.label).toBe(colorKey(palette.accent));
+      expect(projection.actions[0]!.interactive, testCase.label).toBe(testCase.interactive);
+      expect(projection.actions[0]!.state, testCase.label).toBe(testCase.state);
+
+      const action = projection.actions[0]!;
+      await setup.mockMouse.click(
+        action.start + Math.floor(action.width / 2),
+        projection.header.y,
+        MouseButtons.LEFT,
+      );
+      expect(calls, testCase.label).toEqual(testCase.interactive ? ["agent"] : []);
+      setup.renderer.destroy();
+    }
+  });
+
+  it("keeps the shared presenter passive unless the OpenTUI host owns input", async () => {
+    const theme = createSemanticThemeSnapshot({ mode: "dark" });
+    const projection = projectPaneFrame({
+      width: 120,
+      height: 40,
+      title: "Passive root agreement",
+      kind: "native",
+      focused: true,
+      visualState: canonicalActionVisualState(),
+      actions: [actions[0]],
+    });
+    const action = projection.actions[0]!;
+
+    for (const inputOwner of [false, true]) {
+      const calls: string[] = [];
+      const setup = await renderForTest(
+        () => (
+          <PaneFrame
+            theme={theme}
+            projection={projection}
+            inputOwner={inputOwner}
+            onActionActivate={(intent) => calls.push(`${intent.actionId}:${intent.commandId}`)}
+          />
+        ),
+        { width: 120, height: 40 },
+      );
+      await setup.renderOnce();
+      await setup.mockMouse.click(
+        action.start + Math.floor(action.width / 2),
+        projection.header.y,
+        MouseButtons.LEFT,
+      );
+      expect(calls).toEqual(inputOwner ? ["agent:pane.action.agent"] : []);
+      setup.renderer.destroy();
+    }
   });
 
   it("pins native icon base, hover, disabled, pressed, and hidden states", async () => {

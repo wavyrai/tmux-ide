@@ -32,6 +32,15 @@ function pane(overrides: Partial<TerminalPaneChromePane>): TerminalPaneChromePan
 }
 
 describe("terminal pane chrome projection", () => {
+  it("encodes and bounds live tmux ids at the semantic schema boundary", () => {
+    expect(terminalPaneSemanticId("%7")).toBe("pane.tmux.25-37");
+    const first = terminalPaneSemanticId(`%${"pane-".repeat(80)}a`);
+    const second = terminalPaneSemanticId(`%${"pane-".repeat(80)}b`);
+    expect(first.length).toBeLessThanOrEqual(128);
+    expect(first).toMatch(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/u);
+    expect(second).not.toBe(first);
+  });
+
   it("segments the native header for horizontal panes without touching either body", () => {
     const panes = [
       pane({ id: "%1", width: 59 }),

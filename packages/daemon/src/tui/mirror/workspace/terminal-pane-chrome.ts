@@ -1,9 +1,10 @@
-import type {
-  AgentActivity,
-  CanonicalDomainStatus,
-  PaneAttention,
-  PaneVisualStateV1,
-  SemanticProductId,
+import {
+  SemanticProductIdSchemaZ,
+  type AgentActivity,
+  type CanonicalDomainStatus,
+  type PaneAttention,
+  type PaneVisualStateV1,
+  type SemanticProductId,
 } from "@tmux-ide/contracts";
 import type { PaneFrameActionIntent } from "../../../ui/pane-frame/presenter.tsx";
 import { terminalDisplayWidth } from "../panel-host.ts";
@@ -12,6 +13,7 @@ import type { AgentTerminalCanvasProjection } from "./agent-terminal-canvas.ts";
 import {
   paneFrameHitTest,
   projectPaneFrame,
+  resolveEffectivePaneFrameActionState,
   type PaneFrameActionChip,
   type PaneFrameHit,
   type PaneFrameProjection,
@@ -140,10 +142,24 @@ export const CARD_22_4B2_PANE_FRAME_ROOT_WIRING_DEFERRALS = Object.freeze([
 
 /** Live tmux ids are transport identities, so encode them before crossing the semantic boundary. */
 export function terminalPaneSemanticId(paneId: string): SemanticProductId {
-  const encoded = Array.from(paneId, (character) => character.codePointAt(0)!.toString(16)).join(
-    "-",
-  );
-  return `pane.tmux.${encoded || "empty"}` as SemanticProductId;
+  const prefix = "pane.tmux.";
+  const encoded =
+    Array.from(paneId, (character) => character.codePointAt(0)!.toString(16)).join("-") || "empty";
+  const maximumEncodedLength = 128 - prefix.length;
+  const hash = stablePaneIdHash(paneId);
+  const bounded =
+    encoded.length <= maximumEncodedLength
+      ? encoded
+      : `${encoded.slice(0, maximumEncodedLength - hash.length - 1)}-${hash}`;
+  return SemanticProductIdSchemaZ.parse(`${prefix}${bounded}`);
+}
+
+function stablePaneIdHash(value: string): string {
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < value.length; index += 1) {
+    hash = Math.imul(hash ^ value.charCodeAt(index), 0x01000193);
+  }
+  return (hash >>> 0).toString(16).padStart(8, "0");
 }
 
 /**
@@ -488,6 +504,14 @@ function paneHeaderFrame(
   const projectedActions: PaneFrameActionChip[] = [];
   const pushAction = (index: number, chipWidth: number) => {
     const action = actions[index]!;
+    const semanticAction = full.model.actions[index]!;
+    const effective = resolveEffectivePaneFrameActionState({
+      appearance: full.model.appearance,
+      action: semanticAction,
+      attention: false,
+      hostHovered: hovered?.paneId === pane.id && hovered.actionIndex === index,
+      hostPressed: pressed?.paneId === pane.id && pressed.actionIndex === index,
+    });
     projectedActions.push({
       ...action,
       kind: "action",
@@ -496,8 +520,15 @@ function paneHeaderFrame(
       fullLabel: action.label,
       start: actionX,
       width: chipWidth,
-      hovered: hovered?.paneId === pane.id && hovered.actionIndex === index,
-      pressed: pressed?.paneId === pane.id && pressed.actionIndex === index,
+      active: effective.active,
+      disabled: effective.disabled,
+      attention: effective.attention,
+      focused: effective.focused,
+      hovered: effective.hovered,
+      interactive: effective.interactive,
+      loading: effective.loading,
+      pressed: effective.pressed,
+      state: effective.state,
     });
     actionX += chipWidth + 1;
   };

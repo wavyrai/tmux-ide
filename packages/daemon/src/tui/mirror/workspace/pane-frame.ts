@@ -110,8 +110,36 @@ export interface PaneFrameActionChip extends PaneFrameAction {
   fullLabel: string;
   start: number;
   width: number;
+  active: boolean;
+  disabled: boolean;
+  attention: boolean;
+  focused: boolean;
   hovered: boolean;
+  interactive: boolean;
+  loading: boolean;
   pressed: boolean;
+  state: EffectivePaneFrameActionVisualState;
+}
+
+export type EffectivePaneFrameActionVisualState =
+  | "disabled"
+  | "loading"
+  | "pressed"
+  | "focused"
+  | "attention"
+  | "hovered"
+  | "base";
+
+export interface EffectivePaneFrameActionState {
+  readonly active: boolean;
+  readonly disabled: boolean;
+  readonly attention: boolean;
+  readonly focused: boolean;
+  readonly hovered: boolean;
+  readonly interactive: boolean;
+  readonly loading: boolean;
+  readonly pressed: boolean;
+  readonly state: EffectivePaneFrameActionVisualState;
 }
 
 export type PaneFrameChip = PaneFrameStatusChip | PaneFrameStateChip | PaneFrameActionChip;
@@ -346,6 +374,57 @@ export function projectPaneFrame(input: PaneFrameInput): PaneFrameProjection {
   });
 }
 
+/**
+ * One action-state boundary shared by rendering and hit testing.
+ *
+ * Precedence is disabled -> loading -> pressed -> focus-visible -> attention ->
+ * hover -> base. Disabled/loading suppress every transient state,
+ * and only an effective interactive action may own a cell target.
+ */
+export function resolveEffectivePaneFrameActionState(input: {
+  appearance: PaneFrameModel["appearance"];
+  action: SemanticPaneFrameAction;
+  attention: boolean;
+  hostHovered: boolean;
+  hostPressed: boolean;
+}): EffectivePaneFrameActionState {
+  const global = input.appearance.action;
+  const explicitDisabled = global.disabled || !input.action.available;
+  const loading = !explicitDisabled && (global.loading || input.action.busy);
+  const disabled =
+    explicitDisabled || (!global.interactive && !global.loading && !input.action.busy);
+  const interactive = global.interactive && input.action.available && !input.action.busy;
+  const transient = interactive && !disabled && !loading;
+  const pressed = transient && (input.hostPressed || input.action.pressed || global.pressed);
+  const focused = transient && global.focusVisible;
+  const attention = transient && input.attention;
+  const hovered = transient && (input.hostHovered || global.hover);
+  const state: EffectivePaneFrameActionVisualState = disabled
+    ? "disabled"
+    : loading
+      ? "loading"
+      : pressed
+        ? "pressed"
+        : focused
+          ? "focused"
+          : attention
+            ? "attention"
+            : hovered
+              ? "hovered"
+              : "base";
+  return {
+    active: state === "pressed" && input.action.pressed,
+    disabled,
+    attention: state === "attention",
+    focused: state === "focused",
+    hovered: state === "hovered",
+    interactive,
+    loading,
+    pressed: state === "pressed",
+    state,
+  };
+}
+
 /** Cell geometry for a shared semantic PaneFrame model. */
 export function projectSemanticPaneFrame(
   input: SemanticPaneFrameProjectionInput,
@@ -375,6 +454,13 @@ export function projectSemanticPaneFrame(
   );
   const actions = input.model.actions.map((semanticAction, index) => {
     const presentation = presentations.get(semanticAction.id);
+    const effective = resolveEffectivePaneFrameActionState({
+      appearance,
+      action: semanticAction,
+      attention: presentation?.attention === true,
+      hostHovered: input.hoveredActionIndex === index,
+      hostPressed: input.pressedActionIndex === index,
+    });
     const action: PaneFrameAction = {
       id: semanticAction.id,
       commandId: semanticAction.commandId,
@@ -382,10 +468,10 @@ export function projectSemanticPaneFrame(
       compactLabel: presentation?.compactLabel,
       icon: presentation ? presentation.icon : semanticAction.icon,
       description: semanticAction.description ?? semanticAction.label,
-      active: semanticAction.pressed,
-      disabled: !semanticAction.available || semanticAction.busy,
-      attention: presentation?.attention,
-      pressed: semanticAction.pressed,
+      active: effective.active,
+      disabled: effective.disabled,
+      attention: effective.attention,
+      pressed: effective.pressed,
       hidden: presentation?.hidden,
     };
     return {
@@ -398,8 +484,15 @@ export function projectSemanticPaneFrame(
         : variant === "compact"
           ? (action.compactLabel ?? action.label)
           : action.label,
-      hovered: input.hoveredActionIndex === index,
-      pressed: input.pressedActionIndex === index || action.pressed === true,
+      active: effective.active,
+      disabled: effective.disabled,
+      attention: effective.attention,
+      focused: effective.focused,
+      hovered: effective.hovered,
+      interactive: effective.interactive,
+      loading: effective.loading,
+      pressed: effective.pressed,
+      state: effective.state,
     };
   });
   const visible = fitChips(header.width, variant, status, stateChips, actions);
@@ -599,7 +692,7 @@ export function paneFrameHitTest(
   }
   const actionIndex = projection.actions.findIndex(
     (action) =>
-      !action.disabled &&
+      action.interactive &&
       cellY === projection.header.y &&
       cellX >= action.start &&
       cellX < action.start + action.width,

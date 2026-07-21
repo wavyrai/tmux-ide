@@ -112,8 +112,10 @@ function Chip(props: { theme: SemanticThemeSnapshot; chip: PaneFrameChip }) {
             hovered={action()!.hovered}
             pressed={action()!.pressed}
             selected={action()!.active}
+            focused={action()!.focused}
             disabled={action()!.disabled}
             attention={action()!.attention}
+            loading={action()!.loading}
           />
         }
       >
@@ -126,8 +128,10 @@ function Chip(props: { theme: SemanticThemeSnapshot; chip: PaneFrameChip }) {
           // Icon identity (□/▣) communicates toggle state. Keep the idle
           // control transparent like native window chrome.
           selected={false}
+          focused={action()!.focused}
           disabled={action()!.disabled}
           attention={action()!.attention}
+          loading={action()!.loading}
           hidden={action()!.hidden}
         />
       </Show>
@@ -415,7 +419,11 @@ function OpenTuiAction(props: PaneFrameActionLeafProps) {
         top={0}
         width={chip()!.width}
         height={1}
-        onMouseDown={host.inputOwner() && props.interactive ? props.onActivate : undefined}
+        onMouseDown={
+          host.inputOwner() && props.interactive && chip()!.interactive
+            ? props.onActivate
+            : undefined
+        }
       >
         <Chip theme={host.theme()} chip={chip()!} />
       </box>
