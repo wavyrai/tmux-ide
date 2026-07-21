@@ -96,6 +96,9 @@ describe("desktop App host lifecycle", () => {
     expect(app.dataset.theme).toBe("light");
     expect(app.style.getPropertyValue("--tmux-ide-surface-canvas")).toBe("rgb(245 245 247)");
     expect(app.dataset.increasedContrast).toBe("false");
+    expect(app.dataset.shellSource).toBe("preview");
+    expect(root.querySelector(".titlebar__preview-badge")?.textContent).toBe("Preview data");
+    expect(root.querySelector(".status-strip")?.getAttribute("data-shell-source")).toBe("preview");
     expect(root.querySelector(".window-controls")).toBeNull();
 
     pendingBootstrap.resolve({

@@ -55,7 +55,7 @@ export function createOpenTuiWorkbenchDockHost(
           height={1}
           backgroundColor={palette().background}
           overflow="hidden"
-          onMouseDown={props.onActivate ? () => props.onActivate?.() : undefined}
+          onMouseDown={props.onActivate ? () => props.onActivate?.("mouse") : undefined}
         >
           <text fg={palette().foreground} attributes={props.tab.focused ? 1 : 0}>
             {props.tab.label}
@@ -86,7 +86,7 @@ export function createOpenTuiWorkbenchDockHost(
           height={1}
           backgroundColor={palette().background}
           overflow="hidden"
-          onMouseDown={props.onActivate ? () => props.onActivate?.() : undefined}
+          onMouseDown={props.onActivate ? () => props.onActivate?.("mouse") : undefined}
         >
           <text fg={palette().foreground}>{props.action.label}</text>
         </box>

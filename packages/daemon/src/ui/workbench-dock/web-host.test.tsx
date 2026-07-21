@@ -1,6 +1,7 @@
 /* @vitest-environment happy-dom */
 import { afterEach, describe, expect, it } from "vitest";
 import { render } from "solid-js/web";
+import { createSignal } from "solid-js";
 import { COHESION_FIXTURE_V1 } from "@tmux-ide/contracts";
 import {
   DOM_EXPERIENCE_VARIABLE,
@@ -14,6 +15,7 @@ import {
   EXPECTED_WORKBENCH_DOCK_KEYBOARD_TRACE,
 } from "./fixture.ts";
 import { WebWorkbenchDock } from "./web-host.tsx";
+import { assertWorkbenchDockHostOrder } from "./presenter.tsx";
 
 const disposers: Array<() => void> = [];
 
@@ -70,6 +72,10 @@ function tab(root: HTMLElement, id: string): HTMLButtonElement {
 
 function action(root: HTMLElement, id: string): HTMLButtonElement {
   return root.querySelector<HTMLButtonElement>(`[data-action="${id}"]`)!;
+}
+
+function pointerClick(element: Element): void {
+  element.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 1 }));
 }
 
 describe("shared WorkbenchDockPresenter DOM host", () => {
@@ -138,6 +144,120 @@ describe("shared WorkbenchDockPresenter DOM host", () => {
       "tab:activity",
       "tab:files",
     ]);
+  });
+
+  it("preserves exact mouse and keyboard sources across semantic tab and action activation", () => {
+    const calls: string[] = [];
+    const root = document.createElement("div");
+    installCanonicalFixtureVariables(root);
+    document.body.append(root);
+    disposers.push(
+      render(
+        () => (
+          <WebWorkbenchDock
+            projection={createWorkbenchDockHostFixture()}
+            onTabActivate={(tabId, source) => calls.push(`tab:${tabId}:${source}`)}
+            onActionActivate={(actionId, nextMode, source) =>
+              calls.push(`action:${actionId}:${nextMode}:${source}`)
+            }
+          />
+        ),
+        root,
+      ),
+    );
+
+    pointerClick(tab(root, "files"));
+    tab(root, "missions").focus();
+    for (const key of ["ArrowLeft", "ArrowRight", "End", "Home", "Enter", " "]) {
+      (document.activeElement as HTMLButtonElement).dispatchEvent(
+        new KeyboardEvent("keydown", { key, bubbles: true }),
+      );
+    }
+    pointerClick(action(root, "toggle-collapse"));
+    action(root, "toggle-maximize").click();
+
+    expect(calls).toEqual([
+      "tab:files:mouse",
+      "tab:files:keyboard",
+      "tab:missions:keyboard",
+      "tab:activity:keyboard",
+      "tab:files:keyboard",
+      "tab:files:keyboard",
+      "tab:files:keyboard",
+      "action:toggle-collapse:collapsed:mouse",
+      "action:toggle-maximize:maximized:keyboard",
+    ]);
+  });
+
+  it("reactively falls back to the first enabled tab stop when the selected tab is disabled", () => {
+    const [projection, setProjection] = createSignal(createWorkbenchDockHostFixture());
+    const root = document.createElement("div");
+    installCanonicalFixtureVariables(root);
+    document.body.append(root);
+    disposers.push(render(() => <WebWorkbenchDock projection={projection()} />, root));
+
+    expect(tab(root, "missions").tabIndex).toBe(0);
+    const fresh = createWorkbenchDockHostFixture();
+    setProjection({
+      ...fresh,
+      tabs: fresh.tabs.map((candidate) =>
+        candidate.id === "missions"
+          ? { ...candidate, selected: true, disabled: true, disabledReason: "Unavailable" }
+          : candidate.id === "changes"
+            ? { ...candidate, selected: false, disabled: true }
+            : { ...candidate, selected: false },
+      ),
+    });
+
+    const tabStops = [...root.querySelectorAll<HTMLButtonElement>('[role="tab"]')].filter(
+      (candidate) => candidate.tabIndex === 0,
+    );
+    expect(tab(root, "missions").disabled).toBe(true);
+    expect(tabStops.map((candidate) => candidate.dataset.tabId)).toEqual(["files"]);
+  });
+
+  it("preserves host leaf identity across fresh immutable projections", () => {
+    const [projection, setProjection] = createSignal(createWorkbenchDockHostFixture());
+    const root = document.createElement("div");
+    installCanonicalFixtureVariables(root);
+    document.body.append(root);
+    disposers.push(
+      render(
+        () => (
+          <WebWorkbenchDock projection={projection()}>
+            <p>stable body</p>
+          </WebWorkbenchDock>
+        ),
+        root,
+      ),
+    );
+    const filesTab = tab(root, "files");
+    const collapseAction = action(root, "toggle-collapse");
+    const filesPanel = root.querySelector("#workbench-dock-panel-files");
+
+    setProjection(
+      createWorkbenchDockHostFixture({
+        dockMode: "maximized",
+        activeDockTab: "files",
+        focusZone: "dock-body",
+      }),
+    );
+
+    expect(tab(root, "files")).toBe(filesTab);
+    expect(action(root, "toggle-collapse")).toBe(collapseAction);
+    expect(root.querySelector("#workbench-dock-panel-files")).toBe(filesPanel);
+    expect(filesTab.getAttribute("aria-selected")).toBe("true");
+    expect(root.querySelector(".workbench-dock")?.getAttribute("data-mode")).toBe("maximized");
+  });
+
+  it("rejects reordered positional host leaves before rendering the wrong semantics", () => {
+    const fixture = createWorkbenchDockHostFixture();
+    expect(() =>
+      assertWorkbenchDockHostOrder({ ...fixture, tabs: [...fixture.tabs].reverse() }),
+    ).toThrowError("workbench dock tab order changed: activity,missions,changes,files");
+    expect(() =>
+      assertWorkbenchDockHostOrder({ ...fixture, actions: [...fixture.actions].reverse() }),
+    ).toThrowError("workbench dock action order changed: toggle-maximize,toggle-collapse");
   });
 
   it("computes selected, focused, attention, and disabled styles from canonical variables", () => {
