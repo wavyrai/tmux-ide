@@ -2,15 +2,7 @@
 import type { RGBA } from "@opentui/core";
 import { For, Show } from "solid-js";
 import type { MissionDashboardProjection } from "./missions-dashboard.ts";
-import {
-  ACCENT,
-  BADGE_BG,
-  BUTTON_HOVER_BG,
-  DEFAULT_BG,
-  DEFAULT_FG,
-  HOVER_BG,
-  MUTED,
-} from "./theme.ts";
+import { DARK_THEME, type SemanticThemeSnapshot } from "./theme.ts";
 import {
   clipTerminal,
   missionWorkspaceLayout,
@@ -44,7 +36,10 @@ export interface MissionSurfaceProps {
   errorMessage: string;
   resolveDeepLink: (kind: MissionDeepLinkKind) => MissionDeepLinkResolution;
   isHovered: (region: MissionSurfaceHoverRegion, index: number) => boolean;
+  /** @deprecated Card 22.3 removes this accepted-but-unread compatibility prop. */
   theme: MissionSurfaceTheme;
+  /** Canonical theme projection; optional until app.tsx adopts it in Card 22.3. */
+  semanticTheme?: SemanticThemeSnapshot;
 }
 
 interface MissionMainSurfaceProps {
@@ -56,7 +51,7 @@ interface MissionMainSurfaceProps {
   errorMessage: string;
   resolveDeepLink: (kind: MissionDeepLinkKind) => MissionDeepLinkResolution;
   isHovered: (region: MissionSurfaceHoverRegion, index: number) => boolean;
-  theme: MissionSurfaceTheme;
+  semanticTheme?: SemanticThemeSnapshot;
 }
 
 export function missionSurfaceLayout(
@@ -70,6 +65,7 @@ export function missionSurfaceLayout(
 }
 
 export function MissionsSurface(props: MissionSurfaceProps) {
+  const semantic = () => props.semanticTheme ?? DARK_THEME;
   return (
     <box width={props.width} height={props.dashboard.height} flexDirection="row" gap={1}>
       <box
@@ -87,7 +83,7 @@ export function MissionsSurface(props: MissionSurfaceProps) {
           errorMessage={props.errorMessage}
           resolveDeepLink={props.resolveDeepLink}
           isHovered={props.isHovered}
-          theme={props.theme}
+          semanticTheme={props.semanticTheme}
         />
       </box>
       <Show when={props.dashboard.inspector}>
@@ -97,21 +93,29 @@ export function MissionsSurface(props: MissionSurfaceProps) {
             height={inspector().height}
             flexDirection="column"
             border={inspector().width >= 2 && inspector().height >= 2}
-            borderColor={MUTED}
+            borderColor={semantic().roles.borders.default}
             overflow="hidden"
-            backgroundColor={DEFAULT_BG}
+            backgroundColor={semantic().roles.surfaces.canvas}
           >
             <Show when={inspector().titleRows > 0}>
-              <text fg={ACCENT}>
+              <text fg={semantic().roles.text.link}>
                 {clipTerminal(inspector().title, Math.max(0, inspector().width - 2))}
               </text>
             </Show>
             <For each={inspector().rows.slice(0, inspector().bodyRows)}>
               {(row) => (
                 <box height={1} flexDirection="row" overflow="hidden">
-                  <text fg={row.emphasis ? ACCENT : MUTED}>{row.label}</text>
-                  <text fg={MUTED}>{": "}</text>
-                  <text fg={row.emphasis ? DEFAULT_FG : MUTED}>{row.value}</text>
+                  <text
+                    fg={row.emphasis ? semantic().roles.text.link : semantic().roles.text.muted}
+                  >
+                    {row.label}
+                  </text>
+                  <text fg={semantic().roles.text.muted}>{": "}</text>
+                  <text
+                    fg={row.emphasis ? semantic().roles.text.primary : semantic().roles.text.muted}
+                  >
+                    {row.value}
+                  </text>
                 </box>
               )}
             </For>
@@ -123,6 +127,7 @@ export function MissionsSurface(props: MissionSurfaceProps) {
 }
 
 function MissionMainSurface(props: MissionMainSurfaceProps) {
+  const semantic = () => props.semanticTheme ?? DARK_THEME;
   const ready = () =>
     props.snapshot &&
     props.loadState.status !== "loading" &&
@@ -135,22 +140,22 @@ function MissionMainSurface(props: MissionMainSurfaceProps) {
         <For each={props.layout.header.rows[0] ?? []}>
           {(chip) => (
             <text
-              fg={DEFAULT_FG}
+              fg={semantic().roles.text.primary}
               bg={
                 chip.kind === "mode" && chip.mode === props.model.mode
-                  ? props.theme.buttonActiveBg
+                  ? semantic().roles.selection.selection
                   : chip.kind === "mode" &&
                       props.isHovered("missionmode", chip.mode === "board" ? 0 : 1)
-                    ? BUTTON_HOVER_BG
+                    ? semantic().roles.selection.hover
                     : chip.kind === "refresh" && props.isHovered("missionbutton", 0)
-                      ? BUTTON_HOVER_BG
+                      ? semantic().roles.selection.hover
                       : chip.kind === "density" && props.isHovered("missionbutton", 1)
-                        ? BUTTON_HOVER_BG
+                        ? semantic().roles.selection.hover
                         : chip.kind === "collapse" && props.isHovered("missionbutton", 4)
-                          ? BUTTON_HOVER_BG
+                          ? semantic().roles.selection.hover
                           : chip.kind === "zoom" && props.isHovered("missionbutton", 5)
-                            ? BUTTON_HOVER_BG
-                            : props.theme.buttonBg
+                            ? semantic().roles.selection.hover
+                            : semantic().roles.surfaces.header
               }
             >
               {chip.label}
@@ -160,18 +165,26 @@ function MissionMainSurface(props: MissionMainSurfaceProps) {
       </box>
       <box width={props.width} flexDirection="row">
         <text
-          fg={props.theme.buttonFg}
-          bg={props.isHovered("missionbutton", 2) ? BUTTON_HOVER_BG : props.theme.buttonBg}
+          fg={semantic().roles.text.secondary}
+          bg={
+            props.isHovered("missionbutton", 2)
+              ? semantic().roles.selection.hover
+              : semantic().roles.surfaces.header
+          }
         >
           {"<"}
         </text>
-        <text fg={MUTED}>
+        <text fg={semantic().roles.text.muted}>
           {clipTerminal(props.layout.header.labels[1].slice(1, -1), Math.max(0, props.width - 2))}
         </text>
         <Show when={props.width > 1}>
           <text
-            fg={props.theme.buttonFg}
-            bg={props.isHovered("missionbutton", 3) ? BUTTON_HOVER_BG : props.theme.buttonBg}
+            fg={semantic().roles.text.secondary}
+            bg={
+              props.isHovered("missionbutton", 3)
+                ? semantic().roles.selection.hover
+                : semantic().roles.surfaces.header
+            }
           >
             {">"}
           </text>
@@ -180,23 +193,29 @@ function MissionMainSurface(props: MissionMainSurfaceProps) {
       <Show when={props.loadState.status === "loading"}>
         <box flexDirection="column" flexGrow={1}>
           <box height={1} />
-          <text fg={DEFAULT_FG}>Loading missions…</text>
-          <text fg={MUTED}>Mission history is read from the active project runtime.</text>
+          <text fg={semantic().roles.text.primary}>Loading missions…</text>
+          <text fg={semantic().roles.text.muted}>
+            Mission history is read from the active project runtime.
+          </text>
         </box>
       </Show>
       <Show when={props.loadState.status === "error" && !props.snapshot}>
         <box flexDirection="column" flexGrow={1}>
           <box height={1} />
-          <text fg={props.theme.bannerFg}>Mission data could not be loaded.</text>
-          <text fg={MUTED}>{props.errorMessage}</text>
-          <text fg={MUTED}>Press r to retry. Other workspace views remain available.</text>
+          <text fg={semantic().roles.statusTone.danger}>Mission data could not be loaded.</text>
+          <text fg={semantic().roles.text.muted}>{props.errorMessage}</text>
+          <text fg={semantic().roles.text.muted}>
+            Press r to retry. Other workspace views remain available.
+          </text>
         </box>
       </Show>
       <Show when={props.loadState.status === "empty"}>
         <box flexDirection="column" flexGrow={1}>
           <box height={1} />
-          <text fg={DEFAULT_FG}>No missions yet.</text>
-          <text fg={MUTED}>This read-only board will populate from durable mission history.</text>
+          <text fg={semantic().roles.text.primary}>No missions yet.</text>
+          <text fg={semantic().roles.text.muted}>
+            This read-only board will populate from durable mission history.
+          </text>
         </box>
       </Show>
       <Show when={ready()}>
@@ -209,12 +228,18 @@ function MissionMainSurface(props: MissionMainSurfaceProps) {
                   width={column.width}
                   height={column.height}
                   border={column.width >= 2 && column.height >= 2}
-                  borderColor={column.active ? ACCENT : MUTED}
-                  backgroundColor={DEFAULT_BG}
+                  borderColor={
+                    column.active
+                      ? semantic().roles.borders.focused
+                      : semantic().roles.borders.default
+                  }
+                  backgroundColor={semantic().roles.surfaces.canvas}
                   overflow="hidden"
                 >
                   <Show when={column.showTitle}>
-                    <text fg={column.active ? ACCENT : MUTED}>
+                    <text
+                      fg={column.active ? semantic().roles.text.link : semantic().roles.text.muted}
+                    >
                       {clipTerminal(column.title, column.bodyWidth)}
                     </text>
                   </Show>
@@ -227,10 +252,10 @@ function MissionMainSurface(props: MissionMainSurfaceProps) {
                           height={cardLayout.height}
                           backgroundColor={
                             selected
-                              ? BADGE_BG
+                              ? semantic().roles.selection.selection
                               : props.isHovered("missioncard", cardLayout.hoverKey)
-                                ? HOVER_BG
-                                : DEFAULT_BG
+                                ? semantic().roles.selection.hover
+                                : semantic().roles.surfaces.canvas
                           }
                         >
                           <For each={cardLayout.lines}>
@@ -238,10 +263,10 @@ function MissionMainSurface(props: MissionMainSurfaceProps) {
                               <text
                                 fg={
                                   selected && lineIndex() === 0
-                                    ? ACCENT
+                                    ? semantic().roles.text.link
                                     : lineIndex() === 0
-                                      ? DEFAULT_FG
-                                      : MUTED
+                                      ? semantic().roles.text.primary
+                                      : semantic().roles.text.muted
                                 }
                               >
                                 {clipTerminal(line, cardLayout.width)}
@@ -268,15 +293,21 @@ function MissionMainSurface(props: MissionMainSurfaceProps) {
                     height={row.height}
                     backgroundColor={
                       selected
-                        ? BADGE_BG
+                        ? semantic().roles.selection.selection
                         : props.isHovered("missionhistory", row.hoverKey)
-                          ? HOVER_BG
-                          : DEFAULT_BG
+                          ? semantic().roles.selection.hover
+                          : semantic().roles.surfaces.canvas
                     }
                   >
                     <For each={row.lines}>
                       {(line, lineIndex) => (
-                        <text fg={lineIndex() === 0 ? DEFAULT_FG : MUTED}>
+                        <text
+                          fg={
+                            lineIndex() === 0
+                              ? semantic().roles.text.primary
+                              : semantic().roles.text.muted
+                          }
+                        >
                           {clipTerminal(line, row.width)}
                         </text>
                       )}
@@ -293,15 +324,15 @@ function MissionMainSurface(props: MissionMainSurfaceProps) {
               <For each={props.layout.detail.sections}>
                 {(chip) => (
                   <text
-                    fg={DEFAULT_FG}
+                    fg={semantic().roles.text.primary}
                     bg={
                       chip.section === props.model.detailSection ||
                       props.isHovered(
                         "missionbutton",
                         10 + props.layout.detail.sections.indexOf(chip),
                       )
-                        ? props.theme.buttonActiveBg
-                        : props.theme.buttonBg
+                        ? semantic().roles.selection.selection
+                        : semantic().roles.surfaces.header
                     }
                   >
                     {chip.label}
@@ -314,15 +345,19 @@ function MissionMainSurface(props: MissionMainSurfaceProps) {
                   const resolved = chip.link ? props.resolveDeepLink(chip.link) : null;
                   return (
                     <text
-                      fg={resolved?.available ? props.theme.buttonFg : MUTED}
+                      fg={
+                        resolved?.available
+                          ? semantic().roles.text.secondary
+                          : semantic().roles.text.muted
+                      }
                       bg={
                         chip.link &&
                         props.isHovered(
                           "missionbutton",
                           20 + props.layout.detail.links.indexOf(chip),
                         )
-                          ? BUTTON_HOVER_BG
-                          : props.theme.buttonBg
+                          ? semantic().roles.selection.hover
+                          : semantic().roles.surfaces.header
                       }
                     >
                       {chip.label}
@@ -335,8 +370,10 @@ function MissionMainSurface(props: MissionMainSurfaceProps) {
               when={props.snapshot?.detail}
               fallback={
                 <box flexDirection="column" flexGrow={1}>
-                  <text fg={DEFAULT_FG}>Loading mission detail…</text>
-                  <text fg={MUTED}>Press r to refresh if this does not resolve.</text>
+                  <text fg={semantic().roles.text.primary}>Loading mission detail…</text>
+                  <text fg={semantic().roles.text.muted}>
+                    Press r to refresh if this does not resolve.
+                  </text>
                 </box>
               }
             >
@@ -347,7 +384,15 @@ function MissionMainSurface(props: MissionMainSurfaceProps) {
                       {(row) => (
                         <For each={row.lines}>
                           {(line, lineIndex) => (
-                            <text fg={lineIndex() === 0 ? ACCENT : MUTED}>{line}</text>
+                            <text
+                              fg={
+                                lineIndex() === 0
+                                  ? semantic().roles.text.link
+                                  : semantic().roles.text.muted
+                              }
+                            >
+                              {line}
+                            </text>
                           )}
                         </For>
                       )}
@@ -365,15 +410,23 @@ function MissionMainSurface(props: MissionMainSurfaceProps) {
                           height={row.height}
                           backgroundColor={
                             selected
-                              ? BADGE_BG
+                              ? semantic().roles.selection.selection
                               : props.isHovered("missionhistory", row.hoverKey)
-                                ? HOVER_BG
-                                : DEFAULT_BG
+                                ? semantic().roles.selection.hover
+                                : semantic().roles.surfaces.canvas
                           }
                         >
                           <For each={row.lines}>
                             {(line, lineIndex) => (
-                              <text fg={lineIndex() === 0 ? DEFAULT_FG : MUTED}>{line}</text>
+                              <text
+                                fg={
+                                  lineIndex() === 0
+                                    ? semantic().roles.text.primary
+                                    : semantic().roles.text.muted
+                                }
+                              >
+                                {line}
+                              </text>
                             )}
                           </For>
                         </box>
@@ -386,7 +439,7 @@ function MissionMainSurface(props: MissionMainSurfaceProps) {
           </box>
         </Show>
       </Show>
-      <text fg={MUTED}>{props.layout.footer.label}</text>
+      <text fg={semantic().roles.text.muted}>{props.layout.footer.label}</text>
     </>
   );
 }

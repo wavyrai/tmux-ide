@@ -34,7 +34,7 @@ export function createOpenTuiWorkbenchDockHost(
           width={props.projection.dockTabs.width}
           height={props.projection.dockTabs.height}
           position="relative"
-          backgroundColor={theme().colors.surfaceRaised}
+          backgroundColor={theme().roles.surfaces.panelRaised}
           overflow="hidden"
         >
           {props.children}
@@ -70,12 +70,12 @@ export function createOpenTuiWorkbenchDockHost(
       const palette = () =>
         props.action.active
           ? {
-              foreground: theme().colors.selectionForeground,
-              background: theme().colors.selection,
+              foreground: theme().roles.selection.selectionText,
+              background: theme().roles.selection.selection,
             }
           : {
-              foreground: theme().colors.foreground,
-              background: theme().colors.surface,
+              foreground: theme().roles.text.primary,
+              background: theme().roles.surfaces.panel,
             };
       return (
         <box
@@ -99,7 +99,7 @@ export function createOpenTuiWorkbenchDockHost(
             width={props.projection.dockBody.width}
             height={props.projection.dockBody.height}
             flexDirection="row"
-            backgroundColor={theme().colors.surface}
+            backgroundColor={theme().roles.surfaces.panel}
             overflow="hidden"
           >
             <DockFocusRail
@@ -126,31 +126,31 @@ export function createOpenTuiWorkbenchDockHost(
 function tabPalette(theme: SemanticThemeSnapshot, tab: WorkbenchDockHostTab) {
   if (tab.disabled) {
     return {
-      foreground: theme.colors.mutedForeground,
-      background: theme.colors.surface,
+      foreground: theme.roles.text.muted,
+      background: theme.roles.selection.disabled,
     };
   }
   if (tab.selected) {
     return {
-      foreground: theme.colors.selectionForeground,
-      background: theme.colors.selection,
+      foreground: theme.roles.selection.selectionText,
+      background: theme.roles.selection.selection,
     };
   }
   if (tab.attention) {
     return {
-      foreground: theme.colors.foreground,
-      background: theme.colors.attention,
+      foreground: theme.roles.text.primary,
+      background: theme.derived.attentionSurface,
     };
   }
   if (tab.hovered) {
     return {
-      foreground: theme.colors.foreground,
-      background: theme.colors.hover,
+      foreground: theme.roles.text.primary,
+      background: theme.roles.selection.hover,
     };
   }
   return {
-    foreground: theme.colors.foreground,
-    background: theme.colors.surface,
+    foreground: theme.roles.text.primary,
+    background: theme.roles.surfaces.panel,
   };
 }
 
@@ -164,10 +164,12 @@ function DockFocusRail(props: {
     <box
       width={props.width}
       height={props.height}
-      backgroundColor={props.theme.colors.background}
+      backgroundColor={props.theme.roles.surfaces.canvas}
       overflow="hidden"
     >
-      <text fg={props.focused ? props.theme.colors.focus : props.theme.colors.border}>
+      <text
+        fg={props.focused ? props.theme.roles.borders.focused : props.theme.roles.borders.subtle}
+      >
         {props.focused ? "▌" : "│"}
       </text>
     </box>

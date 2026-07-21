@@ -54,7 +54,7 @@ const commands: readonly CommandPaletteDescriptor[] = [
   },
   {
     id: "workspace.diff.open",
-    icon: "diff",
+    icon: "changes",
     label: "Review Changes",
     description: "Open the native diff surface",
     category: "Files",
@@ -70,7 +70,7 @@ const commands: readonly CommandPaletteDescriptor[] = [
   },
   {
     id: "workspace.pane.split",
-    icon: "splitRight",
+    icon: "split-right",
     label: "Split Pane Right",
     description: "Create a terminal beside the active agent",
     category: "Window",

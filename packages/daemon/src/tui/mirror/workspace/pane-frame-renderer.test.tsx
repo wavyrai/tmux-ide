@@ -283,10 +283,10 @@ describe("PaneFrame OpenTUI renderer", () => {
       expect(titleSpan, label).toBeDefined();
       const nativeFocused = projection.focused || projection.terminalFocused;
       expect(colorKey(titleSpan!.fg), label).toBe(
-        colorKey(nativeFocused ? theme.colors.selectionForeground : theme.colors.mutedForeground),
+        colorKey(nativeFocused ? theme.roles.text.primary : theme.roles.text.muted),
       );
       expect(colorKey(titleSpan!.bg), label).toBe(
-        colorKey(nativeFocused ? theme.colors.accentMuted : palette.background),
+        colorKey(nativeFocused ? theme.roles.surfaces.headerActive : palette.background),
       );
       if (label === "edit-floating-maximized") {
         expect(stable).toContain("edit");
@@ -430,8 +430,8 @@ describe("PaneFrame OpenTUI renderer", () => {
     const hovered = spanContaining(setup, "⋯", projection.header.y)!;
     const disabled = spanContaining(setup, "×", projection.header.y)!;
     const pressed = spanContaining(setup, "◲", projection.header.y)!;
-    expect(colorKey(base.bg)).toBe(colorKey(theme.colors.accentMuted));
-    expect(colorKey(base.fg)).toBe(colorKey(theme.colors.mutedForeground));
+    expect(colorKey(base.bg)).toBe(colorKey(theme.roles.surfaces.headerActive));
+    expect(colorKey(base.fg)).toBe(colorKey(theme.roles.text.muted));
     expect(colorKey(hovered.bg)).toBe(colorKey(recipePalette(theme, { hovered: true }).background));
     expect(colorKey(disabled.fg)).toBe(
       colorKey(recipePalette(theme, { disabled: true }).foreground),

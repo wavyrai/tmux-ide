@@ -113,9 +113,9 @@ export function PaneFrameHeader(props: PaneFrameHeaderProps) {
   const palette = () => framePalette(props.theme, props.projection);
   const nativeFocused = () => props.projection.focused || props.projection.terminalFocused;
   const background = () =>
-    nativeFocused() ? props.theme.colors.accentMuted : palette().background;
+    nativeFocused() ? props.theme.roles.surfaces.headerActive : palette().background;
   const titleForeground = () =>
-    nativeFocused() ? props.theme.colors.selectionForeground : props.theme.colors.mutedForeground;
+    nativeFocused() ? props.theme.roles.text.primary : props.theme.roles.text.muted;
   // PaneFrame projections are immutable, so chips are fresh value objects on
   // every state update. Preserve the renderable tree by semantic chip id and
   // resolve the current chip separately.
@@ -140,7 +140,13 @@ export function PaneFrameHeader(props: PaneFrameHeaderProps) {
           width={props.projection.grip!.width}
           height={1}
         >
-          <text fg={nativeFocused() ? props.theme.colors.focus : props.theme.colors.border}>
+          <text
+            fg={
+              nativeFocused()
+                ? props.theme.roles.borders.focused
+                : props.theme.roles.borders.default
+            }
+          >
             {props.projection.grip!.text}
           </text>
         </box>
@@ -165,9 +171,7 @@ export function PaneFrameHeader(props: PaneFrameHeaderProps) {
           height={1}
         >
           <text
-            fg={
-              nativeFocused() ? props.theme.colors.foreground : props.theme.colors.mutedForeground
-            }
+            fg={nativeFocused() ? props.theme.roles.text.primary : props.theme.roles.text.muted}
           >
             {props.projection.subtitleSpan!.text}
           </text>
@@ -205,7 +209,7 @@ export function PaneFrame(props: PaneFrameProps) {
       width={props.projection.width}
       height={props.projection.height}
       position="relative"
-      backgroundColor={props.theme.colors.background}
+      backgroundColor={props.theme.roles.surfaces.canvas}
       overflow="hidden"
     >
       <Show when={props.projection.borderStyle !== "none" && props.projection.width > 1}>
@@ -256,7 +260,7 @@ export function PaneFrame(props: PaneFrameProps) {
         width={props.projection.body.width}
         height={props.projection.body.height}
         flexDirection="column"
-        backgroundColor={props.theme.colors.background}
+        backgroundColor={props.theme.roles.surfaces.terminal}
         overflow="hidden"
       >
         {props.children}

@@ -102,16 +102,16 @@ describe("shell chrome responsive projection", () => {
     });
     const terminal = shellVisualPalette(theme, { terminalFocus: true });
 
-    expect(key(selected.bg)).toBe(key(theme.colors.selection));
-    expect(key(hovered.bg)).toBe(key(theme.colors.hover));
-    expect(key(context.bg)).not.toBe(key(theme.colors.attention));
-    expect(key(context.fg)).toBe(key(theme.colors.accent));
-    expect(key(attention.bg)).toBe(key(theme.colors.attention));
-    expect(key(attention.border)).toBe(key(theme.colors.status.blocked));
-    expect(key(selectedAttention.bg)).toBe(key(theme.colors.selection));
+    expect(key(selected.bg)).toBe(key(theme.roles.selection.selection));
+    expect(key(hovered.bg)).toBe(key(theme.roles.selection.hover));
+    expect(key(context.bg)).not.toBe(key(theme.derived.attentionSurface));
+    expect(key(context.fg)).toBe(key(theme.roles.text.link));
+    expect(key(attention.bg)).toBe(key(theme.derived.attentionSurface));
+    expect(key(attention.border)).toBe(key(theme.roles.statusTone.warning));
+    expect(key(selectedAttention.bg)).toBe(key(theme.roles.selection.selection));
     expect(selectedAttention.marker).toBe("!");
-    expect(key(selectedAttention.border)).toBe(key(theme.colors.status.blocked));
-    expect(key(terminal.bg)).toBe(key(theme.colors.focus));
+    expect(key(selectedAttention.border)).toBe(key(theme.roles.statusTone.warning));
+    expect(key(terminal.bg)).toBe(key(theme.roles.borders.focused));
     expect(
       new Set([selected.marker, hovered.marker, context.marker, attention.marker, terminal.marker])
         .size,

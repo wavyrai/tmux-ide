@@ -2,10 +2,17 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
+  COHESION_FIXTURE_V1,
+  deriveAttentionBlend,
+  resolveVisualTheme,
+  type RendererNeutralColor,
+} from "@tmux-ide/contracts";
+import {
   ACCENT,
   DARK_THEME,
   DEFAULT_BG,
   LIGHT_THEME,
+  LEGACY_THEME_ALIAS_IDS,
   colorToThemeBytes,
   createSemanticThemeSnapshot,
   createSemanticThemeStore,
@@ -16,6 +23,29 @@ import { THEME_PRESETS } from "./settings-model.ts";
 
 function rgbaKey(color: { r: number; g: number; b: number; a: number }): string {
   return colorToThemeBytes(color as Parameters<typeof colorToThemeBytes>[0]).join(",");
+}
+
+function rendererNeutralKey(color: RendererNeutralColor): string {
+  return [color.red, color.green, color.blue, color.alpha].join(",");
+}
+
+function expectCanonicalColorProjection(
+  snapshot: ReturnType<typeof createSemanticThemeSnapshot>,
+  resolved: ReturnType<typeof resolveVisualTheme>,
+): void {
+  for (const group of ["surfaces", "text", "borders", "statusTone", "selection"] as const) {
+    const actual = snapshot.roles[group] as Readonly<Record<string, Parameters<typeof rgbaKey>[0]>>;
+    const expected = resolved.tokens[group] as Readonly<Record<string, RendererNeutralColor>>;
+    expect(Object.keys(actual)).toEqual(Object.keys(expected));
+    for (const role of Object.keys(expected)) {
+      expect(rgbaKey(actual[role]!)).toBe(rendererNeutralKey(expected[role]!));
+    }
+  }
+  expect(rgbaKey(snapshot.derived.attentionSurface)).toBe(
+    rendererNeutralKey(
+      deriveAttentionBlend(resolved.tokens.surfaces.panel, resolved.tokens.borders.attention),
+    ),
+  );
 }
 
 class FakeThemeModeSource implements ThemeModeSource {
@@ -57,7 +87,50 @@ describe("semantic theme snapshots", () => {
     expect(createSemanticThemeSnapshot({ mode: "system" }, "light").setting).toBe("system");
   });
 
-  it("keeps dark compatibility exports mapped to the legacy dark palette", () => {
+  it("projects the common fixture and dark/light/high-contrast canonical roles exactly", () => {
+    const cases = [
+      {
+        config: {
+          mode: "dark" as const,
+          userTheme: COHESION_FIXTURE_V1.theme.user,
+          projectTheme: COHESION_FIXTURE_V1.theme.project ?? undefined,
+          accessibility: COHESION_FIXTURE_V1.theme.accessibility,
+        },
+      },
+      { config: { mode: "light" as const } },
+      {
+        config: {
+          mode: "dark" as const,
+          accessibility: { reducedMotion: true, increasedContrast: true },
+        },
+      },
+    ];
+    for (const { config } of cases) {
+      const expected = resolveVisualTheme({
+        appearance: config.mode,
+        userTheme: "userTheme" in config ? config.userTheme : undefined,
+        projectTheme: "projectTheme" in config ? config.projectTheme : undefined,
+        accessibility: "accessibility" in config ? config.accessibility : undefined,
+      });
+      expectCanonicalColorProjection(createSemanticThemeSnapshot(config), expected);
+    }
+    expect(Object.isFrozen(COHESION_FIXTURE_V1)).toBe(true);
+  });
+
+  it("keeps the explicit compatibility export list mapped to the canonical dark facade", () => {
+    expect(LEGACY_THEME_ALIAS_IDS).toEqual([
+      "DEFAULT_FG",
+      "DEFAULT_BG",
+      "SIDEBAR_BG",
+      "ACCENT",
+      "MUTED",
+      "BADGE_BG",
+      "FOCUS_BORDER_FG",
+      "TAB_ACTIVE_BG",
+      "HOVER_BG",
+      "BUTTON_HOVER_BG",
+      "CHIP_ATTN_BG",
+    ]);
     expect(rgbaKey(DEFAULT_BG)).toBe(rgbaKey(DARK_THEME.colors.background));
     expect(rgbaKey(ACCENT)).toBe(rgbaKey(DARK_THEME.colors.accent));
   });
@@ -74,14 +147,30 @@ describe("semantic theme snapshots", () => {
     expect(rgbaKey(snapshot.colors.accent)).toBe("255,0,170,255");
     expect(rgbaKey(snapshot.colors.focus)).toBe("255,0,170,255");
     expect(rgbaKey(snapshot.colors.focusBorder)).not.toBe(rgbaKey(snapshot.colors.focus));
+    expect(rgbaKey(snapshot.roles.text.link)).toBe("255,0,170,255");
+    expect(rgbaKey(snapshot.roles.borders.focused)).toBe("255,0,170,255");
+    expect(rgbaKey(snapshot.roles.selection.selection)).toBe(rgbaKey(snapshot.colors.selection));
     expect(rgbaKey(snapshot.colors.status.blocked)).toBe(rgbaKey(DARK_THEME.colors.status.blocked));
   });
 
+  it("keeps the canonical high-contrast focus outline above a legacy accent", () => {
+    const snapshot = createSemanticThemeSnapshot({
+      mode: "dark",
+      accent: "#ff00aa",
+      accessibility: { increasedContrast: true },
+    });
+    expect(rgbaKey(snapshot.roles.borders.focused)).toBe("255,255,255,255");
+    expect(rgbaKey(snapshot.roles.text.link)).toBe("255,0,170,255");
+  });
+
   it("preserves a saved accent that collides with status while deriving collision-safe focus", () => {
-    const snapshot = createSemanticThemeSnapshot({ mode: "dark", accent: "colour203" });
-    expect(rgbaKey(snapshot.colors.accent)).toBe("255,95,95,255");
+    const [r, g, b] = colorToThemeBytes(DARK_THEME.colors.status.blocked);
+    const statusAccent = `#${[r, g, b]
+      .map((channel) => channel.toString(16).padStart(2, "0"))
+      .join("")}`;
+    const snapshot = createSemanticThemeSnapshot({ mode: "dark", accent: statusAccent });
     expect(rgbaKey(snapshot.colors.accent)).toBe(rgbaKey(snapshot.colors.status.blocked));
-    expect(rgbaKey(snapshot.colors.focus)).toBe(rgbaKey(DARK_THEME.colors.focus));
+    expect(rgbaKey(snapshot.colors.focus)).toBe(rgbaKey(DARK_THEME.roles.borders.focused));
     expect(rgbaKey(snapshot.colors.focus)).not.toBe(rgbaKey(snapshot.colors.status.blocked));
     expect(rgbaKey(snapshot.colors.focusBorder)).not.toBe(rgbaKey(snapshot.colors.status.blocked));
   });
@@ -129,6 +218,7 @@ describe("semantic theme snapshots", () => {
     });
     expect(rgbaKey(snapshot.colors.accent)).toBe("95,175,255,255");
     expect(rgbaKey(snapshot.colors.status.idle)).toBe("0,255,0,255");
+    expect(rgbaKey(snapshot.roles.statusTone.neutral)).toBe("0,255,0,255");
     expect(snapshot.glyphs.active).toBe("◆");
     expect(snapshot.glyphs.inactive).toBe(DARK_THEME.glyphs.inactive);
   });
@@ -141,14 +231,20 @@ describe("semantic theme snapshots", () => {
     expect(Object.isFrozen(first)).toBe(true);
     expect(Object.isFrozen(first.colors)).toBe(true);
     expect(Object.isFrozen(first.colors.status)).toBe(true);
+    expect(Object.isFrozen(first.roles)).toBe(true);
+    expect(Object.isFrozen(first.roles.surfaces)).toBe(true);
+    expect(Object.isFrozen(first.derived)).toBe(true);
     expect(Object.isFrozen(first.density)).toBe(true);
     expect(Object.isFrozen(first.borders)).toBe(true);
     expect(Object.isFrozen(first.glyphs)).toBe(true);
   });
 
-  it("keeps focus/accent colors distinct from semantic status colors in both palettes", () => {
+  it("keeps compatibility focus signals distinct from semantic status colors", () => {
     for (const snapshot of [DARK_THEME, LIGHT_THEME]) {
-      const reserved = new Set([rgbaKey(snapshot.colors.accent), rgbaKey(snapshot.colors.focus)]);
+      const reserved = new Set([
+        rgbaKey(snapshot.colors.focus),
+        rgbaKey(snapshot.colors.focusBorder),
+      ]);
       expect(reserved.has(rgbaKey(snapshot.colors.status.blocked))).toBe(false);
       expect(reserved.has(rgbaKey(snapshot.colors.status.working))).toBe(false);
       expect(reserved.has(rgbaKey(snapshot.colors.status.done))).toBe(false);

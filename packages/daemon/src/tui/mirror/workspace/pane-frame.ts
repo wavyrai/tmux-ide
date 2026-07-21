@@ -125,7 +125,7 @@ const KIND_ICONS: Readonly<Record<PaneFrameKind, WorkspaceIconId>> = {
   home: "home",
   terminals: "terminals",
   files: "files",
-  diff: "diff",
+  diff: "changes",
   missions: "missions",
   activity: "activity",
   preview: "preview",

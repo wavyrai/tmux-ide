@@ -1,3 +1,5 @@
+import type { SemanticIconId } from "@tmux-ide/contracts";
+
 /**
  * A terminal-safe icon vocabulary shared by native workspace surfaces.
  *
@@ -9,7 +11,7 @@ export const WORKSPACE_ICONS = {
   home: { glyph: "⌂", fallback: "H", label: "Home" },
   terminals: { glyph: "❯", fallback: ">", label: "Terminals" },
   files: { glyph: "▤", fallback: "F", label: "Files" },
-  diff: { glyph: "±", fallback: "D", label: "Changes" },
+  changes: { glyph: "±", fallback: "D", label: "Changes" },
   missions: { glyph: "◆", fallback: "M", label: "Missions" },
   activity: { glyph: "◷", fallback: "A", label: "Activity" },
   preview: { glyph: "◫", fallback: "P", label: "Preview" },
@@ -19,19 +21,26 @@ export const WORKSPACE_ICONS = {
   minimize: { glyph: "−", fallback: "-", label: "Minimize" },
   maximize: { glyph: "□", fallback: "Z", label: "Maximize" },
   restore: { glyph: "▣", fallback: "R", label: "Restore" },
-  splitRight: { glyph: "│", fallback: "|", label: "Split side-by-side" },
-  splitDown: { glyph: "─", fallback: "-", label: "Split stacked" },
+  "split-right": { glyph: "│", fallback: "|", label: "Split side-by-side" },
+  "split-down": { glyph: "─", fallback: "-", label: "Split stacked" },
+  duplicate: { glyph: "▥", fallback: "+", label: "Duplicate" },
   dock: { glyph: "▤", fallback: "D", label: "Dock" },
   float: { glyph: "◇", fallback: "F", label: "Float" },
   move: { glyph: "⠿", fallback: "M", label: "Move" },
   resize: { glyph: "◲", fallback: "R", label: "Resize" },
-  popOut: { glyph: "⇱", fallback: "^", label: "Pop out" },
+  "pop-out": { glyph: "⇱", fallback: "^", label: "Pop out" },
   search: { glyph: "⌕", fallback: "/", label: "Search" },
   refresh: { glyph: "↻", fallback: "r", label: "Refresh" },
   command: { glyph: "›", fallback: ">", label: "Command" },
-} as const;
+} as const satisfies Readonly<Record<SemanticIconId, WorkspaceIconDefinition>>;
 
-export type WorkspaceIconId = keyof typeof WORKSPACE_ICONS;
+export interface WorkspaceIconDefinition {
+  readonly glyph: string;
+  readonly fallback: string;
+  readonly label: string;
+}
+
+export type WorkspaceIconId = SemanticIconId;
 export type WorkspaceIconMode = "unicode" | "ascii";
 
 export function workspaceIcon(id: WorkspaceIconId, mode: WorkspaceIconMode = "unicode"): string {

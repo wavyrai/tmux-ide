@@ -209,8 +209,8 @@ describe("AgentTerminalCanvas OpenTUI renderer", () => {
         .captureSpans()
         .lines[projection.chrome.height - 1]!.spans.find((span) => span.text.includes("□"));
       expect(maximizeSpan).toBeDefined();
-      expect(colorKey(maximizeSpan!.bg)).toBe(colorKey(theme.colors.accentMuted));
-      expect(colorKey(maximizeSpan!.fg)).toBe(colorKey(theme.colors.mutedForeground));
+      expect(colorKey(maximizeSpan!.bg)).toBe(colorKey(theme.roles.surfaces.headerActive));
+      expect(colorKey(maximizeSpan!.fg)).toBe(colorKey(theme.roles.text.muted));
       setup.renderer.destroy();
     },
   );

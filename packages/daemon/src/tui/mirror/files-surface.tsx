@@ -31,7 +31,7 @@ export function FilesSurface(props: FilesSurfaceProps) {
       width={props.projection.width}
       height={props.projection.height}
       position="relative"
-      backgroundColor={props.theme.colors.background}
+      backgroundColor={props.theme.roles.surfaces.canvas}
       overflow="hidden"
     >
       <FilesHeader theme={props.theme} projection={props.projection} />
@@ -46,10 +46,10 @@ export function FilesSurface(props: FilesSurfaceProps) {
         <text
           fg={
             props.projection.state === "error"
-              ? props.theme.colors.status.blocked
+              ? props.theme.roles.statusTone.danger
               : props.projection.state === "success"
-                ? props.theme.colors.status.done
-                : props.theme.colors.mutedForeground
+                ? props.theme.roles.statusTone.success
+                : props.theme.roles.text.muted
           }
         >
           {props.projection.stateMessage}
@@ -117,15 +117,15 @@ export function FilesSurface(props: FilesSurfaceProps) {
                   </text>
                   <Show
                     when={line.cursorCol !== null}
-                    fallback={<text fg={props.theme.colors.foreground}>{line.text}</text>}
+                    fallback={<text fg={props.theme.roles.text.primary}>{line.text}</text>}
                   >
-                    <text fg={props.theme.colors.foreground}>
+                    <text fg={props.theme.roles.text.primary}>
                       {line.text.slice(0, line.cursorCol!)}
                     </text>
-                    <text fg={props.theme.colors.background} bg={props.colors.cursorBg}>
+                    <text fg={props.theme.roles.surfaces.canvas} bg={props.colors.cursorBg}>
                       {line.text[line.cursorCol!] ?? " "}
                     </text>
-                    <text fg={props.theme.colors.foreground}>
+                    <text fg={props.theme.roles.text.primary}>
                       {line.text.slice(line.cursorCol! + 1)}
                     </text>
                   </Show>
@@ -144,7 +144,7 @@ export function FilesSurface(props: FilesSurfaceProps) {
         paddingLeft={1}
         overflow="hidden"
       >
-        <text fg={props.theme.colors.mutedForeground}>{props.projection.footerHint}</text>
+        <text fg={props.theme.roles.text.muted}>{props.projection.footerHint}</text>
       </box>
     </box>
   );
@@ -169,11 +169,11 @@ function FilesHeader(props: { theme: SemanticThemeSnapshot; projection: FilesSur
         gap={1}
         overflow="hidden"
       >
-        <text fg={props.theme.colors.accent} attributes={1}>
+        <text fg={props.theme.roles.text.link} attributes={1}>
           {props.projection.title}
         </text>
         <For each={props.projection.headerMeta}>
-          {(meta) => <text fg={props.theme.colors.mutedForeground}>{meta}</text>}
+          {(meta) => <text fg={props.theme.roles.text.muted}>{meta}</text>}
         </For>
         <Show when={props.projection.filter.active}>
           <InputShell
@@ -230,7 +230,7 @@ function FileRow(props: {
       />
       <Show when={props.row.status}>
         {(status) => (
-          <text fg={props.colors.statusLetterFg[status()] ?? props.theme.colors.foreground}>
+          <text fg={props.colors.statusLetterFg[status()] ?? props.theme.roles.text.primary}>
             {` ${status()}`}
           </text>
         )}

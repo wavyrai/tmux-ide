@@ -1,5 +1,14 @@
 import type { RGBA } from "@opentui/core";
 import {
+  VISUAL_RECIPE_REGISTRY,
+  resolvePaneAppearance,
+  statusToneForDomainStatus,
+  type CanonicalDomainStatus,
+  type PaneVisualStateV1,
+  type StatusToneRole,
+  type VisualRecipeId,
+} from "@tmux-ide/contracts";
+import {
   createSemanticThemeSnapshot,
   type ResolvedThemeMode,
   type SemanticThemeSnapshot,
@@ -163,22 +172,58 @@ const STATE_ORDER: readonly RecipeResolvedState[] = [
 
 export const RECIPE_STATE_PRECEDENCE = STATE_ORDER;
 
+function domainStatusForRecipeTone(tone: RecipeTone | undefined): CanonicalDomainStatus {
+  if (tone === "blocked") return "blocked";
+  if (tone === "working") return "running";
+  if (tone === "done") return "done";
+  return "idle";
+}
+
+function statusToneForRecipeTone(tone: RecipeTone | undefined): StatusToneRole {
+  return statusToneForDomainStatus(domainStatusForRecipeTone(tone));
+}
+
 function statusColor(theme: SemanticThemeSnapshot, tone: RecipeTone | undefined): RGBA {
-  if (tone === "blocked") return theme.colors.status.blocked;
-  if (tone === "working") return theme.colors.status.working;
-  if (tone === "done") return theme.colors.status.done;
-  if (tone === "idle") return theme.colors.status.idle;
-  if (tone === "unknown") return theme.colors.status.unknown;
-  return theme.colors.mutedForeground;
+  return theme.roles.statusTone[statusToneForRecipeTone(tone)];
+}
+
+function interactionAppearance(state: RecipeInteractionState) {
+  const paneState: PaneVisualStateV1 = {
+    structure: "docked",
+    applicationFocus: {
+      pane: Boolean(state.focused),
+      terminalInput: false,
+      windowActive: true,
+    },
+    agentActivity: state.loading ? "running" : "idle",
+    domainStatus: domainStatusForRecipeTone(state.status),
+    attention: state.attention ? "requested" : "none",
+    layoutInteraction: {
+      editable: true,
+      selected: Boolean(state.selected),
+      dragging: false,
+      resizing: false,
+      previewing: false,
+    },
+    controlInteraction: {
+      hover: Boolean(state.hovered),
+      focusVisible: Boolean(state.focused),
+      pressed: Boolean(state.pressed),
+      disabled: Boolean(state.disabled),
+      loading: Boolean(state.loading),
+    },
+  };
+  return resolvePaneAppearance(paneState);
 }
 
 export function resolveRecipeState(state: RecipeInteractionState): RecipeResolvedState {
-  if (state.disabled) return "disabled";
-  if (state.pressed) return "pressed";
+  const interaction = interactionAppearance(state);
+  if (interaction.action.background === "disabled") return "disabled";
+  if (interaction.action.background === "pressed") return "pressed";
   if (state.selected) return "selected";
   if (state.focused) return "focused";
   if (state.attention) return "attention";
-  if (state.hovered) return "hovered";
+  if (interaction.action.background === "hover") return "hovered";
   if (state.loading) return "loading";
   if (state.empty) return "empty";
   if (state.status) return "status";
@@ -193,6 +238,15 @@ function stateAccent(
   return state.status ? statusColor(theme, state.status) : fallback;
 }
 
+export function openTuiRecipeColors(theme: SemanticThemeSnapshot, recipeId: VisualRecipeId) {
+  const recipe = VISUAL_RECIPE_REGISTRY[recipeId];
+  return {
+    foreground: theme.roles.text[recipe.text],
+    background: theme.roles.surfaces[recipe.surface],
+    border: theme.roles.borders[recipe.border],
+  } as const;
+}
+
 export function recipePalette(
   theme: SemanticThemeSnapshot,
   state: RecipeInteractionState = {},
@@ -202,80 +256,80 @@ export function recipePalette(
   if (resolved === "disabled") {
     return {
       state: resolved,
-      foreground: theme.colors.mutedForeground,
-      background: theme.colors.surface,
-      border: theme.colors.border,
-      accent: theme.colors.mutedForeground,
+      foreground: theme.roles.text.muted,
+      background: theme.roles.selection.disabled,
+      border: theme.roles.borders.subtle,
+      accent: theme.roles.statusTone.neutral,
       marker: "×",
     };
   }
   if (resolved === "pressed") {
     return {
       state: resolved,
-      foreground: theme.colors.selectionForeground,
-      background: theme.colors.buttonHover,
-      border: theme.colors.focusBorder,
-      accent: theme.colors.focus,
+      foreground: theme.roles.selection.selectionText,
+      background: theme.roles.selection.pressed,
+      border: theme.roles.borders.focused,
+      accent: theme.roles.borders.focused,
       marker: "◆",
     };
   }
   if (resolved === "selected") {
     return {
       state: resolved,
-      foreground: theme.colors.selectionForeground,
-      background: theme.colors.selection,
-      border: theme.colors.focusBorder,
-      accent: stateAccent(theme, state, theme.colors.focus),
+      foreground: theme.roles.selection.selectionText,
+      background: theme.roles.selection.selection,
+      border: theme.roles.borders.selected,
+      accent: stateAccent(theme, state, theme.roles.borders.focused),
       marker: theme.glyphs.active,
     };
   }
   if (resolved === "focused") {
     return {
       state: resolved,
-      foreground: theme.colors.foreground,
-      background: theme.colors.surfaceRaised,
-      border: theme.colors.focusBorder,
-      accent: stateAccent(theme, state, theme.colors.focus),
+      foreground: theme.roles.text.primary,
+      background: theme.roles.surfaces.panelRaised,
+      border: theme.roles.borders.focused,
+      accent: stateAccent(theme, state, theme.roles.borders.focused),
       marker: "›",
     };
   }
   if (resolved === "hovered") {
     return {
       state: resolved,
-      foreground: theme.colors.foreground,
-      background: theme.colors.hover,
-      border: theme.colors.border,
-      accent: stateAccent(theme, state, theme.colors.accent),
+      foreground: theme.roles.text.primary,
+      background: theme.roles.selection.hover,
+      border: theme.roles.borders.default,
+      accent: stateAccent(theme, state, theme.roles.text.link),
       marker: "·",
     };
   }
   if (resolved === "attention") {
     return {
       state: resolved,
-      foreground: theme.colors.foreground,
-      background: theme.colors.attention,
-      border: theme.colors.focusBorder,
-      accent: stateAccent(theme, state, theme.colors.focus),
+      foreground: theme.roles.text.primary,
+      background: theme.derived.attentionSurface,
+      border: theme.roles.borders.attention,
+      accent: stateAccent(theme, state, theme.roles.borders.attention),
       marker: "!",
     };
   }
   if (resolved === "loading") {
     return {
       state: resolved,
-      foreground: theme.colors.mutedForeground,
-      background: theme.colors.surface,
-      border: theme.colors.border,
-      accent: theme.colors.status.working,
+      foreground: theme.roles.text.muted,
+      background: theme.roles.surfaces.panel,
+      border: theme.roles.borders.default,
+      accent: theme.roles.statusTone.info,
       marker: "…",
     };
   }
   if (resolved === "empty") {
     return {
       state: resolved,
-      foreground: theme.colors.mutedForeground,
-      background: theme.colors.background,
-      border: theme.colors.border,
-      accent: theme.colors.mutedForeground,
+      foreground: theme.roles.text.muted,
+      background: theme.roles.surfaces.canvas,
+      border: theme.roles.borders.subtle,
+      accent: theme.roles.statusTone.neutral,
       marker: "○",
     };
   }
@@ -283,19 +337,19 @@ export function recipePalette(
     const accent = statusColor(theme, state.status);
     return {
       state: resolved,
-      foreground: theme.colors.foreground,
-      background: theme.colors.surface,
+      foreground: theme.roles.text.primary,
+      background: theme.roles.surfaces.panel,
       border: accent,
       accent,
       marker: theme.glyphs.active,
     };
   }
-  const accent = tone === "accent" ? theme.colors.accent : statusColor(theme, tone);
+  const accent = tone === "accent" ? theme.roles.text.link : statusColor(theme, tone);
   return {
     state: resolved,
-    foreground: theme.colors.foreground,
-    background: theme.colors.surface,
-    border: theme.colors.border,
+    foreground: theme.roles.text.primary,
+    background: theme.roles.surfaces.panel,
+    border: theme.roles.borders.default,
     accent,
     marker: theme.glyphs.inactive,
   };
