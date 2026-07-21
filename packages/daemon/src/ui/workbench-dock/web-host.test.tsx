@@ -1,6 +1,7 @@
 /* @vitest-environment happy-dom */
 import { afterEach, describe, expect, it } from "vitest";
 import { render } from "solid-js/web";
+import { COHESION_FIXTURE_V1, resolveVisualTheme } from "@tmux-ide/contracts";
 import {
   createWorkbenchDockHostFixture,
   createWorkbenchDockHostTrace,
@@ -11,6 +12,44 @@ import { WebWorkbenchDock } from "./web-host.tsx";
 
 const disposers: Array<() => void> = [];
 
+function colorToCss(value: { red: number; green: number; blue: number }): string {
+  return `rgb(${value.red} ${value.green} ${value.blue})`;
+}
+
+function installCanonicalFixtureVariables(
+  root: HTMLElement,
+): ReturnType<typeof resolveVisualTheme> {
+  const theme = resolveVisualTheme({
+    userTheme: COHESION_FIXTURE_V1.theme.user,
+    projectTheme: COHESION_FIXTURE_V1.theme.project ?? undefined,
+    accessibility: COHESION_FIXTURE_V1.theme.accessibility,
+  });
+  const { tokens } = theme;
+  root.style.setProperty("--tmux-ide-surface-panel", colorToCss(tokens.surfaces.panel));
+  root.style.setProperty(
+    "--tmux-ide-surface-panel-raised",
+    colorToCss(tokens.surfaces.panelRaised),
+  );
+  root.style.setProperty("--tmux-ide-border-subtle", colorToCss(tokens.borders.subtle));
+  root.style.setProperty("--tmux-ide-border-focused", colorToCss(tokens.borders.focused));
+  root.style.setProperty("--tmux-ide-border-attention", colorToCss(tokens.borders.attention));
+  root.style.setProperty("--tmux-ide-text-primary", colorToCss(tokens.text.primary));
+  root.style.setProperty("--tmux-ide-text-muted", colorToCss(tokens.text.muted));
+  root.style.setProperty("--tmux-ide-selection-selection", colorToCss(tokens.selection.selection));
+  root.style.setProperty("--tmux-ide-selection-hover", colorToCss(tokens.selection.hover));
+  root.style.setProperty("--tmux-ide-selection-disabled", colorToCss(tokens.selection.disabled));
+  root.style.setProperty("--tmux-ide-focus-outline", `${tokens.focus.outline.value * 18}px`);
+  root.style.setProperty(
+    "--tmux-ide-focus-outline-offset",
+    `${tokens.focus.outlineOffset.value * 18}px`,
+  );
+  root.style.setProperty(
+    "--tmux-ide-window-activity-inactive-opacity",
+    String(tokens.windowActivity.inactive.opacity.value),
+  );
+  return theme;
+}
+
 afterEach(() => {
   for (const dispose of disposers.splice(0)) dispose();
   document.body.replaceChildren();
@@ -19,6 +58,7 @@ afterEach(() => {
 function renderDock(projection = createWorkbenchDockHostFixture()) {
   const trace = createWorkbenchDockHostTrace();
   const root = document.createElement("div");
+  const theme = installCanonicalFixtureVariables(root);
   document.body.append(root);
   disposers.push(
     render(
@@ -34,7 +74,7 @@ function renderDock(projection = createWorkbenchDockHostFixture()) {
       root,
     ),
   );
-  return { root, trace };
+  return { root, theme, trace };
 }
 
 function tab(root: HTMLElement, id: string): HTMLButtonElement {
@@ -111,6 +151,28 @@ describe("shared WorkbenchDockPresenter DOM host", () => {
       "tab:activity",
       "tab:files",
     ]);
+  });
+
+  it("computes selected, focused, attention, and disabled styles from canonical variables", () => {
+    const { root, theme } = renderDock();
+    expect(document.styleSheets[0]?.cssRules.length).toBeGreaterThan(0);
+    const missions = tab(root, "missions");
+    const changes = tab(root, "changes");
+    const attention = tab(root, "activity").querySelector<HTMLElement>(
+      ".workbench-dock__attention",
+    )!;
+
+    expect(getComputedStyle(missions).backgroundColor).toBe(
+      colorToCss(theme.tokens.selection.selection),
+    );
+    expect(getComputedStyle(missions).outlineColor).toBe(colorToCss(theme.tokens.borders.focused));
+    expect(getComputedStyle(attention).color).toBe(colorToCss(theme.tokens.borders.attention));
+    expect(getComputedStyle(changes).backgroundColor).toBe(
+      colorToCss(theme.tokens.selection.disabled),
+    );
+    expect(getComputedStyle(changes).opacity).toBe(
+      String(theme.tokens.windowActivity.inactive.opacity.value),
+    );
   });
 
   it("keeps every surface and dock control discoverable in a narrow collapsed layout", () => {

@@ -1,12 +1,12 @@
 .workbench-dock {
-  --dock-bg: #111219;
-  --dock-raised: #191b25;
-  --dock-border: #303443;
-  --dock-fg: #e8eaf0;
-  --dock-muted: #8d93a5;
-  --dock-accent: #77a8ff;
-  --dock-selection: #243b61;
-  --dock-hover: #222633;
+  --dock-bg: var(--tmux-ide-surface-panel);
+  --dock-raised: var(--tmux-ide-surface-panel-raised);
+  --dock-border: var(--tmux-ide-border-subtle);
+  --dock-fg: var(--tmux-ide-text-primary);
+  --dock-muted: var(--tmux-ide-text-muted);
+  --dock-accent: var(--tmux-ide-border-focused);
+  --dock-selection: var(--tmux-ide-selection-selection);
+  --dock-hover: var(--tmux-ide-selection-hover);
   display: flex;
   min-width: 0;
   min-height: 0;
@@ -78,17 +78,20 @@
 }
 
 .workbench-dock__tab:focus-visible,
+.workbench-dock__tab[data-focused="true"],
 .workbench-dock__action:focus-visible,
 .workbench-dock__body:focus-visible {
   position: relative;
   z-index: 1;
-  outline: 2px solid var(--dock-accent);
-  outline-offset: -2px;
+  outline: var(--tmux-ide-focus-outline) solid var(--dock-accent);
+  outline-offset: calc(-1 * var(--tmux-ide-focus-outline-offset));
 }
 
 .workbench-dock__tab:disabled {
   cursor: not-allowed;
-  opacity: 0.42;
+  color: var(--dock-muted);
+  background: var(--tmux-ide-selection-disabled);
+  opacity: var(--tmux-ide-window-activity-inactive-opacity);
 }
 
 .workbench-dock__shortcut {
@@ -98,7 +101,7 @@
 
 .workbench-dock__attention {
   min-width: 0.55em;
-  color: #efbd56;
+  color: var(--tmux-ide-border-attention);
   font-size: 0.65em;
 }
 

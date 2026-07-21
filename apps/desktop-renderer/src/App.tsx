@@ -1,4 +1,4 @@
-import { Show, createResource, createSignal, onCleanup, onMount } from "solid-js";
+import { Show, createMemo, createResource, createSignal, onCleanup, onMount } from "solid-js";
 import type { DesktopThemeState, DesktopWindowState } from "@tmux-ide/contracts";
 
 import {
@@ -7,6 +7,7 @@ import {
   readHostBootstrap,
   resolveHostCapabilities,
 } from "./host-capabilities.ts";
+import { createDomExperience } from "./experience/index.ts";
 
 const host = resolveHostCapabilities();
 
@@ -33,9 +34,17 @@ export function App() {
 
   const effectiveTheme = () => theme() ?? bootstrap()?.theme ?? null;
   const effectiveWindow = () => windowState() ?? bootstrap()?.window ?? null;
+  const experience = createMemo(() => createDomExperience({ hostTheme: effectiveTheme() }));
 
   return (
-    <main class="app" data-theme={effectiveTheme()?.mode ?? "dark"}>
+    <main
+      class="app"
+      data-theme={experience().appearance}
+      data-reduced-motion={String(experience().accessibility.reducedMotion)}
+      data-increased-contrast={String(experience().accessibility.increasedContrast)}
+      data-accessibility-conflicts={experience().accessibility.conflicts.join(" ") || undefined}
+      style={experience().variables}
+    >
       <header class="titlebar">
         <div class="titlebar__drag">
           <span class="brand-mark" aria-hidden="true">

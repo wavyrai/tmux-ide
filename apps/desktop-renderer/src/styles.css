@@ -6,8 +6,8 @@
     BlinkMacSystemFont,
     "Segoe UI",
     sans-serif;
-  color: #e8e9f2;
-  background: #0d0e14;
+  color: CanvasText;
+  background: Canvas;
   font-synthesis: none;
   text-rendering: geometricPrecision;
 }
@@ -30,25 +30,23 @@ button {
 }
 
 .app {
-  --surface: #11121a;
-  --surface-raised: #171923;
-  --border: #282a37;
-  --muted: #8a8d9e;
-  --accent: #62b7bf;
-  --accent-soft: #1b353a;
   display: grid;
   grid-template-rows: 42px 1fr 30px;
   width: 100%;
   height: 100%;
-  color: #e8e9f2;
-  background: radial-gradient(circle at 45% -15%, #1c2730 0, #0d0e14 36%);
+  color: var(--tmux-ide-text-primary);
+  background: radial-gradient(
+    circle at 45% -15%,
+    color-mix(in srgb, var(--tmux-ide-surface-header-active) 62%, var(--tmux-ide-surface-canvas)) 0,
+    var(--tmux-ide-surface-canvas) 36%
+  );
 }
 
 .titlebar {
   display: flex;
   align-items: stretch;
-  border-bottom: 1px solid var(--border);
-  background: color-mix(in srgb, var(--surface) 92%, transparent);
+  border-bottom: 1px solid var(--tmux-ide-border-subtle);
+  background: color-mix(in srgb, var(--tmux-ide-surface-header) 92%, transparent);
   user-select: none;
 }
 .titlebar__drag {
@@ -61,11 +59,11 @@ button {
   letter-spacing: -0.01em;
 }
 .brand-mark {
-  color: var(--accent);
+  color: var(--tmux-ide-text-link);
   font-size: 17px;
 }
 .titlebar__context {
-  color: var(--muted);
+  color: var(--tmux-ide-text-muted);
   font-size: 12px;
   font-weight: 500;
 }
@@ -76,16 +74,20 @@ button {
 .window-controls button {
   width: 46px;
   border: 0;
-  color: #b8bac7;
+  color: var(--tmux-ide-text-secondary);
   background: transparent;
   cursor: default;
+  transition:
+    color var(--tmux-ide-motion-fast) var(--tmux-ide-motion-easing-standard),
+    background-color var(--tmux-ide-motion-fast) var(--tmux-ide-motion-easing-standard);
 }
 .window-controls button:hover {
-  color: white;
-  background: #272936;
+  color: var(--tmux-ide-text-bright);
+  background: var(--tmux-ide-selection-hover);
 }
 .window-controls button:last-child:hover {
-  background: #c8424e;
+  color: var(--tmux-ide-text-bright);
+  background: var(--tmux-ide-status-danger);
 }
 
 .workbench {
@@ -95,11 +97,11 @@ button {
 }
 .rail,
 .inspector {
-  background: color-mix(in srgb, var(--surface) 88%, transparent);
+  background: color-mix(in srgb, var(--tmux-ide-surface-panel) 88%, transparent);
 }
 .rail {
   padding: 14px 10px;
-  border-right: 1px solid var(--border);
+  border-right: 1px solid var(--tmux-ide-border-subtle);
 }
 .rail__item {
   display: flex;
@@ -110,21 +112,21 @@ button {
   padding: 9px 10px;
   border: 0;
   border-radius: 7px;
-  color: var(--muted);
+  color: var(--tmux-ide-text-muted);
   background: transparent;
   text-align: left;
 }
 .rail__item span {
   width: 18px;
-  color: #6f7282;
+  color: var(--tmux-ide-status-neutral);
   text-align: center;
 }
 .rail__item--active {
-  color: #f4f5fa;
-  background: #232531;
+  color: var(--tmux-ide-text-bright);
+  background: var(--tmux-ide-selection-hover);
 }
 .rail__item--active span {
-  color: var(--accent);
+  color: var(--tmux-ide-text-link);
 }
 
 .canvas {
@@ -133,7 +135,7 @@ button {
 }
 .canvas__eyebrow {
   margin-bottom: 12px;
-  color: var(--accent);
+  color: var(--tmux-ide-text-link);
   font:
     600 11px/1.2 ui-monospace,
     SFMono-Regular,
@@ -152,7 +154,7 @@ h1 {
 .canvas__lead {
   max-width: 660px;
   margin: 26px 0 38px;
-  color: #a3a6b4;
+  color: var(--tmux-ide-text-secondary);
   font-size: 16px;
   line-height: 1.65;
 }
@@ -167,14 +169,18 @@ h1 {
   min-height: 210px;
   padding: 24px;
   overflow: hidden;
-  border: 1px solid var(--border);
+  border: 1px solid var(--tmux-ide-border-subtle);
   border-radius: 12px;
-  background: linear-gradient(145deg, #181a24, #12131b);
-  box-shadow: 0 20px 60px #0005;
+  background: linear-gradient(
+    145deg,
+    var(--tmux-ide-surface-panel-raised),
+    var(--tmux-ide-surface-panel)
+  );
+  box-shadow: var(--tmux-ide-elevation-floating-shadow);
 }
 .card__icon {
   margin-bottom: 30px;
-  color: var(--accent);
+  color: var(--tmux-ide-text-link);
   font:
     600 12px ui-monospace,
     monospace;
@@ -185,21 +191,21 @@ h1 {
 }
 .card p {
   margin: 0 0 22px;
-  color: var(--muted);
+  color: var(--tmux-ide-text-muted);
   font-size: 13px;
   line-height: 1.55;
 }
 .primary-action {
   padding: 9px 13px;
-  border: 1px solid #39737a;
+  border: 1px solid var(--tmux-ide-border-focused);
   border-radius: 7px;
-  color: #dff8fa;
-  background: var(--accent-soft);
+  color: var(--tmux-ide-selection-selection-text);
+  background: var(--tmux-ide-selection-selection);
 }
 .card--terminal {
   display: flex;
   align-items: center;
-  background: #0b0d12;
+  background: var(--tmux-ide-surface-terminal);
 }
 .terminal-dots {
   position: absolute;
@@ -212,11 +218,11 @@ h1 {
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: #343743;
+  background: var(--tmux-ide-border-default);
 }
 .card pre {
   margin: 0;
-  color: #c5c8d4;
+  color: var(--tmux-ide-text-secondary);
   font:
     13px/1.8 ui-monospace,
     SFMono-Regular,
@@ -224,16 +230,16 @@ h1 {
     monospace;
 }
 .card pre span {
-  color: var(--accent);
+  color: var(--tmux-ide-text-link);
 }
 .card pre b {
-  color: #747889;
+  color: var(--tmux-ide-text-muted);
   font-weight: 400;
 }
 
 .inspector {
   padding: 18px;
-  border-left: 1px solid var(--border);
+  border-left: 1px solid var(--tmux-ide-border-subtle);
 }
 .inspector h2 {
   margin: 4px 0 20px;
@@ -249,31 +255,31 @@ h1 {
   justify-content: space-between;
   gap: 10px;
   padding: 9px 0;
-  border-bottom: 1px solid #232531;
+  border-bottom: 1px solid var(--tmux-ide-border-subtle);
   font-size: 12px;
 }
 .inspector dt {
-  color: var(--muted);
+  color: var(--tmux-ide-text-muted);
 }
 .inspector dd {
   margin: 0;
-  color: #d3d5de;
+  color: var(--tmux-ide-text-primary);
   text-align: right;
 }
 .boundary-note {
   margin-top: 22px;
   padding: 12px;
-  border: 1px solid #254449;
+  border: 1px solid var(--tmux-ide-status-info);
   border-radius: 8px;
-  color: #8caeb1;
-  background: #142328;
+  color: var(--tmux-ide-text-secondary);
+  background: color-mix(in srgb, var(--tmux-ide-surface-panel) 80%, var(--tmux-ide-status-info));
   font-size: 11px;
   line-height: 1.5;
 }
 .boundary-note span {
   display: block;
   margin-bottom: 4px;
-  color: #b9e6e9;
+  color: var(--tmux-ide-text-link);
   font-weight: 700;
   text-transform: uppercase;
 }
@@ -283,9 +289,9 @@ h1 {
   align-items: center;
   justify-content: space-between;
   padding: 0 10px;
-  border-top: 1px solid var(--border);
-  color: #777a89;
-  background: #101119;
+  border-top: 1px solid var(--tmux-ide-border-subtle);
+  color: var(--tmux-ide-text-muted);
+  background: var(--tmux-ide-surface-header);
   font:
     11px ui-monospace,
     SFMono-Regular,
@@ -298,8 +304,8 @@ h1 {
   height: 6px;
   margin-right: 6px;
   border-radius: 50%;
-  background: #65bd86;
-  box-shadow: 0 0 8px #65bd8688;
+  background: var(--tmux-ide-status-success);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--tmux-ide-status-success) 54%, transparent);
 }
 
 @media (max-width: 980px) {
@@ -332,4 +338,12 @@ h1 {
     transition: none !important;
     animation: none !important;
   }
+}
+
+.app[data-reduced-motion="true"] *,
+.app[data-reduced-motion="true"] *::before,
+.app[data-reduced-motion="true"] *::after {
+  scroll-behavior: auto !important;
+  transition: none !important;
+  animation: none !important;
 }
