@@ -3,6 +3,7 @@ import {
   closeSync,
   constants,
   fstatSync,
+  linkSync,
   lstatSync,
   mkdirSync,
   openSync,
@@ -12,6 +13,7 @@ import {
   writeFileSync,
   type Stats,
 } from "node:fs";
+import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import {
@@ -28,7 +30,28 @@ export type { CanonicalDaemonInfo } from "@tmux-ide/contracts";
 const DAEMON_INFO_DIR_ENV = "TMUX_IDE_DAEMON_INFO_DIR";
 const REGISTRY_DIR_ENV = "TMUX_IDE_REGISTRY_DIR";
 const DAEMON_INFO_FILE = "daemon.json";
+const DAEMON_CLAIM_DIR = "daemon.claim";
+const DAEMON_CLAIM_OWNER_FILE = "owner.json";
 const MAX_DAEMON_INFO_BYTES = 64 * 1024;
+const MAX_DAEMON_CLAIM_BYTES = 4 * 1024;
+
+export interface CanonicalDaemonClaim {
+  readonly claimId: string;
+  readonly pid: number;
+  readonly acquiredAt: string;
+}
+
+export type CanonicalDaemonClaimAttempt =
+  | { status: "acquired"; claim: CanonicalDaemonClaim }
+  | { status: "busy"; owner: CanonicalDaemonClaim }
+  | { status: "invalid"; detail: string };
+
+type CanonicalDaemonClaimState =
+  | { status: "missing" }
+  | { status: "valid"; claim: CanonicalDaemonClaim }
+  | { status: "invalid"; detail: string };
+
+const activeClaims = new Set<string>();
 
 export type CanonicalDaemonInfoInvalidReason =
   | "symlink"
@@ -82,6 +105,10 @@ export function getCanonicalDaemonInfoPath(): string {
   return join(dir, DAEMON_INFO_FILE);
 }
 
+export function getCanonicalDaemonClaimPath(): string {
+  return join(dirname(getCanonicalDaemonInfoPath()), DAEMON_CLAIM_DIR);
+}
+
 function observation(stat: Stats): CanonicalDaemonInfoObservation {
   return { dev: stat.dev, ino: stat.ino, size: stat.size, mtimeMs: stat.mtimeMs };
 }
@@ -113,30 +140,7 @@ function ownerPidFromRaw(raw: unknown): number | null {
   return typeof pid === "number" && Number.isInteger(pid) && pid > 0 ? pid : null;
 }
 
-export function writeCanonicalDaemonInfo(info: CanonicalDaemonInfo): void {
-  const path = getCanonicalDaemonInfoPath();
-  mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
-  const tmpPath = `${path}.${process.pid}.${Date.now()}.tmp`;
-  const persisted: CanonicalDaemonInfo = {
-    pid: info.pid,
-    port: info.port,
-    protocolVersion: info.protocolVersion,
-    productVersion: info.productVersion,
-    instanceId: info.instanceId,
-    startedAt: info.startedAt,
-    bindHostname: info.bindHostname,
-    authToken: info.authToken,
-  };
-  writeFileSync(tmpPath, JSON.stringify(persisted, null, 2) + "\n", {
-    encoding: "utf-8",
-    mode: 0o600,
-  });
-  chmodSync(tmpPath, 0o600);
-  renameSync(tmpPath, path);
-}
-
-export function inspectCanonicalDaemonInfo(): CanonicalDaemonInfoState {
-  const path = getCanonicalDaemonInfoPath();
+function inspectCanonicalDaemonInfoPath(path: string): CanonicalDaemonInfoState {
   let descriptor: number | undefined;
   try {
     const pathStat = lstatSync(path);
@@ -226,6 +230,210 @@ export function inspectCanonicalDaemonInfo(): CanonicalDaemonInfoState {
   }
 }
 
+function inspectCanonicalDaemonClaimPath(path: string): CanonicalDaemonClaimState {
+  let descriptor: number | undefined;
+  try {
+    const claimStat = lstatSync(path);
+    if (claimStat.isSymbolicLink() || !claimStat.isDirectory()) {
+      return { status: "invalid", detail: "daemon claim must be a real directory" };
+    }
+    if (typeof process.getuid === "function" && claimStat.uid !== process.getuid()) {
+      return { status: "invalid", detail: "daemon claim is owned by another user" };
+    }
+    if ((claimStat.mode & 0o077) !== 0) {
+      return { status: "invalid", detail: "daemon claim directory is not owner-only" };
+    }
+
+    const ownerPath = join(path, DAEMON_CLAIM_OWNER_FILE);
+    const ownerStat = lstatSync(ownerPath);
+    if (ownerStat.isSymbolicLink() || !ownerStat.isFile()) {
+      return { status: "invalid", detail: "daemon claim owner must be a real file" };
+    }
+    if (ownerStat.size > MAX_DAEMON_CLAIM_BYTES) {
+      return { status: "invalid", detail: "daemon claim owner exceeds the size limit" };
+    }
+    if (typeof process.getuid === "function" && ownerStat.uid !== process.getuid()) {
+      return { status: "invalid", detail: "daemon claim owner is owned by another user" };
+    }
+    if ((ownerStat.mode & 0o077) !== 0) {
+      return { status: "invalid", detail: "daemon claim owner is not owner-only" };
+    }
+    descriptor = openSync(ownerPath, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+    const openedStat = fstatSync(descriptor);
+    if (
+      !openedStat.isFile() ||
+      openedStat.dev !== ownerStat.dev ||
+      openedStat.ino !== ownerStat.ino ||
+      openedStat.size !== ownerStat.size
+    ) {
+      return { status: "invalid", detail: "daemon claim changed while it was opened" };
+    }
+    const raw = JSON.parse(readFileSync(descriptor, "utf-8")) as Record<string, unknown>;
+    if (
+      typeof raw.claimId !== "string" ||
+      !/^[0-9a-f-]{36}$/iu.test(raw.claimId) ||
+      typeof raw.pid !== "number" ||
+      !Number.isInteger(raw.pid) ||
+      raw.pid <= 0 ||
+      typeof raw.acquiredAt !== "string" ||
+      !Number.isFinite(Date.parse(raw.acquiredAt))
+    ) {
+      return { status: "invalid", detail: "daemon claim owner has invalid metadata" };
+    }
+    return {
+      status: "valid",
+      claim: { claimId: raw.claimId, pid: raw.pid, acquiredAt: raw.acquiredAt },
+    };
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return { status: "missing" };
+    return {
+      status: "invalid",
+      detail: error instanceof Error ? error.message : "daemon claim could not be read",
+    };
+  } finally {
+    if (descriptor !== undefined) closeSync(descriptor);
+  }
+}
+
+function restoreCapturedFile(capturedPath: string, canonicalPath: string): void {
+  try {
+    linkSync(capturedPath, canonicalPath);
+    rmSync(capturedPath, { force: true });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+    // A concurrently published canonical record wins. Keep the captured file
+    // as forensic recovery data rather than deleting either generation.
+  }
+}
+
+function retireCanonicalClaimIfMatches(expected: CanonicalDaemonClaim): boolean {
+  const path = getCanonicalDaemonClaimPath();
+  const captured = `${path}.${expected.claimId}.${randomUUID()}.retired`;
+  try {
+    renameSync(path, captured);
+  } catch {
+    return false;
+  }
+  const moved = inspectCanonicalDaemonClaimPath(captured);
+  if (
+    moved.status === "valid" &&
+    moved.claim.claimId === expected.claimId &&
+    moved.claim.pid === expected.pid
+  ) {
+    rmSync(captured, { recursive: true, force: true });
+    return true;
+  }
+  try {
+    renameSync(captured, path);
+  } catch {
+    // Never delete a claim generation that was not the one we intended to retire.
+  }
+  return false;
+}
+
+/**
+ * Publish a complete, process-lifetime startup claim with one atomic rename.
+ * The winner holds it until daemon shutdown; contenders cannot pass inspection,
+ * bind, or publication concurrently.
+ */
+export function tryAcquireCanonicalDaemonClaim(): CanonicalDaemonClaimAttempt {
+  const path = getCanonicalDaemonClaimPath();
+  const root = dirname(path);
+  mkdirSync(root, { recursive: true, mode: 0o700 });
+
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const claim: CanonicalDaemonClaim = {
+      claimId: randomUUID(),
+      pid: process.pid,
+      acquiredAt: new Date().toISOString(),
+    };
+    const candidate = `${path}.${claim.claimId}.candidate`;
+    mkdirSync(candidate, { mode: 0o700 });
+    writeFileSync(join(candidate, DAEMON_CLAIM_OWNER_FILE), `${JSON.stringify(claim, null, 2)}\n`, {
+      encoding: "utf-8",
+      mode: 0o600,
+    });
+    try {
+      renameSync(candidate, path);
+      activeClaims.add(claim.claimId);
+      return { status: "acquired", claim };
+    } catch (error) {
+      rmSync(candidate, { recursive: true, force: true });
+      const existing = inspectCanonicalDaemonClaimPath(path);
+      if (existing.status === "missing") {
+        if (attempt < 2) continue;
+        return { status: "invalid", detail: "daemon claim changed during acquisition" };
+      }
+      if (existing.status === "invalid") return existing;
+      if (pidLiveness(existing.claim.pid) !== "dead") {
+        return { status: "busy", owner: existing.claim };
+      }
+      if (!retireCanonicalClaimIfMatches(existing.claim) && attempt === 2) {
+        return { status: "invalid", detail: "stale daemon claim changed during recovery" };
+      }
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST" && attempt === 2) throw error;
+    }
+  }
+  return { status: "invalid", detail: "daemon claim could not be acquired" };
+}
+
+function assertCanonicalDaemonClaimHeld(claim: CanonicalDaemonClaim): void {
+  if (!activeClaims.has(claim.claimId)) throw new Error("canonical daemon claim is not active");
+  const current = inspectCanonicalDaemonClaimPath(getCanonicalDaemonClaimPath());
+  if (
+    current.status !== "valid" ||
+    current.claim.claimId !== claim.claimId ||
+    current.claim.pid !== claim.pid
+  ) {
+    throw new Error("canonical daemon claim ownership was lost");
+  }
+}
+
+export function releaseCanonicalDaemonClaim(claim: CanonicalDaemonClaim): boolean {
+  if (!activeClaims.has(claim.claimId)) return false;
+  try {
+    return retireCanonicalClaimIfMatches(claim);
+  } finally {
+    activeClaims.delete(claim.claimId);
+  }
+}
+
+export function writeCanonicalDaemonInfo(
+  info: CanonicalDaemonInfo,
+  claim: CanonicalDaemonClaim,
+): void {
+  assertCanonicalDaemonClaimHeld(claim);
+  const path = getCanonicalDaemonInfoPath();
+  mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+  const tmpPath = `${path}.${claim.claimId}.${randomUUID()}.tmp`;
+  const persisted: CanonicalDaemonInfo = {
+    pid: info.pid,
+    port: info.port,
+    protocolVersion: info.protocolVersion,
+    productVersion: info.productVersion,
+    instanceId: info.instanceId,
+    startedAt: info.startedAt,
+    bindHostname: info.bindHostname,
+    authToken: info.authToken,
+  };
+  writeFileSync(tmpPath, JSON.stringify(persisted, null, 2) + "\n", {
+    encoding: "utf-8",
+    mode: 0o600,
+  });
+  chmodSync(tmpPath, 0o600);
+  try {
+    // link(2) is an atomic create-if-absent publication. It cannot overwrite a
+    // canonical generation published by another process.
+    linkSync(tmpPath, path);
+  } finally {
+    rmSync(tmpPath, { force: true });
+  }
+}
+
+export function inspectCanonicalDaemonInfo(): CanonicalDaemonInfoState {
+  return inspectCanonicalDaemonInfoPath(getCanonicalDaemonInfoPath());
+}
+
 /**
  * Convenience for non-ownership consumers. Startup and takeover code must use
  * inspectCanonicalDaemonInfo() so an invalid record is never treated as absent.
@@ -235,21 +443,57 @@ export function readCanonicalDaemonInfo(): CanonicalDaemonInfo | null {
   return state.status === "valid" ? state.info : null;
 }
 
-export function clearCanonicalDaemonInfo(): void {
-  rmSync(getCanonicalDaemonInfoPath(), { force: true });
+function captureCanonicalDaemonInfo(claim: CanonicalDaemonClaim): string | null {
+  assertCanonicalDaemonClaimHeld(claim);
+  const path = getCanonicalDaemonInfoPath();
+  const captured = `${path}.${claim.claimId}.${randomUUID()}.retired`;
+  try {
+    renameSync(path, captured);
+    return captured;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
+  }
 }
 
-/** Avoid deleting a replacement record published after our observation. */
-export function clearCanonicalDaemonInfoIfUnchanged(state: CanonicalDaemonInfoState): boolean {
+/** Atomically capture and remove only the observed canonical generation. */
+export function clearCanonicalDaemonInfoIfUnchanged(
+  state: CanonicalDaemonInfoState,
+  claim: CanonicalDaemonClaim,
+): boolean {
   if (state.status === "missing" || !state.observation) return false;
+  const path = getCanonicalDaemonInfoPath();
+  const captured = captureCanonicalDaemonInfo(claim);
+  if (!captured) return false;
   try {
-    const current = observation(lstatSync(getCanonicalDaemonInfoPath()));
-    if (!sameObservation(state.observation, current)) return false;
-    rmSync(getCanonicalDaemonInfoPath());
-    return true;
-  } catch {
+    const current = observation(lstatSync(captured));
+    if (sameObservation(state.observation, current)) {
+      rmSync(captured, { recursive: true, force: true });
+      return true;
+    }
+    restoreCapturedFile(captured, path);
     return false;
+  } catch (error) {
+    restoreCapturedFile(captured, path);
+    throw error;
   }
+}
+
+/** Atomically capture and remove only this daemon instance's record. */
+export function clearCanonicalDaemonInfoIfOwned(
+  instanceId: string,
+  claim: CanonicalDaemonClaim,
+): boolean {
+  const path = getCanonicalDaemonInfoPath();
+  const captured = captureCanonicalDaemonInfo(claim);
+  if (!captured) return false;
+  const state = inspectCanonicalDaemonInfoPath(captured);
+  if (state.status === "valid" && state.info.instanceId === instanceId) {
+    rmSync(captured, { recursive: true, force: true });
+    return true;
+  }
+  restoreCapturedFile(captured, path);
+  return false;
 }
 
 type PidLiveness = "alive" | "dead" | "unknown";

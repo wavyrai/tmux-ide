@@ -137,8 +137,11 @@ remote-access authentication. `--port N` is optional; omitting it selects a free
 loopback port. Treat a non-zero child exit before readiness as launch failure and
 surface its stderr/structured error to the user.
 
-The owner atomically publishes this versioned discovery shape with owner-only
-permissions:
+The owner first atomically acquires a process-lifetime claim, then publishes
+this versioned discovery shape with owner-only permissions. The claim spans
+record inspection, socket binding, publication, and the daemon's full lifetime;
+concurrent cold-start losers wait for and reuse the winner instead of binding or
+publishing another daemon:
 
 ```json
 {
@@ -158,10 +161,11 @@ Startup is ready only when all checks succeed:
 1. `~/.tmux-ide/daemon.json` exists (or the directory selected by
    `TMUX_IDE_DAEMON_INFO_DIR`) and names the child PID and port.
 2. The unauthenticated `GET /identity` response exactly matches the record's
-   `pid`, `protocolVersion`, `productVersion`, `instanceId`, and `startedAt`.
-   This binds the endpoint before the host sends any credential.
+   `pid`, `protocolVersion`, `instanceId`, and `startedAt`. This binds the
+   endpoint before the host sends any credential. `productVersion` is reported
+   as a diagnostic and may differ when the wire protocol remains compatible.
 3. `GET /health` succeeds and reports the compatible daemon wire protocol and
-   the same diagnostic `productVersion`. `/healthz` reports that same value.
+   its diagnostic `productVersion`. `/healthz` reports that same value.
 
 Construct probe URLs with a URL API or bracket an IPv6 literal (`[::1]`); never
 interpolate an unbracketed IPv6 hostname into `http://host:port`.
@@ -174,6 +178,10 @@ can ask the user to restart or upgrade. Only a dead PID is stale state and may b
 removed. A live PID whose health endpoint is unavailable still owns the slot:
 the contender exits non-zero without clearing the record or starting another
 daemon.
+
+Publication is create-if-absent and cleanup is generation-safe: an owner removes
+only the record carrying its own `instanceId`. It never deletes a record that a
+concurrent process replaced while cleanup was in progress.
 
 An existing record that is protocol-less, malformed, oversized, symlinked,
 owned by another user, or not owner-only is **invalid**, not missing. Do not

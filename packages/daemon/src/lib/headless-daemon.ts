@@ -1,6 +1,5 @@
 import {
   canonicalDaemonUrl,
-  clearCanonicalDaemonInfoIfUnchanged,
   inspectCanonicalDaemonInfo,
   isCanonicalDaemonAlive,
   isCanonicalDaemonRecordOwnerProvenDead,
@@ -34,7 +33,6 @@ export interface HeadlessDaemonOptions {
 
 export interface HeadlessDaemonDependencies {
   readonly inspectCanonicalDaemonInfo: () => CanonicalDaemonInfoState;
-  readonly clearCanonicalDaemonInfoIfUnchanged: (state: CanonicalDaemonInfoState) => boolean;
   readonly isCanonicalDaemonAlive: (info: CanonicalDaemonInfo) => Promise<boolean>;
   readonly isCanonicalDaemonRecordOwnerProvenDead: (
     state: Exclude<CanonicalDaemonInfoState, { status: "missing" }>,
@@ -51,7 +49,6 @@ export interface HeadlessDaemonDependencies {
 
 const defaultDependencies: HeadlessDaemonDependencies = {
   inspectCanonicalDaemonInfo,
-  clearCanonicalDaemonInfoIfUnchanged,
   isCanonicalDaemonAlive,
   isCanonicalDaemonRecordOwnerProvenDead,
   probeCanonicalDaemonHealth,
@@ -114,12 +111,18 @@ function assertIdentityMatches(info: CanonicalDaemonInfo, identity: DaemonIdenti
     identity.instanceId !== info.instanceId ||
     identity.pid !== info.pid ||
     identity.protocolVersion !== info.protocolVersion ||
-    identity.productVersion !== info.productVersion ||
     identity.startedAt !== info.startedAt
   ) {
     throw new IdeError(
       "Canonical daemon identity probe does not match daemon.json. Refusing takeover or reuse.",
       { code: "DAEMON_IDENTITY_MISMATCH", exitCode: 2 },
+    );
+  }
+  if (identity.productVersion !== info.productVersion) {
+    console.warn(
+      `[tmux-ide] canonical daemon product-version metadata differs: daemon.json reports ` +
+        `"${info.productVersion}" but /identity reports "${identity.productVersion}". ` +
+        `Product version is diagnostic; compatibility is governed by protocol and instance identity.`,
     );
   }
 }
@@ -165,11 +168,8 @@ async function findLiveCanonicalDaemon(
   if (existing.status === "missing") return null;
   if (existing.status === "invalid") {
     if (await deps.isCanonicalDaemonRecordOwnerProvenDead(existing)) {
-      if (deps.clearCanonicalDaemonInfoIfUnchanged(existing)) return null;
-      throw new IdeError("Canonical daemon metadata changed while stale state was removed", {
-        code: "DAEMON_INFO_INVALID",
-        exitCode: 1,
-      });
+      // The process which wins the atomic startup claim removes stale state.
+      return null;
     }
     throw new IdeError(
       `Canonical daemon metadata is ${existing.reason}: ${existing.detail}. ` +
@@ -178,16 +178,40 @@ async function findLiveCanonicalDaemon(
     );
   }
   if (!(await deps.isCanonicalDaemonAlive(existing.info))) {
-    if (!deps.clearCanonicalDaemonInfoIfUnchanged(existing)) {
-      throw new IdeError("Canonical daemon metadata changed while stale state was removed", {
-        code: "DAEMON_INFO_INVALID",
-        exitCode: 1,
-      });
-    }
+    // The process which wins the atomic startup claim removes stale state.
     return null;
   }
   await assertAttachableDaemon(deps, existing.info, options);
   return existing.info;
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function waitForCanonicalWinner(
+  deps: HeadlessDaemonDependencies,
+  options: HeadlessDaemonOptions,
+  timeoutMs = 15_000,
+): Promise<CanonicalDaemonInfo | null> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      const winner = await findLiveCanonicalDaemon(deps, options);
+      if (winner) return winner;
+    } catch (error) {
+      if (
+        !(error instanceof IdeError) ||
+        (error.code !== "DAEMON_IDENTITY_UNAVAILABLE" && error.code !== "DAEMON_UNHEALTHY")
+      ) {
+        throw error;
+      }
+      // The claim winner has published enough metadata to identify its PID but
+      // has not completed the endpoint handshake yet.
+    }
+    await delay(25);
+  }
+  return null;
 }
 
 /**
@@ -218,26 +242,39 @@ export async function runHeadlessDaemon(
       return "already-running";
     }
 
-    try {
-      handle = await deps.startEmbeddedDaemon({
-        port,
-        bindHostname: "127.0.0.1",
-        authToken: null,
-        silent: true,
-        ...(options.sessionName ? { sessionName: options.sessionName } : {}),
-        ...(options.expectedVersion ? { productVersion: options.expectedVersion } : {}),
-      });
-    } catch (error) {
-      // Another owner can become visible between our preflight and the embedded
-      // daemon's guard. Re-resolve it as reuse; never request implicit takeover.
-      if (error instanceof DaemonStartupError && error.reason === "canonical_already_running") {
-        const winner = await findLiveCanonicalDaemon(deps, options);
-        if (winner) {
-          emitStatus(deps, options.json === true, "already-running", winner);
-          return "already-running";
+    for (let startAttempt = 0; startAttempt < 2 && !handle; startAttempt += 1) {
+      try {
+        handle = await deps.startEmbeddedDaemon({
+          port,
+          bindHostname: "127.0.0.1",
+          authToken: null,
+          silent: true,
+          ...(options.sessionName ? { sessionName: options.sessionName } : {}),
+          ...(options.expectedVersion ? { productVersion: options.expectedVersion } : {}),
+        });
+      } catch (error) {
+        // Another process may hold the complete startup claim before its
+        // daemon.json and endpoints are visible. Wait for that exact winner;
+        // if it dies before publication, retry the claim once.
+        if (
+          error instanceof DaemonStartupError &&
+          (error.reason === "canonical_already_running" || error.reason === "canonical_claim_busy")
+        ) {
+          const winner = await waitForCanonicalWinner(deps, options);
+          if (winner) {
+            emitStatus(deps, options.json === true, "already-running", winner);
+            return "already-running";
+          }
+          if (startAttempt === 0) continue;
         }
+        throw error;
       }
-      throw error;
+    }
+    if (!handle) {
+      throw new IdeError("Canonical daemon startup claim did not produce an owner", {
+        code: "DAEMON_STARTUP_TIMEOUT",
+        exitCode: 1,
+      });
     }
 
     let resolveStopped!: () => void;
@@ -273,6 +310,17 @@ export async function runHeadlessDaemon(
       });
     }
     const info = published.info;
+    if (
+      info.instanceId !== handle.instanceId ||
+      info.pid !== handle.pid ||
+      info.port !== handle.port
+    ) {
+      await handle.stop().catch(() => undefined);
+      throw new IdeError("Started daemon handle does not own the canonical published instance", {
+        code: "DAEMON_IDENTITY_MISMATCH",
+        exitCode: 2,
+      });
+    }
     try {
       await assertAttachableDaemon(deps, info, options);
     } catch (error) {

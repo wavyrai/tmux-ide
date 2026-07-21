@@ -13,7 +13,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   canonicalDaemonUrl,
-  clearCanonicalDaemonInfo,
+  clearCanonicalDaemonInfoIfOwned,
+  clearCanonicalDaemonInfoIfUnchanged,
+  getCanonicalDaemonClaimPath,
   getCanonicalDaemonInfoPath,
   inspectCanonicalDaemonInfo,
   isCanonicalDaemonAlive,
@@ -21,7 +23,10 @@ import {
   probeCanonicalDaemonHealth,
   probeCanonicalDaemonIdentity,
   readCanonicalDaemonInfo,
+  releaseCanonicalDaemonClaim,
+  tryAcquireCanonicalDaemonClaim,
   writeCanonicalDaemonInfo,
+  type CanonicalDaemonClaim,
   type CanonicalDaemonInfo,
 } from "./canonical-daemon.ts";
 import { DAEMON_WIRE_PROTOCOL_VERSION } from "@tmux-ide/contracts";
@@ -29,6 +34,7 @@ import { DAEMON_WIRE_PROTOCOL_VERSION } from "@tmux-ide/contracts";
 let tempDir: string;
 let previousDir: string | undefined;
 let server: Server | null = null;
+let activeClaim: CanonicalDaemonClaim | null = null;
 
 beforeEach(() => {
   previousDir = process.env.TMUX_IDE_DAEMON_INFO_DIR;
@@ -37,6 +43,10 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
+  if (activeClaim) {
+    releaseCanonicalDaemonClaim(activeClaim);
+    activeClaim = null;
+  }
   if (server) {
     await new Promise<void>((resolve) => server?.close(() => resolve()));
     server = null;
@@ -57,6 +67,14 @@ function info(port: number): CanonicalDaemonInfo {
     bindHostname: "127.0.0.1",
     authToken: null,
   };
+}
+
+function acquireClaim(): CanonicalDaemonClaim {
+  const attempt = tryAcquireCanonicalDaemonClaim();
+  expect(attempt.status).toBe("acquired");
+  if (attempt.status !== "acquired") throw new Error("expected canonical daemon claim");
+  activeClaim = attempt.claim;
+  return attempt.claim;
 }
 
 function listen(): Promise<number> {
@@ -102,7 +120,8 @@ function listen(): Promise<number> {
 describe("canonical daemon info", () => {
   it("atomically writes, reads, probes, and clears daemon info", async () => {
     const port = await listen();
-    writeCanonicalDaemonInfo(info(port));
+    const claim = acquireClaim();
+    writeCanonicalDaemonInfo(info(port), claim);
 
     expect(getCanonicalDaemonInfoPath()).toBe(join(tempDir, "daemon.json"));
     expect(readCanonicalDaemonInfo()?.port).toBe(port);
@@ -114,7 +133,7 @@ describe("canonical daemon info", () => {
       info(port).instanceId,
     );
 
-    clearCanonicalDaemonInfo();
+    expect(clearCanonicalDaemonInfoIfOwned(info(port).instanceId, claim)).toBe(true);
     expect(readCanonicalDaemonInfo()).toBeNull();
   });
 
@@ -154,7 +173,10 @@ describe("canonical daemon info", () => {
 
   it("does not serialize a local bypass token if one is present on the input object", async () => {
     const port = await listen();
-    writeCanonicalDaemonInfo({ ...info(port), localBypassToken: "secret" } as CanonicalDaemonInfo);
+    writeCanonicalDaemonInfo(
+      { ...info(port), localBypassToken: "secret" } as CanonicalDaemonInfo,
+      acquireClaim(),
+    );
 
     const raw = JSON.parse(readFileSync(getCanonicalDaemonInfoPath(), "utf-8")) as Record<
       string,
@@ -166,7 +188,7 @@ describe("canonical daemon info", () => {
 
   it("writes token-bearing daemon info owner-only", async () => {
     const port = await listen();
-    writeCanonicalDaemonInfo({ ...info(port), authToken: "remote-secret" });
+    writeCanonicalDaemonInfo({ ...info(port), authToken: "remote-secret" }, acquireClaim());
 
     expect(statSync(getCanonicalDaemonInfoPath()).mode & 0o777).toBe(0o600);
     expect(readCanonicalDaemonInfo()?.authToken).toBe("remote-secret");
@@ -241,6 +263,64 @@ describe("canonical daemon info", () => {
     );
     expect(canonicalDaemonUrl("http", "::", 4010, "/health")).toBe("http://[::1]:4010/health");
     expect(canonicalDaemonUrl("ws", "::1", 4010, "/ws/events")).toBe("ws://[::1]:4010/ws/events");
+  });
+
+  it("allows exactly one process-lifetime canonical claim", () => {
+    const claim = acquireClaim();
+    expect(tryAcquireCanonicalDaemonClaim()).toMatchObject({
+      status: "busy",
+      owner: { claimId: claim.claimId, pid: process.pid },
+    });
+    expect(releaseCanonicalDaemonClaim(claim)).toBe(true);
+    activeClaim = null;
+
+    const replacement = tryAcquireCanonicalDaemonClaim();
+    expect(replacement.status).toBe("acquired");
+    if (replacement.status === "acquired") {
+      activeClaim = replacement.claim;
+      expect(getCanonicalDaemonClaimPath()).toBe(join(tempDir, "daemon.claim"));
+    }
+  });
+
+  it("publishes create-if-absent and never overwrites an existing generation", () => {
+    const claim = acquireClaim();
+    writeCanonicalDaemonInfo(info(6060), claim);
+
+    expect(() =>
+      writeCanonicalDaemonInfo(
+        {
+          ...info(7070),
+          instanceId: "76088827-c1f1-4451-bc2e-0a3ae7747434",
+        },
+        claim,
+      ),
+    ).toThrow();
+    expect(readCanonicalDaemonInfo()).toMatchObject({
+      port: 6060,
+      instanceId: info(6060).instanceId,
+    });
+  });
+
+  it("restores a replacement captured after an observation instead of deleting it", () => {
+    const claim = acquireClaim();
+    writeCanonicalDaemonInfo(info(6060), claim);
+    const observed = inspectCanonicalDaemonInfo();
+    expect(observed.status).toBe("valid");
+
+    rmSync(getCanonicalDaemonInfoPath());
+    const replacement = {
+      ...info(7070),
+      instanceId: "76088827-c1f1-4451-bc2e-0a3ae7747434",
+    };
+    writeFileSync(getCanonicalDaemonInfoPath(), `${JSON.stringify(replacement)}\n`, {
+      mode: 0o600,
+    });
+
+    expect(clearCanonicalDaemonInfoIfUnchanged(observed, claim)).toBe(false);
+    expect(readCanonicalDaemonInfo()).toMatchObject({
+      port: replacement.port,
+      instanceId: replacement.instanceId,
+    });
   });
 
   it("deliberately treats an explicit empty daemon directory like an unset value", () => {

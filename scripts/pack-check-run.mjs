@@ -35,9 +35,47 @@ function findTarball(prefix) {
   return join(tarballDir, match);
 }
 
-let child = null;
-let childExit = null;
+const children = [];
+const childOutput = new Map();
+const childExits = new Map();
 let cleanupError = null;
+
+function spawnInstalledCli(installedCli) {
+  const child = spawn(installedCli, ["--headless", "--json"], {
+    cwd: projectDir,
+    env: { ...process.env, HOME: homeDir, npm_config_cache: join(tmpRoot, "npm-cache") },
+    stdio: ["ignore", "pipe", "pipe"],
+    detached: true,
+  });
+  const output = { stdout: "", stderr: "" };
+  child.stdout?.on("data", (chunk) => {
+    output.stdout += chunk.toString();
+  });
+  child.stderr?.on("data", (chunk) => {
+    output.stderr += chunk.toString();
+  });
+  childOutput.set(child, output);
+  childExits.set(
+    child,
+    new Promise((resolveExit, rejectExit) => {
+      child.once("exit", (code, signal) => resolveExit({ code, signal }));
+      child.once("error", rejectExit);
+    }),
+  );
+  children.push(child);
+  return child;
+}
+
+async function waitForChild(child, timeoutMs = 20_000) {
+  const exit = await Promise.race([
+    childExits.get(child),
+    new Promise((_, rejectTimeout) =>
+      setTimeout(() => rejectTimeout(new Error(`PID ${child.pid} did not exit`)), timeoutMs),
+    ),
+  ]);
+  return { ...exit, ...childOutput.get(child) };
+}
+
 try {
   // The public root package contains the compiled root entrypoint and bundles
   // workspace-owned TypeScript. The private @tmux-ide/daemon workspace package
@@ -53,13 +91,7 @@ try {
   run("npx", ["tmux-ide", "--version"], { cwd: projectDir, stdio: "inherit" });
 
   const installedCli = join(projectDir, "node_modules", ".bin", "tmux-ide");
-  child = spawn(installedCli, ["--headless", "--json"], {
-    cwd: projectDir,
-    env: { ...process.env, HOME: homeDir, npm_config_cache: join(tmpRoot, "npm-cache") },
-    stdio: "ignore",
-    detached: true,
-  });
-  childExit = new Promise((resolveExit) => child.once("exit", resolveExit));
+  const contenders = Array.from({ length: 12 }, () => spawnInstalledCli(installedCli));
 
   const daemonInfo = join(homeDir, ".tmux-ide", "daemon.json");
   const deadline = Date.now() + 10_000;
@@ -69,8 +101,9 @@ try {
   if (!existsSync(daemonInfo)) throw new Error("Headless daemon did not write daemon.json");
 
   const info = JSON.parse(readFileSync(daemonInfo, "utf-8"));
-  if (info.pid !== child.pid) {
-    throw new Error(`daemon.json PID ${info.pid} does not match direct child PID ${child.pid}`);
+  const owner = contenders.find((candidate) => candidate.pid === info.pid);
+  if (!owner) {
+    throw new Error(`daemon.json PID ${info.pid} is not one of the installed CLI contenders`);
   }
   if (info.authToken !== null) {
     throw new Error("Headless loopback daemon unexpectedly inherited an auth token");
@@ -116,27 +149,55 @@ try {
     }
   }
 
-  const contender = run(installedCli, ["--headless", "--json"], { cwd: projectDir });
-  const contenderStatus = JSON.parse(contender.stdout.trim());
-  if (contenderStatus.status !== "already-running" || contenderStatus.pid !== child.pid) {
-    throw new Error(`Second headless start did not reuse owner: ${contender.stdout}`);
+  const losers = contenders.filter((candidate) => candidate !== owner);
+  const loserResults = await Promise.all(losers.map((candidate) => waitForChild(candidate)));
+  for (const result of loserResults) {
+    if (result.code !== 0) {
+      throw new Error(
+        `Installed contender failed (${result.code ?? result.signal}):\n${result.stdout}\n${result.stderr}`,
+      );
+    }
+    const contenderStatus = JSON.parse(result.stdout.trim());
+    if (
+      contenderStatus.status !== "already-running" ||
+      contenderStatus.pid !== owner.pid ||
+      contenderStatus.port !== info.port
+    ) {
+      throw new Error(`Installed contender did not reuse owner: ${result.stdout}`);
+    }
+  }
+
+  const liveChildren = contenders.filter(
+    (candidate) => candidate.exitCode === null && candidate.signalCode === null,
+  );
+  if (liveChildren.length !== 1 || liveChildren[0] !== owner) {
+    throw new Error(
+      `Expected exactly owner PID ${owner.pid} alive; found ${liveChildren.map((child) => child.pid).join(", ")}`,
+    );
   }
 } finally {
-  if (child?.pid) {
+  for (const child of children) {
+    if (child.exitCode !== null || child.signalCode !== null) continue;
     try {
       child.kill("SIGTERM");
     } catch {
       // Already exited.
     }
   }
-  if (childExit) {
+
+  const liveChildren = children.filter(
+    (child) => child.exitCode === null && child.signalCode === null,
+  );
+  if (liveChildren.length > 0) {
     const stopped = await Promise.race([
-      childExit.then(() => true),
+      Promise.all(liveChildren.map((child) => childExits.get(child))).then(() => true),
       new Promise((resolveDelay) => setTimeout(() => resolveDelay(false), 5_000)),
     ]);
-    if (!stopped && child?.pid) {
-      child.kill("SIGKILL");
-      cleanupError = new Error("Installed headless daemon did not exit after SIGTERM");
+    if (!stopped) {
+      for (const child of liveChildren) {
+        if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+      }
+      cleanupError = new Error("Installed headless contender did not exit after SIGTERM");
     }
   }
   rmSync(tmpRoot, { recursive: true, force: true });

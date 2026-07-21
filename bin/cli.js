@@ -9466,8 +9466,9 @@ var init_statusline = __esm({
 var canonical_daemon_exports = {};
 __export(canonical_daemon_exports, {
   canonicalDaemonUrl: () => canonicalDaemonUrl,
-  clearCanonicalDaemonInfo: () => clearCanonicalDaemonInfo,
+  clearCanonicalDaemonInfoIfOwned: () => clearCanonicalDaemonInfoIfOwned,
   clearCanonicalDaemonInfoIfUnchanged: () => clearCanonicalDaemonInfoIfUnchanged,
+  getCanonicalDaemonClaimPath: () => getCanonicalDaemonClaimPath,
   getCanonicalDaemonInfoPath: () => getCanonicalDaemonInfoPath,
   inspectCanonicalDaemonInfo: () => inspectCanonicalDaemonInfo,
   isCanonicalDaemonAlive: () => isCanonicalDaemonAlive,
@@ -9475,6 +9476,8 @@ __export(canonical_daemon_exports, {
   probeCanonicalDaemonHealth: () => probeCanonicalDaemonHealth,
   probeCanonicalDaemonIdentity: () => probeCanonicalDaemonIdentity,
   readCanonicalDaemonInfo: () => readCanonicalDaemonInfo,
+  releaseCanonicalDaemonClaim: () => releaseCanonicalDaemonClaim,
+  tryAcquireCanonicalDaemonClaim: () => tryAcquireCanonicalDaemonClaim,
   warnOnDaemonVersionSkew: () => warnOnDaemonVersionSkew,
   writeCanonicalDaemonInfo: () => writeCanonicalDaemonInfo
 });
@@ -9483,6 +9486,7 @@ import {
   closeSync as closeSync2,
   constants,
   fstatSync,
+  linkSync as linkSync2,
   lstatSync,
   mkdirSync as mkdirSync13,
   openSync as openSync2,
@@ -9491,6 +9495,7 @@ import {
   rmSync,
   writeFileSync as writeFileSync12
 } from "node:fs";
+import { randomUUID } from "node:crypto";
 import { homedir as homedir13 } from "node:os";
 import { dirname as dirname18, join as join19 } from "node:path";
 function nonEmptyEnvironmentValue(name) {
@@ -9500,6 +9505,9 @@ function nonEmptyEnvironmentValue(name) {
 function getCanonicalDaemonInfoPath() {
   const dir = nonEmptyEnvironmentValue(DAEMON_INFO_DIR_ENV) ?? nonEmptyEnvironmentValue(REGISTRY_DIR_ENV2) ?? join19(homedir13(), ".tmux-ide");
   return join19(dir, DAEMON_INFO_FILE);
+}
+function getCanonicalDaemonClaimPath() {
+  return join19(dirname18(getCanonicalDaemonInfoPath()), DAEMON_CLAIM_DIR);
 }
 function observation(stat) {
   return { dev: stat.dev, ino: stat.ino, size: stat.size, mtimeMs: stat.mtimeMs };
@@ -9515,29 +9523,7 @@ function ownerPidFromRaw(raw) {
   const pid = raw.pid;
   return typeof pid === "number" && Number.isInteger(pid) && pid > 0 ? pid : null;
 }
-function writeCanonicalDaemonInfo(info) {
-  const path2 = getCanonicalDaemonInfoPath();
-  mkdirSync13(dirname18(path2), { recursive: true, mode: 448 });
-  const tmpPath = `${path2}.${process.pid}.${Date.now()}.tmp`;
-  const persisted = {
-    pid: info.pid,
-    port: info.port,
-    protocolVersion: info.protocolVersion,
-    productVersion: info.productVersion,
-    instanceId: info.instanceId,
-    startedAt: info.startedAt,
-    bindHostname: info.bindHostname,
-    authToken: info.authToken
-  };
-  writeFileSync12(tmpPath, JSON.stringify(persisted, null, 2) + "\n", {
-    encoding: "utf-8",
-    mode: 384
-  });
-  chmodSync3(tmpPath, 384);
-  renameSync8(tmpPath, path2);
-}
-function inspectCanonicalDaemonInfo() {
-  const path2 = getCanonicalDaemonInfoPath();
+function inspectCanonicalDaemonInfoPath(path2) {
   let descriptor;
   try {
     const pathStat = lstatSync(path2);
@@ -9619,23 +9605,212 @@ function inspectCanonicalDaemonInfo() {
     if (descriptor !== void 0) closeSync2(descriptor);
   }
 }
+function inspectCanonicalDaemonClaimPath(path2) {
+  let descriptor;
+  try {
+    const claimStat = lstatSync(path2);
+    if (claimStat.isSymbolicLink() || !claimStat.isDirectory()) {
+      return { status: "invalid", detail: "daemon claim must be a real directory" };
+    }
+    if (typeof process.getuid === "function" && claimStat.uid !== process.getuid()) {
+      return { status: "invalid", detail: "daemon claim is owned by another user" };
+    }
+    if ((claimStat.mode & 63) !== 0) {
+      return { status: "invalid", detail: "daemon claim directory is not owner-only" };
+    }
+    const ownerPath = join19(path2, DAEMON_CLAIM_OWNER_FILE);
+    const ownerStat = lstatSync(ownerPath);
+    if (ownerStat.isSymbolicLink() || !ownerStat.isFile()) {
+      return { status: "invalid", detail: "daemon claim owner must be a real file" };
+    }
+    if (ownerStat.size > MAX_DAEMON_CLAIM_BYTES) {
+      return { status: "invalid", detail: "daemon claim owner exceeds the size limit" };
+    }
+    if (typeof process.getuid === "function" && ownerStat.uid !== process.getuid()) {
+      return { status: "invalid", detail: "daemon claim owner is owned by another user" };
+    }
+    if ((ownerStat.mode & 63) !== 0) {
+      return { status: "invalid", detail: "daemon claim owner is not owner-only" };
+    }
+    descriptor = openSync2(ownerPath, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+    const openedStat = fstatSync(descriptor);
+    if (!openedStat.isFile() || openedStat.dev !== ownerStat.dev || openedStat.ino !== ownerStat.ino || openedStat.size !== ownerStat.size) {
+      return { status: "invalid", detail: "daemon claim changed while it was opened" };
+    }
+    const raw = JSON.parse(readFileSync15(descriptor, "utf-8"));
+    if (typeof raw.claimId !== "string" || !/^[0-9a-f-]{36}$/iu.test(raw.claimId) || typeof raw.pid !== "number" || !Number.isInteger(raw.pid) || raw.pid <= 0 || typeof raw.acquiredAt !== "string" || !Number.isFinite(Date.parse(raw.acquiredAt))) {
+      return { status: "invalid", detail: "daemon claim owner has invalid metadata" };
+    }
+    return {
+      status: "valid",
+      claim: { claimId: raw.claimId, pid: raw.pid, acquiredAt: raw.acquiredAt }
+    };
+  } catch (error) {
+    if (error.code === "ENOENT") return { status: "missing" };
+    return {
+      status: "invalid",
+      detail: error instanceof Error ? error.message : "daemon claim could not be read"
+    };
+  } finally {
+    if (descriptor !== void 0) closeSync2(descriptor);
+  }
+}
+function restoreCapturedFile(capturedPath, canonicalPath) {
+  try {
+    linkSync2(capturedPath, canonicalPath);
+    rmSync(capturedPath, { force: true });
+  } catch (error) {
+    if (error.code !== "EEXIST") throw error;
+  }
+}
+function retireCanonicalClaimIfMatches(expected) {
+  const path2 = getCanonicalDaemonClaimPath();
+  const captured = `${path2}.${expected.claimId}.${randomUUID()}.retired`;
+  try {
+    renameSync8(path2, captured);
+  } catch {
+    return false;
+  }
+  const moved = inspectCanonicalDaemonClaimPath(captured);
+  if (moved.status === "valid" && moved.claim.claimId === expected.claimId && moved.claim.pid === expected.pid) {
+    rmSync(captured, { recursive: true, force: true });
+    return true;
+  }
+  try {
+    renameSync8(captured, path2);
+  } catch {
+  }
+  return false;
+}
+function tryAcquireCanonicalDaemonClaim() {
+  const path2 = getCanonicalDaemonClaimPath();
+  const root = dirname18(path2);
+  mkdirSync13(root, { recursive: true, mode: 448 });
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const claim = {
+      claimId: randomUUID(),
+      pid: process.pid,
+      acquiredAt: (/* @__PURE__ */ new Date()).toISOString()
+    };
+    const candidate = `${path2}.${claim.claimId}.candidate`;
+    mkdirSync13(candidate, { mode: 448 });
+    writeFileSync12(join19(candidate, DAEMON_CLAIM_OWNER_FILE), `${JSON.stringify(claim, null, 2)}
+`, {
+      encoding: "utf-8",
+      mode: 384
+    });
+    try {
+      renameSync8(candidate, path2);
+      activeClaims.add(claim.claimId);
+      return { status: "acquired", claim };
+    } catch (error) {
+      rmSync(candidate, { recursive: true, force: true });
+      const existing = inspectCanonicalDaemonClaimPath(path2);
+      if (existing.status === "missing") {
+        if (attempt < 2) continue;
+        return { status: "invalid", detail: "daemon claim changed during acquisition" };
+      }
+      if (existing.status === "invalid") return existing;
+      if (pidLiveness(existing.claim.pid) !== "dead") {
+        return { status: "busy", owner: existing.claim };
+      }
+      if (!retireCanonicalClaimIfMatches(existing.claim) && attempt === 2) {
+        return { status: "invalid", detail: "stale daemon claim changed during recovery" };
+      }
+      if (error.code !== "EEXIST" && attempt === 2) throw error;
+    }
+  }
+  return { status: "invalid", detail: "daemon claim could not be acquired" };
+}
+function assertCanonicalDaemonClaimHeld(claim) {
+  if (!activeClaims.has(claim.claimId)) throw new Error("canonical daemon claim is not active");
+  const current = inspectCanonicalDaemonClaimPath(getCanonicalDaemonClaimPath());
+  if (current.status !== "valid" || current.claim.claimId !== claim.claimId || current.claim.pid !== claim.pid) {
+    throw new Error("canonical daemon claim ownership was lost");
+  }
+}
+function releaseCanonicalDaemonClaim(claim) {
+  if (!activeClaims.has(claim.claimId)) return false;
+  try {
+    return retireCanonicalClaimIfMatches(claim);
+  } finally {
+    activeClaims.delete(claim.claimId);
+  }
+}
+function writeCanonicalDaemonInfo(info, claim) {
+  assertCanonicalDaemonClaimHeld(claim);
+  const path2 = getCanonicalDaemonInfoPath();
+  mkdirSync13(dirname18(path2), { recursive: true, mode: 448 });
+  const tmpPath = `${path2}.${claim.claimId}.${randomUUID()}.tmp`;
+  const persisted = {
+    pid: info.pid,
+    port: info.port,
+    protocolVersion: info.protocolVersion,
+    productVersion: info.productVersion,
+    instanceId: info.instanceId,
+    startedAt: info.startedAt,
+    bindHostname: info.bindHostname,
+    authToken: info.authToken
+  };
+  writeFileSync12(tmpPath, JSON.stringify(persisted, null, 2) + "\n", {
+    encoding: "utf-8",
+    mode: 384
+  });
+  chmodSync3(tmpPath, 384);
+  try {
+    linkSync2(tmpPath, path2);
+  } finally {
+    rmSync(tmpPath, { force: true });
+  }
+}
+function inspectCanonicalDaemonInfo() {
+  return inspectCanonicalDaemonInfoPath(getCanonicalDaemonInfoPath());
+}
 function readCanonicalDaemonInfo() {
   const state = inspectCanonicalDaemonInfo();
   return state.status === "valid" ? state.info : null;
 }
-function clearCanonicalDaemonInfo() {
-  rmSync(getCanonicalDaemonInfoPath(), { force: true });
-}
-function clearCanonicalDaemonInfoIfUnchanged(state) {
-  if (state.status === "missing" || !state.observation) return false;
+function captureCanonicalDaemonInfo(claim) {
+  assertCanonicalDaemonClaimHeld(claim);
+  const path2 = getCanonicalDaemonInfoPath();
+  const captured = `${path2}.${claim.claimId}.${randomUUID()}.retired`;
   try {
-    const current = observation(lstatSync(getCanonicalDaemonInfoPath()));
-    if (!sameObservation(state.observation, current)) return false;
-    rmSync(getCanonicalDaemonInfoPath());
-    return true;
-  } catch {
-    return false;
+    renameSync8(path2, captured);
+    return captured;
+  } catch (error) {
+    if (error.code === "ENOENT") return null;
+    throw error;
   }
+}
+function clearCanonicalDaemonInfoIfUnchanged(state, claim) {
+  if (state.status === "missing" || !state.observation) return false;
+  const path2 = getCanonicalDaemonInfoPath();
+  const captured = captureCanonicalDaemonInfo(claim);
+  if (!captured) return false;
+  try {
+    const current = observation(lstatSync(captured));
+    if (sameObservation(state.observation, current)) {
+      rmSync(captured, { recursive: true, force: true });
+      return true;
+    }
+    restoreCapturedFile(captured, path2);
+    return false;
+  } catch (error) {
+    restoreCapturedFile(captured, path2);
+    throw error;
+  }
+}
+function clearCanonicalDaemonInfoIfOwned(instanceId, claim) {
+  const path2 = getCanonicalDaemonInfoPath();
+  const captured = captureCanonicalDaemonInfo(claim);
+  if (!captured) return false;
+  const state = inspectCanonicalDaemonInfoPath(captured);
+  if (state.status === "valid" && state.info.instanceId === instanceId) {
+    rmSync(captured, { recursive: true, force: true });
+    return true;
+  }
+  restoreCapturedFile(captured, path2);
+  return false;
 }
 function pidLiveness(pid) {
   try {
@@ -9707,7 +9882,7 @@ async function probeCanonicalDaemonIdentity(info) {
     return null;
   }
 }
-var DAEMON_INFO_DIR_ENV, REGISTRY_DIR_ENV2, DAEMON_INFO_FILE, MAX_DAEMON_INFO_BYTES;
+var DAEMON_INFO_DIR_ENV, REGISTRY_DIR_ENV2, DAEMON_INFO_FILE, DAEMON_CLAIM_DIR, DAEMON_CLAIM_OWNER_FILE, MAX_DAEMON_INFO_BYTES, MAX_DAEMON_CLAIM_BYTES, activeClaims;
 var init_canonical_daemon = __esm({
   "packages/daemon/src/lib/canonical-daemon.ts"() {
     "use strict";
@@ -9715,7 +9890,11 @@ var init_canonical_daemon = __esm({
     DAEMON_INFO_DIR_ENV = "TMUX_IDE_DAEMON_INFO_DIR";
     REGISTRY_DIR_ENV2 = "TMUX_IDE_REGISTRY_DIR";
     DAEMON_INFO_FILE = "daemon.json";
+    DAEMON_CLAIM_DIR = "daemon.claim";
+    DAEMON_CLAIM_OWNER_FILE = "owner.json";
     MAX_DAEMON_INFO_BYTES = 64 * 1024;
+    MAX_DAEMON_CLAIM_BYTES = 4 * 1024;
+    activeClaims = /* @__PURE__ */ new Set();
   }
 });
 
@@ -12215,7 +12394,7 @@ var init_active_projects = __esm({
 });
 
 // packages/daemon/src/send.ts
-import { randomUUID } from "node:crypto";
+import { randomUUID as randomUUID2 } from "node:crypto";
 import { resolve as resolve21, join as join26 } from "node:path";
 import { existsSync as existsSync28, mkdirSync as mkdirSync19, writeFileSync as writeFileSync18 } from "node:fs";
 function writeDispatchFile(dir, paneId, message) {
@@ -12223,7 +12402,7 @@ function writeDispatchFile(dir, paneId, message) {
   const dispatchDir = join26(dir, ".tasks", "dispatch");
   if (!existsSync28(dispatchDir)) mkdirSync19(dispatchDir, { recursive: true });
   const paneSlug = paneId.replace("%", "");
-  const filename = `send-${paneSlug}-${Date.now()}-${randomUUID().slice(0, 8)}.md`;
+  const filename = `send-${paneSlug}-${Date.now()}-${randomUUID2().slice(0, 8)}.md`;
   const filePath = join26(dispatchDir, filename);
   writeFileSync18(filePath, message);
   return { filePath, triggerCmd: `Read and execute: .tasks/dispatch/${filename}` };
@@ -13966,7 +14145,7 @@ import { zValidator } from "@hono/zod-validator";
 import { realpathSync as realpathSync5 } from "node:fs";
 import { homedir as homedir20 } from "node:os";
 import { isAbsolute as isAbsolute6, resolve as pathResolve } from "node:path";
-import { randomUUID as randomUUID3 } from "node:crypto";
+import { randomUUID as randomUUID4 } from "node:crypto";
 import { WebSocketServer } from "ws";
 function bearerToken(authHeader) {
   if (!authHeader?.startsWith("Bearer ")) return null;
@@ -14066,7 +14245,7 @@ function createApp(options = {}) {
   const authService = options.authService ?? new AuthService();
   const daemonIdentity = options.daemonIdentity ?? {
     productVersion: "0.0.0",
-    instanceId: randomUUID3(),
+    instanceId: randomUUID4(),
     startedAt: (/* @__PURE__ */ new Date()).toISOString()
   };
   const healthBootedAt = Date.now();
@@ -14297,7 +14476,7 @@ function createApp(options = {}) {
         });
         scripted = true;
       }
-      if (!id) id = randomUUID3();
+      if (!id) id = randomUUID4();
       try {
         const upsertInput = {
           id,
@@ -14741,7 +14920,7 @@ function createApp(options = {}) {
     if (!existsSync32(parsed.data.dir)) {
       return c.json({ error: `Directory "${parsed.data.dir}" does not exist` }, 400);
     }
-    const jobId = randomUUID3();
+    const jobId = randomUUID4();
     const command2 = process.env.TMUX_IDE_INIT_COMMAND ?? "tmux-ide";
     void (async () => {
       try {
@@ -14959,7 +15138,7 @@ var init_types = __esm({
 
 // packages/daemon/src/lib/daemon-embed.ts
 import { execFileSync as execFileSync12 } from "node:child_process";
-import { randomBytes as randomBytes3, randomUUID as randomUUID4 } from "node:crypto";
+import { randomBytes as randomBytes3, randomUUID as randomUUID5 } from "node:crypto";
 import { createServer } from "node:http";
 import { createRequire as createRequire2 } from "node:module";
 import { WebSocket, WebSocketServer as WebSocketServer2 } from "ws";
@@ -15191,12 +15370,13 @@ async function requestDaemonShutdown(port, bindHostname) {
   } catch {
   }
 }
-async function takeoverCanonicalDaemon(info) {
+async function takeoverCanonicalDaemon(state, claim) {
+  const info = state.info;
   await requestDaemonShutdown(info.port, info.bindHostname);
   const deadline = Date.now() + 1e4;
   while (Date.now() < deadline) {
-    const current = inspectCanonicalDaemonInfo();
-    const fileGone = current.status === "missing" || current.status === "valid" && (current.info.pid !== info.pid || current.info.port !== info.port);
+    const current2 = inspectCanonicalDaemonInfo();
+    const fileGone = current2.status === "missing" || current2.status === "valid" && (current2.info.pid !== info.pid || current2.info.port !== info.port);
     const serverGone = await healthGone(info.port, info.bindHostname);
     if (fileGone && serverGone) return;
     await delay(150);
@@ -15210,7 +15390,8 @@ async function takeoverCanonicalDaemon(info) {
     process.kill(info.pid, "SIGKILL");
   } catch {
   }
-  clearCanonicalDaemonInfo();
+  const current = inspectCanonicalDaemonInfo();
+  if (current.status !== "missing") clearCanonicalDaemonInfoIfUnchanged(current, claim);
 }
 function closeWsGoingAway(ws) {
   const reason = Buffer.from("going away");
@@ -15319,242 +15500,283 @@ async function startEmbeddedDaemon(opts) {
   const bindHostname = opts.bindHostname ?? opts.hostname ?? (persistedRemoteAccess ? "0.0.0.0" : DEFAULT_HOSTNAME);
   const authToken = Object.prototype.hasOwnProperty.call(opts, "authToken") ? opts.authToken ?? null : persistedRemoteAccess?.token ?? null;
   const localBypassToken = opts.localBypassToken ?? generateLocalBypassToken();
-  const existingCanonical = inspectCanonicalDaemonInfo();
-  if (existingCanonical.status === "invalid") {
-    if (await isCanonicalDaemonRecordOwnerProvenDead(existingCanonical)) {
-      if (!clearCanonicalDaemonInfoIfUnchanged(existingCanonical)) {
+  const claimAttempt = tryAcquireCanonicalDaemonClaim();
+  if (claimAttempt.status === "busy") {
+    throw new DaemonStartupError(
+      `Canonical daemon startup is owned by PID ${claimAttempt.owner.pid}`,
+      "canonical_claim_busy"
+    );
+  }
+  if (claimAttempt.status === "invalid") {
+    throw new DaemonStartupError(
+      `Canonical daemon claim is invalid: ${claimAttempt.detail}`,
+      "canonical_record_invalid"
+    );
+  }
+  const claim = claimAttempt.claim;
+  try {
+    const existingCanonical = inspectCanonicalDaemonInfo();
+    if (existingCanonical.status === "invalid") {
+      if (await isCanonicalDaemonRecordOwnerProvenDead(existingCanonical)) {
+        if (!clearCanonicalDaemonInfoIfUnchanged(existingCanonical, claim)) {
+          throw new DaemonStartupError(
+            "Canonical daemon metadata changed while stale state was being removed",
+            "canonical_record_invalid"
+          );
+        }
+      } else {
         throw new DaemonStartupError(
-          "Canonical daemon metadata changed while stale state was being removed",
+          `Canonical daemon metadata is ${existingCanonical.reason}: ${existingCanonical.detail}. Refusing to start another owner.`,
           "canonical_record_invalid"
         );
       }
-    } else {
-      throw new DaemonStartupError(
-        `Canonical daemon metadata is ${existingCanonical.reason}: ${existingCanonical.detail}. Refusing to start another owner.`,
-        "canonical_record_invalid"
-      );
-    }
-  } else if (existingCanonical.status === "valid") {
-    if (await isCanonicalDaemonAlive(existingCanonical.info)) {
-      if (opts.takeoverIfRunning) {
-        await takeoverCanonicalDaemon(existingCanonical.info);
+    } else if (existingCanonical.status === "valid") {
+      if (await isCanonicalDaemonAlive(existingCanonical.info)) {
+        if (opts.takeoverIfRunning) {
+          await takeoverCanonicalDaemon(existingCanonical, claim);
+        } else {
+          throw new DaemonStartupError(
+            `Canonical daemon is already running on port ${existingCanonical.info.port}`,
+            "canonical_already_running"
+          );
+        }
       } else {
-        throw new DaemonStartupError(
-          `Canonical daemon is already running on port ${existingCanonical.info.port}`,
-          "canonical_already_running"
-        );
-      }
-    } else {
-      if (!clearCanonicalDaemonInfoIfUnchanged(existingCanonical)) {
-        throw new DaemonStartupError(
-          "Canonical daemon metadata changed while stale state was being removed",
-          "canonical_already_running"
-        );
+        if (!clearCanonicalDaemonInfoIfUnchanged(existingCanonical, claim)) {
+          throw new DaemonStartupError(
+            "Canonical daemon metadata changed while stale state was being removed",
+            "canonical_already_running"
+          );
+        }
       }
     }
-  }
-  if (!sessionless) assertTmuxSession(sessionName);
-  const port = opts.port ?? await pickFreePort(bindHostname);
-  validatePort(port);
-  const dir = process.cwd();
-  const productVersion = resolveDaemonProductVersion(opts.productVersion);
-  const instanceId = randomUUID4();
-  const startedAt = (/* @__PURE__ */ new Date()).toISOString();
-  const workspaceRegistry = getDefaultWorkspaceRegistry();
-  await workspaceRegistry.load();
-  const legacySession = process.env.TMUX_IDE_SESSION;
-  if (legacySession && !workspaceRegistry.has(legacySession)) {
-    try {
-      workspaceRegistry.add({
-        name: legacySession,
-        sessionName: legacySession,
-        projectDir: dir
-      });
-    } catch {
-    }
-  }
-  if (!sessionless && sessionName !== EMBEDDED_SESSION_NAME && !workspaceRegistry.has(sessionName)) {
-    try {
-      workspaceRegistry.add({
-        name: sessionName,
-        sessionName,
-        projectDir: dir
-      });
-    } catch {
-    }
-  }
-  const { server, sockets, closeClients, closeWsServers } = await startHttpServer({
-    sessionName,
-    requestedPort: port,
-    bindHostname,
-    dir,
-    authToken,
-    localBypassToken,
-    silent: opts.silent,
-    readProjectAuth: !sessionless,
-    daemonIdentity: { productVersion, instanceId, startedAt }
-  });
-  writeCanonicalDaemonInfo({
-    pid: process.pid,
-    port,
-    protocolVersion: DAEMON_WIRE_PROTOCOL_VERSION,
-    productVersion,
-    instanceId,
-    startedAt,
-    bindHostname,
-    authToken
-  });
-  let lastState = "";
-  let stopped = false;
-  let stopping = null;
-  let stopSelf = null;
-  const activeProjectStops = /* @__PURE__ */ new Map();
-  const activateProjectOnDaemon = async (projectName, _options = {}) => {
-    if (!activeProjectStops.has(projectName)) {
-      activeProjectStops.set(projectName, { stop: () => void 0 });
-    }
-    return {
-      stop: async () => {
-        const current = activeProjectStops.get(projectName);
-        if (!current) return;
-        activeProjectStops.delete(projectName);
-        current.stop();
+    if (!sessionless) assertTmuxSession(sessionName);
+    const port = opts.port ?? await pickFreePort(bindHostname);
+    validatePort(port);
+    const dir = process.cwd();
+    const productVersion = resolveDaemonProductVersion(opts.productVersion);
+    const instanceId = randomUUID5();
+    const startedAt = (/* @__PURE__ */ new Date()).toISOString();
+    const workspaceRegistry = getDefaultWorkspaceRegistry();
+    await workspaceRegistry.load();
+    const legacySession = process.env.TMUX_IDE_SESSION;
+    if (legacySession && !workspaceRegistry.has(legacySession)) {
+      try {
+        workspaceRegistry.add({
+          name: legacySession,
+          sessionName: legacySession,
+          projectDir: dir
+        });
+      } catch {
       }
+    }
+    if (!sessionless && sessionName !== EMBEDDED_SESSION_NAME && !workspaceRegistry.has(sessionName)) {
+      try {
+        workspaceRegistry.add({
+          name: sessionName,
+          sessionName,
+          projectDir: dir
+        });
+      } catch {
+      }
+    }
+    const { server, sockets, closeClients, closeWsServers } = await startHttpServer({
+      sessionName,
+      requestedPort: port,
+      bindHostname,
+      dir,
+      authToken,
+      localBypassToken,
+      silent: opts.silent,
+      readProjectAuth: !sessionless,
+      daemonIdentity: { productVersion, instanceId, startedAt }
+    });
+    const abortStartedServer = async () => {
+      closeClients();
+      const closePromise = waitForServerClose(server).catch(() => void 0);
+      for (const socket of sockets) socket.destroy();
+      await Promise.race([closePromise, delay(100)]);
+      await closeWsServers().catch(() => void 0);
     };
-  };
-  setActivationBackend({
-    activateProject: async (name, options) => {
-      await activateProjectOnDaemon(name, options);
-    },
-    deactivateProject: async (name) => {
-      const stop2 = activeProjectStops.get(name);
-      if (!stop2) return;
-      activeProjectStops.delete(name);
-      stop2.stop();
-    }
-  });
-  const tick = () => {
-    if (sessionless) return;
-    const session = sessionExists(sessionName);
-    if (session === "no") {
-      stopSelf?.();
-      return;
-    }
-    if (session === "unknown") {
-      return;
-    }
-    if (!hasClients()) return;
-    const panes = listPanes2(sessionName);
-    if (panes.length === 0) return;
-    const portPanes = computePortPanes(panes);
-    const agentStates = computeAgentStates(panes);
-    const stateKey = panes.map((pane) => {
-      const portState = portPanes.has(pane.id) ? "1" : "0";
-      const agent = agentStates.get(pane.id) ?? "-";
-      const titleDrift = pane.name && pane.title !== pane.name ? "d" : "ok";
-      return `${pane.id}:${portState}:${agent}:${titleDrift}`;
-    }).join("|");
-    if (stateKey === lastState) return;
-    for (const pane of panes) {
-      const hasPort = portPanes.has(pane.id) ? "1" : "0";
-      const agent = agentStates.get(pane.id);
-      tmuxSilent2("set-option", "-pqt", pane.id, "@has_port", hasPort);
-      tmuxSilent2("set-option", "-pqt", pane.id, "@agent_busy", agent === "busy" ? "1" : "0");
-      tmuxSilent2("set-option", "-pqt", pane.id, "@agent_idle", agent === "idle" ? "1" : "0");
-      if (pane.name && pane.title !== pane.name) {
-        tmuxSilent2("select-pane", "-t", pane.id, "-T", pane.name);
+    try {
+      writeCanonicalDaemonInfo(
+        {
+          pid: process.pid,
+          port,
+          protocolVersion: DAEMON_WIRE_PROTOCOL_VERSION,
+          productVersion,
+          instanceId,
+          startedAt,
+          bindHostname,
+          authToken
+        },
+        claim
+      );
+      const published = inspectCanonicalDaemonInfo();
+      if (published.status !== "valid" || published.info.instanceId !== instanceId || published.info.pid !== process.pid || published.info.port !== port) {
+        throw new DaemonStartupError(
+          "Canonical daemon publication does not belong to the started server",
+          "canonical_publication_lost"
+        );
       }
+    } catch (error) {
+      await abortStartedServer();
+      throw error;
     }
-    tmuxSilent2("refresh-client", "-S");
-    lastState = stateKey;
-  };
-  const monitorInterval = setInterval(tick, MONITOR_INTERVAL_MS);
-  const apiBaseUrl = canonicalDaemonUrl("http", bindHostname, port);
-  const wsUrl = canonicalDaemonUrl("ws", bindHostname, port, "/ws/events");
-  const handle = {
-    port,
-    apiBaseUrl,
-    wsUrl,
-    localBypassToken,
-    stop: async ({ gracefulMs = DEFAULT_GRACEFUL_MS } = {}) => {
-      if (stopped) return;
-      if (stopping) return stopping;
-      stopping = (async () => {
-        try {
-          stopped = true;
-          setActivationBackend(null);
-          clearInterval(monitorInterval);
-          const closePromise = waitForServerClose(server);
-          closeClients();
-          for (const stop2 of activeProjectStops.values()) {
-            stop2.stop();
-          }
-          activeProjectStops.clear();
-          shutdownPtyBridges();
-          await Promise.race([closePromise, delay(gracefulMs)]);
-          for (const socket of sockets) socket.destroy();
-          await Promise.race([closePromise.catch(() => void 0), delay(100)]);
-          await closeWsServers();
-          setRemoteAccessRestartBackend(null);
-          setDaemonShutdownBackend(null);
-        } catch (err) {
-          throw new DaemonShutdownError("Daemon shutdown failed", { cause: err });
-        } finally {
-          const current = inspectCanonicalDaemonInfo();
-          if (current.status === "valid" && current.info.instanceId === instanceId) {
-            clearCanonicalDaemonInfoIfUnchanged(current);
-          }
+    let lastState = "";
+    let stopped = false;
+    let stopping = null;
+    let stopSelf = null;
+    const activeProjectStops = /* @__PURE__ */ new Map();
+    const activateProjectOnDaemon = async (projectName, _options = {}) => {
+      if (!activeProjectStops.has(projectName)) {
+        activeProjectStops.set(projectName, { stop: () => void 0 });
+      }
+      return {
+        stop: async () => {
+          const current = activeProjectStops.get(projectName);
+          if (!current) return;
+          activeProjectStops.delete(projectName);
+          current.stop();
         }
-      })();
-      return stopping;
-    },
-    activateProject: activateProjectOnDaemon
-  };
-  setDaemonShutdownBackend(async () => {
-    await handle.stop({ gracefulMs: 500 });
-  });
-  setRemoteAccessRestartBackend((request) => {
-    setTimeout(() => {
-      void (async () => {
-        const restartPort = request.port ?? port;
-        try {
-          await handle.stop({ gracefulMs: 500 });
-        } catch (err) {
-          console.error("[daemon] Remote access stop before restart failed:", err);
-        } finally {
-          clearCanonicalDaemonInfo();
+      };
+    };
+    setActivationBackend({
+      activateProject: async (name, options) => {
+        await activateProjectOnDaemon(name, options);
+      },
+      deactivateProject: async (name) => {
+        const stop2 = activeProjectStops.get(name);
+        if (!stop2) return;
+        activeProjectStops.delete(name);
+        stop2.stop();
+      }
+    });
+    const tick = () => {
+      if (sessionless) return;
+      const session = sessionExists(sessionName);
+      if (session === "no") {
+        stopSelf?.();
+        return;
+      }
+      if (session === "unknown") {
+        return;
+      }
+      if (!hasClients()) return;
+      const panes = listPanes2(sessionName);
+      if (panes.length === 0) return;
+      const portPanes = computePortPanes(panes);
+      const agentStates = computeAgentStates(panes);
+      const stateKey = panes.map((pane) => {
+        const portState = portPanes.has(pane.id) ? "1" : "0";
+        const agent = agentStates.get(pane.id) ?? "-";
+        const titleDrift = pane.name && pane.title !== pane.name ? "d" : "ok";
+        return `${pane.id}:${portState}:${agent}:${titleDrift}`;
+      }).join("|");
+      if (stateKey === lastState) return;
+      for (const pane of panes) {
+        const hasPort = portPanes.has(pane.id) ? "1" : "0";
+        const agent = agentStates.get(pane.id);
+        tmuxSilent2("set-option", "-pqt", pane.id, "@has_port", hasPort);
+        tmuxSilent2("set-option", "-pqt", pane.id, "@agent_busy", agent === "busy" ? "1" : "0");
+        tmuxSilent2("set-option", "-pqt", pane.id, "@agent_idle", agent === "idle" ? "1" : "0");
+        if (pane.name && pane.title !== pane.name) {
+          tmuxSilent2("select-pane", "-t", pane.id, "-T", pane.name);
         }
-        for (let attempt = 0; attempt < 2; attempt++) {
+      }
+      tmuxSilent2("refresh-client", "-S");
+      lastState = stateKey;
+    };
+    const monitorInterval = setInterval(tick, MONITOR_INTERVAL_MS);
+    const apiBaseUrl = canonicalDaemonUrl("http", bindHostname, port);
+    const wsUrl = canonicalDaemonUrl("ws", bindHostname, port, "/ws/events");
+    const handle = {
+      instanceId,
+      pid: process.pid,
+      port,
+      apiBaseUrl,
+      wsUrl,
+      localBypassToken,
+      stop: async ({ gracefulMs = DEFAULT_GRACEFUL_MS } = {}) => {
+        if (stopped) return;
+        if (stopping) return stopping;
+        stopping = (async () => {
           try {
-            const nextHandle = await startEmbeddedDaemon({
-              sessionName: sessionless ? void 0 : sessionName,
-              port: restartPort,
-              bindHostname: request.bindHostname,
-              authToken: request.token,
-              localBypassToken
-            });
-            const mutableHandle = handle;
-            mutableHandle.stop = nextHandle.stop;
-            mutableHandle.activateProject = nextHandle.activateProject;
-            return;
-          } catch (err) {
-            if (err instanceof DaemonStartupError && err.reason === "port_in_use" && attempt === 0) {
-              await delay(150);
-              continue;
+            stopped = true;
+            setActivationBackend(null);
+            clearInterval(monitorInterval);
+            const closePromise = waitForServerClose(server);
+            closeClients();
+            for (const stop2 of activeProjectStops.values()) {
+              stop2.stop();
             }
-            throw err;
+            activeProjectStops.clear();
+            shutdownPtyBridges();
+            await Promise.race([closePromise, delay(gracefulMs)]);
+            for (const socket of sockets) socket.destroy();
+            await Promise.race([closePromise.catch(() => void 0), delay(100)]);
+            await closeWsServers();
+            setRemoteAccessRestartBackend(null);
+            setDaemonShutdownBackend(null);
+          } catch (err) {
+            throw new DaemonShutdownError("Daemon shutdown failed", { cause: err });
+          } finally {
+            try {
+              clearCanonicalDaemonInfoIfOwned(instanceId, claim);
+            } finally {
+              releaseCanonicalDaemonClaim(claim);
+            }
           }
-        }
-      })().catch((err) => {
-        console.error("[daemon] Remote access restart failed:", err);
-        clearCanonicalDaemonInfo();
-      });
-    }, 50).unref?.();
-    return { port };
-  });
-  stopSelf = () => void handle.stop();
-  tick();
-  return handle;
+        })();
+        return stopping;
+      },
+      activateProject: activateProjectOnDaemon
+    };
+    setDaemonShutdownBackend(async () => {
+      await handle.stop({ gracefulMs: 500 });
+    });
+    setRemoteAccessRestartBackend((request) => {
+      setTimeout(() => {
+        void (async () => {
+          const restartPort = request.port ?? port;
+          try {
+            await handle.stop({ gracefulMs: 500 });
+          } catch (err) {
+            console.error("[daemon] Remote access stop before restart failed:", err);
+          }
+          for (let attempt = 0; attempt < 2; attempt++) {
+            try {
+              const nextHandle = await startEmbeddedDaemon({
+                sessionName: sessionless ? void 0 : sessionName,
+                port: restartPort,
+                bindHostname: request.bindHostname,
+                authToken: request.token,
+                localBypassToken
+              });
+              const mutableHandle = handle;
+              mutableHandle.stop = nextHandle.stop;
+              mutableHandle.activateProject = nextHandle.activateProject;
+              return;
+            } catch (err) {
+              if (err instanceof DaemonStartupError && err.reason === "port_in_use" && attempt === 0) {
+                await delay(150);
+                continue;
+              }
+              throw err;
+            }
+          }
+        })().catch((err) => {
+          console.error("[daemon] Remote access restart failed:", err);
+        });
+      }, 50).unref?.();
+      return { port };
+    });
+    stopSelf = () => void handle.stop();
+    tick();
+    return handle;
+  } catch (error) {
+    releaseCanonicalDaemonClaim(claim);
+    throw error;
+  }
 }
 var requireFromHere, DEFAULT_HOSTNAME, DEFAULT_GRACEFUL_MS, MONITOR_INTERVAL_MS, EMBEDDED_SESSION_NAME;
 var init_daemon_embed = __esm({
@@ -15615,7 +15837,6 @@ async function resolveCanonicalDaemon() {
       warnOnDaemonVersionSkew(existing, expectedDaemonVersion());
       return { baseUrl: daemonBaseUrl(existing), transientHandle: null, restoreCwd: null };
     }
-    deps.clearCanonicalDaemonInfo();
   }
   if (process.env.TMUX_IDE_CLI_NO_AUTOSTART) {
     return null;
@@ -15704,7 +15925,6 @@ var init_cli_action_bridge = __esm({
       fetch,
       cwd: () => process.cwd(),
       readCanonicalDaemonInfo,
-      clearCanonicalDaemonInfo,
       isCanonicalDaemonAlive,
       startEmbeddedDaemon
     };
@@ -16220,6 +16440,7 @@ var require_package = __commonJS({
         dev: "node bin/cli.js",
         test: "pnpm -r --filter @tmux-ide/daemon --filter @tmux-ide/contracts run test",
         "test:unit": "pnpm -r --filter @tmux-ide/daemon --filter @tmux-ide/contracts run test",
+        "test:daemon-bun": "bun test ./packages/daemon/src/lib/canonical-daemon.test.ts ./packages/daemon/src/lib/auth/middleware.test.ts",
         lint: "eslint bin scripts packages/contracts/src packages/tmux-bridge/src packages/daemon/src",
         "lint:workspace": "turbo run lint",
         format: "prettier --write .",
@@ -16230,7 +16451,7 @@ var require_package = __commonJS({
         "pack:check": "npm pack --dry-run --cache /tmp/tmux-ide-npm-cache > /dev/null",
         "test:pack-installed": "node scripts/pack-check-run.mjs",
         "check:native-deps": "node packages/daemon/scripts/check-native-deps.mjs",
-        check: "pnpm run lint:workspace && pnpm run format:check && pnpm run typecheck:workspace && pnpm run test:unit && pnpm run test:tui-renderer && pnpm run docs:build && pnpm run pack:check && pnpm run test:pack-installed && pnpm run check:native-deps",
+        check: "pnpm run lint:workspace && pnpm run format:check && pnpm run typecheck:workspace && pnpm run test:unit && pnpm run test:daemon-bun && pnpm run test:tui-renderer && pnpm run docs:build && pnpm run pack:check && pnpm run test:pack-installed && pnpm run check:native-deps",
         postinstall: "node scripts/postinstall.js",
         docs: "turbo run dev --filter=@tmux-ide/docs",
         "test:tui-renderer": "bun test --preload @opentui/solid/preload ./packages/daemon/src/tui/mirror/missions-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/recipes-gallery-renderer.test.tsx ./packages/daemon/src/tui/mirror/shell-chrome-renderer.test.tsx ./packages/daemon/src/tui/mirror/home-files-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/changes-terminal-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/activity-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/application-shell-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/pane-frame-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/workbench-shell-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/agent-terminal-canvas-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/command-palette-surface-renderer.test.tsx",
@@ -18791,7 +19012,6 @@ init_daemon_embed();
 init_errors2();
 var defaultDependencies = {
   inspectCanonicalDaemonInfo,
-  clearCanonicalDaemonInfoIfUnchanged,
   isCanonicalDaemonAlive,
   isCanonicalDaemonRecordOwnerProvenDead,
   probeCanonicalDaemonHealth,
@@ -18840,10 +19060,15 @@ function assertProtocolCompatible(info, health) {
   }
 }
 function assertIdentityMatches(info, identity) {
-  if (identity.instanceId !== info.instanceId || identity.pid !== info.pid || identity.protocolVersion !== info.protocolVersion || identity.productVersion !== info.productVersion || identity.startedAt !== info.startedAt) {
+  if (identity.instanceId !== info.instanceId || identity.pid !== info.pid || identity.protocolVersion !== info.protocolVersion || identity.startedAt !== info.startedAt) {
     throw new IdeError(
       "Canonical daemon identity probe does not match daemon.json. Refusing takeover or reuse.",
       { code: "DAEMON_IDENTITY_MISMATCH", exitCode: 2 }
+    );
+  }
+  if (identity.productVersion !== info.productVersion) {
+    console.warn(
+      `[tmux-ide] canonical daemon product-version metadata differs: daemon.json reports "${info.productVersion}" but /identity reports "${identity.productVersion}". Product version is diagnostic; compatibility is governed by protocol and instance identity.`
     );
   }
 }
@@ -18876,11 +19101,7 @@ async function findLiveCanonicalDaemon(deps2, options) {
   if (existing.status === "missing") return null;
   if (existing.status === "invalid") {
     if (await deps2.isCanonicalDaemonRecordOwnerProvenDead(existing)) {
-      if (deps2.clearCanonicalDaemonInfoIfUnchanged(existing)) return null;
-      throw new IdeError("Canonical daemon metadata changed while stale state was removed", {
-        code: "DAEMON_INFO_INVALID",
-        exitCode: 1
-      });
+      return null;
     }
     throw new IdeError(
       `Canonical daemon metadata is ${existing.reason}: ${existing.detail}. Its owner is not proven dead, so another daemon will not be started.`,
@@ -18888,16 +19109,28 @@ async function findLiveCanonicalDaemon(deps2, options) {
     );
   }
   if (!await deps2.isCanonicalDaemonAlive(existing.info)) {
-    if (!deps2.clearCanonicalDaemonInfoIfUnchanged(existing)) {
-      throw new IdeError("Canonical daemon metadata changed while stale state was removed", {
-        code: "DAEMON_INFO_INVALID",
-        exitCode: 1
-      });
-    }
     return null;
   }
   await assertAttachableDaemon(deps2, existing.info, options);
   return existing.info;
+}
+function delay2(ms) {
+  return new Promise((resolve29) => setTimeout(resolve29, ms));
+}
+async function waitForCanonicalWinner(deps2, options, timeoutMs = 15e3) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      const winner = await findLiveCanonicalDaemon(deps2, options);
+      if (winner) return winner;
+    } catch (error) {
+      if (!(error instanceof IdeError) || error.code !== "DAEMON_IDENTITY_UNAVAILABLE" && error.code !== "DAEMON_UNHEALTHY") {
+        throw error;
+      }
+    }
+    await delay2(25);
+  }
+  return null;
 }
 async function runHeadlessDaemon(options = {}, deps2 = defaultDependencies) {
   const port = parsePort(options.port);
@@ -18915,24 +19148,33 @@ async function runHeadlessDaemon(options = {}, deps2 = defaultDependencies) {
       emitStatus(deps2, options.json === true, "already-running", existing);
       return "already-running";
     }
-    try {
-      handle = await deps2.startEmbeddedDaemon({
-        port,
-        bindHostname: "127.0.0.1",
-        authToken: null,
-        silent: true,
-        ...options.sessionName ? { sessionName: options.sessionName } : {},
-        ...options.expectedVersion ? { productVersion: options.expectedVersion } : {}
-      });
-    } catch (error) {
-      if (error instanceof DaemonStartupError && error.reason === "canonical_already_running") {
-        const winner = await findLiveCanonicalDaemon(deps2, options);
-        if (winner) {
-          emitStatus(deps2, options.json === true, "already-running", winner);
-          return "already-running";
+    for (let startAttempt = 0; startAttempt < 2 && !handle; startAttempt += 1) {
+      try {
+        handle = await deps2.startEmbeddedDaemon({
+          port,
+          bindHostname: "127.0.0.1",
+          authToken: null,
+          silent: true,
+          ...options.sessionName ? { sessionName: options.sessionName } : {},
+          ...options.expectedVersion ? { productVersion: options.expectedVersion } : {}
+        });
+      } catch (error) {
+        if (error instanceof DaemonStartupError && (error.reason === "canonical_already_running" || error.reason === "canonical_claim_busy")) {
+          const winner = await waitForCanonicalWinner(deps2, options);
+          if (winner) {
+            emitStatus(deps2, options.json === true, "already-running", winner);
+            return "already-running";
+          }
+          if (startAttempt === 0) continue;
         }
+        throw error;
       }
-      throw error;
+    }
+    if (!handle) {
+      throw new IdeError("Canonical daemon startup claim did not produce an owner", {
+        code: "DAEMON_STARTUP_TIMEOUT",
+        exitCode: 1
+      });
     }
     let resolveStopped;
     const stopped = new Promise((resolve29) => {
@@ -18965,6 +19207,13 @@ async function runHeadlessDaemon(options = {}, deps2 = defaultDependencies) {
       });
     }
     const info = published.info;
+    if (info.instanceId !== handle.instanceId || info.pid !== handle.pid || info.port !== handle.port) {
+      await handle.stop().catch(() => void 0);
+      throw new IdeError("Started daemon handle does not own the canonical published instance", {
+        code: "DAEMON_IDENTITY_MISMATCH",
+        exitCode: 2
+      });
+    }
     try {
       await assertAttachableDaemon(deps2, info, options);
     } catch (error) {

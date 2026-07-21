@@ -38,10 +38,16 @@ working directory. Redirecting stdio is fine; stdout is not the readiness
 protocol.
 
 Readiness is the owner-only `daemon.json`, a matching credential-free
-`/identity` instance nonce, and a compatible `/health` response. A compatible
-live owner is reused, stale metadata for a proven-dead PID is replaced, and an
-incompatible, malformed, insecure, or live-but-unhealthy owner is rejected
-without takeover. IPv6 literals in probe URLs must be bracketed.
+`/identity` instance nonce, and a compatible `/health` response. Protocol and
+instance identity are compatibility boundaries; `productVersion` is diagnostic
+unless the protocol is incompatible. A process-lifetime atomic claim spans
+inspection, bind, publication, and shutdown, so simultaneous cold-start losers
+wait for and reuse exactly one winner. Publication is create-if-absent and
+cleanup removes only the owning `instanceId`, never a concurrently replaced
+record. A compatible live owner is reused, stale metadata for a proven-dead PID
+is replaced, and an incompatible, malformed, insecure, or live-but-unhealthy
+owner is rejected without takeover. IPv6 literals in probe URLs must be
+bracketed.
 `SIGINT`, `SIGTERM`, and the daemon shutdown action all await the same cleanup
 path before the process exits.
 

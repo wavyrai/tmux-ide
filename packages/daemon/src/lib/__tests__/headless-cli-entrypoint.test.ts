@@ -290,6 +290,36 @@ describe.sequential("shipped tmux-ide --headless entrypoint", () => {
     await waitUntil(() => (existsSync(daemonInfoPath()) ? null : true));
   }, 15_000);
 
+  it("elects exactly one owner from simultaneous cold-start contenders", async () => {
+    const contenders = Array.from({ length: 20 }, () => spawnCli(["--headless", "--json"]));
+    const info = await waitForDaemonInfo();
+    const owner = contenders.find((child) => child.pid === info.pid);
+    expect(owner).toBeDefined();
+
+    const losers = contenders.filter((child) => child !== owner);
+    const loserResults = await Promise.all(losers.map((child) => waitForExit(child, 20_000)));
+    for (const result of loserResults) {
+      expect(result.code).toBe(0);
+      expect(JSON.parse(result.stdout.trim())).toMatchObject({
+        status: "already-running",
+        pid: info.pid,
+        port: info.port,
+      });
+    }
+
+    expect(
+      contenders.filter((child) => child.exitCode == null && child.signalCode == null),
+    ).toEqual([owner]);
+    const identity = DaemonIdentitySchema.parse(
+      await (await fetch(`http://127.0.0.1:${info.port}/identity`)).json(),
+    );
+    expect(identity).toMatchObject({ pid: owner?.pid, instanceId: info.instanceId });
+
+    owner?.kill("SIGTERM");
+    await expect(waitForExit(owner!, 15_000)).resolves.toMatchObject({ code: 0, signal: null });
+    await waitUntil(() => (existsSync(daemonInfoPath()) ? null : true));
+  }, 30_000);
+
   it("refuses takeover of a live daemon with an incompatible protocol", async () => {
     const port = await listenWithProtocol(2);
     writeLiveDaemonInfo(port, 2);

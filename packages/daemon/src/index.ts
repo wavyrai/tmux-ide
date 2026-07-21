@@ -5,14 +5,17 @@ export {
 } from "./embed.ts";
 export {
   canonicalDaemonUrl,
-  clearCanonicalDaemonInfo,
+  clearCanonicalDaemonInfoIfOwned,
   clearCanonicalDaemonInfoIfUnchanged,
+  getCanonicalDaemonClaimPath,
   inspectCanonicalDaemonInfo,
   isCanonicalDaemonAlive,
   isCanonicalDaemonRecordOwnerProvenDead,
   probeCanonicalDaemonHealth,
   probeCanonicalDaemonIdentity,
   readCanonicalDaemonInfo,
+  releaseCanonicalDaemonClaim,
+  tryAcquireCanonicalDaemonClaim,
   writeCanonicalDaemonInfo,
 } from "./canonical.ts";
 export type {
@@ -20,6 +23,8 @@ export type {
   CanonicalDaemonInfoInvalidReason,
   CanonicalDaemonInfoObservation,
   CanonicalDaemonInfoState,
+  CanonicalDaemonClaim,
+  CanonicalDaemonClaimAttempt,
 } from "./canonical.ts";
 export {
   MissionRepository,

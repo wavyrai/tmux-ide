@@ -23,12 +23,16 @@ import { getDefaultWorkspaceRegistry } from "./workspace-registry.ts";
 import { setActivationBackend, type ProjectActivationOptions } from "./active-projects.ts";
 import {
   canonicalDaemonUrl,
-  clearCanonicalDaemonInfo,
+  clearCanonicalDaemonInfoIfOwned,
   clearCanonicalDaemonInfoIfUnchanged,
   inspectCanonicalDaemonInfo,
   isCanonicalDaemonAlive,
   isCanonicalDaemonRecordOwnerProvenDead,
+  releaseCanonicalDaemonClaim,
+  tryAcquireCanonicalDaemonClaim,
   writeCanonicalDaemonInfo,
+  type CanonicalDaemonClaim,
+  type CanonicalDaemonInfoState,
 } from "./canonical-daemon.ts";
 
 const requireFromHere = createRequire(import.meta.url);
@@ -79,6 +83,8 @@ export interface EmbeddedDaemonOptions {
 }
 
 export interface EmbeddedDaemonHandle {
+  readonly instanceId: string;
+  readonly pid: number;
   readonly port: number;
   readonly apiBaseUrl: string;
   readonly wsUrl: string;
@@ -393,11 +399,11 @@ async function requestDaemonShutdown(port: number, bindHostname: string): Promis
   }
 }
 
-async function takeoverCanonicalDaemon(info: {
-  pid: number;
-  port: number;
-  bindHostname: string;
-}): Promise<void> {
+async function takeoverCanonicalDaemon(
+  state: Extract<CanonicalDaemonInfoState, { status: "valid" }>,
+  claim: CanonicalDaemonClaim,
+): Promise<void> {
+  const info = state.info;
   await requestDaemonShutdown(info.port, info.bindHostname);
   const deadline = Date.now() + 10_000;
   while (Date.now() < deadline) {
@@ -422,7 +428,8 @@ async function takeoverCanonicalDaemon(info: {
   } catch {
     // Already gone or not ours.
   }
-  clearCanonicalDaemonInfo();
+  const current = inspectCanonicalDaemonInfo();
+  if (current.status !== "missing") clearCanonicalDaemonInfoIfUnchanged(current, claim);
 }
 
 function closeWsGoingAway(ws: WebSocket): void {
@@ -572,288 +579,334 @@ export async function startEmbeddedDaemon(
     ? (opts.authToken ?? null)
     : (persistedRemoteAccess?.token ?? null);
   const localBypassToken = opts.localBypassToken ?? generateLocalBypassToken();
-  const existingCanonical = inspectCanonicalDaemonInfo();
-  if (existingCanonical.status === "invalid") {
-    if (await isCanonicalDaemonRecordOwnerProvenDead(existingCanonical)) {
-      if (!clearCanonicalDaemonInfoIfUnchanged(existingCanonical)) {
+  const claimAttempt = tryAcquireCanonicalDaemonClaim();
+  if (claimAttempt.status === "busy") {
+    throw new DaemonStartupError(
+      `Canonical daemon startup is owned by PID ${claimAttempt.owner.pid}`,
+      "canonical_claim_busy",
+    );
+  }
+  if (claimAttempt.status === "invalid") {
+    throw new DaemonStartupError(
+      `Canonical daemon claim is invalid: ${claimAttempt.detail}`,
+      "canonical_record_invalid",
+    );
+  }
+  const claim = claimAttempt.claim;
+  try {
+    const existingCanonical = inspectCanonicalDaemonInfo();
+    if (existingCanonical.status === "invalid") {
+      if (await isCanonicalDaemonRecordOwnerProvenDead(existingCanonical)) {
+        if (!clearCanonicalDaemonInfoIfUnchanged(existingCanonical, claim)) {
+          throw new DaemonStartupError(
+            "Canonical daemon metadata changed while stale state was being removed",
+            "canonical_record_invalid",
+          );
+        }
+      } else {
         throw new DaemonStartupError(
-          "Canonical daemon metadata changed while stale state was being removed",
+          `Canonical daemon metadata is ${existingCanonical.reason}: ${existingCanonical.detail}. ` +
+            "Refusing to start another owner.",
           "canonical_record_invalid",
         );
       }
-    } else {
-      throw new DaemonStartupError(
-        `Canonical daemon metadata is ${existingCanonical.reason}: ${existingCanonical.detail}. ` +
-          "Refusing to start another owner.",
-        "canonical_record_invalid",
-      );
-    }
-  } else if (existingCanonical.status === "valid") {
-    if (await isCanonicalDaemonAlive(existingCanonical.info)) {
-      if (opts.takeoverIfRunning) {
-        await takeoverCanonicalDaemon(existingCanonical.info);
+    } else if (existingCanonical.status === "valid") {
+      if (await isCanonicalDaemonAlive(existingCanonical.info)) {
+        if (opts.takeoverIfRunning) {
+          await takeoverCanonicalDaemon(existingCanonical, claim);
+        } else {
+          throw new DaemonStartupError(
+            `Canonical daemon is already running on port ${existingCanonical.info.port}`,
+            "canonical_already_running",
+          );
+        }
       } else {
-        throw new DaemonStartupError(
-          `Canonical daemon is already running on port ${existingCanonical.info.port}`,
-          "canonical_already_running",
-        );
-      }
-    } else {
-      if (!clearCanonicalDaemonInfoIfUnchanged(existingCanonical)) {
-        throw new DaemonStartupError(
-          "Canonical daemon metadata changed while stale state was being removed",
-          "canonical_already_running",
-        );
+        if (!clearCanonicalDaemonInfoIfUnchanged(existingCanonical, claim)) {
+          throw new DaemonStartupError(
+            "Canonical daemon metadata changed while stale state was being removed",
+            "canonical_already_running",
+          );
+        }
       }
     }
-  }
-  if (!sessionless) assertTmuxSession(sessionName);
-  const port = opts.port ?? (await pickFreePort(bindHostname));
-  validatePort(port);
-  const dir = process.cwd();
-  const productVersion = resolveDaemonProductVersion(opts.productVersion);
-  const instanceId = randomUUID();
-  const startedAt = new Date().toISOString();
+    if (!sessionless) assertTmuxSession(sessionName);
+    const port = opts.port ?? (await pickFreePort(bindHostname));
+    validatePort(port);
+    const dir = process.cwd();
+    const productVersion = resolveDaemonProductVersion(opts.productVersion);
+    const instanceId = randomUUID();
+    const startedAt = new Date().toISOString();
 
-  // Workspace registry: load + reconcile against live tmux sessions on
-  // startup. Backwards-compat: if TMUX_IDE_SESSION is set, auto-add it as
-  // a workspace so legacy single-session callers (pre-T068) keep working.
-  // The registry is the source of truth for /api/project/:name lookups.
-  const workspaceRegistry = getDefaultWorkspaceRegistry();
-  await workspaceRegistry.load();
-  const legacySession = process.env.TMUX_IDE_SESSION;
-  if (legacySession && !workspaceRegistry.has(legacySession)) {
-    try {
-      workspaceRegistry.add({
-        name: legacySession,
-        sessionName: legacySession,
-        projectDir: dir,
-      });
-    } catch {
-      // Already added or persistence failed; non-fatal.
+    // Workspace registry: load + reconcile against live tmux sessions on
+    // startup. Backwards-compat: if TMUX_IDE_SESSION is set, auto-add it as
+    // a workspace so legacy single-session callers (pre-T068) keep working.
+    // The registry is the source of truth for /api/project/:name lookups.
+    const workspaceRegistry = getDefaultWorkspaceRegistry();
+    await workspaceRegistry.load();
+    const legacySession = process.env.TMUX_IDE_SESSION;
+    if (legacySession && !workspaceRegistry.has(legacySession)) {
+      try {
+        workspaceRegistry.add({
+          name: legacySession,
+          sessionName: legacySession,
+          projectDir: dir,
+        });
+      } catch {
+        // Already added or persistence failed; non-fatal.
+      }
     }
-  }
-  // Also register the explicit sessionName when the daemon is launched
-  // against a specific tmux session (e.g. `node daemon.ts new-name 6060`).
-  // Without this the operator has to POST /api/workspaces by hand before
-  // /api/sessions / /api/project/:name return anything — which was the
-  // dashboard's "terminal not connecting" symptom before this fix.
-  if (
-    !sessionless &&
-    sessionName !== EMBEDDED_SESSION_NAME &&
-    !workspaceRegistry.has(sessionName)
-  ) {
-    try {
-      workspaceRegistry.add({
-        name: sessionName,
-        sessionName,
-        projectDir: dir,
-      });
-    } catch {
-      // Already added or persistence failed; non-fatal.
+    // Also register the explicit sessionName when the daemon is launched
+    // against a specific tmux session (e.g. `node daemon.ts new-name 6060`).
+    // Without this the operator has to POST /api/workspaces by hand before
+    // /api/sessions / /api/project/:name return anything — which was the
+    // dashboard's "terminal not connecting" symptom before this fix.
+    if (
+      !sessionless &&
+      sessionName !== EMBEDDED_SESSION_NAME &&
+      !workspaceRegistry.has(sessionName)
+    ) {
+      try {
+        workspaceRegistry.add({
+          name: sessionName,
+          sessionName,
+          projectDir: dir,
+        });
+      } catch {
+        // Already added or persistence failed; non-fatal.
+      }
     }
-  }
-  const { server, sockets, closeClients, closeWsServers } = await startHttpServer({
-    sessionName,
-    requestedPort: port,
-    bindHostname,
-    dir,
-    authToken,
-    localBypassToken,
-    silent: opts.silent,
-    readProjectAuth: !sessionless,
-    daemonIdentity: { productVersion, instanceId, startedAt },
-  });
-  writeCanonicalDaemonInfo({
-    pid: process.pid,
-    port,
-    protocolVersion: DAEMON_WIRE_PROTOCOL_VERSION,
-    productVersion,
-    instanceId,
-    startedAt,
-    bindHostname,
-    authToken,
-  });
-
-  let lastState = "";
-  let stopped = false;
-  let stopping: Promise<void> | null = null;
-  let stopSelf: (() => void) | null = null;
-  const activeProjectStops = new Map<string, { stop: () => void }>();
-
-  // Track active projects so the session-control surface can open/close
-  // them. Orchestration moved out of tmux-ide (agent coordination lives in
-  // sfora.ai), so activation is now bookkeeping only.
-  const activateProjectOnDaemon = async (
-    projectName: string,
-    _options: ProjectActivationOptions = {},
-  ): Promise<{ stop: () => Promise<void> }> => {
-    if (!activeProjectStops.has(projectName)) {
-      activeProjectStops.set(projectName, { stop: () => undefined });
-    }
-    return {
-      stop: async () => {
-        const current = activeProjectStops.get(projectName);
-        if (!current) return;
-        activeProjectStops.delete(projectName);
-        current.stop();
-      },
+    const { server, sockets, closeClients, closeWsServers } = await startHttpServer({
+      sessionName,
+      requestedPort: port,
+      bindHostname,
+      dir,
+      authToken,
+      localBypassToken,
+      silent: opts.silent,
+      readProjectAuth: !sessionless,
+      daemonIdentity: { productVersion, instanceId, startedAt },
+    });
+    const abortStartedServer = async (): Promise<void> => {
+      closeClients();
+      const closePromise = waitForServerClose(server).catch(() => undefined);
+      for (const socket of sockets) socket.destroy();
+      await Promise.race([closePromise, delay(100)]);
+      await closeWsServers().catch(() => undefined);
     };
-  };
-
-  setActivationBackend({
-    activateProject: async (name, options) => {
-      await activateProjectOnDaemon(name, options);
-    },
-    deactivateProject: async (name) => {
-      const stop = activeProjectStops.get(name);
-      if (!stop) return;
-      activeProjectStops.delete(name);
-      stop.stop();
-    },
-  });
-
-  const tick = (): void => {
-    if (sessionless) return;
-    const session = sessionExists(sessionName);
-    if (session === "no") {
-      stopSelf?.();
-      return;
-    }
-    if (session === "unknown") {
-      // Transient spawn failure — skip this tick rather than self-destruct.
-      return;
-    }
-    if (!hasClients()) return;
-
-    const panes = listPanes(sessionName);
-    if (panes.length === 0) return;
-
-    const portPanes = computePortPanes(panes);
-    const agentStates = computeAgentStates(panes);
-    const stateKey = panes
-      .map((pane) => {
-        const portState = portPanes.has(pane.id) ? "1" : "0";
-        const agent = agentStates.get(pane.id) ?? "-";
-        const titleDrift = pane.name && pane.title !== pane.name ? "d" : "ok";
-        return `${pane.id}:${portState}:${agent}:${titleDrift}`;
-      })
-      .join("|");
-
-    if (stateKey === lastState) return;
-
-    for (const pane of panes) {
-      const hasPort = portPanes.has(pane.id) ? "1" : "0";
-      const agent = agentStates.get(pane.id);
-      tmuxSilent("set-option", "-pqt", pane.id, "@has_port", hasPort);
-      tmuxSilent("set-option", "-pqt", pane.id, "@agent_busy", agent === "busy" ? "1" : "0");
-      tmuxSilent("set-option", "-pqt", pane.id, "@agent_idle", agent === "idle" ? "1" : "0");
-      if (pane.name && pane.title !== pane.name) {
-        tmuxSilent("select-pane", "-t", pane.id, "-T", pane.name);
+    try {
+      writeCanonicalDaemonInfo(
+        {
+          pid: process.pid,
+          port,
+          protocolVersion: DAEMON_WIRE_PROTOCOL_VERSION,
+          productVersion,
+          instanceId,
+          startedAt,
+          bindHostname,
+          authToken,
+        },
+        claim,
+      );
+      const published = inspectCanonicalDaemonInfo();
+      if (
+        published.status !== "valid" ||
+        published.info.instanceId !== instanceId ||
+        published.info.pid !== process.pid ||
+        published.info.port !== port
+      ) {
+        throw new DaemonStartupError(
+          "Canonical daemon publication does not belong to the started server",
+          "canonical_publication_lost",
+        );
       }
+    } catch (error) {
+      await abortStartedServer();
+      throw error;
     }
 
-    tmuxSilent("refresh-client", "-S");
-    lastState = stateKey;
-  };
+    let lastState = "";
+    let stopped = false;
+    let stopping: Promise<void> | null = null;
+    let stopSelf: (() => void) | null = null;
+    const activeProjectStops = new Map<string, { stop: () => void }>();
 
-  const monitorInterval = setInterval(tick, MONITOR_INTERVAL_MS);
+    // Track active projects so the session-control surface can open/close
+    // them. Orchestration moved out of tmux-ide (agent coordination lives in
+    // sfora.ai), so activation is now bookkeeping only.
+    const activateProjectOnDaemon = async (
+      projectName: string,
+      _options: ProjectActivationOptions = {},
+    ): Promise<{ stop: () => Promise<void> }> => {
+      if (!activeProjectStops.has(projectName)) {
+        activeProjectStops.set(projectName, { stop: () => undefined });
+      }
+      return {
+        stop: async () => {
+          const current = activeProjectStops.get(projectName);
+          if (!current) return;
+          activeProjectStops.delete(projectName);
+          current.stop();
+        },
+      };
+    };
 
-  const apiBaseUrl = canonicalDaemonUrl("http", bindHostname, port);
-  const wsUrl = canonicalDaemonUrl("ws", bindHostname, port, "/ws/events");
+    setActivationBackend({
+      activateProject: async (name, options) => {
+        await activateProjectOnDaemon(name, options);
+      },
+      deactivateProject: async (name) => {
+        const stop = activeProjectStops.get(name);
+        if (!stop) return;
+        activeProjectStops.delete(name);
+        stop.stop();
+      },
+    });
 
-  const handle: EmbeddedDaemonHandle = {
-    port,
-    apiBaseUrl,
-    wsUrl,
-    localBypassToken,
-    stop: async ({ gracefulMs = DEFAULT_GRACEFUL_MS } = {}) => {
-      if (stopped) return;
-      if (stopping) return stopping;
-      stopping = (async () => {
-        try {
-          stopped = true;
-          setActivationBackend(null);
-          clearInterval(monitorInterval);
+    const tick = (): void => {
+      if (sessionless) return;
+      const session = sessionExists(sessionName);
+      if (session === "no") {
+        stopSelf?.();
+        return;
+      }
+      if (session === "unknown") {
+        // Transient spawn failure — skip this tick rather than self-destruct.
+        return;
+      }
+      if (!hasClients()) return;
 
-          const closePromise = waitForServerClose(server);
-          closeClients();
-          for (const stop of activeProjectStops.values()) {
-            stop.stop();
-          }
-          activeProjectStops.clear();
-          shutdownPtyBridges();
-          await Promise.race([closePromise, delay(gracefulMs)]);
-          for (const socket of sockets) socket.destroy();
-          await Promise.race([closePromise.catch(() => undefined), delay(100)]);
-          await closeWsServers();
-          setRemoteAccessRestartBackend(null);
-          setDaemonShutdownBackend(null);
-        } catch (err) {
-          throw new DaemonShutdownError("Daemon shutdown failed", { cause: err as Error });
-        } finally {
-          const current = inspectCanonicalDaemonInfo();
-          if (current.status === "valid" && current.info.instanceId === instanceId) {
-            clearCanonicalDaemonInfoIfUnchanged(current);
-          }
+      const panes = listPanes(sessionName);
+      if (panes.length === 0) return;
+
+      const portPanes = computePortPanes(panes);
+      const agentStates = computeAgentStates(panes);
+      const stateKey = panes
+        .map((pane) => {
+          const portState = portPanes.has(pane.id) ? "1" : "0";
+          const agent = agentStates.get(pane.id) ?? "-";
+          const titleDrift = pane.name && pane.title !== pane.name ? "d" : "ok";
+          return `${pane.id}:${portState}:${agent}:${titleDrift}`;
+        })
+        .join("|");
+
+      if (stateKey === lastState) return;
+
+      for (const pane of panes) {
+        const hasPort = portPanes.has(pane.id) ? "1" : "0";
+        const agent = agentStates.get(pane.id);
+        tmuxSilent("set-option", "-pqt", pane.id, "@has_port", hasPort);
+        tmuxSilent("set-option", "-pqt", pane.id, "@agent_busy", agent === "busy" ? "1" : "0");
+        tmuxSilent("set-option", "-pqt", pane.id, "@agent_idle", agent === "idle" ? "1" : "0");
+        if (pane.name && pane.title !== pane.name) {
+          tmuxSilent("select-pane", "-t", pane.id, "-T", pane.name);
         }
-      })();
-      return stopping;
-    },
-    activateProject: activateProjectOnDaemon,
-  };
-  setDaemonShutdownBackend(async () => {
-    await handle.stop({ gracefulMs: 500 });
-  });
-  setRemoteAccessRestartBackend((request) => {
-    setTimeout(() => {
-      void (async () => {
-        const restartPort = request.port ?? port;
-        try {
-          await handle.stop({ gracefulMs: 500 });
-        } catch (err) {
-          console.error("[daemon] Remote access stop before restart failed:", err);
-        } finally {
-          clearCanonicalDaemonInfo();
-        }
+      }
 
-        for (let attempt = 0; attempt < 2; attempt++) {
+      tmuxSilent("refresh-client", "-S");
+      lastState = stateKey;
+    };
+
+    const monitorInterval = setInterval(tick, MONITOR_INTERVAL_MS);
+
+    const apiBaseUrl = canonicalDaemonUrl("http", bindHostname, port);
+    const wsUrl = canonicalDaemonUrl("ws", bindHostname, port, "/ws/events");
+
+    const handle: EmbeddedDaemonHandle = {
+      instanceId,
+      pid: process.pid,
+      port,
+      apiBaseUrl,
+      wsUrl,
+      localBypassToken,
+      stop: async ({ gracefulMs = DEFAULT_GRACEFUL_MS } = {}) => {
+        if (stopped) return;
+        if (stopping) return stopping;
+        stopping = (async () => {
           try {
-            const nextHandle = await startEmbeddedDaemon({
-              sessionName: sessionless ? undefined : sessionName,
-              port: restartPort,
-              bindHostname: request.bindHostname,
-              authToken: request.token,
-              localBypassToken,
-            });
-            const mutableHandle = handle as {
-              stop: EmbeddedDaemonHandle["stop"];
-              activateProject: EmbeddedDaemonHandle["activateProject"];
-            };
-            mutableHandle.stop = nextHandle.stop;
-            mutableHandle.activateProject = nextHandle.activateProject;
-            return;
-          } catch (err) {
-            if (
-              err instanceof DaemonStartupError &&
-              err.reason === "port_in_use" &&
-              attempt === 0
-            ) {
-              await delay(150);
-              continue;
-            }
-            throw err;
-          }
-        }
-      })().catch((err) => {
-        console.error("[daemon] Remote access restart failed:", err);
-        clearCanonicalDaemonInfo();
-      });
-    }, 50).unref?.();
-    return { port };
-  });
-  stopSelf = () => void handle.stop();
-  tick();
+            stopped = true;
+            setActivationBackend(null);
+            clearInterval(monitorInterval);
 
-  return handle;
+            const closePromise = waitForServerClose(server);
+            closeClients();
+            for (const stop of activeProjectStops.values()) {
+              stop.stop();
+            }
+            activeProjectStops.clear();
+            shutdownPtyBridges();
+            await Promise.race([closePromise, delay(gracefulMs)]);
+            for (const socket of sockets) socket.destroy();
+            await Promise.race([closePromise.catch(() => undefined), delay(100)]);
+            await closeWsServers();
+            setRemoteAccessRestartBackend(null);
+            setDaemonShutdownBackend(null);
+          } catch (err) {
+            throw new DaemonShutdownError("Daemon shutdown failed", { cause: err as Error });
+          } finally {
+            try {
+              clearCanonicalDaemonInfoIfOwned(instanceId, claim);
+            } finally {
+              releaseCanonicalDaemonClaim(claim);
+            }
+          }
+        })();
+        return stopping;
+      },
+      activateProject: activateProjectOnDaemon,
+    };
+    setDaemonShutdownBackend(async () => {
+      await handle.stop({ gracefulMs: 500 });
+    });
+    setRemoteAccessRestartBackend((request) => {
+      setTimeout(() => {
+        void (async () => {
+          const restartPort = request.port ?? port;
+          try {
+            await handle.stop({ gracefulMs: 500 });
+          } catch (err) {
+            console.error("[daemon] Remote access stop before restart failed:", err);
+          }
+
+          for (let attempt = 0; attempt < 2; attempt++) {
+            try {
+              const nextHandle = await startEmbeddedDaemon({
+                sessionName: sessionless ? undefined : sessionName,
+                port: restartPort,
+                bindHostname: request.bindHostname,
+                authToken: request.token,
+                localBypassToken,
+              });
+              const mutableHandle = handle as {
+                stop: EmbeddedDaemonHandle["stop"];
+                activateProject: EmbeddedDaemonHandle["activateProject"];
+              };
+              mutableHandle.stop = nextHandle.stop;
+              mutableHandle.activateProject = nextHandle.activateProject;
+              return;
+            } catch (err) {
+              if (
+                err instanceof DaemonStartupError &&
+                err.reason === "port_in_use" &&
+                attempt === 0
+              ) {
+                await delay(150);
+                continue;
+              }
+              throw err;
+            }
+          }
+        })().catch((err) => {
+          console.error("[daemon] Remote access restart failed:", err);
+        });
+      }, 50).unref?.();
+      return { port };
+    });
+    stopSelf = () => void handle.stop();
+    tick();
+
+    return handle;
+  } catch (error) {
+    releaseCanonicalDaemonClaim(claim);
+    throw error;
+  }
 }

@@ -9,7 +9,6 @@ import {
 import type { ActionErrorCode } from "../command-center/actions/errors.ts";
 import {
   canonicalDaemonUrl,
-  clearCanonicalDaemonInfo,
   isCanonicalDaemonAlive,
   readCanonicalDaemonInfo,
   warnOnDaemonVersionSkew,
@@ -40,7 +39,6 @@ interface CliActionBridgeDeps {
   fetch: typeof fetch;
   cwd: () => string;
   readCanonicalDaemonInfo: () => CanonicalDaemonInfo | null;
-  clearCanonicalDaemonInfo: () => void;
   isCanonicalDaemonAlive: (info: CanonicalDaemonInfo) => Promise<boolean>;
   startEmbeddedDaemon: (opts: EmbeddedDaemonOptions) => Promise<EmbeddedDaemonHandle>;
 }
@@ -49,7 +47,6 @@ let deps: CliActionBridgeDeps = {
   fetch,
   cwd: () => process.cwd(),
   readCanonicalDaemonInfo,
-  clearCanonicalDaemonInfo,
   isCanonicalDaemonAlive,
   startEmbeddedDaemon,
 };
@@ -121,7 +118,8 @@ async function resolveCanonicalDaemon(): Promise<{
       warnOnDaemonVersionSkew(existing, expectedDaemonVersion());
       return { baseUrl: daemonBaseUrl(existing), transientHandle: null, restoreCwd: null };
     }
-    deps.clearCanonicalDaemonInfo();
+    // Stale canonical state is removed only after startEmbeddedDaemon wins the
+    // atomic process-lifetime claim.
   }
 
   // Test / short-lived-CLI escape: skip the transient daemon spawn when
