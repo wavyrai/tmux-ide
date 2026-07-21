@@ -56,6 +56,7 @@ export function App(props: AppProps = {}) {
     >
       <DomApplicationShell
         host={host}
+        daemonState={bootstrap()?.daemon}
         runtime={bootstrap()?.runtime}
         platform={bootstrap()?.platform}
         windowState={effectiveWindow()}

@@ -40,7 +40,7 @@ function host(): HostCapabilities {
       appVersion: "test",
       theme: { mode: "dark", highContrast: false, reducedMotion: false },
       window: WINDOW_STATE,
-      daemon: { status: "deferred", reason: "fixture only" },
+      daemon: { status: "unavailable", code: "preview-only", reason: "fixture only" },
     }),
     lifecycle: { requestQuit: async () => undefined },
     window: {
@@ -436,12 +436,72 @@ describe("visible DOM application shell", () => {
     );
     expect(root.querySelector(".status-strip")?.getAttribute("data-shell-source")).toBe("preview");
     expect(root.querySelector(".status-strip__connection")?.textContent).toContain(
-      "Preview workspace — no daemon connection",
+      "Preview workspace — daemon state is still loading",
     );
     expect(root.querySelector(".status-strip__safe")?.textContent).toBe("Illustrative data only");
     expect(root.textContent).not.toContain("agent processes remain active");
     expect(root.textContent).not.toContain("Retry the attachment");
   });
+
+  it.each([
+    {
+      state: {
+        status: "connected" as const,
+        descriptor: {
+          apiBaseUrl: "http://127.0.0.1:6060",
+          protocolVersion: 1,
+          productVersion: "2.8.0",
+          instanceId: "9bcf33b0-c837-4a94-b5e8-c0977f54464f",
+          startedAt: "2026-07-21T00:00:00.000Z",
+        },
+      },
+      message: "Daemon connected — 2.8.0",
+      safe: "Preview data remains illustrative",
+    },
+    {
+      state: {
+        status: "unavailable" as const,
+        code: "health-unreachable" as const,
+        reason: "Health endpoint is unreachable",
+      },
+      message: "Daemon unavailable — Health endpoint is unreachable",
+      safe: "Illustrative data only",
+    },
+    {
+      state: {
+        status: "degraded" as const,
+        code: "identity-mismatch" as const,
+        reason: "Identity does not match",
+      },
+      message: "Daemon verification degraded — Identity does not match",
+      safe: "Illustrative data only",
+    },
+  ])(
+    "surfaces honest $state.status host state without relabeling preview data",
+    ({ state, message, safe }) => {
+      const root = document.createElement("div");
+      document.body.append(root);
+      disposers.push(
+        render(
+          () => (
+            <DomApplicationShell
+              host={host()}
+              daemonState={state}
+              runtime="electron"
+              platform="darwin"
+              windowState={WINDOW_STATE}
+              dataMode="preview"
+            />
+          ),
+          root,
+        ),
+      );
+
+      expect(root.querySelector(".titlebar__preview-badge")?.textContent).toBe("Preview data");
+      expect(root.querySelector(".status-strip__connection")?.textContent).toContain(message);
+      expect(root.querySelector(".status-strip__safe")?.textContent).toBe(safe);
+    },
+  );
 
   it("reacts to replacement snapshots while preserving valid local state and stable leaves", async () => {
     const initial = createDefaultDomShellInput();

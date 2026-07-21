@@ -5,7 +5,7 @@ import { app, BrowserWindow, dialog, ipcMain, nativeTheme, screen, session } fro
 import type { DesktopPlatform, DesktopThemeState } from "@tmux-ide/contracts";
 
 import {
-  deferredDaemonPreflight,
+  canonicalDaemonPreflight,
   runDaemonPreflight,
   type DaemonPreflight,
 } from "./daemon-preflight.ts";
@@ -93,7 +93,7 @@ export async function runDesktopApp(deps: DesktopAppDependencies = {}): Promise<
   const stateStore = new DesktopWindowStateStore(
     join(app.getPath("userData"), "window-state.json"),
   );
-  const daemon = await runDaemonPreflight(deps.daemonPreflight ?? deferredDaemonPreflight);
+  const daemon = await runDaemonPreflight(deps.daemonPreflight ?? canonicalDaemonPreflight);
   const developmentUrl = trustedDevelopmentUrl();
   const packagedRendererPath = join(__dirname, "renderer", "index.html");
   const trustedRendererLocation: TrustedRendererLocation = developmentUrl

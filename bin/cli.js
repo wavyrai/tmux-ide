@@ -2393,11 +2393,11 @@ var init_commands = __esm({
 
 // packages/contracts/src/desktop-host.ts
 import { z as z15 } from "zod";
-var DESKTOP_HOST_API_VERSION, DesktopRuntimeKindSchemaZ, DesktopPlatformSchemaZ, DesktopThemeModeSchemaZ, DesktopThemeStateSchemaZ, DesktopWindowStateSchemaZ, DesktopDaemonPreflightSchemaZ, DesktopHostBootstrapSchemaZ, DesktopMenuResultSchemaZ, DesktopDirectorySelectionSchemaZ;
+var DESKTOP_HOST_API_VERSION, DesktopRuntimeKindSchemaZ, DesktopPlatformSchemaZ, DesktopThemeModeSchemaZ, DesktopThemeStateSchemaZ, DesktopWindowStateSchemaZ, DesktopDaemonLoopbackUrlSchemaZ, DesktopDaemonHostDescriptorSchemaZ, DesktopDaemonHostIssueCodeSchemaZ, DesktopDaemonHostIssueSchemaFields, DesktopDaemonHostStateSchemaZ, DesktopDaemonPreflightSchemaZ, DesktopHostBootstrapSchemaZ, DesktopMenuResultSchemaZ, DesktopDirectorySelectionSchemaZ;
 var init_desktop_host = __esm({
   "packages/contracts/src/desktop-host.ts"() {
     "use strict";
-    DESKTOP_HOST_API_VERSION = 1;
+    DESKTOP_HOST_API_VERSION = 2;
     DesktopRuntimeKindSchemaZ = z15.enum(["browser", "electron"]);
     DesktopPlatformSchemaZ = z15.enum(["darwin", "linux", "win32", "unknown"]);
     DesktopThemeModeSchemaZ = z15.enum(["light", "dark"]);
@@ -2411,12 +2411,44 @@ var init_desktop_host = __esm({
       fullscreen: z15.boolean(),
       focused: z15.boolean()
     }).strict();
-    DesktopDaemonPreflightSchemaZ = z15.discriminatedUnion("status", [
-      z15.object({ status: z15.literal("ready"), apiBaseUrl: z15.string().url() }).strict(),
-      z15.object({ status: z15.literal("absent") }).strict(),
-      z15.object({ status: z15.literal("deferred"), reason: z15.string().min(1) }).strict(),
-      z15.object({ status: z15.literal("unavailable"), reason: z15.string().min(1) }).strict()
+    DesktopDaemonLoopbackUrlSchemaZ = z15.url().refine((value) => {
+      const url = new URL(value);
+      return url.protocol === "http:" && (url.hostname === "127.0.0.1" || url.hostname === "localhost" || url.hostname === "[::1]") && url.username.length === 0 && url.password.length === 0 && url.pathname === "/" && url.search.length === 0 && url.hash.length === 0;
+    }, "daemon URL must be an uncredentialed loopback HTTP origin");
+    DesktopDaemonHostDescriptorSchemaZ = z15.object({
+      apiBaseUrl: DesktopDaemonLoopbackUrlSchemaZ,
+      protocolVersion: z15.number().int().positive(),
+      productVersion: z15.string().trim().min(1),
+      instanceId: z15.uuid(),
+      startedAt: z15.iso.datetime({ offset: true })
+    }).strict();
+    DesktopDaemonHostIssueCodeSchemaZ = z15.enum([
+      "record-missing",
+      "record-invalid",
+      "endpoint-not-loopback",
+      "protocol-incompatible",
+      "process-not-running",
+      "identity-unreachable",
+      "identity-mismatch",
+      "health-unreachable",
+      "health-mismatch",
+      "probe-failed",
+      "probe-timeout",
+      "preview-only"
     ]);
+    DesktopDaemonHostIssueSchemaFields = {
+      code: DesktopDaemonHostIssueCodeSchemaZ,
+      reason: z15.string().min(1)
+    };
+    DesktopDaemonHostStateSchemaZ = z15.discriminatedUnion("status", [
+      z15.object({
+        status: z15.literal("connected"),
+        descriptor: DesktopDaemonHostDescriptorSchemaZ
+      }).strict(),
+      z15.object({ status: z15.literal("unavailable"), ...DesktopDaemonHostIssueSchemaFields }).strict(),
+      z15.object({ status: z15.literal("degraded"), ...DesktopDaemonHostIssueSchemaFields }).strict()
+    ]);
+    DesktopDaemonPreflightSchemaZ = DesktopDaemonHostStateSchemaZ;
     DesktopHostBootstrapSchemaZ = z15.object({
       apiVersion: z15.literal(DESKTOP_HOST_API_VERSION),
       runtime: DesktopRuntimeKindSchemaZ,
@@ -4300,6 +4332,156 @@ var init_daemon_wire = __esm({
   }
 });
 
+// packages/contracts/src/daemon-resources.ts
+import { z as z24 } from "zod";
+var DaemonSessionOverviewSchemaZ, DaemonPaneInfoSchemaZ, DaemonSessionsResponseSchemaZ, DaemonProjectResponseSchemaZ, DaemonPanesResponseSchemaZ, DaemonWorkspaceSchemaZ, DaemonWorkspacesResponseSchemaZ, DaemonWorkspaceResponseSchemaZ, DaemonRegisteredProjectSchemaZ, DaemonProjectsResponseSchemaZ, DaemonRegisteredProjectResponseSchemaZ, DaemonProjectTemplateSchemaZ, DaemonProjectTemplatesResponseSchemaZ;
+var init_daemon_resources = __esm({
+  "packages/contracts/src/daemon-resources.ts"() {
+    "use strict";
+    init_domain();
+    init_workspace();
+    DaemonSessionOverviewSchemaZ = SessionOverviewSchemaZ.strict();
+    DaemonPaneInfoSchemaZ = PaneInfoSchemaZ.strict();
+    DaemonSessionsResponseSchemaZ = z24.object({
+      sessions: z24.array(DaemonSessionOverviewSchemaZ)
+    }).strict();
+    DaemonProjectResponseSchemaZ = z24.object({
+      session: z24.string(),
+      dir: z24.string(),
+      panes: z24.array(DaemonPaneInfoSchemaZ)
+    }).strict();
+    DaemonPanesResponseSchemaZ = z24.object({
+      panes: z24.array(DaemonPaneInfoSchemaZ)
+    }).strict();
+    DaemonWorkspaceSchemaZ = WorkspaceSchemaZ.strict();
+    DaemonWorkspacesResponseSchemaZ = z24.object({
+      workspaces: z24.array(DaemonWorkspaceSchemaZ)
+    }).strict();
+    DaemonWorkspaceResponseSchemaZ = z24.object({
+      workspace: DaemonWorkspaceSchemaZ
+    }).strict();
+    DaemonRegisteredProjectSchemaZ = z24.object({
+      name: z24.string(),
+      dir: z24.string(),
+      hasIdeYml: z24.boolean(),
+      hasWorkspaceConfig: z24.boolean().optional(),
+      configKind: z24.enum(["workspace", "legacy", "none"]).optional(),
+      configPath: z24.string().nullable().optional(),
+      ideConfigPath: z24.string().nullable().optional(),
+      gitOrigin: z24.string().nullable(),
+      gitBranch: z24.string().nullable(),
+      registeredAt: z24.string()
+    }).strict();
+    DaemonProjectsResponseSchemaZ = z24.object({
+      projects: z24.array(DaemonRegisteredProjectSchemaZ)
+    }).strict();
+    DaemonRegisteredProjectResponseSchemaZ = z24.object({
+      project: DaemonRegisteredProjectSchemaZ
+    }).strict();
+    DaemonProjectTemplateSchemaZ = z24.object({
+      id: z24.string(),
+      label: z24.string(),
+      description: z24.string()
+    }).strict();
+    DaemonProjectTemplatesResponseSchemaZ = z24.object({
+      templates: z24.array(DaemonProjectTemplateSchemaZ)
+    }).strict();
+  }
+});
+
+// packages/contracts/src/daemon-events.ts
+import { z as z25 } from "zod";
+var SessionNamesSchemaZ, DaemonEventSubscribeFrameSchemaZ, DaemonEventUnsubscribeFrameSchemaZ, DaemonEventPingFrameSchemaZ, DaemonEventClientFrameSchemaZ, DaemonSessionSnapshotSchemaZ, DaemonEventHelloFrameSchemaZ, DaemonEventSnapshotFrameSchemaZ, DaemonEventSessionsChangedFrameSchemaZ, DaemonEventProjectsChangedFrameSchemaZ, DaemonEventInitOutputFrameSchemaZ, DaemonEventInitErrorFrameSchemaZ, DaemonEventPongFrameSchemaZ, DaemonEventActionCompleteFrameSchemaZ, DaemonEventConfigChangedFrameSchemaZ, DaemonEventTerminalsChangedFrameSchemaZ, DaemonEventWorkspaceAddedFrameSchemaZ, DaemonEventWorkspaceRemovedFrameSchemaZ, DaemonEventProtocolErrorCodeSchemaZ, DaemonEventProtocolErrorFrameSchemaZ, DaemonEventServerFrameSchemaZ;
+var init_daemon_events = __esm({
+  "packages/contracts/src/daemon-events.ts"() {
+    "use strict";
+    init_daemon_resources();
+    SessionNamesSchemaZ = z25.array(z25.string());
+    DaemonEventSubscribeFrameSchemaZ = z25.object({
+      type: z25.literal("subscribe"),
+      sessions: SessionNamesSchemaZ
+    }).strict();
+    DaemonEventUnsubscribeFrameSchemaZ = z25.object({
+      type: z25.literal("unsubscribe"),
+      sessions: SessionNamesSchemaZ
+    }).strict();
+    DaemonEventPingFrameSchemaZ = z25.object({ type: z25.literal("ping") }).strict();
+    DaemonEventClientFrameSchemaZ = z25.discriminatedUnion("type", [
+      DaemonEventSubscribeFrameSchemaZ,
+      DaemonEventUnsubscribeFrameSchemaZ,
+      DaemonEventPingFrameSchemaZ
+    ]);
+    DaemonSessionSnapshotSchemaZ = z25.object({
+      project: DaemonProjectResponseSchemaZ
+    }).strict();
+    DaemonEventHelloFrameSchemaZ = z25.object({
+      type: z25.literal("hello"),
+      sessions: z25.array(DaemonSessionOverviewSchemaZ)
+    }).strict();
+    DaemonEventSnapshotFrameSchemaZ = z25.object({
+      type: z25.literal("snapshot"),
+      sessionName: z25.string(),
+      data: DaemonSessionSnapshotSchemaZ
+    }).strict();
+    DaemonEventSessionsChangedFrameSchemaZ = z25.object({ type: z25.literal("sessions.changed") }).strict();
+    DaemonEventProjectsChangedFrameSchemaZ = z25.object({ type: z25.literal("projects.changed") }).strict();
+    DaemonEventInitOutputFrameSchemaZ = z25.object({
+      type: z25.literal("init.output"),
+      jobId: z25.string(),
+      chunk: z25.string(),
+      done: z25.boolean().optional()
+    }).strict();
+    DaemonEventInitErrorFrameSchemaZ = z25.object({
+      type: z25.literal("init.error"),
+      jobId: z25.string(),
+      message: z25.string()
+    }).strict();
+    DaemonEventPongFrameSchemaZ = z25.object({ type: z25.literal("pong") }).strict();
+    DaemonEventActionCompleteFrameSchemaZ = z25.object({
+      type: z25.literal("action.complete"),
+      name: z25.string(),
+      result: z25.unknown()
+    }).strict();
+    DaemonEventConfigChangedFrameSchemaZ = z25.object({
+      type: z25.literal("config.changed"),
+      sessionName: z25.string()
+    }).strict();
+    DaemonEventTerminalsChangedFrameSchemaZ = z25.object({
+      type: z25.literal("terminals.changed"),
+      sessionName: z25.string()
+    }).strict();
+    DaemonEventWorkspaceAddedFrameSchemaZ = z25.object({
+      type: z25.literal("workspace.added"),
+      workspace: DaemonWorkspaceSchemaZ
+    }).strict();
+    DaemonEventWorkspaceRemovedFrameSchemaZ = z25.object({
+      type: z25.literal("workspace.removed"),
+      name: z25.string()
+    }).strict();
+    DaemonEventProtocolErrorCodeSchemaZ = z25.enum(["invalid-json", "invalid-frame"]);
+    DaemonEventProtocolErrorFrameSchemaZ = z25.object({
+      type: z25.literal("protocol.error"),
+      code: DaemonEventProtocolErrorCodeSchemaZ,
+      message: z25.string()
+    }).strict();
+    DaemonEventServerFrameSchemaZ = z25.discriminatedUnion("type", [
+      DaemonEventHelloFrameSchemaZ,
+      DaemonEventSnapshotFrameSchemaZ,
+      DaemonEventSessionsChangedFrameSchemaZ,
+      DaemonEventProjectsChangedFrameSchemaZ,
+      DaemonEventInitOutputFrameSchemaZ,
+      DaemonEventInitErrorFrameSchemaZ,
+      DaemonEventPongFrameSchemaZ,
+      DaemonEventActionCompleteFrameSchemaZ,
+      DaemonEventConfigChangedFrameSchemaZ,
+      DaemonEventTerminalsChangedFrameSchemaZ,
+      DaemonEventWorkspaceAddedFrameSchemaZ,
+      DaemonEventWorkspaceRemovedFrameSchemaZ,
+      DaemonEventProtocolErrorFrameSchemaZ
+    ]);
+  }
+});
+
 // packages/contracts/src/index.ts
 var init_src = __esm({
   "packages/contracts/src/index.ts"() {
@@ -4329,6 +4511,8 @@ var init_src = __esm({
     init_focus_overlay();
     init_cohesion_fixture();
     init_daemon_wire();
+    init_daemon_resources();
+    init_daemon_events();
   }
 });
 
@@ -9528,45 +9712,20 @@ var init_session_id = __esm({
 });
 
 // packages/daemon/src/schemas/registry.ts
-import { z as z24 } from "zod";
-var RegisteredProjectSchemaZ, RegisterProjectRequestSchemaZ, InitProjectRequestSchemaZ, ProjectTemplateSchemaZ;
+import { z as z26 } from "zod";
+var RegisteredProjectSchemaZ, RegisterProjectRequestSchemaZ, InitProjectRequestSchemaZ;
 var init_registry = __esm({
   "packages/daemon/src/schemas/registry.ts"() {
     "use strict";
-    RegisteredProjectSchemaZ = z24.object({
-      /** Unique registry key. Defaults to `basename(dir)`; collisions resolved by appending `-2`, `-3`, … */
-      name: z24.string(),
-      /** Absolute path to the project directory. */
-      dir: z24.string(),
-      /** Whether `<dir>/ide.yml` exists; refreshed on register and on `probe()`. */
-      hasIdeYml: z24.boolean(),
-      /** Whether `.tmux-ide/workspace.yml` exists or wins discovery. */
-      hasWorkspaceConfig: z24.boolean().optional(),
-      /** Generalized winning config kind. Added without replacing `hasIdeYml`. */
-      configKind: z24.enum(["workspace", "legacy", "none"]).optional(),
-      /** Generalized winning config path. */
-      configPath: z24.string().nullable().optional(),
-      /** Legacy config path when an `ide.yml` is present. */
-      ideConfigPath: z24.string().nullable().optional(),
-      /** Git remote origin URL, or `null` if not a git repo / no origin / probe failed. */
-      gitOrigin: z24.string().nullable(),
-      /** Current git branch, or `null` if not a git repo / detached HEAD / probe failed. */
-      gitBranch: z24.string().nullable(),
-      /** ISO-8601 timestamp the project was first registered. */
-      registeredAt: z24.string()
+    init_src();
+    RegisteredProjectSchemaZ = DaemonRegisteredProjectSchemaZ;
+    RegisterProjectRequestSchemaZ = z26.object({
+      dir: z26.string().min(1),
+      name: z26.string().min(1).optional()
     });
-    RegisterProjectRequestSchemaZ = z24.object({
-      dir: z24.string().min(1),
-      name: z24.string().min(1).optional()
-    });
-    InitProjectRequestSchemaZ = z24.object({
-      dir: z24.string().min(1),
-      template: z24.string().min(1).optional()
-    });
-    ProjectTemplateSchemaZ = z24.object({
-      id: z24.string(),
-      label: z24.string(),
-      description: z24.string()
+    InitProjectRequestSchemaZ = z26.object({
+      dir: z26.string().min(1),
+      template: z26.string().min(1).optional()
     });
   }
 });
@@ -9628,7 +9787,7 @@ import { EventEmitter } from "node:events";
 import { existsSync as existsSync15, mkdirSync as mkdirSync9, readFileSync as readFileSync11, renameSync as renameSync5, writeFileSync as writeFileSync9 } from "node:fs";
 import { homedir as homedir10 } from "node:os";
 import { dirname as dirname15, isAbsolute as isAbsolute3, join as join14, resolve as resolve11 } from "node:path";
-import { z as z25 } from "zod";
+import { z as z27 } from "zod";
 function applyAction(state, action) {
   switch (action.type) {
     case "register":
@@ -9767,9 +9926,9 @@ var init_project_registry = __esm({
     init_registry();
     init_project_probe();
     REGISTRY_DIR_ENV = "TMUX_IDE_REGISTRY_DIR";
-    RegistryFileSchemaZ = z25.object({
-      version: z25.literal(1),
-      projects: z25.array(RegisteredProjectSchemaZ)
+    RegistryFileSchemaZ = z27.object({
+      version: z27.literal(1),
+      projects: z27.array(RegisteredProjectSchemaZ)
     });
     ProjectRegistryError = class extends Error {
       code;
@@ -10541,7 +10700,7 @@ var init_notify_state = __esm({
 import { existsSync as existsSync19, mkdirSync as mkdirSync12, readFileSync as readFileSync14, renameSync as renameSync7, writeFileSync as writeFileSync11 } from "node:fs";
 import { homedir as homedir12 } from "node:os";
 import { dirname as dirname17, join as join18 } from "node:path";
-import { z as z26 } from "zod";
+import { z as z28 } from "zod";
 function isBareShell(cmd) {
   return /^-?(zsh|bash|sh|fish|dash|ksh|tcsh|csh|nu)$/.test(cmd.trim());
 }
@@ -10713,32 +10872,32 @@ var init_snapshot2 = __esm({
     init_src2();
     init_process_tree();
     init_sessions2();
-    PaneSnapshotSchemaZ = z26.object({
-      index: z26.number(),
-      cwd: z26.string(),
-      command: z26.string().nullable(),
-      agent: z26.string().nullable(),
-      agentSessionId: z26.string().nullable(),
-      agentState: z26.string().nullable(),
-      title: z26.string()
+    PaneSnapshotSchemaZ = z28.object({
+      index: z28.number(),
+      cwd: z28.string(),
+      command: z28.string().nullable(),
+      agent: z28.string().nullable(),
+      agentSessionId: z28.string().nullable(),
+      agentState: z28.string().nullable(),
+      title: z28.string()
     });
-    WindowSnapshotSchemaZ = z26.object({
-      index: z26.number(),
-      name: z26.string(),
-      active: z26.boolean(),
-      layout: z26.string(),
-      panes: z26.array(PaneSnapshotSchemaZ)
+    WindowSnapshotSchemaZ = z28.object({
+      index: z28.number(),
+      name: z28.string(),
+      active: z28.boolean(),
+      layout: z28.string(),
+      panes: z28.array(PaneSnapshotSchemaZ)
     });
-    SessionSnapshotSchemaZ = z26.object({
-      name: z26.string(),
-      cwd: z26.string(),
-      adopted: z26.boolean(),
-      windows: z26.array(WindowSnapshotSchemaZ)
+    SessionSnapshotSchemaZ = z28.object({
+      name: z28.string(),
+      cwd: z28.string(),
+      adopted: z28.boolean(),
+      windows: z28.array(WindowSnapshotSchemaZ)
     });
-    FleetSnapshotSchemaZ = z26.object({
-      version: z26.literal(1),
-      savedAt: z26.string(),
-      sessions: z26.array(SessionSnapshotSchemaZ)
+    FleetSnapshotSchemaZ = z28.object({
+      version: z28.literal(1),
+      savedAt: z28.string(),
+      sessions: z28.array(SessionSnapshotSchemaZ)
     });
     SNAPSHOT_PANE_FORMAT = [
       "#{session_name}",
@@ -11418,6 +11577,7 @@ import {
   chmodSync as chmodSync3,
   closeSync as closeSync2,
   constants,
+  fchmodSync,
   fstatSync,
   linkSync as linkSync2,
   lstatSync,
@@ -11448,6 +11608,48 @@ function observation(stat) {
 function sameObservation(left, right) {
   return left.dev === right.dev && left.ino === right.ino && left.size === right.size && left.mtimeMs === right.mtimeMs;
 }
+function sameFileIdentity(left, right) {
+  return left.dev === right.dev && left.ino === right.ino;
+}
+function canonicalDaemonRootError(detail) {
+  return new Error(`canonical daemon parent ${detail}`);
+}
+function prepareCanonicalDaemonRoot(root) {
+  let descriptor2;
+  try {
+    try {
+      mkdirSync13(root, { recursive: true, mode: 448 });
+    } catch (error) {
+      if (error.code !== "EEXIST") throw error;
+    }
+    const pathStat = lstatSync(root);
+    if (pathStat.isSymbolicLink()) {
+      throw canonicalDaemonRootError("must not be a symbolic link");
+    }
+    if (!pathStat.isDirectory()) {
+      throw canonicalDaemonRootError("must be a directory");
+    }
+    if (typeof process.getuid === "function" && pathStat.uid !== process.getuid()) {
+      throw canonicalDaemonRootError("must be owned by the current user");
+    }
+    descriptor2 = openSync2(
+      root,
+      constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_DIRECTORY ?? 0)
+    );
+    const openedStat = fstatSync(descriptor2);
+    if (!openedStat.isDirectory() || !sameFileIdentity(pathStat, openedStat) || typeof process.getuid === "function" && openedStat.uid !== process.getuid()) {
+      throw canonicalDaemonRootError("changed or became unsafe while it was opened");
+    }
+    fchmodSync(descriptor2, 448);
+    const hardenedStat = fstatSync(descriptor2);
+    const currentPathStat = lstatSync(root);
+    if (!hardenedStat.isDirectory() || !sameFileIdentity(openedStat, hardenedStat) || typeof process.getuid === "function" && hardenedStat.uid !== process.getuid() || (hardenedStat.mode & 63) !== 0 || currentPathStat.isSymbolicLink() || !currentPathStat.isDirectory() || !sameFileIdentity(hardenedStat, currentPathStat) || typeof process.getuid === "function" && currentPathStat.uid !== process.getuid() || (currentPathStat.mode & 63) !== 0) {
+      throw canonicalDaemonRootError("changed or became unsafe while it was hardened");
+    }
+  } finally {
+    if (descriptor2 !== void 0) closeSync2(descriptor2);
+  }
+}
 function invalidState(reason, detail, ownerPid = null, observed = null) {
   return { status: "invalid", reason, detail, ownerPid, observation: observed };
 }
@@ -11461,6 +11663,39 @@ function inspectCanonicalDaemonInfoPath(path2) {
   try {
     const pathStat = lstatSync(path2);
     const pathObservation = observation(pathStat);
+    const parentStat = lstatSync(dirname18(path2));
+    if (parentStat.isSymbolicLink()) {
+      return invalidState(
+        "parent-symlink",
+        "daemon.json parent must not be a symbolic link",
+        null,
+        pathObservation
+      );
+    }
+    if (!parentStat.isDirectory()) {
+      return invalidState(
+        "parent-not-directory",
+        "daemon.json parent must be a directory",
+        null,
+        pathObservation
+      );
+    }
+    if (typeof process.getuid === "function" && parentStat.uid !== process.getuid()) {
+      return invalidState(
+        "parent-wrong-owner",
+        "daemon.json parent is not owned by the current user",
+        null,
+        pathObservation
+      );
+    }
+    if ((parentStat.mode & 63) !== 0) {
+      return invalidState(
+        "parent-unsafe-permissions",
+        "daemon.json parent must be accessible only by its owner",
+        null,
+        pathObservation
+      );
+    }
     if (pathStat.isSymbolicLink()) {
       return invalidState(
         "symlink",
@@ -11499,7 +11734,8 @@ function inspectCanonicalDaemonInfoPath(path2) {
     descriptor2 = openSync2(path2, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
     const openedStat = fstatSync(descriptor2);
     const openedObservation = observation(openedStat);
-    if (!openedStat.isFile() || !sameObservation(pathObservation, openedObservation) || typeof process.getuid === "function" && openedStat.uid !== process.getuid() || (openedStat.mode & 63) !== 0) {
+    const reopenedParentStat = lstatSync(dirname18(path2));
+    if (!openedStat.isFile() || !sameObservation(pathObservation, openedObservation) || !sameFileIdentity(parentStat, reopenedParentStat) || !reopenedParentStat.isDirectory() || typeof process.getuid === "function" && openedStat.uid !== process.getuid() || (openedStat.mode & 63) !== 0 || typeof process.getuid === "function" && reopenedParentStat.uid !== process.getuid() || (reopenedParentStat.mode & 63) !== 0) {
       return invalidState(
         "changed-while-opening",
         "daemon.json changed or became unsafe while it was opened",
@@ -11618,7 +11854,14 @@ function retireCanonicalClaimIfMatches(expected) {
 function tryAcquireCanonicalDaemonClaim() {
   const path2 = getCanonicalDaemonClaimPath();
   const root = dirname18(path2);
-  mkdirSync13(root, { recursive: true, mode: 448 });
+  try {
+    prepareCanonicalDaemonRoot(root);
+  } catch (error) {
+    return {
+      status: "invalid",
+      detail: error instanceof Error ? error.message : "canonical daemon parent could not be prepared"
+    };
+  }
   for (let attempt = 0; attempt < 3; attempt += 1) {
     const claim = {
       claimId: randomUUID(),
@@ -11673,7 +11916,7 @@ function releaseCanonicalDaemonClaim(claim) {
 function writeCanonicalDaemonInfo(info, claim) {
   assertCanonicalDaemonClaimHeld(claim);
   const path2 = getCanonicalDaemonInfoPath();
-  mkdirSync13(dirname18(path2), { recursive: true, mode: 448 });
+  prepareCanonicalDaemonRoot(dirname18(path2));
   const tmpPath = `${path2}.${claim.claimId}.${randomUUID()}.tmp`;
   const persisted = {
     pid: info.pid,
@@ -13687,7 +13930,7 @@ import { EventEmitter as EventEmitter3 } from "node:events";
 import { existsSync as existsSync26, mkdirSync as mkdirSync17, readFileSync as readFileSync20, renameSync as renameSync9, writeFileSync as writeFileSync16 } from "node:fs";
 import { homedir as homedir16 } from "node:os";
 import { dirname as dirname24, join as join24 } from "node:path";
-import { z as z27 } from "zod";
+import { z as z29 } from "zod";
 function getDefaultWorkspaceRegistry() {
   if (!_default) _default = new WorkspaceRegistry();
   return _default;
@@ -13710,9 +13953,9 @@ var init_workspace_registry = __esm({
     "use strict";
     init_src();
     REGISTRY_DIR_ENV3 = "TMUX_IDE_REGISTRY_DIR";
-    RegistryFileSchemaZ2 = z27.object({
-      version: z27.literal(1),
-      workspaces: z27.array(WorkspaceSchemaZ)
+    RegistryFileSchemaZ2 = z29.object({
+      version: z29.literal(1),
+      workspaces: z29.array(WorkspaceSchemaZ)
     });
     WorkspaceAlreadyExistsError = class extends Error {
       code = "ALREADY_EXISTS";
@@ -14067,16 +14310,27 @@ function handleWsEventsConnection(socket) {
   };
   ws.on("message", (data) => {
     if (closed) return;
-    let parsed = null;
+    let raw;
     try {
-      const obj = JSON.parse(rawDataToText2(data));
-      if (obj && typeof obj === "object" && typeof obj.type === "string") {
-        parsed = obj;
-      }
+      raw = JSON.parse(rawDataToText2(data));
     } catch {
+      send2({
+        type: "protocol.error",
+        code: "invalid-json",
+        message: "Client frame must be valid JSON."
+      });
       return;
     }
-    if (!parsed) return;
+    const result = DaemonEventClientFrameSchemaZ.safeParse(raw);
+    if (!result.success) {
+      send2({
+        type: "protocol.error",
+        code: "invalid-frame",
+        message: "Client frame does not match the daemon event protocol."
+      });
+      return;
+    }
+    const parsed = result.data;
     if (parsed.type === "subscribe") {
       for (const name of parsed.sessions) subscribe(name);
       return;
@@ -14106,6 +14360,7 @@ var init_ws_events = __esm({
     init_discovery();
     init_project_registry();
     init_workspace_registry();
+    init_src();
     WS_OPEN2 = 1;
     KEEPALIVE_INTERVAL_MS = 25e3;
     SESSIONS_POLL_MS = 2e3;
@@ -14545,74 +14800,74 @@ var init_log = __esm({
 });
 
 // packages/daemon/src/command-center/schemas.ts
-import { z as z28 } from "zod";
+import { z as z30 } from "zod";
 var updateTaskSchema, createTaskSchema, savePlanSchema, savePlanContentSchema, sendCommandSchema, createMilestoneSchema, updateMilestoneSchema, updateAssertionSchema, triggerResearchSchema, launchSchema, stopSchema, skillNameRegex, createSkillSchema, updateSkillSchema;
 var init_schemas = __esm({
   "packages/daemon/src/command-center/schemas.ts"() {
     "use strict";
-    updateTaskSchema = z28.object({
-      status: z28.enum(["todo", "in-progress", "review", "done"]).optional(),
-      assignee: z28.string().optional(),
-      title: z28.string().optional(),
-      description: z28.string().optional(),
-      priority: z28.number().optional()
+    updateTaskSchema = z30.object({
+      status: z30.enum(["todo", "in-progress", "review", "done"]).optional(),
+      assignee: z30.string().optional(),
+      title: z30.string().optional(),
+      description: z30.string().optional(),
+      priority: z30.number().optional()
     });
-    createTaskSchema = z28.object({
-      title: z28.string().trim().min(1, "Title is required"),
-      description: z28.string().optional(),
-      priority: z28.number().optional(),
-      goal: z28.string().optional(),
-      tags: z28.array(z28.string()).optional()
+    createTaskSchema = z30.object({
+      title: z30.string().trim().min(1, "Title is required"),
+      description: z30.string().optional(),
+      priority: z30.number().optional(),
+      goal: z30.string().optional(),
+      tags: z30.array(z30.string()).optional()
     });
-    savePlanSchema = z28.object({
-      content: z28.string().max(1e6, "Plan content is too large")
+    savePlanSchema = z30.object({
+      content: z30.string().max(1e6, "Plan content is too large")
     });
-    savePlanContentSchema = z28.object({
-      content: z28.string().max(1e6, "Plan content is too large")
+    savePlanContentSchema = z30.object({
+      content: z30.string().max(1e6, "Plan content is too large")
     });
-    sendCommandSchema = z28.object({
-      target: z28.string().min(1, "Target pane is required"),
-      message: z28.string().min(1, "Message is required"),
-      noEnter: z28.boolean().optional()
+    sendCommandSchema = z30.object({
+      target: z30.string().min(1, "Target pane is required"),
+      message: z30.string().min(1, "Message is required"),
+      noEnter: z30.boolean().optional()
     });
-    createMilestoneSchema = z28.object({
-      title: z28.string().trim().min(1, "Title is required"),
-      sequence: z28.number().int().positive(),
-      description: z28.string().optional()
+    createMilestoneSchema = z30.object({
+      title: z30.string().trim().min(1, "Title is required"),
+      sequence: z30.number().int().positive(),
+      description: z30.string().optional()
     });
-    updateMilestoneSchema = z28.object({
-      status: z28.enum(["locked", "active", "done", "validating"]).optional(),
-      title: z28.string().optional(),
-      description: z28.string().optional()
+    updateMilestoneSchema = z30.object({
+      status: z30.enum(["locked", "active", "done", "validating"]).optional(),
+      title: z30.string().optional(),
+      description: z30.string().optional()
     });
-    updateAssertionSchema = z28.object({
-      status: z28.enum(["pending", "passing", "failing", "blocked"]),
-      evidence: z28.string().optional(),
-      verifiedBy: z28.string().optional()
+    updateAssertionSchema = z30.object({
+      status: z30.enum(["pending", "passing", "failing", "blocked"]),
+      evidence: z30.string().optional(),
+      verifiedBy: z30.string().optional()
     });
-    triggerResearchSchema = z28.object({
-      type: z28.string().trim().min(1, "Research type is required")
+    triggerResearchSchema = z30.object({
+      type: z30.string().trim().min(1, "Research type is required")
     });
-    launchSchema = z28.object({
-      attach: z28.boolean().optional()
+    launchSchema = z30.object({
+      attach: z30.boolean().optional()
     }).optional();
-    stopSchema = z28.object({}).optional();
+    stopSchema = z30.object({}).optional();
     skillNameRegex = /^[A-Za-z0-9._ -]+$/;
-    createSkillSchema = z28.object({
-      name: z28.string().trim().min(1, "Skill name is required").regex(
+    createSkillSchema = z30.object({
+      name: z30.string().trim().min(1, "Skill name is required").regex(
         skillNameRegex,
         "Skill name may only contain letters, digits, dot, dash, underscore, or space"
       ),
-      role: z28.string().trim().optional(),
-      description: z28.string().optional(),
-      specialties: z28.array(z28.string()).optional(),
-      body: z28.string().optional()
+      role: z30.string().trim().optional(),
+      description: z30.string().optional(),
+      specialties: z30.array(z30.string()).optional(),
+      body: z30.string().optional()
     });
-    updateSkillSchema = z28.object({
-      role: z28.string().trim().optional(),
-      description: z28.string().optional(),
-      specialties: z28.array(z28.string()).optional(),
-      body: z28.string().optional()
+    updateSkillSchema = z30.object({
+      role: z30.string().trim().optional(),
+      description: z30.string().optional(),
+      specialties: z30.array(z30.string()).optional(),
+      body: z30.string().optional()
     });
   }
 });
@@ -15857,64 +16112,64 @@ var init_project_init_runner = __esm({
 });
 
 // packages/daemon/src/schemas/inspect.ts
-import { z as z29 } from "zod";
+import { z as z31 } from "zod";
 var ProjectInspectDetectedSchemaZ, ProjectInspectSchemaZ, InspectFilesystemRequestSchemaZ, OnboardProjectRequestSchemaZ;
 var init_inspect = __esm({
   "packages/daemon/src/schemas/inspect.ts"() {
     "use strict";
-    ProjectInspectDetectedSchemaZ = z29.object({
+    ProjectInspectDetectedSchemaZ = z31.object({
       /** Detected package manager from lockfile, or `null`. */
-      packageManager: z29.enum(["pnpm", "npm", "yarn", "bun"]).nullable(),
+      packageManager: z31.enum(["pnpm", "npm", "yarn", "bun"]).nullable(),
       /** Detected frameworks (e.g. `["next", "convex"]`). Empty array when none. */
-      frameworks: z29.array(z29.string()),
+      frameworks: z31.array(z31.string()),
       /** Suggested dev command (e.g. `pnpm dev`). `null` if no dev script found. */
-      devCommand: z29.string().nullable(),
+      devCommand: z31.string().nullable(),
       /** Suggested test command (e.g. `pnpm test`). `null` if no test script found. */
-      testCommand: z29.string().nullable()
+      testCommand: z31.string().nullable()
     });
-    ProjectInspectSchemaZ = z29.object({
+    ProjectInspectSchemaZ = z31.object({
       /** Sanitized basename of the directory — safe to use as a tmux session name. */
-      name: z29.string(),
+      name: z31.string(),
       /** Absolute, canonical path to the directory. */
-      dir: z29.string(),
+      dir: z31.string(),
       /** Whether `<dir>/ide.yml` exists. Legacy compatibility fact. */
-      hasIdeYml: z29.boolean(),
+      hasIdeYml: z31.boolean(),
       /** Whether `.tmux-ide/workspace.yml` exists or wins discovery. */
-      hasWorkspaceConfig: z29.boolean().optional(),
+      hasWorkspaceConfig: z31.boolean().optional(),
       /** Generalized winning config kind. Added without replacing `hasIdeYml`. */
-      configKind: z29.enum(["workspace", "legacy", "none"]).optional(),
+      configKind: z31.enum(["workspace", "legacy", "none"]).optional(),
       /** Generalized winning config path. Added without replacing legacy path facts. */
-      configPath: z29.string().nullable().optional(),
+      configPath: z31.string().nullable().optional(),
       /** Legacy config path when an `ide.yml` is present. */
-      ideConfigPath: z29.string().nullable().optional(),
+      ideConfigPath: z31.string().nullable().optional(),
       /** Git remote origin URL, or `null` if not a git repo / no origin / probe failed. */
-      gitOrigin: z29.string().nullable(),
+      gitOrigin: z31.string().nullable(),
       /** Current git branch, or `null` if not a git repo / detached HEAD / probe failed. */
-      gitBranch: z29.string().nullable(),
+      gitBranch: z31.string().nullable(),
       /** Detected stack signals (reuses `tmux-ide detect` logic). */
       detected: ProjectInspectDetectedSchemaZ
     });
-    InspectFilesystemRequestSchemaZ = z29.object({
-      dir: z29.string().min(1)
+    InspectFilesystemRequestSchemaZ = z31.object({
+      dir: z31.string().min(1)
     });
-    OnboardProjectRequestSchemaZ = z29.object({
-      dir: z29.string().min(1),
+    OnboardProjectRequestSchemaZ = z31.object({
+      dir: z31.string().min(1),
       /** Optional override for the project name — defaults to inspect.name. */
-      name: z29.string().min(1).optional(),
+      name: z31.string().min(1).optional(),
       /** 1, 2, or 3 — how many Claude panes to scaffold in the top row. */
-      agents: z29.number().int().min(1).max(3),
+      agents: z31.number().int().min(1).max(3),
       /**
        * Optional per-agent pane titles. When provided, length must equal
        * `agents`; the server uses these as `title:` for the Claude panes
        * instead of the canonical `Lead`/`Teammate N`/`Claude N` defaults.
        */
-      agentNames: z29.array(z29.string().min(1)).optional(),
+      agentNames: z31.array(z31.string().min(1)).optional(),
       /** Dev server command (e.g. `pnpm dev`). Omit / null to skip the dev pane. */
-      devCommand: z29.string().min(1).nullable().optional(),
+      devCommand: z31.string().min(1).nullable().optional(),
       /** Test command (e.g. `pnpm test`). Currently informational; stored for later. */
-      testCommand: z29.string().min(1).nullable().optional(),
+      testCommand: z31.string().min(1).nullable().optional(),
       /** Lint command (e.g. `pnpm lint`). Currently informational; stored for later. */
-      lintCommand: z29.string().min(1).nullable().optional()
+      lintCommand: z31.string().min(1).nullable().optional()
     });
   }
 });
@@ -18074,7 +18329,7 @@ var init_daemon_embed = __esm({
 
 // packages/daemon/src/lib/cli-action-bridge.ts
 import { createRequire as createRequire3 } from "node:module";
-import { z as z30 } from "zod";
+import { z as z32 } from "zod";
 function timeoutSignal3(ms) {
   const controller = new AbortController();
   setTimeout(() => controller.abort(), ms).unref?.();
@@ -18173,7 +18428,7 @@ async function tryDispatchAction(name, input, options = {}) {
       details: failure.data.error.details
     });
   }
-  const success = z30.object({ ok: z30.literal(true), result: contract.result }).safeParse(body);
+  const success = z32.object({ ok: z32.literal(true), result: contract.result }).safeParse(body);
   if (!success.success) return null;
   return success.data.result;
 }
@@ -18184,12 +18439,12 @@ var init_cli_action_bridge = __esm({
     init_contract();
     init_canonical_daemon();
     init_daemon_embed();
-    FailureEnvelopeZ = z30.object({
-      ok: z30.literal(false),
-      error: z30.object({
-        code: z30.string(),
-        message: z30.string(),
-        details: z30.unknown().optional()
+    FailureEnvelopeZ = z32.object({
+      ok: z32.literal(false),
+      error: z32.object({
+        code: z32.string(),
+        message: z32.string(),
+        details: z32.unknown().optional()
       })
     });
     deps = {

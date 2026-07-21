@@ -2,6 +2,7 @@ import {
   chmodSync,
   closeSync,
   constants,
+  fchmodSync,
   fstatSync,
   linkSync,
   lstatSync,
@@ -54,6 +55,10 @@ type CanonicalDaemonClaimState =
 const activeClaims = new Set<string>();
 
 export type CanonicalDaemonInfoInvalidReason =
+  | "parent-symlink"
+  | "parent-not-directory"
+  | "parent-wrong-owner"
+  | "parent-unsafe-permissions"
   | "symlink"
   | "not-regular-file"
   | "oversized"
@@ -125,6 +130,75 @@ function sameObservation(
   );
 }
 
+function sameFileIdentity(left: Stats, right: Stats): boolean {
+  return left.dev === right.dev && left.ino === right.ino;
+}
+
+function canonicalDaemonRootError(detail: string): Error {
+  return new Error(`canonical daemon parent ${detail}`);
+}
+
+/**
+ * Create or harden the daemon record parent without ever path-chmodding an
+ * untrusted endpoint. The directory descriptor pins the object being changed;
+ * the final lstat proves the configured path still names that same object.
+ */
+function prepareCanonicalDaemonRoot(root: string): void {
+  let descriptor: number | undefined;
+  try {
+    try {
+      mkdirSync(root, { recursive: true, mode: 0o700 });
+    } catch (error) {
+      // Recursive mkdir reports EEXIST for a non-directory endpoint. Let the
+      // lstat below classify it deterministically instead of trusting it.
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+    }
+
+    const pathStat = lstatSync(root);
+    if (pathStat.isSymbolicLink()) {
+      throw canonicalDaemonRootError("must not be a symbolic link");
+    }
+    if (!pathStat.isDirectory()) {
+      throw canonicalDaemonRootError("must be a directory");
+    }
+    if (typeof process.getuid === "function" && pathStat.uid !== process.getuid()) {
+      throw canonicalDaemonRootError("must be owned by the current user");
+    }
+
+    descriptor = openSync(
+      root,
+      constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_DIRECTORY ?? 0),
+    );
+    const openedStat = fstatSync(descriptor);
+    if (
+      !openedStat.isDirectory() ||
+      !sameFileIdentity(pathStat, openedStat) ||
+      (typeof process.getuid === "function" && openedStat.uid !== process.getuid())
+    ) {
+      throw canonicalDaemonRootError("changed or became unsafe while it was opened");
+    }
+
+    fchmodSync(descriptor, 0o700);
+    const hardenedStat = fstatSync(descriptor);
+    const currentPathStat = lstatSync(root);
+    if (
+      !hardenedStat.isDirectory() ||
+      !sameFileIdentity(openedStat, hardenedStat) ||
+      (typeof process.getuid === "function" && hardenedStat.uid !== process.getuid()) ||
+      (hardenedStat.mode & 0o077) !== 0 ||
+      currentPathStat.isSymbolicLink() ||
+      !currentPathStat.isDirectory() ||
+      !sameFileIdentity(hardenedStat, currentPathStat) ||
+      (typeof process.getuid === "function" && currentPathStat.uid !== process.getuid()) ||
+      (currentPathStat.mode & 0o077) !== 0
+    ) {
+      throw canonicalDaemonRootError("changed or became unsafe while it was hardened");
+    }
+  } finally {
+    if (descriptor !== undefined) closeSync(descriptor);
+  }
+}
+
 function invalidState(
   reason: CanonicalDaemonInfoInvalidReason,
   detail: string,
@@ -145,6 +219,39 @@ function inspectCanonicalDaemonInfoPath(path: string): CanonicalDaemonInfoState 
   try {
     const pathStat = lstatSync(path);
     const pathObservation = observation(pathStat);
+    const parentStat = lstatSync(dirname(path));
+    if (parentStat.isSymbolicLink()) {
+      return invalidState(
+        "parent-symlink",
+        "daemon.json parent must not be a symbolic link",
+        null,
+        pathObservation,
+      );
+    }
+    if (!parentStat.isDirectory()) {
+      return invalidState(
+        "parent-not-directory",
+        "daemon.json parent must be a directory",
+        null,
+        pathObservation,
+      );
+    }
+    if (typeof process.getuid === "function" && parentStat.uid !== process.getuid()) {
+      return invalidState(
+        "parent-wrong-owner",
+        "daemon.json parent is not owned by the current user",
+        null,
+        pathObservation,
+      );
+    }
+    if ((parentStat.mode & 0o077) !== 0) {
+      return invalidState(
+        "parent-unsafe-permissions",
+        "daemon.json parent must be accessible only by its owner",
+        null,
+        pathObservation,
+      );
+    }
     if (pathStat.isSymbolicLink()) {
       return invalidState(
         "symlink",
@@ -184,11 +291,16 @@ function inspectCanonicalDaemonInfoPath(path: string): CanonicalDaemonInfoState 
     descriptor = openSync(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
     const openedStat = fstatSync(descriptor);
     const openedObservation = observation(openedStat);
+    const reopenedParentStat = lstatSync(dirname(path));
     if (
       !openedStat.isFile() ||
       !sameObservation(pathObservation, openedObservation) ||
+      !sameFileIdentity(parentStat, reopenedParentStat) ||
+      !reopenedParentStat.isDirectory() ||
       (typeof process.getuid === "function" && openedStat.uid !== process.getuid()) ||
-      (openedStat.mode & 0o077) !== 0
+      (openedStat.mode & 0o077) !== 0 ||
+      (typeof process.getuid === "function" && reopenedParentStat.uid !== process.getuid()) ||
+      (reopenedParentStat.mode & 0o077) !== 0
     ) {
       return invalidState(
         "changed-while-opening",
@@ -339,7 +451,15 @@ function retireCanonicalClaimIfMatches(expected: CanonicalDaemonClaim): boolean 
 export function tryAcquireCanonicalDaemonClaim(): CanonicalDaemonClaimAttempt {
   const path = getCanonicalDaemonClaimPath();
   const root = dirname(path);
-  mkdirSync(root, { recursive: true, mode: 0o700 });
+  try {
+    prepareCanonicalDaemonRoot(root);
+  } catch (error) {
+    return {
+      status: "invalid",
+      detail:
+        error instanceof Error ? error.message : "canonical daemon parent could not be prepared",
+    };
+  }
 
   for (let attempt = 0; attempt < 3; attempt += 1) {
     const claim: CanonicalDaemonClaim = {
@@ -404,7 +524,7 @@ export function writeCanonicalDaemonInfo(
 ): void {
   assertCanonicalDaemonClaimHeld(claim);
   const path = getCanonicalDaemonInfoPath();
-  mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+  prepareCanonicalDaemonRoot(dirname(path));
   const tmpPath = `${path}.${claim.claimId}.${randomUUID()}.tmp`;
   const persisted: CanonicalDaemonInfo = {
     pid: info.pid,

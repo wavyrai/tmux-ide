@@ -108,12 +108,15 @@ describe("desktop App host lifecycle", () => {
       appVersion: "test",
       theme: { mode: "light", highContrast: true, reducedMotion: false },
       window: initialWindow,
-      daemon: { status: "deferred", reason: "test boundary" },
+      daemon: { status: "unavailable", code: "preview-only", reason: "test boundary" },
     });
     await vi.waitFor(() => {
       expect(app.dataset.increasedContrast).toBe("true");
       expect(app.dataset.reducedMotion).toBe("false");
       expect(root.querySelector(".window-controls")).not.toBeNull();
+      expect(root.querySelector(".status-strip__connection")?.textContent).toContain(
+        "Daemon unavailable — test boundary",
+      );
     });
     expect(styles).toMatch(
       /\.window-controls button \{[\s\S]*?transition:\s*color var\(--tmux-ide-motion-fast\) linear,\s*background-color var\(--tmux-ide-motion-fast\) linear;/u,
