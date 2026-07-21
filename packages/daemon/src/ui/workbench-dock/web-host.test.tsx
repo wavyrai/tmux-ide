@@ -1,6 +1,12 @@
 /* @vitest-environment happy-dom */
 import { afterEach, describe, expect, it } from "vitest";
 import { render } from "solid-js/web";
+import { COHESION_FIXTURE_V1 } from "@tmux-ide/contracts";
+import {
+  DOM_EXPERIENCE_VARIABLE,
+  createDomExperience,
+  type DomExperienceInput,
+} from "../../../../../apps/desktop-renderer/src/experience/dom-experience.ts";
 import {
   createWorkbenchDockHostFixture,
   createWorkbenchDockHostTrace,
@@ -11,14 +17,35 @@ import { WebWorkbenchDock } from "./web-host.tsx";
 
 const disposers: Array<() => void> = [];
 
+function installCanonicalFixtureVariables(
+  root: HTMLElement,
+  overrides: DomExperienceInput = {},
+): ReturnType<typeof createDomExperience> {
+  const experience = createDomExperience({
+    userTheme: COHESION_FIXTURE_V1.theme.user,
+    projectTheme: COHESION_FIXTURE_V1.theme.project ?? undefined,
+    productAccessibility: COHESION_FIXTURE_V1.theme.accessibility,
+    ...overrides,
+  });
+  for (const [name, value] of Object.entries(experience.variables)) {
+    root.style.setProperty(name, value);
+  }
+  root.dataset.increasedContrast = String(experience.accessibility.increasedContrast);
+  return experience;
+}
+
 afterEach(() => {
   for (const dispose of disposers.splice(0)) dispose();
   document.body.replaceChildren();
 });
 
-function renderDock(projection = createWorkbenchDockHostFixture()) {
+function renderDock(
+  projection = createWorkbenchDockHostFixture(),
+  experienceOverrides: DomExperienceInput = {},
+) {
   const trace = createWorkbenchDockHostTrace();
   const root = document.createElement("div");
+  const experience = installCanonicalFixtureVariables(root, experienceOverrides);
   document.body.append(root);
   disposers.push(
     render(
@@ -34,7 +61,7 @@ function renderDock(projection = createWorkbenchDockHostFixture()) {
       root,
     ),
   );
-  return { root, trace };
+  return { experience, root, trace };
 }
 
 function tab(root: HTMLElement, id: string): HTMLButtonElement {
@@ -111,6 +138,52 @@ describe("shared WorkbenchDockPresenter DOM host", () => {
       "tab:activity",
       "tab:files",
     ]);
+  });
+
+  it("computes selected, focused, attention, and disabled styles from canonical variables", () => {
+    const { experience, root } = renderDock();
+    expect(document.styleSheets[0]?.cssRules.length).toBeGreaterThan(0);
+    const missions = tab(root, "missions");
+    const changes = tab(root, "changes");
+    const attention = tab(root, "activity").querySelector<HTMLElement>(
+      ".workbench-dock__attention",
+    )!;
+
+    expect(Array.from(root.style).sort()).toEqual(Object.keys(experience.variables).sort());
+    expect(getComputedStyle(missions).backgroundColor).toBe(
+      experience.variables[DOM_EXPERIENCE_VARIABLE.selection.selection],
+    );
+    expect(getComputedStyle(missions).outlineColor).toBe(
+      experience.variables[DOM_EXPERIENCE_VARIABLE.border.focused],
+    );
+    expect(getComputedStyle(attention).color).toBe(
+      experience.variables[DOM_EXPERIENCE_VARIABLE.border.attention],
+    );
+    expect(getComputedStyle(changes).backgroundColor).toBe(
+      experience.variables[DOM_EXPERIENCE_VARIABLE.control.disabledBackground],
+    );
+    expect(getComputedStyle(changes).color).toBe(
+      experience.variables[DOM_EXPERIENCE_VARIABLE.control.disabledForeground],
+    );
+    expect(
+      getComputedStyle(changes.querySelector<HTMLElement>(".workbench-dock__shortcut")!).color,
+    ).toBe("inherit");
+    expect(getComputedStyle(changes).opacity).toBe("1");
+  });
+
+  it("uses the opaque high-contrast disabled foreground without changing the base surface", () => {
+    const { experience, root } = renderDock(createWorkbenchDockHostFixture(), {
+      hostTheme: { mode: "dark", highContrast: true },
+    });
+    const changes = tab(root, "changes");
+
+    expect(getComputedStyle(changes).backgroundColor).toBe(
+      experience.variables[DOM_EXPERIENCE_VARIABLE.control.disabledBackground],
+    );
+    expect(getComputedStyle(changes).color).toBe(
+      experience.variables[DOM_EXPERIENCE_VARIABLE.control.disabledForegroundHighContrast],
+    );
+    expect(getComputedStyle(changes).opacity).toBe("1");
   });
 
   it("keeps every surface and dock control discoverable in a narrow collapsed layout", () => {

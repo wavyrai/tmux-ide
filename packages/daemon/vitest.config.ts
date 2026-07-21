@@ -16,6 +16,7 @@ export default defineConfig({
     alias: [{ find: /^ws$/, replacement: fileURLToPath(import.meta.resolve("ws")) }],
   },
   test: {
+    css: true,
     environment: "node",
     include: [
       "src/restore.test.ts",
