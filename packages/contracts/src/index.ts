@@ -38,3 +38,5 @@ export * from "./pane-appearance.ts";
 export * from "./focus-overlay.ts";
 export * from "./cohesion-fixture.ts";
 export * from "./daemon-wire.ts";
+export * from "./daemon-resources.ts";
+export * from "./daemon-events.ts";

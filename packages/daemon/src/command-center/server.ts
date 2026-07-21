@@ -33,7 +33,18 @@ import {
   WorkspaceAlreadyExistsError,
   WorkspaceNotFoundError,
 } from "../lib/workspace-registry.ts";
-import { AddWorkspaceRequestSchemaZ, DAEMON_WIRE_PROTOCOL_VERSION } from "@tmux-ide/contracts";
+import {
+  AddWorkspaceRequestSchemaZ,
+  DAEMON_WIRE_PROTOCOL_VERSION,
+  type DaemonPanesResponse,
+  type DaemonProjectResponse,
+  type DaemonProjectsResponse,
+  type DaemonProjectTemplatesResponse,
+  type DaemonRegisteredProjectResponse,
+  type DaemonSessionsResponse,
+  type DaemonWorkspaceResponse,
+  type DaemonWorkspacesResponse,
+} from "@tmux-ide/contracts";
 import { sendCommandSchema } from "./schemas.ts";
 import {
   createScriptTerminalId,
@@ -374,7 +385,7 @@ export function createApp(options: CreateAppOptions = {}): Hono {
   app.get("/api/sessions", (c) => {
     const sessions = discoverSessions();
     const overviews = buildOverviews(sessions);
-    return c.json({ sessions: overviews });
+    return c.json({ sessions: overviews } satisfies DaemonSessionsResponse);
   });
 
   // ---------------------------------------------------------------------
@@ -386,7 +397,7 @@ export function createApp(options: CreateAppOptions = {}): Hono {
 
   app.get("/api/workspaces", (c) => {
     const registry = getDefaultWorkspaceRegistry();
-    return c.json({ workspaces: registry.list() });
+    return c.json({ workspaces: registry.list() } satisfies DaemonWorkspacesResponse);
   });
 
   app.get("/api/workspaces/:name", (c) => {
@@ -394,7 +405,7 @@ export function createApp(options: CreateAppOptions = {}): Hono {
     const registry = getDefaultWorkspaceRegistry();
     const workspace = registry.get(name);
     if (!workspace) return c.json({ error: "Workspace not found" }, 404);
-    return c.json({ workspace });
+    return c.json({ workspace } satisfies DaemonWorkspaceResponse);
   });
 
   app.post("/api/workspaces", zValidator("json", AddWorkspaceRequestSchemaZ), async (c) => {
@@ -415,7 +426,7 @@ export function createApp(options: CreateAppOptions = {}): Hono {
         configPath: body.configPath ?? facts.configPath,
         hasWorkspaceConfig: body.hasWorkspaceConfig ?? facts.hasWorkspaceConfig,
       });
-      return c.json({ workspace }, 201);
+      return c.json({ workspace } satisfies DaemonWorkspaceResponse, 201);
     } catch (err) {
       if (err instanceof WorkspaceAlreadyExistsError) {
         return c.json({ error: err.message, code: err.code }, 409);
@@ -449,7 +460,7 @@ export function createApp(options: CreateAppOptions = {}): Hono {
       return c.json({ error: "Session not found" }, 404);
     }
     const detail = buildProjectDetail(session);
-    return c.json({ ...detail });
+    return c.json({ ...detail } satisfies DaemonProjectResponse);
   });
 
   app.get("/api/project/:name/panes", (c) => {
@@ -480,7 +491,7 @@ export function createApp(options: CreateAppOptions = {}): Hono {
         name: p.name,
         type: p.type,
       })),
-    });
+    } satisfies DaemonPanesResponse);
   });
 
   app.get("/api/project/:name/terminals", async (c) => {
@@ -995,11 +1006,11 @@ export function createApp(options: CreateAppOptions = {}): Hono {
   // --- Project registry ---
 
   app.get("/api/projects", (c) => {
-    return c.json({ projects: listProjects() });
+    return c.json({ projects: listProjects() } satisfies DaemonProjectsResponse);
   });
 
   app.get("/api/projects/templates", (c) => {
-    return c.json({ templates: listAvailableTemplates() });
+    return c.json({ templates: listAvailableTemplates() } satisfies DaemonProjectTemplatesResponse);
   });
 
   app.post("/api/projects", async (c) => {
@@ -1018,7 +1029,7 @@ export function createApp(options: CreateAppOptions = {}): Hono {
         dir: parsed.data.dir,
         name: parsed.data.name,
       });
-      return c.json({ project }, 201);
+      return c.json({ project } satisfies DaemonRegisteredProjectResponse, 201);
     } catch (err) {
       if (err instanceof ProjectDirNotFoundError) {
         return c.json({ error: err.message, code: err.code }, 400);
@@ -1050,7 +1061,7 @@ export function createApp(options: CreateAppOptions = {}): Hono {
     }
     try {
       const project = await refreshProject(name);
-      return c.json({ project });
+      return c.json({ project } satisfies DaemonRegisteredProjectResponse);
     } catch (err) {
       if (err instanceof ProjectNotFoundError) {
         return c.json({ error: err.message, code: err.code }, 404);
@@ -1187,7 +1198,7 @@ export function createApp(options: CreateAppOptions = {}): Hono {
     // Now register — this also broadcasts `projects.changed`.
     try {
       const project = await registerProject({ dir, name: finalName });
-      return c.json({ project }, 201);
+      return c.json({ project } satisfies DaemonRegisteredProjectResponse, 201);
     } catch (err) {
       if (err instanceof ProjectAlreadyRegisteredError) {
         return c.json({ error: err.message, code: err.code, suggestion: err.suggestion }, 409);
