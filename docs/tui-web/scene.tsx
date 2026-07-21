@@ -20,14 +20,8 @@ import {
 import { sidebarHit } from "@daemon/tui/mirror/agent-rows.ts";
 import { chipLabel } from "@daemon/tui/mirror/agent-chip.ts";
 import { STATUS_COLOR, STATUS_GLYPH } from "@daemon/tui/mirror/status-grammar.ts";
-import {
-  ACCENT,
-  DEFAULT_BG,
-  DEFAULT_FG,
-  MUTED,
-  SIDEBAR_BG,
-  TAB_ACTIVE_BG,
-} from "@daemon/tui/mirror/theme.ts";
+import { ACCENT, DEFAULT_BG, DEFAULT_FG, MUTED, TAB_ACTIVE_BG } from "@daemon/tui/mirror/theme.ts";
+import { DEMO_PANEL_BG, DEMO_THEME } from "./demo-theme.ts";
 import { CYCLE, SESSION, sceneAt, type ScenePane } from "./timeline.ts";
 
 // 32 cells: the footer hint (F1-4 tabs · F5 palette · ^q quit) needs 31 plus
@@ -58,7 +52,11 @@ function Pane(props: { pane: ScenePane; nowMs: number; focused: boolean }) {
 
   return (
     <box width={PANE_W} height={PANE_H} flexDirection="column" backgroundColor={DEFAULT_BG}>
-      <box flexDirection="row" gap={1} backgroundColor={props.focused ? TAB_ACTIVE_BG : SIDEBAR_BG}>
+      <box
+        flexDirection="row"
+        gap={1}
+        backgroundColor={props.focused ? TAB_ACTIVE_BG : DEMO_PANEL_BG}
+      >
         <text
           fg={STATUS_COLOR[props.pane.state]}
           attributes={props.pane.state === "blocked" ? 1 : 0}
@@ -130,6 +128,7 @@ export function Scene() {
     <box flexDirection="column" backgroundColor={DEFAULT_BG}>
       <box flexDirection="row" height={ROW_H}>
         <Sidebar
+          theme={DEMO_THEME}
           width={SIDEBAR_W}
           sessions={sessions()}
           agents={agents()}
@@ -160,7 +159,7 @@ export function Scene() {
         transitions. Full width, under everything, so it never collides with the
         sidebar's footer hint. */}
       <Show when={scene().events.length > 0}>
-        <box flexDirection="row" gap={1} paddingLeft={1} backgroundColor={SIDEBAR_BG}>
+        <box flexDirection="row" gap={1} paddingLeft={1} backgroundColor={DEMO_PANEL_BG}>
           <text fg={ACCENT}>$ tmux-ide events --follow</text>
           <text fg={MUTED}>{`· ${scene().events.slice(-1)[0]}`}</text>
         </box>

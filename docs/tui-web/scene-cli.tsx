@@ -20,15 +20,9 @@ import { For, createSignal, onCleanup } from "solid-js";
 import { Sidebar } from "@daemon/tui/mirror/sidebar.tsx";
 import type { AgentRowInput } from "@daemon/tui/mirror/agent-rows.ts";
 import type { AgentStatus } from "@daemon/tui/detect/classify.ts";
-import {
-  ACCENT,
-  DEFAULT_BG,
-  DEFAULT_FG,
-  MUTED,
-  SIDEBAR_BG,
-  TAB_ACTIVE_BG,
-} from "@daemon/tui/mirror/theme.ts";
+import { ACCENT, DEFAULT_BG, DEFAULT_FG, MUTED, TAB_ACTIVE_BG } from "@daemon/tui/mirror/theme.ts";
 import { STATUS_COLOR } from "@daemon/tui/mirror/status-grammar.ts";
+import { DEMO_PANEL_BG, DEMO_THEME } from "./demo-theme.ts";
 
 const SESSION = "checkout-api";
 const TERM_W = 84;
@@ -179,7 +173,7 @@ export function CliScene() {
               <box
                 flexDirection="row"
                 gap={1}
-                backgroundColor={done() >= i() ? TAB_ACTIVE_BG : SIDEBAR_BG}
+                backgroundColor={done() >= i() ? TAB_ACTIVE_BG : DEMO_PANEL_BG}
                 onMouse={(e) => {
                   if (e.type === "down") run(i());
                 }}
@@ -197,7 +191,7 @@ export function CliScene() {
             <text fg={MUTED} onMouse={(e) => e.type === "down" && reset()}>
               {"   [reset]"}
             </text>
-            <text fg={waiting() ? ACCENT : SIDEBAR_BG}>
+            <text fg={waiting() ? ACCENT : DEMO_PANEL_BG}>
               {waiting() ? `${SPIN[spin() % SPIN.length]} blocking…` : ""}
             </text>
           </box>
@@ -214,6 +208,7 @@ export function CliScene() {
 
       {/* The fleet, reacting. The app's own sidebar component. */}
       <Sidebar
+        theme={DEMO_THEME}
         width={SIDEBAR_W}
         sessions={[{ name: SESSION, status: claude() }]}
         agents={agents()}

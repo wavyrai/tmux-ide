@@ -20,14 +20,8 @@ import {
   type FileNode,
   type RawEntry,
 } from "@daemon/tui/mirror/file-tree.ts";
-import {
-  ACCENT,
-  DEFAULT_BG,
-  DEFAULT_FG,
-  MUTED,
-  SIDEBAR_BG,
-  TAB_ACTIVE_BG,
-} from "@daemon/tui/mirror/theme.ts";
+import { ACCENT, DEFAULT_BG, DEFAULT_FG, MUTED, TAB_ACTIVE_BG } from "@daemon/tui/mirror/theme.ts";
+import { DEMO_PANEL_BG } from "./demo-theme.ts";
 
 const TREE_W = 34;
 const VIEW_W = 62;
@@ -131,14 +125,14 @@ export function FilesScene() {
         <box flexDirection="row" gap={1}>
           <text
             fg={showHidden() ? ACCENT : MUTED}
-            bg={SIDEBAR_BG}
+            bg={DEMO_PANEL_BG}
             onMouse={(e) => e.type === "down" && setShowHidden((v) => !v)}
           >
             {` H hidden ${showHidden() ? "on " : "off"} `}
           </text>
           <text
             fg={showIgnored() ? ACCENT : MUTED}
-            bg={SIDEBAR_BG}
+            bg={DEMO_PANEL_BG}
             onMouse={(e) => e.type === "down" && setShowIgnored((v) => !v)}
           >
             {` I ignored ${showIgnored() ? "on " : "off"} `}
@@ -174,7 +168,7 @@ export function FilesScene() {
           <For each={lines().slice(0, ROWS - 3)}>
             {(line, i) => (
               <box flexDirection="row" gap={1}>
-                <text fg={SIDEBAR_BG}>{String(i() + 1).padStart(3, " ")}</text>
+                <text fg={DEMO_PANEL_BG}>{String(i() + 1).padStart(3, " ")}</text>
                 <text fg={line.trim().startsWith("#") ? MUTED : DEFAULT_FG}>
                   {line.slice(0, VIEW_W - 8)}
                 </text>
