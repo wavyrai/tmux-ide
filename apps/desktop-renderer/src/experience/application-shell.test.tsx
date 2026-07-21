@@ -233,6 +233,23 @@ describe("visible DOM application shell", () => {
     expect(root.querySelector(".palette-trigger kbd")?.textContent).toBe("Ctrl K");
   });
 
+  it("keeps compact session identity and connection state accessible at 720px", () => {
+    vi.spyOn(window, "innerWidth", "get").mockReturnValue(720);
+    vi.spyOn(window, "innerHeight", "get").mockReturnValue(480);
+    const root = renderShell();
+
+    expect(root.querySelector(".workbench-dock")?.getAttribute("data-variant")).toBe("compact");
+    expect(
+      root.querySelector("#sidebar-session-session\\.product")?.getAttribute("aria-label"),
+    ).toBe("Product, reconnecting, selected");
+    expect(root.querySelector("#sidebar-session-session\\.docs")?.getAttribute("aria-label")).toBe(
+      "Documentation, connected",
+    );
+    expect(styles).toMatch(
+      /@media \(max-width: 999px\)[\s\S]*?\.sidebar-row span,[\s\S]*?display: none;/u,
+    );
+  });
+
   it("applies state tones to explicit indicators without recoloring their parent surfaces", () => {
     const root = renderShell();
     const experience = installApplicationStyles(root);
@@ -240,6 +257,8 @@ describe("visible DOM application shell", () => {
     const connectionIndicator = connection.querySelector<HTMLElement>("i")!;
     const runningPane = root.querySelector<HTMLElement>('.agent-pane[data-state="running"]')!;
     const runningIndicator = runningPane.querySelector<HTMLElement>("header i")!;
+    const recoveryPane = root.querySelector<HTMLElement>('.agent-pane[data-state="recovery"]')!;
+    const recoveryIndicator = recoveryPane.querySelector<HTMLElement>("header i")!;
 
     expect(getComputedStyle(connectionIndicator).backgroundColor).toBe(
       experience.variables[DOM_EXPERIENCE_VARIABLE.status.warning],
@@ -252,6 +271,18 @@ describe("visible DOM application shell", () => {
     );
     expect(getComputedStyle(runningPane).backgroundColor).toBe(
       experience.variables[DOM_EXPERIENCE_VARIABLE.surface.terminal],
+    );
+    expect(getComputedStyle(runningPane).borderColor).toBe(
+      experience.variables[DOM_EXPERIENCE_VARIABLE.border.default],
+    );
+    expect(getComputedStyle(recoveryIndicator).backgroundColor).toBe(
+      experience.variables[DOM_EXPERIENCE_VARIABLE.status.warning],
+    );
+    expect(getComputedStyle(recoveryPane).backgroundColor).toBe(
+      experience.variables[DOM_EXPERIENCE_VARIABLE.surface.terminal],
+    );
+    expect(getComputedStyle(recoveryPane).borderColor).toBe(
+      experience.variables[DOM_EXPERIENCE_VARIABLE.border.default],
     );
   });
 
@@ -343,6 +374,41 @@ describe("visible DOM application shell", () => {
       args: { mode: "home" },
       source: { kind: "keyboard", surface: "application-shell" },
     });
+  });
+
+  it("preserves keyboard and real-pointer provenance from the palette trigger", () => {
+    const invocations: ApplicationShellCommandInvocation[] = [];
+    const root = renderShell(createDefaultDomShellInput(), (invocation) =>
+      invocations.push(invocation),
+    );
+    const trigger = root.querySelector<HTMLButtonElement>("#application-command-palette-trigger")!;
+
+    trigger.click();
+    expect(invocations.slice(0, 2).map(({ id, source }) => ({ id, source }))).toEqual([
+      {
+        id: APPLICATION_SHELL_COMMAND_IDS.moveFocus,
+        source: { kind: "keyboard", surface: "application-bar" },
+      },
+      {
+        id: APPLICATION_SHELL_COMMAND_IDS.openPalette,
+        source: { kind: "keyboard", surface: "application-bar" },
+      },
+    ]);
+
+    root
+      .querySelector<HTMLInputElement>('[role="combobox"]')!
+      .dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    pointerClick(trigger);
+    expect(invocations.slice(-2).map(({ id, source }) => ({ id, source }))).toEqual([
+      {
+        id: APPLICATION_SHELL_COMMAND_IDS.moveFocus,
+        source: { kind: "mouse", surface: "application-bar" },
+      },
+      {
+        id: APPLICATION_SHELL_COMMAND_IDS.openPalette,
+        source: { kind: "mouse", surface: "application-bar" },
+      },
+    ]);
   });
 
   it("marks fallback data as preview-only and never claims fixture recovery is live", () => {

@@ -368,7 +368,12 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
           aria-label="Open command palette"
           id="application-command-palette-trigger"
           title="Open command palette (Cmd/Ctrl-K)"
-          onClick={() => openPalette({ kind: "mouse", surface: "application-bar" })}
+          onClick={(event) =>
+            openPalette({
+              kind: event.detail === 0 ? "keyboard" : "mouse",
+              surface: "application-bar",
+            })
+          }
         >
           <DomIcon id="command" usage="action" />
           <kbd>{props.platform === "darwin" ? "⌘K" : "Ctrl K"}</kbd>
@@ -413,37 +418,36 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
           <section aria-labelledby="sessions-heading">
             <h2 id="sessions-heading">Sessions</h2>
             <Index each={shell().sidebar.sessions}>
-              {(session) => (
-                <button
-                  id={`sidebar-session-${session().id}`}
-                  type="button"
-                  class="sidebar-row"
-                  classList={{
-                    "sidebar-row--active":
-                      (shell().sidebar.selectedResourceId ?? shell().sidebar.activeSessionId) ===
-                      session().id,
-                  }}
-                  aria-pressed={
-                    (shell().sidebar.selectedResourceId ?? shell().sidebar.activeSessionId) ===
-                    session().id
-                  }
-                  onClick={(event) =>
-                    dispatch(
-                      applicationShellCommandInvocation(
-                        APPLICATION_SHELL_COMMAND_IDS.selectResource,
-                        { surface: "terminals", resourceId: session().id },
-                        {
-                          kind: event.detail === 0 ? "keyboard" : "mouse",
-                          surface: "sidebar",
-                        },
-                      ),
-                    )
-                  }
-                >
-                  <i data-state={session().state} />
-                  <span>{session().label}</span>
-                </button>
-              )}
+              {(session) => {
+                const selected = () =>
+                  (shell().sidebar.selectedResourceId ?? shell().sidebar.activeSessionId) ===
+                  session().id;
+                return (
+                  <button
+                    id={`sidebar-session-${session().id}`}
+                    type="button"
+                    class="sidebar-row"
+                    classList={{ "sidebar-row--active": selected() }}
+                    aria-label={`${session().label}, ${session().state}${selected() ? ", selected" : ""}`}
+                    aria-pressed={selected()}
+                    onClick={(event) =>
+                      dispatch(
+                        applicationShellCommandInvocation(
+                          APPLICATION_SHELL_COMMAND_IDS.selectResource,
+                          { surface: "terminals", resourceId: session().id },
+                          {
+                            kind: event.detail === 0 ? "keyboard" : "mouse",
+                            surface: "sidebar",
+                          },
+                        ),
+                      )
+                    }
+                  >
+                    <i data-state={session().state} />
+                    <span>{session().label}</span>
+                  </button>
+                );
+              }}
             </Index>
           </section>
           <section aria-labelledby="agents-heading">

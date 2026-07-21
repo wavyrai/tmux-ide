@@ -525,10 +525,6 @@ kbd {
   background: var(--tmux-ide-surface-terminal);
 }
 
-.agent-pane[data-state="running"] {
-  border-color: var(--tmux-ide-border-focused) !important;
-}
-
 .agent-pane > header,
 .agent-pane > footer {
   display: flex;
