@@ -41,18 +41,19 @@ describe("experience shell", () => {
 
   it("converges direct, keyboard, and deep-link opening on semantic commands", () => {
     expect(commandsToOpenSurface({ surface: "terminals" })).toEqual([
-      { id: "workspace.mode.activate", args: { mode: "terminals" } },
+      { id: "application.shell.mode.activate", args: { mode: "terminals" } },
     ]);
     expect(commandsToOpenSurface({ surface: "missions", resourceId: "mission.m31" })).toEqual([
-      { id: "workspace.mode.activate", args: { mode: "terminals" } },
-      { id: "workspace.dock.mode.set", args: { mode: "open" } },
-      { id: "workspace.dock.activate", args: { tool: "missions" } },
+      { id: "application.shell.mode.activate", args: { mode: "terminals" } },
+      { id: "application.shell.dock.mode.set", args: { mode: "open" } },
+      { id: "application.shell.dock.activate", args: { tool: "missions" } },
       {
-        id: "workspace.resource.select",
+        id: "application.shell.resource.select",
         args: { surface: "missions", resourceId: "mission.m31" },
       },
     ]);
     expect(canonicalSurface("files").area).toBe("bottom-dock");
+    expect(Object.isFrozen(commandsToOpenSurface({ surface: "missions" }))).toBe(true);
   });
 
   it("keeps flat and elevated presentation intent explicit", () => {

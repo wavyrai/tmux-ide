@@ -1,5 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
-import { COMMAND_PROTOCOL_VERSION, type CommandInvocation } from "@tmux-ide/contracts";
+import {
+  APPLICATION_SHELL_COMMAND_DEFINITIONS,
+  APPLICATION_SHELL_COMMAND_IDS,
+  COMMAND_PROTOCOL_VERSION,
+  applicationShellCommandInvocation,
+  type CommandInvocation,
+} from "@tmux-ide/contracts";
 import { z } from "zod";
 import { CommandRegistry } from "../../lib/command-registry.ts";
 import {
@@ -75,6 +81,57 @@ describe("renderer command boundary", () => {
       id: "workspace.view.activate",
       args: { viewId: "my-view" },
     });
+  });
+
+  it("composes the live renderer and canonical shell catalogs without id or input collisions", () => {
+    const rendererIds = new Set(
+      RENDERER_COMMAND_DEFINITIONS.map(({ descriptor }) => descriptor.id),
+    );
+    const shellIds = APPLICATION_SHELL_COMMAND_DEFINITIONS.map(({ descriptor }) => descriptor.id);
+    expect(shellIds.filter((id) => rendererIds.has(id))).toEqual([]);
+
+    const registry = new CommandRegistry<RendererCommandContext>([
+      ...RENDERER_COMMAND_DEFINITIONS,
+      ...APPLICATION_SHELL_COMMAND_DEFINITIONS,
+    ]);
+    expect(registry.descriptors()).toHaveLength(
+      RENDERER_COMMAND_DEFINITIONS.length + APPLICATION_SHELL_COMMAND_DEFINITIONS.length,
+    );
+
+    const source = { kind: "program", surface: "compatibility-test" } as const;
+    expect(
+      registry.resolve(
+        rendererCommandInvocation(RENDERER_COMMAND_IDS.openPalette, {}, source),
+        available,
+      ),
+    ).toMatchObject({ ok: true, command: { input: {} } });
+    expect(
+      registry.resolve(
+        rendererCommandInvocation(RENDERER_COMMAND_IDS.activateDock, { tab: "missions" }, source),
+        available,
+      ),
+    ).toMatchObject({ ok: true, command: { input: { tab: "missions" } } });
+    expect(
+      registry.resolve(
+        applicationShellCommandInvocation(
+          APPLICATION_SHELL_COMMAND_IDS.activateDockTool,
+          { tool: "missions" },
+          source,
+        ),
+        available,
+      ),
+    ).toMatchObject({ ok: true, command: { input: { tool: "missions" } } });
+    expect(
+      registry.resolve(
+        {
+          version: COMMAND_PROTOCOL_VERSION,
+          id: APPLICATION_SHELL_COMMAND_IDS.activateDockTool,
+          source,
+          args: { tab: "missions" },
+        },
+        available,
+      ),
+    ).toMatchObject({ ok: false, error: { code: "invalid-input" } });
   });
 
   it("executes every converted effect through one injected seam", () => {

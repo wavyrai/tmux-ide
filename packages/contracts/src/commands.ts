@@ -114,15 +114,15 @@ export type CommandResolutionError = z.infer<typeof CommandResolutionErrorSchema
  * Stable semantic shell commands consumed by both OpenTUI and DOM hosts.
  * Host input events translate to these IDs; effects remain in the host root.
  */
-export const APPLICATION_SHELL_COMMAND_IDS = {
-  activateMode: "workspace.mode.activate",
-  activateDockTool: "workspace.dock.activate",
-  setDockMode: "workspace.dock.mode.set",
-  moveFocus: "workspace.focus.move",
-  openPalette: "app.palette.open",
-  closePalette: "app.palette.close",
-  selectResource: "workspace.resource.select",
-} as const satisfies Readonly<Record<string, CommandId>>;
+export const APPLICATION_SHELL_COMMAND_IDS = Object.freeze({
+  activateMode: "application.shell.mode.activate",
+  activateDockTool: "application.shell.dock.activate",
+  setDockMode: "application.shell.dock.mode.set",
+  moveFocus: "application.shell.focus.move",
+  openPalette: "application.shell.palette.open",
+  closePalette: "application.shell.palette.close",
+  selectResource: "application.shell.resource.select",
+} as const satisfies Readonly<Record<string, CommandId>>);
 
 export type ApplicationShellCommandId =
   (typeof APPLICATION_SHELL_COMMAND_IDS)[keyof typeof APPLICATION_SHELL_COMMAND_IDS];

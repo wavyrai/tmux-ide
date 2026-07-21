@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  APPLICATION_SHELL_COMMAND_IDS,
   COMMAND_PROTOCOL_VERSION,
   CommandAvailabilitySchemaZ,
   CommandDescriptorSchemaZ,
@@ -75,5 +76,11 @@ describe("command protocol", () => {
     for (const id of WORKSPACE_WINDOW_MODE_COMMAND_IDS) {
       expect(CommandDescriptorSchemaZ.safeParse({ ...descriptor, id }).success).toBe(true);
     }
+  });
+
+  it("keeps application-shell ids immutable and isolated from live renderer ids", () => {
+    expect(Object.isFrozen(APPLICATION_SHELL_COMMAND_IDS)).toBe(true);
+    expect(Object.values(APPLICATION_SHELL_COMMAND_IDS)).not.toContain("app.palette.open");
+    expect(Object.values(APPLICATION_SHELL_COMMAND_IDS)).not.toContain("workspace.dock.activate");
   });
 });
