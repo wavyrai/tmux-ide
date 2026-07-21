@@ -101,6 +101,7 @@ import { homedir } from "node:os";
 import { isAbsolute, resolve as pathResolve } from "node:path";
 import { randomUUID } from "node:crypto";
 import { WebSocketServer } from "ws";
+import { projectApplicationShellResource } from "./resources/application-shell.ts";
 export interface CreateAppOptions {
   authService?: AuthService;
   authConfig?: AuthConfig;
@@ -461,6 +462,13 @@ export function createApp(options: CreateAppOptions = {}): Hono {
     }
     const detail = buildProjectDetail(session);
     return c.json({ ...detail } satisfies DaemonProjectResponse);
+  });
+
+  app.get("/api/project/:name/application-shell", (c) => {
+    const name = c.req.param("name");
+    const session = discoverSessions().find((candidate) => candidate.name === name);
+    if (!session) return c.json({ error: "Session not found" }, 404);
+    return c.json(projectApplicationShellResource(session));
   });
 
   app.get("/api/project/:name/panes", (c) => {

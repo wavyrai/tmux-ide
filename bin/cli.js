@@ -411,10 +411,10 @@ var init_workspace_state = __esm({
       focusedPaneId: WorkspaceIdSchemaZ.nullable(),
       workbench: WorkspaceWorkbenchStateSchemaZ
     }).strict().superRefine((observation2, ctx) => {
-      const semanticPaneIds = /* @__PURE__ */ new Set();
+      const semanticPaneIds2 = /* @__PURE__ */ new Set();
       const runtimePaneIds = /* @__PURE__ */ new Set();
       for (const [index, pane] of observation2.panes.entries()) {
-        if (semanticPaneIds.has(pane.semanticPaneId)) {
+        if (semanticPaneIds2.has(pane.semanticPaneId)) {
           ctx.addIssue({
             code: z3.ZodIssueCode.custom,
             message: "observed semantic pane ids must be unique",
@@ -428,7 +428,7 @@ var init_workspace_state = __esm({
             path: ["panes", index, "runtimePaneId"]
           });
         }
-        semanticPaneIds.add(pane.semanticPaneId);
+        semanticPaneIds2.add(pane.semanticPaneId);
         runtimePaneIds.add(pane.runtimePaneId);
       }
     });
@@ -636,14 +636,14 @@ var init_ide_config = __esm({
 
 // packages/contracts/src/domain.ts
 import { z as z5 } from "zod";
-function checkUnique(values2, path2, label, ctx) {
+function checkUnique(values2, path2, label2, ctx) {
   const seen = /* @__PURE__ */ new Set();
   for (const value of values2) {
     if (seen.has(value)) {
       ctx.addIssue({
         code: "custom",
         path: path2,
-        message: `duplicate ${label} are not allowed`
+        message: `duplicate ${label2} are not allowed`
       });
       return;
     }
@@ -2177,8 +2177,8 @@ async function createScriptTerminalId(args) {
   }
   const key = `${args.projectId}::${scope}::${args.kind}::${args.script}`;
   const data = new TextEncoder().encode(key);
-  const digest = await crypto.subtle.digest("SHA-256", data);
-  return Array.from(new Uint8Array(digest)).map((b) => b.toString(16).padStart(2, "0")).join("").slice(0, 32);
+  const digest2 = await crypto.subtle.digest("SHA-256", data);
+  return Array.from(new Uint8Array(digest2)).map((b) => b.toString(16).padStart(2, "0")).join("").slice(0, 32);
 }
 var terminalKindSchema, terminalCreateRequestSchema, terminalRenameRequestSchema;
 var init_terminals = __esm({
@@ -3768,6 +3768,85 @@ function deepFreeze2(value) {
   for (const child of Object.values(value)) deepFreeze2(child);
   return Object.freeze(value);
 }
+function cloneFocusTarget(target) {
+  return { ...target };
+}
+function cloneOverlay(overlay) {
+  return { ...overlay, focusReturnTarget: cloneFocusTarget(overlay.focusReturnTarget) };
+}
+function paletteOverlay(focus) {
+  for (let index = focus.overlays.length - 1; index >= 0; index -= 1) {
+    const overlay = focus.overlays[index];
+    if (overlay.kind === "command-palette") return overlay;
+  }
+  return null;
+}
+function projectedSurface(definition, input) {
+  const dockState = definition.kind === "dock-tool" ? input.dock.tools.find((tool) => tool.id === definition.id) : void 0;
+  return {
+    ...definition,
+    activation: SurfaceCommandTemplateSchemaZ.parse(definition.activation),
+    active: definition.kind === "primary-mode" ? definition.id === input.workspace.activeMode : definition.id === input.dock.activeTool,
+    attention: dockState !== void 0 && dockState.unreadCount > 0,
+    disabledReason: dockState?.disabledReason ?? null
+  };
+}
+function projectApplicationShellV1(input) {
+  const parsed = ApplicationShellProjectionInputV1SchemaZ.parse({
+    project: input.project,
+    workspace: input.workspace,
+    dock: input.dock,
+    focus: input.focus,
+    connection: input.connection
+  });
+  const surfaces = CANONICAL_SURFACE_REGISTRY.map((surface) => projectedSurface(surface, parsed));
+  const palette = paletteOverlay(parsed.focus);
+  return deepFreeze2(
+    ApplicationShellProjectionV1SchemaZ.parse({
+      version: APPLICATION_SHELL_PROJECTION_VERSION,
+      project: {
+        id: parsed.project.id,
+        name: parsed.project.name,
+        rootLabel: parsed.project.rootLabel,
+        readiness: {
+          ...parsed.project.readiness,
+          facts: [...parsed.project.readiness.facts],
+          warnings: [...parsed.project.readiness.warnings]
+        }
+      },
+      workspace: { id: parsed.workspace.id, name: parsed.workspace.name },
+      sidebar: {
+        activeSessionId: parsed.workspace.session.id,
+        sessions: parsed.workspace.sidebar.sessions.map((session) => ({ ...session })),
+        agents: parsed.workspace.sidebar.agents.map((agent) => ({ ...agent }))
+      },
+      primaryNavigation: {
+        activeMode: parsed.workspace.activeMode,
+        items: surfaces.filter((surface) => surface.kind === "primary-mode")
+      },
+      workspaceCanvas: { activeMode: parsed.workspace.activeMode },
+      bottomDock: {
+        mode: ApplicationShellDockModeSchemaZ.parse(parsed.dock.mode),
+        activeTool: parsed.dock.activeTool,
+        tools: surfaces.filter((surface) => surface.kind === "dock-tool")
+      },
+      statusStrip: { ...parsed.connection },
+      focus: {
+        windowActivity: parsed.focus.windowActivity,
+        zone: parsed.focus.focusZone,
+        appFocusedPaneId: parsed.focus.appFocusedPaneId,
+        terminalInputPaneId: parsed.focus.terminalInputPaneId,
+        layoutSelectedPaneId: parsed.focus.layoutSelectedPaneId,
+        overlays: parsed.focus.overlays.map(cloneOverlay),
+        palette: {
+          open: palette !== null,
+          overlayId: palette?.id ?? null,
+          focusReturnTarget: palette ? cloneFocusTarget(palette.focusReturnTarget) : null
+        }
+      }
+    })
+  );
+}
 function applyFocusTarget(focus, target) {
   if (target.kind === "pane") {
     return {
@@ -3994,12 +4073,12 @@ var init_application_shell = __esm({
         args: ApplicationShellSelectResourceArgumentsSchemaZ
       }).strict()
     ]);
-    descriptor = (id, label, category) => deepFreeze2(
+    descriptor = (id, label2, category) => deepFreeze2(
       CommandDescriptorSchemaZ.parse({
         version: COMMAND_PROTOCOL_VERSION,
         id,
         owner: "renderer",
-        label,
+        label: label2,
         category,
         schemas: { input: `${id}.input.v1` },
         dangerous: false,
@@ -4375,8 +4454,8 @@ function markedProjectRoot(inputDir, io) {
 }
 function projectIdentityKey(source, anchor) {
   const prefix = source === "git-common-dir" ? "git" : "path";
-  const digest = createHash("sha256").update(source).update("\0").update(anchor).digest("hex");
-  return `${prefix}-${digest}`;
+  const digest2 = createHash("sha256").update(source).update("\0").update(anchor).digest("hex");
+  return `${prefix}-${digest2}`;
 }
 async function resolveProject(dir, options = {}) {
   const io = { ...defaultProjectResolverIo, ...options.io };
@@ -5882,9 +5961,9 @@ function semanticPaneIdForPane(pane) {
       ([left], [right]) => left < right ? -1 : left > right ? 1 : 0
     )
   });
-  const digest = createHash2("sha256").update(metadata).digest("hex").slice(0, 16);
-  const label = paneIdentityLabel(pane);
-  return `pane-${label}-${digest}`;
+  const digest2 = createHash2("sha256").update(metadata).digest("hex").slice(0, 16);
+  const label2 = paneIdentityLabel(pane);
+  return `pane-${label2}-${digest2}`;
 }
 function paneIdentityOptions(action) {
   return [
@@ -5902,7 +5981,7 @@ function collectPaneStartupPlan(rows, paneMap, firstPanesOfRows, dir) {
   let focusPane = paneMap[0][0];
   const paneActions2 = [];
   const diagnostics = [];
-  const paneIdentities = assignPaneIdentities(rows, diagnostics);
+  const paneIdentities2 = assignPaneIdentities(rows, diagnostics);
   for (let rowIdx = 0; rowIdx < rows.length; rowIdx++) {
     const row = rows[rowIdx];
     const panes = row.panes ?? [];
@@ -5929,7 +6008,7 @@ function collectPaneStartupPlan(rows, paneMap, firstPanesOfRows, dir) {
       }
       const action = {
         targetPane: tmuxPane,
-        semanticPaneId: paneIdentities[rowIdx][paneIdx],
+        semanticPaneId: paneIdentities2[rowIdx][paneIdx],
         title: pane.title ?? null,
         chdir: null,
         exports: [],
@@ -11100,10 +11179,10 @@ function buildStatusline(projects, active2, maxItems = 12, theme = DEFAULT_THEME
     const isActive = active2 !== null && (project.name === active2 || project.sessions.some((s) => s.name === active2));
     const glyph = project.running ? `${statusStyle(project.status, theme)}${statusGlyph(project.status, theme)}#[default]` : `#[fg=${theme.muted}]${theme.glyphs.inactive}#[default]`;
     const name = isActive ? `#[fg=colour231,bold,underscore]${project.name}#[default]` : project.running ? `#[fg=${theme.fg}]${project.name}#[default]` : `#[fg=${theme.muted}]${project.name}#[default]`;
-    const label = `${glyph} ${name}`;
+    const label2 = `${glyph} ${name}`;
     const session = project.sessions[0]?.name;
     segments.push(
-      project.running && session ? `#[range=user|sw${session}]${label}#[norange]` : label
+      project.running && session ? `#[range=user|sw${session}]${label2}#[norange]` : label2
     );
   }
   if (visible.length > maxItems) {
@@ -13767,6 +13846,20 @@ function tmuxSilent(args) {
     return "";
   }
 }
+function semanticPaneIds(session) {
+  const raw = tmuxSilent(["list-panes", "-t", session, "-F", "#{pane_id}	#{@tmux_ide_pane_id}"]);
+  const result = /* @__PURE__ */ new Map();
+  if (!raw) return result;
+  for (const line of raw.split("\n")) {
+    const separator = line.indexOf("	");
+    if (separator < 0) continue;
+    const runtimePaneId = line.slice(0, separator);
+    const semanticPaneId = line.slice(separator + 1);
+    if (!/^%[0-9]+$/u.test(runtimePaneId) || semanticPaneId.length === 0) continue;
+    result.set(runtimePaneId, semanticPaneId);
+  }
+  return result;
+}
 function listTmuxSessions() {
   const raw = tmuxSilent(["list-sessions", "-F", "#{session_name}"]);
   if (!raw) return [];
@@ -13786,7 +13879,11 @@ function discoverSessions() {
     if (!dir) continue;
     let panes = [];
     try {
-      panes = listSessionPanes(name);
+      const semanticIds = semanticPaneIds(name);
+      panes = listSessionPanes(name).map((pane) => ({
+        ...pane,
+        semanticPaneId: semanticIds.get(pane.id) ?? null
+      }));
     } catch {
     }
     results.push({ name, dir, panes });
@@ -13800,7 +13897,10 @@ function buildProjectDetail(info) {
   return {
     session: info.name,
     dir: info.dir,
-    panes: info.panes
+    // Keep the historical project-detail response stable. The semantic stamp
+    // is consumed by typed resources such as application-shell, not leaked by
+    // adding an incidental field to this older endpoint.
+    panes: info.panes.map(({ semanticPaneId: _semanticPaneId, ...pane }) => pane)
   };
 }
 var _tmuxRunner;
@@ -14306,8 +14406,8 @@ function deliverMessage(opts) {
   const pane = resolvePane(panes, target);
   if (!pane) {
     const available = panes.map((p) => {
-      const label = p.name ?? p.title;
-      return `  ${p.id}  ${label}${p.role ? ` (${p.role})` : ""}`;
+      const label2 = p.name ?? p.title;
+      return `  ${p.id}  ${label2}${p.role ? ` (${p.role})` : ""}`;
     }).join("\n");
     throw new IdeError(`Pane "${target}" not found.
 
@@ -14366,9 +14466,9 @@ async function send(targetDir, opts) {
     console.log(JSON.stringify(result, null, 2));
     return;
   }
-  const label = pane.name ?? pane.title;
+  const label2 = pane.name ?? pane.title;
   const preview = message.length > 60 ? message.slice(0, 60) + "..." : message;
-  console.log(`Sent to "${label}" (${pane.paneId}): ${preview}`);
+  console.log(`Sent to "${label2}" (${pane.paneId}): ${preview}`);
   if (busyStatus === "agent") {
     console.log("Warning: agent appears busy. Message sent anyway.");
   }
@@ -15990,6 +16090,219 @@ var init_project_onboard = __esm({
   }
 });
 
+// packages/daemon/src/command-center/resources/application-shell.ts
+import { createHash as createHash5 } from "node:crypto";
+import { basename as basename8 } from "node:path";
+function digest(value) {
+  return createHash5("sha256").update(value).digest("hex").slice(0, 20);
+}
+function semanticId(namespace, value) {
+  return `${namespace}.${digest(value)}`;
+}
+function label(value, fallback) {
+  const withoutControls = Array.from(value ?? "", (character) => {
+    const codePoint = character.codePointAt(0);
+    return codePoint <= 31 || codePoint >= 127 && codePoint <= 159 ? " " : character;
+  }).join("");
+  const normalized = withoutControls.replace(/\s+/gu, " ").trim().slice(0, 160);
+  return normalized || fallback;
+}
+function fallbackPaneId(pane) {
+  return semanticId(
+    "pane.discovered",
+    JSON.stringify({
+      index: pane.index,
+      title: pane.title,
+      command: pane.currentCommand,
+      role: pane.role,
+      name: pane.name,
+      type: pane.type
+    })
+  );
+}
+function paneIdentities(panes) {
+  const validCounts = /* @__PURE__ */ new Map();
+  for (const pane of panes) {
+    if (!SemanticProductIdSchemaZ.safeParse(pane.semanticPaneId).success) continue;
+    validCounts.set(pane.semanticPaneId, (validCounts.get(pane.semanticPaneId) ?? 0) + 1);
+  }
+  const claimed = /* @__PURE__ */ new Set();
+  return panes.map((pane) => {
+    const stamped = pane.semanticPaneId;
+    if (stamped !== null && SemanticProductIdSchemaZ.safeParse(stamped).success && validCounts.get(stamped) === 1 && !claimed.has(stamped)) {
+      claimed.add(stamped);
+      return stamped;
+    }
+    const base = fallbackPaneId(pane);
+    let candidate = base;
+    let suffix = 1;
+    while (claimed.has(candidate)) candidate = `${base}.${suffix++}`;
+    claimed.add(candidate);
+    return candidate;
+  });
+}
+function harnessForPane(pane) {
+  const executable = `${pane.currentCommand} ${pane.type ?? ""} ${pane.name ?? ""}`.toLowerCase();
+  if (executable.includes("codex")) return "codex";
+  if (executable.includes("claude")) return "claude-code";
+  return "custom";
+}
+function isAgentPane(pane) {
+  const metadata = `${pane.currentCommand} ${pane.type ?? ""}`.toLowerCase();
+  return metadata.includes("codex") || metadata.includes("claude") || metadata.includes("opencode") || pane.type === "agent" || pane.role === "lead" || pane.role === "teammate" || pane.role === "planner" || pane.role === "validator" || pane.role === "researcher";
+}
+function agentActivity(pane) {
+  return /^(?:ba|z|fi)?sh$/u.test(pane.currentCommand.trim().toLowerCase()) ? "idle" : "running";
+}
+function dockTools(projectId) {
+  const tools = [];
+  for (const surface of CANONICAL_SURFACE_REGISTRY) {
+    if (surface.kind !== "dock-tool") continue;
+    const unavailable = `${surface.label} capability is not available from the daemon application-shell resource yet`;
+    const common = (id) => ({
+      id,
+      label: surface.label,
+      shortcut: surface.shortcut,
+      unreadCount: 0,
+      disabledReason: unavailable
+    });
+    switch (surface.id) {
+      case "files":
+        tools.push({
+          ...common("files"),
+          data: { kind: "files", selectedResourceId: null, fileCount: 0 }
+        });
+        break;
+      case "changes":
+        tools.push({
+          ...common("changes"),
+          data: { kind: "changes", selectedResourceId: null, changeCount: 0 }
+        });
+        break;
+      case "missions":
+        tools.push({
+          ...common("missions"),
+          data: {
+            kind: "missions",
+            missionId: `mission.unavailable.${digest(projectId)}`,
+            title: "Missions unavailable",
+            status: "disconnected",
+            goalCount: 0,
+            taskCount: 0
+          }
+        });
+        break;
+      case "activity":
+        tools.push({
+          ...common("activity"),
+          data: { kind: "activity", eventCount: 0, latestEventLabel: null }
+        });
+        break;
+    }
+  }
+  return tools;
+}
+function deepFreeze3(value) {
+  if (value === null || typeof value !== "object" || Object.isFrozen(value)) return value;
+  for (const child of Object.values(value)) deepFreeze3(child);
+  return Object.freeze(value);
+}
+function projectApplicationShellResource(session) {
+  const sessionName = label(session.name, "tmux session");
+  const rootLabel = label(basename8(session.dir), sessionName);
+  const projectId = semanticId("project", session.dir);
+  const sessionId = semanticId("session", session.name);
+  const ids = paneIdentities(session.panes);
+  const focusedIndex = session.panes.findIndex((pane) => pane.active);
+  const focusedPaneId = focusedIndex < 0 ? null : ids[focusedIndex] ?? null;
+  const agents = session.panes.flatMap((pane, index) => {
+    if (!isAgentPane(pane)) return [];
+    const paneId = ids[index];
+    return [
+      {
+        id: semanticId("agent", paneId),
+        name: label(pane.name ?? pane.title, `Agent ${index + 1}`),
+        harness: harnessForPane(pane),
+        activity: agentActivity(pane),
+        paneId,
+        attention: false
+      }
+    ];
+  });
+  const hasPanes = session.panes.length > 0;
+  const paneFact = `${session.panes.length} live terminal pane${session.panes.length === 1 ? "" : "s"} discovered`;
+  const agentFact = `${agents.length} agent pane${agents.length === 1 ? "" : "s"} discovered`;
+  const parsed = ApplicationShellProjectionInputV1SchemaZ.parse({
+    project: {
+      id: projectId,
+      name: sessionName,
+      rootLabel,
+      readiness: {
+        state: hasPanes ? "ready" : "warning",
+        facts: ["Live tmux session discovered", paneFact, agentFact],
+        warnings: hasPanes ? [] : ["No live terminal panes were discovered"]
+      }
+    },
+    workspace: {
+      id: semanticId("workspace", session.dir),
+      name: `${sessionName} workspace`.slice(0, 160),
+      activeMode: "terminals",
+      session: {
+        id: sessionId,
+        label: sessionName,
+        state: hasPanes ? "connected" : "reconnecting",
+        active: true
+      },
+      sidebar: {
+        sessions: [
+          {
+            id: sessionId,
+            label: sessionName,
+            state: hasPanes ? "connected" : "reconnecting",
+            active: true
+          }
+        ],
+        agents
+      }
+    },
+    dock: {
+      mode: "collapsed",
+      activeTool: "files",
+      tools: dockTools(projectId)
+    },
+    focus: {
+      // The daemon only knows whether tmux marks a pane active. Desktop host
+      // window activity remains renderer-owned and can replace this
+      // conservative snapshot once live host wiring is present.
+      windowActivity: focusedPaneId === null ? "inactive" : "active",
+      focusZone: focusedPaneId === null ? "primary-navigation" : "canvas",
+      appFocusedPaneId: focusedPaneId,
+      terminalInputPaneId: null,
+      layoutSelectedPaneId: null,
+      overlays: []
+    },
+    connection: hasPanes ? {
+      state: "connected",
+      message: "Live tmux session discovered",
+      safeState: "No desktop terminal attachment is open",
+      nextAction: "Choose a terminal pane"
+    } : {
+      state: "recovering",
+      message: "The tmux session has no discoverable panes",
+      safeState: "No terminal attachment was attempted",
+      nextAction: "Wait for tmux pane discovery to recover"
+    }
+  });
+  projectApplicationShellV1(parsed);
+  return deepFreeze3(parsed);
+}
+var init_application_shell2 = __esm({
+  "packages/daemon/src/command-center/resources/application-shell.ts"() {
+    "use strict";
+    init_src();
+  }
+});
+
 // packages/daemon/src/command-center/server.ts
 var server_exports = {};
 __export(server_exports, {
@@ -16000,7 +16313,7 @@ __export(server_exports, {
 import { execFile as execFile2 } from "node:child_process";
 import { promisify } from "node:util";
 import { existsSync as existsSync32, readdirSync as readdirSync5 } from "node:fs";
-import { join as join30, dirname as dirname27, basename as basename8 } from "node:path";
+import { join as join30, dirname as dirname27, basename as basename9 } from "node:path";
 import { fileURLToPath as fileURLToPath10 } from "node:url";
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
@@ -16220,7 +16533,7 @@ function createApp(options = {}) {
   app.post("/api/workspaces", zValidator("json", AddWorkspaceRequestSchemaZ), async (c) => {
     const body = c.req.valid("json");
     const registry = getDefaultWorkspaceRegistry();
-    const name = body.name ?? basename8(body.projectDir);
+    const name = body.name ?? basename9(body.projectDir);
     if (!name || name.length === 0) {
       return c.json({ error: "Cannot derive workspace name from projectDir" }, 400);
     }
@@ -16265,6 +16578,12 @@ function createApp(options = {}) {
     }
     const detail = buildProjectDetail(session);
     return c.json({ ...detail });
+  });
+  app.get("/api/project/:name/application-shell", (c) => {
+    const name = c.req.param("name");
+    const session = discoverSessions().find((candidate) => candidate.name === name);
+    if (!session) return c.json({ error: "Session not found" }, 404);
+    return c.json(projectApplicationShellResource(session));
   });
   app.get("/api/project/:name/panes", (c) => {
     const name = c.req.param("name");
@@ -16980,6 +17299,7 @@ var init_server = __esm({
     init_filesystem_browser();
     init_project_inspect();
     init_project_onboard();
+    init_application_shell2();
     projectStreamConnections = 0;
     sseMetrics = {
       connections: 0,
@@ -18391,7 +18711,7 @@ var require_package = __commonJS({
         dev: "node bin/cli.js",
         test: "pnpm -r --filter @tmux-ide/daemon --filter @tmux-ide/contracts --filter @tmux-ide/desktop-renderer --filter @tmux-ide/electron-shell run test",
         "test:unit": "pnpm -r --filter @tmux-ide/daemon --filter @tmux-ide/contracts --filter @tmux-ide/desktop-renderer --filter @tmux-ide/electron-shell run test",
-        "test:daemon-bun": "bun test ./packages/daemon/src/lib/canonical-daemon.test.ts ./packages/daemon/src/lib/auth/middleware.test.ts ./packages/daemon/src/command-center/actions/handlers/daemon-shutdown.test.ts",
+        "test:daemon-bun": "bun test ./packages/daemon/src/lib/canonical-daemon.test.ts ./packages/daemon/src/lib/auth/middleware.test.ts ./packages/daemon/src/command-center/actions/handlers/daemon-shutdown.test.ts ./packages/daemon/src/command-center/resources/application-shell.test.ts",
         lint: "eslint bin scripts packages/contracts/src packages/tmux-bridge/src packages/daemon/src",
         "lint:workspace": "turbo run lint",
         format: "prettier --write .",
@@ -18749,36 +19069,36 @@ function renderReport(r, opts = {}) {
   const c = (code, s) => color3 ? `${code}${s}\x1B[0m` : s;
   const bold4 = (s) => c("\x1B[1m", s);
   const dim4 = (s) => c("\x1B[2m", s);
-  const label = (s) => c("\x1B[36m", s);
+  const label2 = (s) => c("\x1B[36m", s);
   const status2 = (s) => c(STATUS_COLOR[s] ?? "", s);
   const yesno = (v) => v ? c("\x1B[32m", "yes") : dim4("no");
   const out = [];
   out.push(bold4(`agent explain \u2014 ${r.pane.id}`));
-  out.push(`  ${label("command")}   ${r.pane.cmd}  ${dim4(`(pid ${r.pane.pid})`)}`);
-  if (r.pane.title) out.push(`  ${label("title")}     ${r.pane.title}`);
+  out.push(`  ${label2("command")}   ${r.pane.cmd}  ${dim4(`(pid ${r.pane.pid})`)}`);
+  if (r.pane.title) out.push(`  ${label2("title")}     ${r.pane.title}`);
   if (r.authority.raw) {
     const age = r.authority.ageSeconds !== null ? ` ${dim4(`(${r.authority.ageSeconds}s ago)`)}` : "";
     const staleTag = r.authority.stale ? " " + c("\x1B[31m", "[STALE \u2192 ignored]") : "";
     const verdict = r.authority.verdict ? status2(r.authority.verdict) : dim4("none (stale/malformed)");
-    out.push(`  ${label("authority")} ${r.authority.raw}${age}${staleTag} \u2192 ${verdict}`);
+    out.push(`  ${label2("authority")} ${r.authority.raw}${age}${staleTag} \u2192 ${verdict}`);
   } else {
-    out.push(`  ${label("authority")} ${dim4("(unset \u2014 falling back to scraping)")}`);
+    out.push(`  ${label2("authority")} ${dim4("(unset \u2014 falling back to scraping)")}`);
   }
   if (r.hint.raw) {
     out.push(
-      `  ${label("hint")}      @agent_hint=${r.hint.raw} \u2192 ${yesno(r.hint.applied)} applied`
+      `  ${label2("hint")}      @agent_hint=${r.hint.raw} \u2192 ${yesno(r.hint.applied)} applied`
     );
   } else {
-    out.push(`  ${label("hint")}      ${dim4("(unset)")}`);
+    out.push(`  ${label2("hint")}      ${dim4("(unset)")}`);
   }
   if (r.resolution.manifestId) {
     const conf = r.resolution.confidence === "tuned" ? c("\x1B[32m", "tuned") : dim4(r.resolution.confidence ?? "conservative");
     out.push(
-      `  ${label("manifest")}  ${r.resolution.manifestId}  ${dim4(`via ${r.resolution.source}` + (r.resolution.matchedCommand ? ` "${r.resolution.matchedCommand}"` : ""))}  [${conf}]`
+      `  ${label2("manifest")}  ${r.resolution.manifestId}  ${dim4(`via ${r.resolution.source}` + (r.resolution.matchedCommand ? ` "${r.resolution.matchedCommand}"` : ""))}  [${conf}]`
     );
   } else {
     const saw = r.resolution.subtree.length > 0 ? r.resolution.subtree.join(", ") : r.pane.cmd || "(nothing)";
-    out.push(`  ${label("manifest")}  ${dim4("none matched")} \u2014 ${dim4(`process-tree saw: ${saw}`)}`);
+    out.push(`  ${label2("manifest")}  ${dim4("none matched")} \u2014 ${dim4(`process-tree saw: ${saw}`)}`);
     out.push(`            ${dim4("set `tmux set-option -p @agent_hint <agent>` to force one")}`);
   }
   out.push("");
@@ -19478,7 +19798,7 @@ __export(worktree_exports, {
   worktreeSessionName: () => worktreeSessionName
 });
 import { execFileSync as execFileSync15 } from "node:child_process";
-import { basename as basename9, dirname as dirname30, isAbsolute as isAbsolute7, join as join32, resolve as resolve27 } from "node:path";
+import { basename as basename10, dirname as dirname30, isAbsolute as isAbsolute7, join as join32, resolve as resolve27 } from "node:path";
 function sanitizeForTmux(part) {
   return part.replace(/[.:/\s]+/g, "-");
 }
@@ -19487,7 +19807,7 @@ function worktreeSessionName(project, branch) {
 }
 function defaultWorktreeBaseDir(repoDir) {
   const abs = resolve27(repoDir);
-  return join32(dirname30(abs), `${basename9(abs)}-worktrees`);
+  return join32(dirname30(abs), `${basename10(abs)}-worktrees`);
 }
 function worktreePath(repoDir, branch, configuredDir) {
   const base = configuredDir && configuredDir.length > 0 ? isAbsolute7(configuredDir) ? configuredDir : resolve27(repoDir, configuredDir) : defaultWorktreeBaseDir(repoDir);
@@ -20106,18 +20426,18 @@ import { resolve as resolve18, dirname as dirname22 } from "node:path";
 import { fileURLToPath as fileURLToPath9 } from "node:url";
 function agentIntegrationRows(agents) {
   return presentAgents(agents).map((agent) => {
-    const label = `agent: ${agent.id}`;
+    const label2 = `agent: ${agent.id}`;
     if (agent.integration) {
       const benefit = agent.capture === "hooks" ? "for ground-truth status" : "to record session ids for restore --resume-agents";
-      return agent.installed ? { label, pass: true, detail: "integration installed \u2713", optional: true } : {
-        label,
+      return agent.installed ? { label: label2, pass: true, detail: "integration installed \u2713", optional: true } : {
+        label: label2,
         pass: false,
         detail: `found on PATH \u2014 run \`tmux-ide integration install ${agent.id}\` ${benefit}`,
         optional: true
       };
     }
     return {
-      label,
+      label: label2,
       pass: true,
       detail: "found \u2014 screen-manifest detection active (no lifecycle integration yet)",
       optional: true
@@ -20125,45 +20445,45 @@ function agentIntegrationRows(agents) {
   });
 }
 function hooksTargetRow(facts) {
-  const label = "Claude hooks target writable";
+  const label2 = "Claude hooks target writable";
   if (facts.writable) {
     return {
-      label,
+      label: label2,
       pass: true,
       detail: facts.fileExists ? facts.settingsPath : `${facts.settingsPath} (will be created)`,
       optional: true
     };
   }
   return {
-    label,
+    label: label2,
     pass: false,
     detail: `cannot write ${facts.settingsPath} \u2014 fix its permissions (chown/chmod), or point TMUX_IDE_CLAUDE_SETTINGS at a writable path`,
     optional: true
   };
 }
 function notifierRow(present) {
-  const label = "native macOS notifications";
+  const label2 = "native macOS notifications";
   if (present) {
     return {
-      label,
+      label: label2,
       pass: true,
       detail: "bundled \u2014 branded banners and click-to-jump are ready",
       optional: true
     };
   }
   return {
-    label,
+    label: label2,
     pass: false,
     detail: "native helper missing \u2014 reinstall tmux-ide; unbranded AppleScript banners remain available",
     optional: true
   };
 }
-function check(label, fn, { optional = false } = {}) {
+function check(label2, fn, { optional = false } = {}) {
   try {
     const result = fn();
-    return { label, pass: true, detail: result, optional };
+    return { label: label2, pass: true, detail: result, optional };
   } catch (e) {
-    return { label, pass: false, detail: e.message, optional };
+    return { label: label2, pass: false, detail: e.message, optional };
   }
 }
 async function doctor({
@@ -20262,8 +20582,8 @@ async function doctor({
       { optional: true }
     )
   );
-  const tunnelCli = (label, cmd) => check(
-    label,
+  const tunnelCli = (label2, cmd) => check(
+    label2,
     () => {
       try {
         return execSync3(cmd, { encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"] }).trim().split("\n")[0];

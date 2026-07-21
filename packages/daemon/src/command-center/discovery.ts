@@ -6,7 +6,12 @@ import { getDefaultWorkspaceRegistry } from "../lib/workspace-registry.ts";
 export interface SessionInfo {
   name: string;
   dir: string;
-  panes: PaneInfo[];
+  panes: DiscoveredPaneInfo[];
+}
+
+/** Live pane metadata enriched with the durable tmux-ide identity stamp. */
+export interface DiscoveredPaneInfo extends PaneInfo {
+  semanticPaneId: string | null;
 }
 
 export interface SessionOverview {
@@ -44,6 +49,21 @@ function tmuxSilent(args: string[]): string {
   }
 }
 
+function semanticPaneIds(session: string): ReadonlyMap<string, string> {
+  const raw = tmuxSilent(["list-panes", "-t", session, "-F", "#{pane_id}\t#{@tmux_ide_pane_id}"]);
+  const result = new Map<string, string>();
+  if (!raw) return result;
+  for (const line of raw.split("\n")) {
+    const separator = line.indexOf("\t");
+    if (separator < 0) continue;
+    const runtimePaneId = line.slice(0, separator);
+    const semanticPaneId = line.slice(separator + 1);
+    if (!/^%[0-9]+$/u.test(runtimePaneId) || semanticPaneId.length === 0) continue;
+    result.set(runtimePaneId, semanticPaneId);
+  }
+  return result;
+}
+
 export function listTmuxSessions(): string[] {
   const raw = tmuxSilent(["list-sessions", "-F", "#{session_name}"]);
   if (!raw) return [];
@@ -70,9 +90,13 @@ export function discoverSessions(): SessionInfo[] {
     const dir = getSessionCwd(name);
     if (!dir) continue;
 
-    let panes: PaneInfo[] = [];
+    let panes: DiscoveredPaneInfo[] = [];
     try {
-      panes = listSessionPanes(name);
+      const semanticIds = semanticPaneIds(name);
+      panes = listSessionPanes(name).map((pane) => ({
+        ...pane,
+        semanticPaneId: semanticIds.get(pane.id) ?? null,
+      }));
     } catch {
       // session may have vanished
     }
@@ -91,6 +115,9 @@ export function buildProjectDetail(info: SessionInfo): ProjectDetail {
   return {
     session: info.name,
     dir: info.dir,
-    panes: info.panes,
+    // Keep the historical project-detail response stable. The semantic stamp
+    // is consumed by typed resources such as application-shell, not leaked by
+    // adding an incidental field to this older endpoint.
+    panes: info.panes.map(({ semanticPaneId: _semanticPaneId, ...pane }) => pane),
   };
 }
