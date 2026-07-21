@@ -380,7 +380,7 @@ import {
   type TerminalPaneChromeHoverTarget,
   type TerminalPaneChromeMetadata,
 } from "./workspace/terminal-pane-chrome.ts";
-import { TerminalPaneChromeLayer } from "./workspace/terminal-pane-chrome-view.tsx";
+import { SharedTerminalPaneChromeLayer } from "./workspace/terminal-pane-chrome-view.tsx";
 import {
   workbenchCanvasPanelForShortcut,
   workbenchCanvasShortcutForPanel,
@@ -6411,11 +6411,6 @@ try {
       else if (id === "refresh") refreshTree();
     };
 
-    /** The root pane-chrome dispatcher focuses before calling this command edge. */
-    const runTerminalPaneAction = (paneId: string, id: string) => {
-      if (id === "zoom") void mirror?.command(`resize-pane -Z -t ${paneId}`).catch(() => {});
-    };
-
     /** The strip as THREE static texts (pre/active/post) whose STRINGS update.
      *  KNOWN UPSTREAM QUIRK: clicks landing exactly ON this row's label cells
      *  are swallowed before dispatch regardless of node structure (For-of-texts,
@@ -6791,10 +6786,13 @@ try {
             dispatchTerminalPaneChromePointerIntent(paneChromeIntent, {
               hover: setHoveredTerminalPaneAction,
               focus: (paneId) => mirror?.focus(paneId),
-              action: (paneId, actionId, actionIndex) => {
+              action: (paneId, _actionId, actionIndex, semanticIntent) => {
                 setPressedTerminalPaneAction({ paneId, actionIndex });
-                if (actionId === "menu") openPaneActions(paneId);
-                else runTerminalPaneAction(paneId, actionId);
+                if (semanticIntent.commandId === "workspace.pane.menu.open") {
+                  openPaneActions(paneId);
+                } else if (semanticIntent.commandId === "workspace.windowMode.maximize.toggle") {
+                  void mirror?.command(`resize-pane -Z -t ${paneId}`).catch(() => {});
+                }
               },
               menu: openPaneActions,
               settle: () => settleTerminalGestureBoundary(e),
@@ -7922,7 +7920,7 @@ try {
                         {/* Segmented pane chrome occupies gy=1, immediately above
                   the exact tmux framebuffer. The layer is passive; root routing
                   owns every action and lifecycle effect. */}
-                        <TerminalPaneChromeLayer
+                        <SharedTerminalPaneChromeLayer
                           theme={semanticTheme()}
                           layout={terminalPaneChromeLayout()}
                           layer="native"
@@ -8061,7 +8059,7 @@ try {
                   separator cells. Focus belongs to this semantic pane chrome,
                   while the pure projection proves no emitted rectangle
                   intersects a pane framebuffer. */}
-                        <TerminalPaneChromeLayer
+                        <SharedTerminalPaneChromeLayer
                           theme={semanticTheme()}
                           layout={terminalPaneChromeLayout()}
                           layer="framebuffer"

@@ -9,6 +9,8 @@ import {
   projectTerminalPaneChrome,
   terminalPaneChromeHitTest,
   terminalPaneChromeOverlapsBodies,
+  type TerminalPaneChromeLayout,
+  type TerminalPaneChromePane,
 } from "./terminal-pane-chrome.ts";
 import { SharedTerminalPaneChromeLayer } from "./terminal-pane-chrome-view.tsx";
 
@@ -269,144 +271,292 @@ describe("AgentTerminalCanvas OpenTUI renderer", () => {
     },
   );
 
-  it("keeps pane and action renderables stable across fresh projection objects", async () => {
-    const width = 100;
-    const height = 14;
-    const theme = createSemanticThemeSnapshot({ mode: "dark" });
-    const canvas = projectAgentTerminalCanvas({ width, height, chromeRows: 2 });
-    const states = [
-      { active: "%1", hoveredPane: "%1", hoveredAction: 0, pressedAction: null },
-      { active: "%2", hoveredPane: "%2", hoveredAction: 1, pressedAction: null },
-      { active: "%3", hoveredPane: "%3", hoveredAction: 0, pressedAction: 0 },
-      { active: "%1", hoveredPane: "%1", hoveredAction: 0, pressedAction: null },
-    ] as const;
-    let drive!: (state: (typeof states)[number]) => void;
-
-    function Harness() {
-      const [state, setState] = createSignal<(typeof states)[number]>(states[0]);
-      drive = setState;
-      const layout = createMemo(() => {
-        const current = state();
-        // Deliberately allocate every pane, metadata map, projection, frame,
-        // chip, and action again. This is the production projection contract.
-        return projectTerminalPaneChrome({
-          canvas,
-          panes: [
-            {
-              id: "%1",
-              left: 0,
-              top: 0,
-              width: 49,
-              height: canvas.framebuffer.height,
-              active: current.active === "%1",
-              zoomed: false,
-            },
-            {
-              id: "%2",
-              left: 50,
-              top: 0,
-              width: 50,
-              height: 5,
-              active: current.active === "%2",
-              zoomed: false,
-            },
-            {
-              id: "%3",
-              left: 50,
-              top: 6,
-              width: 50,
-              height: canvas.framebuffer.height - 6,
-              active: current.active === "%3",
-              zoomed: false,
-            },
-          ],
-          metadataByPane: new Map([
-            ["%1", { title: "Codex PM", status: "working", statusTone: "working" as const }],
-            ["%2", { title: "Codex builder", status: "working", statusTone: "working" as const }],
-            ["%3", { title: "Claude review", status: "idle", statusTone: "idle" as const }],
-          ]),
-          hoveredAction: {
-            paneId: current.hoveredPane,
-            actionIndex: current.hoveredAction,
-          },
-          pressedAction:
-            current.pressedAction === null
-              ? null
-              : { paneId: current.hoveredPane, actionIndex: current.pressedAction },
-        });
-      });
-      return (
-        <box position="relative" width={width} height={height} overflow="hidden">
-          <SharedTerminalPaneChromeLayer theme={theme} layout={layout()} layer="native" />
-          <box
-            position="absolute"
-            left={canvas.framebuffer.x}
-            top={canvas.framebuffer.y}
-            width={canvas.framebuffer.width}
-            height={canvas.framebuffer.height}
-          >
-            <SharedTerminalPaneChromeLayer theme={theme} layout={layout()} layer="framebuffer" />
-          </box>
-        </box>
-      );
-    }
-
-    const setup = await renderForTest(() => <Harness />, { width, height });
-    await setup.renderOnce();
-    const initialCount = renderableCount(setup.renderer.root);
-    const stablePaneNodes = new Map(
-      ["%1", "%2", "%3"].map((paneId) => {
-        const layer = paneId === "%3" ? "framebuffer" : "native";
-        return [
-          paneId,
-          setup.renderer.root.findDescendantById(`shared-terminal-pane-chrome:${layer}:${paneId}`),
-        ] as const;
-      }),
-    );
-    expect([...stablePaneNodes.values()].every(Boolean)).toBe(true);
-    const stablePaneTrees = new Map(
-      [...stablePaneNodes].map(([paneId, node]) => [
-        paneId,
-        renderableTree(node as TestRenderable),
-      ]),
-    );
-
-    const warnings: string[] = [];
-    const originalWarn = console.warn;
-    console.warn = (...args: unknown[]) => warnings.push(args.map(String).join(" "));
-    const framesByState = new Map<string, string>();
-    try {
-      for (let index = 0; index < 24; index += 1) {
-        const state = states[index % states.length]!;
-        drive({ ...state });
-        await setup.renderOnce();
-        expect(renderableCount(setup.renderer.root)).toBe(initialCount);
-        for (const [paneId, node] of stablePaneNodes) {
-          const layer = paneId === "%3" ? "framebuffer" : "native";
-          expect(
-            setup.renderer.root.findDescendantById(
-              `shared-terminal-pane-chrome:${layer}:${paneId}`,
-            ),
-          ).toBe(node);
-          const currentTree = renderableTree(node as TestRenderable);
-          const stableTree = stablePaneTrees.get(paneId)!;
-          expect(currentTree).toHaveLength(stableTree.length);
-          currentTree.forEach((renderable, childIndex) => {
-            expect(renderable).toBe(stableTree[childIndex]);
-          });
-        }
-        const key = JSON.stringify(state);
-        const frame = stableFrame(setup.captureCharFrame());
-        const previous = framesByState.get(key);
-        if (previous) expect(frame).toBe(previous);
-        else framesByState.set(key, frame);
+  it.each([
+    [80, 24],
+    [120, 40],
+    [200, 60],
+  ] as const)(
+    "keeps pane chrome stable through production topology churn at %sx%s",
+    async (width, height) => {
+      type Topology = "base" | "added" | "migrated" | "zoomed";
+      interface StressState {
+        topology: Topology;
+        active: string;
+        attention: string | null;
+        hoveredAction: number | null;
+        pressed: boolean;
       }
-    } finally {
-      console.warn = originalWarn;
-      setup.renderer.destroy();
-    }
-    expect(warnings.filter((warning) => /insertBefore|anchor|reconcil/iu.test(warning))).toEqual(
-      [],
-    );
-  });
+
+      const theme = createSemanticThemeSnapshot({ mode: "dark" });
+      const canvas = projectAgentTerminalCanvas({ width, height, chromeRows: 2 });
+      const framebuffer = canvas.framebuffer;
+      const leftWidth = Math.floor((framebuffer.width - 1) / 2);
+      const rightLeft = leftWidth + 1;
+      const rightWidth = framebuffer.width - rightLeft;
+      const upperHeight = Math.floor((framebuffer.height - 1) / 2);
+      const lowerTop = upperHeight + 1;
+      const firstLeftWidth = Math.floor((leftWidth - 1) / 2);
+      const addedLeft = firstLeftWidth + 1;
+      const addedWidth = leftWidth - addedLeft;
+      const states: readonly StressState[] = [
+        {
+          topology: "base",
+          active: "%1",
+          attention: null,
+          hoveredAction: 0,
+          pressed: false,
+        },
+        {
+          topology: "base",
+          active: "%2",
+          attention: "%3",
+          hoveredAction: 1,
+          pressed: true,
+        },
+        {
+          topology: "added",
+          active: "%4",
+          attention: "%2",
+          hoveredAction: 0,
+          pressed: false,
+        },
+        {
+          topology: "added",
+          active: "%1",
+          attention: "%4",
+          hoveredAction: 1,
+          pressed: true,
+        },
+        {
+          topology: "base",
+          active: "%3",
+          attention: null,
+          hoveredAction: 0,
+          pressed: false,
+        },
+        {
+          topology: "migrated",
+          active: "%3",
+          attention: "%2",
+          hoveredAction: 1,
+          pressed: false,
+        },
+        {
+          topology: "migrated",
+          active: "%2",
+          attention: "%3",
+          hoveredAction: 0,
+          pressed: true,
+        },
+        {
+          topology: "base",
+          active: "%2",
+          attention: "%1",
+          hoveredAction: 1,
+          pressed: false,
+        },
+        {
+          topology: "zoomed",
+          active: "%2",
+          attention: "%2",
+          hoveredAction: 0,
+          pressed: true,
+        },
+        {
+          topology: "base",
+          active: "%1",
+          attention: null,
+          hoveredAction: 0,
+          pressed: false,
+        },
+      ];
+
+      const pane = (
+        current: StressState,
+        id: string,
+        left: number,
+        top: number,
+        paneWidth: number,
+        paneHeight: number,
+      ): TerminalPaneChromePane => ({
+        id,
+        left,
+        top,
+        width: paneWidth,
+        height: paneHeight,
+        active: current.active === id,
+        zoomed: current.topology === "zoomed",
+      });
+      const panesFor = (current: StressState): readonly TerminalPaneChromePane[] => {
+        if (current.topology === "zoomed") {
+          return [pane(current, "%2", 0, 0, framebuffer.width, framebuffer.height)];
+        }
+        const leftPanes =
+          current.topology === "added"
+            ? [
+                pane(current, "%1", 0, 0, firstLeftWidth, framebuffer.height),
+                pane(current, "%4", addedLeft, 0, addedWidth, framebuffer.height),
+              ]
+            : [pane(current, "%1", 0, 0, leftWidth, framebuffer.height)];
+        const upperId = current.topology === "migrated" ? "%3" : "%2";
+        const lowerId = current.topology === "migrated" ? "%2" : "%3";
+        return [
+          ...leftPanes,
+          pane(current, upperId, rightLeft, 0, rightWidth, upperHeight),
+          pane(current, lowerId, rightLeft, lowerTop, rightWidth, framebuffer.height - lowerTop),
+        ];
+      };
+
+      let drive!: (state: StressState) => void;
+      let readLayout!: () => TerminalPaneChromeLayout;
+      let readPanes!: () => readonly TerminalPaneChromePane[];
+
+      function Harness() {
+        const [state, setState] = createSignal<StressState>(states[0]!);
+        drive = setState;
+        const livePanes = createMemo(() => panesFor(state()));
+        const layout = createMemo(() => {
+          const current = state();
+          const panes = livePanes();
+          return projectTerminalPaneChrome({
+            canvas,
+            panes,
+            metadataByPane: new Map(
+              panes.map((candidate) => {
+                const attention = current.attention === candidate.id;
+                return [
+                  candidate.id,
+                  {
+                    title: `Agent ${candidate.id}`,
+                    status: attention ? "blocked" : "working",
+                    statusTone: attention ? ("blocked" as const) : ("working" as const),
+                    attention,
+                  },
+                ] as const;
+              }),
+            ),
+            hoveredAction: {
+              paneId: current.active,
+              actionIndex: current.hoveredAction,
+            },
+            pressedAction: current.pressed
+              ? { paneId: current.active, actionIndex: current.hoveredAction ?? 0 }
+              : null,
+          });
+        });
+        readLayout = layout;
+        readPanes = livePanes;
+        return (
+          <AgentTerminalCanvas
+            theme={theme}
+            projection={canvas}
+            chrome={
+              <>
+                <text fg={theme.roles.text.muted}> production window</text>
+                <SharedTerminalPaneChromeLayer theme={theme} layout={layout()} layer="native" />
+              </>
+            }
+            framebuffer={
+              <box
+                position="relative"
+                width={framebuffer.width}
+                height={framebuffer.height}
+                backgroundColor={theme.roles.surfaces.terminal}
+              >
+                <box position="absolute" left={0} bottom={0} width={1} height={1}>
+                  <text fg={theme.roles.text.muted}>·</text>
+                </box>
+                <SharedTerminalPaneChromeLayer
+                  theme={theme}
+                  layout={layout()}
+                  layer="framebuffer"
+                />
+              </box>
+            }
+          />
+        );
+      }
+
+      const warnings: string[] = [];
+      const originalWarn = console.warn;
+      const originalError = console.error;
+      const captureWarning = (...args: unknown[]) => warnings.push(args.map(String).join(" "));
+      console.warn = captureWarning;
+      console.error = captureWarning;
+      const setup = await renderForTest(() => <Harness />, { width, height });
+      const countsByTopology = new Map<Topology, number>();
+      const framesByState = new Map<string, string>();
+      let previousTopology: Topology | null = null;
+      let previousNodes = new Map<string, unknown>();
+      let previousTrees = new Map<string, readonly unknown[]>();
+      try {
+        for (let index = 0; index < states.length * 3; index += 1) {
+          const state = states[index % states.length]!;
+          drive({ ...state });
+          await setup.renderOnce();
+
+          const layout = readLayout();
+          const panes = readPanes();
+          const projections = [...layout.native, ...layout.framebuffer].filter(
+            (projection) => projection.frame !== null,
+          );
+          expect(canvas.tmuxSize).toEqual({ cols: width, rows: height - 2 });
+          expect(
+            projections.every(
+              (projection) => !terminalPaneChromeOverlapsBodies({ canvas, panes }, projection),
+            ),
+          ).toBe(true);
+
+          const nodes = new Map<string, unknown>();
+          const trees = new Map<string, readonly unknown[]>();
+          for (const projection of projections) {
+            const key = `${projection.layer}:${projection.paneId}`;
+            const node = setup.renderer.root.findDescendantById(
+              `shared-terminal-pane-chrome:${key}`,
+            );
+            expect(node).toBeDefined();
+            expect(nodes.has(key)).toBe(false);
+            nodes.set(key, node);
+            trees.set(key, renderableTree(node as TestRenderable));
+          }
+          expect(nodes.size).toBe(projections.length);
+
+          for (const [key, node] of nodes) {
+            if (!previousNodes.has(key)) continue;
+            expect(node).toBe(previousNodes.get(key));
+            if (previousTopology !== state.topology) continue;
+            const previousTree = previousTrees.get(key)!;
+            const tree = trees.get(key)!;
+            expect(tree).toHaveLength(previousTree.length);
+            tree.forEach((renderable, childIndex) => {
+              expect(renderable).toBe(previousTree[childIndex]);
+            });
+          }
+
+          const renderables = renderableCount(setup.renderer.root);
+          const previousCount = countsByTopology.get(state.topology);
+          if (previousCount === undefined) countsByTopology.set(state.topology, renderables);
+          else expect(renderables).toBe(previousCount);
+
+          const frame = stableFrame(setup.captureCharFrame());
+          expectFrameBounds(frame, width, height);
+          const stateKey = JSON.stringify(state);
+          const previousFrame = framesByState.get(stateKey);
+          if (previousFrame === undefined) framesByState.set(stateKey, frame);
+          else expect(frame).toBe(previousFrame);
+
+          previousTopology = state.topology;
+          previousNodes = nodes;
+          previousTrees = trees;
+        }
+      } finally {
+        console.warn = originalWarn;
+        console.error = originalError;
+        setup.renderer.destroy();
+      }
+      expect(warnings.filter((warning) => /insertBefore|anchor|reconcil/iu.test(warning))).toEqual(
+        [],
+      );
+    },
+  );
 });
