@@ -15792,8 +15792,8 @@ async function startEmbeddedDaemon(opts) {
       wsUrl,
       localBypassToken,
       stop: async ({ gracefulMs = DEFAULT_GRACEFUL_MS } = {}) => {
-        if (stopped) return;
         if (stopping) return stopping;
+        if (stopped) return;
         stopping = (async () => {
           try {
             stopped = true;

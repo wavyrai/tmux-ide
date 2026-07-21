@@ -3,7 +3,8 @@ import { randomUUID } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Socket } from "node:net";
+import { connect, type Socket } from "node:net";
+import { once } from "node:events";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { DAEMON_WIRE_PROTOCOL_VERSION } from "@tmux-ide/contracts";
 import { setDaemonShutdownBackend } from "../../command-center/actions/handlers/daemon-shutdown.ts";
@@ -169,6 +170,20 @@ afterEach(async () => {
 });
 
 describe.sequential("embedded daemon cooperative takeover", () => {
+  it("makes concurrent stop callers join canonical cleanup", async () => {
+    const handle = trackHandle(await startEmbeddedDaemon({ silent: true }));
+    const connection = connect({ host: "127.0.0.1", port: handle.port });
+    await once(connection, "connect");
+
+    const firstStop = handle.stop({ gracefulMs: 50 });
+    await handle.stop();
+
+    expect(inspectCanonicalDaemonInfo().status).toBe("missing");
+    expect(existsSync(getCanonicalDaemonClaimPath())).toBe(false);
+    await firstStop;
+    connection.destroy();
+  });
+
   it("replaces a live authenticated owner only after its claim and generation are released", async () => {
     const owner = trackHandle(
       await startEmbeddedDaemon({
