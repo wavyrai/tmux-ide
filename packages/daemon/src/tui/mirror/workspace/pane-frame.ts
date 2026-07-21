@@ -1,3 +1,18 @@
+import {
+  resolvePaneAppearance,
+  type CanonicalDomainStatus,
+  type CommandId,
+  type PaneRoleId,
+  type PaneVisualStateV1,
+  type SemanticProductId,
+  type StatusToneRole,
+} from "@tmux-ide/contracts";
+import type {
+  PaneFrameAction as SemanticPaneFrameAction,
+  PaneFrameChip as SemanticPaneFrameChip,
+  PaneFrameModel,
+  PaneFrameStatus as SemanticPaneFrameStatus,
+} from "../../../ui/pane-frame/presenter.tsx";
 import { terminalDisplayWidth } from "../panel-host.ts";
 import { actionChipWidth, iconButtonWidth, type RecipeTone, type Rect } from "../recipes.ts";
 import { clipWorkspaceText } from "./text.ts";
@@ -16,6 +31,7 @@ export type PaneFrameKind =
 
 export interface PaneFrameAction {
   id: string;
+  commandId?: CommandId;
   label: string;
   compactLabel?: string;
   icon?: WorkspaceIconId;
@@ -28,6 +44,8 @@ export interface PaneFrameAction {
 }
 
 export interface PaneFrameInput {
+  /** Stable renderer-neutral identity. Live tmux ids are encoded by their host adapter. */
+  paneId?: SemanticProductId;
   width: number;
   height: number;
   title: string;
@@ -45,6 +63,18 @@ export interface PaneFrameInput {
   actions?: readonly PaneFrameAction[];
   hoveredActionIndex?: number | null;
   pressedActionIndex?: number | null;
+  /** Canonical state wins over every legacy compatibility flag above. */
+  visualState?: PaneVisualStateV1;
+}
+
+export interface SemanticPaneFrameProjectionInput {
+  width: number;
+  height: number;
+  model: PaneFrameModel;
+  dirty?: boolean;
+  actionPresentation?: readonly PaneFrameAction[];
+  hoveredActionIndex?: number | null;
+  pressedActionIndex?: number | null;
 }
 
 export interface PaneFrameSpan extends Rect {
@@ -57,6 +87,7 @@ export interface PaneFrameGripSpan extends PaneFrameSpan {
 
 export interface PaneFrameStatusChip {
   kind: "status";
+  id: SemanticProductId;
   label: string;
   tone: Exclude<RecipeTone, "neutral" | "accent">;
   start: number;
@@ -65,7 +96,7 @@ export interface PaneFrameStatusChip {
 
 export interface PaneFrameStateChip {
   kind: "state";
-  id: "edit" | "float" | "maximized";
+  id: SemanticProductId;
   label: string;
   tone: RecipeTone;
   start: number;
@@ -88,6 +119,8 @@ export type PaneFrameChip = PaneFrameStatusChip | PaneFrameStateChip | PaneFrame
 export type PaneFrameBorderStyle = "none" | "single" | "strong";
 
 export interface PaneFrameProjection {
+  /** Shared semantic presenter input; all semantic state priority is resolved here. */
+  model: PaneFrameModel;
   width: number;
   height: number;
   variant: PaneFrameVariant;
@@ -121,17 +154,6 @@ export type PaneFrameHit =
   | { area: "border" }
   | null;
 
-const KIND_ICONS: Readonly<Record<PaneFrameKind, WorkspaceIconId>> = {
-  home: "home",
-  terminals: "terminals",
-  files: "files",
-  diff: "changes",
-  missions: "missions",
-  activity: "activity",
-  preview: "preview",
-  native: "native",
-};
-
 const STATUS_GLYPHS: Readonly<Record<Exclude<RecipeTone, "neutral" | "accent">, string>> = {
   blocked: "!",
   working: "●",
@@ -140,6 +162,171 @@ const STATUS_GLYPHS: Readonly<Record<Exclude<RecipeTone, "neutral" | "accent">, 
   unknown: "?",
 };
 
+const ROLE_BY_KIND: Readonly<Record<PaneFrameKind, PaneRoleId>> = {
+  home: "home",
+  terminals: "terminal",
+  files: "files",
+  diff: "changes",
+  missions: "missions",
+  activity: "activity",
+  preview: "preview",
+  native: "native",
+};
+
+const ICON_BY_ROLE: Readonly<Record<PaneRoleId, WorkspaceIconId>> = {
+  home: "home",
+  terminal: "terminals",
+  files: "files",
+  changes: "changes",
+  missions: "missions",
+  activity: "activity",
+  preview: "preview",
+  native: "native",
+};
+
+function domainStatusForRecipeTone(tone: PaneFrameInput["statusTone"]): CanonicalDomainStatus {
+  if (tone === "blocked") return "blocked";
+  if (tone === "working") return "running";
+  if (tone === "done") return "done";
+  if (tone === "unknown") return "disconnected";
+  return "idle";
+}
+
+function recipeToneForStatus(tone: StatusToneRole | null): RecipeTone {
+  if (tone === null) return "neutral";
+  if (tone === "warning") return "blocked";
+  if (tone === "info") return "working";
+  if (tone === "success") return "done";
+  if (tone === "danger") return "unknown";
+  return "idle";
+}
+
+function recipeDomainTone(tone: StatusToneRole): Exclude<RecipeTone, "neutral" | "accent"> {
+  const recipeTone = recipeToneForStatus(tone);
+  return recipeTone === "neutral" || recipeTone === "accent" ? "idle" : recipeTone;
+}
+
+function semanticId(value: string, fallback: string): SemanticProductId {
+  const normalized = value
+    .trim()
+    .replace(/[^A-Za-z0-9._:-]+/gu, "-")
+    .replace(/^-+|-+$/gu, "");
+  return (
+    normalized && /^[A-Za-z0-9]/u.test(normalized) ? normalized : fallback
+  ) as SemanticProductId;
+}
+
+function commandIdForAction(action: PaneFrameAction): CommandId {
+  if (action.commandId) return action.commandId;
+  const suffix =
+    action.id
+      .trim()
+      .replace(/[^A-Za-z0-9-]+/gu, "-")
+      .replace(/^-+|-+$/gu, "") || "activate";
+  return `pane.action.${suffix}` as CommandId;
+}
+
+function paneFrameVisualState(input: PaneFrameInput): PaneVisualStateV1 {
+  if (input.visualState) return input.visualState;
+  const domainStatus = domainStatusForRecipeTone(input.statusTone);
+  return {
+    structure: input.maximized ? "maximized" : input.floating ? "floating" : "docked",
+    applicationFocus: {
+      pane: input.focused,
+      terminalInput: input.terminalFocused === true,
+      windowActive: true,
+    },
+    agentActivity:
+      domainStatus === "running"
+        ? "running"
+        : domainStatus === "done"
+          ? "complete"
+          : domainStatus === "blocked"
+            ? "waiting"
+            : domainStatus === "disconnected"
+              ? "disconnected"
+              : "idle",
+    domainStatus,
+    attention:
+      input.attention === true ? (domainStatus === "blocked" ? "warning" : "requested") : "none",
+    layoutInteraction: {
+      editable: true,
+      selected: input.windowEditSelected === true,
+      dragging: false,
+      resizing: false,
+      previewing: false,
+    },
+    controlInteraction: {
+      hover: false,
+      focusVisible: false,
+      pressed: false,
+      disabled: false,
+      loading: false,
+    },
+  };
+}
+
+function legacyStateChips(
+  input: PaneFrameInput,
+  appearance: PaneFrameModel["appearance"],
+): SemanticPaneFrameChip[] {
+  const chips: SemanticPaneFrameChip[] = [];
+  if (appearance.accessibility.layoutSelected) {
+    chips.push({ id: "edit", kind: "mode", label: "edit", tone: "info" });
+  }
+  if (input.visualState ? appearance.structure === "floating" : input.floating === true) {
+    chips.push({ id: "float", kind: "state", label: "float", tone: null });
+  }
+  if (input.visualState ? appearance.structure === "maximized" : input.maximized === true) {
+    chips.push({ id: "maximized", kind: "state", label: "max", tone: "info" });
+  }
+  return chips;
+}
+
+/** Compatibility adapter. New hosts should construct the model directly. */
+export function paneFrameModel(input: PaneFrameInput): PaneFrameModel {
+  const appearance = resolvePaneAppearance(paneFrameVisualState(input));
+  const status: SemanticPaneFrameStatus | null = input.status
+    ? {
+        id: "status.domain",
+        label: input.status,
+        description: appearance.accessibility.description,
+        tone: appearance.status.domainTone,
+        busy: appearance.accessibility.busy,
+      }
+    : null;
+  const actions: SemanticPaneFrameAction[] = (input.actions ?? []).map((action) => ({
+    id: semanticId(action.id, "action.activate"),
+    commandId: commandIdForAction(action),
+    icon: action.icon ?? "command",
+    label: action.label,
+    description: action.description,
+    available: action.disabled !== true,
+    disabledReason: action.disabled ? action.description : null,
+    pressed: action.active === true || action.pressed === true,
+    busy: false,
+  }));
+  return {
+    pane: {
+      id: input.paneId ?? "pane.preview",
+      kind: ROLE_BY_KIND[input.kind],
+    },
+    appearance,
+    title: input.title,
+    subtitle: input.subtitle ?? null,
+    status,
+    chips: legacyStateChips(input, appearance),
+    actions,
+  };
+}
+
+function compactChipLabel(chip: SemanticPaneFrameChip): string {
+  if (chip.id === "edit") return "E";
+  if (chip.id === "float") return "F";
+  if (chip.id === "maximized") return "M";
+  return clipWorkspaceText(chip.label, 1);
+}
+
 export function paneFrameVariant(width: number, height: number): PaneFrameVariant {
   if (width >= 160 && height >= 44) return "wide";
   if (width >= 100 && height >= 28) return "standard";
@@ -147,6 +334,22 @@ export function paneFrameVariant(width: number, height: number): PaneFrameVarian
 }
 
 export function projectPaneFrame(input: PaneFrameInput): PaneFrameProjection {
+  const model = paneFrameModel(input);
+  return projectSemanticPaneFrame({
+    width: input.width,
+    height: input.height,
+    model,
+    dirty: input.dirty,
+    actionPresentation: input.actions,
+    hoveredActionIndex: input.hoveredActionIndex,
+    pressedActionIndex: input.pressedActionIndex,
+  });
+}
+
+/** Cell geometry for a shared semantic PaneFrame model. */
+export function projectSemanticPaneFrame(
+  input: SemanticPaneFrameProjectionInput,
+): PaneFrameProjection {
   const width = Math.max(0, Math.floor(input.width));
   const height = Math.max(0, Math.floor(input.height));
   const variant = paneFrameVariant(width, height);
@@ -158,33 +361,47 @@ export function projectPaneFrame(input: PaneFrameInput): PaneFrameProjection {
   const bodyHeight = Math.max(0, innerHeight - headerHeight);
   const header: Rect = { x: inset, y: inset, width: innerWidth, height: headerHeight };
   const body: Rect = { x: inset, y: inset + headerHeight, width: innerWidth, height: bodyHeight };
-  const terminalFocused = input.terminalFocused === true;
-  const attention = input.attention === true;
-  const windowEditSelected = input.windowEditSelected === true;
-  const floating = input.floating === true;
-  const maximized = input.maximized === true;
-  const marker = paneFrameMarker({
-    windowEditSelected,
-    terminalFocused,
-    attention,
-    focused: input.focused,
-    floating,
+  const { appearance } = input.model;
+  const terminalFocused = appearance.accessibility.terminalInputOwner;
+  const attention = appearance.accessibility.hasAttention;
+  const windowEditSelected = appearance.accessibility.layoutSelected;
+  const floating = appearance.structure === "floating";
+  const maximized = appearance.structure === "maximized";
+  const marker = paneFrameMarker(appearance);
+  const status = statusChip(input.model.status, variant);
+  const stateChips = projectStateChips(input.model.chips, variant);
+  const presentations = new Map(
+    (input.actionPresentation ?? []).map((action) => [action.id, action]),
+  );
+  const actions = input.model.actions.map((semanticAction, index) => {
+    const presentation = presentations.get(semanticAction.id);
+    const action: PaneFrameAction = {
+      id: semanticAction.id,
+      commandId: semanticAction.commandId,
+      label: semanticAction.label,
+      compactLabel: presentation?.compactLabel,
+      icon: presentation ? presentation.icon : semanticAction.icon,
+      description: semanticAction.description ?? semanticAction.label,
+      active: semanticAction.pressed,
+      disabled: !semanticAction.available || semanticAction.busy,
+      attention: presentation?.attention,
+      pressed: semanticAction.pressed,
+      hidden: presentation?.hidden,
+    };
+    return {
+      ...action,
+      kind: "action" as const,
+      fullLabel: action.label,
+      appearance: action.icon ? ("icon" as const) : ("label" as const),
+      label: action.icon
+        ? workspaceIcon(action.icon)
+        : variant === "compact"
+          ? (action.compactLabel ?? action.label)
+          : action.label,
+      hovered: input.hoveredActionIndex === index,
+      pressed: input.pressedActionIndex === index || action.pressed === true,
+    };
   });
-  const status = statusChip(input.status, input.statusTone, variant);
-  const stateChips = projectStateChips({ windowEditSelected, floating, maximized, variant });
-  const actions = (input.actions ?? []).map((action, index) => ({
-    ...action,
-    kind: "action" as const,
-    fullLabel: action.label,
-    appearance: action.icon ? ("icon" as const) : ("label" as const),
-    label: action.icon
-      ? workspaceIcon(action.icon)
-      : variant === "compact"
-        ? (action.compactLabel ?? action.label)
-        : action.label,
-    hovered: input.hoveredActionIndex === index,
-    pressed: input.pressedActionIndex === index || action.pressed === true,
-  }));
   const visible = fitChips(header.width, variant, status, stateChips, actions);
   const chips = positionChips(header.x + header.width, visible);
   const firstChip = chips[0]?.start ?? header.x + header.width;
@@ -196,12 +413,12 @@ export function projectPaneFrame(input: PaneFrameInput): PaneFrameProjection {
   const titleStart = header.x + (grip ? grip.width + 1 : 0);
   const titleBudget = Math.max(0, firstChip - titleStart - (chips.length > 0 ? 1 : 0));
   const dirty = input.dirty ? " •" : "";
-  const kindGlyph = workspaceIcon(KIND_ICONS[input.kind]);
+  const kindGlyph = workspaceIcon(ICON_BY_ROLE[input.model.pane.kind]);
   const titlePrefix = `${marker} ${kindGlyph} `;
-  const requestedTitle = `${titlePrefix}${input.title}${dirty}`;
-  const showSubtitle = variant !== "compact" && !!input.subtitle;
+  const requestedTitle = `${titlePrefix}${input.model.title}${dirty}`;
+  const showSubtitle = variant !== "compact" && !!input.model.subtitle;
   const subtitleDividerWidth = showSubtitle ? 3 : 0;
-  const subtitlePreferred = showSubtitle ? ` · ${input.subtitle}` : "";
+  const subtitlePreferred = showSubtitle ? ` · ${input.model.subtitle}` : "";
   const titleOnlyBudget = showSubtitle
     ? Math.max(4, Math.floor(titleBudget * (variant === "wide" ? 0.58 : 0.68)))
     : titleBudget;
@@ -224,12 +441,13 @@ export function projectPaneFrame(input: PaneFrameInput): PaneFrameProjection {
       : null;
 
   return {
+    model: input.model,
     width,
     height,
     variant,
     outer: { x: 0, y: 0, width, height },
     border: { x: 0, y: 0, width, height },
-    borderStyle: bordered ? (windowEditSelected ? "strong" : "single") : "none",
+    borderStyle: bordered ? (appearance.outerOutline.visible ? "strong" : "single") : "none",
     header,
     body,
     grip,
@@ -245,7 +463,7 @@ export function projectPaneFrame(input: PaneFrameInput): PaneFrameProjection {
     glyph: kindGlyph,
     title: titleText,
     subtitle: subtitleText,
-    focused: input.focused,
+    focused: appearance.accessibility.focused,
     terminalFocused,
     attention,
     windowEditSelected,
@@ -256,53 +474,39 @@ export function projectPaneFrame(input: PaneFrameInput): PaneFrameProjection {
   };
 }
 
-function paneFrameMarker(state: {
-  windowEditSelected: boolean;
-  terminalFocused: boolean;
-  attention: boolean;
-  focused: boolean;
-  floating: boolean;
-}): string {
-  if (state.windowEditSelected) return "◇";
-  if (state.terminalFocused) return "▣";
-  if (state.attention) return "!";
-  if (state.focused) return "●";
-  if (state.floating) return "◌";
+function paneFrameMarker(appearance: PaneFrameModel["appearance"]): string {
+  if (appearance.accessibility.layoutSelected) return "◇";
+  if (appearance.accessibility.terminalInputOwner) return "▣";
+  if (appearance.accessibility.hasAttention) return "!";
+  if (appearance.accessibility.focused) return "●";
+  if (appearance.structure === "floating") return "◌";
   return "○";
 }
 
 function statusChip(
-  status: string | null | undefined,
-  tone: PaneFrameInput["statusTone"],
+  status: PaneFrameModel["status"],
   variant: PaneFrameVariant,
 ): Omit<PaneFrameStatusChip, "start" | "width"> | null {
   if (!status) return null;
-  const resolvedTone = tone ?? "unknown";
+  const resolvedTone = recipeDomainTone(status.tone);
   return {
     kind: "status",
-    label: variant === "compact" ? STATUS_GLYPHS[resolvedTone] : status,
+    id: status.id,
+    label: variant === "compact" ? STATUS_GLYPHS[resolvedTone] : status.label,
     tone: resolvedTone,
   };
 }
 
-function projectStateChips(input: {
-  windowEditSelected: boolean;
-  floating: boolean;
-  maximized: boolean;
-  variant: PaneFrameVariant;
-}): Omit<PaneFrameStateChip, "start" | "width">[] {
-  const compact = input.variant === "compact";
-  const chips: Omit<PaneFrameStateChip, "start" | "width">[] = [];
-  if (input.windowEditSelected) {
-    chips.push({ kind: "state", id: "edit", label: compact ? "E" : "edit", tone: "accent" });
-  }
-  if (input.floating) {
-    chips.push({ kind: "state", id: "float", label: compact ? "F" : "float", tone: "neutral" });
-  }
-  if (input.maximized) {
-    chips.push({ kind: "state", id: "maximized", label: compact ? "M" : "max", tone: "accent" });
-  }
-  return chips;
+function projectStateChips(
+  chips: readonly SemanticPaneFrameChip[],
+  variant: PaneFrameVariant,
+): Omit<PaneFrameStateChip, "start" | "width">[] {
+  return chips.map((chip) => ({
+    kind: "state",
+    id: chip.id,
+    label: variant === "compact" ? compactChipLabel(chip) : chip.label,
+    tone: recipeToneForStatus(chip.tone),
+  }));
 }
 
 function chipWidth(

@@ -7,8 +7,13 @@ import { SelectableRow } from "../recipes.tsx";
 import { recipePalette } from "../recipes.ts";
 import { colorToThemeBytes, createSemanticThemeSnapshot } from "../theme.ts";
 import { expectFrameBounds, renderForTest, stableFrame } from "../testing/renderer-harness.test.ts";
+import {
+  createPaneFrameFixtureTraceRecorder,
+  PANE_FRAME_FIXTURE_EXPECTED_TRACE,
+  PANE_FRAME_FIXTURE_MODEL,
+} from "../../../ui/pane-frame/fixture.ts";
 import type { PaneFrameInput } from "./pane-frame.ts";
-import { paneFrameHitTest, projectPaneFrame } from "./pane-frame.ts";
+import { paneFrameHitTest, projectPaneFrame, projectSemanticPaneFrame } from "./pane-frame.ts";
 import { PaneFrame } from "./pane-frame.tsx";
 
 const actions = [
@@ -173,6 +178,41 @@ async function renderPane(width: number, height: number) {
 }
 
 describe("PaneFrame OpenTUI renderer", () => {
+  it("renders and activates the shared cohesion fixture through injected OpenTUI leaves", async () => {
+    const theme = createSemanticThemeSnapshot({ mode: "dark" });
+    const recorder = createPaneFrameFixtureTraceRecorder();
+    const projection = projectSemanticPaneFrame({
+      width: 120,
+      height: 40,
+      model: PANE_FRAME_FIXTURE_MODEL,
+    });
+    const setup = await renderForTest(
+      () => (
+        <PaneFrame
+          theme={theme}
+          projection={projection}
+          inputOwner
+          onActionActivate={recorder.onActionActivate}
+          onGripActivate={recorder.onGripActivate}
+        >
+          <text> shared fixture body</text>
+        </PaneFrame>
+      ),
+      { width: 120, height: 40 },
+    );
+    await setup.renderOnce();
+    await setup.mockMouse.click(projection.grip!.x, projection.grip!.y, MouseButtons.LEFT);
+    const split = projection.actions.find((action) => action.id === "split")!;
+    await setup.mockMouse.click(
+      split.start + Math.floor(split.width / 2),
+      projection.header.y,
+      MouseButtons.LEFT,
+    );
+    expect(recorder.trace).toEqual(PANE_FRAME_FIXTURE_EXPECTED_TRACE);
+    expect(stableFrame(setup.captureCharFrame())).toContain(PANE_FRAME_FIXTURE_MODEL.title);
+    setup.renderer.destroy();
+  });
+
   it.each([
     [80, 24, "compact"],
     [120, 40, "standard"],
@@ -217,7 +257,6 @@ describe("PaneFrame OpenTUI renderer", () => {
         },
         marker: "○",
         borderStart: "┌",
-        paletteState: {},
       },
       {
         label: "keyboard-focus-attention",
@@ -231,7 +270,6 @@ describe("PaneFrame OpenTUI renderer", () => {
         },
         marker: "!",
         borderStart: "┌",
-        paletteState: { focused: true, attention: true },
       },
       {
         label: "terminal-focus-attention",
@@ -246,7 +284,6 @@ describe("PaneFrame OpenTUI renderer", () => {
         },
         marker: "▣",
         borderStart: "┌",
-        paletteState: { focused: true, attention: true },
       },
       {
         label: "edit-floating-maximized",
@@ -265,28 +302,29 @@ describe("PaneFrame OpenTUI renderer", () => {
         },
         marker: "◇",
         borderStart: "┏",
-        paletteState: { selected: true, focused: true, attention: true },
       },
     ] as const;
 
-    for (const { label, input, marker, borderStart, paletteState } of cases) {
+    for (const { label, input, marker, borderStart } of cases) {
       const { setup, theme, projection } = await renderStaticPane(input);
       const stable = stableFrame(setup.captureCharFrame());
       expect(stable, label).toMatchSnapshot();
       expect(stable.startsWith(borderStart), label).toBe(true);
       expect(projection.marker, label).toBe(marker);
       expect(projection.titleSpan.text, label).toContain(marker);
-      const palette = recipePalette(theme, paletteState);
+      const appearance = projection.model.appearance;
+      const borderRole = appearance.outerOutline.visible
+        ? (appearance.outerOutline.role ?? appearance.border.role)
+        : appearance.border.role;
       const borderSpan = setup.captureSpans().lines[0]!.spans[0]!;
-      expect(colorKey(borderSpan.fg), label).toBe(colorKey(palette.border));
+      expect(colorKey(borderSpan.fg), label).toBe(colorKey(theme.roles.borders[borderRole]));
       const titleSpan = spanContaining(setup, projection.titleSpan.text, projection.header.y);
       expect(titleSpan, label).toBeDefined();
-      const nativeFocused = projection.focused || projection.terminalFocused;
       expect(colorKey(titleSpan!.fg), label).toBe(
-        colorKey(nativeFocused ? theme.roles.text.primary : theme.roles.text.muted),
+        colorKey(theme.roles.text[appearance.header.text]),
       );
       expect(colorKey(titleSpan!.bg), label).toBe(
-        colorKey(nativeFocused ? theme.roles.surfaces.headerActive : palette.background),
+        colorKey(theme.roles.surfaces[appearance.header.surface]),
       );
       if (label === "edit-floating-maximized") {
         expect(stable).toContain("edit");

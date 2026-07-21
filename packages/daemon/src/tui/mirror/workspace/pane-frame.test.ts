@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import type { PaneVisualStateV1 } from "@tmux-ide/contracts";
 import { terminalDisplayWidth } from "../panel-host.ts";
 import { paneFrameHitTest, paneFrameVariant, projectPaneFrame } from "./pane-frame.ts";
 
@@ -160,6 +161,60 @@ describe("PaneFrame projection", () => {
       "edit",
       "float",
       "maximized",
+    ]);
+  });
+
+  it("lets canonical PaneAppearance override every conflicting legacy state flag", () => {
+    const visualState: PaneVisualStateV1 = {
+      structure: "docked",
+      applicationFocus: { pane: false, terminalInput: false, windowActive: true },
+      agentActivity: "idle",
+      domainStatus: "idle",
+      attention: "none",
+      layoutInteraction: {
+        editable: true,
+        selected: false,
+        dragging: false,
+        resizing: false,
+        previewing: false,
+      },
+      controlInteraction: {
+        hover: false,
+        focusVisible: false,
+        pressed: false,
+        disabled: false,
+        loading: false,
+      },
+    };
+    const projection = projectPaneFrame({
+      width: 120,
+      height: 40,
+      title: "Canonical pane",
+      kind: "native",
+      focused: true,
+      terminalFocused: true,
+      attention: true,
+      windowEditSelected: true,
+      floating: true,
+      maximized: true,
+      status: "idle",
+      statusTone: "blocked",
+      visualState,
+    });
+    expect(projection.marker).toBe("○");
+    expect(projection).toMatchObject({
+      focused: false,
+      terminalFocused: false,
+      attention: false,
+      windowEditSelected: false,
+      floating: false,
+      maximized: false,
+    });
+    expect(projection.model.appearance.accessibility.description).toBe(
+      "docked pane, idle status, idle agent",
+    );
+    expect(projection.chips).toEqual([
+      expect.objectContaining({ kind: "status", label: "idle", tone: "idle" }),
     ]);
   });
 
