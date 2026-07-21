@@ -15,7 +15,9 @@ import { fileURLToPath } from "node:url";
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const repoRoot = resolve(packageRoot, "../..");
+const distRoot = join(packageRoot, "dist");
 const generatedRoot = join(packageRoot, "dist", "ui", "workbench-dock");
+const webGeneratedRoot = join(generatedRoot, "web");
 const temporaryRoot = mkdtempSync(join(tmpdir(), "tmux-ide-dock-package-"));
 const tarballRoot = join(temporaryRoot, "tarball");
 const consumerRoot = join(temporaryRoot, "consumer");
@@ -47,9 +49,9 @@ try {
   mkdirSync(tarballRoot, { recursive: true });
   mkdirSync(consumerRoot, { recursive: true });
 
-  // Prove prepack owns every exported artifact. A stale local Vite output must
-  // not be able to make the package check pass.
-  rmSync(generatedRoot, { recursive: true, force: true });
+  // Prove prepack owns every exported artifact in its real script order. No
+  // stale normal-daemon or Vite output may make this check pass.
+  rmSync(distRoot, { recursive: true, force: true });
   run("pnpm", ["pack", "--pack-destination", tarballRoot], packageRoot, "pipe");
 
   const tarballName = readdirSync(tarballRoot).find((name) => name.startsWith("tmux-ide-daemon-"));
@@ -61,16 +63,21 @@ try {
   if (webExport?.types !== "./dist/ui/workbench-dock/web-entry.d.ts") {
     throw new Error("Workbench dock types export is not the generated declaration entry");
   }
-  for (const file of [
-    "workbench-dock-web.js",
-    "workbench-dock-web.css",
-    "web-entry.d.ts",
-    "web-host.d.ts",
-    "presenter.d.ts",
-    "navigation.d.ts",
-  ]) {
+  if (webExport?.default !== "./dist/ui/workbench-dock/web/workbench-dock-web.js") {
+    throw new Error("Workbench dock JavaScript export is not in the Vite-owned output leaf");
+  }
+  const cssExport = packageJson.exports?.["./workbench-dock-web.css"];
+  if (cssExport?.default !== "./dist/ui/workbench-dock/web/workbench-dock-web.css") {
+    throw new Error("Workbench dock CSS export is not in the Vite-owned output leaf");
+  }
+  for (const file of ["web-entry.d.ts", "web-host.d.ts", "presenter.d.ts", "navigation.d.ts"]) {
     requireFile(join(generatedRoot, file));
   }
+  for (const file of ["workbench-dock-web.js", "workbench-dock-web.css"]) {
+    requireFile(join(webGeneratedRoot, file));
+  }
+  requireFile(join(generatedRoot, "navigation.js"));
+  requireFile(join(distRoot, "tui", "mirror", "workspace", "workbench-shell.js"));
   for (const declaration of [
     "web-entry.d.ts",
     "web-host.d.ts",
@@ -98,11 +105,13 @@ try {
   mkdirSync(installedScope, { recursive: true });
   run("tar", ["-xzf", tarball, "-C", extractionRoot], consumerRoot, "pipe");
   renameSync(join(extractionRoot, "package"), join(installedScope, "daemon"));
-  symlinkSync(
-    join(repoRoot, "node_modules", "solid-js"),
-    join(consumerRoot, "node_modules", "solid-js"),
-    process.platform === "win32" ? "junction" : "dir",
-  );
+  for (const dependency of ["happy-dom", "solid-js", "string-width"]) {
+    symlinkSync(
+      join(packageRoot, "node_modules", dependency),
+      join(consumerRoot, "node_modules", dependency),
+      process.platform === "win32" ? "junction" : "dir",
+    );
+  }
   writeFileSync(
     join(consumerRoot, "consumer.ts"),
     `import { mountWebWorkbenchDock, type WorkbenchDockHostProjection } from "@tmux-ide/daemon/workbench-dock-web";\n\n` +
@@ -137,15 +146,54 @@ try {
     [join(repoRoot, "node_modules", "typescript", "bin", "tsc"), "-p", "tsconfig.json"],
     consumerRoot,
   );
+
+  const runtimeCheck = join(consumerRoot, "runtime-check.mjs");
+  writeFileSync(
+    runtimeCheck,
+    `import { pathToFileURL } from "node:url";\n` +
+      `import { Window } from "happy-dom";\n\n` +
+      `const [shellPath, webTarget, mode] = process.argv.slice(2);\n` +
+      `const shell = await import(pathToFileURL(shellPath).href);\n` +
+      `if (typeof shell.projectWorkbenchShell !== "function") throw new Error("missing workbench shell runtime");\n` +
+      `const projection = shell.projectWorkbenchShell({ width: 80, height: 24, dockMode: "open", persistedDockHeight: 8, activeDockTab: "missions", focusZone: "dock-tabs" });\n` +
+      `if (projection.activeDockTab !== "missions") throw new Error("workbench shell runtime failed");\n` +
+      `const browserWindow = new Window({ url: "http://localhost/" });\n` +
+      `Object.defineProperties(globalThis, {\n` +
+      `  window: { configurable: true, value: browserWindow },\n` +
+      `  document: { configurable: true, value: browserWindow.document },\n` +
+      `  Node: { configurable: true, value: browserWindow.Node },\n` +
+      `  HTMLElement: { configurable: true, value: browserWindow.HTMLElement },\n` +
+      `  KeyboardEvent: { configurable: true, value: browserWindow.KeyboardEvent },\n` +
+      `});\n` +
+      `const webSpecifier = webTarget.startsWith("@") ? webTarget : pathToFileURL(webTarget).href;\n` +
+      `const web = await import(webSpecifier);\n` +
+      `if (typeof web.mountWebWorkbenchDock !== "function") throw new Error("missing web runtime export");\n` +
+      `if (mode === "package") {\n` +
+      `  const css = import.meta.resolve("@tmux-ide/daemon/workbench-dock-web.css");\n` +
+      `  if (!css.endsWith("workbench-dock-web.css")) throw new Error("missing CSS export");\n` +
+      `}\n` +
+      `browserWindow.close();\n`,
+  );
+
   run(
     process.execPath,
     [
-      "--input-type=module",
-      "--eval",
-      `const js = import.meta.resolve("@tmux-ide/daemon/workbench-dock-web");\n` +
-        `if (!js.endsWith("workbench-dock-web.js")) throw new Error("missing JavaScript export");\n` +
-        `const css = import.meta.resolve("@tmux-ide/daemon/workbench-dock-web.css");\n` +
-        `if (!css.endsWith("workbench-dock-web.css")) throw new Error("missing CSS export");\n`,
+      "--conditions=browser",
+      runtimeCheck,
+      join(distRoot, "tui", "mirror", "workspace", "workbench-shell.js"),
+      join(webGeneratedRoot, "workbench-dock-web.js"),
+      "files",
+    ],
+    consumerRoot,
+  );
+  run(
+    process.execPath,
+    [
+      "--conditions=browser",
+      runtimeCheck,
+      join(installedScope, "daemon", "dist", "tui", "mirror", "workspace", "workbench-shell.js"),
+      "@tmux-ide/daemon/workbench-dock-web",
+      "package",
     ],
     consumerRoot,
   );

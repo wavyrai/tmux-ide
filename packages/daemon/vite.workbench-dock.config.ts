@@ -14,7 +14,10 @@ export default defineConfig({
       fileName: () => "workbench-dock-web.js",
       cssFileName: "workbench-dock-web",
     },
-    outDir: here("./dist/ui/workbench-dock"),
+    // Vite owns only this leaf. The normal daemon tsc build also emits runtime
+    // modules under dist/ui/workbench-dock, so clearing the parent would break
+    // imports from compiled TUI projection modules such as workbench-shell.js.
+    outDir: here("./dist/ui/workbench-dock/web"),
     emptyOutDir: true,
     target: "es2022",
     rollupOptions: {

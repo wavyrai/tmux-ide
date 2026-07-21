@@ -35,10 +35,10 @@
     },
     "./workbench-dock-web": {
       "types": "./dist/ui/workbench-dock/web-entry.d.ts",
-      "default": "./dist/ui/workbench-dock/workbench-dock-web.js"
+      "default": "./dist/ui/workbench-dock/web/workbench-dock-web.js"
     },
     "./workbench-dock-web.css": {
-      "default": "./dist/ui/workbench-dock/workbench-dock-web.css"
+      "default": "./dist/ui/workbench-dock/web/workbench-dock-web.css"
     }
   },
   "files": [

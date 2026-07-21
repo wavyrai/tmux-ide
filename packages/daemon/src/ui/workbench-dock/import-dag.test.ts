@@ -1,4 +1,5 @@
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, extname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
@@ -25,15 +26,26 @@ function runtimeImports(source: string): string[] {
 function resolveLocalImport(importer: string, specifier: string): string | null {
   if (!specifier.startsWith(".")) return null;
   const candidate = resolve(dirname(importer), specifier);
-  if (extname(candidate)) return candidate;
-  for (const extension of [".ts", ".tsx"]) {
+  const extension = extname(candidate);
+  const candidates =
+    extension === ".js" || extension === ".jsx"
+      ? [
+          candidate.slice(0, -extension.length) + ".ts",
+          candidate.slice(0, -extension.length) + ".tsx",
+        ]
+      : extension
+        ? [candidate]
+        : [candidate + ".ts", candidate + ".tsx"];
+  for (const sourceCandidate of candidates) {
     try {
-      readFileSync(candidate + extension, "utf8");
-      return candidate + extension;
+      readFileSync(sourceCandidate, "utf8");
+      return sourceCandidate;
     } catch {
-      // Try the next production extension.
+      // Try the next source representation.
     }
   }
+  // Non-code local imports such as CSS are intentionally outside the runtime
+  // TypeScript graph. Missing code imports are covered by the build itself.
   return candidate;
 }
 
@@ -77,6 +89,29 @@ describe("shared workbench dock import DAG", () => {
     );
     expect([...graph.externalSpecifiers].some((value) => value.startsWith("node:"))).toBe(false);
     expect(relativeFiles(graph).some((file) => file.includes("/tui/"))).toBe(false);
+    expect(relativeFiles(graph)).toEqual([
+      "packages/daemon/src/ui/workbench-dock/navigation.ts",
+      "packages/daemon/src/ui/workbench-dock/presenter.tsx",
+      "packages/daemon/src/ui/workbench-dock/web-entry.tsx",
+      "packages/daemon/src/ui/workbench-dock/web-host.tsx",
+    ]);
+  });
+
+  it("follows emitted .js specifiers before detecting forbidden downstream imports", () => {
+    const root = mkdtempSync(resolve(tmpdir(), "tmux-ide-import-dag-"));
+    try {
+      const entry = resolve(root, "entry.ts");
+      writeFileSync(entry, 'import "./downstream.js";\n');
+      writeFileSync(resolve(root, "downstream.ts"), 'import "node:fs";\n');
+
+      const graph = importGraph(entry);
+      expect([...graph.files.keys()].sort()).toEqual(
+        [entry, resolve(root, "downstream.ts")].sort(),
+      );
+      expect([...graph.externalSpecifiers]).toContain("node:fs");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it("keeps the OpenTUI leaves free of DOM and Node runtime imports", () => {
