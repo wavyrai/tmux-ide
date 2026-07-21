@@ -935,6 +935,12 @@ export async function startEmbeddedDaemon(
         if (stopped) return;
         if (stopping) return stopping;
         stopping = (async () => {
+          // A pending Promise does not retain Node's event loop. Shutdown closes
+          // the server, sockets, and monitor before it retires canonical state,
+          // so an early process signal could otherwise let Node exit between
+          // those phases and leave daemon.json behind. Keep one ref'ed handle
+          // alive until canonical cleanup and claim release are both complete.
+          const shutdownKeepAlive = setInterval(() => undefined, 1_000);
           try {
             stopped = true;
             setActivationBackend(null);
@@ -959,7 +965,11 @@ export async function startEmbeddedDaemon(
             try {
               clearCanonicalDaemonInfoIfOwned(instanceId, claim);
             } finally {
-              releaseCanonicalDaemonClaim(claim);
+              try {
+                releaseCanonicalDaemonClaim(claim);
+              } finally {
+                clearInterval(shutdownKeepAlive);
+              }
             }
           }
         })();
