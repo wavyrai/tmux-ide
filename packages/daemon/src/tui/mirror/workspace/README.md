@@ -53,7 +53,20 @@ and Activity tabs; collapsed, open, and maximized geometry; a separately
 preserved preferred open height; effective focus zones; responsive minimums;
 and exact tab, action, canvas, and dock-body hit cells.
 
-`workbench-shell.tsx` only paints that projection. Card 03 deliberately does not
-move live surfaces, persist state, or install keyboard, paste, pointer, or
-renderer lifecycle owners. Those effects remain with the root controller until
-the workspace-state and command-adapter cards land.
+`workbench-shell.tsx` only paints that projection. Its production dock now runs
+through `ui/workbench-dock/presenter.tsx`, an intrinsic-free Solid presenter
+whose capitalized leaves are supplied by either the OpenTUI or standard DOM
+host. `workbench-shell.ts` remains the single geometry/state projection and
+`workbench-controller.ts` remains the input policy boundary; neither host
+derives a second dock model.
+
+The OpenTUI leaves preserve the existing cell tree and root-owned event routing.
+The DOM leaves expose a semantic tablist, tab and action buttons, and stable
+tabpanels whose IDs remain present while inactive or collapsed. Horizontal
+arrows use automatic activation in both hosts: they skip disabled tabs and emit
+the same semantic tab command as pointer activation. Collapse is a disclosure
+(`aria-expanded`/`aria-controls`) while maximize remains a toggle. The two hosts
+share fixture, pointer, and real-keyboard traces and have separate JSX
+typecheck/build lanes plus transitive import-DAG guards.
+Browser/Electron renderers can consume `@tmux-ide/daemon/workbench-dock-web`
+and its explicit `@tmux-ide/daemon/workbench-dock-web.css` style export.

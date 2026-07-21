@@ -343,7 +343,7 @@ import { ShellTabBar } from "./shell-chrome.tsx";
 import { shellChromeLayout, shellSidebarHint, shellSurfaceTabSpans } from "./shell-chrome.ts";
 import {
   projectWorkbenchShell,
-  moveWorkbenchDockTab,
+  workbenchDockNavigationTarget,
   workbenchShellHitTest,
   type WorkbenchDockMode,
   type WorkbenchDockTabId,
@@ -5882,12 +5882,18 @@ try {
         return;
       }
       if (workbenchProjection().focusZone === "dock-tabs") {
-        if (evt.name === "left" || evt.name === "h" || evt.name === "right" || evt.name === "l") {
-          const next = moveWorkbenchDockTab(
-            activeDockTab(),
-            evt.name === "left" || evt.name === "h" ? "previous" : "next",
+        const keyboardTarget = workbenchDockNavigationTarget(
+          workbenchProjection().tabs,
+          activeDockTab(),
+          evt,
+        );
+        if (keyboardTarget) {
+          executeRendererCommand(
+            rendererInvocationForDock(keyboardTarget, {
+              kind: "keyboard",
+              surface: "workbench",
+            }),
           );
-          activateDockTab(next);
           setWorkbenchFocusZone("dock-tabs");
           return;
         }

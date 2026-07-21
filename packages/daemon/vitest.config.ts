@@ -1,4 +1,5 @@
 import { defineConfig } from "vitest/config";
+import solid from "vite-plugin-solid";
 
 /**
  * Vitest config for the daemon package. Scoped to the suites that have
@@ -6,7 +7,9 @@ import { defineConfig } from "vitest/config";
  * toolchain). The remaining daemon tests target `bun:test`.
  */
 export default defineConfig({
+  plugins: [solid()],
   test: {
+    environment: "node",
     include: [
       "src/restore.test.ts",
       "src/doctor.test.ts",
@@ -22,6 +25,8 @@ export default defineConfig({
       "src/tui/chrome/*.test.ts",
       "src/tui/integrations/*.test.ts",
       "src/widgets/lib/grammar.test.ts",
+      "src/ui/workbench-dock/**/*.test.ts",
+      "src/ui/workbench-dock/**/*.test.tsx",
     ],
     coverage: {
       provider: "v8",

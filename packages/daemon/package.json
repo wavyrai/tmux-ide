@@ -32,6 +32,13 @@
     "./codex": {
       "types": "./dist/codex/index.d.ts",
       "default": "./dist/codex/index.js"
+    },
+    "./workbench-dock-web": {
+      "types": "./dist/ui/workbench-dock/web-entry.d.ts",
+      "default": "./dist/ui/workbench-dock/web/workbench-dock-web.js"
+    },
+    "./workbench-dock-web.css": {
+      "default": "./dist/ui/workbench-dock/web/workbench-dock-web.css"
     }
   },
   "files": [
@@ -43,9 +50,14 @@
     "access": "public"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "pnpm run build:tsc && pnpm run build:workbench-dock-web && pnpm run build:workbench-dock-web-types",
     "build:tsc": "tsc -p tsconfig.json",
-    "typecheck": "tsc --noEmit",
+    "build:workbench-dock-web": "vite build --config vite.workbench-dock.config.ts",
+    "build:workbench-dock-web-types": "tsc -p tsconfig.workbench-dock-web.types.json",
+    "test:workbench-dock-package": "node scripts/check-workbench-dock-package.mjs",
+    "typecheck": "tsc --noEmit && pnpm run typecheck:workbench-dock-opentui && pnpm run typecheck:workbench-dock-web",
+    "typecheck:workbench-dock-opentui": "tsc --noEmit -p tsconfig.workbench-dock-opentui.json",
+    "typecheck:workbench-dock-web": "tsc --noEmit -p tsconfig.workbench-dock-web.json",
     "prepack": "pnpm run build",
     "dev": "tsx --watch src/lib/daemon.ts",
     "start": "node dist/lib/daemon.js",
@@ -74,8 +86,11 @@
   "devDependencies": {
     "@types/node": "^25.5.0",
     "@types/ws": "^8.18.1",
+    "happy-dom": "^20.8.4",
     "tsx": "^4.20.7",
     "typescript": "^5.9.3",
+    "vite": "^8.1.4",
+    "vite-plugin-solid": "^2.11.12",
     "vitest": "^4.1.0"
   }
 }

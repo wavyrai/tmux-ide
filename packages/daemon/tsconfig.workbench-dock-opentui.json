@@ -1,0 +1,16 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "jsx": "preserve",
+    "jsxImportSource": "@opentui/solid"
+  },
+  "files": [
+    "src/js-yaml.d.ts",
+    "src/ui/workbench-dock/presenter.tsx",
+    "src/tui/mirror/workspace/workbench-dock-opentui.tsx",
+    "src/tui/mirror/workspace/workbench-shell.tsx"
+  ],
+  "include": [],
+  "exclude": []
+}
