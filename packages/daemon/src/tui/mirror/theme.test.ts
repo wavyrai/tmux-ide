@@ -9,7 +9,6 @@ import {
 } from "@tmux-ide/contracts";
 import {
   ACCENT,
-  CARD_22_3B_LIVE_THEME_WIRING_DEFERRALS,
   DARK_THEME,
   DEFAULT_BG,
   LIGHT_THEME,
@@ -174,18 +173,33 @@ describe("semantic theme snapshots", () => {
     expect(LEGACY_THEME_ALIAS_IDS).toEqual([
       "DEFAULT_FG",
       "DEFAULT_BG",
-      "SIDEBAR_BG",
       "ACCENT",
       "MUTED",
       "BADGE_BG",
-      "FOCUS_BORDER_FG",
       "TAB_ACTIVE_BG",
       "HOVER_BG",
-      "BUTTON_HOVER_BG",
-      "CHIP_ATTN_BG",
     ]);
     expect(rgbaKey(DEFAULT_BG)).toBe(rgbaKey(DARK_THEME.colors.background));
     expect(rgbaKey(ACCENT)).toBe(rgbaKey(DARK_THEME.colors.accent));
+  });
+
+  it("audits the completed live-theme boundary and retired aliases", () => {
+    const themeSource = readFileSync(fileURLToPath(new URL("./theme.ts", import.meta.url)), "utf8");
+    const sidebarSource = readFileSync(
+      fileURLToPath(new URL("./sidebar.tsx", import.meta.url)),
+      "utf8",
+    );
+    const missionsSource = readFileSync(
+      fileURLToPath(new URL("./missions-surface.tsx", import.meta.url)),
+      "utf8",
+    );
+    expect(themeSource).not.toContain("CARD_22_3B_LIVE_THEME_WIRING_DEFERRALS");
+    expect(themeSource).not.toMatch(
+      /export const (SIDEBAR_BG|FOCUS_BORDER_FG|BUTTON_HOVER_BG|CHIP_ATTN_BG)/u,
+    );
+    expect(sidebarSource).not.toContain("props.theme ?? DARK_THEME");
+    expect(missionsSource).not.toContain("semanticTheme");
+    expect(missionsSource).not.toContain("MissionSurfaceTheme");
   });
 
   it("normalizes color bytes without confusing real normalized channels and browser-shim bytes", () => {
@@ -387,22 +401,5 @@ describe("semantic theme store", () => {
 
     store.configure({ mode: "dark", projectTheme: projectTheme(20) });
     expect(notifications).toBe(1);
-  });
-});
-
-describe("Card 22.3b live-theme wiring deferrals", () => {
-  it("keeps the two root-composition writes explicit until app.tsx owns them", () => {
-    expect(CARD_22_3B_LIVE_THEME_WIRING_DEFERRALS).toEqual([
-      { component: "Sidebar", prop: "theme", owner: "app.tsx" },
-      { component: "MissionsSurface", prop: "semanticTheme", owner: "app.tsx" },
-    ]);
-
-    const app = readFileSync(fileURLToPath(new URL("./app.tsx", import.meta.url)), "utf-8");
-    const sidebarCall = app.match(/<Sidebar[\s\S]*?\/>/u)?.[0];
-    const missionsCall = app.match(/<MissionsSurface[\s\S]*?\/>/u)?.[0];
-    expect(sidebarCall).toBeDefined();
-    expect(sidebarCall).not.toContain("theme={semanticTheme()}");
-    expect(missionsCall).toBeDefined();
-    expect(missionsCall).not.toContain("semanticTheme={semanticTheme()}");
   });
 });

@@ -1,4 +1,5 @@
 import type { WorkbenchDockTabId, WorkbenchFocusZone } from "./workbench-shell.ts";
+import { CANONICAL_SURFACE_REGISTRY } from "@tmux-ide/contracts";
 
 export interface WorkbenchShortcutEvent {
   name: string;
@@ -7,41 +8,40 @@ export interface WorkbenchShortcutEvent {
   shift?: boolean;
 }
 
-const DOCK_SHORTCUTS: Readonly<Record<string, WorkbenchDockTabId>> = {
-  f3: "files",
-  f4: "changes",
-  f6: "missions",
-  f9: "activity",
-};
-
 export type WorkbenchCanvasPanel = "home" | "terminals";
 
-const CANVAS_SHORTCUTS_BY_PANEL = {
-  home: { key: "f1", label: "F1" },
-  terminals: { key: "f2", label: "F2" },
-} as const;
-
-const CANVAS_SHORTCUTS: Readonly<Record<string, WorkbenchCanvasPanel>> = {
-  f1: "home",
-  f2: "terminals",
-};
-
 export function workbenchCanvasShortcutForPanel(panel: WorkbenchCanvasPanel) {
-  return CANVAS_SHORTCUTS_BY_PANEL[panel];
+  const surface = CANONICAL_SURFACE_REGISTRY.find(
+    (candidate) => candidate.kind === "primary-mode" && candidate.id === panel,
+  )!;
+  return {
+    key: surface.shortcut.toLowerCase() as `f${number}`,
+    label: surface.shortcut as `F${number}`,
+  };
 }
 
 export function workbenchCanvasPanelForShortcut(
   event: WorkbenchShortcutEvent,
 ): WorkbenchCanvasPanel | null {
   if (event.ctrl || event.meta || event.shift) return null;
-  return CANVAS_SHORTCUTS[event.name.toLowerCase()] ?? null;
+  const surface = CANONICAL_SURFACE_REGISTRY.find(
+    (candidate) =>
+      candidate.kind === "primary-mode" &&
+      candidate.shortcut.toLowerCase() === event.name.toLowerCase(),
+  );
+  return surface ? (surface.id as WorkbenchCanvasPanel) : null;
 }
 
 export function workbenchDockTabForShortcut(
   event: WorkbenchShortcutEvent,
 ): WorkbenchDockTabId | null {
   if (event.ctrl || event.meta || event.shift) return null;
-  return DOCK_SHORTCUTS[event.name.toLowerCase()] ?? null;
+  const surface = CANONICAL_SURFACE_REGISTRY.find(
+    (candidate) =>
+      candidate.kind === "dock-tool" &&
+      candidate.shortcut.toLowerCase() === event.name.toLowerCase(),
+  );
+  return surface ? (surface.id as WorkbenchDockTabId) : null;
 }
 
 export type WorkbenchPasteTarget = "terminal" | "files-editor" | "consume";

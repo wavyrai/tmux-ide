@@ -3,8 +3,12 @@ import type { JSX } from "@opentui/solid";
 import { Show } from "solid-js";
 import {
   WorkbenchDockPresenter,
+  type WorkbenchDockHostActionId,
+  type WorkbenchDockHostActivationSource,
   type WorkbenchDockHostLeaves,
+  type WorkbenchDockHostMode,
   type WorkbenchDockHostTab,
+  type WorkbenchDockHostTabId,
 } from "../../../ui/workbench-dock/presenter.tsx";
 import type { SemanticThemeSnapshot } from "../theme.ts";
 import type { WorkbenchShellProjection } from "./workbench-shell.ts";
@@ -13,12 +17,29 @@ export interface OpenTuiWorkbenchDockProps {
   theme: SemanticThemeSnapshot;
   projection: WorkbenchShellProjection;
   body: JSX.Element;
+  onTabActivate?: (
+    tabId: WorkbenchDockHostTabId,
+    source: WorkbenchDockHostActivationSource,
+  ) => void;
+  onActionActivate?: (
+    actionId: WorkbenchDockHostActionId,
+    nextMode: WorkbenchDockHostMode,
+    source: WorkbenchDockHostActivationSource,
+  ) => void;
 }
 
 /** OpenTUI leaves for the shared dock presenter; the root app still owns input. */
 export function OpenTuiWorkbenchDock(props: OpenTuiWorkbenchDockProps) {
   const host = createOpenTuiWorkbenchDockHost(() => props.theme);
-  return <WorkbenchDockPresenter host={host} projection={props.projection} body={props.body} />;
+  return (
+    <WorkbenchDockPresenter
+      host={host}
+      projection={props.projection}
+      body={props.body}
+      onTabActivate={props.onTabActivate}
+      onActionActivate={props.onActionActivate}
+    />
+  );
 }
 
 export function createOpenTuiWorkbenchDockHost(
@@ -55,7 +76,14 @@ export function createOpenTuiWorkbenchDockHost(
           height={1}
           backgroundColor={palette().background}
           overflow="hidden"
-          onMouseDown={props.onActivate ? () => props.onActivate?.("mouse") : undefined}
+          onMouseDown={
+            props.onActivate
+              ? (event) => {
+                  event.stopPropagation();
+                  props.onActivate?.("mouse");
+                }
+              : undefined
+          }
         >
           <text fg={palette().foreground} attributes={props.tab.focused ? 1 : 0}>
             {props.tab.label}
@@ -86,7 +114,14 @@ export function createOpenTuiWorkbenchDockHost(
           height={1}
           backgroundColor={palette().background}
           overflow="hidden"
-          onMouseDown={props.onActivate ? () => props.onActivate?.("mouse") : undefined}
+          onMouseDown={
+            props.onActivate
+              ? (event) => {
+                  event.stopPropagation();
+                  props.onActivate?.("mouse");
+                }
+              : undefined
+          }
         >
           <text fg={palette().foreground}>{props.action.label}</text>
         </box>

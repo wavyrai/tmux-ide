@@ -3,12 +3,12 @@ import { MouseButtons } from "@opentui/core/testing";
 import { useKeyboard } from "@opentui/solid";
 import { createSignal } from "solid-js";
 import { describe, expect, it } from "bun:test";
+import { COHESION_FIXTURE_V1, projectApplicationShellV1 } from "@tmux-ide/contracts";
 import { SelectableRow } from "../recipes.tsx";
 import { createSemanticThemeSnapshot } from "../theme.ts";
 import { expectFrameBounds, renderForTest, stableFrame } from "../testing/renderer-harness.test.ts";
 import {
   projectWorkbenchShell,
-  workbenchShellHitTest,
   type WorkbenchDockMode,
   type WorkbenchDockTabId,
   type WorkbenchFocusZone,
@@ -16,6 +16,7 @@ import {
 import { WorkbenchShell } from "./workbench-shell.tsx";
 
 async function renderWorkbench(width: number, height: number) {
+  const shell = projectApplicationShellV1(COHESION_FIXTURE_V1);
   const theme = createSemanticThemeSnapshot({ mode: "dark" });
   const calls: string[] = [];
   let modeValue: WorkbenchDockMode = "open";
@@ -37,6 +38,7 @@ async function renderWorkbench(width: number, height: number) {
         focusZone: focus(),
         hoveredDockTab: null,
         attentionDockTabs: new Set(["activity"]),
+        dockTools: shell.bottomDock.tools,
       });
     useKeyboard((event) => {
       if (event.name === "tab") {
@@ -50,24 +52,25 @@ async function renderWorkbench(width: number, height: number) {
         width={width}
         height={height}
         overflow="hidden"
-        onMouseDown={(event) => {
-          const hit = workbenchShellHitTest(projection(), event.x, event.y);
-          if (hit?.kind === "dock-tab") {
-            activeValue = hit.tabId;
-            focusValue = "dock-tabs";
-            setActive(activeValue);
-            setFocus(focusValue);
-            calls.push(`mouse:tab:${hit.tabId}`);
-          } else if (hit?.kind === "dock-action") {
-            modeValue = hit.nextMode;
-            setMode(modeValue);
-            calls.push(`mouse:action:${hit.actionId}`);
-          }
-        }}
+        onMouseDown={() => calls.push("leaked-to-root")}
       >
         <WorkbenchShell
           theme={theme}
           projection={projection()}
+          onDockTabActivate={(tabId, source) => {
+            activeValue = tabId;
+            focusValue = "dock-body";
+            setActive(activeValue);
+            setFocus(focusValue);
+            calls.push(`${source}:tab:${tabId}`);
+          }}
+          onDockActionActivate={(actionId, nextMode, source) => {
+            modeValue = nextMode;
+            focusValue = nextMode === "collapsed" ? "dock-tabs" : "dock-body";
+            setMode(modeValue);
+            setFocus(focusValue);
+            calls.push(`${source}:action:${actionId}`);
+          }}
           canvas={
             <box
               width={projection().canvasBody.width}
@@ -159,6 +162,7 @@ async function renderWorkbench(width: number, height: number) {
         focusZone: focusValue,
         hoveredDockTab: null,
         attentionDockTabs: new Set(["activity"]),
+        dockTools: shell.bottomDock.tools,
       }),
     frame: () => setup.captureCharFrame(),
   };
@@ -194,7 +198,7 @@ describe("WorkbenchShell OpenTUI renderer", () => {
     );
     await harness.setup.renderOnce();
     expect(harness.active()).toBe("files");
-    expect(harness.focus()).toBe("dock-tabs");
+    expect(harness.focus()).toBe("dock-body");
 
     const collapse = harness
       .projection()

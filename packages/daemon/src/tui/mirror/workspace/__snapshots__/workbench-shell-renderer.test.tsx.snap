@@ -15,7 +15,7 @@ exports[`WorkbenchShell OpenTUI renderer renders the %sx%s compact agent canvas 
 
 
 
-  ▤ Files   ± Changes  ●◆ Missions  !◌ Activity                           ▾   □
+  ▤ Files   ± Changes  ●◆ Missions  !◷ Activity                           ▾   □
 │● missions dock                                        open · preferred 10 rows
  ○ Full application parity                                          7 / 20 cards
  ● Workbench dock projection                                         in progress
@@ -54,7 +54,7 @@ exports[`WorkbenchShell OpenTUI renderer renders the %sx%s standard agent canvas
 
 
 
-  ▤ Files   ± Changes  ●◆ Missions  !◌ Activity                                                         ▾ close   □ max
+  ▤ Files   ± Changes  ●◆ Missions  !◷ Activity                                                         ▾ close   □ max
 │● missions dock                                                                                open · preferred 14 rows
  ○ Full application parity                                                                                  7 / 20 cards
  ● Workbench dock projection                                                                                 in progress
@@ -111,7 +111,7 @@ exports[`WorkbenchShell OpenTUI renderer renders the %sx%s wide agent canvas and
 
 
 
- F3  ▤ Files  F4  ± Changes  F6 ●◆ Missions  F9 !◌ Activity                                                                                                                             ▾ close   □ max
+ F3  ▤ Files  F4  ± Changes  F6 ●◆ Missions  F9 !◷ Activity                                                                                                                             ▾ close   □ max
 │● missions dock                                                                                                                                                                open · preferred 20 rows
  ○ Full application parity                                                                                                                                                                  7 / 20 cards
  ● Workbench dock projection                                                                                                                                                                 in progress

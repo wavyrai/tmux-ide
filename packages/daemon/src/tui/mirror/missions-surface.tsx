@@ -1,8 +1,7 @@
 /* @jsxImportSource @opentui/solid */
-import type { RGBA } from "@opentui/core";
 import { For, Show } from "solid-js";
 import type { MissionDashboardProjection } from "./missions-dashboard.ts";
-import { DARK_THEME, type SemanticThemeSnapshot } from "./theme.ts";
+import type { SemanticThemeSnapshot } from "./theme.ts";
 import {
   clipTerminal,
   missionWorkspaceLayout,
@@ -20,13 +19,6 @@ export type MissionSurfaceHoverRegion =
   | "missioncard"
   | "missionhistory";
 
-export interface MissionSurfaceTheme {
-  bannerFg: RGBA;
-  buttonFg: RGBA;
-  buttonBg: RGBA;
-  buttonActiveBg: RGBA;
-}
-
 export interface MissionSurfaceProps {
   width: number;
   dashboard: MissionDashboardProjection;
@@ -36,10 +28,7 @@ export interface MissionSurfaceProps {
   errorMessage: string;
   resolveDeepLink: (kind: MissionDeepLinkKind) => MissionDeepLinkResolution;
   isHovered: (region: MissionSurfaceHoverRegion, index: number) => boolean;
-  /** @deprecated Card 22.3 removes this accepted-but-unread compatibility prop. */
-  theme: MissionSurfaceTheme;
-  /** Canonical theme projection; optional until app.tsx adopts it in Card 22.3. */
-  semanticTheme?: SemanticThemeSnapshot;
+  theme: SemanticThemeSnapshot;
 }
 
 interface MissionMainSurfaceProps {
@@ -51,7 +40,7 @@ interface MissionMainSurfaceProps {
   errorMessage: string;
   resolveDeepLink: (kind: MissionDeepLinkKind) => MissionDeepLinkResolution;
   isHovered: (region: MissionSurfaceHoverRegion, index: number) => boolean;
-  semanticTheme?: SemanticThemeSnapshot;
+  theme: SemanticThemeSnapshot;
 }
 
 export function missionSurfaceLayout(
@@ -65,7 +54,7 @@ export function missionSurfaceLayout(
 }
 
 export function MissionsSurface(props: MissionSurfaceProps) {
-  const semantic = () => props.semanticTheme ?? DARK_THEME;
+  const semantic = () => props.theme;
   return (
     <box width={props.width} height={props.dashboard.height} flexDirection="row" gap={1}>
       <box
@@ -83,7 +72,7 @@ export function MissionsSurface(props: MissionSurfaceProps) {
           errorMessage={props.errorMessage}
           resolveDeepLink={props.resolveDeepLink}
           isHovered={props.isHovered}
-          semanticTheme={props.semanticTheme}
+          theme={props.theme}
         />
       </box>
       <Show when={props.dashboard.inspector}>
@@ -127,7 +116,7 @@ export function MissionsSurface(props: MissionSurfaceProps) {
 }
 
 function MissionMainSurface(props: MissionMainSurfaceProps) {
-  const semantic = () => props.semanticTheme ?? DARK_THEME;
+  const semantic = () => props.theme;
   const ready = () =>
     props.snapshot &&
     props.loadState.status !== "loading" &&

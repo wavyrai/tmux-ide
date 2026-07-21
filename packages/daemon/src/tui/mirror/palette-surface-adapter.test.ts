@@ -24,11 +24,11 @@ const actionRow = (action: PaletteAction, shortcut: string | null = null): Palet
 });
 
 const save: PaletteAction = { kind: "save", label: "Save file" };
-const home: PaletteAction = { kind: "tab", tab: "home", label: "Switch tab: Home" };
+const home: PaletteAction = { kind: "surface", surface: "home", label: "Open Home" };
 const terminals: PaletteAction = {
-  kind: "tab",
-  tab: "terminal",
-  label: "Switch tab: Terminal",
+  kind: "surface",
+  surface: "terminals",
+  label: "Open Terminals",
 };
 const quit: PaletteAction = { kind: "quit", label: "Quit" };
 const writableSaveState = {
@@ -50,7 +50,7 @@ describe("live command palette adapter", () => {
         actionRow(quit, "⌘Q"),
       ],
       {
-        currentTab: "terminal",
+        currentSurface: "terminals",
         saveState: { hasBuffer: false, hasPath: false, readOnlyReason: null },
       },
     );

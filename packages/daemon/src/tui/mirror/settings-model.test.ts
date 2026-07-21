@@ -244,10 +244,12 @@ describe("keybinding viewer", () => {
 describe("PALETTE_KEYCAPS (M24.4 — the palette rows' shortcut source)", () => {
   it("maps exactly the actions the viewer enumerates with palette keys", () => {
     expect(PALETTE_KEYCAPS).toEqual({
-      "tab:home": "F1",
-      "tab:terminal": "F2",
-      "tab:files": "F3",
-      "tab:diff": "F4",
+      "surface:home": "F1",
+      "surface:terminals": "F2",
+      "surface:files": "F3",
+      "surface:changes": "F4",
+      "surface:missions": "F6",
+      "surface:activity": "F9",
       save: "^s",
       quit: "^q",
     });

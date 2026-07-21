@@ -17,15 +17,9 @@ import {
   parseStatusGroups,
   type DiffEntry,
 } from "@daemon/tui/mirror/diff-model.ts";
-import {
-  ACCENT,
-  DEFAULT_BG,
-  DEFAULT_FG,
-  MUTED,
-  SIDEBAR_BG,
-  TAB_ACTIVE_BG,
-} from "@daemon/tui/mirror/theme.ts";
+import { ACCENT, DEFAULT_BG, DEFAULT_FG, MUTED, TAB_ACTIVE_BG } from "@daemon/tui/mirror/theme.ts";
 import { STATUS_COLOR } from "@daemon/tui/mirror/status-grammar.ts";
+import { DEMO_PANEL_BG } from "./demo-theme.ts";
 
 const LIST_W = 36;
 const HUNK_W = 60;
@@ -155,7 +149,7 @@ export function DiffScene() {
         <box flexDirection="row" gap={1}>
           <text
             fg={DEFAULT_FG}
-            bg={SIDEBAR_BG}
+            bg={DEMO_PANEL_BG}
             onMouse={(e) => {
               if (e.type !== "down") return;
               const f = current();
@@ -167,7 +161,7 @@ export function DiffScene() {
           </text>
           <text
             fg={MUTED}
-            bg={SIDEBAR_BG}
+            bg={DEMO_PANEL_BG}
             onMouse={(e) => {
               if (e.type === "down") setStaged(new Set<string>());
             }}

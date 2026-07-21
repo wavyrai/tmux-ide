@@ -12,6 +12,7 @@
  * to the top when the query looks like a path.
  */
 import { fuzzyFilter } from "../team/fuzzy.ts";
+import { CANONICAL_SURFACE_REGISTRY, type ProductSurfaceId } from "@tmux-ide/contracts";
 import type { PaletteUsageEntry, Tab } from "./app-state.ts";
 import type { AgentRowInput } from "./agent-rows.ts";
 import type { HostedPanelView } from "./panel-host.ts";
@@ -20,6 +21,7 @@ import { SETTINGS_PALETTE_COMMANDS, type SettingsCommandId } from "./settings-mo
 /** One runnable palette entry. `label` is what the list shows and what the
  *  fuzzy filter scores; `kind` (+ payload) is what the app dispatches on. */
 export type PaletteAction =
+  | { kind: "surface"; surface: ProductSurfaceId; label: string }
   | { kind: "tab"; tab: Tab; label: string }
   | { kind: "view"; viewId: string; label: string }
   | { kind: "open-folder"; label: string }
@@ -108,18 +110,22 @@ export interface PaletteContext {
    *  respecting, capped by the caller. A non-empty query offers fuzzy-matched
    *  "Go to file: <path>" rows via {@link goToFileActions}. */
   repoFiles?: readonly string[];
-  /** Configured first-class panel views (C05). When present, these replace the
-   *  legacy four static tab actions so duplicate panel kinds keep their stable
-   *  configured view identity. */
+  /** Configured first-class panel views. Only noncanonical custom views are
+   *  appended; the canonical six always come from the product registry. */
   views?: readonly HostedPanelView[];
 }
 
-const TAB_LABELS: { tab: Tab; label: string }[] = [
-  { tab: "home", label: "Switch tab: Home" },
-  { tab: "terminal", label: "Switch tab: Terminal" },
-  { tab: "files", label: "Switch tab: Files" },
-  { tab: "diff", label: "Switch tab: Diff" },
-];
+const CANONICAL_VIEW_IDS: Readonly<Record<HostedPanelView["panel"], string>> = {
+  home: "home",
+  terminals: "terminals",
+  files: "files",
+  diff: "diff",
+  missions: "missions",
+};
+
+function isNoncanonicalConfiguredView(view: HostedPanelView): boolean {
+  return view.layout !== null || view.id !== CANONICAL_VIEW_IDS[view.panel];
+}
 
 /** PURE — the always-available static actions: the four tab switches, one
  *  attach-session per fleet session, then Save / Refresh diff, the Terminal-only
@@ -135,12 +141,13 @@ export function staticPaletteActions(
   if (ctx.againName) {
     actions.push({ kind: "new-agent-again", label: `New agent: ${ctx.againName} (again)` });
   }
+  for (const surface of CANONICAL_SURFACE_REGISTRY) {
+    actions.push({ kind: "surface", surface: surface.id, label: `Open ${surface.label}` });
+  }
   if (ctx.views) {
-    for (const view of ctx.views) {
+    for (const view of ctx.views.filter(isNoncanonicalConfiguredView)) {
       actions.push({ kind: "view", viewId: view.id, label: `Switch view: ${view.title}` });
     }
-  } else {
-    for (const t of TAB_LABELS) actions.push({ kind: "tab", tab: t.tab, label: t.label });
   }
   // The non-technicals' front door (M22.5): a filesystem picker → create-or-
   // attach a session in the chosen folder. Offered on every surface.
@@ -360,6 +367,8 @@ export function goToFileActions(
  */
 export function paletteActionKey(a: PaletteAction): string {
   switch (a.kind) {
+    case "surface":
+      return `surface:${a.surface}`;
     case "tab":
       return `tab:${a.tab}`;
     case "view":

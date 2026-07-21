@@ -16,15 +16,9 @@ import { For, Show, createMemo, createSignal, onCleanup, onMount } from "solid-j
 import { staticPaletteActions, type PaletteAction } from "@daemon/tui/mirror/palette.ts";
 import { fuzzyFilter } from "@daemon/tui/team/fuzzy.ts";
 import type { AgentRowInput } from "@daemon/tui/mirror/agent-rows.ts";
-import {
-  ACCENT,
-  DEFAULT_BG,
-  DEFAULT_FG,
-  MUTED,
-  SIDEBAR_BG,
-  TAB_ACTIVE_BG,
-} from "@daemon/tui/mirror/theme.ts";
+import { ACCENT, DEFAULT_BG, DEFAULT_FG, MUTED, TAB_ACTIVE_BG } from "@daemon/tui/mirror/theme.ts";
 import { STATUS_COLOR } from "@daemon/tui/mirror/status-grammar.ts";
+import { DEMO_PANEL_BG } from "./demo-theme.ts";
 
 const W = 74;
 const ROWS = 9;
@@ -153,7 +147,7 @@ export function PaletteScene() {
       <box flexDirection="row" gap={1} paddingLeft={1}>
         <text
           fg={open() ? DEFAULT_FG : ACCENT}
-          bg={open() ? TAB_ACTIVE_BG : SIDEBAR_BG}
+          bg={open() ? TAB_ACTIVE_BG : DEMO_PANEL_BG}
           onMouse={(e) => {
             if (e.type !== "down") return;
             setOpen((o) => !o);
@@ -185,7 +179,7 @@ export function PaletteScene() {
       >
         <box flexDirection="column" paddingLeft={1}>
           {/* Query line */}
-          <box flexDirection="row" backgroundColor={SIDEBAR_BG}>
+          <box flexDirection="row" backgroundColor={DEMO_PANEL_BG}>
             <text fg={ACCENT}>{"> "}</text>
             <text fg={DEFAULT_FG}>{query() + "▌"}</text>
             <box flexGrow={1} />
@@ -207,7 +201,7 @@ export function PaletteScene() {
                   }
                 }}
               >
-                <text fg={i() === sel() ? ACCENT : SIDEBAR_BG}>{i() === sel() ? "›" : " "}</text>
+                <text fg={i() === sel() ? ACCENT : DEMO_PANEL_BG}>{i() === sel() ? "›" : " "}</text>
                 <Label
                   text={row.action.label.slice(0, W - 6)}
                   positions={row.positions}
