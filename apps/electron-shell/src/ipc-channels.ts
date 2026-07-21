@@ -1,0 +1,26 @@
+/** Private, finite IPC vocabulary. Never export a generic renderer channel. */
+export const HOST_IPC = {
+  bootstrap: "tmux-ide:host/bootstrap",
+  lifecycleQuit: "tmux-ide:host/lifecycle/quit",
+  windowGetState: "tmux-ide:host/window/get-state",
+  windowMinimize: "tmux-ide:host/window/minimize",
+  windowToggleMaximized: "tmux-ide:host/window/toggle-maximized",
+  windowClose: "tmux-ide:host/window/close",
+  windowStateChanged: "tmux-ide:host/window/state-changed",
+  menuShowApplication: "tmux-ide:host/menu/show-application",
+  dialogSelectProjectDirectory: "tmux-ide:host/dialog/select-project-directory",
+  themeGetState: "tmux-ide:host/theme/get-state",
+  themeChanged: "tmux-ide:host/theme/changed",
+} as const;
+
+export const HOST_INVOKE_CHANNELS = [
+  HOST_IPC.bootstrap,
+  HOST_IPC.lifecycleQuit,
+  HOST_IPC.windowGetState,
+  HOST_IPC.windowMinimize,
+  HOST_IPC.windowToggleMaximized,
+  HOST_IPC.windowClose,
+  HOST_IPC.menuShowApplication,
+  HOST_IPC.dialogSelectProjectDirectory,
+  HOST_IPC.themeGetState,
+] as const;

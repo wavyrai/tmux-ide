@@ -62,6 +62,7 @@ docs/release-readiness*.md
 dist/
 
 # Electron build outputs (binaries exceed GitHub 100MB limit)
+apps/electron-shell/release*/
 app-electron/release/
 app-electron/dist-electron/
 app-electron/build/
