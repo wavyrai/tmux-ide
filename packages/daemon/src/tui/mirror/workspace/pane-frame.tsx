@@ -1,6 +1,18 @@
 /* @jsxImportSource @opentui/solid */
 import type { JSX } from "@opentui/solid";
-import { createMemo, For, Show } from "solid-js";
+import { createContext, createMemo, For, Show, useContext } from "solid-js";
+import {
+  PaneFramePresenter,
+  type PaneFrameActionLeafProps,
+  type PaneFrameActionListLeafProps,
+  type PaneFrameBodyLeafProps,
+  type PaneFrameGripLeafProps,
+  type PaneFrameHeaderLeafProps,
+  type PaneFrameHostLeaves,
+  type PaneFrameRootLeafProps,
+  type PaneFrameStatusLeafProps,
+  type PaneFrameTitleLeafProps,
+} from "../../../ui/pane-frame/presenter.tsx";
 import { ActionChip, Badge, IconButton, StatusChip } from "../recipes.tsx";
 import { recipePalette } from "../recipes.ts";
 import type { SemanticThemeSnapshot } from "../theme.ts";
@@ -9,6 +21,20 @@ import type { PaneFrameChip, PaneFrameProjection } from "./pane-frame.ts";
 export interface PaneFrameHeaderProps {
   theme: SemanticThemeSnapshot;
   projection: PaneFrameProjection;
+}
+
+interface OpenTuiPaneFrameHostContext {
+  theme: () => SemanticThemeSnapshot;
+  projection: () => PaneFrameProjection;
+  inputOwner: () => boolean;
+}
+
+const OpenTuiPaneFrameContext = createContext<OpenTuiPaneFrameHostContext>();
+
+function useOpenTuiPaneFrameHost(): OpenTuiPaneFrameHostContext {
+  const context = useContext(OpenTuiPaneFrameContext);
+  if (!context) throw new Error("OpenTUI PaneFrame host leaves require their host context");
+  return context;
 }
 
 function framePalette(theme: SemanticThemeSnapshot, projection: PaneFrameProjection) {
@@ -86,8 +112,10 @@ function Chip(props: { theme: SemanticThemeSnapshot; chip: PaneFrameChip }) {
             hovered={action()!.hovered}
             pressed={action()!.pressed}
             selected={action()!.active}
+            focused={action()!.focused}
             disabled={action()!.disabled}
             attention={action()!.attention}
+            loading={action()!.loading}
           />
         }
       >
@@ -100,8 +128,10 @@ function Chip(props: { theme: SemanticThemeSnapshot; chip: PaneFrameChip }) {
           // Icon identity (□/▣) communicates toggle state. Keep the idle
           // control transparent like native window chrome.
           selected={false}
+          focused={action()!.focused}
           disabled={action()!.disabled}
           attention={action()!.attention}
+          loading={action()!.loading}
           hidden={action()!.hidden}
         />
       </Show>
@@ -197,74 +227,264 @@ export function PaneFrameHeader(props: PaneFrameHeaderProps) {
   );
 }
 
-export interface PaneFrameProps extends PaneFrameHeaderProps {
-  children?: JSX.Element;
+function semanticBorderColor(
+  theme: SemanticThemeSnapshot,
+  appearance: PaneFrameRootLeafProps["appearance"],
+) {
+  const role = appearance.outerOutline.visible
+    ? (appearance.outerOutline.role ?? appearance.border.role)
+    : appearance.border.role;
+  return theme.roles.borders[role];
 }
 
-export function PaneFrame(props: PaneFrameProps) {
-  const palette = () => framePalette(props.theme, props.projection);
-  const glyphs = () => borderGlyphs(props.projection.borderStyle);
+function OpenTuiRoot(props: PaneFrameRootLeafProps) {
+  const host = useOpenTuiPaneFrameHost();
+  const projection = host.projection;
+  const glyphs = () => borderGlyphs(projection().borderStyle);
+  const border = () => semanticBorderColor(host.theme(), props.appearance);
   return (
     <box
-      width={props.projection.width}
-      height={props.projection.height}
+      id={`pane-frame:${props.pane.id}:root`}
+      width={projection().width}
+      height={projection().height}
       position="relative"
-      backgroundColor={props.theme.roles.surfaces.canvas}
+      backgroundColor={host.theme().roles.surfaces.canvas}
       overflow="hidden"
     >
-      <Show when={props.projection.borderStyle !== "none" && props.projection.width > 1}>
-        <box position="absolute" left={0} top={0} width={props.projection.width} height={1}>
-          <text fg={palette().border}>
-            {`${glyphs().tl}${glyphs().h.repeat(Math.max(0, props.projection.width - 2))}${glyphs().tr}`}
+      <Show when={projection().borderStyle !== "none" && projection().width > 1}>
+        <box position="absolute" left={0} top={0} width={projection().width} height={1}>
+          <text fg={border()}>
+            {`${glyphs().tl}${glyphs().h.repeat(Math.max(0, projection().width - 2))}${glyphs().tr}`}
           </text>
         </box>
         <box
           position="absolute"
           left={0}
-          top={Math.max(0, props.projection.height - 1)}
-          width={props.projection.width}
+          top={Math.max(0, projection().height - 1)}
+          width={projection().width}
           height={1}
         >
-          <text fg={palette().border}>
-            {`${glyphs().bl}${glyphs().h.repeat(Math.max(0, props.projection.width - 2))}${glyphs().br}`}
+          <text fg={border()}>
+            {`${glyphs().bl}${glyphs().h.repeat(Math.max(0, projection().width - 2))}${glyphs().br}`}
           </text>
         </box>
-        <Show when={props.projection.height > 2}>
-          <box position="absolute" left={0} top={1} width={1} height={props.projection.height - 2}>
-            <text fg={palette().border}>
-              {Array(props.projection.height - 2)
+        <Show when={projection().height > 2}>
+          <box position="absolute" left={0} top={1} width={1} height={projection().height - 2}>
+            <text fg={border()}>
+              {Array(projection().height - 2)
                 .fill(glyphs().v)
                 .join("\n")}
             </text>
           </box>
           <box
             position="absolute"
-            left={Math.max(0, props.projection.width - 1)}
+            left={Math.max(0, projection().width - 1)}
             top={1}
             width={1}
-            height={props.projection.height - 2}
+            height={projection().height - 2}
           >
-            <text fg={palette().border}>
-              {Array(props.projection.height - 2)
+            <text fg={border()}>
+              {Array(projection().height - 2)
                 .fill(glyphs().v)
                 .join("\n")}
             </text>
           </box>
         </Show>
       </Show>
-      <PaneFrameHeader theme={props.theme} projection={props.projection} />
-      <box
-        position="absolute"
-        left={props.projection.body.x}
-        top={props.projection.body.y}
-        width={props.projection.body.width}
-        height={props.projection.body.height}
-        flexDirection="column"
-        backgroundColor={props.theme.roles.surfaces.terminal}
-        overflow="hidden"
-      >
-        {props.children}
-      </box>
+      {props.children}
     </box>
+  );
+}
+
+function OpenTuiHeader(props: PaneFrameHeaderLeafProps) {
+  const host = useOpenTuiPaneFrameHost();
+  const projection = host.projection;
+  return (
+    <box
+      id={`pane-frame:${props.pane.id}:header`}
+      position="absolute"
+      left={projection().header.x}
+      top={projection().header.y}
+      width={projection().header.width}
+      height={projection().header.height}
+      backgroundColor={host.theme().roles.surfaces[props.appearance.header.surface]}
+      overflow="hidden"
+    >
+      {props.children}
+    </box>
+  );
+}
+
+function OpenTuiGrip(props: PaneFrameGripLeafProps) {
+  const host = useOpenTuiPaneFrameHost();
+  const projection = host.projection;
+  return (
+    <Show when={projection().grip !== null}>
+      <box
+        id={`pane-frame:${props.pane.id}:grip`}
+        position="absolute"
+        left={projection().grip!.x - projection().header.x}
+        top={0}
+        width={projection().grip!.width}
+        height={1}
+        onMouseDown={host.inputOwner() ? props.onActivate : undefined}
+      >
+        <text fg={semanticBorderColor(host.theme(), props.appearance)}>
+          {projection().grip!.text}
+        </text>
+      </box>
+    </Show>
+  );
+}
+
+function OpenTuiTitle(props: PaneFrameTitleLeafProps) {
+  const host = useOpenTuiPaneFrameHost();
+  const projection = host.projection;
+  const titleColor = () => host.theme().roles.text[props.appearance.header.text];
+  return (
+    <>
+      <box
+        id={`pane-frame:${props.pane.id}:title`}
+        position="absolute"
+        left={projection().titleSpan.x - projection().header.x}
+        top={0}
+        width={projection().titleSpan.width}
+        height={1}
+      >
+        <text fg={titleColor()} attributes={props.appearance.header.focused ? 1 : 0}>
+          {projection().titleSpan.text}
+        </text>
+      </box>
+      <Show when={projection().subtitleSpan !== null}>
+        <box
+          id={`pane-frame:${props.pane.id}:subtitle`}
+          position="absolute"
+          left={projection().subtitleSpan!.x - projection().header.x}
+          top={0}
+          width={projection().subtitleSpan!.width}
+          height={1}
+        >
+          <text fg={host.theme().roles.text.muted}>{projection().subtitleSpan!.text}</text>
+        </box>
+      </Show>
+    </>
+  );
+}
+
+function projectedStatusChip(
+  projection: PaneFrameProjection,
+  props: PaneFrameStatusLeafProps,
+): PaneFrameChip | null {
+  return (
+    projection.chips.find((chip) => {
+      if (props.item.kind === "status") return chip.kind === "status" && chip.id === props.item.id;
+      return chip.kind === "state" && chip.id === props.item.id;
+    }) ?? null
+  );
+}
+
+function OpenTuiStatus(props: PaneFrameStatusLeafProps) {
+  const host = useOpenTuiPaneFrameHost();
+  const chip = () => projectedStatusChip(host.projection(), props);
+  return (
+    <Show when={chip() !== null}>
+      <box
+        id={`pane-frame:${props.pane.id}:${props.item.kind}:${props.item.id}`}
+        position="absolute"
+        left={chip()!.start - host.projection().header.x}
+        top={0}
+        width={chip()!.width}
+        height={1}
+      >
+        <Chip theme={host.theme()} chip={chip()!} />
+      </box>
+    </Show>
+  );
+}
+
+function OpenTuiActionList(props: PaneFrameActionListLeafProps) {
+  return props.children;
+}
+
+function OpenTuiAction(props: PaneFrameActionLeafProps) {
+  const host = useOpenTuiPaneFrameHost();
+  const chip = () =>
+    host.projection().actions.find((action) => action.id === props.action.id) ?? null;
+  return (
+    <Show when={chip() !== null}>
+      <box
+        id={`pane-frame:${props.pane.id}:action:${props.action.id}`}
+        position="absolute"
+        left={chip()!.start - host.projection().header.x}
+        top={0}
+        width={chip()!.width}
+        height={1}
+        onMouseDown={
+          host.inputOwner() && props.interactive && chip()!.interactive
+            ? props.onActivate
+            : undefined
+        }
+      >
+        <Chip theme={host.theme()} chip={chip()!} />
+      </box>
+    </Show>
+  );
+}
+
+function OpenTuiBody(props: PaneFrameBodyLeafProps) {
+  const host = useOpenTuiPaneFrameHost();
+  const projection = host.projection;
+  return (
+    <box
+      id={`pane-frame:${props.pane.id}:body`}
+      position="absolute"
+      left={projection().body.x}
+      top={projection().body.y}
+      width={projection().body.width}
+      height={projection().body.height}
+      flexDirection="column"
+      backgroundColor={host.theme().roles.surfaces.terminal}
+      overflow="hidden"
+    >
+      {props.children}
+    </box>
+  );
+}
+
+export const OPEN_TUI_PANE_FRAME_HOST = Object.freeze({
+  Root: OpenTuiRoot,
+  Header: OpenTuiHeader,
+  Grip: OpenTuiGrip,
+  Title: OpenTuiTitle,
+  Status: OpenTuiStatus,
+  ActionList: OpenTuiActionList,
+  Action: OpenTuiAction,
+  Body: OpenTuiBody,
+}) satisfies PaneFrameHostLeaves;
+
+export interface PaneFrameProps extends PaneFrameHeaderProps {
+  children?: JSX.Element;
+  /** Standalone fixture/test ownership only. Production terminal chrome stays passive. */
+  inputOwner?: boolean;
+  onActionActivate?: Parameters<typeof PaneFramePresenter>[0]["onActionActivate"];
+  onGripActivate?: Parameters<typeof PaneFramePresenter>[0]["onGripActivate"];
+}
+
+export function PaneFrame(props: PaneFrameProps) {
+  const context: OpenTuiPaneFrameHostContext = {
+    theme: () => props.theme,
+    projection: () => props.projection,
+    inputOwner: () => props.inputOwner === true,
+  };
+  return (
+    <OpenTuiPaneFrameContext.Provider value={context}>
+      <PaneFramePresenter
+        model={props.projection.model}
+        host={OPEN_TUI_PANE_FRAME_HOST}
+        body={props.children}
+        onActionActivate={props.onActionActivate}
+        onGripActivate={props.onGripActivate}
+      />
+    </OpenTuiPaneFrameContext.Provider>
   );
 }

@@ -9,6 +9,8 @@
     "src/js-yaml.d.ts",
     "src/ui/pane-frame/presenter.tsx",
     "src/ui/workbench-dock/presenter.tsx",
+    "src/tui/mirror/workspace/pane-frame.tsx",
+    "src/tui/mirror/workspace/terminal-pane-chrome-view.tsx",
     "src/tui/mirror/workspace/workbench-dock-opentui.tsx",
     "src/tui/mirror/workspace/workbench-shell.tsx"
   ],

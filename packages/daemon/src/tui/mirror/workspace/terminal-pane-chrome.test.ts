@@ -1,14 +1,18 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { projectAgentTerminalCanvas } from "./agent-terminal-canvas.ts";
 import {
+  CARD_22_4B2_PANE_FRAME_ROOT_WIRING_DEFERRALS,
   dispatchTerminalPaneChromePointerIntent,
   projectTerminalPaneChrome,
   reconcileTerminalPaneChromeActionTarget,
+  terminalPaneChromeActionTargetForIntent,
   terminalPaneChromeHitTest,
   terminalPaneChromeMotionState,
   terminalPaneChromeOverlapsBodies,
   terminalPaneChromePointerIntent,
   terminalPaneChromeTitle,
+  terminalPaneSemanticId,
   type TerminalPaneChromePane,
 } from "./terminal-pane-chrome.ts";
 
@@ -28,6 +32,15 @@ function pane(overrides: Partial<TerminalPaneChromePane>): TerminalPaneChromePan
 }
 
 describe("terminal pane chrome projection", () => {
+  it("encodes and bounds live tmux ids at the semantic schema boundary", () => {
+    expect(terminalPaneSemanticId("%7")).toBe("pane.tmux.25-37");
+    const first = terminalPaneSemanticId(`%${"pane-".repeat(80)}a`);
+    const second = terminalPaneSemanticId(`%${"pane-".repeat(80)}b`);
+    expect(first.length).toBeLessThanOrEqual(128);
+    expect(first).toMatch(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/u);
+    expect(second).not.toBe(first);
+  });
+
   it("segments the native header for horizontal panes without touching either body", () => {
     const panes = [
       pane({ id: "%1", width: 59 }),
@@ -212,6 +225,21 @@ describe("terminal pane chrome projection", () => {
       paneId: "%2",
       actionId: "zoom",
       actionIndex: zoomIndex,
+      semanticIntent: {
+        kind: "action",
+        paneId: terminalPaneSemanticId("%2"),
+        actionId: "zoom",
+        commandId: "workspace.windowMode.maximize.toggle",
+      },
+    });
+    const intent = terminalPaneChromePointerIntent(layout, x, y, "down");
+    expect(
+      intent?.kind === "action"
+        ? terminalPaneChromeActionTargetForIntent(layout, intent.semanticIntent)
+        : null,
+    ).toEqual({
+      paneId: "%2",
+      actionIndex: zoomIndex,
     });
     expect(terminalPaneChromePointerIntent(layout, second.canvasRect.x, y, "down")).toEqual({
       kind: "focus",
@@ -235,7 +263,18 @@ describe("terminal pane chrome projection", () => {
     const calls: string[] = [];
     const ptyWrites: string[] = [];
     dispatchTerminalPaneChromePointerIntent(
-      { kind: "action", paneId: "%9", actionId: "zoom", actionIndex: 0 },
+      {
+        kind: "action",
+        paneId: "%9",
+        actionId: "zoom",
+        actionIndex: 0,
+        semanticIntent: {
+          kind: "action",
+          paneId: terminalPaneSemanticId("%9"),
+          actionId: "zoom",
+          commandId: "workspace.windowMode.maximize.toggle",
+        },
+      },
       {
         hover: () => calls.push("hover"),
         focus: (paneId) => calls.push(`focus:${paneId}`),
@@ -246,6 +285,21 @@ describe("terminal pane chrome projection", () => {
     );
     expect(calls).toEqual(["focus:%9", "zoom:%9"]);
     expect(ptyWrites).toEqual([]);
+  });
+
+  it("keeps the one-item production root swap executable and owned by Card 22.4b2", () => {
+    const appSource = readFileSync(new URL("../app.tsx", import.meta.url), "utf8");
+    expect(CARD_22_4B2_PANE_FRAME_ROOT_WIRING_DEFERRALS).toEqual([
+      {
+        component: "TerminalPaneChromeLayer",
+        replacement: "SharedTerminalPaneChromeLayer",
+        owner: "22.4b2",
+      },
+    ]);
+    expect(appSource).toContain(
+      'import { TerminalPaneChromeLayer } from "./workspace/terminal-pane-chrome-view.tsx"',
+    );
+    expect(appSource).not.toContain("SharedTerminalPaneChromeLayer");
   });
 
   it("lets non-action lower-header cells fall through to separator resize", () => {

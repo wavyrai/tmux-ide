@@ -1,9 +1,19 @@
+import {
+  SemanticProductIdSchemaZ,
+  type AgentActivity,
+  type CanonicalDomainStatus,
+  type PaneAttention,
+  type PaneVisualStateV1,
+  type SemanticProductId,
+} from "@tmux-ide/contracts";
+import type { PaneFrameActionIntent } from "../../../ui/pane-frame/presenter.tsx";
 import { terminalDisplayWidth } from "../panel-host.ts";
 import { iconButtonWidth, type RecipeTone, type Rect } from "../recipes.ts";
 import type { AgentTerminalCanvasProjection } from "./agent-terminal-canvas.ts";
 import {
   paneFrameHitTest,
   projectPaneFrame,
+  resolveEffectivePaneFrameActionState,
   type PaneFrameActionChip,
   type PaneFrameHit,
   type PaneFrameProjection,
@@ -30,6 +40,9 @@ export interface TerminalPaneChromeMetadata {
   status?: string | null;
   statusTone?: Exclude<RecipeTone, "neutral" | "accent">;
   attention?: boolean;
+  agentActivity?: AgentActivity;
+  domainStatus?: CanonicalDomainStatus;
+  attentionKind?: PaneAttention;
 }
 
 export interface TerminalPaneChromeActionTarget {
@@ -83,7 +96,13 @@ export interface TerminalPaneChromeHit {
 export type TerminalPaneChromePointerIntent =
   | { kind: "hover"; target: TerminalPaneChromeHoverTarget | null }
   | { kind: "focus"; paneId: string }
-  | { kind: "action"; paneId: string; actionId: string; actionIndex: number }
+  | {
+      kind: "action";
+      paneId: string;
+      actionId: string;
+      actionIndex: number;
+      semanticIntent: PaneFrameActionIntent;
+    }
   | { kind: "menu"; paneId: string }
   | { kind: "settle"; paneId: string }
   | { kind: "consume"; paneId: string }
@@ -92,7 +111,12 @@ export type TerminalPaneChromePointerIntent =
 export interface TerminalPaneChromePointerEffects {
   hover(target: TerminalPaneChromeHoverTarget | null): void;
   focus(paneId: string): void;
-  action(paneId: string, actionId: string, actionIndex: number): void;
+  action(
+    paneId: string,
+    actionId: string,
+    actionIndex: number,
+    semanticIntent: PaneFrameActionIntent,
+  ): void;
   menu(paneId: string): void;
   settle(paneId: string): void;
 }
@@ -105,6 +129,37 @@ export interface TerminalPaneChromeMotionState {
 interface Segment {
   start: number;
   end: number;
+}
+
+/** One executable production-root handoff; Card 22.4b2 must remove it when wiring the new host. */
+export const CARD_22_4B2_PANE_FRAME_ROOT_WIRING_DEFERRALS = Object.freeze([
+  Object.freeze({
+    component: "TerminalPaneChromeLayer",
+    replacement: "SharedTerminalPaneChromeLayer",
+    owner: "22.4b2",
+  }),
+] as const);
+
+/** Live tmux ids are transport identities, so encode them before crossing the semantic boundary. */
+export function terminalPaneSemanticId(paneId: string): SemanticProductId {
+  const prefix = "pane.tmux.";
+  const encoded =
+    Array.from(paneId, (character) => character.codePointAt(0)!.toString(16)).join("-") || "empty";
+  const maximumEncodedLength = 128 - prefix.length;
+  const hash = stablePaneIdHash(paneId);
+  const bounded =
+    encoded.length <= maximumEncodedLength
+      ? encoded
+      : `${encoded.slice(0, maximumEncodedLength - hash.length - 1)}-${hash}`;
+  return SemanticProductIdSchemaZ.parse(`${prefix}${bounded}`);
+}
+
+function stablePaneIdHash(value: string): string {
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < value.length; index += 1) {
+    hash = Math.imul(hash ^ value.charCodeAt(index), 0x01000193);
+  }
+  return (hash >>> 0).toString(16).padStart(8, "0");
 }
 
 /**
@@ -230,6 +285,44 @@ export function terminalPaneChromeHitTest(
   return null;
 }
 
+export function terminalPaneChromeSemanticActionIntent(
+  layout: TerminalPaneChromeLayout,
+  paneId: string,
+  hit: Extract<Exclude<PaneFrameHit, null>, { area: "action" }>,
+): PaneFrameActionIntent | null {
+  const pane = [...layout.native, ...layout.framebuffer].find(
+    (projection) => projection.paneId === paneId,
+  );
+  const action = pane?.frame?.model.actions.find((candidate) => candidate.id === hit.actionId);
+  if (!pane?.frame || !action) return null;
+  return {
+    kind: "action",
+    paneId: pane.frame.model.pane.id,
+    actionId: action.id,
+    commandId: action.commandId,
+  };
+}
+
+/** Reverse the renderer-neutral intent into the existing live tmux cell target. */
+export function terminalPaneChromeActionTargetForIntent(
+  layout: TerminalPaneChromeLayout,
+  intent: PaneFrameActionIntent,
+): TerminalPaneChromeActionTarget | null {
+  for (const pane of [...layout.native, ...layout.framebuffer]) {
+    if (pane.frame?.model.pane.id !== intent.paneId) continue;
+    const actionIndex = pane.frame.actions.findIndex(
+      (action) =>
+        action.id === intent.actionId &&
+        pane.frame?.model.actions.some(
+          (semanticAction) =>
+            semanticAction.id === action.id && semanticAction.commandId === intent.commandId,
+        ),
+    );
+    if (actionIndex >= 0) return { paneId: pane.paneId, actionIndex };
+  }
+  return null;
+}
+
 /** Root-owned pointer policy. A chrome cell is always consumed and never PTY-routed. */
 export function terminalPaneChromePointerIntent(
   layout: TerminalPaneChromeLayout,
@@ -269,11 +362,18 @@ export function terminalPaneChromePointerIntent(
     };
   }
   if (eventType === "down" && result.hit.area === "action") {
+    const semanticIntent = terminalPaneChromeSemanticActionIntent(
+      layout,
+      result.paneId,
+      result.hit,
+    );
+    if (!semanticIntent) return { kind: "consume", paneId: result.paneId };
     return {
       kind: "action",
       paneId: result.paneId,
       actionId: result.hit.actionId,
       actionIndex: result.hit.actionIndex,
+      semanticIntent,
     };
   }
   if (eventType === "down") return { kind: "focus", paneId: result.paneId };
@@ -293,7 +393,7 @@ export function dispatchTerminalPaneChromePointerIntent(
   else if (intent.kind === "focus") effects.focus(intent.paneId);
   else if (intent.kind === "action") {
     effects.focus(intent.paneId);
-    effects.action(intent.paneId, intent.actionId, intent.actionIndex);
+    effects.action(intent.paneId, intent.actionId, intent.actionIndex, intent.semanticIntent);
   } else if (intent.kind === "menu") {
     effects.focus(intent.paneId);
     effects.menu(intent.paneId);
@@ -347,6 +447,7 @@ function paneHeaderFrame(
   const actions = [
     {
       id: "zoom",
+      commandId: "workspace.windowMode.maximize.toggle" as const,
       label: pane.zoomed ? "restore" : "zoom",
       compactLabel: pane.zoomed ? "R" : "Z",
       icon: pane.zoomed ? "restore" : "maximize",
@@ -356,6 +457,7 @@ function paneHeaderFrame(
     },
     {
       id: "menu",
+      commandId: "workspace.pane.menu.open" as const,
       label: "more",
       compactLabel: ".",
       icon: "more",
@@ -364,6 +466,7 @@ function paneHeaderFrame(
     },
   ] as const;
   const input = {
+    paneId: terminalPaneSemanticId(pane.id),
     width,
     height: 1,
     title,
@@ -374,6 +477,7 @@ function paneHeaderFrame(
     attention: metadata?.attention === true,
     status: metadata?.status,
     statusTone: metadata?.statusTone,
+    visualState: terminalPaneVisualState(pane, metadata),
     hoveredActionIndex: hovered?.paneId === pane.id ? hovered.actionIndex : null,
     pressedActionIndex: pressed?.paneId === pane.id ? pressed.actionIndex : null,
     actions,
@@ -400,6 +504,14 @@ function paneHeaderFrame(
   const projectedActions: PaneFrameActionChip[] = [];
   const pushAction = (index: number, chipWidth: number) => {
     const action = actions[index]!;
+    const semanticAction = full.model.actions[index]!;
+    const effective = resolveEffectivePaneFrameActionState({
+      appearance: full.model.appearance,
+      action: semanticAction,
+      attention: false,
+      hostHovered: hovered?.paneId === pane.id && hovered.actionIndex === index,
+      hostPressed: pressed?.paneId === pane.id && pressed.actionIndex === index,
+    });
     projectedActions.push({
       ...action,
       kind: "action",
@@ -408,8 +520,15 @@ function paneHeaderFrame(
       fullLabel: action.label,
       start: actionX,
       width: chipWidth,
-      hovered: hovered?.paneId === pane.id && hovered.actionIndex === index,
-      pressed: pressed?.paneId === pane.id && pressed.actionIndex === index,
+      active: effective.active,
+      disabled: effective.disabled,
+      attention: effective.attention,
+      focused: effective.focused,
+      hovered: effective.hovered,
+      interactive: effective.interactive,
+      loading: effective.loading,
+      pressed: effective.pressed,
+      state: effective.state,
     });
     actionX += chipWidth + 1;
   };
@@ -421,6 +540,7 @@ function paneHeaderFrame(
   const titleWidth = terminalDisplayWidth(titleText);
   return {
     ...base,
+    model: full.model,
     grip: null,
     title: titleText,
     subtitle: "",
@@ -428,6 +548,64 @@ function paneHeaderFrame(
     subtitleSpan: null,
     chips: projectedActions,
     actions: projectedActions,
+  };
+}
+
+function terminalPaneDomainStatus(
+  metadata: TerminalPaneChromeMetadata | undefined,
+): CanonicalDomainStatus {
+  if (metadata?.domainStatus) return metadata.domainStatus;
+  if (metadata?.statusTone === "working") return "running";
+  if (metadata?.statusTone === "blocked") return "blocked";
+  if (metadata?.statusTone === "done") return "done";
+  if (metadata?.statusTone === "unknown") return "disconnected";
+  return "idle";
+}
+
+function terminalPaneAgentActivity(
+  metadata: TerminalPaneChromeMetadata | undefined,
+  status: CanonicalDomainStatus,
+): AgentActivity {
+  if (metadata?.agentActivity) return metadata.agentActivity;
+  if (status === "running") return "running";
+  if (status === "blocked" || status === "review") return "waiting";
+  if (status === "done") return "complete";
+  if (status === "disconnected") return "disconnected";
+  if (status === "recovering") return "running";
+  return "idle";
+}
+
+function terminalPaneVisualState(
+  pane: TerminalPaneChromePane,
+  metadata: TerminalPaneChromeMetadata | undefined,
+): PaneVisualStateV1 {
+  const domainStatus = terminalPaneDomainStatus(metadata);
+  return {
+    structure: pane.zoomed ? "maximized" : "docked",
+    applicationFocus: {
+      pane: pane.active,
+      terminalInput: pane.active,
+      windowActive: true,
+    },
+    agentActivity: terminalPaneAgentActivity(metadata, domainStatus),
+    domainStatus,
+    attention:
+      metadata?.attentionKind ??
+      (metadata?.attention ? (domainStatus === "blocked" ? "warning" : "requested") : "none"),
+    layoutInteraction: {
+      editable: true,
+      selected: false,
+      dragging: false,
+      resizing: false,
+      previewing: false,
+    },
+    controlInteraction: {
+      hover: false,
+      focusVisible: false,
+      pressed: false,
+      disabled: false,
+      loading: false,
+    },
   };
 }
 

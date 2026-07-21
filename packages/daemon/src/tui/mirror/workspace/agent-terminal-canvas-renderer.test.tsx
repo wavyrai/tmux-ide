@@ -10,7 +10,7 @@ import {
   terminalPaneChromeHitTest,
   terminalPaneChromeOverlapsBodies,
 } from "./terminal-pane-chrome.ts";
-import { TerminalPaneChromeLayer } from "./terminal-pane-chrome-view.tsx";
+import { SharedTerminalPaneChromeLayer } from "./terminal-pane-chrome-view.tsx";
 
 interface TestRenderable {
   getChildren(): readonly unknown[];
@@ -170,7 +170,7 @@ describe("AgentTerminalCanvas OpenTUI renderer", () => {
             chrome={
               <>
                 <text fg={theme.colors.mutedForeground}> 0:agents 1:shell</text>
-                <TerminalPaneChromeLayer theme={theme} layout={layout} layer="native" />
+                <SharedTerminalPaneChromeLayer theme={theme} layout={layout} layer="native" />
               </>
             }
             framebuffer={
@@ -187,7 +187,7 @@ describe("AgentTerminalCanvas OpenTUI renderer", () => {
                     {sentinel(pane.id, pane.width, pane.height)}
                   </box>
                 ))}
-                <TerminalPaneChromeLayer theme={theme} layout={layout} layer="framebuffer" />
+                <SharedTerminalPaneChromeLayer theme={theme} layout={layout} layer="framebuffer" />
               </box>
             }
           />
@@ -240,7 +240,7 @@ describe("AgentTerminalCanvas OpenTUI renderer", () => {
             chrome={
               <>
                 <text fg={theme.colors.mutedForeground}> window</text>
-                <TerminalPaneChromeLayer theme={theme} layout={layout} layer="native" />
+                <SharedTerminalPaneChromeLayer theme={theme} layout={layout} layer="native" />
               </>
             }
             framebuffer={<text>B</text>}
@@ -337,7 +337,7 @@ describe("AgentTerminalCanvas OpenTUI renderer", () => {
       });
       return (
         <box position="relative" width={width} height={height} overflow="hidden">
-          <TerminalPaneChromeLayer theme={theme} layout={layout()} layer="native" />
+          <SharedTerminalPaneChromeLayer theme={theme} layout={layout()} layer="native" />
           <box
             position="absolute"
             left={canvas.framebuffer.x}
@@ -345,7 +345,7 @@ describe("AgentTerminalCanvas OpenTUI renderer", () => {
             width={canvas.framebuffer.width}
             height={canvas.framebuffer.height}
           >
-            <TerminalPaneChromeLayer theme={theme} layout={layout()} layer="framebuffer" />
+            <SharedTerminalPaneChromeLayer theme={theme} layout={layout()} layer="framebuffer" />
           </box>
         </box>
       );
@@ -359,7 +359,7 @@ describe("AgentTerminalCanvas OpenTUI renderer", () => {
         const layer = paneId === "%3" ? "framebuffer" : "native";
         return [
           paneId,
-          setup.renderer.root.findDescendantById(`terminal-pane-chrome:${layer}:${paneId}`),
+          setup.renderer.root.findDescendantById(`shared-terminal-pane-chrome:${layer}:${paneId}`),
         ] as const;
       }),
     );
@@ -384,7 +384,9 @@ describe("AgentTerminalCanvas OpenTUI renderer", () => {
         for (const [paneId, node] of stablePaneNodes) {
           const layer = paneId === "%3" ? "framebuffer" : "native";
           expect(
-            setup.renderer.root.findDescendantById(`terminal-pane-chrome:${layer}:${paneId}`),
+            setup.renderer.root.findDescendantById(
+              `shared-terminal-pane-chrome:${layer}:${paneId}`,
+            ),
           ).toBe(node);
           const currentTree = renderableTree(node as TestRenderable);
           const stableTree = stablePaneTrees.get(paneId)!;
