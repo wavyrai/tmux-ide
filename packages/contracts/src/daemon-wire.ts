@@ -25,6 +25,21 @@ export function isDaemonWireProtocolCompatible(protocolVersion: number): boolean
  */
 export const DaemonInstanceIdSchema = z.uuid();
 
+/**
+ * Browser-safe identity stamped onto authenticated REST resources and the
+ * unified event socket hello. Clients compare every field with the canonical
+ * descriptor supplied by their desktop host before trusting payloads.
+ */
+export const DaemonInstanceIdentitySchemaZ = z
+  .object({
+    protocolVersion: DaemonWireProtocolVersionSchema,
+    productVersion: z.string().trim().min(1),
+    instanceId: DaemonInstanceIdSchema,
+    startedAt: z.iso.datetime({ offset: true }),
+  })
+  .strict();
+export type DaemonInstanceIdentity = z.infer<typeof DaemonInstanceIdentitySchemaZ>;
+
 export const CanonicalDaemonInfoSchema = z.object({
   pid: z.number().int().positive(),
   port: z.number().int().min(1).max(65_535),

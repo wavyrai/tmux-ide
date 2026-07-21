@@ -2,6 +2,13 @@ import { describe, expect, it } from "vitest";
 import { DaemonEventClientFrameSchemaZ, DaemonEventServerFrameSchemaZ } from "../daemon-events.ts";
 
 describe("daemon event contracts", () => {
+  const daemon = {
+    protocolVersion: 1,
+    productVersion: "2.8.0",
+    instanceId: "9bcf33b0-c837-4a94-b5e8-c0977f54464f",
+    startedAt: "2026-07-21T00:00:00.000Z",
+  } as const;
+
   it("accepts every client frame and rejects missing or extra fields", () => {
     expect(
       DaemonEventClientFrameSchemaZ.parse({ type: "subscribe", sessions: ["tmux-ide"] }),
@@ -65,7 +72,7 @@ describe("daemon event contracts", () => {
 
   it("keeps every historical server discriminator parseable", () => {
     const frames = [
-      { type: "hello", sessions: [] },
+      { type: "hello", daemon, sessions: [] },
       { type: "sessions.changed" },
       { type: "projects.changed" },
       { type: "init.output", jobId: "job-1", chunk: "working", done: false },
@@ -90,5 +97,21 @@ describe("daemon event contracts", () => {
     for (const frame of frames) {
       expect(DaemonEventServerFrameSchemaZ.safeParse(frame).success, frame.type).toBe(true);
     }
+  });
+
+  it("requires a strict daemon generation on hello", () => {
+    expect(
+      DaemonEventServerFrameSchemaZ.safeParse({ type: "hello", daemon, sessions: [] }).success,
+    ).toBe(true);
+    expect(DaemonEventServerFrameSchemaZ.safeParse({ type: "hello", sessions: [] }).success).toBe(
+      false,
+    );
+    expect(
+      DaemonEventServerFrameSchemaZ.safeParse({
+        type: "hello",
+        daemon: { ...daemon, authToken: "must-not-cross-wire" },
+        sessions: [],
+      }).success,
+    ).toBe(false);
   });
 });

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { DaemonInstanceIdentitySchemaZ } from "./daemon-wire.ts";
 
 /** Versioned, deliberately narrow bridge exposed by a desktop host preload. */
 export const DESKTOP_HOST_API_VERSION = 2 as const;
@@ -44,6 +45,13 @@ export const DesktopDaemonHostDescriptorSchemaZ = z
     productVersion: z.string().trim().min(1),
     instanceId: z.uuid(),
     startedAt: z.iso.datetime({ offset: true }),
+  })
+  .strict();
+
+export const DesktopApplicationShellTargetSchemaZ = z
+  .object({
+    daemon: DaemonInstanceIdentitySchemaZ,
+    workspaceName: z.string().trim().min(1).max(160),
   })
   .strict();
 
@@ -101,6 +109,7 @@ export type DesktopPlatform = z.infer<typeof DesktopPlatformSchemaZ>;
 export type DesktopThemeState = z.infer<typeof DesktopThemeStateSchemaZ>;
 export type DesktopWindowState = z.infer<typeof DesktopWindowStateSchemaZ>;
 export type DesktopDaemonHostDescriptor = z.infer<typeof DesktopDaemonHostDescriptorSchemaZ>;
+export type DesktopApplicationShellTarget = z.infer<typeof DesktopApplicationShellTargetSchemaZ>;
 export type DesktopDaemonHostIssueCode = z.infer<typeof DesktopDaemonHostIssueCodeSchemaZ>;
 export type DesktopDaemonHostState = z.infer<typeof DesktopDaemonHostStateSchemaZ>;
 /** @deprecated Compatibility name for existing host bootstrap consumers. */

@@ -33,6 +33,7 @@ export * from "./desktop-host.ts";
 export * from "./experience-identifiers.ts";
 export * from "./experience-shell.ts";
 export * from "./application-shell.ts";
+export * from "./application-shell-resource.ts";
 export * from "./visual-tokens.ts";
 export * from "./visual-recipes.ts";
 export * from "./pane-appearance.ts";

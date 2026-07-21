@@ -11,7 +11,11 @@ import { createServer, type Server } from "node:http";
 import { createRequire } from "node:module";
 import type { Socket } from "node:net";
 import { WebSocket, WebSocketServer } from "ws";
-import { DAEMON_WIRE_PROTOCOL_VERSION } from "@tmux-ide/contracts";
+import {
+  DAEMON_WIRE_PROTOCOL_VERSION,
+  DaemonInstanceIdentitySchemaZ,
+  type DaemonInstanceIdentity,
+} from "@tmux-ide/contracts";
 import { computeAgentStates, computePortPanes } from "./session-monitor.ts";
 import { DaemonShutdownError, DaemonStartupError } from "./errors.ts";
 import { handlePtyWebSocket, shutdownPtyBridges } from "../server/ws-route.ts";
@@ -284,7 +288,8 @@ function attachWebSockets(
     authToken?: string | null;
     localBypassToken?: string | null;
     bindHostname?: string | null;
-  } = {},
+    daemonIdentity: DaemonInstanceIdentity;
+  },
 ): {
   closeClients: () => void;
   closeServers: () => Promise<void>;
@@ -316,7 +321,7 @@ function attachWebSockets(
     if (pathname === "/ws/events") {
       eventsWss.handleUpgrade(req, socket, head, (ws) => {
         track(ws);
-        handleWsEventsConnection(ws);
+        handleWsEventsConnection(ws, opts.daemonIdentity);
       });
       return;
     }
@@ -639,6 +644,10 @@ async function startHttpServer({
     authToken,
     localBypassToken,
     bindHostname,
+    daemonIdentity: DaemonInstanceIdentitySchemaZ.parse({
+      protocolVersion: DAEMON_WIRE_PROTOCOL_VERSION,
+      ...daemonIdentity,
+    }),
   });
 
   await new Promise<void>((resolve, reject) => {
