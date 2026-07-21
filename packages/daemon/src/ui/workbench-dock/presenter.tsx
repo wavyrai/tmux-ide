@@ -1,10 +1,22 @@
-import { For, Show, type Component, type JSX, type ParentProps } from "solid-js";
+import { Index, Show, type Component, type JSX, type ParentProps } from "solid-js";
 import type { WorkbenchDockNavigationTabId } from "./navigation.js";
 
 export type WorkbenchDockHostTabId = WorkbenchDockNavigationTabId;
 export type WorkbenchDockHostActionId = "toggle-collapse" | "toggle-maximize";
 export type WorkbenchDockHostMode = "collapsed" | "open" | "maximized";
 export type WorkbenchDockHostVariant = "compact" | "standard" | "wide";
+
+export const WORKBENCH_DOCK_HOST_TAB_ORDER = Object.freeze([
+  "files",
+  "changes",
+  "missions",
+  "activity",
+] as const satisfies readonly WorkbenchDockHostTabId[]);
+
+export const WORKBENCH_DOCK_HOST_ACTION_ORDER = Object.freeze([
+  "toggle-collapse",
+  "toggle-maximize",
+] as const satisfies readonly WorkbenchDockHostActionId[]);
 
 export interface WorkbenchDockHostRect {
   readonly x: number;
@@ -23,6 +35,8 @@ export interface WorkbenchDockHostTab {
   readonly hovered: boolean;
   readonly attention: boolean;
   readonly disabled: boolean;
+  /** Host-visible explanation for an unavailable canonical surface. */
+  readonly disabledReason?: string | null;
   readonly x: number;
   readonly width: number;
 }
@@ -112,6 +126,24 @@ export interface WorkbenchDockPresenterProps {
   onActionActivate?: (actionId: WorkbenchDockHostActionId, nextMode: WorkbenchDockHostMode) => void;
 }
 
+/** Positional host leaves are safe only while the canonical fixed order holds. */
+export function assertWorkbenchDockHostOrder(projection: WorkbenchDockHostProjection): void {
+  const tabOrder = projection.tabs.map(({ id }) => id);
+  const actionOrder = projection.actions.map(({ id }) => id);
+  if (
+    tabOrder.length !== WORKBENCH_DOCK_HOST_TAB_ORDER.length ||
+    tabOrder.some((id, index) => id !== WORKBENCH_DOCK_HOST_TAB_ORDER[index])
+  ) {
+    throw new Error(`workbench dock tab order changed: ${tabOrder.join(",")}`);
+  }
+  if (
+    actionOrder.length !== WORKBENCH_DOCK_HOST_ACTION_ORDER.length ||
+    actionOrder.some((id, index) => id !== WORKBENCH_DOCK_HOST_ACTION_ORDER[index])
+  ) {
+    throw new Error(`workbench dock action order changed: ${actionOrder.join(",")}`);
+  }
+}
+
 /**
  * Shared Solid control flow for the current production bottom dock.
  *
@@ -127,50 +159,60 @@ export function WorkbenchDockPresenter(props: WorkbenchDockPresenterProps) {
   const ActionList = props.host.ActionList;
   const Action = props.host.Action;
   const Body = props.host.Body;
+  const projection = (): WorkbenchDockHostProjection => {
+    assertWorkbenchDockHostOrder(props.projection);
+    return props.projection;
+  };
 
   return (
-    <Root projection={props.projection}>
-      <TabBar projection={props.projection}>
+    <Root projection={projection()}>
+      <TabBar projection={projection()}>
         <TabList
-          activeTabId={props.projection.activeDockTab}
-          tabs={props.projection.tabs}
-          focused={props.projection.focusZone === "dock-tabs"}
+          activeTabId={projection().activeDockTab}
+          tabs={projection().tabs}
+          focused={projection().focusZone === "dock-tabs"}
         >
-          <For each={props.projection.tabs}>
+          {/*
+           * Contract projections are immutable and therefore refresh with new
+           * object identities. Reference-keyed For remounted focused DOM tabs
+           * (and produced OpenTUI anchor churn) on every semantic command.
+           * Index preserves the host leaf at each asserted canonical slot.
+           */}
+          <Index each={projection().tabs}>
             {(tab) => (
               <Tab
-                tab={tab}
-                onActivate={tab.disabled ? undefined : () => props.onTabActivate?.(tab.id)}
+                tab={tab()}
+                onActivate={tab().disabled ? undefined : () => props.onTabActivate?.(tab().id)}
               />
             )}
-          </For>
+          </Index>
         </TabList>
         <ActionList>
-          <For each={props.projection.actions}>
+          <Index each={projection().actions}>
             {(action) => (
               <Action
-                action={action}
-                activeTabId={props.projection.activeDockTab}
-                onActivate={() => props.onActionActivate?.(action.id, action.nextMode)}
+                action={action()}
+                activeTabId={projection().activeDockTab}
+                onActivate={() => props.onActionActivate?.(action().id, action().nextMode)}
               />
             )}
-          </For>
+          </Index>
         </ActionList>
       </TabBar>
 
-      <For each={props.projection.tabs}>
+      <Index each={projection().tabs}>
         {(tab) => (
           <Body
-            projection={props.projection}
-            tabId={tab.id}
-            active={tab.selected}
-            visible={tab.selected && props.projection.dockBody.height > 0}
-            focused={tab.selected && props.projection.focusZone === "dock-body"}
+            projection={projection()}
+            tabId={tab().id}
+            active={tab().selected}
+            visible={tab().selected && projection().dockBody.height > 0}
+            focused={tab().selected && projection().focusZone === "dock-body"}
           >
-            <Show when={tab.selected}>{props.body}</Show>
+            <Show when={tab().selected}>{props.body}</Show>
           </Body>
         )}
-      </For>
+      </Index>
     </Root>
   );
 }

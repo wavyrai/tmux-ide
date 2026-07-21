@@ -1,6 +1,7 @@
 /* @vitest-environment happy-dom */
 import { afterEach, describe, expect, it } from "vitest";
 import { render } from "solid-js/web";
+import { createSignal } from "solid-js";
 import { COHESION_FIXTURE_V1 } from "@tmux-ide/contracts";
 import {
   DOM_EXPERIENCE_VARIABLE,
@@ -14,6 +15,7 @@ import {
   EXPECTED_WORKBENCH_DOCK_KEYBOARD_TRACE,
 } from "./fixture.ts";
 import { WebWorkbenchDock } from "./web-host.tsx";
+import { assertWorkbenchDockHostOrder } from "./presenter.tsx";
 
 const disposers: Array<() => void> = [];
 
@@ -138,6 +140,50 @@ describe("shared WorkbenchDockPresenter DOM host", () => {
       "tab:activity",
       "tab:files",
     ]);
+  });
+
+  it("preserves host leaf identity across fresh immutable projections", () => {
+    const [projection, setProjection] = createSignal(createWorkbenchDockHostFixture());
+    const root = document.createElement("div");
+    installCanonicalFixtureVariables(root);
+    document.body.append(root);
+    disposers.push(
+      render(
+        () => (
+          <WebWorkbenchDock projection={projection()}>
+            <p>stable body</p>
+          </WebWorkbenchDock>
+        ),
+        root,
+      ),
+    );
+    const filesTab = tab(root, "files");
+    const collapseAction = action(root, "toggle-collapse");
+    const filesPanel = root.querySelector("#workbench-dock-panel-files");
+
+    setProjection(
+      createWorkbenchDockHostFixture({
+        dockMode: "maximized",
+        activeDockTab: "files",
+        focusZone: "dock-body",
+      }),
+    );
+
+    expect(tab(root, "files")).toBe(filesTab);
+    expect(action(root, "toggle-collapse")).toBe(collapseAction);
+    expect(root.querySelector("#workbench-dock-panel-files")).toBe(filesPanel);
+    expect(filesTab.getAttribute("aria-selected")).toBe("true");
+    expect(root.querySelector(".workbench-dock")?.getAttribute("data-mode")).toBe("maximized");
+  });
+
+  it("rejects reordered positional host leaves before rendering the wrong semantics", () => {
+    const fixture = createWorkbenchDockHostFixture();
+    expect(() =>
+      assertWorkbenchDockHostOrder({ ...fixture, tabs: [...fixture.tabs].reverse() }),
+    ).toThrowError("workbench dock tab order changed: activity,missions,changes,files");
+    expect(() =>
+      assertWorkbenchDockHostOrder({ ...fixture, actions: [...fixture.actions].reverse() }),
+    ).toThrowError("workbench dock action order changed: toggle-maximize,toggle-collapse");
   });
 
   it("computes selected, focused, attention, and disabled styles from canonical variables", () => {

@@ -1,4 +1,4 @@
-import { type JSX, type ParentProps } from "solid-js";
+import { createContext, type JSX, type ParentProps, useContext } from "solid-js";
 import {
   WorkbenchDockPresenter,
   type WorkbenchDockHostLeaves,
@@ -21,18 +21,31 @@ export type WebWorkbenchDockProps = ParentProps<{
   projection: WorkbenchDockHostProjection;
   onTabActivate?: (tabId: WorkbenchDockHostTabId) => void;
   onActionActivate?: (actionId: WorkbenchDockHostActionId, nextMode: WorkbenchDockHostMode) => void;
+  renderTabIcon?: (tab: WorkbenchDockHostProjection["tabs"][number]) => JSX.Element;
+  renderActionIcon?: (action: WorkbenchDockHostProjection["actions"][number]) => JSX.Element;
 }>;
+
+interface WebWorkbenchDockRenderers {
+  readonly tabIcon?: WebWorkbenchDockProps["renderTabIcon"];
+  readonly actionIcon?: WebWorkbenchDockProps["renderActionIcon"];
+}
+
+const WebWorkbenchDockRenderContext = createContext<WebWorkbenchDockRenderers>({});
 
 /** Standard Solid DOM host for the shared production dock presenter. */
 export function WebWorkbenchDock(props: WebWorkbenchDockProps) {
   return (
-    <WorkbenchDockPresenter
-      host={WEB_WORKBENCH_DOCK_HOST}
-      projection={props.projection}
-      body={props.children}
-      onTabActivate={props.onTabActivate}
-      onActionActivate={props.onActionActivate}
-    />
+    <WebWorkbenchDockRenderContext.Provider
+      value={{ tabIcon: props.renderTabIcon, actionIcon: props.renderActionIcon }}
+    >
+      <WorkbenchDockPresenter
+        host={WEB_WORKBENCH_DOCK_HOST}
+        projection={props.projection}
+        body={props.children}
+        onTabActivate={props.onTabActivate}
+        onActionActivate={props.onActionActivate}
+      />
+    </WebWorkbenchDockRenderContext.Provider>
   );
 }
 
@@ -97,8 +110,11 @@ export const WEB_WORKBENCH_DOCK_HOST: WorkbenchDockHostLeaves = {
     );
   },
   Tab(props) {
+    const renderers = useContext(WebWorkbenchDockRenderContext);
     const accessibleLabel = () =>
-      props.tab.attention ? `${props.tab.title}, needs attention` : props.tab.title;
+      [props.tab.title, props.tab.attention ? "needs attention" : null, props.tab.disabledReason]
+        .filter(Boolean)
+        .join(", ");
     return (
       <button
         class="workbench-dock__tab"
@@ -112,7 +128,7 @@ export const WEB_WORKBENCH_DOCK_HOST: WorkbenchDockHostLeaves = {
         aria-disabled={props.tab.disabled}
         disabled={props.tab.disabled}
         tabIndex={props.tab.selected && !props.tab.disabled ? 0 : -1}
-        title={`${props.tab.title}${props.tab.shortcut ? ` (${props.tab.shortcut})` : ""}`}
+        title={`${props.tab.title}${props.tab.shortcut ? ` (${props.tab.shortcut})` : ""}${props.tab.disabledReason ? ` — ${props.tab.disabledReason}` : ""}`}
         data-attention={props.tab.attention ? "true" : "false"}
         data-focused={props.tab.focused ? "true" : "false"}
         data-hovered={props.tab.hovered ? "true" : "false"}
@@ -122,7 +138,7 @@ export const WEB_WORKBENCH_DOCK_HOST: WorkbenchDockHostLeaves = {
           {props.tab.shortcut}
         </span>
         <span class="workbench-dock__glyph" aria-hidden="true">
-          {TAB_GLYPHS[props.tab.id]}
+          {renderers.tabIcon?.(props.tab) ?? TAB_GLYPHS[props.tab.id]}
         </span>
         <span class="workbench-dock__title">{props.tab.title}</span>
         <span class="workbench-dock__attention" aria-hidden="true">
@@ -139,6 +155,7 @@ export const WEB_WORKBENCH_DOCK_HOST: WorkbenchDockHostLeaves = {
     );
   },
   Action(props) {
+    const renderers = useContext(WebWorkbenchDockRenderContext);
     const collapse = () => props.action.id === "toggle-collapse";
     return (
       <button
@@ -152,7 +169,7 @@ export const WEB_WORKBENCH_DOCK_HOST: WorkbenchDockHostLeaves = {
         title={props.action.description}
         onClick={() => props.onActivate?.()}
       >
-        {props.action.label.trim()}
+        {renderers.actionIcon?.(props.action) ?? props.action.label.trim()}
       </button>
     );
   },
