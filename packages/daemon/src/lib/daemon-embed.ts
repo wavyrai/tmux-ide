@@ -6,7 +6,7 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { randomBytes } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { createServer, type Server } from "node:http";
 import { createRequire } from "node:module";
 import type { Socket } from "node:net";
@@ -22,9 +22,12 @@ import { readAppSettings } from "./app-settings.ts";
 import { getDefaultWorkspaceRegistry } from "./workspace-registry.ts";
 import { setActivationBackend, type ProjectActivationOptions } from "./active-projects.ts";
 import {
+  canonicalDaemonUrl,
   clearCanonicalDaemonInfo,
+  clearCanonicalDaemonInfoIfUnchanged,
+  inspectCanonicalDaemonInfo,
   isCanonicalDaemonAlive,
-  readCanonicalDaemonInfo,
+  isCanonicalDaemonRecordOwnerProvenDead,
   writeCanonicalDaemonInfo,
 } from "./canonical-daemon.ts";
 
@@ -33,6 +36,33 @@ const DEFAULT_HOSTNAME = "127.0.0.1";
 const DEFAULT_GRACEFUL_MS = 2000;
 const MONITOR_INTERVAL_MS = 1000;
 const EMBEDDED_SESSION_NAME = "__embedded__";
+
+type PackageVersionLoader = () => unknown;
+
+function loadBundledPackage(): unknown {
+  return requireFromHere("../../package.json");
+}
+
+/**
+ * Resolve diagnostic version metadata without making daemon startup depend on
+ * package.json being present next to a bundled executable.
+ */
+export function resolveDaemonProductVersion(
+  explicit: string | undefined,
+  loadPackage: PackageVersionLoader = loadBundledPackage,
+): string {
+  if (typeof explicit === "string" && explicit.trim().length > 0) return explicit.trim();
+  try {
+    const pkg = loadPackage();
+    if (pkg && typeof pkg === "object" && "version" in pkg) {
+      const version = (pkg as { version?: unknown }).version;
+      if (typeof version === "string" && version.trim().length > 0) return version.trim();
+    }
+  } catch {
+    // Bundled/single-file hosts may have no package.json at this relative path.
+  }
+  return "0.0.0";
+}
 
 export interface EmbeddedDaemonOptions {
   sessionName?: string;
@@ -332,10 +362,6 @@ function generateLocalBypassToken(): string {
   return randomBytes(32).toString("base64url");
 }
 
-function probeHostname(bindHostname: string): string {
-  return bindHostname === "0.0.0.0" ? "127.0.0.1" : bindHostname;
-}
-
 function timeoutSignal(ms: number): AbortSignal {
   const controller = new AbortController();
   setTimeout(() => controller.abort(), ms).unref?.();
@@ -344,7 +370,7 @@ function timeoutSignal(ms: number): AbortSignal {
 
 async function healthGone(port: number, bindHostname: string): Promise<boolean> {
   try {
-    const res = await fetch(`http://${probeHostname(bindHostname)}:${port}/health`, {
+    const res = await fetch(canonicalDaemonUrl("http", bindHostname, port, "/health"), {
       signal: timeoutSignal(500),
     });
     return !res.ok;
@@ -355,7 +381,7 @@ async function healthGone(port: number, bindHostname: string): Promise<boolean> 
 
 async function requestDaemonShutdown(port: number, bindHostname: string): Promise<void> {
   try {
-    await fetch(`http://${probeHostname(bindHostname)}:${port}/api/v2/action/daemon.shutdown`, {
+    await fetch(canonicalDaemonUrl("http", bindHostname, port, "/api/v2/action/daemon.shutdown"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ reason: "takeover" }),
@@ -375,8 +401,11 @@ async function takeoverCanonicalDaemon(info: {
   await requestDaemonShutdown(info.port, info.bindHostname);
   const deadline = Date.now() + 10_000;
   while (Date.now() < deadline) {
-    const current = readCanonicalDaemonInfo();
-    const fileGone = !current || current.pid !== info.pid || current.port !== info.port;
+    const current = inspectCanonicalDaemonInfo();
+    const fileGone =
+      current.status === "missing" ||
+      (current.status === "valid" &&
+        (current.info.pid !== info.pid || current.info.port !== info.port));
     const serverGone = await healthGone(info.port, info.bindHostname);
     if (fileGone && serverGone) return;
     await delay(150);
@@ -419,6 +448,7 @@ async function startHttpServer({
   localBypassToken,
   silent,
   readProjectAuth,
+  daemonIdentity,
 }: {
   sessionName: string;
   requestedPort: number;
@@ -428,6 +458,11 @@ async function startHttpServer({
   localBypassToken?: string | null;
   silent?: boolean;
   readProjectAuth?: boolean;
+  daemonIdentity: {
+    productVersion: string;
+    instanceId: string;
+    startedAt: string;
+  };
 }): Promise<{
   server: Server;
   sockets: Set<Socket>;
@@ -460,6 +495,7 @@ async function startHttpServer({
       token: authToken ?? null,
       localBypassToken: localBypassToken ?? null,
     },
+    daemonIdentity,
   });
   app.get("/api/daemon/health", (c: { json: (body: unknown, status?: number) => Response }) => {
     return c.json({ ok: true, session: sessionName });
@@ -536,25 +572,48 @@ export async function startEmbeddedDaemon(
     ? (opts.authToken ?? null)
     : (persistedRemoteAccess?.token ?? null);
   const localBypassToken = opts.localBypassToken ?? generateLocalBypassToken();
-  const existingCanonical = readCanonicalDaemonInfo();
-  if (existingCanonical) {
-    if (await isCanonicalDaemonAlive(existingCanonical)) {
+  const existingCanonical = inspectCanonicalDaemonInfo();
+  if (existingCanonical.status === "invalid") {
+    if (await isCanonicalDaemonRecordOwnerProvenDead(existingCanonical)) {
+      if (!clearCanonicalDaemonInfoIfUnchanged(existingCanonical)) {
+        throw new DaemonStartupError(
+          "Canonical daemon metadata changed while stale state was being removed",
+          "canonical_record_invalid",
+        );
+      }
+    } else {
+      throw new DaemonStartupError(
+        `Canonical daemon metadata is ${existingCanonical.reason}: ${existingCanonical.detail}. ` +
+          "Refusing to start another owner.",
+        "canonical_record_invalid",
+      );
+    }
+  } else if (existingCanonical.status === "valid") {
+    if (await isCanonicalDaemonAlive(existingCanonical.info)) {
       if (opts.takeoverIfRunning) {
-        await takeoverCanonicalDaemon(existingCanonical);
+        await takeoverCanonicalDaemon(existingCanonical.info);
       } else {
         throw new DaemonStartupError(
-          `Canonical daemon is already running on port ${existingCanonical.port}`,
+          `Canonical daemon is already running on port ${existingCanonical.info.port}`,
           "canonical_already_running",
         );
       }
     } else {
-      clearCanonicalDaemonInfo();
+      if (!clearCanonicalDaemonInfoIfUnchanged(existingCanonical)) {
+        throw new DaemonStartupError(
+          "Canonical daemon metadata changed while stale state was being removed",
+          "canonical_already_running",
+        );
+      }
     }
   }
   if (!sessionless) assertTmuxSession(sessionName);
   const port = opts.port ?? (await pickFreePort(bindHostname));
   validatePort(port);
   const dir = process.cwd();
+  const productVersion = resolveDaemonProductVersion(opts.productVersion);
+  const instanceId = randomUUID();
+  const startedAt = new Date().toISOString();
 
   // Workspace registry: load + reconcile against live tmux sessions on
   // startup. Backwards-compat: if TMUX_IDE_SESSION is set, auto-add it as
@@ -603,21 +662,15 @@ export async function startEmbeddedDaemon(
     localBypassToken,
     silent: opts.silent,
     readProjectAuth: !sessionless,
+    daemonIdentity: { productVersion, instanceId, startedAt },
   });
-  // The shipped root CLI is an esbuild bundle, so import.meta.url points at
-  // bin/cli.js and the daemon package's relative package.json does not exist.
-  // Process hosts pass their product version explicitly; standalone embedders
-  // retain the package-local fallback.
-  const productVersion =
-    opts.productVersion ??
-    (requireFromHere("../../package.json") as { version?: string }).version ??
-    "0.0.0";
   writeCanonicalDaemonInfo({
     pid: process.pid,
     port,
     protocolVersion: DAEMON_WIRE_PROTOCOL_VERSION,
-    version: productVersion,
-    startedAt: new Date().toISOString(),
+    productVersion,
+    instanceId,
+    startedAt,
     bindHostname,
     authToken,
   });
@@ -706,8 +759,8 @@ export async function startEmbeddedDaemon(
 
   const monitorInterval = setInterval(tick, MONITOR_INTERVAL_MS);
 
-  const apiBaseUrl = `http://${bindHostname}:${port}`;
-  const wsUrl = `ws://${bindHostname}:${port}/ws/events`;
+  const apiBaseUrl = canonicalDaemonUrl("http", bindHostname, port);
+  const wsUrl = canonicalDaemonUrl("ws", bindHostname, port, "/ws/events");
 
   const handle: EmbeddedDaemonHandle = {
     port,
@@ -739,7 +792,10 @@ export async function startEmbeddedDaemon(
         } catch (err) {
           throw new DaemonShutdownError("Daemon shutdown failed", { cause: err as Error });
         } finally {
-          clearCanonicalDaemonInfo();
+          const current = inspectCanonicalDaemonInfo();
+          if (current.status === "valid" && current.info.instanceId === instanceId) {
+            clearCanonicalDaemonInfoIfUnchanged(current);
+          }
         }
       })();
       return stopping;

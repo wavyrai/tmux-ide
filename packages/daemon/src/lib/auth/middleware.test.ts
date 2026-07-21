@@ -21,6 +21,8 @@ describe("authMiddleware", () => {
     const app = new Hono();
     app.use("/*", authMiddleware(auth, config));
     app.get("/health", (c) => c.json({ ok: true }));
+    app.get("/healthz", (c) => c.json({ ok: true }));
+    app.get("/identity", (c) => c.json({ ok: true }));
     app.get("/api/auth/challenge", (c) => c.json({ bypassed: true }));
     app.get("/api/sessions", (c) => c.json({ sessions: [] }));
     return app;
@@ -41,6 +43,12 @@ describe("authMiddleware", () => {
       const app = buildApp(config);
       const res = await app.request("/health");
       expect(res.status).toBe(200);
+    });
+
+    it("bypasses /healthz and /identity before credentials are available", async () => {
+      const app = buildApp(config);
+      expect((await app.request("/healthz")).status).toBe(200);
+      expect((await app.request("/identity")).status).toBe(200);
     });
 
     it("bypasses /api/auth/* routes", async () => {

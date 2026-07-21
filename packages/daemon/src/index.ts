@@ -4,13 +4,23 @@ export {
   type EmbeddedDaemonOptions,
 } from "./embed.ts";
 export {
+  canonicalDaemonUrl,
   clearCanonicalDaemonInfo,
+  clearCanonicalDaemonInfoIfUnchanged,
+  inspectCanonicalDaemonInfo,
   isCanonicalDaemonAlive,
+  isCanonicalDaemonRecordOwnerProvenDead,
   probeCanonicalDaemonHealth,
+  probeCanonicalDaemonIdentity,
   readCanonicalDaemonInfo,
   writeCanonicalDaemonInfo,
 } from "./canonical.ts";
-export type { CanonicalDaemonInfo } from "./canonical.ts";
+export type {
+  CanonicalDaemonInfo,
+  CanonicalDaemonInfoInvalidReason,
+  CanonicalDaemonInfoObservation,
+  CanonicalDaemonInfoState,
+} from "./canonical.ts";
 export {
   MissionRepository,
   MissionRepositoryError,

@@ -1,7 +1,15 @@
 import { describe, expect, it, vi } from "vitest";
-import { DAEMON_WIRE_PROTOCOL_VERSION, type DaemonHealth } from "@tmux-ide/contracts";
-import type { CanonicalDaemonInfo } from "../canonical-daemon.ts";
-import type { EmbeddedDaemonHandle, EmbeddedDaemonOptions } from "../daemon-embed.ts";
+import {
+  DAEMON_WIRE_PROTOCOL_VERSION,
+  type DaemonHealth,
+  type DaemonIdentity,
+} from "@tmux-ide/contracts";
+import type { CanonicalDaemonInfo, CanonicalDaemonInfoState } from "../canonical-daemon.ts";
+import {
+  resolveDaemonProductVersion,
+  type EmbeddedDaemonHandle,
+  type EmbeddedDaemonOptions,
+} from "../daemon-embed.ts";
 import { runHeadlessDaemon, type HeadlessDaemonDependencies } from "../headless-daemon.ts";
 
 function daemonInfo(overrides: Partial<CanonicalDaemonInfo> = {}): CanonicalDaemonInfo {
@@ -9,11 +17,20 @@ function daemonInfo(overrides: Partial<CanonicalDaemonInfo> = {}): CanonicalDaem
     pid: 321,
     port: 4321,
     protocolVersion: DAEMON_WIRE_PROTOCOL_VERSION,
-    version: "2.8.0",
+    productVersion: "2.8.0",
+    instanceId: "9bcf33b0-c837-4a94-b5e8-c0977f54464f",
     startedAt: "2026-07-21T00:00:00.000Z",
     bindHostname: "127.0.0.1",
     authToken: null,
     ...overrides,
+  };
+}
+
+function validState(info: CanonicalDaemonInfo): CanonicalDaemonInfoState {
+  return {
+    status: "valid",
+    info,
+    observation: { dev: 1, ino: 1, size: 1, mtimeMs: 1 },
   };
 }
 
@@ -27,9 +44,11 @@ function deferred(): { promise: Promise<void>; resolve: () => void } {
 
 function createHarness(
   options: {
-    info?: CanonicalDaemonInfo | null;
+    state?: CanonicalDaemonInfoState;
     alive?: boolean;
+    ownerProvenDead?: boolean;
     health?: DaemonHealth | null;
+    identity?: DaemonIdentity | null;
   } = {},
 ): {
   deps: HeadlessDaemonDependencies;
@@ -39,7 +58,7 @@ function createHarness(
   clearCount: () => number;
   stop: () => Promise<void>;
 } {
-  let info = options.info === undefined ? null : options.info;
+  let state: CanonicalDaemonInfoState = options.state ?? { status: "missing" };
   let cleared = 0;
   const lines: string[] = [];
   const signals = new Map<NodeJS.Signals, () => void>();
@@ -54,26 +73,41 @@ function createHarness(
     stop: async () => stopped.resolve(),
   };
   const deps: HeadlessDaemonDependencies = {
-    readCanonicalDaemonInfo: () => info,
-    clearCanonicalDaemonInfo: () => {
+    inspectCanonicalDaemonInfo: () => state,
+    clearCanonicalDaemonInfoIfUnchanged: () => {
       cleared += 1;
-      info = null;
+      state = { status: "missing" };
+      return true;
     },
     isCanonicalDaemonAlive: async () => options.alive ?? false,
+    isCanonicalDaemonRecordOwnerProvenDead: async () => options.ownerProvenDead ?? false,
     probeCanonicalDaemonHealth: async () =>
       options.health !== undefined
         ? options.health
-        : info
+        : state.status === "valid"
           ? {
               ok: true,
-              protocolVersion: info.protocolVersion,
-              version: info.version,
+              protocolVersion: state.info.protocolVersion,
+              productVersion: state.info.productVersion,
               uptime: 42,
+            }
+          : null,
+    probeCanonicalDaemonIdentity: async () =>
+      options.identity !== undefined
+        ? options.identity
+        : state.status === "valid"
+          ? {
+              ok: true,
+              pid: state.info.pid,
+              protocolVersion: state.info.protocolVersion,
+              productVersion: state.info.productVersion,
+              instanceId: state.info.instanceId,
+              startedAt: state.info.startedAt,
             }
           : null,
     startEmbeddedDaemon: async (start) => {
       startOptions.push(start);
-      info = daemonInfo();
+      state = validState(daemonInfo());
       return handle;
     },
     writeStdout: (line) => lines.push(line),
@@ -93,8 +127,18 @@ function createHarness(
 }
 
 describe("runHeadlessDaemon", () => {
+  it("uses a safe product-version fallback when bundled package metadata is unavailable", () => {
+    expect(
+      resolveDaemonProductVersion(undefined, () => {
+        throw new Error("package.json is not bundled");
+      }),
+    ).toBe("0.0.0");
+    expect(resolveDaemonProductVersion(" 2.8.0 ", () => ({ version: "ignored" }))).toBe("2.8.0");
+    expect(resolveDaemonProductVersion(undefined, () => ({ version: 42 }))).toBe("0.0.0");
+  });
+
   it("reuses a compatible live canonical daemon without takeover", async () => {
-    const harness = createHarness({ info: daemonInfo(), alive: true });
+    const harness = createHarness({ state: validState(daemonInfo()), alive: true });
 
     await expect(runHeadlessDaemon({ json: true }, harness.deps)).resolves.toBe("already-running");
 
@@ -108,7 +152,10 @@ describe("runHeadlessDaemon", () => {
   });
 
   it("clears stale metadata, starts loopback without implicit auth, and stops on SIGTERM", async () => {
-    const harness = createHarness({ info: daemonInfo({ pid: 999_999 }), alive: false });
+    const harness = createHarness({
+      state: validState(daemonInfo({ pid: 999_999 })),
+      alive: false,
+    });
     const running = runHeadlessDaemon({ port: "4321", json: true }, harness.deps);
     await vi.waitFor(() => expect(harness.lines).toHaveLength(1));
 
@@ -169,7 +216,7 @@ describe("runHeadlessDaemon", () => {
 
   it("does not reuse a daemon rejected by protocol compatibility", async () => {
     const harness = createHarness({
-      info: daemonInfo({ protocolVersion: 2 }),
+      state: validState(daemonInfo({ protocolVersion: 2 })),
       alive: true,
     });
 
@@ -182,7 +229,11 @@ describe("runHeadlessDaemon", () => {
   });
 
   it("does not clear or replace a live owner whose health is unavailable", async () => {
-    const harness = createHarness({ info: daemonInfo(), alive: true, health: null });
+    const harness = createHarness({
+      state: validState(daemonInfo()),
+      alive: true,
+      health: null,
+    });
 
     await expect(runHeadlessDaemon({}, harness.deps)).rejects.toMatchObject({
       code: "DAEMON_UNHEALTHY",
@@ -194,9 +245,9 @@ describe("runHeadlessDaemon", () => {
 
   it("rejects disagreement between discovery and health protocols", async () => {
     const harness = createHarness({
-      info: daemonInfo(),
+      state: validState(daemonInfo()),
       alive: true,
-      health: { ok: true, protocolVersion: 2, version: "2.8.0", uptime: 42 },
+      health: { ok: true, protocolVersion: 2, productVersion: "2.8.0", uptime: 42 },
     });
 
     await expect(runHeadlessDaemon({}, harness.deps)).rejects.toMatchObject({
@@ -204,6 +255,65 @@ describe("runHeadlessDaemon", () => {
       exitCode: 2,
     });
     expect(harness.clearCount()).toBe(0);
+    expect(harness.startOptions).toEqual([]);
+  });
+
+  it("refuses a live protocol-less canonical record instead of starting a second owner", async () => {
+    const harness = createHarness({
+      state: {
+        status: "invalid",
+        reason: "invalid-schema",
+        detail: "protocolVersion is required",
+        ownerPid: 321,
+        observation: { dev: 1, ino: 1, size: 1, mtimeMs: 1 },
+      },
+      ownerProvenDead: false,
+    });
+
+    await expect(runHeadlessDaemon({}, harness.deps)).rejects.toMatchObject({
+      code: "DAEMON_INFO_INVALID",
+    });
+    expect(harness.clearCount()).toBe(0);
+    expect(harness.startOptions).toEqual([]);
+  });
+
+  it("removes a securely read invalid record only when its owner is proven dead", async () => {
+    const harness = createHarness({
+      state: {
+        status: "invalid",
+        reason: "invalid-schema",
+        detail: "legacy record",
+        ownerPid: 999_999,
+        observation: { dev: 1, ino: 1, size: 1, mtimeMs: 1 },
+      },
+      ownerProvenDead: true,
+    });
+    const running = runHeadlessDaemon({}, harness.deps);
+    await vi.waitFor(() => expect(harness.lines).toHaveLength(1));
+    expect(harness.clearCount()).toBe(1);
+    harness.signals.get("SIGTERM")?.();
+    await expect(running).resolves.toBe("stopped");
+  });
+
+  it("refuses endpoint identity disagreement before health reuse", async () => {
+    const info = daemonInfo();
+    const harness = createHarness({
+      state: validState(info),
+      alive: true,
+      identity: {
+        ok: true,
+        pid: info.pid,
+        protocolVersion: info.protocolVersion,
+        productVersion: info.productVersion,
+        instanceId: "76088827-c1f1-4451-bc2e-0a3ae7747434",
+        startedAt: info.startedAt,
+      },
+    });
+
+    await expect(runHeadlessDaemon({}, harness.deps)).rejects.toMatchObject({
+      code: "DAEMON_IDENTITY_MISMATCH",
+      exitCode: 2,
+    });
     expect(harness.startOptions).toEqual([]);
   });
 });

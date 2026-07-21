@@ -1,15 +1,20 @@
 import {
-  clearCanonicalDaemonInfo,
+  canonicalDaemonUrl,
+  clearCanonicalDaemonInfoIfUnchanged,
+  inspectCanonicalDaemonInfo,
   isCanonicalDaemonAlive,
+  isCanonicalDaemonRecordOwnerProvenDead,
   probeCanonicalDaemonHealth,
-  readCanonicalDaemonInfo,
+  probeCanonicalDaemonIdentity,
   warnOnDaemonVersionSkew,
+  type CanonicalDaemonInfoState,
   type CanonicalDaemonInfo,
 } from "./canonical-daemon.ts";
 import {
   DAEMON_WIRE_PROTOCOL_VERSION,
   isDaemonWireProtocolCompatible,
   type DaemonHealth,
+  type DaemonIdentity,
 } from "@tmux-ide/contracts";
 import {
   startEmbeddedDaemon,
@@ -28,10 +33,16 @@ export interface HeadlessDaemonOptions {
 }
 
 export interface HeadlessDaemonDependencies {
-  readonly readCanonicalDaemonInfo: () => CanonicalDaemonInfo | null;
-  readonly clearCanonicalDaemonInfo: () => void;
+  readonly inspectCanonicalDaemonInfo: () => CanonicalDaemonInfoState;
+  readonly clearCanonicalDaemonInfoIfUnchanged: (state: CanonicalDaemonInfoState) => boolean;
   readonly isCanonicalDaemonAlive: (info: CanonicalDaemonInfo) => Promise<boolean>;
+  readonly isCanonicalDaemonRecordOwnerProvenDead: (
+    state: Exclude<CanonicalDaemonInfoState, { status: "missing" }>,
+  ) => Promise<boolean>;
   readonly probeCanonicalDaemonHealth: (info: CanonicalDaemonInfo) => Promise<DaemonHealth | null>;
+  readonly probeCanonicalDaemonIdentity: (
+    info: CanonicalDaemonInfo,
+  ) => Promise<DaemonIdentity | null>;
   readonly startEmbeddedDaemon: (opts: EmbeddedDaemonOptions) => Promise<EmbeddedDaemonHandle>;
   readonly writeStdout: (line: string) => void;
   readonly onSignal: (signal: NodeJS.Signals, listener: () => void) => void;
@@ -39,10 +50,12 @@ export interface HeadlessDaemonDependencies {
 }
 
 const defaultDependencies: HeadlessDaemonDependencies = {
-  readCanonicalDaemonInfo,
-  clearCanonicalDaemonInfo,
+  inspectCanonicalDaemonInfo,
+  clearCanonicalDaemonInfoIfUnchanged,
   isCanonicalDaemonAlive,
+  isCanonicalDaemonRecordOwnerProvenDead,
   probeCanonicalDaemonHealth,
+  probeCanonicalDaemonIdentity,
   startEmbeddedDaemon,
   writeStdout: (line) => process.stdout.write(`${line}\n`),
   onSignal: (signal, listener) => process.on(signal, listener),
@@ -67,8 +80,7 @@ function emitStatus(
   status: "ready" | "already-running",
   info: Pick<CanonicalDaemonInfo, "pid" | "port" | "bindHostname">,
 ): void {
-  const hostname = info.bindHostname === "0.0.0.0" ? "127.0.0.1" : info.bindHostname;
-  const apiBaseUrl = `http://${hostname}:${info.port}`;
+  const apiBaseUrl = canonicalDaemonUrl("http", info.bindHostname, info.port);
   if (json) {
     deps.writeStdout(JSON.stringify({ status, pid: info.pid, port: info.port, apiBaseUrl }));
     return;
@@ -97,11 +109,35 @@ function assertProtocolCompatible(info: CanonicalDaemonInfo, health: DaemonHealt
   }
 }
 
+function assertIdentityMatches(info: CanonicalDaemonInfo, identity: DaemonIdentity): void {
+  if (
+    identity.instanceId !== info.instanceId ||
+    identity.pid !== info.pid ||
+    identity.protocolVersion !== info.protocolVersion ||
+    identity.productVersion !== info.productVersion ||
+    identity.startedAt !== info.startedAt
+  ) {
+    throw new IdeError(
+      "Canonical daemon identity probe does not match daemon.json. Refusing takeover or reuse.",
+      { code: "DAEMON_IDENTITY_MISMATCH", exitCode: 2 },
+    );
+  }
+}
+
 async function assertAttachableDaemon(
   deps: HeadlessDaemonDependencies,
   info: CanonicalDaemonInfo,
   options: HeadlessDaemonOptions,
 ): Promise<void> {
+  const identity = await deps.probeCanonicalDaemonIdentity(info);
+  if (!identity) {
+    throw new IdeError(
+      `Canonical daemon PID ${info.pid} is alive but its identity endpoint is unavailable. ` +
+        "Refusing takeover.",
+      { code: "DAEMON_IDENTITY_UNAVAILABLE", exitCode: 1 },
+    );
+  }
+  assertIdentityMatches(info, identity);
   const health = await deps.probeCanonicalDaemonHealth(info);
   if (!health) {
     throw new IdeError(
@@ -112,10 +148,10 @@ async function assertAttachableDaemon(
   }
   assertProtocolCompatible(info, health);
   if (options.expectedVersion) warnOnDaemonVersionSkew(info, options.expectedVersion);
-  if (health.version !== info.version) {
+  if (health.productVersion !== info.productVersion) {
     console.warn(
-      `[tmux-ide] canonical daemon version metadata differs: daemon.json reports ` +
-        `"${info.version}" but /health reports "${health.version}". ` +
+      `[tmux-ide] canonical daemon product-version metadata differs: daemon.json reports ` +
+        `"${info.productVersion}" but /health reports "${health.productVersion}". ` +
         `Wire compatibility is governed independently by protocolVersion.`,
     );
   }
@@ -125,14 +161,33 @@ async function findLiveCanonicalDaemon(
   deps: HeadlessDaemonDependencies,
   options: HeadlessDaemonOptions,
 ): Promise<CanonicalDaemonInfo | null> {
-  const existing = deps.readCanonicalDaemonInfo();
-  if (!existing) return null;
-  if (!(await deps.isCanonicalDaemonAlive(existing))) {
-    deps.clearCanonicalDaemonInfo();
+  const existing = deps.inspectCanonicalDaemonInfo();
+  if (existing.status === "missing") return null;
+  if (existing.status === "invalid") {
+    if (await deps.isCanonicalDaemonRecordOwnerProvenDead(existing)) {
+      if (deps.clearCanonicalDaemonInfoIfUnchanged(existing)) return null;
+      throw new IdeError("Canonical daemon metadata changed while stale state was removed", {
+        code: "DAEMON_INFO_INVALID",
+        exitCode: 1,
+      });
+    }
+    throw new IdeError(
+      `Canonical daemon metadata is ${existing.reason}: ${existing.detail}. ` +
+        "Its owner is not proven dead, so another daemon will not be started.",
+      { code: "DAEMON_INFO_INVALID", exitCode: 1 },
+    );
+  }
+  if (!(await deps.isCanonicalDaemonAlive(existing.info))) {
+    if (!deps.clearCanonicalDaemonInfoIfUnchanged(existing)) {
+      throw new IdeError("Canonical daemon metadata changed while stale state was removed", {
+        code: "DAEMON_INFO_INVALID",
+        exitCode: 1,
+      });
+    }
     return null;
   }
-  await assertAttachableDaemon(deps, existing, options);
-  return existing;
+  await assertAttachableDaemon(deps, existing.info, options);
+  return existing.info;
 }
 
 /**
@@ -209,14 +264,15 @@ export async function runHeadlessDaemon(
       return "stopped";
     }
 
-    const info = deps.readCanonicalDaemonInfo();
-    if (!info) {
+    const published = deps.inspectCanonicalDaemonInfo();
+    if (published.status !== "valid") {
       await handle.stop().catch(() => undefined);
       throw new IdeError("Canonical daemon started without publishing daemon.json", {
         code: "DAEMON_INFO_MISSING",
         exitCode: 1,
       });
     }
+    const info = published.info;
     try {
       await assertAttachableDaemon(deps, info, options);
     } catch (error) {

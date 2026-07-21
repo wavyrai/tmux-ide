@@ -410,10 +410,10 @@ var init_workspace_state = __esm({
       panes: z3.array(WorkspaceObservedPaneSchemaZ).max(WORKSPACE_STATE_MAX_PANES),
       focusedPaneId: WorkspaceIdSchemaZ.nullable(),
       workbench: WorkspaceWorkbenchStateSchemaZ
-    }).strict().superRefine((observation, ctx) => {
+    }).strict().superRefine((observation2, ctx) => {
       const semanticPaneIds = /* @__PURE__ */ new Set();
       const runtimePaneIds = /* @__PURE__ */ new Set();
-      for (const [index, pane] of observation.panes.entries()) {
+      for (const [index, pane] of observation2.panes.entries()) {
         if (semanticPaneIds.has(pane.semanticPaneId)) {
           ctx.addIssue({
             code: z3.ZodIssueCode.custom,
@@ -2383,17 +2383,19 @@ import { z as z15 } from "zod";
 function isDaemonWireProtocolCompatible(protocolVersion) {
   return protocolVersion === DAEMON_WIRE_PROTOCOL_VERSION;
 }
-var DAEMON_WIRE_PROTOCOL_VERSION, DaemonWireProtocolVersionSchema, CanonicalDaemonInfoSchema, DaemonHealthSchema, DaemonHealthzSchema;
+var DAEMON_WIRE_PROTOCOL_VERSION, DaemonWireProtocolVersionSchema, DaemonInstanceIdSchema, CanonicalDaemonInfoSchema, DaemonHealthSchema, DaemonHealthzSchema, DaemonIdentitySchema;
 var init_daemon_wire = __esm({
   "packages/contracts/src/daemon-wire.ts"() {
     "use strict";
     DAEMON_WIRE_PROTOCOL_VERSION = 1;
     DaemonWireProtocolVersionSchema = z15.number().int().positive();
+    DaemonInstanceIdSchema = z15.uuid();
     CanonicalDaemonInfoSchema = z15.object({
       pid: z15.number().int().positive(),
       port: z15.number().int().min(1).max(65535),
       protocolVersion: DaemonWireProtocolVersionSchema,
-      version: z15.string().trim().min(1),
+      productVersion: z15.string().trim().min(1),
+      instanceId: DaemonInstanceIdSchema,
       startedAt: z15.iso.datetime({ offset: true }),
       bindHostname: z15.string().trim().min(1),
       authToken: z15.string().min(1).nullable()
@@ -2401,14 +2403,22 @@ var init_daemon_wire = __esm({
     DaemonHealthSchema = z15.object({
       ok: z15.literal(true),
       protocolVersion: DaemonWireProtocolVersionSchema,
-      version: z15.string().trim().min(1),
+      productVersion: z15.string().trim().min(1),
       uptime: z15.number().nonnegative()
     });
     DaemonHealthzSchema = z15.object({
       ok: z15.literal(true),
       protocolVersion: DaemonWireProtocolVersionSchema,
-      version: z15.string().trim().min(1),
+      productVersion: z15.string().trim().min(1),
       uptimeMs: z15.number().nonnegative()
+    });
+    DaemonIdentitySchema = z15.object({
+      ok: z15.literal(true),
+      pid: z15.number().int().positive(),
+      protocolVersion: DaemonWireProtocolVersionSchema,
+      productVersion: z15.string().trim().min(1),
+      instanceId: DaemonInstanceIdSchema,
+      startedAt: z15.iso.datetime({ offset: true })
     });
   }
 });
@@ -9455,10 +9465,15 @@ var init_statusline = __esm({
 // packages/daemon/src/lib/canonical-daemon.ts
 var canonical_daemon_exports = {};
 __export(canonical_daemon_exports, {
+  canonicalDaemonUrl: () => canonicalDaemonUrl,
   clearCanonicalDaemonInfo: () => clearCanonicalDaemonInfo,
+  clearCanonicalDaemonInfoIfUnchanged: () => clearCanonicalDaemonInfoIfUnchanged,
   getCanonicalDaemonInfoPath: () => getCanonicalDaemonInfoPath,
+  inspectCanonicalDaemonInfo: () => inspectCanonicalDaemonInfo,
   isCanonicalDaemonAlive: () => isCanonicalDaemonAlive,
+  isCanonicalDaemonRecordOwnerProvenDead: () => isCanonicalDaemonRecordOwnerProvenDead,
   probeCanonicalDaemonHealth: () => probeCanonicalDaemonHealth,
+  probeCanonicalDaemonIdentity: () => probeCanonicalDaemonIdentity,
   readCanonicalDaemonInfo: () => readCanonicalDaemonInfo,
   warnOnDaemonVersionSkew: () => warnOnDaemonVersionSkew,
   writeCanonicalDaemonInfo: () => writeCanonicalDaemonInfo
@@ -9486,9 +9501,19 @@ function getCanonicalDaemonInfoPath() {
   const dir = nonEmptyEnvironmentValue(DAEMON_INFO_DIR_ENV) ?? nonEmptyEnvironmentValue(REGISTRY_DIR_ENV2) ?? join19(homedir13(), ".tmux-ide");
   return join19(dir, DAEMON_INFO_FILE);
 }
-function parseCanonicalDaemonInfo(raw) {
-  const parsed = CanonicalDaemonInfoSchema.safeParse(raw);
-  return parsed.success ? parsed.data : null;
+function observation(stat) {
+  return { dev: stat.dev, ino: stat.ino, size: stat.size, mtimeMs: stat.mtimeMs };
+}
+function sameObservation(left, right) {
+  return left.dev === right.dev && left.ino === right.ino && left.size === right.size && left.mtimeMs === right.mtimeMs;
+}
+function invalidState(reason, detail, ownerPid = null, observed = null) {
+  return { status: "invalid", reason, detail, ownerPid, observation: observed };
+}
+function ownerPidFromRaw(raw) {
+  if (!raw || typeof raw !== "object" || !("pid" in raw)) return null;
+  const pid = raw.pid;
+  return typeof pid === "number" && Number.isInteger(pid) && pid > 0 ? pid : null;
 }
 function writeCanonicalDaemonInfo(info) {
   const path2 = getCanonicalDaemonInfoPath();
@@ -9498,7 +9523,8 @@ function writeCanonicalDaemonInfo(info) {
     pid: info.pid,
     port: info.port,
     protocolVersion: info.protocolVersion,
-    version: info.version,
+    productVersion: info.productVersion,
+    instanceId: info.instanceId,
     startedAt: info.startedAt,
     bindHostname: info.bindHostname,
     authToken: info.authToken
@@ -9510,66 +9536,172 @@ function writeCanonicalDaemonInfo(info) {
   chmodSync3(tmpPath, 384);
   renameSync8(tmpPath, path2);
 }
-function readCanonicalDaemonInfo() {
+function inspectCanonicalDaemonInfo() {
   const path2 = getCanonicalDaemonInfoPath();
   let descriptor;
   try {
     const pathStat = lstatSync(path2);
-    if (pathStat.isSymbolicLink() || !pathStat.isFile() || pathStat.size > MAX_DAEMON_INFO_BYTES) {
-      return null;
+    const pathObservation = observation(pathStat);
+    if (pathStat.isSymbolicLink()) {
+      return invalidState(
+        "symlink",
+        "daemon.json must not be a symbolic link",
+        null,
+        pathObservation
+      );
+    }
+    if (!pathStat.isFile()) {
+      return invalidState(
+        "not-regular-file",
+        "daemon.json must be a regular file",
+        null,
+        pathObservation
+      );
+    }
+    if (pathStat.size > MAX_DAEMON_INFO_BYTES) {
+      return invalidState("oversized", "daemon.json exceeds the size limit", null, pathObservation);
+    }
+    if (typeof process.getuid === "function" && pathStat.uid !== process.getuid()) {
+      return invalidState(
+        "wrong-owner",
+        "daemon.json is not owned by the current user",
+        null,
+        pathObservation
+      );
+    }
+    if ((pathStat.mode & 63) !== 0) {
+      return invalidState(
+        "unsafe-permissions",
+        "daemon.json must be readable and writable only by its owner",
+        null,
+        pathObservation
+      );
     }
     descriptor = openSync2(path2, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
     const openedStat = fstatSync(descriptor);
-    if (!openedStat.isFile() || openedStat.size > MAX_DAEMON_INFO_BYTES || openedStat.dev !== pathStat.dev || openedStat.ino !== pathStat.ino) {
-      return null;
+    const openedObservation = observation(openedStat);
+    if (!openedStat.isFile() || !sameObservation(pathObservation, openedObservation) || typeof process.getuid === "function" && openedStat.uid !== process.getuid() || (openedStat.mode & 63) !== 0) {
+      return invalidState(
+        "changed-while-opening",
+        "daemon.json changed or became unsafe while it was opened",
+        null,
+        openedObservation
+      );
     }
-    const info = parseCanonicalDaemonInfo(JSON.parse(readFileSync15(descriptor, "utf-8")));
-    if (!info) return null;
-    const ownerMismatch = typeof process.getuid === "function" && openedStat.uid !== process.getuid();
-    if (info.authToken !== null && (ownerMismatch || (openedStat.mode & 63) !== 0)) return null;
-    return info;
-  } catch {
-    return null;
+    let raw;
+    try {
+      raw = JSON.parse(readFileSync15(descriptor, "utf-8"));
+    } catch (error) {
+      return invalidState(
+        "malformed-json",
+        error instanceof Error ? error.message : "daemon.json is not valid JSON",
+        null,
+        openedObservation
+      );
+    }
+    const parsed = CanonicalDaemonInfoSchema.safeParse(raw);
+    if (!parsed.success) {
+      return invalidState(
+        "invalid-schema",
+        parsed.error.issues.map((issue) => issue.message).join("; "),
+        ownerPidFromRaw(raw),
+        openedObservation
+      );
+    }
+    return { status: "valid", info: parsed.data, observation: openedObservation };
+  } catch (error) {
+    if (error.code === "ENOENT") return { status: "missing" };
+    return invalidState(
+      "unreadable",
+      error instanceof Error ? error.message : "daemon.json could not be read"
+    );
   } finally {
     if (descriptor !== void 0) closeSync2(descriptor);
   }
 }
+function readCanonicalDaemonInfo() {
+  const state = inspectCanonicalDaemonInfo();
+  return state.status === "valid" ? state.info : null;
+}
 function clearCanonicalDaemonInfo() {
   rmSync(getCanonicalDaemonInfoPath(), { force: true });
 }
-function isPidAlive(pid) {
+function clearCanonicalDaemonInfoIfUnchanged(state) {
+  if (state.status === "missing" || !state.observation) return false;
   try {
-    process.kill(pid, 0);
+    const current = observation(lstatSync(getCanonicalDaemonInfoPath()));
+    if (!sameObservation(state.observation, current)) return false;
+    rmSync(getCanonicalDaemonInfoPath());
     return true;
-  } catch (error) {
-    return error.code === "EPERM";
+  } catch {
+    return false;
   }
 }
-function probeHostname(bindHostname) {
-  return bindHostname === "0.0.0.0" ? "127.0.0.1" : bindHostname;
+function pidLiveness(pid) {
+  try {
+    process.kill(pid, 0);
+    return "alive";
+  } catch (error) {
+    const code = error.code;
+    if (code === "ESRCH") return "dead";
+    if (code === "EPERM") return "alive";
+    return "unknown";
+  }
+}
+async function isCanonicalDaemonAlive(info) {
+  return pidLiveness(info.pid) !== "dead";
+}
+async function isCanonicalDaemonRecordOwnerProvenDead(state) {
+  const pid = state.status === "valid" ? state.info.pid : state.ownerPid;
+  return pid !== null && pidLiveness(pid) === "dead";
+}
+function connectHostname(bindHostname) {
+  if (bindHostname === "0.0.0.0") return "127.0.0.1";
+  if (bindHostname === "::") return "::1";
+  return bindHostname;
+}
+function urlHostname(bindHostname) {
+  const hostname2 = connectHostname(bindHostname).replace(/^\[|\]$/gu, "");
+  if (/[/?#@]/u.test(hostname2)) throw new TypeError("Invalid daemon bind hostname");
+  const escaped = hostname2.replace(/%/gu, "%25");
+  return escaped.includes(":") ? `[${escaped}]` : escaped;
+}
+function canonicalDaemonUrl(protocol, bindHostname, port, path2 = "") {
+  const suffix = path2.length === 0 ? "" : path2.startsWith("/") ? path2 : `/${path2}`;
+  return `${protocol}://${urlHostname(bindHostname)}:${port}${suffix}`;
 }
 function timeoutSignal(ms) {
   const controller = new AbortController();
   setTimeout(() => controller.abort(), ms).unref?.();
   return controller.signal;
 }
-function warnOnDaemonVersionSkew(info, expectedVersion) {
-  if (info.version === expectedVersion) return;
+function warnOnDaemonVersionSkew(info, expectedProductVersion) {
+  if (info.productVersion === expectedProductVersion) return;
   console.warn(
-    `[tmux-ide] canonical daemon version skew: daemon.json reports "${info.version}" but this client expects "${expectedVersion}". Wire compatibility is governed independently by protocolVersion.`
+    `[tmux-ide] canonical daemon product-version skew: daemon.json reports "${info.productVersion}" but this client expects "${expectedProductVersion}". Wire compatibility is governed independently by protocolVersion.`
   );
 }
-async function isCanonicalDaemonAlive(info) {
-  return isPidAlive(info.pid);
-}
 async function probeCanonicalDaemonHealth(info) {
-  if (!isPidAlive(info.pid)) return null;
+  if (!await isCanonicalDaemonAlive(info)) return null;
   try {
-    const res = await fetch(`http://${probeHostname(info.bindHostname)}:${info.port}/health`, {
+    const res = await fetch(canonicalDaemonUrl("http", info.bindHostname, info.port, "/health"), {
       signal: timeoutSignal(750)
     });
     if (!res.ok) return null;
     const parsed = DaemonHealthSchema.safeParse(await res.json());
+    return parsed.success ? parsed.data : null;
+  } catch {
+    return null;
+  }
+}
+async function probeCanonicalDaemonIdentity(info) {
+  if (!await isCanonicalDaemonAlive(info)) return null;
+  try {
+    const res = await fetch(canonicalDaemonUrl("http", info.bindHostname, info.port, "/identity"), {
+      signal: timeoutSignal(750)
+    });
+    if (!res.ok) return null;
+    const parsed = DaemonIdentitySchema.safeParse(await res.json());
     return parsed.success ? parsed.data : null;
   } catch {
     return null;
@@ -9807,10 +9939,10 @@ async function launch(targetDir, {
     `Starting "${session}" (${rows.length} row${rows.length === 1 ? "" : "s"}, ${totalPanes} pane${totalPanes === 1 ? "" : "s"})...`
   );
   try {
-    const { readCanonicalDaemonInfo: readCanonicalDaemonInfo2 } = await Promise.resolve().then(() => (init_canonical_daemon(), canonical_daemon_exports));
+    const { canonicalDaemonUrl: canonicalDaemonUrl2, readCanonicalDaemonInfo: readCanonicalDaemonInfo2 } = await Promise.resolve().then(() => (init_canonical_daemon(), canonical_daemon_exports));
     const info = readCanonicalDaemonInfo2();
     if (info) {
-      console.log(`Command center: http://${info.bindHostname}:${info.port}/`);
+      console.log(`Command center: ${canonicalDaemonUrl2("http", info.bindHostname, info.port)}/`);
     }
   } catch {
   }
@@ -12603,7 +12735,7 @@ function authMiddleware(authService, config2) {
       return next();
     }
     const path2 = new URL(c.req.url).pathname;
-    if (path2 === "/health" || path2.startsWith("/api/auth/")) {
+    if (path2 === "/health" || path2 === "/healthz" || path2 === "/identity" || path2.startsWith("/api/auth/")) {
       return next();
     }
     const authHeader = c.req.header("Authorization");
@@ -13824,7 +13956,7 @@ __export(server_exports, {
 });
 import { execFile as execFile2 } from "node:child_process";
 import { promisify } from "node:util";
-import { existsSync as existsSync32, readFileSync as readFileSync24, readdirSync as readdirSync5 } from "node:fs";
+import { existsSync as existsSync32, readdirSync as readdirSync5 } from "node:fs";
 import { join as join30, dirname as dirname27, basename as basename8 } from "node:path";
 import { fileURLToPath as fileURLToPath10 } from "node:url";
 import { Hono } from "hono";
@@ -13836,17 +13968,6 @@ import { homedir as homedir20 } from "node:os";
 import { isAbsolute as isAbsolute6, resolve as pathResolve } from "node:path";
 import { randomUUID as randomUUID3 } from "node:crypto";
 import { WebSocketServer } from "ws";
-function resolvePackageVersion() {
-  const candidates = [join30(__dirname5, "../../package.json"), join30(__dirname5, "../package.json")];
-  for (const candidate of candidates) {
-    try {
-      const parsed = JSON.parse(readFileSync24(candidate, "utf-8"));
-      if (typeof parsed.version === "string") return parsed.version;
-    } catch {
-    }
-  }
-  return "0.0.0";
-}
 function bearerToken(authHeader) {
   if (!authHeader?.startsWith("Bearer ")) return null;
   return authHeader.slice("Bearer ".length);
@@ -13864,8 +13985,9 @@ function requireAuth(token, localBypassToken) {
 }
 function remoteAccessAuth(options) {
   const bindHostname = options.remoteAccess?.bindHostname ?? "127.0.0.1";
+  const loopback = bindHostname === "127.0.0.1" || bindHostname === "::1" || bindHostname === "localhost";
   return {
-    token: bindHostname === "127.0.0.1" ? null : options.remoteAccess?.token ?? null,
+    token: loopback ? null : options.remoteAccess?.token ?? null,
     localBypassToken: options.remoteAccess?.localBypassToken ?? null
   };
 }
@@ -13942,6 +14064,12 @@ function sandboxResolveDir(rawDir) {
 function createApp(options = {}) {
   const authConfig = options.authConfig ?? { method: "none", token_expiry: 86400 };
   const authService = options.authService ?? new AuthService();
+  const daemonIdentity = options.daemonIdentity ?? {
+    productVersion: "0.0.0",
+    instanceId: randomUUID3(),
+    startedAt: (/* @__PURE__ */ new Date()).toISOString()
+  };
+  const healthBootedAt = Date.now();
   const app = new Hono();
   app.use("/*", cors());
   const remoteAuth = remoteAccessAuth(options);
@@ -14012,13 +14140,22 @@ function createApp(options = {}) {
       return c.json({ error: err instanceof Error ? err.message : String(err) }, 500);
     }
   });
-  const HEALTHZ_BOOTED_AT = Date.now();
   app.get("/healthz", (c) => {
     return c.json({
       ok: true,
       protocolVersion: DAEMON_WIRE_PROTOCOL_VERSION,
-      version: process.env.npm_package_version ?? "dev",
-      uptimeMs: Date.now() - HEALTHZ_BOOTED_AT
+      productVersion: daemonIdentity.productVersion,
+      uptimeMs: Date.now() - healthBootedAt
+    });
+  });
+  app.get("/identity", (c) => {
+    return c.json({
+      ok: true,
+      pid: process.pid,
+      protocolVersion: DAEMON_WIRE_PROTOCOL_VERSION,
+      productVersion: daemonIdentity.productVersion,
+      instanceId: daemonIdentity.instanceId,
+      startedAt: daemonIdentity.startedAt
     });
   });
   app.get("/api/sessions", (c) => {
@@ -14527,7 +14664,7 @@ function createApp(options = {}) {
       ok: true,
       protocolVersion: DAEMON_WIRE_PROTOCOL_VERSION,
       uptime: Math.round(process.uptime()),
-      version: pkgVersion
+      productVersion: daemonIdentity.productVersion
     });
   });
   app.get("/api/projects", (c) => {
@@ -14769,7 +14906,7 @@ function attachWsEvents(server) {
     }
   };
 }
-var __dirname5, pkgVersion, projectStreamConnections, sseMetrics;
+var projectStreamConnections, sseMetrics;
 var init_server = __esm({
   "packages/daemon/src/command-center/server.ts"() {
     "use strict";
@@ -14800,8 +14937,6 @@ var init_server = __esm({
     init_filesystem_browser();
     init_project_inspect();
     init_project_onboard();
-    __dirname5 = dirname27(fileURLToPath10(import.meta.url));
-    pkgVersion = resolvePackageVersion();
     projectStreamConnections = 0;
     sseMetrics = {
       connections: 0,
@@ -14824,10 +14959,25 @@ var init_types = __esm({
 
 // packages/daemon/src/lib/daemon-embed.ts
 import { execFileSync as execFileSync12 } from "node:child_process";
-import { randomBytes as randomBytes3 } from "node:crypto";
+import { randomBytes as randomBytes3, randomUUID as randomUUID4 } from "node:crypto";
 import { createServer } from "node:http";
 import { createRequire as createRequire2 } from "node:module";
 import { WebSocket, WebSocketServer as WebSocketServer2 } from "ws";
+function loadBundledPackage() {
+  return requireFromHere("../../package.json");
+}
+function resolveDaemonProductVersion(explicit, loadPackage = loadBundledPackage) {
+  if (typeof explicit === "string" && explicit.trim().length > 0) return explicit.trim();
+  try {
+    const pkg = loadPackage();
+    if (pkg && typeof pkg === "object" && "version" in pkg) {
+      const version = pkg.version;
+      if (typeof version === "string" && version.trim().length > 0) return version.trim();
+    }
+  } catch {
+  }
+  return "0.0.0";
+}
 function tmux3(...args) {
   return execFileSync12("tmux", args, {
     encoding: "utf-8",
@@ -15015,9 +15165,6 @@ function delay(ms) {
 function generateLocalBypassToken() {
   return randomBytes3(32).toString("base64url");
 }
-function probeHostname2(bindHostname) {
-  return bindHostname === "0.0.0.0" ? "127.0.0.1" : bindHostname;
-}
 function timeoutSignal2(ms) {
   const controller = new AbortController();
   setTimeout(() => controller.abort(), ms).unref?.();
@@ -15025,7 +15172,7 @@ function timeoutSignal2(ms) {
 }
 async function healthGone(port, bindHostname) {
   try {
-    const res = await fetch(`http://${probeHostname2(bindHostname)}:${port}/health`, {
+    const res = await fetch(canonicalDaemonUrl("http", bindHostname, port, "/health"), {
       signal: timeoutSignal2(500)
     });
     return !res.ok;
@@ -15035,7 +15182,7 @@ async function healthGone(port, bindHostname) {
 }
 async function requestDaemonShutdown(port, bindHostname) {
   try {
-    await fetch(`http://${probeHostname2(bindHostname)}:${port}/api/v2/action/daemon.shutdown`, {
+    await fetch(canonicalDaemonUrl("http", bindHostname, port, "/api/v2/action/daemon.shutdown"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ reason: "takeover" }),
@@ -15048,8 +15195,8 @@ async function takeoverCanonicalDaemon(info) {
   await requestDaemonShutdown(info.port, info.bindHostname);
   const deadline = Date.now() + 1e4;
   while (Date.now() < deadline) {
-    const current = readCanonicalDaemonInfo();
-    const fileGone = !current || current.pid !== info.pid || current.port !== info.port;
+    const current = inspectCanonicalDaemonInfo();
+    const fileGone = current.status === "missing" || current.status === "valid" && (current.info.pid !== info.pid || current.info.port !== info.port);
     const serverGone = await healthGone(info.port, info.bindHostname);
     if (fileGone && serverGone) return;
     await delay(150);
@@ -15086,7 +15233,8 @@ async function startHttpServer({
   authToken,
   localBypassToken,
   silent,
-  readProjectAuth
+  readProjectAuth,
+  daemonIdentity
 }) {
   const { createApp: createApp3 } = await Promise.resolve().then(() => (init_server(), server_exports));
   const { getRequestListener: getRequestListener3 } = await import(requireFromHere.resolve("@hono/node-server"));
@@ -15109,7 +15257,8 @@ async function startHttpServer({
       bindHostname,
       token: authToken ?? null,
       localBypassToken: localBypassToken ?? null
-    }
+    },
+    daemonIdentity
   });
   app.get("/api/daemon/health", (c) => {
     return c.json({ ok: true, session: sessionName });
@@ -15170,25 +15319,47 @@ async function startEmbeddedDaemon(opts) {
   const bindHostname = opts.bindHostname ?? opts.hostname ?? (persistedRemoteAccess ? "0.0.0.0" : DEFAULT_HOSTNAME);
   const authToken = Object.prototype.hasOwnProperty.call(opts, "authToken") ? opts.authToken ?? null : persistedRemoteAccess?.token ?? null;
   const localBypassToken = opts.localBypassToken ?? generateLocalBypassToken();
-  const existingCanonical = readCanonicalDaemonInfo();
-  if (existingCanonical) {
-    if (await isCanonicalDaemonAlive(existingCanonical)) {
+  const existingCanonical = inspectCanonicalDaemonInfo();
+  if (existingCanonical.status === "invalid") {
+    if (await isCanonicalDaemonRecordOwnerProvenDead(existingCanonical)) {
+      if (!clearCanonicalDaemonInfoIfUnchanged(existingCanonical)) {
+        throw new DaemonStartupError(
+          "Canonical daemon metadata changed while stale state was being removed",
+          "canonical_record_invalid"
+        );
+      }
+    } else {
+      throw new DaemonStartupError(
+        `Canonical daemon metadata is ${existingCanonical.reason}: ${existingCanonical.detail}. Refusing to start another owner.`,
+        "canonical_record_invalid"
+      );
+    }
+  } else if (existingCanonical.status === "valid") {
+    if (await isCanonicalDaemonAlive(existingCanonical.info)) {
       if (opts.takeoverIfRunning) {
-        await takeoverCanonicalDaemon(existingCanonical);
+        await takeoverCanonicalDaemon(existingCanonical.info);
       } else {
         throw new DaemonStartupError(
-          `Canonical daemon is already running on port ${existingCanonical.port}`,
+          `Canonical daemon is already running on port ${existingCanonical.info.port}`,
           "canonical_already_running"
         );
       }
     } else {
-      clearCanonicalDaemonInfo();
+      if (!clearCanonicalDaemonInfoIfUnchanged(existingCanonical)) {
+        throw new DaemonStartupError(
+          "Canonical daemon metadata changed while stale state was being removed",
+          "canonical_already_running"
+        );
+      }
     }
   }
   if (!sessionless) assertTmuxSession(sessionName);
   const port = opts.port ?? await pickFreePort(bindHostname);
   validatePort(port);
   const dir = process.cwd();
+  const productVersion = resolveDaemonProductVersion(opts.productVersion);
+  const instanceId = randomUUID4();
+  const startedAt = (/* @__PURE__ */ new Date()).toISOString();
   const workspaceRegistry = getDefaultWorkspaceRegistry();
   await workspaceRegistry.load();
   const legacySession = process.env.TMUX_IDE_SESSION;
@@ -15220,15 +15391,16 @@ async function startEmbeddedDaemon(opts) {
     authToken,
     localBypassToken,
     silent: opts.silent,
-    readProjectAuth: !sessionless
+    readProjectAuth: !sessionless,
+    daemonIdentity: { productVersion, instanceId, startedAt }
   });
-  const productVersion = opts.productVersion ?? requireFromHere("../../package.json").version ?? "0.0.0";
   writeCanonicalDaemonInfo({
     pid: process.pid,
     port,
     protocolVersion: DAEMON_WIRE_PROTOCOL_VERSION,
-    version: productVersion,
-    startedAt: (/* @__PURE__ */ new Date()).toISOString(),
+    productVersion,
+    instanceId,
+    startedAt,
     bindHostname,
     authToken
   });
@@ -15297,8 +15469,8 @@ async function startEmbeddedDaemon(opts) {
     lastState = stateKey;
   };
   const monitorInterval = setInterval(tick, MONITOR_INTERVAL_MS);
-  const apiBaseUrl = `http://${bindHostname}:${port}`;
-  const wsUrl = `ws://${bindHostname}:${port}/ws/events`;
+  const apiBaseUrl = canonicalDaemonUrl("http", bindHostname, port);
+  const wsUrl = canonicalDaemonUrl("ws", bindHostname, port, "/ws/events");
   const handle = {
     port,
     apiBaseUrl,
@@ -15328,7 +15500,10 @@ async function startEmbeddedDaemon(opts) {
         } catch (err) {
           throw new DaemonShutdownError("Daemon shutdown failed", { cause: err });
         } finally {
-          clearCanonicalDaemonInfo();
+          const current = inspectCanonicalDaemonInfo();
+          if (current.status === "valid" && current.info.instanceId === instanceId) {
+            clearCanonicalDaemonInfoIfUnchanged(current);
+          }
         }
       })();
       return stopping;
@@ -15422,11 +15597,8 @@ async function isDaemonAlive(port) {
     return false;
   }
 }
-function hostnameForClient(bindHostname) {
-  return bindHostname === "0.0.0.0" ? "127.0.0.1" : bindHostname;
-}
 function daemonBaseUrl(info) {
-  return `http://${hostnameForClient(info.bindHostname)}:${info.port}`;
+  return canonicalDaemonUrl("http", info.bindHostname, info.port);
 }
 function expectedDaemonVersion() {
   try {
@@ -16056,8 +16228,9 @@ var require_package = __commonJS({
         "typecheck:workspace": "turbo run typecheck",
         "docs:build": "turbo run build --filter=@tmux-ide/docs",
         "pack:check": "npm pack --dry-run --cache /tmp/tmux-ide-npm-cache > /dev/null",
+        "test:pack-installed": "node scripts/pack-check-run.mjs",
         "check:native-deps": "node packages/daemon/scripts/check-native-deps.mjs",
-        check: "pnpm run lint:workspace && pnpm run format:check && pnpm run typecheck:workspace && pnpm run test:unit && pnpm run test:tui-renderer && pnpm run docs:build && pnpm run pack:check && pnpm run check:native-deps",
+        check: "pnpm run lint:workspace && pnpm run format:check && pnpm run typecheck:workspace && pnpm run test:unit && pnpm run test:tui-renderer && pnpm run docs:build && pnpm run pack:check && pnpm run test:pack-installed && pnpm run check:native-deps",
         postinstall: "node scripts/postinstall.js",
         docs: "turbo run dev --filter=@tmux-ide/docs",
         "test:tui-renderer": "bun test --preload @opentui/solid/preload ./packages/daemon/src/tui/mirror/missions-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/recipes-gallery-renderer.test.tsx ./packages/daemon/src/tui/mirror/shell-chrome-renderer.test.tsx ./packages/daemon/src/tui/mirror/home-files-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/changes-terminal-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/activity-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/application-shell-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/pane-frame-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/workbench-shell-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/agent-terminal-canvas-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/command-palette-surface-renderer.test.tsx",
@@ -18617,10 +18790,12 @@ init_src();
 init_daemon_embed();
 init_errors2();
 var defaultDependencies = {
-  readCanonicalDaemonInfo,
-  clearCanonicalDaemonInfo,
+  inspectCanonicalDaemonInfo,
+  clearCanonicalDaemonInfoIfUnchanged,
   isCanonicalDaemonAlive,
+  isCanonicalDaemonRecordOwnerProvenDead,
   probeCanonicalDaemonHealth,
+  probeCanonicalDaemonIdentity,
   startEmbeddedDaemon,
   writeStdout: (line) => process.stdout.write(`${line}
 `),
@@ -18639,8 +18814,7 @@ function parsePort(value) {
   return port;
 }
 function emitStatus(deps2, json2, status2, info) {
-  const hostname2 = info.bindHostname === "0.0.0.0" ? "127.0.0.1" : info.bindHostname;
-  const apiBaseUrl = `http://${hostname2}:${info.port}`;
+  const apiBaseUrl = canonicalDaemonUrl("http", info.bindHostname, info.port);
   if (json2) {
     deps2.writeStdout(JSON.stringify({ status: status2, pid: info.pid, port: info.port, apiBaseUrl }));
     return;
@@ -18665,7 +18839,23 @@ function assertProtocolCompatible(info, health) {
     );
   }
 }
+function assertIdentityMatches(info, identity) {
+  if (identity.instanceId !== info.instanceId || identity.pid !== info.pid || identity.protocolVersion !== info.protocolVersion || identity.productVersion !== info.productVersion || identity.startedAt !== info.startedAt) {
+    throw new IdeError(
+      "Canonical daemon identity probe does not match daemon.json. Refusing takeover or reuse.",
+      { code: "DAEMON_IDENTITY_MISMATCH", exitCode: 2 }
+    );
+  }
+}
 async function assertAttachableDaemon(deps2, info, options) {
+  const identity = await deps2.probeCanonicalDaemonIdentity(info);
+  if (!identity) {
+    throw new IdeError(
+      `Canonical daemon PID ${info.pid} is alive but its identity endpoint is unavailable. Refusing takeover.`,
+      { code: "DAEMON_IDENTITY_UNAVAILABLE", exitCode: 1 }
+    );
+  }
+  assertIdentityMatches(info, identity);
   const health = await deps2.probeCanonicalDaemonHealth(info);
   if (!health) {
     throw new IdeError(
@@ -18675,21 +18865,39 @@ async function assertAttachableDaemon(deps2, info, options) {
   }
   assertProtocolCompatible(info, health);
   if (options.expectedVersion) warnOnDaemonVersionSkew(info, options.expectedVersion);
-  if (health.version !== info.version) {
+  if (health.productVersion !== info.productVersion) {
     console.warn(
-      `[tmux-ide] canonical daemon version metadata differs: daemon.json reports "${info.version}" but /health reports "${health.version}". Wire compatibility is governed independently by protocolVersion.`
+      `[tmux-ide] canonical daemon product-version metadata differs: daemon.json reports "${info.productVersion}" but /health reports "${health.productVersion}". Wire compatibility is governed independently by protocolVersion.`
     );
   }
 }
 async function findLiveCanonicalDaemon(deps2, options) {
-  const existing = deps2.readCanonicalDaemonInfo();
-  if (!existing) return null;
-  if (!await deps2.isCanonicalDaemonAlive(existing)) {
-    deps2.clearCanonicalDaemonInfo();
+  const existing = deps2.inspectCanonicalDaemonInfo();
+  if (existing.status === "missing") return null;
+  if (existing.status === "invalid") {
+    if (await deps2.isCanonicalDaemonRecordOwnerProvenDead(existing)) {
+      if (deps2.clearCanonicalDaemonInfoIfUnchanged(existing)) return null;
+      throw new IdeError("Canonical daemon metadata changed while stale state was removed", {
+        code: "DAEMON_INFO_INVALID",
+        exitCode: 1
+      });
+    }
+    throw new IdeError(
+      `Canonical daemon metadata is ${existing.reason}: ${existing.detail}. Its owner is not proven dead, so another daemon will not be started.`,
+      { code: "DAEMON_INFO_INVALID", exitCode: 1 }
+    );
+  }
+  if (!await deps2.isCanonicalDaemonAlive(existing.info)) {
+    if (!deps2.clearCanonicalDaemonInfoIfUnchanged(existing)) {
+      throw new IdeError("Canonical daemon metadata changed while stale state was removed", {
+        code: "DAEMON_INFO_INVALID",
+        exitCode: 1
+      });
+    }
     return null;
   }
-  await assertAttachableDaemon(deps2, existing, options);
-  return existing;
+  await assertAttachableDaemon(deps2, existing.info, options);
+  return existing.info;
 }
 async function runHeadlessDaemon(options = {}, deps2 = defaultDependencies) {
   const port = parsePort(options.port);
@@ -18748,14 +18956,15 @@ async function runHeadlessDaemon(options = {}, deps2 = defaultDependencies) {
       if (stopFailure) throw stopFailure;
       return "stopped";
     }
-    const info = deps2.readCanonicalDaemonInfo();
-    if (!info) {
+    const published = deps2.inspectCanonicalDaemonInfo();
+    if (published.status !== "valid") {
       await handle.stop().catch(() => void 0);
       throw new IdeError("Canonical daemon started without publishing daemon.json", {
         code: "DAEMON_INFO_MISSING",
         exitCode: 1
       });
     }
+    const info = published.info;
     try {
       await assertAttachableDaemon(deps2, info, options);
     } catch (error) {
@@ -18778,9 +18987,9 @@ async function runHeadlessDaemon(options = {}, deps2 = defaultDependencies) {
 
 // bin/cli.ts
 init_hosted();
-var __dirname6 = dirname32(fileURLToPath11(import.meta.url));
+var __dirname5 = dirname32(fileURLToPath11(import.meta.url));
 var selfPath = fileURLToPath11(import.meta.url);
-var nodeCliPath = selfPath.endsWith(".js") ? selfPath : resolve28(__dirname6, "cli.js");
+var nodeCliPath = selfPath.endsWith(".js") ? selfPath : resolve28(__dirname5, "cli.js");
 var { positionals, values } = parseArgs({
   allowPositionals: true,
   strict: false,
@@ -19020,7 +19229,7 @@ Install bun (https://bun.sh) \u2014 the TUI surfaces run on it. Sources ship wit
   if (launch2.mode === "bun") {
     execFileSync16(launch2.bin, launch2.argv, {
       stdio: "inherit",
-      cwd: resolve28(__dirname6, ".."),
+      cwd: resolve28(__dirname5, ".."),
       env
     });
     return;
@@ -19050,7 +19259,7 @@ Install bun (https://bun.sh) \u2014 the TUI surfaces run on it. Sources ship wit
     exists = false;
   }
   if (!exists) {
-    const cwd = launch2.mode === "bun" ? resolve28(__dirname6, "..") : process.cwd();
+    const cwd = launch2.mode === "bun" ? resolve28(__dirname5, "..") : process.cwd();
     const commandLine = hostedCommandLine(
       launch2.bin,
       launch2.argv,
@@ -19096,8 +19305,8 @@ async function waitOverSocket(params) {
     client.close();
   }
 }
-var teamScriptPath = resolve28(__dirname6, "../packages/daemon/src/tui/team/index.tsx");
-var appScriptPath = resolve28(__dirname6, "../packages/daemon/src/tui/mirror/app.tsx");
+var teamScriptPath = resolve28(__dirname5, "../packages/daemon/src/tui/team/index.tsx");
+var appScriptPath = resolve28(__dirname5, "../packages/daemon/src/tui/mirror/app.tsx");
 function launchTeamCockpit() {
   execBunWidget("team", teamScriptPath, [], "team");
 }
@@ -19245,7 +19454,7 @@ try {
         action = "disable-team";
         configArgs = [];
       } else if (sub === "edit") {
-        const scriptPath = resolve28(__dirname6, "../packages/daemon/src/widgets/setup/index.tsx");
+        const scriptPath = resolve28(__dirname5, "../packages/daemon/src/widgets/setup/index.tsx");
         execBunWidget(
           "setup",
           scriptPath,
@@ -19258,7 +19467,7 @@ try {
       break;
     }
     case "setup": {
-      const scriptPath = resolve28(__dirname6, "../packages/daemon/src/widgets/setup/index.tsx");
+      const scriptPath = resolve28(__dirname5, "../packages/daemon/src/widgets/setup/index.tsx");
       const setupArgs = ["--dir=" + resolve28(startTargetDir || ".")];
       if (positionals[1] === "--edit" || values.edit) setupArgs.push("--edit");
       if (positionals[1] === "--wizard" || values.wizard) setupArgs.push("--wizard");
@@ -19270,14 +19479,14 @@ try {
       const messageStart = values.to ? 1 : 2;
       let message = positionals.slice(messageStart).join(" ");
       if (!message && !process.stdin.isTTY) {
-        const { readFileSync: readFileSync25 } = await import("node:fs");
-        message = readFileSync25(0, "utf-8").trim();
+        const { readFileSync: readFileSync24 } = await import("node:fs");
+        message = readFileSync24(0, "utf-8").trim();
       }
       await send(null, { json, to: target, message, noEnter: values["no-enter"] });
       break;
     }
     case "settings": {
-      const scriptPath = resolve28(__dirname6, "../packages/daemon/src/widgets/config/index.tsx");
+      const scriptPath = resolve28(__dirname5, "../packages/daemon/src/widgets/config/index.tsx");
       execBunWidget("config", scriptPath, ["--dir=" + resolve28(startTargetDir || ".")], "settings");
       break;
     }
@@ -19403,7 +19612,7 @@ try {
       break;
     }
     case "events": {
-      const { readFileSync: readFileSync25, existsSync: existsSync36, statSync: statSync7, openSync: openSync3, readSync, closeSync: closeSync3 } = await import("node:fs");
+      const { readFileSync: readFileSync24, existsSync: existsSync36, statSync: statSync7, openSync: openSync3, readSync, closeSync: closeSync3 } = await import("node:fs");
       const { eventsPath: eventsPath2, formatEventLine: formatEventLine2 } = await Promise.resolve().then(() => (init_events(), events_exports));
       const path2 = eventsPath2();
       const paintStatus = (status2, text) => {
@@ -19429,7 +19638,7 @@ try {
         }).catch(() => null);
         if (client) {
           if (existsSync36(path2)) {
-            const backlog = readFileSync25(path2, "utf8").split("\n").filter((l) => l.trim().length > 0);
+            const backlog = readFileSync24(path2, "utf8").split("\n").filter((l) => l.trim().length > 0);
             for (const line of backlog.slice(-50)) printLine(line);
           }
           await client.subscribe((frame) => {
@@ -19447,7 +19656,7 @@ try {
         console.log("no events yet \u2014 is a session adopted? (the chrome updater writes events)");
         break;
       }
-      const allLines = readFileSync25(path2, "utf8").split("\n").filter((l) => l.trim().length > 0);
+      const allLines = readFileSync24(path2, "utf8").split("\n").filter((l) => l.trim().length > 0);
       for (const line of allLines.slice(-50)) printLine(line);
       if (!values.follow) break;
       let offset = statSync7(path2).size;
@@ -19810,7 +20019,7 @@ Known panels: ${POPUP_WIDGETS2.join(", ")}.`,
           { code: "USAGE", exitCode: 1 }
         );
       }
-      const scriptPath = resolve28(__dirname6, "../packages/daemon/src/widgets", widget, "index.tsx");
+      const scriptPath = resolve28(__dirname5, "../packages/daemon/src/widgets", widget, "index.tsx");
       let popupSession = "";
       try {
         popupSession = execFileSync16("tmux", ["display-message", "-p", "#{session_name}"], {
@@ -20086,7 +20295,7 @@ Known panels: ${POPUP_WIDGETS2.join(", ")}.`,
       }
       const { runUpdate: runUpdate2 } = await Promise.resolve().then(() => (init_update(), update_exports));
       const dryRun = values["dry-run"] === true;
-      const plan = runUpdate2({ cliDir: __dirname6, dryRun });
+      const plan = runUpdate2({ cliDir: __dirname5, dryRun });
       if (!dryRun) {
         const { syncSkill: syncSkill2 } = await Promise.resolve().then(() => (init_skill_sync(), skill_sync_exports));
         if (plan.method === "dev") {
@@ -20137,7 +20346,7 @@ Known panels: ${POPUP_WIDGETS2.join(", ")}.`,
     }
     case "server": {
       if ("bun" in process.versions) {
-        const scriptPath = resolve28(__dirname6, "../packages/daemon/src/server/standalone.ts");
+        const scriptPath = resolve28(__dirname5, "../packages/daemon/src/server/standalone.ts");
         const serverArgs = ["--experimental-strip-types", scriptPath];
         if (values.port) serverArgs.push("--port", values.port);
         execFileSync16("node", serverArgs, { stdio: "inherit" });

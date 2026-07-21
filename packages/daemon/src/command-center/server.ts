@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
 import { join, dirname, basename } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Hono, type MiddlewareHandler } from "hono";
@@ -98,28 +98,13 @@ export interface CreateAppOptions {
     token?: string | null;
     localBypassToken?: string | null;
   };
+  daemonIdentity?: {
+    productVersion: string;
+    instanceId: string;
+    startedAt: string;
+  };
 }
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-// Resolve our package.json's version. The lookup needs to handle BOTH
-// dev (this file lives at src/command-center/, so the workspace root
-// is two levels up) AND the packaged Electron bundle (this file is
-// flattened into app.asar/dist-electron/, so the bundled package.json
-// is ONE level up; two levels up escapes the asar). Try the candidates
-// in order; fall back to a sentinel if neither is readable.
-function resolvePackageVersion(): string {
-  const candidates = [join(__dirname, "../../package.json"), join(__dirname, "../package.json")];
-  for (const candidate of candidates) {
-    try {
-      const parsed = JSON.parse(readFileSync(candidate, "utf-8")) as { version?: string };
-      if (typeof parsed.version === "string") return parsed.version;
-    } catch {
-      /* try the next candidate */
-    }
-  }
-  return "0.0.0";
-}
-const pkgVersion: string = resolvePackageVersion();
 let projectStreamConnections = 0;
 
 function bearerToken(authHeader: string | undefined): string | null {
@@ -145,8 +130,10 @@ function remoteAccessAuth(options: CreateAppOptions): {
   localBypassToken: string | null;
 } {
   const bindHostname = options.remoteAccess?.bindHostname ?? "127.0.0.1";
+  const loopback =
+    bindHostname === "127.0.0.1" || bindHostname === "::1" || bindHostname === "localhost";
   return {
-    token: bindHostname === "127.0.0.1" ? null : (options.remoteAccess?.token ?? null),
+    token: loopback ? null : (options.remoteAccess?.token ?? null),
     localBypassToken: options.remoteAccess?.localBypassToken ?? null,
   };
 }
@@ -261,6 +248,12 @@ function sandboxResolveDir(rawDir: string): SandboxResolveOk | SandboxResolveErr
 export function createApp(options: CreateAppOptions = {}): Hono {
   const authConfig: AuthConfig = options.authConfig ?? { method: "none", token_expiry: 86400 };
   const authService = options.authService ?? new AuthService();
+  const daemonIdentity = options.daemonIdentity ?? {
+    productVersion: "0.0.0",
+    instanceId: randomUUID(),
+    startedAt: new Date().toISOString(),
+  };
+  const healthBootedAt = Date.now();
 
   const app = new Hono();
 
@@ -354,14 +347,27 @@ export function createApp(options: CreateAppOptions = {}): Hono {
 
   // T067: /healthz — minimal liveness probe used by daemon-client.
   // Intentionally NOT under /api so it bypasses the auth middleware on
-  // every consumer. Returns ok + version + uptime (ms since boot).
-  const HEALTHZ_BOOTED_AT = Date.now();
+  // every consumer. Returns ok + productVersion + uptime (ms since boot).
   app.get("/healthz", (c) => {
     return c.json({
       ok: true,
       protocolVersion: DAEMON_WIRE_PROTOCOL_VERSION,
-      version: process.env.npm_package_version ?? "dev",
-      uptimeMs: Date.now() - HEALTHZ_BOOTED_AT,
+      productVersion: daemonIdentity.productVersion,
+      uptimeMs: Date.now() - healthBootedAt,
+    });
+  });
+
+  // Credential-free endpoint binding. A desktop host reads the nonce from the
+  // owner-only canonical record, probes this endpoint, and compares before it
+  // sends any remote-access or local-bypass credential.
+  app.get("/identity", (c) => {
+    return c.json({
+      ok: true,
+      pid: process.pid,
+      protocolVersion: DAEMON_WIRE_PROTOCOL_VERSION,
+      productVersion: daemonIdentity.productVersion,
+      instanceId: daemonIdentity.instanceId,
+      startedAt: daemonIdentity.startedAt,
     });
   });
 
@@ -982,7 +988,7 @@ export function createApp(options: CreateAppOptions = {}): Hono {
       ok: true,
       protocolVersion: DAEMON_WIRE_PROTOCOL_VERSION,
       uptime: Math.round(process.uptime()),
-      version: pkgVersion,
+      productVersion: daemonIdentity.productVersion,
     });
   });
 

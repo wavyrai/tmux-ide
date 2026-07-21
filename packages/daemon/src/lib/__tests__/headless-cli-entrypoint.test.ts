@@ -1,18 +1,33 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { CanonicalDaemonInfo } from "../canonical-daemon.ts";
-import { DAEMON_WIRE_PROTOCOL_VERSION, DaemonHealthSchema } from "@tmux-ide/contracts";
+import {
+  DAEMON_WIRE_PROTOCOL_VERSION,
+  DaemonHealthSchema,
+  DaemonHealthzSchema,
+  DaemonIdentitySchema,
+} from "@tmux-ide/contracts";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../../../../");
 const cliPath = join(repoRoot, "bin/cli.js");
 const packageVersion = (
   JSON.parse(readFileSync(join(repoRoot, "package.json"), "utf-8")) as { version: string }
 ).version;
+const INSTANCE_ID = "9bcf33b0-c837-4a94-b5e8-c0977f54464f";
+const STARTED_AT = "2026-07-21T00:00:00.000Z";
 
 let tempDir: string;
 let env: NodeJS.ProcessEnv;
@@ -135,8 +150,9 @@ function writeLiveDaemonInfo(port: number, protocolVersion = DAEMON_WIRE_PROTOCO
       pid: process.pid,
       port,
       protocolVersion,
-      version: protocolVersion === DAEMON_WIRE_PROTOCOL_VERSION ? packageVersion : "future",
-      startedAt: "2026-07-21T00:00:00.000Z",
+      productVersion: protocolVersion === DAEMON_WIRE_PROTOCOL_VERSION ? packageVersion : "future",
+      instanceId: INSTANCE_ID,
+      startedAt: STARTED_AT,
       bindHostname: "127.0.0.1",
       authToken: null,
     })}\n`,
@@ -146,6 +162,21 @@ function writeLiveDaemonInfo(port: number, protocolVersion = DAEMON_WIRE_PROTOCO
 
 async function listenWithProtocol(protocolVersion: number): Promise<number> {
   const server = createServer((request, response) => {
+    if (request.url === "/identity") {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(
+        JSON.stringify({
+          ok: true,
+          pid: process.pid,
+          protocolVersion,
+          productVersion:
+            protocolVersion === DAEMON_WIRE_PROTOCOL_VERSION ? packageVersion : "future",
+          instanceId: INSTANCE_ID,
+          startedAt: STARTED_AT,
+        }),
+      );
+      return;
+    }
     if (request.url !== "/health") {
       response.writeHead(404).end();
       return;
@@ -155,7 +186,8 @@ async function listenWithProtocol(protocolVersion: number): Promise<number> {
       JSON.stringify({
         ok: true,
         protocolVersion,
-        version: protocolVersion === DAEMON_WIRE_PROTOCOL_VERSION ? packageVersion : "future",
+        productVersion:
+          protocolVersion === DAEMON_WIRE_PROTOCOL_VERSION ? packageVersion : "future",
         uptime: 42,
       }),
     );
@@ -194,24 +226,44 @@ describe.sequential("shipped tmux-ide --headless entrypoint", () => {
         pid: 999_999_999,
         port: 9,
         protocolVersion: DAEMON_WIRE_PROTOCOL_VERSION,
-        version: "stale-test",
-        startedAt: "2026-07-21T00:00:00.000Z",
+        productVersion: "stale-test",
+        instanceId: INSTANCE_ID,
+        startedAt: STARTED_AT,
         bindHostname: "127.0.0.1",
         authToken: null,
       })}\n`,
+      { mode: 0o600 },
     );
 
     const owner = spawnCli(["--headless", "--json"]);
     const info = await waitForDaemonInfo((candidate) => candidate.pid === owner.pid);
     expect(info.pid).toBe(owner.pid);
     expect(info.authToken).toBeNull();
-    expect(info.version).toBe(packageVersion);
+    expect(info.productVersion).toBe(packageVersion);
+    expect(info.instanceId).toMatch(/^[0-9a-f-]{36}$/u);
 
     const healthResponse = await fetch(`http://127.0.0.1:${info.port}/health`);
     expect(healthResponse.ok).toBe(true);
     const health = DaemonHealthSchema.parse(await healthResponse.json());
     expect(health.protocolVersion).toBe(DAEMON_WIRE_PROTOCOL_VERSION);
     expect(info.protocolVersion).toBe(health.protocolVersion);
+    expect(health.productVersion).toBe(info.productVersion);
+
+    const healthz = DaemonHealthzSchema.parse(
+      await (await fetch(`http://127.0.0.1:${info.port}/healthz`)).json(),
+    );
+    expect(healthz.productVersion).toBe(info.productVersion);
+
+    const identity = DaemonIdentitySchema.parse(
+      await (await fetch(`http://127.0.0.1:${info.port}/identity`)).json(),
+    );
+    expect(identity).toMatchObject({
+      pid: info.pid,
+      protocolVersion: info.protocolVersion,
+      productVersion: info.productVersion,
+      instanceId: info.instanceId,
+      startedAt: info.startedAt,
+    });
 
     const contender = await waitForExit(spawnCli(["--headless", "--json"]));
     expect(contender.code).toBe(0);
@@ -253,17 +305,52 @@ describe.sequential("shipped tmux-ide --headless entrypoint", () => {
     });
   });
 
-  it("refuses takeover of a live owner whose health is unavailable", async () => {
+  it("refuses takeover of a live owner whose identity endpoint is unavailable", async () => {
     writeLiveDaemonInfo(9);
 
     const result = await waitForExit(spawnCli(["--headless", "--json"]));
 
     expect(result.code).toBe(1);
-    expect(JSON.parse(result.stderr)).toMatchObject({ code: "DAEMON_UNHEALTHY" });
+    expect(JSON.parse(result.stderr)).toMatchObject({ code: "DAEMON_IDENTITY_UNAVAILABLE" });
     expect(JSON.parse(readFileSync(daemonInfoPath(), "utf-8"))).toMatchObject({
       pid: process.pid,
       port: 9,
     });
+  });
+
+  it("refuses live protocol-less, malformed, and insecure canonical records", async () => {
+    const valid = {
+      pid: process.pid,
+      port: 9,
+      productVersion: packageVersion,
+      instanceId: INSTANCE_ID,
+      startedAt: STARTED_AT,
+      bindHostname: "127.0.0.1",
+      authToken: null,
+    };
+
+    writeFileSync(daemonInfoPath(), `${JSON.stringify(valid)}\n`, { mode: 0o600 });
+    const protocolLess = await waitForExit(spawnCli(["--headless", "--json"]));
+    expect(protocolLess.code).toBe(1);
+    expect(JSON.parse(protocolLess.stderr)).toMatchObject({ code: "DAEMON_INFO_INVALID" });
+    expect(JSON.parse(readFileSync(daemonInfoPath(), "utf-8"))).toMatchObject({ pid: process.pid });
+
+    writeFileSync(daemonInfoPath(), "{", { mode: 0o600 });
+    const malformed = await waitForExit(spawnCli(["--headless", "--json"]));
+    expect(malformed.code).toBe(1);
+    expect(JSON.parse(malformed.stderr)).toMatchObject({ code: "DAEMON_INFO_INVALID" });
+    expect(readFileSync(daemonInfoPath(), "utf-8")).toBe("{");
+
+    writeFileSync(
+      daemonInfoPath(),
+      `${JSON.stringify({ ...valid, protocolVersion: DAEMON_WIRE_PROTOCOL_VERSION })}\n`,
+      { mode: 0o600 },
+    );
+    chmodSync(daemonInfoPath(), 0o644);
+    const insecure = await waitForExit(spawnCli(["--headless", "--json"]));
+    expect(insecure.code).toBe(1);
+    expect(JSON.parse(insecure.stderr)).toMatchObject({ code: "DAEMON_INFO_INVALID" });
+    expect(existsSync(daemonInfoPath())).toBe(true);
   });
 
   it("cleans canonical state and exits zero on SIGTERM", async () => {

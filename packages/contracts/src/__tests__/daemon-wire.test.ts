@@ -5,6 +5,8 @@ import {
   CanonicalDaemonInfoSchema,
   DAEMON_WIRE_PROTOCOL_VERSION,
   DaemonHealthSchema,
+  DaemonHealthzSchema,
+  DaemonIdentitySchema,
   isDaemonWireProtocolCompatible,
 } from "../daemon-wire.ts";
 
@@ -20,6 +22,9 @@ describe("daemon wire protocol", () => {
     expect(DaemonHealthSchema.parse(fixture.health).protocolVersion).toBe(
       DAEMON_WIRE_PROTOCOL_VERSION,
     );
+    expect(DaemonHealthzSchema.parse(fixture.healthz).productVersion).toBe("0.0.1");
+    const identity = DaemonIdentitySchema.parse(fixture.identity);
+    expect(identity.instanceId).toBe(CanonicalDaemonInfoSchema.parse(fixture.canonical).instanceId);
   });
 
   it("retains an unknown positive wire version for a separate compatibility decision", () => {

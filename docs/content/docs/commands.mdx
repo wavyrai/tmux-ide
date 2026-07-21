@@ -121,12 +121,21 @@ executable: /resolved/path/to/tmux-ide
 argv:       ["--headless"]
 ```
 
-Do not wrap that invocation in a shell and do not append `&`, `nohup`, or a
-second daemonizer. `tmux-ide --headless` stays in the foreground; the spawned
-process is the daemon owner even when the host detaches its stdio. It does not
-open a TUI, launch a tmux workspace, require a project config, install anything,
-or inherit remote-access authentication. `--port N` is optional; omitting it
-selects a free loopback port.
+Resolve `executable` to the installed root package's `tmux-ide` bin (not a
+workspace source file or the private `@tmux-ide/daemon` package). Pass every
+argument as its own argv element. Use an existing directory as the child working
+directory, inherit `HOME` unless you deliberately isolate daemon state, and
+retain the returned child PID. Stdio may be piped or redirected to null, but do
+not wrap the invocation in a shell, append `&`/`nohup`, or add a second
+daemonizer. Readiness is established by the probes below, not by the spawn call
+returning and not by parsing stdout.
+
+`tmux-ide --headless` stays in the foreground; the spawned process is the daemon
+owner even when the host detaches its stdio. It does not open a TUI, launch a
+tmux workspace, require a project config, install anything, or inherit
+remote-access authentication. `--port N` is optional; omitting it selects a free
+loopback port. Treat a non-zero child exit before readiness as launch failure and
+surface its stderr/structured error to the user.
 
 The owner atomically publishes this versioned discovery shape with owner-only
 permissions:
@@ -136,19 +145,26 @@ permissions:
   "pid": 4312,
   "port": 4010,
   "protocolVersion": 1,
-  "version": "2.8.0",
+  "productVersion": "2.8.0",
+  "instanceId": "9bcf33b0-c837-4a94-b5e8-c0977f54464f",
   "startedAt": "2026-07-21T00:00:00.000Z",
   "bindHostname": "127.0.0.1",
   "authToken": null
 }
 ```
 
-Startup is ready only when both checks succeed:
+Startup is ready only when all checks succeed:
 
 1. `~/.tmux-ide/daemon.json` exists (or the directory selected by
    `TMUX_IDE_DAEMON_INFO_DIR`) and names the child PID and port.
-2. `GET http://127.0.0.1:<port>/health` succeeds and reports the compatible
-   daemon wire protocol.
+2. The unauthenticated `GET /identity` response exactly matches the record's
+   `pid`, `protocolVersion`, `productVersion`, `instanceId`, and `startedAt`.
+   This binds the endpoint before the host sends any credential.
+3. `GET /health` succeeds and reports the compatible daemon wire protocol and
+   the same diagnostic `productVersion`. `/healthz` reports that same value.
+
+Construct probe URLs with a URL API or bracket an IPv6 literal (`[::1]`); never
+interpolate an unbracketed IPv6 hostname into `http://host:port`.
 
 A second `tmux-ide --headless` never takes over a healthy daemon. If its wire
 protocol is compatible, the second process reports `already-running` and exits
@@ -158,6 +174,13 @@ can ask the user to restart or upgrade. Only a dead PID is stale state and may b
 removed. A live PID whose health endpoint is unavailable still owns the slot:
 the contender exits non-zero without clearing the record or starting another
 daemon.
+
+An existing record that is protocol-less, malformed, oversized, symlinked,
+owned by another user, or not owner-only is **invalid**, not missing. Do not
+delete it or start another owner. The CLI only removes a securely read invalid
+record when its positive recorded PID is explicitly proven dead; otherwise the
+host should ask the user to inspect or remove the record after verifying the
+owner process.
 
 Send `SIGINT` or `SIGTERM` to stop the owner. The daemon shutdown action follows
 the same idempotent path. Both close HTTP/WebSocket/PTY resources, remove the

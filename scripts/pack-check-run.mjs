@@ -78,6 +78,12 @@ try {
   if (!Number.isInteger(info.protocolVersion) || info.protocolVersion < 1) {
     throw new Error(`daemon.json has invalid protocolVersion: ${info.protocolVersion}`);
   }
+  if (typeof info.productVersion !== "string" || info.productVersion.length === 0) {
+    throw new Error(`daemon.json has invalid productVersion: ${info.productVersion}`);
+  }
+  if (typeof info.instanceId !== "string" || info.instanceId.length === 0) {
+    throw new Error("daemon.json has no instance identity");
+  }
   const health = await fetch(`http://127.0.0.1:${info.port}/health`);
   if (!health.ok) throw new Error(`Headless daemon health returned HTTP ${health.status}`);
   const healthBody = await health.json();
@@ -85,6 +91,29 @@ try {
     throw new Error(
       `daemon.json protocol ${info.protocolVersion} disagrees with health ${healthBody.protocolVersion}`,
     );
+  }
+  if (healthBody.productVersion !== info.productVersion) {
+    throw new Error(
+      `daemon.json product ${info.productVersion} disagrees with health ${healthBody.productVersion}`,
+    );
+  }
+  const healthz = await fetch(`http://127.0.0.1:${info.port}/healthz`);
+  if (!healthz.ok) throw new Error(`Headless daemon healthz returned HTTP ${healthz.status}`);
+  const healthzBody = await healthz.json();
+  if (healthzBody.productVersion !== info.productVersion) {
+    throw new Error(
+      `daemon.json product ${info.productVersion} disagrees with healthz ${healthzBody.productVersion}`,
+    );
+  }
+  const identity = await fetch(`http://127.0.0.1:${info.port}/identity`);
+  if (!identity.ok) throw new Error(`Headless daemon identity returned HTTP ${identity.status}`);
+  const identityBody = await identity.json();
+  for (const key of ["pid", "protocolVersion", "productVersion", "instanceId", "startedAt"]) {
+    if (identityBody[key] !== info[key]) {
+      throw new Error(
+        `daemon.json ${key} ${JSON.stringify(info[key])} disagrees with identity ${JSON.stringify(identityBody[key])}`,
+      );
+    }
   }
 
   const contender = run(installedCli, ["--headless", "--json"], { cwd: projectDir });

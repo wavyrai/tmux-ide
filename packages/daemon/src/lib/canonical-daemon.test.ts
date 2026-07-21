@@ -12,10 +12,14 @@ import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  canonicalDaemonUrl,
   clearCanonicalDaemonInfo,
   getCanonicalDaemonInfoPath,
+  inspectCanonicalDaemonInfo,
   isCanonicalDaemonAlive,
+  isCanonicalDaemonRecordOwnerProvenDead,
   probeCanonicalDaemonHealth,
+  probeCanonicalDaemonIdentity,
   readCanonicalDaemonInfo,
   writeCanonicalDaemonInfo,
   type CanonicalDaemonInfo,
@@ -47,7 +51,8 @@ function info(port: number): CanonicalDaemonInfo {
     pid: process.pid,
     port,
     protocolVersion: DAEMON_WIRE_PROTOCOL_VERSION,
-    version: "0.0.0-test",
+    productVersion: "0.0.0-test",
+    instanceId: "9bcf33b0-c837-4a94-b5e8-c0977f54464f",
     startedAt: new Date().toISOString(),
     bindHostname: "127.0.0.1",
     authToken: null,
@@ -62,8 +67,22 @@ function listen(): Promise<number> {
         JSON.stringify({
           ok: true,
           protocolVersion: DAEMON_WIRE_PROTOCOL_VERSION,
-          version: "0.0.0-test",
+          productVersion: "0.0.0-test",
           uptime: 42,
+        }),
+      );
+      return;
+    }
+    if (req.url === "/identity") {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(
+        JSON.stringify({
+          ok: true,
+          pid: process.pid,
+          protocolVersion: DAEMON_WIRE_PROTOCOL_VERSION,
+          productVersion: "0.0.0-test",
+          instanceId: "9bcf33b0-c837-4a94-b5e8-c0977f54464f",
+          startedAt: info(1).startedAt,
         }),
       );
       return;
@@ -91,6 +110,9 @@ describe("canonical daemon info", () => {
     expect((await probeCanonicalDaemonHealth(info(port)))?.protocolVersion).toBe(
       DAEMON_WIRE_PROTOCOL_VERSION,
     );
+    expect((await probeCanonicalDaemonIdentity(info(port)))?.instanceId).toBe(
+      info(port).instanceId,
+    );
 
     clearCanonicalDaemonInfo();
     expect(readCanonicalDaemonInfo()).toBeNull();
@@ -108,6 +130,7 @@ describe("canonical daemon info", () => {
 
   it("returns null when no daemon file exists", () => {
     expect(readCanonicalDaemonInfo()).toBeNull();
+    expect(inspectCanonicalDaemonInfo()).toEqual({ status: "missing" });
   });
 
   it("rejects an empty canonical authentication token", () => {
@@ -115,6 +138,11 @@ describe("canonical daemon info", () => {
       mode: 0o600,
     });
     expect(readCanonicalDaemonInfo()).toBeNull();
+    expect(inspectCanonicalDaemonInfo()).toMatchObject({
+      status: "invalid",
+      reason: "invalid-schema",
+      ownerPid: process.pid,
+    });
   });
 
   it("retains an unknown positive wire version so ownership is not lost", () => {
@@ -150,6 +178,11 @@ describe("canonical daemon info", () => {
     chmodSync(path, 0o644);
 
     expect(readCanonicalDaemonInfo()).toBeNull();
+    expect(inspectCanonicalDaemonInfo()).toMatchObject({
+      status: "invalid",
+      reason: "unsafe-permissions",
+      ownerPid: null,
+    });
   });
 
   it("rejects symlinks and oversized daemon info", () => {
@@ -158,10 +191,56 @@ describe("canonical daemon info", () => {
     writeFileSync(target, JSON.stringify(info(6060)), { mode: 0o600 });
     symlinkSync(target, path);
     expect(readCanonicalDaemonInfo()).toBeNull();
+    expect(inspectCanonicalDaemonInfo()).toMatchObject({ status: "invalid", reason: "symlink" });
 
     rmSync(path);
     writeFileSync(path, "x".repeat(64 * 1024 + 1), { mode: 0o600 });
     expect(readCanonicalDaemonInfo()).toBeNull();
+    expect(inspectCanonicalDaemonInfo()).toMatchObject({ status: "invalid", reason: "oversized" });
+  });
+
+  it("distinguishes malformed and protocol-less live records from absence", async () => {
+    const path = getCanonicalDaemonInfoPath();
+    writeFileSync(path, "{", { mode: 0o600 });
+    expect(inspectCanonicalDaemonInfo()).toMatchObject({
+      status: "invalid",
+      reason: "malformed-json",
+      ownerPid: null,
+    });
+
+    writeFileSync(path, JSON.stringify({ ...info(6060), protocolVersion: undefined }), {
+      mode: 0o600,
+    });
+    const state = inspectCanonicalDaemonInfo();
+    expect(state).toMatchObject({
+      status: "invalid",
+      reason: "invalid-schema",
+      ownerPid: process.pid,
+    });
+    if (state.status !== "missing") {
+      expect(await isCanonicalDaemonRecordOwnerProvenDead(state)).toBe(false);
+    }
+  });
+
+  it("only proves a securely read invalid owner stale after an explicit dead PID", async () => {
+    writeFileSync(
+      getCanonicalDaemonInfoPath(),
+      JSON.stringify({ pid: 999_999_999, productVersion: "legacy-without-protocol" }),
+      { mode: 0o600 },
+    );
+    const state = inspectCanonicalDaemonInfo();
+    expect(state).toMatchObject({ status: "invalid", ownerPid: 999_999_999 });
+    if (state.status !== "missing") {
+      expect(await isCanonicalDaemonRecordOwnerProvenDead(state)).toBe(true);
+    }
+  });
+
+  it("formats wildcard and IPv6 daemon probe URLs safely", () => {
+    expect(canonicalDaemonUrl("http", "0.0.0.0", 4010, "/health")).toBe(
+      "http://127.0.0.1:4010/health",
+    );
+    expect(canonicalDaemonUrl("http", "::", 4010, "/health")).toBe("http://[::1]:4010/health");
+    expect(canonicalDaemonUrl("ws", "::1", 4010, "/ws/events")).toBe("ws://[::1]:4010/ws/events");
   });
 
   it("deliberately treats an explicit empty daemon directory like an unset value", () => {

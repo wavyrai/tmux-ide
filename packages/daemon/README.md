@@ -30,11 +30,18 @@ command:
 /resolved/path/to/tmux-ide  --headless
 ```
 
-The command is deliberately foreground and config-free. The child it creates
-is the canonical daemon owner; readiness is the published `daemon.json` plus a
-successful `/health` probe. A compatible live owner is reused, stale metadata
-for a dead PID is replaced, and an incompatible or live-but-unhealthy owner is
-rejected without takeover.
+Resolve that executable from the installed root package and spawn it directly
+with an argv array; do not use a shell, `&`, `nohup`, or another daemonizer. The
+command is deliberately foreground and config-free. The spawned child itself is
+the canonical daemon owner, so the host must retain its PID and use an existing
+working directory. Redirecting stdio is fine; stdout is not the readiness
+protocol.
+
+Readiness is the owner-only `daemon.json`, a matching credential-free
+`/identity` instance nonce, and a compatible `/health` response. A compatible
+live owner is reused, stale metadata for a proven-dead PID is replaced, and an
+incompatible, malformed, insecure, or live-but-unhealthy owner is rejected
+without takeover. IPv6 literals in probe URLs must be bracketed.
 `SIGINT`, `SIGTERM`, and the daemon shutdown action all await the same cleanup
 path before the process exits.
 

@@ -6,7 +6,7 @@ import type { AuthConfig } from "./types.ts";
 /**
  * Hono middleware that checks Authorization Bearer header.
  *
- * - Bypasses /health and /api/auth/* routes.
+ * - Bypasses credential-free health/identity probes and /api/auth/* routes.
  * - When method is "none" (default), passes through everything (backward compatible).
  * - Otherwise validates the JWT and sets c.set("userId", ...).
  */
@@ -19,8 +19,14 @@ export function authMiddleware(authService: AuthService, config: AuthConfig): Mi
 
     const path = new URL(c.req.url).pathname;
 
-    // Bypass health and auth endpoints
-    if (path === "/health" || path.startsWith("/api/auth/")) {
+    // A process host must bind daemon.json to the endpoint identity before it
+    // has credentials. None of these probes disclose an authentication token.
+    if (
+      path === "/health" ||
+      path === "/healthz" ||
+      path === "/identity" ||
+      path.startsWith("/api/auth/")
+    ) {
       return next();
     }
 

@@ -47,7 +47,8 @@ export type DaemonStartupReason =
   | "port_invalid"
   | "bind_failed"
   | "tmux_session_missing"
-  | "canonical_already_running";
+  | "canonical_already_running"
+  | "canonical_record_invalid";
 
 export class DaemonStartupError extends IdeError {
   readonly reason: DaemonStartupReason;

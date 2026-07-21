@@ -8,6 +8,7 @@ import {
 } from "../command-center/actions/contract.ts";
 import type { ActionErrorCode } from "../command-center/actions/errors.ts";
 import {
+  canonicalDaemonUrl,
   clearCanonicalDaemonInfo,
   isCanonicalDaemonAlive,
   readCanonicalDaemonInfo,
@@ -92,12 +93,8 @@ async function isDaemonAlive(port: number): Promise<boolean> {
   }
 }
 
-function hostnameForClient(bindHostname: string): string {
-  return bindHostname === "0.0.0.0" ? "127.0.0.1" : bindHostname;
-}
-
 function daemonBaseUrl(info: CanonicalDaemonInfo): string {
-  return `http://${hostnameForClient(info.bindHostname)}:${info.port}`;
+  return canonicalDaemonUrl("http", info.bindHostname, info.port);
 }
 
 const requireFromHere = createRequire(import.meta.url);

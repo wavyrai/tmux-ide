@@ -342,10 +342,11 @@ export async function launch(
   // tolerate its absence (daemon may still be coming up, or running
   // sessionless). Print only when we have a real port to advertise.
   try {
-    const { readCanonicalDaemonInfo } = await import("./lib/canonical-daemon.ts");
+    const { canonicalDaemonUrl, readCanonicalDaemonInfo } =
+      await import("./lib/canonical-daemon.ts");
     const info = readCanonicalDaemonInfo();
     if (info) {
-      console.log(`Command center: http://${info.bindHostname}:${info.port}/`);
+      console.log(`Command center: ${canonicalDaemonUrl("http", info.bindHostname, info.port)}/`);
     }
   } catch {
     // Non-fatal — the daemon may still be coming up.

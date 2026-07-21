@@ -139,7 +139,8 @@ jobs:
 
       - name: Run quality checks
         # `pnpm check` runs lint + format + typecheck + unit tests +
-        # docs build + pack-check. The integration test relies on a
+        # docs build + dry-run pack validation + an install-from-tarball
+        # canonical-headless smoke. The integration test relies on a
         # live tmux server that isn't available in CI; rename it to
         # `.skip` so the unit-test stage stays green here without
         # touching the suite's behaviour locally.
