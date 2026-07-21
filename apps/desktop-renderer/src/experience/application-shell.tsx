@@ -8,7 +8,7 @@ import {
   type ApplicationShellProjectionInputV1,
   type ApplicationShellProjectionV1,
   type CommandSource,
-  type DesktopDaemonHostState,
+  type DesktopDaemonCapabilityState,
   type DesktopWindowState,
   type FocusZone,
   type HostCapabilities,
@@ -62,7 +62,7 @@ const PALETTE_OVERLAY_ID = "overlay.palette.trace";
 
 export interface DomApplicationShellProps {
   readonly host: HostCapabilities;
-  readonly daemonState?: DesktopDaemonHostState;
+  readonly daemonState?: DesktopDaemonCapabilityState;
   readonly runtime?: string;
   readonly platform?: string;
   readonly windowState?: DesktopWindowState | null;
@@ -251,7 +251,7 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
     if (props.daemonState?.status === "connected") {
       return {
         state: "connected" as const,
-        message: `Daemon connected — ${props.daemonState.descriptor.productVersion}`,
+        message: `Daemon connected — ${props.daemonState.identity.productVersion}`,
         safeState: "Preview data remains illustrative",
         nextAction: "Live workspace loading is not enabled in this build",
       };

@@ -45,6 +45,20 @@ describe("REST /api/workspaces", () => {
     expect((body.workspaces[0] as { name: string }).name).toBe("alpha");
   });
 
+  it("GET resource catalog is generation-stamped and excludes project metadata", async () => {
+    registry.add({ name: "alpha", sessionName: "alpha-live", projectDir: "/tmp/alpha" });
+    const app = createApp({ daemonIdentity: TEST_DAEMON_IDENTITY });
+    const res = await app.request("/api/resources/workspace-catalog");
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body).toEqual({
+      version: 1,
+      daemon: TEST_DAEMON_IDENTITY,
+      workspaces: [{ workspaceName: "alpha", sessionName: "alpha-live" }],
+    });
+    expect(JSON.stringify(body)).not.toMatch(/projectDir|ideConfigPath|configPath/);
+  });
+
   it("POST adds a workspace and returns 201 with the new entry", async () => {
     const app = createApp();
     const res = await app.request("/api/workspaces", {
