@@ -131,15 +131,6 @@ interface Segment {
   end: number;
 }
 
-/** One executable production-root handoff; Card 22.4b2 must remove it when wiring the new host. */
-export const CARD_22_4B2_PANE_FRAME_ROOT_WIRING_DEFERRALS = Object.freeze([
-  Object.freeze({
-    component: "TerminalPaneChromeLayer",
-    replacement: "SharedTerminalPaneChromeLayer",
-    owner: "22.4b2",
-  }),
-] as const);
-
 /** Live tmux ids are transport identities, so encode them before crossing the semantic boundary. */
 export function terminalPaneSemanticId(paneId: string): SemanticProductId {
   const prefix = "pane.tmux.";
