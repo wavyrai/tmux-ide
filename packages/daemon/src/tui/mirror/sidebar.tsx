@@ -33,7 +33,7 @@ import {
   agentsHeaderLabel,
   type AgentRowInput,
 } from "./agent-rows.ts";
-import { DARK_THEME, type SemanticThemeSnapshot } from "./theme.ts";
+import type { SemanticThemeSnapshot } from "./theme.ts";
 import type { AgentStatus } from "../detect/classify.ts";
 import type { ShellChromeVariant } from "./shell-chrome.ts";
 
@@ -61,8 +61,7 @@ export interface SidebarMouseEvent {
 }
 
 export interface SidebarProps {
-  /** Card 22 adapter input. Optional until app.tsx switches in Card 22.3. */
-  theme?: SemanticThemeSnapshot;
+  theme: SemanticThemeSnapshot;
   /** Column width in cells. */
   width: number;
   variant?: ShellChromeVariant;
@@ -85,7 +84,7 @@ export interface SidebarProps {
 }
 
 export function Sidebar(props: SidebarProps) {
-  const theme = () => props.theme ?? DARK_THEME;
+  const theme = () => props.theme;
   const statusColor = (status: AgentStatus) => {
     if (status === "blocked") return theme().roles.statusTone.warning;
     if (status === "working") return theme().roles.statusTone.info;

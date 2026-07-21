@@ -9,11 +9,7 @@ import {
   handleMissionSurfacePointerDown,
   type MissionSurfaceControllerActions,
 } from "./missions-surface-controller.ts";
-import {
-  MissionsSurface,
-  type MissionSurfaceHoverRegion,
-  type MissionSurfaceTheme,
-} from "./missions-surface.tsx";
+import { MissionsSurface, type MissionSurfaceHoverRegion } from "./missions-surface.tsx";
 import { missionRenderFixture } from "./missions-render-fixtures.ts";
 import {
   defaultMissionWorkspaceModel,
@@ -24,16 +20,11 @@ import {
   type MissionWorkspaceSnapshot,
 } from "./missions-workspace.ts";
 import { terminalDisplayWidth } from "./panel-host.ts";
-import { ACCENT, BADGE_BG, DEFAULT_FG, MUTED, TAB_ACTIVE_BG } from "./theme.ts";
+import { MUTED, createSemanticThemeSnapshot } from "./theme.ts";
 
 type TestSetup = Awaited<ReturnType<typeof testRender>>;
 
-const THEME: MissionSurfaceTheme = {
-  bannerFg: ACCENT,
-  buttonFg: DEFAULT_FG,
-  buttonBg: BADGE_BG,
-  buttonActiveBg: TAB_ACTIVE_BG,
-};
+const THEME = createSemanticThemeSnapshot({ mode: "dark" });
 
 let setup: TestSetup | null = null;
 

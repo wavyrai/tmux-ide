@@ -7,11 +7,9 @@ import type { ApplicationShellProjection } from "./application-shell.ts";
 export interface ApplicationShellProps {
   theme: SemanticThemeSnapshot;
   projection: ApplicationShellProjection;
-  project: string;
-  mode: string;
-  notification: string | null;
   help: string;
   note?: string | null;
+  sidebar?: JSX.Element;
   rightChips?: readonly {
     id: string;
     label: string;
@@ -54,14 +52,16 @@ export function ApplicationShell(props: ApplicationShellProps) {
         flexDirection="row"
         overflow="hidden"
       >
-        <ShellMiniSidebar
-          theme={props.theme}
-          width={props.projection.layout.sidebar.width}
-          variant={props.projection.layout.variant}
-          sessions={props.projection.sessions}
-          active={props.projection.activeSession}
-          hint={props.projection.sidebarHint}
-        />
+        {props.sidebar ?? (
+          <ShellMiniSidebar
+            theme={props.theme}
+            width={props.projection.layout.sidebar.width}
+            variant={props.projection.layout.variant}
+            sessions={props.projection.sessions}
+            active={props.projection.activeSession}
+            hint={props.projection.sidebarHint}
+          />
+        )}
         <box
           width={props.projection.layout.main.width}
           height={props.projection.layout.main.height}
@@ -79,9 +79,9 @@ export function ApplicationShell(props: ApplicationShellProps) {
           <ShellStatusStrip
             theme={props.theme}
             layout={props.projection.layout}
-            project={props.project}
-            mode={props.mode}
-            notification={props.notification}
+            project={props.projection.semantic.project.name}
+            mode={props.projection.semantic.workspaceCanvas.activeMode}
+            notification={props.projection.semantic.statusStrip.message}
             help={props.help}
           />
         </box>

@@ -3,6 +3,7 @@ import {
   type WorkbenchShellInput,
   type WorkbenchShellProjection,
 } from "../../tui/mirror/workspace/workbench-shell.ts";
+import { COHESION_FIXTURE_V1, projectApplicationShellV1 } from "@tmux-ide/contracts";
 import type {
   WorkbenchDockHostActionId,
   WorkbenchDockHostMode,
@@ -12,6 +13,7 @@ import type {
 export function createWorkbenchDockHostFixture(
   overrides: Partial<WorkbenchShellInput> = {},
 ): WorkbenchShellProjection {
+  const shell = projectApplicationShellV1(COHESION_FIXTURE_V1);
   return projectWorkbenchShell({
     width: 80,
     height: 24,
@@ -22,6 +24,7 @@ export function createWorkbenchDockHostFixture(
     hoveredDockTab: null,
     attentionDockTabs: new Set(["activity"]),
     disabledDockTabs: new Set(["changes"]),
+    dockTools: shell.bottomDock.tools,
     ...overrides,
   });
 }

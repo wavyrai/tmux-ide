@@ -1,3 +1,4 @@
+import type { ApplicationShellProjectionV1 } from "@tmux-ide/contracts";
 import type { HostedPanelView } from "../panel-host.ts";
 import {
   shellChromeLayout,
@@ -8,46 +9,69 @@ import {
   type ShellTabPresentation,
 } from "../shell-chrome.ts";
 import type { Rect } from "../recipes.ts";
-
-export interface ApplicationShellSession {
-  name: string;
-  status: "idle" | "working" | "blocked" | "done" | "unknown";
-}
+import { workspaceIcon } from "./icons.ts";
 
 export interface ApplicationShellInput {
   width: number;
   height: number;
   preferredSidebarWidth: number;
-  views: readonly HostedPanelView[];
-  activeViewId: string;
+  shell: ApplicationShellProjectionV1;
   hoveredTabIndex: number | null;
-  attentionViewIds?: ReadonlySet<string>;
-  sessions: readonly ApplicationShellSession[];
-  activeSession: string;
   quitHint: string;
 }
 
 export interface ApplicationShellProjection {
   layout: ShellChromeLayout;
   content: Rect;
+  semantic: ApplicationShellProjectionV1;
   views: readonly HostedPanelView[];
   tabs: readonly ShellTabPresentation[];
   sidebarHint: ShellSidebarHint;
-  sessions: readonly ApplicationShellSession[];
+  sessions: readonly {
+    name: string;
+    status: "idle" | "working" | "blocked" | "done" | "unknown";
+  }[];
   activeSession: string;
   activeViewId: string;
 }
 
 export type ApplicationShellHit =
-  | { kind: "view"; viewId: string; index: number }
+  | { kind: "view"; viewId: "home" | "terminals"; index: number }
   | { kind: "session"; session: string; index: number }
   | { kind: "palette" }
+  | { kind: "status-strip" }
   | null;
 
-/** Pure application-shell geometry. Runtime stores and tmux never enter here. */
+function sessionStatus(
+  state: ApplicationShellProjectionV1["sidebar"]["sessions"][number]["state"],
+): "idle" | "working" | "blocked" | "done" | "unknown" {
+  if (state === "connected") return "idle";
+  if (state === "reconnecting") return "blocked";
+  return "unknown";
+}
+
+/** Host geometry around the one renderer-neutral application-shell projection. */
 export function projectApplicationShell(input: ApplicationShellInput): ApplicationShellProjection {
   const layout = shellChromeLayout(input.width, input.height, input.preferredSidebarWidth);
   const contentHeight = Math.max(0, layout.main.height - layout.status.height);
+  const views: HostedPanelView[] = input.shell.primaryNavigation.items.map((surface) => ({
+    id: surface.id,
+    title: surface.label,
+    panel: surface.id as "home" | "terminals",
+    layout: null,
+    glyph: workspaceIcon(surface.icon),
+    order: surface.order,
+    shortcut: {
+      key: surface.shortcut.toLowerCase() as `f${number}`,
+      label: surface.shortcut as `F${number}`,
+    },
+  }));
+  const activeSession =
+    input.shell.sidebar.sessions.find(
+      (session) => session.id === input.shell.sidebar.activeSessionId,
+    )?.label ??
+    input.shell.sidebar.sessions[0]?.label ??
+    "workspace";
   return {
     layout,
     content: {
@@ -56,25 +80,30 @@ export function projectApplicationShell(input: ApplicationShellInput): Applicati
       width: layout.main.width,
       height: contentHeight,
     },
-    views: input.views,
+    semantic: input.shell,
+    views,
     tabs: shellSurfaceTabs(
-      input.views,
-      input.activeViewId,
+      views,
+      input.shell.primaryNavigation.activeMode,
       layout.variant,
       input.hoveredTabIndex,
-      input.attentionViewIds,
+      new Set(
+        input.shell.primaryNavigation.items
+          .filter(({ attention }) => attention)
+          .map(({ id }) => id),
+      ),
     ),
     sidebarHint: shellSidebarHint(layout.variant, input.quitHint, layout.sidebar.width),
-    sessions: input.sessions,
-    activeSession: input.activeSession,
-    activeViewId: input.activeViewId,
+    sessions: input.shell.sidebar.sessions.map((session) => ({
+      name: session.label,
+      status: sessionStatus(session.state),
+    })),
+    activeSession,
+    activeViewId: input.shell.primaryNavigation.activeMode,
   };
 }
 
-/**
- * One coordinate router for shell chrome. Surface/pane hit testing remains with
- * the active surface and the root application controller.
- */
+/** One coordinate router for chrome owned by the application shell. */
 export function applicationShellHitTest(
   projection: ApplicationShellProjection,
   x: number,
@@ -83,14 +112,34 @@ export function applicationShellHitTest(
   if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
   const cellX = Math.floor(x);
   const cellY = Math.floor(y);
-  if (cellX < 0 || cellY < 0 || cellX >= projection.layout.width) return null;
+  if (
+    cellX < 0 ||
+    cellY < 0 ||
+    cellX >= projection.layout.width ||
+    cellY >= projection.layout.height
+  ) {
+    return null;
+  }
 
   if (cellY === projection.layout.tabbar.y && projection.layout.tabbar.height > 0) {
     const index = projection.tabs.findIndex(
       (tab) => cellX >= tab.span.start && cellX < tab.span.start + tab.span.width,
     );
     const tab = projection.tabs[index];
-    return tab ? { kind: "view", viewId: tab.id, index } : null;
+    return tab && (tab.id === "home" || tab.id === "terminals")
+      ? { kind: "view", viewId: tab.id, index }
+      : null;
+  }
+
+  const status = projection.layout.status;
+  if (
+    status.height > 0 &&
+    cellX >= status.x &&
+    cellX < status.x + status.width &&
+    cellY >= status.y &&
+    cellY < status.y + status.height
+  ) {
+    return { kind: "status-strip" };
   }
 
   const sidebar = projection.layout.sidebar;

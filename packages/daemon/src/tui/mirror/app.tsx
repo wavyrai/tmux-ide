@@ -215,13 +215,19 @@ import { execFile, spawn } from "node:child_process";
 import type { AgentStatus } from "../detect/classify.ts";
 import { Sidebar } from "./sidebar.tsx";
 import {
+  APPLICATION_SHELL_COMMAND_IDS,
+  applicationShellCommandInvocation,
+  type ApplicationShellCommandInvocation,
+  type CommandSource,
+  type SemanticFocusTarget,
+} from "@tmux-ide/contracts";
+import {
   ACCENT,
   BADGE_BG,
   DEFAULT_BG,
   DEFAULT_FG,
   HOVER_BG,
   MUTED,
-  SIDEBAR_BG,
   TAB_ACTIVE_BG,
   createSemanticThemeStore,
 } from "./theme.ts";
@@ -339,8 +345,6 @@ import {
   type HostedPanelKind,
   type HostedPanelView,
 } from "./panel-host.ts";
-import { ShellTabBar } from "./shell-chrome.tsx";
-import { shellChromeLayout, shellSidebarHint, shellSurfaceTabSpans } from "./shell-chrome.ts";
 import {
   projectWorkbenchShell,
   workbenchDockNavigationTarget,
@@ -350,6 +354,16 @@ import {
   type WorkbenchFocusZone,
 } from "./workspace/workbench-shell.ts";
 import { WorkbenchShell } from "./workspace/workbench-shell.tsx";
+import { applicationShellHitTest, projectApplicationShell } from "./workspace/application-shell.ts";
+import { ApplicationShell } from "./workspace/application-shell.tsx";
+import {
+  applicationShellPaletteInvocation,
+  applicationShellSurfaceInvocation,
+  openTuiRuntimePaneId,
+  projectOpenTuiApplicationShell,
+  reduceOpenTuiApplicationShellCommand,
+  type OpenTuiApplicationShellEffect,
+} from "./workspace/application-shell-controller.ts";
 import {
   agentTerminalCanvasPointerPolicy,
   agentTerminalCanvasRouteX,
@@ -443,11 +457,7 @@ import {
   resolveQuitLifecycleCommand,
 } from "./input-lifecycle.ts";
 import {
-  RENDERER_COMMAND_IDS,
   createRendererCommandExecutor,
-  rendererCommandInvocation,
-  rendererInvocationForCanvas,
-  rendererInvocationForDock,
   rendererInvocationForGlobal,
   rendererInvocationForLifecycle,
   rendererInvocationForView,
@@ -711,8 +721,7 @@ const zzlog = (m: string) => {
 // so the gutter stays visually thin (a filled bar read as extra padding — user
 // feedback). Doesn't compete with the blocked chip's red — focus is an accent
 // signal, agent state is a status signal, never the same hue.
-// A single subtle pointer-hover tint, one lift above both DEFAULT_BG (16,16,22)
-// and SIDEBAR_BG (22,22,30) and below TAB_ACTIVE_BG — the active/selected state
+// A single subtle pointer-hover tint, between the background and selected state.
 // always wins over hover. Used on every hoverable row/segment (see `hover`).
 const KEYMAP: Record<string, string> = {
   return: "Enter",
@@ -749,7 +758,7 @@ interface WindowTab {
 }
 /** The hoverable surfaces — each names a row/segment set the router can resolve
  *  by coordinate math and each render tints with HOVER_BG (chips lift to
- *  BUTTON_HOVER_BG). M21.9 adds: `tabbtn` (the tab bar's right-aligned context/
+ *  semantic button-hover token). M21.9 adds: `tabbtn` (the tab bar's right-aligned context/
  *  palette chips), `homechip` (a home row's right-aligned verb chip, index =
  *  row), and `sidebtn` (the sidebar footer's clickable "F5 palette" segment). */
 type HoverRegion =
@@ -959,18 +968,46 @@ try {
       disposeRendererThemeMode();
       disposeSemanticThemeStore();
     });
-    const shellLayout = () => shellChromeLayout(dims().width, dims().height, preferredSidebarW());
+    const shellLayout = () => applicationShellProjection().layout;
     const sidebarW = () => shellLayout().sidebar.width;
-    const sidebarHint = () => shellSidebarHint(shellLayout().variant, QUIT_HINT, sidebarW());
+    const sidebarHint = () => applicationShellProjection().sidebarHint;
     const paletteW = () => shellLayout().paletteWidth;
     const dialogW = () => shellLayout().dialogWidth;
     const dialogInnerWidth = () => dialogInnerW(dialogW());
-    const mainColumnCols = () => Math.max(0, dims().width - sidebarW());
 
     // Persisted state (one-shot read at launch — NOT on the render loop). The tab
     // and context restore below; the open editor file / diff selection restore in
     // onMount (after the FFI buffer + fleet arrive).
     const persisted: AppState = loadAppState();
+    const [contextSession, setContextSession] = createSignal<string>(
+      persisted.contextSession ?? "",
+    );
+    const [contextDir, setContextDir] = createSignal<string>("");
+    const [projectsData, setProjectsData] = createSignal<FleetProject[]>([]);
+    const fleet = (): Array<{ name: string; status: AgentStatus }> =>
+      projectsData()
+        .flatMap((project) =>
+          project.sessions.map((session) => ({ name: session.name, status: session.status })),
+        )
+        .filter(
+          (session, index, all) =>
+            all.findIndex((candidate) => candidate.name === session.name) === index,
+        );
+    const fleetAgents = createMemo<AgentRowInput[]>(() =>
+      sortAgentRows(
+        projectsData()
+          .flatMap((project) => project.sessions.flatMap((session) => session.agents ?? []))
+          .filter(
+            (agent, index, all) =>
+              all.findIndex((candidate) => candidate.paneId === agent.paneId) === index,
+          ),
+      ),
+    );
+    const [status, setStatus] = createSignal(bareHome ? "home" : "attaching…");
+    const [paletteOpen, setPaletteOpen] = createSignal(false);
+    const [hover, setHover] = createSignal<{ region: HoverRegion; index: number } | null>(null);
+    const [panes, setPanes] = createSignal<LivePane[]>([]);
+    let mirror: SessionMirror | null = null;
     // The bundled CLI — the async fleet poll and `detect --write` both shell out
     // to it (resolved once; `node <cliPath> …`). The CLI forwards its own
     // node-runnable path as TMUX_IDE_CLI; prefer it, because in the COMPILED TUI
@@ -1112,17 +1149,65 @@ try {
     const [hoveredDockTab, setHoveredDockTab] = createSignal<WorkbenchDockTabId | null>(null);
     const [activitySelectedId, setActivitySelectedId] = createSignal<string | null>(null);
     const [activityScrollOffset, setActivityScrollOffset] = createSignal(0);
+    const semanticApplicationShell = createMemo(() =>
+      projectOpenTuiApplicationShell({
+        projectName: basename(contextDir() || invokeCwd) || "tmux-ide",
+        rootLabel: contextDir() || invokeCwd,
+        workspaceName: contextSession() || target || "tmux-ide",
+        activeMode: canvasPanel(),
+        dockMode: dockMode(),
+        activeDockTool: activeDockTab(),
+        focusZone:
+          workbenchFocusZone() === "canvas"
+            ? canvasPanel() === "terminals" && panes().some((pane) => pane.active)
+              ? "terminal"
+              : "canvas"
+            : workbenchFocusZone() === "dock-tabs"
+              ? "dock-tabs"
+              : "dock-body",
+        focusedPaneId: panes().find((pane) => pane.active)?.id ?? null,
+        terminalInputPaneId:
+          canvasPanel() === "terminals" && workbenchFocusZone() === "canvas"
+            ? (panes().find((pane) => pane.active)?.id ?? null)
+            : null,
+        paletteOpen: paletteOpen(),
+        sessions: fleet(),
+        activeSession: contextSession() || target || "tmux-ide",
+        agents: fleetAgents().map((agent) => ({
+          paneId: agent.paneId,
+          name: agentDisplayKind(agent),
+          kind: agent.kind,
+          status: agent.state,
+        })),
+        fileCount: 0,
+        changeCount: 0,
+        missionTitle: "Workspace missions",
+        activityCount: fleetAgents().length,
+        notification: status(),
+        connectionState: status() === "live" || status() === "home" ? "connected" : "reconnecting",
+      }),
+    );
+    const applicationShellProjection = createMemo(() =>
+      projectApplicationShell({
+        width: dims().width,
+        height: dims().height,
+        preferredSidebarWidth: preferredSidebarW(),
+        shell: semanticApplicationShell(),
+        hoveredTabIndex: hover()?.region === "surfacetab" ? hover()!.index : null,
+        quitHint: QUIT_HINT,
+      }),
+    );
     const workbenchProjection = createMemo(() =>
       projectWorkbenchShell({
-        width: mainColumnCols(),
-        height: Math.max(0, dims().height - TABBAR_H),
+        width: applicationShellProjection().content.width,
+        height: applicationShellProjection().content.height,
         dockMode: dockMode(),
         persistedDockHeight: preferredDockHeight(),
         activeDockTab: activeDockTab(),
         focusZone: workbenchFocusZone(),
         hoveredDockTab: hoveredDockTab(),
         attentionDockTabs: new Set(),
-        dockTabShortcuts: { files: "F3", changes: "F4", missions: "F6", activity: "F9" },
+        dockTools: semanticApplicationShell().bottomDock.tools,
       }),
     );
     const dockSurfaceWidth = () => workbenchProjection().dockBodyContent.width;
@@ -1139,9 +1224,7 @@ try {
     };
     const tab = (): Tab => legacyTabFromPanelKind(activePanel());
     const mode = (): "home" | "mirror" | "editor" | "diff" | "missions" => panelMode(activePanel());
-    const surfaceSpans = createMemo(() =>
-      shellSurfaceTabSpans(canvasHostedViews(), shellLayout().variant),
-    );
+    const surfaceSpans = createMemo(() => applicationShellProjection().tabs.map((tab) => tab.span));
     const [missionWorkspaceLoad, setMissionWorkspaceLoad] = createSignal<MissionWorkspaceLoadState>(
       {
         status: "loading",
@@ -1155,20 +1238,9 @@ try {
       defaultMissionWorkspaceModel(),
     );
 
-    // ── WORKSPACE CONTEXT ────────────────────────────────────────────────────
-    // One context per session: choosing a session on Home (or via the palette)
-    // sets the terminal target AND the files/diff directory. The header shows the
-    // context name across every tab. `contextDir` starts from the persisted
-    // guess and is reconciled against the fleet payload once it arrives.
-    const [contextSession, setContextSession] = createSignal<string>(
-      persisted.contextSession ?? "",
-    );
-    const [contextDir, setContextDir] = createSignal<string>("");
-
     const [curTarget, setCurTarget] = createSignal(
       bareHome ? (persisted.contextSession ?? "") : target,
     );
-    const [panes, setPanes] = createSignal<LivePane[]>([]);
     // Size truth (M22.8): the actual tmux window size when a co-attached terminal
     // has shrunk it below our pinned canvas (else null). Set in the tick from the
     // RAW pane geometry (before the letterbox offset is baked into `panes()`), it
@@ -1187,7 +1259,6 @@ try {
     });
     const panesById = createMemo(() => new Map(panes().map((p) => [p.id, p])));
     const [windowTabs, setWindowTabs] = createSignal<WindowTab[]>([]);
-    const [projectsData, setProjectsData] = createSignal<FleetProject[]>([]);
     // The fleet payload's per-pane entries join directly to tmux's live %pane_id.
     // Drag policy and pane chrome consume this same authority-derived map.
     const agentByPane = createMemo(() => agentsByPane(projectsData()));
@@ -1195,7 +1266,6 @@ try {
     // {region, index}; the same coordinate math that routes clicks resolves it on
     // motion events, and each hoverable render reads it for a subtle HOVER_BG. It
     // must never thrash: `setHoverIf` no-ops unless region+index actually change.
-    const [hover, setHover] = createSignal<{ region: HoverRegion; index: number } | null>(null);
     const setHoverIf = (next: { region: HoverRegion; index: number } | null) => {
       const cur = hover();
       if (next === null) {
@@ -1209,7 +1279,6 @@ try {
       return h !== null && h.region === region && h.index === index;
     };
     const [sel, setSel] = createSignal(0);
-    const [status, setStatus] = createSignal(bareHome ? "home" : "attaching…");
 
     // ── SELECTION & CLIPBOARD (M19.4; absolute-space M25.6) ──────────────────
     // The visible selection (drives inverse-tint on the mirror/editor render) and
@@ -1857,26 +1926,6 @@ try {
     // early fleet re-poll instead of waiting out the 3s interval.
     let fleetRefresh: (() => void) | null = null;
 
-    // Derived, io-free views over the one async fleet payload. `fleet` is the
-    // sidebar's flat, deduped session list; `homeItems` is the HOME panel's row
-    // list — live sessions first, then the registered-but-not-running projects
-    // section (home-model.ts, pure); `rollup` is the header tally.
-    const fleet = (): Array<{ name: string; status: AgentStatus }> =>
-      projectsData()
-        .flatMap((p) => p.sessions.map((s) => ({ name: s.name, status: s.status })))
-        .filter((x, i, a) => a.findIndex((y) => y.name === x.name) === i);
-    // The sidebar AGENTS section (M22.2): every agent across the fleet, flattened
-    // and sorted attention-first (blocked → working → done → idle). Deduped by
-    // paneId in case a session surfaces under two projects (as `fleet` dedups by
-    // name). Drives BOTH the sidebar rows and the palette's jump-agent actions,
-    // so the two lists always agree on order. Pure logic lives in agent-rows.ts.
-    const fleetAgents = createMemo<AgentRowInput[]>(() =>
-      sortAgentRows(
-        projectsData()
-          .flatMap((p) => p.sessions.flatMap((s) => s.agents ?? []))
-          .filter((a, i, arr) => arr.findIndex((b) => b.paneId === a.paneId) === i),
-      ),
-    );
     const activityRows = createMemo<ActivityRowDto[]>(() => {
       const agentRows: ActivityRowDto[] = fleetAgents().map((agent, index) => ({
         kind: "agent",
@@ -2592,7 +2641,6 @@ try {
         else if (id === "unstage" || id === "row-unstage") unstageEntry(entry);
       }
     };
-    let mirror: SessionMirror | null = null;
     // ── EVENT-DRIVEN RE-PIN (M23.5) ──────────────────────────────────────────
     // The native Workbench projection is the sole pin source. `lastPin` remains
     // null until a non-zero framebuffer exists; a hidden/maximized dock never
@@ -3937,7 +3985,6 @@ try {
     // adds semantic icons/details/availability and stable selection ids. The
     // component owns no handlers: this root routes keyboard, paste, projected
     // mouse hits, lifecycle, and execution through the existing action executor.
-    const [paletteOpen, setPaletteOpen] = createSignal(false);
     const [paletteQuery, setPaletteQuery] = createSignal("");
     const paletteBufferLoadGate = new PaletteBufferLoadGate();
     onCleanup(() => paletteBufferLoadGate.invalidate());
@@ -4137,6 +4184,83 @@ try {
       },
     });
     const executeRendererCommand = rendererCommandExecutor.execute;
+    const applyApplicationShellFocus = (target: SemanticFocusTarget) => {
+      if (target.kind === "dock-tool") {
+        setActiveDockTab(target.tool);
+        setWorkbenchFocusZone("dock-tabs");
+      } else if (target.kind === "zone") {
+        if (target.zone === "dock-tabs") setWorkbenchFocusZone("dock-tabs");
+        else if (target.zone === "dock-body") setWorkbenchFocusZone("dock-body");
+        else setWorkbenchFocusZone("canvas");
+      } else if (target.kind === "pane") {
+        setWorkbenchFocusZone("canvas");
+        const runtimePaneId = openTuiRuntimePaneId(
+          target.paneId,
+          panes().map((pane) => pane.id),
+        );
+        if (runtimePaneId && mirror) mirror.focus(runtimePaneId);
+      } else if (target.zone === "dock-tabs") {
+        setWorkbenchFocusZone("dock-tabs");
+      } else if (target.zone === "dock-body") {
+        setWorkbenchFocusZone("dock-body");
+      } else {
+        setWorkbenchFocusZone("canvas");
+      }
+      touchedWorkspaceDock = true;
+    };
+    const executeApplicationShellEffect = (effect: OpenTuiApplicationShellEffect) => {
+      switch (effect.kind) {
+        case "renderer-command":
+          executeRendererCommand(effect.invocation);
+          break;
+        case "dock-mode":
+          setDockMode(effect.mode);
+          touchedWorkspaceDock = true;
+          break;
+        case "focus":
+          applyApplicationShellFocus(effect.target);
+          break;
+        case "palette-close":
+          closePalette();
+          applyApplicationShellFocus(effect.restore);
+          break;
+        case "resource-select":
+          // Resource selection remains owned by each native dock surface.
+          break;
+      }
+    };
+    const executeApplicationShellCommand = (invocation: ApplicationShellCommandInvocation) => {
+      const reduced = reduceOpenTuiApplicationShellCommand(semanticApplicationShell(), invocation);
+      executeApplicationShellEffect(reduced.effect);
+      return reduced.next;
+    };
+    const executeSurfaceCommand = (
+      surface: "home" | "terminals" | WorkbenchDockTabId,
+      source: CommandSource,
+    ) =>
+      executeApplicationShellCommand(
+        applicationShellSurfaceInvocation(semanticApplicationShell(), surface, source),
+      );
+    const executePaletteCommand = (open: boolean, source: CommandSource) =>
+      executeApplicationShellCommand(
+        applicationShellPaletteInvocation(semanticApplicationShell(), open, source),
+      );
+    const executeDockModeCommand = (nextMode: WorkbenchDockMode, source: CommandSource) =>
+      executeApplicationShellCommand(
+        applicationShellCommandInvocation(
+          APPLICATION_SHELL_COMMAND_IDS.setDockMode,
+          { mode: nextMode },
+          source,
+        ),
+      );
+    const executeFocusCommand = (target: SemanticFocusTarget, source: CommandSource) =>
+      executeApplicationShellCommand(
+        applicationShellCommandInvocation(
+          APPLICATION_SHELL_COMMAND_IDS.moveFocus,
+          { target },
+          source,
+        ),
+      );
     const runPaletteAction = (a: PaletteAction) => {
       // Usage history (M24.4): every dispatched action bumps its stable key —
       // count + lastUsed feed the "recent" group and the ranking tie-break.
@@ -4151,7 +4275,7 @@ try {
         loadBuffers();
         return;
       }
-      closePalette();
+      executePaletteCommand(false, { kind: "palette", surface: "command-palette" });
       switch (a.kind) {
         case "search-scrollback":
           // The live-prompt entry to scrollback search — `/` only works while
@@ -4160,19 +4284,15 @@ try {
           break;
         case "tab":
           if (a.tab === "home" || a.tab === "terminal") {
-            executeRendererCommand(
-              rendererInvocationForCanvas(a.tab === "home" ? "home" : "terminals", {
-                kind: "palette",
-                surface: "palette",
-              }),
-            );
+            executeSurfaceCommand(a.tab === "home" ? "home" : "terminals", {
+              kind: "palette",
+              surface: "command-palette",
+            });
           } else {
-            executeRendererCommand(
-              rendererInvocationForDock(a.tab === "files" ? "files" : "changes", {
-                kind: "palette",
-                surface: "palette",
-              }),
-            );
+            executeSurfaceCommand(a.tab === "files" ? "files" : "changes", {
+              kind: "palette",
+              surface: "command-palette",
+            });
           }
           break;
         case "view":
@@ -4343,7 +4463,7 @@ try {
         return;
       }
       if (evt.name === "escape") {
-        closePalette();
+        executePaletteCommand(false, { kind: "keyboard", surface: "command-palette" });
       } else if (evt.name === "return") {
         dispatchPaletteCommand(paletteEntries(), paletteSelectedCommandId(), runPaletteAction);
       } else if (evt.name === "up") {
@@ -5035,7 +5155,7 @@ try {
      *  latin1 (byte-per-char) so multibyte glyphs must be re-encoded latin1→utf8
      *  (the same fix the pane seed uses) before hitting the paste path. */
     const pasteBuffer = (name: string) => {
-      closePalette();
+      executePaletteCommand(false, { kind: "palette", surface: "paste-buffer" });
       setPaletteSel(0);
       setPaletteTop(0);
       if (mirror) {
@@ -5834,13 +5954,7 @@ try {
         return;
       }
       if (layer.kind === "kitty-super-palette") {
-        executeRendererCommand(
-          rendererCommandInvocation(
-            RENDERER_COMMAND_IDS.openPalette,
-            {},
-            { kind: "keyboard", surface: "workbench" },
-          ),
-        );
+        executePaletteCommand(true, { kind: "keyboard", surface: "workbench" });
         return;
       }
       if (layer.kind === "kitty-super-suppressed") return;
@@ -5862,23 +5976,20 @@ try {
       }
       const canvasShortcut = workbenchCanvasPanelForShortcut(evt);
       if (canvasShortcut) {
-        executeRendererCommand(
-          rendererInvocationForCanvas(canvasShortcut, {
-            kind: "keyboard",
-            surface: "workbench",
-          }),
-        );
+        executeSurfaceCommand(canvasShortcut, { kind: "keyboard", surface: "workbench" });
         return;
       }
       const dockShortcut = workbenchDockTabForShortcut(evt);
       if (dockShortcut) {
-        executeRendererCommand(
-          rendererInvocationForDock(dockShortcut, { kind: "keyboard", surface: "workbench" }),
-        );
+        executeSurfaceCommand(dockShortcut, { kind: "keyboard", surface: "workbench" });
         return;
       }
       if (layer.kind === "global") {
-        executeRendererCommand(rendererInvocationForGlobal(layer.command));
+        if (layer.command.kind === "open-palette") {
+          executePaletteCommand(true, { kind: "keyboard", surface: "workbench" });
+        } else {
+          executeRendererCommand(rendererInvocationForGlobal(layer.command));
+        }
         return;
       }
       if (workbenchProjection().focusZone === "dock-tabs") {
@@ -5888,24 +5999,26 @@ try {
           evt,
         );
         if (keyboardTarget) {
-          executeRendererCommand(
-            rendererInvocationForDock(keyboardTarget, {
-              kind: "keyboard",
-              surface: "workbench",
-            }),
+          executeSurfaceCommand(keyboardTarget, { kind: "keyboard", surface: "workbench" });
+          executeFocusCommand(
+            { kind: "zone", zone: "dock-tabs" },
+            { kind: "keyboard", surface: "workbench" },
           );
-          setWorkbenchFocusZone("dock-tabs");
           return;
         }
         if (evt.name === "return" || evt.name === "enter" || evt.name === "down") {
-          setDockMode("open");
-          setWorkbenchFocusZone("dock-body");
-          touchedWorkspaceDock = true;
+          executeDockModeCommand("open", { kind: "keyboard", surface: "bottom-dock" });
+          executeFocusCommand(
+            { kind: "zone", zone: "dock-body" },
+            { kind: "keyboard", surface: "bottom-dock" },
+          );
           return;
         }
         if (evt.name === "escape" || evt.name === "up") {
-          setWorkbenchFocusZone("canvas");
-          touchedWorkspaceDock = true;
+          executeFocusCommand(
+            { kind: "zone", zone: "canvas" },
+            { kind: "keyboard", surface: "bottom-dock" },
+          );
           return;
         }
         return;
@@ -5914,8 +6027,10 @@ try {
         if (evt.name === "j" || evt.name === "down") moveActivitySelection(1);
         else if (evt.name === "k" || evt.name === "up") moveActivitySelection(-1);
         else if (evt.name === "escape") {
-          setWorkbenchFocusZone("dock-tabs");
-          touchedWorkspaceDock = true;
+          executeFocusCommand(
+            { kind: "zone", zone: "dock-tabs" },
+            { kind: "keyboard", surface: "activity" },
+          );
         }
         return;
       }
@@ -6357,13 +6472,7 @@ try {
     });
     const runTabbarButton = (id: string) => {
       if (id === "tab-palette") {
-        executeRendererCommand(
-          rendererCommandInvocation(
-            RENDERER_COMMAND_IDS.openPalette,
-            {},
-            { kind: "mouse", surface: "workbench" },
-          ),
-        );
+        executePaletteCommand(true, { kind: "mouse", surface: "application-bar" });
       } else if (id === "tab-context" && contextSession()) switchTarget(contextSession());
     };
     /** Which chip (if any) column `x` hits on the row for `it`. */
@@ -6633,6 +6742,11 @@ try {
      *  rail), and every dock event is consumed so wheel/right-click/drag can
      *  never leak into the terminal transport beneath it. */
     const routeWorkbenchPointer = (e: RouteEvent): boolean => {
+      const applicationHit = applicationShellHitTest(applicationShellProjection(), e.x, e.y);
+      if (applicationHit?.kind === "status-strip") {
+        clearTerminalPaneActionState();
+        return true;
+      }
       if (e.y < TABBAR_H || e.x < sidebarW()) {
         clearTerminalPaneActionState();
         return false;
@@ -6672,8 +6786,10 @@ try {
             setPressedTerminalPaneAction(motion.pressed);
           }
           if (paneChromeIntent) {
-            setWorkbenchFocusZone("canvas");
-            touchedWorkspaceDock = true;
+            executeFocusCommand(
+              { kind: "zone", zone: "canvas" },
+              { kind: "mouse", surface: "terminal-pane-chrome" },
+            );
             const openPaneActions = (paneId: string) => {
               const pane = panesById().get(paneId);
               if (!pane) return;
@@ -6719,8 +6835,10 @@ try {
         }
         if (terminalPolicy === "consume") return true;
         if (e.type === "down" || terminalPolicy === "focus-route") {
-          setWorkbenchFocusZone("canvas");
-          touchedWorkspaceDock = true;
+          executeFocusCommand(
+            { kind: "zone", zone: "canvas" },
+            { kind: "mouse", surface: "workspace-canvas" },
+          );
         }
         return false;
       }
@@ -6728,8 +6846,10 @@ try {
         setHoveredDockTab(null);
         setHoverIf(null);
         if (e.type === "down") {
-          setWorkbenchFocusZone("canvas");
-          touchedWorkspaceDock = true;
+          executeFocusCommand(
+            { kind: "zone", zone: "canvas" },
+            { kind: "mouse", surface: "workspace-canvas" },
+          );
         }
         return true;
       }
@@ -6742,32 +6862,39 @@ try {
       }
       if (hit.kind === "dock-tab") {
         if (e.type === "down" && e.button !== 2) {
-          executeRendererCommand(
-            rendererInvocationForDock(hit.tabId, { kind: "mouse", surface: "workbench" }),
-          );
+          executeSurfaceCommand(hit.tabId, { kind: "mouse", surface: "bottom-dock" });
         }
         return true;
       }
       if (hit.kind === "dock-action") {
         if (e.type === "down" && e.button !== 2) {
-          setDockMode(hit.nextMode);
-          setWorkbenchFocusZone(hit.nextMode === "collapsed" ? "dock-tabs" : "dock-body");
-          touchedWorkspaceDock = true;
+          executeDockModeCommand(hit.nextMode, { kind: "mouse", surface: "bottom-dock" });
+          executeFocusCommand(
+            {
+              kind: "zone",
+              zone: hit.nextMode === "collapsed" ? "dock-tabs" : "dock-body",
+            },
+            { kind: "mouse", surface: "bottom-dock" },
+          );
         }
         return true;
       }
       if (hit.kind === "dock-tabs" || hit.kind === "dock-body-rail") {
         if (e.type === "down") {
-          setWorkbenchFocusZone(hit.kind === "dock-tabs" ? "dock-tabs" : "dock-body");
-          touchedWorkspaceDock = true;
+          executeFocusCommand(
+            { kind: "zone", zone: hit.kind === "dock-tabs" ? "dock-tabs" : "dock-body" },
+            { kind: "mouse", surface: "bottom-dock" },
+          );
         }
         return true;
       }
       if (hit.kind !== "dock-body") return true;
 
       if (e.type === "down" || e.type === "scroll") {
-        setWorkbenchFocusZone("dock-body");
-        touchedWorkspaceDock = true;
+        executeFocusCommand(
+          { kind: "zone", zone: "dock-body" },
+          { kind: e.type === "scroll" ? "wheel" : "mouse", surface: "bottom-dock" },
+        );
       }
       const { localX, localY } = hit;
       if (activeDockTab() === "files") {
@@ -7095,7 +7222,9 @@ try {
             if (e.button !== 2) openPalette();
             return;
           }
-          if (hit === null) closePalette();
+          if (hit === null) {
+            executePaletteCommand(false, { kind: "mouse", surface: "command-palette" });
+          }
           return;
         }
 
@@ -7128,7 +7257,16 @@ try {
           if (b) pasteBuffer(b.name);
           return;
         }
-        if (!paletteContains(g, x, y)) closePalette();
+        if (!paletteContains(g, x, y)) {
+          executePaletteCommand(false, { kind: "mouse", surface: "paste-buffer" });
+        }
+        return;
+      }
+      const applicationChromeHit = applicationShellHitTest(applicationShellProjection(), e.x, e.y);
+      if (applicationChromeHit?.kind === "status-strip") {
+        if (type === "up" || type === "drag-end" || type === "drop" || type === "out") {
+          settleTerminalGestureBoundary(e);
+        }
         return;
       }
       if (!dragging && routeWorkbenchPointer(e)) return;
@@ -7179,25 +7317,16 @@ try {
             return;
           }
           const i = spanHit(surfaceSpans(), x);
-          const view = canvasHostedViews()[i];
-          if (view?.panel === "home" || view?.panel === "terminals") {
-            executeRendererCommand(
-              rendererInvocationForCanvas(view.panel, { kind: "mouse", surface: "workbench" }),
-            );
-          }
+          const surface = semanticApplicationShell().primaryNavigation.items[i];
+          if (surface)
+            executeSurfaceCommand(surface.id, { kind: "mouse", surface: "application-bar" });
           return;
         }
         const gy = y - TABBAR_H;
         if (x < sidebarW()) {
           if (y === dims().height - 1) {
             if (spanHit([sidebarHint().buttonSpan], x) === 0) {
-              executeRendererCommand(
-                rendererCommandInvocation(
-                  RENDERER_COMMAND_IDS.openPalette,
-                  {},
-                  { kind: "mouse", surface: "sidebar" },
-                ),
-              );
+              executePaletteCommand(true, { kind: "mouse", surface: "sidebar" });
             }
             return;
           }
@@ -7449,12 +7578,9 @@ try {
           return;
         }
         const i = spanHit(surfaceSpans(), x);
-        const view = canvasHostedViews()[i];
-        if (view?.panel === "home" || view?.panel === "terminals") {
-          executeRendererCommand(
-            rendererInvocationForCanvas(view.panel, { kind: "mouse", surface: "workbench" }),
-          );
-        }
+        const surface = semanticApplicationShell().primaryNavigation.items[i];
+        if (surface)
+          executeSurfaceCommand(surface.id, { kind: "mouse", surface: "application-bar" });
         return;
       }
       const gy = y - TABBAR_H;
@@ -7463,13 +7589,7 @@ try {
         // The footer hint's "F5 palette" segment is a chip (last screen row).
         if (y === dims().height - 1) {
           if (spanHit([sidebarHint().buttonSpan], x) === 0) {
-            executeRendererCommand(
-              rendererCommandInvocation(
-                RENDERER_COMMAND_IDS.openPalette,
-                {},
-                { kind: "mouse", surface: "sidebar" },
-              ),
-            );
+            executePaletteCommand(true, { kind: "mouse", surface: "sidebar" });
           }
           return;
         }
@@ -7711,348 +7831,312 @@ try {
         backgroundColor={DEFAULT_BG}
         onMouse={(e: RouteEvent) => route(e)}
       >
-        {/* Surface tab bar — the top screen row (gy=0), full width above the
-          sidebar. The click x-spans are computed from the exact same hosted-view
-          labels rendered here. F1..F4 then F6..F13 switch configured views; the active view carries the accent background, a hovered one a
-          subtle tint. */}
-        <box
-          height={TABBAR_H}
-          flexDirection="row"
-          backgroundColor={TABBAR_BG}
-          onMouse={(e: RouteEvent) => route(e)}
-        >
-          <ShellTabBar
-            theme={semanticTheme()}
-            width={dims().width}
-            variant={shellLayout().variant}
-            views={canvasHostedViews()}
-            activeViewId={canvasViewForPanel(canvasHostedViews(), canvasPanel()).id}
-            hoveredIndex={hover()?.region === "surfacetab" ? hover()!.index : null}
-            note={note()}
-            rightChips={tabbarButtons().defs.map((button, index) => ({
-              id: button.id,
-              label: button.label,
-              hovered: isHovered("tabbtn", index),
-              context: button.id === "tab-context",
-            }))}
-          />
-        </box>
-        <box flexDirection="row" flexGrow={1} backgroundColor={DEFAULT_BG} overflow="hidden">
-          <Sidebar
-            width={sidebarW()}
-            sessions={fleet()}
-            agents={fleetAgents()}
-            current={curTarget()}
-            nowSec={Math.floor(Date.now() / 1000)}
-            isHovered={isHovered}
-            flashed={(paneId: string) => attnFlash().has(paneId)}
-            variant={shellLayout().variant}
-            hint={sidebarHint()}
-            onMouse={(e) => route(e as RouteEvent)}
-          />
-          <box
-            position="relative"
-            flexDirection="column"
-            flexGrow={1}
-            overflow="hidden"
-            onMouse={(e: RouteEvent) => route(e)}
-          >
-            <WorkbenchShell
+        <ApplicationShell
+          theme={semanticTheme()}
+          projection={applicationShellProjection()}
+          help={`${QUIT_HINT} · F5 palette`}
+          note={note()}
+          rightChips={tabbarButtons().defs.map((button, index) => ({
+            id: button.id,
+            label: button.label,
+            hovered: isHovered("tabbtn", index),
+            context: button.id === "tab-context",
+          }))}
+          sidebar={
+            <Sidebar
               theme={semanticTheme()}
-              projection={workbenchProjection()}
-              canvas={
-                <Show
-                  when={canvasPanel() === "home"}
-                  fallback={
-                    <AgentTerminalCanvas
-                      theme={semanticTheme()}
-                      projection={terminalCanvasProjection()}
-                      chrome={
-                        <>
-                          {/* The per-window strip (gy=0). Rendered as bare styled TEXT runs (no
+              width={sidebarW()}
+              sessions={fleet()}
+              agents={fleetAgents()}
+              current={curTarget()}
+              nowSec={Math.floor(Date.now() / 1000)}
+              isHovered={isHovered}
+              flashed={(paneId: string) => attnFlash().has(paneId)}
+              variant={shellLayout().variant}
+              hint={sidebarHint()}
+              onMouse={(e) => route(e as RouteEvent)}
+            />
+          }
+        >
+          <WorkbenchShell
+            theme={semanticTheme()}
+            projection={workbenchProjection()}
+            canvas={
+              <Show
+                when={canvasPanel() === "home"}
+                fallback={
+                  <AgentTerminalCanvas
+                    theme={semanticTheme()}
+                    projection={terminalCanvasProjection()}
+                    chrome={
+                      <>
+                        {/* The per-window strip (gy=0). Rendered as bare styled TEXT runs (no
                 per-window <box> wrapper) so the late-mounted segments bubble
                 clicks to the main-column router instead of swallowing them the
                 way late-mounted boxes do; `route` hit-tests `windowSpans`, whose
                 labels equal these run strings. Active = accent+tint, hover =
                 subtle tint. */}
-                          <box paddingLeft={1} flexDirection="row" gap={1}>
-                            <text fg={MUTED}>{windowStripParts().pre}</text>
-                            <text fg={ACCENT} bg={TAB_ACTIVE_BG}>
-                              {windowStripParts().active}
-                            </text>
-                            <text fg={MUTED}>{windowStripParts().post}</text>
-                            {/* Window-level indicators remain on row zero; pane-level
+                        <box paddingLeft={1} flexDirection="row" gap={1}>
+                          <text fg={MUTED}>{windowStripParts().pre}</text>
+                          <text fg={ACCENT} bg={TAB_ACTIVE_BG}>
+                            {windowStripParts().active}
+                          </text>
+                          <text fg={MUTED}>{windowStripParts().post}</text>
+                          {/* Window-level indicators remain on row zero; pane-level
                   zoom/split controls now live in each pane's own chrome row. */}
-                            <Show when={isZoomed()}>
-                              <text fg={ACCENT} bg={TAB_ACTIVE_BG} attributes={1}>
-                                {` ${focusedLivePane()?.id ?? ""} [Z] `}
-                              </text>
-                            </Show>
-                            {/* Synchronize-panes indicator (M20.2): shown while the active
+                          <Show when={isZoomed()}>
+                            <text fg={ACCENT} bg={TAB_ACTIVE_BG} attributes={1}>
+                              {` ${focusedLivePane()?.id ?? ""} [Z] `}
+                            </text>
+                          </Show>
+                          {/* Synchronize-panes indicator (M20.2): shown while the active
                   window's synchronize-panes option is on, left-aligned after the
                   labels like [Z]. */}
-                            <Show when={syncOn()}>
-                              <text fg={BUTTON_FG} bg={BUTTON_ACTIVE_BG} attributes={1}>
-                                {" [SYNC] "}
-                              </text>
-                            </Show>
-                          </box>
-                          {/* Segmented pane chrome occupies gy=1, immediately above
+                          <Show when={syncOn()}>
+                            <text fg={BUTTON_FG} bg={BUTTON_ACTIVE_BG} attributes={1}>
+                              {" [SYNC] "}
+                            </text>
+                          </Show>
+                        </box>
+                        {/* Segmented pane chrome occupies gy=1, immediately above
                   the exact tmux framebuffer. The layer is passive; root routing
                   owns every action and lifecycle effect. */}
-                          <TerminalPaneChromeLayer
-                            theme={semanticTheme()}
-                            layout={terminalPaneChromeLayout()}
-                            layer="native"
-                          />
-                        </>
-                      }
-                      framebuffer={
-                        <box
-                          position="relative"
-                          width={terminalCanvasProjection().framebuffer.width}
-                          height={terminalCanvasProjection().framebuffer.height}
-                          backgroundColor={GUTTER_BG}
-                          overflow="hidden"
-                        >
-                          {/* M21.3 — framebuffer blit (flagged). ONE <pane_surface> per
+                        <TerminalPaneChromeLayer
+                          theme={semanticTheme()}
+                          layout={terminalPaneChromeLayout()}
+                          layer="native"
+                        />
+                      </>
+                    }
+                    framebuffer={
+                      <box
+                        position="relative"
+                        width={terminalCanvasProjection().framebuffer.width}
+                        height={terminalCanvasProjection().framebuffer.height}
+                        backgroundColor={GUTTER_BG}
+                        overflow="hidden"
+                      >
+                        {/* M21.3 — framebuffer blit (flagged). ONE <pane_surface> per
                   pane blits the grid straight into packed buffers; the For keys
                   on the stable id list so a content tick reuses each surface (and
                   its framebuffer) instead of tearing it down. Chrome (badge +
                   scrollbar) stays Solid JSX layered over the surface. The old
                   StyledRun path is the fallback, unchanged, default for A/B. */}
-                          <Show
-                            when={FB_PANES}
-                            fallback={
-                              <For each={panes()}>
-                                {(pane) => (
+                        <Show
+                          when={FB_PANES}
+                          fallback={
+                            <For each={panes()}>
+                              {(pane) => (
+                                <box
+                                  position="absolute"
+                                  left={pane.left}
+                                  top={pane.top}
+                                  width={pane.width}
+                                  height={pane.height}
+                                  flexDirection="column"
+                                  backgroundColor={DEFAULT_BG}
+                                  overflow="hidden"
+                                >
+                                  <For each={paneSelRows(pane)}>
+                                    {(runs) => (
+                                      <box flexDirection="row" height={1}>
+                                        <For each={runs}>
+                                          {(run) => (
+                                            <text
+                                              fg={packedToRgba(run.fg, DEFAULT_FG)}
+                                              bg={packedToRgba(run.bg, DEFAULT_BG)}
+                                              attributes={run.attributes}
+                                            >
+                                              {run.text}
+                                            </text>
+                                          )}
+                                        </For>
+                                      </box>
+                                    )}
+                                  </For>
+                                  {/* Top-right badge family: the select-mode chip (M22.9,
+                            passive text runs — presses bubble to the router) then
+                            the scroll badge. */}
+                                  <box position="absolute" right={1} top={0} flexDirection="row">
+                                    <Show
+                                      when={
+                                        selectModePane() === pane.id && selectBadgeLabel(pane.width)
+                                      }
+                                    >
+                                      <text fg={DEFAULT_FG} bg={BUTTON_ACTIVE_BG} attributes={1}>
+                                        {selectBadgeLabel(pane.width)!}
+                                      </text>
+                                    </Show>
+                                    <Show when={pane.snapshot.scrollOffset > 0}>
+                                      <text fg={DEFAULT_FG} bg={BADGE_BG}>
+                                        {` ↑${pane.snapshot.scrollOffset}/${pane.scrollbackDepth} `}
+                                      </text>
+                                    </Show>
+                                  </box>
+                                  {/* Right-edge scrollbar — only while scrolled up, so a live
+                            terminal stays clean (mirrorScrollGeom gates on offset). */}
+                                  {scrollbarOverlay(() => mirrorScrollGeom(pane))}
+                                </box>
+                              )}
+                            </For>
+                          }
+                        >
+                          <For each={paneIds()}>
+                            {(id) => {
+                              const pane = () => panesById().get(id);
+                              return (
+                                <Show when={pane()}>
                                   <box
                                     position="absolute"
-                                    left={pane.left}
-                                    top={pane.top}
-                                    width={pane.width}
-                                    height={pane.height}
-                                    flexDirection="column"
+                                    left={pane()!.left}
+                                    top={pane()!.top}
+                                    width={pane()!.width}
+                                    height={pane()!.height}
                                     backgroundColor={DEFAULT_BG}
                                     overflow="hidden"
                                   >
-                                    <For each={paneSelRows(pane)}>
-                                      {(runs) => (
-                                        <box flexDirection="row" height={1}>
-                                          <For each={runs}>
-                                            {(run) => (
-                                              <text
-                                                fg={packedToRgba(run.fg, DEFAULT_FG)}
-                                                bg={packedToRgba(run.bg, DEFAULT_BG)}
-                                                attributes={run.attributes}
-                                              >
-                                                {run.text}
-                                              </text>
-                                            )}
-                                          </For>
-                                        </box>
-                                      )}
-                                    </For>
-                                    {/* Top-right badge family: the select-mode chip (M22.9,
-                            passive text runs — presses bubble to the router) then
-                            the scroll badge. */}
+                                    <pane_surface
+                                      width={pane()!.width}
+                                      height={pane()!.height}
+                                      mirror={mirror!}
+                                      paneId={id}
+                                      defaultFg={DEFAULT_FG_PACKED}
+                                      defaultBg={DEFAULT_BG_PACKED}
+                                      searchHl={SEARCH_HL}
+                                      searchCur={SEARCH_CUR}
+                                      scrollOffset={pane()!.snapshot.scrollOffset}
+                                      paneFocused={pane()!.active}
+                                      contentVersion={pane()!.version}
+                                      selRange={mirrorSelForPane(id)}
+                                      search={mirrorSearchForPane(pane()!)}
+                                    />
+                                    {/* Top-right badge family: the select-mode chip
+                              (M22.9, passive text runs — presses bubble to the
+                              router) then the scroll badge. */}
                                     <box position="absolute" right={1} top={0} flexDirection="row">
                                       <Show
                                         when={
-                                          selectModePane() === pane.id &&
-                                          selectBadgeLabel(pane.width)
+                                          selectModePane() === id && selectBadgeLabel(pane()!.width)
                                         }
                                       >
                                         <text fg={DEFAULT_FG} bg={BUTTON_ACTIVE_BG} attributes={1}>
-                                          {selectBadgeLabel(pane.width)!}
+                                          {selectBadgeLabel(pane()!.width)!}
                                         </text>
                                       </Show>
-                                      <Show when={pane.snapshot.scrollOffset > 0}>
+                                      <Show when={pane()!.snapshot.scrollOffset > 0}>
                                         <text fg={DEFAULT_FG} bg={BADGE_BG}>
-                                          {` ↑${pane.snapshot.scrollOffset}/${pane.scrollbackDepth} `}
+                                          {` ↑${pane()!.snapshot.scrollOffset}/${pane()!.scrollbackDepth} `}
                                         </text>
                                       </Show>
                                     </box>
-                                    {/* Right-edge scrollbar — only while scrolled up, so a live
-                            terminal stays clean (mirrorScrollGeom gates on offset). */}
-                                    {scrollbarOverlay(() => mirrorScrollGeom(pane))}
+                                    {scrollbarOverlay(() => mirrorScrollGeom(pane()!))}
                                   </box>
-                                )}
-                              </For>
-                            }
-                          >
-                            <For each={paneIds()}>
-                              {(id) => {
-                                const pane = () => panesById().get(id);
-                                return (
-                                  <Show when={pane()}>
-                                    <box
-                                      position="absolute"
-                                      left={pane()!.left}
-                                      top={pane()!.top}
-                                      width={pane()!.width}
-                                      height={pane()!.height}
-                                      backgroundColor={DEFAULT_BG}
-                                      overflow="hidden"
-                                    >
-                                      <pane_surface
-                                        width={pane()!.width}
-                                        height={pane()!.height}
-                                        mirror={mirror!}
-                                        paneId={id}
-                                        defaultFg={DEFAULT_FG_PACKED}
-                                        defaultBg={DEFAULT_BG_PACKED}
-                                        searchHl={SEARCH_HL}
-                                        searchCur={SEARCH_CUR}
-                                        scrollOffset={pane()!.snapshot.scrollOffset}
-                                        paneFocused={pane()!.active}
-                                        contentVersion={pane()!.version}
-                                        selRange={mirrorSelForPane(id)}
-                                        search={mirrorSearchForPane(pane()!)}
-                                      />
-                                      {/* Top-right badge family: the select-mode chip
-                              (M22.9, passive text runs — presses bubble to the
-                              router) then the scroll badge. */}
-                                      <box
-                                        position="absolute"
-                                        right={1}
-                                        top={0}
-                                        flexDirection="row"
-                                      >
-                                        <Show
-                                          when={
-                                            selectModePane() === id &&
-                                            selectBadgeLabel(pane()!.width)
-                                          }
-                                        >
-                                          <text
-                                            fg={DEFAULT_FG}
-                                            bg={BUTTON_ACTIVE_BG}
-                                            attributes={1}
-                                          >
-                                            {selectBadgeLabel(pane()!.width)!}
-                                          </text>
-                                        </Show>
-                                        <Show when={pane()!.snapshot.scrollOffset > 0}>
-                                          <text fg={DEFAULT_FG} bg={BADGE_BG}>
-                                            {` ↑${pane()!.snapshot.scrollOffset}/${pane()!.scrollbackDepth} `}
-                                          </text>
-                                        </Show>
-                                      </box>
-                                      {scrollbarOverlay(() => mirrorScrollGeom(pane()!))}
-                                    </box>
-                                  </Show>
-                                );
-                              }}
-                            </For>
-                          </Show>
-                          {/* Lower-pane headers reuse only tmux's existing horizontal
+                                </Show>
+                              );
+                            }}
+                          </For>
+                        </Show>
+                        {/* Lower-pane headers reuse only tmux's existing horizontal
                   separator cells. Focus belongs to this semantic pane chrome,
                   while the pure projection proves no emitted rectangle
                   intersects a pane framebuffer. */}
-                          <TerminalPaneChromeLayer
-                            theme={semanticTheme()}
-                            layout={terminalPaneChromeLayout()}
-                            layer="framebuffer"
-                          />
-                          {/* Size-truth hint (M22.8): quiet, dismiss-free, shown ONLY while
+                        <TerminalPaneChromeLayer
+                          theme={semanticTheme()}
+                          layout={terminalPaneChromeLayout()}
+                          layer="framebuffer"
+                        />
+                        {/* Size-truth hint (M22.8): quiet, dismiss-free, shown ONLY while
                   a co-attached terminal has sized the window away from our canvas
                   (the letterboxed grid is centered beneath it). It states the
                   honest actual size — the iTerm2-style answer — and disappears the
                   moment the sizes agree. A handler-less box in the top gutter, so
                   no pointer routing changes. */}
-                          <Show when={windowMismatch()}>
-                            <box position="absolute" left={1} top={0} backgroundColor={BADGE_BG}>
-                              <text fg={MUTED}>{` ${formatSizeHint(windowMismatch()!)} `}</text>
-                            </box>
-                          </Show>
-                        </box>
-                      }
-                      footer={
-                        search() ? (
-                          <box
-                            width={terminalCanvasProjection().footer.width}
-                            height={terminalCanvasProjection().footer.height}
-                            flexDirection="row"
-                            backgroundColor={PALETTE_BG}
-                            paddingLeft={1}
-                            paddingRight={1}
-                          >
-                            <text fg={ACCENT} attributes={1}>
-                              {search()!.editing ? "/" : "search "}
-                            </text>
-                            <text
-                              fg={DEFAULT_FG}
-                            >{`${search()!.query}${search()!.editing ? "▏" : ""}`}</text>
-                            <box flexGrow={1} />
-                            <text fg={MUTED}>{searchStatus()}</text>
+                        <Show when={windowMismatch()}>
+                          <box position="absolute" left={1} top={0} backgroundColor={BADGE_BG}>
+                            <text fg={MUTED}>{` ${formatSizeHint(windowMismatch()!)} `}</text>
                           </box>
-                        ) : undefined
-                      }
-                    />
-                  }
-                >
-                  <HomeSurface
+                        </Show>
+                      </box>
+                    }
+                    footer={
+                      search() ? (
+                        <box
+                          width={terminalCanvasProjection().footer.width}
+                          height={terminalCanvasProjection().footer.height}
+                          flexDirection="row"
+                          backgroundColor={PALETTE_BG}
+                          paddingLeft={1}
+                          paddingRight={1}
+                        >
+                          <text fg={ACCENT} attributes={1}>
+                            {search()!.editing ? "/" : "search "}
+                          </text>
+                          <text
+                            fg={DEFAULT_FG}
+                          >{`${search()!.query}${search()!.editing ? "▏" : ""}`}</text>
+                          <box flexGrow={1} />
+                          <text fg={MUTED}>{searchStatus()}</text>
+                        </box>
+                      ) : undefined
+                    }
+                  />
+                }
+              >
+                <HomeSurface
+                  theme={semanticTheme()}
+                  projection={homeSurfaceProjection()}
+                  rollup={rollup()}
+                />
+              </Show>
+            }
+            dockBody={
+              <>
+                <Show when={activeDockTab() === "files"}>
+                  <FilesSurface
                     theme={semanticTheme()}
-                    projection={homeSurfaceProjection()}
-                    rollup={rollup()}
+                    projection={filesSurfaceProjection()}
+                    colors={{
+                      gutterBg: GUTTER_BG,
+                      gutterFg: GUTTER_FG,
+                      cursorBg: CURSOR_BG,
+                      modifiedFg: MODIFIED_FG,
+                      statusLetterFg: STATUS_LETTER_FG,
+                    }}
                   />
                 </Show>
-              }
-              dockBody={
-                <>
-                  <Show when={activeDockTab() === "files"}>
-                    <FilesSurface
-                      theme={semanticTheme()}
-                      projection={filesSurfaceProjection()}
-                      colors={{
-                        gutterBg: GUTTER_BG,
-                        gutterFg: GUTTER_FG,
-                        cursorBg: CURSOR_BG,
-                        modifiedFg: MODIFIED_FG,
-                        statusLetterFg: STATUS_LETTER_FG,
-                      }}
-                    />
-                  </Show>
-                  <Show when={activeDockTab() === "changes"}>
-                    <ChangesSurface
-                      theme={semanticTheme()}
-                      projection={changesSurfaceProjection()}
-                      colors={{
-                        gutterBg: GUTTER_BG,
-                        gutterFg: GUTTER_FG,
-                        statusLetterFg: STATUS_LETTER_FG,
-                        diffFg: DIFF_FG,
-                        diffLineBg: DIFF_LINE_BG,
-                      }}
-                    />
-                  </Show>
-                  <Show when={activeDockTab() === "missions"}>
-                    <MissionsSurface
-                      width={dockSurfaceWidth()}
-                      dashboard={missionsDashboard()}
-                      model={missionWorkspaceModel()}
-                      snapshot={missionWorkspaceSnapshot()}
-                      loadState={missionWorkspaceLoad()}
-                      errorMessage={missionLoadErrorMessage()}
-                      resolveDeepLink={missionDeepLink}
-                      isHovered={isHovered}
-                      theme={{
-                        bannerFg: BANNER_FG,
-                        buttonFg: BUTTON_FG,
-                        buttonBg: BUTTON_BG,
-                        buttonActiveBg: BUTTON_ACTIVE_BG,
-                      }}
-                    />
-                  </Show>
-                  <Show when={activeDockTab() === "activity"}>
-                    <ActivitySurface theme={semanticTheme()} projection={activityProjection()} />
-                  </Show>
-                </>
-              }
-            />
-          </box>
-        </box>
+                <Show when={activeDockTab() === "changes"}>
+                  <ChangesSurface
+                    theme={semanticTheme()}
+                    projection={changesSurfaceProjection()}
+                    colors={{
+                      gutterBg: GUTTER_BG,
+                      gutterFg: GUTTER_FG,
+                      statusLetterFg: STATUS_LETTER_FG,
+                      diffFg: DIFF_FG,
+                      diffLineBg: DIFF_LINE_BG,
+                    }}
+                  />
+                </Show>
+                <Show when={activeDockTab() === "missions"}>
+                  <MissionsSurface
+                    width={dockSurfaceWidth()}
+                    dashboard={missionsDashboard()}
+                    model={missionWorkspaceModel()}
+                    snapshot={missionWorkspaceSnapshot()}
+                    loadState={missionWorkspaceLoad()}
+                    errorMessage={missionLoadErrorMessage()}
+                    resolveDeepLink={missionDeepLink}
+                    isHovered={isHovered}
+                    theme={semanticTheme()}
+                  />
+                </Show>
+                <Show when={activeDockTab() === "activity"}>
+                  <ActivitySurface theme={semanticTheme()} projection={activityProjection()} />
+                </Show>
+              </>
+            }
+          />
+        </ApplicationShell>
         {/* Native COMMAND PALETTE overlay. Presentation stays handler-free;
           the root uses the same projection for render and pointer hit-testing.
           The original tmux paste-buffer picker remains the second level. */}

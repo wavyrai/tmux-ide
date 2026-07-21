@@ -696,54 +696,28 @@ function sameSnapshot(a: SemanticThemeSnapshot, b: SemanticThemeSnapshot): boole
 const compatibilityTheme = DARK_THEME;
 
 /**
- * Card 22.3b owns these root-composition writes. Keeping the list executable
- * prevents optional DARK_THEME fallbacks from becoming an undocumented public
- * contract while this adapter card deliberately leaves app.tsx untouched.
- */
-export const CARD_22_3B_LIVE_THEME_WIRING_DEFERRALS = [
-  { component: "Sidebar", prop: "theme", owner: "app.tsx" },
-  { component: "MissionsSurface", prop: "semanticTheme", owner: "app.tsx" },
-] as const;
-
-/**
  * Temporary names retained for app.tsx and pre-Card-22 leaves. Card 22.3 owns
  * their removal after every consumer receives a live SemanticThemeSnapshot.
  */
 export const LEGACY_THEME_ALIAS_IDS = [
   "DEFAULT_FG",
   "DEFAULT_BG",
-  "SIDEBAR_BG",
   "ACCENT",
   "MUTED",
   "BADGE_BG",
-  "FOCUS_BORDER_FG",
   "TAB_ACTIVE_BG",
   "HOVER_BG",
-  "BUTTON_HOVER_BG",
-  "CHIP_ATTN_BG",
 ] as const;
 
 export const DEFAULT_FG = compatibilityTheme.colors.foreground;
 export const DEFAULT_BG = compatibilityTheme.colors.background;
 
-/** The sidebar's surface — one lift above DEFAULT_BG so the nav column reads as
- *  chrome, not as content. */
-export const SIDEBAR_BG = compatibilityTheme.colors.surface;
 export const ACCENT = compatibilityTheme.colors.accent;
 export const MUTED = compatibilityTheme.colors.mutedForeground;
 export const BADGE_BG = compatibilityTheme.colors.accentMuted;
-
-/** Focused-pane gutter hairline: focus is an accent signal, not agent status. */
-export const FOCUS_BORDER_FG = compatibilityTheme.colors.focusBorder;
 
 /** The selected row/tab. Always wins over HOVER_BG. */
 export const TAB_ACTIVE_BG = compatibilityTheme.colors.selection;
 
 /** A single subtle pointer-hover tint. */
 export const HOVER_BG = compatibilityTheme.colors.hover;
-
-/** A chip/button under the pointer. */
-export const BUTTON_HOVER_BG = compatibilityTheme.colors.buttonHover;
-
-/** The attention flash: a short-lived "look here" signal, distinct from focus. */
-export const CHIP_ATTN_BG = compatibilityTheme.colors.attention;

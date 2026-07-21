@@ -155,7 +155,13 @@ try {
       `const [shellPath, webTarget, mode] = process.argv.slice(2);\n` +
       `const shell = await import(pathToFileURL(shellPath).href);\n` +
       `if (typeof shell.projectWorkbenchShell !== "function") throw new Error("missing workbench shell runtime");\n` +
-      `const projection = shell.projectWorkbenchShell({ width: 80, height: 24, dockMode: "open", persistedDockHeight: 8, activeDockTab: "missions", focusZone: "dock-tabs" });\n` +
+      `const dockTools = [\n` +
+      `  { id: "files", icon: "files", label: "Files", shortcut: "F3" },\n` +
+      `  { id: "changes", icon: "changes", label: "Changes", shortcut: "F4" },\n` +
+      `  { id: "missions", icon: "missions", label: "Missions", shortcut: "F6" },\n` +
+      `  { id: "activity", icon: "activity", label: "Activity", shortcut: "F9" },\n` +
+      `];\n` +
+      `const projection = shell.projectWorkbenchShell({ width: 80, height: 24, dockMode: "open", persistedDockHeight: 8, activeDockTab: "missions", focusZone: "dock-tabs", dockTools });\n` +
       `if (projection.activeDockTab !== "missions") throw new Error("workbench shell runtime failed");\n` +
       `const browserWindow = new Window({ url: "http://localhost/" });\n` +
       `Object.defineProperties(globalThis, {\n` +

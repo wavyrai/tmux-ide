@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { COHESION_FIXTURE_V1, projectApplicationShellV1 } from "@tmux-ide/contracts";
 import {
   projectWorkbenchShell,
   moveWorkbenchDockTab,
@@ -16,6 +17,7 @@ const DOCK_EXCLUDES_TERMINAL_AND_HOME: Extract<
   : false = true;
 
 function input(overrides: Partial<WorkbenchShellInput> = {}): WorkbenchShellInput {
+  const shell = projectApplicationShellV1(COHESION_FIXTURE_V1);
   return {
     width: 120,
     height: 40,
@@ -25,6 +27,7 @@ function input(overrides: Partial<WorkbenchShellInput> = {}): WorkbenchShellInpu
     focusZone: "canvas",
     hoveredDockTab: null,
     attentionDockTabs: new Set(["activity"]),
+    dockTools: shell.bottomDock.tools,
     ...overrides,
   };
 }
@@ -191,6 +194,7 @@ describe("WorkbenchShell projection", () => {
 
   it("keeps disabled tabs visible, inert, and out of keyboard traversal", () => {
     const disabled = new Set<WorkbenchDockTabId>(["changes", "missions"]);
+    const dockTools = input().dockTools;
     const projection = projectWorkbenchShell(
       input({ activeDockTab: "changes", disabledDockTabs: disabled, focusZone: "dock-tabs" }),
     );
@@ -205,8 +209,8 @@ describe("WorkbenchShell projection", () => {
     expect(workbenchShellHitTest(projection, changes.x, projection.dockTabs.y)).toEqual({
       kind: "dock-tabs",
     });
-    expect(moveWorkbenchDockTab("files", "next", disabled)).toBe("activity");
-    expect(moveWorkbenchDockTab("activity", "previous", disabled)).toBe("files");
+    expect(moveWorkbenchDockTab("files", "next", dockTools, disabled)).toBe("activity");
+    expect(moveWorkbenchDockTab("activity", "previous", dockTools, disabled)).toBe("files");
   });
 
   it("routes every padded tab/action edge and leaves the blank strip inert", () => {

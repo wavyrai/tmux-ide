@@ -1,10 +1,9 @@
 /* @jsxImportSource @opentui/solid */
 import { MouseButtons } from "@opentui/core/testing";
 import { useKeyboard } from "@opentui/solid";
-import { createSignal, onCleanup } from "solid-js";
+import { Show, createSignal, onCleanup } from "solid-js";
 import { describe, expect, it } from "bun:test";
-import { buildHostedPanelViews } from "../panel-host.ts";
-import { SelectableRow, Surface } from "../recipes.tsx";
+import { SelectableRow } from "../recipes.tsx";
 import { createSemanticThemeSnapshot } from "../theme.ts";
 import {
   destroyTestRenderer,
@@ -12,64 +11,117 @@ import {
   renderForTest,
   stableFrame,
 } from "../testing/renderer-harness.test.ts";
-import {
-  applicationShellHitTest,
-  projectApplicationShell,
-  type ApplicationShellSession,
-} from "./application-shell.ts";
+import { applicationShellHitTest, projectApplicationShell } from "./application-shell.ts";
 import { ApplicationShell } from "./application-shell.tsx";
+import {
+  applicationShellPaletteInvocation,
+  applicationShellSurfaceInvocation,
+  projectOpenTuiApplicationShell,
+  reduceOpenTuiApplicationShellCommand,
+} from "./application-shell-controller.ts";
+import {
+  projectWorkbenchShell,
+  workbenchShellHitTest,
+  type WorkbenchDockMode,
+  type WorkbenchFocusZone,
+} from "./workbench-shell.ts";
+import { WorkbenchShell } from "./workbench-shell.tsx";
 
-const views = buildHostedPanelViews([
-  { id: "home", title: "Home", panel: "home" },
-  { id: "terminal", title: "Terminal", panel: "terminals" },
-  { id: "files", title: "Files", panel: "files" },
-  { id: "changes", title: "Changes", panel: "diff" },
-  { id: "missions", title: "Missions", panel: "missions" },
-]);
-const sessions: readonly ApplicationShellSession[] = [
-  { name: "tmux-ide", status: "working" },
-  { name: "website", status: "blocked" },
-  { name: "docs", status: "idle" },
-];
-
-async function renderShell(width: number, height: number, disposed?: () => void) {
+async function renderProductionShell(
+  width: number,
+  height: number,
+  initialDockMode: WorkbenchDockMode,
+  disposed?: () => void,
+) {
   const theme = createSemanticThemeSnapshot({ mode: "dark" });
   const events: string[] = [];
-  let activeValue = "terminal";
-  let messageValue = "ready";
+  let activeValue: "home" | "terminals" = "terminals";
+  let dockModeValue = initialDockMode;
+  let focusValue: WorkbenchFocusZone = "canvas";
+  let paletteValue = false;
+  let drivePalette = (_open: boolean) => {};
+  let driveFocus = () => {};
 
   function Harness() {
     const [active, setActive] = createSignal(activeValue);
-    const [message, setMessage] = createSignal(messageValue);
-    const projection = () =>
+    const [dockMode, setDockMode] = createSignal(dockModeValue);
+    const [focus, setFocus] = createSignal(focusValue);
+    const [palette, setPalette] = createSignal(paletteValue);
+    const semantic = () =>
+      projectOpenTuiApplicationShell({
+        projectName: "tmux-ide",
+        rootLabel: "/workspace/tmux-ide",
+        workspaceName: "main",
+        activeMode: active(),
+        dockMode: dockMode(),
+        activeDockTool: "missions",
+        focusZone:
+          focus() === "canvas" ? "canvas" : focus() === "dock-tabs" ? "dock-tabs" : "dock-body",
+        focusedPaneId: null,
+        terminalInputPaneId: null,
+        paletteOpen: palette(),
+        sessions: [
+          { name: "main", status: "working" },
+          { name: "website", status: "blocked" },
+        ],
+        activeSession: "main",
+        agents: [{ paneId: "%7", name: "Codex", kind: "codex", status: "working" }],
+        notification: palette() ? "Command palette open" : "ready",
+      });
+    const shell = () =>
       projectApplicationShell({
         width,
         height,
         preferredSidebarWidth: 28,
-        views,
-        activeViewId: active(),
+        shell: semantic(),
         hoveredTabIndex: null,
-        attentionViewIds: new Set(["missions"]),
-        sessions,
-        activeSession: "tmux-ide",
         quitHint: "^q quit",
       });
-    const activate = (viewId: string) => {
-      activeValue = viewId;
-      messageValue = `selected ${viewId}`;
-      setActive(viewId);
-      setMessage(messageValue);
-      events.push(`view:${viewId}`);
+    const workbench = () =>
+      projectWorkbenchShell({
+        width: shell().content.width,
+        height: shell().content.height,
+        dockMode: dockMode(),
+        persistedDockHeight: null,
+        activeDockTab: "missions",
+        focusZone: focus(),
+        dockTools: semantic().bottomDock.tools,
+      });
+    const activate = (surface: "home" | "terminals") => {
+      const result = reduceOpenTuiApplicationShellCommand(
+        semantic(),
+        applicationShellSurfaceInvocation(semantic(), surface, {
+          kind: "keyboard",
+          surface: "application-bar",
+        }),
+      );
+      activeValue = result.next.activeMode;
+      setActive(activeValue);
+      events.push(`surface:${surface}`);
+    };
+    const setPaletteOpen = (open: boolean) => {
+      reduceOpenTuiApplicationShellCommand(
+        semantic(),
+        applicationShellPaletteInvocation(semantic(), open, {
+          kind: "keyboard",
+          surface: open ? "application-bar" : "command-palette",
+        }),
+      );
+      paletteValue = open;
+      setPalette(open);
+      events.push(open ? "palette:open" : "palette:close");
+    };
+    drivePalette = setPaletteOpen;
+    driveFocus = () => {
+      focusValue = focus() === "canvas" ? "dock-tabs" : "canvas";
+      setFocus(focusValue);
     };
     useKeyboard((event) => {
-      if (event.name === "right") {
-        const index = views.findIndex((view) => view.id === active());
-        activate(views[Math.min(views.length - 1, index + 1)]!.id);
-      } else if (event.name === "f5") {
-        messageValue = "palette";
-        setMessage(messageValue);
-        events.push("palette");
-      }
+      const key = event.name.toLowerCase();
+      if (key === "left") activate("home");
+      else if (key === "f5") setPaletteOpen(true);
+      else if (key === "escape" && palette()) setPaletteOpen(false);
+      else if (key === "tab") driveFocus();
     });
     onCleanup(() => disposed?.());
     return (
@@ -78,61 +130,63 @@ async function renderShell(width: number, height: number, disposed?: () => void)
         height={height}
         overflow="hidden"
         onMouseDown={(event) => {
-          const hit = applicationShellHitTest(projection(), event.x, event.y);
-          if (hit?.kind === "view") activate(hit.viewId);
-          else if (hit?.kind === "session") events.push(`session:${hit.session}`);
-          else if (hit?.kind === "palette") {
-            messageValue = "palette";
-            setMessage(messageValue);
-            events.push("palette");
+          const shellHit = applicationShellHitTest(shell(), event.x, event.y);
+          if (shellHit?.kind === "view") activate(shellHit.viewId);
+          if (shellHit?.kind === "palette") setPaletteOpen(true);
+          const dockHit = workbenchShellHitTest(
+            workbench(),
+            event.x - shell().layout.sidebar.width,
+            event.y - shell().layout.tabbar.height,
+          );
+          if (dockHit?.kind === "dock-action") {
+            dockModeValue = dockHit.nextMode;
+            setDockMode(dockModeValue);
+            events.push(`dock:${dockModeValue}`);
           }
         }}
       >
         <ApplicationShell
           theme={theme}
-          projection={projection()}
-          project="tmux-ide"
-          mode={active()}
-          notification={message()}
-          help="F5 palette · arrows move · ^q quit"
-          note="M31 application workspace"
-          rightChips={[
-            { id: "context", label: "⧉ tmux-ide ", context: true },
-            { id: "mission", label: "!1 blocked ", attention: true },
-          ]}
+          projection={shell()}
+          help="F5 palette · tab focus · ^q quit"
+          note="production application root"
         >
-          <Surface
+          <WorkbenchShell
             theme={theme}
-            title={`${projection().layout.variant} workspace`}
-            focused
-            width={projection().content.width}
-            height={projection().content.height}
-          >
-            <SelectableRow
-              theme={theme}
-              label="Persistent application shell"
-              meta={active()}
-              width={Math.max(1, projection().content.width - 2)}
-              selected
-            />
-            <SelectableRow
-              theme={theme}
-              label="PaneFrame lands in the next card"
-              meta="M31.2"
-              width={Math.max(1, projection().content.width - 2)}
-              focused
-            />
-            <SelectableRow
-              theme={theme}
-              label="Mission runtime stays harness-neutral"
-              meta="contract"
-              width={Math.max(1, projection().content.width - 2)}
-              attention
-              status="blocked"
-              tone="blocked"
-            />
-          </Surface>
+            projection={workbench()}
+            canvas={
+              <SelectableRow
+                theme={theme}
+                label="Native terminal canvas"
+                meta={`${active()} · ${focus()}`}
+                width={workbench().canvasBody.width}
+                focused={focus() === "canvas"}
+              />
+            }
+            dockBody={
+              <SelectableRow
+                theme={theme}
+                label="Native Missions surface"
+                meta={dockMode()}
+                width={workbench().dockBodyContent.width}
+                focused={focus() === "dock-body"}
+              />
+            }
+          />
         </ApplicationShell>
+        <Show when={palette()}>
+          <box
+            position="absolute"
+            left={Math.max(1, Math.floor(width / 4))}
+            top={3}
+            width={Math.max(20, Math.floor(width / 2))}
+            border
+            borderColor={theme.colors.focus}
+            backgroundColor={theme.colors.surface}
+          >
+            <text fg={theme.colors.foreground}>Command palette</text>
+          </box>
+        </Show>
       </box>
     );
   }
@@ -143,70 +197,86 @@ async function renderShell(width: number, height: number, disposed?: () => void)
     setup,
     events,
     active: () => activeValue,
-    message: () => messageValue,
-    projection: () =>
+    dockMode: () => dockModeValue,
+    focus: () => focusValue,
+    palette: () => paletteValue,
+    setPaletteOpen: (open: boolean) => drivePalette(open),
+    toggleFocus: () => driveFocus(),
+    shell: () =>
       projectApplicationShell({
         width,
         height,
         preferredSidebarWidth: 28,
-        views,
-        activeViewId: activeValue,
+        shell: projectOpenTuiApplicationShell({
+          projectName: "tmux-ide",
+          rootLabel: "/workspace/tmux-ide",
+          workspaceName: "main",
+          activeMode: activeValue,
+          dockMode: dockModeValue,
+          activeDockTool: "missions",
+          focusZone:
+            focusValue === "canvas"
+              ? "canvas"
+              : focusValue === "dock-tabs"
+                ? "dock-tabs"
+                : "dock-body",
+          focusedPaneId: null,
+          terminalInputPaneId: null,
+          paletteOpen: paletteValue,
+          sessions: [{ name: "main", status: "working" }],
+          activeSession: "main",
+          agents: [],
+          notification: "ready",
+        }),
         hoveredTabIndex: null,
-        attentionViewIds: new Set(["missions"]),
-        sessions,
-        activeSession: "tmux-ide",
         quitHint: "^q quit",
       }),
     frame: () => setup.captureCharFrame(),
   };
 }
 
-describe("ApplicationShell OpenTUI renderer", () => {
+describe("production ApplicationShell → WorkbenchShell OpenTUI renderer", () => {
   it.each([
-    [80, 24, "compact"],
-    [120, 40, "standard"],
-    [200, 60, "wide"],
-  ] as const)("records the %sx%s %s acceptance baseline", async (width, height, variant) => {
-    const harness = await renderShell(width, height);
+    [80, 24, "collapsed"],
+    [120, 40, "open"],
+    [200, 60, "maximized"],
+  ] as const)("records the %sx%s %s dock acceptance baseline", async (width, height, dockMode) => {
+    const harness = await renderProductionShell(width, height, dockMode);
     const frame = harness.frame();
     expectFrameBounds(frame, width, height);
     expect(stableFrame(frame)).toMatchSnapshot();
-    expect(stableFrame(frame)).toContain(`${variant} workspace`);
-    expect(stableFrame(frame)).toContain("M31 application workspace");
-    expect(stableFrame(frame)).toContain("F5");
-    expect(stableFrame(frame)).toContain("^q quit");
+    expect(stableFrame(frame)).toContain("production application");
+    expect(stableFrame(frame)).toContain("F5 palette");
+    expect(harness.dockMode()).toBe(dockMode);
   });
 
-  it("routes keyboard and pointer actions through the harness input owner", async () => {
-    const harness = await renderShell(120, 40);
-    harness.setup.mockInput.pressArrow("right");
+  it("routes palette open/close, focus, and canonical surface pointer input", async () => {
+    const harness = await renderProductionShell(120, 40, "open");
+    harness.setPaletteOpen(true);
     await harness.setup.renderOnce();
-    expect(harness.active()).toBe("files");
-    expect(stableFrame(harness.frame())).toContain("selected files");
+    expect(harness.palette()).toBe(true);
+    expect(stableFrame(harness.frame())).toContain("Command palette");
 
-    const missions = harness.projection().tabs.find((tab) => tab.id === "missions")!;
+    harness.setPaletteOpen(false);
+    harness.toggleFocus();
+    await harness.setup.renderOnce();
+    expect(harness.palette()).toBe(false);
+    expect(harness.focus()).toBe("dock-tabs");
+
+    const home = harness.shell().tabs.find(({ id }) => id === "home")!;
     await harness.setup.mockMouse.click(
-      missions.span.start + Math.floor(missions.span.width / 2),
+      home.span.start + Math.floor(home.span.width / 2),
       0,
       MouseButtons.LEFT,
     );
     await harness.setup.renderOnce();
-    expect(harness.active()).toBe("missions");
-
-    const hint = harness.projection().sidebarHint.buttonSpan;
-    await harness.setup.mockMouse.click(
-      hint.start,
-      harness.projection().layout.sidebar.y + harness.projection().layout.sidebar.height - 1,
-      MouseButtons.LEFT,
-    );
-    await harness.setup.renderOnce();
-    expect(harness.message()).toBe("palette");
-    expect(harness.events).toEqual(["view:files", "view:missions", "palette"]);
+    expect(harness.active()).toBe("home");
+    expect(harness.events).toEqual(["palette:open", "palette:close", "surface:home"]);
   });
 
   it("destroys the renderer and disposes the Solid root", async () => {
     let disposed = false;
-    const harness = await renderShell(80, 24, () => {
+    const harness = await renderProductionShell(80, 24, "open", () => {
       disposed = true;
     });
     destroyTestRenderer(harness.setup);

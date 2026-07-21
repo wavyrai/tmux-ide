@@ -3,6 +3,7 @@ import { MouseButtons } from "@opentui/core/testing";
 import { useKeyboard } from "@opentui/solid";
 import { createSignal } from "solid-js";
 import { describe, expect, it } from "bun:test";
+import { COHESION_FIXTURE_V1, projectApplicationShellV1 } from "@tmux-ide/contracts";
 import { SelectableRow } from "../recipes.tsx";
 import { createSemanticThemeSnapshot } from "../theme.ts";
 import { expectFrameBounds, renderForTest, stableFrame } from "../testing/renderer-harness.test.ts";
@@ -16,6 +17,7 @@ import {
 import { WorkbenchShell } from "./workbench-shell.tsx";
 
 async function renderWorkbench(width: number, height: number) {
+  const shell = projectApplicationShellV1(COHESION_FIXTURE_V1);
   const theme = createSemanticThemeSnapshot({ mode: "dark" });
   const calls: string[] = [];
   let modeValue: WorkbenchDockMode = "open";
@@ -37,6 +39,7 @@ async function renderWorkbench(width: number, height: number) {
         focusZone: focus(),
         hoveredDockTab: null,
         attentionDockTabs: new Set(["activity"]),
+        dockTools: shell.bottomDock.tools,
       });
     useKeyboard((event) => {
       if (event.name === "tab") {
@@ -159,6 +162,7 @@ async function renderWorkbench(width: number, height: number) {
         focusZone: focusValue,
         hoveredDockTab: null,
         attentionDockTabs: new Set(["activity"]),
+        dockTools: shell.bottomDock.tools,
       }),
     frame: () => setup.captureCharFrame(),
   };

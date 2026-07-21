@@ -1,6 +1,8 @@
 import { terminalDisplayWidth } from "../panel-host.ts";
+import type { SemanticIconId } from "@tmux-ide/contracts";
 import type { Rect } from "../recipes.ts";
 import { clipWorkspaceText } from "./text.ts";
+import { workspaceIcon } from "./icons.ts";
 import {
   workbenchDockNavigationTarget,
   type WorkbenchDockNavigationTabId,
@@ -12,6 +14,13 @@ export type WorkbenchFocusZone = "canvas" | "dock-tabs" | "dock-body";
 export type WorkbenchDockTabId = WorkbenchDockNavigationTabId;
 export { workbenchDockNavigationTarget } from "../../../ui/workbench-dock/navigation.ts";
 export type WorkbenchDockActionId = "toggle-collapse" | "toggle-maximize";
+
+export interface WorkbenchDockToolDefinition {
+  id: WorkbenchDockTabId;
+  icon: SemanticIconId;
+  label: string;
+  shortcut: string;
+}
 
 export interface WorkbenchShellInput {
   width: number;
@@ -25,6 +34,8 @@ export interface WorkbenchShellInput {
   attentionDockTabs?: ReadonlySet<WorkbenchDockTabId>;
   disabledDockTabs?: ReadonlySet<WorkbenchDockTabId>;
   dockTabShortcuts?: Partial<Record<WorkbenchDockTabId, string>>;
+  /** Product identity/order comes only from the canonical application shell. */
+  dockTools: readonly WorkbenchDockToolDefinition[];
 }
 
 export interface WorkbenchDockConstraints {
@@ -96,21 +107,6 @@ export type WorkbenchShellHit =
   | { kind: "dock-body-rail"; tabId: WorkbenchDockTabId }
   | null;
 
-interface DockTabDefinition {
-  id: WorkbenchDockTabId;
-  title: string;
-  compactTitle: string;
-  glyph: string;
-  shortcut: string;
-}
-
-const DOCK_TABS: readonly DockTabDefinition[] = [
-  { id: "files", title: "Files", compactTitle: "Files", glyph: "▤", shortcut: "F3" },
-  { id: "changes", title: "Changes", compactTitle: "Changes", glyph: "±", shortcut: "F4" },
-  { id: "missions", title: "Missions", compactTitle: "Missions", glyph: "◆", shortcut: "F6" },
-  { id: "activity", title: "Activity", compactTitle: "Activity", glyph: "◌", shortcut: "F9" },
-];
-
 const TAB_BAR_ROWS = 1;
 
 export function workbenchVariant(width: number, height: number): WorkbenchVariant {
@@ -163,7 +159,11 @@ export function projectWorkbenchShell(input: WorkbenchShellInput): WorkbenchShel
   const dockBodyRail = contentRail(dockBody);
   const dockBodyContent = contentBody(dockBody);
   const focusZone = effectiveFocusZone(input.focusZone, canvas, dockBody);
-  const activeDockTab = enabledDockTab(input.activeDockTab, input.disabledDockTabs);
+  const activeDockTab = enabledDockTab(
+    input.activeDockTab,
+    input.dockTools,
+    input.disabledDockTabs,
+  );
   const actions = projectDockActions(width, variant, dockMode);
   const tabRight = Math.max(0, (actions[0]?.x ?? width) - (actions.length > 0 ? 1 : 0));
   const tabs = projectDockTabs(input, variant, focusZone, tabRight, activeDockTab);
@@ -201,11 +201,15 @@ export function projectWorkbenchShell(input: WorkbenchShellInput): WorkbenchShel
 export function moveWorkbenchDockTab(
   active: WorkbenchDockTabId,
   direction: "next" | "previous",
+  dockTools: readonly Pick<WorkbenchDockToolDefinition, "id">[],
   disabled: ReadonlySet<WorkbenchDockTabId> = new Set(),
 ): WorkbenchDockTabId {
   return (
     workbenchDockNavigationTarget(
-      DOCK_TABS.map((tab) => ({ id: tab.id, disabled: disabled.has(tab.id) })),
+      dockTools.map((tool) => ({
+        id: tool.id,
+        disabled: disabled.has(tool.id),
+      })),
       active,
       { name: direction === "next" ? "right" : "left" },
     ) ?? active
@@ -275,20 +279,22 @@ function projectDockTabs(
   activeDockTab: WorkbenchDockTabId,
 ): WorkbenchDockTabProjection[] {
   let x = 0;
-  return DOCK_TABS.map((definition, index) => {
-    const selected = definition.id === activeDockTab;
-    const attention = input.attentionDockTabs?.has(definition.id) ?? false;
-    const disabled = input.disabledDockTabs?.has(definition.id) ?? false;
-    const shortcut = input.dockTabShortcuts?.[definition.id] ?? definition.shortcut;
+  const dockTools = input.dockTools;
+  return dockTools.map((definition, index) => {
+    const id = definition.id as WorkbenchDockTabId;
+    const selected = id === activeDockTab;
+    const attention = input.attentionDockTabs?.has(id) ?? false;
+    const disabled = input.disabledDockTabs?.has(id) ?? false;
+    const shortcut = input.dockTabShortcuts?.[id] ?? definition.shortcut;
     const desired = dockTabLabel(definition, shortcut, variant, selected, attention, disabled);
-    const remainingTabs = DOCK_TABS.length - index;
+    const remainingTabs = dockTools.length - index;
     const available = Math.max(0, rightEdge - x);
     const fairWidth = remainingTabs > 0 ? Math.floor(available / remainingTabs) : 0;
     const label = clipWorkspaceText(desired, fairWidth);
     const width = terminalDisplayWidth(label);
     const projection: WorkbenchDockTabProjection = {
-      id: definition.id,
-      title: definition.title,
+      id,
+      title: definition.label,
       label,
       shortcut,
       selected,
@@ -363,7 +369,7 @@ function projectDockActions(
 }
 
 function dockTabLabel(
-  definition: DockTabDefinition,
+  definition: WorkbenchDockToolDefinition,
   shortcut: string,
   variant: WorkbenchVariant,
   selected: boolean,
@@ -371,17 +377,18 @@ function dockTabLabel(
   disabled: boolean,
 ): string {
   const marker = disabled ? "×" : attention ? "!" : selected ? "●" : " ";
-  const title = variant === "compact" ? definition.compactTitle : definition.title;
+  const title = definition.label;
   const shortcutLabel = variant === "wide" && shortcut ? `${shortcut} ` : "";
-  return ` ${shortcutLabel}${marker}${definition.glyph} ${title} `;
+  return ` ${shortcutLabel}${marker}${workspaceIcon(definition.icon)} ${title} `;
 }
 
 function enabledDockTab(
   requested: WorkbenchDockTabId,
+  dockTools: readonly Pick<WorkbenchDockToolDefinition, "id">[],
   disabled: ReadonlySet<WorkbenchDockTabId> | undefined,
 ): WorkbenchDockTabId {
   if (!disabled?.has(requested)) return requested;
-  return moveWorkbenchDockTab(requested, "next", disabled);
+  return moveWorkbenchDockTab(requested, "next", dockTools, disabled);
 }
 
 function minimumCanvasRows(variant: WorkbenchVariant): number {
