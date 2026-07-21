@@ -36,3 +36,4 @@ export * from "./visual-recipes.ts";
 export * from "./pane-appearance.ts";
 export * from "./focus-overlay.ts";
 export * from "./cohesion-fixture.ts";
+export * from "./daemon-wire.ts";

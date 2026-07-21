@@ -8,6 +8,7 @@ Describe the change and the user-facing impact.
 - [ ] `npm test`
 - [ ] `pnpm docs:build`
 - [ ] `npm run pack:check`
+- [ ] `pnpm test:pack-installed` when CLI/daemon startup or packaging changed
 - [ ] `CHANGELOG.md` updated if release notes changed
 - [ ] README/docs updated when the CLI contract changed
 

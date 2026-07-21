@@ -43,6 +43,7 @@ import { restore } from "../packages/daemon/src/restore.ts";
 import { send } from "../packages/daemon/src/send.ts";
 import { IdeError } from "../packages/daemon/src/lib/errors.ts";
 import { printCommandError } from "../packages/daemon/src/lib/output.ts";
+import { runHeadlessDaemon } from "../packages/daemon/src/lib/headless-daemon.ts";
 import {
   wantsHostedApp,
   hostedEnvVars,
@@ -59,6 +60,7 @@ const { positionals, values } = parseArgs({
   strict: false,
   options: {
     json: { type: "boolean" },
+    headless: { type: "boolean" },
     row: { type: "string" },
     pane: { type: "string" },
     title: { type: "string" },
@@ -194,6 +196,7 @@ function printHelp() {
 
 ${bold("Usage:")}
   ${cyan("tmux-ide")}                    ${dim("Launch workspace config, or open the team cockpit if none")}
+  ${cyan("tmux-ide --headless")}         ${dim("Run the canonical daemon in this foreground process")}
   ${cyan("tmux-ide <path>")}             ${dim("Launch from a specific directory (cockpit if no config)")}
   ${cyan("tmux-ide setup")}              ${dim("Interactive TUI setup wizard")}
   ${cyan("tmux-ide setup --edit")}       ${dim("Open config tree editor")}
@@ -266,6 +269,7 @@ ${bold("Discover (in the TUI):")}
 
 ${bold("Flags:")}
   ${cyan("--json")}                      ${dim("Output as JSON (all commands)")}
+  ${cyan("--headless")}                  ${dim("Canonical daemon only; no tmux workspace or TUI")}
   ${cyan("--template <name>")}           ${dim("Use specific template for init")}
   ${cyan("--write")}                     ${dim("Write detected config to .tmux-ide/workspace.yml")}
   ${cyan("--dry-run")}                   ${dim("Preview migration/restore without writing")}
@@ -466,6 +470,26 @@ function launchApp(): void {
 }
 
 try {
+  if (values.headless) {
+    if (positionals.length > 0) {
+      throw new IdeError("--headless cannot be combined with a command or project path", {
+        code: "USAGE",
+        exitCode: 2,
+      });
+    }
+    const pkg = await import("../package.json");
+    await runHeadlessDaemon({
+      port: values.port,
+      json,
+      expectedVersion: pkg.version,
+    });
+    // The daemon cleanup is complete here. Exit explicitly because stores and
+    // native adapters may retain harmless timers/handles that must not turn a
+    // stopped desktop-owned daemon into a zombie process.
+    // Flush a piped JSON/human status before the explicit owner exit.
+    await new Promise<void>((resolveFlush) => process.stdout.write("", resolveFlush));
+    process.exit(0);
+  }
   switch (command) {
     case "start": {
       // npm-style staleness nudge: one dim stderr line when a newer version is

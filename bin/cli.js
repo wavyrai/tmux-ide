@@ -78,25 +78,431 @@ var init_hq = __esm({
   }
 });
 
-// packages/contracts/src/ide-config.ts
+// packages/contracts/src/workspace-state.ts
 import { z as z3 } from "zod";
+function projectRelativePathStaysContained(path2) {
+  if (/^(?:[/\\]|[A-Za-z]:)/u.test(path2)) return false;
+  let depth = 0;
+  for (const segment of path2.split(/[/\\]+/u)) {
+    if (segment === "" || segment === ".") continue;
+    if (segment === "..") {
+      if (depth === 0) return false;
+      depth -= 1;
+    } else {
+      depth += 1;
+    }
+  }
+  return true;
+}
+function paneTreeLimitFailure(value) {
+  const stack = [{ value, depth: 1 }];
+  let nodes = 0;
+  while (stack.length > 0) {
+    const current = stack.pop();
+    nodes += 1;
+    if (nodes > WORKSPACE_STATE_MAX_TREE_NODES) return "pane tree node limit exceeded";
+    if (current.depth > WORKSPACE_STATE_MAX_TREE_DEPTH) return "pane tree depth limit exceeded";
+    if (current.value && typeof current.value === "object" && !Array.isArray(current.value) && "type" in current.value && current.value.type === "split" && "children" in current.value && Array.isArray(current.value.children)) {
+      if (current.value.children.length > 8) return "split child limit exceeded";
+      for (const child of current.value.children) {
+        stack.push({ value: child, depth: current.depth + 1 });
+      }
+    }
+  }
+  return null;
+}
+var WORKSPACE_STATE_VERSION, WORKSPACE_SEMANTIC_PANE_OPTION, WORKSPACE_STATE_MAX_LAYOUTS, WORKSPACE_STATE_MAX_CHECKOUTS, WORKSPACE_STATE_MAX_PANES, WORKSPACE_STATE_MAX_TREE_DEPTH, WORKSPACE_STATE_MAX_TREE_NODES, WORKSPACE_STATE_MAX_ID_LENGTH, WORKSPACE_STATE_MAX_NAME_LENGTH, RESERVED_RECORD_KEYS, SafeStringSchemaZ, WorkspaceIdSchemaZ, NullableTextSchemaZ, AbsolutePathSchemaZ, WorkspaceTimestampSchemaZ, WorkspaceProjectIdentitySchemaZ, WorkspacePaneRectSchemaZ, WorkspacePaneCwdSchemaZ, WorkspacePaneDefinitionSchemaZ, WorkspacePaneTreeNodeRecursiveSchemaZ, WorkspacePaneTreeNodeSchemaZ, WorkspacePaneTopologySchemaZ, WorkspaceDockSnapshotSchemaZ, WorkspaceWorkbenchStateSchemaZ, WorkspaceLayoutSnapshotSchemaZ, WorkspaceNamedLayoutSchemaZ, WorkspacePaneBindingSchemaZ, WorkspaceRecoveryStateSchemaZ, WorkspaceCheckoutStateSchemaZ, WorkspaceStateV1SchemaZ, WorkspaceObservedPaneSchemaZ, WorkspaceObservationSchemaZ, WorkspaceLayoutApplyPlanSchemaZ, WorkspaceStateDiagnosticSchemaZ;
+var init_workspace_state = __esm({
+  "packages/contracts/src/workspace-state.ts"() {
+    "use strict";
+    WORKSPACE_STATE_VERSION = 1;
+    WORKSPACE_SEMANTIC_PANE_OPTION = "@tmux_ide_pane_id";
+    WORKSPACE_STATE_MAX_LAYOUTS = 32;
+    WORKSPACE_STATE_MAX_CHECKOUTS = 16;
+    WORKSPACE_STATE_MAX_PANES = 128;
+    WORKSPACE_STATE_MAX_TREE_DEPTH = 32;
+    WORKSPACE_STATE_MAX_TREE_NODES = 255;
+    WORKSPACE_STATE_MAX_ID_LENGTH = 128;
+    WORKSPACE_STATE_MAX_NAME_LENGTH = 80;
+    RESERVED_RECORD_KEYS = /* @__PURE__ */ new Set(["__proto__", "prototype", "constructor"]);
+    SafeStringSchemaZ = (max) => z3.string().min(1).max(max).refine((value) => !value.includes("\0"), "text must not contain NUL bytes");
+    WorkspaceIdSchemaZ = z3.string().min(1).max(WORKSPACE_STATE_MAX_ID_LENGTH).regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/u).refine((value) => !RESERVED_RECORD_KEYS.has(value), "reserved record key is not allowed");
+    NullableTextSchemaZ = (max) => SafeStringSchemaZ(max).nullable();
+    AbsolutePathSchemaZ = SafeStringSchemaZ(4096).refine(
+      (value) => /^(?:[/\\]{1,2}|[A-Za-z]:[/\\])/u.test(value),
+      "path must be absolute"
+    );
+    WorkspaceTimestampSchemaZ = z3.string().datetime({ offset: false });
+    WorkspaceProjectIdentitySchemaZ = z3.object({
+      identityKey: WorkspaceIdSchemaZ,
+      identitySource: z3.enum(["git-common-dir", "canonical-realpath"]),
+      identityAnchor: SafeStringSchemaZ(4096)
+    }).strict();
+    WorkspacePaneRectSchemaZ = z3.object({
+      left: z3.number().int().nonnegative(),
+      top: z3.number().int().nonnegative(),
+      width: z3.number().int().positive(),
+      height: z3.number().int().positive()
+    }).strict();
+    WorkspacePaneCwdSchemaZ = z3.discriminatedUnion("kind", [
+      z3.object({ kind: z3.literal("project-relative"), path: SafeStringSchemaZ(4096) }).strict().refine(
+        (cwd) => projectRelativePathStaysContained(cwd.path),
+        "project-relative cwd must remain inside the checkout"
+      ),
+      z3.object({ kind: z3.literal("absolute"), path: SafeStringSchemaZ(4096) }).strict().refine(
+        (cwd) => /^(?:[/\\]{1,2}|[A-Za-z]:[/\\])/u.test(cwd.path),
+        "absolute cwd must use an absolute path"
+      )
+    ]);
+    WorkspacePaneDefinitionSchemaZ = z3.object({
+      id: WorkspaceIdSchemaZ,
+      /** Split-node id in the semantic tree; null only for a single-pane root. */
+      parentId: WorkspaceIdSchemaZ.nullable(),
+      role: z3.enum(["agent", "shell"]),
+      harness: NullableTextSchemaZ(WORKSPACE_STATE_MAX_NAME_LENGTH),
+      title: NullableTextSchemaZ(WORKSPACE_STATE_MAX_NAME_LENGTH),
+      command: NullableTextSchemaZ(512),
+      /** Portable named-layout path; project-relative paths rebase across linked checkouts. */
+      cwd: WorkspacePaneCwdSchemaZ.nullable(),
+      rect: WorkspacePaneRectSchemaZ
+    }).strict();
+    WorkspacePaneTreeNodeRecursiveSchemaZ = z3.lazy(
+      () => z3.discriminatedUnion("type", [
+        z3.object({
+          type: z3.literal("pane"),
+          nodeId: WorkspaceIdSchemaZ,
+          paneId: WorkspaceIdSchemaZ
+        }).strict(),
+        z3.object({
+          type: z3.literal("split"),
+          nodeId: WorkspaceIdSchemaZ,
+          axis: z3.enum(["horizontal", "vertical"]),
+          children: z3.array(WorkspacePaneTreeNodeRecursiveSchemaZ).min(2).max(8),
+          weights: z3.array(z3.number().int().positive()).min(2).max(8)
+        }).strict().refine((node) => node.children.length === node.weights.length, {
+          message: "split weights must match children"
+        })
+      ])
+    );
+    WorkspacePaneTreeNodeSchemaZ = z3.unknown().superRefine((value, ctx) => {
+      const failure = paneTreeLimitFailure(value);
+      if (failure) ctx.addIssue({ code: z3.ZodIssueCode.custom, message: failure });
+    }).pipe(WorkspacePaneTreeNodeRecursiveSchemaZ);
+    WorkspacePaneTopologySchemaZ = z3.object({
+      panes: z3.record(WorkspaceIdSchemaZ, WorkspacePaneDefinitionSchemaZ),
+      root: WorkspacePaneTreeNodeSchemaZ.nullable()
+    }).strict().superRefine((topology, ctx) => {
+      const paneIds = Object.keys(topology.panes);
+      if (paneIds.length > WORKSPACE_STATE_MAX_PANES) {
+        ctx.addIssue({
+          code: z3.ZodIssueCode.custom,
+          message: "pane limit exceeded",
+          path: ["panes"]
+        });
+      }
+      for (const [key, pane] of Object.entries(topology.panes)) {
+        if (key !== pane.id) {
+          ctx.addIssue({
+            code: z3.ZodIssueCode.custom,
+            message: "pane record key must match pane id",
+            path: ["panes", key, "id"]
+          });
+        }
+      }
+      if (topology.root === null !== (paneIds.length === 0)) {
+        ctx.addIssue({
+          code: z3.ZodIssueCode.custom,
+          message: "topology root and panes must either both be empty or both be present",
+          path: ["root"]
+        });
+        return;
+      }
+      const visitedPanes = /* @__PURE__ */ new Set();
+      const visitedNodes = /* @__PURE__ */ new Set();
+      const visit = (node, parentId) => {
+        if (visitedNodes.has(node.nodeId)) {
+          ctx.addIssue({
+            code: z3.ZodIssueCode.custom,
+            message: "tree node ids must be unique",
+            path: ["root"]
+          });
+        }
+        visitedNodes.add(node.nodeId);
+        if (node.type === "split") {
+          for (const child of node.children) visit(child, node.nodeId);
+          return;
+        }
+        const pane = topology.panes[node.paneId];
+        if (!pane || visitedPanes.has(node.paneId)) {
+          ctx.addIssue({
+            code: z3.ZodIssueCode.custom,
+            message: "tree pane references must be unique and resolve",
+            path: ["root"]
+          });
+          return;
+        }
+        visitedPanes.add(node.paneId);
+        if (pane.parentId !== parentId) {
+          ctx.addIssue({
+            code: z3.ZodIssueCode.custom,
+            message: "pane parentId must match its semantic split parent",
+            path: ["panes", node.paneId, "parentId"]
+          });
+        }
+      };
+      if (topology.root) visit(topology.root, null);
+      if (visitedPanes.size !== paneIds.length) {
+        ctx.addIssue({
+          code: z3.ZodIssueCode.custom,
+          message: "every pane must occur exactly once in the tree",
+          path: ["root"]
+        });
+      }
+    });
+    WorkspaceDockSnapshotSchemaZ = z3.object({
+      activeTab: z3.enum(["files", "changes", "missions", "activity"]),
+      mode: z3.enum(["collapsed", "open", "maximized"]),
+      preferredHeight: z3.number().int().nonnegative().nullable(),
+      focusZone: z3.enum(["canvas", "dock-tabs", "dock-body"])
+    }).strict();
+    WorkspaceWorkbenchStateSchemaZ = z3.object({
+      canvasPanel: z3.enum(["home", "terminals"]),
+      dock: WorkspaceDockSnapshotSchemaZ
+    }).strict();
+    WorkspaceLayoutSnapshotSchemaZ = z3.object({
+      topology: WorkspacePaneTopologySchemaZ,
+      focusedPaneId: WorkspaceIdSchemaZ.nullable(),
+      workbench: WorkspaceWorkbenchStateSchemaZ
+    }).strict().superRefine((snapshot, ctx) => {
+      if (snapshot.focusedPaneId && !snapshot.topology.panes[snapshot.focusedPaneId]) {
+        ctx.addIssue({
+          code: z3.ZodIssueCode.custom,
+          message: "focused pane must exist in topology",
+          path: ["focusedPaneId"]
+        });
+      }
+    });
+    WorkspaceNamedLayoutSchemaZ = z3.object({
+      id: WorkspaceIdSchemaZ,
+      name: SafeStringSchemaZ(WORKSPACE_STATE_MAX_NAME_LENGTH).refine(
+        (value) => value.trim().length > 0,
+        "layout name must contain visible text"
+      ),
+      revision: z3.number().int().positive(),
+      createdAt: WorkspaceTimestampSchemaZ,
+      updatedAt: WorkspaceTimestampSchemaZ,
+      snapshot: WorkspaceLayoutSnapshotSchemaZ
+    }).strict();
+    WorkspacePaneBindingSchemaZ = z3.object({
+      semanticPaneId: WorkspaceIdSchemaZ,
+      runtimePaneId: z3.string().regex(/^%[0-9]+$/u),
+      lastSeenAt: WorkspaceTimestampSchemaZ
+    }).strict();
+    WorkspaceRecoveryStateSchemaZ = z3.object({
+      status: z3.enum(["empty", "clean", "reconciled"]),
+      capturedAt: WorkspaceTimestampSchemaZ.nullable(),
+      sessionName: NullableTextSchemaZ(256),
+      windowIndex: z3.number().int().nonnegative().nullable(),
+      windowName: NullableTextSchemaZ(256),
+      missingPaneIds: z3.array(WorkspaceIdSchemaZ).max(WORKSPACE_STATE_MAX_PANES),
+      externalPaneIds: z3.array(WorkspaceIdSchemaZ).max(WORKSPACE_STATE_MAX_PANES)
+    }).strict();
+    WorkspaceCheckoutStateSchemaZ = z3.object({
+      checkoutKey: WorkspaceIdSchemaZ,
+      projectRoot: AbsolutePathSchemaZ,
+      activeLayoutId: WorkspaceIdSchemaZ.nullable(),
+      topology: WorkspacePaneTopologySchemaZ,
+      focusedPaneId: WorkspaceIdSchemaZ.nullable(),
+      workbench: WorkspaceWorkbenchStateSchemaZ,
+      bindings: z3.record(WorkspaceIdSchemaZ, WorkspacePaneBindingSchemaZ),
+      recovery: WorkspaceRecoveryStateSchemaZ
+    }).strict().superRefine((checkout, ctx) => {
+      if (checkout.focusedPaneId && !checkout.topology.panes[checkout.focusedPaneId]) {
+        ctx.addIssue({
+          code: z3.ZodIssueCode.custom,
+          message: "focused pane must exist in topology",
+          path: ["focusedPaneId"]
+        });
+      }
+      const runtimePaneIds = /* @__PURE__ */ new Set();
+      for (const [key, binding] of Object.entries(checkout.bindings)) {
+        if (key !== binding.semanticPaneId || !checkout.topology.panes[key]) {
+          ctx.addIssue({
+            code: z3.ZodIssueCode.custom,
+            message: "binding key must match a live semantic pane",
+            path: ["bindings", key]
+          });
+        }
+        if (runtimePaneIds.has(binding.runtimePaneId)) {
+          ctx.addIssue({
+            code: z3.ZodIssueCode.custom,
+            message: "runtime pane bindings must be injective",
+            path: ["bindings", key, "runtimePaneId"]
+          });
+        }
+        runtimePaneIds.add(binding.runtimePaneId);
+      }
+    });
+    WorkspaceStateV1SchemaZ = z3.object({
+      version: z3.literal(WORKSPACE_STATE_VERSION),
+      project: WorkspaceProjectIdentitySchemaZ,
+      layouts: z3.record(WorkspaceIdSchemaZ, WorkspaceNamedLayoutSchemaZ),
+      checkouts: z3.record(WorkspaceIdSchemaZ, WorkspaceCheckoutStateSchemaZ)
+    }).strict().superRefine((state, ctx) => {
+      if (Object.keys(state.layouts).length > WORKSPACE_STATE_MAX_LAYOUTS) {
+        ctx.addIssue({
+          code: z3.ZodIssueCode.custom,
+          message: "layout limit exceeded",
+          path: ["layouts"]
+        });
+      }
+      if (Object.keys(state.checkouts).length > WORKSPACE_STATE_MAX_CHECKOUTS) {
+        ctx.addIssue({
+          code: z3.ZodIssueCode.custom,
+          message: "checkout limit exceeded",
+          path: ["checkouts"]
+        });
+      }
+      for (const [key, layout] of Object.entries(state.layouts)) {
+        if (key !== layout.id) {
+          ctx.addIssue({
+            code: z3.ZodIssueCode.custom,
+            message: "layout record key must match layout id",
+            path: ["layouts", key, "id"]
+          });
+        }
+      }
+      for (const [key, checkout] of Object.entries(state.checkouts)) {
+        if (key !== checkout.checkoutKey) {
+          ctx.addIssue({
+            code: z3.ZodIssueCode.custom,
+            message: "checkout record key must match checkout key",
+            path: ["checkouts", key, "checkoutKey"]
+          });
+        }
+        if (checkout.activeLayoutId && !state.layouts[checkout.activeLayoutId]) {
+          ctx.addIssue({
+            code: z3.ZodIssueCode.custom,
+            message: "active layout must exist",
+            path: ["checkouts", key, "activeLayoutId"]
+          });
+        }
+      }
+    });
+    WorkspaceObservedPaneSchemaZ = z3.object({
+      semanticPaneId: WorkspaceIdSchemaZ,
+      runtimePaneId: z3.string().regex(/^%[0-9]+$/u),
+      role: z3.enum(["agent", "shell"]),
+      harness: NullableTextSchemaZ(WORKSPACE_STATE_MAX_NAME_LENGTH).optional(),
+      title: NullableTextSchemaZ(WORKSPACE_STATE_MAX_NAME_LENGTH).optional(),
+      command: NullableTextSchemaZ(512).optional(),
+      cwd: NullableTextSchemaZ(4096).optional(),
+      rect: WorkspacePaneRectSchemaZ,
+      active: z3.boolean().optional()
+    }).strict();
+    WorkspaceObservationSchemaZ = z3.object({
+      checkoutKey: WorkspaceIdSchemaZ,
+      projectRoot: AbsolutePathSchemaZ,
+      observedAt: WorkspaceTimestampSchemaZ,
+      sessionName: NullableTextSchemaZ(256),
+      windowIndex: z3.number().int().nonnegative().nullable(),
+      windowName: NullableTextSchemaZ(256),
+      panes: z3.array(WorkspaceObservedPaneSchemaZ).max(WORKSPACE_STATE_MAX_PANES),
+      focusedPaneId: WorkspaceIdSchemaZ.nullable(),
+      workbench: WorkspaceWorkbenchStateSchemaZ
+    }).strict().superRefine((observation2, ctx) => {
+      const semanticPaneIds = /* @__PURE__ */ new Set();
+      const runtimePaneIds = /* @__PURE__ */ new Set();
+      for (const [index, pane] of observation2.panes.entries()) {
+        if (semanticPaneIds.has(pane.semanticPaneId)) {
+          ctx.addIssue({
+            code: z3.ZodIssueCode.custom,
+            message: "observed semantic pane ids must be unique",
+            path: ["panes", index, "semanticPaneId"]
+          });
+        }
+        if (runtimePaneIds.has(pane.runtimePaneId)) {
+          ctx.addIssue({
+            code: z3.ZodIssueCode.custom,
+            message: "observed runtime pane ids must be unique",
+            path: ["panes", index, "runtimePaneId"]
+          });
+        }
+        semanticPaneIds.add(pane.semanticPaneId);
+        runtimePaneIds.add(pane.runtimePaneId);
+      }
+    });
+    WorkspaceLayoutApplyPlanSchemaZ = z3.object({
+      layoutId: WorkspaceIdSchemaZ,
+      checkoutKey: WorkspaceIdSchemaZ,
+      projectRoot: AbsolutePathSchemaZ,
+      sessionName: NullableTextSchemaZ(256),
+      windowIndex: z3.number().int().nonnegative().nullable(),
+      windowName: NullableTextSchemaZ(256),
+      targetTopology: WorkspacePaneTopologySchemaZ,
+      materializedPaneCwds: z3.record(WorkspaceIdSchemaZ, NullableTextSchemaZ(4096)),
+      targetFocusedPaneId: WorkspaceIdSchemaZ.nullable(),
+      liveFocusedPaneId: WorkspaceIdSchemaZ.nullable(),
+      workbench: WorkspaceWorkbenchStateSchemaZ,
+      retainedBindings: z3.record(WorkspaceIdSchemaZ, WorkspacePaneBindingSchemaZ),
+      retainedPaneIds: z3.array(WorkspaceIdSchemaZ),
+      missingPaneIds: z3.array(WorkspaceIdSchemaZ),
+      externalPaneIds: z3.array(WorkspaceIdSchemaZ)
+    }).strict().superRefine((plan, ctx) => {
+      if (plan.targetFocusedPaneId && !plan.targetTopology.panes[plan.targetFocusedPaneId]) {
+        ctx.addIssue({
+          code: z3.ZodIssueCode.custom,
+          message: "target focus must exist in target topology",
+          path: ["targetFocusedPaneId"]
+        });
+      }
+      for (const [paneId, binding] of Object.entries(plan.retainedBindings)) {
+        if (paneId !== binding.semanticPaneId || !plan.targetTopology.panes[paneId] || !plan.retainedPaneIds.includes(paneId)) {
+          ctx.addIssue({
+            code: z3.ZodIssueCode.custom,
+            message: "retained binding must correlate to a retained target pane",
+            path: ["retainedBindings", paneId]
+          });
+        }
+      }
+    });
+    WorkspaceStateDiagnosticSchemaZ = z3.object({
+      code: z3.enum([
+        "MALFORMED",
+        "UNSUPPORTED_VERSION",
+        "INVALID_FIELD",
+        "OVERSIZED",
+        "IDENTITY_MISMATCH",
+        "PROJECT_RELINKED"
+      ]),
+      path: z3.string(),
+      message: z3.string()
+    }).strict();
+  }
+});
+
+// packages/contracts/src/ide-config.ts
+import { z as z4 } from "zod";
 var sizeField, ThemeConfigSchema, PaneSchema, RowSchema, WebhookConfigSchema, OrchestratorYamlConfigSchema, TunnelConfigSchema, CommandCenterConfigSchema, DashboardConfigSchema, SidebarConfigSchema, IdeConfigSchema, PaneActionSchema, SessionStateSchema;
 var init_ide_config = __esm({
   "packages/contracts/src/ide-config.ts"() {
     "use strict";
     init_auth();
     init_hq();
-    sizeField = z3.string().regex(/^[1-9]\d*%$/).refine((v) => parseInt(v) <= 100);
-    ThemeConfigSchema = z3.object({
-      accent: z3.string().optional(),
-      border: z3.string().optional(),
-      bg: z3.string().optional(),
-      fg: z3.string().optional()
+    init_workspace_state();
+    sizeField = z4.string().regex(/^[1-9]\d*%$/).refine((v) => parseInt(v) <= 100);
+    ThemeConfigSchema = z4.object({
+      accent: z4.string().optional(),
+      border: z4.string().optional(),
+      bg: z4.string().optional(),
+      fg: z4.string().optional()
     });
-    PaneSchema = z3.object({
-      title: z3.string().optional(),
-      command: z3.string().optional(),
-      type: z3.enum([
+    PaneSchema = z4.object({
+      /** Stable semantic identity. Strongly recommended for long-lived agent panes. */
+      id: WorkspaceIdSchemaZ.optional(),
+      title: z4.string().optional(),
+      command: z4.string().optional(),
+      type: z4.enum([
         "explorer",
         "changes",
         "preview",
@@ -106,86 +512,86 @@ var init_ide_config = __esm({
         "mission-control",
         "sidebar"
       ]).optional(),
-      target: z3.string().optional(),
-      dir: z3.string().optional(),
+      target: z4.string().optional(),
+      dir: z4.string().optional(),
       size: sizeField.optional(),
-      focus: z3.boolean().optional(),
-      env: z3.record(z3.string(), z3.union([z3.string(), z3.number()])).optional(),
-      role: z3.enum(["lead", "teammate", "planner", "validator", "researcher"]).optional(),
-      task: z3.string().optional(),
-      specialty: z3.string().optional(),
-      skill: z3.string().optional()
+      focus: z4.boolean().optional(),
+      env: z4.record(z4.string(), z4.union([z4.string(), z4.number()])).optional(),
+      role: z4.enum(["lead", "teammate", "planner", "validator", "researcher"]).optional(),
+      task: z4.string().optional(),
+      specialty: z4.string().optional(),
+      skill: z4.string().optional()
     });
-    RowSchema = z3.object({
+    RowSchema = z4.object({
       size: sizeField.optional(),
-      panes: z3.array(PaneSchema).min(1)
+      panes: z4.array(PaneSchema).min(1)
     });
-    WebhookConfigSchema = z3.object({
-      url: z3.string(),
-      events: z3.array(z3.string()).optional(),
-      secret: z3.string().optional()
+    WebhookConfigSchema = z4.object({
+      url: z4.string(),
+      events: z4.array(z4.string()).optional(),
+      secret: z4.string().optional()
     });
-    OrchestratorYamlConfigSchema = z3.object({
-      enabled: z3.boolean().optional(),
-      port: z3.number().int().positive().optional(),
-      auto_dispatch: z3.boolean().optional(),
-      stall_timeout: z3.number().optional(),
-      poll_interval: z3.number().min(100).optional(),
-      master_pane: z3.string().optional(),
-      before_run: z3.string().optional(),
-      after_run: z3.string().optional(),
-      dispatch_mode: z3.enum(["tasks", "goals", "missions"]).optional(),
-      max_concurrent_agents: z3.number().min(1).max(50).optional(),
-      widgets: z3.boolean().optional(),
-      webhooks: z3.array(WebhookConfigSchema).optional(),
-      services: z3.record(
-        z3.string(),
-        z3.object({
-          command: z3.string(),
-          port: z3.number().optional(),
-          healthcheck: z3.string().optional()
+    OrchestratorYamlConfigSchema = z4.object({
+      enabled: z4.boolean().optional(),
+      port: z4.number().int().positive().optional(),
+      auto_dispatch: z4.boolean().optional(),
+      stall_timeout: z4.number().optional(),
+      poll_interval: z4.number().min(100).optional(),
+      master_pane: z4.string().optional(),
+      before_run: z4.string().optional(),
+      after_run: z4.string().optional(),
+      dispatch_mode: z4.enum(["tasks", "goals", "missions"]).optional(),
+      max_concurrent_agents: z4.number().min(1).max(50).optional(),
+      widgets: z4.boolean().optional(),
+      webhooks: z4.array(WebhookConfigSchema).optional(),
+      services: z4.record(
+        z4.string(),
+        z4.object({
+          command: z4.string(),
+          port: z4.number().optional(),
+          healthcheck: z4.string().optional()
         })
       ).optional(),
-      research: z3.object({
-        enabled: z3.boolean().optional(),
-        triggers: z3.object({
-          mission_start: z3.boolean().optional(),
-          milestone_progress: z3.number().min(0).optional(),
-          milestone_complete: z3.boolean().optional(),
-          periodic_minutes: z3.number().min(0).optional(),
-          retry_cluster: z3.boolean().optional(),
-          stall_detected: z3.boolean().optional(),
-          discovered_issue: z3.boolean().optional()
+      research: z4.object({
+        enabled: z4.boolean().optional(),
+        triggers: z4.object({
+          mission_start: z4.boolean().optional(),
+          milestone_progress: z4.number().min(0).optional(),
+          milestone_complete: z4.boolean().optional(),
+          periodic_minutes: z4.number().min(0).optional(),
+          retry_cluster: z4.boolean().optional(),
+          stall_detected: z4.boolean().optional(),
+          discovered_issue: z4.boolean().optional()
         }).optional()
       }).optional()
     });
-    TunnelConfigSchema = z3.object({
-      provider: z3.enum(["tailscale", "ngrok", "cloudflare"]),
-      auto_start: z3.boolean().optional(),
-      port: z3.number().int().positive().optional(),
-      domain: z3.string().optional(),
-      authtoken: z3.string().optional()
+    TunnelConfigSchema = z4.object({
+      provider: z4.enum(["tailscale", "ngrok", "cloudflare"]),
+      auto_start: z4.boolean().optional(),
+      port: z4.number().int().positive().optional(),
+      domain: z4.string().optional(),
+      authtoken: z4.string().optional()
     });
-    CommandCenterConfigSchema = z3.object({
-      port: z3.number().optional(),
-      enabled: z3.boolean().optional()
+    CommandCenterConfigSchema = z4.object({
+      port: z4.number().optional(),
+      enabled: z4.boolean().optional()
     });
-    DashboardConfigSchema = z3.object({
-      port: z3.number().int().positive().optional()
+    DashboardConfigSchema = z4.object({
+      port: z4.number().int().positive().optional()
     });
-    SidebarConfigSchema = z3.union([
-      z3.boolean(),
-      z3.object({ width: z3.string().optional() })
+    SidebarConfigSchema = z4.union([
+      z4.boolean(),
+      z4.object({ width: z4.string().optional() })
     ]);
-    IdeConfigSchema = z3.object({
-      name: z3.string().optional(),
-      before: z3.string().optional(),
-      team: z3.object({
-        name: z3.string(),
-        model: z3.string().optional(),
-        permissions: z3.array(z3.string()).optional()
+    IdeConfigSchema = z4.object({
+      name: z4.string().optional(),
+      before: z4.string().optional(),
+      team: z4.object({
+        name: z4.string(),
+        model: z4.string().optional(),
+        permissions: z4.array(z4.string()).optional()
       }).optional(),
-      rows: z3.array(RowSchema).min(1),
+      rows: z4.array(RowSchema).min(1),
       sidebar: SidebarConfigSchema.optional(),
       theme: ThemeConfigSchema.optional(),
       orchestrator: OrchestratorYamlConfigSchema.optional(),
@@ -194,161 +600,1220 @@ var init_ide_config = __esm({
       auth: AuthConfigSchema.optional(),
       tunnel: TunnelConfigSchema.optional(),
       hq: HQConfigSchema.optional()
+    }).superRefine((config2, context) => {
+      const explicitPaneIds = /* @__PURE__ */ new Set();
+      for (const [rowIndex, row] of config2.rows.entries()) {
+        for (const [paneIndex, pane] of row.panes.entries()) {
+          if (!pane.id) continue;
+          if (explicitPaneIds.has(pane.id)) {
+            context.addIssue({
+              code: "custom",
+              path: ["rows", rowIndex, "panes", paneIndex, "id"],
+              message: `Duplicate pane id "${pane.id}"`
+            });
+          }
+          explicitPaneIds.add(pane.id);
+        }
+      }
     });
-    PaneActionSchema = z3.object({
-      targetPane: z3.string(),
-      title: z3.string().nullable(),
-      chdir: z3.string().nullable(),
-      exports: z3.array(z3.string()),
-      command: z3.string().nullable(),
-      widgetType: z3.string().nullable(),
-      widgetTarget: z3.string().nullable(),
-      paneRole: z3.string().nullable(),
-      paneType: z3.string().nullable()
+    PaneActionSchema = z4.object({
+      targetPane: z4.string(),
+      title: z4.string().nullable(),
+      chdir: z4.string().nullable(),
+      exports: z4.array(z4.string()),
+      command: z4.string().nullable(),
+      widgetType: z4.string().nullable(),
+      widgetTarget: z4.string().nullable(),
+      paneRole: z4.string().nullable(),
+      paneType: z4.string().nullable()
     });
-    SessionStateSchema = z3.object({
-      running: z3.boolean(),
-      reason: z3.string().nullable()
+    SessionStateSchema = z4.object({
+      running: z4.boolean(),
+      reason: z4.string().nullable()
     });
   }
 });
 
 // packages/contracts/src/domain.ts
-import { z as z4 } from "zod";
-var PaneInfoSchemaZ, SessionOverviewSchemaZ;
+import { z as z5 } from "zod";
+function checkUnique(values2, path2, label, ctx) {
+  const seen = /* @__PURE__ */ new Set();
+  for (const value of values2) {
+    if (seen.has(value)) {
+      ctx.addIssue({
+        code: "custom",
+        path: path2,
+        message: `duplicate ${label} are not allowed`
+      });
+      return;
+    }
+    seen.add(value);
+  }
+}
+var MissionIdPattern, TaskIdPattern, AttemptIdPattern, ProofIdPattern, ReferenceIdPattern, TmuxPaneIdPattern, TimestampSchemaZ, MissionDomainVersionSchemaZ, MissionIdSchemaZ, MissionTaskIdSchemaZ, MissionAttemptIdSchemaZ, MissionProofIdSchemaZ, MissionReferenceIdSchemaZ, MissionTerminalReferenceSchemaZ, MissionActorSchemaZ, MissionSourceSchemaZ, MissionStatusSchemaZ, MissionTaskStatusSchemaZ, MissionAttemptStatusSchemaZ, MissionAttemptOutcomeSchemaZ, MissionProofTestSchemaZ, MissionProofSchemaZ, MissionEventBaseSchemaZ, MissionEventSchemas, MissionEventSchemaZ, MissionTaskSchemaZ, MissionAttemptSchemaZ, MissionSnapshotSchemaZ, MissionProjectStateSchemaZ, MissionHistoryEntrySchemaZ, PaneInfoSchemaZ, SessionOverviewSchemaZ;
 var init_domain = __esm({
   "packages/contracts/src/domain.ts"() {
     "use strict";
-    PaneInfoSchemaZ = z4.object({
-      id: z4.string(),
-      index: z4.number(),
-      title: z4.string(),
-      currentCommand: z4.string(),
-      width: z4.number(),
-      height: z4.number(),
-      active: z4.boolean(),
-      role: z4.enum(["lead", "teammate", "planner", "validator", "researcher", "widget", "shell"]).nullable(),
-      name: z4.string().nullable(),
-      type: z4.string().nullable()
+    MissionIdPattern = /^mis_[A-Za-z0-9][A-Za-z0-9_-]{0,96}$/u;
+    TaskIdPattern = /^tsk_[A-Za-z0-9][A-Za-z0-9_-]{0,96}$/u;
+    AttemptIdPattern = /^att_[A-Za-z0-9][A-Za-z0-9_-]{0,96}$/u;
+    ProofIdPattern = /^prf_[A-Za-z0-9][A-Za-z0-9_-]{0,96}$/u;
+    ReferenceIdPattern = /^[A-Za-z0-9][A-Za-z0-9._:/@-]{0,127}$/u;
+    TmuxPaneIdPattern = /^%[0-9]{1,20}$/u;
+    TimestampSchemaZ = z5.string().refine(
+      (value) => {
+        try {
+          return new Date(value).toISOString() === value;
+        } catch {
+          return false;
+        }
+      },
+      { message: "must be a canonical ISO timestamp" }
+    );
+    MissionDomainVersionSchemaZ = z5.literal(1);
+    MissionIdSchemaZ = z5.string().regex(MissionIdPattern);
+    MissionTaskIdSchemaZ = z5.string().regex(TaskIdPattern);
+    MissionAttemptIdSchemaZ = z5.string().regex(AttemptIdPattern);
+    MissionProofIdSchemaZ = z5.string().regex(ProofIdPattern);
+    MissionReferenceIdSchemaZ = z5.string().regex(ReferenceIdPattern);
+    MissionTerminalReferenceSchemaZ = z5.string().refine((value) => ReferenceIdPattern.test(value) || TmuxPaneIdPattern.test(value), {
+      message: "must be a mission reference id or canonical tmux pane id"
     });
-    SessionOverviewSchemaZ = z4.object({
-      name: z4.string(),
-      dir: z4.string()
+    MissionActorSchemaZ = z5.strictObject({
+      type: z5.enum(["user", "system", "agent", "service"]),
+      id: MissionReferenceIdSchemaZ.optional(),
+      profile: MissionReferenceIdSchemaZ.optional(),
+      displayName: z5.string().min(1).max(200).optional()
+    });
+    MissionSourceSchemaZ = z5.strictObject({
+      type: z5.enum(["user", "system", "import", "service"]),
+      id: MissionReferenceIdSchemaZ.optional()
+    });
+    MissionStatusSchemaZ = z5.enum([
+      "created",
+      "planned",
+      "started",
+      "blocked",
+      "review",
+      "completed",
+      "failed",
+      "cancelled"
+    ]);
+    MissionTaskStatusSchemaZ = z5.enum([
+      "added",
+      "ready",
+      "claimed",
+      "started",
+      "blocked",
+      "submitted",
+      "completed",
+      "failed",
+      "cancelled"
+    ]);
+    MissionAttemptStatusSchemaZ = z5.enum([
+      "started",
+      "submitted",
+      "approved",
+      "rejected",
+      "failed",
+      "interrupted"
+    ]);
+    MissionAttemptOutcomeSchemaZ = z5.enum([
+      "submitted",
+      "approved",
+      "rejected",
+      "failed",
+      "interrupted"
+    ]);
+    MissionProofTestSchemaZ = z5.strictObject({
+      name: z5.string().min(1),
+      status: z5.enum(["passed", "failed", "skipped"]),
+      passed: z5.number().int().nonnegative().optional(),
+      total: z5.number().int().nonnegative().optional(),
+      url: z5.string().url().optional(),
+      notes: z5.string().min(1).optional()
+    }).superRefine((test, ctx) => {
+      if (test.passed !== void 0 && test.total !== void 0 && test.passed > test.total) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["passed"],
+          message: "passed must not exceed total"
+        });
+      }
+    });
+    MissionProofSchemaZ = z5.strictObject({
+      tests: z5.array(MissionProofTestSchemaZ).optional(),
+      commits: z5.array(
+        z5.strictObject({
+          sha: z5.string().regex(/^[A-Fa-f0-9]{7,64}$/u),
+          repo: MissionReferenceIdSchemaZ.optional(),
+          url: z5.string().url().optional()
+        })
+      ).optional(),
+      diff: z5.strictObject({
+        summary: z5.string().min(1).optional(),
+        stats: z5.strictObject({
+          filesChanged: z5.number().int().nonnegative().optional(),
+          insertions: z5.number().int().nonnegative().optional(),
+          deletions: z5.number().int().nonnegative().optional()
+        }).optional(),
+        url: z5.string().url().optional()
+      }).optional(),
+      pr: z5.strictObject({
+        number: z5.number().int().positive().optional(),
+        url: z5.string().url().optional(),
+        status: z5.enum(["draft", "open", "merged", "closed"]).optional()
+      }).optional(),
+      artifacts: z5.array(
+        z5.strictObject({
+          name: z5.string().min(1),
+          uri: z5.string().min(1),
+          kind: z5.string().min(1).optional()
+        })
+      ).optional(),
+      notes: z5.string().min(1).optional(),
+      noProofReason: z5.string().min(1).optional()
+    }).superRefine((proof, ctx) => {
+      const hasEvidence = Boolean(
+        proof.noProofReason || proof.notes || (proof.tests?.length ?? 0) > 0 || (proof.commits?.length ?? 0) > 0 || proof.diff?.summary || proof.diff?.url || proof.diff?.stats?.filesChanged !== void 0 || proof.diff?.stats?.insertions !== void 0 || proof.diff?.stats?.deletions !== void 0 || proof.pr?.url || proof.pr?.number || proof.pr?.status || (proof.artifacts?.length ?? 0) > 0
+      );
+      if (!hasEvidence) {
+        ctx.addIssue({
+          code: "custom",
+          message: "proof must include meaningful evidence or an explicit noProofReason"
+        });
+      }
+    });
+    MissionEventBaseSchemaZ = z5.strictObject({
+      version: MissionDomainVersionSchemaZ,
+      actor: MissionActorSchemaZ
+    });
+    MissionEventSchemas = [
+      MissionEventBaseSchemaZ.extend({
+        type: z5.literal("mission.created"),
+        missionId: MissionIdSchemaZ,
+        title: z5.string().min(1),
+        objective: z5.string().min(1),
+        acceptanceCriteria: z5.array(z5.string().min(1)).default([]),
+        constraints: z5.array(z5.string().min(1)).default([]),
+        labels: z5.array(z5.string().min(1)).default([]),
+        source: MissionSourceSchemaZ
+      }),
+      MissionEventBaseSchemaZ.extend({
+        type: z5.enum([
+          "mission.planned",
+          "mission.started",
+          "mission.review",
+          "mission.completed",
+          "mission.failed",
+          "mission.cancelled"
+        ]),
+        missionId: MissionIdSchemaZ,
+        reason: z5.string().min(1).optional(),
+        proofId: MissionProofIdSchemaZ.optional()
+      }),
+      MissionEventBaseSchemaZ.extend({
+        type: z5.literal("mission.blocked"),
+        missionId: MissionIdSchemaZ,
+        reason: z5.string().min(1)
+      }),
+      MissionEventBaseSchemaZ.extend({
+        type: z5.literal("task.added"),
+        missionId: MissionIdSchemaZ,
+        taskId: MissionTaskIdSchemaZ,
+        title: z5.string().min(1),
+        description: z5.string().min(1).optional(),
+        priority: z5.number().int().default(0),
+        dependencies: z5.array(MissionTaskIdSchemaZ).default([]),
+        assignee: MissionReferenceIdSchemaZ.optional()
+      }),
+      MissionEventBaseSchemaZ.extend({
+        type: z5.literal("task.updated"),
+        missionId: MissionIdSchemaZ,
+        taskId: MissionTaskIdSchemaZ,
+        title: z5.string().min(1).optional(),
+        description: z5.string().min(1).optional(),
+        priority: z5.number().int().optional(),
+        dependencies: z5.array(MissionTaskIdSchemaZ).optional(),
+        assignee: MissionReferenceIdSchemaZ.nullable().optional()
+      }),
+      MissionEventBaseSchemaZ.extend({
+        type: z5.enum([
+          "task.ready",
+          "task.started",
+          "task.submitted",
+          "task.completed",
+          "task.failed",
+          "task.cancelled"
+        ]),
+        missionId: MissionIdSchemaZ,
+        taskId: MissionTaskIdSchemaZ,
+        reason: z5.string().min(1).optional(),
+        proofId: MissionProofIdSchemaZ.optional()
+      }),
+      MissionEventBaseSchemaZ.extend({
+        type: z5.literal("task.claimed"),
+        missionId: MissionIdSchemaZ,
+        taskId: MissionTaskIdSchemaZ,
+        assignee: MissionReferenceIdSchemaZ
+      }),
+      MissionEventBaseSchemaZ.extend({
+        type: z5.literal("task.blocked"),
+        missionId: MissionIdSchemaZ,
+        taskId: MissionTaskIdSchemaZ,
+        reason: z5.string().min(1)
+      }),
+      MissionEventBaseSchemaZ.extend({
+        type: z5.literal("attempt.started"),
+        missionId: MissionIdSchemaZ,
+        taskId: MissionTaskIdSchemaZ,
+        attemptId: MissionAttemptIdSchemaZ,
+        agent: MissionReferenceIdSchemaZ,
+        harness: MissionReferenceIdSchemaZ,
+        model: MissionReferenceIdSchemaZ.optional(),
+        terminal: MissionTerminalReferenceSchemaZ.optional(),
+        session: MissionReferenceIdSchemaZ.optional(),
+        worktree: z5.string().min(1).optional()
+      }),
+      MissionEventBaseSchemaZ.extend({
+        type: z5.enum([
+          "attempt.submitted",
+          "attempt.approved",
+          "attempt.rejected",
+          "attempt.failed",
+          "attempt.interrupted"
+        ]),
+        missionId: MissionIdSchemaZ,
+        taskId: MissionTaskIdSchemaZ,
+        attemptId: MissionAttemptIdSchemaZ,
+        proofId: MissionProofIdSchemaZ.optional(),
+        reason: z5.string().min(1).optional()
+      }),
+      MissionEventBaseSchemaZ.extend({
+        type: z5.literal("proof.recorded"),
+        missionId: MissionIdSchemaZ,
+        taskId: MissionTaskIdSchemaZ.optional(),
+        attemptId: MissionAttemptIdSchemaZ.optional(),
+        proofId: MissionProofIdSchemaZ,
+        proof: MissionProofSchemaZ
+      })
+    ];
+    MissionEventSchemaZ = z5.discriminatedUnion("type", MissionEventSchemas);
+    MissionTaskSchemaZ = z5.strictObject({
+      id: MissionTaskIdSchemaZ,
+      missionId: MissionIdSchemaZ,
+      title: z5.string().min(1),
+      description: z5.string().min(1).optional(),
+      priority: z5.number().int(),
+      dependencies: z5.array(MissionTaskIdSchemaZ),
+      assignee: MissionReferenceIdSchemaZ.optional(),
+      status: MissionTaskStatusSchemaZ,
+      createdAt: TimestampSchemaZ,
+      updatedAt: TimestampSchemaZ,
+      startedAt: TimestampSchemaZ.optional(),
+      finishedAt: TimestampSchemaZ.optional(),
+      proofIds: z5.array(MissionProofIdSchemaZ),
+      attemptIds: z5.array(MissionAttemptIdSchemaZ)
+    });
+    MissionAttemptSchemaZ = z5.strictObject({
+      id: MissionAttemptIdSchemaZ,
+      missionId: MissionIdSchemaZ,
+      taskId: MissionTaskIdSchemaZ,
+      agent: MissionReferenceIdSchemaZ,
+      harness: MissionReferenceIdSchemaZ,
+      model: MissionReferenceIdSchemaZ.optional(),
+      terminal: MissionTerminalReferenceSchemaZ.optional(),
+      session: MissionReferenceIdSchemaZ.optional(),
+      worktree: z5.string().min(1).optional(),
+      status: MissionAttemptStatusSchemaZ,
+      outcome: MissionAttemptOutcomeSchemaZ.optional(),
+      startedAt: TimestampSchemaZ,
+      updatedAt: TimestampSchemaZ,
+      finishedAt: TimestampSchemaZ.optional(),
+      proofIds: z5.array(MissionProofIdSchemaZ)
+    });
+    MissionSnapshotSchemaZ = z5.strictObject({
+      id: MissionIdSchemaZ,
+      title: z5.string().min(1),
+      objective: z5.string().min(1),
+      acceptanceCriteria: z5.array(z5.string().min(1)),
+      constraints: z5.array(z5.string().min(1)),
+      labels: z5.array(z5.string().min(1)),
+      source: MissionSourceSchemaZ,
+      status: MissionStatusSchemaZ,
+      createdAt: TimestampSchemaZ,
+      updatedAt: TimestampSchemaZ,
+      startedAt: TimestampSchemaZ.optional(),
+      finishedAt: TimestampSchemaZ.optional(),
+      tasks: z5.record(MissionTaskIdSchemaZ, MissionTaskSchemaZ),
+      attempts: z5.record(MissionAttemptIdSchemaZ, MissionAttemptSchemaZ),
+      proofs: z5.record(MissionProofIdSchemaZ, MissionProofSchemaZ)
+    }).superRefine((mission, ctx) => {
+      for (const [taskKey, task] of Object.entries(mission.tasks)) {
+        if (taskKey !== task.id) {
+          ctx.addIssue({
+            code: "custom",
+            path: ["tasks", taskKey, "id"],
+            message: "task record key must equal task id"
+          });
+        }
+        if (task.missionId !== mission.id) {
+          ctx.addIssue({
+            code: "custom",
+            path: ["tasks", taskKey, "missionId"],
+            message: "task missionId must equal parent mission id"
+          });
+        }
+        checkUnique(task.dependencies, ["tasks", taskKey, "dependencies"], "dependency ids", ctx);
+        checkUnique(task.proofIds, ["tasks", taskKey, "proofIds"], "proof ids", ctx);
+        checkUnique(task.attemptIds, ["tasks", taskKey, "attemptIds"], "attempt ids", ctx);
+        for (const dependencyId of task.dependencies) {
+          if (!mission.tasks[dependencyId]) {
+            ctx.addIssue({
+              code: "custom",
+              path: ["tasks", taskKey, "dependencies"],
+              message: `dependency ${dependencyId} must resolve to a task`
+            });
+          }
+        }
+        for (const proofId of task.proofIds) {
+          if (!mission.proofs[proofId]) {
+            ctx.addIssue({
+              code: "custom",
+              path: ["tasks", taskKey, "proofIds"],
+              message: `proof ${proofId} must resolve`
+            });
+          }
+        }
+        for (const attemptId of task.attemptIds) {
+          const attempt = mission.attempts[attemptId];
+          if (!attempt) {
+            ctx.addIssue({
+              code: "custom",
+              path: ["tasks", taskKey, "attemptIds"],
+              message: `attempt ${attemptId} must resolve`
+            });
+          } else if (attempt.taskId !== task.id) {
+            ctx.addIssue({
+              code: "custom",
+              path: ["tasks", taskKey, "attemptIds"],
+              message: `attempt ${attemptId} must point back to task ${task.id}`
+            });
+          }
+        }
+      }
+      for (const [attemptKey, attempt] of Object.entries(mission.attempts)) {
+        if (attemptKey !== attempt.id) {
+          ctx.addIssue({
+            code: "custom",
+            path: ["attempts", attemptKey, "id"],
+            message: "attempt record key must equal attempt id"
+          });
+        }
+        if (attempt.missionId !== mission.id) {
+          ctx.addIssue({
+            code: "custom",
+            path: ["attempts", attemptKey, "missionId"],
+            message: "attempt missionId must equal parent mission id"
+          });
+        }
+        if (!mission.tasks[attempt.taskId]) {
+          ctx.addIssue({
+            code: "custom",
+            path: ["attempts", attemptKey, "taskId"],
+            message: "attempt taskId must resolve to a task"
+          });
+        }
+        checkUnique(attempt.proofIds, ["attempts", attemptKey, "proofIds"], "proof ids", ctx);
+        for (const proofId of attempt.proofIds) {
+          if (!mission.proofs[proofId]) {
+            ctx.addIssue({
+              code: "custom",
+              path: ["attempts", attemptKey, "proofIds"],
+              message: `proof ${proofId} must resolve`
+            });
+          }
+        }
+      }
+    });
+    MissionProjectStateSchemaZ = z5.strictObject({
+      sequence: z5.number().int().nonnegative(),
+      missions: z5.record(MissionIdSchemaZ, MissionSnapshotSchemaZ)
+    }).superRefine((state, ctx) => {
+      for (const [missionKey, mission] of Object.entries(state.missions)) {
+        if (missionKey !== mission.id) {
+          ctx.addIssue({
+            code: "custom",
+            path: ["missions", missionKey, "id"],
+            message: "mission record key must equal mission id"
+          });
+        }
+      }
+    });
+    MissionHistoryEntrySchemaZ = z5.strictObject({
+      sequence: z5.number().int().positive(),
+      timestamp: TimestampSchemaZ,
+      event: MissionEventSchemaZ
+    });
+    PaneInfoSchemaZ = z5.object({
+      id: z5.string(),
+      index: z5.number(),
+      title: z5.string(),
+      currentCommand: z5.string(),
+      width: z5.number(),
+      height: z5.number(),
+      active: z5.boolean(),
+      role: z5.enum(["lead", "teammate", "planner", "validator", "researcher", "widget", "shell"]).nullable(),
+      name: z5.string().nullable(),
+      type: z5.string().nullable()
+    });
+    SessionOverviewSchemaZ = z5.object({
+      name: z5.string(),
+      dir: z5.string()
+    });
+  }
+});
+
+// packages/contracts/src/mission-projections.ts
+import { z as z6 } from "zod";
+var TimestampSchemaZ2, UniqueStringArraySchemaZ, MissionProjectionVersionSchemaZ, MissionBoardColumnSchemaZ, MissionProgressSummarySchemaZ, MissionProofSummarySchemaZ, MissionAttemptSummarySchemaZ, TaskCardViewSchemaZ, MissionCardViewSchemaZ, MissionBoardViewSchemaZ, MissionTimelineEntrySchemaZ, MissionHistorySummarySchemaZ, MissionDetailViewSchemaZ;
+var init_mission_projections = __esm({
+  "packages/contracts/src/mission-projections.ts"() {
+    "use strict";
+    init_domain();
+    TimestampSchemaZ2 = z6.string().refine(
+      (value) => {
+        try {
+          return new Date(value).toISOString() === value;
+        } catch {
+          return false;
+        }
+      },
+      { message: "must be a canonical ISO timestamp" }
+    );
+    UniqueStringArraySchemaZ = (item) => z6.array(item).superRefine((values2, ctx) => {
+      const seen = /* @__PURE__ */ new Set();
+      for (const [index, value] of values2.entries()) {
+        if (seen.has(value)) {
+          ctx.addIssue({
+            code: "custom",
+            path: [index],
+            message: "duplicate references are not allowed"
+          });
+        }
+        seen.add(value);
+      }
+    });
+    MissionProjectionVersionSchemaZ = z6.literal(1);
+    MissionBoardColumnSchemaZ = z6.enum([
+      "planned",
+      "running",
+      "blocked",
+      "review",
+      "done"
+    ]);
+    MissionProgressSummarySchemaZ = z6.strictObject({
+      total: z6.number().int().nonnegative(),
+      planned: z6.number().int().nonnegative(),
+      running: z6.number().int().nonnegative(),
+      blocked: z6.number().int().nonnegative(),
+      review: z6.number().int().nonnegative(),
+      completed: z6.number().int().nonnegative(),
+      failed: z6.number().int().nonnegative(),
+      cancelled: z6.number().int().nonnegative(),
+      done: z6.number().int().nonnegative()
+    });
+    MissionProofSummarySchemaZ = z6.strictObject({
+      proofIds: UniqueStringArraySchemaZ(MissionProofIdSchemaZ),
+      hasProof: z6.boolean(),
+      noProofReasons: z6.array(z6.string().min(1)),
+      notesCount: z6.number().int().nonnegative(),
+      tests: z6.strictObject({
+        suites: z6.number().int().nonnegative(),
+        passed: z6.number().int().nonnegative(),
+        failed: z6.number().int().nonnegative(),
+        skipped: z6.number().int().nonnegative(),
+        total: z6.number().int().nonnegative()
+      }),
+      commits: UniqueStringArraySchemaZ(z6.string().min(1)),
+      diff: z6.strictObject({
+        summaries: UniqueStringArraySchemaZ(z6.string().min(1)),
+        urls: UniqueStringArraySchemaZ(z6.string().url()),
+        filesChanged: z6.number().int().nonnegative(),
+        insertions: z6.number().int().nonnegative(),
+        deletions: z6.number().int().nonnegative()
+      }),
+      prs: z6.array(
+        z6.strictObject({
+          number: z6.number().int().positive().optional(),
+          url: z6.string().url().optional(),
+          status: z6.enum(["draft", "open", "merged", "closed"]).optional()
+        })
+      ),
+      artifacts: z6.array(
+        z6.strictObject({
+          name: z6.string().min(1),
+          uri: z6.string().min(1),
+          kind: z6.string().min(1).optional()
+        })
+      )
+    });
+    MissionAttemptSummarySchemaZ = z6.strictObject({
+      id: MissionAttemptIdSchemaZ,
+      taskId: MissionTaskIdSchemaZ,
+      status: MissionAttemptStatusSchemaZ,
+      outcome: z6.enum(["submitted", "approved", "rejected", "failed", "interrupted"]).optional(),
+      agent: MissionReferenceIdSchemaZ,
+      harness: MissionReferenceIdSchemaZ,
+      model: MissionReferenceIdSchemaZ.optional(),
+      terminal: MissionTerminalReferenceSchemaZ.optional(),
+      session: MissionReferenceIdSchemaZ.optional(),
+      worktree: z6.string().min(1).optional(),
+      startedAt: TimestampSchemaZ2,
+      updatedAt: TimestampSchemaZ2,
+      finishedAt: TimestampSchemaZ2.optional(),
+      durationMs: z6.number().int().nonnegative().nullable(),
+      proofIds: UniqueStringArraySchemaZ(MissionProofIdSchemaZ)
+    });
+    TaskCardViewSchemaZ = z6.strictObject({
+      version: MissionProjectionVersionSchemaZ,
+      id: MissionTaskIdSchemaZ,
+      missionId: MissionIdSchemaZ,
+      title: z6.string().min(1),
+      summary: z6.string().min(1),
+      status: MissionTaskStatusSchemaZ,
+      column: MissionBoardColumnSchemaZ,
+      priority: z6.number().int(),
+      assignee: MissionReferenceIdSchemaZ.optional(),
+      dependencies: UniqueStringArraySchemaZ(MissionTaskIdSchemaZ),
+      blockedBy: UniqueStringArraySchemaZ(MissionTaskIdSchemaZ),
+      createdAt: TimestampSchemaZ2,
+      updatedAt: TimestampSchemaZ2,
+      startedAt: TimestampSchemaZ2.optional(),
+      finishedAt: TimestampSchemaZ2.optional(),
+      durationMs: z6.number().int().nonnegative().nullable(),
+      latestAttempt: MissionAttemptSummarySchemaZ.nullable(),
+      proofSummary: MissionProofSummarySchemaZ,
+      refs: z6.strictObject({
+        missionId: MissionIdSchemaZ,
+        taskId: MissionTaskIdSchemaZ,
+        attemptIds: UniqueStringArraySchemaZ(MissionAttemptIdSchemaZ),
+        proofIds: UniqueStringArraySchemaZ(MissionProofIdSchemaZ),
+        terminal: MissionTerminalReferenceSchemaZ.optional(),
+        session: MissionReferenceIdSchemaZ.optional(),
+        worktree: z6.string().min(1).optional()
+      })
+    });
+    MissionCardViewSchemaZ = z6.strictObject({
+      version: MissionProjectionVersionSchemaZ,
+      id: MissionIdSchemaZ,
+      title: z6.string().min(1),
+      summary: z6.string().min(1),
+      status: MissionStatusSchemaZ,
+      column: MissionBoardColumnSchemaZ,
+      labels: z6.array(z6.string().min(1)),
+      createdAt: TimestampSchemaZ2,
+      updatedAt: TimestampSchemaZ2,
+      startedAt: TimestampSchemaZ2.optional(),
+      finishedAt: TimestampSchemaZ2.optional(),
+      durationMs: z6.number().int().nonnegative().nullable(),
+      progress: MissionProgressSummarySchemaZ,
+      blockedBy: UniqueStringArraySchemaZ(MissionTaskIdSchemaZ),
+      latestAttempt: MissionAttemptSummarySchemaZ.nullable(),
+      proofSummary: MissionProofSummarySchemaZ,
+      refs: z6.strictObject({
+        missionId: MissionIdSchemaZ,
+        taskIds: UniqueStringArraySchemaZ(MissionTaskIdSchemaZ),
+        attemptIds: UniqueStringArraySchemaZ(MissionAttemptIdSchemaZ),
+        proofIds: UniqueStringArraySchemaZ(MissionProofIdSchemaZ)
+      })
+    });
+    MissionBoardViewSchemaZ = z6.strictObject({
+      version: MissionProjectionVersionSchemaZ,
+      columns: z6.strictObject({
+        planned: z6.array(MissionCardViewSchemaZ),
+        running: z6.array(MissionCardViewSchemaZ),
+        blocked: z6.array(MissionCardViewSchemaZ),
+        review: z6.array(MissionCardViewSchemaZ),
+        done: z6.array(MissionCardViewSchemaZ)
+      }),
+      counts: z6.strictObject({
+        planned: z6.number().int().nonnegative(),
+        running: z6.number().int().nonnegative(),
+        blocked: z6.number().int().nonnegative(),
+        review: z6.number().int().nonnegative(),
+        done: z6.number().int().nonnegative(),
+        total: z6.number().int().nonnegative()
+      })
+    });
+    MissionTimelineEntrySchemaZ = z6.strictObject({
+      version: MissionProjectionVersionSchemaZ,
+      sequence: z6.number().int().positive(),
+      timestamp: TimestampSchemaZ2,
+      missionId: MissionIdSchemaZ,
+      taskId: MissionTaskIdSchemaZ.optional(),
+      attemptId: MissionAttemptIdSchemaZ.optional(),
+      proofId: MissionProofIdSchemaZ.optional(),
+      type: z6.string().min(1),
+      label: z6.string().min(1),
+      actor: MissionActorSchemaZ,
+      reason: z6.string().min(1).optional(),
+      refs: z6.strictObject({
+        missionId: MissionIdSchemaZ,
+        taskId: MissionTaskIdSchemaZ.optional(),
+        attemptId: MissionAttemptIdSchemaZ.optional(),
+        proofId: MissionProofIdSchemaZ.optional(),
+        terminal: MissionTerminalReferenceSchemaZ.optional(),
+        session: MissionReferenceIdSchemaZ.optional(),
+        worktree: z6.string().min(1).optional()
+      })
+    });
+    MissionHistorySummarySchemaZ = z6.strictObject({
+      version: MissionProjectionVersionSchemaZ,
+      mission: MissionCardViewSchemaZ,
+      outcome: z6.enum(["completed", "failed", "cancelled"]),
+      startedAt: TimestampSchemaZ2.optional(),
+      finishedAt: TimestampSchemaZ2,
+      durationMs: z6.number().int().nonnegative().nullable(),
+      taskTotals: MissionProgressSummarySchemaZ,
+      attemptTotals: z6.strictObject({
+        total: z6.number().int().nonnegative(),
+        submitted: z6.number().int().nonnegative(),
+        approved: z6.number().int().nonnegative(),
+        rejected: z6.number().int().nonnegative(),
+        failed: z6.number().int().nonnegative(),
+        interrupted: z6.number().int().nonnegative(),
+        running: z6.number().int().nonnegative()
+      }),
+      proofSummary: MissionProofSummarySchemaZ,
+      lastEvent: MissionTimelineEntrySchemaZ.nullable()
+    });
+    MissionDetailViewSchemaZ = z6.strictObject({
+      version: MissionProjectionVersionSchemaZ,
+      mission: MissionCardViewSchemaZ,
+      taskBoard: z6.strictObject({
+        columns: z6.strictObject({
+          planned: z6.array(TaskCardViewSchemaZ),
+          running: z6.array(TaskCardViewSchemaZ),
+          blocked: z6.array(TaskCardViewSchemaZ),
+          review: z6.array(TaskCardViewSchemaZ),
+          done: z6.array(TaskCardViewSchemaZ)
+        }),
+        counts: z6.strictObject({
+          planned: z6.number().int().nonnegative(),
+          running: z6.number().int().nonnegative(),
+          blocked: z6.number().int().nonnegative(),
+          review: z6.number().int().nonnegative(),
+          done: z6.number().int().nonnegative(),
+          total: z6.number().int().nonnegative()
+        })
+      }),
+      attempts: z6.array(MissionAttemptSummarySchemaZ),
+      proofSummary: MissionProofSummarySchemaZ,
+      progress: MissionProgressSummarySchemaZ,
+      timeline: z6.array(MissionTimelineEntrySchemaZ)
     });
   }
 });
 
 // packages/contracts/src/tmux.ts
-import { z as z5 } from "zod";
+import { z as z7 } from "zod";
 var TmuxPaneSchemaZ, TmuxWindowSchemaZ, TmuxSessionSchemaZ, TmuxPaneTargetSchemaZ;
 var init_tmux = __esm({
   "packages/contracts/src/tmux.ts"() {
     "use strict";
-    TmuxPaneSchemaZ = z5.object({
+    TmuxPaneSchemaZ = z7.object({
       /** Stable tmux pane id (e.g. `%23`). */
-      id: z5.string(),
+      id: z7.string(),
       /** Pane index within its window (zero-based). */
-      paneIndex: z5.number().int().nonnegative(),
+      paneIndex: z7.number().int().nonnegative(),
       /** Window index within the session (zero-based). */
-      windowIndex: z5.number().int().nonnegative(),
-      title: z5.string().nullable(),
-      command: z5.string().nullable(),
-      active: z5.boolean()
+      windowIndex: z7.number().int().nonnegative(),
+      title: z7.string().nullable(),
+      command: z7.string().nullable(),
+      active: z7.boolean()
     });
-    TmuxWindowSchemaZ = z5.object({
-      index: z5.number().int().nonnegative(),
-      name: z5.string(),
-      panes: z5.array(TmuxPaneSchemaZ)
+    TmuxWindowSchemaZ = z7.object({
+      index: z7.number().int().nonnegative(),
+      name: z7.string(),
+      panes: z7.array(TmuxPaneSchemaZ)
     });
-    TmuxSessionSchemaZ = z5.object({
-      name: z5.string(),
-      windows: z5.array(TmuxWindowSchemaZ),
+    TmuxSessionSchemaZ = z7.object({
+      name: z7.string(),
+      windows: z7.array(TmuxWindowSchemaZ),
       /** Session creation time (epoch milliseconds). */
-      created: z5.number().int().nonnegative(),
-      attached: z5.boolean(),
+      created: z7.number().int().nonnegative(),
+      attached: z7.boolean(),
       /** Project directory the session was launched from, when known. */
-      projectDir: z5.string().nullable()
+      projectDir: z7.string().nullable()
     });
-    TmuxPaneTargetSchemaZ = z5.discriminatedUnion("kind", [
-      z5.object({ kind: z5.literal("byId"), id: z5.string() }),
-      z5.object({ kind: z5.literal("byIndex"), index: z5.number().int().nonnegative() }),
-      z5.object({ kind: z5.literal("byTitle"), title: z5.string() }),
-      z5.object({ kind: z5.literal("byRole"), role: z5.string() })
+    TmuxPaneTargetSchemaZ = z7.discriminatedUnion("kind", [
+      z7.object({ kind: z7.literal("byId"), id: z7.string() }),
+      z7.object({ kind: z7.literal("byIndex"), index: z7.number().int().nonnegative() }),
+      z7.object({ kind: z7.literal("byTitle"), title: z7.string() }),
+      z7.object({ kind: z7.literal("byRole"), role: z7.string() })
     ]);
   }
 });
 
 // packages/contracts/src/workspace.ts
-import { z as z6 } from "zod";
+import { z as z8 } from "zod";
 var WorkspaceSchemaZ, WorkspaceListResponseSchemaZ, AddWorkspaceRequestSchemaZ, AddWorkspaceResponseSchemaZ, WorkspaceAddedFrameSchemaZ, WorkspaceRemovedFrameSchemaZ;
 var init_workspace = __esm({
   "packages/contracts/src/workspace.ts"() {
     "use strict";
-    WorkspaceSchemaZ = z6.object({
+    WorkspaceSchemaZ = z8.object({
       /** Stable workspace name (typically equal to tmux session name). */
-      name: z6.string().min(1),
+      name: z8.string().min(1),
       /** Tmux session this workspace maps to. */
-      sessionName: z6.string().min(1),
+      sessionName: z8.string().min(1),
       /** Absolute project directory. */
-      projectDir: z6.string().min(1),
+      projectDir: z8.string().min(1),
       /** Absolute path to the legacy ide.yml driving this workspace, when present. */
-      ideConfigPath: z6.string().nullable(),
+      ideConfigPath: z8.string().nullable(),
       /** Winning config kind, appended without replacing ideConfigPath. */
-      configKind: z6.enum(["workspace", "legacy", "none"]).optional(),
+      configKind: z8.enum(["workspace", "legacy", "none"]).optional(),
       /** Absolute path to the winning config, if any. */
-      configPath: z6.string().nullable().optional(),
+      configPath: z8.string().nullable().optional(),
       /** Whether the workspace has `.tmux-ide/workspace.yml`. */
-      hasWorkspaceConfig: z6.boolean().optional(),
+      hasWorkspaceConfig: z8.boolean().optional(),
       /** ISO timestamp of when the workspace was added. */
-      addedAt: z6.string()
+      addedAt: z8.string()
     });
-    WorkspaceListResponseSchemaZ = z6.object({
-      workspaces: z6.array(WorkspaceSchemaZ)
+    WorkspaceListResponseSchemaZ = z8.object({
+      workspaces: z8.array(WorkspaceSchemaZ)
     });
-    AddWorkspaceRequestSchemaZ = z6.object({
+    AddWorkspaceRequestSchemaZ = z8.object({
       /** Absolute path to the project directory. */
-      projectDir: z6.string().min(1),
+      projectDir: z8.string().min(1),
       /** Optional explicit workspace name. Auto-derived from basename when absent. */
-      name: z6.string().min(1).optional(),
+      name: z8.string().min(1).optional(),
       /** Optional override for the tmux session name (defaults to `name`). */
-      sessionName: z6.string().min(1).optional(),
+      sessionName: z8.string().min(1).optional(),
       /** Optional ide.yml path the workspace was launched with. Preserved for wire compatibility. */
-      ideConfigPath: z6.string().min(1).optional(),
+      ideConfigPath: z8.string().min(1).optional(),
       /** Optional generalized config kind. */
-      configKind: z6.enum(["workspace", "legacy", "none"]).optional(),
+      configKind: z8.enum(["workspace", "legacy", "none"]).optional(),
       /** Optional generalized config path. */
-      configPath: z6.string().min(1).optional(),
+      configPath: z8.string().min(1).optional(),
       /** Optional workspace config presence fact. */
-      hasWorkspaceConfig: z6.boolean().optional()
+      hasWorkspaceConfig: z8.boolean().optional()
     });
-    AddWorkspaceResponseSchemaZ = z6.object({
+    AddWorkspaceResponseSchemaZ = z8.object({
       workspace: WorkspaceSchemaZ
     });
-    WorkspaceAddedFrameSchemaZ = z6.object({
-      type: z6.literal("workspace.added"),
+    WorkspaceAddedFrameSchemaZ = z8.object({
+      type: z8.literal("workspace.added"),
       workspace: WorkspaceSchemaZ
     });
-    WorkspaceRemovedFrameSchemaZ = z6.object({
-      type: z6.literal("workspace.removed"),
-      name: z6.string()
+    WorkspaceRemovedFrameSchemaZ = z8.object({
+      type: z8.literal("workspace.removed"),
+      name: z8.string()
+    });
+  }
+});
+
+// packages/contracts/src/app-window-state.ts
+import { z as z9 } from "zod";
+function dockTreeLimitFailure(value) {
+  const stack = [{ value, depth: 1 }];
+  let nodes = 0;
+  while (stack.length > 0) {
+    const current = stack.pop();
+    nodes += 1;
+    if (nodes > APP_WINDOW_MAX_TREE_NODES) return "dock tree node limit exceeded";
+    if (current.depth > APP_WINDOW_MAX_TREE_DEPTH) return "dock tree depth limit exceeded";
+    if (current.value && typeof current.value === "object" && !Array.isArray(current.value) && "type" in current.value && current.value.type === "split" && "children" in current.value && Array.isArray(current.value.children)) {
+      if (current.value.children.length > 8) return "dock split child limit exceeded";
+      for (const child of current.value.children) {
+        stack.push({ value: child, depth: current.depth + 1 });
+      }
+    }
+  }
+  return null;
+}
+function refineScene(scene, ctx) {
+  const windowEntries = Object.entries(scene.windows);
+  if (windowEntries.length > APP_WINDOW_MAX_WINDOWS) {
+    ctx.addIssue({
+      code: z9.ZodIssueCode.custom,
+      message: "app window limit exceeded",
+      path: ["windows"]
+    });
+  }
+  for (const [key, window] of windowEntries) {
+    if (key !== window.id) {
+      ctx.addIssue({
+        code: z9.ZodIssueCode.custom,
+        message: "window record key must match window id",
+        path: ["windows", key, "id"]
+      });
+    }
+  }
+  const dockMembership = /* @__PURE__ */ new Map();
+  const nodeIds = /* @__PURE__ */ new Set();
+  const visit = (node) => {
+    if (nodeIds.has(node.id)) {
+      ctx.addIssue({
+        code: z9.ZodIssueCode.custom,
+        message: "dock node ids must be unique",
+        path: ["dockRoot"]
+      });
+    }
+    nodeIds.add(node.id);
+    if (node.type === "split") {
+      for (const child of node.children) visit(child);
+      return;
+    }
+    for (const [index, windowId] of node.windowIds.entries()) {
+      if (dockMembership.has(windowId)) {
+        ctx.addIssue({
+          code: z9.ZodIssueCode.custom,
+          message: "docked window must occur in exactly one stack",
+          path: ["dockRoot"]
+        });
+      }
+      dockMembership.set(windowId, {
+        stackId: node.id,
+        index,
+        activeWindowId: node.activeWindowId
+      });
+    }
+  };
+  if (scene.dockRoot) visit(scene.dockRoot);
+  const floatingSet = new Set(scene.floatingOrder);
+  if (floatingSet.size !== scene.floatingOrder.length) {
+    ctx.addIssue({
+      code: z9.ZodIssueCode.custom,
+      message: "floating z-order ids must be unique",
+      path: ["floatingOrder"]
+    });
+  }
+  for (const [windowId, window] of windowEntries) {
+    const dockedAt = dockMembership.get(windowId);
+    const isFloating = floatingSet.has(windowId);
+    if (window.placement.mode === "docked") {
+      if (!dockedAt || isFloating) {
+        ctx.addIssue({
+          code: z9.ZodIssueCode.custom,
+          message: "docked window must occur only in the dock tree",
+          path: ["windows", windowId, "placement"]
+        });
+      } else if (window.placement.docked?.stackId !== dockedAt.stackId || window.placement.docked.index !== dockedAt.index) {
+        ctx.addIssue({
+          code: z9.ZodIssueCode.custom,
+          message: "dock placement memory must match current stack membership",
+          path: ["windows", windowId, "placement", "docked"]
+        });
+      }
+    } else if (dockedAt || !isFloating) {
+      ctx.addIssue({
+        code: z9.ZodIssueCode.custom,
+        message: "floating window must occur only in floating z-order",
+        path: ["windows", windowId, "placement"]
+      });
+    }
+  }
+  for (const windowId of dockMembership.keys()) {
+    if (!Object.hasOwn(scene.windows, windowId)) {
+      ctx.addIssue({
+        code: z9.ZodIssueCode.custom,
+        message: "dock tree references an unknown window",
+        path: ["dockRoot"]
+      });
+    }
+  }
+  for (const windowId of floatingSet) {
+    if (!Object.hasOwn(scene.windows, windowId)) {
+      ctx.addIssue({
+        code: z9.ZodIssueCode.custom,
+        message: "floating z-order references an unknown window",
+        path: ["floatingOrder"]
+      });
+    }
+  }
+  if (scene.focusedWindowId && !Object.hasOwn(scene.windows, scene.focusedWindowId)) {
+    ctx.addIssue({
+      code: z9.ZodIssueCode.custom,
+      message: "focused window must exist",
+      path: ["focusedWindowId"]
+    });
+  } else if (scene.focusedWindowId) {
+    const focused = scene.windows[scene.focusedWindowId];
+    if (focused.placement.mode === "floating" && scene.floatingOrder.at(-1) !== scene.focusedWindowId) {
+      ctx.addIssue({
+        code: z9.ZodIssueCode.custom,
+        message: "focused floating window must be top-most",
+        path: ["focusedWindowId"]
+      });
+    }
+    if (focused.placement.mode === "docked") {
+      const membership = dockMembership.get(scene.focusedWindowId);
+      if (membership && membership.activeWindowId !== scene.focusedWindowId) {
+        ctx.addIssue({
+          code: z9.ZodIssueCode.custom,
+          message: "focused docked window must be the active window in its stack",
+          path: ["focusedWindowId"]
+        });
+      }
+    }
+  }
+}
+var APP_WINDOW_DOCUMENT_VERSION, APP_WINDOW_MAX_WINDOWS, APP_WINDOW_MAX_LAYOUTS, APP_WINDOW_MAX_TREE_DEPTH, APP_WINDOW_MAX_TREE_NODES, APP_WINDOW_MAX_ID_LENGTH, APP_WINDOW_MAX_TITLE_LENGTH, RESERVED_RECORD_KEYS2, finiteCoordinate, finiteExtent, VisibleTextSchemaZ, AppWindowIdSchemaZ, AppWindowTimestampSchemaZ, AppWindowNativeSurfaceSchemaZ, AppWindowSourceSchemaZ, AppWindowRectSchemaZ, AppWindowDockMemorySchemaZ, AppWindowPlacementSchemaZ, AppWindowDockStateSchemaZ, AppWindowInstanceSchemaZ, AppWindowDockNodeRecursiveSchemaZ, AppWindowDockNodeSchemaZ, AppWindowSceneShapeSchemaZ, AppWindowSceneSchemaZ, AppWindowNamedLayoutSchemaZ, AppWindowDocumentV1SchemaZ;
+var init_app_window_state = __esm({
+  "packages/contracts/src/app-window-state.ts"() {
+    "use strict";
+    APP_WINDOW_DOCUMENT_VERSION = 1;
+    APP_WINDOW_MAX_WINDOWS = 128;
+    APP_WINDOW_MAX_LAYOUTS = 32;
+    APP_WINDOW_MAX_TREE_DEPTH = 24;
+    APP_WINDOW_MAX_TREE_NODES = 255;
+    APP_WINDOW_MAX_ID_LENGTH = 128;
+    APP_WINDOW_MAX_TITLE_LENGTH = 160;
+    RESERVED_RECORD_KEYS2 = /* @__PURE__ */ new Set(["__proto__", "prototype", "constructor"]);
+    finiteCoordinate = z9.number().finite().min(-1e6).max(1e6);
+    finiteExtent = z9.number().finite().positive().max(1e6);
+    VisibleTextSchemaZ = (max) => z9.string().max(max).refine((value) => !value.includes("\0"), "text must not contain NUL bytes").refine((value) => value.trim().length > 0, "text must contain visible characters");
+    AppWindowIdSchemaZ = z9.string().min(1).max(APP_WINDOW_MAX_ID_LENGTH).regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/u).refine((value) => !RESERVED_RECORD_KEYS2.has(value), "reserved record key is not allowed");
+    AppWindowTimestampSchemaZ = z9.string().datetime({ offset: false });
+    AppWindowNativeSurfaceSchemaZ = z9.enum([
+      "home",
+      "files",
+      "changes",
+      "missions",
+      "activity"
+    ]);
+    AppWindowSourceSchemaZ = z9.discriminatedUnion("kind", [
+      z9.object({
+        kind: z9.literal("native"),
+        surface: AppWindowNativeSurfaceSchemaZ,
+        /** Stable resource identity for multiple instances of one native surface. */
+        resourceId: AppWindowIdSchemaZ.nullable()
+      }).strict(),
+      z9.object({
+        kind: z9.literal("terminal"),
+        /** Durable semantic source id. A live tmux `%pane_id` is intentionally invalid. */
+        terminalSourceId: AppWindowIdSchemaZ
+      }).strict()
+    ]);
+    AppWindowRectSchemaZ = z9.object({
+      x: finiteCoordinate,
+      y: finiteCoordinate,
+      width: finiteExtent,
+      height: finiteExtent
+    }).strict();
+    AppWindowDockMemorySchemaZ = z9.object({
+      stackId: AppWindowIdSchemaZ,
+      index: z9.number().int().nonnegative().max(APP_WINDOW_MAX_WINDOWS - 1)
+    }).strict();
+    AppWindowPlacementSchemaZ = z9.object({
+      mode: z9.enum(["docked", "floating"]),
+      /** Current dock location when docked; last dock location when floating. */
+      docked: AppWindowDockMemorySchemaZ.nullable(),
+      /** Current rect when floating; last floating rect when docked. */
+      floating: AppWindowRectSchemaZ.nullable()
+    }).strict().superRefine((placement, ctx) => {
+      if (placement.mode === "docked" && placement.docked === null) {
+        ctx.addIssue({
+          code: z9.ZodIssueCode.custom,
+          message: "docked windows require dock placement memory",
+          path: ["docked"]
+        });
+      }
+      if (placement.mode === "floating" && placement.floating === null) {
+        ctx.addIssue({
+          code: z9.ZodIssueCode.custom,
+          message: "floating windows require a floating rect",
+          path: ["floating"]
+        });
+      }
+    });
+    AppWindowDockStateSchemaZ = z9.object({
+      mode: z9.enum(["collapsed", "open", "maximized"]),
+      preferredHeight: z9.number().int().nonnegative().max(1e6).nullable(),
+      focusZone: z9.enum(["canvas", "dock-tabs", "dock-body"])
+    }).strict();
+    AppWindowInstanceSchemaZ = z9.object({
+      id: AppWindowIdSchemaZ,
+      source: AppWindowSourceSchemaZ,
+      title: VisibleTextSchemaZ(APP_WINDOW_MAX_TITLE_LENGTH).nullable(),
+      placement: AppWindowPlacementSchemaZ
+    }).strict();
+    AppWindowDockNodeRecursiveSchemaZ = z9.lazy(
+      () => z9.discriminatedUnion("type", [
+        z9.object({
+          type: z9.literal("stack"),
+          id: AppWindowIdSchemaZ,
+          windowIds: z9.array(AppWindowIdSchemaZ).min(1).max(APP_WINDOW_MAX_WINDOWS),
+          activeWindowId: AppWindowIdSchemaZ
+        }).strict().superRefine((stack, ctx) => {
+          if (new Set(stack.windowIds).size !== stack.windowIds.length) {
+            ctx.addIssue({
+              code: z9.ZodIssueCode.custom,
+              message: "stack window ids must be unique",
+              path: ["windowIds"]
+            });
+          }
+          if (!stack.windowIds.includes(stack.activeWindowId)) {
+            ctx.addIssue({
+              code: z9.ZodIssueCode.custom,
+              message: "active window must belong to the stack",
+              path: ["activeWindowId"]
+            });
+          }
+        }),
+        z9.object({
+          type: z9.literal("split"),
+          id: AppWindowIdSchemaZ,
+          axis: z9.enum(["horizontal", "vertical"]),
+          children: z9.array(AppWindowDockNodeRecursiveSchemaZ).min(2).max(8),
+          weights: z9.array(z9.number().int().positive().max(1e6)).min(2).max(8)
+        }).strict().refine((node) => node.children.length === node.weights.length, {
+          message: "split weights must match children",
+          path: ["weights"]
+        })
+      ])
+    );
+    AppWindowDockNodeSchemaZ = z9.unknown().superRefine((value, ctx) => {
+      const failure = dockTreeLimitFailure(value);
+      if (failure) ctx.addIssue({ code: z9.ZodIssueCode.custom, message: failure });
+    }).pipe(AppWindowDockNodeRecursiveSchemaZ);
+    AppWindowSceneShapeSchemaZ = z9.object({
+      windows: z9.record(AppWindowIdSchemaZ, AppWindowInstanceSchemaZ),
+      dockRoot: AppWindowDockNodeSchemaZ.nullable(),
+      dockState: AppWindowDockStateSchemaZ,
+      /** Back-to-front order. The last id is the top-most floating window. */
+      floatingOrder: z9.array(AppWindowIdSchemaZ).max(APP_WINDOW_MAX_WINDOWS),
+      focusedWindowId: AppWindowIdSchemaZ.nullable()
+    }).strict();
+    AppWindowSceneSchemaZ = AppWindowSceneShapeSchemaZ.superRefine(refineScene);
+    AppWindowNamedLayoutSchemaZ = z9.object({
+      id: AppWindowIdSchemaZ,
+      name: VisibleTextSchemaZ(80),
+      description: VisibleTextSchemaZ(512).nullable(),
+      revision: z9.number().int().positive(),
+      createdAt: AppWindowTimestampSchemaZ,
+      updatedAt: AppWindowTimestampSchemaZ,
+      scene: AppWindowSceneSchemaZ
+    }).strict().refine((layout) => Date.parse(layout.updatedAt) >= Date.parse(layout.createdAt), {
+      message: "layout updatedAt must not precede createdAt",
+      path: ["updatedAt"]
+    });
+    AppWindowDocumentV1SchemaZ = AppWindowSceneShapeSchemaZ.extend({
+      version: z9.literal(APP_WINDOW_DOCUMENT_VERSION),
+      revision: z9.number().int().nonnegative(),
+      updatedAt: AppWindowTimestampSchemaZ,
+      activeLayoutId: AppWindowIdSchemaZ.nullable(),
+      layouts: z9.record(AppWindowIdSchemaZ, AppWindowNamedLayoutSchemaZ)
+    }).strict().superRefine((document, ctx) => {
+      refineScene(document, ctx);
+      if (Object.keys(document.layouts).length > APP_WINDOW_MAX_LAYOUTS) {
+        ctx.addIssue({
+          code: z9.ZodIssueCode.custom,
+          message: "named layout limit exceeded",
+          path: ["layouts"]
+        });
+      }
+      for (const [key, layout] of Object.entries(document.layouts)) {
+        if (key !== layout.id) {
+          ctx.addIssue({
+            code: z9.ZodIssueCode.custom,
+            message: "layout record key must match layout id",
+            path: ["layouts", key, "id"]
+          });
+        }
+      }
+      if (document.activeLayoutId && !Object.hasOwn(document.layouts, document.activeLayoutId)) {
+        ctx.addIssue({
+          code: z9.ZodIssueCode.custom,
+          message: "active layout must exist",
+          path: ["activeLayoutId"]
+        });
+      }
+      for (const [key, layout] of Object.entries(document.layouts)) {
+        if (Date.parse(layout.updatedAt) > Date.parse(document.updatedAt)) {
+          ctx.addIssue({
+            code: z9.ZodIssueCode.custom,
+            message: "layout updatedAt must not exceed document updatedAt",
+            path: ["layouts", key, "updatedAt"]
+          });
+        }
+      }
     });
   }
 });
 
 // packages/contracts/src/workspace-config.ts
-import { z as z7 } from "zod";
-var NonEmptyStringSchema, ProfileNameSchema, WorkspaceCommandSchemaZ, WorkspaceTerminalPaneSchemaZ, WorkspaceTerminalRowSchemaZ, WorkspaceTerminalConfigSchemaZ, WorkspacePanelKindSchemaZ, WorkspaceFullPanelViewSchemaZ, WorkspaceAppConfigSchemaZ, WorkspaceHarnessProfileSchemaZ, WorkspaceAgentRoleSchemaZ, WorkspaceAgentProfileSchemaZ, WorkspaceMissionDefaultsSchemaZ, WorkspaceConfigV1ObjectSchemaZ, WorkspaceConfigV1SchemaZ;
+import { z as z10 } from "zod";
+function validateWorkspaceLayoutTree(root, path2, context) {
+  const seen = /* @__PURE__ */ new Map();
+  let count = 0;
+  const walk = (node, nodePath, depth) => {
+    count += 1;
+    if (count > 64) {
+      context.addIssue({
+        code: "custom",
+        path: path2,
+        message: "Composite view layout must not exceed 64 nodes"
+      });
+      return;
+    }
+    if (depth > 8) {
+      context.addIssue({
+        code: "custom",
+        path: nodePath,
+        message: "Composite view layout must not be deeper than 8 nodes"
+      });
+    }
+    const existing = seen.get(node.id);
+    if (existing) {
+      context.addIssue({
+        code: "custom",
+        path: [...nodePath, "id"],
+        message: `Duplicate layout node id "${node.id}"`
+      });
+    } else {
+      seen.set(node.id, [...nodePath, "id"]);
+    }
+    if (node.type === "split") {
+      if (node.weights !== void 0 && node.weights.length !== node.children.length) {
+        context.addIssue({
+          code: "custom",
+          path: [...nodePath, "weights"],
+          message: "Split weights length must match children length"
+        });
+      }
+      node.children.forEach(
+        (child, childIndex) => walk(child, [...nodePath, "children", childIndex], depth + 1)
+      );
+    } else if (node.type === "tabs") {
+      if (node.active && !node.children.some((child) => child.id === node.active)) {
+        context.addIssue({
+          code: "custom",
+          path: [...nodePath, "active"],
+          message: `Unknown active tab child "${node.active}"`
+        });
+      }
+      node.children.forEach(
+        (child, childIndex) => walk(child, [...nodePath, "children", childIndex], depth + 1)
+      );
+    }
+  };
+  walk(root, path2, 1);
+}
+var NonEmptyStringSchema, ProfileNameSchema, WorkspaceCommandSchemaZ, WorkspaceTerminalPaneSchemaZ, WorkspaceTerminalRowSchemaZ, WorkspaceTerminalConfigSchemaZ, WorkspacePanelKindSchemaZ, WorkspaceLayoutIdSchemaZ, WorkspaceAppLayoutNodeSchemaZ, WorkspaceFullPanelViewSchemaZ, WorkspaceCompositeViewSchemaZ, WorkspaceAppViewSchemaZ, WorkspaceAppConfigSchemaZ, WorkspaceHarnessProfileSchemaZ, WorkspaceAgentRoleSchemaZ, WorkspaceAgentProfileSchemaZ, WorkspaceMissionDefaultsSchemaZ, WorkspaceConfigV1ObjectSchemaZ, WorkspaceConfigV1SchemaZ;
 var init_workspace_config = __esm({
   "packages/contracts/src/workspace-config.ts"() {
     "use strict";
     init_ide_config();
-    NonEmptyStringSchema = z7.string().min(1);
-    ProfileNameSchema = z7.string().min(1);
-    WorkspaceCommandSchemaZ = z7.union([
+    NonEmptyStringSchema = z10.string().min(1);
+    ProfileNameSchema = z10.string().min(1);
+    WorkspaceCommandSchemaZ = z10.union([
       NonEmptyStringSchema,
-      z7.array(NonEmptyStringSchema).min(1)
+      z10.array(NonEmptyStringSchema).min(1)
     ]);
     WorkspaceTerminalPaneSchemaZ = PaneSchema.pick({
+      id: true,
       title: true,
       command: true,
       type: true,
@@ -358,59 +1823,106 @@ var init_workspace_config = __esm({
       focus: true,
       env: true
     }).strict();
-    WorkspaceTerminalRowSchemaZ = z7.strictObject({
+    WorkspaceTerminalRowSchemaZ = z10.strictObject({
       size: RowSchema.shape.size,
-      panes: z7.array(WorkspaceTerminalPaneSchemaZ).min(1)
+      panes: z10.array(WorkspaceTerminalPaneSchemaZ).min(1)
     });
-    WorkspaceTerminalConfigSchemaZ = z7.strictObject({
-      rows: z7.array(WorkspaceTerminalRowSchemaZ).min(1),
+    WorkspaceTerminalConfigSchemaZ = z10.strictObject({
+      rows: z10.array(WorkspaceTerminalRowSchemaZ).min(1),
       theme: ThemeConfigSchema.strict().optional()
     });
-    WorkspacePanelKindSchemaZ = z7.enum(["home", "terminals", "files", "diff", "missions"]);
-    WorkspaceFullPanelViewSchemaZ = z7.strictObject({
+    WorkspacePanelKindSchemaZ = z10.enum(["home", "terminals", "files", "diff", "missions"]);
+    WorkspaceLayoutIdSchemaZ = NonEmptyStringSchema.max(128);
+    WorkspaceAppLayoutNodeSchemaZ = z10.lazy(
+      () => z10.discriminatedUnion("type", [
+        z10.strictObject({
+          type: z10.literal("panel"),
+          id: WorkspaceLayoutIdSchemaZ,
+          panel: WorkspacePanelKindSchemaZ,
+          min_size: z10.number().int().positive().optional()
+        }),
+        z10.strictObject({
+          type: z10.literal("split"),
+          id: WorkspaceLayoutIdSchemaZ,
+          direction: z10.enum(["horizontal", "vertical"]),
+          children: z10.array(WorkspaceAppLayoutNodeSchemaZ).min(2).max(4),
+          weights: z10.array(z10.number().positive()).optional()
+        }),
+        z10.strictObject({
+          type: z10.literal("tabs"),
+          id: WorkspaceLayoutIdSchemaZ,
+          children: z10.array(WorkspaceAppLayoutNodeSchemaZ).min(1).max(8),
+          active: WorkspaceLayoutIdSchemaZ.optional()
+        })
+      ])
+    );
+    WorkspaceFullPanelViewSchemaZ = z10.strictObject({
       id: NonEmptyStringSchema,
       title: NonEmptyStringSchema.optional(),
       panel: WorkspacePanelKindSchemaZ
     });
-    WorkspaceAppConfigSchemaZ = z7.strictObject({
-      views: z7.array(WorkspaceFullPanelViewSchemaZ).min(1)
+    WorkspaceCompositeViewSchemaZ = z10.strictObject({
+      id: NonEmptyStringSchema,
+      title: NonEmptyStringSchema.optional(),
+      layout: WorkspaceAppLayoutNodeSchemaZ
     });
-    WorkspaceHarnessProfileSchemaZ = z7.strictObject({
+    WorkspaceAppViewSchemaZ = z10.union([
+      WorkspaceFullPanelViewSchemaZ,
+      WorkspaceCompositeViewSchemaZ
+    ]);
+    WorkspaceAppConfigSchemaZ = z10.strictObject({
+      views: z10.array(WorkspaceAppViewSchemaZ).min(1)
+    });
+    WorkspaceHarnessProfileSchemaZ = z10.strictObject({
       adapter: NonEmptyStringSchema,
       command: WorkspaceCommandSchemaZ,
-      env: z7.record(NonEmptyStringSchema, z7.string()).optional()
+      env: z10.record(NonEmptyStringSchema, z10.string()).optional()
     });
-    WorkspaceAgentRoleSchemaZ = z7.enum([
+    WorkspaceAgentRoleSchemaZ = z10.enum([
       "manager",
       "implementer",
       "reviewer",
       "researcher",
       "validator"
     ]);
-    WorkspaceAgentProfileSchemaZ = z7.strictObject({
+    WorkspaceAgentProfileSchemaZ = z10.strictObject({
       harness: ProfileNameSchema,
       model: NonEmptyStringSchema.optional(),
       role: WorkspaceAgentRoleSchemaZ
     });
-    WorkspaceMissionDefaultsSchemaZ = z7.strictObject({
+    WorkspaceMissionDefaultsSchemaZ = z10.strictObject({
       manager: ProfileNameSchema.optional(),
-      workers: z7.array(ProfileNameSchema).optional(),
+      workers: z10.array(ProfileNameSchema).optional(),
       reviewer: ProfileNameSchema.optional(),
-      isolation: z7.enum(["shared", "worktree"]).optional(),
-      max_concurrent_tasks: z7.number().int().positive().optional()
+      isolation: z10.enum(["shared", "worktree"]).optional(),
+      max_concurrent_tasks: z10.number().int().positive().optional()
     });
-    WorkspaceConfigV1ObjectSchemaZ = z7.strictObject({
-      version: z7.literal(1),
+    WorkspaceConfigV1ObjectSchemaZ = z10.strictObject({
+      version: z10.literal(1),
       name: NonEmptyStringSchema.optional(),
-      before: z7.string().optional(),
+      before: z10.string().optional(),
       terminal: WorkspaceTerminalConfigSchemaZ.optional(),
       app: WorkspaceAppConfigSchemaZ.optional(),
-      harnesses: z7.record(ProfileNameSchema, WorkspaceHarnessProfileSchemaZ).optional(),
-      agents: z7.record(ProfileNameSchema, WorkspaceAgentProfileSchemaZ).optional(),
+      harnesses: z10.record(ProfileNameSchema, WorkspaceHarnessProfileSchemaZ).optional(),
+      agents: z10.record(ProfileNameSchema, WorkspaceAgentProfileSchemaZ).optional(),
       missions: WorkspaceMissionDefaultsSchemaZ.optional()
     });
     WorkspaceConfigV1SchemaZ = WorkspaceConfigV1ObjectSchemaZ.superRefine(
       (config2, context) => {
+        const explicitPaneIds = /* @__PURE__ */ new Set();
+        for (const [rowIndex, row] of (config2.terminal?.rows ?? []).entries()) {
+          for (const [paneIndex, pane] of row.panes.entries()) {
+            if (!pane.id) continue;
+            if (explicitPaneIds.has(pane.id)) {
+              context.addIssue({
+                code: "custom",
+                path: ["terminal", "rows", rowIndex, "panes", paneIndex, "id"],
+                message: `Duplicate pane id "${pane.id}"`
+              });
+            }
+            explicitPaneIds.add(pane.id);
+          }
+        }
         const harnessNames = new Set(Object.keys(config2.harnesses ?? {}));
         for (const [agentName, agent] of Object.entries(config2.agents ?? {})) {
           if (!harnessNames.has(agent.harness)) {
@@ -446,6 +1958,9 @@ var init_workspace_config = __esm({
             });
           }
           viewIds.add(view.id);
+          if ("layout" in view) {
+            validateWorkspaceLayoutTree(view.layout, ["app", "views", index, "layout"], context);
+          }
         }
       }
     );
@@ -453,7 +1968,7 @@ var init_workspace_config = __esm({
 });
 
 // packages/contracts/src/actions-contract.ts
-import { z as z8 } from "zod";
+import { z as z11 } from "zod";
 function isActionName(name) {
   return name in ActionContractsZ;
 }
@@ -462,122 +1977,123 @@ var init_actions_contract = __esm({
   "packages/contracts/src/actions-contract.ts"() {
     "use strict";
     init_ide_config();
-    ProjectOpenTerminalInputZ = z8.object({
-      name: z8.string().min(1)
+    ProjectOpenTerminalInputZ = z11.object({
+      name: z11.string().min(1)
     });
-    ProjectOpenTerminalResultZ = z8.object({
-      sessionName: z8.string(),
-      cwd: z8.string().min(1),
-      terminalTabId: z8.string(),
+    ProjectOpenTerminalResultZ = z11.object({
+      sessionName: z11.string(),
+      cwd: z11.string().min(1),
+      terminalTabId: z11.string(),
       /**
        * `true` when the dispatcher had to launch the tmux session as part of
        * resolving the terminal. `false` when the session was already running.
        */
-      launched: z8.boolean()
+      launched: z11.boolean()
     });
-    ProjectLaunchInputZ = z8.object({
-      name: z8.string().min(1)
+    ProjectLaunchInputZ = z11.object({
+      name: z11.string().min(1)
     });
-    ProjectLaunchResultZ = z8.object({
-      sessionName: z8.string(),
+    ProjectLaunchResultZ = z11.object({
+      sessionName: z11.string(),
       /**
        * `false` when the session was already running (idempotent no-op),
        * `true` when this call started a fresh session.
        */
-      started: z8.boolean()
+      started: z11.boolean()
     });
-    ProjectStopInputZ = z8.object({
-      name: z8.string().min(1)
+    ProjectStopInputZ = z11.object({
+      name: z11.string().min(1)
     });
-    ProjectStopResultZ = z8.object({
-      sessionName: z8.string(),
+    ProjectStopResultZ = z11.object({
+      sessionName: z11.string(),
       /**
        * `false` when no session was running (idempotent no-op),
        * `true` when this call killed a session.
        */
-      stopped: z8.boolean()
+      stopped: z11.boolean()
     });
-    ProjectRestartInputZ = z8.object({
-      name: z8.string().min(1)
+    ProjectRestartInputZ = z11.object({
+      name: z11.string().min(1)
     });
-    ProjectRestartResultZ = z8.object({
-      sessionName: z8.string(),
-      restarted: z8.literal(true)
+    ProjectRestartResultZ = z11.object({
+      sessionName: z11.string(),
+      restarted: z11.literal(true)
     });
-    ProjectActivateInputZ = z8.object({
-      name: z8.string().min(1)
+    ProjectActivateInputZ = z11.object({
+      name: z11.string().min(1)
     });
-    ProjectActivateResultZ = z8.object({
-      active: z8.boolean(),
-      projectName: z8.string()
+    ProjectActivateResultZ = z11.object({
+      active: z11.boolean(),
+      projectName: z11.string()
     });
-    TerminalRespawnInputZ = z8.object({
-      sessionName: z8.string().min(1),
-      terminalId: z8.string().min(1),
+    TerminalRespawnInputZ = z11.object({
+      sessionName: z11.string().min(1),
+      terminalId: z11.string().min(1),
       /**
        * Optional cwd override. Omit to respawn at the bridge's current cwd
        * (re-using the `lastCwd` recorded by the PTY bridge).
        */
-      cwd: z8.string().min(1).optional()
+      cwd: z11.string().min(1).optional()
     });
-    TerminalRespawnResultZ = z8.object({
-      respawned: z8.literal(true),
-      cwd: z8.string().min(1)
+    TerminalRespawnResultZ = z11.object({
+      respawned: z11.literal(true),
+      cwd: z11.string().min(1)
     });
-    TerminalStopInputZ = z8.object({
-      sessionName: z8.string().min(1),
-      terminalId: z8.string().min(1)
+    TerminalStopInputZ = z11.object({
+      sessionName: z11.string().min(1),
+      terminalId: z11.string().min(1)
     });
-    TerminalStopResultZ = z8.object({
-      stopped: z8.literal(true)
+    TerminalStopResultZ = z11.object({
+      stopped: z11.literal(true)
     });
-    ConfigSetInputZ = z8.object({
-      projectName: z8.string().min(1).optional(),
-      path: z8.string().min(1),
-      value: z8.unknown()
+    ConfigSetInputZ = z11.object({
+      projectName: z11.string().min(1).optional(),
+      path: z11.string().min(1),
+      value: z11.unknown()
     });
-    ConfigResultZ = z8.object({
+    ConfigResultZ = z11.object({
       config: IdeConfigSchema
     });
     ConfigAddPaneInputZ = PaneSchema.partial().extend({
-      projectName: z8.string().min(1).optional(),
-      rowIndex: z8.number().int().min(0)
+      projectName: z11.string().min(1).optional(),
+      rowIndex: z11.number().int().min(0)
     });
     ConfigAddPaneResultZ = ConfigResultZ;
-    ConfigRemovePaneInputZ = z8.object({
-      projectName: z8.string().min(1).optional(),
-      rowIndex: z8.number().int().min(0),
-      paneIndex: z8.number().int().min(0)
+    ConfigRemovePaneInputZ = z11.object({
+      projectName: z11.string().min(1).optional(),
+      rowIndex: z11.number().int().min(0),
+      paneIndex: z11.number().int().min(0)
     });
     ConfigRemovePaneResultZ = ConfigResultZ;
-    ConfigAddRowInputZ = z8.object({
-      projectName: z8.string().min(1).optional(),
-      size: z8.string().optional()
+    ConfigAddRowInputZ = z11.object({
+      projectName: z11.string().min(1).optional(),
+      size: z11.string().optional()
     });
     ConfigAddRowResultZ = ConfigResultZ;
-    ConfigEnableTeamInputZ = z8.object({
-      projectName: z8.string().min(1).optional(),
-      name: z8.string().min(1).optional()
+    ConfigEnableTeamInputZ = z11.object({
+      projectName: z11.string().min(1).optional(),
+      name: z11.string().min(1).optional()
     });
     ConfigEnableTeamResultZ = ConfigResultZ;
-    ConfigDisableTeamInputZ = z8.object({
-      projectName: z8.string().min(1).optional()
+    ConfigDisableTeamInputZ = z11.object({
+      projectName: z11.string().min(1).optional()
     });
     ConfigDisableTeamResultZ = ConfigResultZ;
-    AppSetRemoteAccessInputZ = z8.object({
-      enabled: z8.boolean()
+    AppSetRemoteAccessInputZ = z11.object({
+      enabled: z11.boolean()
     });
-    AppSetRemoteAccessResultZ = z8.object({
-      enabled: z8.boolean(),
-      url: z8.string().nullable(),
-      token: z8.string().nullable(),
-      qrPayload: z8.string().nullable()
+    AppSetRemoteAccessResultZ = z11.object({
+      enabled: z11.boolean(),
+      url: z11.string().nullable(),
+      token: z11.string().nullable(),
+      qrPayload: z11.string().nullable()
     });
-    DaemonShutdownInputZ = z8.object({
-      reason: z8.string().optional()
+    DaemonShutdownInputZ = z11.object({
+      reason: z11.string().optional(),
+      expectedInstanceId: z11.uuid().optional()
     });
-    DaemonShutdownResultZ = z8.object({
-      stopping: z8.literal(true)
+    DaemonShutdownResultZ = z11.object({
+      stopping: z11.literal(true)
     });
     ActionContractsZ = {
       "project.openTerminal": {
@@ -653,7 +2169,7 @@ var init_actions_errors = __esm({
 });
 
 // packages/contracts/src/terminals.ts
-import { z as z9 } from "zod";
+import { z as z12 } from "zod";
 async function createScriptTerminalId(args) {
   const scope = args.scopeId ?? args.taskId;
   if (!scope) {
@@ -668,105 +2184,105 @@ var terminalKindSchema, terminalCreateRequestSchema, terminalRenameRequestSchema
 var init_terminals = __esm({
   "packages/contracts/src/terminals.ts"() {
     "use strict";
-    terminalKindSchema = z9.enum(["shell", "setup", "run", "teardown"]);
-    terminalCreateRequestSchema = z9.object({
-      scopeId: z9.string().trim().min(1).max(256),
-      name: z9.string().trim().min(1).max(120),
+    terminalKindSchema = z12.enum(["shell", "setup", "run", "teardown"]);
+    terminalCreateRequestSchema = z12.object({
+      scopeId: z12.string().trim().min(1).max(256),
+      name: z12.string().trim().min(1).max(120),
       kind: terminalKindSchema.optional(),
       /** Provide for script tabs to opt into deterministic id collapse. */
-      script: z9.string().max(2048).optional(),
+      script: z12.string().max(2048).optional(),
       /** Explicit id wins. Used by the dashboard to reserve a known id
        *  (e.g. the default shell tab derived from session.dir). */
-      id: z9.string().trim().min(8).max(64).regex(/^[A-Za-z0-9_-]+$/u, "id may only contain alphanumerics, '-', '_'").optional()
+      id: z12.string().trim().min(8).max(64).regex(/^[A-Za-z0-9_-]+$/u, "id may only contain alphanumerics, '-', '_'").optional()
     }).refine((v) => v.kind !== void 0 || v.script === void 0, {
       message: "script requires kind",
       path: ["script"]
     });
-    terminalRenameRequestSchema = z9.object({
-      name: z9.string().trim().min(1).max(120)
+    terminalRenameRequestSchema = z12.object({
+      name: z12.string().trim().min(1).max(120)
     });
   }
 });
 
 // packages/contracts/src/control.ts
-import { z as z10 } from "zod";
+import { z as z13 } from "zod";
 var CONTROL_PROTOCOL_VERSION, controlIdSchema, agentStatusSchema, controlRequestSchema, controlErrorSchema, controlResponseSchema, controlEventSchema, agentStatusEventSchema, agentsParamsSchema, sendParamsSchema, CONTROL_WAIT_MAX_TIMEOUT_MS, waitTimeoutSchema, waitParamsSchema, spawnPlacementSchema, spawnParamsSchema, restartAgentParamsSchema, stopAgentParamsSchema, explainParamsSchema, subscribeParamsSchema;
 var init_control = __esm({
   "packages/contracts/src/control.ts"() {
     "use strict";
     CONTROL_PROTOCOL_VERSION = 1;
-    controlIdSchema = z10.union([z10.string(), z10.number()]);
-    agentStatusSchema = z10.enum(["blocked", "working", "done", "idle", "unknown"]);
-    controlRequestSchema = z10.object({
-      v: z10.literal(CONTROL_PROTOCOL_VERSION),
+    controlIdSchema = z13.union([z13.string(), z13.number()]);
+    agentStatusSchema = z13.enum(["blocked", "working", "done", "idle", "unknown"]);
+    controlRequestSchema = z13.object({
+      v: z13.literal(CONTROL_PROTOCOL_VERSION),
       id: controlIdSchema,
-      verb: z10.string().min(1),
-      params: z10.record(z10.string(), z10.unknown()).optional()
+      verb: z13.string().min(1),
+      params: z13.record(z13.string(), z13.unknown()).optional()
     });
-    controlErrorSchema = z10.object({
-      code: z10.string(),
-      message: z10.string()
+    controlErrorSchema = z13.object({
+      code: z13.string(),
+      message: z13.string()
     });
-    controlResponseSchema = z10.discriminatedUnion("ok", [
-      z10.object({
-        v: z10.literal(CONTROL_PROTOCOL_VERSION),
+    controlResponseSchema = z13.discriminatedUnion("ok", [
+      z13.object({
+        v: z13.literal(CONTROL_PROTOCOL_VERSION),
         id: controlIdSchema.nullable(),
-        ok: z10.literal(true),
-        data: z10.unknown()
+        ok: z13.literal(true),
+        data: z13.unknown()
       }),
-      z10.object({
-        v: z10.literal(CONTROL_PROTOCOL_VERSION),
+      z13.object({
+        v: z13.literal(CONTROL_PROTOCOL_VERSION),
         id: controlIdSchema.nullable(),
-        ok: z10.literal(false),
+        ok: z13.literal(false),
         error: controlErrorSchema
       })
     ]);
-    controlEventSchema = z10.object({
-      v: z10.literal(CONTROL_PROTOCOL_VERSION),
-      event: z10.string().min(1),
-      data: z10.unknown()
+    controlEventSchema = z13.object({
+      v: z13.literal(CONTROL_PROTOCOL_VERSION),
+      event: z13.string().min(1),
+      data: z13.unknown()
     });
-    agentStatusEventSchema = z10.object({
-      ts: z10.string(),
-      session: z10.string(),
+    agentStatusEventSchema = z13.object({
+      ts: z13.string(),
+      session: z13.string(),
       from: agentStatusSchema.nullable(),
       to: agentStatusSchema
     });
-    agentsParamsSchema = z10.object({
-      session: z10.string().optional()
+    agentsParamsSchema = z13.object({
+      session: z13.string().optional()
     });
-    sendParamsSchema = z10.object({
-      session: z10.string().min(1),
-      target: z10.string().min(1),
-      message: z10.string().min(1),
-      noEnter: z10.boolean().optional(),
-      dir: z10.string().optional()
+    sendParamsSchema = z13.object({
+      session: z13.string().min(1),
+      target: z13.string().min(1),
+      message: z13.string().min(1),
+      noEnter: z13.boolean().optional(),
+      dir: z13.string().optional()
     });
     CONTROL_WAIT_MAX_TIMEOUT_MS = 6e5;
-    waitTimeoutSchema = z10.number().int().positive().max(CONTROL_WAIT_MAX_TIMEOUT_MS).optional();
-    waitParamsSchema = z10.discriminatedUnion("kind", [
-      z10.object({
-        kind: z10.literal("agent-status"),
-        session: z10.string().min(1),
+    waitTimeoutSchema = z13.number().int().positive().max(CONTROL_WAIT_MAX_TIMEOUT_MS).optional();
+    waitParamsSchema = z13.discriminatedUnion("kind", [
+      z13.object({
+        kind: z13.literal("agent-status"),
+        session: z13.string().min(1),
         status: agentStatusSchema,
         timeoutMs: waitTimeoutSchema
       }),
-      z10.object({
-        kind: z10.literal("output"),
-        target: z10.string().min(1),
-        match: z10.string().min(1),
+      z13.object({
+        kind: z13.literal("output"),
+        target: z13.string().min(1),
+        match: z13.string().min(1),
         timeoutMs: waitTimeoutSchema
       })
     ]);
-    spawnPlacementSchema = z10.enum(["window", "split-h", "split-v"]);
-    spawnParamsSchema = z10.object({
-      kind: z10.string().min(1).optional(),
-      command: z10.string().min(1).optional(),
-      session: z10.string().min(1).optional(),
-      sessionName: z10.string().min(1).optional(),
-      dir: z10.string().optional(),
+    spawnPlacementSchema = z13.enum(["window", "split-h", "split-v"]);
+    spawnParamsSchema = z13.object({
+      kind: z13.string().min(1).optional(),
+      command: z13.string().min(1).optional(),
+      session: z13.string().min(1).optional(),
+      sessionName: z13.string().min(1).optional(),
+      dir: z13.string().optional(),
       placement: spawnPlacementSchema.optional(),
-      paneId: z10.string().optional()
+      paneId: z13.string().optional()
     }).refine((p) => Boolean(p.kind) !== Boolean(p.command), {
       message: "exactly one of `kind` or `command` is required"
     }).refine((p) => Boolean(p.session) || Boolean(p.sessionName), {
@@ -774,20 +2290,1537 @@ var init_control = __esm({
     }).refine((p) => !(p.placement && p.placement !== "window") || Boolean(p.paneId), {
       message: "split placements need `paneId`"
     });
-    restartAgentParamsSchema = z10.object({
-      paneId: z10.string().min(1),
-      kind: z10.string().min(1).optional(),
-      command: z10.string().min(1).optional()
+    restartAgentParamsSchema = z13.object({
+      paneId: z13.string().min(1),
+      kind: z13.string().min(1).optional(),
+      command: z13.string().min(1).optional()
     }).refine((p) => Boolean(p.kind) || Boolean(p.command), {
       message: "`kind` or `command` is required"
     });
-    stopAgentParamsSchema = z10.object({
-      paneId: z10.string().min(1)
+    stopAgentParamsSchema = z13.object({
+      paneId: z13.string().min(1)
     });
-    explainParamsSchema = z10.object({
-      target: z10.string().min(1)
+    explainParamsSchema = z13.object({
+      target: z13.string().min(1)
     });
-    subscribeParamsSchema = z10.object({}).loose();
+    subscribeParamsSchema = z13.object({}).loose();
+  }
+});
+
+// packages/contracts/src/commands.ts
+import { z as z14 } from "zod";
+var COMMAND_PROTOCOL_VERSION, CommandIdSchemaZ, CommandOwnerSchemaZ, CommandSourceKindSchemaZ, CommandSourceSchemaZ, CommandSchemaReferencesSchemaZ, CommandConfirmationSchemaZ, CommandDescriptorSchemaZ, CommandArgumentsSchemaZ, CommandInvocationSchemaZ, CommandAvailabilitySchemaZ, CommandResolutionErrorCodeSchemaZ, CommandResolutionErrorSchemaZ;
+var init_commands = __esm({
+  "packages/contracts/src/commands.ts"() {
+    "use strict";
+    COMMAND_PROTOCOL_VERSION = 1;
+    CommandIdSchemaZ = z14.string().min(3).max(160).regex(
+      /^[a-z][A-Za-z0-9-]*(?:\.[A-Za-z0-9-]+)+$/,
+      "command id must be a dot-namespaced identifier"
+    );
+    CommandOwnerSchemaZ = z14.enum(["daemon", "renderer"]);
+    CommandSourceKindSchemaZ = z14.enum([
+      "cli",
+      "http",
+      "local-control",
+      "keyboard",
+      "palette",
+      "menu",
+      "mouse",
+      "wheel",
+      "program"
+    ]);
+    CommandSourceSchemaZ = z14.object({
+      kind: CommandSourceKindSchemaZ,
+      surface: z14.string().min(1).max(80).optional()
+    }).strict();
+    CommandSchemaReferencesSchemaZ = z14.object({
+      input: z14.string().min(1).max(160),
+      result: z14.string().min(1).max(160).optional()
+    }).strict();
+    CommandConfirmationSchemaZ = z14.enum(["none", "inline", "dialog"]);
+    CommandDescriptorSchemaZ = z14.object({
+      version: z14.literal(COMMAND_PROTOCOL_VERSION),
+      id: CommandIdSchemaZ,
+      owner: CommandOwnerSchemaZ,
+      label: z14.string().min(1).max(160),
+      description: z14.string().min(1).max(500).optional(),
+      category: z14.string().min(1).max(80),
+      schemas: CommandSchemaReferencesSchemaZ,
+      dangerous: z14.boolean(),
+      confirmation: CommandConfirmationSchemaZ
+    }).strict();
+    CommandArgumentsSchemaZ = z14.record(z14.string(), z14.json());
+    CommandInvocationSchemaZ = z14.object({
+      version: z14.literal(COMMAND_PROTOCOL_VERSION),
+      id: CommandIdSchemaZ,
+      source: CommandSourceSchemaZ,
+      args: CommandArgumentsSchemaZ
+    }).strict();
+    CommandAvailabilitySchemaZ = z14.discriminatedUnion("available", [
+      z14.object({ available: z14.literal(true) }).strict(),
+      z14.object({
+        available: z14.literal(false),
+        reason: z14.string().min(1).max(500)
+      }).strict()
+    ]);
+    CommandResolutionErrorCodeSchemaZ = z14.enum([
+      "unknown-command",
+      "invalid-invocation",
+      "invalid-input",
+      "unavailable"
+    ]);
+    CommandResolutionErrorSchemaZ = z14.object({
+      code: CommandResolutionErrorCodeSchemaZ,
+      message: z14.string().min(1),
+      commandId: CommandIdSchemaZ.optional(),
+      details: z14.json().optional()
+    }).strict();
+  }
+});
+
+// packages/contracts/src/desktop-host.ts
+import { z as z15 } from "zod";
+var DESKTOP_HOST_API_VERSION, DesktopRuntimeKindSchemaZ, DesktopPlatformSchemaZ, DesktopThemeModeSchemaZ, DesktopThemeStateSchemaZ, DesktopWindowStateSchemaZ, DesktopDaemonPreflightSchemaZ, DesktopHostBootstrapSchemaZ, DesktopMenuResultSchemaZ, DesktopDirectorySelectionSchemaZ;
+var init_desktop_host = __esm({
+  "packages/contracts/src/desktop-host.ts"() {
+    "use strict";
+    DESKTOP_HOST_API_VERSION = 1;
+    DesktopRuntimeKindSchemaZ = z15.enum(["browser", "electron"]);
+    DesktopPlatformSchemaZ = z15.enum(["darwin", "linux", "win32", "unknown"]);
+    DesktopThemeModeSchemaZ = z15.enum(["light", "dark"]);
+    DesktopThemeStateSchemaZ = z15.object({
+      mode: DesktopThemeModeSchemaZ,
+      highContrast: z15.boolean(),
+      reducedMotion: z15.boolean()
+    }).strict();
+    DesktopWindowStateSchemaZ = z15.object({
+      maximized: z15.boolean(),
+      fullscreen: z15.boolean(),
+      focused: z15.boolean()
+    }).strict();
+    DesktopDaemonPreflightSchemaZ = z15.discriminatedUnion("status", [
+      z15.object({ status: z15.literal("ready"), apiBaseUrl: z15.string().url() }).strict(),
+      z15.object({ status: z15.literal("absent") }).strict(),
+      z15.object({ status: z15.literal("deferred"), reason: z15.string().min(1) }).strict(),
+      z15.object({ status: z15.literal("unavailable"), reason: z15.string().min(1) }).strict()
+    ]);
+    DesktopHostBootstrapSchemaZ = z15.object({
+      apiVersion: z15.literal(DESKTOP_HOST_API_VERSION),
+      runtime: DesktopRuntimeKindSchemaZ,
+      platform: DesktopPlatformSchemaZ,
+      appVersion: z15.string().min(1),
+      theme: DesktopThemeStateSchemaZ,
+      window: DesktopWindowStateSchemaZ,
+      daemon: DesktopDaemonPreflightSchemaZ
+    }).strict();
+    DesktopMenuResultSchemaZ = z15.object({ status: z15.literal("unavailable") }).strict();
+    DesktopDirectorySelectionSchemaZ = z15.object({ path: z15.string().min(1) }).strict();
+  }
+});
+
+// packages/contracts/src/experience-identifiers.ts
+import { z as z16 } from "zod";
+var SEMANTIC_ICON_IDS, SemanticIconIdSchemaZ, PANE_ROLE_IDS, PaneRoleIdSchemaZ;
+var init_experience_identifiers = __esm({
+  "packages/contracts/src/experience-identifiers.ts"() {
+    "use strict";
+    SEMANTIC_ICON_IDS = [
+      "home",
+      "terminals",
+      "files",
+      "changes",
+      "missions",
+      "activity",
+      "preview",
+      "native",
+      "more",
+      "close",
+      "minimize",
+      "maximize",
+      "restore",
+      "split-right",
+      "split-down",
+      "duplicate",
+      "dock",
+      "float",
+      "move",
+      "resize",
+      "pop-out",
+      "search",
+      "refresh",
+      "command"
+    ];
+    SemanticIconIdSchemaZ = z16.enum(SEMANTIC_ICON_IDS);
+    PANE_ROLE_IDS = [
+      "home",
+      "terminal",
+      "files",
+      "changes",
+      "missions",
+      "activity",
+      "preview",
+      "native"
+    ];
+    PaneRoleIdSchemaZ = z16.enum(PANE_ROLE_IDS);
+  }
+});
+
+// packages/contracts/src/experience-shell.ts
+import { z as z17 } from "zod";
+var ShellAreaIdSchemaZ, PRIMARY_WORKSPACE_MODE_IDS, PrimaryWorkspaceModeIdSchemaZ, DOCK_TOOL_IDS, DockToolIdSchemaZ, PRODUCT_SURFACE_IDS, ProductSurfaceIdSchemaZ, CANONICAL_SHELL_AREAS, SurfaceKindSchemaZ, modeCommand, dockCommand, CANONICAL_SURFACE_REGISTRY, surfaceById;
+var init_experience_shell = __esm({
+  "packages/contracts/src/experience-shell.ts"() {
+    "use strict";
+    init_commands();
+    init_experience_identifiers();
+    ShellAreaIdSchemaZ = z17.enum([
+      "application-bar",
+      "sidebar",
+      "primary-navigation",
+      "context-actions",
+      "workspace-canvas",
+      "bottom-dock",
+      "status-strip"
+    ]);
+    PRIMARY_WORKSPACE_MODE_IDS = ["home", "terminals"];
+    PrimaryWorkspaceModeIdSchemaZ = z17.enum(PRIMARY_WORKSPACE_MODE_IDS);
+    DOCK_TOOL_IDS = ["files", "changes", "missions", "activity"];
+    DockToolIdSchemaZ = z17.enum(DOCK_TOOL_IDS);
+    PRODUCT_SURFACE_IDS = [...PRIMARY_WORKSPACE_MODE_IDS, ...DOCK_TOOL_IDS];
+    ProductSurfaceIdSchemaZ = z17.enum(PRODUCT_SURFACE_IDS);
+    CANONICAL_SHELL_AREAS = Object.freeze([
+      { id: "application-bar", label: "Application bar", order: 0 },
+      { id: "sidebar", label: "Workspace sidebar", order: 1 },
+      { id: "primary-navigation", label: "Workspace modes", order: 2 },
+      { id: "context-actions", label: "Context actions", order: 3 },
+      { id: "workspace-canvas", label: "Workspace canvas", order: 4 },
+      { id: "bottom-dock", label: "Bottom dock", order: 5 },
+      { id: "status-strip", label: "Status and recovery", order: 6 }
+    ]);
+    SurfaceKindSchemaZ = z17.enum(["primary-mode", "dock-tool"]);
+    modeCommand = (mode) => ({
+      id: "workspace.mode.activate",
+      args: { mode }
+    });
+    dockCommand = (tool) => ({
+      id: "workspace.dock.activate",
+      args: { tool }
+    });
+    CANONICAL_SURFACE_REGISTRY = Object.freeze([
+      {
+        id: "home",
+        icon: "home",
+        label: "Home",
+        kind: "primary-mode",
+        area: "workspace-canvas",
+        order: 0,
+        owningMode: "home",
+        shortcut: "F1",
+        activation: modeCommand("home")
+      },
+      {
+        id: "terminals",
+        icon: "terminals",
+        label: "Terminals",
+        kind: "primary-mode",
+        area: "workspace-canvas",
+        order: 1,
+        owningMode: "terminals",
+        shortcut: "F2",
+        activation: modeCommand("terminals")
+      },
+      {
+        id: "files",
+        icon: "files",
+        label: "Files",
+        kind: "dock-tool",
+        area: "bottom-dock",
+        order: 0,
+        owningMode: "terminals",
+        shortcut: "F3",
+        activation: dockCommand("files")
+      },
+      {
+        id: "changes",
+        icon: "changes",
+        label: "Changes",
+        kind: "dock-tool",
+        area: "bottom-dock",
+        order: 1,
+        owningMode: "terminals",
+        shortcut: "F4",
+        activation: dockCommand("changes")
+      },
+      {
+        id: "missions",
+        icon: "missions",
+        label: "Missions",
+        kind: "dock-tool",
+        area: "bottom-dock",
+        order: 2,
+        owningMode: "terminals",
+        shortcut: "F6",
+        activation: dockCommand("missions")
+      },
+      {
+        id: "activity",
+        icon: "activity",
+        label: "Activity",
+        kind: "dock-tool",
+        area: "bottom-dock",
+        order: 3,
+        owningMode: "terminals",
+        shortcut: "F9",
+        activation: dockCommand("activity")
+      }
+    ]);
+    surfaceById = new Map(CANONICAL_SURFACE_REGISTRY.map((surface) => [surface.id, surface]));
+    for (const surface of CANONICAL_SURFACE_REGISTRY) {
+      CommandIdSchemaZ.parse(surface.activation.id);
+      SemanticIconIdSchemaZ.parse(surface.icon);
+    }
+  }
+});
+
+// packages/contracts/src/visual-tokens.ts
+import { z as z18 } from "zod";
+function color(hex) {
+  const normalized = hex.replace(/^#/u, "");
+  return {
+    space: "srgb",
+    red: Number.parseInt(normalized.slice(0, 2), 16),
+    green: Number.parseInt(normalized.slice(2, 4), 16),
+    blue: Number.parseInt(normalized.slice(4, 6), 16),
+    alpha: 255
+  };
+}
+function mixSrgbColors(left, right, rightWeight) {
+  const weight = Math.max(0, Math.min(1, rightWeight));
+  const channel = (a, b) => Math.round(a * (1 - weight) + b * weight);
+  return {
+    space: "srgb",
+    red: channel(left.red, right.red),
+    green: channel(left.green, right.green),
+    blue: channel(left.blue, right.blue),
+    alpha: channel(left.alpha, right.alpha)
+  };
+}
+function deriveFocusedHeader(header, focus) {
+  return mixSrgbColors(header, focus, 0.16);
+}
+function baseTokens(appearance) {
+  const dark = appearance === "dark";
+  const header = color(dark ? "17171f" : "ececf1");
+  const focus = color(dark ? "68a8ff" : "1769d2");
+  return VisualTokensV1SchemaZ.parse({
+    surfaces: {
+      canvas: color(dark ? "0e0e12" : "f5f5f7"),
+      panel: color(dark ? "13131a" : "ffffff"),
+      panelRaised: color(dark ? "1b1b24" : "ffffff"),
+      terminal: color(dark ? "0b0b10" : "fbfbfd"),
+      header,
+      headerActive: deriveFocusedHeader(header, focus),
+      command: color(dark ? "181821" : "ffffff")
+    },
+    text: {
+      primary: color(dark ? "dedee6" : "202027"),
+      secondary: color(dark ? "a5a5b3" : "555563"),
+      muted: color(dark ? "7b7b8a" : "72727f"),
+      bright: color(dark ? "ffffff" : "09090d"),
+      inverse: color(dark ? "101015" : "ffffff"),
+      link: color(dark ? "62d9e8" : "006c7a")
+    },
+    borders: {
+      subtle: color(dark ? "242430" : "dedee5"),
+      default: color(dark ? "343445" : "c3c3ce"),
+      focused: focus,
+      selected: color(dark ? "d77cff" : "7d35a8"),
+      attention: color(dark ? "f0bd5c" : "8d5c00"),
+      danger: color(dark ? "ff6475" : "b42334")
+    },
+    statusTone: {
+      neutral: color(dark ? "8b8b99" : "61616c"),
+      info: color(dark ? "62b9ff" : "1769d2"),
+      warning: color(dark ? "f0bd5c" : "8d5c00"),
+      danger: color(dark ? "ff6475" : "b42334"),
+      success: color(dark ? "62d49a" : "18764b")
+    },
+    selection: {
+      selection: color(dark ? "315f89" : "cce4ff"),
+      selectionText: color(dark ? "ffffff" : "172334"),
+      hover: color(dark ? "222b38" : "e8eef6"),
+      pressed: color(dark ? "2c394a" : "dbe5f1"),
+      disabled: color(dark ? "1a1a20" : "ececf0")
+    },
+    density: {
+      cellHeight: rhythm(1),
+      headerHeight: rhythm(1),
+      statusHeight: rhythm(1),
+      inlineGap: rhythm(0.33),
+      sectionGap: rhythm(1),
+      controlPadding: rhythm(0.45)
+    },
+    shape: {
+      dockedRadius: rhythm(0),
+      floatingRadius: rhythm(0.33),
+      controlRadius: rhythm(0.22),
+      statusRadius: rhythm(0.44)
+    },
+    elevation: {
+      floating: { level: 1, intent: "raised" },
+      palette: { level: 3, intent: "overlay" },
+      windowMode: { level: 2, intent: "overlay" }
+    },
+    motion: {
+      instant: duration(0),
+      fast: duration(90),
+      standard: duration(150),
+      emphasized: duration(220),
+      easing: { standard: "standard", emphasized: "decelerate" }
+    },
+    typography: {
+      workspace: {
+        family: "monospace",
+        weight: "regular",
+        lineHeight: ratio(1.5),
+        truncation: "ellipsis"
+      },
+      label: {
+        family: "monospace",
+        weight: "medium",
+        lineHeight: ratio(1.35),
+        truncation: "ellipsis"
+      },
+      title: {
+        family: "monospace",
+        weight: "semibold",
+        lineHeight: ratio(1.35),
+        truncation: "ellipsis"
+      },
+      metadata: {
+        family: "monospace",
+        weight: "regular",
+        lineHeight: ratio(1.35),
+        truncation: "ellipsis"
+      },
+      code: {
+        family: "monospace",
+        weight: "regular",
+        lineHeight: ratio(1.5),
+        truncation: "clip"
+      }
+    },
+    focus: {
+      outline: rhythm(0.12),
+      outlineOffset: rhythm(0.05),
+      focusContrast: ratio(4.5),
+      highContrastOutline: color(dark ? "ffffff" : "000000")
+    },
+    windowActivity: {
+      active: { opacity: ratio(1), contrast: ratio(1) },
+      inactive: { opacity: ratio(0.82), contrast: ratio(0.88) }
+    }
+  });
+}
+var VISUAL_THEME_VERSION, DENSITY_TOKEN_ROLES, SHAPE_TOKEN_ROLES, ELEVATION_TOKEN_ROLES, MOTION_DURATION_ROLES, TYPOGRAPHY_TOKEN_ROLES, WINDOW_ACTIVITY_TOKEN_ROLES, RendererNeutralColorSchemaZ, RhythmValueSchemaZ, RatioValueSchemaZ, DurationValueSchemaZ, ElevationValueSchemaZ, TypographyValueSchemaZ, MotionEasingSchemaZ, WindowActivityValueSchemaZ, SurfacesSchemaZ, TextSchemaZ, BordersSchemaZ, StatusToneSchemaZ, SelectionSchemaZ, DensitySchemaZ, ShapeSchemaZ, ElevationSchemaZ, MotionSchemaZ, TypographySchemaZ, FocusSchemaZ, WindowActivitySchemaZ, VisualTokensV1SchemaZ, VisualTokenOverridesV1SchemaZ, ThemeIdSchemaZ, ThemeNameSchemaZ, ThemeAppearanceSchemaZ, VisualThemeDocumentV1SchemaZ, VisualThemeDocumentV0SchemaZ, ThemeAccessibilityPreferencesSchemaZ, groupSchemas, rhythm, ratio, duration, BUILTIN_VISUAL_THEMES;
+var init_visual_tokens = __esm({
+  "packages/contracts/src/visual-tokens.ts"() {
+    "use strict";
+    VISUAL_THEME_VERSION = 1;
+    DENSITY_TOKEN_ROLES = [
+      "cellHeight",
+      "headerHeight",
+      "statusHeight",
+      "inlineGap",
+      "sectionGap",
+      "controlPadding"
+    ];
+    SHAPE_TOKEN_ROLES = [
+      "dockedRadius",
+      "floatingRadius",
+      "controlRadius",
+      "statusRadius"
+    ];
+    ELEVATION_TOKEN_ROLES = ["floating", "palette", "windowMode"];
+    MOTION_DURATION_ROLES = ["instant", "fast", "standard", "emphasized"];
+    TYPOGRAPHY_TOKEN_ROLES = ["workspace", "label", "title", "metadata", "code"];
+    WINDOW_ACTIVITY_TOKEN_ROLES = ["active", "inactive"];
+    RendererNeutralColorSchemaZ = z18.object({
+      space: z18.literal("srgb"),
+      red: z18.number().int().min(0).max(255),
+      green: z18.number().int().min(0).max(255),
+      blue: z18.number().int().min(0).max(255),
+      alpha: z18.number().int().min(0).max(255)
+    }).strict();
+    RhythmValueSchemaZ = z18.object({ unit: z18.literal("rhythm"), value: z18.number().finite().min(0).max(16) }).strict();
+    RatioValueSchemaZ = z18.object({ unit: z18.literal("ratio"), value: z18.number().finite().min(0).max(20) }).strict();
+    DurationValueSchemaZ = z18.object({ unit: z18.literal("ms"), value: z18.number().finite().min(0).max(1e4) }).strict();
+    ElevationValueSchemaZ = z18.object({
+      level: z18.number().int().min(0).max(4),
+      intent: z18.enum(["flat", "raised", "overlay"])
+    }).strict();
+    TypographyValueSchemaZ = z18.object({
+      family: z18.enum(["monospace", "system"]),
+      weight: z18.enum(["regular", "medium", "semibold", "bold"]),
+      lineHeight: RatioValueSchemaZ,
+      truncation: z18.enum(["ellipsis", "clip", "wrap"])
+    }).strict();
+    MotionEasingSchemaZ = z18.object({
+      standard: z18.enum(["linear", "standard", "decelerate"]),
+      emphasized: z18.enum(["linear", "standard", "decelerate"])
+    }).strict();
+    WindowActivityValueSchemaZ = z18.object({ opacity: RatioValueSchemaZ, contrast: RatioValueSchemaZ }).strict();
+    SurfacesSchemaZ = z18.object({
+      canvas: RendererNeutralColorSchemaZ,
+      panel: RendererNeutralColorSchemaZ,
+      panelRaised: RendererNeutralColorSchemaZ,
+      terminal: RendererNeutralColorSchemaZ,
+      header: RendererNeutralColorSchemaZ,
+      headerActive: RendererNeutralColorSchemaZ,
+      command: RendererNeutralColorSchemaZ
+    }).strict();
+    TextSchemaZ = z18.object({
+      primary: RendererNeutralColorSchemaZ,
+      secondary: RendererNeutralColorSchemaZ,
+      muted: RendererNeutralColorSchemaZ,
+      bright: RendererNeutralColorSchemaZ,
+      inverse: RendererNeutralColorSchemaZ,
+      link: RendererNeutralColorSchemaZ
+    }).strict();
+    BordersSchemaZ = z18.object({
+      subtle: RendererNeutralColorSchemaZ,
+      default: RendererNeutralColorSchemaZ,
+      focused: RendererNeutralColorSchemaZ,
+      selected: RendererNeutralColorSchemaZ,
+      attention: RendererNeutralColorSchemaZ,
+      danger: RendererNeutralColorSchemaZ
+    }).strict();
+    StatusToneSchemaZ = z18.object({
+      neutral: RendererNeutralColorSchemaZ,
+      info: RendererNeutralColorSchemaZ,
+      warning: RendererNeutralColorSchemaZ,
+      danger: RendererNeutralColorSchemaZ,
+      success: RendererNeutralColorSchemaZ
+    }).strict();
+    SelectionSchemaZ = z18.object({
+      selection: RendererNeutralColorSchemaZ,
+      selectionText: RendererNeutralColorSchemaZ,
+      hover: RendererNeutralColorSchemaZ,
+      pressed: RendererNeutralColorSchemaZ,
+      disabled: RendererNeutralColorSchemaZ
+    }).strict();
+    DensitySchemaZ = z18.object({
+      cellHeight: RhythmValueSchemaZ,
+      headerHeight: RhythmValueSchemaZ,
+      statusHeight: RhythmValueSchemaZ,
+      inlineGap: RhythmValueSchemaZ,
+      sectionGap: RhythmValueSchemaZ,
+      controlPadding: RhythmValueSchemaZ
+    }).strict();
+    ShapeSchemaZ = z18.object({
+      dockedRadius: RhythmValueSchemaZ,
+      floatingRadius: RhythmValueSchemaZ,
+      controlRadius: RhythmValueSchemaZ,
+      statusRadius: RhythmValueSchemaZ
+    }).strict();
+    ElevationSchemaZ = z18.object({
+      floating: ElevationValueSchemaZ,
+      palette: ElevationValueSchemaZ,
+      windowMode: ElevationValueSchemaZ
+    }).strict();
+    MotionSchemaZ = z18.object({
+      instant: DurationValueSchemaZ,
+      fast: DurationValueSchemaZ,
+      standard: DurationValueSchemaZ,
+      emphasized: DurationValueSchemaZ,
+      easing: MotionEasingSchemaZ
+    }).strict();
+    TypographySchemaZ = z18.object({
+      workspace: TypographyValueSchemaZ,
+      label: TypographyValueSchemaZ,
+      title: TypographyValueSchemaZ,
+      metadata: TypographyValueSchemaZ,
+      code: TypographyValueSchemaZ
+    }).strict();
+    FocusSchemaZ = z18.object({
+      outline: RhythmValueSchemaZ,
+      outlineOffset: RhythmValueSchemaZ,
+      focusContrast: RatioValueSchemaZ,
+      highContrastOutline: RendererNeutralColorSchemaZ
+    }).strict();
+    WindowActivitySchemaZ = z18.object({ active: WindowActivityValueSchemaZ, inactive: WindowActivityValueSchemaZ }).strict();
+    VisualTokensV1SchemaZ = z18.object({
+      surfaces: SurfacesSchemaZ,
+      text: TextSchemaZ,
+      borders: BordersSchemaZ,
+      statusTone: StatusToneSchemaZ,
+      selection: SelectionSchemaZ,
+      density: DensitySchemaZ,
+      shape: ShapeSchemaZ,
+      elevation: ElevationSchemaZ,
+      motion: MotionSchemaZ,
+      typography: TypographySchemaZ,
+      focus: FocusSchemaZ,
+      windowActivity: WindowActivitySchemaZ
+    }).strict();
+    VisualTokenOverridesV1SchemaZ = z18.object({
+      surfaces: SurfacesSchemaZ.partial().optional(),
+      text: TextSchemaZ.partial().optional(),
+      borders: BordersSchemaZ.partial().optional(),
+      statusTone: StatusToneSchemaZ.partial().optional(),
+      selection: SelectionSchemaZ.partial().optional(),
+      density: DensitySchemaZ.partial().optional(),
+      shape: ShapeSchemaZ.partial().optional(),
+      elevation: ElevationSchemaZ.partial().optional(),
+      motion: MotionSchemaZ.partial().optional(),
+      typography: TypographySchemaZ.partial().optional(),
+      focus: FocusSchemaZ.partial().optional(),
+      windowActivity: WindowActivitySchemaZ.partial().optional()
+    }).strict();
+    ThemeIdSchemaZ = z18.string().min(1).max(80).regex(/^[a-z0-9][a-z0-9._-]*$/u);
+    ThemeNameSchemaZ = z18.string().min(1).max(120);
+    ThemeAppearanceSchemaZ = z18.enum(["dark", "light"]);
+    VisualThemeDocumentV1SchemaZ = z18.object({
+      version: z18.literal(VISUAL_THEME_VERSION),
+      id: ThemeIdSchemaZ,
+      name: ThemeNameSchemaZ,
+      appearance: ThemeAppearanceSchemaZ.optional(),
+      overrides: VisualTokenOverridesV1SchemaZ
+    }).strict();
+    VisualThemeDocumentV0SchemaZ = z18.object({
+      version: z18.literal(0),
+      id: ThemeIdSchemaZ,
+      name: ThemeNameSchemaZ,
+      appearance: ThemeAppearanceSchemaZ.optional(),
+      tokens: VisualTokenOverridesV1SchemaZ
+    }).strict();
+    ThemeAccessibilityPreferencesSchemaZ = z18.object({ reducedMotion: z18.boolean(), increasedContrast: z18.boolean() }).strict();
+    groupSchemas = {
+      surfaces: {
+        canvas: RendererNeutralColorSchemaZ,
+        panel: RendererNeutralColorSchemaZ,
+        panelRaised: RendererNeutralColorSchemaZ,
+        terminal: RendererNeutralColorSchemaZ,
+        header: RendererNeutralColorSchemaZ,
+        headerActive: RendererNeutralColorSchemaZ,
+        command: RendererNeutralColorSchemaZ
+      },
+      text: {
+        primary: RendererNeutralColorSchemaZ,
+        secondary: RendererNeutralColorSchemaZ,
+        muted: RendererNeutralColorSchemaZ,
+        bright: RendererNeutralColorSchemaZ,
+        inverse: RendererNeutralColorSchemaZ,
+        link: RendererNeutralColorSchemaZ
+      },
+      borders: {
+        subtle: RendererNeutralColorSchemaZ,
+        default: RendererNeutralColorSchemaZ,
+        focused: RendererNeutralColorSchemaZ,
+        selected: RendererNeutralColorSchemaZ,
+        attention: RendererNeutralColorSchemaZ,
+        danger: RendererNeutralColorSchemaZ
+      },
+      statusTone: {
+        neutral: RendererNeutralColorSchemaZ,
+        info: RendererNeutralColorSchemaZ,
+        warning: RendererNeutralColorSchemaZ,
+        danger: RendererNeutralColorSchemaZ,
+        success: RendererNeutralColorSchemaZ
+      },
+      selection: {
+        selection: RendererNeutralColorSchemaZ,
+        selectionText: RendererNeutralColorSchemaZ,
+        hover: RendererNeutralColorSchemaZ,
+        pressed: RendererNeutralColorSchemaZ,
+        disabled: RendererNeutralColorSchemaZ
+      },
+      density: Object.fromEntries(DENSITY_TOKEN_ROLES.map((role) => [role, RhythmValueSchemaZ])),
+      shape: Object.fromEntries(SHAPE_TOKEN_ROLES.map((role) => [role, RhythmValueSchemaZ])),
+      elevation: Object.fromEntries(ELEVATION_TOKEN_ROLES.map((role) => [role, ElevationValueSchemaZ])),
+      motion: {
+        ...Object.fromEntries(MOTION_DURATION_ROLES.map((role) => [role, DurationValueSchemaZ])),
+        easing: MotionEasingSchemaZ
+      },
+      typography: Object.fromEntries(
+        TYPOGRAPHY_TOKEN_ROLES.map((role) => [role, TypographyValueSchemaZ])
+      ),
+      focus: {
+        outline: RhythmValueSchemaZ,
+        outlineOffset: RhythmValueSchemaZ,
+        focusContrast: RatioValueSchemaZ,
+        highContrastOutline: RendererNeutralColorSchemaZ
+      },
+      windowActivity: Object.fromEntries(
+        WINDOW_ACTIVITY_TOKEN_ROLES.map((role) => [role, WindowActivityValueSchemaZ])
+      )
+    };
+    rhythm = (value) => ({ unit: "rhythm", value });
+    ratio = (value) => ({ unit: "ratio", value });
+    duration = (value) => ({ unit: "ms", value });
+    BUILTIN_VISUAL_THEMES = Object.freeze({ dark: baseTokens("dark"), light: baseTokens("light") });
+  }
+});
+
+// packages/contracts/src/visual-recipes.ts
+var VISUAL_RECIPE_REGISTRY;
+var init_visual_recipes = __esm({
+  "packages/contracts/src/visual-recipes.ts"() {
+    "use strict";
+    VISUAL_RECIPE_REGISTRY = Object.freeze(
+      {
+        "application-bar": {
+          id: "application-bar",
+          surface: "header",
+          text: "bright",
+          border: "subtle",
+          typography: "label",
+          shape: "dockedRadius",
+          elevation: null
+        },
+        sidebar: {
+          id: "sidebar",
+          surface: "panel",
+          text: "secondary",
+          border: "subtle",
+          typography: "metadata",
+          shape: "dockedRadius",
+          elevation: null
+        },
+        "primary-navigation": {
+          id: "primary-navigation",
+          surface: "header",
+          text: "primary",
+          border: "subtle",
+          typography: "label",
+          shape: "controlRadius",
+          elevation: null
+        },
+        "context-actions": {
+          id: "context-actions",
+          surface: "header",
+          text: "secondary",
+          border: "subtle",
+          typography: "label",
+          shape: "controlRadius",
+          elevation: null
+        },
+        "workspace-canvas": {
+          id: "workspace-canvas",
+          surface: "canvas",
+          text: "primary",
+          border: "subtle",
+          typography: "workspace",
+          shape: "dockedRadius",
+          elevation: null
+        },
+        "bottom-dock": {
+          id: "bottom-dock",
+          surface: "panel",
+          text: "primary",
+          border: "default",
+          typography: "workspace",
+          shape: "dockedRadius",
+          elevation: null
+        },
+        "status-strip": {
+          id: "status-strip",
+          surface: "header",
+          text: "muted",
+          border: "subtle",
+          typography: "metadata",
+          shape: "statusRadius",
+          elevation: null
+        },
+        "pane-docked": {
+          id: "pane-docked",
+          surface: "terminal",
+          text: "primary",
+          border: "default",
+          typography: "workspace",
+          shape: "dockedRadius",
+          elevation: null
+        },
+        "pane-floating": {
+          id: "pane-floating",
+          surface: "panelRaised",
+          text: "primary",
+          border: "default",
+          typography: "workspace",
+          shape: "floatingRadius",
+          elevation: "floating"
+        },
+        "command-palette": {
+          id: "command-palette",
+          surface: "command",
+          text: "primary",
+          border: "focused",
+          typography: "workspace",
+          shape: "floatingRadius",
+          elevation: "palette"
+        }
+      }
+    );
+  }
+});
+
+// packages/contracts/src/pane-appearance.ts
+import { z as z19 } from "zod";
+var SemanticProductIdSchemaZ, PANE_STRUCTURE_IDS, PaneStructureSchemaZ, AGENT_ACTIVITY_IDS, AgentActivitySchemaZ, CANONICAL_DOMAIN_STATUS_IDS, CanonicalDomainStatusSchemaZ, PANE_ATTENTION_IDS, PaneAttentionSchemaZ, PaneVisualStateV1SchemaZ, DOMAIN_STATUS_TONES;
+var init_pane_appearance = __esm({
+  "packages/contracts/src/pane-appearance.ts"() {
+    "use strict";
+    SemanticProductIdSchemaZ = z19.string().min(1).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/u, "semantic id contains a transport-only character");
+    PANE_STRUCTURE_IDS = ["docked", "floating", "maximized"];
+    PaneStructureSchemaZ = z19.enum(PANE_STRUCTURE_IDS);
+    AGENT_ACTIVITY_IDS = [
+      "idle",
+      "running",
+      "waiting",
+      "complete",
+      "failed",
+      "disconnected"
+    ];
+    AgentActivitySchemaZ = z19.enum(AGENT_ACTIVITY_IDS);
+    CANONICAL_DOMAIN_STATUS_IDS = [
+      "idle",
+      "running",
+      "blocked",
+      "review",
+      "done",
+      "disconnected",
+      "recovering"
+    ];
+    CanonicalDomainStatusSchemaZ = z19.enum(CANONICAL_DOMAIN_STATUS_IDS);
+    PANE_ATTENTION_IDS = [
+      "none",
+      "unread",
+      "requested",
+      "warning",
+      "destructive",
+      "recovery"
+    ];
+    PaneAttentionSchemaZ = z19.enum(PANE_ATTENTION_IDS);
+    PaneVisualStateV1SchemaZ = z19.object({
+      structure: PaneStructureSchemaZ,
+      applicationFocus: z19.object({ pane: z19.boolean(), terminalInput: z19.boolean(), windowActive: z19.boolean() }).strict(),
+      agentActivity: AgentActivitySchemaZ,
+      domainStatus: CanonicalDomainStatusSchemaZ,
+      attention: PaneAttentionSchemaZ,
+      layoutInteraction: z19.object({
+        editable: z19.boolean(),
+        selected: z19.boolean(),
+        dragging: z19.boolean(),
+        resizing: z19.boolean(),
+        previewing: z19.boolean()
+      }).strict(),
+      controlInteraction: z19.object({
+        hover: z19.boolean(),
+        focusVisible: z19.boolean(),
+        pressed: z19.boolean(),
+        disabled: z19.boolean(),
+        loading: z19.boolean()
+      }).strict()
+    }).strict();
+    DOMAIN_STATUS_TONES = Object.freeze({
+      idle: "neutral",
+      running: "info",
+      blocked: "warning",
+      review: "info",
+      done: "success",
+      disconnected: "danger",
+      recovering: "danger"
+    });
+  }
+});
+
+// packages/contracts/src/focus-overlay.ts
+import { z as z20 } from "zod";
+var FocusZoneSchemaZ, SemanticFocusTargetSchemaZ, OverlayKindSchemaZ, SemanticOverlaySchemaZ, FocusOverlayStateV1SchemaZ;
+var init_focus_overlay = __esm({
+  "packages/contracts/src/focus-overlay.ts"() {
+    "use strict";
+    init_experience_shell();
+    init_pane_appearance();
+    FocusZoneSchemaZ = z20.enum([
+      "application-bar",
+      "sidebar",
+      "primary-navigation",
+      "canvas",
+      "dock-tabs",
+      "dock-body",
+      "status-strip",
+      "terminal"
+    ]);
+    SemanticFocusTargetSchemaZ = z20.discriminatedUnion("kind", [
+      z20.object({ kind: z20.literal("zone"), zone: FocusZoneSchemaZ }).strict(),
+      z20.object({
+        kind: z20.literal("pane"),
+        paneId: SemanticProductIdSchemaZ,
+        input: z20.enum(["chrome", "terminal"])
+      }).strict(),
+      z20.object({ kind: z20.literal("dock-tool"), tool: DockToolIdSchemaZ }).strict(),
+      z20.object({
+        kind: z20.literal("control"),
+        controlId: SemanticProductIdSchemaZ,
+        zone: FocusZoneSchemaZ
+      }).strict()
+    ]);
+    OverlayKindSchemaZ = z20.enum(["modal-dialog", "command-palette", "context-menu"]);
+    SemanticOverlaySchemaZ = z20.object({
+      id: SemanticProductIdSchemaZ,
+      kind: OverlayKindSchemaZ,
+      focusReturnTarget: SemanticFocusTargetSchemaZ
+    }).strict();
+    FocusOverlayStateV1SchemaZ = z20.object({
+      windowActivity: z20.enum(["active", "inactive"]),
+      focusZone: FocusZoneSchemaZ,
+      appFocusedPaneId: SemanticProductIdSchemaZ.nullable(),
+      terminalInputPaneId: SemanticProductIdSchemaZ.nullable(),
+      layoutSelectedPaneId: SemanticProductIdSchemaZ.nullable(),
+      overlays: z20.array(SemanticOverlaySchemaZ).max(16)
+    }).strict().superRefine((state, ctx) => {
+      const ids = state.overlays.map((overlay) => overlay.id);
+      if (new Set(ids).size !== ids.length) {
+        ctx.addIssue({
+          code: z20.ZodIssueCode.custom,
+          message: "overlay ids must be unique",
+          path: ["overlays"]
+        });
+      }
+      if (state.terminalInputPaneId !== null && state.appFocusedPaneId !== state.terminalInputPaneId) {
+        ctx.addIssue({
+          code: z20.ZodIssueCode.custom,
+          message: "terminal input owner must also be the app-focused pane",
+          path: ["terminalInputPaneId"]
+        });
+      }
+    });
+  }
+});
+
+// packages/contracts/src/cohesion-fixture.ts
+import { z as z21 } from "zod";
+function deepFreeze(value) {
+  if (value === null || typeof value !== "object" || Object.isFrozen(value)) return value;
+  for (const child of Object.values(value)) deepFreeze(child);
+  return Object.freeze(value);
+}
+var COHESION_FIXTURE_VERSION, LabelSchemaZ, OptionalLabelSchemaZ, ReadinessSchemaZ, SessionSidebarItemSchemaZ, AgentSidebarItemSchemaZ, PaneActionSchemaZ, PaneFixtureSchemaZ, DockToolDataSchemaZ, DockToolFixtureSchemaZ, ConnectionRecoverySchemaZ, CohesionFixtureV1SchemaZ, paneActions, COHESION_FIXTURE_V1_INPUT, COHESION_FIXTURE_V1;
+var init_cohesion_fixture = __esm({
+  "packages/contracts/src/cohesion-fixture.ts"() {
+    "use strict";
+    init_commands();
+    init_experience_shell();
+    init_experience_identifiers();
+    init_focus_overlay();
+    init_pane_appearance();
+    init_visual_tokens();
+    COHESION_FIXTURE_VERSION = 1;
+    LabelSchemaZ = z21.string().min(1).max(160);
+    OptionalLabelSchemaZ = z21.string().min(1).max(240).nullable();
+    ReadinessSchemaZ = z21.object({
+      state: z21.enum(["ready", "warning", "blocked"]),
+      facts: z21.array(LabelSchemaZ).max(24),
+      warnings: z21.array(LabelSchemaZ).max(24)
+    }).strict();
+    SessionSidebarItemSchemaZ = z21.object({
+      id: SemanticProductIdSchemaZ,
+      label: LabelSchemaZ,
+      state: z21.enum(["connected", "reconnecting", "disconnected"]),
+      active: z21.boolean()
+    }).strict();
+    AgentSidebarItemSchemaZ = z21.object({
+      id: SemanticProductIdSchemaZ,
+      name: LabelSchemaZ,
+      harness: z21.enum(["codex", "claude-code", "custom"]),
+      activity: AgentActivitySchemaZ,
+      paneId: SemanticProductIdSchemaZ.nullable(),
+      attention: z21.boolean()
+    }).strict();
+    PaneActionSchemaZ = z21.object({
+      id: z21.enum([
+        "focus-terminal",
+        "split",
+        "duplicate",
+        "float-toggle",
+        "maximize-toggle",
+        "detach"
+      ]),
+      icon: SemanticIconIdSchemaZ,
+      label: LabelSchemaZ,
+      commandId: CommandIdSchemaZ,
+      available: z21.boolean(),
+      disabledReason: OptionalLabelSchemaZ
+    }).strict().refine((action) => action.available === (action.disabledReason === null), {
+      message: "available actions must not have a disabled reason and unavailable actions must",
+      path: ["disabledReason"]
+    });
+    PaneFixtureSchemaZ = z21.object({
+      id: SemanticProductIdSchemaZ,
+      role: PaneRoleIdSchemaZ,
+      title: LabelSchemaZ,
+      subtitle: OptionalLabelSchemaZ,
+      terminalSourceId: SemanticProductIdSchemaZ.nullable(),
+      agentId: SemanticProductIdSchemaZ.nullable(),
+      state: PaneVisualStateV1SchemaZ,
+      actions: z21.array(PaneActionSchemaZ).min(1).max(6)
+    }).strict().superRefine((pane, ctx) => {
+      const expectedOrder = [
+        "focus-terminal",
+        "split",
+        "duplicate",
+        "float-toggle",
+        "maximize-toggle",
+        "detach"
+      ];
+      let last = -1;
+      for (const [index, action] of pane.actions.entries()) {
+        const order = expectedOrder.indexOf(action.id);
+        if (order <= last) {
+          ctx.addIssue({
+            code: z21.ZodIssueCode.custom,
+            message: "pane actions must follow canonical action order",
+            path: ["actions", index, "id"]
+          });
+        }
+        last = order;
+      }
+    });
+    DockToolDataSchemaZ = z21.discriminatedUnion("kind", [
+      z21.object({
+        kind: z21.literal("files"),
+        selectedResourceId: SemanticProductIdSchemaZ.nullable(),
+        fileCount: z21.number().int().nonnegative()
+      }).strict(),
+      z21.object({
+        kind: z21.literal("changes"),
+        selectedResourceId: SemanticProductIdSchemaZ.nullable(),
+        changeCount: z21.number().int().nonnegative()
+      }).strict(),
+      z21.object({
+        kind: z21.literal("missions"),
+        missionId: SemanticProductIdSchemaZ,
+        title: LabelSchemaZ,
+        status: CanonicalDomainStatusSchemaZ,
+        goalCount: z21.number().int().nonnegative(),
+        taskCount: z21.number().int().nonnegative()
+      }).strict(),
+      z21.object({
+        kind: z21.literal("activity"),
+        eventCount: z21.number().int().nonnegative(),
+        latestEventLabel: OptionalLabelSchemaZ
+      }).strict()
+    ]);
+    DockToolFixtureSchemaZ = z21.object({
+      id: DockToolIdSchemaZ,
+      label: LabelSchemaZ,
+      shortcut: LabelSchemaZ,
+      unreadCount: z21.number().int().nonnegative(),
+      disabledReason: OptionalLabelSchemaZ,
+      data: DockToolDataSchemaZ
+    }).strict().refine((tool) => tool.id === tool.data.kind, {
+      message: "dock tool data kind must match its canonical tool id",
+      path: ["data", "kind"]
+    });
+    ConnectionRecoverySchemaZ = z21.object({
+      state: z21.enum(["connected", "reconnecting", "disconnected", "recovering"]),
+      message: LabelSchemaZ,
+      safeState: LabelSchemaZ,
+      nextAction: LabelSchemaZ
+    }).strict();
+    CohesionFixtureV1SchemaZ = z21.object({
+      version: z21.literal(COHESION_FIXTURE_VERSION),
+      project: z21.object({
+        id: SemanticProductIdSchemaZ,
+        name: LabelSchemaZ,
+        rootLabel: LabelSchemaZ,
+        readiness: ReadinessSchemaZ
+      }).strict(),
+      workspace: z21.object({
+        id: SemanticProductIdSchemaZ,
+        name: LabelSchemaZ,
+        activeMode: PrimaryWorkspaceModeIdSchemaZ,
+        session: SessionSidebarItemSchemaZ,
+        sidebar: z21.object({
+          sessions: z21.array(SessionSidebarItemSchemaZ).min(1).max(32),
+          agents: z21.array(AgentSidebarItemSchemaZ).max(64)
+        }).strict()
+      }).strict(),
+      panes: z21.array(PaneFixtureSchemaZ).min(1).max(32),
+      dock: z21.object({
+        mode: z21.enum(["collapsed", "open", "maximized"]),
+        activeTool: DockToolIdSchemaZ,
+        tools: z21.array(DockToolFixtureSchemaZ).length(4)
+      }).strict(),
+      focus: FocusOverlayStateV1SchemaZ,
+      theme: z21.object({
+        user: VisualThemeDocumentV1SchemaZ.nullable(),
+        project: VisualThemeDocumentV1SchemaZ.nullable(),
+        accessibility: ThemeAccessibilityPreferencesSchemaZ
+      }).strict(),
+      connection: ConnectionRecoverySchemaZ
+    }).strict().superRefine((fixture, ctx) => {
+      const paneIds = fixture.panes.map((pane) => pane.id);
+      const paneIdSet = new Set(paneIds);
+      if (paneIdSet.size !== paneIds.length) {
+        ctx.addIssue({
+          code: z21.ZodIssueCode.custom,
+          message: "pane ids must be unique",
+          path: ["panes"]
+        });
+      }
+      const agentIds = fixture.workspace.sidebar.agents.map((agent) => agent.id);
+      if (new Set(agentIds).size !== agentIds.length) {
+        ctx.addIssue({
+          code: z21.ZodIssueCode.custom,
+          message: "agent ids must be unique",
+          path: ["workspace", "sidebar", "agents"]
+        });
+      }
+      const sessionIds = fixture.workspace.sidebar.sessions.map((session) => session.id);
+      if (new Set(sessionIds).size !== sessionIds.length) {
+        ctx.addIssue({
+          code: z21.ZodIssueCode.custom,
+          message: "session ids must be unique",
+          path: ["workspace", "sidebar", "sessions"]
+        });
+      }
+      if (!fixture.workspace.sidebar.sessions.some(
+        (session) => session.id === fixture.workspace.session.id
+      )) {
+        ctx.addIssue({
+          code: z21.ZodIssueCode.custom,
+          message: "active session must be present in the sidebar",
+          path: ["workspace", "session", "id"]
+        });
+      }
+      for (const [index, agent] of fixture.workspace.sidebar.agents.entries()) {
+        if (agent.paneId !== null && !paneIdSet.has(agent.paneId)) {
+          ctx.addIssue({
+            code: z21.ZodIssueCode.custom,
+            message: "agent pane must exist in fixture panes",
+            path: ["workspace", "sidebar", "agents", index, "paneId"]
+          });
+        }
+      }
+      const focusReferences = [
+        fixture.focus.appFocusedPaneId,
+        fixture.focus.terminalInputPaneId,
+        fixture.focus.layoutSelectedPaneId
+      ];
+      for (const paneId of focusReferences) {
+        if (paneId !== null && !paneIdSet.has(paneId)) {
+          ctx.addIssue({
+            code: z21.ZodIssueCode.custom,
+            message: "focus state references an unknown pane",
+            path: ["focus"]
+          });
+        }
+      }
+      for (const [index, pane] of fixture.panes.entries()) {
+        const shouldBeFocused = pane.id === fixture.focus.appFocusedPaneId;
+        const shouldOwnTerminal = pane.id === fixture.focus.terminalInputPaneId;
+        const shouldBeSelected = pane.id === fixture.focus.layoutSelectedPaneId;
+        if (pane.state.applicationFocus.pane !== shouldBeFocused) {
+          ctx.addIssue({
+            code: z21.ZodIssueCode.custom,
+            message: "pane focus channel must match canonical focus state",
+            path: ["panes", index, "state", "applicationFocus", "pane"]
+          });
+        }
+        if (pane.state.applicationFocus.terminalInput !== shouldOwnTerminal) {
+          ctx.addIssue({
+            code: z21.ZodIssueCode.custom,
+            message: "terminal input channel must match canonical focus state",
+            path: ["panes", index, "state", "applicationFocus", "terminalInput"]
+          });
+        }
+        if (pane.state.layoutInteraction.selected !== shouldBeSelected) {
+          ctx.addIssue({
+            code: z21.ZodIssueCode.custom,
+            message: "layout selection channel must match canonical focus state",
+            path: ["panes", index, "state", "layoutInteraction", "selected"]
+          });
+        }
+        if (pane.state.applicationFocus.windowActive !== (fixture.focus.windowActivity === "active")) {
+          ctx.addIssue({
+            code: z21.ZodIssueCode.custom,
+            message: "pane window activity must match canonical focus state",
+            path: ["panes", index, "state", "applicationFocus", "windowActive"]
+          });
+        }
+      }
+      const expectedDockOrder = CANONICAL_SURFACE_REGISTRY.filter(
+        (surface) => surface.kind === "dock-tool"
+      ).map((surface) => surface.id);
+      const actualDockOrder = fixture.dock.tools.map((tool) => tool.id);
+      if (actualDockOrder.some((tool, index) => tool !== expectedDockOrder[index])) {
+        ctx.addIssue({
+          code: z21.ZodIssueCode.custom,
+          message: "dock tools must use canonical identity and order",
+          path: ["dock", "tools"]
+        });
+      }
+    });
+    paneActions = (canSplit) => [
+      {
+        id: "focus-terminal",
+        icon: "terminals",
+        label: "Focus terminal",
+        commandId: "pane.terminal.focus",
+        available: true,
+        disabledReason: null
+      },
+      {
+        id: "split",
+        icon: "split-right",
+        label: "Split pane",
+        commandId: "pane.split",
+        available: canSplit,
+        disabledReason: canSplit ? null : "This pane cannot be split while recovering"
+      },
+      {
+        id: "duplicate",
+        icon: "duplicate",
+        label: "Duplicate pane",
+        commandId: "pane.duplicate",
+        available: canSplit,
+        disabledReason: canSplit ? null : "This pane cannot be duplicated while recovering"
+      },
+      {
+        id: "float-toggle",
+        icon: "float",
+        label: "Float or dock",
+        commandId: "pane.float.toggle",
+        available: true,
+        disabledReason: null
+      },
+      {
+        id: "maximize-toggle",
+        icon: "maximize",
+        label: "Maximize or restore",
+        commandId: "pane.maximize.toggle",
+        available: true,
+        disabledReason: null
+      },
+      {
+        id: "detach",
+        icon: "pop-out",
+        label: "Detach pane",
+        commandId: "pane.detach",
+        available: true,
+        disabledReason: null
+      }
+    ];
+    COHESION_FIXTURE_V1_INPUT = CohesionFixtureV1SchemaZ.parse({
+      version: COHESION_FIXTURE_VERSION,
+      project: {
+        id: "project.tmux-ide",
+        name: "tmux-ide",
+        rootLabel: "tmux-ide",
+        readiness: {
+          state: "warning",
+          facts: ["pnpm workspace detected", "Codex and Claude Code are available"],
+          warnings: ["Desktop terminal attachment is reconnecting"]
+        }
+      },
+      workspace: {
+        id: "workspace.product",
+        name: "Product workspace",
+        activeMode: "terminals",
+        session: { id: "session.product", label: "Product", state: "reconnecting", active: true },
+        sidebar: {
+          sessions: [
+            { id: "session.product", label: "Product", state: "reconnecting", active: true },
+            { id: "session.docs", label: "Documentation", state: "connected", active: false }
+          ],
+          agents: [
+            {
+              id: "agent.pm",
+              name: "Fable",
+              harness: "claude-code",
+              activity: "waiting",
+              paneId: "pane.pm",
+              attention: true
+            },
+            {
+              id: "agent.implementer",
+              name: "Codex",
+              harness: "codex",
+              activity: "running",
+              paneId: "pane.implementer",
+              attention: false
+            },
+            {
+              id: "agent.reviewer",
+              name: "Review",
+              harness: "codex",
+              activity: "complete",
+              paneId: "pane.reviewer",
+              attention: false
+            },
+            {
+              id: "agent.recovery",
+              name: "Recovery",
+              harness: "custom",
+              activity: "disconnected",
+              paneId: "pane.recovery",
+              attention: true
+            }
+          ]
+        }
+      },
+      panes: [
+        {
+          id: "pane.pm",
+          role: "terminal",
+          title: "Project manager",
+          subtitle: "Fable",
+          terminalSourceId: "terminal.pm",
+          agentId: "agent.pm",
+          state: {
+            structure: "docked",
+            applicationFocus: { pane: false, terminalInput: false, windowActive: true },
+            agentActivity: "waiting",
+            domainStatus: "blocked",
+            attention: "requested",
+            layoutInteraction: {
+              editable: true,
+              selected: false,
+              dragging: false,
+              resizing: false,
+              previewing: false
+            },
+            controlInteraction: {
+              hover: false,
+              focusVisible: false,
+              pressed: false,
+              disabled: false,
+              loading: false
+            }
+          },
+          actions: paneActions(true)
+        },
+        {
+          id: "pane.implementer",
+          role: "terminal",
+          title: "Implementer",
+          subtitle: "Codex",
+          terminalSourceId: "terminal.implementer",
+          agentId: "agent.implementer",
+          state: {
+            structure: "maximized",
+            applicationFocus: { pane: true, terminalInput: true, windowActive: true },
+            agentActivity: "running",
+            domainStatus: "running",
+            attention: "unread",
+            layoutInteraction: {
+              editable: false,
+              selected: false,
+              dragging: false,
+              resizing: false,
+              previewing: false
+            },
+            controlInteraction: {
+              hover: true,
+              focusVisible: true,
+              pressed: true,
+              disabled: false,
+              loading: false
+            }
+          },
+          actions: paneActions(true)
+        },
+        {
+          id: "pane.reviewer",
+          role: "terminal",
+          title: "Reviewer",
+          subtitle: "Completed review",
+          terminalSourceId: "terminal.reviewer",
+          agentId: "agent.reviewer",
+          state: {
+            structure: "floating",
+            applicationFocus: { pane: false, terminalInput: false, windowActive: true },
+            agentActivity: "complete",
+            domainStatus: "review",
+            attention: "none",
+            layoutInteraction: {
+              editable: true,
+              selected: true,
+              dragging: false,
+              resizing: false,
+              previewing: true
+            },
+            controlInteraction: {
+              hover: false,
+              focusVisible: false,
+              pressed: false,
+              disabled: false,
+              loading: false
+            }
+          },
+          actions: paneActions(true)
+        },
+        {
+          id: "pane.recovery",
+          role: "terminal",
+          title: "Recovery",
+          subtitle: "Connection lost",
+          terminalSourceId: "terminal.recovery",
+          agentId: "agent.recovery",
+          state: {
+            structure: "docked",
+            applicationFocus: { pane: false, terminalInput: false, windowActive: true },
+            agentActivity: "disconnected",
+            domainStatus: "recovering",
+            attention: "recovery",
+            layoutInteraction: {
+              editable: false,
+              selected: false,
+              dragging: false,
+              resizing: false,
+              previewing: false
+            },
+            controlInteraction: {
+              hover: false,
+              focusVisible: true,
+              pressed: true,
+              disabled: true,
+              loading: true
+            }
+          },
+          actions: paneActions(false)
+        }
+      ],
+      dock: {
+        mode: "open",
+        activeTool: "missions",
+        tools: [
+          {
+            id: "files",
+            label: "Files",
+            shortcut: "F3",
+            unreadCount: 0,
+            disabledReason: null,
+            data: { kind: "files", selectedResourceId: "src.index", fileCount: 214 }
+          },
+          {
+            id: "changes",
+            label: "Changes",
+            shortcut: "F4",
+            unreadCount: 4,
+            disabledReason: null,
+            data: { kind: "changes", selectedResourceId: "src.chrome", changeCount: 4 }
+          },
+          {
+            id: "missions",
+            label: "Missions",
+            shortcut: "F6",
+            unreadCount: 1,
+            disabledReason: null,
+            data: {
+              kind: "missions",
+              missionId: "mission.m31",
+              title: "Native agent workbench",
+              status: "running",
+              goalCount: 4,
+              taskCount: 22
+            }
+          },
+          {
+            id: "activity",
+            label: "Activity",
+            shortcut: "F9",
+            unreadCount: 2,
+            disabledReason: null,
+            data: { kind: "activity", eventCount: 18, latestEventLabel: "Reviewer completed" }
+          }
+        ]
+      },
+      focus: {
+        windowActivity: "active",
+        focusZone: "terminal",
+        appFocusedPaneId: "pane.implementer",
+        terminalInputPaneId: "pane.implementer",
+        layoutSelectedPaneId: "pane.reviewer",
+        overlays: [
+          {
+            id: "overlay.palette",
+            kind: "command-palette",
+            focusReturnTarget: {
+              kind: "pane",
+              paneId: "pane.implementer",
+              input: "terminal"
+            }
+          }
+        ]
+      },
+      theme: {
+        user: {
+          version: 1,
+          id: "tmux-ide-dark",
+          name: "tmux-ide Dark",
+          appearance: "dark",
+          overrides: {}
+        },
+        project: null,
+        accessibility: { reducedMotion: false, increasedContrast: false }
+      },
+      connection: {
+        state: "recovering",
+        message: "Desktop terminal attachment is reconnecting",
+        safeState: "The tmux session and agent processes remain active",
+        nextAction: "Retry the attachment or open recovery details"
+      }
+    });
+    COHESION_FIXTURE_V1 = deepFreeze(COHESION_FIXTURE_V1_INPUT);
+  }
+});
+
+// packages/contracts/src/daemon-wire.ts
+import { z as z22 } from "zod";
+function isDaemonWireProtocolCompatible(protocolVersion) {
+  return protocolVersion === DAEMON_WIRE_PROTOCOL_VERSION;
+}
+var DAEMON_WIRE_PROTOCOL_VERSION, DaemonWireProtocolVersionSchema, DaemonInstanceIdSchema, CanonicalDaemonInfoSchema, DaemonHealthSchema, DaemonHealthzSchema, DaemonIdentitySchema;
+var init_daemon_wire = __esm({
+  "packages/contracts/src/daemon-wire.ts"() {
+    "use strict";
+    DAEMON_WIRE_PROTOCOL_VERSION = 1;
+    DaemonWireProtocolVersionSchema = z22.number().int().positive();
+    DaemonInstanceIdSchema = z22.uuid();
+    CanonicalDaemonInfoSchema = z22.object({
+      pid: z22.number().int().positive(),
+      port: z22.number().int().min(1).max(65535),
+      protocolVersion: DaemonWireProtocolVersionSchema,
+      productVersion: z22.string().trim().min(1),
+      instanceId: DaemonInstanceIdSchema,
+      startedAt: z22.iso.datetime({ offset: true }),
+      bindHostname: z22.string().trim().min(1),
+      authToken: z22.string().min(1).nullable()
+    });
+    DaemonHealthSchema = z22.object({
+      ok: z22.literal(true),
+      protocolVersion: DaemonWireProtocolVersionSchema,
+      productVersion: z22.string().trim().min(1),
+      uptime: z22.number().nonnegative()
+    });
+    DaemonHealthzSchema = z22.object({
+      ok: z22.literal(true),
+      protocolVersion: DaemonWireProtocolVersionSchema,
+      productVersion: z22.string().trim().min(1),
+      uptimeMs: z22.number().nonnegative()
+    });
+    DaemonIdentitySchema = z22.object({
+      ok: z22.literal(true),
+      pid: z22.number().int().positive(),
+      protocolVersion: DaemonWireProtocolVersionSchema,
+      productVersion: z22.string().trim().min(1),
+      instanceId: DaemonInstanceIdSchema,
+      startedAt: z22.iso.datetime({ offset: true })
+    });
   }
 });
 
@@ -799,13 +3832,26 @@ var init_src = __esm({
     init_hq();
     init_ide_config();
     init_domain();
+    init_mission_projections();
     init_tmux();
     init_workspace();
+    init_workspace_state();
+    init_app_window_state();
     init_workspace_config();
     init_actions_contract();
     init_actions_errors();
     init_terminals();
     init_control();
+    init_commands();
+    init_desktop_host();
+    init_experience_identifiers();
+    init_experience_shell();
+    init_visual_tokens();
+    init_visual_recipes();
+    init_pane_appearance();
+    init_focus_overlay();
+    init_cohesion_fixture();
+    init_daemon_wire();
   }
 });
 
@@ -906,6 +3952,29 @@ function configProjectRoot(config2, inputDir) {
   }
   return configDir;
 }
+function hintedProjectRoot(hint, inputDir, io) {
+  if (!hint || hint.trim().length === 0) return null;
+  const root = canonicalize(isAbsolute(hint) ? hint : resolve(inputDir, hint), io);
+  if (!isWithin(inputDir, root)) {
+    throw new Error(`Project root hint "${root}" does not contain input directory "${inputDir}"`);
+  }
+  return root;
+}
+function markedProjectRoot(inputDir, io) {
+  let current = inputDir;
+  let nearestPackageRoot = null;
+  while (true) {
+    if (WORKSPACE_ROOT_MARKERS.some((marker) => safeExists(join(current, marker), io))) {
+      return current;
+    }
+    if (nearestPackageRoot === null && PACKAGE_ROOT_MARKERS.some((marker) => safeExists(join(current, marker), io))) {
+      nearestPackageRoot = current;
+    }
+    const parent = dirname(current);
+    if (parent === current) return nearestPackageRoot;
+    current = parent;
+  }
+}
 function projectIdentityKey(source, anchor) {
   const prefix = source === "git-common-dir" ? "git" : "path";
   const digest = createHash("sha256").update(source).update("\0").update(anchor).digest("hex");
@@ -919,7 +3988,9 @@ async function resolveProject(dir, options = {}) {
   const gitCommonDir = gitProjectRoot ? await resolveGitPath(["rev-parse", "--git-common-dir"], gitProjectRoot, true, io) : null;
   const discovered = discoverConfigs(inputDir, gitProjectRoot, io);
   const config2 = chooseConfig(options.explicitConfigPath, inputDir, discovered, io);
-  const projectRoot = gitProjectRoot ?? configProjectRoot(config2, inputDir);
+  const configuredRoot = config2.kind === "none" ? null : configProjectRoot(config2, inputDir);
+  const inferredRoot = gitProjectRoot || configuredRoot ? null : hintedProjectRoot(options.projectRootHint, inputDir, io) ?? markedProjectRoot(inputDir, io);
+  const projectRoot = gitProjectRoot ?? configuredRoot ?? inferredRoot ?? inputDir;
   const identitySource = gitCommonDir ? "git-common-dir" : "canonical-realpath";
   const identityAnchor = gitCommonDir ?? projectRoot;
   return {
@@ -934,11 +4005,39 @@ async function resolveProject(dir, options = {}) {
     hasLegacyConfigAtInput: discovered.hasLegacyAtInput
   };
 }
-var GIT_TIMEOUT_MS, defaultProjectResolverIo;
+var GIT_TIMEOUT_MS, WORKSPACE_ROOT_MARKERS, PACKAGE_ROOT_MARKERS, PROJECT_ROOT_MARKERS, defaultProjectResolverIo;
 var init_project_resolver = __esm({
   "packages/daemon/src/lib/project-resolver.ts"() {
     "use strict";
     GIT_TIMEOUT_MS = 2e3;
+    WORKSPACE_ROOT_MARKERS = [
+      ".tmux-ide",
+      "pnpm-workspace.yaml",
+      "pnpm-lock.yaml",
+      "yarn.lock",
+      "package-lock.json",
+      "bun.lock",
+      "bun.lockb",
+      "uv.lock",
+      "go.work",
+      "Cargo.lock",
+      "settings.gradle",
+      "settings.gradle.kts"
+    ];
+    PACKAGE_ROOT_MARKERS = [
+      "deno.json",
+      "deno.jsonc",
+      "package.json",
+      "Cargo.toml",
+      "go.mod",
+      "pyproject.toml",
+      "Gemfile",
+      "composer.json",
+      "mix.exs",
+      "Package.swift",
+      "pom.xml"
+    ];
+    PROJECT_ROOT_MARKERS = [...WORKSPACE_ROOT_MARKERS, ...PACKAGE_ROOT_MARKERS];
     defaultProjectResolverIo = {
       exists: existsSync,
       realpath: realpathSync,
@@ -1159,13 +4258,13 @@ async function loadWorkspaceConfig(dir, options = {}) {
   }
   const validated = WorkspaceConfigV1SchemaZ.safeParse(effectiveValue);
   if (!validated.success) {
-    const issues = validationIssues(validated.error);
+    const issues2 = validationIssues(validated.error);
     throw new WorkspaceConfigLoadError({
       code: "FINAL_VALIDATION_FAILED",
       stage: "validation",
       path: basePath,
-      issues,
-      message: `Effective workspace config is invalid: ${issues.slice(0, 3).map((issue) => `${issue.path.join(".") || "<root>"}: ${issue.message}`).join("; ")}`
+      issues: issues2,
+      message: `Effective workspace config is invalid: ${issues2.slice(0, 3).map((issue) => `${issue.path.join(".") || "<root>"}: ${issue.message}`).join("; ")}`
     });
   }
   return {
@@ -1758,6 +4857,7 @@ function pushDiagnostic(diagnostics, code, path2, message) {
 }
 function cloneTerminalPane(pane) {
   const result = {};
+  if (pane.id !== void 0) result.id = pane.id;
   if (pane.title !== void 0) result.title = pane.title;
   if (pane.command !== void 0) result.command = pane.command;
   if (pane.type !== void 0) result.type = pane.type;
@@ -1814,6 +4914,7 @@ function workspaceConfigToLegacyProjection(workspace) {
     rows: (workspace.terminal?.rows ?? [{ panes: [{ title: "Shell" }] }]).map((row) => ({
       ...row.size === void 0 ? {} : { size: row.size },
       panes: row.panes.map((pane) => ({
+        ...pane.id === void 0 ? {} : { id: pane.id },
         ...pane.title === void 0 ? {} : { title: pane.title },
         ...pane.command === void 0 ? {} : { command: pane.command },
         ...pane.type === void 0 ? {} : { type: pane.type },
@@ -1945,6 +5046,7 @@ function readLegacyConfigForResolution(path2) {
 async function resolveConfig(dir, options = {}) {
   const resolution = await resolveProject(dir, {
     explicitConfigPath: options.explicitConfigPath ?? options.resolveOptions?.explicitConfigPath,
+    projectRootHint: options.resolveOptions?.projectRootHint,
     io: options.resolverIo ?? options.resolveOptions?.io
   });
   if (resolution.config.kind === "workspace") {
@@ -2205,6 +5307,7 @@ var init_resolved_config = __esm({
     ]);
     ROW_KEYS = /* @__PURE__ */ new Set(["size", "panes"]);
     PANE_KEYS = /* @__PURE__ */ new Set([
+      "id",
       "title",
       "command",
       "type",
@@ -2367,13 +5470,41 @@ var init_shell = __esm({
 
 // packages/daemon/src/lib/launch-plan.ts
 import { resolve as resolve5 } from "node:path";
+import { createHash as createHash2 } from "node:crypto";
+function semanticPaneIdForPane(pane) {
+  if (pane.id) return pane.id;
+  const metadata = JSON.stringify({
+    title: pane.title ?? null,
+    command: pane.command ?? null,
+    type: pane.type ?? null,
+    target: pane.target ?? null,
+    dir: pane.dir ?? null,
+    role: pane.role ?? null,
+    env: Object.entries(pane.env ?? {}).sort(
+      ([left], [right]) => left < right ? -1 : left > right ? 1 : 0
+    )
+  });
+  const digest = createHash2("sha256").update(metadata).digest("hex").slice(0, 16);
+  const label = paneIdentityLabel(pane);
+  return `pane-${label}-${digest}`;
+}
+function paneIdentityOptions(action) {
+  return [
+    [WORKSPACE_SEMANTIC_PANE_OPTION, action.semanticPaneId],
+    ["@ide_role", action.paneRole ?? "shell"],
+    ["@ide_name", action.title ?? ""],
+    ["@ide_type", action.paneType ?? "shell"]
+  ];
+}
 function buildPaneCommand(pane) {
   if (!pane.command) return null;
   return pane.command;
 }
 function collectPaneStartupPlan(rows, paneMap, firstPanesOfRows, dir) {
   let focusPane = paneMap[0][0];
-  const paneActions = [];
+  const paneActions2 = [];
+  const diagnostics = [];
+  const paneIdentities = assignPaneIdentities(rows, diagnostics);
   for (let rowIdx = 0; rowIdx < rows.length; rowIdx++) {
     const row = rows[rowIdx];
     const panes = row.panes ?? [];
@@ -2400,6 +5531,7 @@ function collectPaneStartupPlan(rows, paneMap, firstPanesOfRows, dir) {
       }
       const action = {
         targetPane: tmuxPane,
+        semanticPaneId: paneIdentities[rowIdx][paneIdx],
         title: pane.title ?? null,
         chdir: null,
         exports: [],
@@ -2427,14 +5559,61 @@ function collectPaneStartupPlan(rows, paneMap, firstPanesOfRows, dir) {
       if (pane.focus) {
         focusPane = tmuxPane;
       }
-      paneActions.push(action);
+      paneActions2.push(action);
     }
   }
-  return { focusPane, paneActions };
+  return { focusPane, paneActions: paneActions2, diagnostics };
+}
+function assignPaneIdentities(rows, diagnostics) {
+  const bases = rows.map((row) => row.panes.map(semanticPaneIdForPane));
+  const implicitCounts = /* @__PURE__ */ new Map();
+  const explicitIds = /* @__PURE__ */ new Set();
+  for (const [rowIndex, row] of rows.entries()) {
+    for (const [paneIndex, pane] of row.panes.entries()) {
+      const base = bases[rowIndex][paneIndex];
+      if (pane.id) {
+        if (explicitIds.has(base)) throw new Error(`duplicate explicit pane id "${base}"`);
+        explicitIds.add(base);
+      } else {
+        implicitCounts.set(base, (implicitCounts.get(base) ?? 0) + 1);
+      }
+    }
+  }
+  const occurrences = /* @__PURE__ */ new Map();
+  const assigned = new Set(explicitIds);
+  return rows.map(
+    (row, rowIndex) => row.panes.map((pane, paneIndex) => {
+      const base = bases[rowIndex][paneIndex];
+      if (pane.id) return base;
+      const total = implicitCounts.get(base) ?? 1;
+      const occurrence = (occurrences.get(base) ?? 0) + 1;
+      occurrences.set(base, occurrence);
+      const candidate = total === 1 ? base : `${base}-${occurrence}`;
+      if (assigned.has(candidate)) {
+        throw new Error(
+          `explicit pane id "${candidate}" collides with a derived pane identity; choose another explicit id`
+        );
+      }
+      assigned.add(candidate);
+      if (total > 1 && occurrence === 1) {
+        diagnostics.push({
+          code: "AMBIGUOUS_IMPLICIT_PANE_ID",
+          message: `${total} panes produce the same implicit identity fingerprint. Assigned occurrence suffixes for compatibility; add explicit pane ids to preserve their individual identity across insert/delete.`
+        });
+      }
+      return candidate;
+    })
+  );
+}
+function paneIdentityLabel(pane) {
+  const raw = pane.title ?? pane.type ?? pane.role ?? pane.command?.trim().split(/\s+/u)[0] ?? "shell";
+  const slug = raw.toLowerCase().replace(/[^a-z0-9]+/gu, "-").replace(/^-+|-+$/gu, "").slice(0, 32);
+  return slug || "pane";
 }
 var init_launch_plan = __esm({
   "packages/daemon/src/lib/launch-plan.ts"() {
     "use strict";
+    init_src();
     init_shell();
   }
 });
@@ -4010,6 +7189,7 @@ function parseAppConfig(input) {
       }
     },
     theme: {
+      mode: pickChoice(theme.mode, ["dark", "light", "system"], D.theme.mode),
       accent: pickString(theme.accent, D.theme.accent),
       muted: pickString(theme.muted, D.theme.muted),
       fg: pickString(theme.fg, D.theme.fg),
@@ -4125,6 +7305,7 @@ var init_app_config = __esm({
         panels: { explorer: "M-e", changes: "M-g", config: "M-," }
       },
       theme: {
+        mode: "dark",
         accent: "colour75",
         muted: "colour240",
         fg: "colour250",
@@ -4963,7 +8144,7 @@ function tokenCode(token) {
 }
 function legendMark(token, glyph) {
   const code = tokenCode(token);
-  return code === null ? dim(glyph) : color(code, glyph);
+  return code === null ? dim(glyph) : color2(code, glyph);
 }
 function renderKey(tmuxKey) {
   return tmuxKey.replace(/M-/g, "\u2325").replace(/C-/g, "^").replace(/S-/g, "\u21E7");
@@ -5096,7 +8277,7 @@ function cheatsheetBindCommand(cheatsheetCmd = "tmux-ide cheatsheet", key = CHEA
 function cheatsheetUnbindCommand(key = CHEATSHEET_KEY) {
   return ["unbind-key", "-n", key];
 }
-var CHEATSHEET_KEY, bold, dim, cyan, head, color;
+var CHEATSHEET_KEY, bold, dim, cyan, head, color2;
 var init_cheatsheet = __esm({
   "packages/daemon/src/tui/chrome/cheatsheet.ts"() {
     "use strict";
@@ -5109,7 +8290,7 @@ var init_cheatsheet = __esm({
     dim = (s) => `\x1B[2m${s}\x1B[22m`;
     cyan = (s) => `\x1B[36m${s}\x1B[39m`;
     head = (s) => `\x1B[1;36m${s}\x1B[0m`;
-    color = (code, s) => `\x1B[38;5;${code}m${s}\x1B[39m`;
+    color2 = (code, s) => `\x1B[38;5;${code}m${s}\x1B[39m`;
   }
 });
 
@@ -5575,7 +8756,7 @@ var init_front_door = __esm({
 
 // packages/daemon/src/tui/detect/session-id.ts
 import { execFileSync as execFileSync6 } from "node:child_process";
-import { createHash as createHash2 } from "node:crypto";
+import { createHash as createHash3 } from "node:crypto";
 import { readdirSync as readdirSync2, readFileSync as readFileSync10, readlinkSync, statSync } from "node:fs";
 import { homedir as homedir9 } from "node:os";
 import { join as join13 } from "node:path";
@@ -5667,7 +8848,7 @@ function codexIdFromStateDir(root, paneCwd, startMs, io, nowMs = Date.now()) {
   return null;
 }
 function cursorIdFromStateDir(chatsRoot, paneCwd, startMs, io) {
-  const hashed = join13(chatsRoot, createHash2("md5").update(paneCwd).digest("hex"));
+  const hashed = join13(chatsRoot, createHash3("md5").update(paneCwd).digest("hex"));
   const cutoff = startMs - START_SLACK_MS;
   let best = null;
   for (const name of io.listDir(hashed)) {
@@ -5823,45 +9004,45 @@ var init_session_id = __esm({
 });
 
 // packages/daemon/src/schemas/registry.ts
-import { z as z11 } from "zod";
+import { z as z23 } from "zod";
 var RegisteredProjectSchemaZ, RegisterProjectRequestSchemaZ, InitProjectRequestSchemaZ, ProjectTemplateSchemaZ;
 var init_registry = __esm({
   "packages/daemon/src/schemas/registry.ts"() {
     "use strict";
-    RegisteredProjectSchemaZ = z11.object({
+    RegisteredProjectSchemaZ = z23.object({
       /** Unique registry key. Defaults to `basename(dir)`; collisions resolved by appending `-2`, `-3`, … */
-      name: z11.string(),
+      name: z23.string(),
       /** Absolute path to the project directory. */
-      dir: z11.string(),
+      dir: z23.string(),
       /** Whether `<dir>/ide.yml` exists; refreshed on register and on `probe()`. */
-      hasIdeYml: z11.boolean(),
+      hasIdeYml: z23.boolean(),
       /** Whether `.tmux-ide/workspace.yml` exists or wins discovery. */
-      hasWorkspaceConfig: z11.boolean().optional(),
+      hasWorkspaceConfig: z23.boolean().optional(),
       /** Generalized winning config kind. Added without replacing `hasIdeYml`. */
-      configKind: z11.enum(["workspace", "legacy", "none"]).optional(),
+      configKind: z23.enum(["workspace", "legacy", "none"]).optional(),
       /** Generalized winning config path. */
-      configPath: z11.string().nullable().optional(),
+      configPath: z23.string().nullable().optional(),
       /** Legacy config path when an `ide.yml` is present. */
-      ideConfigPath: z11.string().nullable().optional(),
+      ideConfigPath: z23.string().nullable().optional(),
       /** Git remote origin URL, or `null` if not a git repo / no origin / probe failed. */
-      gitOrigin: z11.string().nullable(),
+      gitOrigin: z23.string().nullable(),
       /** Current git branch, or `null` if not a git repo / detached HEAD / probe failed. */
-      gitBranch: z11.string().nullable(),
+      gitBranch: z23.string().nullable(),
       /** ISO-8601 timestamp the project was first registered. */
-      registeredAt: z11.string()
+      registeredAt: z23.string()
     });
-    RegisterProjectRequestSchemaZ = z11.object({
-      dir: z11.string().min(1),
-      name: z11.string().min(1).optional()
+    RegisterProjectRequestSchemaZ = z23.object({
+      dir: z23.string().min(1),
+      name: z23.string().min(1).optional()
     });
-    InitProjectRequestSchemaZ = z11.object({
-      dir: z11.string().min(1),
-      template: z11.string().min(1).optional()
+    InitProjectRequestSchemaZ = z23.object({
+      dir: z23.string().min(1),
+      template: z23.string().min(1).optional()
     });
-    ProjectTemplateSchemaZ = z11.object({
-      id: z11.string(),
-      label: z11.string(),
-      description: z11.string()
+    ProjectTemplateSchemaZ = z23.object({
+      id: z23.string(),
+      label: z23.string(),
+      description: z23.string()
     });
   }
 });
@@ -5923,7 +9104,7 @@ import { EventEmitter } from "node:events";
 import { existsSync as existsSync15, mkdirSync as mkdirSync9, readFileSync as readFileSync11, renameSync as renameSync5, writeFileSync as writeFileSync9 } from "node:fs";
 import { homedir as homedir10 } from "node:os";
 import { dirname as dirname15, isAbsolute as isAbsolute3, join as join14, resolve as resolve11 } from "node:path";
-import { z as z12 } from "zod";
+import { z as z24 } from "zod";
 function applyAction(state, action) {
   switch (action.type) {
     case "register":
@@ -6062,9 +9243,9 @@ var init_project_registry = __esm({
     init_registry();
     init_project_probe();
     REGISTRY_DIR_ENV = "TMUX_IDE_REGISTRY_DIR";
-    RegistryFileSchemaZ = z12.object({
-      version: z12.literal(1),
-      projects: z12.array(RegisteredProjectSchemaZ)
+    RegistryFileSchemaZ = z24.object({
+      version: z24.literal(1),
+      projects: z24.array(RegisteredProjectSchemaZ)
     });
     ProjectRegistryError = class extends Error {
       code;
@@ -6836,7 +10017,7 @@ var init_notify_state = __esm({
 import { existsSync as existsSync19, mkdirSync as mkdirSync12, readFileSync as readFileSync14, renameSync as renameSync7, writeFileSync as writeFileSync11 } from "node:fs";
 import { homedir as homedir12 } from "node:os";
 import { dirname as dirname17, join as join18 } from "node:path";
-import { z as z13 } from "zod";
+import { z as z25 } from "zod";
 function isBareShell(cmd) {
   return /^-?(zsh|bash|sh|fish|dash|ksh|tcsh|csh|nu)$/.test(cmd.trim());
 }
@@ -7008,32 +10189,32 @@ var init_snapshot2 = __esm({
     init_src2();
     init_process_tree();
     init_sessions2();
-    PaneSnapshotSchemaZ = z13.object({
-      index: z13.number(),
-      cwd: z13.string(),
-      command: z13.string().nullable(),
-      agent: z13.string().nullable(),
-      agentSessionId: z13.string().nullable(),
-      agentState: z13.string().nullable(),
-      title: z13.string()
+    PaneSnapshotSchemaZ = z25.object({
+      index: z25.number(),
+      cwd: z25.string(),
+      command: z25.string().nullable(),
+      agent: z25.string().nullable(),
+      agentSessionId: z25.string().nullable(),
+      agentState: z25.string().nullable(),
+      title: z25.string()
     });
-    WindowSnapshotSchemaZ = z13.object({
-      index: z13.number(),
-      name: z13.string(),
-      active: z13.boolean(),
-      layout: z13.string(),
-      panes: z13.array(PaneSnapshotSchemaZ)
+    WindowSnapshotSchemaZ = z25.object({
+      index: z25.number(),
+      name: z25.string(),
+      active: z25.boolean(),
+      layout: z25.string(),
+      panes: z25.array(PaneSnapshotSchemaZ)
     });
-    SessionSnapshotSchemaZ = z13.object({
-      name: z13.string(),
-      cwd: z13.string(),
-      adopted: z13.boolean(),
-      windows: z13.array(WindowSnapshotSchemaZ)
+    SessionSnapshotSchemaZ = z25.object({
+      name: z25.string(),
+      cwd: z25.string(),
+      adopted: z25.boolean(),
+      windows: z25.array(WindowSnapshotSchemaZ)
     });
-    FleetSnapshotSchemaZ = z13.object({
-      version: z13.literal(1),
-      savedAt: z13.string(),
-      sessions: z13.array(SessionSnapshotSchemaZ)
+    FleetSnapshotSchemaZ = z25.object({
+      version: z25.literal(1),
+      savedAt: z25.string(),
+      sessions: z25.array(SessionSnapshotSchemaZ)
     });
     SNAPSHOT_PANE_FORMAT = [
       "#{session_name}",
@@ -7455,8 +10636,8 @@ __export(statusline_exports, {
   updatePopupCommand: () => updatePopupCommand
 });
 function statusStyle(status2, theme) {
-  const color2 = theme.status[status2];
-  return status2 === "blocked" ? `#[fg=${color2},bold]` : `#[fg=${color2}]`;
+  const color3 = theme.status[status2];
+  return status2 === "blocked" ? `#[fg=${color3},bold]` : `#[fg=${color3}]`;
 }
 function statusGlyph(status2, theme) {
   return status2 === "unknown" ? "\xB7" : theme.glyphs.active;
@@ -7693,106 +10874,436 @@ var init_statusline = __esm({
 // packages/daemon/src/lib/canonical-daemon.ts
 var canonical_daemon_exports = {};
 __export(canonical_daemon_exports, {
-  clearCanonicalDaemonInfo: () => clearCanonicalDaemonInfo,
+  canonicalDaemonUrl: () => canonicalDaemonUrl,
+  clearCanonicalDaemonInfoIfOwned: () => clearCanonicalDaemonInfoIfOwned,
+  clearCanonicalDaemonInfoIfUnchanged: () => clearCanonicalDaemonInfoIfUnchanged,
+  getCanonicalDaemonClaimPath: () => getCanonicalDaemonClaimPath,
   getCanonicalDaemonInfoPath: () => getCanonicalDaemonInfoPath,
+  inspectCanonicalDaemonInfo: () => inspectCanonicalDaemonInfo,
   isCanonicalDaemonAlive: () => isCanonicalDaemonAlive,
+  isCanonicalDaemonRecordOwnerProvenDead: () => isCanonicalDaemonRecordOwnerProvenDead,
+  probeCanonicalDaemonHealth: () => probeCanonicalDaemonHealth,
+  probeCanonicalDaemonIdentity: () => probeCanonicalDaemonIdentity,
   readCanonicalDaemonInfo: () => readCanonicalDaemonInfo,
+  releaseCanonicalDaemonClaim: () => releaseCanonicalDaemonClaim,
+  tryAcquireCanonicalDaemonClaim: () => tryAcquireCanonicalDaemonClaim,
   warnOnDaemonVersionSkew: () => warnOnDaemonVersionSkew,
   writeCanonicalDaemonInfo: () => writeCanonicalDaemonInfo
 });
-import { existsSync as existsSync20, mkdirSync as mkdirSync13, readFileSync as readFileSync15, renameSync as renameSync8, rmSync, writeFileSync as writeFileSync12 } from "node:fs";
+import {
+  chmodSync as chmodSync3,
+  closeSync as closeSync2,
+  constants,
+  fstatSync,
+  linkSync as linkSync2,
+  lstatSync,
+  mkdirSync as mkdirSync13,
+  openSync as openSync2,
+  readFileSync as readFileSync15,
+  renameSync as renameSync8,
+  rmSync,
+  writeFileSync as writeFileSync12
+} from "node:fs";
+import { randomUUID } from "node:crypto";
 import { homedir as homedir13 } from "node:os";
 import { dirname as dirname18, join as join19 } from "node:path";
+function nonEmptyEnvironmentValue(name) {
+  const value = process.env[name];
+  return value !== void 0 && value.length > 0 ? value : void 0;
+}
 function getCanonicalDaemonInfoPath() {
-  const dir = process.env[DAEMON_INFO_DIR_ENV] ?? process.env[REGISTRY_DIR_ENV2] ?? join19(homedir13(), ".tmux-ide");
+  const dir = nonEmptyEnvironmentValue(DAEMON_INFO_DIR_ENV) ?? nonEmptyEnvironmentValue(REGISTRY_DIR_ENV2) ?? join19(homedir13(), ".tmux-ide");
   return join19(dir, DAEMON_INFO_FILE);
 }
-function parseCanonicalDaemonInfo(raw) {
-  if (!raw || typeof raw !== "object") return null;
-  const info = raw;
-  const pid = info.pid;
-  const port = info.port;
-  if (typeof pid !== "number" || typeof port !== "number") return null;
-  if (!Number.isInteger(pid) || !Number.isInteger(port)) return null;
-  if (typeof info.version !== "string" || typeof info.startedAt !== "string") return null;
-  if (typeof info.bindHostname !== "string") return null;
-  if (info.authToken !== null && typeof info.authToken !== "string") return null;
-  return {
-    pid,
-    port,
-    version: info.version,
-    startedAt: info.startedAt,
-    bindHostname: info.bindHostname,
-    authToken: info.authToken
-  };
+function getCanonicalDaemonClaimPath() {
+  return join19(dirname18(getCanonicalDaemonInfoPath()), DAEMON_CLAIM_DIR);
 }
-function writeCanonicalDaemonInfo(info) {
-  const path2 = getCanonicalDaemonInfoPath();
-  mkdirSync13(dirname18(path2), { recursive: true });
-  const tmpPath = `${path2}.${process.pid}.${Date.now()}.tmp`;
-  const persisted = {
-    pid: info.pid,
-    port: info.port,
-    version: info.version,
-    startedAt: info.startedAt,
-    bindHostname: info.bindHostname,
-    authToken: info.authToken
-  };
-  writeFileSync12(tmpPath, JSON.stringify(persisted, null, 2) + "\n", "utf-8");
-  renameSync8(tmpPath, path2);
+function observation(stat) {
+  return { dev: stat.dev, ino: stat.ino, size: stat.size, mtimeMs: stat.mtimeMs };
 }
-function readCanonicalDaemonInfo() {
-  const path2 = getCanonicalDaemonInfoPath();
-  if (!existsSync20(path2)) return null;
+function sameObservation(left, right) {
+  return left.dev === right.dev && left.ino === right.ino && left.size === right.size && left.mtimeMs === right.mtimeMs;
+}
+function invalidState(reason, detail, ownerPid = null, observed = null) {
+  return { status: "invalid", reason, detail, ownerPid, observation: observed };
+}
+function ownerPidFromRaw(raw) {
+  if (!raw || typeof raw !== "object" || !("pid" in raw)) return null;
+  const pid = raw.pid;
+  return typeof pid === "number" && Number.isInteger(pid) && pid > 0 ? pid : null;
+}
+function inspectCanonicalDaemonInfoPath(path2) {
+  let descriptor;
   try {
-    return parseCanonicalDaemonInfo(JSON.parse(readFileSync15(path2, "utf-8")));
-  } catch {
-    return null;
+    const pathStat = lstatSync(path2);
+    const pathObservation = observation(pathStat);
+    if (pathStat.isSymbolicLink()) {
+      return invalidState(
+        "symlink",
+        "daemon.json must not be a symbolic link",
+        null,
+        pathObservation
+      );
+    }
+    if (!pathStat.isFile()) {
+      return invalidState(
+        "not-regular-file",
+        "daemon.json must be a regular file",
+        null,
+        pathObservation
+      );
+    }
+    if (pathStat.size > MAX_DAEMON_INFO_BYTES) {
+      return invalidState("oversized", "daemon.json exceeds the size limit", null, pathObservation);
+    }
+    if (typeof process.getuid === "function" && pathStat.uid !== process.getuid()) {
+      return invalidState(
+        "wrong-owner",
+        "daemon.json is not owned by the current user",
+        null,
+        pathObservation
+      );
+    }
+    if ((pathStat.mode & 63) !== 0) {
+      return invalidState(
+        "unsafe-permissions",
+        "daemon.json must be readable and writable only by its owner",
+        null,
+        pathObservation
+      );
+    }
+    descriptor = openSync2(path2, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+    const openedStat = fstatSync(descriptor);
+    const openedObservation = observation(openedStat);
+    if (!openedStat.isFile() || !sameObservation(pathObservation, openedObservation) || typeof process.getuid === "function" && openedStat.uid !== process.getuid() || (openedStat.mode & 63) !== 0) {
+      return invalidState(
+        "changed-while-opening",
+        "daemon.json changed or became unsafe while it was opened",
+        null,
+        openedObservation
+      );
+    }
+    let raw;
+    try {
+      raw = JSON.parse(readFileSync15(descriptor, "utf-8"));
+    } catch (error) {
+      return invalidState(
+        "malformed-json",
+        error instanceof Error ? error.message : "daemon.json is not valid JSON",
+        null,
+        openedObservation
+      );
+    }
+    const parsed = CanonicalDaemonInfoSchema.safeParse(raw);
+    if (!parsed.success) {
+      return invalidState(
+        "invalid-schema",
+        parsed.error.issues.map((issue) => issue.message).join("; "),
+        ownerPidFromRaw(raw),
+        openedObservation
+      );
+    }
+    return { status: "valid", info: parsed.data, observation: openedObservation };
+  } catch (error) {
+    if (error.code === "ENOENT") return { status: "missing" };
+    return invalidState(
+      "unreadable",
+      error instanceof Error ? error.message : "daemon.json could not be read"
+    );
+  } finally {
+    if (descriptor !== void 0) closeSync2(descriptor);
   }
 }
-function clearCanonicalDaemonInfo() {
-  rmSync(getCanonicalDaemonInfoPath(), { force: true });
-}
-function isPidAlive(pid) {
+function inspectCanonicalDaemonClaimPath(path2) {
+  let descriptor;
   try {
-    process.kill(pid, 0);
-    return true;
+    const claimStat = lstatSync(path2);
+    if (claimStat.isSymbolicLink() || !claimStat.isDirectory()) {
+      return { status: "invalid", detail: "daemon claim must be a real directory" };
+    }
+    if (typeof process.getuid === "function" && claimStat.uid !== process.getuid()) {
+      return { status: "invalid", detail: "daemon claim is owned by another user" };
+    }
+    if ((claimStat.mode & 63) !== 0) {
+      return { status: "invalid", detail: "daemon claim directory is not owner-only" };
+    }
+    const ownerPath = join19(path2, DAEMON_CLAIM_OWNER_FILE);
+    const ownerStat = lstatSync(ownerPath);
+    if (ownerStat.isSymbolicLink() || !ownerStat.isFile()) {
+      return { status: "invalid", detail: "daemon claim owner must be a real file" };
+    }
+    if (ownerStat.size > MAX_DAEMON_CLAIM_BYTES) {
+      return { status: "invalid", detail: "daemon claim owner exceeds the size limit" };
+    }
+    if (typeof process.getuid === "function" && ownerStat.uid !== process.getuid()) {
+      return { status: "invalid", detail: "daemon claim owner is owned by another user" };
+    }
+    if ((ownerStat.mode & 63) !== 0) {
+      return { status: "invalid", detail: "daemon claim owner is not owner-only" };
+    }
+    descriptor = openSync2(ownerPath, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+    const openedStat = fstatSync(descriptor);
+    if (!openedStat.isFile() || openedStat.dev !== ownerStat.dev || openedStat.ino !== ownerStat.ino || openedStat.size !== ownerStat.size) {
+      return { status: "invalid", detail: "daemon claim changed while it was opened" };
+    }
+    const raw = JSON.parse(readFileSync15(descriptor, "utf-8"));
+    if (typeof raw.claimId !== "string" || !/^[0-9a-f-]{36}$/iu.test(raw.claimId) || typeof raw.pid !== "number" || !Number.isInteger(raw.pid) || raw.pid <= 0 || typeof raw.acquiredAt !== "string" || !Number.isFinite(Date.parse(raw.acquiredAt))) {
+      return { status: "invalid", detail: "daemon claim owner has invalid metadata" };
+    }
+    return {
+      status: "valid",
+      claim: { claimId: raw.claimId, pid: raw.pid, acquiredAt: raw.acquiredAt }
+    };
+  } catch (error) {
+    if (error.code === "ENOENT") return { status: "missing" };
+    return {
+      status: "invalid",
+      detail: error instanceof Error ? error.message : "daemon claim could not be read"
+    };
+  } finally {
+    if (descriptor !== void 0) closeSync2(descriptor);
+  }
+}
+function restoreCapturedFile(capturedPath, canonicalPath) {
+  try {
+    linkSync2(capturedPath, canonicalPath);
+    rmSync(capturedPath, { force: true });
+  } catch (error) {
+    if (error.code !== "EEXIST") throw error;
+  }
+}
+function retireCanonicalClaimIfMatches(expected) {
+  const path2 = getCanonicalDaemonClaimPath();
+  const captured = `${path2}.${expected.claimId}.${randomUUID()}.retired`;
+  try {
+    renameSync8(path2, captured);
   } catch {
     return false;
   }
+  const moved = inspectCanonicalDaemonClaimPath(captured);
+  if (moved.status === "valid" && moved.claim.claimId === expected.claimId && moved.claim.pid === expected.pid) {
+    rmSync(captured, { recursive: true, force: true });
+    return true;
+  }
+  try {
+    renameSync8(captured, path2);
+  } catch {
+  }
+  return false;
 }
-function probeHostname(bindHostname) {
-  return bindHostname === "0.0.0.0" ? "127.0.0.1" : bindHostname;
+function tryAcquireCanonicalDaemonClaim() {
+  const path2 = getCanonicalDaemonClaimPath();
+  const root = dirname18(path2);
+  mkdirSync13(root, { recursive: true, mode: 448 });
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const claim = {
+      claimId: randomUUID(),
+      pid: process.pid,
+      acquiredAt: (/* @__PURE__ */ new Date()).toISOString()
+    };
+    const candidate = `${path2}.${claim.claimId}.candidate`;
+    mkdirSync13(candidate, { mode: 448 });
+    writeFileSync12(join19(candidate, DAEMON_CLAIM_OWNER_FILE), `${JSON.stringify(claim, null, 2)}
+`, {
+      encoding: "utf-8",
+      mode: 384
+    });
+    try {
+      renameSync8(candidate, path2);
+      activeClaims.add(claim.claimId);
+      return { status: "acquired", claim };
+    } catch (error) {
+      rmSync(candidate, { recursive: true, force: true });
+      const existing = inspectCanonicalDaemonClaimPath(path2);
+      if (existing.status === "missing") {
+        if (attempt < 2) continue;
+        return { status: "invalid", detail: "daemon claim changed during acquisition" };
+      }
+      if (existing.status === "invalid") return existing;
+      if (pidLiveness(existing.claim.pid) !== "dead") {
+        return { status: "busy", owner: existing.claim };
+      }
+      if (!retireCanonicalClaimIfMatches(existing.claim) && attempt === 2) {
+        return { status: "invalid", detail: "stale daemon claim changed during recovery" };
+      }
+      if (error.code !== "EEXIST" && attempt === 2) throw error;
+    }
+  }
+  return { status: "invalid", detail: "daemon claim could not be acquired" };
+}
+function assertCanonicalDaemonClaimHeld(claim) {
+  if (!activeClaims.has(claim.claimId)) throw new Error("canonical daemon claim is not active");
+  const current = inspectCanonicalDaemonClaimPath(getCanonicalDaemonClaimPath());
+  if (current.status !== "valid" || current.claim.claimId !== claim.claimId || current.claim.pid !== claim.pid) {
+    throw new Error("canonical daemon claim ownership was lost");
+  }
+}
+function releaseCanonicalDaemonClaim(claim) {
+  if (!activeClaims.has(claim.claimId)) return false;
+  try {
+    return retireCanonicalClaimIfMatches(claim);
+  } finally {
+    activeClaims.delete(claim.claimId);
+  }
+}
+function writeCanonicalDaemonInfo(info, claim) {
+  assertCanonicalDaemonClaimHeld(claim);
+  const path2 = getCanonicalDaemonInfoPath();
+  mkdirSync13(dirname18(path2), { recursive: true, mode: 448 });
+  const tmpPath = `${path2}.${claim.claimId}.${randomUUID()}.tmp`;
+  const persisted = {
+    pid: info.pid,
+    port: info.port,
+    protocolVersion: info.protocolVersion,
+    productVersion: info.productVersion,
+    instanceId: info.instanceId,
+    startedAt: info.startedAt,
+    bindHostname: info.bindHostname,
+    authToken: info.authToken
+  };
+  writeFileSync12(tmpPath, JSON.stringify(persisted, null, 2) + "\n", {
+    encoding: "utf-8",
+    mode: 384
+  });
+  chmodSync3(tmpPath, 384);
+  try {
+    linkSync2(tmpPath, path2);
+  } finally {
+    rmSync(tmpPath, { force: true });
+  }
+}
+function inspectCanonicalDaemonInfo() {
+  return inspectCanonicalDaemonInfoPath(getCanonicalDaemonInfoPath());
+}
+function readCanonicalDaemonInfo() {
+  const state = inspectCanonicalDaemonInfo();
+  return state.status === "valid" ? state.info : null;
+}
+function captureCanonicalDaemonInfo(claim) {
+  assertCanonicalDaemonClaimHeld(claim);
+  const path2 = getCanonicalDaemonInfoPath();
+  const captured = `${path2}.${claim.claimId}.${randomUUID()}.retired`;
+  try {
+    renameSync8(path2, captured);
+    return captured;
+  } catch (error) {
+    if (error.code === "ENOENT") return null;
+    throw error;
+  }
+}
+function clearCanonicalDaemonInfoIfUnchanged(state, claim) {
+  if (state.status === "missing" || !state.observation) return false;
+  const path2 = getCanonicalDaemonInfoPath();
+  const captured = captureCanonicalDaemonInfo(claim);
+  if (!captured) return false;
+  try {
+    const current = observation(lstatSync(captured));
+    if (sameObservation(state.observation, current)) {
+      rmSync(captured, { recursive: true, force: true });
+      return true;
+    }
+    restoreCapturedFile(captured, path2);
+    return false;
+  } catch (error) {
+    restoreCapturedFile(captured, path2);
+    throw error;
+  }
+}
+function clearCanonicalDaemonInfoIfOwned(instanceId, claim) {
+  const path2 = getCanonicalDaemonInfoPath();
+  const captured = captureCanonicalDaemonInfo(claim);
+  if (!captured) return false;
+  const state = inspectCanonicalDaemonInfoPath(captured);
+  if (state.status === "valid" && state.info.instanceId === instanceId) {
+    rmSync(captured, { recursive: true, force: true });
+    return true;
+  }
+  restoreCapturedFile(captured, path2);
+  return false;
+}
+function pidLiveness(pid) {
+  try {
+    process.kill(pid, 0);
+    return "alive";
+  } catch (error) {
+    const code = error.code;
+    if (code === "ESRCH") return "dead";
+    if (code === "EPERM") return "alive";
+    return "unknown";
+  }
+}
+async function isCanonicalDaemonAlive(info) {
+  return pidLiveness(info.pid) !== "dead";
+}
+async function isCanonicalDaemonRecordOwnerProvenDead(state) {
+  const pid = state.status === "valid" ? state.info.pid : state.ownerPid;
+  return pid !== null && pidLiveness(pid) === "dead";
+}
+function connectHostname(bindHostname) {
+  if (bindHostname === "0.0.0.0") return "127.0.0.1";
+  if (bindHostname === "::") return "::1";
+  return bindHostname;
+}
+function urlHostname(bindHostname) {
+  const hostname2 = connectHostname(bindHostname).replace(/^\[|\]$/gu, "");
+  if (/[/?#@]/u.test(hostname2)) throw new TypeError("Invalid daemon bind hostname");
+  const escaped = hostname2.replace(/%/gu, "%25");
+  return escaped.includes(":") ? `[${escaped}]` : escaped;
+}
+function canonicalDaemonUrl(protocol, bindHostname, port, path2 = "") {
+  const suffix = path2.length === 0 ? "" : path2.startsWith("/") ? path2 : `/${path2}`;
+  return `${protocol}://${urlHostname(bindHostname)}:${port}${suffix}`;
 }
 function timeoutSignal(ms) {
   const controller = new AbortController();
   setTimeout(() => controller.abort(), ms).unref?.();
   return controller.signal;
 }
-function warnOnDaemonVersionSkew(info, expectedVersion) {
-  if (info.version === expectedVersion) return;
+function warnOnDaemonVersionSkew(info, expectedProductVersion) {
+  if (info.productVersion === expectedProductVersion) return;
   console.warn(
-    `[tmux-ide] canonical daemon version skew: daemon.json reports "${info.version}" but this client expects "${expectedVersion}". The action/WS contract may have drifted \u2014 restart the canonical daemon (tmux-ide) so it matches this client build.`
+    `[tmux-ide] canonical daemon product-version skew: daemon.json reports "${info.productVersion}" but this client expects "${expectedProductVersion}". Wire compatibility is governed independently by protocolVersion.`
   );
 }
-async function isCanonicalDaemonAlive(info) {
-  if (!isPidAlive(info.pid)) return false;
+async function probeCanonicalDaemonHealth(info) {
+  if (!await isCanonicalDaemonAlive(info)) return null;
   try {
-    const res = await fetch(`http://${probeHostname(info.bindHostname)}:${info.port}/health`, {
+    const res = await fetch(canonicalDaemonUrl("http", info.bindHostname, info.port, "/health"), {
       signal: timeoutSignal(750)
     });
-    return res.ok;
+    if (!res.ok) return null;
+    const parsed = DaemonHealthSchema.safeParse(await res.json());
+    return parsed.success ? parsed.data : null;
   } catch {
-    return false;
+    return null;
   }
 }
-var DAEMON_INFO_DIR_ENV, REGISTRY_DIR_ENV2, DAEMON_INFO_FILE;
+async function probeCanonicalDaemonIdentity(info) {
+  if (!await isCanonicalDaemonAlive(info)) return null;
+  try {
+    const res = await fetch(canonicalDaemonUrl("http", info.bindHostname, info.port, "/identity"), {
+      signal: timeoutSignal(750)
+    });
+    if (!res.ok) return null;
+    const parsed = DaemonIdentitySchema.safeParse(await res.json());
+    return parsed.success ? parsed.data : null;
+  } catch {
+    return null;
+  }
+}
+var DAEMON_INFO_DIR_ENV, REGISTRY_DIR_ENV2, DAEMON_INFO_FILE, DAEMON_CLAIM_DIR, DAEMON_CLAIM_OWNER_FILE, MAX_DAEMON_INFO_BYTES, MAX_DAEMON_CLAIM_BYTES, activeClaims;
 var init_canonical_daemon = __esm({
   "packages/daemon/src/lib/canonical-daemon.ts"() {
     "use strict";
+    init_src();
     DAEMON_INFO_DIR_ENV = "TMUX_IDE_DAEMON_INFO_DIR";
     REGISTRY_DIR_ENV2 = "TMUX_IDE_REGISTRY_DIR";
     DAEMON_INFO_FILE = "daemon.json";
+    DAEMON_CLAIM_DIR = "daemon.claim";
+    DAEMON_CLAIM_OWNER_FILE = "owner.json";
+    MAX_DAEMON_INFO_BYTES = 64 * 1024;
+    MAX_DAEMON_CLAIM_BYTES = 4 * 1024;
+    activeClaims = /* @__PURE__ */ new Set();
   }
 });
 
@@ -7806,7 +11317,7 @@ __export(launch_exports, {
 });
 import { resolve as resolve13 } from "node:path";
 import { execSync } from "node:child_process";
-import { createHash as createHash3 } from "node:crypto";
+import { createHash as createHash4 } from "node:crypto";
 function stripWidgetPanes(rows) {
   return rows.map((row) => ({
     ...row,
@@ -7817,7 +11328,7 @@ function sleepMs(ms) {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 function configHash(config2) {
-  return createHash3("sha256").update(JSON.stringify(config2)).digest("hex").slice(0, 12);
+  return createHash4("sha256").update(JSON.stringify(config2)).digest("hex").slice(0, 12);
 }
 function waitForPaneCommand(targetPane, expectedCommands, {
   attempts = 20,
@@ -7962,14 +11473,21 @@ async function launch(targetDir, {
     rootPaneId,
     ({ targetPane, direction, cwd, percent }) => splitPane(targetPane, direction, cwd, percent)
   );
-  const { focusPane, paneActions } = collectPaneStartupPlan(rows, paneMap, firstPanesOfRows, dir);
-  for (const action of paneActions) {
+  const {
+    focusPane,
+    paneActions: paneActions2,
+    diagnostics: launchDiagnostics
+  } = collectPaneStartupPlan(rows, paneMap, firstPanesOfRows, dir);
+  for (const diagnostic of launchDiagnostics) {
+    console.error(`tmux-ide: warning: ${diagnostic.message}`);
+  }
+  for (const action of paneActions2) {
     if (action.title) {
       setPaneTitle(action.targetPane, action.title);
     }
-    setPaneOption(action.targetPane, "@ide_role", action.paneRole ?? "shell");
-    setPaneOption(action.targetPane, "@ide_name", action.title ?? "");
-    setPaneOption(action.targetPane, "@ide_type", action.paneType ?? "shell");
+    for (const [option, value] of paneIdentityOptions(action)) {
+      setPaneOption(action.targetPane, option, value);
+    }
     if (action.paneRole === "lead" || action.paneRole === "teammate") {
       setPaneOption(action.targetPane, "allow-rename", "off");
     }
@@ -8009,10 +11527,10 @@ async function launch(targetDir, {
     `Starting "${session}" (${rows.length} row${rows.length === 1 ? "" : "s"}, ${totalPanes} pane${totalPanes === 1 ? "" : "s"})...`
   );
   try {
-    const { readCanonicalDaemonInfo: readCanonicalDaemonInfo2 } = await Promise.resolve().then(() => (init_canonical_daemon(), canonical_daemon_exports));
+    const { canonicalDaemonUrl: canonicalDaemonUrl2, readCanonicalDaemonInfo: readCanonicalDaemonInfo2 } = await Promise.resolve().then(() => (init_canonical_daemon(), canonical_daemon_exports));
     const info = readCanonicalDaemonInfo2();
     if (info) {
-      console.log(`Command center: http://${info.bindHostname}:${info.port}/`);
+      console.log(`Command center: ${canonicalDaemonUrl2("http", info.bindHostname, info.port)}/`);
     }
   } catch {
   }
@@ -8053,9 +11571,9 @@ var init_yaml_io = __esm({
 
 // packages/daemon/src/detect.ts
 import { resolve as resolve14, basename as basename6 } from "node:path";
-import { readFileSync as readFileSync16, existsSync as existsSync21 } from "node:fs";
+import { readFileSync as readFileSync16, existsSync as existsSync20 } from "node:fs";
 function fileExists(dir, name) {
-  return existsSync21(resolve14(dir, name));
+  return existsSync20(resolve14(dir, name));
 }
 function readJson(dir, name) {
   try {
@@ -8163,8 +11681,8 @@ function suggestConfig(dir, detected) {
       {
         size: "70%",
         panes: [
-          { title: "Claude 1", command: "claude" },
-          { title: "Claude 2", command: "claude" }
+          { id: "agent-1", title: "Claude 1", command: "claude" },
+          { id: "agent-2", title: "Claude 2", command: "claude" }
         ]
       },
       {
@@ -8175,37 +11693,37 @@ function suggestConfig(dir, detected) {
   const bottom = config2.rows[1].panes;
   const frameworks = detected.frameworks;
   if (frameworks.length >= 2) {
-    config2.rows[0].panes.push({ title: "Claude 3", command: "claude" });
+    config2.rows[0].panes.push({ id: "agent-3", title: "Claude 3", command: "claude" });
   }
   if (frameworks.includes("next")) {
-    bottom.push({ title: "Next.js", command: `${run} dev` });
+    bottom.push({ id: "dev", title: "Next.js", command: `${run} dev` });
   } else if (frameworks.includes("vite")) {
-    bottom.push({ title: "Vite", command: `${run} dev` });
+    bottom.push({ id: "dev", title: "Vite", command: `${run} dev` });
   } else if (frameworks.includes("nuxt")) {
-    bottom.push({ title: "Nuxt", command: `${run} dev` });
+    bottom.push({ id: "dev", title: "Nuxt", command: `${run} dev` });
   } else if (frameworks.includes("remix")) {
-    bottom.push({ title: "Remix", command: `${run} dev` });
+    bottom.push({ id: "dev", title: "Remix", command: `${run} dev` });
   } else if (frameworks.includes("astro")) {
-    bottom.push({ title: "Astro", command: `${run} dev` });
+    bottom.push({ id: "dev", title: "Astro", command: `${run} dev` });
   } else if (frameworks.includes("svelte")) {
-    bottom.push({ title: "SvelteKit", command: `${run} dev` });
+    bottom.push({ id: "dev", title: "SvelteKit", command: `${run} dev` });
   } else if (frameworks.includes("fastapi")) {
-    bottom.push({ title: "FastAPI", command: "uvicorn main:app --reload" });
+    bottom.push({ id: "dev", title: "FastAPI", command: "uvicorn main:app --reload" });
   } else if (frameworks.includes("django")) {
-    bottom.push({ title: "Django", command: "python manage.py runserver" });
+    bottom.push({ id: "dev", title: "Django", command: "python manage.py runserver" });
   } else if (frameworks.includes("flask")) {
-    bottom.push({ title: "Flask", command: "flask run --reload" });
+    bottom.push({ id: "dev", title: "Flask", command: "flask run --reload" });
   } else if (frameworks.includes("cargo")) {
-    bottom.push({ title: "Cargo", command: "cargo watch -x run" });
+    bottom.push({ id: "dev", title: "Cargo", command: "cargo watch -x run" });
   } else if (frameworks.includes("go")) {
-    bottom.push({ title: "Go", command: "go run ." });
+    bottom.push({ id: "dev", title: "Go", command: "go run ." });
   } else if (detected.devCommand) {
-    bottom.push({ title: "Dev Server", command: detected.devCommand });
+    bottom.push({ id: "dev", title: "Dev Server", command: detected.devCommand });
   }
   if (frameworks.includes("convex")) {
-    bottom.push({ title: "Convex", command: "npx convex dev" });
+    bottom.push({ id: "convex", title: "Convex", command: "npx convex dev" });
   }
-  bottom.push({ title: "Shell" });
+  bottom.push({ id: "shell", title: "Shell" });
   return config2;
 }
 async function detect(targetDir, { json: json2, write } = {}) {
@@ -8273,7 +11791,7 @@ __export(skill_sync_exports, {
   syncSkill: () => syncSkill,
   versionMarker: () => versionMarker
 });
-import { existsSync as existsSync23, mkdirSync as mkdirSync15, readFileSync as readFileSync18, writeFileSync as writeFileSync14 } from "node:fs";
+import { existsSync as existsSync22, mkdirSync as mkdirSync15, readFileSync as readFileSync18, writeFileSync as writeFileSync14 } from "node:fs";
 import { homedir as homedir14 } from "node:os";
 import { dirname as dirname20, join as join21 } from "node:path";
 import { fileURLToPath as fileURLToPath8 } from "node:url";
@@ -8294,7 +11812,7 @@ function defaultSkillSource() {
     join21(here, "../../../../skill/SKILL.md")
     // dev src/lib → repo root
   ];
-  return candidates.find((c) => existsSync23(c)) ?? candidates[0];
+  return candidates.find((c) => existsSync22(c)) ?? candidates[0];
 }
 function versionMarker(version) {
   return `<!-- tmux-ide-skill-version: ${version} -->`;
@@ -8309,7 +11827,7 @@ function rewriteVersionMarker(content, version) {
 }
 function installedSkillVersion(dir = skillTargetDir()) {
   const file = join21(dir, "SKILL.md");
-  if (!existsSync23(file)) return null;
+  if (!existsSync22(file)) return null;
   try {
     return parseSkillVersion(readFileSync18(file, "utf-8"));
   } catch {
@@ -8323,7 +11841,7 @@ function syncSkill({
   const rendered = rewriteVersionMarker(readFileSync18(source, "utf-8"), version);
   const dir = skillTargetDir();
   const target = join21(dir, "SKILL.md");
-  const existing = existsSync23(target) ? readFileSync18(target, "utf-8") : null;
+  const existing = existsSync22(target) ? readFileSync18(target, "utf-8") : null;
   if (existing === rendered) {
     return { action: "unchanged", path: target, to: version };
   }
@@ -8353,7 +11871,7 @@ __export(opencode_exports, {
   opencodePluginPath: () => opencodePluginPath,
   uninstallOpencodeIntegration: () => uninstallOpencodeIntegration
 });
-import { existsSync as existsSync24, mkdirSync as mkdirSync16, readFileSync as readFileSync19, rmSync as rmSync2, writeFileSync as writeFileSync15 } from "node:fs";
+import { existsSync as existsSync23, mkdirSync as mkdirSync16, readFileSync as readFileSync19, rmSync as rmSync2, writeFileSync as writeFileSync15 } from "node:fs";
 import { homedir as homedir15 } from "node:os";
 import { dirname as dirname21, join as join22 } from "node:path";
 function opencodePluginPath() {
@@ -8381,7 +11899,7 @@ function uninstallOpencodeIntegration() {
 function opencodeIntegrationStatus() {
   const pluginPath = opencodePluginPath();
   try {
-    if (!existsSync24(pluginPath)) return { installed: false };
+    if (!existsSync23(pluginPath)) return { installed: false };
     return { installed: isOurPlugin(readFileSync19(pluginPath, "utf8")) };
   } catch {
     return { installed: false };
@@ -8629,7 +12147,7 @@ var init_PtyAdapter = __esm({
 });
 
 // packages/daemon/src/terminal/NodePtyAdapter.ts
-import { chmodSync as chmodSync3, existsSync as existsSync26, statSync as statSync3 } from "node:fs";
+import { chmodSync as chmodSync4, existsSync as existsSync25, statSync as statSync3 } from "node:fs";
 import { dirname as dirname23, join as join23 } from "node:path";
 import { createRequire } from "node:module";
 import * as pty from "node-pty";
@@ -8653,9 +12171,9 @@ function ensureNodePtySpawnHelperExecutable(options = {}) {
   if (!options.force && !options.explicitPath && helperEnsured) return;
   const candidates = options.explicitPath ? [options.explicitPath] : candidateSpawnHelperPaths();
   for (const candidate of candidates) {
-    if (!existsSync26(candidate)) continue;
+    if (!existsSync25(candidate)) continue;
     try {
-      chmodSync3(candidate, 493);
+      chmodSync4(candidate, 493);
     } catch {
     }
   }
@@ -9642,10 +13160,10 @@ var init_pane_comms = __esm({
 
 // packages/daemon/src/lib/workspace-registry.ts
 import { EventEmitter as EventEmitter3 } from "node:events";
-import { existsSync as existsSync27, mkdirSync as mkdirSync17, readFileSync as readFileSync20, renameSync as renameSync9, writeFileSync as writeFileSync16 } from "node:fs";
+import { existsSync as existsSync26, mkdirSync as mkdirSync17, readFileSync as readFileSync20, renameSync as renameSync9, writeFileSync as writeFileSync16 } from "node:fs";
 import { homedir as homedir16 } from "node:os";
 import { dirname as dirname24, join as join24 } from "node:path";
-import { z as z14 } from "zod";
+import { z as z26 } from "zod";
 function getDefaultWorkspaceRegistry() {
   if (!_default) _default = new WorkspaceRegistry();
   return _default;
@@ -9668,9 +13186,9 @@ var init_workspace_registry = __esm({
     "use strict";
     init_src();
     REGISTRY_DIR_ENV3 = "TMUX_IDE_REGISTRY_DIR";
-    RegistryFileSchemaZ2 = z14.object({
-      version: z14.literal(1),
-      workspaces: z14.array(WorkspaceSchemaZ)
+    RegistryFileSchemaZ2 = z26.object({
+      version: z26.literal(1),
+      workspaces: z26.array(WorkspaceSchemaZ)
     });
     WorkspaceAlreadyExistsError = class extends Error {
       code = "ALREADY_EXISTS";
@@ -9767,7 +13285,7 @@ var init_workspace_registry = __esm({
       }
       readDisk() {
         const path2 = this.filePath();
-        if (!existsSync27(path2)) return [];
+        if (!existsSync26(path2)) return [];
         let parsed;
         try {
           parsed = JSON.parse(readFileSync20(path2, "utf-8"));
@@ -10065,7 +13583,7 @@ var init_auth_token = __esm({
 });
 
 // packages/daemon/src/lib/app-settings.ts
-import { existsSync as existsSync28, mkdirSync as mkdirSync18, readFileSync as readFileSync21, renameSync as renameSync10, writeFileSync as writeFileSync17 } from "node:fs";
+import { existsSync as existsSync27, mkdirSync as mkdirSync18, readFileSync as readFileSync21, renameSync as renameSync10, writeFileSync as writeFileSync17 } from "node:fs";
 import { dirname as dirname25, join as join25 } from "node:path";
 import { homedir as homedir17 } from "node:os";
 function settingsDir() {
@@ -10085,7 +13603,7 @@ function normalizeSettings(value) {
 }
 function readAppSettings() {
   const path2 = appSettingsPath();
-  if (!existsSync28(path2)) return structuredClone(DEFAULT_SETTINGS);
+  if (!existsSync27(path2)) return structuredClone(DEFAULT_SETTINGS);
   try {
     return normalizeSettings(JSON.parse(readFileSync21(path2, "utf-8")));
   } catch {
@@ -10232,11 +13750,20 @@ var init_errors3 = __esm({
 });
 
 // packages/daemon/src/command-center/actions/handlers/daemon-shutdown.ts
-function setDaemonShutdownBackend(backend2) {
+function setDaemonShutdownBackend(backend2, instanceId = null) {
   shutdownBackend = backend2;
+  daemonInstanceId = backend2 ? instanceId : null;
   if (!backend2) shutdownInProgress = false;
 }
 function daemonShutdownHandler(input, deps2 = {}) {
+  const expectedInstanceId = input.expectedInstanceId;
+  const currentInstanceId = deps2.instanceId ?? daemonInstanceId;
+  if (expectedInstanceId && expectedInstanceId !== currentInstanceId) {
+    throw new ActionError({
+      code: "daemon_instance_mismatch",
+      message: "Daemon instance changed before shutdown"
+    });
+  }
   if (shutdownInProgress) {
     throw new ActionError({
       code: "shutdown_already_in_progress",
@@ -10252,12 +13779,13 @@ function daemonShutdownHandler(input, deps2 = {}) {
   });
   return { stopping: true };
 }
-var shutdownBackend, shutdownInProgress;
+var shutdownBackend, daemonInstanceId, shutdownInProgress;
 var init_daemon_shutdown = __esm({
   "packages/daemon/src/command-center/actions/handlers/daemon-shutdown.ts"() {
     "use strict";
     init_errors3();
     shutdownBackend = null;
+    daemonInstanceId = null;
     shutdownInProgress = false;
   }
 });
@@ -10285,15 +13813,15 @@ var init_active_projects = __esm({
 });
 
 // packages/daemon/src/send.ts
-import { randomUUID } from "node:crypto";
+import { randomUUID as randomUUID2 } from "node:crypto";
 import { resolve as resolve21, join as join26 } from "node:path";
-import { existsSync as existsSync29, mkdirSync as mkdirSync19, writeFileSync as writeFileSync18 } from "node:fs";
+import { existsSync as existsSync28, mkdirSync as mkdirSync19, writeFileSync as writeFileSync18 } from "node:fs";
 function writeDispatchFile(dir, paneId, message) {
   if (message.length <= LONG_MESSAGE_THRESHOLD) return null;
   const dispatchDir = join26(dir, ".tasks", "dispatch");
-  if (!existsSync29(dispatchDir)) mkdirSync19(dispatchDir, { recursive: true });
+  if (!existsSync28(dispatchDir)) mkdirSync19(dispatchDir, { recursive: true });
   const paneSlug = paneId.replace("%", "");
-  const filename = `send-${paneSlug}-${Date.now()}-${randomUUID().slice(0, 8)}.md`;
+  const filename = `send-${paneSlug}-${Date.now()}-${randomUUID2().slice(0, 8)}.md`;
   const filePath = join26(dispatchDir, filename);
   writeFileSync18(filePath, message);
   return { filePath, triggerCmd: `Read and execute: .tasks/dispatch/${filename}` };
@@ -10472,80 +14000,80 @@ var init_log = __esm({
 });
 
 // packages/daemon/src/command-center/schemas.ts
-import { z as z15 } from "zod";
+import { z as z27 } from "zod";
 var updateTaskSchema, createTaskSchema, savePlanSchema, savePlanContentSchema, sendCommandSchema, createMilestoneSchema, updateMilestoneSchema, updateAssertionSchema, triggerResearchSchema, launchSchema, stopSchema, skillNameRegex, createSkillSchema, updateSkillSchema;
 var init_schemas = __esm({
   "packages/daemon/src/command-center/schemas.ts"() {
     "use strict";
-    updateTaskSchema = z15.object({
-      status: z15.enum(["todo", "in-progress", "review", "done"]).optional(),
-      assignee: z15.string().optional(),
-      title: z15.string().optional(),
-      description: z15.string().optional(),
-      priority: z15.number().optional()
+    updateTaskSchema = z27.object({
+      status: z27.enum(["todo", "in-progress", "review", "done"]).optional(),
+      assignee: z27.string().optional(),
+      title: z27.string().optional(),
+      description: z27.string().optional(),
+      priority: z27.number().optional()
     });
-    createTaskSchema = z15.object({
-      title: z15.string().trim().min(1, "Title is required"),
-      description: z15.string().optional(),
-      priority: z15.number().optional(),
-      goal: z15.string().optional(),
-      tags: z15.array(z15.string()).optional()
+    createTaskSchema = z27.object({
+      title: z27.string().trim().min(1, "Title is required"),
+      description: z27.string().optional(),
+      priority: z27.number().optional(),
+      goal: z27.string().optional(),
+      tags: z27.array(z27.string()).optional()
     });
-    savePlanSchema = z15.object({
-      content: z15.string().max(1e6, "Plan content is too large")
+    savePlanSchema = z27.object({
+      content: z27.string().max(1e6, "Plan content is too large")
     });
-    savePlanContentSchema = z15.object({
-      content: z15.string().max(1e6, "Plan content is too large")
+    savePlanContentSchema = z27.object({
+      content: z27.string().max(1e6, "Plan content is too large")
     });
-    sendCommandSchema = z15.object({
-      target: z15.string().min(1, "Target pane is required"),
-      message: z15.string().min(1, "Message is required"),
-      noEnter: z15.boolean().optional()
+    sendCommandSchema = z27.object({
+      target: z27.string().min(1, "Target pane is required"),
+      message: z27.string().min(1, "Message is required"),
+      noEnter: z27.boolean().optional()
     });
-    createMilestoneSchema = z15.object({
-      title: z15.string().trim().min(1, "Title is required"),
-      sequence: z15.number().int().positive(),
-      description: z15.string().optional()
+    createMilestoneSchema = z27.object({
+      title: z27.string().trim().min(1, "Title is required"),
+      sequence: z27.number().int().positive(),
+      description: z27.string().optional()
     });
-    updateMilestoneSchema = z15.object({
-      status: z15.enum(["locked", "active", "done", "validating"]).optional(),
-      title: z15.string().optional(),
-      description: z15.string().optional()
+    updateMilestoneSchema = z27.object({
+      status: z27.enum(["locked", "active", "done", "validating"]).optional(),
+      title: z27.string().optional(),
+      description: z27.string().optional()
     });
-    updateAssertionSchema = z15.object({
-      status: z15.enum(["pending", "passing", "failing", "blocked"]),
-      evidence: z15.string().optional(),
-      verifiedBy: z15.string().optional()
+    updateAssertionSchema = z27.object({
+      status: z27.enum(["pending", "passing", "failing", "blocked"]),
+      evidence: z27.string().optional(),
+      verifiedBy: z27.string().optional()
     });
-    triggerResearchSchema = z15.object({
-      type: z15.string().trim().min(1, "Research type is required")
+    triggerResearchSchema = z27.object({
+      type: z27.string().trim().min(1, "Research type is required")
     });
-    launchSchema = z15.object({
-      attach: z15.boolean().optional()
+    launchSchema = z27.object({
+      attach: z27.boolean().optional()
     }).optional();
-    stopSchema = z15.object({}).optional();
+    stopSchema = z27.object({}).optional();
     skillNameRegex = /^[A-Za-z0-9._ -]+$/;
-    createSkillSchema = z15.object({
-      name: z15.string().trim().min(1, "Skill name is required").regex(
+    createSkillSchema = z27.object({
+      name: z27.string().trim().min(1, "Skill name is required").regex(
         skillNameRegex,
         "Skill name may only contain letters, digits, dot, dash, underscore, or space"
       ),
-      role: z15.string().trim().optional(),
-      description: z15.string().optional(),
-      specialties: z15.array(z15.string()).optional(),
-      body: z15.string().optional()
+      role: z27.string().trim().optional(),
+      description: z27.string().optional(),
+      specialties: z27.array(z27.string()).optional(),
+      body: z27.string().optional()
     });
-    updateSkillSchema = z15.object({
-      role: z15.string().trim().optional(),
-      description: z15.string().optional(),
-      specialties: z15.array(z15.string()).optional(),
-      body: z15.string().optional()
+    updateSkillSchema = z27.object({
+      role: z27.string().trim().optional(),
+      description: z27.string().optional(),
+      specialties: z27.array(z27.string()).optional(),
+      body: z27.string().optional()
     });
   }
 });
 
 // packages/daemon/src/lib/terminals-store.ts
-import { existsSync as existsSync30, mkdirSync as mkdirSync20, readFileSync as readFileSync22, renameSync as renameSync11, writeFileSync as writeFileSync19 } from "node:fs";
+import { existsSync as existsSync29, mkdirSync as mkdirSync20, readFileSync as readFileSync22, renameSync as renameSync11, writeFileSync as writeFileSync19 } from "node:fs";
 import { dirname as dirname26, join as join27 } from "node:path";
 function path(dir) {
   return join27(dir, TERMINALS_FILE);
@@ -10555,7 +14083,7 @@ function ensureDir(dir) {
 }
 function loadTerminals(dir) {
   const file = path(dir);
-  if (!existsSync30(file)) return [];
+  if (!existsSync29(file)) return [];
   try {
     const body = readFileSync22(file, "utf-8");
     const parsed = JSON.parse(body);
@@ -10636,7 +14164,7 @@ __export(auth_service_exports, {
   AuthService: () => AuthService
 });
 import * as crypto2 from "node:crypto";
-import { readFileSync as readFileSync23, existsSync as existsSync31 } from "node:fs";
+import { readFileSync as readFileSync23, existsSync as existsSync30 } from "node:fs";
 import { join as join28 } from "node:path";
 import { homedir as homedir18 } from "node:os";
 function base64url(buf) {
@@ -10782,7 +14310,7 @@ var init_auth_service = __esm({
         try {
           const home = userId === process.env.USER ? homedir18() : `/home/${userId}`;
           const authKeysPath = join28(home, ".ssh", "authorized_keys");
-          if (!existsSync31(authKeysPath)) return false;
+          if (!existsSync30(authKeysPath)) return false;
           const authorizedKeys = readFileSync23(authKeysPath, "utf-8");
           const parts = publicKey.trim().split(" ");
           const keyData = parts.length > 1 ? parts[1] : parts[0];
@@ -10805,7 +14333,7 @@ function authMiddleware(authService, config2) {
       return next();
     }
     const path2 = new URL(c.req.url).pathname;
-    if (path2 === "/health" || path2.startsWith("/api/auth/")) {
+    if (path2 === "/health" || path2 === "/healthz" || path2 === "/identity" || path2.startsWith("/api/auth/")) {
       return next();
     }
     const authHeader = c.req.header("Authorization");
@@ -11190,6 +14718,11 @@ var init_project_context = __esm({
 });
 
 // packages/daemon/src/command-center/actions/handlers/config-actions.ts
+function workspaceWriteActionErrorCode(code) {
+  if (code === "CONFIG_EXISTS") return "config_exists";
+  if (code === "WORKSPACE_WRITE_FAILED") return "workspace_write_failed";
+  return "config_validation_failed";
+}
 async function mutateConfigAction(input, deps2, fn) {
   const context = await resolveProjectContext(input, deps2);
   const configContext = await resolveProjectConfigContext(context.dir);
@@ -11215,7 +14748,7 @@ async function mutateConfigAction(input, deps2, fn) {
     }
     if (err instanceof WorkspaceConfigWriteError) {
       throw new ActionError({
-        code: err.code.toLowerCase(),
+        code: workspaceWriteActionErrorCode(err.code),
         message: err.message,
         details: { path: err.path },
         cause: err
@@ -11390,6 +14923,175 @@ var init_registry2 = __esm({
   }
 });
 
+// packages/daemon/src/lib/command-registry.ts
+function issues(error) {
+  return JSON.parse(JSON.stringify({ issues: error.issues }));
+}
+function recoverCommandId(value) {
+  if (!value || typeof value !== "object" || !("id" in value)) return void 0;
+  const id = value.id;
+  const parsed = CommandIdSchemaZ.safeParse(id);
+  return parsed.success ? parsed.data : void 0;
+}
+function immutableDescriptor(rawDescriptor) {
+  const descriptor = CommandDescriptorSchemaZ.parse(rawDescriptor);
+  return Object.freeze({
+    ...descriptor,
+    schemas: Object.freeze({ ...descriptor.schemas })
+  });
+}
+var CommandRegistry;
+var init_command_registry = __esm({
+  "packages/daemon/src/lib/command-registry.ts"() {
+    "use strict";
+    init_src();
+    CommandRegistry = class {
+      definitions = /* @__PURE__ */ new Map();
+      constructor(definitions = []) {
+        for (const definition of definitions) this.register(definition);
+      }
+      register(definition) {
+        const descriptor = immutableDescriptor(definition.descriptor);
+        if (this.definitions.has(descriptor.id)) {
+          throw new Error(`duplicate command id: ${descriptor.id}`);
+        }
+        this.definitions.set(descriptor.id, {
+          ...definition,
+          descriptor: Object.freeze(descriptor)
+        });
+      }
+      has(id) {
+        return this.definitions.has(id);
+      }
+      descriptors() {
+        return Object.freeze([...this.definitions.values()].map((definition) => definition.descriptor));
+      }
+      resolve(rawInvocation, context) {
+        const invocationResult = CommandInvocationSchemaZ.safeParse(rawInvocation);
+        if (!invocationResult.success) {
+          const commandId = recoverCommandId(rawInvocation);
+          return {
+            ok: false,
+            error: {
+              code: "invalid-invocation",
+              message: "Command invocation failed envelope validation",
+              ...commandId ? { commandId } : {},
+              details: issues(invocationResult.error)
+            }
+          };
+        }
+        const invocation = invocationResult.data;
+        const definition = this.definitions.get(invocation.id);
+        if (!definition) {
+          return {
+            ok: false,
+            error: {
+              code: "unknown-command",
+              commandId: invocation.id,
+              message: `Unknown command: ${invocation.id}`
+            }
+          };
+        }
+        const inputResult = definition.inputSchema.safeParse(invocation.args);
+        if (!inputResult.success) {
+          return {
+            ok: false,
+            error: {
+              code: "invalid-input",
+              commandId: invocation.id,
+              message: "Command input failed schema validation",
+              details: issues(inputResult.error)
+            }
+          };
+        }
+        const availability = CommandAvailabilitySchemaZ.parse(
+          definition.availability?.(context, inputResult.data) ?? { available: true }
+        );
+        if (!availability.available) {
+          return {
+            ok: false,
+            error: {
+              code: "unavailable",
+              commandId: invocation.id,
+              message: availability.reason
+            }
+          };
+        }
+        return {
+          ok: true,
+          command: {
+            descriptor: definition.descriptor,
+            invocation,
+            input: inputResult.data,
+            resultSchema: definition.resultSchema
+          }
+        };
+      }
+    };
+  }
+});
+
+// packages/daemon/src/command-center/actions/command-definitions.ts
+function actionDescriptor(name) {
+  const metadata = ACTION_COMMAND_METADATA[name];
+  return Object.freeze({
+    version: COMMAND_PROTOCOL_VERSION,
+    id: name,
+    owner: "daemon",
+    label: metadata.label,
+    category: metadata.category,
+    schemas: Object.freeze({
+      input: `${name}.input.v1`,
+      result: `${name}.result.v1`
+    }),
+    dangerous: metadata.dangerous === true,
+    // Existing HTTP/CLI compatibility paths do not add interactive prompts.
+    confirmation: "none"
+  });
+}
+var ACTION_COMMAND_METADATA, DAEMON_ACTION_COMMAND_DEFINITIONS, daemonActionCommandRegistry;
+var init_command_definitions = __esm({
+  "packages/daemon/src/command-center/actions/command-definitions.ts"() {
+    "use strict";
+    init_src();
+    init_command_registry();
+    ACTION_COMMAND_METADATA = {
+      "project.openTerminal": { label: "Open project terminal", category: "project" },
+      "project.launch": { label: "Launch project", category: "project" },
+      "project.stop": { label: "Stop project", category: "project", dangerous: true },
+      "project.restart": { label: "Restart project", category: "project", dangerous: true },
+      "project.activate": { label: "Activate project", category: "project" },
+      "terminal.respawn": { label: "Respawn terminal", category: "terminal" },
+      "terminal.stop": { label: "Stop terminal", category: "terminal", dangerous: true },
+      "config.set": { label: "Set configuration value", category: "configuration" },
+      "config.addPane": { label: "Add configuration pane", category: "configuration" },
+      "config.removePane": {
+        label: "Remove configuration pane",
+        category: "configuration",
+        dangerous: true
+      },
+      "config.addRow": { label: "Add configuration row", category: "configuration" },
+      "config.enableTeam": { label: "Enable legacy team configuration", category: "compatibility" },
+      "config.disableTeam": {
+        label: "Disable legacy team configuration",
+        category: "compatibility"
+      },
+      "app.setRemoteAccess": { label: "Set remote access", category: "application" },
+      "daemon.shutdown": { label: "Shut down daemon", category: "daemon", dangerous: true }
+    };
+    DAEMON_ACTION_COMMAND_DEFINITIONS = Object.freeze(
+      ACTION_NAMES.map(
+        (name) => Object.freeze({
+          descriptor: actionDescriptor(name),
+          inputSchema: ActionContractsZ[name].input,
+          resultSchema: ActionContractsZ[name].result
+        })
+      )
+    );
+    daemonActionCommandRegistry = new CommandRegistry(DAEMON_ACTION_COMMAND_DEFINITIONS);
+  }
+});
+
 // packages/daemon/src/command-center/actions/dispatcher.ts
 function errorEnvelope(err) {
   return { ok: false, error: err.toEnvelope() };
@@ -11453,14 +15155,41 @@ function createActionDispatcher(deps2 = {}) {
     if (!inputParsed.success) {
       return c.json(zodErrorEnvelope(inputParsed.error), 200);
     }
+    const commandResolution = daemonActionCommandRegistry.resolve(
+      {
+        version: COMMAND_PROTOCOL_VERSION,
+        id: actionName,
+        source: { kind: "http" },
+        args: inputParsed.data
+      },
+      void 0
+    );
+    if (!commandResolution.ok) {
+      console.error("[actions] command adapter rejected action-schema-validated input", {
+        actionName,
+        error: commandResolution.error
+      });
+      return c.json(
+        {
+          ok: false,
+          error: {
+            code: "internal",
+            message: "Action command adapter rejected validated input"
+          }
+        },
+        200
+      );
+    }
     let result;
     try {
-      result = await entry.handler(inputParsed.data);
+      result = await entry.handler(commandResolution.command.input);
     } catch (err) {
       const wrapped = wrapInternalError(err);
       return c.json(errorEnvelope(wrapped), 200);
     }
-    const outputParsed = entry.resultSchema.safeParse(result);
+    const outputParsed = (commandResolution.command.resultSchema ?? entry.resultSchema).safeParse(
+      result
+    );
     if (!outputParsed.success) {
       return c.json(outputZodErrorEnvelope(outputParsed.error), 200);
     }
@@ -11479,6 +15208,7 @@ var init_dispatcher = __esm({
     init_errors3();
     init_registry2();
     init_ws_events();
+    init_command_definitions();
   }
 });
 
@@ -11582,64 +15312,64 @@ var init_project_init_runner = __esm({
 });
 
 // packages/daemon/src/schemas/inspect.ts
-import { z as z16 } from "zod";
+import { z as z28 } from "zod";
 var ProjectInspectDetectedSchemaZ, ProjectInspectSchemaZ, InspectFilesystemRequestSchemaZ, OnboardProjectRequestSchemaZ;
 var init_inspect = __esm({
   "packages/daemon/src/schemas/inspect.ts"() {
     "use strict";
-    ProjectInspectDetectedSchemaZ = z16.object({
+    ProjectInspectDetectedSchemaZ = z28.object({
       /** Detected package manager from lockfile, or `null`. */
-      packageManager: z16.enum(["pnpm", "npm", "yarn", "bun"]).nullable(),
+      packageManager: z28.enum(["pnpm", "npm", "yarn", "bun"]).nullable(),
       /** Detected frameworks (e.g. `["next", "convex"]`). Empty array when none. */
-      frameworks: z16.array(z16.string()),
+      frameworks: z28.array(z28.string()),
       /** Suggested dev command (e.g. `pnpm dev`). `null` if no dev script found. */
-      devCommand: z16.string().nullable(),
+      devCommand: z28.string().nullable(),
       /** Suggested test command (e.g. `pnpm test`). `null` if no test script found. */
-      testCommand: z16.string().nullable()
+      testCommand: z28.string().nullable()
     });
-    ProjectInspectSchemaZ = z16.object({
+    ProjectInspectSchemaZ = z28.object({
       /** Sanitized basename of the directory — safe to use as a tmux session name. */
-      name: z16.string(),
+      name: z28.string(),
       /** Absolute, canonical path to the directory. */
-      dir: z16.string(),
+      dir: z28.string(),
       /** Whether `<dir>/ide.yml` exists. Legacy compatibility fact. */
-      hasIdeYml: z16.boolean(),
+      hasIdeYml: z28.boolean(),
       /** Whether `.tmux-ide/workspace.yml` exists or wins discovery. */
-      hasWorkspaceConfig: z16.boolean().optional(),
+      hasWorkspaceConfig: z28.boolean().optional(),
       /** Generalized winning config kind. Added without replacing `hasIdeYml`. */
-      configKind: z16.enum(["workspace", "legacy", "none"]).optional(),
+      configKind: z28.enum(["workspace", "legacy", "none"]).optional(),
       /** Generalized winning config path. Added without replacing legacy path facts. */
-      configPath: z16.string().nullable().optional(),
+      configPath: z28.string().nullable().optional(),
       /** Legacy config path when an `ide.yml` is present. */
-      ideConfigPath: z16.string().nullable().optional(),
+      ideConfigPath: z28.string().nullable().optional(),
       /** Git remote origin URL, or `null` if not a git repo / no origin / probe failed. */
-      gitOrigin: z16.string().nullable(),
+      gitOrigin: z28.string().nullable(),
       /** Current git branch, or `null` if not a git repo / detached HEAD / probe failed. */
-      gitBranch: z16.string().nullable(),
+      gitBranch: z28.string().nullable(),
       /** Detected stack signals (reuses `tmux-ide detect` logic). */
       detected: ProjectInspectDetectedSchemaZ
     });
-    InspectFilesystemRequestSchemaZ = z16.object({
-      dir: z16.string().min(1)
+    InspectFilesystemRequestSchemaZ = z28.object({
+      dir: z28.string().min(1)
     });
-    OnboardProjectRequestSchemaZ = z16.object({
-      dir: z16.string().min(1),
+    OnboardProjectRequestSchemaZ = z28.object({
+      dir: z28.string().min(1),
       /** Optional override for the project name — defaults to inspect.name. */
-      name: z16.string().min(1).optional(),
+      name: z28.string().min(1).optional(),
       /** 1, 2, or 3 — how many Claude panes to scaffold in the top row. */
-      agents: z16.number().int().min(1).max(3),
+      agents: z28.number().int().min(1).max(3),
       /**
        * Optional per-agent pane titles. When provided, length must equal
        * `agents`; the server uses these as `title:` for the Claude panes
        * instead of the canonical `Lead`/`Teammate N`/`Claude N` defaults.
        */
-      agentNames: z16.array(z16.string().min(1)).optional(),
+      agentNames: z28.array(z28.string().min(1)).optional(),
       /** Dev server command (e.g. `pnpm dev`). Omit / null to skip the dev pane. */
-      devCommand: z16.string().min(1).nullable().optional(),
+      devCommand: z28.string().min(1).nullable().optional(),
       /** Test command (e.g. `pnpm test`). Currently informational; stored for later. */
-      testCommand: z16.string().min(1).nullable().optional(),
+      testCommand: z28.string().min(1).nullable().optional(),
       /** Lint command (e.g. `pnpm lint`). Currently informational; stored for later. */
-      lintCommand: z16.string().min(1).nullable().optional()
+      lintCommand: z28.string().min(1).nullable().optional()
     });
   }
 });
@@ -11676,7 +15406,7 @@ var init_filesystem_browser = __esm({
 });
 
 // packages/daemon/src/lib/project-inspect.ts
-import { existsSync as existsSync32 } from "node:fs";
+import { existsSync as existsSync31 } from "node:fs";
 import { isAbsolute as isAbsolute5, resolve as resolve24 } from "node:path";
 function narrowPackageManager(raw) {
   if (!raw) return null;
@@ -11687,7 +15417,7 @@ function inferTestCommand(packageManager) {
   return packageManager === "npm" ? "npm test" : `${packageManager} test`;
 }
 async function inspectProject(dir, io = {}) {
-  const exists = io.exists ?? existsSync32;
+  const exists = io.exists ?? existsSync31;
   const absoluteDir = isAbsolute5(dir) ? dir : resolve24(dir);
   if (!exists(absoluteDir)) {
     throw new InspectDirNotFoundError(absoluteDir);
@@ -11761,6 +15491,7 @@ function composeIdeYmlConfig(input) {
     const fallback = agentsCount > 1 ? i === 0 ? "Lead" : `Teammate ${i}` : `Claude ${i + 1}`;
     const customTitle = customNames?.[i]?.trim();
     const pane = {
+      id: `agent-${i + 1}`,
       title: customTitle && customTitle.length > 0 ? customTitle : fallback,
       command: "claude"
     };
@@ -11772,9 +15503,9 @@ function composeIdeYmlConfig(input) {
   const bottomPanes = [];
   const devCommand = input.devCommand?.trim();
   if (devCommand) {
-    bottomPanes.push({ title: "Dev", command: devCommand });
+    bottomPanes.push({ id: "dev", title: "Dev", command: devCommand });
   }
-  bottomPanes.push({ title: "Shell" });
+  bottomPanes.push({ id: "shell", title: "Shell" });
   const rows = [{ size: "70%", panes: topPanes }, { panes: bottomPanes }];
   const config2 = {
     name: cleanName,
@@ -11823,7 +15554,7 @@ __export(server_exports, {
 });
 import { execFile as execFile2 } from "node:child_process";
 import { promisify } from "node:util";
-import { existsSync as existsSync33, readFileSync as readFileSync24, readdirSync as readdirSync5 } from "node:fs";
+import { existsSync as existsSync32, readdirSync as readdirSync5 } from "node:fs";
 import { join as join30, dirname as dirname27, basename as basename8 } from "node:path";
 import { fileURLToPath as fileURLToPath10 } from "node:url";
 import { Hono } from "hono";
@@ -11833,19 +15564,8 @@ import { zValidator } from "@hono/zod-validator";
 import { realpathSync as realpathSync5 } from "node:fs";
 import { homedir as homedir20 } from "node:os";
 import { isAbsolute as isAbsolute6, resolve as pathResolve } from "node:path";
-import { randomUUID as randomUUID3 } from "node:crypto";
+import { randomUUID as randomUUID4 } from "node:crypto";
 import { WebSocketServer } from "ws";
-function resolvePackageVersion() {
-  const candidates = [join30(__dirname5, "../../package.json"), join30(__dirname5, "../package.json")];
-  for (const candidate of candidates) {
-    try {
-      const parsed = JSON.parse(readFileSync24(candidate, "utf-8"));
-      if (typeof parsed.version === "string") return parsed.version;
-    } catch {
-    }
-  }
-  return "0.0.0";
-}
 function bearerToken(authHeader) {
   if (!authHeader?.startsWith("Bearer ")) return null;
   return authHeader.slice("Bearer ".length);
@@ -11863,8 +15583,9 @@ function requireAuth(token, localBypassToken) {
 }
 function remoteAccessAuth(options) {
   const bindHostname = options.remoteAccess?.bindHostname ?? "127.0.0.1";
+  const loopback = bindHostname === "127.0.0.1" || bindHostname === "::1" || bindHostname === "localhost";
   return {
-    token: bindHostname === "127.0.0.1" ? null : options.remoteAccess?.token ?? null,
+    token: loopback ? null : options.remoteAccess?.token ?? null,
     localBypassToken: options.remoteAccess?.localBypassToken ?? null
   };
 }
@@ -11941,6 +15662,12 @@ function sandboxResolveDir(rawDir) {
 function createApp(options = {}) {
   const authConfig = options.authConfig ?? { method: "none", token_expiry: 86400 };
   const authService = options.authService ?? new AuthService();
+  const daemonIdentity = options.daemonIdentity ?? {
+    productVersion: "0.0.0",
+    instanceId: randomUUID4(),
+    startedAt: (/* @__PURE__ */ new Date()).toISOString()
+  };
+  const healthBootedAt = Date.now();
   const app = new Hono();
   app.use("/*", cors());
   const remoteAuth = remoteAccessAuth(options);
@@ -12011,12 +15738,22 @@ function createApp(options = {}) {
       return c.json({ error: err instanceof Error ? err.message : String(err) }, 500);
     }
   });
-  const HEALTHZ_BOOTED_AT = Date.now();
   app.get("/healthz", (c) => {
     return c.json({
       ok: true,
-      version: process.env.npm_package_version ?? "dev",
-      uptimeMs: Date.now() - HEALTHZ_BOOTED_AT
+      protocolVersion: DAEMON_WIRE_PROTOCOL_VERSION,
+      productVersion: daemonIdentity.productVersion,
+      uptimeMs: Date.now() - healthBootedAt
+    });
+  });
+  app.get("/identity", (c) => {
+    return c.json({
+      ok: true,
+      pid: process.pid,
+      protocolVersion: DAEMON_WIRE_PROTOCOL_VERSION,
+      productVersion: daemonIdentity.productVersion,
+      instanceId: daemonIdentity.instanceId,
+      startedAt: daemonIdentity.startedAt
     });
   });
   app.get("/api/sessions", (c) => {
@@ -12158,7 +15895,7 @@ function createApp(options = {}) {
         });
         scripted = true;
       }
-      if (!id) id = randomUUID3();
+      if (!id) id = randomUUID4();
       try {
         const upsertInput = {
           id,
@@ -12523,8 +16260,9 @@ function createApp(options = {}) {
   app.get("/health", (c) => {
     return c.json({
       ok: true,
+      protocolVersion: DAEMON_WIRE_PROTOCOL_VERSION,
       uptime: Math.round(process.uptime()),
-      version: pkgVersion
+      productVersion: daemonIdentity.productVersion
     });
   });
   app.get("/api/projects", (c) => {
@@ -12598,10 +16336,10 @@ function createApp(options = {}) {
     if (!parsed.success) {
       return c.json({ error: "Invalid request", details: parsed.error.issues }, 400);
     }
-    if (!existsSync33(parsed.data.dir)) {
+    if (!existsSync32(parsed.data.dir)) {
       return c.json({ error: `Directory "${parsed.data.dir}" does not exist` }, 400);
     }
-    const jobId = randomUUID3();
+    const jobId = randomUUID4();
     const command2 = process.env.TMUX_IDE_INIT_COMMAND ?? "tmux-ide";
     void (async () => {
       try {
@@ -12706,7 +16444,7 @@ function listAvailableTemplates() {
   const __filename = fileURLToPath10(import.meta.url);
   const __dir = dirname27(__filename);
   const templatesDir = join30(__dir, "..", "..", "..", "..", "templates");
-  if (!existsSync33(templatesDir)) return [];
+  if (!existsSync32(templatesDir)) return [];
   const labels = {
     default: { label: "Default", description: "Single Claude pane + dev/shell row" },
     nextjs: {
@@ -12766,7 +16504,7 @@ function attachWsEvents(server) {
     }
   };
 }
-var __dirname5, pkgVersion, projectStreamConnections, sseMetrics;
+var projectStreamConnections, sseMetrics;
 var init_server = __esm({
   "packages/daemon/src/command-center/server.ts"() {
     "use strict";
@@ -12797,8 +16535,6 @@ var init_server = __esm({
     init_filesystem_browser();
     init_project_inspect();
     init_project_onboard();
-    __dirname5 = dirname27(fileURLToPath10(import.meta.url));
-    pkgVersion = resolvePackageVersion();
     projectStreamConnections = 0;
     sseMetrics = {
       connections: 0,
@@ -12821,10 +16557,25 @@ var init_types = __esm({
 
 // packages/daemon/src/lib/daemon-embed.ts
 import { execFileSync as execFileSync12 } from "node:child_process";
-import { randomBytes as randomBytes3 } from "node:crypto";
+import { randomBytes as randomBytes3, randomUUID as randomUUID5 } from "node:crypto";
 import { createServer } from "node:http";
 import { createRequire as createRequire2 } from "node:module";
 import { WebSocket, WebSocketServer as WebSocketServer2 } from "ws";
+function loadBundledPackage() {
+  return requireFromHere("../../package.json");
+}
+function resolveDaemonProductVersion(explicit, loadPackage = loadBundledPackage) {
+  if (typeof explicit === "string" && explicit.trim().length > 0) return explicit.trim();
+  try {
+    const pkg = loadPackage();
+    if (pkg && typeof pkg === "object" && "version" in pkg) {
+      const version = pkg.version;
+      if (typeof version === "string" && version.trim().length > 0) return version.trim();
+    }
+  } catch {
+  }
+  return "0.0.0";
+}
 function tmux3(...args) {
   return execFileSync12("tmux", args, {
     encoding: "utf-8",
@@ -13012,55 +16763,147 @@ function delay(ms) {
 function generateLocalBypassToken() {
   return randomBytes3(32).toString("base64url");
 }
-function probeHostname2(bindHostname) {
-  return bindHostname === "0.0.0.0" ? "127.0.0.1" : bindHostname;
-}
 function timeoutSignal2(ms) {
   const controller = new AbortController();
   setTimeout(() => controller.abort(), ms).unref?.();
   return controller.signal;
 }
-async function healthGone(port, bindHostname) {
+function sameCanonicalInstance(left, right) {
+  return left.pid === right.pid && left.port === right.port && left.protocolVersion === right.protocolVersion && left.instanceId === right.instanceId && left.startedAt === right.startedAt && left.bindHostname === right.bindHostname;
+}
+async function requestValidatedDaemonShutdown(info) {
+  const identity = await probeCanonicalDaemonIdentity(info);
+  if (!identity || identity.pid !== info.pid || identity.protocolVersion !== info.protocolVersion || identity.protocolVersion !== DAEMON_WIRE_PROTOCOL_VERSION || identity.instanceId !== info.instanceId || identity.startedAt !== info.startedAt) {
+    throw new DaemonStartupError(
+      "Canonical daemon identity changed before takeover",
+      "canonical_takeover_identity_mismatch"
+    );
+  }
+  const health = await probeCanonicalDaemonHealth(info);
+  if (!health || health.protocolVersion !== info.protocolVersion || health.protocolVersion !== DAEMON_WIRE_PROTOCOL_VERSION) {
+    throw new DaemonStartupError(
+      "Canonical daemon protocol or health is incompatible with takeover",
+      "canonical_takeover_refused"
+    );
+  }
+  const current = inspectCanonicalDaemonInfo();
+  if (current.status !== "valid" || !sameCanonicalInstance(current.info, info)) {
+    throw new DaemonStartupError(
+      "Canonical daemon generation changed before takeover",
+      "canonical_takeover_identity_mismatch"
+    );
+  }
+  const headers = { "Content-Type": "application/json" };
+  if (info.authToken) headers.Authorization = `Bearer ${info.authToken}`;
+  let response;
   try {
-    const res = await fetch(`http://${probeHostname2(bindHostname)}:${port}/health`, {
-      signal: timeoutSignal2(500)
-    });
-    return !res.ok;
-  } catch {
-    return true;
+    response = await fetch(
+      canonicalDaemonUrl("http", info.bindHostname, info.port, "/api/v2/action/daemon.shutdown"),
+      {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ reason: "takeover", expectedInstanceId: info.instanceId }),
+        signal: timeoutSignal2(TAKEOVER_REQUEST_TIMEOUT_MS)
+      }
+    );
+  } catch (error) {
+    if (error instanceof Error && error.name === "AbortError") {
+      throw new DaemonStartupError(
+        "Canonical daemon did not answer the takeover request in time",
+        "canonical_takeover_timeout",
+        { cause: error }
+      );
+    }
+    throw new DaemonStartupError(
+      "Canonical daemon did not accept the takeover request",
+      "canonical_takeover_refused",
+      { cause: error }
+    );
+  }
+  const envelope = await response.json().catch(() => null);
+  if (envelope?.error?.code === "daemon_instance_mismatch") {
+    throw new DaemonStartupError(
+      "Canonical daemon generation changed before shutdown",
+      "canonical_takeover_identity_mismatch"
+    );
+  }
+  if (!response.ok || envelope?.ok !== true || envelope.result?.stopping !== true) {
+    throw new DaemonStartupError(
+      `Canonical daemon refused takeover (HTTP ${response.status})`,
+      "canonical_takeover_refused"
+    );
   }
 }
-async function requestDaemonShutdown(port, bindHostname) {
-  try {
-    await fetch(`http://${probeHostname2(bindHostname)}:${port}/api/v2/action/daemon.shutdown`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ reason: "takeover" }),
-      signal: timeoutSignal2(1e3)
-    });
-  } catch {
-  }
-}
-async function takeoverCanonicalDaemon(info) {
-  await requestDaemonShutdown(info.port, info.bindHostname);
-  const deadline = Date.now() + 1e4;
+async function waitForTakeoverQuiescence(info, deadline) {
   while (Date.now() < deadline) {
-    const current = readCanonicalDaemonInfo();
-    const fileGone = !current || current.pid !== info.pid || current.port !== info.port;
-    const serverGone = await healthGone(info.port, info.bindHostname);
-    if (fileGone && serverGone) return;
-    await delay(150);
+    const current = inspectCanonicalDaemonInfo();
+    if (current.status === "valid" && !sameCanonicalInstance(current.info, info)) {
+      throw new DaemonStartupError(
+        "Another daemon generation won the takeover race",
+        "canonical_already_running"
+      );
+    }
+    const recordOwnerGone = current.status === "missing" || await isCanonicalDaemonRecordOwnerProvenDead(current);
+    const [identity, health] = await Promise.all([
+      probeCanonicalDaemonIdentity(info),
+      probeCanonicalDaemonHealth(info)
+    ]);
+    if (recordOwnerGone && identity === null && health === null) return;
+    await delay(TAKEOVER_POLL_MS);
   }
-  try {
-    process.kill(info.pid, "SIGTERM");
-  } catch {
+  throw new DaemonStartupError(
+    "Canonical daemon retained its generation after accepting takeover",
+    "canonical_takeover_timeout"
+  );
+}
+async function acquireCanonicalDaemonClaimAfterTakeover(info) {
+  const deadline = Date.now() + TAKEOVER_RELEASE_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    const current = inspectCanonicalDaemonInfo();
+    if (current.status === "valid" && !sameCanonicalInstance(current.info, info)) {
+      throw new DaemonStartupError(
+        "Another daemon generation won the takeover race",
+        "canonical_already_running"
+      );
+    }
+    const attempt = tryAcquireCanonicalDaemonClaim();
+    if (attempt.status === "acquired") {
+      try {
+        await waitForTakeoverQuiescence(info, deadline);
+        return attempt.claim;
+      } catch (error) {
+        releaseCanonicalDaemonClaim(attempt.claim);
+        throw error;
+      }
+    }
+    if (attempt.status === "invalid") {
+      throw new DaemonStartupError(
+        `Canonical daemon claim is invalid: ${attempt.detail}`,
+        "canonical_record_invalid"
+      );
+    }
+    await delay(TAKEOVER_POLL_MS);
   }
-  await delay(500);
-  try {
-    process.kill(info.pid, "SIGKILL");
-  } catch {
+  throw new DaemonStartupError(
+    "Canonical daemon did not release its startup claim after accepting takeover",
+    "canonical_takeover_timeout"
+  );
+}
+function acquireCanonicalDaemonClaim() {
+  const attempt = tryAcquireCanonicalDaemonClaim();
+  if (attempt.status === "busy") {
+    throw new DaemonStartupError(
+      `Canonical daemon startup is owned by PID ${attempt.owner.pid}`,
+      "canonical_claim_busy"
+    );
   }
-  clearCanonicalDaemonInfo();
+  if (attempt.status === "invalid") {
+    throw new DaemonStartupError(
+      `Canonical daemon claim is invalid: ${attempt.detail}`,
+      "canonical_record_invalid"
+    );
+  }
+  return attempt.claim;
 }
 function closeWsGoingAway(ws) {
   const reason = Buffer.from("going away");
@@ -13082,18 +16925,22 @@ async function startHttpServer({
   dir,
   authToken,
   localBypassToken,
-  silent
+  silent,
+  readProjectAuth,
+  daemonIdentity
 }) {
   const { createApp: createApp3 } = await Promise.resolve().then(() => (init_server(), server_exports));
   const { getRequestListener: getRequestListener3 } = await import(requireFromHere.resolve("@hono/node-server"));
   const { AuthService: AuthService2 } = await Promise.resolve().then(() => (init_auth_service(), auth_service_exports));
   const { AuthConfigSchema: AuthConfigSchema2 } = await Promise.resolve().then(() => (init_types(), types_exports));
   let authConfig = AuthConfigSchema2.parse({});
-  try {
-    const { resolveConfig: resolveConfig2 } = await Promise.resolve().then(() => (init_resolved_config(), resolved_config_exports));
-    const { launchConfig } = await resolveConfig2(dir);
-    if (launchConfig?.auth) authConfig = AuthConfigSchema2.parse(launchConfig.auth);
-  } catch {
+  if (readProjectAuth !== false) {
+    try {
+      const { resolveConfig: resolveConfig2 } = await Promise.resolve().then(() => (init_resolved_config(), resolved_config_exports));
+      const { launchConfig } = await resolveConfig2(dir);
+      if (launchConfig?.auth) authConfig = AuthConfigSchema2.parse(launchConfig.auth);
+    } catch {
+    }
   }
   const authService = new AuthService2(authConfig.secret);
   const app = createApp3({
@@ -13103,7 +16950,8 @@ async function startHttpServer({
       bindHostname,
       token: authToken ?? null,
       localBypassToken: localBypassToken ?? null
-    }
+    },
+    daemonIdentity
   });
   app.get("/api/daemon/health", (c) => {
     return c.json({ ok: true, session: sessionName });
@@ -13162,221 +17010,282 @@ async function startEmbeddedDaemon(opts) {
   const appSettings = readAppSettings();
   const persistedRemoteAccess = appSettings.remoteAccess.enabled && appSettings.remoteAccess.token ? appSettings.remoteAccess : null;
   const bindHostname = opts.bindHostname ?? opts.hostname ?? (persistedRemoteAccess ? "0.0.0.0" : DEFAULT_HOSTNAME);
-  const authToken = opts.authToken ?? persistedRemoteAccess?.token ?? null;
+  const authToken = Object.prototype.hasOwnProperty.call(opts, "authToken") ? opts.authToken ?? null : persistedRemoteAccess?.token ?? null;
   const localBypassToken = opts.localBypassToken ?? generateLocalBypassToken();
-  const existingCanonical = readCanonicalDaemonInfo();
-  if (existingCanonical) {
-    if (await isCanonicalDaemonAlive(existingCanonical)) {
-      if (opts.takeoverIfRunning) {
-        await takeoverCanonicalDaemon(existingCanonical);
+  let takeoverTarget = null;
+  if (opts.takeoverIfRunning) {
+    const state = inspectCanonicalDaemonInfo();
+    if (state.status === "valid" && await isCanonicalDaemonAlive(state.info)) {
+      await requestValidatedDaemonShutdown(state.info);
+      takeoverTarget = state.info;
+    }
+  }
+  const claim = takeoverTarget ? await acquireCanonicalDaemonClaimAfterTakeover(takeoverTarget) : acquireCanonicalDaemonClaim();
+  try {
+    const existingCanonical = inspectCanonicalDaemonInfo();
+    if (existingCanonical.status === "invalid") {
+      if (await isCanonicalDaemonRecordOwnerProvenDead(existingCanonical)) {
+        if (!clearCanonicalDaemonInfoIfUnchanged(existingCanonical, claim)) {
+          throw new DaemonStartupError(
+            "Canonical daemon metadata changed while stale state was being removed",
+            "canonical_record_invalid"
+          );
+        }
       } else {
         throw new DaemonStartupError(
-          `Canonical daemon is already running on port ${existingCanonical.port}`,
-          "canonical_already_running"
+          `Canonical daemon metadata is ${existingCanonical.reason}: ${existingCanonical.detail}. Refusing to start another owner.`,
+          "canonical_record_invalid"
         );
       }
-    } else {
-      clearCanonicalDaemonInfo();
-    }
-  }
-  if (!sessionless) assertTmuxSession(sessionName);
-  const port = opts.port ?? await pickFreePort(bindHostname);
-  validatePort(port);
-  const dir = process.cwd();
-  const workspaceRegistry = getDefaultWorkspaceRegistry();
-  await workspaceRegistry.load();
-  const legacySession = process.env.TMUX_IDE_SESSION;
-  if (legacySession && !workspaceRegistry.has(legacySession)) {
-    try {
-      workspaceRegistry.add({
-        name: legacySession,
-        sessionName: legacySession,
-        projectDir: dir
-      });
-    } catch {
-    }
-  }
-  if (!sessionless && sessionName !== EMBEDDED_SESSION_NAME && !workspaceRegistry.has(sessionName)) {
-    try {
-      workspaceRegistry.add({
-        name: sessionName,
-        sessionName,
-        projectDir: dir
-      });
-    } catch {
-    }
-  }
-  const { server, sockets, closeClients, closeWsServers } = await startHttpServer({
-    sessionName,
-    requestedPort: port,
-    bindHostname,
-    dir,
-    authToken,
-    localBypassToken,
-    silent: opts.silent
-  });
-  const pkg = requireFromHere("../../package.json");
-  writeCanonicalDaemonInfo({
-    pid: process.pid,
-    port,
-    version: pkg.version ?? "0.0.0",
-    startedAt: (/* @__PURE__ */ new Date()).toISOString(),
-    bindHostname,
-    authToken
-  });
-  let lastState = "";
-  let stopped = false;
-  let stopping = null;
-  let stopSelf = null;
-  const activeProjectStops = /* @__PURE__ */ new Map();
-  const activateProjectOnDaemon = async (projectName, _options = {}) => {
-    if (!activeProjectStops.has(projectName)) {
-      activeProjectStops.set(projectName, { stop: () => void 0 });
-    }
-    return {
-      stop: async () => {
-        const current = activeProjectStops.get(projectName);
-        if (!current) return;
-        activeProjectStops.delete(projectName);
-        current.stop();
+    } else if (existingCanonical.status === "valid") {
+      if (await isCanonicalDaemonAlive(existingCanonical.info)) {
+        throw new DaemonStartupError(
+          `Canonical daemon is already running on port ${existingCanonical.info.port}`,
+          "canonical_already_running"
+        );
+      } else {
+        if (!clearCanonicalDaemonInfoIfUnchanged(existingCanonical, claim)) {
+          throw new DaemonStartupError(
+            "Canonical daemon metadata changed while stale state was being removed",
+            "canonical_already_running"
+          );
+        }
       }
+    }
+    if (!sessionless) assertTmuxSession(sessionName);
+    const port = opts.port ?? await pickFreePort(bindHostname);
+    validatePort(port);
+    const dir = process.cwd();
+    const productVersion = resolveDaemonProductVersion(opts.productVersion);
+    const instanceId = randomUUID5();
+    const startedAt = (/* @__PURE__ */ new Date()).toISOString();
+    const workspaceRegistry = getDefaultWorkspaceRegistry();
+    await workspaceRegistry.load();
+    const legacySession = process.env.TMUX_IDE_SESSION;
+    if (legacySession && !workspaceRegistry.has(legacySession)) {
+      try {
+        workspaceRegistry.add({
+          name: legacySession,
+          sessionName: legacySession,
+          projectDir: dir
+        });
+      } catch {
+      }
+    }
+    if (!sessionless && sessionName !== EMBEDDED_SESSION_NAME && !workspaceRegistry.has(sessionName)) {
+      try {
+        workspaceRegistry.add({
+          name: sessionName,
+          sessionName,
+          projectDir: dir
+        });
+      } catch {
+      }
+    }
+    const { server, sockets, closeClients, closeWsServers } = await startHttpServer({
+      sessionName,
+      requestedPort: port,
+      bindHostname,
+      dir,
+      authToken,
+      localBypassToken,
+      silent: opts.silent,
+      readProjectAuth: !sessionless,
+      daemonIdentity: { productVersion, instanceId, startedAt }
+    });
+    const abortStartedServer = async () => {
+      closeClients();
+      const closePromise = waitForServerClose(server).catch(() => void 0);
+      for (const socket of sockets) socket.destroy();
+      await Promise.race([closePromise, delay(100)]);
+      await closeWsServers().catch(() => void 0);
     };
-  };
-  setActivationBackend({
-    activateProject: async (name, options) => {
-      await activateProjectOnDaemon(name, options);
-    },
-    deactivateProject: async (name) => {
-      const stop2 = activeProjectStops.get(name);
-      if (!stop2) return;
-      activeProjectStops.delete(name);
-      stop2.stop();
-    }
-  });
-  const tick = () => {
-    if (sessionless) return;
-    const session = sessionExists(sessionName);
-    if (session === "no") {
-      stopSelf?.();
-      return;
-    }
-    if (session === "unknown") {
-      return;
-    }
-    if (!hasClients()) return;
-    const panes = listPanes2(sessionName);
-    if (panes.length === 0) return;
-    const portPanes = computePortPanes(panes);
-    const agentStates = computeAgentStates(panes);
-    const stateKey = panes.map((pane) => {
-      const portState = portPanes.has(pane.id) ? "1" : "0";
-      const agent = agentStates.get(pane.id) ?? "-";
-      const titleDrift = pane.name && pane.title !== pane.name ? "d" : "ok";
-      return `${pane.id}:${portState}:${agent}:${titleDrift}`;
-    }).join("|");
-    if (stateKey === lastState) return;
-    for (const pane of panes) {
-      const hasPort = portPanes.has(pane.id) ? "1" : "0";
-      const agent = agentStates.get(pane.id);
-      tmuxSilent2("set-option", "-pqt", pane.id, "@has_port", hasPort);
-      tmuxSilent2("set-option", "-pqt", pane.id, "@agent_busy", agent === "busy" ? "1" : "0");
-      tmuxSilent2("set-option", "-pqt", pane.id, "@agent_idle", agent === "idle" ? "1" : "0");
-      if (pane.name && pane.title !== pane.name) {
-        tmuxSilent2("select-pane", "-t", pane.id, "-T", pane.name);
+    try {
+      writeCanonicalDaemonInfo(
+        {
+          pid: process.pid,
+          port,
+          protocolVersion: DAEMON_WIRE_PROTOCOL_VERSION,
+          productVersion,
+          instanceId,
+          startedAt,
+          bindHostname,
+          authToken
+        },
+        claim
+      );
+      const published = inspectCanonicalDaemonInfo();
+      if (published.status !== "valid" || published.info.instanceId !== instanceId || published.info.pid !== process.pid || published.info.port !== port) {
+        throw new DaemonStartupError(
+          "Canonical daemon publication does not belong to the started server",
+          "canonical_publication_lost"
+        );
       }
+    } catch (error) {
+      await abortStartedServer();
+      throw error;
     }
-    tmuxSilent2("refresh-client", "-S");
-    lastState = stateKey;
-  };
-  const monitorInterval = setInterval(tick, MONITOR_INTERVAL_MS);
-  const apiBaseUrl = `http://${bindHostname}:${port}`;
-  const wsUrl = `ws://${bindHostname}:${port}/ws/events`;
-  const handle = {
-    port,
-    apiBaseUrl,
-    wsUrl,
-    localBypassToken,
-    stop: async ({ gracefulMs = DEFAULT_GRACEFUL_MS } = {}) => {
-      if (stopped) return;
-      if (stopping) return stopping;
-      stopping = (async () => {
-        try {
-          stopped = true;
-          setActivationBackend(null);
-          clearInterval(monitorInterval);
-          const closePromise = waitForServerClose(server);
-          closeClients();
-          for (const stop2 of activeProjectStops.values()) {
-            stop2.stop();
-          }
-          activeProjectStops.clear();
-          shutdownPtyBridges();
-          await Promise.race([closePromise, delay(gracefulMs)]);
-          for (const socket of sockets) socket.destroy();
-          await Promise.race([closePromise.catch(() => void 0), delay(100)]);
-          await closeWsServers();
-          setRemoteAccessRestartBackend(null);
-          setDaemonShutdownBackend(null);
-        } catch (err) {
-          throw new DaemonShutdownError("Daemon shutdown failed", { cause: err });
-        } finally {
-          clearCanonicalDaemonInfo();
+    let lastState = "";
+    let stopped = false;
+    let stopping = null;
+    let stopSelf = null;
+    const activeProjectStops = /* @__PURE__ */ new Map();
+    const activateProjectOnDaemon = async (projectName, _options = {}) => {
+      if (!activeProjectStops.has(projectName)) {
+        activeProjectStops.set(projectName, { stop: () => void 0 });
+      }
+      return {
+        stop: async () => {
+          const current = activeProjectStops.get(projectName);
+          if (!current) return;
+          activeProjectStops.delete(projectName);
+          current.stop();
         }
-      })();
-      return stopping;
-    },
-    activateProject: activateProjectOnDaemon
-  };
-  setDaemonShutdownBackend(async () => {
-    await handle.stop({ gracefulMs: 500 });
-  });
-  setRemoteAccessRestartBackend((request) => {
-    setTimeout(() => {
-      void (async () => {
-        const restartPort = request.port ?? port;
-        try {
-          await handle.stop({ gracefulMs: 500 });
-        } catch (err) {
-          console.error("[daemon] Remote access stop before restart failed:", err);
-        } finally {
-          clearCanonicalDaemonInfo();
+      };
+    };
+    setActivationBackend({
+      activateProject: async (name, options) => {
+        await activateProjectOnDaemon(name, options);
+      },
+      deactivateProject: async (name) => {
+        const stop2 = activeProjectStops.get(name);
+        if (!stop2) return;
+        activeProjectStops.delete(name);
+        stop2.stop();
+      }
+    });
+    const tick = () => {
+      if (sessionless) return;
+      const session = sessionExists(sessionName);
+      if (session === "no") {
+        stopSelf?.();
+        return;
+      }
+      if (session === "unknown") {
+        return;
+      }
+      if (!hasClients()) return;
+      const panes = listPanes2(sessionName);
+      if (panes.length === 0) return;
+      const portPanes = computePortPanes(panes);
+      const agentStates = computeAgentStates(panes);
+      const stateKey = panes.map((pane) => {
+        const portState = portPanes.has(pane.id) ? "1" : "0";
+        const agent = agentStates.get(pane.id) ?? "-";
+        const titleDrift = pane.name && pane.title !== pane.name ? "d" : "ok";
+        return `${pane.id}:${portState}:${agent}:${titleDrift}`;
+      }).join("|");
+      if (stateKey === lastState) return;
+      for (const pane of panes) {
+        const hasPort = portPanes.has(pane.id) ? "1" : "0";
+        const agent = agentStates.get(pane.id);
+        tmuxSilent2("set-option", "-pqt", pane.id, "@has_port", hasPort);
+        tmuxSilent2("set-option", "-pqt", pane.id, "@agent_busy", agent === "busy" ? "1" : "0");
+        tmuxSilent2("set-option", "-pqt", pane.id, "@agent_idle", agent === "idle" ? "1" : "0");
+        if (pane.name && pane.title !== pane.name) {
+          tmuxSilent2("select-pane", "-t", pane.id, "-T", pane.name);
         }
-        for (let attempt = 0; attempt < 2; attempt++) {
+      }
+      tmuxSilent2("refresh-client", "-S");
+      lastState = stateKey;
+    };
+    const monitorInterval = setInterval(tick, MONITOR_INTERVAL_MS);
+    const apiBaseUrl = canonicalDaemonUrl("http", bindHostname, port);
+    const wsUrl = canonicalDaemonUrl("ws", bindHostname, port, "/ws/events");
+    const handle = {
+      instanceId,
+      pid: process.pid,
+      port,
+      apiBaseUrl,
+      wsUrl,
+      localBypassToken,
+      stop: async ({ gracefulMs = DEFAULT_GRACEFUL_MS } = {}) => {
+        if (stopping) return stopping;
+        if (stopped) return;
+        stopping = (async () => {
           try {
-            const nextHandle = await startEmbeddedDaemon({
-              sessionName: sessionless ? void 0 : sessionName,
-              port: restartPort,
-              bindHostname: request.bindHostname,
-              authToken: request.token,
-              localBypassToken
-            });
-            const mutableHandle = handle;
-            mutableHandle.stop = nextHandle.stop;
-            mutableHandle.activateProject = nextHandle.activateProject;
-            return;
-          } catch (err) {
-            if (err instanceof DaemonStartupError && err.reason === "port_in_use" && attempt === 0) {
-              await delay(150);
-              continue;
+            stopped = true;
+            setActivationBackend(null);
+            clearInterval(monitorInterval);
+            const closePromise = waitForServerClose(server);
+            closeClients();
+            for (const stop2 of activeProjectStops.values()) {
+              stop2.stop();
             }
-            throw err;
+            activeProjectStops.clear();
+            shutdownPtyBridges();
+            await Promise.race([closePromise, delay(gracefulMs)]);
+            for (const socket of sockets) socket.destroy();
+            await Promise.race([closePromise.catch(() => void 0), delay(100)]);
+            await closeWsServers();
+            setRemoteAccessRestartBackend(null);
+            setDaemonShutdownBackend(null);
+          } catch (err) {
+            throw new DaemonShutdownError("Daemon shutdown failed", { cause: err });
+          } finally {
+            try {
+              clearCanonicalDaemonInfoIfOwned(instanceId, claim);
+            } finally {
+              releaseCanonicalDaemonClaim(claim);
+            }
           }
-        }
-      })().catch((err) => {
-        console.error("[daemon] Remote access restart failed:", err);
-        clearCanonicalDaemonInfo();
-      });
-    }, 50).unref?.();
-    return { port };
-  });
-  stopSelf = () => void handle.stop();
-  tick();
-  return handle;
+        })();
+        return stopping;
+      },
+      activateProject: activateProjectOnDaemon
+    };
+    setDaemonShutdownBackend(async () => {
+      await handle.stop({ gracefulMs: 500 });
+    }, instanceId);
+    setRemoteAccessRestartBackend((request) => {
+      setTimeout(() => {
+        void (async () => {
+          const restartPort = request.port ?? port;
+          try {
+            await handle.stop({ gracefulMs: 500 });
+          } catch (err) {
+            console.error("[daemon] Remote access stop before restart failed:", err);
+          }
+          for (let attempt = 0; attempt < 2; attempt++) {
+            try {
+              const nextHandle = await startEmbeddedDaemon({
+                sessionName: sessionless ? void 0 : sessionName,
+                port: restartPort,
+                bindHostname: request.bindHostname,
+                authToken: request.token,
+                localBypassToken
+              });
+              const mutableHandle = handle;
+              mutableHandle.stop = nextHandle.stop;
+              mutableHandle.activateProject = nextHandle.activateProject;
+              return;
+            } catch (err) {
+              if (err instanceof DaemonStartupError && err.reason === "port_in_use" && attempt === 0) {
+                await delay(150);
+                continue;
+              }
+              throw err;
+            }
+          }
+        })().catch((err) => {
+          console.error("[daemon] Remote access restart failed:", err);
+        });
+      }, 50).unref?.();
+      return { port };
+    });
+    stopSelf = () => void handle.stop();
+    tick();
+    return handle;
+  } catch (error) {
+    releaseCanonicalDaemonClaim(claim);
+    throw error;
+  }
 }
-var requireFromHere, DEFAULT_HOSTNAME, DEFAULT_GRACEFUL_MS, MONITOR_INTERVAL_MS, EMBEDDED_SESSION_NAME;
+var requireFromHere, DEFAULT_HOSTNAME, DEFAULT_GRACEFUL_MS, MONITOR_INTERVAL_MS, EMBEDDED_SESSION_NAME, TAKEOVER_REQUEST_TIMEOUT_MS, TAKEOVER_RELEASE_TIMEOUT_MS, TAKEOVER_POLL_MS;
 var init_daemon_embed = __esm({
   "packages/daemon/src/lib/daemon-embed.ts"() {
     "use strict";
+    init_src();
     init_session_monitor();
     init_errors2();
     init_ws_route();
@@ -13392,12 +17301,15 @@ var init_daemon_embed = __esm({
     DEFAULT_GRACEFUL_MS = 2e3;
     MONITOR_INTERVAL_MS = 1e3;
     EMBEDDED_SESSION_NAME = "__embedded__";
+    TAKEOVER_REQUEST_TIMEOUT_MS = 1e3;
+    TAKEOVER_RELEASE_TIMEOUT_MS = 1e4;
+    TAKEOVER_POLL_MS = 50;
   }
 });
 
 // packages/daemon/src/lib/cli-action-bridge.ts
 import { createRequire as createRequire3 } from "node:module";
-import { z as z17 } from "zod";
+import { z as z29 } from "zod";
 function timeoutSignal3(ms) {
   const controller = new AbortController();
   setTimeout(() => controller.abort(), ms).unref?.();
@@ -13413,11 +17325,8 @@ async function isDaemonAlive(port) {
     return false;
   }
 }
-function hostnameForClient(bindHostname) {
-  return bindHostname === "0.0.0.0" ? "127.0.0.1" : bindHostname;
-}
 function daemonBaseUrl(info) {
-  return `http://${hostnameForClient(info.bindHostname)}:${info.port}`;
+  return canonicalDaemonUrl("http", info.bindHostname, info.port);
 }
 function expectedDaemonVersion() {
   try {
@@ -13434,7 +17343,6 @@ async function resolveCanonicalDaemon() {
       warnOnDaemonVersionSkew(existing, expectedDaemonVersion());
       return { baseUrl: daemonBaseUrl(existing), transientHandle: null, restoreCwd: null };
     }
-    deps.clearCanonicalDaemonInfo();
   }
   if (process.env.TMUX_IDE_CLI_NO_AUTOSTART) {
     return null;
@@ -13500,7 +17408,7 @@ async function tryDispatchAction(name, input, options = {}) {
       details: failure.data.error.details
     });
   }
-  const success = z17.object({ ok: z17.literal(true), result: contract.result }).safeParse(body);
+  const success = z29.object({ ok: z29.literal(true), result: contract.result }).safeParse(body);
   if (!success.success) return null;
   return success.data.result;
 }
@@ -13511,19 +17419,18 @@ var init_cli_action_bridge = __esm({
     init_contract();
     init_canonical_daemon();
     init_daemon_embed();
-    FailureEnvelopeZ = z17.object({
-      ok: z17.literal(false),
-      error: z17.object({
-        code: z17.string(),
-        message: z17.string(),
-        details: z17.unknown().optional()
+    FailureEnvelopeZ = z29.object({
+      ok: z29.literal(false),
+      error: z29.object({
+        code: z29.string(),
+        message: z29.string(),
+        details: z29.unknown().optional()
       })
     });
     deps = {
       fetch,
       cwd: () => process.cwd(),
       readCanonicalDaemonInfo,
-      clearCanonicalDaemonInfo,
       isCanonicalDaemonAlive,
       startEmbeddedDaemon
     };
@@ -13563,9 +17470,9 @@ function withConfig(dir, mutator) {
   const result = mutator(cfg);
   const validation = IdeConfigSchema.safeParse(cfg);
   if (!validation.success) {
-    const issues = validation.error.issues.map((i) => `  ${i.path.join(".")}: ${i.message}`).join("\n");
+    const issues2 = validation.error.issues.map((i) => `  ${i.path.join(".")}: ${i.message}`).join("\n");
     outputError(`Invalid config after mutation:
-${issues}`, "INVALID_CONFIG");
+${issues2}`, "INVALID_CONFIG");
     return;
   }
   writeConfig(dir, cfg);
@@ -13579,8 +17486,8 @@ function mutateConfig(dir, mutator) {
   const result = mutator(cfg);
   const validation = IdeConfigSchema.safeParse(cfg);
   if (!validation.success) {
-    const issues = validation.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ");
-    throw new Error(`Invalid config after mutation: ${issues}`);
+    const issues2 = validation.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ");
+    throw new Error(`Invalid config after mutation: ${issues2}`);
   }
   writeConfig(dir, cfg);
   return { config: cfg, result };
@@ -14037,20 +17944,26 @@ var require_package = __commonJS({
         prepublishOnly: "pnpm build:cli && pnpm check && node scripts/prepublish-check.mjs",
         typecheck: 'echo "root typecheck deferred to per-package turbo run"',
         dev: "node bin/cli.js",
-        test: "pnpm -r --filter @tmux-ide/daemon --filter @tmux-ide/contracts run test",
-        "test:unit": "pnpm -r --filter @tmux-ide/daemon --filter @tmux-ide/contracts run test",
+        test: "pnpm -r --filter @tmux-ide/daemon --filter @tmux-ide/contracts --filter @tmux-ide/desktop-renderer --filter @tmux-ide/electron-shell run test",
+        "test:unit": "pnpm -r --filter @tmux-ide/daemon --filter @tmux-ide/contracts --filter @tmux-ide/desktop-renderer --filter @tmux-ide/electron-shell run test",
+        "test:daemon-bun": "bun test ./packages/daemon/src/lib/canonical-daemon.test.ts ./packages/daemon/src/lib/auth/middleware.test.ts ./packages/daemon/src/command-center/actions/handlers/daemon-shutdown.test.ts",
         lint: "eslint bin scripts packages/contracts/src packages/tmux-bridge/src packages/daemon/src",
         "lint:workspace": "turbo run lint",
         format: "prettier --write .",
         "format:check": "prettier --check .",
         "build:workspace": "turbo run build",
+        "build:workbench-dock-web": "pnpm --filter @tmux-ide/daemon run build:workbench-dock-web",
+        "test:workbench-dock-package": "pnpm --filter @tmux-ide/daemon run test:workbench-dock-package",
         "typecheck:workspace": "turbo run typecheck",
         "docs:build": "turbo run build --filter=@tmux-ide/docs",
         "pack:check": "npm pack --dry-run --cache /tmp/tmux-ide-npm-cache > /dev/null",
+        "test:pack-installed": "node scripts/pack-check-run.mjs",
         "check:native-deps": "node packages/daemon/scripts/check-native-deps.mjs",
-        check: "pnpm run lint:workspace && pnpm run format:check && pnpm run typecheck:workspace && pnpm run test:unit && pnpm run docs:build && pnpm run pack:check && pnpm run check:native-deps",
+        check: "pnpm run lint:workspace && pnpm run format:check && pnpm run typecheck:workspace && pnpm run test:unit && pnpm run test:daemon-bun && pnpm run test:tui-renderer && pnpm run test:workbench-dock-package && pnpm run docs:build && pnpm run pack:check && pnpm run test:pack-installed && pnpm run check:native-deps",
         postinstall: "node scripts/postinstall.js",
-        docs: "turbo run dev --filter=@tmux-ide/docs"
+        docs: "turbo run dev --filter=@tmux-ide/docs",
+        "test:tui-renderer": "bun test --preload @opentui/solid/preload ./packages/daemon/src/tui/mirror/missions-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/recipes-gallery-renderer.test.tsx ./packages/daemon/src/tui/mirror/shell-chrome-renderer.test.tsx ./packages/daemon/src/tui/mirror/home-files-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/changes-terminal-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/activity-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/application-shell-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/pane-frame-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/workbench-shell-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/workbench-dock-dual-host-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/agent-terminal-canvas-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/command-palette-surface-renderer.test.tsx",
+        "test:tui-smoke": "node scripts/smoke-tui-missions.mjs"
       },
       keywords: [
         "tmux",
@@ -14387,8 +18300,8 @@ function buildReport(target) {
   };
 }
 function renderReport(r, opts = {}) {
-  const color2 = opts.color ?? !("NO_COLOR" in process.env);
-  const c = (code, s) => color2 ? `${code}${s}\x1B[0m` : s;
+  const color3 = opts.color ?? !("NO_COLOR" in process.env);
+  const c = (code, s) => color3 ? `${code}${s}\x1B[0m` : s;
   const bold4 = (s) => c("\x1B[1m", s);
   const dim4 = (s) => c("\x1B[2m", s);
   const label = (s) => c("\x1B[36m", s);
@@ -14849,14 +18762,14 @@ __export(server_exports2, {
   defaultControlSocketPath: () => defaultControlSocketPath,
   startControlServer: () => startControlServer
 });
-import { chmodSync as chmodSync4, existsSync as existsSync34, mkdirSync as mkdirSync21, statSync as statSync6, unlinkSync as unlinkSync2 } from "node:fs";
+import { chmodSync as chmodSync5, existsSync as existsSync33, mkdirSync as mkdirSync21, statSync as statSync6, unlinkSync as unlinkSync2 } from "node:fs";
 import { createServer as createServer2, connect } from "node:net";
 import { dirname as dirname29, join as join31 } from "node:path";
 function defaultControlSocketPath() {
   return join31(tuiStateHome(), "control.sock");
 }
 async function claimSocketPath(path2) {
-  if (!existsSync34(path2)) return;
+  if (!existsSync33(path2)) return;
   if (!statSync6(path2).isSocket()) {
     throw new IdeError(
       `${path2} exists and is not a socket \u2014 refusing to remove it. Pass a different --socket path.`,
@@ -14968,7 +18881,7 @@ Pass a shorter path: tmux-ide serve --socket /tmp/tmux-ide-control.sock`,
       resolve29();
     });
   });
-  chmodSync4(socketPath, 384);
+  chmodSync5(socketPath, 384);
   log(`listening on ${socketPath}`);
   return {
     socketPath,
@@ -15277,7 +19190,7 @@ __export(update_exports, {
   runUpdate: () => runUpdate
 });
 import { execSync as execSync4 } from "node:child_process";
-import { existsSync as existsSync35 } from "node:fs";
+import { existsSync as existsSync34 } from "node:fs";
 import { dirname as dirname31, join as join33 } from "node:path";
 function detectPackageManager(cliPath) {
   const p = cliPath.toLowerCase();
@@ -15324,7 +19237,7 @@ function renderPlan(plan, { current, latest, dryRun }) {
 function findGitCheckoutRoot(startDir) {
   let dir = startDir;
   for (; ; ) {
-    if (existsSync35(join33(dir, ".git"))) return dir;
+    if (existsSync34(join33(dir, ".git"))) return dir;
     const parent = dirname31(dir);
     if (parent === dir) return null;
     dir = parent;
@@ -15459,7 +19372,7 @@ init_launch();
 import { parseArgs } from "node:util";
 import { resolve as resolve28, dirname as dirname32 } from "node:path";
 import { execFileSync as execFileSync16 } from "node:child_process";
-import { existsSync as existsSync36 } from "node:fs";
+import { existsSync as existsSync35 } from "node:fs";
 import { fileURLToPath as fileURLToPath11 } from "node:url";
 
 // packages/daemon/src/tui/team/entry.ts
@@ -15484,7 +19397,7 @@ init_legacy_config_migration();
 init_config_context();
 init_src();
 import {
-  existsSync as existsSync22,
+  existsSync as existsSync21,
   readFileSync as readFileSync17,
   writeFileSync as writeFileSync13,
   mkdirSync as mkdirSync14,
@@ -15497,7 +19410,7 @@ var __dirname4 = dirname19(fileURLToPath7(import.meta.url));
 function copyTemplateSkills(targetDir) {
   const created = [];
   const templateSkillsDir = resolve15(__dirname4, "..", "..", "..", "templates", "skills");
-  if (!existsSync22(templateSkillsDir)) return created;
+  if (!existsSync21(templateSkillsDir)) return created;
   mkdirSync14(targetDir, { recursive: true });
   for (const file of readdirSync3(templateSkillsDir)) {
     if (!file.endsWith(".md")) continue;
@@ -15510,12 +19423,12 @@ function copyTemplateSkills(targetDir) {
 function scaffoldLibraryStubs(dir) {
   const created = [];
   const libraryDir = join20(dir, ".tmux-ide", "library");
-  if (!existsSync22(libraryDir)) {
+  if (!existsSync21(libraryDir)) {
     mkdirSync14(libraryDir, { recursive: true });
     created.push(libraryDir);
   }
   const archPath = join20(libraryDir, "architecture.md");
-  if (!existsSync22(archPath)) {
+  if (!existsSync21(archPath)) {
     writeFileSync13(
       archPath,
       "# Architecture\n\n<!-- Describe your project's architecture here. This context is injected into agent dispatch prompts. -->\n"
@@ -15523,7 +19436,7 @@ function scaffoldLibraryStubs(dir) {
     created.push(archPath);
   }
   const learningsPath = join20(libraryDir, "learnings.md");
-  if (!existsSync22(learningsPath)) {
+  if (!existsSync21(learningsPath)) {
     writeFileSync13(
       learningsPath,
       "# Learnings\n\n<!-- Task summaries are automatically appended here by the orchestrator. -->\n"
@@ -15535,11 +19448,11 @@ function scaffoldLibraryStubs(dir) {
 function scaffoldValidationContract(dir) {
   const created = [];
   const tasksDir = join20(dir, ".tasks");
-  if (!existsSync22(tasksDir)) {
+  if (!existsSync21(tasksDir)) {
     mkdirSync14(tasksDir, { recursive: true });
   }
   const contractPath = join20(tasksDir, "validation-contract.md");
-  if (!existsSync22(contractPath)) {
+  if (!existsSync21(contractPath)) {
     writeFileSync13(
       contractPath,
       "# Validation Contract\n\n<!-- Define assertions that the validator agent will verify. Example: -->\n<!-- - VAL-001: All tests pass -->\n<!-- - VAL-002: No TypeScript errors -->\n<!-- - VAL-003: Lint passes with zero warnings -->\n"
@@ -15551,9 +19464,9 @@ function scaffoldValidationContract(dir) {
 function scaffoldAgentsMd(dir, name) {
   const created = [];
   const agentsTemplatePath = resolve15(__dirname4, "..", "..", "..", "templates", "AGENTS.md");
-  if (existsSync22(agentsTemplatePath)) {
+  if (existsSync21(agentsTemplatePath)) {
     const agentsPath = join20(dir, "AGENTS.md");
-    if (!existsSync22(agentsPath)) {
+    if (!existsSync21(agentsPath)) {
       const content = readFileSync17(agentsTemplatePath, "utf-8").replace(/{{name}}/g, name);
       writeFileSync13(agentsPath, content);
       created.push(agentsPath);
@@ -15590,7 +19503,7 @@ async function init({
   }
   if (template) {
     const templatePath = resolve15(__dirname4, "..", "..", "..", "templates", `${template}.yml`);
-    if (!existsSync22(templatePath)) {
+    if (!existsSync21(templatePath)) {
       outputError(`Template "${template}" not found`, "NOT_FOUND");
     }
     let content = readFileSync17(templatePath, "utf-8");
@@ -15652,7 +19565,7 @@ async function init({
     }
   }
   const skillsDir = join20(dir, ".tmux-ide", "skills");
-  if (!existsSync22(skillsDir)) {
+  if (!existsSync21(skillsDir)) {
     const created = copyTemplateSkills(skillsDir);
     if (created.length > 0 && !json2) {
       console.log("Copied built-in skill templates to .tmux-ide/skills/");
@@ -15743,7 +19656,7 @@ init_claude();
 init_notify();
 init_resolved_config();
 import { execSync as execSync3 } from "node:child_process";
-import { accessSync, constants, existsSync as existsSync25 } from "node:fs";
+import { accessSync, constants as constants2, existsSync as existsSync24 } from "node:fs";
 import { resolve as resolve18, dirname as dirname22 } from "node:path";
 import { fileURLToPath as fileURLToPath9 } from "node:url";
 function agentIntegrationRows(agents) {
@@ -15881,7 +19794,7 @@ async function doctor({
         const checkoutEntry = [
           resolve18(here, "../packages/daemon/src/tui/team/index.tsx"),
           resolve18(here, "tui/team/index.tsx")
-        ].find(existsSync25);
+        ].find(existsSync24);
         const binary = findCompiledTui();
         if (checkoutEntry && isBunAvailable()) return "dev checkout (bun)";
         if (binary) return `compiled binary (${binary})`;
@@ -15921,16 +19834,16 @@ async function doctor({
   checks.push(
     (() => {
       const settingsPath = claudeSettingsPath();
-      const fileExists2 = existsSync25(settingsPath);
+      const fileExists2 = existsSync24(settingsPath);
       let probe = fileExists2 ? settingsPath : dirname22(settingsPath);
-      while (!existsSync25(probe)) {
+      while (!existsSync24(probe)) {
         const parent = dirname22(probe);
         if (parent === probe) break;
         probe = parent;
       }
       let writable = false;
       try {
-        accessSync(probe, constants.W_OK);
+        accessSync(probe, constants2.W_OK);
         writable = true;
       } catch {
       }
@@ -15979,8 +19892,8 @@ async function doctor({
   }
   for (const c of checks) {
     const icon = c.pass ? "\u2713" : c.optional ? "\u25CB" : "\u2717";
-    const color2 = c.pass ? "\x1B[32m" : c.optional ? "\x1B[33m" : "\x1B[31m";
-    console.log(`${color2}${icon}\x1B[0m ${c.label} \u2014 ${c.detail}`);
+    const color3 = c.pass ? "\x1B[32m" : c.optional ? "\x1B[33m" : "\x1B[31m";
+    console.log(`${color3}${icon}\x1B[0m ${c.label} \u2014 ${c.detail}`);
   }
   if (!allPass) process.exitCode = 1;
 }
@@ -15999,7 +19912,7 @@ async function status(targetDir, { json: json2 } = {}) {
   let panes = [];
   if (running) panes = listPanes(session);
   const daemonInfo = readCanonicalDaemonInfo();
-  const healthy = daemonInfo ? await isCanonicalDaemonAlive(daemonInfo) : false;
+  const healthy = daemonInfo ? await probeCanonicalDaemonHealth(daemonInfo) !== null : false;
   const data = {
     session,
     running,
@@ -16112,7 +20025,7 @@ async function inspect(targetDir, { json: json2 } = {}) {
   try {
     const context = await resolveProjectConfigContext(dir);
     const resolved2 = context.resolved;
-    if (!resolved2.launchConfig || !resolved2.path) {
+    if (!resolved2?.launchConfig || !resolved2.path) {
       outputError("Cannot read workspace config: no config found", "READ_ERROR");
       return;
     }
@@ -16292,9 +20205,6 @@ async function migrate(targetDir, {
     }
   } catch (error) {
     if (error instanceof IdeError) throw error;
-    if (error instanceof WorkspaceConfigWriteError) {
-      outputError(error.message, error.code);
-    }
     if (error instanceof Error && error.name === "ZodError") {
       outputError(`Invalid legacy ide.yml: ${error.message}`, "INVALID_CONFIG");
     }
@@ -16602,15 +20512,247 @@ function reportPlan(plan, snapshot, { json: json2, dryRun, restored, launched, r
 init_send();
 init_errors2();
 init_output();
+
+// packages/daemon/src/lib/headless-daemon.ts
+init_canonical_daemon();
+init_src();
+init_daemon_embed();
+init_errors2();
+var defaultDependencies = {
+  inspectCanonicalDaemonInfo,
+  isCanonicalDaemonAlive,
+  isCanonicalDaemonRecordOwnerProvenDead,
+  probeCanonicalDaemonHealth,
+  probeCanonicalDaemonIdentity,
+  startEmbeddedDaemon,
+  writeStdout: (line) => process.stdout.write(`${line}
+`),
+  onSignal: (signal, listener) => process.on(signal, listener),
+  offSignal: (signal, listener) => process.off(signal, listener)
+};
+function parsePort(value) {
+  if (value == null) return void 0;
+  const port = typeof value === "number" ? value : Number(value);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    throw new IdeError(`Invalid daemon port: ${String(value)}`, {
+      code: "USAGE",
+      exitCode: 2
+    });
+  }
+  return port;
+}
+function emitStatus(deps2, json2, status2, info) {
+  const apiBaseUrl = canonicalDaemonUrl("http", info.bindHostname, info.port);
+  if (json2) {
+    deps2.writeStdout(JSON.stringify({ status: status2, pid: info.pid, port: info.port, apiBaseUrl }));
+    return;
+  }
+  if (status2 === "already-running") {
+    deps2.writeStdout(`Canonical daemon already running: ${apiBaseUrl} (pid ${info.pid})`);
+  } else {
+    deps2.writeStdout(`Canonical daemon ready: ${apiBaseUrl} (pid ${info.pid})`);
+  }
+}
+function assertProtocolCompatible(info, health) {
+  if (info.protocolVersion !== health.protocolVersion) {
+    throw new IdeError(
+      `Canonical daemon protocol disagreement: daemon.json reports ${info.protocolVersion}, /health reports ${health.protocolVersion}. Refusing takeover.`,
+      { code: "DAEMON_PROTOCOL_MISMATCH", exitCode: 2 }
+    );
+  }
+  if (!isDaemonWireProtocolCompatible(info.protocolVersion)) {
+    throw new IdeError(
+      `Canonical daemon protocol ${info.protocolVersion} is incompatible with this CLI (expected ${DAEMON_WIRE_PROTOCOL_VERSION}). Refusing takeover.`,
+      { code: "DAEMON_PROTOCOL_MISMATCH", exitCode: 2 }
+    );
+  }
+}
+function assertIdentityMatches(info, identity) {
+  if (identity.instanceId !== info.instanceId || identity.pid !== info.pid || identity.protocolVersion !== info.protocolVersion || identity.startedAt !== info.startedAt) {
+    throw new IdeError(
+      "Canonical daemon identity probe does not match daemon.json. Refusing takeover or reuse.",
+      { code: "DAEMON_IDENTITY_MISMATCH", exitCode: 2 }
+    );
+  }
+  if (identity.productVersion !== info.productVersion) {
+    console.warn(
+      `[tmux-ide] canonical daemon product-version metadata differs: daemon.json reports "${info.productVersion}" but /identity reports "${identity.productVersion}". Product version is diagnostic; compatibility is governed by protocol and instance identity.`
+    );
+  }
+}
+async function assertAttachableDaemon(deps2, info, options) {
+  const identity = await deps2.probeCanonicalDaemonIdentity(info);
+  if (!identity) {
+    throw new IdeError(
+      `Canonical daemon PID ${info.pid} is alive but its identity endpoint is unavailable. Refusing takeover.`,
+      { code: "DAEMON_IDENTITY_UNAVAILABLE", exitCode: 1 }
+    );
+  }
+  assertIdentityMatches(info, identity);
+  const health = await deps2.probeCanonicalDaemonHealth(info);
+  if (!health) {
+    throw new IdeError(
+      `Canonical daemon PID ${info.pid} is alive but its health endpoint is unavailable. Refusing takeover.`,
+      { code: "DAEMON_UNHEALTHY", exitCode: 1 }
+    );
+  }
+  assertProtocolCompatible(info, health);
+  if (options.expectedVersion) warnOnDaemonVersionSkew(info, options.expectedVersion);
+  if (health.productVersion !== info.productVersion) {
+    console.warn(
+      `[tmux-ide] canonical daemon product-version metadata differs: daemon.json reports "${info.productVersion}" but /health reports "${health.productVersion}". Wire compatibility is governed independently by protocolVersion.`
+    );
+  }
+}
+async function findLiveCanonicalDaemon(deps2, options) {
+  const existing = deps2.inspectCanonicalDaemonInfo();
+  if (existing.status === "missing") return null;
+  if (existing.status === "invalid") {
+    if (await deps2.isCanonicalDaemonRecordOwnerProvenDead(existing)) {
+      return null;
+    }
+    throw new IdeError(
+      `Canonical daemon metadata is ${existing.reason}: ${existing.detail}. Its owner is not proven dead, so another daemon will not be started.`,
+      { code: "DAEMON_INFO_INVALID", exitCode: 1 }
+    );
+  }
+  if (!await deps2.isCanonicalDaemonAlive(existing.info)) {
+    return null;
+  }
+  await assertAttachableDaemon(deps2, existing.info, options);
+  return existing.info;
+}
+function delay2(ms) {
+  return new Promise((resolve29) => setTimeout(resolve29, ms));
+}
+async function waitForCanonicalWinner(deps2, options, timeoutMs = 15e3) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      const winner = await findLiveCanonicalDaemon(deps2, options);
+      if (winner) return winner;
+    } catch (error) {
+      if (!(error instanceof IdeError) || error.code !== "DAEMON_IDENTITY_UNAVAILABLE" && error.code !== "DAEMON_UNHEALTHY") {
+        throw error;
+      }
+    }
+    await delay2(25);
+  }
+  return null;
+}
+async function runHeadlessDaemon(options = {}, deps2 = defaultDependencies) {
+  const port = parsePort(options.port);
+  let handle = null;
+  let signalRequested = false;
+  const requestStop = () => {
+    signalRequested = true;
+    if (handle) void handle.stop().catch(() => void 0);
+  };
+  deps2.onSignal("SIGINT", requestStop);
+  deps2.onSignal("SIGTERM", requestStop);
+  try {
+    const existing = await findLiveCanonicalDaemon(deps2, options);
+    if (existing) {
+      emitStatus(deps2, options.json === true, "already-running", existing);
+      return "already-running";
+    }
+    for (let startAttempt = 0; startAttempt < 2 && !handle; startAttempt += 1) {
+      try {
+        handle = await deps2.startEmbeddedDaemon({
+          port,
+          bindHostname: "127.0.0.1",
+          authToken: null,
+          silent: true,
+          ...options.sessionName ? { sessionName: options.sessionName } : {},
+          ...options.expectedVersion ? { productVersion: options.expectedVersion } : {}
+        });
+      } catch (error) {
+        if (error instanceof DaemonStartupError && (error.reason === "canonical_already_running" || error.reason === "canonical_claim_busy")) {
+          const winner = await waitForCanonicalWinner(deps2, options);
+          if (winner) {
+            emitStatus(deps2, options.json === true, "already-running", winner);
+            return "already-running";
+          }
+          if (startAttempt === 0) continue;
+        }
+        throw error;
+      }
+    }
+    if (!handle) {
+      throw new IdeError("Canonical daemon startup claim did not produce an owner", {
+        code: "DAEMON_STARTUP_TIMEOUT",
+        exitCode: 1
+      });
+    }
+    let resolveStopped;
+    const stopped = new Promise((resolve29) => {
+      resolveStopped = resolve29;
+    });
+    let stopFailure;
+    const originalStop = handle.stop.bind(handle);
+    const mutableHandle = handle;
+    mutableHandle.stop = async (stopOptions) => {
+      try {
+        await originalStop(stopOptions);
+      } catch (error) {
+        stopFailure = error;
+        throw error;
+      } finally {
+        resolveStopped();
+      }
+    };
+    if (signalRequested) {
+      await handle.stop();
+      if (stopFailure) throw stopFailure;
+      return "stopped";
+    }
+    const published = deps2.inspectCanonicalDaemonInfo();
+    if (published.status !== "valid") {
+      await handle.stop().catch(() => void 0);
+      throw new IdeError("Canonical daemon started without publishing daemon.json", {
+        code: "DAEMON_INFO_MISSING",
+        exitCode: 1
+      });
+    }
+    const info = published.info;
+    if (info.instanceId !== handle.instanceId || info.pid !== handle.pid || info.port !== handle.port) {
+      await handle.stop().catch(() => void 0);
+      throw new IdeError("Started daemon handle does not own the canonical published instance", {
+        code: "DAEMON_IDENTITY_MISMATCH",
+        exitCode: 2
+      });
+    }
+    try {
+      await assertAttachableDaemon(deps2, info, options);
+    } catch (error) {
+      await handle.stop().catch(() => void 0);
+      if (signalRequested) {
+        if (stopFailure) throw stopFailure;
+        return "stopped";
+      }
+      throw error;
+    }
+    emitStatus(deps2, options.json === true, "ready", info);
+    await stopped;
+    if (stopFailure) throw stopFailure;
+    return "stopped";
+  } finally {
+    deps2.offSignal("SIGINT", requestStop);
+    deps2.offSignal("SIGTERM", requestStop);
+  }
+}
+
+// bin/cli.ts
 init_hosted();
-var __dirname6 = dirname32(fileURLToPath11(import.meta.url));
+var __dirname5 = dirname32(fileURLToPath11(import.meta.url));
 var selfPath = fileURLToPath11(import.meta.url);
-var nodeCliPath = selfPath.endsWith(".js") ? selfPath : resolve28(__dirname6, "cli.js");
+var nodeCliPath = selfPath.endsWith(".js") ? selfPath : resolve28(__dirname5, "cli.js");
 var { positionals, values } = parseArgs({
   allowPositionals: true,
   strict: false,
   options: {
     json: { type: "boolean" },
+    headless: { type: "boolean" },
     row: { type: "string" },
     pane: { type: "string" },
     title: { type: "string" },
@@ -16738,6 +20880,7 @@ function printHelp() {
 
 ${bold3("Usage:")}
   ${cyan2("tmux-ide")}                    ${dim3("Launch workspace config, or open the team cockpit if none")}
+  ${cyan2("tmux-ide --headless")}         ${dim3("Run the canonical daemon in this foreground process")}
   ${cyan2("tmux-ide <path>")}             ${dim3("Launch from a specific directory (cockpit if no config)")}
   ${cyan2("tmux-ide setup")}              ${dim3("Interactive TUI setup wizard")}
   ${cyan2("tmux-ide setup --edit")}       ${dim3("Open config tree editor")}
@@ -16810,6 +20953,7 @@ ${bold3("Discover (in the TUI):")}
 
 ${bold3("Flags:")}
   ${cyan2("--json")}                      ${dim3("Output as JSON (all commands)")}
+  ${cyan2("--headless")}                  ${dim3("Canonical daemon only; no tmux workspace or TUI")}
   ${cyan2("--template <name>")}           ${dim3("Use specific template for init")}
   ${cyan2("--write")}                     ${dim3("Write detected config to .tmux-ide/workspace.yml")}
   ${cyan2("--dry-run")}                   ${dim3("Preview migration/restore without writing")}
@@ -16822,7 +20966,7 @@ function execBunWidget(surface, scriptPath, args, commandLabel, extraEnv = {}) {
     surface,
     scriptPath,
     args,
-    checkoutExists: existsSync36(scriptPath),
+    checkoutExists: existsSync35(scriptPath),
     bunAvailable: isBunAvailable(),
     compiledBinary: findCompiledTui()
   });
@@ -16842,7 +20986,7 @@ Install bun (https://bun.sh) \u2014 the TUI surfaces run on it. Sources ship wit
   if (launch2.mode === "bun") {
     execFileSync16(launch2.bin, launch2.argv, {
       stdio: "inherit",
-      cwd: resolve28(__dirname6, ".."),
+      cwd: resolve28(__dirname5, ".."),
       env
     });
     return;
@@ -16854,7 +20998,7 @@ function launchHostedApp(scriptPath, appArgs) {
     surface: "app",
     scriptPath,
     args: appArgs,
-    checkoutExists: existsSync36(scriptPath),
+    checkoutExists: existsSync35(scriptPath),
     bunAvailable: isBunAvailable(),
     compiledBinary: findCompiledTui()
   });
@@ -16872,7 +21016,7 @@ Install bun (https://bun.sh) \u2014 the TUI surfaces run on it. Sources ship wit
     exists = false;
   }
   if (!exists) {
-    const cwd = launch2.mode === "bun" ? resolve28(__dirname6, "..") : process.cwd();
+    const cwd = launch2.mode === "bun" ? resolve28(__dirname5, "..") : process.cwd();
     const commandLine = hostedCommandLine(
       launch2.bin,
       launch2.argv,
@@ -16918,8 +21062,8 @@ async function waitOverSocket(params) {
     client.close();
   }
 }
-var teamScriptPath = resolve28(__dirname6, "../packages/daemon/src/tui/team/index.tsx");
-var appScriptPath = resolve28(__dirname6, "../packages/daemon/src/tui/mirror/app.tsx");
+var teamScriptPath = resolve28(__dirname5, "../packages/daemon/src/tui/team/index.tsx");
+var appScriptPath = resolve28(__dirname5, "../packages/daemon/src/tui/mirror/app.tsx");
 function launchTeamCockpit() {
   execBunWidget("team", teamScriptPath, [], "team");
 }
@@ -16937,6 +21081,22 @@ function launchApp() {
   runApp([]);
 }
 try {
+  if (values.headless) {
+    if (positionals.length > 0) {
+      throw new IdeError("--headless cannot be combined with a command or project path", {
+        code: "USAGE",
+        exitCode: 2
+      });
+    }
+    const pkg = await Promise.resolve().then(() => __toESM(require_package(), 1));
+    await runHeadlessDaemon({
+      port: values.port,
+      json,
+      expectedVersion: pkg.version
+    });
+    await new Promise((resolveFlush) => process.stdout.write("", resolveFlush));
+    process.exit(0);
+  }
   switch (command) {
     case "start": {
       if (!json) {
@@ -16953,7 +21113,7 @@ try {
         }
       }
       const targetDir = resolve28(startTargetDir || ".");
-      if (startTargetDir && !existsSync36(targetDir)) {
+      if (startTargetDir && !existsSync35(targetDir)) {
         throw new IdeError(
           `No workspace config found in ${targetDir}. Run "tmux-ide init" or "tmux-ide detect --write" to create one.`,
           { code: "CONFIG_NOT_FOUND", exitCode: 1 }
@@ -17051,7 +21211,7 @@ try {
         action = "disable-team";
         configArgs = [];
       } else if (sub === "edit") {
-        const scriptPath = resolve28(__dirname6, "../packages/daemon/src/widgets/setup/index.tsx");
+        const scriptPath = resolve28(__dirname5, "../packages/daemon/src/widgets/setup/index.tsx");
         execBunWidget(
           "setup",
           scriptPath,
@@ -17064,7 +21224,7 @@ try {
       break;
     }
     case "setup": {
-      const scriptPath = resolve28(__dirname6, "../packages/daemon/src/widgets/setup/index.tsx");
+      const scriptPath = resolve28(__dirname5, "../packages/daemon/src/widgets/setup/index.tsx");
       const setupArgs = ["--dir=" + resolve28(startTargetDir || ".")];
       if (positionals[1] === "--edit" || values.edit) setupArgs.push("--edit");
       if (positionals[1] === "--wizard" || values.wizard) setupArgs.push("--wizard");
@@ -17076,14 +21236,14 @@ try {
       const messageStart = values.to ? 1 : 2;
       let message = positionals.slice(messageStart).join(" ");
       if (!message && !process.stdin.isTTY) {
-        const { readFileSync: readFileSync25 } = await import("node:fs");
-        message = readFileSync25(0, "utf-8").trim();
+        const { readFileSync: readFileSync24 } = await import("node:fs");
+        message = readFileSync24(0, "utf-8").trim();
       }
       await send(null, { json, to: target, message, noEnter: values["no-enter"] });
       break;
     }
     case "settings": {
-      const scriptPath = resolve28(__dirname6, "../packages/daemon/src/widgets/config/index.tsx");
+      const scriptPath = resolve28(__dirname5, "../packages/daemon/src/widgets/config/index.tsx");
       execBunWidget("config", scriptPath, ["--dir=" + resolve28(startTargetDir || ".")], "settings");
       break;
     }
@@ -17209,7 +21369,7 @@ try {
       break;
     }
     case "events": {
-      const { readFileSync: readFileSync25, existsSync: existsSync37, statSync: statSync7, openSync: openSync2, readSync, closeSync: closeSync2 } = await import("node:fs");
+      const { readFileSync: readFileSync24, existsSync: existsSync36, statSync: statSync7, openSync: openSync3, readSync, closeSync: closeSync3 } = await import("node:fs");
       const { eventsPath: eventsPath2, formatEventLine: formatEventLine2 } = await Promise.resolve().then(() => (init_events(), events_exports));
       const path2 = eventsPath2();
       const paintStatus = (status2, text) => {
@@ -17234,8 +21394,8 @@ try {
           socketPath: typeof socketFlag === "string" ? socketFlag : void 0
         }).catch(() => null);
         if (client) {
-          if (existsSync37(path2)) {
-            const backlog = readFileSync25(path2, "utf8").split("\n").filter((l) => l.trim().length > 0);
+          if (existsSync36(path2)) {
+            const backlog = readFileSync24(path2, "utf8").split("\n").filter((l) => l.trim().length > 0);
             for (const line of backlog.slice(-50)) printLine(line);
           }
           await client.subscribe((frame) => {
@@ -17249,11 +21409,11 @@ try {
           break;
         }
       }
-      if (!existsSync37(path2)) {
+      if (!existsSync36(path2)) {
         console.log("no events yet \u2014 is a session adopted? (the chrome updater writes events)");
         break;
       }
-      const allLines = readFileSync25(path2, "utf8").split("\n").filter((l) => l.trim().length > 0);
+      const allLines = readFileSync24(path2, "utf8").split("\n").filter((l) => l.trim().length > 0);
       for (const line of allLines.slice(-50)) printLine(line);
       if (!values.follow) break;
       let offset = statSync7(path2).size;
@@ -17270,7 +21430,7 @@ try {
           leftover = "";
         }
         if (size <= offset) return;
-        const fd = openSync2(path2, "r");
+        const fd = openSync3(path2, "r");
         try {
           const buf = Buffer.alloc(size - offset);
           readSync(fd, buf, 0, buf.length, offset);
@@ -17279,7 +21439,7 @@ try {
           leftover = parts.pop() ?? "";
           for (const line of parts) if (line.trim().length > 0) printLine(line);
         } finally {
-          closeSync2(fd);
+          closeSync3(fd);
         }
       }, 500);
       process.on("SIGINT", () => {
@@ -17616,7 +21776,7 @@ Known panels: ${POPUP_WIDGETS2.join(", ")}.`,
           { code: "USAGE", exitCode: 1 }
         );
       }
-      const scriptPath = resolve28(__dirname6, "../packages/daemon/src/widgets", widget, "index.tsx");
+      const scriptPath = resolve28(__dirname5, "../packages/daemon/src/widgets", widget, "index.tsx");
       let popupSession = "";
       try {
         popupSession = execFileSync16("tmux", ["display-message", "-p", "#{session_name}"], {
@@ -17892,7 +22052,7 @@ Known panels: ${POPUP_WIDGETS2.join(", ")}.`,
       }
       const { runUpdate: runUpdate2 } = await Promise.resolve().then(() => (init_update(), update_exports));
       const dryRun = values["dry-run"] === true;
-      const plan = runUpdate2({ cliDir: __dirname6, dryRun });
+      const plan = runUpdate2({ cliDir: __dirname5, dryRun });
       if (!dryRun) {
         const { syncSkill: syncSkill2 } = await Promise.resolve().then(() => (init_skill_sync(), skill_sync_exports));
         if (plan.method === "dev") {
@@ -17943,7 +22103,7 @@ Known panels: ${POPUP_WIDGETS2.join(", ")}.`,
     }
     case "server": {
       if ("bun" in process.versions) {
-        const scriptPath = resolve28(__dirname6, "../packages/daemon/src/server/standalone.ts");
+        const scriptPath = resolve28(__dirname5, "../packages/daemon/src/server/standalone.ts");
         const serverArgs = ["--experimental-strip-types", scriptPath];
         if (values.port) serverArgs.push("--port", values.port);
         execFileSync16("node", serverArgs, { stdio: "inherit" });

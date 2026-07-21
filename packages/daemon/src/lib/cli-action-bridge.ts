@@ -8,7 +8,7 @@ import {
 } from "../command-center/actions/contract.ts";
 import type { ActionErrorCode } from "../command-center/actions/errors.ts";
 import {
-  clearCanonicalDaemonInfo,
+  canonicalDaemonUrl,
   isCanonicalDaemonAlive,
   readCanonicalDaemonInfo,
   warnOnDaemonVersionSkew,
@@ -39,7 +39,6 @@ interface CliActionBridgeDeps {
   fetch: typeof fetch;
   cwd: () => string;
   readCanonicalDaemonInfo: () => CanonicalDaemonInfo | null;
-  clearCanonicalDaemonInfo: () => void;
   isCanonicalDaemonAlive: (info: CanonicalDaemonInfo) => Promise<boolean>;
   startEmbeddedDaemon: (opts: EmbeddedDaemonOptions) => Promise<EmbeddedDaemonHandle>;
 }
@@ -48,7 +47,6 @@ let deps: CliActionBridgeDeps = {
   fetch,
   cwd: () => process.cwd(),
   readCanonicalDaemonInfo,
-  clearCanonicalDaemonInfo,
   isCanonicalDaemonAlive,
   startEmbeddedDaemon,
 };
@@ -92,12 +90,8 @@ async function isDaemonAlive(port: number): Promise<boolean> {
   }
 }
 
-function hostnameForClient(bindHostname: string): string {
-  return bindHostname === "0.0.0.0" ? "127.0.0.1" : bindHostname;
-}
-
 function daemonBaseUrl(info: CanonicalDaemonInfo): string {
-  return `http://${hostnameForClient(info.bindHostname)}:${info.port}`;
+  return canonicalDaemonUrl("http", info.bindHostname, info.port);
 }
 
 const requireFromHere = createRequire(import.meta.url);
@@ -124,7 +118,8 @@ async function resolveCanonicalDaemon(): Promise<{
       warnOnDaemonVersionSkew(existing, expectedDaemonVersion());
       return { baseUrl: daemonBaseUrl(existing), transientHandle: null, restoreCwd: null };
     }
-    deps.clearCanonicalDaemonInfo();
+    // Stale canonical state is removed only after startEmbeddedDaemon wins the
+    // atomic process-lifetime claim.
   }
 
   // Test / short-lived-CLI escape: skip the transient daemon spawn when

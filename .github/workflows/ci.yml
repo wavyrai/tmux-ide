@@ -64,12 +64,20 @@ jobs:
         if: matrix.node >= 22
         run: pnpm test:unit
 
+      - name: Run canonical daemon and authentication suites
+        if: matrix.node >= 22
+        run: pnpm test:daemon-bun
+
       - name: Run TUI renderer suite
         if: matrix.node >= 22
         run: pnpm test:tui-renderer
 
       - name: Validate package contents
         run: pnpm pack:check
+
+      - name: Install tarball and smoke canonical headless ownership
+        if: matrix.node >= 22
+        run: pnpm test:pack-installed
 
   coverage:
     name: Vitest coverage (per package)
