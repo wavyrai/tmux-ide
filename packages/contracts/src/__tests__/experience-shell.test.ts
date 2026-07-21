@@ -45,7 +45,7 @@ describe("experience shell", () => {
     ]);
     expect(commandsToOpenSurface({ surface: "missions", resourceId: "mission.m31" })).toEqual([
       { id: "workspace.mode.activate", args: { mode: "terminals" } },
-      { id: "workspace.dock.expand", args: {} },
+      { id: "workspace.dock.mode.set", args: { mode: "open" } },
       { id: "workspace.dock.activate", args: { tool: "missions" } },
       {
         id: "workspace.resource.select",

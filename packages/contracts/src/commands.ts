@@ -111,6 +111,30 @@ export type CommandResolutionErrorCode = z.infer<typeof CommandResolutionErrorCo
 export type CommandResolutionError = z.infer<typeof CommandResolutionErrorSchemaZ>;
 
 /**
+ * Stable semantic shell commands consumed by both OpenTUI and DOM hosts.
+ * Host input events translate to these IDs; effects remain in the host root.
+ */
+export const APPLICATION_SHELL_COMMAND_IDS = {
+  activateMode: "workspace.mode.activate",
+  activateDockTool: "workspace.dock.activate",
+  setDockMode: "workspace.dock.mode.set",
+  moveFocus: "workspace.focus.move",
+  openPalette: "app.palette.open",
+  closePalette: "app.palette.close",
+  selectResource: "workspace.resource.select",
+} as const satisfies Readonly<Record<string, CommandId>>;
+
+export type ApplicationShellCommandId =
+  (typeof APPLICATION_SHELL_COMMAND_IDS)[keyof typeof APPLICATION_SHELL_COMMAND_IDS];
+
+export const ApplicationShellCommandIdSchemaZ = z.enum(
+  Object.values(APPLICATION_SHELL_COMMAND_IDS) as [
+    ApplicationShellCommandId,
+    ...ApplicationShellCommandId[],
+  ],
+);
+
+/**
  * Names reserved for the Gloomberb-inspired window-control work. They are not
  * command registrations yet and therefore cannot be invoked by Card07.
  */

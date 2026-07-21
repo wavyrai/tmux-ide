@@ -7,6 +7,7 @@ import { describe, expect, it } from "vitest";
 
 const SOURCE_ROOT = fileURLToPath(new URL("../", import.meta.url));
 const KERNEL_ENTRY_FILES = [
+  "application-shell.ts",
   "experience-identifiers.ts",
   "experience-shell.ts",
   "visual-recipes.ts",
@@ -18,7 +19,7 @@ const KERNEL_ENTRY_FILES = [
 const ALLOWED_EXTERNAL_IMPORTS = new Set(["zod"]);
 const NODE_IMPORTS = new Set(builtinModules.flatMap((name) => [name, name.replace(/^node:/u, "")]));
 const FORBIDDEN_LOCAL_SEGMENT =
-  /(?:^|[/._-])(?:dom|electron|opentui|solid|react|xterm|string-width|tmux|pty)(?=$|[/._-])/iu;
+  /(?:^|[/._-])(?:cell|cells|dom|electron|geometry|opentui|pixel|pixels|pty|react|rect|solid|string-width|tmux|xterm)(?=$|[/._-])/iu;
 
 function resolveLocalImport(importer: string, specifier: string): string | null {
   const candidate = resolve(dirname(importer), specifier);
@@ -86,6 +87,7 @@ describe("experience-kernel import boundary", () => {
 
     expect(findings).toEqual([]);
     expect([...visited].map(displayPath).sort()).toEqual([
+      "application-shell.ts",
       "cohesion-fixture.ts",
       "commands.ts",
       "experience-identifiers.ts",

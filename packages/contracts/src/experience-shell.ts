@@ -1,5 +1,10 @@
 import { z } from "zod";
-import { CommandIdSchemaZ, type CommandArguments, type CommandId } from "./commands.ts";
+import {
+  APPLICATION_SHELL_COMMAND_IDS,
+  CommandIdSchemaZ,
+  type CommandArguments,
+  type CommandId,
+} from "./commands.ts";
 import { SemanticIconIdSchemaZ, type SemanticIconId } from "./experience-identifiers.ts";
 
 /** Canonical product information architecture. Hosts may change placement, never identity/order. */
@@ -65,12 +70,12 @@ export interface ProductSurfaceDefinition {
 }
 
 const modeCommand = (mode: PrimaryWorkspaceModeId): SurfaceCommandTemplate => ({
-  id: "workspace.mode.activate",
+  id: APPLICATION_SHELL_COMMAND_IDS.activateMode,
   args: { mode },
 });
 
 const dockCommand = (tool: DockToolId): SurfaceCommandTemplate => ({
-  id: "workspace.dock.activate",
+  id: APPLICATION_SHELL_COMMAND_IDS.activateDockTool,
   args: { tool },
 });
 
@@ -165,12 +170,12 @@ export function commandsToOpenSurface(
   if (surface.kind === "primary-mode") return [surface.activation];
   const commands: SurfaceCommandTemplate[] = [
     modeCommand(surface.owningMode),
-    { id: "workspace.dock.expand", args: {} },
+    { id: APPLICATION_SHELL_COMMAND_IDS.setDockMode, args: { mode: "open" } },
     surface.activation,
   ];
   if (intent.resourceId) {
     commands.push({
-      id: "workspace.resource.select",
+      id: APPLICATION_SHELL_COMMAND_IDS.selectResource,
       args: { surface: surface.id, resourceId: intent.resourceId },
     });
   }
