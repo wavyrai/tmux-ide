@@ -2,7 +2,9 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import {
   chmodSync,
   mkdtempSync,
+  mkdirSync,
   readFileSync,
+  renameSync,
   rmSync,
   statSync,
   symlinkSync,
@@ -194,6 +196,25 @@ describe("canonical daemon info", () => {
     expect(readCanonicalDaemonInfo()?.authToken).toBe("remote-secret");
   });
 
+  it("refuses to publish through a symlinked parent without chmodding its target", () => {
+    const claim = acquireClaim();
+    const target = `${tempDir}.symlink-target`;
+    renameSync(tempDir, target);
+    chmodSync(target, 0o755);
+    symlinkSync(target, tempDir);
+    try {
+      expect(() => writeCanonicalDaemonInfo(info(6060), claim)).toThrow(
+        "canonical daemon parent must not be a symbolic link",
+      );
+      expect(statSync(target).mode & 0o777).toBe(0o755);
+      expect(() => statSync(join(target, "daemon.json"))).toThrow();
+    } finally {
+      rmSync(tempDir, { force: true });
+      renameSync(target, tempDir);
+      chmodSync(tempDir, 0o700);
+    }
+  });
+
   it("rejects a token-bearing file with group or world access", () => {
     const path = getCanonicalDaemonInfoPath();
     writeFileSync(path, JSON.stringify({ ...info(6060), authToken: "leaked" }), { mode: 0o644 });
@@ -294,6 +315,50 @@ describe("canonical daemon info", () => {
     if (replacement.status === "acquired") {
       activeClaim = replacement.claim;
       expect(getCanonicalDaemonClaimPath()).toBe(join(tempDir, "daemon.claim"));
+    }
+  });
+
+  it("creates an absent claim parent as the verified owner-only directory", () => {
+    rmSync(tempDir, { recursive: true });
+
+    acquireClaim();
+
+    const parent = statSync(tempDir);
+    expect(parent.isDirectory()).toBe(true);
+    expect(parent.mode & 0o777).toBe(0o700);
+  });
+
+  it("rejects a symlinked claim parent without chmodding its target", () => {
+    const target = `${tempDir}.symlink-target`;
+    mkdirSync(target, { mode: 0o755 });
+    chmodSync(target, 0o755);
+    rmSync(tempDir, { recursive: true });
+    symlinkSync(target, tempDir);
+    try {
+      expect(tryAcquireCanonicalDaemonClaim()).toEqual({
+        status: "invalid",
+        detail: "canonical daemon parent must not be a symbolic link",
+      });
+      expect(statSync(target).mode & 0o777).toBe(0o755);
+      expect(() => statSync(join(target, "daemon.claim"))).toThrow();
+    } finally {
+      rmSync(tempDir, { force: true });
+      renameSync(target, tempDir);
+      chmodSync(tempDir, 0o700);
+    }
+  });
+
+  it("rejects a non-directory claim parent deterministically", () => {
+    rmSync(tempDir, { recursive: true });
+    writeFileSync(tempDir, "not a directory", { mode: 0o600 });
+    try {
+      expect(tryAcquireCanonicalDaemonClaim()).toEqual({
+        status: "invalid",
+        detail: "canonical daemon parent must be a directory",
+      });
+    } finally {
+      rmSync(tempDir, { force: true });
+      mkdirSync(tempDir, { mode: 0o700 });
     }
   });
 
