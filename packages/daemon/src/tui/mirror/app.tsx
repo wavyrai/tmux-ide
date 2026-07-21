@@ -356,8 +356,8 @@ import {
   type OpenTuiApplicationShellEffect,
 } from "./workspace/application-shell-controller.ts";
 import {
-  applicationSidebarResizePointerPhase,
   createApplicationRootController,
+  routeApplicationSidebarResizePointer,
 } from "./workspace/application-root-controller.ts";
 import {
   agentTerminalCanvasPointerPolicy,
@@ -7079,6 +7079,31 @@ try {
       }
     };
 
+    const routeSidebarResizePointer = (e: RouteEvent, active: boolean): boolean =>
+      routeApplicationSidebarResizePointer(
+        {
+          type: e.type,
+          active,
+          x: e.x,
+          y: e.y,
+          button: e.button,
+          sidebarWidth: sidebarW(),
+          tabbarHeight: TABBAR_H,
+        },
+        {
+          start: () => {
+            setHoverIf(null);
+            dragging = { kind: "sidebar" };
+            setStatusNote("resizing…");
+          },
+          resize: (pointerX) => setPreferredSidebarW(clampSidebarWidth(pointerX)),
+          end: () => {
+            dragging = null;
+            setNote("");
+          },
+        },
+      );
+
     const route = (e: RouteEvent) => {
       const { type, y } = e;
       const screenX = e.x;
@@ -7089,6 +7114,10 @@ try {
       // late-mounted menu overlay, whose only ancestor handler is root, is handled
       // exactly once there). Idempotent on the real MouseEvent; a no-op in tests.
       e.stopPropagation?.();
+      // A gesture that already owns the pointer must see every event before
+      // dialogs, menus, palettes, or the status strip can consume its release.
+      // New seam presses retain their normal lower priority below.
+      if (dragging?.kind === "sidebar" && routeSidebarResizePointer(e, true)) return;
       // While a DIALOG is open it OWNS pointer routing (M22.4) — topmost, so
       // checked before the menu and the palette, with the SAME pure geometry the
       // render places the box with (dialogGeomNow / dialogRowAt / dialogContains
@@ -7256,31 +7285,7 @@ try {
       // Both cells of the sidebar seam own the pointer before the workbench's
       // canvas rail can see them. This prevents a resize press/drag/release from
       // leaking into an agent terminal at any responsive width.
-      const sidebarResizePhase = applicationSidebarResizePointerPhase({
-        type,
-        active: dragging?.kind === "sidebar",
-        x: e.x,
-        y: e.y,
-        button: e.button,
-        sidebarWidth: sidebarW(),
-        tabbarHeight: TABBAR_H,
-      });
-      if (sidebarResizePhase === "start") {
-        setHoverIf(null);
-        dragging = { kind: "sidebar" };
-        setStatusNote("resizing…");
-        return;
-      }
-      if (sidebarResizePhase) {
-        if (sidebarResizePhase === "update" || sidebarResizePhase === "end") {
-          setPreferredSidebarW(clampSidebarWidth(e.x));
-        }
-        if (sidebarResizePhase === "end") {
-          dragging = null;
-          setNote("");
-        }
-        return;
-      }
+      if (routeSidebarResizePointer(e, false)) return;
       if (!dragging && routeWorkbenchPointer(e)) return;
       if (e.y >= TABBAR_H && e.x >= sidebarW()) {
         const shellHit = workbenchShellHitTest(

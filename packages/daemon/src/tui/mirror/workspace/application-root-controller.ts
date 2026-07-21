@@ -126,6 +126,12 @@ export function isApplicationSidebarResizeBoundary(input: {
 
 export type ApplicationSidebarResizePointerPhase = "start" | "update" | "end" | "consume" | null;
 
+export interface ApplicationSidebarResizePointerEffects {
+  start: () => void;
+  resize: (x: number) => void;
+  end: () => void;
+}
+
 /** Pointer priority for the sidebar gesture; a live gesture owns every event. */
 export function applicationSidebarResizePointerPhase(input: {
   type: string;
@@ -150,4 +156,17 @@ export function applicationSidebarResizePointerPhase(input: {
   return input.type === "down" && input.button !== 2 && isApplicationSidebarResizeBoundary(input)
     ? "start"
     : null;
+}
+
+/** Exact production effect boundary used at both root priority checkpoints. */
+export function routeApplicationSidebarResizePointer(
+  input: Parameters<typeof applicationSidebarResizePointerPhase>[0],
+  effects: ApplicationSidebarResizePointerEffects,
+): boolean {
+  const phase = applicationSidebarResizePointerPhase(input);
+  if (!phase) return false;
+  if (phase === "start") effects.start();
+  if (phase === "update" || phase === "end") effects.resize(input.x);
+  if (phase === "end") effects.end();
+  return true;
 }

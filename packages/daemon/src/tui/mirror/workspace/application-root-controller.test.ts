@@ -1,9 +1,11 @@
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 import type { SemanticFocusTarget } from "@tmux-ide/contracts";
 import { TuiCleanupRegistry } from "../input-lifecycle.ts";
 import {
-  applicationSidebarResizePointerPhase,
   createApplicationRootController,
+  routeApplicationSidebarResizePointer,
 } from "./application-root-controller.ts";
 import {
   openTuiRuntimePaneId,
@@ -144,37 +146,70 @@ describe("production application root controller", () => {
     ]);
   });
 
-  it.each([80, 120, 200])(
-    "keeps both sidebar seam cells ahead of terminal routing at width %i",
-    (width) => {
+  it.each([
+    [80, 24],
+    [120, 40],
+    [200, 60],
+  ] as const)(
+    "releases both sidebar seam cells over the status strip at %i×%i",
+    (width, height) => {
       const sidebarWidth = width === 80 ? 22 : width === 120 ? 28 : 36;
-      let active = false;
-      let terminalEvents = 0;
-      const route = (type: string, x: number) => {
-        const phase = applicationSidebarResizePointerPhase({
-          type,
-          active,
-          x,
-          y: 4,
-          button: 0,
-          sidebarWidth,
-          tabbarHeight: 1,
-        });
-        if (phase === "start") active = true;
-        else if (phase === "end") active = false;
-        if (!phase) terminalEvents += 1;
-        return phase;
-      };
-
       for (const seamX of [sidebarWidth - 1, sidebarWidth]) {
-        active = false;
-        expect(route("down", seamX)).toBe("start");
-        expect(route("drag", seamX + 3)).toBe("update");
-        expect(route("up", seamX + 4)).toBe("end");
+        let active = false;
+        let terminalEvents = 0;
+        let statusEvents = 0;
+        const effects = {
+          start: () => {
+            active = true;
+          },
+          resize: vi.fn(),
+          end: () => {
+            active = false;
+          },
+        };
+        const route = (event: { type: string; x: number; y: number }) => {
+          const input = {
+            ...event,
+            active,
+            button: 0,
+            sidebarWidth,
+            tabbarHeight: 1,
+          };
+          // This is the production ordering in app.tsx: an active owner first,
+          // then status chrome, then inactive seam-start, then normal routing.
+          if (active && routeApplicationSidebarResizePointer(input, effects)) return "resize";
+          if (event.y === height - 1) {
+            statusEvents += 1;
+            return "status";
+          }
+          if (routeApplicationSidebarResizePointer({ ...input, active: false }, effects)) {
+            return "resize";
+          }
+          terminalEvents += 1;
+          return "terminal";
+        };
+
+        expect(route({ type: "down", x: seamX, y: 4 })).toBe("resize");
+        expect(active).toBe(true);
+        expect(route({ type: "up", x: seamX + 4, y: height - 1 })).toBe("resize");
+        expect(active).toBe(false);
+        expect(statusEvents).toBe(0);
+        expect(effects.resize).toHaveBeenCalledWith(seamX + 4);
+        expect(route({ type: "down", x: sidebarWidth + 2, y: 4 })).toBe("terminal");
+        expect(terminalEvents).toBe(1);
       }
-      expect(terminalEvents).toBe(0);
-      expect(route("down", sidebarWidth + 1)).toBeNull();
-      expect(terminalEvents).toBe(1);
     },
   );
+
+  it("keeps active resize ownership before status and inactive starts after it in app.tsx", () => {
+    const app = readFileSync(fileURLToPath(new URL("../app.tsx", import.meta.url)), "utf8");
+    const active = app.indexOf(
+      'if (dragging?.kind === "sidebar" && routeSidebarResizePointer(e, true)) return;',
+    );
+    const status = app.indexOf('applicationChromeHit?.kind === "status-strip"');
+    const start = app.indexOf("if (routeSidebarResizePointer(e, false)) return;");
+    expect(active).toBeGreaterThan(-1);
+    expect(active).toBeLessThan(status);
+    expect(status).toBeLessThan(start);
+  });
 });
