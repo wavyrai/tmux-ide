@@ -1,0 +1,316 @@
+.web-pane-frame {
+  --pane-border: var(--tmux-ide-border-default, #343541);
+  --pane-header: var(--tmux-ide-surface-header, #1d1e26);
+  --pane-header-active: var(--tmux-ide-surface-header-active, #242735);
+  --pane-body: var(--tmux-ide-surface-terminal, #11121a);
+  --pane-text: var(--tmux-ide-text-primary, #f2f3f7);
+  --pane-muted: var(--tmux-ide-text-muted, #9296a5);
+  --pane-focus: var(--tmux-ide-border-focused, #6f9bff);
+  --pane-attention: var(--tmux-ide-border-attention, #dca84d);
+  --pane-danger: var(--tmux-ide-border-danger, #ef6b73);
+  --pane-selected: var(--tmux-ide-border-selected, #9b7cff);
+  display: grid;
+  grid-template-rows: 28px minmax(0, 1fr);
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  container-type: inline-size;
+  color: var(--pane-text);
+  border: 1px solid var(--pane-border);
+  background: var(--pane-body);
+  font-family: ui-monospace, "SFMono-Regular", "Cascadia Code", monospace;
+}
+
+.web-pane-frame[data-border-role="focused"] {
+  --pane-border: var(--pane-focus);
+}
+
+.web-pane-frame[data-border-role="attention"] {
+  --pane-border: var(--pane-attention);
+}
+
+.web-pane-frame[data-border-role="danger"] {
+  --pane-border: var(--pane-danger);
+}
+
+.web-pane-frame[data-border-strength="decisive"] {
+  border-width: 2px;
+}
+
+.web-pane-frame[data-layout-selected="true"] {
+  box-shadow: 0 0 0 2px var(--pane-selected);
+}
+
+.web-pane-frame[data-structure="floating"] {
+  border-radius: 7px;
+  box-shadow:
+    0 14px 34px rgb(0 0 0 / 28%),
+    0 0 0 1px rgb(255 255 255 / 3%);
+}
+
+.web-pane-frame[data-structure="floating"][data-layout-selected="true"] {
+  box-shadow:
+    0 0 0 2px var(--pane-selected),
+    0 14px 34px rgb(0 0 0 / 28%);
+}
+
+.web-pane-frame[data-structure="maximized"] {
+  border-color: var(--pane-focus);
+}
+
+.web-pane-frame[data-window-active="false"] {
+  --pane-text: var(--pane-muted);
+}
+
+.web-pane-frame__header {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  overflow: hidden;
+  border-bottom: 1px solid color-mix(in srgb, var(--pane-border), transparent 42%);
+  background: var(--pane-header);
+}
+
+.web-pane-frame__header[data-surface="headerActive"] {
+  background: var(--pane-header-active);
+}
+
+.web-pane-frame__grip,
+.web-pane-frame__action {
+  appearance: none;
+  display: inline-grid;
+  flex: 0 0 auto;
+  place-items: center;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  color: var(--pane-muted);
+  background: transparent;
+  font: inherit;
+}
+
+.web-pane-frame__grip {
+  width: 24px;
+  cursor: grab;
+}
+
+.web-pane-frame__grip:not(:disabled):active {
+  cursor: grabbing;
+  background: var(--tmux-ide-selection-pressed, #303445);
+}
+
+.web-pane-frame__identity {
+  display: flex;
+  min-width: 3rem;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: 6px;
+  overflow: hidden;
+}
+
+.web-pane-frame__role-icon,
+.web-pane-frame__role-icon svg,
+.web-pane-frame__action svg,
+.web-pane-frame__grip svg {
+  display: block;
+  flex: 0 0 auto;
+}
+
+.web-pane-frame__title-group {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  gap: 6px;
+  overflow: hidden;
+}
+
+.web-pane-frame__title,
+.web-pane-frame__subtitle {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.web-pane-frame__title {
+  color: var(--pane-text);
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.web-pane-frame__subtitle {
+  color: var(--pane-muted);
+  font-size: 10px;
+}
+
+.web-pane-frame__status {
+  display: inline-flex;
+  min-width: 0;
+  flex: 0 1 auto;
+  align-items: center;
+  gap: 5px;
+  padding: 0 7px;
+  overflow: hidden;
+  color: var(--pane-muted);
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.web-pane-frame__status i {
+  display: block;
+  flex: 0 0 5px;
+  width: 5px;
+  height: 5px;
+  border: 1px solid currentColor;
+  border-radius: 50%;
+}
+
+.web-pane-frame__status[data-tone="info"] {
+  color: var(--tmux-ide-status-info, #67a5ff);
+}
+
+.web-pane-frame__status[data-tone="info"] i {
+  background: var(--tmux-ide-status-info, #67a5ff);
+}
+
+.web-pane-frame__status[data-tone="success"] {
+  color: var(--tmux-ide-status-success, #61c889);
+}
+
+.web-pane-frame__status[data-tone="success"] i {
+  background: var(--tmux-ide-status-success, #61c889);
+}
+
+.web-pane-frame__status[data-tone="warning"] {
+  color: var(--tmux-ide-status-warning, #dca84d);
+}
+
+.web-pane-frame__status[data-tone="warning"] i {
+  background: var(--tmux-ide-status-warning, #dca84d);
+}
+
+.web-pane-frame__status[data-tone="danger"] {
+  color: var(--tmux-ide-status-danger, #ef6b73);
+}
+
+.web-pane-frame__status[data-tone="danger"] i {
+  background: var(--tmux-ide-status-danger, #ef6b73);
+}
+
+.web-pane-frame__status[data-busy="true"] i {
+  border-style: dotted;
+}
+
+.web-pane-frame__actions {
+  display: flex;
+  height: 100%;
+  flex: 0 0 auto;
+  align-items: stretch;
+  border-left: 1px solid color-mix(in srgb, var(--pane-border), transparent 48%);
+}
+
+.web-pane-frame__action {
+  width: 28px;
+  cursor: pointer;
+}
+
+.web-pane-frame__action:hover:not(:disabled),
+.web-pane-frame__action[data-state="hovered"] {
+  color: var(--pane-text);
+  background: var(--tmux-ide-selection-hover, #252938);
+}
+
+.web-pane-frame__action:active:not(:disabled),
+.web-pane-frame__action[data-state="pressed"] {
+  color: var(--pane-text);
+  background: var(--tmux-ide-selection-pressed, #303445);
+}
+
+.web-pane-frame__action:focus-visible,
+.web-pane-frame__action[data-state="focused"],
+.web-pane-frame__grip:focus-visible {
+  z-index: 1;
+  outline: var(--tmux-ide-focus-outline, 2px) solid var(--pane-focus);
+  outline-offset: calc(-1 * var(--tmux-ide-focus-outline-offset, 2px));
+}
+
+.web-pane-frame__action[data-state="attention"] {
+  color: var(--pane-attention);
+  background: color-mix(in srgb, var(--pane-attention), transparent 88%);
+}
+
+.web-pane-frame__action[aria-pressed="true"] {
+  color: var(--pane-focus);
+  background: var(--tmux-ide-selection-selection, #293149);
+}
+
+.web-pane-frame__action:disabled,
+.web-pane-frame__grip:disabled,
+.web-pane-frame__action[data-state="disabled"] {
+  color: var(--tmux-ide-control-disabled-foreground, #626676);
+  background: var(--tmux-ide-control-disabled-background, transparent);
+  cursor: not-allowed;
+}
+
+.web-pane-frame__action[data-state="loading"] {
+  color: var(--pane-muted);
+  cursor: wait;
+}
+
+.web-pane-frame__action[data-state="loading"] svg {
+  opacity: 0.55;
+}
+
+.web-pane-frame__action-label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.web-pane-frame__body {
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--pane-body);
+}
+
+@container (max-width: 32rem) {
+  .web-pane-frame__subtitle,
+  .web-pane-frame__status[data-chip-kind="agent"] {
+    display: none;
+  }
+
+  .web-pane-frame__status {
+    padding-inline: 5px;
+  }
+}
+
+@container (max-width: 22rem) {
+  .web-pane-frame__status > span,
+  .web-pane-frame__status[data-item-kind="status"] {
+    display: none;
+  }
+
+  .web-pane-frame__status {
+    padding-inline: 3px;
+  }
+
+  .web-pane-frame__action {
+    width: 25px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .web-pane-frame,
+  .web-pane-frame * {
+    scroll-behavior: auto !important;
+    animation: none !important;
+    transition: none !important;
+  }
+}

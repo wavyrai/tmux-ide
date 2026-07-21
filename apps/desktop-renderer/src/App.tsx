@@ -15,12 +15,24 @@ import {
   resolveHostCapabilities,
 } from "./host-capabilities.ts";
 import { DomApplicationShell, createDomExperience } from "./experience/index.ts";
+import type {
+  PaneFrameActionIntent,
+  PaneFrameActivationSource,
+  PaneFrameGripIntent,
+  PaneFrameModel,
+} from "../../../packages/daemon/src/ui/pane-frame/presenter.tsx";
 
 export interface AppProps {
   readonly host?: HostCapabilities;
   readonly initialTheme?: DesktopThemeState;
   readonly shellInput?: ApplicationShellProjectionInputV1;
   readonly onCommand?: (invocation: ApplicationShellCommandInvocation) => void;
+  readonly paneFrames?: readonly PaneFrameModel[];
+  readonly onPaneAction?: (
+    intent: PaneFrameActionIntent,
+    source: PaneFrameActivationSource,
+  ) => void;
+  readonly onPaneGrip?: (intent: PaneFrameGripIntent, source: PaneFrameActivationSource) => void;
 }
 
 export function App(props: AppProps = {}) {
@@ -63,6 +75,9 @@ export function App(props: AppProps = {}) {
         input={props.shellInput}
         dataMode={props.shellInput === undefined ? "preview" : "runtime"}
         onCommand={props.onCommand}
+        paneFrames={props.paneFrames}
+        onPaneAction={props.onPaneAction}
+        onPaneGrip={props.onPaneGrip}
       />
     </div>
   );

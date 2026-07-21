@@ -1,0 +1,23 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "rewriteRelativeImportExtensions": true,
+    "noEmit": true,
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "skipLibCheck": true,
+    "jsx": "preserve",
+    "jsxImportSource": "solid-js",
+    "types": []
+  },
+  "include": [
+    "src/ui/pane-frame/action-state.ts",
+    "src/ui/pane-frame/model.ts",
+    "src/ui/pane-frame/presenter.tsx",
+    "src/ui/pane-frame/web-host.tsx",
+    "src/ui/pane-frame/web-entry.tsx"
+  ]
+}

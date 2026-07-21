@@ -28,7 +28,7 @@ const TEST_HOST: PaneFrameHostLeaves = {
   ),
   Header: (props) => <header data-leaf="header">{props.children}</header>,
   Grip: (props) => (
-    <button data-leaf="grip" type="button" onClick={() => props.onActivate?.()}>
+    <button data-leaf="grip" type="button" onClick={() => props.onActivate?.("mouse")}>
       Move {props.pane.id}
     </button>
   ),
@@ -58,7 +58,7 @@ const TEST_HOST: PaneFrameHostLeaves = {
       data-action={props.action.id}
       type="button"
       disabled={!props.interactive}
-      onClick={() => props.onActivate?.()}
+      onClick={() => props.onActivate?.("mouse")}
     >
       {props.action.label}
     </button>
@@ -125,8 +125,8 @@ describe("PaneFramePresenter", () => {
     const { root, setModel } = renderPresenter();
     const body = byData(root, "leaf", "body");
     const split = byData(root, "action", "split");
-    const agent = byData(root, "item", "chip:chip.agent");
-    const attention = byData(root, "item", "chip:chip.attention");
+    const agent = byData(root, "item", "chip:pane.implementer:agent");
+    const attention = byData(root, "item", "chip:pane.implementer:attention");
 
     const next = freshModel();
     const [nextAgent, nextAttention] = next.chips;
@@ -145,8 +145,8 @@ describe("PaneFramePresenter", () => {
 
     expect(byData(root, "leaf", "body")).toBe(body);
     expect(byData(root, "action", "split")).toBe(split);
-    expect(byData(root, "item", "chip:chip.agent")).toBe(agent);
-    expect(byData(root, "item", "chip:chip.attention")).toBe(attention);
+    expect(byData(root, "item", "chip:pane.implementer:agent")).toBe(agent);
+    expect(byData(root, "item", "chip:pane.implementer:attention")).toBe(attention);
     expect(split.textContent).toBe("Split updated");
     expect(byData(root, "leaf", "actions").dataset.actions?.split(",")[0]).toBe("split");
     expect(root.querySelector('[data-leaf="title"]')?.textContent).toContain("Updated implementer");

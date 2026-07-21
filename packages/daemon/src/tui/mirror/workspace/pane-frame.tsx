@@ -327,7 +327,7 @@ function OpenTuiGrip(props: PaneFrameGripLeafProps) {
         top={0}
         width={projection().grip!.width}
         height={1}
-        onMouseDown={host.inputOwner() ? props.onActivate : undefined}
+        onMouseDown={host.inputOwner() ? () => props.onActivate?.("mouse") : undefined}
       >
         <text fg={semanticBorderColor(host.theme(), props.appearance)}>
           {projection().grip!.text}
@@ -421,7 +421,7 @@ function OpenTuiAction(props: PaneFrameActionLeafProps) {
         height={1}
         onMouseDown={
           host.inputOwner() && props.interactive && chip()!.interactive
-            ? props.onActivate
+            ? () => props.onActivate?.("mouse")
             : undefined
         }
       >

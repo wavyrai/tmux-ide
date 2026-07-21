@@ -318,8 +318,7 @@ kbd {
 }
 
 .sidebar-row i,
-.status-strip i,
-.agent-pane header i {
+.status-strip i {
   display: inline-block;
   flex: 0 0 6px;
   width: 6px;
@@ -330,15 +329,13 @@ kbd {
 
 .sidebar-row i[data-state="connected"],
 .sidebar-row i[data-state="complete"],
-.status-strip__connection[data-state="connected"] > i,
-.agent-pane[data-state="complete"] header i {
+.status-strip__connection[data-state="connected"] > i {
   border-color: var(--tmux-ide-status-success) !important;
   background: var(--tmux-ide-status-success);
 }
 
 .sidebar-row i[data-state="running"],
-.status-strip__connection[data-state="running"] > i,
-.agent-pane[data-state="running"] header i {
+.status-strip__connection[data-state="running"] > i {
   border-color: var(--tmux-ide-status-info) !important;
   background: var(--tmux-ide-status-info);
 }
@@ -352,7 +349,6 @@ kbd {
 .status-strip__connection[data-state="recovering"] > i,
 .status-strip__connection[data-state="warning"] > i,
 .status-strip__connection[data-state="disconnected"] > i,
-.agent-pane[data-state="recovery"] header i,
 .readiness-card header span[data-state="warning"] {
   border-color: var(--tmux-ide-status-warning) !important;
   background: var(--tmux-ide-status-warning);
@@ -515,41 +511,13 @@ kbd {
   height: calc(100% - 27px);
 }
 
-.agent-pane {
-  display: grid;
-  grid-template-rows: 24px minmax(0, 1fr) 18px;
+.agent-grid > .web-pane-frame {
   min-width: 0;
   min-height: 0;
-  overflow: hidden;
-  border: 1px solid var(--tmux-ide-border-default);
-  background: var(--tmux-ide-surface-terminal);
-}
-
-.agent-pane > header,
-.agent-pane > footer {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0 7px;
-  overflow: hidden;
-  color: var(--tmux-ide-text-muted);
-  background: var(--tmux-ide-surface-header);
-  font-size: 10px;
-}
-
-.agent-pane > header > span {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.agent-pane > footer {
-  border-top: 1px solid var(--tmux-ide-border-subtle);
-  white-space: nowrap;
 }
 
 .agent-pane__body {
+  height: 100%;
   padding: 9px;
   overflow: auto;
   color: var(--tmux-ide-text-secondary);
@@ -557,6 +525,10 @@ kbd {
 
 .agent-pane__body p {
   margin: 7px 0;
+}
+
+.agent-pane__body small {
+  color: var(--tmux-ide-text-muted);
 }
 
 .agent-prompt {

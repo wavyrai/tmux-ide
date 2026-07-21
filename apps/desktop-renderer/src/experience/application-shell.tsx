@@ -14,6 +14,7 @@ import {
   type HostCapabilities,
   type ProductSurfaceId,
   type SemanticFocusTarget,
+  resolvePaneAppearance,
 } from "@tmux-ide/contracts";
 import {
   For,
@@ -29,6 +30,13 @@ import {
 } from "solid-js";
 
 import { WebWorkbenchDock } from "../../../../packages/daemon/src/ui/workbench-dock/web-host.tsx";
+import { WebPaneFrame } from "../../../../packages/daemon/src/ui/pane-frame/web-host.tsx";
+import type {
+  PaneFrameActionIntent,
+  PaneFrameActivationSource,
+  PaneFrameGripIntent,
+  PaneFrameModel,
+} from "../../../../packages/daemon/src/ui/pane-frame/presenter.tsx";
 import type {
   WorkbenchDockHostActionId,
   WorkbenchDockHostMode,
@@ -38,6 +46,7 @@ import { CommandPalette } from "./command-palette.tsx";
 import { DomIcon } from "./dom-icon.tsx";
 import {
   createDefaultDomShellInput,
+  createDefaultDomPaneFrames,
   createDomPaletteEntries,
   createDomShellReplayState,
   dockToolIcon,
@@ -60,6 +69,12 @@ export interface DomApplicationShellProps {
   readonly input?: ApplicationShellProjectionInputV1;
   readonly dataMode?: "runtime" | "preview";
   readonly onCommand?: (invocation: ApplicationShellCommandInvocation) => void;
+  readonly paneFrames?: readonly PaneFrameModel[];
+  readonly onPaneAction?: (
+    intent: PaneFrameActionIntent,
+    source: PaneFrameActivationSource,
+  ) => void;
+  readonly onPaneGrip?: (intent: PaneFrameGripIntent, source: PaneFrameActivationSource) => void;
 }
 
 export interface PrimaryNavigationProps {
@@ -171,6 +186,64 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
   let returnFocusId: string | null = null;
 
   const shell = createMemo(() => projectDomApplicationShell(input(), state()));
+  const paneFrames = createMemo<readonly PaneFrameModel[]>(() => {
+    if (props.paneFrames) return props.paneFrames;
+    if (dataMode() === "preview") return createDefaultDomPaneFrames();
+    return shell().sidebar.agents.flatMap((agent) => {
+      if (!agent.paneId) return [];
+      const domainStatus =
+        agent.activity === "running"
+          ? "running"
+          : agent.activity === "complete"
+            ? "done"
+            : agent.activity === "disconnected"
+              ? "disconnected"
+              : "idle";
+      const appearance = resolvePaneAppearance({
+        structure: "docked",
+        applicationFocus: {
+          pane: shell().focus.appFocusedPaneId === agent.paneId,
+          terminalInput: shell().focus.terminalInputPaneId === agent.paneId,
+          windowActive: shell().focus.windowActivity === "active",
+        },
+        agentActivity: agent.activity,
+        domainStatus,
+        attention:
+          agent.activity === "disconnected" ? "recovery" : agent.attention ? "requested" : "none",
+        layoutInteraction: {
+          editable: false,
+          selected: shell().focus.layoutSelectedPaneId === agent.paneId,
+          dragging: false,
+          resizing: false,
+          previewing: false,
+        },
+        controlInteraction: {
+          hover: false,
+          focusVisible: false,
+          pressed: false,
+          disabled: false,
+          loading: false,
+        },
+      });
+      return [
+        {
+          pane: { id: agent.paneId, kind: "terminal" },
+          appearance,
+          title: agent.name,
+          subtitle: agent.harness,
+          status: {
+            id: `${agent.paneId}:status`,
+            label: domainStatus,
+            description: appearance.accessibility.description,
+            tone: appearance.status.tone,
+            busy: appearance.accessibility.busy,
+          },
+          chips: [],
+          actions: [],
+        },
+      ];
+    });
+  });
   const dock = createMemo(() => projectDomWorkbenchDock(shell(), viewport()));
   const paletteEntries = createMemo(() => createDomPaletteEntries(shell()));
   const statusStrip = createMemo(() => {
@@ -573,23 +646,30 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
               <span>{shell().sidebar.agents.length} agents</span>
             </header>
             <div class="agent-grid">
-              <Index each={shell().sidebar.agents}>
-                {(agent) => (
-                  <article class="agent-pane" data-state={activityTone(agent().activity)}>
-                    <header>
-                      <span>
-                        <i />
-                        <strong>{agent().name}</strong>
-                      </span>
-                      <span>{agent().activity}</span>
-                    </header>
-                    <div class="agent-pane__body">
-                      <span class="agent-prompt">{agent().harness}</span>
-                      <p>Activity: {agent().activity}</p>
-                    </div>
-                    <footer>{agent().paneId}</footer>
-                  </article>
-                )}
+              <Index each={paneFrames()}>
+                {(paneFrame) => {
+                  const agent = createMemo(() =>
+                    shell().sidebar.agents.find((item) => item.paneId === paneFrame().pane.id),
+                  );
+                  return (
+                    <WebPaneFrame
+                      model={paneFrame()}
+                      onActionActivate={props.onPaneAction}
+                      onGripActivate={props.onPaneGrip}
+                      renderPaneIcon={(_pane, icon) => <DomIcon id={icon} usage="pane" />}
+                      renderActionIcon={(action) => <DomIcon id={action.icon} usage="action" />}
+                      renderGripIcon={(icon) => <DomIcon id={icon} usage="action" />}
+                    >
+                      <div class="agent-pane__body" data-focus-zone="terminal">
+                        <span class="agent-prompt">
+                          {agent()?.harness ?? paneFrame().subtitle ?? paneFrame().pane.kind}
+                        </span>
+                        <p>Activity: {agent()?.activity ?? paneFrame().status?.label ?? "idle"}</p>
+                        <small>{paneFrame().pane.id}</small>
+                      </div>
+                    </WebPaneFrame>
+                  );
+                }}
               </Index>
             </div>
           </section>
