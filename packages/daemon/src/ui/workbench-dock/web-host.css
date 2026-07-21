@@ -1,0 +1,163 @@
+.workbench-dock {
+  --dock-bg: #111219;
+  --dock-raised: #191b25;
+  --dock-border: #303443;
+  --dock-fg: #e8eaf0;
+  --dock-muted: #8d93a5;
+  --dock-accent: #77a8ff;
+  --dock-selection: #243b61;
+  --dock-hover: #222633;
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+  overflow: hidden;
+  container-type: inline-size;
+  color: var(--dock-fg);
+  border-top: 1px solid var(--dock-border);
+  background: var(--dock-bg);
+  font-family: ui-monospace, "SFMono-Regular", "Cascadia Code", monospace;
+}
+
+.workbench-dock__bar {
+  display: flex;
+  min-width: 0;
+  align-items: stretch;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--dock-border);
+  background: var(--dock-raised);
+}
+
+.workbench-dock__tabs {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 auto;
+  align-items: stretch;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.workbench-dock__tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.workbench-dock__tab,
+.workbench-dock__action {
+  appearance: none;
+  border: 0;
+  border-radius: 0;
+  color: inherit;
+  background: transparent;
+  font: inherit;
+  cursor: pointer;
+}
+
+.workbench-dock__tab {
+  display: inline-flex;
+  flex: 0 0 auto;
+  gap: 0.45rem;
+  align-items: center;
+  min-height: 2rem;
+  padding: 0 0.72rem;
+  color: var(--dock-muted);
+  border-right: 1px solid transparent;
+  border-left: 1px solid transparent;
+  white-space: nowrap;
+}
+
+.workbench-dock__tab:hover:not(:disabled),
+.workbench-dock__tab[data-hovered="true"]:not(:disabled) {
+  color: var(--dock-fg);
+  background: var(--dock-hover);
+}
+
+.workbench-dock__tab[aria-selected="true"] {
+  color: var(--dock-fg);
+  border-color: var(--dock-border);
+  background: var(--dock-selection);
+}
+
+.workbench-dock__tab:focus-visible,
+.workbench-dock__action:focus-visible,
+.workbench-dock__body:focus-visible {
+  position: relative;
+  z-index: 1;
+  outline: 2px solid var(--dock-accent);
+  outline-offset: -2px;
+}
+
+.workbench-dock__tab:disabled {
+  cursor: not-allowed;
+  opacity: 0.42;
+}
+
+.workbench-dock__shortcut {
+  color: var(--dock-accent);
+  font-size: 0.78em;
+}
+
+.workbench-dock__attention {
+  min-width: 0.55em;
+  color: #efbd56;
+  font-size: 0.65em;
+}
+
+.workbench-dock__actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: stretch;
+  border-left: 1px solid var(--dock-border);
+  background: var(--dock-raised);
+}
+
+.workbench-dock__action {
+  min-width: 2.15rem;
+  padding: 0 0.62rem;
+  color: var(--dock-muted);
+}
+
+.workbench-dock__action:hover {
+  color: var(--dock-fg);
+  background: var(--dock-hover);
+}
+
+.workbench-dock__action[aria-pressed="true"] {
+  color: var(--dock-accent);
+  background: var(--dock-selection);
+}
+
+.workbench-dock__body {
+  min-width: 0;
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow: auto;
+  outline: none;
+  background: var(--dock-bg);
+}
+
+.workbench-dock__body[data-focused="true"] {
+  box-shadow: inset 3px 0 0 var(--dock-accent);
+}
+
+.workbench-dock[data-mode="collapsed"] .workbench-dock__bar {
+  border-bottom: 0;
+}
+
+.workbench-dock[data-mode="maximized"] {
+  flex: 1 1 auto;
+}
+
+.workbench-dock[data-variant="compact"] .workbench-dock__tab {
+  gap: 0.3rem;
+  padding-inline: 0.5rem;
+}
+
+.workbench-dock[data-variant="compact"] .workbench-dock__shortcut {
+  display: none;
+}
+
+@container (max-width: 34rem) {
+  .workbench-dock__shortcut {
+    display: none;
+  }
+}

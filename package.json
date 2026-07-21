@@ -35,14 +35,15 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "build:workspace": "turbo run build",
+    "build:workbench-dock-web": "pnpm --filter @tmux-ide/daemon run build:workbench-dock-web",
     "typecheck:workspace": "turbo run typecheck",
     "docs:build": "turbo run build --filter=@tmux-ide/docs",
     "pack:check": "npm pack --dry-run --cache /tmp/tmux-ide-npm-cache > /dev/null",
     "check:native-deps": "node packages/daemon/scripts/check-native-deps.mjs",
-    "check": "pnpm run lint:workspace && pnpm run format:check && pnpm run typecheck:workspace && pnpm run test:unit && pnpm run test:tui-renderer && pnpm run docs:build && pnpm run pack:check && pnpm run check:native-deps",
+    "check": "pnpm run lint:workspace && pnpm run format:check && pnpm run typecheck:workspace && pnpm run build:workbench-dock-web && pnpm run test:unit && pnpm run test:tui-renderer && pnpm run docs:build && pnpm run pack:check && pnpm run check:native-deps",
     "postinstall": "node scripts/postinstall.js",
     "docs": "turbo run dev --filter=@tmux-ide/docs",
-    "test:tui-renderer": "bun test --preload @opentui/solid/preload ./packages/daemon/src/tui/mirror/missions-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/recipes-gallery-renderer.test.tsx ./packages/daemon/src/tui/mirror/shell-chrome-renderer.test.tsx ./packages/daemon/src/tui/mirror/home-files-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/changes-terminal-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/activity-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/application-shell-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/pane-frame-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/workbench-shell-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/agent-terminal-canvas-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/command-palette-surface-renderer.test.tsx",
+    "test:tui-renderer": "bun test --preload @opentui/solid/preload ./packages/daemon/src/tui/mirror/missions-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/recipes-gallery-renderer.test.tsx ./packages/daemon/src/tui/mirror/shell-chrome-renderer.test.tsx ./packages/daemon/src/tui/mirror/home-files-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/changes-terminal-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/activity-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/application-shell-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/pane-frame-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/workbench-shell-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/workbench-dock-dual-host-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/agent-terminal-canvas-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/command-palette-surface-renderer.test.tsx",
     "test:tui-smoke": "node scripts/smoke-tui-missions.mjs"
   },
   "keywords": [
