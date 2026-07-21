@@ -150,6 +150,7 @@ function updatedSameWorkspace(
 }
 
 afterEach(() => {
+  vi.restoreAllMocks();
   for (const dispose of disposers.splice(0)) dispose();
   document.body.replaceChildren();
 });
