@@ -4386,7 +4386,11 @@ var init_desktop_host = __esm({
       z25.object({ status: z25.literal("error"), error: DesktopDaemonCapabilityErrorSchemaZ }).strict()
     ]);
     DesktopDaemonEventSubscriptionRequestSchemaZ = z25.object({
-      workspaceNames: z25.array(DesktopWorkspaceNameSchemaZ).min(1).max(64)
+      /**
+       * Empty subscribes to catalog/connection invalidations only. Non-empty
+       * subscriptions additionally receive events for the named workspaces.
+       */
+      workspaceNames: z25.array(DesktopWorkspaceNameSchemaZ).max(64)
     }).strict().superRefine(({ workspaceNames }, ctx) => {
       if (new Set(workspaceNames).size !== workspaceNames.length) {
         ctx.addIssue({ code: "custom", message: "workspace names must be unique" });

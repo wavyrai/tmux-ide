@@ -171,7 +171,11 @@ export const DesktopDaemonFetchApplicationShellResultSchemaZ = z.discriminatedUn
 
 export const DesktopDaemonEventSubscriptionRequestSchemaZ = z
   .object({
-    workspaceNames: z.array(DesktopWorkspaceNameSchemaZ).min(1).max(64),
+    /**
+     * Empty subscribes to catalog/connection invalidations only. Non-empty
+     * subscriptions additionally receive events for the named workspaces.
+     */
+    workspaceNames: z.array(DesktopWorkspaceNameSchemaZ).max(64),
   })
   .strict()
   .superRefine(({ workspaceNames }, ctx) => {
