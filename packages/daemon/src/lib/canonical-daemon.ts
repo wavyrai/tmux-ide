@@ -54,6 +54,10 @@ type CanonicalDaemonClaimState =
 const activeClaims = new Set<string>();
 
 export type CanonicalDaemonInfoInvalidReason =
+  | "parent-symlink"
+  | "parent-not-directory"
+  | "parent-wrong-owner"
+  | "parent-unsafe-permissions"
   | "symlink"
   | "not-regular-file"
   | "oversized"
@@ -145,6 +149,39 @@ function inspectCanonicalDaemonInfoPath(path: string): CanonicalDaemonInfoState 
   try {
     const pathStat = lstatSync(path);
     const pathObservation = observation(pathStat);
+    const parentStat = lstatSync(dirname(path));
+    if (parentStat.isSymbolicLink()) {
+      return invalidState(
+        "parent-symlink",
+        "daemon.json parent must not be a symbolic link",
+        null,
+        pathObservation,
+      );
+    }
+    if (!parentStat.isDirectory()) {
+      return invalidState(
+        "parent-not-directory",
+        "daemon.json parent must be a directory",
+        null,
+        pathObservation,
+      );
+    }
+    if (typeof process.getuid === "function" && parentStat.uid !== process.getuid()) {
+      return invalidState(
+        "parent-wrong-owner",
+        "daemon.json parent is not owned by the current user",
+        null,
+        pathObservation,
+      );
+    }
+    if ((parentStat.mode & 0o077) !== 0) {
+      return invalidState(
+        "parent-unsafe-permissions",
+        "daemon.json parent must be accessible only by its owner",
+        null,
+        pathObservation,
+      );
+    }
     if (pathStat.isSymbolicLink()) {
       return invalidState(
         "symlink",
@@ -184,11 +221,16 @@ function inspectCanonicalDaemonInfoPath(path: string): CanonicalDaemonInfoState 
     descriptor = openSync(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
     const openedStat = fstatSync(descriptor);
     const openedObservation = observation(openedStat);
+    const reopenedParentStat = lstatSync(dirname(path));
     if (
       !openedStat.isFile() ||
       !sameObservation(pathObservation, openedObservation) ||
+      !sameObservation(observation(parentStat), observation(reopenedParentStat)) ||
+      !reopenedParentStat.isDirectory() ||
       (typeof process.getuid === "function" && openedStat.uid !== process.getuid()) ||
-      (openedStat.mode & 0o077) !== 0
+      (openedStat.mode & 0o077) !== 0 ||
+      (typeof process.getuid === "function" && reopenedParentStat.uid !== process.getuid()) ||
+      (reopenedParentStat.mode & 0o077) !== 0
     ) {
       return invalidState(
         "changed-while-opening",
@@ -340,6 +382,7 @@ export function tryAcquireCanonicalDaemonClaim(): CanonicalDaemonClaimAttempt {
   const path = getCanonicalDaemonClaimPath();
   const root = dirname(path);
   mkdirSync(root, { recursive: true, mode: 0o700 });
+  chmodSync(root, 0o700);
 
   for (let attempt = 0; attempt < 3; attempt += 1) {
     const claim: CanonicalDaemonClaim = {
@@ -405,6 +448,7 @@ export function writeCanonicalDaemonInfo(
   assertCanonicalDaemonClaimHeld(claim);
   const path = getCanonicalDaemonInfoPath();
   mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+  chmodSync(dirname(path), 0o700);
   const tmpPath = `${path}.${claim.claimId}.${randomUUID()}.tmp`;
   const persisted: CanonicalDaemonInfo = {
     pid: info.pid,

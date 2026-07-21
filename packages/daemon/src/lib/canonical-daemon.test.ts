@@ -207,6 +207,21 @@ describe("canonical daemon info", () => {
     });
   });
 
+  it("rejects a daemon record whose parent directory is not owner-only", () => {
+    writeFileSync(getCanonicalDaemonInfoPath(), JSON.stringify(info(6060)), { mode: 0o600 });
+    chmodSync(tempDir, 0o755);
+    try {
+      expect(readCanonicalDaemonInfo()).toBeNull();
+      expect(inspectCanonicalDaemonInfo()).toMatchObject({
+        status: "invalid",
+        reason: "parent-unsafe-permissions",
+        ownerPid: null,
+      });
+    } finally {
+      chmodSync(tempDir, 0o700);
+    }
+  });
+
   it("rejects symlinks and oversized daemon info", () => {
     const path = getCanonicalDaemonInfoPath();
     const target = join(tempDir, "target.json");

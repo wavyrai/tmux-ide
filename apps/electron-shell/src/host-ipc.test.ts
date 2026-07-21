@@ -21,12 +21,22 @@ describe("host IPC trust boundary", () => {
       isFocused: () => true,
       webContents,
     } as unknown as BrowserWindow;
+    const daemon = {
+      status: "connected" as const,
+      descriptor: {
+        apiBaseUrl: "http://127.0.0.1:6060",
+        protocolVersion: 1,
+        productVersion: "2.8.0",
+        instanceId: "9bcf33b0-c837-4a94-b5e8-c0977f54464f",
+        startedAt: "2026-07-21T00:00:00.000Z",
+      },
+    };
     const unregister = registerHostIpc({
       ipcMain,
       getWindow: () => window,
       appVersion: "test",
       platform: "darwin",
-      daemon: { status: "absent" },
+      daemon,
       requestQuit: vi.fn(),
       selectProjectDirectory: async () => null,
       getTheme: () => ({ mode: "dark", highContrast: false, reducedMotion: false }),
@@ -39,7 +49,7 @@ describe("host IPC trust boundary", () => {
     const bootstrap = handlers.get(HOST_IPC.bootstrap);
     expect(
       bootstrap?.({ sender: webContents, senderFrame: mainFrame } as unknown as IpcMainInvokeEvent),
-    ).toMatchObject({ runtime: "electron", appVersion: "test" });
+    ).toMatchObject({ runtime: "electron", appVersion: "test", daemon });
     expect(() =>
       bootstrap?.({ sender: webContents, senderFrame: {} } as unknown as IpcMainInvokeEvent),
     ).toThrow("untrusted renderer");

@@ -63,6 +63,18 @@ describe("desktop process boundaries", () => {
     expect(Object.values(HOST_IPC)).not.toContain("tmux-ide:host/command");
   });
 
+  it("keeps canonical daemon attachment in Electron main and out of preload", async () => {
+    const preflight = await readFile(join(packageRoot, "src", "daemon-preflight.ts"), "utf8");
+    const preload = await readFile(join(packageRoot, "src", "preload.ts"), "utf8");
+
+    expect(importedSpecifiers(preflight)).toContain("../../../packages/daemon/src/canonical.ts");
+    expect(importedSpecifiers(preflight)).not.toContain("@tmux-ide/daemon");
+    expect(importedSpecifiers(preload).some((specifier) => specifier.includes("daemon/src"))).toBe(
+      false,
+    );
+    expect(importedSpecifiers(preload).some(isNodeBuiltin)).toBe(false);
+  });
+
   it("ships a strict browser renderer policy", async () => {
     const html = await readFile(join(packageRoot, "..", "desktop-renderer", "index.html"), "utf8");
     expect(html).toContain("default-src 'self'");

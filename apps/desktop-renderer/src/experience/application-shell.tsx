@@ -8,6 +8,7 @@ import {
   type ApplicationShellProjectionInputV1,
   type ApplicationShellProjectionV1,
   type CommandSource,
+  type DesktopDaemonHostState,
   type DesktopWindowState,
   type FocusZone,
   type HostCapabilities,
@@ -52,6 +53,7 @@ const PALETTE_OVERLAY_ID = "overlay.palette.trace";
 
 export interface DomApplicationShellProps {
   readonly host: HostCapabilities;
+  readonly daemonState?: DesktopDaemonHostState;
   readonly runtime?: string;
   readonly platform?: string;
   readonly windowState?: DesktopWindowState | null;
@@ -171,16 +173,39 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
   const shell = createMemo(() => projectDomApplicationShell(input(), state()));
   const dock = createMemo(() => projectDomWorkbenchDock(shell(), viewport()));
   const paletteEntries = createMemo(() => createDomPaletteEntries(shell()));
-  const statusStrip = createMemo(() =>
-    dataMode() === "preview"
-      ? {
-          state: "disconnected" as const,
-          message: "Preview workspace — no daemon connection",
-          safeState: "Illustrative data only",
-          nextAction: "Connect the desktop host to load a workspace",
-        }
-      : shell().statusStrip,
-  );
+  const statusStrip = createMemo(() => {
+    if (dataMode() !== "preview") return shell().statusStrip;
+    if (props.daemonState?.status === "connected") {
+      return {
+        state: "connected" as const,
+        message: `Daemon connected — ${props.daemonState.descriptor.productVersion}`,
+        safeState: "Preview data remains illustrative",
+        nextAction: "Live workspace loading is not enabled in this build",
+      };
+    }
+    if (props.daemonState?.status === "degraded") {
+      return {
+        state: "recovering" as const,
+        message: `Daemon verification degraded — ${props.daemonState.reason}`,
+        safeState: "Illustrative data only",
+        nextAction: "Repair the canonical daemon record and reopen the app",
+      };
+    }
+    if (props.daemonState?.status === "unavailable") {
+      return {
+        state: "disconnected" as const,
+        message: `Daemon unavailable — ${props.daemonState.reason}`,
+        safeState: "Illustrative data only",
+        nextAction: "Start tmux-ide --headless and reopen the app",
+      };
+    }
+    return {
+      state: "disconnected" as const,
+      message: "Preview workspace — daemon state is still loading",
+      safeState: "Illustrative data only",
+      nextAction: "Wait for desktop host verification",
+    };
+  });
 
   createEffect(() => {
     const nextInput = input();

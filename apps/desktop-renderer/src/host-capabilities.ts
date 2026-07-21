@@ -77,8 +77,9 @@ export function createBrowserHostCapabilities(): HostCapabilities {
       theme: browserTheme(),
       window: browserWindowState(),
       daemon: {
-        status: "deferred",
-        reason: "Browser preview does not own the desktop daemon lifecycle.",
+        status: "unavailable",
+        code: "preview-only",
+        reason: "Browser preview does not attach to the desktop daemon.",
       },
     }),
     lifecycle: {
