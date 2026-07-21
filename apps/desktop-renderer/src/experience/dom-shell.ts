@@ -20,6 +20,8 @@ import type {
   WorkbenchDockHostProjection,
   WorkbenchDockHostTabId,
 } from "../../../../packages/daemon/src/ui/workbench-dock/presenter.tsx";
+import { paneFrameModelFromCohesionPane } from "../../../../packages/daemon/src/ui/pane-frame/model.ts";
+import type { PaneFrameModel } from "../../../../packages/daemon/src/ui/pane-frame/presenter.tsx";
 
 export interface DomViewport {
   readonly width: number;
@@ -60,6 +62,11 @@ export function createDefaultDomShellInput(): ApplicationShellProjectionInputV1 
     focus: { ...COHESION_FIXTURE_V1.focus, overlays: [] },
     connection: COHESION_FIXTURE_V1.connection,
   });
+}
+
+/** Preview-only pane resources; production hosts pass fresh semantic models. */
+export function createDefaultDomPaneFrames(): readonly PaneFrameModel[] {
+  return COHESION_FIXTURE_V1.panes.map(paneFrameModelFromCohesionPane);
 }
 
 export function createDomShellReplayState(

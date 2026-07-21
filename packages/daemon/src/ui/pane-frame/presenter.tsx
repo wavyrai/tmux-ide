@@ -49,6 +49,8 @@ export interface PaneFrameAction {
   readonly disabledReason: string | null;
   readonly pressed: boolean;
   readonly busy: boolean;
+  /** Semantic attention belongs to the action, never to transient DOM focus. */
+  readonly attention?: boolean;
 }
 
 export interface PaneFrameModel {
@@ -85,6 +87,8 @@ export interface PaneFrameGripIntent {
   readonly paneId: SemanticProductId;
 }
 
+export type PaneFrameActivationSource = "keyboard" | "mouse";
+
 export interface PaneFrameLeafContext {
   readonly pane: PaneFramePane;
   readonly appearance: PaneAppearance;
@@ -94,7 +98,7 @@ export type PaneFrameRootLeafProps = ParentProps<PaneFrameLeafContext>;
 export type PaneFrameHeaderLeafProps = ParentProps<PaneFrameLeafContext>;
 
 export interface PaneFrameGripLeafProps extends PaneFrameLeafContext {
-  readonly onActivate?: () => void;
+  readonly onActivate?: (source: PaneFrameActivationSource) => void;
 }
 
 export interface PaneFrameTitleLeafProps extends PaneFrameLeafContext {
@@ -115,7 +119,7 @@ export type PaneFrameActionListLeafProps = ParentProps<
 export interface PaneFrameActionLeafProps extends PaneFrameLeafContext {
   readonly action: PaneFrameAction;
   readonly interactive: boolean;
-  readonly onActivate?: () => void;
+  readonly onActivate?: (source: PaneFrameActivationSource) => void;
 }
 
 export type PaneFrameBodyLeafProps = ParentProps<PaneFrameLeafContext>;
@@ -136,8 +140,14 @@ export interface PaneFramePresenterProps {
   readonly model: PaneFrameModel;
   readonly host: PaneFrameHostLeaves;
   readonly body?: JSX.Element;
-  readonly onActionActivate?: (intent: PaneFrameActionIntent) => void;
-  readonly onGripActivate?: (intent: PaneFrameGripIntent) => void;
+  readonly onActionActivate?: (
+    intent: PaneFrameActionIntent,
+    source: PaneFrameActivationSource,
+  ) => void;
+  readonly onGripActivate?: (
+    intent: PaneFrameGripIntent,
+    source: PaneFrameActivationSource,
+  ) => void;
 }
 
 interface KeyedRecord<T> {
@@ -251,7 +261,8 @@ export function PaneFramePresenter(props: PaneFramePresenterProps) {
                 appearance={model().appearance}
                 onActivate={
                   props.onGripActivate
-                    ? () => props.onGripActivate?.({ kind: "grip", paneId: model().pane.id })
+                    ? (source) =>
+                        props.onGripActivate?.({ kind: "grip", paneId: model().pane.id }, source)
                     : undefined
                 }
               />
@@ -289,14 +300,17 @@ export function PaneFramePresenter(props: PaneFramePresenterProps) {
                         interactive={interactive()}
                         onActivate={
                           interactive() && props.onActionActivate
-                            ? () => {
+                            ? (source) => {
                                 const action = entry.value();
-                                props.onActionActivate?.({
-                                  kind: "action",
-                                  paneId: model().pane.id,
-                                  actionId: action.id,
-                                  commandId: action.commandId,
-                                });
+                                props.onActionActivate?.(
+                                  {
+                                    kind: "action",
+                                    paneId: model().pane.id,
+                                    actionId: action.id,
+                                    commandId: action.commandId,
+                                  },
+                                  source,
+                                );
                               }
                             : undefined
                         }

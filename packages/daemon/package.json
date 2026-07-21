@@ -39,6 +39,13 @@
     },
     "./workbench-dock-web.css": {
       "default": "./dist/ui/workbench-dock/web/workbench-dock-web.css"
+    },
+    "./pane-frame-web": {
+      "types": "./dist/ui/pane-frame/web-entry.d.ts",
+      "default": "./dist/ui/pane-frame/web/pane-frame-web.js"
+    },
+    "./pane-frame-web.css": {
+      "default": "./dist/ui/pane-frame/web/pane-frame-web.css"
     }
   },
   "files": [
@@ -50,14 +57,18 @@
     "access": "public"
   },
   "scripts": {
-    "build": "pnpm run build:tsc && pnpm run build:workbench-dock-web && pnpm run build:workbench-dock-web-types",
+    "build": "pnpm run build:tsc && pnpm run build:workbench-dock-web && pnpm run build:workbench-dock-web-types && pnpm run build:pane-frame-web && pnpm run build:pane-frame-web-types",
     "build:tsc": "tsc -p tsconfig.json",
     "build:workbench-dock-web": "vite build --config vite.workbench-dock.config.ts",
     "build:workbench-dock-web-types": "tsc -p tsconfig.workbench-dock-web.types.json",
+    "build:pane-frame-web": "vite build --config vite.pane-frame.config.ts",
+    "build:pane-frame-web-types": "tsc -p tsconfig.pane-frame-web.types.json",
     "test:workbench-dock-package": "node scripts/check-workbench-dock-package.mjs",
-    "typecheck": "tsc --noEmit && pnpm run typecheck:workbench-dock-opentui && pnpm run typecheck:workbench-dock-web",
+    "test:pane-frame-package": "pnpm run build:pane-frame-web && pnpm run build:pane-frame-web-types && node scripts/check-pane-frame-package.mjs",
+    "typecheck": "tsc --noEmit && pnpm run typecheck:workbench-dock-opentui && pnpm run typecheck:workbench-dock-web && pnpm run typecheck:pane-frame-web",
     "typecheck:workbench-dock-opentui": "tsc --noEmit -p tsconfig.workbench-dock-opentui.json",
     "typecheck:workbench-dock-web": "tsc --noEmit -p tsconfig.workbench-dock-web.json",
+    "typecheck:pane-frame-web": "tsc --noEmit -p tsconfig.pane-frame-web.json",
     "prepack": "pnpm run build",
     "dev": "tsx --watch src/lib/daemon.ts",
     "start": "node dist/lib/daemon.js",

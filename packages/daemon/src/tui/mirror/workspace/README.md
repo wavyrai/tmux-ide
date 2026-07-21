@@ -70,3 +70,10 @@ share fixture, pointer, and real-keyboard traces and have separate JSX
 typecheck/build lanes plus transitive import-DAG guards.
 Browser/Electron renderers can consume `@tmux-ide/daemon/workbench-dock-web`
 and its explicit `@tmux-ide/daemon/workbench-dock-web.css` style export.
+
+Pane chrome follows the same boundary. `ui/pane-frame/presenter.tsx` owns
+semantic identity and action intents, while the OpenTUI cell host and standard
+Solid DOM host own only their native leaves. Browser/Electron consumers can use
+`@tmux-ide/daemon/pane-frame-web` with
+`@tmux-ide/daemon/pane-frame-web.css`; terminal transport mounts inside the
+stable body sentinel and remains outside the frame component.

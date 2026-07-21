@@ -13,6 +13,11 @@ import type {
   PaneFrameModel,
   PaneFrameStatus as SemanticPaneFrameStatus,
 } from "../../../ui/pane-frame/presenter.tsx";
+import {
+  resolveEffectivePaneFrameActionState,
+  type EffectivePaneFrameActionState,
+  type EffectivePaneFrameActionVisualState,
+} from "../../../ui/pane-frame/action-state.ts";
 import { terminalDisplayWidth } from "../panel-host.ts";
 import { actionChipWidth, iconButtonWidth, type RecipeTone, type Rect } from "../recipes.ts";
 import { clipWorkspaceText } from "./text.ts";
@@ -121,26 +126,8 @@ export interface PaneFrameActionChip extends PaneFrameAction {
   state: EffectivePaneFrameActionVisualState;
 }
 
-export type EffectivePaneFrameActionVisualState =
-  | "disabled"
-  | "loading"
-  | "pressed"
-  | "focused"
-  | "attention"
-  | "hovered"
-  | "base";
-
-export interface EffectivePaneFrameActionState {
-  readonly active: boolean;
-  readonly disabled: boolean;
-  readonly attention: boolean;
-  readonly focused: boolean;
-  readonly hovered: boolean;
-  readonly interactive: boolean;
-  readonly loading: boolean;
-  readonly pressed: boolean;
-  readonly state: EffectivePaneFrameActionVisualState;
-}
+export type { EffectivePaneFrameActionState, EffectivePaneFrameActionVisualState };
+export { resolveEffectivePaneFrameActionState };
 
 export type PaneFrameChip = PaneFrameStatusChip | PaneFrameStateChip | PaneFrameActionChip;
 
@@ -374,57 +361,6 @@ export function projectPaneFrame(input: PaneFrameInput): PaneFrameProjection {
   });
 }
 
-/**
- * One action-state boundary shared by rendering and hit testing.
- *
- * Precedence is disabled -> loading -> pressed -> focus-visible -> attention ->
- * hover -> base. Disabled/loading suppress every transient state,
- * and only an effective interactive action may own a cell target.
- */
-export function resolveEffectivePaneFrameActionState(input: {
-  appearance: PaneFrameModel["appearance"];
-  action: SemanticPaneFrameAction;
-  attention: boolean;
-  hostHovered: boolean;
-  hostPressed: boolean;
-}): EffectivePaneFrameActionState {
-  const global = input.appearance.action;
-  const explicitDisabled = global.disabled || !input.action.available;
-  const loading = !explicitDisabled && (global.loading || input.action.busy);
-  const disabled =
-    explicitDisabled || (!global.interactive && !global.loading && !input.action.busy);
-  const interactive = global.interactive && input.action.available && !input.action.busy;
-  const transient = interactive && !disabled && !loading;
-  const pressed = transient && (input.hostPressed || input.action.pressed || global.pressed);
-  const focused = transient && global.focusVisible;
-  const attention = transient && input.attention;
-  const hovered = transient && (input.hostHovered || global.hover);
-  const state: EffectivePaneFrameActionVisualState = disabled
-    ? "disabled"
-    : loading
-      ? "loading"
-      : pressed
-        ? "pressed"
-        : focused
-          ? "focused"
-          : attention
-            ? "attention"
-            : hovered
-              ? "hovered"
-              : "base";
-  return {
-    active: state === "pressed" && input.action.pressed,
-    disabled,
-    attention: state === "attention",
-    focused: state === "focused",
-    hovered: state === "hovered",
-    interactive,
-    loading,
-    pressed: state === "pressed",
-    state,
-  };
-}
-
 /** Cell geometry for a shared semantic PaneFrame model. */
 export function projectSemanticPaneFrame(
   input: SemanticPaneFrameProjectionInput,
@@ -457,7 +393,7 @@ export function projectSemanticPaneFrame(
     const effective = resolveEffectivePaneFrameActionState({
       appearance,
       action: semanticAction,
-      attention: presentation?.attention === true,
+      attention: presentation?.attention === true || semanticAction.attention === true,
       hostHovered: input.hoveredActionIndex === index,
       hostPressed: input.pressedActionIndex === index,
     });

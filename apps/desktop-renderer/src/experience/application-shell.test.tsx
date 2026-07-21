@@ -13,14 +13,20 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createSignal } from "solid-js";
 import { render } from "solid-js/web";
 
-import { DomApplicationShell, PrimaryNavigation } from "./application-shell.tsx";
+import {
+  DomApplicationShell,
+  PrimaryNavigation,
+  type DomApplicationShellProps,
+} from "./application-shell.tsx";
 import { DOM_EXPERIENCE_VARIABLE, createDomExperience } from "./dom-experience.ts";
 import {
   createDefaultDomShellInput,
+  createDefaultDomPaneFrames,
   createDomShellReplayState,
   projectDomApplicationShell,
 } from "./dom-shell.ts";
 import styles from "../styles.css?raw";
+import paneFrameStyles from "../../../../packages/daemon/src/ui/pane-frame/web-host.css?raw";
 
 const disposers: Array<() => void> = [];
 
@@ -78,6 +84,7 @@ function renderShell(
   input: ApplicationShellProjectionInputV1 = createDefaultDomShellInput(),
   onCommand?: (invocation: ApplicationShellCommandInvocation) => void,
   platform = "darwin",
+  onPaneAction?: DomApplicationShellProps["onPaneAction"],
 ) {
   const root = document.createElement("div");
   document.body.append(root);
@@ -92,6 +99,8 @@ function renderShell(
           input={input}
           dataMode="runtime"
           onCommand={onCommand}
+          paneFrames={createDefaultDomPaneFrames()}
+          onPaneAction={onPaneAction}
         />
       ),
       root,
@@ -110,7 +119,7 @@ function installApplicationStyles(root: HTMLElement) {
     root.style.setProperty(name, value);
   }
   const sheet = document.createElement("style");
-  sheet.textContent = styles;
+  sheet.textContent = `${styles}\n${paneFrameStyles}`;
   document.head.append(sheet);
   disposers.push(() => sheet.remove());
   return experience;
@@ -225,13 +234,45 @@ describe("visible DOM application shell", () => {
       /\.command-palette(?:-overlay)?(?:--open)?\s*\{[^}]*(?:transition|transform)\s*:/gu,
     );
     expect(styles).toContain('.status-strip__connection[data-state="recovering"] > i');
-    expect(styles).toContain('.agent-pane[data-state="running"] header i');
+    expect(paneFrameStyles).toContain('.web-pane-frame[data-border-role="focused"]');
     expect(styles).not.toMatch(/^\[data-state=/mu);
   });
 
   it("uses Ctrl K outside Darwin", () => {
     const root = renderShell(createDefaultDomShellInput(), undefined, "linux");
     expect(root.querySelector(".palette-trigger kbd")?.textContent).toBe("Ctrl K");
+  });
+
+  it("routes pane chrome commands through the explicit semantic host boundary", () => {
+    const onPaneAction = vi.fn<NonNullable<DomApplicationShellProps["onPaneAction"]>>();
+    const root = renderShell(createDefaultDomShellInput(), undefined, "darwin", onPaneAction);
+    const split = root.querySelector<HTMLButtonElement>(
+      '[data-pane-id="pane.implementer"] [data-action-id="split"]',
+    )!;
+
+    pointerClick(split);
+    split.click();
+
+    expect(onPaneAction).toHaveBeenNthCalledWith(
+      1,
+      {
+        kind: "action",
+        paneId: "pane.implementer",
+        actionId: "split",
+        commandId: "pane.split",
+      },
+      "mouse",
+    );
+    expect(onPaneAction).toHaveBeenNthCalledWith(
+      2,
+      {
+        kind: "action",
+        paneId: "pane.implementer",
+        actionId: "split",
+        commandId: "pane.split",
+      },
+      "keyboard",
+    );
   });
 
   it("keeps compact session identity and connection state accessible at 720px", () => {
@@ -256,10 +297,16 @@ describe("visible DOM application shell", () => {
     const experience = installApplicationStyles(root);
     const connection = root.querySelector<HTMLElement>(".status-strip__connection")!;
     const connectionIndicator = connection.querySelector<HTMLElement>("i")!;
-    const runningPane = root.querySelector<HTMLElement>('.agent-pane[data-state="running"]')!;
-    const runningIndicator = runningPane.querySelector<HTMLElement>("header i")!;
-    const recoveryPane = root.querySelector<HTMLElement>('.agent-pane[data-state="recovery"]')!;
-    const recoveryIndicator = recoveryPane.querySelector<HTMLElement>("header i")!;
+    const runningPane = root.querySelector<HTMLElement>(
+      '.web-pane-frame[data-pane-id="pane.implementer"]',
+    )!;
+    const runningIndicator = runningPane.querySelector<HTMLElement>('[data-item-kind="status"] i')!;
+    const recoveryPane = root.querySelector<HTMLElement>(
+      '.web-pane-frame[data-pane-id="pane.recovery"]',
+    )!;
+    const recoveryIndicator = recoveryPane.querySelector<HTMLElement>(
+      '[data-item-kind="status"] i',
+    )!;
 
     expect(getComputedStyle(connectionIndicator).backgroundColor).toBe(
       experience.variables[DOM_EXPERIENCE_VARIABLE.status.warning],
@@ -274,16 +321,16 @@ describe("visible DOM application shell", () => {
       experience.variables[DOM_EXPERIENCE_VARIABLE.surface.terminal],
     );
     expect(getComputedStyle(runningPane).borderColor).toBe(
-      experience.variables[DOM_EXPERIENCE_VARIABLE.border.default],
+      experience.variables[DOM_EXPERIENCE_VARIABLE.border.focused],
     );
     expect(getComputedStyle(recoveryIndicator).backgroundColor).toBe(
-      experience.variables[DOM_EXPERIENCE_VARIABLE.status.warning],
+      experience.variables[DOM_EXPERIENCE_VARIABLE.status.danger],
     );
     expect(getComputedStyle(recoveryPane).backgroundColor).toBe(
       experience.variables[DOM_EXPERIENCE_VARIABLE.surface.terminal],
     );
     expect(getComputedStyle(recoveryPane).borderColor).toBe(
-      experience.variables[DOM_EXPERIENCE_VARIABLE.border.default],
+      experience.variables[DOM_EXPERIENCE_VARIABLE.border.danger],
     );
   });
 
