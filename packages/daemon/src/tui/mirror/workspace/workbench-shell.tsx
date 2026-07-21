@@ -3,12 +3,27 @@ import type { JSX } from "@opentui/solid";
 import { OpenTuiWorkbenchDock } from "./workbench-dock-opentui.tsx";
 import type { SemanticThemeSnapshot } from "../theme.ts";
 import type { WorkbenchShellProjection } from "./workbench-shell.ts";
+import type {
+  WorkbenchDockHostActionId,
+  WorkbenchDockHostActivationSource,
+  WorkbenchDockHostMode,
+  WorkbenchDockHostTabId,
+} from "../../../ui/workbench-dock/presenter.tsx";
 
 export interface WorkbenchShellProps {
   theme: SemanticThemeSnapshot;
   projection: WorkbenchShellProjection;
   canvas: JSX.Element;
   dockBody: JSX.Element;
+  onDockTabActivate?: (
+    tabId: WorkbenchDockHostTabId,
+    source: WorkbenchDockHostActivationSource,
+  ) => void;
+  onDockActionActivate?: (
+    actionId: WorkbenchDockHostActionId,
+    nextMode: WorkbenchDockHostMode,
+    source: WorkbenchDockHostActivationSource,
+  ) => void;
 }
 
 /**
@@ -52,6 +67,8 @@ export function WorkbenchShell(props: WorkbenchShellProps) {
         theme={props.theme}
         projection={props.projection}
         body={props.dockBody}
+        onTabActivate={props.onDockTabActivate}
+        onActionActivate={props.onDockActionActivate}
       />
     </box>
   );

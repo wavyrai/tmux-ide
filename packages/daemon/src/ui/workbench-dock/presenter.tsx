@@ -196,7 +196,9 @@ export function WorkbenchDockPresenter(props: WorkbenchDockPresenterProps) {
                 tab={tab()}
                 tabStop={tab().id === tabStopId()}
                 onActivate={
-                  tab().disabled ? undefined : (source) => props.onTabActivate?.(tab().id, source)
+                  tab().disabled || !props.onTabActivate
+                    ? undefined
+                    : (source) => props.onTabActivate?.(tab().id, source)
                 }
               />
             )}
@@ -208,8 +210,10 @@ export function WorkbenchDockPresenter(props: WorkbenchDockPresenterProps) {
               <Action
                 action={action()}
                 activeTabId={projection().activeDockTab}
-                onActivate={(source) =>
-                  props.onActionActivate?.(action().id, action().nextMode, source)
+                onActivate={
+                  props.onActionActivate
+                    ? (source) => props.onActionActivate?.(action().id, action().nextMode, source)
+                    : undefined
                 }
               />
             )}

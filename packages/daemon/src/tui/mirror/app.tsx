@@ -7864,6 +7864,19 @@ try {
           <WorkbenchShell
             theme={semanticTheme()}
             projection={workbenchProjection()}
+            onDockTabActivate={(tabId, source) =>
+              executeSurfaceCommand(tabId, { kind: source, surface: "bottom-dock" })
+            }
+            onDockActionActivate={(_actionId, nextMode, source) => {
+              executeDockModeCommand(nextMode, { kind: source, surface: "bottom-dock" });
+              executeFocusCommand(
+                {
+                  kind: "zone",
+                  zone: nextMode === "collapsed" ? "dock-tabs" : "dock-body",
+                },
+                { kind: source, surface: "bottom-dock" },
+              );
+            }}
             canvas={
               <Show
                 when={canvasPanel() === "home"}

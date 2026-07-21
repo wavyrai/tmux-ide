@@ -187,6 +187,19 @@ async function renderProductionShell(
           <WorkbenchShell
             theme={theme}
             projection={workbench()}
+            onDockTabActivate={(tabId, source) =>
+              controller.openSurface(tabId, { kind: source, surface: "bottom-dock" })
+            }
+            onDockActionActivate={(_actionId, nextMode, source) => {
+              controller.setDockMode(nextMode, { kind: source, surface: "bottom-dock" });
+              controller.moveFocus(
+                {
+                  kind: "zone",
+                  zone: nextMode === "collapsed" ? "dock-tabs" : "dock-body",
+                },
+                { kind: source, surface: "bottom-dock" },
+              );
+            }}
             canvas={
               <SelectableRow
                 theme={theme}

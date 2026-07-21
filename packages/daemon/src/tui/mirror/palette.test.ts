@@ -117,12 +117,21 @@ describe("staticPaletteActions", () => {
     const actions = staticPaletteActions([], {
       views: [
         {
+          id: "terminals",
+          title: "Terminals",
+          panel: "terminals",
+          layout: null,
+          glyph: "❯",
+          order: 0,
+          shortcut: { key: "f2", label: "F2" },
+        },
+        {
           id: "term-a",
           title: "Agent A",
           panel: "terminals",
           layout: null,
           glyph: "❯",
-          order: 0,
+          order: 1,
           shortcut: { key: "f1", label: "F1" },
         },
         {
@@ -131,7 +140,7 @@ describe("staticPaletteActions", () => {
           panel: "terminals",
           layout: null,
           glyph: "❯",
-          order: 1,
+          order: 2,
           shortcut: { key: "f2", label: "F2" },
         },
       ],
@@ -144,6 +153,9 @@ describe("staticPaletteActions", () => {
       { kind: "view", viewId: "term-a", label: "Switch view: Agent A" },
       { kind: "view", viewId: "term-b", label: "Switch view: Agent B" },
     ]);
+    expect(actions.some((action) => action.kind === "view" && action.viewId === "terminals")).toBe(
+      false,
+    );
     expect(paletteActionKey(actions[7]!)).toBe("view:term-b");
   });
 });
