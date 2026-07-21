@@ -15,8 +15,13 @@ import type { RawData, WebSocket } from "ws";
 import { discoverSessions, buildOverviews, buildProjectDetail } from "./discovery.ts";
 import { projectRegistryEmitter } from "../lib/project-registry.ts";
 import { getDefaultWorkspaceRegistry } from "../lib/workspace-registry.ts";
-import type { ServerFrame, ClientFrame } from "../schemas/ws-events.ts";
-import type { Workspace } from "@tmux-ide/contracts";
+import {
+  DaemonEventClientFrameSchemaZ,
+  type DaemonEventClientFrame,
+  type DaemonEventServerFrame,
+  type DaemonSessionSnapshot,
+  type Workspace,
+} from "@tmux-ide/contracts";
 
 const WS_OPEN = 1;
 const KEEPALIVE_INTERVAL_MS = 25_000;
@@ -144,7 +149,7 @@ function rawDataToText(data: RawData | string): string {
  * Build the snapshot payload pushed to a client when they subscribe to a
  * session — the live project + pane state.
  */
-export function buildSessionSnapshot(sessionName: string): unknown | null {
+export function buildSessionSnapshot(sessionName: string): DaemonSessionSnapshot | null {
   const session = discoverSessions().find((s) => s.name === sessionName);
   if (!session) return null;
   return { project: buildProjectDetail(session) };
@@ -159,7 +164,7 @@ export function handleWsEventsConnection(socket: WebSocket | WsLike): void {
   const subscriptions = new Set<string>();
   let closed = false;
 
-  const send = (frame: ServerFrame): void => {
+  const send = (frame: DaemonEventServerFrame): void => {
     if (closed || ws.readyState !== WS_OPEN) return;
     try {
       ws.send(JSON.stringify(frame));
@@ -177,7 +182,7 @@ export function handleWsEventsConnection(socket: WebSocket | WsLike): void {
   };
 
   const broadcastInitOutputForClient = (jobId: string, chunk: string, done?: boolean): void => {
-    const frame: ServerFrame =
+    const frame: DaemonEventServerFrame =
       done === undefined
         ? { type: "init.output", jobId, chunk }
         : { type: "init.output", jobId, chunk, done };
@@ -197,7 +202,7 @@ export function handleWsEventsConnection(socket: WebSocket | WsLike): void {
   };
 
   const broadcastTerminalsChangedForClient = (sessionName: string): void => {
-    send({ type: "terminals.changed", sessionName } as ServerFrame);
+    send({ type: "terminals.changed", sessionName });
   };
 
   // Per-connection subscription to the current workspace-registry singleton.
@@ -236,7 +241,7 @@ export function handleWsEventsConnection(socket: WebSocket | WsLike): void {
     if (session) {
       const data = buildSessionSnapshot(sessionName);
       if (data) {
-        send({ type: "snapshot", sessionName, data: data as Record<string, unknown> });
+        send({ type: "snapshot", sessionName, data });
       }
     }
   };
@@ -259,16 +264,27 @@ export function handleWsEventsConnection(socket: WebSocket | WsLike): void {
 
   ws.on("message", (data) => {
     if (closed) return;
-    let parsed: ClientFrame | null = null;
+    let raw: unknown;
     try {
-      const obj = JSON.parse(rawDataToText(data));
-      if (obj && typeof obj === "object" && typeof (obj as { type?: unknown }).type === "string") {
-        parsed = obj as ClientFrame;
-      }
+      raw = JSON.parse(rawDataToText(data));
     } catch {
-      return; // ignore non-JSON / malformed frames
+      send({
+        type: "protocol.error",
+        code: "invalid-json",
+        message: "Client frame must be valid JSON.",
+      });
+      return;
     }
-    if (!parsed) return;
+    const result = DaemonEventClientFrameSchemaZ.safeParse(raw);
+    if (!result.success) {
+      send({
+        type: "protocol.error",
+        code: "invalid-frame",
+        message: "Client frame does not match the daemon event protocol.",
+      });
+      return;
+    }
+    const parsed: DaemonEventClientFrame = result.data;
 
     if (parsed.type === "subscribe") {
       for (const name of parsed.sessions) subscribe(name);
