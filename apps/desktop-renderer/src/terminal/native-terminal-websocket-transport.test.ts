@@ -24,7 +24,7 @@ import {
 const NOW = 1_000;
 const URL = "ws://127.0.0.1:6070/v1/terminal/attachments/redeem";
 const REQUEST_ID = "2a215cf2-547e-42a2-91c7-454df8e56121";
-const DAEMON_ID = "daemon-instance-1";
+const DAEMON_ID = "9bcf33b0-c837-4a94-b5e8-c0977f54464f";
 const TICKET = `ta1_${"a".repeat(43)}`;
 const TARGET = { workspaceName: "workspace.alpha", semanticPaneId: "pane.codex" };
 const REQUEST = {
@@ -38,7 +38,7 @@ function issueDescriptor(overrides: Record<string, unknown> = {}): unknown {
   return {
     protocolVersion: 1,
     webSocketUrl: URL,
-    webSocketProtocol: NATIVE_TERMINAL_WEBSOCKET_PROTOCOL,
+    subprotocol: NATIVE_TERMINAL_WEBSOCKET_PROTOCOL,
     redemptionTicket: TICKET,
     daemonInstanceId: DAEMON_ID,
     requestId: REQUEST_ID,
@@ -195,7 +195,7 @@ describe("NativeTerminalTransport direct WebSocket adapter", () => {
         webSocketUrl: `ws://secret@127.0.0.1:6070${URL.slice(URL.indexOf("/v1"))}`,
       }),
       issueDescriptor({ webSocketUrl: `${URL}?ticket=${TICKET}` }),
-      issueDescriptor({ webSocketProtocol: "other-terminal.v1" }),
+      issueDescriptor({ subprotocol: "other-terminal.v1" }),
       issueDescriptor({ expiresAt: NOW }),
       issueDescriptor({ tmuxPaneId: "%7" }),
     ]) {

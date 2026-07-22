@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { DaemonInstanceIdentitySchemaZ } from "./daemon-wire.ts";
 import { WorkspaceIdSchemaZ } from "./workspace-state.ts";
 
 /** Wire version for the semantic terminal-attachment boundary. */
@@ -151,3 +152,125 @@ export const TerminalAttachmentPlanResponseSchemaZ = z.discriminatedUnion("ok", 
     .strict(),
 ]);
 export type TerminalAttachmentPlanResponse = z.infer<typeof TerminalAttachmentPlanResponseSchemaZ>;
+
+/** Reviewed direct-stream facts shared by Electron main and the renderer. */
+export const TERMINAL_ATTACHMENT_REDEEM_PATH = "/v1/terminal/attachments/redeem" as const;
+export const TERMINAL_ATTACHMENT_WEBSOCKET_SUBPROTOCOL = "tmux-ide-terminal.v1" as const;
+export const TERMINAL_ATTACHMENT_MAX_ISSUE_DESCRIPTOR_LIFETIME_MS = 60_000;
+
+export const TerminalAttachmentRequestIdSchemaZ = z.uuid();
+export const TerminalAttachmentRedemptionTicketSchemaZ = z
+  .string()
+  .regex(/^ta1_[A-Za-z0-9_-]{43}$/u);
+
+/**
+ * A canonical, uncredentialed loopback WebSocket URL for the one reviewed
+ * redemption path. A port is mandatory so a daemon can never redirect the
+ * renderer to a browser default or non-loopback authority.
+ */
+export const TerminalAttachmentLoopbackWebSocketUrlSchemaZ = z
+  .url()
+  .max(2_048)
+  .refine((value) => {
+    const url = new URL(value);
+    return (
+      url.protocol === "ws:" &&
+      ["127.0.0.1", "localhost", "[::1]"].includes(url.hostname) &&
+      url.port.length > 0 &&
+      url.username.length === 0 &&
+      url.password.length === 0 &&
+      url.pathname === TERMINAL_ATTACHMENT_REDEEM_PATH &&
+      url.search.length === 0 &&
+      url.hash.length === 0 &&
+      url.toString() === value
+    );
+  }, "terminal URL must be the canonical uncredentialed loopback redemption endpoint");
+
+/**
+ * Renderer-visible one-use attachment capability. It contains no tmux id,
+ * command, cwd, argv, environment, owner token, or reusable daemon secret.
+ */
+export const TerminalAttachmentIssueDescriptorSchemaZ = z
+  .object({
+    protocolVersion: z.literal(TERMINAL_ATTACHMENT_PROTOCOL_VERSION),
+    webSocketUrl: TerminalAttachmentLoopbackWebSocketUrlSchemaZ,
+    subprotocol: z.literal(TERMINAL_ATTACHMENT_WEBSOCKET_SUBPROTOCOL),
+    redemptionTicket: TerminalAttachmentRedemptionTicketSchemaZ,
+    daemonInstanceId: DaemonInstanceIdentitySchemaZ.shape.instanceId,
+    requestId: TerminalAttachmentRequestIdSchemaZ,
+    expiresAt: z.number().int().positive(),
+    effectiveViewerMode: TerminalAttachmentViewerModeSchemaZ,
+  })
+  .strict();
+export type TerminalAttachmentIssueDescriptor = z.infer<
+  typeof TerminalAttachmentIssueDescriptorSchemaZ
+>;
+
+export const TerminalAttachmentIssueErrorCodeSchemaZ = z.enum([
+  "preview-only",
+  "renderer-origin-unavailable",
+  "daemon-unavailable",
+  "daemon-degraded",
+  "invalid-request",
+  "workspace-not-found",
+  "pane-not-found",
+  "pane-not-attachable",
+  "interactive-viewer-conflict",
+  "request-timeout",
+  "response-too-large",
+  "invalid-response",
+  "daemon-identity-mismatch",
+  "attachment-unavailable",
+  "request-failed",
+  "disposed",
+]);
+export type TerminalAttachmentIssueErrorCode = z.infer<
+  typeof TerminalAttachmentIssueErrorCodeSchemaZ
+>;
+
+const RendererSafeTerminalAttachmentReasonSchemaZ = z
+  .string()
+  .min(1)
+  .max(240)
+  .refine(
+    (reason) => !/(?:authorization|bearer\s+|owner.?token|redemptionticket|ta1_)/iu.test(reason),
+    "terminal attachment error reason must be credential-redacted",
+  );
+
+export const TerminalAttachmentIssueErrorSchemaZ = z
+  .object({
+    code: TerminalAttachmentIssueErrorCodeSchemaZ,
+    reason: RendererSafeTerminalAttachmentReasonSchemaZ,
+    retryable: z.boolean(),
+  })
+  .strict();
+export type TerminalAttachmentIssueError = z.infer<typeof TerminalAttachmentIssueErrorSchemaZ>;
+
+/** Strict renderer-facing result. Daemon response detail is never forwarded. */
+export const TerminalAttachmentIssueResultSchemaZ = z.discriminatedUnion("status", [
+  z
+    .object({
+      status: z.literal("issued"),
+      descriptor: TerminalAttachmentIssueDescriptorSchemaZ,
+    })
+    .strict(),
+  z
+    .object({
+      status: z.literal("error"),
+      error: TerminalAttachmentIssueErrorSchemaZ,
+    })
+    .strict(),
+]);
+export type TerminalAttachmentIssueResult = z.infer<typeof TerminalAttachmentIssueResultSchemaZ>;
+
+/** Private Electron-main-to-daemon envelope; the renderer authors none of it. */
+export const TerminalAttachmentIssueMutationRequestSchemaZ = z
+  .object({
+    requestId: TerminalAttachmentRequestIdSchemaZ,
+    expectedDaemonInstanceId: DaemonInstanceIdentitySchemaZ.shape.instanceId,
+    attachment: TerminalAttachRequestSchemaZ,
+  })
+  .strict();
+export type TerminalAttachmentIssueMutationRequest = z.infer<
+  typeof TerminalAttachmentIssueMutationRequestSchemaZ
+>;

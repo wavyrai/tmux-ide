@@ -8,7 +8,9 @@ import {
   type DesktopDaemonHostState,
   type DesktopDaemonListWorkspacesResult,
   type DesktopDaemonRefreshConnectionResult,
-  type WorkspacePaneCreateArguments,
+  type TerminalAttachmentIssueMutationRequest,
+  type TerminalAttachmentIssueResult,
+  type WorkspacePaneCreateMutationRequest,
   type WorkspacePaneCreateMutationResult,
 } from "@tmux-ide/contracts";
 
@@ -16,6 +18,7 @@ import {
   DaemonResourceBroker,
   daemonCapabilityError,
   rendererDaemonState,
+  terminalAttachmentIssueError,
   type BrokerSubscriptionResult,
 } from "./daemon-resource-broker.ts";
 import { runDaemonPreflight, type DaemonPreflight } from "./daemon-preflight.ts";
@@ -25,9 +28,12 @@ type ConnectedDaemonState = Extract<DesktopDaemonHostState, { status: "connected
 
 export interface DaemonResourceAuthority {
   createWorkspacePane(
-    intent: WorkspacePaneCreateArguments,
-    operationId: string,
+    request: WorkspacePaneCreateMutationRequest,
   ): Promise<WorkspacePaneCreateMutationResult>;
+  issueTerminalAttachment(
+    request: TerminalAttachmentIssueMutationRequest,
+    rendererOrigin: string,
+  ): Promise<TerminalAttachmentIssueResult>;
   listWorkspaces(): Promise<DesktopDaemonListWorkspacesResult>;
   fetchApplicationShell(workspaceName: string): Promise<DesktopDaemonFetchApplicationShellResult>;
   subscribe(
@@ -175,19 +181,46 @@ export class DaemonConnectionCoordinator implements DaemonConnectionAuthority {
   }
 
   async createWorkspacePane(
-    intent: WorkspacePaneCreateArguments,
-    operationId: string,
+    request: WorkspacePaneCreateMutationRequest,
   ): Promise<WorkspacePaneCreateMutationResult> {
     const broker = this.#broker;
     if (!broker || this.#disposed) throw new Error("daemon mutation authority is unavailable");
     const rendererGeneration = this.#rendererGeneration;
-    const result = await broker.createWorkspacePane(intent, operationId);
+    const result = await broker.createWorkspacePane(request);
     if (
       this.#broker !== broker ||
       rendererGeneration !== this.#rendererGeneration ||
       this.#disposed
     ) {
       throw new Error("daemon mutation authority changed during the request");
+    }
+    return result;
+  }
+
+  async issueTerminalAttachment(
+    request: TerminalAttachmentIssueMutationRequest,
+    rendererOrigin: string,
+  ): Promise<TerminalAttachmentIssueResult> {
+    const broker = this.#broker;
+    if (!broker || this.#disposed) {
+      return {
+        status: "error",
+        error: terminalAttachmentIssueError("daemon-unavailable"),
+      };
+    }
+    const rendererGeneration = this.#rendererGeneration;
+    const result = await broker.issueTerminalAttachment(request, rendererOrigin);
+    if (
+      this.#broker !== broker ||
+      rendererGeneration !== this.#rendererGeneration ||
+      this.#disposed
+    ) {
+      return {
+        status: "error",
+        error: terminalAttachmentIssueError(
+          this.#broker !== broker ? "daemon-identity-mismatch" : "disposed",
+        ),
+      };
     }
     return result;
   }

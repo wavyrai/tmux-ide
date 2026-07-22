@@ -1,6 +1,8 @@
 import {
   TERMINAL_ATTACHMENT_PROTOCOL_VERSION,
+  TERMINAL_ATTACHMENT_WEBSOCKET_SUBPROTOCOL,
   TerminalAttachRequestSchemaZ,
+  TerminalAttachmentIssueDescriptorSchemaZ,
   TerminalAttachmentViewerModeSchemaZ,
   TerminalAttachmentViewportSchemaZ,
   type TerminalAttachRequest,
@@ -17,7 +19,7 @@ import type {
   NativeTerminalTransportError,
 } from "./native-terminal-transport.ts";
 
-export const NATIVE_TERMINAL_WEBSOCKET_PROTOCOL = "tmux-ide-terminal.v1";
+export const NATIVE_TERMINAL_WEBSOCKET_PROTOCOL = TERMINAL_ATTACHMENT_WEBSOCKET_SUBPROTOCOL;
 export const NATIVE_TERMINAL_MAX_CONTROL_BYTES = 4 * 1024;
 export const NATIVE_TERMINAL_MAX_OUTPUT_FRAME_BYTES = 256 * 1024;
 export const NATIVE_TERMINAL_MAX_QUEUED_EVENT_BYTES = 1024 * 1024;
@@ -32,7 +34,6 @@ export const NATIVE_TERMINAL_MAX_INBOUND_CONTROL_FRAMES_PER_WINDOW = 256;
 export const NATIVE_TERMINAL_MAX_CONNECTION_LIFETIME_MS = 24 * 60 * 60 * 1_000;
 export const NATIVE_TERMINAL_RESIZE_ACK_TIMEOUT_MS = 5_000;
 
-const REDEEM_PATH = "/v1/terminal/attachments/redeem";
 const WS_CONNECTING = 0;
 const WS_OPEN = 1;
 const WS_CLOSING = 2;
@@ -197,67 +198,26 @@ function boundedControlByteLength(value: string): number | null {
   return byteLength <= NATIVE_TERMINAL_MAX_CONTROL_BYTES ? byteLength : null;
 }
 
-function validateLoopbackWebSocketUrl(value: unknown): string | null {
-  if (typeof value !== "string" || value.length === 0 || value.length > 2_048) return null;
-  let parsed: URL;
-  try {
-    parsed = new URL(value);
-  } catch {
-    return null;
-  }
-  if (
-    (parsed.protocol !== "ws:" && parsed.protocol !== "wss:") ||
-    !["127.0.0.1", "localhost", "[::1]"].includes(parsed.hostname) ||
-    parsed.username.length > 0 ||
-    parsed.password.length > 0 ||
-    parsed.pathname !== REDEEM_PATH ||
-    parsed.search.length > 0 ||
-    parsed.hash.length > 0
-  ) {
-    return null;
-  }
-  return parsed.toString();
-}
-
 function validateIssueDescriptor(
   value: unknown,
   request: TerminalAttachRequest,
   now: number,
 ): SafeIssueDescriptor | null {
-  if (!isRecord(value)) return null;
+  const parsed = TerminalAttachmentIssueDescriptorSchemaZ.safeParse(value);
   if (
-    !hasExactKeys(value, [
-      "daemonInstanceId",
-      "effectiveViewerMode",
-      "expiresAt",
-      "protocolVersion",
-      "redemptionTicket",
-      "requestId",
-      "webSocketProtocol",
-      "webSocketUrl",
-    ]) ||
-    value.protocolVersion !== TERMINAL_ATTACHMENT_PROTOCOL_VERSION ||
-    value.webSocketProtocol !== NATIVE_TERMINAL_WEBSOCKET_PROTOCOL ||
-    !safeIdentity(value.daemonInstanceId, 4_096) ||
-    typeof value.requestId !== "string" ||
-    !RequestIdPattern.test(value.requestId) ||
-    !safeInteger(value.expiresAt) ||
-    value.expiresAt <= now ||
-    value.expiresAt - now > NATIVE_TERMINAL_MAX_DESCRIPTOR_LIFETIME_MS ||
-    !safeIdentity(value.redemptionTicket, 4_096)
-  ) {
+    !parsed.success ||
+    parsed.data.expiresAt <= now ||
+    parsed.data.expiresAt - now > NATIVE_TERMINAL_MAX_DESCRIPTOR_LIFETIME_MS
+  )
     return null;
-  }
-  const webSocketUrl = validateLoopbackWebSocketUrl(value.webSocketUrl);
-  const viewerMode = TerminalAttachmentViewerModeSchemaZ.safeParse(value.effectiveViewerMode);
-  if (!webSocketUrl || !viewerMode.success) return null;
+  const descriptor = parsed.data;
 
   const redemptionFrame = JSON.stringify({
     type: "redeem",
     protocolVersion: TERMINAL_ATTACHMENT_PROTOCOL_VERSION,
-    ticket: value.redemptionTicket,
-    requestId: value.requestId,
-    daemonInstanceId: value.daemonInstanceId,
+    ticket: descriptor.redemptionTicket,
+    requestId: descriptor.requestId,
+    daemonInstanceId: descriptor.daemonInstanceId,
   });
   if (boundedControlByteLength(redemptionFrame) === null) return null;
 
@@ -265,12 +225,12 @@ function validateIssueDescriptor(
   // the renderer never infers authority from the requested mode.
   void request;
   return {
-    webSocketUrl,
+    webSocketUrl: descriptor.webSocketUrl,
     webSocketProtocol: NATIVE_TERMINAL_WEBSOCKET_PROTOCOL,
-    daemonInstanceId: value.daemonInstanceId,
-    requestId: value.requestId,
-    expiresAt: value.expiresAt,
-    effectiveViewerMode: viewerMode.data,
+    daemonInstanceId: descriptor.daemonInstanceId,
+    requestId: descriptor.requestId,
+    expiresAt: descriptor.expiresAt,
+    effectiveViewerMode: descriptor.effectiveViewerMode,
     redemptionFrame,
   };
 }

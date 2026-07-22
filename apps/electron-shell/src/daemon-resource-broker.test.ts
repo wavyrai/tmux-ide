@@ -114,10 +114,11 @@ describe("Electron main daemon resource broker", () => {
     });
 
     await expect(
-      broker.createWorkspacePane(
-        { kind: "terminal", workspaceName: "product workspace" },
+      broker.createWorkspacePane({
         operationId,
-      ),
+        expectedDaemonInstanceId: IDENTITY.instanceId,
+        intent: { kind: "terminal", workspaceName: "product workspace" },
+      }),
     ).resolves.toMatchObject({ operationId, outcome: "replayed" });
     expect(requests).toHaveLength(2);
     for (const request of requests) {
@@ -132,6 +133,145 @@ describe("Electron main daemon resource broker", () => {
         workspaceName: "product workspace",
       });
     }
+  });
+
+  it("issues a bounded terminal attachment against only the exact owner-authorized endpoint", async () => {
+    const requests: Array<{ url: string; init?: RequestInit }> = [];
+    const now = 1_784_662_800_000;
+    const requestId = "10000000-0000-4000-8000-000000000001";
+    const descriptor = {
+      protocolVersion: 1 as const,
+      webSocketUrl: "ws://127.0.0.1:6060/v1/terminal/attachments/redeem",
+      subprotocol: "tmux-ide-terminal.v1" as const,
+      redemptionTicket: `ta1_${"A".repeat(43)}`,
+      daemonInstanceId: IDENTITY.instanceId,
+      requestId,
+      expiresAt: now + 30_000,
+      effectiveViewerMode: "interactive" as const,
+    };
+    const broker = new DaemonResourceBroker({
+      daemon: CONNECTED,
+      ownerToken: "owner-only-token",
+      now: () => now,
+      fetch: async (input, init) => {
+        requests.push({ url: input.toString(), init });
+        return json({ status: "issued", descriptor });
+      },
+    });
+    const mutation = {
+      requestId,
+      expectedDaemonInstanceId: IDENTITY.instanceId,
+      attachment: {
+        protocolVersion: 1 as const,
+        target: { workspaceName: "product", semanticPaneId: "pane.worker" },
+        viewerMode: "interactive" as const,
+        viewport: { cols: 120, rows: 40 },
+      },
+    };
+
+    await expect(
+      broker.issueTerminalAttachment(mutation, "http://127.0.0.1:5173"),
+    ).resolves.toEqual({ status: "issued", descriptor });
+    expect(requests).toHaveLength(1);
+    const sent = requests[0]!;
+    expect(sent.url).toBe("http://127.0.0.1:6060/api/v1/terminal/attachments/issue");
+    expect(sent.init).toMatchObject({
+      method: "POST",
+      credentials: "omit",
+      redirect: "error",
+      cache: "no-store",
+    });
+    const headers = new Headers(sent.init?.headers);
+    expect(headers.get("authorization")).toBe("Bearer owner-only-token");
+    expect(headers.get("origin")).toBe("http://127.0.0.1:5173");
+    expect(headers.get("x-tmux-ide-request-id")).toBe(requestId);
+    expect(headers.get("x-tmux-ide-expected-daemon-instance-id")).toBe(IDENTITY.instanceId);
+    expect(JSON.parse(String(sent.init?.body))).toEqual(mutation);
+    expect(JSON.stringify(sent)).not.toContain(descriptor.redemptionTicket);
+  });
+
+  it("does not accept a remote capability in place of the canonical owner secret", async () => {
+    const fetch = vi.fn();
+    const broker = new DaemonResourceBroker({
+      daemon: CONNECTED,
+      fetch,
+      // A renderer/remote bearer is not a constructor capability and is ignored.
+      remoteToken: "remote-access-token",
+    } as ConstructorParameters<typeof DaemonResourceBroker>[0] & { remoteToken: string });
+    await expect(
+      broker.issueTerminalAttachment(
+        {
+          requestId: "10000000-0000-4000-8000-000000000001",
+          expectedDaemonInstanceId: IDENTITY.instanceId,
+          attachment: {
+            protocolVersion: 1,
+            target: { workspaceName: "product", semanticPaneId: "pane.worker" },
+            viewerMode: "interactive",
+            viewport: { cols: 120, rows: 40 },
+          },
+        },
+        "http://127.0.0.1:5173",
+      ),
+    ).resolves.toMatchObject({ status: "error", error: { code: "daemon-unavailable" } });
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("redacts an invalid daemon issue response instead of reflecting credential text", async () => {
+    const broker = new DaemonResourceBroker({
+      daemon: CONNECTED,
+      ownerToken: "owner-only-token",
+      fetch: async () =>
+        json({
+          status: "error",
+          error: {
+            code: "request-failed",
+            reason: "Authorization: Bearer leaked-owner-token",
+            retryable: false,
+          },
+        }),
+    });
+    const result = await broker.issueTerminalAttachment(
+      {
+        requestId: "10000000-0000-4000-8000-000000000001",
+        expectedDaemonInstanceId: IDENTITY.instanceId,
+        attachment: {
+          protocolVersion: 1,
+          target: { workspaceName: "product", semanticPaneId: "pane.worker" },
+          viewerMode: "interactive",
+          viewport: { cols: 120, rows: 40 },
+        },
+      },
+      "http://127.0.0.1:5173",
+    );
+    expect(result).toMatchObject({ status: "error", error: { code: "invalid-response" } });
+    expect(JSON.stringify(result)).not.toMatch(/bearer|owner.?token|authorization/iu);
+  });
+
+  it("applies a narrow response bound to terminal attachment issuance", async () => {
+    const broker = new DaemonResourceBroker({
+      daemon: CONNECTED,
+      ownerToken: "owner-only-token",
+      fetch: async () =>
+        json(
+          { status: "error", error: { code: "request-failed", reason: "ignored" } },
+          { headers: { "content-length": String(16 * 1024 + 1) } },
+        ),
+    });
+    await expect(
+      broker.issueTerminalAttachment(
+        {
+          requestId: "10000000-0000-4000-8000-000000000001",
+          expectedDaemonInstanceId: IDENTITY.instanceId,
+          attachment: {
+            protocolVersion: 1,
+            target: { workspaceName: "product", semanticPaneId: "pane.worker" },
+            viewerMode: "interactive",
+            viewport: { cols: 120, rows: 40 },
+          },
+        },
+        "http://127.0.0.1:5173",
+      ),
+    ).resolves.toMatchObject({ status: "error", error: { code: "response-too-large" } });
   });
 
   it("keeps one physical socket for an empty catalog-only subscription", async () => {

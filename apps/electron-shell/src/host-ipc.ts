@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type { BrowserWindow, IpcMain, IpcMainInvokeEvent } from "electron";
 import {
   DESKTOP_HOST_API_VERSION,
@@ -8,6 +9,14 @@ import {
   DesktopDaemonSubscriptionIdSchemaZ,
   DesktopDaemonSubscribeWireResultSchemaZ,
   DesktopHostBootstrapSchemaZ,
+  TerminalAttachRequestSchemaZ,
+  TerminalAttachmentIssueMutationRequestSchemaZ,
+  TerminalAttachmentIssueResultSchemaZ,
+  WorkspacePaneCreateHostResultSchemaZ,
+  WorkspacePaneCreateInvocationSchemaZ,
+  WorkspacePaneCreateMutationRequestSchemaZ,
+  type DaemonInstanceIdentity,
+  type DesktopDaemonCapabilityState,
   type DesktopHostBootstrap,
   type DesktopPlatform,
   type DesktopThemeState,
@@ -15,7 +24,7 @@ import {
 } from "@tmux-ide/contracts";
 
 import type { DaemonConnectionAuthority } from "./daemon-connection-coordinator.ts";
-import { daemonCapabilityError } from "./daemon-resource-broker.ts";
+import { daemonCapabilityError, terminalAttachmentIssueError } from "./daemon-resource-broker.ts";
 import { HOST_INVOKE_CHANNELS, HOST_IPC } from "./ipc-channels.ts";
 
 export interface HostIpcDependencies {
@@ -54,6 +63,27 @@ export function snapshotWindow(window: BrowserWindow | null): DesktopWindowState
     fullscreen: window?.isFullScreen() ?? false,
     focused: window?.isFocused() ?? false,
   };
+}
+
+function sameDaemonIdentity(left: DaemonInstanceIdentity, right: DaemonInstanceIdentity): boolean {
+  return (
+    left.protocolVersion === right.protocolVersion &&
+    left.productVersion === right.productVersion &&
+    left.instanceId === right.instanceId &&
+    left.startedAt === right.startedAt
+  );
+}
+
+function disconnectedCapabilityError(state: DesktopDaemonCapabilityState) {
+  return daemonCapabilityError(
+    state.status === "degraded" ? "daemon-degraded" : "daemon-unavailable",
+  );
+}
+
+function disconnectedTerminalError(state: DesktopDaemonCapabilityState) {
+  return terminalAttachmentIssueError(
+    state.status === "degraded" ? "daemon-degraded" : "daemon-unavailable",
+  );
 }
 
 function trustedWindow(
@@ -246,6 +276,165 @@ export function registerHostIpc(deps: HostIpcDependencies): RegisteredHostIpc {
       daemonSubscriptions.clear();
     }
     return result;
+  });
+
+  handle(HOST_IPC.daemonCreateWorkspacePane, async (event, ...args) => {
+    const authority = trustedRendererAuthority(event);
+    if (args.length !== 1) {
+      return WorkspacePaneCreateHostResultSchemaZ.parse({
+        status: "error",
+        error: daemonCapabilityError("invalid-request"),
+      });
+    }
+    const invocation = WorkspacePaneCreateInvocationSchemaZ.safeParse(args[0]);
+    if (!invocation.success) {
+      return WorkspacePaneCreateHostResultSchemaZ.parse({
+        status: "error",
+        error: daemonCapabilityError("invalid-request"),
+      });
+    }
+    const before = deps.daemonResources.state();
+    if (before.status !== "connected") {
+      return WorkspacePaneCreateHostResultSchemaZ.parse({
+        status: "error",
+        error: disconnectedCapabilityError(before),
+      });
+    }
+    const request = WorkspacePaneCreateMutationRequestSchemaZ.parse({
+      operationId: randomUUID(),
+      expectedDaemonInstanceId: before.identity.instanceId,
+      intent: invocation.data.args,
+    });
+    try {
+      const result = await deps.daemonResources.createWorkspacePane(request);
+      try {
+        assertRendererAuthority(event, authority.generation);
+      } catch {
+        return WorkspacePaneCreateHostResultSchemaZ.parse({
+          status: "error",
+          error: daemonCapabilityError("disposed"),
+        });
+      }
+      const after = deps.daemonResources.state();
+      if (
+        after.status !== "connected" ||
+        !sameDaemonIdentity(before.identity, after.identity) ||
+        result.operationId !== request.operationId ||
+        result.daemonInstanceId !== request.expectedDaemonInstanceId
+      ) {
+        return WorkspacePaneCreateHostResultSchemaZ.parse({
+          status: "error",
+          error: daemonCapabilityError("daemon-identity-mismatch"),
+        });
+      }
+      return WorkspacePaneCreateHostResultSchemaZ.parse({ status: "ok", result });
+    } catch {
+      try {
+        assertRendererAuthority(event, authority.generation);
+      } catch {
+        return WorkspacePaneCreateHostResultSchemaZ.parse({
+          status: "error",
+          error: daemonCapabilityError("disposed"),
+        });
+      }
+      return WorkspacePaneCreateHostResultSchemaZ.parse({
+        status: "error",
+        error: daemonCapabilityError("request-failed"),
+      });
+    }
+  });
+
+  handle(HOST_IPC.daemonIssueTerminalAttachment, async (event, ...args) => {
+    const authority = trustedRendererAuthority(event);
+    if (args.length !== 1) {
+      return TerminalAttachmentIssueResultSchemaZ.parse({
+        status: "error",
+        error: terminalAttachmentIssueError("invalid-request"),
+      });
+    }
+    const attachment = TerminalAttachRequestSchemaZ.safeParse(args[0]);
+    if (!attachment.success) {
+      return TerminalAttachmentIssueResultSchemaZ.parse({
+        status: "error",
+        error: terminalAttachmentIssueError("invalid-request"),
+      });
+    }
+    if (deps.trustedRendererLocation.kind !== "development-origin") {
+      return TerminalAttachmentIssueResultSchemaZ.parse({
+        status: "error",
+        error: terminalAttachmentIssueError("renderer-origin-unavailable"),
+      });
+    }
+    const rendererFrameUrl = authority.mainFrame?.url;
+    if (!rendererFrameUrl) {
+      return TerminalAttachmentIssueResultSchemaZ.parse({
+        status: "error",
+        error: terminalAttachmentIssueError("renderer-origin-unavailable"),
+      });
+    }
+    const rendererOrigin = new URL(rendererFrameUrl).origin;
+    if (
+      rendererOrigin === "null" ||
+      rendererOrigin !== deps.trustedRendererLocation.origin ||
+      !["http:", "https:"].includes(new URL(rendererOrigin).protocol)
+    ) {
+      return TerminalAttachmentIssueResultSchemaZ.parse({
+        status: "error",
+        error: terminalAttachmentIssueError("renderer-origin-unavailable"),
+      });
+    }
+    const before = deps.daemonResources.state();
+    if (before.status !== "connected") {
+      return TerminalAttachmentIssueResultSchemaZ.parse({
+        status: "error",
+        error: disconnectedTerminalError(before),
+      });
+    }
+    const request = TerminalAttachmentIssueMutationRequestSchemaZ.parse({
+      requestId: randomUUID(),
+      expectedDaemonInstanceId: before.identity.instanceId,
+      attachment: attachment.data,
+    });
+    try {
+      const result = TerminalAttachmentIssueResultSchemaZ.parse(
+        await deps.daemonResources.issueTerminalAttachment(request, rendererOrigin),
+      );
+      try {
+        assertRendererAuthority(event, authority.generation);
+      } catch {
+        return TerminalAttachmentIssueResultSchemaZ.parse({
+          status: "error",
+          error: terminalAttachmentIssueError("disposed"),
+        });
+      }
+      const after = deps.daemonResources.state();
+      if (
+        after.status !== "connected" ||
+        !sameDaemonIdentity(before.identity, after.identity) ||
+        (result.status === "issued" &&
+          (result.descriptor.requestId !== request.requestId ||
+            result.descriptor.daemonInstanceId !== request.expectedDaemonInstanceId))
+      ) {
+        return TerminalAttachmentIssueResultSchemaZ.parse({
+          status: "error",
+          error: terminalAttachmentIssueError("daemon-identity-mismatch"),
+        });
+      }
+      return result;
+    } catch {
+      try {
+        assertRendererAuthority(event, authority.generation);
+      } catch {
+        return TerminalAttachmentIssueResultSchemaZ.parse({
+          status: "error",
+          error: terminalAttachmentIssueError("disposed"),
+        });
+      }
+      return TerminalAttachmentIssueResultSchemaZ.parse({
+        status: "error",
+        error: terminalAttachmentIssueError("request-failed"),
+      });
+    }
   });
 
   handle(HOST_IPC.daemonListWorkspaces, async (event, ...args) => {

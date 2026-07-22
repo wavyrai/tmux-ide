@@ -7,7 +7,10 @@ import {
   type CommandDescriptor,
   type CommandSource,
 } from "./commands.ts";
-import { DesktopWorkspaceNameSchemaZ } from "./desktop-host.ts";
+import {
+  DesktopDaemonCapabilityErrorSchemaZ,
+  DesktopWorkspaceNameSchemaZ,
+} from "./desktop-host.ts";
 import { WorkspaceAgentRoleSchemaZ } from "./workspace-config.ts";
 
 export const WORKSPACE_PANE_CREATE_COMMAND_ID = "workspace.pane.create" as const;
@@ -149,6 +152,13 @@ export const WorkspacePaneCreateMutationResultSchemaZ = z
 export type WorkspacePaneCreateMutationResult = z.infer<
   typeof WorkspacePaneCreateMutationResultSchemaZ
 >;
+
+/** Strict renderer-visible host result for the semantic creation command. */
+export const WorkspacePaneCreateHostResultSchemaZ = z.discriminatedUnion("status", [
+  z.object({ status: z.literal("ok"), result: WorkspacePaneCreateMutationResultSchemaZ }).strict(),
+  z.object({ status: z.literal("error"), error: DesktopDaemonCapabilityErrorSchemaZ }).strict(),
+]);
+export type WorkspacePaneCreateHostResult = z.infer<typeof WorkspacePaneCreateHostResultSchemaZ>;
 
 function deepFreeze<Value>(value: Value): Value {
   if (value !== null && typeof value === "object" && !Object.isFrozen(value)) {

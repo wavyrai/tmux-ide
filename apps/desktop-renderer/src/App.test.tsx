@@ -166,6 +166,18 @@ function createHostHarness() {
       },
     },
     daemon: {
+      createWorkspacePane: vi.fn(async () => ({
+        status: "error" as const,
+        error: { code: "preview-only" as const, reason: "fixture only" },
+      })),
+      issueTerminalAttachment: vi.fn(async () => ({
+        status: "error" as const,
+        error: {
+          code: "preview-only" as const,
+          reason: "fixture only",
+          retryable: false,
+        },
+      })),
       refreshConnection: vi.fn(
         async (): Promise<DesktopDaemonRefreshConnectionResult> => ({
           outcome: "unchanged",

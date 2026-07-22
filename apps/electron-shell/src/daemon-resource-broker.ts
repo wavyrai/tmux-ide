@@ -9,8 +9,17 @@ import {
   DesktopDaemonHostStateSchemaZ,
   DesktopDaemonListWorkspacesResultSchemaZ,
   DesktopWorkspaceNameSchemaZ,
+  TERMINAL_ATTACHMENT_MAX_ISSUE_DESCRIPTOR_LIFETIME_MS,
+  TerminalAttachmentIssueDescriptorSchemaZ,
+  TerminalAttachmentIssueMutationRequestSchemaZ,
+  TerminalAttachmentIssueResultSchemaZ,
+  type TerminalAttachmentIssueError,
+  type TerminalAttachmentIssueErrorCode,
+  type TerminalAttachmentIssueMutationRequest,
+  type TerminalAttachmentIssueResult,
   WorkspaceCatalogResourceV1SchemaZ,
   WorkspacePaneCreateArgumentsSchemaZ,
+  WorkspacePaneCreateMutationRequestSchemaZ,
   WorkspacePaneCreateMutationResultSchemaZ,
   type DaemonEventServerFrame,
   type DaemonInstanceIdentity,
@@ -20,13 +29,14 @@ import {
   type DesktopDaemonFetchApplicationShellResult,
   type DesktopDaemonHostState,
   type DesktopDaemonListWorkspacesResult,
-  type WorkspacePaneCreateArguments,
+  type WorkspacePaneCreateMutationRequest,
   type WorkspacePaneCreateMutationResult,
 } from "@tmux-ide/contracts";
 import { z } from "zod";
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 3_000;
 const DEFAULT_MAX_RESPONSE_BYTES = 1024 * 1024;
+const MAX_TERMINAL_ATTACHMENT_ISSUE_RESPONSE_BYTES = 16 * 1024;
 const DEFAULT_MAX_EVENT_BYTES = 512 * 1024;
 const DEFAULT_EVENT_HANDSHAKE_TIMEOUT_MS = 3_000;
 const DEFAULT_EVENT_RECONNECT_INITIAL_DELAY_MS = 250;
@@ -73,6 +83,7 @@ export interface DaemonResourceBrokerDependencies {
   readonly eventReconnectInitialDelayMs?: number;
   readonly eventReconnectMaximumDelayMs?: number;
   readonly eventReconnectMaximumAttempts?: number;
+  readonly now?: () => number;
   /** Owner-only canonical capability retained in Electron main. */
   readonly ownerToken?: string | null;
 }
@@ -112,6 +123,65 @@ const ERROR_REASON: Record<DesktopDaemonCapabilityErrorCode, string> = {
   "protocol-error": "The daemon event protocol rejected the subscription.",
   disposed: "The desktop daemon resource broker was disposed.",
 };
+
+const TERMINAL_ISSUE_ERROR: Record<
+  TerminalAttachmentIssueErrorCode,
+  { readonly reason: string; readonly retryable: boolean }
+> = {
+  "preview-only": {
+    reason: "Terminal attachments are unavailable in browser preview.",
+    retryable: false,
+  },
+  "renderer-origin-unavailable": {
+    reason: "The current renderer location cannot authorize terminal attachment redemption.",
+    retryable: false,
+  },
+  "daemon-unavailable": { reason: "The canonical daemon is unavailable.", retryable: true },
+  "daemon-degraded": {
+    reason: "The canonical daemon could not be trusted.",
+    retryable: true,
+  },
+  "invalid-request": { reason: "The terminal attachment request was invalid.", retryable: false },
+  "workspace-not-found": {
+    reason: "The requested workspace is unavailable.",
+    retryable: false,
+  },
+  "pane-not-found": { reason: "The requested terminal is unavailable.", retryable: false },
+  "pane-not-attachable": {
+    reason: "The requested pane cannot be attached as a terminal.",
+    retryable: false,
+  },
+  "interactive-viewer-conflict": {
+    reason: "The terminal already has an interactive viewer.",
+    retryable: true,
+  },
+  "request-timeout": { reason: "The terminal attachment request timed out.", retryable: true },
+  "response-too-large": {
+    reason: "The terminal attachment response exceeded its size limit.",
+    retryable: false,
+  },
+  "invalid-response": {
+    reason: "The daemon returned an invalid terminal attachment response.",
+    retryable: false,
+  },
+  "daemon-identity-mismatch": {
+    reason: "The daemon generation changed during terminal attachment issuance.",
+    retryable: true,
+  },
+  "attachment-unavailable": {
+    reason: "The terminal attachment is unavailable.",
+    retryable: true,
+  },
+  "request-failed": { reason: "The terminal attachment request failed.", retryable: true },
+  disposed: { reason: "The terminal attachment authority was retired.", retryable: true },
+};
+
+export function terminalAttachmentIssueError(
+  code: TerminalAttachmentIssueErrorCode,
+  retryable = TERMINAL_ISSUE_ERROR[code].retryable,
+): TerminalAttachmentIssueError {
+  return { code, reason: TERMINAL_ISSUE_ERROR[code].reason, retryable };
+}
 
 export function daemonCapabilityError(
   code: DesktopDaemonCapabilityErrorCode,
@@ -224,6 +294,7 @@ export class DaemonResourceBroker {
   readonly #eventReconnectInitialDelayMs: number;
   readonly #eventReconnectMaximumDelayMs: number;
   readonly #eventReconnectMaximumAttempts: number;
+  readonly #now: () => number;
   readonly #ownerToken: string | null;
   readonly #controllers = new Set<AbortController>();
   readonly #subscriptions = new Map<number, BrokerSubscription>();
@@ -286,32 +357,34 @@ export class DaemonResourceBroker {
       0,
       10,
     );
+    this.#now = dependencies.now ?? Date.now;
     this.#ownerToken = dependencies.ownerToken ?? null;
   }
 
   async createWorkspacePane(
-    intent: WorkspacePaneCreateArguments,
-    operationId: string,
+    request: WorkspacePaneCreateMutationRequest,
   ): Promise<WorkspacePaneCreateMutationResult> {
     if (this.#daemon.status !== "connected" || !this.#ownerToken) {
       throw new BrokerFailure(daemonCapabilityError("daemon-unavailable"));
     }
-    const parsedIntent = WorkspacePaneCreateArgumentsSchemaZ.parse(intent);
-    const parsedOperationId = z.uuid().parse(operationId);
+    const parsed = WorkspacePaneCreateMutationRequestSchemaZ.parse(request);
+    if (parsed.expectedDaemonInstanceId !== this.#daemon.descriptor.instanceId) {
+      throw new BrokerFailure(daemonCapabilityError("daemon-identity-mismatch"));
+    }
     let lastError: unknown;
     for (let attempt = 0; attempt < 2; attempt += 1) {
       try {
         const raw = await this.#mutationJson(
           "/api/v2/action/workspace.pane.create",
-          parsedIntent,
-          parsedOperationId,
+          WorkspacePaneCreateArgumentsSchemaZ.parse(parsed.intent),
+          { "X-Tmux-Ide-Operation-Id": parsed.operationId },
         );
         const envelope = z
           .object({ ok: z.literal(true), result: WorkspacePaneCreateMutationResultSchemaZ })
           .strict()
           .parse(raw);
         if (
-          envelope.result.operationId !== parsedOperationId ||
+          envelope.result.operationId !== parsed.operationId ||
           envelope.result.daemonInstanceId !== this.#daemon.descriptor.instanceId
         ) {
           throw new BrokerFailure(daemonCapabilityError("daemon-identity-mismatch"));
@@ -322,6 +395,72 @@ export class DaemonResourceBroker {
       }
     }
     throw lastError;
+  }
+
+  async issueTerminalAttachment(
+    request: TerminalAttachmentIssueMutationRequest,
+    rendererOrigin: string,
+  ): Promise<TerminalAttachmentIssueResult> {
+    if (this.#daemon.status !== "connected" || !this.#ownerToken) {
+      return {
+        status: "error",
+        error: terminalAttachmentIssueError("daemon-unavailable"),
+      };
+    }
+    try {
+      const parsed = TerminalAttachmentIssueMutationRequestSchemaZ.parse(request);
+      if (parsed.expectedDaemonInstanceId !== this.#daemon.descriptor.instanceId) {
+        throw new BrokerFailure(daemonCapabilityError("daemon-identity-mismatch"));
+      }
+      const origin = this.#canonicalRendererOrigin(rendererOrigin);
+      const raw = await this.#mutationJson(
+        "/api/v1/terminal/attachments/issue",
+        parsed,
+        {
+          Origin: origin,
+          "X-Tmux-Ide-Request-Id": parsed.requestId,
+          "X-Tmux-Ide-Expected-Daemon-Instance-Id": parsed.expectedDaemonInstanceId,
+        },
+        Math.min(this.#maxResponseBytes, MAX_TERMINAL_ATTACHMENT_ISSUE_RESPONSE_BYTES),
+      );
+      const parsedResult = TerminalAttachmentIssueResultSchemaZ.safeParse(raw);
+      if (!parsedResult.success) {
+        throw new BrokerFailure(daemonCapabilityError("invalid-response"));
+      }
+      const result = parsedResult.data;
+      if (result.status === "error") {
+        return {
+          status: "error",
+          error: terminalAttachmentIssueError(result.error.code, result.error.retryable),
+        };
+      }
+      const descriptor = TerminalAttachmentIssueDescriptorSchemaZ.parse(result.descriptor);
+      const remainingLifetime = descriptor.expiresAt - this.#now();
+      if (
+        descriptor.daemonInstanceId !== this.#daemon.descriptor.instanceId ||
+        descriptor.requestId !== parsed.requestId ||
+        descriptor.effectiveViewerMode !== parsed.attachment.viewerMode ||
+        remainingLifetime <= 0 ||
+        remainingLifetime > TERMINAL_ATTACHMENT_MAX_ISSUE_DESCRIPTOR_LIFETIME_MS
+      ) {
+        throw new BrokerFailure(daemonCapabilityError("daemon-identity-mismatch"));
+      }
+      return { status: "issued", descriptor };
+    } catch (error) {
+      const bounded = this.#boundedError(error);
+      const code: TerminalAttachmentIssueErrorCode =
+        bounded.code === "request-timeout" ||
+        bounded.code === "response-too-large" ||
+        bounded.code === "invalid-response" ||
+        bounded.code === "daemon-identity-mismatch" ||
+        bounded.code === "disposed" ||
+        bounded.code === "daemon-unavailable" ||
+        bounded.code === "daemon-degraded" ||
+        bounded.code === "invalid-request"
+          ? bounded.code
+          : "request-failed";
+      return { status: "error", error: terminalAttachmentIssueError(code) };
+    }
   }
 
   async listWorkspaces(): Promise<DesktopDaemonListWorkspacesResult> {
@@ -545,7 +684,36 @@ export class DaemonResourceBroker {
     }
   }
 
-  async #mutationJson(pathname: string, body: unknown, operationId: string): Promise<unknown> {
+  #canonicalRendererOrigin(value: string): string {
+    if (typeof value !== "string" || value.length > 2_048 || /[\0\r\n\t ]/u.test(value)) {
+      throw new BrokerFailure(daemonCapabilityError("invalid-request"));
+    }
+    let origin: URL;
+    try {
+      origin = new URL(value);
+    } catch {
+      throw new BrokerFailure(daemonCapabilityError("invalid-request"));
+    }
+    if (
+      (origin.protocol !== "http:" && origin.protocol !== "https:") ||
+      origin.origin !== value ||
+      origin.username.length > 0 ||
+      origin.password.length > 0 ||
+      origin.pathname !== "/" ||
+      origin.search.length > 0 ||
+      origin.hash.length > 0
+    ) {
+      throw new BrokerFailure(daemonCapabilityError("invalid-request"));
+    }
+    return origin.origin;
+  }
+
+  async #mutationJson(
+    pathname: string,
+    body: unknown,
+    correlationHeaders: Readonly<Record<string, string>>,
+    maximumResponseBytes = this.#maxResponseBytes,
+  ): Promise<unknown> {
     if (this.#disposed) throw new BrokerFailure(daemonCapabilityError("disposed"));
     if (this.#daemon.status !== "connected" || !this.#ownerToken) {
       throw new BrokerFailure(daemonCapabilityError("daemon-unavailable"));
@@ -570,10 +738,10 @@ export class DaemonResourceBroker {
       const response = await this.#fetch(url, {
         method: "POST",
         headers: {
+          ...correlationHeaders,
           accept: "application/json",
           Authorization: `Bearer ${this.#ownerToken}`,
           "Content-Type": "application/json",
-          "X-Tmux-Ide-Operation-Id": operationId,
         },
         body: JSON.stringify(body),
         cache: "no-store",
@@ -584,7 +752,7 @@ export class DaemonResourceBroker {
       if (response.redirected || !response.ok) {
         throw new BrokerFailure(daemonCapabilityError("request-failed"));
       }
-      return readBoundedJson(response, this.#maxResponseBytes);
+      return readBoundedJson(response, maximumResponseBytes);
     })();
     try {
       const result = await Promise.race([operation, deadline]);
