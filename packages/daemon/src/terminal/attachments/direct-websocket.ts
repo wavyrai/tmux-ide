@@ -1,8 +1,15 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 import {
-  TERMINAL_ATTACHMENT_REDEEM_PATH,
+  TERMINAL_ATTACHMENT_MAX_INPUT_WIRE_BYTES,
+  TerminalAttachmentInputLimitsSchemaZ,
+  decodeTerminalAttachmentInputFrame,
+  type TerminalAttachmentInputCapability,
+  type TerminalAttachmentInputLimits,
+} from "@tmux-ide/contracts/terminal-attachment-stream";
+import {
   TERMINAL_ATTACHMENT_PROTOCOL_VERSION,
+  TERMINAL_ATTACHMENT_REDEEM_PATH,
   TERMINAL_ATTACHMENT_WEBSOCKET_SUBPROTOCOL,
   TerminalAttachRequestSchemaZ,
   TerminalAttachmentLoopbackWebSocketUrlSchemaZ,
@@ -995,6 +1002,36 @@ interface LiveConnectionOptions {
   readonly schedule: (callback: () => void, delayMs: number) => () => void;
 }
 
+function boundedInputCapability(
+  client: ClaimedPtyTmuxAttachment,
+  viewerMode: TerminalAttachmentViewerMode,
+): {
+  readonly input: NonNullable<ClaimedPtyTmuxAttachment["boundedInput"]> | null;
+  readonly capability: TerminalAttachmentInputCapability;
+  readonly limits: TerminalAttachmentInputLimits | null;
+} {
+  const input = viewerMode === "interactive" ? client.boundedInput : null;
+  if (!input) return { input: null, capability: "unavailable", limits: null };
+  try {
+    const snapshot = input.snapshot();
+    if (snapshot.state !== "open") {
+      return { input: null, capability: "unavailable", limits: null };
+    }
+    const limits = TerminalAttachmentInputLimitsSchemaZ.parse({
+      maxFrameBytes: snapshot.maxFrameBytes,
+      maxAcceptedBytes: snapshot.maxAcceptedBytes,
+      maxAcceptedFrames: snapshot.maxAcceptedFrames,
+    });
+    return {
+      input,
+      capability: Object.freeze({ mode: "bounded", limits }),
+      limits,
+    };
+  } catch {
+    return { input: null, capability: "unavailable", limits: null };
+  }
+}
+
 class TerminalAttachmentLiveConnection {
   readonly #onRetire: LiveConnectionOptions["onRetire"];
   readonly #socket: DirectTerminalSocket;
@@ -1015,6 +1052,12 @@ class TerminalAttachmentLiveConnection {
   #pendingResize: TerminalAttachmentViewport | null = null;
   #resizeRunning = false;
   #controlFrames = 0;
+  #input: NonNullable<ClaimedPtyTmuxAttachment["boundedInput"]> | null = null;
+  #inputCapability: TerminalAttachmentInputCapability = "unavailable";
+  #inputLimits: TerminalAttachmentInputLimits | null = null;
+  #nextInputSequence = 1;
+  #acceptedInputBytes = 0;
+  #acceptedInputFrames = 0;
   #closed = false;
   #cancelRenewal: (() => void) | null = null;
   #cancelExpiry: (() => void) | null = null;
@@ -1047,6 +1090,12 @@ class TerminalAttachmentLiveConnection {
     this.#socket.on("close", this.#onClose);
     this.#socket.on("error", this.#onClose);
     try {
+      const boundedInput = boundedInputCapability(this.#client, this.#descriptor.viewerMode);
+      this.#input = boundedInput.input;
+      this.#inputCapability = boundedInput.capability;
+      this.#inputLimits = boundedInput.limits;
+      this.#acceptedInputBytes = 0;
+      this.#acceptedInputFrames = 0;
       sendControl(this.#socket, {
         type: "ready",
         protocolVersion: TERMINAL_ATTACHMENT_PROTOCOL_VERSION,
@@ -1054,7 +1103,7 @@ class TerminalAttachmentLiveConnection {
         requestId: this.#binding.requestId,
         generation: this.#descriptor.viewGeneration,
         effectiveViewerMode: this.#descriptor.viewerMode,
-        inputCapability: "unavailable",
+        inputCapability: this.#inputCapability,
         sourceGrid: this.#initialGeometry.sourceGrid,
         clientViewport: this.#initialGeometry.clientViewport,
       });
@@ -1074,6 +1123,8 @@ class TerminalAttachmentLiveConnection {
     this.#cancelExpiry?.();
     this.#cancelExpiry = null;
     this.#pendingResize = null;
+    this.#input = null;
+    this.#inputLimits = null;
     this.#socket.off("message", this.#onMessage);
     this.#socket.off("close", this.#onClose);
     this.#socket.off("error", this.#onClose);
@@ -1102,28 +1153,16 @@ class TerminalAttachmentLiveConnection {
     isBinary: boolean,
   ): void => {
     if (this.#closed) return;
+    if (isBinary) {
+      this.#acceptInputFrame(data);
+      return;
+    }
     this.#controlFrames += 1;
     if (this.#controlFrames > this.#maxLiveControlFrames) {
       this.close(1008, "control-frame-limit");
       return;
     }
     const byteLength = rawDataByteLength(data, TERMINAL_ATTACHMENT_MAX_CONTROL_BYTES);
-    if (isBinary) {
-      try {
-        sendControl(this.#socket, {
-          type: "mutation-error",
-          protocolVersion: TERMINAL_ATTACHMENT_PROTOCOL_VERSION,
-          mutation: "input",
-          code: "input-backpressure-unavailable",
-          retryable: false,
-        });
-      } catch {
-        this.close(1011, "attachment-unavailable");
-        return;
-      }
-      this.close(1008, "input-backpressure-unavailable");
-      return;
-    }
     if (byteLength === 0 || byteLength > TERMINAL_ATTACHMENT_MAX_CONTROL_BYTES) {
       this.close(1009, "control-frame-rejected");
       return;
@@ -1143,6 +1182,84 @@ class TerminalAttachmentLiveConnection {
     this.#pendingResize = frame.viewport;
     this.#flushResize();
   };
+
+  #acceptInputFrame(data: string | Buffer | ArrayBuffer | readonly Buffer[]): void {
+    const input = this.#input;
+    const limits = this.#inputLimits;
+    if (!input || !limits) {
+      this.#rejectInput("input-backpressure-unavailable");
+      return;
+    }
+    const byteLength = rawDataByteLength(data, TERMINAL_ATTACHMENT_MAX_INPUT_WIRE_BYTES);
+    if (byteLength === 0 || byteLength > TERMINAL_ATTACHMENT_MAX_INPUT_WIRE_BYTES) {
+      this.#rejectInput("input-rejected");
+      return;
+    }
+    const decoded = decodeTerminalAttachmentInputFrame(rawDataToBuffer(data));
+    if (
+      !decoded ||
+      decoded.sequence !== this.#nextInputSequence ||
+      decoded.payload.byteLength > limits.maxFrameBytes
+    ) {
+      this.#rejectInput("input-rejected");
+      return;
+    }
+    try {
+      const receipt = input.write(decoded.payload);
+      const acceptedBytes = this.#acceptedInputBytes + decoded.payload.byteLength;
+      const acceptedFrames = this.#acceptedInputFrames + 1;
+      const remainingBytes = limits.maxAcceptedBytes - acceptedBytes;
+      const remainingFrames = limits.maxAcceptedFrames - acceptedFrames;
+      const state = remainingBytes === 0 || remainingFrames === 0 ? "exhausted" : "open";
+      if (
+        receipt.status !== "accepted" ||
+        receipt.byteLength !== decoded.payload.byteLength ||
+        receipt.snapshot.maxFrameBytes !== limits.maxFrameBytes ||
+        receipt.snapshot.maxAcceptedBytes !== limits.maxAcceptedBytes ||
+        receipt.snapshot.maxAcceptedFrames !== limits.maxAcceptedFrames ||
+        receipt.snapshot.state !== state ||
+        receipt.snapshot.acceptedBytes !== acceptedBytes ||
+        receipt.snapshot.acceptedFrames !== acceptedFrames ||
+        receipt.snapshot.remainingBytes !== remainingBytes ||
+        receipt.snapshot.remainingFrames !== remainingFrames
+      ) {
+        throw new TypeError("bounded input returned an invalid receipt");
+      }
+      sendControl(this.#socket, {
+        type: "input-ack",
+        protocolVersion: TERMINAL_ATTACHMENT_PROTOCOL_VERSION,
+        generation: this.#descriptor.viewGeneration,
+        sequence: decoded.sequence,
+        byteLength: receipt.byteLength,
+        state: receipt.snapshot.state,
+        acceptedBytes: receipt.snapshot.acceptedBytes,
+        acceptedFrames: receipt.snapshot.acceptedFrames,
+        remainingBytes: receipt.snapshot.remainingBytes,
+        remainingFrames: receipt.snapshot.remainingFrames,
+      });
+      this.#acceptedInputBytes = acceptedBytes;
+      this.#acceptedInputFrames = acceptedFrames;
+      this.#nextInputSequence += 1;
+    } catch {
+      this.#rejectInput("input-rejected");
+    }
+  }
+
+  #rejectInput(code: "input-backpressure-unavailable" | "input-rejected"): void {
+    try {
+      sendControl(this.#socket, {
+        type: "mutation-error",
+        protocolVersion: TERMINAL_ATTACHMENT_PROTOCOL_VERSION,
+        mutation: "input",
+        code,
+        retryable: false,
+      });
+    } catch {
+      this.close(1011, "attachment-unavailable");
+      return;
+    }
+    this.close(1008, code);
+  }
 
   readonly #onClose = (): void => this.close(1000, "peer-closed");
 

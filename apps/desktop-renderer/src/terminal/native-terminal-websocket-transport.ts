@@ -1,4 +1,13 @@
 import {
+  TERMINAL_ATTACHMENT_MAX_INPUT_SEQUENCE,
+  TerminalAttachmentInputAckFrameSchemaZ,
+  TerminalAttachmentInputCapabilitySchemaZ,
+  encodeTerminalAttachmentInputFrame,
+  type TerminalAttachmentInputAckFrame,
+  type TerminalAttachmentInputCapability,
+  type TerminalAttachmentInputLimits,
+} from "@tmux-ide/contracts/terminal-attachment-stream";
+import {
   TERMINAL_ATTACHMENT_PROTOCOL_VERSION,
   TERMINAL_ATTACHMENT_WEBSOCKET_SUBPROTOCOL,
   TerminalAttachRequestSchemaZ,
@@ -25,7 +34,7 @@ export const NATIVE_TERMINAL_MAX_OUTPUT_FRAME_BYTES = 256 * 1024;
 export const NATIVE_TERMINAL_MAX_QUEUED_EVENT_BYTES = 1024 * 1024;
 export const NATIVE_TERMINAL_MAX_QUEUED_EVENTS = 32;
 export const NATIVE_TERMINAL_MAX_CONTROL_FRAMES = 1_024;
-export const NATIVE_TERMINAL_MAX_SOCKET_BUFFERED_BYTES = 64 * 1024;
+export const NATIVE_TERMINAL_MAX_SOCKET_BUFFERED_BYTES = 128 * 1024;
 export const NATIVE_TERMINAL_MAX_DESCRIPTOR_LIFETIME_MS = 60_000;
 export const NATIVE_TERMINAL_DEFAULT_ISSUE_TIMEOUT_MS = 5_000;
 export const NATIVE_TERMINAL_RATE_WINDOW_MS = 1_000;
@@ -33,6 +42,7 @@ export const NATIVE_TERMINAL_MAX_INBOUND_FRAMES_PER_WINDOW = 4_096;
 export const NATIVE_TERMINAL_MAX_INBOUND_CONTROL_FRAMES_PER_WINDOW = 256;
 export const NATIVE_TERMINAL_MAX_CONNECTION_LIFETIME_MS = 24 * 60 * 60 * 1_000;
 export const NATIVE_TERMINAL_RESIZE_ACK_TIMEOUT_MS = 5_000;
+export const NATIVE_TERMINAL_INPUT_ACK_TIMEOUT_MS = 5_000;
 
 const WS_CONNECTING = 0;
 const WS_OPEN = 1;
@@ -99,6 +109,7 @@ interface ReadyFrame {
   readonly effectiveViewerMode: TerminalAttachmentViewerMode;
   readonly sourceGrid: TerminalAttachmentViewport;
   readonly clientViewport: TerminalAttachmentViewport;
+  readonly inputCapability: TerminalAttachmentInputCapability;
 }
 
 interface GeometryFrame {
@@ -121,7 +132,12 @@ interface ErrorFrame {
   readonly retryable: boolean;
 }
 
-type ServerControlFrame = ReadyFrame | GeometryFrame | ExitFrame | ErrorFrame;
+type ServerControlFrame =
+  | ReadyFrame
+  | GeometryFrame
+  | ExitFrame
+  | ErrorFrame
+  | TerminalAttachmentInputAckFrame;
 
 interface QueuedEvent {
   readonly event: NativeTerminalEvent;
@@ -138,6 +154,21 @@ interface ResizeRequest {
 interface SentResize {
   readonly viewport: TerminalAttachmentViewport;
   request: ResizeRequest | null;
+  cancelTimeout: () => void;
+}
+
+interface InputRequest {
+  readonly bytes: Uint8Array;
+  readonly promise: Promise<NativeTerminalMutationResult>;
+  readonly resolve: (result: NativeTerminalMutationResult) => void;
+  offset: number;
+  settled: boolean;
+}
+
+interface SentInput {
+  readonly request: InputRequest;
+  readonly sequence: number;
+  readonly byteLength: number;
   cancelTimeout: () => void;
 }
 
@@ -261,7 +292,6 @@ function parseControlFrame(text: string): ServerControlFrame | null {
       ]) ||
       !safeInteger(value.generation) ||
       value.generation < 0 ||
-      value.inputCapability !== "unavailable" ||
       !safeIdentity(value.daemonInstanceId, 4_096) ||
       typeof value.requestId !== "string" ||
       !RequestIdPattern.test(value.requestId) ||
@@ -271,7 +301,10 @@ function parseControlFrame(text: string): ServerControlFrame | null {
       return null;
     }
     const viewerMode = TerminalAttachmentViewerModeSchemaZ.safeParse(value.effectiveViewerMode);
-    if (!viewerMode.success) return null;
+    const inputCapability = TerminalAttachmentInputCapabilitySchemaZ.safeParse(
+      value.inputCapability,
+    );
+    if (!viewerMode.success || !inputCapability.success) return null;
     return {
       type: "ready",
       daemonInstanceId: value.daemonInstanceId,
@@ -280,6 +313,7 @@ function parseControlFrame(text: string): ServerControlFrame | null {
       effectiveViewerMode: viewerMode.data,
       sourceGrid: TerminalAttachmentViewportSchemaZ.parse(value.sourceGrid),
       clientViewport: TerminalAttachmentViewportSchemaZ.parse(value.clientViewport),
+      inputCapability: inputCapability.data,
     };
   }
 
@@ -323,6 +357,11 @@ function parseControlFrame(text: string): ServerControlFrame | null {
       exitCode: value.exitCode,
       signal: value.signal,
     };
+  }
+
+  if (value.type === "input-ack") {
+    const parsed = TerminalAttachmentInputAckFrameSchemaZ.safeParse(value);
+    return parsed.success ? parsed.data : null;
   }
 
   if (value.type === "error") {
@@ -402,6 +441,14 @@ function resizeRequest(viewport: TerminalAttachmentViewport): ResizeRequest {
   return { viewport, promise, resolve, settled: false };
 }
 
+function inputRequest(bytes: Uint8Array): InputRequest {
+  let resolve!: (result: NativeTerminalMutationResult) => void;
+  const promise = new Promise<NativeTerminalMutationResult>((settle) => {
+    resolve = settle;
+  });
+  return { bytes: bytes.slice(), promise, resolve, offset: 0, settled: false };
+}
+
 class NativeTerminalWebSocketSession {
   readonly #socket: NativeTerminalWebSocket;
   readonly #listener: (event: NativeTerminalEvent) => void | Promise<void>;
@@ -424,6 +471,13 @@ class NativeTerminalWebSocketSession {
   #delivering = false;
   #queuedResize: ResizeRequest | null = null;
   #sentResize: SentResize | null = null;
+  #inputCapability: TerminalAttachmentInputCapability = "unavailable";
+  #inputLimits: TerminalAttachmentInputLimits | null = null;
+  #inputRequest: InputRequest | null = null;
+  #sentInput: SentInput | null = null;
+  #nextInputSequence = 1;
+  #acceptedInputBytes = 0;
+  #acceptedInputFrames = 0;
   #resizeFlushScheduled = false;
   #outboundControlFrames = 0;
   #rateWindowStartedAt: number;
@@ -635,6 +689,16 @@ class NativeTerminalWebSocketSession {
         return;
       }
       this.#generation = frame.generation;
+      if (frame.effectiveViewerMode === "read-only" && frame.inputCapability !== "unavailable") {
+        this.#protocolFailure();
+        return;
+      }
+      this.#inputCapability = frame.inputCapability;
+      this.#inputLimits =
+        frame.inputCapability === "unavailable" ? null : frame.inputCapability.limits;
+      this.#nextInputSequence = 1;
+      this.#acceptedInputBytes = 0;
+      this.#acceptedInputFrames = 0;
       this.#phase = "live";
       this.#cancelExpiry?.();
       this.#cancelExpiry = null;
@@ -711,6 +775,10 @@ class NativeTerminalWebSocketSession {
       );
       return;
     }
+    if (frame.type === "input-ack") {
+      this.#acknowledgeInput(frame);
+      return;
+    }
     this.#retire(controlError(frame), true, 1008, "attachment-unavailable", true);
   }
 
@@ -723,10 +791,147 @@ class NativeTerminalWebSocketSession {
     );
   }
 
-  #write(_bytes: Uint8Array): Promise<NativeTerminalMutationResult> {
-    // Input remains deliberately unavailable even though the daemon now owns a
-    // bounded primitive. Recovery/no-replay enablement is a separate reviewed card.
-    return Promise.resolve(errorResult(INPUT_UNAVAILABLE));
+  #write(bytes: Uint8Array): Promise<NativeTerminalMutationResult> {
+    if (!(bytes instanceof Uint8Array)) {
+      return Promise.resolve(
+        errorResult(transportError("invalid-input", "Terminal input must be binary.", false)),
+      );
+    }
+    if (bytes.byteLength === 0) return Promise.resolve({ status: "ok" });
+    const limits = this.#inputLimits;
+    if (
+      this.#phase !== "live" ||
+      this.#generation === null ||
+      this.#identity.effectiveViewerMode !== "interactive" ||
+      this.#inputCapability === "unavailable" ||
+      !limits
+    ) {
+      return Promise.resolve(errorResult(INPUT_UNAVAILABLE));
+    }
+    if (this.#inputRequest) {
+      return Promise.resolve(
+        errorResult(
+          transportError(
+            "input-write-in-progress",
+            "A terminal input write is already awaiting acknowledgement.",
+            true,
+          ),
+        ),
+      );
+    }
+    const remainingBytes = limits.maxAcceptedBytes - this.#acceptedInputBytes;
+    const remainingFrames = limits.maxAcceptedFrames - this.#acceptedInputFrames;
+    const requiredFrames = Math.ceil(bytes.byteLength / limits.maxFrameBytes);
+    if (
+      bytes.byteLength > remainingBytes ||
+      requiredFrames > remainingFrames ||
+      this.#nextInputSequence > TERMINAL_ATTACHMENT_MAX_INPUT_SEQUENCE - requiredFrames + 1
+    ) {
+      const error = transportError(
+        "input-capacity-exhausted",
+        "This terminal input generation exhausted its bounded capacity.",
+        false,
+      );
+      this.#retire(error, true, 1008, "input-capacity-exhausted");
+      return Promise.resolve(errorResult(error));
+    }
+    const request = inputRequest(bytes);
+    this.#inputRequest = request;
+    this.#flushInput();
+    return request.promise;
+  }
+
+  #flushInput(): void {
+    const request = this.#inputRequest;
+    const limits = this.#inputLimits;
+    if (!request || request.settled || this.#sentInput || !limits) return;
+    if (this.#phase !== "live" || this.#generation === null) {
+      this.#settleInput(request, errorResult(INPUT_UNAVAILABLE));
+      return;
+    }
+    const byteLength = Math.min(limits.maxFrameBytes, request.bytes.byteLength - request.offset);
+    if (byteLength <= 0) {
+      this.#settleInput(request, { status: "ok" });
+      return;
+    }
+    const sequence = this.#nextInputSequence;
+    let frame: Uint8Array;
+    try {
+      frame = encodeTerminalAttachmentInputFrame(
+        sequence,
+        request.bytes.subarray(request.offset, request.offset + byteLength),
+      );
+    } catch {
+      this.#protocolFailure();
+      return;
+    }
+    const sent: SentInput = {
+      request,
+      sequence,
+      byteLength,
+      cancelTimeout: () => undefined,
+    };
+    this.#sentInput = sent;
+    const sendError = this.#sendBinary(frame);
+    if (sendError || this.#sentInput !== sent) return;
+    sent.cancelTimeout = this.#schedule(() => {
+      if (this.#sentInput !== sent) return;
+      this.#retire(
+        transportError(
+          "input-ack-timeout",
+          "The daemon did not acknowledge terminal input in time.",
+          false,
+        ),
+        true,
+        1008,
+        "input-ack-timeout",
+      );
+    }, NATIVE_TERMINAL_INPUT_ACK_TIMEOUT_MS);
+  }
+
+  #acknowledgeInput(frame: TerminalAttachmentInputAckFrame): void {
+    const sent = this.#sentInput;
+    const limits = this.#inputLimits;
+    if (!sent || !limits || frame.generation !== this.#generation) {
+      this.#protocolFailure();
+      return;
+    }
+    const expectedBytes = this.#acceptedInputBytes + sent.byteLength;
+    const expectedFrames = this.#acceptedInputFrames + 1;
+    const expectedRemainingBytes = limits.maxAcceptedBytes - expectedBytes;
+    const expectedRemainingFrames = limits.maxAcceptedFrames - expectedFrames;
+    const expectedState =
+      expectedRemainingBytes === 0 || expectedRemainingFrames === 0 ? "exhausted" : "open";
+    if (
+      frame.sequence !== sent.sequence ||
+      frame.byteLength !== sent.byteLength ||
+      frame.acceptedBytes !== expectedBytes ||
+      frame.acceptedFrames !== expectedFrames ||
+      frame.remainingBytes !== expectedRemainingBytes ||
+      frame.remainingFrames !== expectedRemainingFrames ||
+      frame.state !== expectedState
+    ) {
+      this.#protocolFailure();
+      return;
+    }
+    sent.cancelTimeout();
+    this.#sentInput = null;
+    this.#acceptedInputBytes = expectedBytes;
+    this.#acceptedInputFrames = expectedFrames;
+    this.#nextInputSequence += 1;
+    sent.request.offset += sent.byteLength;
+    if (sent.request.offset === sent.request.bytes.byteLength) {
+      this.#settleInput(sent.request, { status: "ok" });
+    } else {
+      this.#flushInput();
+    }
+  }
+
+  #settleInput(request: InputRequest | null, result: NativeTerminalMutationResult): void {
+    if (!request || request.settled) return;
+    request.settled = true;
+    if (this.#inputRequest === request) this.#inputRequest = null;
+    request.resolve(result);
   }
 
   #resize(viewport: TerminalAttachmentViewport): Promise<NativeTerminalMutationResult> {
@@ -895,6 +1100,37 @@ class NativeTerminalWebSocketSession {
     }
   }
 
+  #sendBinary(frame: Uint8Array): NativeTerminalTransportError | null {
+    const buffered = this.#socket.bufferedAmount;
+    if (
+      this.#socket.readyState !== WS_OPEN ||
+      !Number.isSafeInteger(buffered) ||
+      buffered < 0 ||
+      frame.byteLength > NATIVE_TERMINAL_MAX_SOCKET_BUFFERED_BYTES ||
+      buffered > NATIVE_TERMINAL_MAX_SOCKET_BUFFERED_BYTES - frame.byteLength
+    ) {
+      const error = transportError(
+        "socket-backpressure",
+        "The terminal WebSocket could not accept terminal input.",
+        true,
+      );
+      this.#retire(error, true, 1013, "socket-backpressure");
+      return error;
+    }
+    try {
+      this.#socket.send(frame);
+      return null;
+    } catch {
+      const error = transportError(
+        "socket-unavailable",
+        "The terminal WebSocket became unavailable.",
+        true,
+      );
+      this.#retire(error, true, 1011, "socket-unavailable");
+      return error;
+    }
+  }
+
   #queueEvent(event: NativeTerminalEvent, byteLength: number): void {
     if (this.#phase === "closed" && event.type === "output") return;
     if (
@@ -979,11 +1215,19 @@ class NativeTerminalWebSocketSession {
     this.#redemptionFrame = null;
     const queuedResize = this.#queuedResize;
     const sentResize = this.#sentResize;
+    const inputRequest = this.#inputRequest;
+    const sentInput = this.#sentInput;
     this.#queuedResize = null;
     this.#sentResize = null;
+    this.#inputRequest = null;
+    this.#sentInput = null;
     sentResize?.cancelTimeout();
+    sentInput?.cancelTimeout();
     this.#settleResize(sentResize?.request ?? null, errorResult(error));
     this.#settleResize(queuedResize, errorResult(error));
+    this.#settleInput(inputRequest, errorResult(error));
+    this.#inputCapability = "unavailable";
+    this.#inputLimits = null;
     this.#cancelExpiry?.();
     this.#cancelExpiry = null;
     this.#cancelLifetime?.();

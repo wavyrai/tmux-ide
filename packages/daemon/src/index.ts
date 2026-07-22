@@ -214,7 +214,6 @@ export {
   type TmuxAttachmentViewExecutorOptions,
 } from "./terminal/attachments/tmux-view-executor.ts";
 export {
-  PtyTmuxAttachmentInputUnavailableError,
   PtyTmuxAttachmentLauncher,
   type ClaimedPtyTmuxAttachment,
   type DaemonTmuxSocketSelector,

@@ -3,7 +3,7 @@ import { delimiter, isAbsolute, join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { defaultNodePtyAdapter } from "../NodePtyAdapter.ts";
-import type { PtyAdapter, PtyExitEvent, PtyProcess } from "../PtyAdapter.ts";
+import type { PtyAdapter, PtyBoundedInput, PtyExitEvent, PtyProcess } from "../PtyAdapter.ts";
 import {
   GROUPED_TMUX_VIEW_MARKER_ENVIRONMENT,
   type GroupedTmuxAttachmentPlan,
@@ -37,11 +37,10 @@ export interface ClaimedPtyTmuxAttachment {
   readonly generation: number;
   readonly pid: number;
   /**
-   * Intentionally unsupported until the PTY adapter exposes public drain or
-   * pending-capacity semantics. node-pty's public `write(): void` can enqueue
-   * without bound when tmux stops reading.
+   * The only input authority exposed across this boundary. The legacy process
+   * handle and its unbounded `write()` method remain launcher-private.
    */
-  write(data: string | Uint8Array): never;
+  readonly boundedInput: PtyBoundedInput | null;
   resize(cols: number, rows: number): void;
   onData(callback: (data: Buffer) => void): () => void;
   onExit(callback: (event: PtyExitEvent) => void): () => void;
@@ -476,12 +475,7 @@ export class PtyTmuxAttachmentLauncher implements TmuxAttachmentClientTransport 
       attachmentId: state.attachmentId,
       generation: state.generation,
       pid: state.process.pid,
-      write: (_data: string | Uint8Array): never => {
-        if (state.viewerMode === "read-only") {
-          throw new TypeError("read-only terminal attachments reject input");
-        }
-        throw new PtyTmuxAttachmentInputUnavailableError();
-      },
+      boundedInput: state.viewerMode === "interactive" ? state.process.boundedInput : null,
       resize: (cols: number, rows: number) => {
         if (state.viewerMode === "read-only") {
           throw new TypeError("read-only terminal attachments reject resize");
@@ -723,18 +717,14 @@ export class PtyTmuxAttachmentLauncher implements TmuxAttachmentClientTransport 
     }
     state.exitListeners.clear();
     try {
+      state.process.boundedInput.close();
+    } catch {
+      // Input authority is already irreversibly retired by closed state.
+    }
+    try {
       state.process.kill("SIGTERM");
     } catch {
       // The client already exited. The tmux view and durable source remain.
     }
-  }
-}
-
-export class PtyTmuxAttachmentInputUnavailableError extends Error {
-  readonly code = "input-backpressure-unavailable" as const;
-
-  constructor() {
-    super("PTY input is unavailable until the adapter exposes bounded drain semantics.");
-    this.name = "PtyTmuxAttachmentInputUnavailableError";
   }
 }

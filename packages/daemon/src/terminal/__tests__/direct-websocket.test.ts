@@ -4,6 +4,7 @@ import { createConnection } from "node:net";
 import { describe, expect, it, vi } from "vitest";
 import { WebSocket } from "ws";
 import type { TerminalAttachRequest } from "@tmux-ide/contracts";
+import { encodeTerminalAttachmentInputFrame } from "@tmux-ide/contracts/terminal-attachment-stream";
 import {
   TERMINAL_ATTACHMENT_REDEEM_PATH,
   TERMINAL_ATTACHMENT_WEBSOCKET_PROTOCOL,
@@ -20,6 +21,8 @@ import type {
   IssuedAttachmentLease,
 } from "../attachments/lease-manager.ts";
 import type { ClaimedPtyTmuxAttachment } from "../attachments/pty-tmux-attachment-launcher.ts";
+import { DEFAULT_PTY_INPUT_LIMITS, MonotonicPtyInput } from "../MonotonicPtyInput.ts";
+import type { PtyInputLimits } from "../PtyAdapter.ts";
 import { attachTerminalAttachmentWebSocket } from "../../server/terminal-attachment-upgrade.ts";
 
 const INSTANCE_ID = "daemon-instance-1";
@@ -152,14 +155,25 @@ class FakeClient implements ClaimedPtyTmuxAttachment {
   readonly generation = 0;
   readonly pid = 1234;
   readonly resizes: Array<[number, number]> = [];
+  readonly boundedWrites: Buffer[] = [];
+  readonly boundedInput: MonotonicPtyInput | null;
   readonly dataListeners = new Set<(data: Buffer) => void>();
   readonly exitListeners = new Set<
     (event: { readonly exitCode: number; readonly signal: number | null }) => void
   >();
   disposed = 0;
 
-  write(): never {
-    throw new Error("input unavailable");
+  constructor(
+    limits: PtyInputLimits = DEFAULT_PTY_INPUT_LIMITS,
+    sink: ((frame: Buffer) => void) | null = null,
+    available = true,
+  ) {
+    this.boundedInput = available
+      ? new MonotonicPtyInput(limits, (frame) => {
+          this.boundedWrites.push(Buffer.from(frame));
+          sink?.(frame);
+        })
+      : null;
   }
 
   resize(cols: number, rows: number): void {
@@ -180,6 +194,7 @@ class FakeClient implements ClaimedPtyTmuxAttachment {
 
   dispose(): void {
     this.disposed += 1;
+    this.boundedInput?.close();
   }
 
   output(bytes: Buffer): void {
@@ -250,10 +265,17 @@ function rig(
     maxLiveControlFrames?: number;
     schedule?: (callback: () => void, delayMs: number) => () => void;
     now?: () => number;
+    inputLimits?: PtyInputLimits;
+    inputSink?: (frame: Buffer) => void;
+    inputAvailable?: boolean;
   } = {},
 ) {
   const manager = new FakeLeaseManager();
-  const client = new FakeClient();
+  const client = new FakeClient(
+    overrides.inputLimits,
+    overrides.inputSink ?? null,
+    overrides.inputAvailable ?? true,
+  );
   const claim = vi.fn(() => client);
   const resolveGeometry = vi.fn(async () => ({
     sourceGrid: { cols: 120, rows: 40 },
@@ -481,23 +503,206 @@ describe("TerminalAttachmentAdmissionCoordinator", () => {
     expect(JSON.parse(socket.sent[0]!.data as string)).toMatchObject({
       type: "ready",
       effectiveViewerMode: "interactive",
-      inputCapability: "unavailable",
+      inputCapability: {
+        mode: "bounded",
+        limits: DEFAULT_PTY_INPUT_LIMITS,
+      },
       sourceGrid: { cols: 120, rows: 40 },
       clientViewport: { cols: 118, rows: 38 },
     });
     client.output(Buffer.from([0, 255, 13, 10]));
     expect(socket.sent.at(-1)).toEqual({ data: Buffer.from([0, 255, 13, 10]), binary: true });
 
-    socket.frame(Buffer.from("typed input"), true);
+    socket.frame(
+      Buffer.from(encodeTerminalAttachmentInputFrame(1, Buffer.from("typed input"))),
+      true,
+    );
+    expect(client.boundedWrites).toEqual([Buffer.from("typed input")]);
+    expect(JSON.parse(socket.sent.at(-1)!.data as string)).toMatchObject({
+      type: "input-ack",
+      sequence: 1,
+      byteLength: 11,
+      acceptedBytes: 11,
+      acceptedFrames: 1,
+    });
+    expect(coordinator.snapshot().liveConnections).toBe(1);
+    await coordinator.shutdown();
+  });
+
+  it("accepts exact bounded input limits, acknowledges accounting, then retires on exhaustion", async () => {
+    const limits = { maxFrameBytes: 3, maxAcceptedBytes: 6, maxAcceptedFrames: 2 };
+    const { coordinator, client } = rig({ inputLimits: limits });
+    await issue(coordinator);
+    const socket = new FakeSocket();
+    admission(coordinator).bind(socket);
+    socket.frame(redemption());
+    await flush();
+    await flush();
+
+    expect(JSON.parse(socket.sent[0]!.data as string)).toMatchObject({
+      inputCapability: { mode: "bounded", limits },
+    });
+    socket.frame(Buffer.from(encodeTerminalAttachmentInputFrame(1, Uint8Array.of(1, 2, 3))), true);
+    expect(JSON.parse(socket.sent.at(-1)!.data as string)).toMatchObject({
+      type: "input-ack",
+      sequence: 1,
+      byteLength: 3,
+      state: "open",
+      acceptedBytes: 3,
+      acceptedFrames: 1,
+      remainingBytes: 3,
+      remainingFrames: 1,
+    });
+    socket.frame(Buffer.from(encodeTerminalAttachmentInputFrame(2, Uint8Array.of(4, 5, 6))), true);
+    expect(JSON.parse(socket.sent.at(-1)!.data as string)).toMatchObject({
+      type: "input-ack",
+      sequence: 2,
+      state: "exhausted",
+      acceptedBytes: 6,
+      acceptedFrames: 2,
+      remainingBytes: 0,
+      remainingFrames: 0,
+    });
+    expect(client.boundedWrites).toEqual([Buffer.from([1, 2, 3]), Buffer.from([4, 5, 6])]);
+    expect(coordinator.snapshot().liveConnections).toBe(1);
+
+    socket.frame(Buffer.from(encodeTerminalAttachmentInputFrame(3, Uint8Array.of(7))), true);
     expect(JSON.parse(socket.sent.at(-1)!.data as string)).toMatchObject({
       type: "mutation-error",
-      code: "input-backpressure-unavailable",
+      mutation: "input",
+      code: "input-rejected",
+      retryable: false,
+    });
+    expect(socket.closes.at(-1)).toEqual({ code: 1008, reason: "input-rejected" });
+    expect(client.boundedWrites).toHaveLength(2);
+    await coordinator.shutdown();
+  });
+
+  it("retires gaps, duplicates, oversize, backend failure, and unavailable input without reflection", async () => {
+    const cases: Array<{
+      name: string;
+      overrides?: Parameters<typeof rig>[0];
+      frames: Buffer[];
+      expectedCode?: string;
+    }> = [
+      {
+        name: "gap",
+        frames: [Buffer.from(encodeTerminalAttachmentInputFrame(2, Uint8Array.of(1)))],
+      },
+      {
+        name: "duplicate",
+        frames: [
+          Buffer.from(encodeTerminalAttachmentInputFrame(1, Uint8Array.of(1))),
+          Buffer.from(encodeTerminalAttachmentInputFrame(1, Uint8Array.of(2))),
+        ],
+      },
+      {
+        name: "oversize",
+        overrides: {
+          inputLimits: { maxFrameBytes: 2, maxAcceptedBytes: 8, maxAcceptedFrames: 4 },
+        },
+        frames: [Buffer.from(encodeTerminalAttachmentInputFrame(1, Uint8Array.of(1, 2, 3)))],
+      },
+      {
+        name: "backend",
+        overrides: {
+          inputSink: () => {
+            throw new Error("secret backend detail");
+          },
+        },
+        frames: [Buffer.from(encodeTerminalAttachmentInputFrame(1, Uint8Array.of(9)))],
+      },
+      {
+        name: "unavailable",
+        overrides: { inputAvailable: false },
+        frames: [Buffer.from(encodeTerminalAttachmentInputFrame(1, Uint8Array.of(7)))],
+        expectedCode: "input-backpressure-unavailable",
+      },
+    ];
+
+    for (const selected of cases) {
+      const { coordinator, client } = rig(selected.overrides);
+      await issue(coordinator);
+      const socket = new FakeSocket();
+      admission(coordinator).bind(socket);
+      socket.frame(redemption());
+      await flush();
+      await flush();
+      for (const frame of selected.frames) socket.frame(frame, true);
+      const mutation = socket.sent
+        .filter((entry) => typeof entry.data === "string")
+        .map((entry) => JSON.parse(entry.data as string) as Record<string, unknown>)
+        .findLast((entry) => entry.type === "mutation-error");
+      expect(mutation, selected.name).toMatchObject({
+        mutation: "input",
+        code: selected.expectedCode ?? "input-rejected",
+        retryable: false,
+      });
+      expect(JSON.stringify(mutation)).not.toContain("secret backend detail");
+      expect(client.disposed, selected.name).toBe(1);
+      expect(coordinator.snapshot().liveConnections, selected.name).toBe(0);
+      await coordinator.shutdown();
+    }
+  });
+
+  it("does not charge binary input against the independent live control-frame budget", async () => {
+    const { coordinator, client } = rig({ maxLiveControlFrames: 1 });
+    await issue(coordinator);
+    const socket = new FakeSocket();
+    admission(coordinator).bind(socket);
+    socket.frame(redemption());
+    await flush();
+    await flush();
+
+    socket.frame(Buffer.from(encodeTerminalAttachmentInputFrame(1, Uint8Array.of(1))), true);
+    expect(client.boundedWrites).toEqual([Buffer.from([1])]);
+    const resize = JSON.stringify({
+      type: "resize",
+      protocolVersion: 1,
+      generation: 0,
+      viewport: { cols: 100, rows: 30 },
+    });
+    socket.frame(resize);
+    expect(socket.closes).toEqual([]);
+    socket.frame(resize);
+    expect(socket.closes.at(-1)).toEqual({ code: 1008, reason: "control-frame-limit" });
+    await coordinator.shutdown();
+  });
+
+  it("closes bounded input on shutdown, awaits release, and cannot replay an acknowledged frame", async () => {
+    const { coordinator, manager, client } = rig();
+    await issue(coordinator);
+    const socket = new FakeSocket();
+    admission(coordinator).bind(socket);
+    socket.frame(redemption());
+    await flush();
+    await flush();
+    socket.frame(Buffer.from(encodeTerminalAttachmentInputFrame(1, Uint8Array.of(4, 5))), true);
+    expect(JSON.parse(socket.sent.at(-1)!.data as string)).toMatchObject({
+      type: "input-ack",
+      sequence: 1,
+      acceptedBytes: 2,
+    });
+
+    let releaseCleanup!: () => void;
+    manager.releaseGate = new Promise<void>((resolve) => {
+      releaseCleanup = resolve;
+    });
+    let settled = false;
+    const shutdown = coordinator.shutdown().then(() => {
+      settled = true;
     });
     await flush();
-    expect(client.disposed).toBe(1);
-    expect(coordinator.snapshot().liveConnections).toBe(0);
-    expect(manager.releases).toHaveLength(1);
-    await coordinator.shutdown();
+    expect(settled).toBe(false);
+    expect(client.boundedInput?.snapshot().state).toBe("closed");
+    expect(socket.closes.at(-1)).toEqual({ code: 1001, reason: "daemon-shutdown" });
+    socket.frame(Buffer.from(encodeTerminalAttachmentInputFrame(2, Uint8Array.of(6))), true);
+    expect(client.boundedWrites).toEqual([Buffer.from([4, 5])]);
+
+    releaseCleanup();
+    await shutdown;
+    expect(settled).toBe(true);
+    expect(client.boundedWrites).toHaveLength(1);
   });
 
   it("bounds live control frames and awaits lease release during shutdown", async () => {
@@ -924,6 +1129,19 @@ describe("TerminalAttachmentAdmissionCoordinator", () => {
         frames.some((frame) => !frame.binary && frame.data.toString().includes('"ready"')),
       ).toBe(true);
     });
+    const largerThanRedemption = Buffer.alloc(4_097, 0x61);
+    live.send(Buffer.from(encodeTerminalAttachmentInputFrame(1, largerThanRedemption)));
+    await vi.waitFor(() => {
+      expect(
+        frames.some(
+          (frame) =>
+            !frame.binary &&
+            JSON.parse(frame.data.toString())?.type === "input-ack" &&
+            JSON.parse(frame.data.toString())?.byteLength === largerThanRedemption.byteLength,
+        ),
+      ).toBe(true);
+    });
+    expect(client.boundedWrites).toEqual([largerThanRedemption]);
     client.output(Buffer.from([1, 0, 255, 2]));
     await vi.waitFor(() => {
       expect(
