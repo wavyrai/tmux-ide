@@ -77,40 +77,38 @@ export function dockAppWindowIntent(
   };
 }
 
-/** Stable command order is focus, move, then resize. */
-export function rectCommitIntents(
+/**
+ * Commit a complete floating rect through the repository's atomic
+ * `window.float(rect)` operation. Separate move/resize commands can expose an
+ * invalid intermediate rect and consume multiple durable revisions.
+ */
+export function rectCommitIntent(
   windowId: string,
-  before: CanvasRect,
-  after: CanvasRect,
+  rect: CanvasRect,
   source: AppWindowInteractionCommandSource,
-  options: { readonly focus?: boolean } = {},
-): readonly AppWindowInteractionCommandIntent[] {
-  const intents: AppWindowInteractionCommandIntent[] = [];
-  if (options.focus ?? true) intents.push(focusAppWindowIntent(windowId, source));
-  if (before.x !== after.x || before.y !== after.y) {
-    intents.push(moveAppWindowIntent(windowId, after, source));
-  }
-  if (before.width !== after.width || before.height !== after.height) {
-    intents.push(resizeAppWindowIntent(windowId, after, source));
-  }
-  return intents;
+): AppWindowInteractionCommandIntent {
+  return floatAppWindowIntent(windowId, source, rect);
 }
 
-export interface AppWindowMaximizeState {
-  readonly mode: "maximized" | "restored";
-  /** Original floating rect while maximized; null while restored. */
-  readonly restoreRect: CanvasRect | null;
-}
+/** Restore geometry exists if and only if the window is maximized. */
+export type AppWindowMaximizeState =
+  | { readonly mode: "restored" }
+  | { readonly mode: "maximized"; readonly restoreRect: CanvasRect };
 
 export interface AppWindowMaximizeIntent {
   readonly state: AppWindowMaximizeState;
   readonly rect: CanvasRect;
-  readonly commands: readonly AppWindowInteractionCommandIntent[];
+  /** Exactly one atomic durable transition; never a move/resize sequence. */
+  readonly commands: readonly [AppWindowInteractionCommandIntent];
+}
+
+function assertNever(value: never): never {
+  throw new Error(`unknown maximize mode: ${String(value)}`);
 }
 
 /**
- * Maximize is a local layout intent expressed through existing AppWindow move
- * and resize commands; it does not invent a second durable placement model.
+ * Maximize is a local layout intent expressed through the existing atomic
+ * AppWindow full-rect command; it does not invent a second durable model.
  */
 export function toggleAppWindowMaximizeIntent(input: {
   readonly windowId: string;
@@ -119,13 +117,20 @@ export function toggleAppWindowMaximizeIntent(input: {
   readonly state: AppWindowMaximizeState;
   readonly source: AppWindowInteractionCommandSource;
 }): AppWindowMaximizeIntent {
-  const maximizing = input.state.mode === "restored";
-  const rect = maximizing ? input.availableRect : (input.state.restoreRect ?? input.currentRect);
-  return {
-    state: maximizing
-      ? { mode: "maximized", restoreRect: input.currentRect }
-      : { mode: "restored", restoreRect: null },
-    rect,
-    commands: rectCommitIntents(input.windowId, input.currentRect, rect, input.source),
-  };
+  switch (input.state.mode) {
+    case "restored":
+      return {
+        state: { mode: "maximized", restoreRect: input.currentRect },
+        rect: input.availableRect,
+        commands: [rectCommitIntent(input.windowId, input.availableRect, input.source)],
+      };
+    case "maximized":
+      return {
+        state: { mode: "restored" },
+        rect: input.state.restoreRect,
+        commands: [rectCommitIntent(input.windowId, input.state.restoreRect, input.source)],
+      };
+    default:
+      return assertNever(input.state);
+  }
 }

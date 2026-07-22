@@ -1,4 +1,10 @@
-import type { CanvasRect, CanvasResizeEdge } from "./canvas-interaction-geometry.ts";
+import {
+  normalizeCanvasTransform,
+  type CanvasRect,
+  type CanvasResizeEdge,
+  type CanvasScaleRange,
+  type CanvasViewportTransform,
+} from "./canvas-interaction-geometry.ts";
 
 export interface CanvasResizeHitTarget {
   readonly edge: CanvasResizeEdge;
@@ -10,6 +16,7 @@ export interface CanvasResizeHitTarget {
 }
 
 export interface CanvasResizeHitTargetOptions {
+  /** All target metrics are screen pixels and converted to canvas units. */
   readonly hitSlop?: number;
   readonly edgeThickness?: number;
   readonly cornerSpan?: number;
@@ -18,11 +25,17 @@ export interface CanvasResizeHitTargetOptions {
 /** Model eight wide, transparent resize targets independently from painted borders. */
 export function canvasResizeHitTargets(
   rect: CanvasRect,
+  transform: CanvasViewportTransform,
   options: CanvasResizeHitTargetOptions = {},
+  scaleRange?: CanvasScaleRange,
 ): readonly CanvasResizeHitTarget[] {
-  const hitSlop = Math.max(1, options.hitSlop ?? 8);
-  const edgeThickness = Math.max(1, options.edgeThickness ?? 1);
-  const cornerSpan = Math.max(hitSlop * 2, options.cornerSpan ?? 24);
+  const scale = normalizeCanvasTransform(transform, scaleRange).scale;
+  const screenHitSlop = Math.max(1, finiteMetric(options.hitSlop, 8));
+  const screenEdgeThickness = Math.max(1, finiteMetric(options.edgeThickness, 1));
+  const screenCornerSpan = Math.max(screenHitSlop * 2, finiteMetric(options.cornerSpan, 24));
+  const hitSlop = screenHitSlop / scale;
+  const edgeThickness = screenEdgeThickness / scale;
+  const cornerSpan = screenCornerSpan / scale;
   const horizontalSpan = Math.max(0, rect.width - cornerSpan * 2);
   const verticalSpan = Math.max(0, rect.height - cornerSpan * 2);
   const left = rect.x;
@@ -121,6 +134,10 @@ export function canvasResizeHitTargets(
       edgeRect: { x: left, y: top + cornerSpan, width: edgeThickness, height: verticalSpan },
     },
   ];
+}
+
+function finiteMetric(value: number | undefined, fallback: number): number {
+  return value !== undefined && Number.isFinite(value) ? value : fallback;
 }
 
 export type CanvasPointerRegion =

@@ -10,6 +10,7 @@ describe("canvas resize hit targets", () => {
   it("models eight transparent targets wider than their painted edges", () => {
     const targets = canvasResizeHitTargets(
       { x: 100, y: 80, width: 400, height: 300 },
+      { x: 0, y: 0, scale: 1 },
       { hitSlop: 8, edgeThickness: 1, cornerSpan: 24 },
     );
     expect(targets.map(({ edge }) => edge)).toEqual([
@@ -26,6 +27,32 @@ describe("canvas resize hit targets", () => {
       hitRect: { x: 492, y: 104, width: 16, height: 252 },
       edgeRect: { x: 499, y: 104, width: 1, height: 252 },
     });
+  });
+
+  it("keeps hit slop, painted edges, and corners constant in screen pixels", () => {
+    const rect = { x: 100, y: 80, width: 400, height: 300 };
+    const metrics = { hitSlop: 8, edgeThickness: 1, cornerSpan: 24 };
+    const atHalfZoom = canvasResizeHitTargets(rect, { x: 0, y: 0, scale: 0.5 }, metrics);
+    const atDoubleZoom = canvasResizeHitTargets(rect, { x: 0, y: 0, scale: 2 }, metrics);
+    const halfEast = atHalfZoom.find(({ edge }) => edge === "east")!;
+    const doubleEast = atDoubleZoom.find(({ edge }) => edge === "east")!;
+
+    expect(halfEast.hitRect.width * 0.5).toBe(16);
+    expect(doubleEast.hitRect.width * 2).toBe(16);
+    expect(halfEast.edgeRect.width * 0.5).toBe(1);
+    expect(doubleEast.edgeRect.width * 2).toBe(1);
+    expect((halfEast.hitRect.y - rect.y) * 0.5).toBe(24);
+    expect((doubleEast.hitRect.y - rect.y) * 2).toBe(24);
+  });
+
+  it("honors a custom zoom range while deriving screen-constant targets", () => {
+    const targets = canvasResizeHitTargets(
+      { x: 0, y: 0, width: 800, height: 600 },
+      { x: 0, y: 0, scale: 0.1 },
+      { hitSlop: 8 },
+      { min: 0.05, max: 0.2 },
+    );
+    expect(targets.find(({ edge }) => edge === "west")?.hitRect.width).toBe(160);
   });
 });
 

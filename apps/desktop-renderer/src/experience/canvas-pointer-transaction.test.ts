@@ -33,7 +33,7 @@ describe("canvas pointer transactions", () => {
     });
   });
 
-  it("resizes north-west under zoom and commits move before resize", () => {
+  it("resizes north-west under zoom and commits one atomic full-rect command", () => {
     let transaction = beginCanvasResize({ ...BASE, edge: "north-west" });
     ({ transaction } = updateCanvasPointerTransaction(transaction, {
       pointerId: 7,
@@ -48,11 +48,11 @@ describe("canvas pointer transactions", () => {
       persist: true,
       commands: [
         {
-          command: { type: "window.move", windowId: "window.lead", x: 20, y: 10 },
-          source: "mouse",
-        },
-        {
-          command: { type: "window.resize", windowId: "window.lead", width: 340, height: 260 },
+          command: {
+            type: "window.float",
+            windowId: "window.lead",
+            rect: { x: 20, y: 10, width: 340, height: 260 },
+          },
           source: "mouse",
         },
       ],
@@ -121,5 +121,19 @@ describe("canvas pointer transactions", () => {
     expect(updateCanvasPointerTransaction(reduced, pointer)).toEqual(
       updateCanvasPointerTransaction(full, pointer),
     );
+  });
+
+  it("uses the caller's custom zoom range for pointer deltas", () => {
+    const started = beginCanvasMove({
+      ...BASE,
+      transform: { x: 0, y: 0, scale: 0.1 },
+      scaleRange: { min: 0.05, max: 0.2 },
+    });
+    const update = updateCanvasPointerTransaction(started, {
+      pointerId: 7,
+      x: 220,
+      y: 110,
+    });
+    expect(update.frame.rect).toEqual({ x: 240, y: 130, width: 320, height: 240 });
   });
 });

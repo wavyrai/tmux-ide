@@ -7,10 +7,11 @@ import {
   type CanvasRect,
   type CanvasRectConstraints,
   type CanvasResizeEdge,
+  type CanvasScaleRange,
   type CanvasViewportTransform,
 } from "./canvas-interaction-geometry.ts";
 import {
-  rectCommitIntents,
+  rectCommitIntent,
   type AppWindowInteractionCommandIntent,
 } from "./canvas-interaction-intents.ts";
 
@@ -25,6 +26,7 @@ interface CanvasPointerTransactionBase {
   readonly originalRect: CanvasRect;
   readonly currentRect: CanvasRect;
   readonly transform: CanvasViewportTransform;
+  readonly scaleRange?: CanvasScaleRange;
   readonly constraints: CanvasRectConstraints;
 }
 
@@ -40,6 +42,8 @@ export interface CanvasPointerTransactionInput {
   readonly windowId: string;
   readonly rect: CanvasRect;
   readonly transform: CanvasViewportTransform;
+  /** Must match the range used to normalize the viewport transform. */
+  readonly scaleRange?: CanvasScaleRange;
   readonly constraints: CanvasRectConstraints;
   /** Presentation preference is intentionally irrelevant to transaction semantics. */
   readonly presentation?: { readonly reducedMotion: boolean };
@@ -56,7 +60,8 @@ export interface CanvasPointerCompletion {
   readonly phase: "committed" | "cancelled";
   readonly rect: CanvasRect;
   readonly persist: boolean;
-  readonly commands: readonly AppWindowInteractionCommandIntent[];
+  /** Geometry completion persists through zero or one atomic full-rect command. */
+  readonly commands: readonly [] | readonly [AppWindowInteractionCommandIntent];
 }
 
 export function beginCanvasMove(input: CanvasPointerTransactionInput): CanvasPointerTransaction {
@@ -68,6 +73,7 @@ export function beginCanvasMove(input: CanvasPointerTransactionInput): CanvasPoi
     originalRect: input.rect,
     currentRect: input.rect,
     transform: input.transform,
+    scaleRange: input.scaleRange,
     constraints: input.constraints,
   };
 }
@@ -84,6 +90,7 @@ export function beginCanvasResize(
     originalRect: input.rect,
     currentRect: input.rect,
     transform: input.transform,
+    scaleRange: input.scaleRange,
     constraints: input.constraints,
   };
 }
@@ -101,6 +108,7 @@ export function updateCanvasPointerTransaction(
   const delta = canvasDeltaFromScreenDelta(
     { x: pointer.x - transaction.origin.x, y: pointer.y - transaction.origin.y },
     transaction.transform,
+    transaction.scaleRange,
   );
   const currentRect =
     transaction.kind === "move"
@@ -127,15 +135,7 @@ export function commitCanvasPointerTransaction(
     rect: transaction.currentRect,
     persist: changed,
     commands: changed
-      ? rectCommitIntents(
-          transaction.windowId,
-          transaction.originalRect,
-          transaction.currentRect,
-          "mouse",
-          // Pointer routing focuses on gesture start. Avoid a duplicate durable
-          // focus mutation when geometry commits on pointerup.
-          { focus: false },
-        )
+      ? [rectCommitIntent(transaction.windowId, transaction.currentRect, "mouse")]
       : [],
   };
 }

@@ -79,8 +79,9 @@ export function normalizeCanvasTransform(
 export function canvasToScreen(
   point: CanvasPoint,
   transform: CanvasViewportTransform,
+  range: CanvasScaleRange = DEFAULT_SCALE_RANGE,
 ): CanvasPoint {
-  const normalized = normalizeCanvasTransform(transform);
+  const normalized = normalizeCanvasTransform(transform, range);
   return {
     x: point.x * normalized.scale + normalized.x,
     y: point.y * normalized.scale + normalized.y,
@@ -90,8 +91,9 @@ export function canvasToScreen(
 export function screenToCanvas(
   point: CanvasPoint,
   transform: CanvasViewportTransform,
+  range: CanvasScaleRange = DEFAULT_SCALE_RANGE,
 ): CanvasPoint {
-  const normalized = normalizeCanvasTransform(transform);
+  const normalized = normalizeCanvasTransform(transform, range);
   return {
     x: (point.x - normalized.x) / normalized.scale,
     y: (point.y - normalized.y) / normalized.scale,
@@ -102,8 +104,9 @@ export function screenToCanvas(
 export function panCanvasViewport(
   transform: CanvasViewportTransform,
   screenDelta: CanvasPoint,
+  range: CanvasScaleRange = DEFAULT_SCALE_RANGE,
 ): CanvasViewportTransform {
-  const normalized = normalizeCanvasTransform(transform);
+  const normalized = normalizeCanvasTransform(transform, range);
   return {
     ...normalized,
     x: normalized.x + finite(screenDelta.x, 0),
@@ -125,7 +128,7 @@ export function zoomCanvasViewportAt(
     normalizedRange.min,
     normalizedRange.max,
   );
-  const canvasAnchor = screenToCanvas(screenAnchor, normalized);
+  const canvasAnchor = screenToCanvas(screenAnchor, normalized, normalizedRange);
   return {
     scale,
     x: screenAnchor.x - canvasAnchor.x * scale,
@@ -136,8 +139,9 @@ export function zoomCanvasViewportAt(
 export function canvasDeltaFromScreenDelta(
   screenDelta: CanvasPoint,
   transform: CanvasViewportTransform,
+  range: CanvasScaleRange = DEFAULT_SCALE_RANGE,
 ): CanvasPoint {
-  const scale = normalizeCanvasTransform(transform).scale;
+  const scale = normalizeCanvasTransform(transform, range).scale;
   return { x: finite(screenDelta.x, 0) / scale, y: finite(screenDelta.y, 0) / scale };
 }
 

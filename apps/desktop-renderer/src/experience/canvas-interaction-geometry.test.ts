@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  canvasDeltaFromScreenDelta,
   canvasToScreen,
   moveCanvasRect,
+  panCanvasViewport,
   resizeCanvasRect,
   screenToCanvas,
   zoomCanvasViewportAt,
@@ -38,7 +40,26 @@ describe("canvas viewport geometry", () => {
     const anchor = { x: 100, y: 50 };
     const after = zoomCanvasViewportAt({ x: 10, y: 5, scale: 1 }, 20, anchor, { min: 0.5, max: 3 });
     expect(after.scale).toBe(3);
-    expect(canvasToScreen({ x: 90, y: 45 }, after)).toEqual(anchor);
+    expect(canvasToScreen({ x: 90, y: 45 }, after, { min: 0.5, max: 3 })).toEqual(anchor);
+  });
+
+  it("propagates a custom scale range through projection, inversion, pan, and deltas", () => {
+    const range = { min: 0.05, max: 0.2 };
+    const transform = { x: 10, y: 20, scale: 0.1 };
+    const canvas = { x: 400, y: 300 };
+    const screen = canvasToScreen(canvas, transform, range);
+
+    expect(screen).toEqual({ x: 50, y: 50 });
+    expect(screenToCanvas(screen, transform, range)).toEqual(canvas);
+    expect(canvasDeltaFromScreenDelta({ x: 10, y: -5 }, transform, range)).toEqual({
+      x: 100,
+      y: -50,
+    });
+    expect(panCanvasViewport(transform, { x: 5, y: 8 }, range)).toEqual({
+      x: 15,
+      y: 28,
+      scale: 0.1,
+    });
   });
 });
 
