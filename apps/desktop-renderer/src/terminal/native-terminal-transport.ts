@@ -64,3 +64,22 @@ export function isNativeTerminalOutput(
 ): event is Extract<NativeTerminalEvent, { readonly type: "output" }> {
   return event.type === "output" && event.bytes instanceof Uint8Array;
 }
+
+export {
+  NATIVE_TERMINAL_DEFAULT_ISSUE_TIMEOUT_MS,
+  NATIVE_TERMINAL_MAX_CONTROL_BYTES,
+  NATIVE_TERMINAL_MAX_CONTROL_FRAMES,
+  NATIVE_TERMINAL_MAX_DESCRIPTOR_LIFETIME_MS,
+  NATIVE_TERMINAL_MAX_OUTPUT_FRAME_BYTES,
+  NATIVE_TERMINAL_MAX_QUEUED_EVENT_BYTES,
+  NATIVE_TERMINAL_MAX_QUEUED_EVENTS,
+  NATIVE_TERMINAL_MAX_SOCKET_BUFFERED_BYTES,
+  NATIVE_TERMINAL_WEBSOCKET_PROTOCOL,
+  createNativeTerminalWebSocketTransport,
+  type NativeTerminalIssueAttachment,
+  type NativeTerminalSocketEvent,
+  type NativeTerminalSocketListener,
+  type NativeTerminalWebSocket,
+  type NativeTerminalWebSocketFactory,
+  type NativeTerminalWebSocketTransportDependencies,
+} from "./native-terminal-websocket-transport.ts";
