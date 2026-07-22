@@ -1368,7 +1368,11 @@ function listAvailableTemplates(): ProjectTemplate[] {
   // Repo-root templates/ — 4 levels up from packages/daemon/src/command-center/.
   // Pre-fold this lived at <pkg>/templates (..,.. worked); post-fold the
   // canonical templates dir is at the repo root.
-  const templatesDir = join(__dir, "..", "..", "..", "..", "templates");
+  const configuredTemplatesDir = process.env.TMUX_IDE_TEMPLATES_DIR;
+  const templatesDir =
+    configuredTemplatesDir && isAbsolute(configuredTemplatesDir)
+      ? configuredTemplatesDir
+      : join(__dir, "..", "..", "..", "..", "templates");
   if (!existsSync(templatesDir)) return [];
   const labels: Record<string, { label: string; description: string }> = {
     default: { label: "Default", description: "Single Claude pane + dev/shell row" },

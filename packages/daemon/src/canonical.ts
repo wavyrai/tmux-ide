@@ -1,5 +1,6 @@
 export {
   canonicalDaemonUrl,
+  canonicalDaemonClaimAllowsStartupAttempt,
   clearCanonicalDaemonInfoIfOwned,
   clearCanonicalDaemonInfoIfUnchanged,
   getCanonicalDaemonClaimPath,

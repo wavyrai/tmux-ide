@@ -15,6 +15,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   canonicalDaemonUrl,
+  canonicalDaemonClaimAllowsStartupAttempt,
   clearCanonicalDaemonInfoIfOwned,
   clearCanonicalDaemonInfoIfUnchanged,
   getCanonicalDaemonClaimPath,
@@ -302,13 +303,16 @@ describe("canonical daemon info", () => {
   });
 
   it("allows exactly one process-lifetime canonical claim", () => {
+    expect(canonicalDaemonClaimAllowsStartupAttempt()).toBe(true);
     const claim = acquireClaim();
+    expect(canonicalDaemonClaimAllowsStartupAttempt()).toBe(false);
     expect(tryAcquireCanonicalDaemonClaim()).toMatchObject({
       status: "busy",
       owner: { claimId: claim.claimId, pid: process.pid },
     });
     expect(releaseCanonicalDaemonClaim(claim)).toBe(true);
     activeClaim = null;
+    expect(canonicalDaemonClaimAllowsStartupAttempt()).toBe(true);
 
     const replacement = tryAcquireCanonicalDaemonClaim();
     expect(replacement.status).toBe("acquired");
@@ -335,6 +339,7 @@ describe("canonical daemon info", () => {
     rmSync(tempDir, { recursive: true });
     symlinkSync(target, tempDir);
     try {
+      expect(canonicalDaemonClaimAllowsStartupAttempt()).toBe(false);
       expect(tryAcquireCanonicalDaemonClaim()).toEqual({
         status: "invalid",
         detail: "canonical daemon parent must not be a symbolic link",
@@ -352,6 +357,7 @@ describe("canonical daemon info", () => {
     rmSync(tempDir, { recursive: true });
     writeFileSync(tempDir, "not a directory", { mode: 0o600 });
     try {
+      expect(canonicalDaemonClaimAllowsStartupAttempt()).toBe(false);
       expect(tryAcquireCanonicalDaemonClaim()).toEqual({
         status: "invalid",
         detail: "canonical daemon parent must be a directory",

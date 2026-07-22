@@ -630,6 +630,33 @@ function pidLiveness(pid: number): PidLiveness {
   }
 }
 
+/**
+ * Read-only startup guard for hosts which would launch a daemon contender.
+ * Missing and explicitly dead claims are safe because the atomic claimant can
+ * recover them; live, unknown, and malformed claims remain authoritative.
+ */
+export function canonicalDaemonClaimAllowsStartupAttempt(): boolean {
+  const claimPath = getCanonicalDaemonClaimPath();
+  try {
+    const root = lstatSync(dirname(claimPath));
+    if (
+      root.isSymbolicLink() ||
+      !root.isDirectory() ||
+      (typeof process.getuid === "function" && root.uid !== process.getuid()) ||
+      (root.mode & 0o077) !== 0
+    ) {
+      return false;
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") return false;
+  }
+  const claim = inspectCanonicalDaemonClaimPath(claimPath);
+  return (
+    claim.status === "missing" ||
+    (claim.status === "valid" && pidLiveness(claim.claim.pid) === "dead")
+  );
+}
+
 /** Unknown process state is retained as ownership, never mistaken for death. */
 export async function isCanonicalDaemonAlive(info: CanonicalDaemonInfo): Promise<boolean> {
   return pidLiveness(info.pid) !== "dead";

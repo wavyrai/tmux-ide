@@ -12265,6 +12265,7 @@ var init_statusline = __esm({
 // packages/daemon/src/lib/canonical-daemon.ts
 var canonical_daemon_exports = {};
 __export(canonical_daemon_exports, {
+  canonicalDaemonClaimAllowsStartupAttempt: () => canonicalDaemonClaimAllowsStartupAttempt,
   canonicalDaemonUrl: () => canonicalDaemonUrl,
   clearCanonicalDaemonInfoIfOwned: () => clearCanonicalDaemonInfoIfOwned,
   clearCanonicalDaemonInfoIfUnchanged: () => clearCanonicalDaemonInfoIfUnchanged,
@@ -12706,6 +12707,19 @@ function pidLiveness(pid) {
     if (code === "EPERM") return "alive";
     return "unknown";
   }
+}
+function canonicalDaemonClaimAllowsStartupAttempt() {
+  const claimPath = getCanonicalDaemonClaimPath();
+  try {
+    const root = lstatSync(dirname18(claimPath));
+    if (root.isSymbolicLink() || !root.isDirectory() || typeof process.getuid === "function" && root.uid !== process.getuid() || (root.mode & 63) !== 0) {
+      return false;
+    }
+  } catch (error) {
+    if (error.code !== "ENOENT") return false;
+  }
+  const claim = inspectCanonicalDaemonClaimPath(claimPath);
+  return claim.status === "missing" || claim.status === "valid" && pidLiveness(claim.claim.pid) === "dead";
 }
 async function isCanonicalDaemonAlive(info) {
   return pidLiveness(info.pid) !== "dead";
@@ -26581,7 +26595,8 @@ function createApp(options = {}) {
 function listAvailableTemplates() {
   const __filename = fileURLToPath10(import.meta.url);
   const __dir = dirname27(__filename);
-  const templatesDir = join33(__dir, "..", "..", "..", "..", "templates");
+  const configuredTemplatesDir = process.env.TMUX_IDE_TEMPLATES_DIR;
+  const templatesDir = configuredTemplatesDir && isAbsolute12(configuredTemplatesDir) ? configuredTemplatesDir : join33(__dir, "..", "..", "..", "..", "templates");
   if (!existsSync33(templatesDir)) return [];
   const labels = {
     default: { label: "Default", description: "Single Claude pane + dev/shell row" },

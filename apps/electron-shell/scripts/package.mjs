@@ -1,10 +1,12 @@
 import { execFile } from "node:child_process";
-import { cp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { access, chmod, cp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
+const requireFromHere = createRequire(import.meta.url);
 
 const packageRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
 const repoRoot = join(packageRoot, "..", "..");
@@ -20,8 +22,36 @@ await mkdir(staging, { recursive: true });
 await Promise.all([
   cp(join(packageRoot, "dist", "main.cjs"), join(staging, "main.cjs")),
   cp(join(packageRoot, "dist", "preload.cjs"), join(staging, "preload.cjs")),
+  cp(join(packageRoot, "dist", "daemon-child.cjs"), join(staging, "daemon-child.cjs")),
   cp(join(packageRoot, "dist", "renderer"), join(staging, "renderer"), { recursive: true }),
+  cp(join(repoRoot, "templates"), join(staging, "templates"), { recursive: true }),
 ]);
+
+const nodePtyRoot = dirname(requireFromHere.resolve("node-pty/package.json"));
+const nodePtyTarget = join(staging, "node_modules", "node-pty");
+const honoNodeServerRoot = dirname(dirname(requireFromHere.resolve("@hono/node-server")));
+const honoNodeServerTarget = join(staging, "node_modules", "@hono", "node-server");
+const nativePlatform = `${process.platform}-${process.arch}`;
+const nativeSource = join(nodePtyRoot, "prebuilds", nativePlatform);
+await access(join(nativeSource, "pty.node"));
+await Promise.all([
+  mkdir(nodePtyTarget, { recursive: true }),
+  mkdir(honoNodeServerTarget, { recursive: true }),
+]);
+await Promise.all([
+  cp(join(nodePtyRoot, "LICENSE"), join(nodePtyTarget, "LICENSE")),
+  cp(join(nodePtyRoot, "package.json"), join(nodePtyTarget, "package.json")),
+  cp(join(nodePtyRoot, "lib"), join(nodePtyTarget, "lib"), { recursive: true }),
+  cp(nativeSource, join(nodePtyTarget, "prebuilds", nativePlatform), { recursive: true }),
+  cp(join(honoNodeServerRoot, "LICENSE"), join(honoNodeServerTarget, "LICENSE")),
+  cp(join(honoNodeServerRoot, "package.json"), join(honoNodeServerTarget, "package.json")),
+  cp(join(honoNodeServerRoot, "dist"), join(honoNodeServerTarget, "dist"), {
+    recursive: true,
+  }),
+]);
+if (process.platform !== "win32") {
+  await chmod(join(nodePtyTarget, "prebuilds", nativePlatform, "spawn-helper"), 0o755);
+}
 await writeFile(
   join(staging, "package.json"),
   `${JSON.stringify(

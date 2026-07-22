@@ -34,6 +34,22 @@ await Promise.all([
     sourcemap: true,
     logLevel: "info",
   }),
+  build({
+    entryPoints: [join(packageRoot, "scripts", "daemon-child.mjs")],
+    outfile: join(dist, "daemon-child.cjs"),
+    bundle: true,
+    platform: "node",
+    target: "node22",
+    format: "cjs",
+    banner: {
+      js: 'const __daemonImportMetaUrl = require("node:url").pathToFileURL(__filename).href;',
+    },
+    define: { "import.meta.url": "__daemonImportMetaUrl" },
+    // The native binding is copied into the packaged runtime explicitly.
+    external: ["node-pty"],
+    sourcemap: true,
+    logLevel: "info",
+  }),
 ]);
 
 await cp(rendererDist, join(dist, "renderer"), { recursive: true });
