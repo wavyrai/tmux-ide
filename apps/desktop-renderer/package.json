@@ -15,7 +15,8 @@
     "@tmux-ide/contracts": "workspace:*",
     "@xterm/addon-fit": "0.11.0",
     "@xterm/xterm": "6.0.0",
-    "solid-js": "1.9.12"
+    "solid-js": "1.9.12",
+    "zod": "4.3.6"
   },
   "devDependencies": {
     "happy-dom": "^20.8.4",

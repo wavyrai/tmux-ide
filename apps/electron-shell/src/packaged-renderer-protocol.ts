@@ -199,6 +199,8 @@ export function packagedRendererContentSecurityPolicy(daemonHttpOrigin: string |
     "default-src 'self'",
     "script-src 'self'",
     "style-src 'self'",
+    "style-src-elem 'self' 'unsafe-inline'",
+    "style-src-attr 'unsafe-inline'",
     "img-src 'self' data:",
     "font-src 'self'",
     `connect-src ${connectSources.join(" ")}`,

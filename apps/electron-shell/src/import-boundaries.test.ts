@@ -101,6 +101,9 @@ describe("desktop process boundaries", () => {
     expect(vite).toContain("frame-ancestors 'none'");
     expect(vite).toContain("ws://127.0.0.1:5173");
     expect(vite).toContain("sourcemap: false");
-    expect(vite).not.toMatch(/unsafe-(?:inline|eval)/u);
+    expect(vite).toContain("\"script-src 'self'\"");
+    expect(vite).toContain("\"style-src-elem 'self' 'unsafe-inline'\"");
+    expect(vite).toContain("\"style-src-attr 'unsafe-inline'\"");
+    expect(vite).not.toContain("unsafe-eval");
   });
 });

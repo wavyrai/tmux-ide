@@ -9,6 +9,15 @@ import { chromium } from "playwright";
 const packageRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
 const cspViolation = /content security policy|violates.+style-src/iu;
 
+function cspDirectives(value) {
+  return new Map(
+    value.split(";").flatMap((part) => {
+      const [name, ...sources] = part.trim().split(/\s+/u);
+      return name ? [[name, sources.join(" ")]] : [];
+    }),
+  );
+}
+
 function reservePort() {
   return new Promise((resolve, reject) => {
     const server = createServer();
@@ -138,7 +147,30 @@ try {
         });
       });
     });
-    await page.goto(rendererUrl, { waitUntil: "networkidle" });
+    const navigation = await page.goto(rendererUrl, { waitUntil: "networkidle" });
+    const policy = cspDirectives(navigation?.headers()["content-security-policy"] ?? "");
+    const expectedPolicy = new Map([
+      ["default-src", "'self'"],
+      ["script-src", "'self'"],
+      ["style-src", "'self'"],
+      ["style-src-elem", "'self' 'unsafe-inline'"],
+      ["style-src-attr", "'unsafe-inline'"],
+      ["img-src", "'self' data:"],
+      ["font-src", "'self'"],
+      ["connect-src", "'self' ws://127.0.0.1:5173"],
+      ["object-src", "'none'"],
+      ["base-uri", "'none'"],
+      ["frame-ancestors", "'none'"],
+      ["form-action", "'none'"],
+    ]);
+    if (
+      policy.size !== expectedPolicy.size ||
+      [...expectedPolicy].some(([directive, sources]) => policy.get(directive) !== sources)
+    ) {
+      throw new Error(
+        `Renderer CSP boundary changed: ${JSON.stringify(Object.fromEntries(policy))}`,
+      );
+    }
     const result = await page.evaluate(() => {
       const frame = [...globalThis.document.querySelectorAll(".web-pane-frame")].find(
         (candidate) => globalThis.getComputedStyle(candidate).display !== "none",
@@ -159,6 +191,8 @@ try {
         await import("/src/ui-system/showcase.fixture.tsx");
       const { mountAppWindowCanvasSmokeFixture } =
         await import("/src/experience/app-window-canvas.fixture.tsx");
+      const { mountTerminalSurfaceSmokeFixture } =
+        await import("/src/terminal/terminal-surface.fixture.tsx");
       const dispose = mountUiSystemShowcaseFixture(mountRoot);
       const trigger = mountRoot.querySelector('[aria-label="Add pane"]');
       trigger?.focus();
@@ -207,6 +241,44 @@ try {
           // Ignore opaque stylesheets.
         }
       }
+      const terminalRoot = globalThis.document.createElement("div");
+      const baselineStyles = new Set(globalThis.document.querySelectorAll("style"));
+      globalThis.document.body.append(terminalRoot);
+      const disposeTerminal = mountTerminalSurfaceSmokeFixture(terminalRoot);
+      const terminalDeadline = Date.now() + 5_000;
+      let terminalSurface = null;
+      while (Date.now() < terminalDeadline) {
+        terminalSurface = terminalRoot.querySelector(".terminal-surface");
+        if (
+          terminalSurface?.getAttribute("data-phase") === "connected" &&
+          terminalSurface.getAttribute("data-preserves-frame") === "true" &&
+          terminalRoot.querySelector(".xterm")
+        ) {
+          break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+      await new Promise((resolve) => globalThis.requestAnimationFrame(resolve));
+      await new Promise((resolve) => globalThis.requestAnimationFrame(resolve));
+      const xterm = terminalRoot.querySelector(".xterm");
+      const xtermRect = xterm?.getBoundingClientRect();
+      const inlineStyleOwners = [...globalThis.document.querySelectorAll("[style]")].map(
+        (element) => ({
+          tag: element.tagName.toLowerCase(),
+          class: element.getAttribute("class") ?? "",
+          ownedByXterm: terminalRoot.contains(element) && Boolean(element.closest(".xterm")),
+        }),
+      );
+      const generatedStyleOwners = [...globalThis.document.querySelectorAll("style")]
+        .filter((element) => !baselineStyles.has(element))
+        .map((element) => ({
+          insideXterm: terminalRoot.contains(element) && Boolean(element.closest(".xterm")),
+          globalXtermSheet:
+            element.parentElement === globalThis.document.head &&
+            element.type === "text/css" &&
+            element.media === "screen",
+          ruleCount: element.sheet?.cssRules.length ?? 0,
+        }));
       const output = {
         controlledTabsSynchronized,
         portaledWithinFixture: Boolean(tooltip && mountRoot.contains(tooltip)),
@@ -235,9 +307,23 @@ try {
             element?.getAttribute("data-tmi-runtime-style"),
           ),
           runtimeRules: canvasRuntimeRules,
-          inlineAttributes: globalThis.document.querySelectorAll("[style]").length,
+          inlineAttributes: canvasRoot.querySelectorAll("[style]").length,
+        },
+        terminal: {
+          phase: terminalSurface?.getAttribute("data-phase"),
+          preservesFrame: terminalSurface?.getAttribute("data-preserves-frame"),
+          clientViewport: terminalSurface?.getAttribute("data-client-viewport"),
+          hasXterm: Boolean(xterm),
+          hasTextarea: Boolean(terminalRoot.querySelector(".xterm-helper-textarea")),
+          hasCursor: Boolean(terminalRoot.querySelector(".xterm-cursor")),
+          renderedText: terminalRoot.textContent?.includes("CSP terminal ready") ?? false,
+          geometry: xtermRect ? { width: xtermRect.width, height: xtermRect.height } : null,
+          inlineStyleOwners,
+          generatedStyleOwners,
         },
       };
+      disposeTerminal();
+      terminalRoot.remove();
       disposeCanvas();
       canvasRoot.remove();
       controlledTabs.dispose();
@@ -277,7 +363,7 @@ try {
       };
     });
     const violations = consoleMessages.filter((message) => cspViolation.test(message));
-    if (violations.length > 0) {
+    if (violations.length > 0 || styleDiagnostics.violations.length > 0) {
       throw new Error(
         `Renderer emitted CSP violations:\n${violations.join("\n")}\n` +
           `Style diagnostics: ${JSON.stringify(styleDiagnostics, null, 2)}`,
@@ -286,7 +372,9 @@ try {
     if (
       result.inlineStyleElements !== 0 ||
       styleDiagnostics.inlineAttributes.length !== 0 ||
-      styleDiagnostics.styleElements.length !== 0
+      styleDiagnostics.styleElements.some(
+        (element) => element.tag !== "style" || element.style !== "",
+      )
     ) {
       throw new Error(
         `Renderer created inline style nodes or attributes: ${JSON.stringify(styleDiagnostics, null, 2)}`,
@@ -318,10 +406,25 @@ try {
       primitiveResult.canvas.floating?.left !== 42 ||
       primitiveResult.canvas.floating?.top !== 36 ||
       primitiveResult.canvas.floating?.width !== 360 ||
-      primitiveResult.canvas.floating?.height !== 220
+      primitiveResult.canvas.floating?.height !== 220 ||
+      primitiveResult.terminal.phase !== "connected" ||
+      primitiveResult.terminal.preservesFrame !== "true" ||
+      !primitiveResult.terminal.hasXterm ||
+      !primitiveResult.terminal.hasTextarea ||
+      !primitiveResult.terminal.hasCursor ||
+      !primitiveResult.terminal.renderedText ||
+      !primitiveResult.terminal.geometry ||
+      primitiveResult.terminal.geometry.width <= 0 ||
+      primitiveResult.terminal.geometry.height <= 0 ||
+      primitiveResult.terminal.inlineStyleOwners.length === 0 ||
+      primitiveResult.terminal.inlineStyleOwners.some((owner) => !owner.ownedByXterm) ||
+      primitiveResult.terminal.generatedStyleOwners.length === 0 ||
+      primitiveResult.terminal.generatedStyleOwners.some(
+        (owner) => !owner.insideXterm && !owner.globalXtermSheet,
+      )
     ) {
       throw new Error(
-        `Renderer primitive tooltip escaped safe geometry: ${JSON.stringify(primitiveResult)}`,
+        `Renderer primitive, canvas, or xterm boundary failed: ${JSON.stringify(primitiveResult)}`,
       );
     }
   } finally {

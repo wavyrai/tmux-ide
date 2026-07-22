@@ -6,3 +6,11 @@
 .tmi-runtime-style-registry {
   --tmi-runtime-style-registry-ready: 1;
 }
+
+.tmi-terminal-smoke-fixture {
+  position: fixed;
+  top: 80px;
+  left: 80px;
+  width: 640px;
+  height: 360px;
+}

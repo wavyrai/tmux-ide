@@ -114,6 +114,9 @@ importers:
       solid-js:
         specifier: 1.9.12
         version: 1.9.12
+      zod:
+        specifier: ^4.3.6
+        version: 4.3.6
     devDependencies:
       happy-dom:
         specifier: ^20.8.4
