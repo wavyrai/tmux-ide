@@ -17390,17 +17390,13 @@ var init_mission_repository = __esm({
 
 // packages/daemon/src/lib/workspace-pane-creation.ts
 import { accessSync as accessSync3, constants as constants4, realpathSync as realpathSync5, statSync as statSync6 } from "node:fs";
-import { delimiter as delimiter2, isAbsolute as isAbsolute6, relative as relative3, resolve as resolve23, sep as sep4 } from "node:path";
+import { delimiter as delimiter2, isAbsolute as isAbsolute6, join as join27, relative as relative3, sep as sep4 } from "node:path";
 function canonicalProjectDir(path2) {
   const canonical = realpathSync5(path2);
   if (!statSync6(canonical).isDirectory()) throw new Error("project root is not a directory");
   return canonical;
 }
-function workspaceWithTrustedConfig(workspace, canonicalRoot) {
-  const candidate = workspace.configPath ?? workspace.ideConfigPath;
-  if (!candidate) {
-    return { ...workspace, configPath: null, ideConfigPath: null };
-  }
+function canonicalWorkspaceFile(workspace, canonicalRoot, candidate, source) {
   let canonicalConfig;
   try {
     canonicalConfig = realpathSync5(candidate);
@@ -17408,7 +17404,10 @@ function workspaceWithTrustedConfig(workspace, canonicalRoot) {
   } catch (cause) {
     throw new WorkspacePaneCreationError(
       "workspace_unavailable",
-      { workspaceName: workspace.name, reason: "config_provenance_unavailable" },
+      {
+        workspaceName: workspace.name,
+        reason: `${source}_config_provenance_unavailable`
+      },
       cause
     );
   }
@@ -17416,18 +17415,32 @@ function workspaceWithTrustedConfig(workspace, canonicalRoot) {
   if (ownedRelativePath === "" || ownedRelativePath === ".." || ownedRelativePath.startsWith(`..${sep4}`) || isAbsolute6(ownedRelativePath)) {
     throw new WorkspacePaneCreationError("workspace_unavailable", {
       workspaceName: workspace.name,
-      reason: "config_outside_workspace"
+      reason: `${source}_config_outside_workspace`
     });
   }
+  return canonicalConfig;
+}
+function workspaceWithTrustedConfig(workspace, canonicalRoot) {
+  const candidate = workspace.configPath ?? workspace.ideConfigPath;
+  if (!candidate) {
+    return { ...workspace, configPath: null, ideConfigPath: null };
+  }
+  const canonicalConfig = canonicalWorkspaceFile(workspace, canonicalRoot, candidate, "base");
   return {
     ...workspace,
     configPath: canonicalConfig,
     ideConfigPath: canonicalConfig
   };
 }
+function assertEffectiveConfigProvenance(workspace, canonicalRoot, source) {
+  canonicalWorkspaceFile(workspace, canonicalRoot, source.basePath, "base");
+  if (source.localPath !== null) {
+    canonicalWorkspaceFile(workspace, canonicalRoot, source.localPath, "local");
+  }
+}
 function resolveTmuxExecutable() {
   const configured = process.env.TMUX_IDE_TMUX_BIN;
-  const candidates = configured ? [configured] : (process.env.PATH ?? "").split(delimiter2).filter(Boolean).map((entry) => resolve23(entry, "tmux"));
+  const candidates = configured ? [configured] : (process.env.PATH ?? "").split(delimiter2).filter((entry) => entry.length > 0 && isAbsolute6(entry)).map((entry) => join27(entry, "tmux"));
   for (const candidate of candidates) {
     try {
       if (!isAbsolute6(candidate)) continue;
@@ -17440,6 +17453,19 @@ function resolveTmuxExecutable() {
   throw new WorkspacePaneCreationError("workspace_unavailable", {
     reason: "tmux_executable_unavailable"
   });
+}
+function tmuxClientEnvironment(source) {
+  const environment = {
+    TERM: SAFE_TERMINAL_VALUE.test(source.TERM ?? "") ? source.TERM : "xterm-256color"
+  };
+  if (SAFE_COLOR_TERMINAL_VALUE.test(source.COLORTERM ?? "")) {
+    environment.COLORTERM = source.COLORTERM;
+  }
+  for (const name of ["LANG", "LC_ALL", "LC_CTYPE"]) {
+    const value = source[name];
+    if (value && SAFE_LOCALE_VALUE.test(value)) environment[name] = value;
+  }
+  return environment;
 }
 function tmuxSocketFromEnvironment() {
   const match = /^(.*),[0-9]+,[0-9]+$/u.exec(process.env.TMUX ?? "");
@@ -17480,9 +17506,7 @@ function pinnedTmuxRunner(authority) {
   })() : authority.socketSelector.name === "default" ? ["-L", "default"] : (() => {
     throw new TypeError("Pinned tmux socket is invalid.");
   })();
-  const environment = { ...process.env };
-  delete environment.TMUX;
-  delete environment.TMUX_PANE;
+  const environment = Object.freeze(tmuxClientEnvironment(process.env));
   return (args) => String(
     runTmuxBinary(executablePath, [...socketArgv, ...args], {
       encoding: "utf8",
@@ -17501,6 +17525,7 @@ async function resolveHarness(workspace, canonicalRoot, harnessProfileId) {
     const loaded = await loadWorkspaceConfig(canonicalRoot, {
       explicitConfigPath: workspace.configPath ?? workspace.ideConfigPath
     });
+    assertEffectiveConfigProvenance(workspace, canonicalRoot, loaded.source);
     configuredProfiles = loaded.config.harnesses ?? {};
   } catch (error) {
     if (!(error instanceof WorkspaceConfigLoadError)) throw error;
@@ -17696,7 +17721,7 @@ function boundedAuthorityLimit(value, fallback) {
   }
   return value;
 }
-var MAX_LIVE_OR_UNSAFE_OPERATIONS, MAX_REPLAYABLE_FAILURES, MAX_COMMAND_ARGUMENTS, MAX_COMMAND_ARGUMENT_BYTES, MAX_COMMAND_BYTES, MAX_ENVIRONMENT_ENTRIES, MAX_ENVIRONMENT_BYTES, TMUX_OUTPUT_BYTES, CREATION_OPTION, HARNESS_OPTION, MISSION_OPTION, SEMANTIC_PANE_OPTION, ERROR_MESSAGES, WorkspacePaneCreationError, DEFAULT_IO, WorkspacePaneCreationAuthority;
+var MAX_LIVE_OR_UNSAFE_OPERATIONS, MAX_REPLAYABLE_FAILURES, MAX_COMMAND_ARGUMENTS, MAX_COMMAND_ARGUMENT_BYTES, MAX_COMMAND_BYTES, MAX_ENVIRONMENT_ENTRIES, MAX_ENVIRONMENT_BYTES, TMUX_OUTPUT_BYTES, CREATION_OPTION, HARNESS_OPTION, MISSION_OPTION, SEMANTIC_PANE_OPTION, ERROR_MESSAGES, WorkspacePaneCreationError, SAFE_TERMINAL_VALUE, SAFE_COLOR_TERMINAL_VALUE, SAFE_LOCALE_VALUE, DEFAULT_IO, WorkspacePaneCreationAuthority;
 var init_workspace_pane_creation2 = __esm({
   "packages/daemon/src/lib/workspace-pane-creation.ts"() {
     "use strict";
@@ -17742,6 +17767,9 @@ var init_workspace_pane_creation2 = __esm({
         this.context = Object.freeze({ ...context });
       }
     };
+    SAFE_TERMINAL_VALUE = /^(?:xterm|screen|tmux|rxvt|vt100|ansi)[A-Za-z0-9+._-]{0,58}$/u;
+    SAFE_COLOR_TERMINAL_VALUE = /^(?:truecolor|24bit)$/u;
+    SAFE_LOCALE_VALUE = /^[A-Za-z0-9][A-Za-z0-9_.@-]{0,127}$/u;
     DEFAULT_IO = {
       canonicalProjectDir,
       resolveHarness,
@@ -18195,15 +18223,15 @@ var init_active_projects = __esm({
 
 // packages/daemon/src/send.ts
 import { randomUUID as randomUUID4 } from "node:crypto";
-import { resolve as resolve24, join as join27 } from "node:path";
+import { resolve as resolve23, join as join28 } from "node:path";
 import { existsSync as existsSync29, mkdirSync as mkdirSync20, writeFileSync as writeFileSync19 } from "node:fs";
 function writeDispatchFile(dir, paneId, message) {
   if (message.length <= LONG_MESSAGE_THRESHOLD) return null;
-  const dispatchDir = join27(dir, ".tasks", "dispatch");
+  const dispatchDir = join28(dir, ".tasks", "dispatch");
   if (!existsSync29(dispatchDir)) mkdirSync20(dispatchDir, { recursive: true });
   const paneSlug = paneId.replace("%", "");
   const filename = `send-${paneSlug}-${Date.now()}-${randomUUID4().slice(0, 8)}.md`;
-  const filePath = join27(dispatchDir, filename);
+  const filePath = join28(dispatchDir, filename);
   writeFileSync19(filePath, message);
   return { filePath, triggerCmd: `Read and execute: .tasks/dispatch/${filename}` };
 }
@@ -18282,7 +18310,7 @@ ${available}`, {
   };
 }
 async function send(targetDir, opts) {
-  const dir = resolve24(targetDir ?? ".");
+  const dir = resolve23(targetDir ?? ".");
   const { sessionName: session } = await resolveProjectConfigContext(dir);
   const { json: json2, to: target, message: rawMessage, noEnter } = opts;
   if (!target) {
@@ -18455,9 +18483,9 @@ var init_schemas = __esm({
 
 // packages/daemon/src/lib/terminals-store.ts
 import { existsSync as existsSync30, mkdirSync as mkdirSync21, readFileSync as readFileSync23, renameSync as renameSync12, writeFileSync as writeFileSync20 } from "node:fs";
-import { dirname as dirname26, join as join28 } from "node:path";
+import { dirname as dirname26, join as join29 } from "node:path";
 function path(dir) {
-  return join28(dir, TERMINALS_FILE);
+  return join29(dir, TERMINALS_FILE);
 }
 function ensureDir(dir) {
   mkdirSync21(dirname26(path(dir)), { recursive: true });
@@ -18546,7 +18574,7 @@ __export(auth_service_exports, {
 });
 import * as crypto2 from "node:crypto";
 import { readFileSync as readFileSync24, existsSync as existsSync31 } from "node:fs";
-import { join as join29 } from "node:path";
+import { join as join30 } from "node:path";
 import { homedir as homedir18 } from "node:os";
 function base64url(buf) {
   const b = typeof buf === "string" ? Buffer.from(buf) : buf;
@@ -18690,7 +18718,7 @@ var init_auth_service = __esm({
       checkSSHKeyAuthorization(userId, publicKey) {
         try {
           const home = userId === process.env.USER ? homedir18() : `/home/${userId}`;
-          const authKeysPath = join29(home, ".ssh", "authorized_keys");
+          const authKeysPath = join30(home, ".ssh", "authorized_keys");
           if (!existsSync31(authKeysPath)) return false;
           const authorizedKeys = readFileSync24(authKeysPath, "utf-8");
           const parts = publicKey.trim().split(" ");
@@ -18936,9 +18964,9 @@ var init_project_stop = __esm({
 });
 
 // packages/daemon/src/restart.ts
-import { resolve as resolve25 } from "node:path";
+import { resolve as resolve24 } from "node:path";
 async function restart(targetDir, { json: json2, attach: attach2 } = {}) {
-  const dir = resolve25(targetDir ?? ".");
+  const dir = resolve24(targetDir ?? ".");
   const { sessionName: session } = await resolveProjectConfigContext(dir);
   stopSessionMonitor(session);
   const result = killSession(session);
@@ -19810,7 +19838,7 @@ var init_inspect = __esm({
 // packages/daemon/src/lib/filesystem-browser.ts
 import { realpathSync as realpathSync6, readdirSync as readdirSync4, statSync as statSync7 } from "node:fs";
 import { homedir as homedir19 } from "node:os";
-import { isAbsolute as isAbsolute7, join as join30, resolve as resolve26, sep as sep5 } from "node:path";
+import { isAbsolute as isAbsolute7, join as join31, resolve as resolve25, sep as sep5 } from "node:path";
 function isUnderRoot(canonical, root) {
   if (canonical === root) return true;
   const prefix = root.endsWith(sep5) ? root : root + sep5;
@@ -19840,7 +19868,7 @@ var init_filesystem_browser = __esm({
 
 // packages/daemon/src/lib/project-inspect.ts
 import { existsSync as existsSync32 } from "node:fs";
-import { isAbsolute as isAbsolute8, resolve as resolve27 } from "node:path";
+import { isAbsolute as isAbsolute8, resolve as resolve26 } from "node:path";
 function narrowPackageManager(raw) {
   if (!raw) return null;
   return KNOWN_PACKAGE_MANAGERS.has(raw) ? raw : null;
@@ -19851,7 +19879,7 @@ function inferTestCommand(packageManager) {
 }
 async function inspectProject(dir, io = {}) {
   const exists = io.exists ?? existsSync32;
-  const absoluteDir = isAbsolute8(dir) ? dir : resolve27(dir);
+  const absoluteDir = isAbsolute8(dir) ? dir : resolve26(dir);
   if (!exists(absoluteDir)) {
     throw new InspectDirNotFoundError(absoluteDir);
   }
@@ -20201,7 +20229,7 @@ __export(server_exports, {
 import { execFile as execFile3 } from "node:child_process";
 import { promisify } from "node:util";
 import { existsSync as existsSync33, readdirSync as readdirSync5 } from "node:fs";
-import { join as join31, dirname as dirname27, basename as basename10 } from "node:path";
+import { join as join32, dirname as dirname27, basename as basename10 } from "node:path";
 import { fileURLToPath as fileURLToPath10 } from "node:url";
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
@@ -21135,7 +21163,7 @@ function createApp(options = {}) {
 function listAvailableTemplates() {
   const __filename = fileURLToPath10(import.meta.url);
   const __dir = dirname27(__filename);
-  const templatesDir = join31(__dir, "..", "..", "..", "..", "templates");
+  const templatesDir = join32(__dir, "..", "..", "..", "..", "templates");
   if (!existsSync33(templatesDir)) return [];
   const labels = {
     default: { label: "Default", description: "Single Claude pane + dev/shell row" },
@@ -21305,13 +21333,13 @@ function validatePort(port) {
 }
 async function pickFreePort(hostname2) {
   const probe = createServer();
-  return await new Promise((resolve32, reject) => {
+  return await new Promise((resolve31, reject) => {
     probe.once("error", reject);
     probe.listen(0, hostname2, () => {
       const address = probe.address();
       const port = typeof address === "object" && address ? address.port : null;
       probe.close(() => {
-        if (port) resolve32(port);
+        if (port) resolve31(port);
         else reject(new DaemonStartupError("Could not allocate daemon port", "bind_failed"));
       });
     });
@@ -21437,21 +21465,21 @@ function attachWebSockets(server, opts) {
           ws.terminate();
         }
       }
-      const closeWss = (wss) => Promise.race([new Promise((resolve32) => wss.close(() => resolve32())), delay(100)]);
+      const closeWss = (wss) => Promise.race([new Promise((resolve31) => wss.close(() => resolve31())), delay(100)]);
       await Promise.all([closeWss(eventsWss), closeWss(ptyWss)]);
     }
   };
 }
 function waitForServerClose(server) {
-  return new Promise((resolve32, reject) => {
+  return new Promise((resolve31, reject) => {
     server.close((err) => {
       if (err) reject(err);
-      else resolve32();
+      else resolve31();
     });
   });
 }
 function delay(ms) {
-  return new Promise((resolve32) => setTimeout(resolve32, ms));
+  return new Promise((resolve31) => setTimeout(resolve31, ms));
 }
 function generateLocalBypassToken() {
   return randomBytes3(32).toString("base64url");
@@ -21667,7 +21695,7 @@ async function startHttpServer({
       ...daemonIdentity
     })
   });
-  await new Promise((resolve32, reject) => {
+  await new Promise((resolve31, reject) => {
     const onError = (err) => {
       server.off("listening", onListening);
       if (err.code === "EADDRINUSE") {
@@ -21691,7 +21719,7 @@ async function startHttpServer({
           `[daemon] Command Center on http://${bindHostname}:${requestedPort} (session: ${sessionName})`
         );
       }
-      resolve32();
+      resolve31();
     };
     server.once("error", onError);
     server.once("listening", onListening);
@@ -22184,7 +22212,7 @@ var init_cli_action_bridge = __esm({
 });
 
 // packages/daemon/src/config.ts
-import { resolve as resolve28 } from "node:path";
+import { resolve as resolve27 } from "node:path";
 function readConfigSafe(dir) {
   let cfg;
   try {
@@ -22318,7 +22346,7 @@ function configDisableTeam(dir) {
   }).config;
 }
 async function config(targetDir, { json: json2, action, args } = {}) {
-  const dir = resolve28(targetDir ?? ".");
+  const dir = resolve27(targetDir ?? ".");
   if (await tryDispatchConfigAction(dir, { json: json2, action, args: args ?? [] })) return;
   const configContext = await resolveProjectConfigContext(dir);
   if (!configContext.configExists) {
@@ -23326,8 +23354,8 @@ var init_agent_lifecycle = __esm({
 // packages/daemon/src/control/lifecycle.ts
 import { execFile as execFile4 } from "node:child_process";
 function tmuxRun(args) {
-  return new Promise((resolve32, reject) => {
-    execFile4("tmux", args, (err, stdout) => err ? reject(err) : resolve32(stdout.trimEnd()));
+  return new Promise((resolve31, reject) => {
+    execFile4("tmux", args, (err, stdout) => err ? reject(err) : resolve31(stdout.trimEnd()));
   });
 }
 async function tmuxTry(args) {
@@ -23501,9 +23529,9 @@ __export(server_exports2, {
 });
 import { chmodSync as chmodSync5, existsSync as existsSync34, mkdirSync as mkdirSync22, statSync as statSync8, unlinkSync as unlinkSync3 } from "node:fs";
 import { createServer as createServer2, connect } from "node:net";
-import { dirname as dirname29, join as join32 } from "node:path";
+import { dirname as dirname29, join as join33 } from "node:path";
 function defaultControlSocketPath() {
-  return join32(tuiStateHome(), "control.sock");
+  return join33(tuiStateHome(), "control.sock");
 }
 async function claimSocketPath(path2) {
   if (!existsSync34(path2)) return;
@@ -23513,11 +23541,11 @@ async function claimSocketPath(path2) {
       { code: "USAGE", exitCode: 1 }
     );
   }
-  const alive = await new Promise((resolve32) => {
+  const alive = await new Promise((resolve31) => {
     const probe = connect(path2);
     const done = (result) => {
       probe.destroy();
-      resolve32(result);
+      resolve31(result);
     };
     probe.once("connect", () => done(true));
     probe.once("error", () => done(false));
@@ -23599,7 +23627,7 @@ async function startControlServer(opts = {}) {
     conn.on("error", () => {
     });
   });
-  await new Promise((resolve32, reject) => {
+  await new Promise((resolve31, reject) => {
     server.once("error", (err) => {
       if ((err.code === "EINVAL" || err.code === "ENAMETOOLONG") && socketPath.length > 100) {
         reject(
@@ -23615,14 +23643,14 @@ Pass a shorter path: tmux-ide serve --socket /tmp/tmux-ide-control.sock`,
     });
     server.listen(socketPath, () => {
       server.removeAllListeners("error");
-      resolve32();
+      resolve31();
     });
   });
   chmodSync5(socketPath, 384);
   log(`listening on ${socketPath}`);
   return {
     socketPath,
-    close: () => new Promise((resolve32) => {
+    close: () => new Promise((resolve31) => {
       if (timer) clearInterval(timer);
       timer = null;
       for (const conn of connections) conn.destroy();
@@ -23631,7 +23659,7 @@ Pass a shorter path: tmux-ide serve --socket /tmp/tmux-ide-control.sock`,
           unlinkSync3(socketPath);
         } catch {
         }
-        resolve32();
+        resolve31();
       });
     })
   };
@@ -23662,12 +23690,12 @@ __export(client_exports, {
 import { connect as connect2 } from "node:net";
 function connectControl(opts = {}) {
   const path2 = opts.socketPath ?? defaultControlSocketPath();
-  return new Promise((resolve32, reject) => {
+  return new Promise((resolve31, reject) => {
     const socket = connect2(path2);
     socket.once("error", reject);
     socket.once("connect", () => {
       socket.removeListener("error", reject);
-      resolve32(wrap(socket));
+      resolve31(wrap(socket));
     });
   });
 }
@@ -23719,12 +23747,12 @@ function wrap(socket) {
   });
   const request = (verb, params) => {
     const id = nextId++;
-    return new Promise((resolve32, reject) => {
+    return new Promise((resolve31, reject) => {
       if (socket.destroyed) {
         reject(new ControlRequestError("disconnected", "control socket closed"));
         return;
       }
-      pending.set(id, { resolve: resolve32, reject });
+      pending.set(id, { resolve: resolve31, reject });
       socket.write(encodeFrame({ v: CONTROL_PROTOCOL_VERSION, id, verb, params }));
     });
   };
@@ -23770,7 +23798,7 @@ __export(worktree_exports, {
   worktreeSessionName: () => worktreeSessionName
 });
 import { execFileSync as execFileSync15 } from "node:child_process";
-import { basename as basename11, dirname as dirname30, isAbsolute as isAbsolute10, join as join33, resolve as resolve30 } from "node:path";
+import { basename as basename11, dirname as dirname30, isAbsolute as isAbsolute10, join as join34, resolve as resolve29 } from "node:path";
 function sanitizeForTmux(part) {
   return part.replace(/[.:/\s]+/g, "-");
 }
@@ -23778,12 +23806,12 @@ function worktreeSessionName(project, branch) {
   return `${sanitizeForTmux(project)}@${sanitizeForTmux(branch)}`;
 }
 function defaultWorktreeBaseDir(repoDir) {
-  const abs = resolve30(repoDir);
-  return join33(dirname30(abs), `${basename11(abs)}-worktrees`);
+  const abs = resolve29(repoDir);
+  return join34(dirname30(abs), `${basename11(abs)}-worktrees`);
 }
 function worktreePath(repoDir, branch, configuredDir) {
-  const base = configuredDir && configuredDir.length > 0 ? isAbsolute10(configuredDir) ? configuredDir : resolve30(repoDir, configuredDir) : defaultWorktreeBaseDir(repoDir);
-  return join33(base, branch);
+  const base = configuredDir && configuredDir.length > 0 ? isAbsolute10(configuredDir) ? configuredDir : resolve29(repoDir, configuredDir) : defaultWorktreeBaseDir(repoDir);
+  return join34(base, branch);
 }
 function parseWorktreeList(porcelain) {
   const entries = [];
@@ -23928,7 +23956,7 @@ __export(update_exports, {
 });
 import { execSync as execSync4 } from "node:child_process";
 import { existsSync as existsSync35 } from "node:fs";
-import { dirname as dirname31, join as join34 } from "node:path";
+import { dirname as dirname31, join as join35 } from "node:path";
 function detectPackageManager(cliPath) {
   const p = cliPath.toLowerCase();
   if (/(^|\/)\.?bun(\/|$)/.test(p)) return "bun";
@@ -23974,7 +24002,7 @@ function renderPlan(plan, { current, latest, dryRun }) {
 function findGitCheckoutRoot(startDir) {
   let dir = startDir;
   for (; ; ) {
-    if (existsSync35(join34(dir, ".git"))) return dir;
+    if (existsSync35(join35(dir, ".git"))) return dir;
     const parent = dirname31(dir);
     if (parent === dir) return null;
     dir = parent;
@@ -24021,10 +24049,10 @@ async function startCommandCenter(options = {}) {
   const app = createApp(appOpts);
   const listener = getRequestListener(app.fetch);
   const server = createServer3(listener);
-  return new Promise((resolve32) => {
+  return new Promise((resolve31) => {
     server.listen(port, hostname2, () => {
       console.log(`Command Center API on http://${hostname2}:${port}`);
-      resolve32(server);
+      resolve31(server);
     });
   });
 }
@@ -24077,21 +24105,21 @@ async function start(port) {
       handlePtyWebSocket(ws, id);
     });
   });
-  await new Promise((resolve32, reject) => {
+  await new Promise((resolve31, reject) => {
     server.once("error", reject);
     server.listen(resolvedPort, "0.0.0.0", () => {
       server.off("error", reject);
-      resolve32();
+      resolve31();
     });
   });
   console.log(`tmux-ide server listening on http://0.0.0.0:${resolvedPort}`);
   return {
     port: resolvedPort,
     server,
-    close: () => new Promise((resolve32, reject) => {
+    close: () => new Promise((resolve31, reject) => {
       shutdownPtyBridges();
       ptyWss.close();
-      server.close((err) => err ? reject(err) : resolve32());
+      server.close((err) => err ? reject(err) : resolve31());
     })
   };
 }
@@ -24107,7 +24135,7 @@ var init_server3 = __esm({
 // bin/cli.ts
 init_launch();
 import { parseArgs } from "node:util";
-import { resolve as resolve31, dirname as dirname32 } from "node:path";
+import { resolve as resolve30, dirname as dirname32 } from "node:path";
 import { execFileSync as execFileSync16 } from "node:child_process";
 import { existsSync as existsSync36 } from "node:fs";
 import { fileURLToPath as fileURLToPath11 } from "node:url";
@@ -24848,7 +24876,7 @@ init_legacy_config_adapter();
 init_project_resolver();
 init_errors2();
 import { execFileSync as execFileSync13 } from "node:child_process";
-import { dirname as dirname28, resolve as resolve29 } from "node:path";
+import { dirname as dirname28, resolve as resolve28 } from "node:path";
 function gitIgnoresWorkspace(dir) {
   try {
     execFileSync13("git", ["-C", dir, "check-ignore", "-q", ".tmux-ide/workspace.yml"], {
@@ -24894,7 +24922,7 @@ async function migrate(targetDir, {
   write,
   onAfterRead
 } = {}) {
-  const dir = resolve29(targetDir ?? ".");
+  const dir = resolve28(targetDir ?? ".");
   if (!dryRun && !write) dryRun = true;
   if (dryRun && write) outputError("Use either --dry-run or --write, not both", "USAGE");
   try {
@@ -25361,7 +25389,7 @@ async function findLiveCanonicalDaemon(deps2, options) {
   return existing.info;
 }
 function delay2(ms) {
-  return new Promise((resolve32) => setTimeout(resolve32, ms));
+  return new Promise((resolve31) => setTimeout(resolve31, ms));
 }
 async function waitForCanonicalWinner(deps2, options, timeoutMs = 15e3) {
   const deadline = Date.now() + timeoutMs;
@@ -25426,8 +25454,8 @@ async function runHeadlessDaemon(options = {}, deps2 = defaultDependencies) {
       });
     }
     let resolveStopped;
-    const stopped = new Promise((resolve32) => {
-      resolveStopped = resolve32;
+    const stopped = new Promise((resolve31) => {
+      resolveStopped = resolve31;
     });
     let stopFailure;
     const originalStop = handle.stop.bind(handle);
@@ -25487,7 +25515,7 @@ async function runHeadlessDaemon(options = {}, deps2 = defaultDependencies) {
 init_hosted();
 var __dirname5 = dirname32(fileURLToPath11(import.meta.url));
 var selfPath = fileURLToPath11(import.meta.url);
-var nodeCliPath = selfPath.endsWith(".js") ? selfPath : resolve31(__dirname5, "cli.js");
+var nodeCliPath = selfPath.endsWith(".js") ? selfPath : resolve30(__dirname5, "cli.js");
 var { positionals, values } = parseArgs({
   allowPositionals: true,
   strict: false,
@@ -25727,7 +25755,7 @@ Install bun (https://bun.sh) \u2014 the TUI surfaces run on it. Sources ship wit
   if (launch2.mode === "bun") {
     execFileSync16(launch2.bin, launch2.argv, {
       stdio: "inherit",
-      cwd: resolve31(__dirname5, ".."),
+      cwd: resolve30(__dirname5, ".."),
       env
     });
     return;
@@ -25757,7 +25785,7 @@ Install bun (https://bun.sh) \u2014 the TUI surfaces run on it. Sources ship wit
     exists = false;
   }
   if (!exists) {
-    const cwd = launch2.mode === "bun" ? resolve31(__dirname5, "..") : process.cwd();
+    const cwd = launch2.mode === "bun" ? resolve30(__dirname5, "..") : process.cwd();
     const commandLine = hostedCommandLine(
       launch2.bin,
       launch2.argv,
@@ -25803,8 +25831,8 @@ async function waitOverSocket(params) {
     client.close();
   }
 }
-var teamScriptPath = resolve31(__dirname5, "../packages/daemon/src/tui/team/index.tsx");
-var appScriptPath = resolve31(__dirname5, "../packages/daemon/src/tui/mirror/app.tsx");
+var teamScriptPath = resolve30(__dirname5, "../packages/daemon/src/tui/team/index.tsx");
+var appScriptPath = resolve30(__dirname5, "../packages/daemon/src/tui/mirror/app.tsx");
 function launchTeamCockpit() {
   execBunWidget("team", teamScriptPath, [], "team");
 }
@@ -25853,7 +25881,7 @@ try {
         } catch {
         }
       }
-      const targetDir = resolve31(startTargetDir || ".");
+      const targetDir = resolve30(startTargetDir || ".");
       if (startTargetDir && !existsSync36(targetDir)) {
         throw new IdeError(
           `No workspace config found in ${targetDir}. Run "tmux-ide init" or "tmux-ide detect --write" to create one.`,
@@ -25952,11 +25980,11 @@ try {
         action = "disable-team";
         configArgs = [];
       } else if (sub === "edit") {
-        const scriptPath = resolve31(__dirname5, "../packages/daemon/src/widgets/setup/index.tsx");
+        const scriptPath = resolve30(__dirname5, "../packages/daemon/src/widgets/setup/index.tsx");
         execBunWidget(
           "setup",
           scriptPath,
-          ["--dir=" + resolve31(startTargetDir || "."), "--edit"],
+          ["--dir=" + resolve30(startTargetDir || "."), "--edit"],
           "config edit"
         );
         break;
@@ -25965,8 +25993,8 @@ try {
       break;
     }
     case "setup": {
-      const scriptPath = resolve31(__dirname5, "../packages/daemon/src/widgets/setup/index.tsx");
-      const setupArgs = ["--dir=" + resolve31(startTargetDir || ".")];
+      const scriptPath = resolve30(__dirname5, "../packages/daemon/src/widgets/setup/index.tsx");
+      const setupArgs = ["--dir=" + resolve30(startTargetDir || ".")];
       if (positionals[1] === "--edit" || values.edit) setupArgs.push("--edit");
       if (positionals[1] === "--wizard" || values.wizard) setupArgs.push("--wizard");
       execBunWidget("setup", scriptPath, setupArgs, "setup");
@@ -25984,8 +26012,8 @@ try {
       break;
     }
     case "settings": {
-      const scriptPath = resolve31(__dirname5, "../packages/daemon/src/widgets/config/index.tsx");
-      execBunWidget("config", scriptPath, ["--dir=" + resolve31(startTargetDir || ".")], "settings");
+      const scriptPath = resolve30(__dirname5, "../packages/daemon/src/widgets/config/index.tsx");
+      execBunWidget("config", scriptPath, ["--dir=" + resolve30(startTargetDir || ".")], "settings");
       break;
     }
     case "team": {
@@ -26312,13 +26340,13 @@ try {
             console.log(forcedKey);
             act(forcedKey);
           } else {
-            const key = await new Promise((resolve32) => {
+            const key = await new Promise((resolve31) => {
               try {
                 process.stdin.setRawMode?.(true);
                 process.stdin.resume();
-                process.stdin.once("data", (data) => resolve32(data.toString()));
+                process.stdin.once("data", (data) => resolve31(data.toString()));
               } catch {
-                resolve32("");
+                resolve31("");
               }
             });
             try {
@@ -26517,7 +26545,7 @@ Known panels: ${POPUP_WIDGETS2.join(", ")}.`,
           { code: "USAGE", exitCode: 1 }
         );
       }
-      const scriptPath = resolve31(__dirname5, "../packages/daemon/src/widgets", widget, "index.tsx");
+      const scriptPath = resolve30(__dirname5, "../packages/daemon/src/widgets", widget, "index.tsx");
       let popupSession = "";
       try {
         popupSession = execFileSync16("tmux", ["display-message", "-p", "#{session_name}"], {
@@ -26844,7 +26872,7 @@ Known panels: ${POPUP_WIDGETS2.join(", ")}.`,
     }
     case "server": {
       if ("bun" in process.versions) {
-        const scriptPath = resolve31(__dirname5, "../packages/daemon/src/server/standalone.ts");
+        const scriptPath = resolve30(__dirname5, "../packages/daemon/src/server/standalone.ts");
         const serverArgs = ["--experimental-strip-types", scriptPath];
         if (values.port) serverArgs.push("--port", values.port);
         execFileSync16("node", serverArgs, { stdio: "inherit" });

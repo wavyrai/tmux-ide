@@ -1,11 +1,21 @@
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { WorkspacePaneCreateMutationRequest } from "@tmux-ide/contracts";
+import { _setExecutor } from "@tmux-ide/tmux-bridge";
 
 import {
+  resolveWorkspacePaneTmuxAuthority,
   WorkspacePaneCreationAuthority,
   WorkspacePaneCreationError,
   type WorkspacePaneCreationIo,
@@ -371,6 +381,192 @@ describe("WorkspacePaneCreationAuthority", () => {
       ),
     ).rejects.toSatisfy((error: unknown) => errorCode(error) === "workspace_unavailable");
     expect(fake.creations).toBe(0);
+  });
+
+  it("rejects a local config overlay symlink that escapes the selected workspace root", async () => {
+    const root = mkdtempSync(join(tmpdir(), "tmux-ide-pane-local-root-"));
+    const outside = mkdtempSync(join(tmpdir(), "tmux-ide-pane-local-outside-"));
+    roots.push(root, outside);
+    const configDir = join(root, ".tmux-ide");
+    mkdirSync(configDir, { recursive: true });
+    const configPath = join(configDir, "workspace.yml");
+    writeFileSync(
+      configPath,
+      [
+        "version: 1",
+        "harnesses:",
+        "  portable-agent:",
+        "    adapter: generic",
+        "    command: [/bin/sh, -c, 'sleep 30']",
+        "",
+      ].join("\n"),
+    );
+    const outsideOverlay = join(outside, "workspace.local.yml");
+    writeFileSync(
+      outsideOverlay,
+      [
+        "version: 1",
+        "harnesses:",
+        "  portable-agent:",
+        "    adapter: generic",
+        "    command: [/bin/sh, -c, 'touch /tmp/escaped-local-overlay']",
+        "    env:",
+        "      BASH_ENV: /tmp/escaped-local-overlay",
+        "",
+      ].join("\n"),
+    );
+    symlinkSync(outsideOverlay, join(configDir, "workspace.local.yml"));
+    const registry = new WorkspaceRegistry({ dir: join(root, "registry"), listSessions: () => [] });
+    registry.add({
+      name: "workspace.local-escaped",
+      sessionName: "local-escaped-session",
+      projectDir: root,
+      configKind: "workspace",
+      configPath,
+      hasWorkspaceConfig: true,
+    });
+    const fake = new FakeTmux();
+    const authority = new WorkspacePaneCreationAuthority({
+      daemonInstanceId: DAEMON,
+      registry,
+      io: { canonicalProjectDir: () => realpathSync(root), runTmux: fake.run },
+    });
+
+    await expect(
+      authority.create(
+        request({
+          intent: {
+            kind: "agent",
+            workspaceName: "workspace.local-escaped",
+            harnessProfileId: "portable-agent",
+            role: "implementer",
+          },
+        }),
+      ),
+    ).rejects.toSatisfy(
+      (error: unknown) =>
+        errorCode(error) === "workspace_unavailable" &&
+        (error as WorkspacePaneCreationError).context.reason === "local_config_outside_workspace",
+    );
+    expect(fake.creations).toBe(0);
+  });
+
+  it("rejects project-relative and empty PATH authority even when ./tmux is executable", () => {
+    const root = mkdtempSync(join(tmpdir(), "tmux-ide-relative-tmux-"));
+    roots.push(root);
+    const projectTmux = join(root, "tmux");
+    writeFileSync(projectTmux, "#!/bin/sh\nexit 0\n");
+    chmodSync(projectTmux, 0o755);
+    const originalCwd = process.cwd();
+    const originalPath = process.env.PATH;
+    const originalConfigured = process.env.TMUX_IDE_TMUX_BIN;
+    const originalTmux = process.env.TMUX;
+    process.chdir(root);
+    delete process.env.TMUX_IDE_TMUX_BIN;
+    delete process.env.TMUX;
+    process.env.PATH = ".::relative-bin";
+    try {
+      expect(() => resolveWorkspacePaneTmuxAuthority()).toThrow(
+        expect.objectContaining({
+          code: "workspace_unavailable",
+          context: { reason: "tmux_executable_unavailable" },
+        }),
+      );
+      process.env.TMUX_IDE_TMUX_BIN = "./tmux";
+      process.env.PATH = "";
+      expect(() => resolveWorkspacePaneTmuxAuthority()).toThrow(
+        expect.objectContaining({
+          code: "workspace_unavailable",
+          context: { reason: "tmux_executable_unavailable" },
+        }),
+      );
+    } finally {
+      process.chdir(originalCwd);
+      if (originalPath === undefined) delete process.env.PATH;
+      else process.env.PATH = originalPath;
+      if (originalConfigured === undefined) delete process.env.TMUX_IDE_TMUX_BIN;
+      else process.env.TMUX_IDE_TMUX_BIN = originalConfigured;
+      if (originalTmux === undefined) delete process.env.TMUX;
+      else process.env.TMUX = originalTmux;
+    }
+  });
+
+  it("runs the pinned tmux binary with only the explicit presentation environment allowlist", async () => {
+    const root = mkdtempSync(join(tmpdir(), "tmux-ide-pinned-environment-"));
+    roots.push(root);
+    const executablePath = join(root, "trusted-tmux");
+    writeFileSync(executablePath, "#!/bin/sh\nexit 0\n");
+    chmodSync(executablePath, 0o755);
+    const registry = new WorkspaceRegistry({ dir: join(root, "registry"), listSessions: () => [] });
+    registry.add({
+      name: "workspace.environment",
+      sessionName: "runtime-session",
+      projectDir: root,
+    });
+    const fake = new FakeTmux();
+    const captured: Array<{ executable: string; environment: NodeJS.ProcessEnv }> = [];
+    const restoreExecutor = _setExecutor(((
+      executable: string,
+      args: string[],
+      options: { env?: NodeJS.ProcessEnv },
+    ) => {
+      captured.push({ executable, environment: { ...(options.env ?? {}) } });
+      return fake.run(args.slice(2));
+    }) as Parameters<typeof _setExecutor>[0]);
+    const hostileEnvironment: NodeJS.ProcessEnv = {
+      TERM: "screen-256color",
+      COLORTERM: "truecolor",
+      LANG: "en_US.UTF-8",
+      LC_ALL: "C",
+      LC_CTYPE: "../../hostile-locale",
+      PATH: `${root}:/hostile/bin`,
+      HOME: join(root, "hostile-home"),
+      SHELL: join(root, "hostile-shell"),
+      TMUX: "/tmp/hostile.sock,999,9",
+      TMUX_PANE: "%999",
+      TMUX_TMPDIR: join(root, "hostile-sockets"),
+      BASH_ENV: join(root, "bash-env"),
+      ENV: join(root, "sh-env"),
+      NODE_OPTIONS: "--require=/tmp/hostile-node-hook.cjs",
+      LD_PRELOAD: "/tmp/hostile.so",
+      DYLD_INSERT_LIBRARIES: "/tmp/hostile.dylib",
+      SECRET_TOKEN: "must-not-cross",
+    };
+    const originalEnvironment = new Map(
+      Object.keys(hostileEnvironment).map((name) => [name, process.env[name]]),
+    );
+    Object.assign(process.env, hostileEnvironment);
+    try {
+      const authority = new WorkspacePaneCreationAuthority({
+        daemonInstanceId: DAEMON,
+        registry,
+        tmuxAuthority: {
+          executablePath,
+          socketSelector: { kind: "name", name: "default" },
+        },
+      });
+      await expect(
+        authority.create(
+          request({ intent: { kind: "terminal", workspaceName: "workspace.environment" } }),
+        ),
+      ).resolves.toMatchObject({ outcome: "created" });
+    } finally {
+      restoreExecutor();
+      for (const [name, value] of originalEnvironment) {
+        if (value === undefined) delete process.env[name];
+        else process.env[name] = value;
+      }
+    }
+    expect(captured.length).toBeGreaterThan(0);
+    for (const call of captured) {
+      expect(call.executable).toBe(realpathSync(executablePath));
+      expect(call.environment).toEqual({
+        TERM: "screen-256color",
+        COLORTERM: "truecolor",
+        LANG: "en_US.UTF-8",
+        LC_ALL: "C",
+      });
+    }
   });
 
   it("serializes concurrent retries and creates exactly once", async () => {

@@ -1,5 +1,5 @@
 import { accessSync, constants, realpathSync, statSync } from "node:fs";
-import { delimiter, isAbsolute, relative, resolve, sep } from "node:path";
+import { delimiter, isAbsolute, join, relative, sep } from "node:path";
 
 import {
   WorkspacePaneCreateMutationRequestSchemaZ,
@@ -13,7 +13,11 @@ import {
 import { runTmuxBinary, TmuxError } from "@tmux-ide/tmux-bridge";
 
 import { probeProjectReadiness } from "./project-readiness-probe.ts";
-import { loadWorkspaceConfig, WorkspaceConfigLoadError } from "./workspace-config-loader.ts";
+import {
+  loadWorkspaceConfig,
+  WorkspaceConfigLoadError,
+  type WorkspaceConfigSourceMetadata,
+} from "./workspace-config-loader.ts";
 import { getDefaultWorkspaceRegistry, type WorkspaceRegistry } from "./workspace-registry.ts";
 import { shellEscape } from "./shell.ts";
 import { MissionRepository } from "./mission-repository.ts";
@@ -140,11 +144,12 @@ function canonicalProjectDir(path: string): string {
   return canonical;
 }
 
-function workspaceWithTrustedConfig(workspace: Workspace, canonicalRoot: string): Workspace {
-  const candidate = workspace.configPath ?? workspace.ideConfigPath;
-  if (!candidate) {
-    return { ...workspace, configPath: null, ideConfigPath: null };
-  }
+function canonicalWorkspaceFile(
+  workspace: Workspace,
+  canonicalRoot: string,
+  candidate: string,
+  source: "base" | "local",
+): string {
   let canonicalConfig: string;
   try {
     canonicalConfig = realpathSync(candidate);
@@ -152,7 +157,10 @@ function workspaceWithTrustedConfig(workspace: Workspace, canonicalRoot: string)
   } catch (cause) {
     throw new WorkspacePaneCreationError(
       "workspace_unavailable",
-      { workspaceName: workspace.name, reason: "config_provenance_unavailable" },
+      {
+        workspaceName: workspace.name,
+        reason: `${source}_config_provenance_unavailable`,
+      },
       cause,
     );
   }
@@ -165,14 +173,34 @@ function workspaceWithTrustedConfig(workspace: Workspace, canonicalRoot: string)
   ) {
     throw new WorkspacePaneCreationError("workspace_unavailable", {
       workspaceName: workspace.name,
-      reason: "config_outside_workspace",
+      reason: `${source}_config_outside_workspace`,
     });
   }
+  return canonicalConfig;
+}
+
+function workspaceWithTrustedConfig(workspace: Workspace, canonicalRoot: string): Workspace {
+  const candidate = workspace.configPath ?? workspace.ideConfigPath;
+  if (!candidate) {
+    return { ...workspace, configPath: null, ideConfigPath: null };
+  }
+  const canonicalConfig = canonicalWorkspaceFile(workspace, canonicalRoot, candidate, "base");
   return {
     ...workspace,
     configPath: canonicalConfig,
     ideConfigPath: canonicalConfig,
   };
+}
+
+function assertEffectiveConfigProvenance(
+  workspace: Workspace,
+  canonicalRoot: string,
+  source: WorkspaceConfigSourceMetadata,
+): void {
+  canonicalWorkspaceFile(workspace, canonicalRoot, source.basePath, "base");
+  if (source.localPath !== null) {
+    canonicalWorkspaceFile(workspace, canonicalRoot, source.localPath, "local");
+  }
 }
 
 function resolveTmuxExecutable(): string {
@@ -181,8 +209,10 @@ function resolveTmuxExecutable(): string {
     ? [configured]
     : (process.env.PATH ?? "")
         .split(delimiter)
-        .filter(Boolean)
-        .map((entry) => resolve(entry, "tmux"));
+        // Empty and relative PATH entries mean the daemon/project cwd. They
+        // are never executable authority for a privileged tmux mutation.
+        .filter((entry) => entry.length > 0 && isAbsolute(entry))
+        .map((entry) => join(entry, "tmux"));
   for (const candidate of candidates) {
     try {
       if (!isAbsolute(candidate)) continue;
@@ -196,6 +226,30 @@ function resolveTmuxExecutable(): string {
   throw new WorkspacePaneCreationError("workspace_unavailable", {
     reason: "tmux_executable_unavailable",
   });
+}
+
+const SAFE_TERMINAL_VALUE = /^(?:xterm|screen|tmux|rxvt|vt100|ansi)[A-Za-z0-9+._-]{0,58}$/u;
+const SAFE_COLOR_TERMINAL_VALUE = /^(?:truecolor|24bit)$/u;
+const SAFE_LOCALE_VALUE = /^[A-Za-z0-9][A-Za-z0-9_.@-]{0,127}$/u;
+
+/**
+ * The pinned tmux client receives only presentation metadata. Everything else
+ * is denied by omission: PATH/HOME/SHELL, TMUX/TMUX_PANE/TMUX_TMPDIR, shell
+ * startup hooks, dynamic-loader variables, Node options, and project secrets
+ * cannot redirect authority or inject code into this daemon-owned execution.
+ */
+function tmuxClientEnvironment(source: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const environment: NodeJS.ProcessEnv = {
+    TERM: SAFE_TERMINAL_VALUE.test(source.TERM ?? "") ? source.TERM : "xterm-256color",
+  };
+  if (SAFE_COLOR_TERMINAL_VALUE.test(source.COLORTERM ?? "")) {
+    environment.COLORTERM = source.COLORTERM;
+  }
+  for (const name of ["LANG", "LC_ALL", "LC_CTYPE"] as const) {
+    const value = source[name];
+    if (value && SAFE_LOCALE_VALUE.test(value)) environment[name] = value;
+  }
+  return environment;
 }
 
 function tmuxSocketFromEnvironment(): string | null {
@@ -249,9 +303,7 @@ function pinnedTmuxRunner(
         : (() => {
             throw new TypeError("Pinned tmux socket is invalid.");
           })();
-  const environment = { ...process.env };
-  delete environment.TMUX;
-  delete environment.TMUX_PANE;
+  const environment = Object.freeze(tmuxClientEnvironment(process.env));
   return (args) =>
     String(
       runTmuxBinary(executablePath, [...socketArgv, ...args], {
@@ -279,6 +331,7 @@ async function resolveHarness(
     const loaded = await loadWorkspaceConfig(canonicalRoot, {
       explicitConfigPath: workspace.configPath ?? workspace.ideConfigPath,
     });
+    assertEffectiveConfigProvenance(workspace, canonicalRoot, loaded.source);
     configuredProfiles = loaded.config.harnesses ?? {};
   } catch (error) {
     if (!(error instanceof WorkspaceConfigLoadError)) throw error;

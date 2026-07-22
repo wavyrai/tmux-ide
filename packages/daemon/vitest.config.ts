@@ -24,6 +24,8 @@ export default defineConfig({
       "src/terminal/__tests__/*.test.ts",
       "src/lib/app-config.test.ts",
       "src/lib/__tests__/*.test.ts",
+      "src/command-center/actions/*.test.ts",
+      "src/command-center/workspace-pane-create-auth.test.ts",
       "src/control/*.test.ts",
       "src/tui/*.test.ts",
       "src/tui/detect/*.test.ts",
