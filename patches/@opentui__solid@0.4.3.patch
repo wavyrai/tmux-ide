@@ -1,0 +1,26 @@
+diff --git a/index.bun.js b/index.bun.js
+index 72c8ce7e28f1f724e80ee84fa52961668b8e62dd..ad120aa29820d281e0d758faeaca3b95f519433b 100644
+--- a/index.bun.js
++++ b/index.bun.js
+@@ -568,7 +568,7 @@ function _insertNode(parent, node, anchor) {
+   if (anchorIndex === -1) {
+     log("[INSERT]", "Could not find anchor", logId(parent), logId(anchor), "[children]", ...children.map((c) => c.id));
+   }
+-  parent.add(node, anchorIndex);
++  node !== anchor && parent.add(node, anchorIndex);
+ }
+ function _removeNode(parent, node) {
+   log("Removing node:", logId(node), "from parent:", logId(parent));
+diff --git a/index.js b/index.js
+index 18d70421367d554a9d6a66584b80f0bb46de5ec6..3994fa9f81b9f8d6f6f14c5bba0f9f7537e51612 100644
+--- a/index.js
++++ b/index.js
+@@ -542,7 +542,7 @@ function _insertNode(parent, node, anchor) {
+   if (anchorIndex === -1) {
+     log("[INSERT]", "Could not find anchor", logId(parent), logId(anchor), "[children]", ...children.map((c) => c.id));
+   }
+-  parent.add(node, anchorIndex);
++  node !== anchor && parent.add(node, anchorIndex);
+ }
+ function _removeNode(parent, node) {
+   log("Removing node:", logId(node), "from parent:", logId(parent));
