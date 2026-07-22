@@ -92,6 +92,7 @@ export function mountDesktopCanvasFirstRunFixture(
           dataMode="runtime"
           paneFrames={paneFrames}
           terminalTransport={null}
+          onAppWindowCommand={() => undefined}
         />
       </div>
     ),

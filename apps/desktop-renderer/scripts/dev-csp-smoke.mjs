@@ -504,6 +504,49 @@ try {
         }),
       );
       const scaleAfterCanvasPinch = Number(canvasElement?.getAttribute("data-viewport-scale"));
+      canvasElement?.dispatchEvent(
+        new globalThis.WheelEvent("wheel", {
+          bubbles: true,
+          cancelable: true,
+          deltaX: 64,
+          deltaY: 36,
+        }),
+      );
+      const selectedCard = globalThis.document.querySelector(
+        '.app-window-card[data-selected="true"]',
+      );
+      const maximizeControl = selectedCard?.querySelector('[data-action-id="app-window-maximize"]');
+      const closeControl = selectedCard?.querySelector('[data-action-id="app-window-close"]');
+      maximizeControl?.dispatchEvent(
+        new globalThis.MouseEvent("click", { bubbles: true, detail: 1 }),
+      );
+      await new Promise((resolve) => globalThis.requestAnimationFrame(resolve));
+      const maximizedCardRect = selectedCard?.getBoundingClientRect();
+      const currentCanvasRect = canvasElement?.getBoundingClientRect();
+      const maximizedGeometry =
+        maximizedCardRect && currentCanvasRect
+          ? {
+              left: maximizedCardRect.left - currentCanvasRect.left,
+              top: maximizedCardRect.top - currentCanvasRect.top,
+              right: maximizedCardRect.right - currentCanvasRect.left,
+              bottom: maximizedCardRect.bottom - currentCanvasRect.top,
+              canvasWidth: currentCanvasRect.width,
+              canvasHeight: currentCanvasRect.height,
+              canvasClientLeft: canvasElement.clientLeft,
+              canvasClientTop: canvasElement.clientTop,
+              canvasClientWidth: canvasElement.clientWidth,
+              canvasClientHeight: canvasElement.clientHeight,
+            }
+          : null;
+      const maximizedByMouse =
+        selectedCard?.getAttribute("data-maximized") === "true" &&
+        maximizeControl?.getAttribute("aria-pressed") === "true";
+      maximizeControl?.dispatchEvent(
+        new globalThis.MouseEvent("click", { bubbles: true, detail: 0 }),
+      );
+      const restoredByKeyboard =
+        selectedCard?.getAttribute("data-maximized") === "false" &&
+        maximizeControl?.getAttribute("aria-pressed") === "false";
       globalThis.document.querySelector('[aria-label="Reset view"]')?.click();
       const scaleAfterReset = Number(canvasElement?.getAttribute("data-viewport-scale"));
       return {
@@ -523,6 +566,14 @@ try {
           scaleAfterTerminalWheel,
           scaleAfterCanvasPinch,
           scaleAfterReset,
+        },
+        windowControls: {
+          maximizedByMouse,
+          restoredByKeyboard,
+          maximizedGeometry,
+          closeDisabled:
+            closeControl?.hasAttribute("disabled") === true &&
+            closeControl.getAttribute("title")?.includes("not supported") === true,
         },
         violations: globalThis.__tmiCspViolations ?? [],
       };
@@ -572,6 +623,30 @@ try {
       visualResult.viewportInput.scaleAfterTerminalWheel !== 1 ||
       visualResult.viewportInput.scaleAfterCanvasPinch <= 1 ||
       visualResult.viewportInput.scaleAfterReset !== 1 ||
+      !visualResult.windowControls.maximizedByMouse ||
+      !visualResult.windowControls.restoredByKeyboard ||
+      !visualResult.windowControls.maximizedGeometry ||
+      Math.abs(
+        visualResult.windowControls.maximizedGeometry.left -
+          (visualResult.windowControls.maximizedGeometry.canvasClientLeft + 12),
+      ) > 0.5 ||
+      Math.abs(
+        visualResult.windowControls.maximizedGeometry.top -
+          (visualResult.windowControls.maximizedGeometry.canvasClientTop + 12),
+      ) > 0.5 ||
+      Math.abs(
+        visualResult.windowControls.maximizedGeometry.right -
+          (visualResult.windowControls.maximizedGeometry.canvasClientLeft +
+            visualResult.windowControls.maximizedGeometry.canvasClientWidth -
+            12),
+      ) > 0.5 ||
+      Math.abs(
+        visualResult.windowControls.maximizedGeometry.bottom -
+          (visualResult.windowControls.maximizedGeometry.canvasClientTop +
+            visualResult.windowControls.maximizedGeometry.canvasClientHeight -
+            12),
+      ) > 0.5 ||
+      !visualResult.windowControls.closeDisabled ||
       dragResult.deltaX !== 72 ||
       dragResult.deltaY !== 48 ||
       !dragResult.terminalIdentityStable ||

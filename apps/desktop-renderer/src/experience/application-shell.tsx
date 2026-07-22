@@ -987,6 +987,7 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
                   reducedMotion={props.reducedMotion}
                   terminalThemeKey={props.terminalThemeKey}
                   onCommand={dispatchAppWindow}
+                  mutationsAvailable={props.onAppWindowCommand !== undefined}
                 />
               )}
             </Show>

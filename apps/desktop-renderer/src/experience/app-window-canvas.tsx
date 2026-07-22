@@ -20,7 +20,10 @@ import {
 // Pane chrome CSS is already imported by the renderer's external stylesheet.
 // Importing the styled entry would make Vite inject a CSP-blocked <style> tag.
 import { WebPaneFrame } from "../../../../packages/daemon/src/ui/pane-frame/web-host-unstyled.tsx";
-import type { PaneFrameModel } from "../../../../packages/daemon/src/ui/pane-frame/presenter.tsx";
+import type {
+  PaneFrameAction,
+  PaneFrameModel,
+} from "../../../../packages/daemon/src/ui/pane-frame/presenter.tsx";
 import { TerminalSurface } from "../terminal/terminal-surface.tsx";
 import type { NativeTerminalTransport } from "../terminal/native-terminal-transport.ts";
 import type { TerminalRendererFactory } from "../terminal/xterm-renderer.ts";
@@ -36,6 +39,7 @@ import {
 import {
   fitCanvasViewport,
   panCanvasViewport,
+  screenToCanvas,
   zoomCanvasViewportAt,
   type CanvasViewportTransform,
   type CanvasResizeEdge,
@@ -58,6 +62,11 @@ import {
   type AppWindowCanvasItem,
   type AppWindowCanvasViewport,
 } from "./app-window-canvas-presenter.ts";
+import {
+  dockAppWindowIntent,
+  floatAppWindowIntent,
+  toggleAppWindowMaximizeIntent,
+} from "./canvas-interaction-intents.ts";
 
 export interface AppWindowCanvasProps {
   readonly document: AppWindowDocumentV1;
@@ -69,11 +78,77 @@ export interface AppWindowCanvasProps {
   readonly terminalThemeKey?: string;
   readonly rendererFactory?: TerminalRendererFactory;
   readonly viewport?: AppWindowCanvasViewport;
+  /** True only when the host can durably execute AppWindow commands. */
+  readonly mutationsAvailable?: boolean;
   readonly onCommand?: (invocation: AppWindowCanvasCommandInvocation) => void;
 }
 
 const CANVAS_SCALE_RANGE = { min: 0.35, max: 2.4 } as const;
 const DEFAULT_CANVAS_TRANSFORM: CanvasViewportTransform = { x: 0, y: 0, scale: 1 };
+
+export const APP_WINDOW_CANVAS_ACTION_IDS = Object.freeze({
+  placement: "app-window-placement",
+  maximize: "app-window-maximize",
+  close: "app-window-close",
+} as const);
+
+interface LocalMaximizedWindow {
+  readonly restoreRect: AppWindowCanvasItem["rect"];
+  readonly maximizedRect: AppWindowCanvasItem["rect"];
+  readonly observedRevision: number;
+}
+
+function unavailableReason(commandsAvailable: boolean): string | null {
+  return commandsAvailable ? null : "Window mutations are unavailable in this host";
+}
+
+export function appWindowCanvasActions(input: {
+  readonly placement: AppWindowCanvasItem["placement"];
+  readonly maximized: boolean;
+  readonly commandsAvailable: boolean;
+}): readonly PaneFrameAction[] {
+  const mutationUnavailable = unavailableReason(input.commandsAvailable);
+  const docked = input.placement === "docked";
+  return [
+    {
+      id: APP_WINDOW_CANVAS_ACTION_IDS.placement,
+      commandId: docked ? "workspace.window.float" : "workspace.window.dock",
+      behavior: "action",
+      icon: docked ? "float" : "dock",
+      label: docked ? "Float" : "Dock",
+      description: docked ? "Float this window on the canvas" : "Dock this window",
+      available: mutationUnavailable === null,
+      disabledReason: mutationUnavailable,
+      pressed: false,
+      busy: false,
+    },
+    {
+      id: APP_WINDOW_CANVAS_ACTION_IDS.maximize,
+      commandId: "workspace.window.maximize.toggle",
+      behavior: "toggle",
+      icon: input.maximized ? "restore" : "maximize",
+      label: input.maximized ? "Restore" : "Maximize",
+      description: input.maximized ? "Restore the floating window" : "Maximize the floating window",
+      available: mutationUnavailable === null && !docked,
+      disabledReason:
+        mutationUnavailable ?? (docked ? "Float this window before maximizing" : null),
+      pressed: input.maximized,
+      busy: false,
+    },
+    {
+      id: APP_WINDOW_CANVAS_ACTION_IDS.close,
+      commandId: "workspace.window.close",
+      behavior: "action",
+      icon: "close",
+      label: "Close",
+      description: "Close this app window",
+      available: false,
+      disabledReason: "Closing app windows is not supported by the AppWindow command contract",
+      pressed: false,
+      busy: false,
+    },
+  ];
+}
 
 type CanvasControlIconId = "zoom-in" | "zoom-out" | "fit" | "reset";
 
@@ -106,9 +181,13 @@ function CanvasControlIcon(props: { readonly id: CanvasControlIconId }): JSX.Ele
   );
 }
 
-function sceneAppearance(base: PaneAppearance, window: AppWindowCanvasItem): PaneAppearance {
+function sceneAppearance(
+  base: PaneAppearance,
+  window: AppWindowCanvasItem,
+  maximized: boolean,
+): PaneAppearance {
   return resolvePaneAppearance({
-    structure: window.placement,
+    structure: maximized ? "maximized" : window.placement,
     applicationFocus: {
       pane: window.selected,
       terminalInput: window.selected,
@@ -134,32 +213,37 @@ function sceneAppearance(base: PaneAppearance, window: AppWindowCanvasItem): Pan
   });
 }
 
-function windowFrameModel(window: AppWindowCanvasItem, source: PaneFrameModel): PaneFrameModel {
+function windowFrameModel(
+  window: AppWindowCanvasItem,
+  source: PaneFrameModel,
+  options: { readonly maximized: boolean; readonly commandsAvailable: boolean },
+): PaneFrameModel {
   const paneId = window.windowId;
   return {
     ...source,
     pane: { ...source.pane, id: paneId },
     title: window.title ?? source.title,
-    appearance: sceneAppearance(source.appearance, window),
+    appearance: sceneAppearance(source.appearance, window, options.maximized),
     status: source.status ? { ...source.status, id: `${paneId}.status` } : null,
     chips: source.chips.map((chip, index) => ({
       ...chip,
       id: `${paneId}.chip.${index}`,
     })),
-    actions: source.actions.map((action) => ({
-      ...action,
-      available: false,
-      disabledReason: "App window controls are not connected yet",
-      pressed: false,
-    })),
+    actions: appWindowCanvasActions({
+      placement: window.placement,
+      maximized: options.maximized,
+      commandsAvailable: options.commandsAvailable,
+    }),
   };
 }
 
 function measuredViewport(element: HTMLElement): AppWindowCanvasViewport {
   const bounds = element.getBoundingClientRect();
   return {
-    width: Math.max(0, Math.round(bounds.width || element.clientWidth)),
-    height: Math.max(0, Math.round(bounds.height || element.clientHeight)),
+    // App-window coordinates are relative to the canvas content box. Using the
+    // border-box bounds makes the far maximize inset smaller by the border width.
+    width: Math.max(0, Math.round(element.clientWidth || bounds.width)),
+    height: Math.max(0, Math.round(element.clientHeight || bounds.height)),
   };
 }
 
@@ -217,6 +301,10 @@ export function AppWindowCanvas(props: AppWindowCanvasProps) {
       string,
       { readonly rect: AppWindowCanvasItem["rect"]; readonly revision: number | null }
     >(),
+    { equals: false },
+  );
+  const [maximizeStates, setMaximizeStates] = createSignal(
+    new Map<string, LocalMaximizedWindow>(),
     { equals: false },
   );
   onCleanup(() => {
@@ -292,6 +380,35 @@ export function AppWindowCanvas(props: AppWindowCanvasProps) {
       }
     }
     if (changed) setRectOverrides(next);
+  });
+
+  createEffect(() => {
+    const revision = projection().revision;
+    const windows = new Map(projection().windows.map((window) => [window.windowId, window]));
+    const current = maximizeStates();
+    const next = new Map(current);
+    let changed = false;
+    for (const [windowId, state] of current) {
+      const window = windows.get(windowId);
+      if (!window || window.placement !== "floating") {
+        next.delete(windowId);
+        changed = true;
+      } else if (revision > state.observedRevision) {
+        const rect = window.rect;
+        if (
+          rect.x !== state.maximizedRect.x ||
+          rect.y !== state.maximizedRect.y ||
+          rect.width !== state.maximizedRect.width ||
+          rect.height !== state.maximizedRect.height
+        ) {
+          next.delete(windowId);
+        } else {
+          next.set(windowId, { ...state, observedRevision: revision });
+        }
+        changed = true;
+      }
+    }
+    if (changed) setMaximizeStates(next);
   });
 
   createEffect(() => {
@@ -377,6 +494,67 @@ export function AppWindowCanvas(props: AppWindowCanvasProps) {
     );
   };
 
+  const clearMaximizeState = (windowId: string) => {
+    const next = new Map(maximizeStates());
+    next.delete(windowId);
+    setMaximizeStates(next);
+  };
+
+  const handleWindowAction = (
+    window: AppWindowCanvasItem,
+    actionId: string,
+    source: "keyboard" | "mouse",
+  ) => {
+    if (!(props.mutationsAvailable ?? props.onCommand !== undefined)) return;
+    if (actionId === APP_WINDOW_CANVAS_ACTION_IDS.placement) {
+      clearMaximizeState(window.windowId);
+      props.onCommand?.(
+        window.placement === "floating"
+          ? dockAppWindowIntent(window.windowId, source)
+          : floatAppWindowIntent(window.windowId, source),
+      );
+      return;
+    }
+    if (actionId !== APP_WINDOW_CANVAS_ACTION_IDS.maximize || window.placement !== "floating") {
+      return;
+    }
+    const localMaximized = maximizeStates().get(window.windowId);
+    const state = localMaximized
+      ? { mode: "maximized" as const, restoreRect: localMaximized.restoreRect }
+      : { mode: "restored" as const };
+    const topLeft = screenToCanvas({ x: 12, y: 12 }, transform(), CANVAS_SCALE_RANGE);
+    const bottomRight = screenToCanvas(
+      { x: Math.max(12, viewport().width - 12), y: Math.max(12, viewport().height - 12) },
+      transform(),
+      CANVAS_SCALE_RANGE,
+    );
+    const next = toggleAppWindowMaximizeIntent({
+      windowId: window.windowId,
+      currentRect: displayedWindow(window).rect,
+      availableRect: {
+        x: topLeft.x,
+        y: topLeft.y,
+        width: Math.max(1, bottomRight.x - topLeft.x),
+        height: Math.max(1, bottomRight.y - topLeft.y),
+      },
+      state,
+      source,
+    });
+    if (next.state.mode === "maximized") {
+      const states = new Map(maximizeStates());
+      states.set(window.windowId, {
+        restoreRect: next.state.restoreRect,
+        maximizedRect: next.rect,
+        observedRevision: projection().revision,
+      });
+      setMaximizeStates(states);
+    } else {
+      clearMaximizeState(window.windowId);
+    }
+    updateOverride(window.windowId, next.rect, projection().revision);
+    props.onCommand?.(next.commands[0]);
+  };
+
   const handlePointerDown: JSX.EventHandler<HTMLDivElement, PointerEvent> = (event) => {
     const region = pointerRegion(event.target);
     if (!region) return;
@@ -402,7 +580,9 @@ export function AppWindowCanvas(props: AppWindowCanvasProps) {
     }
     if (route.action !== "move" && route.action !== "resize") return;
     const window = projection().windows.find(({ windowId }) => windowId === route.focusWindowId);
-    if (!window || window.placement !== "floating") return;
+    if (!window || window.placement !== "floating" || maximizeStates().has(window.windowId)) {
+      return;
+    }
     event.preventDefault();
     const transactionInput = {
       pointer: { ...pointer, pointerId: event.pointerId },
@@ -618,7 +798,12 @@ export function AppWindowCanvas(props: AppWindowCanvasProps) {
             });
             const frame = createMemo(() => {
               const source = sourceFrame();
-              return source ? windowFrameModel(window(), source) : null;
+              return source
+                ? windowFrameModel(window(), source, {
+                    maximized: maximizeStates().has(window().windowId),
+                    commandsAvailable: props.mutationsAvailable ?? props.onCommand !== undefined,
+                  })
+                : null;
             });
             const target = createMemo(() => {
               const sourceId = terminalSourceId();
@@ -643,6 +828,7 @@ export function AppWindowCanvas(props: AppWindowCanvasProps) {
                 data-placement={window().placement}
                 data-selected={window().selected}
                 data-active={window().active}
+                data-maximized={maximizeStates().has(window().windowId)}
                 data-transient-geometry={rectOverrides().get(window().windowId)?.revision === null}
               >
                 <Show
@@ -657,6 +843,9 @@ export function AppWindowCanvas(props: AppWindowCanvasProps) {
                   {(model) => (
                     <WebPaneFrame
                       model={model()}
+                      onActionActivate={(intent, source) =>
+                        handleWindowAction(window(), intent.actionId, source)
+                      }
                       onGripActivate={(_intent, source) => {
                         if (source === "keyboard") focusWindow(window().windowId, "keyboard");
                       }}
@@ -707,7 +896,11 @@ export function AppWindowCanvas(props: AppWindowCanvasProps) {
                     </WebPaneFrame>
                   )}
                 </Show>
-                <Show when={window().placement === "floating"}>
+                <Show
+                  when={
+                    window().placement === "floating" && !maximizeStates().has(window().windowId)
+                  }
+                >
                   <For
                     each={
                       [

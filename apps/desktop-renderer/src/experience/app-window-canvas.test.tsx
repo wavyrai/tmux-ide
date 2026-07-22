@@ -16,7 +16,11 @@ import type {
 } from "../terminal/native-terminal-transport.ts";
 import type { TerminalRenderer, TerminalRendererFactory } from "../terminal/xterm-renderer.ts";
 import runtimeStyles from "../runtime-styles.css?raw";
-import { AppWindowCanvas } from "./app-window-canvas.tsx";
+import {
+  APP_WINDOW_CANVAS_ACTION_IDS,
+  AppWindowCanvas,
+  appWindowCanvasActions,
+} from "./app-window-canvas.tsx";
 
 const disposers: Array<() => void> = [];
 
@@ -167,6 +171,50 @@ const inventory: ApplicationShellTerminalInventory = {
 };
 
 describe("AppWindowCanvas", () => {
+  it("publishes honest semantic availability for placement, maximize, and close", () => {
+    expect(
+      appWindowCanvasActions({
+        placement: "docked",
+        maximized: false,
+        commandsAvailable: true,
+      }),
+    ).toMatchObject([
+      {
+        id: APP_WINDOW_CANVAS_ACTION_IDS.placement,
+        commandId: "workspace.window.float",
+        label: "Float",
+        available: true,
+        disabledReason: null,
+      },
+      {
+        id: APP_WINDOW_CANVAS_ACTION_IDS.maximize,
+        label: "Maximize",
+        available: false,
+        disabledReason: "Float this window before maximizing",
+      },
+      {
+        id: APP_WINDOW_CANVAS_ACTION_IDS.close,
+        commandId: "workspace.window.close",
+        available: false,
+        disabledReason: "Closing app windows is not supported by the AppWindow command contract",
+      },
+    ]);
+    expect(
+      appWindowCanvasActions({
+        placement: "floating",
+        maximized: false,
+        commandsAvailable: false,
+      }).map(({ available, disabledReason }) => ({ available, disabledReason })),
+    ).toEqual([
+      { available: false, disabledReason: "Window mutations are unavailable in this host" },
+      { available: false, disabledReason: "Window mutations are unavailable in this host" },
+      {
+        available: false,
+        disabledReason: "Closing app windows is not supported by the AppWindow command contract",
+      },
+    ]);
+  });
+
   it("renders terminal content under canonical window identity and durable geometry", () => {
     const runtimeSheet = document.createElement("style");
     runtimeSheet.textContent = runtimeStyles;
@@ -239,6 +287,37 @@ describe("AppWindowCanvas", () => {
       source: "mouse",
     });
     expect(onCommand).toHaveBeenCalledTimes(1);
+  });
+
+  it("invokes the docked Float control from keyboard activation", () => {
+    const root = document.createElement("div");
+    document.body.append(root);
+    const onCommand = vi.fn();
+    disposers.push(
+      render(
+        () => (
+          <AppWindowCanvas
+            document={documentFixture()}
+            paneFrames={[frame()]}
+            terminalInventory={inventory}
+            workspaceName="workspace.product"
+            viewport={{ width: 900, height: 540 }}
+            onCommand={onCommand}
+          />
+        ),
+        root,
+      ),
+    );
+    const placement = root.querySelector<HTMLButtonElement>(
+      `[data-action-id="${APP_WINDOW_CANVAS_ACTION_IDS.placement}"]`,
+    )!;
+    expect(placement.disabled).toBe(false);
+    placement.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 0 }));
+    expect(onCommand).toHaveBeenCalledOnce();
+    expect(onCommand).toHaveBeenCalledWith({
+      command: { type: "window.float", windowId: "window.lead" },
+      source: "keyboard",
+    });
   });
 
   it("lets the terminal emit the only focus command for an unfocused terminal click", () => {
@@ -419,6 +498,201 @@ describe("AppWindowCanvas", () => {
     expect(lifecycle.transport.connect).toHaveBeenCalledOnce();
     expect(lifecycle.renderer.dispose).not.toHaveBeenCalled();
     expect(lifecycle.attachment.dispose).not.toHaveBeenCalled();
+  });
+
+  it("activates maximize, restore, and dock controls with mouse/keyboard parity without remounting", async () => {
+    const lifecycle = installTerminalLifecycleHarness();
+    const root = document.createElement("div");
+    document.body.append(root);
+    const onCommand = vi.fn();
+    disposers.push(
+      render(
+        () => (
+          <AppWindowCanvas
+            document={floatingDocumentFixture()}
+            paneFrames={[frame()]}
+            terminalInventory={inventory}
+            workspaceName="workspace.product"
+            viewport={{ width: 900, height: 540 }}
+            transport={lifecycle.transport}
+            rendererFactory={lifecycle.rendererFactory}
+            onCommand={onCommand}
+          />
+        ),
+        root,
+      ),
+    );
+    await vi.waitFor(() => expect(lifecycle.transport.connect).toHaveBeenCalledOnce());
+    const terminalMount = root.querySelector(".terminal-surface__viewport");
+    const maximize = root.querySelector<HTMLButtonElement>(
+      `[data-action-id="${APP_WINDOW_CANVAS_ACTION_IDS.maximize}"]`,
+    )!;
+    const close = root.querySelector<HTMLButtonElement>(
+      `[data-action-id="${APP_WINDOW_CANVAS_ACTION_IDS.close}"]`,
+    )!;
+    expect(maximize.disabled).toBe(false);
+    expect(close.disabled).toBe(true);
+    expect(close.title).toBe(
+      "Closing app windows is not supported by the AppWindow command contract",
+    );
+
+    maximize.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 1 }));
+    expect(onCommand).toHaveBeenLastCalledWith({
+      command: {
+        type: "window.float",
+        windowId: "window.lead",
+        rect: { x: 12, y: 12, width: 876, height: 516 },
+      },
+      source: "mouse",
+    });
+    expect(maximize.getAttribute("aria-pressed")).toBe("true");
+    expect(maximize.getAttribute("aria-label")).toBe("Restore the floating window");
+    expect(root.querySelector(".terminal-surface__viewport")).toBe(terminalMount);
+
+    maximize.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 0 }));
+    expect(onCommand).toHaveBeenLastCalledWith({
+      command: {
+        type: "window.float",
+        windowId: "window.lead",
+        rect: { x: 42, y: 36, width: 360, height: 220 },
+      },
+      source: "keyboard",
+    });
+    expect(maximize.getAttribute("aria-pressed")).toBe("false");
+
+    root
+      .querySelector<HTMLButtonElement>(
+        `[data-action-id="${APP_WINDOW_CANVAS_ACTION_IDS.placement}"]`,
+      )!
+      .dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 1 }));
+    expect(onCommand).toHaveBeenLastCalledWith({
+      command: { type: "window.dock", windowId: "window.lead" },
+      source: "mouse",
+    });
+    expect(onCommand).toHaveBeenCalledTimes(3);
+    expect(root.querySelector(".terminal-surface__viewport")).toBe(terminalMount);
+    expect(lifecycle.rendererFactory).toHaveBeenCalledOnce();
+    expect(lifecycle.transport.connect).toHaveBeenCalledOnce();
+    expect(lifecycle.renderer.dispose).not.toHaveBeenCalled();
+    expect(lifecycle.attachment.dispose).not.toHaveBeenCalled();
+  });
+
+  it("maximizes to the visible canvas inset after zooming and panning, then restores exactly", () => {
+    const root = document.createElement("div");
+    document.body.append(root);
+    const onCommand = vi.fn();
+    disposers.push(
+      render(
+        () => (
+          <AppWindowCanvas
+            document={floatingDocumentFixture()}
+            paneFrames={[frame()]}
+            terminalInventory={inventory}
+            workspaceName="workspace.product"
+            viewport={{ width: 900, height: 540 }}
+            onCommand={onCommand}
+          />
+        ),
+        root,
+      ),
+    );
+    const canvas = root.querySelector<HTMLElement>(".app-window-canvas")!;
+    root.querySelector<HTMLButtonElement>('[aria-label="Zoom in"]')!.click();
+    root.querySelector<HTMLButtonElement>('[aria-label="Zoom in"]')!.click();
+    canvas.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true, cancelable: true }),
+    );
+    canvas.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true, cancelable: true }),
+    );
+    expect(canvas.dataset.viewportScale).toBe("1.440");
+    expect(canvas.dataset.viewportX).toBe("-246");
+    expect(canvas.dataset.viewportY).toBe("-167");
+
+    const maximize = root.querySelector<HTMLButtonElement>(
+      `[data-action-id="${APP_WINDOW_CANVAS_ACTION_IDS.maximize}"]`,
+    )!;
+    maximize.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 1 }));
+    const maximizedRect = onCommand.mock.lastCall?.[0].command.rect;
+    expect(maximizedRect.x).toBeCloseTo(179.1667);
+    expect(maximizedRect.y).toBeCloseTo(124.1667);
+    expect(maximizedRect.width).toBeCloseTo(608.3333);
+    expect(maximizedRect.height).toBeCloseTo(358.3333);
+    expect(maximizedRect.x * 1.44 - 246).toBeCloseTo(12);
+    expect(maximizedRect.y * 1.44 - 166.8).toBeCloseTo(12);
+    expect((maximizedRect.x + maximizedRect.width) * 1.44 - 246).toBeCloseTo(888);
+    expect((maximizedRect.y + maximizedRect.height) * 1.44 - 166.8).toBeCloseTo(528);
+
+    maximize.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 0 }));
+    expect(onCommand).toHaveBeenLastCalledWith({
+      command: {
+        type: "window.float",
+        windowId: "window.lead",
+        rect: { x: 42, y: 36, width: 360, height: 220 },
+      },
+      source: "keyboard",
+    });
+  });
+
+  it("invalidates local maximize restore geometry when a newer external revision wins", async () => {
+    const [documentValue, setDocumentValue] = createSignal(floatingDocumentFixture());
+    const root = document.createElement("div");
+    document.body.append(root);
+    const onCommand = vi.fn();
+    disposers.push(
+      render(
+        () => (
+          <AppWindowCanvas
+            document={documentValue()}
+            paneFrames={[frame()]}
+            terminalInventory={inventory}
+            workspaceName="workspace.product"
+            viewport={{ width: 900, height: 540 }}
+            onCommand={onCommand}
+          />
+        ),
+        root,
+      ),
+    );
+    const maximize = () =>
+      root.querySelector<HTMLButtonElement>(
+        `[data-action-id="${APP_WINDOW_CANVAS_ACTION_IDS.maximize}"]`,
+      )!;
+    maximize().click();
+    expect(root.querySelector(".app-window-card")?.getAttribute("data-maximized")).toBe("true");
+
+    const current = documentValue();
+    const externalRect = { x: 180, y: 140, width: 500, height: 300 };
+    setDocumentValue(
+      AppWindowDocumentV1SchemaZ.parse({
+        ...current,
+        revision: current.revision + 1,
+        updatedAt: "2026-07-22T10:01:00.000Z",
+        windows: {
+          ...current.windows,
+          "window.lead": {
+            ...current.windows["window.lead"],
+            placement: {
+              mode: "floating",
+              docked: null,
+              floating: externalRect,
+            },
+          },
+        },
+      }),
+    );
+
+    await vi.waitFor(() =>
+      expect(root.querySelector(".app-window-card")?.getAttribute("data-maximized")).toBe("false"),
+    );
+    expect(maximize().getAttribute("aria-label")).toBe("Maximize the floating window");
+
+    maximize().dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 1 }));
+    maximize().dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 0 }));
+    expect(onCommand).toHaveBeenLastCalledWith({
+      command: { type: "window.float", windowId: "window.lead", rect: externalRect },
+      source: "keyboard",
+    });
   });
 
   it.each(["lost capture", "window blur", "Escape"] as const)(
