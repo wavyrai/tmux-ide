@@ -124,24 +124,78 @@ function checkoutIntents(
   return new Map([[checkoutKey, new Set(domains)]]);
 }
 
-function waitForFile(path: string, timeoutMs = 5_000): void {
-  const startedAt = Date.now();
-  while (!existsSync(path)) {
-    if (Date.now() - startedAt > timeoutMs) throw new Error(`timed out waiting for ${path}`);
-    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5);
+interface ChildExitResult {
+  code: number | null;
+  signal: NodeJS.Signals | null;
+  stderr: string;
+}
+
+interface ChildObservation {
+  exit: Promise<ChildExitResult>;
+  stderr: () => string;
+}
+
+function observeChild(child: ReturnType<typeof spawn>): ChildObservation {
+  let stderr = "";
+  const exit = new Promise<ChildExitResult>((resolvePromise, reject) => {
+    child.stderr?.on("data", (chunk) => (stderr += String(chunk)));
+    child.once("error", (error) => {
+      reject(new Error(`child process failed: ${String(error)}; stderr: ${stderr || "<empty>"}`));
+    });
+    child.once("close", (code, signal) => resolvePromise({ code, signal, stderr }));
+  });
+  return { exit, stderr: () => stderr };
+}
+
+function childExitDetails(result: ChildExitResult): string {
+  return `code ${String(result.code)}, signal ${result.signal ?? "none"}; stderr: ${result.stderr || "<empty>"}`;
+}
+
+async function waitForFileOrChildExit(
+  path: string,
+  child: ReturnType<typeof spawn>,
+  observation: ChildObservation,
+  timeoutMs = 15_000,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  const readiness = (async () => {
+    while (!existsSync(path)) {
+      if (Date.now() >= deadline) {
+        throw new Error(
+          `timed out waiting for ${path} from child ${String(child.pid)}; stderr: ${observation.stderr() || "<empty>"}`,
+        );
+      }
+      await new Promise((resolveDelay) => setTimeout(resolveDelay, 25));
+    }
+  })();
+  const earlyExit = observation.exit.then(
+    (result) => {
+      throw new Error(
+        `child ${String(child.pid)} exited before signaling readiness at ${path}: ${childExitDetails(result)}`,
+      );
+    },
+    (error) => {
+      throw new Error(
+        `child ${String(child.pid)} failed before signaling readiness at ${path}: ${String(error)}`,
+      );
+    },
+  );
+  await Promise.race([readiness, earlyExit]);
+}
+
+async function requireSuccessfulChildExit(observation: ChildObservation): Promise<void> {
+  const result = await observation.exit;
+  if (result.code !== 0 || result.signal !== null) {
+    throw new Error(`child exited unsuccessfully: ${childExitDetails(result)}`);
   }
 }
 
-function childExit(child: ReturnType<typeof spawn>): Promise<void> {
-  return new Promise((resolvePromise, reject) => {
-    let stderr = "";
-    child.stderr?.on("data", (chunk) => (stderr += String(chunk)));
-    child.once("error", reject);
-    child.once("exit", (code) => {
-      if (code === 0) resolvePromise();
-      else reject(new Error(`child exited ${String(code)}: ${stderr}`));
-    });
-  });
+async function terminateChild(
+  child: ReturnType<typeof spawn>,
+  observation: ChildObservation,
+): Promise<void> {
+  if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+  await observation.exit.catch(() => undefined);
 }
 
 afterEach(() => {
@@ -942,17 +996,29 @@ describe("workspace state repository", () => {
     const second = spawn(tsx, [fixture, home, secondRoot, "layout-b", readyB, go], {
       stdio: ["ignore", "ignore", "pipe"],
     });
-    const firstExit = childExit(first);
-    const secondExit = childExit(second);
-    waitForFile(readyA);
-    waitForFile(readyB);
-    writeFileSync(go, "go\n", "utf8");
-    await Promise.all([firstExit, secondExit]);
+    const firstObservation = observeChild(first);
+    const secondObservation = observeChild(second);
+    try {
+      await Promise.all([
+        waitForFileOrChildExit(readyA, first, firstObservation),
+        waitForFileOrChildExit(readyB, second, secondObservation),
+      ]);
+      writeFileSync(go, "go\n", "utf8");
+      await Promise.all([
+        requireSuccessfulChildExit(firstObservation),
+        requireSuccessfulChildExit(secondObservation),
+      ]);
 
-    const repository = createProjectRuntimeRepository(resolution(firstRoot), { home });
-    const final = loadWorkspaceState(repository);
-    expect(final.revision).toBe(2);
-    expect(Object.keys(final.state.layouts)).toEqual(["layout-a", "layout-b"]);
-    expect(Object.keys(final.state.checkouts)).toHaveLength(2);
-  }, 15_000);
+      const repository = createProjectRuntimeRepository(resolution(firstRoot), { home });
+      const final = loadWorkspaceState(repository);
+      expect(final.revision).toBe(2);
+      expect(Object.keys(final.state.layouts)).toEqual(["layout-a", "layout-b"]);
+      expect(Object.keys(final.state.checkouts)).toHaveLength(2);
+    } finally {
+      await Promise.all([
+        terminateChild(first, firstObservation),
+        terminateChild(second, secondObservation),
+      ]);
+    }
+  }, 30_000);
 });
