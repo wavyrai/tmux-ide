@@ -80,7 +80,8 @@ Hard boundaries:
 
 - A renderer cannot spawn a PTY, invent a semantic pane identity, author a terminal
   command/cwd, or receive a raw tmux `%pane_id`. Raw correlation stays inside the
-  daemon/trusted host.
+  daemon only; Electron main holds neither raw tmux proof nor product-state
+  correlation.
 - A terminal tile obtains a short-lived, single-use, daemon-instance/request/origin-
   bound attachment descriptor through the narrow Electron host issue call, then
   streams bytes directly to the daemon. Electron main never proxies terminal input,
@@ -387,10 +388,10 @@ surface is complete. It is a tmux-ide feature, not an embedded reference app.
 
 Requirements:
 
-- Every tile is keyed by a daemon-issued semantic pane identity. The daemon/trusted
-  host correlates that identity to the current raw tmux `%pane_id`; the renderer never
-  receives or persists the raw correlation. Switching between grid and map cannot
-  create, clone, or replace a terminal process.
+- Every tile is keyed by a daemon-issued semantic pane identity. The daemon alone
+  correlates that identity to the current raw tmux `%pane_id`; neither Electron main
+  nor the renderer receives or persists the raw correlation. Switching between grid
+  and map cannot create, clone, or replace a terminal process.
 - Pan/zoom/placement are app presentation state. Create, split, close, restart, rename,
   and focus remain daemon-owned semantic tmux mutations.
 - The camera can fit all panes or focus one pane. The current zoom percentage and a
@@ -419,9 +420,14 @@ Acceptance:
   use the bounded direct binary WebSocket after descriptor issue.
 - The daemon `PtyAdapter` launches only fixed argv-safe real `tmux attach-session` in a
   proof-bound ephemeral one-window view; tmux owns process, history, and redraw truth.
+- Issue records requested viewer mode; daemon `ready` reports effective mode,
+  authoritative shared-window grid, and client viewport. Read-only rejects input and
+  resize authority; mismatched viewports clip/scroll instead of changing shared tmux
+  geometry.
 - One-writer reservation, atomic issue/redeem, expiry, daemon generation, Origin/CSP,
-  bounded backpressure, fresh-redraw reconnect, and detach behavior have adversarial
-  and live tmux tests.
+  atomic pre-auth socket capacity, bounded redemption, implementable PTY
+  completion/drain or fail-closed flow control, fresh-redraw reconnect, and detach
+  behavior have adversarial and live tmux tests.
 - `Ctrl-C` reaches the foreground process; app shutdown remains separate.
 - Desktop tests prove the terminal mount sentinel is not replaced when chrome/status
   changes.

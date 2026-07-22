@@ -85,9 +85,13 @@ sequenceDiagram
 ```
 
 The host issue call is a privilege transition, not a stream transport. It accepts only
-a daemon-issued semantic pane identity, the current resource/generation proof, and a
-validated viewport. It does not accept an executable, argv, shell fragment, working
-directory, environment, daemon URL, expected Origin, raw tmux `%pane_id`, or ticket.
+a daemon-issued semantic pane identity, requested viewer mode, opaque resource revision,
+request generation, and a validated viewport. It does not accept an executable, argv,
+shell fragment, working directory, environment, daemon URL, expected Origin, raw tmux
+`%pane_id`, or ticket. The daemon resolves and validates all topology proof after the
+call. Raw tmux runtime identities and their resolution proof are strictly daemon-only.
+Electron main owns no product-state correlation and never receives or caches
+`%pane_id`, runtime session/window ids, socket proof, or tmux topology.
 
 ### Attachment descriptor
 
@@ -135,18 +139,32 @@ crash reports, URLs, command descriptors, or persisted workspace data.
 ### Origin and CSP admission
 
 Production desktop builds use a stable, registered secure application scheme and a
-canonical renderer Origin. The daemon rejects `null`, missing, wildcard, file, and
-unexpected origins for terminal upgrades. It checks the upgrade Origin before allowing
-the bounded redemption frame and checks that the same Origin was bound by the trusted
-host at issue time. The renderer does not supply or override its expected Origin.
+canonical renderer Origin. The only terminal upgrade route is the exact versioned path
+`/v1/terminal/attachments/redeem` with subprotocol `tmux-ide-terminal.v1`. The daemon
+rejects every other path/subprotocol and rejects `null`, missing, wildcard, file, and
+unexpected origins before returning `101 Switching Protocols`. It checks that the exact
+Origin was bound by the trusted host at issue time. The renderer does not supply or
+override its expected Origin.
+
+Admission is bounded before authentication. The upgrade handler atomically reserves a
+slot from a separate pre-auth socket cap before returning `101`; a saturated cap is
+rejected without allocating a WebSocket. An admitted socket gets at most 1,000 ms to
+send exactly one redemption control frame of at most 4 KiB. Binary data, a second frame,
+an oversized frame, malformed redemption, or any other message before `ready` closes
+the socket. The slot is released on every rejection, timeout, peer close, parser error,
+successful transition to separately reserved live capacity, and daemon shutdown. The
+redeem transition atomically consumes the ticket and reserves live capacity before it
+releases pre-auth capacity; if either operation loses a race, the socket closes without
+spawning a PTY. Pending-ticket capacity remains independently bounded and expires even
+when no socket ever presents the ticket.
 
 The desktop renderer keeps context isolation enabled, Node integration disabled, remote
 navigation disabled, and a restrictive Content Security Policy. `connect-src` admits
 only the resolved local daemon origin needed for the current instance plus explicitly
 declared development services. No remote document is allowed to inherit terminal
-capabilities. A fixed WebSocket subprotocol identifies the protocol version; the first
-small control frame carries the one-time ticket. After ready, terminal input and output
-use binary frames. Ticket material is never encoded in a WebSocket URL.
+capabilities. The first bounded control frame carries the one-time ticket. After ready,
+terminal input and output use binary frames. Ticket material is never encoded in a
+WebSocket URL.
 
 Development has two honest modes:
 
@@ -190,6 +208,40 @@ Electron main process, dock surface, agent card, or daemon attachment handler ma
 to launch a shell, agent harness, or arbitrary program. Those processes are created by
 semantic tmux mutations and remain tmux-owned.
 
+### Viewer mode and geometry authority
+
+The issue request contains `requestedViewerMode`; it is intent, not authority. On
+successful redemption the daemon sends `ready` with `effectiveViewerMode`, the
+authoritative source/window grid, and the attached client viewport. The renderer does
+not infer effective mode from what it requested.
+
+- `interactive` is the only input and shared-size owner. It accepts terminal input and
+  its coalesced viewport changes may drive tmux geometry. The daemon confirms the new
+  authoritative grid after tmux applies it; optimistic DOM/xterm size is not truth.
+- `read-only` rejects every input frame and ignores resize as shared tmux authority. A
+  local viewport change may alter only clipping, scrolling, padding, or presentation.
+  It cannot resize the PTY client in a way that participates in tmux window sizing.
+- `ready` and later geometry events carry both `sourceGrid` (the daemon-read tmux
+  window/pane grid) and `clientViewport` (the visible terminal-cell viewport). When
+  they differ, xterm renders the source grid and the tile clips/scrolls honestly. It
+  does not stretch cells, claim a false fit, or resize shared tmux state.
+
+Read-only support is gated by installed tmux behavior and a continuously held,
+daemon-managed interactive size owner for the same linked window. In tmux 3.1, a
+read-only client is ignored for size only while a non-read-only attached client exists.
+From tmux 3.2, `attach -r` sets both `READONLY` and `IGNORESIZE`, but an ignore-size
+client is likewise ignored only while a size-participating client exists. Therefore a
+read-only request must fail with a typed `read_only_unavailable` error rather than
+silently become interactive whenever version/proof is unknown, no interactive owner is
+reserved, or owner-loss ordering cannot be proved safe. The first implementation keeps
+read-only disabled until a live tmux gate proves attach, viewport mismatch, owner
+teardown, crash, and reconnect cannot alter the shared grid.
+
+An interactive attachment may return an effective viewport different from its request
+while tmux converges. Initial attach and reconnect both wait for authoritative
+`sourceGrid`/`clientViewport` evidence before reporting `ready`; recovery never assumes
+the pre-disconnect size survived.
+
 ### Stream, resize, and backpressure
 
 The daemon and renderer use a versioned direct protocol with strict frame kinds and
@@ -200,10 +252,28 @@ of this protocol.
 Both directions have byte, frame-count, and per-frame limits. Input writes are ordered;
 empty writes are ignored. Resize keeps only the latest uncommitted viewport and is
 serialized with terminal mutations so it cannot create an unbounded resize queue.
-Output observes WebSocket/transport high- and low-water marks. The daemon pauses the PTY
-source where the adapter supports it; otherwise it fails closed and retires the
-attachment before a bounded buffer can overflow. A slow, detached, or non-reading
-renderer cannot grow daemon memory without limit.
+
+The legacy `PtyProcess.write(...): void` and `node-pty` private write queue are not an
+acceptable backpressure proof for this path. Before native attachment ships,
+`PtyAdapter` must expose either:
+
+1. an input completion/drain primitive whose completion means the adapter/native queue
+   released the accounted bytes; or
+2. a demonstrably bounded `tryWrite`/fail-closed primitive that refuses bytes before
+   any unobservable native queue can grow.
+
+The bridge reserves input bytes before calling the adapter, permits only the bounded
+number of in-flight writes specified by the protocol, and releases accounting only on
+that completion/drain proof. If the adapter cannot accept within its fixed deadline,
+the bridge closes the attachment and tmux client; it does not enqueue another write.
+
+Output uses an adapter-level pause/resume contract tied to WebSocket high/low water
+marks. If the platform adapter cannot suspend output before the fixed HWM, the bridge
+synchronously retires the attachment at the HWM and discards no additional output into
+an application queue. The implementation gate must include the native binding's own
+queue in the bound; JS-array accounting alone is insufficient. A slow, detached, or
+non-reading renderer therefore cannot grow daemon or native-process memory without
+limit.
 
 Capacity is reserved atomically before asynchronous issue/redeem work. Limits cover
 pending descriptors, live attachments, pending bytes, frames, control messages, and
@@ -318,18 +388,27 @@ The native terminal path is not complete until all gates are implemented:
 3. The daemon authenticates issue with the durable credential and atomically issues,
    reserves, redeems, expires, and retires tickets.
 4. Upgrade and redemption enforce exact Origin, daemon instance, request, target proof,
-   resource generation, TTL, one-time use, and one-writer capacity.
+   resource generation, TTL, one-time use, and one-writer capacity. The exact path and
+   subprotocol, atomic pre-auth socket cap, 1,000 ms redemption deadline, and one 4 KiB
+   first-frame limit are enforced before live allocation.
 5. A daemon-owned fixed argv builder creates and cleans a proof-bound one-window view,
    rejects sibling-pane exposure, then spawns only a real `tmux attach-session` through
    `PtyAdapter`.
-6. Renderer xterm connects directly, handles binary data, coalesces resize, preserves a
-   recovery overlay, and resets for a fresh real redraw on reconnect.
-7. Production CSP/custom-origin and exact Vite-in-Electron development origin are
+6. Requested/effective viewer mode and geometry are explicit. Interactive owns input
+   and shared size; read-only is typed-failure gated until its installed tmux version,
+   continuous owner, mismatch, and owner-loss behavior are proven geometry-neutral.
+7. `PtyAdapter` provides measurable input completion/drain or demonstrably bounded
+   fail-closed input plus output pause/resume or HWM close; the legacy void-write/private
+   queue is not used as proof.
+8. Renderer xterm connects directly, handles binary data, clips/scrolls a mismatched
+   source grid honestly, coalesces interactive resize, preserves a recovery overlay,
+   and resets for a fresh real redraw on reconnect.
+9. Production CSP/custom-origin and exact Vite-in-Electron development origin are
    configured; standalone browser preview remains non-live.
-8. WSL2 discovery resolves the daemon without changing process authority; remote use is
-   refused unless an authenticated host-owned tunnel is configured.
-9. Metrics expose counts and sizes without tickets, terminal bytes, commands, cwd,
-   environment secrets, or raw tmux correlation.
+10. WSL2 discovery resolves the daemon without changing process authority; remote use is
+    refused unless an authenticated host-owned tunnel is configured.
+11. Metrics expose counts and sizes without tickets, terminal bytes, commands, cwd,
+    environment secrets, or raw tmux correlation.
 
 ## Test gates
 
@@ -338,28 +417,38 @@ Required automated evidence includes:
 1. Contract tests reject executable/cwd/env/raw-pane fields, malformed descriptors,
    oversized frames, retired generations, and protocol-version mismatch.
 2. Security tests cover missing/wrong durable credential; missing/`null`/wrong Origin;
-   ticket reuse, expiry, transfer, daemon restart, target change, concurrent redemption,
-   and log/snapshot/crash-report redaction.
+   wrong path/subprotocol; ticket reuse, expiry, transfer, daemon restart, target change,
+   concurrent redemption, and log/snapshot/crash-report redaction.
 3. Capacity tests race concurrent issue/redeem calls and prove atomic caps for pending
-   tickets, connections, per-pane writers, frame count, and bytes.
+   tickets, pre-auth sockets, live connections, per-pane writers, frame count, and
+   bytes. They cover saturation before `101`, no first frame, slow/oversized/multiple
+   first frames, close-before-frame, timeout-versus-redeem, redeem-versus-expiry, and
+   two sockets racing one ticket; all reservations and timers are reclaimed.
 4. `PtyAdapter` unit tests assert the exact executable/argv/env/cwd shape and prove no
    shell interpolation or renderer-authored launch field can reach spawn.
 5. Live tmux tests prove an existing full-screen/alternate-screen pane redraws on
-   attach; subsequent output arrives exactly once; input and `Ctrl-C` reach the tmux
-   process; resize reaches the attached client; multi-pane sources fail closed; and
-   disconnect leaves tmux alive.
-6. Reconnect tests prove a new ticket and client, fresh redraw without cached-tail
-   duplication, last-frame recovery overlay, disabled input while stale, and rejection
-   of late old-connection events.
-7. Backpressure tests use slow/non-reading peers, oversized/zero-byte frame floods,
-   resize storms, PTY write failure, socket close races, and teardown during pending
-   writes; memory and queue bounds remain fixed.
-8. Boundary/source tests prove Electron has no terminal streaming IPC and that
-   `node-pty` imports exist only behind the daemon `PtyAdapter` implementation.
-9. CSP/navigation tests prove production and Vite-in-Electron live development connect
-   only to the intended daemon; standalone browser preview and remote documents cannot
-   issue or redeem live attachments.
-10. WSL2 integration tests cover discovery/address rotation and fresh issue; remote
+   attach; subsequent output arrives exactly once; interactive input and `Ctrl-C` reach
+   the tmux process; resize reaches the attached client; multi-pane sources fail closed;
+   and disconnect leaves tmux alive.
+6. Viewer-mode tests prove requested/effective reporting, read-only input rejection,
+   version gating, a continuous interactive size owner, owner teardown/crash, and
+   initial/recovery viewport mismatches. Source grid never changes from a read-only
+   attach/resize/disconnect; the renderer clips/scrolls to the reported client viewport.
+7. Reconnect tests prove a new ticket and client, fresh redraw without cached-tail
+   duplication, authoritative post-reconnect source/client grids, last-frame recovery
+   overlay, disabled input while stale, and rejection of late old-connection events.
+8. Backpressure tests use slow/non-reading peers, stalled tmux input, oversized/zero-byte
+   frame floods, resize storms, PTY write failure, socket close races, and teardown
+   during pending writes. They assert adapter/native queue telemetry and daemon/tmux RSS
+   remain within fixed bounds over time, not only that JavaScript arrays are bounded.
+9. Boundary/source tests prove Electron has no terminal streaming IPC or raw tmux
+   identity/proof in host capabilities, issue request/response, retained state, events,
+   or diagnostics; `node-pty` imports exist only behind the daemon `PtyAdapter`
+   implementation.
+10. CSP/navigation tests prove production and Vite-in-Electron live development connect
+    only to the intended daemon; standalone browser preview and remote documents cannot
+    issue or redeem live attachments.
+11. WSL2 integration tests cover discovery/address rotation and fresh issue; remote
     network tests reject unauthenticated/non-tunnel exposure.
 
 ## Clean-room reference boundary
