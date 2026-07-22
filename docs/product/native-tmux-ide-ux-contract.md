@@ -424,10 +424,12 @@ Acceptance:
   authoritative shared-window grid, and client viewport. Read-only rejects input and
   resize authority; mismatched viewports clip/scroll instead of changing shared tmux
   geometry.
-- One-writer reservation, atomic issue/redeem, expiry, daemon generation, Origin/CSP,
-  atomic pre-auth socket capacity, bounded redemption, implementable PTY
-  completion/drain or fail-closed flow control, fresh-redraw reconnect, and detach
-  behavior have adversarial and live tmux tests.
+- Mode-specific admission reserves the sole writer only for effective interactive;
+  read-only reserves reader/live capacity plus proven continuous interactive geometry
+  ownership or fails typed. Atomic issue/redeem, expiry, daemon generation, Origin/CSP,
+  pre-auth socket capacity, bounded redemption, implementable PTY completion/drain or
+  fail-closed flow control, fresh-redraw reconnect, and detach behavior have adversarial
+  and live tmux tests.
 - `Ctrl-C` reaches the foreground process; app shutdown remains separate.
 - Desktop tests prove the terminal mount sentinel is not replaced when chrome/status
   changes.

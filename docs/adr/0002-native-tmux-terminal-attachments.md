@@ -48,11 +48,13 @@ directly between the renderer and daemon over a binary WebSocket. Electron main 
 proxies terminal input, output, resize messages, flow-control acknowledgements, or
 terminal lifecycle events.**
 
-**The daemon redeems the descriptor once, verifies its proof and one-writer policy,
-builds a proof-bound ephemeral one-window tmux view, and uses its existing
+**The daemon redeems the descriptor once, verifies its proof and mode-specific admission
+policy, builds a proof-bound ephemeral one-window tmux view, and uses its existing
 `PtyAdapter`/`node-pty` boundary to launch a fixed argv-safe real
-`tmux attach-session`. tmux remains the sole process, session, pane, history, and
-framebuffer authority.**
+`tmux attach-session`. Effective interactive mode reserves the sole writer; effective
+read-only mode reserves reader/live capacity and depends on a separately proven
+continuous interactive geometry owner. tmux remains the sole process, session, pane,
+history, and framebuffer authority.**
 
 ### Data flow
 
@@ -65,9 +67,19 @@ sequenceDiagram
   participant P as daemon PtyAdapter / node-pty
   participant T as real tmux client + server
 
-  X->>H: issue(semanticPane, viewport, requestGeneration)
+  X->>H: issue(semanticPane, requestedViewerMode, viewport, requestGeneration)
   H->>D: POST issue + durable daemon credential + canonical renderer origin
-  D->>D: resolve proof, reserve writer, mint single-use ticket
+  D->>D: resolve proof and effective mode
+  break requested read-only cannot be proven safe
+    D-->>H: typed read_only_unavailable
+    H-->>X: typed read_only_unavailable; no ticket or capacity retained
+  end
+  alt effective interactive
+    D->>D: reserve sole writer + live capacity
+  else effective read-only
+    D->>D: prove continuous interactive geometry owner + reserve reader/live capacity
+  end
+  D->>D: mint mode-bound single-use ticket
   D-->>H: ephemeral attachment descriptor
   H-->>X: descriptor only (no durable credential or raw pane id)
   X->>D: WebSocket upgrade (exact Origin)
@@ -78,9 +90,13 @@ sequenceDiagram
   T-->>P: full tmux redraw
   P-->>D: PTY output
   D-->>X: binary terminal output
-  X->>D: binary input or bounded resize/control
-  D->>P: ordered PTY write or coalesced resize
-  P->>T: real terminal input/resize
+  alt effective interactive
+    X->>D: binary input or bounded resize/control
+    D->>P: ordered PTY write or coalesced resize
+    P->>T: real terminal input/resize
+  else effective read-only
+    Note over X,D: output only; input rejected and viewport is presentation-only
+  end
   Note over X,D: Direct stream; Electron main is absent from the byte path
 ```
 
@@ -107,11 +123,15 @@ for one immediate connection:
 - non-secret display/retry metadata where useful.
 
 The ticket is bound server-side to the exact daemon instance, host-issued request,
-canonical renderer Origin, semantic target proof, resource generation, and writer
-reservation. It has a short fixed TTL, is consumed atomically before the tmux client
-starts, and cannot be retried or transferred to another origin. Cancellation, target
-retirement, daemon restart, and expiry release the reservation. Reconnect always
-requires a new host issue call and a new ticket.
+canonical renderer Origin, semantic target proof, resource generation, effective viewer
+mode, and its mode-specific admission. Interactive binds the sole writer plus live
+capacity. Read-only binds reader/live capacity plus proof of a separately held,
+continuous interactive geometry owner; inability to establish that proof returns typed
+`read_only_unavailable` before ticket issue. It has a short fixed TTL, is consumed
+atomically before the tmux client starts, and cannot be retried or transferred to
+another origin. Cancellation, target retirement, daemon restart, and expiry release
+only that mode's reservation. Reconnect always requires a new host issue call and a new
+ticket.
 
 The descriptor may expose the daemon's WebSocket URL because the URL alone grants no
 terminal access. The renderer must never receive the durable daemon credential or a
@@ -181,8 +201,11 @@ mode are not supported.
 
 The daemon resolves the semantic pane identity to a current tmux proof that includes
 the server/socket identity, daemon generation, session/window/pane lineage, and current
-resource revision. It reserves the single writer before awaiting work and revalidates
-the proof immediately before PTY spawn.
+resource revision. Before awaiting work it reserves either the sole interactive writer
+and live capacity, or read-only reader/live capacity tied to a separately reserved
+continuous interactive geometry owner. A read-only reservation never consumes or
+creates writer authority. The daemon revalidates topology, effective mode, capacity,
+and (for read-only) continuous geometry-owner proof immediately before PTY spawn.
 
 For each attachment, the daemon creates an ephemeral tmux view containing exactly one
 linked target window, selects the proof-resolved pane, and attaches a normal tmux client
@@ -276,9 +299,10 @@ non-reading renderer therefore cannot grow daemon or native-process memory witho
 limit.
 
 Capacity is reserved atomically before asynchronous issue/redeem work. Limits cover
-pending descriptors, live attachments, pending bytes, frames, control messages, and
-per-pane writers. Teardown is idempotent and removes every timer, listener, writer
-reservation, ephemeral view, and PTY client.
+pending descriptors, live attachments, pending bytes, frames, control messages,
+per-pane interactive writers, read-only readers, and mode-specific live capacity.
+Teardown is idempotent and removes every timer, listener, writer/reader/live reservation,
+geometry-owner dependency, ephemeral view, and PTY client.
 
 ### Redraw and reconnect
 
@@ -386,11 +410,13 @@ The native terminal path is not complete until all gates are implemented:
 2. Electron exposes only `issueTerminalAttachment(...)`; no terminal byte/resize/ACK
    IPC channels or main-process stream queues exist.
 3. The daemon authenticates issue with the durable credential and atomically issues,
-   reserves, redeems, expires, and retires tickets.
+   reserves, redeems, expires, and retires mode-bound tickets. Only effective
+   interactive reserves writer authority; effective read-only reserves reader/live
+   capacity plus continuous interactive geometry-owner proof or fails typed.
 4. Upgrade and redemption enforce exact Origin, daemon instance, request, target proof,
-   resource generation, TTL, one-time use, and one-writer capacity. The exact path and
-   subprotocol, atomic pre-auth socket cap, 1,000 ms redemption deadline, and one 4 KiB
-   first-frame limit are enforced before live allocation.
+   resource generation, TTL, one-time use, and mode-specific capacity. The exact path
+   and subprotocol, atomic pre-auth socket cap, 1,000 ms redemption deadline, and one
+   4 KiB first-frame limit are enforced before live allocation.
 5. A daemon-owned fixed argv builder creates and cleans a proof-bound one-window view,
    rejects sibling-pane exposure, then spawns only a real `tmux attach-session` through
    `PtyAdapter`.
@@ -420,10 +446,13 @@ Required automated evidence includes:
    wrong path/subprotocol; ticket reuse, expiry, transfer, daemon restart, target change,
    concurrent redemption, and log/snapshot/crash-report redaction.
 3. Capacity tests race concurrent issue/redeem calls and prove atomic caps for pending
-   tickets, pre-auth sockets, live connections, per-pane writers, frame count, and
-   bytes. They cover saturation before `101`, no first frame, slow/oversized/multiple
-   first frames, close-before-frame, timeout-versus-redeem, redeem-versus-expiry, and
-   two sockets racing one ticket; all reservations and timers are reclaimed.
+   tickets, pre-auth sockets, live connections, per-pane interactive writers, read-only
+   readers, mode-specific live capacity, frame count, and bytes. They prove read-only
+   never consumes writer capacity and cannot issue without continuous interactive
+   geometry-owner proof. They cover saturation before `101`, no first frame,
+   slow/oversized/multiple first frames, close-before-frame, timeout-versus-redeem,
+   redeem-versus-expiry, and two sockets racing one ticket; all reservations and timers
+   are reclaimed.
 4. `PtyAdapter` unit tests assert the exact executable/argv/env/cwd shape and prove no
    shell interpolation or renderer-authored launch field can reach spawn.
 5. Live tmux tests prove an existing full-screen/alternate-screen pane redraws on
