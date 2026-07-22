@@ -13,6 +13,10 @@ import {
   TERMINAL_ATTACHMENT_WEBSOCKET_PROTOCOL,
   type DirectTerminalSocket,
 } from "../attachments/direct-websocket.ts";
+import {
+  groupedTmuxViewSessionName,
+  planGroupedTmuxAttachment,
+} from "../attachments/grouped-tmux.ts";
 import { createNativeTerminalAttachmentRuntime } from "../attachments/native-runtime.ts";
 
 const hasTmux = spawnSync("tmux", ["-V"], { stdio: "ignore" }).status === 0;
@@ -61,7 +65,7 @@ describe.skipIf(!hasTmux)("native attachment runtime isolated tmux integration",
     }).replace(/(?:\r?\n)+$/u, "");
 
   beforeAll(() => {
-    run(["-f", "/dev/null", "new-session", "-d", "-s", sessionName, "exec sleep 30"]);
+    run(["-f", "/dev/null", "new-session", "-d", "-s", sessionName, "exec sleep 300"]);
     run(["set-option", "-p", "-t", `=${sessionName}:0.0`, "@tmux_ide_pane_id", semanticPaneId]);
   });
 
@@ -141,5 +145,81 @@ describe.skipIf(!hasTmux)("native attachment runtime isolated tmux integration",
     }
     expect(runtime.snapshot()).toMatchObject({ liveConnections: 0, shuttingDown: true });
     expect(run(["list-sessions", "-F", "#{session_name}"])).toBe(sessionName);
+  }, 10_000);
+
+  it("removes a strictly marked view left by a simulated crash before restart readiness", async () => {
+    const orphanAttachmentId = randomUUID();
+    const [sourceSessionId, sourceWindowId, sourcePaneId, sourcePaneCount] = run([
+      "list-panes",
+      "-t",
+      `=${sessionName}:0.0`,
+      "-F",
+      "#{session_id}\t#{window_id}\t#{pane_id}\t#{window_panes}",
+    ]).split("\t");
+    if (!sourceSessionId || !sourceWindowId || !sourcePaneId || sourcePaneCount !== "1") {
+      throw new Error("isolated source pane discovery failed");
+    }
+    const orphanPlan = planGroupedTmuxAttachment({
+      attachmentId: orphanAttachmentId,
+      generation: 0,
+      target: { workspaceName, semanticPaneId },
+      viewerMode: "interactive",
+      viewport: { cols: 100, rows: 30 },
+      source: {
+        sessionId: sourceSessionId,
+        windowId: sourceWindowId,
+        runtimePaneId: sourcePaneId,
+        paneCount: 1,
+      },
+    });
+    // This is the durable tmux state a daemon process crash leaves behind:
+    // the prior in-memory lease/admission owner is gone, but its strictly
+    // named and marked one-window view remains on the shared tmux socket.
+    run(orphanPlan.create.command.argv);
+    const orphanViewName = groupedTmuxViewSessionName(orphanAttachmentId, 0);
+    const viewExists = (): boolean =>
+      spawnSync(executablePath, ["-L", socketName, "has-session", "-t", `=${orphanViewName}`], {
+        cwd: root,
+        stdio: "ignore",
+      }).status === 0;
+    expect(viewExists()).toBe(true);
+
+    const registry = new WorkspaceRegistry({
+      dir: join(root, "restart-registry"),
+      listSessions: () => [],
+    });
+    registry.add({ name: workspaceName, sessionName, projectDir: root });
+    const restarted = createNativeTerminalAttachmentRuntime({
+      daemonInstanceId: `${daemonInstanceId}-restart`,
+      webSocketUrl: "ws://127.0.0.1:6070/v1/terminal/attachments/redeem",
+      registry,
+      tmuxAuthority: {
+        executablePath,
+        socketSelector: { kind: "name", name: socketName },
+        trustedCwd: root,
+      },
+    });
+
+    // Construction starts reconciliation, but readiness is the publication
+    // barrier. The orphan is still observable until that barrier completes.
+    expect(viewExists()).toBe(true);
+    await expect(restarted.whenReady()).resolves.toBeUndefined();
+    expect(viewExists()).toBe(false);
+    await expect(
+      restarted.admission.issue(
+        {
+          protocolVersion: 1,
+          target: { workspaceName, semanticPaneId },
+          viewerMode: "interactive",
+          viewport: { cols: 100, rows: 30 },
+        },
+        {
+          requestId: randomUUID(),
+          projectIdentity: "project-live-restarted",
+          rendererOrigin: "tmux-ide://app",
+        },
+      ),
+    ).resolves.toMatchObject({ daemonInstanceId: `${daemonInstanceId}-restart` });
+    await restarted.dispose();
   }, 10_000);
 });

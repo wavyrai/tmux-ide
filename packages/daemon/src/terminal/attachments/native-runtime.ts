@@ -56,13 +56,17 @@ export type NativeTerminalAttachmentRuntimeErrorCode =
   | "invalid-authority"
   | "discovery-failed"
   | "invalid-tmux-output"
-  | "geometry-mismatch";
+  | "geometry-mismatch"
+  | "orphan-reconciliation-failed"
+  | "runtime-disposed";
 
 const ERROR_MESSAGES: Readonly<Record<NativeTerminalAttachmentRuntimeErrorCode, string>> = {
   "invalid-authority": "The daemon tmux authority is invalid.",
   "discovery-failed": "Trusted semantic pane discovery failed.",
   "invalid-tmux-output": "Trusted tmux discovery returned invalid output.",
   "geometry-mismatch": "Terminal attachment geometry no longer matches its proof.",
+  "orphan-reconciliation-failed": "Daemon-owned terminal view startup reconciliation failed.",
+  "runtime-disposed": "The native terminal attachment runtime was disposed during startup.",
 };
 
 export class NativeTerminalAttachmentRuntimeError extends Error {
@@ -450,7 +454,12 @@ type LauncherRuntimeOptions = Omit<
 >;
 type AdmissionRuntimeOptions = Omit<
   TerminalAttachmentAdmissionCoordinatorOptions,
-  "daemonInstanceId" | "webSocketUrl" | "leaseManager" | "launcher" | "resolveGeometry"
+  | "daemonInstanceId"
+  | "webSocketUrl"
+  | "leaseManager"
+  | "launcher"
+  | "resolveGeometry"
+  | "startupBarrier"
 >;
 
 export interface NativeTerminalAttachmentRuntimeOptions {
@@ -471,7 +480,9 @@ export interface NativeTerminalAttachmentRuntimeOptions {
 export class NativeTerminalAttachmentRuntime {
   readonly admission: TerminalAttachmentAdmissionCoordinator;
   readonly #launcher: PtyTmuxAttachmentLauncher;
+  readonly #startupBarrier: Promise<void>;
   readonly #serializer: TmuxAttachmentOperationSerializer;
+  #lifecycle: "initializing" | "ready" | "failed" | "disposing" | "disposed" = "initializing";
   #disposePromise: Promise<void> | null = null;
 
   constructor(options: NativeTerminalAttachmentRuntimeOptions) {
@@ -515,12 +526,34 @@ export class NativeTerminalAttachmentRuntime {
       runner,
       operationSerializer: serializer,
     });
+    this.#startupBarrier = leaseManager
+      .reconcileOrphanViews()
+      .then((result) => {
+        if (result.failed.length > 0) {
+          throw new NativeTerminalAttachmentRuntimeError("orphan-reconciliation-failed");
+        }
+        if (this.#lifecycle !== "initializing") {
+          throw new NativeTerminalAttachmentRuntimeError("runtime-disposed");
+        }
+        this.#lifecycle = "ready";
+      })
+      .catch((error: unknown) => {
+        if (this.#lifecycle === "initializing") this.#lifecycle = "failed";
+        if (error instanceof NativeTerminalAttachmentRuntimeError) throw error;
+        throw new NativeTerminalAttachmentRuntimeError("orphan-reconciliation-failed");
+      });
+    // Startup begins at construction so no caller can expose admission before
+    // reconciliation starts. The rejection remains observable via whenReady()
+    // and admission.issue(); this prevents an unawaited runtime from emitting
+    // a process-level unhandled rejection first.
+    void this.#startupBarrier.catch(() => undefined);
     this.admission = new TerminalAttachmentAdmissionCoordinator({
       ...options.admission,
       daemonInstanceId: options.daemonInstanceId,
       webSocketUrl: options.webSocketUrl,
       leaseManager,
       launcher,
+      startupBarrier: this.#startupBarrier,
       resolveGeometry: (descriptor, client) => geometry.resolve(descriptor, client),
     });
     this.#launcher = launcher;
@@ -535,19 +568,31 @@ export class NativeTerminalAttachmentRuntime {
     return this.snapshot();
   }
 
+  /** A2 must await this barrier before exposing HTTP or WebSocket listeners. */
+  whenReady(): Promise<void> {
+    return this.#startupBarrier;
+  }
+
   dispose(): Promise<void> {
-    this.#disposePromise ??= this.#finishDispose();
+    if (!this.#disposePromise) {
+      this.#lifecycle = "disposing";
+      this.#disposePromise = this.#finishDispose();
+    }
     return this.#disposePromise;
   }
 
   async #finishDispose(): Promise<void> {
-    const admissionBarrier = this.admission.shutdown();
-    // Cancel an attach readiness wait immediately; the coordinator barrier
-    // then retires the associated lease/view before this method resolves.
-    this.#launcher.disposeAll();
-    await admissionBarrier;
-    this.#launcher.disposeAll();
-    await this.#serializer.barrier();
+    try {
+      const admissionBarrier = this.admission.shutdown();
+      // Cancel an attach readiness wait immediately; the coordinator barrier
+      // then retires the associated lease/view before this method resolves.
+      this.#launcher.disposeAll();
+      await Promise.all([admissionBarrier, this.#startupBarrier.catch(() => undefined)]);
+      this.#launcher.disposeAll();
+      await this.#serializer.barrier();
+    } finally {
+      this.#lifecycle = "disposed";
+    }
   }
 }
 

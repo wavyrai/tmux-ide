@@ -303,7 +303,166 @@ class RuntimeTmuxModel {
   };
 }
 
+class StartupReconciliationTmuxModel {
+  readonly viewName = groupedTmuxViewSessionName(LEASE_ID, 0);
+  readonly marker = `v1:${LEASE_ID}:0`;
+  readonly events: string[];
+  viewExists = true;
+  cleanupFailure = false;
+
+  constructor(events: string[] = []) {
+    this.events = events;
+  }
+
+  execute: NativeTerminalAttachmentCommandExecutor = (_executable, rawArgv) => {
+    const argv = rawArgv.slice(2);
+    const targetIndex = argv.indexOf("-t");
+    const target = targetIndex < 0 ? "" : (argv[targetIndex + 1] ?? "");
+    if (argv[0] === "list-sessions") {
+      this.events.push("enumerate-orphans");
+      return this.viewExists ? `${this.viewName}\t$9\n` : "";
+    }
+    if (argv[0] === "show-environment") {
+      if (!this.viewExists) throw new TmuxError("missing", "SESSION_NOT_FOUND");
+      return `TMUX_IDE_ATTACHMENT_VIEW=${this.marker}\n`;
+    }
+    if (argv[0] === "has-session") {
+      if (!this.viewExists) throw new TmuxError("missing", "SESSION_NOT_FOUND");
+      return "";
+    }
+    if (argv[0] === "list-windows" && target === `=${this.viewName}`) {
+      if (!this.viewExists) throw new TmuxError("missing", "SESSION_NOT_FOUND");
+      return "@2\n";
+    }
+    if (argv[0] === "list-panes" && target === `=${this.viewName}`) {
+      if (!this.viewExists) throw new TmuxError("missing", "SESSION_NOT_FOUND");
+      if (argv.at(-1) === "#{session_id}") return "$9\n";
+      return "$9\t@2\t%3\t1\t1\n";
+    }
+    if (argv[0] === "if-shell" && argv.join(" ").includes("kill-session")) {
+      this.events.push("cleanup-orphan");
+      if (this.cleanupFailure) throw new Error("raw cleanup failure must not escape");
+      this.viewExists = false;
+      return "";
+    }
+    return "";
+  };
+}
+
 describe("native terminal attachment runtime lifecycle", () => {
+  it("cleans strictly marked orphan views before an issue can resolve", async () => {
+    const { registry, root } = createRegistry();
+    const events: string[] = [];
+    const model = new StartupReconciliationTmuxModel(events);
+    const catalog = new SemanticPaneCatalog({
+      discover: () => {
+        events.push("discover-pane-for-issue");
+        return [row()];
+      },
+    });
+    const runtime = createNativeTerminalAttachmentRuntime({
+      daemonInstanceId: INSTANCE_ID,
+      webSocketUrl: WS_URL,
+      registry,
+      tmuxAuthority: authority(root),
+      semanticPaneCatalog: catalog,
+      commandExecutor: model.execute,
+      lease: {
+        createId: () => LEASE_ID,
+        randomBytes: () => Buffer.alloc(32, 7),
+      },
+    });
+
+    const issuing = runtime.admission.issue(request(), {
+      requestId: REQUEST_ID,
+      projectIdentity: "project-alpha",
+      rendererOrigin: ORIGIN,
+    });
+    expect(
+      runtime.admission.reserveUpgrade({
+        path: TERMINAL_ATTACHMENT_REDEEM_PATH,
+        protocols: [TERMINAL_ATTACHMENT_WEBSOCKET_PROTOCOL],
+        origin: ORIGIN,
+      }),
+    ).toEqual({ accepted: false, code: "attachment-unavailable", httpStatus: 503 });
+
+    await expect(runtime.whenReady()).resolves.toBeUndefined();
+    await expect(issuing).resolves.toMatchObject({ requestId: REQUEST_ID });
+    expect(model.viewExists).toBe(false);
+    expect(events).toEqual(["enumerate-orphans", "cleanup-orphan", "discover-pane-for-issue"]);
+    await runtime.dispose();
+  });
+
+  it("fails readiness and issue admission closed when orphan cleanup fails", async () => {
+    const { registry, root } = createRegistry();
+    const events: string[] = [];
+    const model = new StartupReconciliationTmuxModel(events);
+    model.cleanupFailure = true;
+    const catalog = new SemanticPaneCatalog({
+      discover: () => {
+        events.push("unexpected-pane-discovery");
+        return [row()];
+      },
+    });
+    const runtime = createNativeTerminalAttachmentRuntime({
+      daemonInstanceId: INSTANCE_ID,
+      webSocketUrl: WS_URL,
+      registry,
+      tmuxAuthority: authority(root),
+      semanticPaneCatalog: catalog,
+      commandExecutor: model.execute,
+      lease: {
+        createId: () => LEASE_ID,
+        randomBytes: () => Buffer.alloc(32, 7),
+      },
+    });
+
+    await expect(runtime.whenReady()).rejects.toMatchObject({
+      code: "orphan-reconciliation-failed",
+      message: "Daemon-owned terminal view startup reconciliation failed.",
+    });
+    await expect(
+      runtime.admission.issue(request(), {
+        requestId: REQUEST_ID,
+        projectIdentity: "project-alpha",
+        rendererOrigin: ORIGIN,
+      }),
+    ).rejects.toMatchObject({
+      code: "attachment-unavailable",
+      message: "Terminal attachment startup reconciliation failed.",
+    });
+    expect(events).toEqual(["enumerate-orphans", "cleanup-orphan"]);
+    expect(runtime.snapshot()).toMatchObject({ pendingTickets: 0, liveConnections: 0 });
+    await runtime.dispose();
+  });
+
+  it("disposes through initialization and never reports late readiness", async () => {
+    const { registry, root } = createRegistry();
+    const model = new StartupReconciliationTmuxModel();
+    model.viewExists = false;
+    const runtime = createNativeTerminalAttachmentRuntime({
+      daemonInstanceId: INSTANCE_ID,
+      webSocketUrl: WS_URL,
+      registry,
+      tmuxAuthority: authority(root),
+      semanticPaneCatalog: new SemanticPaneCatalog({ discover: () => [row()] }),
+      commandExecutor: model.execute,
+    });
+
+    const readiness = runtime.whenReady();
+    const disposing = runtime.dispose();
+    expect(runtime.dispose()).toBe(disposing);
+    await expect(readiness).rejects.toMatchObject({ code: "runtime-disposed" });
+    await disposing;
+    expect(model.events).toEqual(["enumerate-orphans"]);
+    expect(runtime.snapshot()).toEqual({
+      pendingTickets: 0,
+      preAuthSockets: 0,
+      liveConnections: 0,
+      shuttingDown: true,
+    });
+  });
+
   it("does not finish an issue across shutdown and returns one complete dispose barrier", async () => {
     const { registry, root } = createRegistry();
     let releaseDiscovery!: () => void;

@@ -171,6 +171,12 @@ export interface TerminalAttachmentAdmissionCoordinatorOptions {
   readonly webSocketUrl: string;
   readonly leaseManager: DirectTerminalAttachmentLeaseManager;
   readonly launcher: DirectTerminalAttachmentLauncher;
+  /**
+   * Daemon-owned startup work which must complete before any descriptor or
+   * WebSocket admission can be published. Rejections are deliberately
+   * collapsed to the static attachment-unavailable domain error.
+   */
+  readonly startupBarrier?: PromiseLike<void>;
   readonly resolveGeometry: (
     descriptor: AttachmentLeaseDescriptor,
     client: TerminalAttachmentGeometryClientProof,
@@ -359,6 +365,7 @@ export class TerminalAttachmentAdmissionCoordinator {
   readonly #webSocketUrl: string;
   readonly #leaseManager: DirectTerminalAttachmentLeaseManager;
   readonly #launcher: DirectTerminalAttachmentLauncher;
+  readonly #startupBarrier: Promise<void>;
   readonly #resolveGeometry: TerminalAttachmentAdmissionCoordinatorOptions["resolveGeometry"];
   readonly #maxPending: number;
   readonly #maxPreAuth: number;
@@ -376,6 +383,7 @@ export class TerminalAttachmentAdmissionCoordinator {
   #pendingReservations = 0;
   #liveReservations = 0;
   #operationTail: Promise<void> = Promise.resolve();
+  #startupState: "pending" | "ready" | "failed";
   #shuttingDown = false;
   #shutdownPromise: Promise<void> | null = null;
 
@@ -384,6 +392,27 @@ export class TerminalAttachmentAdmissionCoordinator {
     this.#webSocketUrl = validateWebSocketUrl(options.webSocketUrl);
     this.#leaseManager = options.leaseManager;
     this.#launcher = options.launcher;
+    if (options.startupBarrier) {
+      this.#startupState = "pending";
+      this.#startupBarrier = Promise.resolve(options.startupBarrier).then(
+        () => {
+          this.#startupState = "ready";
+        },
+        () => {
+          this.#startupState = "failed";
+          throw new TerminalAttachmentAdmissionError(
+            "attachment-unavailable",
+            "Terminal attachment startup reconciliation failed.",
+          );
+        },
+      );
+      // The same rejection remains observable through issue(); this handler
+      // only prevents a constructor-started barrier from becoming unhandled.
+      void this.#startupBarrier.catch(() => undefined);
+    } else {
+      this.#startupState = "ready";
+      this.#startupBarrier = Promise.resolve();
+    }
     this.#resolveGeometry = options.resolveGeometry;
     this.#maxPending = boundedInteger(options.maxPendingTickets, 32, 1_024);
     this.#maxPreAuth = boundedInteger(options.maxPreAuthSockets, 16, 1_024);
@@ -416,6 +445,20 @@ export class TerminalAttachmentAdmissionCoordinator {
     context: DirectTerminalAttachmentIssueContext,
   ): Promise<DirectTerminalAttachmentDescriptor> {
     return this.#exclusive(async () => {
+      try {
+        await this.#startupBarrier;
+      } catch {
+        if (this.#shuttingDown) {
+          throw new TerminalAttachmentAdmissionError(
+            "daemon-shutting-down",
+            "Terminal attachment admission is shutting down.",
+          );
+        }
+        throw new TerminalAttachmentAdmissionError(
+          "attachment-unavailable",
+          "Terminal attachment startup reconciliation failed.",
+        );
+      }
       if (this.#shuttingDown) {
         throw new TerminalAttachmentAdmissionError(
           "daemon-shutting-down",
@@ -534,6 +577,9 @@ export class TerminalAttachmentAdmissionCoordinator {
   }): TerminalAttachmentUpgradeDecision {
     if (this.#shuttingDown) {
       return { accepted: false, code: "daemon-shutting-down", httpStatus: 503 };
+    }
+    if (this.#startupState !== "ready") {
+      return { accepted: false, code: "attachment-unavailable", httpStatus: 503 };
     }
     if (input.path !== TERMINAL_ATTACHMENT_REDEEM_PATH) {
       return { accepted: false, code: "invalid-path", httpStatus: 404 };
