@@ -8,6 +8,8 @@ export const APP_WINDOW_MAX_TREE_DEPTH = 24;
 export const APP_WINDOW_MAX_TREE_NODES = 255;
 export const APP_WINDOW_MAX_ID_LENGTH = 128;
 export const APP_WINDOW_MAX_TITLE_LENGTH = 160;
+/** UTC ISO-8601 through nanosecond precision; Date.toISOString() emits 24 characters. */
+export const APP_WINDOW_TIMESTAMP_MAX_LENGTH = 30;
 
 const RESERVED_RECORD_KEYS = new Set(["__proto__", "prototype", "constructor"]);
 const finiteCoordinate = z.number().finite().min(-1_000_000).max(1_000_000);
@@ -27,7 +29,14 @@ export const AppWindowIdSchemaZ = z
   .refine((value) => !RESERVED_RECORD_KEYS.has(value), "reserved record key is not allowed");
 export type AppWindowId = z.infer<typeof AppWindowIdSchemaZ>;
 
-export const AppWindowTimestampSchemaZ = z.string().datetime({ offset: false });
+export const AppWindowTimestampSchemaZ = z
+  .string()
+  .max(APP_WINDOW_TIMESTAMP_MAX_LENGTH)
+  .regex(
+    /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?Z$/u,
+    "timestamp must be UTC ISO-8601 with at most nanosecond precision",
+  )
+  .datetime({ offset: false });
 
 export const AppWindowNativeSurfaceSchemaZ = z.enum([
   "home",

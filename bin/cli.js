@@ -1575,7 +1575,7 @@ function refineScene(scene, ctx) {
     }
   }
 }
-var APP_WINDOW_DOCUMENT_VERSION, APP_WINDOW_MAX_WINDOWS, APP_WINDOW_MAX_LAYOUTS, APP_WINDOW_MAX_TREE_DEPTH, APP_WINDOW_MAX_TREE_NODES, APP_WINDOW_MAX_ID_LENGTH, APP_WINDOW_MAX_TITLE_LENGTH, RESERVED_RECORD_KEYS2, finiteCoordinate, finiteExtent, VisibleTextSchemaZ, AppWindowIdSchemaZ, AppWindowTimestampSchemaZ, AppWindowNativeSurfaceSchemaZ, AppWindowSourceSchemaZ, AppWindowRectSchemaZ, AppWindowDockMemorySchemaZ, AppWindowPlacementSchemaZ, AppWindowDockStateSchemaZ, AppWindowInstanceSchemaZ, AppWindowDockNodeRecursiveSchemaZ, AppWindowDockNodeSchemaZ, AppWindowSceneShapeSchemaZ, AppWindowSceneSchemaZ, AppWindowNamedLayoutSchemaZ, AppWindowDocumentV1SchemaZ;
+var APP_WINDOW_DOCUMENT_VERSION, APP_WINDOW_MAX_WINDOWS, APP_WINDOW_MAX_LAYOUTS, APP_WINDOW_MAX_TREE_DEPTH, APP_WINDOW_MAX_TREE_NODES, APP_WINDOW_MAX_ID_LENGTH, APP_WINDOW_MAX_TITLE_LENGTH, APP_WINDOW_TIMESTAMP_MAX_LENGTH, RESERVED_RECORD_KEYS2, finiteCoordinate, finiteExtent, VisibleTextSchemaZ, AppWindowIdSchemaZ, AppWindowTimestampSchemaZ, AppWindowNativeSurfaceSchemaZ, AppWindowSourceSchemaZ, AppWindowRectSchemaZ, AppWindowDockMemorySchemaZ, AppWindowPlacementSchemaZ, AppWindowDockStateSchemaZ, AppWindowInstanceSchemaZ, AppWindowDockNodeRecursiveSchemaZ, AppWindowDockNodeSchemaZ, AppWindowSceneShapeSchemaZ, AppWindowSceneSchemaZ, AppWindowNamedLayoutSchemaZ, AppWindowDocumentV1SchemaZ;
 var init_app_window_state = __esm({
   "packages/contracts/src/app-window-state.ts"() {
     "use strict";
@@ -1586,12 +1586,16 @@ var init_app_window_state = __esm({
     APP_WINDOW_MAX_TREE_NODES = 255;
     APP_WINDOW_MAX_ID_LENGTH = 128;
     APP_WINDOW_MAX_TITLE_LENGTH = 160;
+    APP_WINDOW_TIMESTAMP_MAX_LENGTH = 30;
     RESERVED_RECORD_KEYS2 = /* @__PURE__ */ new Set(["__proto__", "prototype", "constructor"]);
     finiteCoordinate = z10.number().finite().min(-1e6).max(1e6);
     finiteExtent = z10.number().finite().positive().max(1e6);
     VisibleTextSchemaZ = (max) => z10.string().max(max).refine((value) => !value.includes("\0"), "text must not contain NUL bytes").refine((value) => value.trim().length > 0, "text must contain visible characters");
     AppWindowIdSchemaZ = z10.string().min(1).max(APP_WINDOW_MAX_ID_LENGTH).regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/u).refine((value) => !RESERVED_RECORD_KEYS2.has(value), "reserved record key is not allowed");
-    AppWindowTimestampSchemaZ = z10.string().datetime({ offset: false });
+    AppWindowTimestampSchemaZ = z10.string().max(APP_WINDOW_TIMESTAMP_MAX_LENGTH).regex(
+      /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?Z$/u,
+      "timestamp must be UTC ISO-8601 with at most nanosecond precision"
+    ).datetime({ offset: false });
     AppWindowNativeSurfaceSchemaZ = z10.enum([
       "home",
       "files",

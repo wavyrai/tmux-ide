@@ -3,6 +3,7 @@ import {
   APPLICATION_SHELL_RESOURCE_V3_VERSION,
   APP_WINDOW_MAX_ID_LENGTH,
   APP_WINDOW_MAX_LAYOUTS,
+  APP_WINDOW_TIMESTAMP_MAX_LENGTH,
   APP_WINDOW_MAX_WINDOWS,
   ApplicationShellResourceV3SchemaZ,
   AppWindowDocumentV1SchemaZ,
@@ -96,7 +97,9 @@ function maximumSemanticId(prefix: string, index: number): string {
   return `${head}${"x".repeat(APP_WINDOW_MAX_ID_LENGTH - head.length)}`;
 }
 
-/** Current schema maxima with the six-byte JSON escape expansion for bounded text. */
+const MAXIMUM_APP_WINDOW_TIMESTAMP = "2026-07-22T10:00:00.123456789Z";
+
+/** Current schema maxima with maximum timestamps and six-byte JSON-expanded bounded text. */
 function maximumApplicationShellV3Envelope() {
   const escapedText = "\u0001";
   const windows: Record<string, AppWindowInstance> = {};
@@ -165,8 +168,8 @@ function maximumApplicationShellV3Envelope() {
           name: escapedText.repeat(80),
           description: escapedText.repeat(512),
           revision: Number.MAX_SAFE_INTEGER,
-          createdAt: "2026-07-22T10:00:00.000Z",
-          updatedAt: "2026-07-22T10:00:00.000Z",
+          createdAt: MAXIMUM_APP_WINDOW_TIMESTAMP,
+          updatedAt: MAXIMUM_APP_WINDOW_TIMESTAMP,
           scene,
         },
       ];
@@ -176,7 +179,7 @@ function maximumApplicationShellV3Envelope() {
     ...scene,
     version: 1,
     revision: Number.MAX_SAFE_INTEGER,
-    updatedAt: "2026-07-22T10:00:00.000Z",
+    updatedAt: MAXIMUM_APP_WINDOW_TIMESTAMP,
     activeLayoutId: Object.keys(layouts)[0],
     layouts,
   });
@@ -545,8 +548,10 @@ describe("Electron main daemon resource broker", () => {
     const envelope = maximumApplicationShellV3Envelope();
     const serialized = JSON.stringify(envelope);
     const payloadBytes = new TextEncoder().encode(serialized).byteLength;
+    expect(MAXIMUM_APP_WINDOW_TIMESTAMP).toHaveLength(APP_WINDOW_TIMESTAMP_MAX_LENGTH);
     expect(payloadBytes).toBeGreaterThan(1024 * 1024);
     expect(payloadBytes).toBeLessThanOrEqual(APPLICATION_SHELL_V3_MAX_RESPONSE_BYTES);
+    expect(APPLICATION_SHELL_V3_MAX_RESPONSE_BYTES - payloadBytes).toBeGreaterThan(5 * 1024 * 1024);
     const broker = new DaemonResourceBroker({
       daemon: CONNECTED,
       fetch: async (input) =>

@@ -44,7 +44,8 @@ const DEFAULT_MAX_RESPONSE_BYTES = 1024 * 1024;
 /**
  * V3 can carry 33 schema-bounded app-window scenes: the current scene plus
  * 32 named layouts, each with 128 windows and a 255-node dock tree. A fixture
- * using every maximum and worst-case JSON-escaped text is about 10.2 MiB.
+ * using every maximum, bounded nanosecond timestamps, and worst-case
+ * JSON-escaped text is about 10.2 MiB.
  * Keep a finite power-of-two ceiling with headroom for the rest of the shell
  * projection while leaving catalog, V2, and mutation limits unchanged.
  */
