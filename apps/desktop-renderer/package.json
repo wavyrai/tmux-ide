@@ -6,7 +6,8 @@
   "scripts": {
     "build": "vite build",
     "dev": "vite",
-    "lint": "eslint src vite.config.ts vitest.config.ts",
+    "lint": "eslint src scripts vite.config.ts vitest.config.ts",
+    "smoke:dev-csp": "node scripts/dev-csp-smoke.mjs",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },
@@ -18,6 +19,7 @@
   },
   "devDependencies": {
     "happy-dom": "^20.8.4",
+    "playwright": "1.59.1",
     "typescript": "^5.9.3",
     "vite": "^7.2.2",
     "vite-plugin-solid": "^2.11.10",

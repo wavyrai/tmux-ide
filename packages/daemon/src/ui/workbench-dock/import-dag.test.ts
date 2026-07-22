@@ -93,6 +93,7 @@ describe("shared workbench dock import DAG", () => {
       "packages/daemon/src/ui/workbench-dock/navigation.ts",
       "packages/daemon/src/ui/workbench-dock/presenter.tsx",
       "packages/daemon/src/ui/workbench-dock/web-entry.tsx",
+      "packages/daemon/src/ui/workbench-dock/web-host-unstyled.tsx",
       "packages/daemon/src/ui/workbench-dock/web-host.tsx",
     ]);
   });

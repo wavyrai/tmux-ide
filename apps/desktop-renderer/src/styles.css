@@ -1,4 +1,12 @@
 @import "@xterm/xterm/css/xterm.css";
+/*
+ * Keep shared pane chrome and dock styles in the renderer's external
+ * stylesheet. Vite otherwise injects their TSX-owned CSS imports through an
+ * inline <style> element during development, which the Electron renderer's
+ * strict `style-src 'self'` policy intentionally rejects.
+ */
+@import "../../../packages/daemon/src/ui/pane-frame/web-host.css";
+@import "../../../packages/daemon/src/ui/workbench-dock/web-host.css";
 
 :root {
   font-family: ui-monospace, "SFMono-Regular", Menlo, Monaco, Consolas, monospace;

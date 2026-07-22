@@ -262,6 +262,10 @@ describe("visible DOM application shell", () => {
       /\.command-palette(?:-overlay)?(?:--open)?\s*\{[^}]*(?:transition|transform)\s*:/gu,
     );
     expect(styles).toContain('.status-strip__connection[data-state="recovering"] > i');
+    expect(styles).toContain('@import "../../../packages/daemon/src/ui/pane-frame/web-host.css"');
+    expect(styles).toContain(
+      '@import "../../../packages/daemon/src/ui/workbench-dock/web-host.css"',
+    );
     expect(paneFrameStyles).toContain('.web-pane-frame[data-border-role="focused"]');
     expect(styles).not.toMatch(/^\[data-state=/mu);
   });

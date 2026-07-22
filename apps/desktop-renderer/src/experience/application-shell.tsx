@@ -31,8 +31,8 @@ import {
   onMount,
 } from "solid-js";
 
-import { WebWorkbenchDock } from "../../../../packages/daemon/src/ui/workbench-dock/web-host.tsx";
-import { WebPaneFrame } from "../../../../packages/daemon/src/ui/pane-frame/web-host.tsx";
+import { WebWorkbenchDock } from "../../../../packages/daemon/src/ui/workbench-dock/web-host-unstyled.tsx";
+import { WebPaneFrame } from "../../../../packages/daemon/src/ui/pane-frame/web-host-unstyled.tsx";
 import type { ApplicationShellTerminalPaneFrame } from "../../../../packages/daemon/src/ui/pane-frame/model.ts";
 import type {
   PaneFrameActionIntent,
