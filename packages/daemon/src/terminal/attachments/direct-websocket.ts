@@ -61,6 +61,14 @@ export interface TerminalAttachmentGeometry {
   readonly clientViewport: TerminalAttachmentViewport;
 }
 
+/** Narrow, non-capability proof retained only inside the daemon runtime. */
+export interface TerminalAttachmentGeometryClientProof {
+  readonly attemptId: string;
+  readonly attachmentId: string;
+  readonly generation: number;
+  readonly pid: number;
+}
+
 export interface DirectTerminalAttachmentDescriptor {
   readonly protocolVersion: typeof TERMINAL_ATTACHMENT_PROTOCOL_VERSION;
   readonly webSocketUrl: string;
@@ -165,6 +173,7 @@ export interface TerminalAttachmentAdmissionCoordinatorOptions {
   readonly launcher: DirectTerminalAttachmentLauncher;
   readonly resolveGeometry: (
     descriptor: AttachmentLeaseDescriptor,
+    client: TerminalAttachmentGeometryClientProof,
   ) => Promise<TerminalAttachmentGeometry>;
   readonly maxPendingTickets?: number;
   readonly maxPreAuthSockets?: number;
@@ -436,6 +445,17 @@ export class TerminalAttachmentAdmissionCoordinator {
       } finally {
         this.#pendingReservations -= 1;
       }
+      if (this.#shuttingDown) {
+        await this.#releaseLease(issued.descriptor.leaseId, {
+          daemonInstanceId: this.#instanceId,
+          requestId,
+          projectIdentity,
+        });
+        throw new TerminalAttachmentAdmissionError(
+          "daemon-shutting-down",
+          "Terminal attachment admission is shutting down.",
+        );
+      }
       const ticket = issued.redemptionTicket;
       const issuedDescriptor = issued.descriptor;
       if (
@@ -665,7 +685,7 @@ export class TerminalAttachmentAdmissionCoordinator {
         }
         let geometry: TerminalAttachmentGeometry;
         try {
-          const resolved = await this.#resolveGeometry(activeDescriptor);
+          const resolved = await this.#resolveGeometry(activeDescriptor, client);
           geometry = {
             sourceGrid: GridSchemaZ.parse(resolved.sourceGrid),
             clientViewport: GridSchemaZ.parse(resolved.clientViewport),
@@ -933,6 +953,7 @@ interface LiveConnectionOptions {
   readonly geometry: TerminalAttachmentGeometry;
   readonly resolveGeometry: (
     descriptor: AttachmentLeaseDescriptor,
+    client: TerminalAttachmentGeometryClientProof,
   ) => Promise<TerminalAttachmentGeometry>;
   readonly maxBufferedOutputBytes: number;
   readonly maxOutputFrameBytes: number;
@@ -1138,7 +1159,7 @@ class TerminalAttachmentLiveConnection {
         this.#pendingResize = null;
         try {
           this.#client.resize(viewport.cols, viewport.rows);
-          const geometry = await this.#resolveGeometry(this.#descriptor);
+          const geometry = await this.#resolveGeometry(this.#descriptor, this.#client);
           if (this.#closed) return;
           sendControl(this.#socket, {
             type: "geometry",
@@ -1198,7 +1219,7 @@ class TerminalAttachmentLiveConnection {
         ) {
           throw new TypeError("Terminal attachment lease identity changed during renewal.");
         }
-        const geometry = await this.#resolveGeometry(descriptor);
+        const geometry = await this.#resolveGeometry(descriptor, this.#client);
         if (this.#closed) return;
         this.#descriptor = structuredClone(descriptor);
         sendControl(this.#socket, {

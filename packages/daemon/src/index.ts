@@ -189,6 +189,7 @@ export {
   type TerminalAttachmentAdmissionErrorCode,
   type TerminalAttachmentAdmissionSnapshot,
   type TerminalAttachmentGeometry,
+  type TerminalAttachmentGeometryClientProof,
   type TerminalAttachmentPreAuthAdmission,
   type TerminalAttachmentUpgradeDecision,
 } from "./terminal/attachments/direct-websocket.ts";
@@ -198,6 +199,7 @@ export {
 } from "./server/terminal-attachment-upgrade.ts";
 export {
   TmuxAttachmentViewExecutor,
+  TmuxAttachmentOperationSerializer,
   TmuxAttachmentViewExecutorError,
   TmuxAttachmentClientTransportError,
   planCanonicalTmuxAttachmentClientCommand,
@@ -219,3 +221,12 @@ export {
   type PtyTmuxAttachmentClaimKey,
   type PtyTmuxAttachmentLauncherOptions,
 } from "./terminal/attachments/pty-tmux-attachment-launcher.ts";
+export {
+  NativeTerminalAttachmentRuntime,
+  NativeTerminalAttachmentRuntimeError,
+  createNativeTerminalAttachmentRuntime,
+  type NativeTerminalAttachmentCommandExecutor,
+  type NativeTerminalAttachmentRuntimeErrorCode,
+  type NativeTerminalAttachmentRuntimeOptions,
+  type NativeTerminalAttachmentTmuxAuthority,
+} from "./terminal/attachments/native-runtime.ts";

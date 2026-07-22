@@ -13,6 +13,7 @@ import type {
 } from "../attachments/lease-manager.ts";
 import {
   TmuxAttachmentClientTransportError,
+  TmuxAttachmentOperationSerializer,
   TmuxAttachmentViewExecutor,
   TmuxAttachmentViewExecutorError,
   planCanonicalTmuxAttachmentClientCommand,
@@ -660,8 +661,17 @@ describe("TmuxAttachmentViewExecutor guarded cleanup", () => {
     const firstPlan = plan();
     const secondPlan = plan(secondAttachmentId);
     seed(runner, secondPlan);
-    const first = new TmuxAttachmentViewExecutor({ runner, now: () => 1_000 });
-    const second = new TmuxAttachmentViewExecutor({ runner, now: () => 1_000 });
+    const operationSerializer = new TmuxAttachmentOperationSerializer();
+    const first = new TmuxAttachmentViewExecutor({
+      runner,
+      operationSerializer,
+      now: () => 1_000,
+    });
+    const second = new TmuxAttachmentViewExecutor({
+      runner,
+      operationSerializer,
+      now: () => 1_000,
+    });
 
     const creating = first.executeGuardedViewOperation(operation("create", firstPlan));
     const cleaning = second.guardedCleanup(cleanup(secondPlan));
