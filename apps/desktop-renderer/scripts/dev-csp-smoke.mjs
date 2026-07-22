@@ -71,6 +71,7 @@ async function browserExecutable() {
   const configured = process.env.TMUX_IDE_CHROMIUM_EXECUTABLE;
   const candidates = [
     configured,
+    chromium.executablePath(),
     process.platform === "darwin"
       ? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
       : undefined,
@@ -100,7 +101,8 @@ async function browserExecutable() {
     }
   }
   throw new Error(
-    "No Chromium browser found. Set TMUX_IDE_CHROMIUM_EXECUTABLE to run the strict-CSP smoke.",
+    "No Chromium browser found. Run `pnpm exec playwright install chromium` or set " +
+      "TMUX_IDE_CHROMIUM_EXECUTABLE to run the strict-CSP smoke.",
   );
 }
 
