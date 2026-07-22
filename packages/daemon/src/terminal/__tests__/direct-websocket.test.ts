@@ -549,6 +549,68 @@ describe("TerminalAttachmentAdmissionCoordinator", () => {
     expect(shutdownSettled).toBe(true);
   });
 
+  it("awaits a gated lease release that started before shutdown on peer close", async () => {
+    const { coordinator, manager } = rig();
+    await issue(coordinator);
+    const socket = new FakeSocket();
+    admission(coordinator).bind(socket);
+    socket.frame(redemption());
+    await flush();
+    await flush();
+
+    let releaseCleanup!: () => void;
+    manager.releaseGate = new Promise<void>((resolve) => {
+      releaseCleanup = resolve;
+    });
+    socket.readyState = 3;
+    socket.emit("close");
+    expect(coordinator.snapshot().liveConnections).toBe(0);
+    expect(manager.calls.at(-1)).toBe("release");
+
+    let shutdownSettled = false;
+    const shutdown = coordinator.shutdown().then(() => {
+      shutdownSettled = true;
+    });
+    await flush();
+    expect(shutdownSettled).toBe(false);
+
+    releaseCleanup();
+    await shutdown;
+    expect(shutdownSettled).toBe(true);
+    expect(manager.releases).toHaveLength(1);
+  });
+
+  it("returns one shared shutdown barrier to concurrent callers", async () => {
+    const { coordinator, manager } = rig();
+    await issue(coordinator);
+    const socket = new FakeSocket();
+    admission(coordinator).bind(socket);
+    socket.frame(redemption());
+    await flush();
+    await flush();
+
+    let releaseCleanup!: () => void;
+    manager.releaseGate = new Promise<void>((resolve) => {
+      releaseCleanup = resolve;
+    });
+    const first = coordinator.shutdown();
+    const second = coordinator.shutdown();
+    expect(second).toBe(first);
+
+    let settled = false;
+    void second.then(() => {
+      settled = true;
+    });
+    await flush();
+    expect(settled).toBe(false);
+    expect(socket.closes.at(-1)).toEqual({ code: 1001, reason: "daemon-shutdown" });
+
+    releaseCleanup();
+    await Promise.all([first, second]);
+    expect(settled).toBe(true);
+    expect(manager.releases).toHaveLength(1);
+  });
+
   it("renews a stable live lease before expiry and retires on renewal failure", async () => {
     let now = 1_000;
     const scheduled: Array<{ callback: () => void; cancelled: boolean; delay: number }> = [];

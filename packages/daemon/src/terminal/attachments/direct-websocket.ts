@@ -363,10 +363,12 @@ export class TerminalAttachmentAdmissionCoordinator {
   readonly #pending = new Map<string, PendingTicket>();
   readonly #preAuth = new Set<PreAuthAdmission>();
   readonly #live = new Set<TerminalAttachmentLiveConnection>();
+  readonly #retiringReleases = new Set<Promise<void>>();
   #pendingReservations = 0;
   #liveReservations = 0;
   #operationTail: Promise<void> = Promise.resolve();
   #shuttingDown = false;
+  #shutdownPromise: Promise<void> | null = null;
 
   constructor(options: TerminalAttachmentAdmissionCoordinatorOptions) {
     this.#instanceId = BindingIdSchemaZ.parse(options.daemonInstanceId);
@@ -558,16 +560,25 @@ export class TerminalAttachmentAdmissionCoordinator {
     return this.snapshot();
   }
 
-  async shutdown(): Promise<void> {
-    if (this.#shuttingDown) return;
+  shutdown(): Promise<void> {
+    if (this.#shutdownPromise) return this.#shutdownPromise;
     this.#shuttingDown = true;
+    this.#shutdownPromise = this.#finishShutdown();
+    return this.#shutdownPromise;
+  }
+
+  async #finishShutdown(): Promise<void> {
     for (const admission of [...this.#preAuth]) admission.close(1001, "daemon-shutdown");
-    const live = [...this.#live];
-    for (const connection of live) connection.close(1001, "daemon-shutdown");
-    await Promise.all(live.map((connection) => connection.waitForRelease()));
     await this.#exclusive(async () => {
+      // Operations admitted before shutdown may have crossed async lease or
+      // launcher boundaries. Sweep only after they have left the serialized
+      // section so a late-created live connection cannot escape teardown.
+      for (const connection of [...this.#live]) {
+        connection.close(1001, "daemon-shutdown");
+      }
       for (const pending of [...this.#pending.values()]) await this.#retirePending(pending);
     });
+    await Promise.all([...this.#retiringReleases]);
   }
 
   #redeem(
@@ -674,7 +685,7 @@ export class TerminalAttachmentAdmissionCoordinator {
           );
         }
         const live = new TerminalAttachmentLiveConnection({
-          onRetire: (connection) => this.#live.delete(connection),
+          onRetire: (connection) => this.#trackRetiringRelease(connection),
           socket,
           client,
           leaseManager: this.#leaseManager,
@@ -756,6 +767,16 @@ export class TerminalAttachmentAdmissionCoordinator {
       // The lease manager may already have retired the one-use lease. No
       // credential, target proof, or terminal bytes are reflected outward.
     }
+  }
+
+  #trackRetiringRelease(connection: TerminalAttachmentLiveConnection): void {
+    this.#live.delete(connection);
+    const release = connection.waitForRelease();
+    this.#retiringReleases.add(release);
+    void release.then(
+      () => this.#retiringReleases.delete(release),
+      () => this.#retiringReleases.delete(release),
+    );
   }
 
   #exclusive<T>(operation: () => Promise<T>): Promise<T> {
@@ -1011,10 +1032,10 @@ class TerminalAttachmentLiveConnection {
     } catch {
       // Lease retirement below remains authoritative.
     }
-    this.#onRetire(this);
     this.#releasePromise = this.#leaseManager
       .release(this.#leaseId, this.#binding)
       .catch(() => undefined);
+    this.#onRetire(this);
     safeClose(this.#socket, code, reason);
   }
 
