@@ -29,6 +29,7 @@ import { getLooseActionEntry } from "./registry.ts";
 import { broadcastActionComplete } from "../ws-events.ts";
 import { daemonActionCommandRegistry } from "./command-definitions.ts";
 import type { WorkspacePaneCreationBackend } from "./handlers/workspace-pane-create.ts";
+import type { WorkspaceOpenBackend } from "./handlers/workspace-open.ts";
 
 export interface DispatcherDeps {
   /** Override the WS broadcaster (tests / non-default daemons). */
@@ -37,6 +38,8 @@ export interface DispatcherDeps {
   daemonInstanceId?: string;
   /** Instance-owned privileged mutation authority; never module-global. */
   workspacePaneCreationBackend?: WorkspacePaneCreationBackend;
+  /** Instance-owned config-free admission authority; never renderer-authored. */
+  workspaceOpenBackend?: WorkspaceOpenBackend;
 }
 
 interface DispatchOk {
@@ -160,6 +163,7 @@ export function createActionDispatcher(deps: DispatcherDeps = {}) {
         operationId: c.req.header("X-Tmux-Ide-Operation-Id"),
         daemonInstanceId: deps.daemonInstanceId,
         workspacePaneCreationBackend: deps.workspacePaneCreationBackend,
+        workspaceOpenBackend: deps.workspaceOpenBackend,
       };
       result = entry.handlerWithContext
         ? await entry.handlerWithContext(commandResolution.command.input, context)

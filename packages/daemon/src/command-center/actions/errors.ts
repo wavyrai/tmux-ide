@@ -55,6 +55,11 @@ export type ActionErrorCode =
   | "pane_creation_failed"
   | "pane_cleanup_unproven"
   | "pane_resource_changed"
+  | "workspace_conflict"
+  | "session_conflict"
+  | "workspace_creation_failed"
+  | "workspace_cleanup_unproven"
+  | "workspace_resource_changed"
   | "internal";
 
 export class ActionError extends Error {

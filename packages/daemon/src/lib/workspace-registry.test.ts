@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -66,6 +66,16 @@ describe("WorkspaceRegistry — add/list/get/remove round-trip", () => {
     expect(() => reg.add({ name: "alpha", projectDir: "/tmp/alpha", now })).toThrow(
       WorkspaceAlreadyExistsError,
     );
+  });
+
+  it("does not retain an in-memory workspace when persistence fails", async () => {
+    const blocked = join(dir, "not-a-directory");
+    writeFileSync(blocked, "blocked");
+    const reg = new WorkspaceRegistry({ dir: blocked, listSessions: () => [] });
+
+    expect(() => reg.add({ name: "alpha", projectDir: "/tmp/alpha", now })).toThrow();
+    expect(reg.list()).toEqual([]);
+    expect(reg.has("alpha")).toBe(false);
   });
 
   it("remove() drops the entry and persists", async () => {

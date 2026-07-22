@@ -36,6 +36,12 @@ const FailureEnvelopeZ = z.object({
   }),
 });
 
+/** Owner-only semantic mutations that are safe to retry with one stable operation id. */
+const RETRY_SAFE_OWNER_ACTIONS: ReadonlySet<ActionName> = new Set([
+  "workspace.pane.create",
+  "workspace.open",
+]);
+
 interface CliActionBridgeDeps {
   fetch: typeof fetch;
   cwd: () => string;
@@ -186,8 +192,9 @@ export async function tryDispatchAction<Name extends ActionName>(
 
   const contract = ActionContractsZ[name];
   const parsedInput = contract.input.parse(input);
-  const operationId =
-    name === "workspace.pane.create" ? (options.operationId ?? randomUUID()) : null;
+  const operationId = RETRY_SAFE_OWNER_ACTIONS.has(name)
+    ? (options.operationId ?? randomUUID())
+    : null;
   if (operationId && !daemon.ownerToken) {
     await stopTransientDaemon(daemon);
     return null;

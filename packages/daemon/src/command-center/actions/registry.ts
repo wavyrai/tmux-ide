@@ -15,6 +15,8 @@ import {
   ActionContractsZ,
   type WorkspacePaneCreateMutationRequest,
   type WorkspacePaneCreateMutationResult,
+  type WorkspaceOpenMutationRequest,
+  type WorkspaceOpenMutationResult,
   type ActionInput,
   type ActionName,
   type ActionResult,
@@ -37,12 +39,16 @@ import {
 import { appSetRemoteAccessHandler } from "./handlers/app-set-remote-access.ts";
 import { daemonShutdownHandler } from "./handlers/daemon-shutdown.ts";
 import { workspacePaneCreateHandler } from "./handlers/workspace-pane-create.ts";
+import { workspaceOpenHandler } from "./handlers/workspace-open.ts";
 
 export interface ActionExecutionContext {
   readonly operationId?: string;
   readonly daemonInstanceId?: string;
   readonly workspacePaneCreationBackend?: {
     create(input: WorkspacePaneCreateMutationRequest): Promise<WorkspacePaneCreateMutationResult>;
+  };
+  readonly workspaceOpenBackend?: {
+    open(input: WorkspaceOpenMutationRequest): Promise<WorkspaceOpenMutationResult>;
   };
 }
 
@@ -145,6 +151,12 @@ export const actionRegistry: RegistryShape = {
     resultSchema: ActionContractsZ["workspace.pane.create"].result,
     handler: (input) => workspacePaneCreateHandler(input),
     handlerWithContext: workspacePaneCreateHandler,
+  },
+  "workspace.open": {
+    inputSchema: ActionContractsZ["workspace.open"].input,
+    resultSchema: ActionContractsZ["workspace.open"].result,
+    handler: (input) => workspaceOpenHandler(input),
+    handlerWithContext: workspaceOpenHandler,
   },
 };
 

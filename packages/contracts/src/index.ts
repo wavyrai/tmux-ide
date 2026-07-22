@@ -37,6 +37,7 @@ export * from "./application-shell.ts";
 export * from "./application-shell-resource.ts";
 export * from "./workspace-catalog-resource.ts";
 export * from "./workspace-pane-creation.ts";
+export * from "./workspace-open.ts";
 export * from "./visual-tokens.ts";
 export * from "./visual-recipes.ts";
 export * from "./pane-appearance.ts";

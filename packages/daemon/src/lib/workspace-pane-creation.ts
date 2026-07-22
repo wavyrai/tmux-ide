@@ -281,7 +281,8 @@ export function resolveWorkspacePaneTmuxAuthority(): WorkspacePaneTmuxAuthority 
   });
 }
 
-function pinnedTmuxRunner(
+/** Execute mutations only through the daemon-generation-pinned tmux authority. */
+export function createPinnedWorkspaceTmuxRunner(
   authority: WorkspacePaneTmuxAuthority,
 ): (args: readonly string[]) => string {
   const executablePath = realpathSync(authority.executablePath);
@@ -615,7 +616,9 @@ export class WorkspacePaneCreationAuthority {
       ...options.io,
       runTmux:
         options.io?.runTmux ??
-        pinnedTmuxRunner(options.tmuxAuthority ?? resolveWorkspacePaneTmuxAuthority()),
+        createPinnedWorkspaceTmuxRunner(
+          options.tmuxAuthority ?? resolveWorkspacePaneTmuxAuthority(),
+        ),
     };
     this.#maxLiveOrUnsafeOperations = boundedAuthorityLimit(
       options.maxLiveOrUnsafeOperations,
