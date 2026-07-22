@@ -28,6 +28,14 @@ a remote transport.
 - `NodePtyAdapter.ts` — concrete implementation backed by `node-pty`.
   Ports t3's `ensureNodePtySpawnHelperExecutable` chmod-on-helper trick
   so a fresh install always boots.
+- `attachments/pty-tmux-attachment-launcher.ts` — daemon-owned normal
+  `tmux attach-session` PTY client. It accepts canonical operation metadata,
+  reconstructs the complete guarded argv itself, and rejects unknown fields;
+  no caller-authored tmux argv crosses this boundary. Socket, exact tmux
+  executable, cwd, and sanitized environment remain daemon-owned and are
+  identical for spawn and readiness proof. Output stays bounded until tmux
+  proves the spawned client PID is attached to that exact marked one-window
+  view.
 - `__tests__/MockPtyAdapter.ts` — scripted PTY for the test suite. Lives
   under `__tests__/` so production bundling never picks it up.
 - `__tests__/*.test.ts` — contract tests parameterised over every
@@ -81,6 +89,25 @@ we register there.
 - No production code outside `NodePtyAdapter.ts` imports `node-pty`.
   This is enforced by `pty-bridge.ts` now consuming `PtyAdapter` and is
   the gate G14-T10 will tighten further.
+- Native PTY input is intentionally not exposed by the grouped attachment
+  launcher yet. Installed node-pty's public `IPty.write(): void` offers no
+  drain/completion or pending-capacity signal while its Unix implementation
+  has a private asynchronous queue. Until an adapter/native helper provides a
+  real bounded-write contract, interactive writes fail with
+  `input-backpressure-unavailable`; this prevents stalled tmux readers from
+  growing an unobservable queue without bound. Output uses public
+  `IPty.pause()`/`resume()` and byte+frame caps.
+- Read-only attachment clients are also fail-closed in this first launcher
+  slice. They fail before PTY spawn with `read_only_unavailable` until the
+  daemon proves the installed tmux version and continuously holds an
+  interactive geometry owner with defined owner-loss behavior. The tmux
+  `attach-session -r` flag alone is not treated as a geometry-safety proof.
+- Successful attach/recover execution returns a first-class one-use
+  `clientClaim` key through the executor and lease-manager result, so the next
+  stream layer can adopt the exact PTY without intercepting the transport.
+  Proof-ready clients remain paused and must be claimed within the bounded
+  claim deadline (two seconds by default); otherwise the launcher terminates
+  only that client and releases capacity.
 
 ## Roadmap notes
 

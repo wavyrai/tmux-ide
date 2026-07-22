@@ -12,9 +12,12 @@ import type {
   GuardedAttachmentViewOperation,
 } from "../attachments/lease-manager.ts";
 import {
+  TmuxAttachmentClientTransportError,
   TmuxAttachmentViewExecutor,
   TmuxAttachmentViewExecutorError,
-  type TmuxAttachmentClientTransportResult,
+  planCanonicalTmuxAttachmentClientCommand,
+  type TmuxAttachmentClientTransportInput,
+  type TmuxAttachmentClientTransportOutcome,
   type TmuxAttachmentCommandResult,
   type TmuxAttachmentCommandRunner,
 } from "../attachments/tmux-view-executor.ts";
@@ -160,7 +163,7 @@ class FakeRunner implements TmuxAttachmentCommandRunner {
         }
         return {
           status: "ok",
-          stdout: `${this.sessionId(target.slice(1))}\t${view.windows[0] ?? "@0"}\t%91\t${view.windows.length === 1 ? "1" : "2"}\t1\n`,
+          stdout: `${this.sessionId(target.slice(1))}\t${view.windows[0] ?? "@0"}\t%56\t${view.windows.length === 1 ? "1" : "2"}\t1\n`,
         };
       }
       case "list-sessions":
@@ -194,12 +197,16 @@ class FakeRunner implements TmuxAttachmentCommandRunner {
   }
 }
 
-function plan(id = attachmentId, generation = 0): GroupedTmuxAttachmentPlan {
+function plan(
+  id = attachmentId,
+  generation = 0,
+  viewerMode: "interactive" | "read-only" = "interactive",
+): GroupedTmuxAttachmentPlan {
   return planGroupedTmuxAttachment({
     attachmentId: id,
     generation,
     target: { workspaceName: "workspace.alpha", semanticPaneId: "pane.worker" },
-    viewerMode: "interactive",
+    viewerMode,
     viewport: { cols: 120, rows: 40 },
     source: {
       sessionId: "$12",
@@ -249,16 +256,26 @@ function seed(runner: FakeRunner, selectedPlan = plan(), overrides: Partial<Fake
 
 function clientTransport(runner: FakeRunner) {
   return {
-    runGuardedAttach: (command: TmuxArgvPlan): TmuxAttachmentClientTransportResult => {
-      const result = runner.run(command);
-      if (result.status !== "ok") return { status: "failed" };
-      if (result.stdout.trim() === "__tmux_ide_source_proof_mismatch_v1__") {
-        return { status: "source-proof-mismatch" };
+    beginGuardedAttach: (input: TmuxAttachmentClientTransportInput) => {
+      const result = runner.run(planCanonicalTmuxAttachmentClientCommand(input));
+      let outcome: TmuxAttachmentClientTransportOutcome = { status: "executed" };
+      if (result.status !== "ok") {
+        outcome = { status: "failed" };
+      } else {
+        if (result.stdout.trim() === "__tmux_ide_source_proof_mismatch_v1__") {
+          outcome = { status: "source-proof-mismatch" };
+        }
+        if (result.stdout.trim() === "__tmux_ide_view_proof_mismatch_v1__") {
+          outcome = { status: "view-proof-mismatch" };
+        }
       }
-      if (result.stdout.trim() === "__tmux_ide_view_proof_mismatch_v1__") {
-        return { status: "view-proof-mismatch" };
-      }
-      return { status: "executed" };
+      return {
+        status: "claimed" as const,
+        attemptId: "728e8e59-00e7-4b6b-b794-1f55686f39ea",
+        attachmentId: input.identity.attachmentId,
+        generation: input.identity.generation,
+        outcome: Promise.resolve(outcome),
+      };
     },
   };
 }
@@ -331,7 +348,14 @@ describe("TmuxAttachmentViewExecutor guarded execution", () => {
 
     await expect(
       executor.executeGuardedViewOperation(operation("attach", selectedPlan)),
-    ).resolves.toBe("executed");
+    ).resolves.toMatchObject({
+      status: "executed",
+      clientClaim: {
+        attachmentId,
+        generation: 0,
+        attemptId: "728e8e59-00e7-4b6b-b794-1f55686f39ea",
+      },
+    });
     const proofCall = runner.calls.find(
       (argv) => argv[0] === "list-panes" && argv[2] === "$12:@34",
     );
@@ -445,6 +469,96 @@ describe("TmuxAttachmentViewExecutor guarded execution", () => {
       expect(runner.mutationCount).toBe(0);
     },
   );
+
+  it("synchronously claims the PTY before yielding after the final daemon proof", async () => {
+    const runner = new FakeRunner();
+    const selectedPlan = plan();
+    seed(runner, selectedPlan);
+    let yielded = false;
+    let began = false;
+    runner.before = (argv) => {
+      if (argv[0] === "list-panes" && argv[2] === "$12:@34") {
+        queueMicrotask(() => {
+          yielded = true;
+        });
+      }
+    };
+    const executor = new TmuxAttachmentViewExecutor({
+      runner,
+      clientTransport: {
+        beginGuardedAttach(input) {
+          began = true;
+          expect(yielded).toBe(false);
+          expect(input).not.toHaveProperty("command");
+          expect(planCanonicalTmuxAttachmentClientCommand(input).argv[0]).toBe("if-shell");
+          return {
+            status: "claimed",
+            attemptId: "728e8e59-00e7-4b6b-b794-1f55686f39ea",
+            attachmentId: input.identity.attachmentId,
+            generation: input.identity.generation,
+            outcome: Promise.resolve({ status: "executed" }),
+          };
+        },
+      },
+      now: () => 1_000,
+    });
+
+    await expect(
+      executor.executeGuardedViewOperation(operation("attach", selectedPlan)),
+    ).resolves.toMatchObject({
+      status: "executed",
+      clientClaim: { attemptId: "728e8e59-00e7-4b6b-b794-1f55686f39ea" },
+    });
+    expect(began).toBe(true);
+    expect(yielded).toBe(true);
+  });
+
+  it("preserves a typed read-only transport refusal before client spawn", async () => {
+    const runner = new FakeRunner();
+    const selectedPlan = plan(attachmentId, 0, "read-only");
+    seed(runner, selectedPlan);
+    const executor = new TmuxAttachmentViewExecutor({
+      runner,
+      clientTransport: {
+        beginGuardedAttach() {
+          throw new TmuxAttachmentClientTransportError("read_only_unavailable");
+        },
+      },
+      now: () => 1_000,
+    });
+
+    await expect(
+      executor.executeGuardedViewOperation(operation("attach", selectedPlan)),
+    ).rejects.toMatchObject({
+      code: "read_only_unavailable",
+      message: "Read-only terminal attachment is not proven safe on this daemon.",
+    });
+  });
+
+  it("fails closed on a transport outcome outside the static protocol", async () => {
+    const runner = new FakeRunner();
+    const selectedPlan = plan();
+    seed(runner, selectedPlan);
+    const executor = new TmuxAttachmentViewExecutor({
+      runner,
+      clientTransport: {
+        beginGuardedAttach(input) {
+          return {
+            status: "claimed",
+            attemptId: "728e8e59-00e7-4b6b-b794-1f55686f39ea",
+            attachmentId: input.identity.attachmentId,
+            generation: input.identity.generation,
+            outcome: Promise.resolve({ status: "hostile" } as never),
+          };
+        },
+      },
+      now: () => 1_000,
+    });
+
+    await expect(
+      executor.executeGuardedViewOperation(operation("attach", selectedPlan)),
+    ).rejects.toMatchObject({ code: "mutation-outcome-uncertain" });
+  });
 
   it("reports a partial mutation as uncertain, rolls back only a canonical view, and leaks nothing", async () => {
     const runner = new FakeRunner();
