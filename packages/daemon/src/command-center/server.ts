@@ -128,6 +128,7 @@ import {
   mountTerminalAttachmentIssueRoute,
   type TerminalAttachmentIssueBackend,
 } from "./terminal-attachment-issue.ts";
+import { mountWorkspaceResourceRoutes } from "./resources/workspace-resource-routes.ts";
 export interface CreateAppOptions {
   authService?: AuthService;
   authConfig?: AuthConfig;
@@ -736,6 +737,15 @@ export function createApp(options: CreateAppOptions = {}): Hono {
       daemon: daemonInstanceIdentity,
       resource: legacyResource,
     } satisfies ApplicationShellResourceV1);
+  });
+
+  // Owner-only, generation-stamped native Files and Changes read resources.
+  // The route param is a semantic workspace name resolved through the private
+  // workspace registry; renderer-supplied ids never decode to a path.
+  mountWorkspaceResourceRoutes(app, {
+    daemon: daemonInstanceIdentity,
+    ownerToken: options.remoteAccess?.ownerToken ?? null,
+    registry: options.workspaceRegistry ?? getDefaultWorkspaceRegistry(),
   });
 
   app.get("/api/project/:name/panes", (c) => {
