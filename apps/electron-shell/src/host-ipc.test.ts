@@ -3,6 +3,7 @@ import type { BrowserWindow, IpcMain, IpcMainInvokeEvent } from "electron";
 import type {
   TerminalAttachmentIssueMutationRequest,
   TerminalAttachmentIssueResult,
+  WorkspaceOpenMutationRequest,
   WorkspacePaneCreateMutationRequest,
 } from "@tmux-ide/contracts";
 import {
@@ -46,6 +47,16 @@ describe("host IPC trust boundary", () => {
     let publishDaemonEvent: ((event: { type: "workspaces.changed" }) => void) | undefined;
     const stopDaemonSubscription = vi.fn();
     const daemonResources = {
+      openWorkspace: vi.fn(async (request: WorkspaceOpenMutationRequest) => ({
+        operationId: request.operationId,
+        daemonInstanceId: request.expectedDaemonInstanceId,
+        outcome: "created" as const,
+        resource: {
+          resourceVersion: 1 as const,
+          workspaceName: "project-00112233445566778899aabbccddeeff",
+          initialPaneId: "pane.workspace.00112233445566778899aabbccddeeff",
+        },
+      })),
       createWorkspacePane: vi.fn(async (request: WorkspacePaneCreateMutationRequest) => ({
         operationId: request.operationId,
         daemonInstanceId: request.expectedDaemonInstanceId,
@@ -104,6 +115,7 @@ describe("host IPC trust boundary", () => {
       releaseRenderer: vi.fn(),
       dispose: vi.fn(),
     } as unknown as DaemonConnectionAuthority;
+    const selectProjectDirectory = vi.fn(async () => "/private/project");
     const registration = registerHostIpc({
       ipcMain,
       getWindow: () => window,
@@ -111,7 +123,7 @@ describe("host IPC trust boundary", () => {
       platform: "darwin",
       daemonResources,
       requestQuit: vi.fn(),
-      selectProjectDirectory: async () => null,
+      selectProjectDirectory,
       getTheme: () => ({ mode: "dark", highContrast: false, reducedMotion: false }),
       trustedRendererLocation: {
         kind: "packaged-url",
@@ -185,6 +197,57 @@ describe("host IPC trust boundary", () => {
     expect(JSON.stringify(authoredCreate)).not.toMatch(
       /ownerToken|sessionName|paneId|cwd|argv|env/iu,
     );
+
+    const opened = await handlers.get(HOST_IPC.workspaceOpenProjectDirectory)?.(trustedEvent);
+    expect(opened).toMatchObject({
+      status: "ok",
+      result: {
+        daemonInstanceId: daemon.descriptor.instanceId,
+        resource: { workspaceName: "project-00112233445566778899aabbccddeeff" },
+      },
+    });
+    expect(selectProjectDirectory).toHaveBeenCalledWith(window);
+    expect(daemonResources.openWorkspace).toHaveBeenCalledOnce();
+    const authoredOpen = vi.mocked(daemonResources.openWorkspace).mock.calls[0]?.[0];
+    expect(authoredOpen).toMatchObject({
+      expectedDaemonInstanceId: daemon.descriptor.instanceId,
+      intent: { projectDir: "/private/project" },
+    });
+    expect(authoredOpen?.operationId).toMatch(/^[0-9a-f-]{36}$/u);
+    expect(JSON.stringify(opened)).not.toMatch(/private\/project|projectDir|sessionName/iu);
+
+    await expect(
+      handlers.get(HOST_IPC.workspaceOpenProjectDirectory)?.(trustedEvent, {
+        projectDir: "/renderer/substitution",
+      }),
+    ).resolves.toMatchObject({ status: "error", error: { code: "invalid-request" } });
+    expect(selectProjectDirectory).toHaveBeenCalledOnce();
+    expect(daemonResources.openWorkspace).toHaveBeenCalledOnce();
+
+    await expect(
+      handlers.get(HOST_IPC.workspaceOpenProjectDirectory)?.({
+        sender: { id: 8 },
+        senderFrame: mainFrame,
+      } as unknown as IpcMainInvokeEvent),
+    ).rejects.toThrow("untrusted renderer");
+    expect(selectProjectDirectory).toHaveBeenCalledOnce();
+
+    vi.mocked(daemonResources.openWorkspace).mockImplementationOnce(async (request) => ({
+      operationId: request.operationId,
+      daemonInstanceId: "00000000-0000-4000-8000-000000000099",
+      outcome: "created" as const,
+      resource: {
+        resourceVersion: 1 as const,
+        workspaceName: "project-00112233445566778899aabbccddeeff",
+        initialPaneId: "pane.workspace.00112233445566778899aabbccddeeff",
+      },
+    }));
+    await expect(
+      handlers.get(HOST_IPC.workspaceOpenProjectDirectory)?.(trustedEvent),
+    ).resolves.toMatchObject({
+      status: "error",
+      error: { code: "daemon-identity-mismatch" },
+    });
 
     expect(
       await handlers.get(HOST_IPC.daemonCreateWorkspacePane)?.(trustedEvent, {

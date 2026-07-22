@@ -290,6 +290,53 @@ describe("Electron main daemon resource broker", () => {
     }
   });
 
+  it("replays one host-authored workspace open across a transport retry", async () => {
+    const requests: Array<{ url: string; init?: RequestInit }> = [];
+    const operationId = "20000000-0000-4000-8000-000000000002";
+    let attempt = 0;
+    const broker = new DaemonResourceBroker({
+      daemon: CONNECTED,
+      ownerToken: "owner-only-token",
+      fetch: async (input, init) => {
+        requests.push({ url: input.toString(), init });
+        attempt += 1;
+        if (attempt === 1) throw new Error("transport timeout after workspace commit");
+        return json({
+          ok: true,
+          result: {
+            operationId,
+            daemonInstanceId: IDENTITY.instanceId,
+            outcome: "replayed",
+            resource: {
+              resourceVersion: 1,
+              workspaceName: "project-00112233445566778899aabbccddeeff",
+              initialPaneId: "pane.workspace.00112233445566778899aabbccddeeff",
+            },
+          },
+        });
+      },
+    });
+
+    await expect(
+      broker.openWorkspace({
+        operationId,
+        expectedDaemonInstanceId: IDENTITY.instanceId,
+        intent: { projectDir: "/selected/private/project" },
+      }),
+    ).resolves.toMatchObject({ operationId, outcome: "replayed" });
+    expect(requests).toHaveLength(2);
+    for (const request of requests) {
+      expect(request.url).toBe("http://127.0.0.1:6060/api/v2/action/workspace.open");
+      expect(new Headers(request.init?.headers).get("authorization")).toBe(
+        "Bearer owner-only-token",
+      );
+      expect(new Headers(request.init?.headers).get("x-tmux-ide-operation-id")).toBe(operationId);
+      expect(JSON.parse(String(request.init?.body))).toEqual({
+        projectDir: "/selected/private/project",
+      });
+    }
+  });
+
   it.each(["http://127.0.0.1:5173", DESKTOP_PACKAGED_RENDERER_ORIGIN])(
     "issues a bounded terminal attachment for renderer origin %s against only the exact owner-authorized endpoint",
     async (rendererOrigin) => {

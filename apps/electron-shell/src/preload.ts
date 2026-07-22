@@ -8,7 +8,6 @@ import {
   DesktopDaemonListWorkspacesResultSchemaZ,
   DesktopDaemonRefreshConnectionResultSchemaZ,
   DesktopDaemonSubscribeWireResultSchemaZ,
-  DesktopDirectorySelectionSchemaZ,
   DesktopHostBootstrapSchemaZ,
   DesktopMenuResultSchemaZ,
   DesktopThemeStateSchemaZ,
@@ -17,6 +16,7 @@ import {
   TerminalAttachmentIssueResultSchemaZ,
   WorkspacePaneCreateHostResultSchemaZ,
   WorkspacePaneCreateInvocationSchemaZ,
+  WorkspaceOpenHostResultSchemaZ,
   type DesktopDaemonEvent,
   type DesktopDaemonEventSubscriptionRequest,
   type DesktopDaemonFetchApplicationShellRequest,
@@ -98,10 +98,10 @@ const capabilities: HostCapabilities = Object.freeze({
     showApplicationMenu: async () =>
       DesktopMenuResultSchemaZ.parse(await ipcRenderer.invoke(HOST_IPC.menuShowApplication)),
   }),
-  dialog: Object.freeze({
-    selectProjectDirectory: async () =>
-      DesktopDirectorySelectionSchemaZ.nullable().parse(
-        await ipcRenderer.invoke(HOST_IPC.dialogSelectProjectDirectory),
+  workspace: Object.freeze({
+    openProjectDirectory: async () =>
+      WorkspaceOpenHostResultSchemaZ.nullable().parse(
+        await ipcRenderer.invoke(HOST_IPC.workspaceOpenProjectDirectory),
       ),
   }),
   theme: Object.freeze({

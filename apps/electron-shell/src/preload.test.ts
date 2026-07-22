@@ -31,6 +31,34 @@ beforeAll(async () => {
 });
 
 describe("desktop preload daemon bridge", () => {
+  it("opens a native-selected project without exposing or accepting a filesystem path", async () => {
+    const capabilities = electron.exposeInMainWorld.mock.calls[0]?.[1] as HostCapabilities;
+    const operationId = "20000000-0000-4000-8000-000000000002";
+    electron.invoke.mockImplementationOnce(async (...args: unknown[]) => {
+      expect(args).toEqual([HOST_IPC.workspaceOpenProjectDirectory]);
+      return {
+        status: "ok",
+        result: {
+          operationId,
+          daemonInstanceId: "9bcf33b0-c837-4a94-b5e8-c0977f54464f",
+          outcome: "created",
+          resource: {
+            resourceVersion: 1,
+            workspaceName: "project-00112233445566778899aabbccddeeff",
+            initialPaneId: "pane.workspace.00112233445566778899aabbccddeeff",
+          },
+        },
+      };
+    });
+
+    const openWithInjectedArgument = capabilities.workspace.openProjectDirectory as unknown as (
+      rendererValue: unknown,
+    ) => ReturnType<HostCapabilities["workspace"]["openProjectDirectory"]>;
+    const result = await openWithInjectedArgument({ projectDir: "/renderer/substitution" });
+    expect(result).toMatchObject({ status: "ok", result: { operationId } });
+    expect(JSON.stringify(result)).not.toMatch(/projectDir|renderer\/substitution/iu);
+  });
+
   it("exposes only named, schema-validated semantic create and attachment issue calls", async () => {
     const capabilities = electron.exposeInMainWorld.mock.calls[0]?.[1] as HostCapabilities;
     const callsBefore = electron.invoke.mock.calls.length;

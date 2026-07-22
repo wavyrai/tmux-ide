@@ -157,7 +157,7 @@ function createHostHarness() {
       },
     },
     menu: { showApplicationMenu: async () => ({ status: "unavailable" }) },
-    dialog: { selectProjectDirectory: vi.fn(async () => null) },
+    workspace: { openProjectDirectory: vi.fn(async () => null) },
     theme: {
       getState: async () => ({ mode: "light", highContrast: false, reducedMotion: false }),
       onChanged(listener) {
@@ -315,12 +315,24 @@ async function mountResourceIdentityMismatch(
 function retryButton(root: HTMLElement): HTMLButtonElement | null {
   return (
     [...root.querySelectorAll<HTMLButtonElement>("button")].find(
-      (button) => button.textContent === "Try again",
+      (button) =>
+        button.textContent === "Try again" ||
+        button.textContent === "Retry workspace" ||
+        button.textContent === "Recheck daemon",
+    ) ?? null
+  );
+}
+
+function buttonNamed(root: HTMLElement, label: string): HTMLButtonElement | null {
+  return (
+    [...root.querySelectorAll<HTMLButtonElement>("button")].find(
+      (button) => button.textContent?.trim() === label,
     ) ?? null
   );
 }
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.restoreAllMocks();
   delete window.tmuxIdeHost;
   document.body.replaceChildren();
@@ -402,7 +414,9 @@ describe("desktop App live composition", () => {
       expect(root.querySelector(".runtime-state-surface")?.getAttribute("data-state")).toBe(
         "onboarding",
       );
-      expect(root.textContent).toContain("Start tmux-ide in a project");
+      expect(root.textContent).toContain("Open a project to begin");
+      expect(root.textContent).toContain("No ide.yml required");
+      expect(root.textContent).toContain("Open Folder");
       expect(root.querySelector('[aria-label="Minimize"]')).not.toBeNull();
     });
 
@@ -416,13 +430,145 @@ describe("desktop App live composition", () => {
     });
     expect(styles).toContain("@media (prefers-reduced-motion: reduce)");
     expect(styles).toContain("var(--tmux-ide-motion-easing-standard)");
-    expect(root.querySelector(".runtime-action")).toBeNull();
-    expect(harness.host.dialog.selectProjectDirectory).not.toHaveBeenCalled();
+    expect(harness.host.workspace.openProjectDirectory).not.toHaveBeenCalled();
 
     dispose();
     expect(harness.stopTheme).toHaveBeenCalledOnce();
     expect(harness.stopWindow).toHaveBeenCalledOnce();
     expect(harness.subscriptions[0]?.unsubscribe).toHaveBeenCalledOnce();
+  });
+
+  it("treats native folder selection cancellation as a quiet no-op", async () => {
+    installLightMediaPreference();
+    const harness = createHostHarness();
+    const { root, dispose } = mount(() => <App host={harness.host} />);
+    await markLive(harness, []);
+    await vi.waitFor(() => expect(buttonNamed(root, "Open Folder")).not.toBeNull());
+
+    buttonNamed(root, "Open Folder")?.click();
+    await vi.waitFor(() =>
+      expect(harness.host.workspace.openProjectDirectory).toHaveBeenCalledOnce(),
+    );
+    await vi.waitFor(() => expect(buttonNamed(root, "Open Folder")?.disabled).toBe(false));
+    expect(root.querySelector('[role="alert"]')).toBeNull();
+    expect(root.querySelector(".shell-workbench")).toBeNull();
+    dispose();
+  });
+
+  it("shows a bounded native open error without revealing a workspace", async () => {
+    installLightMediaPreference();
+    const harness = createHostHarness();
+    vi.mocked(harness.host.workspace.openProjectDirectory).mockResolvedValueOnce({
+      status: "error",
+      error: { code: "request-failed", reason: "The selected project could not be opened." },
+    });
+    const { root, dispose } = mount(() => <App host={harness.host} />);
+    await markLive(harness, []);
+    await vi.waitFor(() => expect(buttonNamed(root, "Open Folder")).not.toBeNull());
+
+    buttonNamed(root, "Open Folder")?.click();
+    await vi.waitFor(() =>
+      expect(root.querySelector('[role="alert"]')?.textContent).toContain(
+        "The selected project could not be opened.",
+      ),
+    );
+    expect(root.querySelector(".shell-workbench")).toBeNull();
+    dispose();
+  });
+
+  it("reveals a native workspace only after catalog discovery and a usable V3 resource", async () => {
+    installLightMediaPreference();
+    const harness = createHostHarness();
+    const workspaceName = "project-00112233445566778899aabbccddeeff";
+    harness.setShell(workspaceName, shellInput("Opened project"));
+    vi.mocked(harness.host.workspace.openProjectDirectory).mockImplementationOnce(async () => {
+      harness.setWorkspaces(workspaceName);
+      return {
+        status: "ok",
+        result: {
+          operationId: "20000000-0000-4000-8000-000000000002",
+          daemonInstanceId: DAEMON_A.instanceId,
+          outcome: "created",
+          resource: {
+            resourceVersion: 1,
+            workspaceName,
+            initialPaneId: "pane.workspace.00112233445566778899aabbccddeeff",
+          },
+        },
+      };
+    });
+    const { root, dispose } = mount(() => <App host={harness.host} />);
+    await markLive(harness, []);
+    await vi.waitFor(() => expect(buttonNamed(root, "Open Folder")).not.toBeNull());
+
+    buttonNamed(root, "Open Folder")?.click();
+    await markLive(harness, [workspaceName]);
+    await vi.waitFor(() => {
+      expect(root.querySelector(".shell-workbench")?.getAttribute("data-shell-source")).toBe(
+        "runtime",
+      );
+      expect(root.textContent).toContain("Opened project");
+    });
+    expect(harness.host.daemon.fetchApplicationShell).toHaveBeenCalledWith({
+      workspaceName,
+      resourceVersion: 3,
+    });
+    dispose();
+  });
+
+  it("times out discovery honestly and retries it without reopening the folder", async () => {
+    installLightMediaPreference();
+    const harness = createHostHarness();
+    vi.mocked(harness.host.workspace.openProjectDirectory).mockResolvedValueOnce({
+      status: "ok",
+      result: {
+        operationId: "20000000-0000-4000-8000-000000000002",
+        daemonInstanceId: DAEMON_A.instanceId,
+        outcome: "created",
+        resource: {
+          resourceVersion: 1,
+          workspaceName: "project-00112233445566778899aabbccddeeff",
+          initialPaneId: "pane.workspace.00112233445566778899aabbccddeeff",
+        },
+      },
+    });
+    const { root, dispose } = mount(() => <App host={harness.host} />);
+    await markLive(harness, []);
+    await vi.waitFor(() => expect(buttonNamed(root, "Open Folder")).not.toBeNull());
+
+    vi.useFakeTimers();
+    buttonNamed(root, "Open Folder")?.click();
+    await vi.advanceTimersByTimeAsync(8_000);
+    vi.useRealTimers();
+    await vi.waitFor(() => expect(root.textContent).toContain("discovery is still catching up"));
+    const listCalls = vi.mocked(harness.host.daemon.listWorkspaces).mock.calls.length;
+    buttonNamed(root, "Retry discovery")?.click();
+    await vi.waitFor(() =>
+      expect(harness.host.daemon.listWorkspaces).toHaveBeenCalledTimes(listCalls + 1),
+    );
+    expect(harness.host.workspace.openProjectDirectory).toHaveBeenCalledOnce();
+    dispose();
+  });
+
+  it("suppresses a second folder-open submission while the native transaction is pending", async () => {
+    installLightMediaPreference();
+    const harness = createHostHarness();
+    const pendingOpen = deferred<null>();
+    vi.mocked(harness.host.workspace.openProjectDirectory).mockReturnValueOnce(pendingOpen.promise);
+    const { root, dispose } = mount(() => <App host={harness.host} />);
+    await markLive(harness, []);
+    await vi.waitFor(() => expect(buttonNamed(root, "Open Folder")).not.toBeNull());
+    const open = buttonNamed(root, "Open Folder")!;
+
+    open.click();
+    open.click();
+    await vi.waitFor(() =>
+      expect(harness.host.workspace.openProjectDirectory).toHaveBeenCalledOnce(),
+    );
+    expect(open.disabled).toBe(true);
+    pendingOpen.resolve(null);
+    await vi.waitFor(() => expect(buttonNamed(root, "Open Folder")?.disabled).toBe(false));
+    dispose();
   });
 
   it("requires explicit selection for many workspaces and renders the live semantic shell", async () => {
@@ -481,7 +627,7 @@ describe("desktop App live composition", () => {
     const workspaceSubscription = harness.subscriptions.find(
       ({ workspaceNames }) => workspaceNames[0] === "beta",
     );
-    expect(harness.host.dialog.selectProjectDirectory).not.toHaveBeenCalled();
+    expect(harness.host.workspace.openProjectDirectory).not.toHaveBeenCalled();
     dispose();
     expect(workspaceSubscription?.unsubscribe).toHaveBeenCalledOnce();
   });

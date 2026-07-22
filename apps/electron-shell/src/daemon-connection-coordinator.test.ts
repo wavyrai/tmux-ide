@@ -83,6 +83,16 @@ function brokerHarness(
   };
   return {
     authority: {
+      openWorkspace: async (request) => ({
+        operationId: request.operationId,
+        daemonInstanceId: identity.instanceId,
+        outcome: "created",
+        resource: {
+          resourceVersion: 1,
+          workspaceName: "project-00112233445566778899aabbccddeeff",
+          initialPaneId: "pane.workspace.00112233445566778899aabbccddeeff",
+        },
+      }),
       createWorkspacePane: async (request) => ({
         operationId: request.operationId,
         daemonInstanceId: identity.instanceId,

@@ -13,6 +13,8 @@ import {
   type TerminalAttachmentIssueResult,
   type WorkspacePaneCreateMutationRequest,
   type WorkspacePaneCreateMutationResult,
+  type WorkspaceOpenMutationRequest,
+  type WorkspaceOpenMutationResult,
 } from "@tmux-ide/contracts";
 
 import {
@@ -28,6 +30,7 @@ import { inspectCanonicalDaemonInfo } from "../../../packages/daemon/src/canonic
 type ConnectedDaemonState = Extract<DesktopDaemonHostState, { status: "connected" }>;
 
 export interface DaemonResourceAuthority {
+  openWorkspace(request: WorkspaceOpenMutationRequest): Promise<WorkspaceOpenMutationResult>;
   createWorkspacePane(
     request: WorkspacePaneCreateMutationRequest,
   ): Promise<WorkspacePaneCreateMutationResult>;
@@ -196,6 +199,21 @@ export class DaemonConnectionCoordinator implements DaemonConnectionAuthority {
     if (!broker || this.#disposed) throw new Error("daemon mutation authority is unavailable");
     const rendererGeneration = this.#rendererGeneration;
     const result = await broker.createWorkspacePane(request);
+    if (
+      this.#broker !== broker ||
+      rendererGeneration !== this.#rendererGeneration ||
+      this.#disposed
+    ) {
+      throw new Error("daemon mutation authority changed during the request");
+    }
+    return result;
+  }
+
+  async openWorkspace(request: WorkspaceOpenMutationRequest): Promise<WorkspaceOpenMutationResult> {
+    const broker = this.#broker;
+    if (!broker || this.#disposed) throw new Error("daemon mutation authority is unavailable");
+    const rendererGeneration = this.#rendererGeneration;
+    const result = await broker.openWorkspace(request);
     if (
       this.#broker !== broker ||
       rendererGeneration !== this.#rendererGeneration ||

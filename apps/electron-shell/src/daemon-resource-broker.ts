@@ -23,6 +23,9 @@ import {
   type TerminalAttachmentIssueResult,
   type DesktopDaemonFetchApplicationShellRequest,
   WorkspaceCatalogResourceV1SchemaZ,
+  WorkspaceOpenArgumentsSchemaZ,
+  WorkspaceOpenMutationRequestSchemaZ,
+  WorkspaceOpenMutationResultSchemaZ,
   WorkspacePaneCreateArgumentsSchemaZ,
   WorkspacePaneCreateMutationRequestSchemaZ,
   WorkspacePaneCreateMutationResultSchemaZ,
@@ -36,6 +39,8 @@ import {
   type DesktopDaemonListWorkspacesResult,
   type WorkspacePaneCreateMutationRequest,
   type WorkspacePaneCreateMutationResult,
+  type WorkspaceOpenMutationRequest,
+  type WorkspaceOpenMutationResult,
 } from "@tmux-ide/contracts";
 import { z } from "zod";
 
@@ -382,6 +387,40 @@ export class DaemonResourceBroker {
     );
     this.#now = dependencies.now ?? Date.now;
     this.#ownerToken = dependencies.ownerToken ?? null;
+  }
+
+  async openWorkspace(request: WorkspaceOpenMutationRequest): Promise<WorkspaceOpenMutationResult> {
+    if (this.#daemon.status !== "connected" || !this.#ownerToken) {
+      throw new BrokerFailure(daemonCapabilityError("daemon-unavailable"));
+    }
+    const parsed = WorkspaceOpenMutationRequestSchemaZ.parse(request);
+    if (parsed.expectedDaemonInstanceId !== this.#daemon.descriptor.instanceId) {
+      throw new BrokerFailure(daemonCapabilityError("daemon-identity-mismatch"));
+    }
+    let lastError: unknown;
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        const raw = await this.#mutationJson(
+          "/api/v2/action/workspace.open",
+          WorkspaceOpenArgumentsSchemaZ.parse(parsed.intent),
+          { "X-Tmux-Ide-Operation-Id": parsed.operationId },
+        );
+        const envelope = z
+          .object({ ok: z.literal(true), result: WorkspaceOpenMutationResultSchemaZ })
+          .strict()
+          .parse(raw);
+        if (
+          envelope.result.operationId !== parsed.operationId ||
+          envelope.result.daemonInstanceId !== this.#daemon.descriptor.instanceId
+        ) {
+          throw new BrokerFailure(daemonCapabilityError("daemon-identity-mismatch"));
+        }
+        return envelope.result;
+      } catch (error) {
+        lastError = error;
+      }
+    }
+    throw lastError;
   }
 
   async createWorkspacePane(

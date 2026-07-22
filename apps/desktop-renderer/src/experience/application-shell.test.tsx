@@ -60,7 +60,7 @@ function host(): HostCapabilities {
       onStateChanged: () => () => undefined,
     },
     menu: { showApplicationMenu: async () => ({ status: "unavailable" }) },
-    dialog: { selectProjectDirectory: async () => null },
+    workspace: { openProjectDirectory: async () => null },
     theme: {
       getState: async () => ({ mode: "dark", highContrast: false, reducedMotion: false }),
       onChanged: () => () => undefined,

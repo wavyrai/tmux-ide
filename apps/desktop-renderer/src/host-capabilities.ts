@@ -100,8 +100,8 @@ export function createBrowserHostCapabilities(): HostCapabilities {
     menu: {
       showApplicationMenu: async () => ({ status: "unavailable" }),
     },
-    dialog: {
-      selectProjectDirectory: async () => null,
+    workspace: {
+      openProjectDirectory: async () => null,
     },
     theme: {
       getState: async () => browserTheme(),
@@ -146,7 +146,7 @@ function hasNarrowFacade(value: unknown): value is HostCapabilities {
     typeof candidate.window?.close === "function" &&
     typeof candidate.window?.onStateChanged === "function" &&
     typeof candidate.menu?.showApplicationMenu === "function" &&
-    typeof candidate.dialog?.selectProjectDirectory === "function" &&
+    typeof candidate.workspace?.openProjectDirectory === "function" &&
     typeof candidate.theme?.getState === "function" &&
     typeof candidate.theme?.onChanged === "function" &&
     typeof candidate.daemon?.createWorkspacePane === "function" &&

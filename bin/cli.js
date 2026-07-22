@@ -4081,7 +4081,7 @@ var init_desktop_host = __esm({
     "use strict";
     init_application_shell_resource();
     init_daemon_wire();
-    DESKTOP_HOST_API_VERSION = 6;
+    DESKTOP_HOST_API_VERSION = 7;
     DESKTOP_PACKAGED_RENDERER_SCHEME = "tmux-ide";
     DESKTOP_PACKAGED_RENDERER_HOST = "app";
     DESKTOP_PACKAGED_RENDERER_ORIGIN = `${DESKTOP_PACKAGED_RENDERER_SCHEME}://${DESKTOP_PACKAGED_RENDERER_HOST}`;
@@ -4396,7 +4396,7 @@ var init_workspace_pane_creation = __esm({
 
 // packages/contracts/src/workspace-open.ts
 import { z as z24 } from "zod";
-var WorkspaceOpenArgumentsSchemaZ, WorkspaceOpenMutationRequestSchemaZ, WorkspaceOpenedResourceSchemaZ, WorkspaceOpenMutationResultSchemaZ;
+var WorkspaceOpenArgumentsSchemaZ, WorkspaceOpenMutationRequestSchemaZ, WorkspaceOpenedResourceSchemaZ, WorkspaceOpenMutationResultSchemaZ, WorkspaceOpenHostResultSchemaZ;
 var init_workspace_open = __esm({
   "packages/contracts/src/workspace-open.ts"() {
     "use strict";
@@ -4421,6 +4421,10 @@ var init_workspace_open = __esm({
       outcome: z24.enum(["created", "reopened", "replayed"]),
       resource: WorkspaceOpenedResourceSchemaZ
     }).strict();
+    WorkspaceOpenHostResultSchemaZ = z24.discriminatedUnion("status", [
+      z24.object({ status: z24.literal("ok"), result: WorkspaceOpenMutationResultSchemaZ }).strict(),
+      z24.object({ status: z24.literal("error"), error: DesktopDaemonCapabilityErrorSchemaZ }).strict()
+    ]);
   }
 });
 

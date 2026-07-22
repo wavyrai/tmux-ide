@@ -38,6 +38,7 @@ describe("renderer host capabilities", () => {
       outcome: "unchanged",
       daemon: { status: "unavailable", code: "preview-only" },
     });
+    await expect(host.workspace.openProjectDirectory()).resolves.toBeNull();
   });
 
   it("does not silently downgrade a present incompatible preload object", () => {

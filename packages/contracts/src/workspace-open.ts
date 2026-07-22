@@ -1,6 +1,9 @@
 import { z } from "zod";
 
-import { DesktopWorkspaceNameSchemaZ } from "./desktop-host.ts";
+import {
+  DesktopDaemonCapabilityErrorSchemaZ,
+  DesktopWorkspaceNameSchemaZ,
+} from "./desktop-host.ts";
 import { SemanticProductIdSchemaZ } from "./pane-appearance.ts";
 
 /** Owner-host request. The project path is never a browser-safe resource field. */
@@ -48,3 +51,14 @@ export const WorkspaceOpenMutationResultSchemaZ = z
   .strict();
 
 export type WorkspaceOpenMutationResult = z.infer<typeof WorkspaceOpenMutationResultSchemaZ>;
+
+/**
+ * Renderer-safe host result. Electron selects the directory, then authors the
+ * operation and daemon-generation envelope; no filesystem path crosses to the renderer.
+ */
+export const WorkspaceOpenHostResultSchemaZ = z.discriminatedUnion("status", [
+  z.object({ status: z.literal("ok"), result: WorkspaceOpenMutationResultSchemaZ }).strict(),
+  z.object({ status: z.literal("error"), error: DesktopDaemonCapabilityErrorSchemaZ }).strict(),
+]);
+
+export type WorkspaceOpenHostResult = z.infer<typeof WorkspaceOpenHostResultSchemaZ>;

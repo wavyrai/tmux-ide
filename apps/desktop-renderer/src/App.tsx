@@ -247,6 +247,11 @@ export function App(props: AppProps = {}) {
                       guidance="Reopen tmux-ide after updating the desktop host"
                       alert
                       onRetry={loadBootstrap}
+                      retryLabel="Retry host check"
+                      diagnostics={[
+                        "The desktop bridge returned an invalid bootstrap response.",
+                        "No preview or partial workspace data was substituted.",
+                      ]}
                     />
                   }
                 >
@@ -276,8 +281,14 @@ export function App(props: AppProps = {}) {
                             eyebrow="Native tmux workspace"
                             title="The daemon is unavailable"
                             description={daemonCapabilityReason(ready().daemon)}
-                            guidance="Start tmux-ide and try again"
+                            guidance="The workspace stays hidden until daemon health is verified"
                             onRetry={refreshDaemonConnection}
+                            retryLabel="Recheck daemon"
+                            diagnostics={[
+                              daemonCapabilityReason(ready().daemon),
+                              `Recovery phase: ${daemonRecovery()}`,
+                              "No workspace resource or terminal attachment has been mounted.",
+                            ]}
                           />
                         }
                       >

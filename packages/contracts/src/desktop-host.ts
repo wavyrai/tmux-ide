@@ -13,9 +13,10 @@ import type {
   WorkspacePaneCreateHostResult,
   WorkspacePaneCreateInvocation,
 } from "./workspace-pane-creation.ts";
+import type { WorkspaceOpenHostResult } from "./workspace-open.ts";
 
 /** Versioned, deliberately narrow bridge exposed by a desktop host preload. */
-export const DESKTOP_HOST_API_VERSION = 6 as const;
+export const DESKTOP_HOST_API_VERSION = 7 as const;
 
 /** Stable tuple origin for the packaged, sandboxed Electron renderer. */
 export const DESKTOP_PACKAGED_RENDERER_SCHEME = "tmux-ide" as const;
@@ -388,8 +389,8 @@ export interface HostCapabilities {
   readonly menu: {
     showApplicationMenu(): Promise<DesktopMenuResult>;
   };
-  readonly dialog: {
-    selectProjectDirectory(): Promise<DesktopDirectorySelection | null>;
+  readonly workspace: {
+    openProjectDirectory(): Promise<WorkspaceOpenHostResult | null>;
   };
   readonly theme: {
     getState(): Promise<DesktopThemeState>;

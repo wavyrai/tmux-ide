@@ -10,7 +10,16 @@ import {
   type HostCapabilities,
   type WorkspacePaneCreateInvocation,
 } from "@tmux-ide/contracts";
-import { For, Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js";
+import {
+  For,
+  Match,
+  Show,
+  Switch,
+  createEffect,
+  createMemo,
+  createSignal,
+  onCleanup,
+} from "solid-js";
 
 import {
   paneFrameTerminalsFromApplicationShellInventory,
@@ -25,6 +34,7 @@ import { DomApplicationShell } from "../experience/application-shell.tsx";
 import type { AppWindowCanvasCommandInvocation } from "../experience/app-window-canvas-presenter.ts";
 import type { CreatePaneFlowCatalogs } from "../experience/create-pane-flow-presenter.ts";
 import { DomIcon } from "../experience/dom-icon.tsx";
+import { Button } from "../ui-system/index.ts";
 import type { DesktopApplicationShellResourceState } from "./connection-state.ts";
 import { createSolidDesktopApplicationShellResourceStore } from "./desktop-resource-store.ts";
 import { createHostDaemonTransport } from "./host-daemon-transport.ts";
@@ -81,8 +91,14 @@ interface DesktopConnectionSurfaceProps {
   readonly guidance: string;
   readonly alert?: boolean;
   readonly onRetry?: () => void;
+  readonly retryLabel?: string;
+  readonly onRestartConnection?: () => void;
+  readonly diagnostics?: readonly string[];
   readonly workspaces?: readonly string[];
   readonly onSelectWorkspace?: (workspaceName: string) => void;
+  readonly onOpenProject?: () => void;
+  readonly openProjectPhase?: "idle" | "selecting" | "opening" | "waiting" | "error";
+  readonly openProjectError?: string | null;
 }
 
 function WindowControls(props: {
@@ -177,6 +193,17 @@ export function DesktopConnectionSurface(props: DesktopConnectionSurfaceProps) {
     }
   };
 
+  const openingProject = () =>
+    props.openProjectPhase === "selecting" ||
+    props.openProjectPhase === "opening" ||
+    props.openProjectPhase === "waiting";
+  const openProjectLabel = () => {
+    if (props.openProjectPhase === "selecting") return "Opening project…";
+    if (props.openProjectPhase === "opening") return "Opening workspace…";
+    if (props.openProjectPhase === "waiting") return "Preparing workspace…";
+    return props.state === "chooser" ? "Open another folder" : "Open Folder";
+  };
+
   return (
     <>
       <header class="titlebar runtime-titlebar" data-focus-zone="application-bar">
@@ -199,56 +226,156 @@ export function DesktopConnectionSurface(props: DesktopConnectionSurfaceProps) {
         data-state={props.state}
         role={props.alert ? "alert" : undefined}
         aria-live={props.alert ? "assertive" : "polite"}
-        aria-busy={props.state === "pending" || props.state === "loading"}
+        aria-busy={props.state === "pending" || props.state === "loading" || openingProject()}
       >
-        <section class="runtime-state-card" aria-labelledby="runtime-state-title">
-          <div class="runtime-state-card__signal" aria-hidden="true">
-            <i />
-            <span>{props.state}</span>
-          </div>
-          <span class="eyebrow">{props.eyebrow}</span>
-          <h1 id="runtime-state-title">{props.title}</h1>
-          <p>{props.description}</p>
+        <Switch>
+          <Match when={props.state === "pending"}>
+            <section class="runtime-launch" aria-labelledby="runtime-state-title">
+              <div class="runtime-launch__brand" aria-hidden="true">
+                <span>
+                  <DomIcon id="terminals" usage="pane" />
+                </span>
+                <strong>tmux-ide</strong>
+              </div>
+              <div class="runtime-launch__copy">
+                <span class="eyebrow">{props.eyebrow}</span>
+                <h1 id="runtime-state-title">{props.title}</h1>
+                <p>{props.description}</p>
+              </div>
+              <div class="runtime-launch__skeleton" aria-hidden="true">
+                <i />
+                <span />
+                <span />
+                <span />
+              </div>
+            </section>
+          </Match>
+          <Match when={true}>
+            <section class="runtime-state-card" aria-labelledby="runtime-state-title">
+              <div class="runtime-state-card__main">
+                <div class="runtime-state-card__signal" aria-hidden="true">
+                  <i />
+                  <span>{props.state}</span>
+                </div>
+                <span class="eyebrow">{props.eyebrow}</span>
+                <h1 id="runtime-state-title">{props.title}</h1>
+                <p>{props.description}</p>
 
-          <Show when={props.workspaces && props.workspaces.length > 0}>
-            <div
-              class="workspace-chooser"
-              role="listbox"
-              aria-label="Available workspaces"
-              onKeyDown={handleChooserKeyDown}
-            >
-              <For each={props.workspaces}>
-                {(workspaceName) => (
-                  <button
-                    type="button"
-                    role="option"
-                    aria-selected={workspaceName === activeWorkspace()}
-                    tabIndex={workspaceName === activeWorkspace() ? 0 : -1}
-                    onFocus={() => setActiveWorkspace(workspaceName)}
-                    onClick={() => props.onSelectWorkspace?.(workspaceName)}
+                <Show when={props.workspaces && props.workspaces.length > 0}>
+                  <div class="workspace-chooser__heading">
+                    <span>Available now</span>
+                    <small>{props.workspaces?.length} workspaces</small>
+                  </div>
+                  <div
+                    class="workspace-chooser"
+                    role="listbox"
+                    aria-label="Available workspaces"
+                    onKeyDown={handleChooserKeyDown}
                   >
-                    <span class="workspace-chooser__mark" aria-hidden="true">
-                      {workspaceName.slice(0, 2)}
-                    </span>
-                    <span>
-                      <strong>{workspaceName}</strong>
-                      <small>Live tmux workspace</small>
-                    </span>
-                    <DomIcon id="terminals" usage="action" />
-                  </button>
-                )}
-              </For>
-            </div>
-          </Show>
+                    <For each={props.workspaces}>
+                      {(workspaceName) => (
+                        <button
+                          type="button"
+                          role="option"
+                          aria-selected={workspaceName === activeWorkspace()}
+                          tabIndex={workspaceName === activeWorkspace() ? 0 : -1}
+                          onFocus={() => setActiveWorkspace(workspaceName)}
+                          onClick={() => props.onSelectWorkspace?.(workspaceName)}
+                        >
+                          <span class="workspace-chooser__mark" aria-hidden="true">
+                            {workspaceName.slice(0, 2)}
+                          </span>
+                          <span>
+                            <strong>{workspaceName}</strong>
+                            <small>Live tmux workspace</small>
+                          </span>
+                          <DomIcon id="terminals" usage="action" />
+                        </button>
+                      )}
+                    </For>
+                  </div>
+                </Show>
 
-          <Show when={props.onRetry}>
-            <div class="runtime-state-card__actions">
-              <button class="runtime-action" type="button" onClick={() => props.onRetry?.()}>
-                Try again
-              </button>
-            </div>
-          </Show>
-        </section>
+                <Show when={props.openProjectError}>
+                  <div class="runtime-state-card__inline-error" role="alert">
+                    <DomIcon id="refresh" usage="action" />
+                    <span>{props.openProjectError}</span>
+                  </div>
+                </Show>
+
+                <Show when={props.onOpenProject || props.onRetry || props.onRestartConnection}>
+                  <div class="runtime-state-card__actions">
+                    <Show when={props.onOpenProject}>
+                      <Button
+                        variant="primary"
+                        loading={openingProject()}
+                        onClick={() => props.onOpenProject?.()}
+                      >
+                        {openProjectLabel()}
+                      </Button>
+                    </Show>
+                    <Show when={props.onRetry}>
+                      <Button
+                        variant={props.onOpenProject ? "secondary" : "primary"}
+                        onClick={() => props.onRetry?.()}
+                      >
+                        {props.retryLabel ?? "Try again"}
+                      </Button>
+                    </Show>
+                    <Show when={props.onRestartConnection}>
+                      <Button variant="secondary" onClick={() => props.onRestartConnection?.()}>
+                        Restart connection
+                      </Button>
+                    </Show>
+                  </div>
+                </Show>
+
+                <Show when={props.diagnostics && props.diagnostics.length > 0}>
+                  <details class="runtime-diagnostics">
+                    <summary>Connection details</summary>
+                    <ul>
+                      <For each={props.diagnostics}>{(item) => <li>{item}</li>}</For>
+                    </ul>
+                  </details>
+                </Show>
+              </div>
+
+              <Show when={props.state === "onboarding"}>
+                <aside class="runtime-onboarding-notes" aria-label="Config-free workspace setup">
+                  <span class="runtime-onboarding-notes__icon">
+                    <DomIcon id="native" usage="pane" />
+                  </span>
+                  <strong>Start from the folder you already have</strong>
+                  <p>
+                    tmux-ide opens a native tmux workspace, detects the project context, and keeps
+                    agent terminals attached to the real session.
+                  </p>
+                  <ul>
+                    <li>
+                      <i />
+                      No <code>ide.yml</code> required
+                    </li>
+                    <li>
+                      <i />
+                      Available harnesses are discovered after opening
+                    </li>
+                    <li>
+                      <i />
+                      Your tmux session stays the source of truth
+                    </li>
+                  </ul>
+                  <details>
+                    <summary>Advanced configuration</summary>
+                    <p>
+                      Add <code>.tmux-ide/workspace.yml</code> later only when you want a saved
+                      layout, custom commands, or project theme overrides.
+                    </p>
+                  </details>
+                </aside>
+              </Show>
+            </section>
+          </Match>
+        </Switch>
       </main>
 
       <footer class="status-strip runtime-status-strip" role="status">
@@ -559,6 +686,12 @@ function LiveWorkspace(props: LiveWorkspaceProps) {
           description="tmux-ide rejected an incoherent semantic workspace update."
           guidance="No preview or partial workspace data is shown"
           onRetry={() => store.refresh()}
+          retryLabel="Reload workspace"
+          onRestartConnection={props.onRetryDaemonConnection}
+          diagnostics={[
+            "The V3 workspace resource failed semantic projection.",
+            "The previous workspace was not mounted as a fallback.",
+          ]}
         />
       );
     }
@@ -590,12 +723,23 @@ function LiveWorkspace(props: LiveWorkspaceProps) {
         description={identityMismatch ? recovery.description : resourceReason(resource)}
         guidance={identityMismatch ? recovery.guidance : "tmux remains the source of truth"}
         alert={resource.status === "error"}
+        diagnostics={[
+          identityMismatch ? recovery.description : resourceReason(resource),
+          `Resource state: ${resource.status}`,
+          "The desktop shell remains gated until a valid V3 resource is available.",
+        ]}
         onRetry={
           identityMismatch
             ? props.daemonRecovery === "refreshing"
               ? undefined
               : props.onRetryDaemonConnection
             : () => store.refresh()
+        }
+        retryLabel={identityMismatch ? "Recheck daemon" : "Reload workspace"}
+        onRestartConnection={
+          !identityMismatch && resource.status === "error"
+            ? props.onRetryDaemonConnection
+            : undefined
         }
       />
     );
@@ -657,6 +801,70 @@ export function DesktopLiveApplication(props: DesktopLiveApplicationProps) {
     host: props.host,
     daemon: props.daemon,
   });
+  const [openProjectPhase, setOpenProjectPhase] = createSignal<
+    "idle" | "selecting" | "opening" | "waiting" | "error"
+  >("idle");
+  const [openProjectError, setOpenProjectError] = createSignal<string | null>(null);
+  const [pendingWorkspaceName, setPendingWorkspaceName] = createSignal<string | null>(null);
+  let openProjectRequest = 0;
+  let discoveryTimer: ReturnType<typeof setTimeout> | null = null;
+
+  const clearDiscoveryTimer = (): void => {
+    if (discoveryTimer !== null) clearTimeout(discoveryTimer);
+    discoveryTimer = null;
+  };
+
+  const waitForOpenedWorkspace = (workspaceName: string): void => {
+    clearDiscoveryTimer();
+    setPendingWorkspaceName(workspaceName);
+    setOpenProjectPhase("waiting");
+    catalog.refresh();
+    discoveryTimer = setTimeout(() => {
+      if (pendingWorkspaceName() !== workspaceName) return;
+      setOpenProjectError(
+        "The workspace opened, but discovery is still catching up. Retry discovery without reopening the folder.",
+      );
+      setOpenProjectPhase("error");
+    }, 8_000);
+  };
+
+  const openProject = async (): Promise<void> => {
+    if (openProjectPhase() === "selecting" || openProjectPhase() === "opening") return;
+    const request = ++openProjectRequest;
+    clearDiscoveryTimer();
+    setOpenProjectError(null);
+    setOpenProjectPhase("selecting");
+    try {
+      const result = await props.host.workspace.openProjectDirectory();
+      if (request !== openProjectRequest) return;
+      if (!result) {
+        setOpenProjectPhase("idle");
+        return;
+      }
+      if (result.status === "error") {
+        setOpenProjectError(result.error.reason);
+        setOpenProjectPhase("error");
+        return;
+      }
+      waitForOpenedWorkspace(result.result.resource.workspaceName);
+    } catch {
+      if (request !== openProjectRequest) return;
+      setOpenProjectError("tmux-ide could not open that folder through the verified daemon.");
+      setOpenProjectPhase("error");
+    }
+  };
+
+  const retryDiscovery = (): void => {
+    const workspaceName = pendingWorkspaceName();
+    if (!workspaceName) return;
+    setOpenProjectError(null);
+    waitForOpenedWorkspace(workspaceName);
+  };
+
+  onCleanup(() => {
+    openProjectRequest += 1;
+    clearDiscoveryTimer();
+  });
   // The constructor already owns the initial daemon. Only a genuinely new
   // capability generation should retire catalog work and start another read.
   let activeDaemonKey = daemonCapabilityKey(props.daemon);
@@ -688,6 +896,22 @@ export function DesktopLiveApplication(props: DesktopLiveApplicationProps) {
     return { daemon: state.daemon, workspaceName: selection.workspaceName };
   });
 
+  createEffect(() => {
+    const workspaceName = pendingWorkspaceName();
+    const snapshot = catalog.state().snapshot;
+    if (
+      !workspaceName ||
+      !snapshot?.workspaces.some((workspace) => workspace.workspaceName === workspaceName)
+    ) {
+      return;
+    }
+    if (!catalog.select(workspaceName)) return;
+    clearDiscoveryTimer();
+    setPendingWorkspaceName(null);
+    setOpenProjectError(null);
+    setOpenProjectPhase("idle");
+  });
+
   const fallback = () => {
     const state = catalog.state();
     const selection = state.snapshot?.selection;
@@ -700,9 +924,14 @@ export function DesktopLiveApplication(props: DesktopLiveApplicationProps) {
           windowState={props.windowState}
           state="onboarding"
           eyebrow="Workspace discovery"
-          title="No live workspaces yet"
-          description="Start tmux-ide in a project to make its live workspace available here."
-          guidance="Workspace opening is not available in this build yet"
+          title="Open a project to begin"
+          description="Choose any project folder. tmux-ide will create or reopen its config-free native workspace."
+          guidance="No ide.yml required"
+          onOpenProject={() => void openProject()}
+          openProjectPhase={openProjectPhase()}
+          openProjectError={openProjectError()}
+          onRetry={pendingWorkspaceName() ? retryDiscovery : undefined}
+          retryLabel="Retry discovery"
         />
       );
     }
@@ -720,6 +949,11 @@ export function DesktopLiveApplication(props: DesktopLiveApplicationProps) {
           guidance="Arrow keys move · Enter opens"
           workspaces={state.snapshot.workspaces.map(({ workspaceName }) => workspaceName)}
           onSelectWorkspace={(workspaceName) => catalog.select(workspaceName)}
+          onOpenProject={() => void openProject()}
+          openProjectPhase={openProjectPhase()}
+          openProjectError={openProjectError()}
+          onRetry={pendingWorkspaceName() ? retryDiscovery : undefined}
+          retryLabel="Retry discovery"
         />
       );
     }
@@ -756,6 +990,15 @@ export function DesktopLiveApplication(props: DesktopLiveApplicationProps) {
         }
         guidance={identityMismatch ? recovery.guidance : "tmux remains the source of truth"}
         alert={state.status === "error"}
+        diagnostics={[
+          identityMismatch
+            ? recovery.description
+            : "reason" in state
+              ? state.reason
+              : "Catalog unavailable.",
+          `Recovery phase: ${props.daemonRecovery ?? "idle"}`,
+          "The renderer has not received a usable V3 workspace resource.",
+        ]}
         onRetry={
           state.status === "loading"
             ? undefined
@@ -764,6 +1007,10 @@ export function DesktopLiveApplication(props: DesktopLiveApplicationProps) {
                 ? undefined
                 : props.onRetryDaemonConnection
               : () => catalog.refresh()
+        }
+        retryLabel="Retry workspace"
+        onRestartConnection={
+          props.daemonRecovery === "refreshing" ? undefined : props.onRetryDaemonConnection
         }
       />
     );

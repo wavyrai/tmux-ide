@@ -283,13 +283,143 @@ kbd {
     var(--tmux-ide-surface-canvas);
 }
 
+.runtime-launch {
+  display: grid;
+  width: min(720px, 100%);
+  grid-template-columns: minmax(0, 1fr) minmax(260px, 0.82fr);
+  gap: clamp(30px, 6vw, 72px);
+  align-items: center;
+}
+
+.runtime-launch__brand {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--tmux-ide-text-bright);
+  font-size: 13px;
+  letter-spacing: -0.01em;
+}
+
+.runtime-launch__brand > span {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  border: 1px solid color-mix(in srgb, var(--tmux-ide-border-focused) 54%, transparent);
+  border-radius: 9px;
+  color: var(--tmux-ide-text-link);
+  background: color-mix(in srgb, var(--tmux-ide-border-focused) 13%, var(--tmux-ide-surface-panel));
+  box-shadow: 0 8px 24px color-mix(in srgb, var(--tmux-ide-surface-terminal) 34%, transparent);
+}
+
+.runtime-launch__brand svg {
+  width: 16px;
+  height: 16px;
+}
+
+.runtime-launch__copy h1 {
+  margin: 8px 0 12px;
+  color: var(--tmux-ide-text-bright);
+  font-size: clamp(28px, 5vw, 48px);
+  font-weight: 650;
+  letter-spacing: -0.045em;
+  line-height: 1;
+}
+
+.runtime-launch__copy p {
+  max-width: 46ch;
+  margin: 0;
+  color: var(--tmux-ide-text-secondary);
+  font-size: 13px;
+  line-height: 20px;
+}
+
+.runtime-launch__skeleton {
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr);
+  gap: 12px;
+  padding: 18px;
+  border: 1px solid var(--tmux-ide-border-subtle);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--tmux-ide-surface-panel) 92%, transparent);
+  box-shadow: var(--tmux-ide-elevation-floating-shadow);
+}
+
+.runtime-launch__skeleton i,
+.runtime-launch__skeleton span {
+  display: block;
+  border-radius: 6px;
+  background: linear-gradient(
+    100deg,
+    var(--tmux-ide-surface-panel-raised) 20%,
+    color-mix(in srgb, var(--tmux-ide-border-focused) 13%, var(--tmux-ide-surface-panel-raised)) 42%,
+    var(--tmux-ide-surface-panel-raised) 64%
+  );
+  background-size: 240% 100%;
+  animation: runtime-skeleton 1.8s ease-in-out infinite;
+}
+
+.runtime-launch__skeleton i {
+  grid-row: 1 / span 3;
+  width: 48px;
+  height: 48px;
+}
+
+.runtime-launch__skeleton span {
+  height: 9px;
+}
+
+.runtime-launch__skeleton span:nth-of-type(1) {
+  width: 72%;
+}
+
+.runtime-launch__skeleton span:nth-of-type(2) {
+  width: 94%;
+}
+
+.runtime-launch__skeleton span:nth-of-type(3) {
+  width: 58%;
+}
+
+@keyframes runtime-skeleton {
+  to {
+    background-position: -140% 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .runtime-launch__skeleton i,
+  .runtime-launch__skeleton span,
+  .runtime-state-card__signal i {
+    animation: none !important;
+  }
+}
+
+[data-reduced-motion="true"] .runtime-launch__skeleton i,
+[data-reduced-motion="true"] .runtime-launch__skeleton span,
+[data-reduced-motion="true"] .runtime-state-card__signal i {
+  animation: none !important;
+}
+
 .runtime-state-card {
-  width: min(620px, 100%);
-  padding: clamp(20px, 4vw, 40px);
+  display: grid;
+  width: min(760px, 100%);
+  padding: clamp(22px, 4vw, 42px);
   border: 1px solid var(--tmux-ide-border-default);
   border-radius: var(--desktop-panel-radius);
   background: color-mix(in srgb, var(--tmux-ide-surface-panel) 96%, transparent);
   box-shadow: var(--tmux-ide-elevation-floating-shadow);
+}
+
+.runtime-state-surface[data-state="onboarding"] .runtime-state-card {
+  grid-template-columns: minmax(0, 1.15fr) minmax(250px, 0.85fr);
+  gap: clamp(26px, 5vw, 56px);
+  align-items: start;
+}
+
+.runtime-state-card__main {
+  min-width: 0;
 }
 
 .runtime-state-card__signal {
@@ -349,18 +479,137 @@ kbd {
   letter-spacing: -0.04em;
 }
 
-.runtime-state-card > p {
+.runtime-state-card__main > p {
   max-width: 520px;
   margin: 0;
   color: var(--tmux-ide-text-secondary);
-  font-size: 12px;
-  line-height: 19px;
+  font-size: 13px;
+  line-height: 20px;
 }
 
 .runtime-state-card__actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   margin-top: 20px;
+}
+
+.runtime-state-card__inline-error {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr);
+  gap: 8px;
+  align-items: start;
+  margin-top: 14px;
+  padding: 9px 10px;
+  border: 1px solid color-mix(in srgb, var(--tmux-ide-status-danger) 42%, transparent);
+  border-radius: 7px;
+  color: var(--tmux-ide-status-danger);
+  background: color-mix(in srgb, var(--tmux-ide-status-danger) 8%, transparent);
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.runtime-state-card__inline-error svg {
+  margin-top: 2px;
+}
+
+.runtime-diagnostics {
+  margin-top: 20px;
+  padding-top: 12px;
+  border-top: 1px solid var(--tmux-ide-border-subtle);
+  color: var(--tmux-ide-text-muted);
+  font-size: 11px;
+}
+
+.runtime-diagnostics summary,
+.runtime-onboarding-notes summary {
+  width: fit-content;
+  color: var(--tmux-ide-text-secondary);
+  cursor: pointer;
+}
+
+.runtime-diagnostics ul {
+  display: grid;
+  gap: 5px;
+  margin: 9px 0 0;
+  padding-left: 18px;
+  line-height: 16px;
+}
+
+.runtime-onboarding-notes {
+  padding: 18px;
+  border: 1px solid var(--tmux-ide-border-subtle);
+  border-radius: 10px;
+  color: var(--tmux-ide-text-secondary);
+  background:
+    linear-gradient(
+      145deg,
+      color-mix(in srgb, var(--tmux-ide-border-focused) 10%, transparent),
+      transparent 64%
+    ),
+    var(--tmux-ide-surface-panel-raised);
+}
+
+.runtime-onboarding-notes__icon {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  margin-bottom: 20px;
+  place-items: center;
+  border: 1px solid var(--tmux-ide-border-default);
+  border-radius: 9px;
+  color: var(--tmux-ide-text-link);
+  background: var(--tmux-ide-surface-terminal);
+}
+
+.runtime-onboarding-notes__icon svg {
+  width: 16px;
+  height: 16px;
+}
+
+.runtime-onboarding-notes > strong {
+  display: block;
+  color: var(--tmux-ide-text-bright);
+  font-size: 13px;
+}
+
+.runtime-onboarding-notes > p,
+.runtime-onboarding-notes details p {
+  margin: 7px 0 0;
+  color: var(--tmux-ide-text-muted);
+  font-size: 11px;
+  line-height: 17px;
+}
+
+.runtime-onboarding-notes ul {
+  display: grid;
+  gap: 8px;
+  margin: 17px 0;
+  padding: 14px 0;
+  border-top: 1px solid var(--tmux-ide-border-subtle);
+  border-bottom: 1px solid var(--tmux-ide-border-subtle);
+  list-style: none;
+}
+
+.runtime-onboarding-notes li {
+  display: grid;
+  grid-template-columns: 8px minmax(0, 1fr);
+  gap: 7px;
+  align-items: center;
+  color: var(--tmux-ide-text-secondary);
+  font-size: 11px;
+}
+
+.runtime-onboarding-notes li i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--tmux-ide-status-success);
+}
+
+.runtime-onboarding-notes code,
+.runtime-diagnostics li {
+  font-family: var(--tmi-font-technical);
 }
 
 .runtime-action {
@@ -390,9 +639,28 @@ kbd {
   display: grid;
   gap: 6px;
   max-height: min(312px, 38vh);
-  margin-top: 22px;
+  margin-top: 7px;
   padding-right: 3px;
   overflow: auto;
+}
+
+.workspace-chooser__heading {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 22px;
+  color: var(--tmux-ide-text-muted);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+.workspace-chooser__heading small {
+  color: var(--tmux-ide-text-muted);
+  font-size: 9px;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
 }
 
 .workspace-chooser button {
@@ -447,6 +715,22 @@ kbd {
 .runtime-status-strip {
   grid-row: 3;
   justify-content: space-between;
+}
+
+@media (max-width: 760px) {
+  .runtime-launch,
+  .runtime-state-surface[data-state="onboarding"] .runtime-state-card {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .runtime-launch__brand {
+    grid-column: 1;
+  }
+
+  .runtime-launch__skeleton,
+  .runtime-onboarding-notes {
+    display: none;
+  }
 }
 
 .runtime-resource-notice {

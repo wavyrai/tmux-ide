@@ -17,6 +17,8 @@ import {
   WorkspacePaneCreateHostResultSchemaZ,
   WorkspacePaneCreateInvocationSchemaZ,
   WorkspacePaneCreateMutationRequestSchemaZ,
+  WorkspaceOpenHostResultSchemaZ,
+  WorkspaceOpenMutationRequestSchemaZ,
   type DaemonInstanceIdentity,
   type DesktopDaemonCapabilityState,
   type DesktopHostBootstrap,
@@ -270,12 +272,67 @@ export function registerHostIpc(deps: HostIpcDependencies): RegisteredHostIpc {
     trustedRendererAuthority(event);
     return { status: "unavailable" as const };
   });
-  handle(HOST_IPC.dialogSelectProjectDirectory, async (event) => {
+  handle(HOST_IPC.workspaceOpenProjectDirectory, async (event, ...args) => {
     const authority = trustedRendererAuthority(event);
+    if (args.length !== 0) {
+      return WorkspaceOpenHostResultSchemaZ.parse({
+        status: "error",
+        error: daemonCapabilityError("invalid-request"),
+      });
+    }
     const { window } = authority;
     const path = await deps.selectProjectDirectory(window);
     assertRendererAuthority(event, authority.generation);
-    return path ? { path } : null;
+    if (!path) return null;
+    const before = deps.daemonResources.state();
+    if (before.status !== "connected") {
+      return WorkspaceOpenHostResultSchemaZ.parse({
+        status: "error",
+        error: disconnectedCapabilityError(before),
+      });
+    }
+    const request = WorkspaceOpenMutationRequestSchemaZ.parse({
+      operationId: randomUUID(),
+      expectedDaemonInstanceId: before.identity.instanceId,
+      intent: { projectDir: path },
+    });
+    try {
+      const result = await deps.daemonResources.openWorkspace(request);
+      try {
+        assertRendererAuthority(event, authority.generation);
+      } catch {
+        return WorkspaceOpenHostResultSchemaZ.parse({
+          status: "error",
+          error: daemonCapabilityError("disposed"),
+        });
+      }
+      const after = deps.daemonResources.state();
+      if (
+        after.status !== "connected" ||
+        !sameDaemonIdentity(before.identity, after.identity) ||
+        result.operationId !== request.operationId ||
+        result.daemonInstanceId !== request.expectedDaemonInstanceId
+      ) {
+        return WorkspaceOpenHostResultSchemaZ.parse({
+          status: "error",
+          error: daemonCapabilityError("daemon-identity-mismatch"),
+        });
+      }
+      return WorkspaceOpenHostResultSchemaZ.parse({ status: "ok", result });
+    } catch {
+      try {
+        assertRendererAuthority(event, authority.generation);
+      } catch {
+        return WorkspaceOpenHostResultSchemaZ.parse({
+          status: "error",
+          error: daemonCapabilityError("disposed"),
+        });
+      }
+      return WorkspaceOpenHostResultSchemaZ.parse({
+        status: "error",
+        error: daemonCapabilityError("request-failed"),
+      });
+    }
   });
   handle(HOST_IPC.themeGetState, (event) => {
     trustedRendererAuthority(event);
