@@ -205,9 +205,9 @@ describe("DOM experience adapter", () => {
       expect(resolveDomIcon(id)).toMatchObject({
         id,
         viewBox: "0 0 16 16",
-        size: 12,
+        size: 16,
         usage: "action",
-        usageSizes: { pane: 12, tab: 12, rail: 12, action: 12, nativeWindow: 10 },
+        usageSizes: { pane: 16, tab: 16, rail: 18, action: 16, nativeWindow: 16 },
         strokeWidth: 1.5,
         strokeLinecap: "round",
         strokeLinejoin: "round",
@@ -217,7 +217,7 @@ describe("DOM experience adapter", () => {
       expect(resolveDomIcon(id).label.length).toBeGreaterThan(0);
       expect(resolveDomIcon(id).paths.length).toBeGreaterThan(0);
     }
-    expect(resolveDomIcon("close", "nativeWindow").size).toBe(10);
+    expect(resolveDomIcon("close", "nativeWindow").size).toBe(16);
     expect(resolveDomIcon("more").paths).toEqual(["M2.75 8h.5M7.75 8h.5M12.75 8h.5"]);
   });
 });

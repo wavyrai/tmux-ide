@@ -433,7 +433,7 @@ describe("visible DOM application shell", () => {
     expect(styles).toContain(
       "grid-template-rows: var(--desktop-chrome-height) minmax(0, 1fr) var(--desktop-status-height)",
     );
-    expect(styles).toContain("grid-template-columns: 48px minmax(0, 1fr)");
+    expect(styles).toContain("grid-template-columns: var(--desktop-sidebar-width) minmax(0, 1fr)");
     expect(styles).toContain("width: 456px");
     expect(styles).toMatch(
       /@media \(max-width: 999px\)[\s\S]*?\.status-strip__safe \{\s*display: none;[\s\S]*?\.status-strip__guidance \{[\s\S]*?max-width: 184px;[\s\S]*?text-overflow: ellipsis;/u,
@@ -597,9 +597,36 @@ describe("visible DOM application shell", () => {
     expect(root.querySelector("#sidebar-session-session\\.docs")?.getAttribute("aria-label")).toBe(
       "Documentation, connected",
     );
-    expect(styles).toMatch(
-      /@media \(max-width: 999px\)[\s\S]*?\.sidebar-row span,[\s\S]*?display: none;/u,
+    expect(styles).toContain(
+      '.shell-workbench[data-sidebar-collapsed="true"] .sidebar-row__identity',
     );
+  });
+
+  it("collapses and keyboard-resizes the sidebar without changing shell ownership", () => {
+    const root = renderShell();
+    const workbench = root.querySelector<HTMLElement>(".shell-workbench")!;
+    const titlebar = root.querySelector<HTMLElement>(".titlebar")!;
+    const resize = root.querySelector<HTMLElement>('.workspace-sidebar__resize[role="separator"]')!;
+    const toggle = root.querySelector<HTMLButtonElement>('[aria-label="Collapse sidebar"]')!;
+
+    expect(resize.getAttribute("aria-valuemin")).toBe("240");
+    expect(resize.getAttribute("aria-valuemax")).toBe("320");
+    expect(resize.getAttribute("aria-valuenow")).toBe("272");
+    resize.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowLeft", bubbles: true }));
+    expect(resize.getAttribute("aria-valuenow")).toBe("264");
+
+    pointerClick(toggle);
+    expect(workbench.getAttribute("data-sidebar-collapsed")).toBe("true");
+    expect(titlebar.getAttribute("data-sidebar-collapsed")).toBe("true");
+    expect(resize.getAttribute("aria-disabled")).toBe("true");
+    expect(root.querySelector('[aria-label="Expand sidebar"]')).not.toBeNull();
+
+    document.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "b", metaKey: true, bubbles: true }),
+    );
+    expect(workbench.getAttribute("data-sidebar-collapsed")).toBe("false");
+    expect(resize.getAttribute("aria-disabled")).toBeNull();
+    expect(root.querySelector('[aria-label="Collapse sidebar"]')).not.toBeNull();
   });
 
   it("applies state tones to explicit indicators without recoloring their parent surfaces", () => {

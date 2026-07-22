@@ -64,8 +64,11 @@ const input = ApplicationShellProjectionInputV3SchemaZ.parse({
 });
 
 /** Full-window visual acceptance fixture for the native first-run canvas. */
-export function mountDesktopCanvasFirstRunFixture(root: HTMLElement): () => void {
-  const experience = createDomExperience({ hostTheme: { mode: "dark" } });
+export function mountDesktopCanvasFirstRunFixture(
+  root: HTMLElement,
+  appearance: "dark" | "light" = "dark",
+): () => void {
+  const experience = createDomExperience({ hostTheme: { mode: appearance } });
   let disposeStyle: (() => void) | null = null;
   const dispose = render(
     () => (
@@ -76,7 +79,7 @@ export function mountDesktopCanvasFirstRunFixture(root: HTMLElement): () => void
           disposeStyle = () => binding.dispose();
         }}
         class="app"
-        data-theme="dark"
+        data-theme={appearance}
         data-platform="darwin"
         data-reduced-motion="false"
         data-shell-source="visual-smoke"

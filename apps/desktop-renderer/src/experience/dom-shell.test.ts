@@ -9,6 +9,7 @@ import {
 import {
   createDefaultDomShellInput,
   createDomShellReplayState,
+  DOM_SHELL_GEOMETRY,
   domShellVariant,
   projectDomApplicationShell,
   projectDomWorkbenchDock,
@@ -26,26 +27,26 @@ describe("DOM application-shell projection", () => {
     {
       viewport: { width: 720, height: 480 },
       variant: "compact",
-      sidebar: 48,
-      workbench: 418,
-      canvas: 292,
-      dock: { x: 48, y: 332, width: 672, height: 126 },
+      sidebar: 272,
+      workbench: 404,
+      canvas: 278,
+      dock: { x: 272, y: 330, width: 448, height: 126 },
     },
     {
       viewport: { width: 1_280, height: 820 },
       variant: "standard",
-      sidebar: 216,
-      workbench: 758,
-      canvas: 531,
-      dock: { x: 216, y: 571, width: 1_064, height: 227 },
+      sidebar: 272,
+      workbench: 744,
+      canvas: 521,
+      dock: { x: 272, y: 573, width: 1_008, height: 223 },
     },
     {
       viewport: { width: 1_600, height: 1_000 },
       variant: "wide",
-      sidebar: 232,
-      workbench: 938,
-      canvas: 657,
-      dock: { x: 232, y: 697, width: 1_368, height: 281 },
+      sidebar: 272,
+      workbench: 924,
+      canvas: 647,
+      dock: { x: 272, y: 699, width: 1_328, height: 277 },
     },
   ])("uses bottom-dock geometry at $viewport.width×$viewport.height", (fixture) => {
     const dock = projectDomWorkbenchDock(projection(), fixture.viewport);
@@ -54,16 +55,18 @@ describe("DOM application-shell projection", () => {
     expect(dock.variant).toBe(fixture.variant);
     expect(dock.dock).toEqual(fixture.dock);
     expect(dock.dock.x).toBe(fixture.sidebar);
-    expect(dock.dock.y - 40).toBe(fixture.canvas);
-    expect(dock.dock.y + dock.dock.height).toBe(fixture.viewport.height - 22);
+    expect(dock.dock.y - DOM_SHELL_GEOMETRY.titlebarHeight).toBe(fixture.canvas);
+    expect(dock.dock.y + dock.dock.height).toBe(
+      fixture.viewport.height - DOM_SHELL_GEOMETRY.statusHeight,
+    );
     expect(dock.dockTabs).toEqual({
       x: fixture.sidebar,
       y: fixture.dock.y,
       width: fixture.dock.width,
-      height: 36,
+      height: 38,
     });
-    expect(dock.dockBody.height).toBe(fixture.dock.height - 36);
-    expect(dock.dockBodyContent.width).toBe(fixture.dock.width - 36);
+    expect(dock.dockBody.height).toBe(fixture.dock.height - 38);
+    expect(dock.dockBodyContent.width).toBe(fixture.dock.width - 38);
     expect(dock.dock.width).toBe(fixture.viewport.width - fixture.sidebar);
   });
 
@@ -72,11 +75,28 @@ describe("DOM application-shell projection", () => {
     const collapsed = projectDomWorkbenchDock(projection("collapsed"), viewport);
     const maximized = projectDomWorkbenchDock(projection("maximized"), viewport);
 
-    expect(collapsed.dock).toEqual({ x: 216, y: 762, width: 1_064, height: 36 });
+    expect(collapsed.dock).toEqual({ x: 272, y: 758, width: 1_008, height: 38 });
     expect(collapsed.dockBody.height).toBe(0);
-    expect(maximized.dock).toEqual({ x: 216, y: 40, width: 1_064, height: 758 });
-    expect(maximized.dockBody.height).toBe(722);
+    expect(maximized.dock).toEqual({ x: 272, y: 52, width: 1_008, height: 744 });
+    expect(maximized.dockBody.height).toBe(706);
   });
+
+  it.each([56, 240, 272, 320])(
+    "keeps dock geometry aligned with a %ipx effective sidebar",
+    (sidebarWidth) => {
+      const viewport = { width: 840, height: 620 };
+      const dock = projectDomWorkbenchDock(projection("collapsed"), viewport, { sidebarWidth });
+
+      expect(dock.dock.x).toBe(sidebarWidth);
+      expect(dock.dock.width).toBe(viewport.width - sidebarWidth);
+      expect(dock.dock.x + dock.dock.width).toBe(viewport.width);
+      expect(dock.dockTabs).toMatchObject({
+        x: sidebarWidth,
+        width: viewport.width - sidebarWidth,
+      });
+      expect(dock.dockBodyContent.width).toBe(viewport.width - sidebarWidth - 38);
+    },
+  );
 
   it("starts from the canonical closed-overlay fixture and trace", () => {
     const input = createDefaultDomShellInput();

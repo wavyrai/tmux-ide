@@ -1,11 +1,11 @@
 import { SEMANTIC_ICON_IDS, type SemanticIconId } from "@tmux-ide/contracts";
 
 export const DOM_ICON_USAGE_SIZES = Object.freeze({
-  pane: 12,
-  tab: 12,
-  rail: 12,
-  action: 12,
-  nativeWindow: 10,
+  pane: 16,
+  tab: 16,
+  rail: 18,
+  action: 16,
+  nativeWindow: 16,
 } as const);
 
 export type DomIconUsage = keyof typeof DOM_ICON_USAGE_SIZES;
@@ -15,7 +15,7 @@ export interface DomIconMetadata {
   readonly id: SemanticIconId;
   readonly label: string;
   readonly viewBox: "0 0 16 16";
-  readonly size: 12;
+  readonly size: 16;
   readonly usageSizes: Readonly<Record<DomIconUsage, DomIconSize>>;
   readonly strokeWidth: 1.5;
   readonly strokeLinecap: "round";
@@ -137,7 +137,7 @@ export const DOM_ICON_METADATA: Readonly<Record<SemanticIconId, DomIconMetadata>
           id,
           label: spec.label,
           viewBox: "0 0 16 16" as const,
-          size: 12 as const,
+          size: 16 as const,
           usageSizes: DOM_ICON_USAGE_SIZES,
           strokeWidth: 1.5 as const,
           strokeLinecap: "round" as const,

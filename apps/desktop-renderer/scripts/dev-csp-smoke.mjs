@@ -578,10 +578,10 @@ try {
       dragResult.styleAttributes !== 0 ||
       visualResult.app?.width !== 1_440 ||
       visualResult.app?.height !== 900 ||
-      visualResult.titlebar?.height !== 40 ||
-      visualResult.sidebar?.width !== 232 ||
-      visualResult.dock?.height !== 36 ||
-      visualResult.status?.height !== 22 ||
+      visualResult.titlebar?.height !== 52 ||
+      visualResult.sidebar?.width !== 272 ||
+      visualResult.dock?.height !== 38 ||
+      visualResult.status?.height !== 24 ||
       visualResult.tabs !== 2 ||
       visualResult.dockTabs !== 4 ||
       visualResult.cards.length !== 2 ||
@@ -599,6 +599,169 @@ try {
         `Desktop first-run canvas visual acceptance failed: ${JSON.stringify(visualResult, null, 2)}\n` +
           `Interaction result: ${JSON.stringify(dragResult, null, 2)}\n` +
           visualViolations.join("\n"),
+      );
+    }
+
+    const shellEvidenceCases = [
+      { appearance: "dark", width: 1_200, height: 800 },
+      { appearance: "light", width: 1_200, height: 800 },
+      { appearance: "dark", width: 840, height: 620 },
+    ];
+    const shellEvidence = [];
+    for (const fixture of shellEvidenceCases) {
+      const evidencePage = await browser.newPage({
+        viewport: { width: fixture.width, height: fixture.height },
+        colorScheme: fixture.appearance,
+      });
+      const evidenceConsoleMessages = [];
+      evidencePage.on("console", (message) => evidenceConsoleMessages.push(message.text()));
+      await evidencePage.addInitScript(() => {
+        globalThis.__tmiCspViolations = [];
+        globalThis.document.addEventListener("securitypolicyviolation", (event) => {
+          globalThis.__tmiCspViolations.push({
+            blockedURI: event.blockedURI,
+            directive: event.effectiveDirective,
+          });
+        });
+      });
+      await evidencePage.goto(rendererUrl, { waitUntil: "networkidle" });
+      const evidence = await evidencePage.evaluate(async ({ appearance, width, height }) => {
+        globalThis.document.getElementById("root")?.remove();
+        const root = globalThis.document.createElement("div");
+        root.id = "root";
+        globalThis.document.body.append(root);
+        const { mountDesktopCanvasFirstRunFixture } =
+          await import("/src/experience/desktop-canvas-first-run.fixture.tsx");
+        mountDesktopCanvasFirstRunFixture(root, appearance);
+        await new Promise((resolve) => globalThis.requestAnimationFrame(resolve));
+        await new Promise((resolve) => globalThis.requestAnimationFrame(resolve));
+        const dimensions = (selector) => {
+          const bounds = globalThis.document.querySelector(selector)?.getBoundingClientRect();
+          return bounds ? { width: bounds.width, height: bounds.height } : null;
+        };
+        const layoutBounds = () => {
+          const read = (selector) => {
+            const bounds = globalThis.document.querySelector(selector)?.getBoundingClientRect();
+            return bounds
+              ? {
+                  left: bounds.left,
+                  right: bounds.right,
+                  width: bounds.width,
+                }
+              : null;
+          };
+          return {
+            sidebar: read(".workspace-sidebar"),
+            canvas: read(".app-window-canvas"),
+            dock: read(".workspace-dock"),
+          };
+        };
+        const computed = (selector) => {
+          const element = globalThis.document.querySelector(selector);
+          return element ? globalThis.getComputedStyle(element) : null;
+        };
+        const titlebarStyle = computed(".titlebar");
+        const initial = {
+          app: dimensions(".app"),
+          titlebar: dimensions(".titlebar"),
+          sidebar: dimensions(".workspace-sidebar"),
+          dock: dimensions(".workspace-dock"),
+          status: dimensions(".status-strip"),
+          primaryTab: dimensions('.primary-tabs [role="tab"]'),
+          palette: dimensions(".palette-trigger"),
+          sidebarRow: dimensions(".sidebar-row"),
+          icon: dimensions('.primary-tabs [role="tab"] svg'),
+        };
+        let interaction = null;
+        if (width === 840) {
+          globalThis.document
+            .querySelector('[aria-label="Collapse sidebar"]')
+            ?.dispatchEvent(new globalThis.MouseEvent("click", { bubbles: true, detail: 1 }));
+          await new Promise((resolve) => globalThis.requestAnimationFrame(resolve));
+          const collapsed = layoutBounds();
+          globalThis.document.dispatchEvent(
+            new globalThis.KeyboardEvent("keydown", { key: "b", metaKey: true, bubbles: true }),
+          );
+          await new Promise((resolve) => globalThis.requestAnimationFrame(resolve));
+          const resizeHandle = globalThis.document.querySelector(
+            '.workspace-sidebar__resize[role="separator"]',
+          );
+          resizeHandle?.dispatchEvent(
+            new globalThis.KeyboardEvent("keydown", { key: "End", bubbles: true }),
+          );
+          await new Promise((resolve) => globalThis.requestAnimationFrame(resolve));
+          interaction = {
+            collapsed,
+            resized: layoutBounds(),
+            resizeValue: resizeHandle?.getAttribute("aria-valuenow") ?? null,
+          };
+        }
+        return {
+          appearance,
+          viewport: { width, height },
+          ...initial,
+          resizeHandle: Boolean(
+            globalThis.document.querySelector('.workspace-sidebar__resize[role="separator"]'),
+          ),
+          chromeColor: titlebarStyle?.backgroundColor ?? null,
+          horizontalOverflow: globalThis.document.documentElement.scrollWidth > width,
+          styleAttributes: globalThis.document.querySelectorAll("[style]").length,
+          styleElements: globalThis.document.querySelectorAll("style").length,
+          violations: globalThis.__tmiCspViolations ?? [],
+          interaction,
+        };
+      }, fixture);
+      shellEvidence.push({
+        ...evidence,
+        consoleViolations: evidenceConsoleMessages.filter((message) => cspViolation.test(message)),
+      });
+      if (process.env.TMUX_IDE_DESKTOP_VISUAL_SCREENSHOT) {
+        const evidencePath = process.env.TMUX_IDE_DESKTOP_VISUAL_SCREENSHOT.replace(
+          /(\.[^.]+)$/u,
+          `-${fixture.appearance}-${fixture.width}x${fixture.height}$1`,
+        );
+        await evidencePage.screenshot({ path: evidencePath, fullPage: true });
+      }
+      await evidencePage.close();
+    }
+    const [darkEvidence, lightEvidence] = shellEvidence;
+    if (
+      shellEvidence.some(
+        (evidence) =>
+          evidence.app?.width !== evidence.viewport.width ||
+          evidence.app?.height !== evidence.viewport.height ||
+          evidence.titlebar?.height !== 52 ||
+          evidence.sidebar?.width !== 272 ||
+          evidence.dock?.height !== 38 ||
+          evidence.status?.height !== 24 ||
+          evidence.primaryTab?.height !== 38 ||
+          evidence.palette?.height !== 32 ||
+          (evidence.sidebarRow?.height ?? 0) < 38 ||
+          evidence.icon?.width !== 16 ||
+          !evidence.resizeHandle ||
+          evidence.horizontalOverflow ||
+          evidence.styleAttributes !== 0 ||
+          evidence.styleElements !== 0 ||
+          evidence.violations.some(({ directive }) => directive.startsWith("style-src")) ||
+          evidence.consoleViolations.length > 0,
+      ) ||
+      !darkEvidence?.chromeColor ||
+      !lightEvidence?.chromeColor ||
+      darkEvidence.chromeColor === lightEvidence.chromeColor ||
+      shellEvidence.some(
+        (evidence) =>
+          evidence.interaction &&
+          (evidence.interaction.collapsed.sidebar?.width !== 56 ||
+            evidence.interaction.collapsed.dock?.left !== 56 ||
+            (evidence.interaction.collapsed.canvas?.left ?? 0) < 56 ||
+            evidence.interaction.resized.sidebar?.width !== 320 ||
+            evidence.interaction.resized.dock?.left !== 320 ||
+            (evidence.interaction.resized.canvas?.left ?? 0) < 320 ||
+            evidence.interaction.resizeValue !== "320"),
+      )
+    ) {
+      throw new Error(
+        `Desktop shell responsive/theme evidence failed: ${JSON.stringify(shellEvidence, null, 2)}`,
       );
     }
   } finally {

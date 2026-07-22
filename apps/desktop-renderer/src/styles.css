@@ -63,10 +63,10 @@ select:focus-visible,
 }
 
 .app {
-  --desktop-chrome-height: 40px;
-  --desktop-sidebar-width: 216px;
-  --desktop-dock-bar-height: 36px;
-  --desktop-status-height: 22px;
+  --desktop-chrome-height: 52px;
+  --desktop-sidebar-width: 272px;
+  --desktop-dock-bar-height: 38px;
+  --desktop-status-height: 24px;
   --desktop-panel-radius: 10px;
   position: relative;
   display: grid;
@@ -497,6 +497,8 @@ kbd {
 }
 
 .workspace-sidebar {
+  grid-row: 1;
+  grid-column: 1;
   min-width: 0;
   min-height: 0;
   padding: 10px 8px;
@@ -534,7 +536,7 @@ kbd {
   text-transform: uppercase;
 }
 
-.workspace-sidebar__project > span:last-child {
+.workspace-sidebar__project > span:nth-child(2) {
   display: flex;
   min-width: 0;
   flex-direction: column;
@@ -1608,13 +1610,13 @@ kbd {
 
 .create-pane-flow__overlay[data-transition-source="mouse"] {
   transition:
-    opacity var(--tmux-ide-motion-fast) cubic-bezier(0.895, 0.03, 0.685, 0.22),
-    visibility 0ms linear var(--tmux-ide-motion-fast);
+    opacity 100ms cubic-bezier(0.895, 0.03, 0.685, 0.22),
+    visibility 0ms linear 100ms;
 }
 
 .create-pane-flow__overlay--open[data-transition-source="mouse"] {
   transition:
-    opacity var(--tmux-ide-motion-standard) cubic-bezier(0.32, 0.72, 0, 1),
+    opacity 150ms cubic-bezier(0.32, 0.72, 0, 1),
     visibility 0ms linear;
 }
 
@@ -1637,11 +1639,11 @@ kbd {
 }
 
 .create-pane-flow__overlay[data-transition-source="mouse"] .create-pane-flow__dialog {
-  transition: transform var(--tmux-ide-motion-fast) cubic-bezier(0.895, 0.03, 0.685, 0.22);
+  transition: transform 100ms cubic-bezier(0.895, 0.03, 0.685, 0.22);
 }
 
 .create-pane-flow__overlay--open[data-transition-source="mouse"] .create-pane-flow__dialog {
-  transition: transform var(--tmux-ide-motion-standard) cubic-bezier(0.32, 0.72, 0, 1);
+  transition: transform 150ms cubic-bezier(0.32, 0.72, 0, 1);
 }
 
 .create-pane-flow__header {
@@ -1927,11 +1929,11 @@ kbd {
 
 @media (min-width: 1440px) {
   .titlebar__brand {
-    flex-basis: 232px;
+    flex-basis: var(--desktop-sidebar-width);
   }
 
   .shell-workbench {
-    grid-template-columns: 232px minmax(0, 1fr);
+    grid-template-columns: var(--desktop-sidebar-width) minmax(0, 1fr);
   }
 
   .workspace-main {
@@ -1952,7 +1954,7 @@ kbd {
   }
 
   .shell-workbench {
-    grid-template-columns: 48px minmax(0, 1fr);
+    grid-template-columns: var(--desktop-sidebar-width) minmax(0, 1fr);
   }
 
   .workspace-sidebar {
@@ -1964,7 +1966,7 @@ kbd {
     padding: 4px 0;
   }
 
-  .workspace-sidebar__project > span:last-child,
+  .workspace-sidebar__project > span:nth-child(2),
   .workspace-sidebar h2,
   .sidebar-row span,
   .sidebar-row b {
@@ -2034,4 +2036,581 @@ kbd {
   scroll-behavior: auto !important;
   transition-duration: 0ms !important;
   animation-duration: 0ms !important;
+}
+
+/* --------------------------------------------------------------------------
+ * Desktop shell polish
+ *
+ * These aliases deliberately separate application chrome from terminal theme
+ * colors. The terminal remains faithful to its profile while the surrounding
+ * product reads as one native, graphite workbench in both appearances.
+ * -------------------------------------------------------------------------- */
+
+.app {
+  --desktop-chrome-height: 52px;
+  --desktop-sidebar-width: 272px;
+  --desktop-sidebar-collapsed-width: 56px;
+  --desktop-dock-bar-height: 38px;
+  --desktop-status-height: 24px;
+  --desktop-panel-radius: 10px;
+  --desktop-ui-font:
+    "DM Sans", Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI",
+    sans-serif;
+  --desktop-mono-font:
+    "SF Mono", "SFMono-Regular", "JetBrains Mono", Menlo, Monaco, Consolas, monospace;
+  --desktop-ease-smooth: cubic-bezier(0.4, 0, 0.2, 1);
+  --desktop-chrome: #17181d;
+  --desktop-sidebar: #15161a;
+  --desktop-workbench: #101116;
+  --desktop-raised: #1c1e24;
+  --desktop-hover: rgb(255 255 255 / 5.5%);
+  --desktop-active: rgb(255 255 255 / 8.5%);
+  --desktop-separator: rgb(255 255 255 / 7.5%);
+  --desktop-shadow: rgb(0 0 0 / 42%);
+  font-family: var(--desktop-ui-font);
+  font-size: 12px;
+  line-height: 18px;
+  -webkit-font-smoothing: antialiased;
+}
+
+.app[data-theme="light"] {
+  --desktop-chrome: #f2f2f4;
+  --desktop-sidebar: #f6f6f7;
+  --desktop-workbench: #fafafb;
+  --desktop-raised: #ffffff;
+  --desktop-hover: rgb(17 24 39 / 4.5%);
+  --desktop-active: rgb(17 24 39 / 7.5%);
+  --desktop-separator: rgb(17 24 39 / 9%);
+  --desktop-shadow: rgb(35 38 47 / 16%);
+}
+
+.titlebar {
+  height: var(--desktop-chrome-height);
+  align-items: center;
+  border-color: var(--desktop-separator);
+  background: var(--desktop-chrome);
+  box-shadow: 0 1px 0 color-mix(in srgb, var(--tmux-ide-text-bright) 2.5%, transparent);
+}
+
+.app[data-platform="darwin"] .titlebar {
+  padding-left: 0;
+}
+
+.titlebar button,
+.titlebar input,
+.titlebar a,
+.titlebar .tmi-tooltip-anchor {
+  -webkit-app-region: no-drag;
+}
+
+.titlebar__brand {
+  position: relative;
+  flex-basis: var(--desktop-sidebar-width);
+  height: 100%;
+  gap: 9px;
+  padding: 0 12px;
+  border-color: var(--desktop-separator);
+  transition:
+    color 150ms var(--desktop-ease-smooth),
+    background-color 150ms var(--desktop-ease-smooth),
+    border-color 150ms var(--desktop-ease-smooth),
+    box-shadow 150ms var(--desktop-ease-smooth),
+    opacity 150ms var(--desktop-ease-smooth);
+}
+
+.app[data-platform="darwin"] .titlebar__brand {
+  padding-left: 86px;
+}
+
+.titlebar__product-mark {
+  display: grid;
+  flex: 0 0 28px;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  color: var(--tmux-ide-text-bright);
+  border: 1px solid var(--desktop-separator);
+  border-radius: 7px;
+  background: linear-gradient(145deg, var(--desktop-raised), var(--desktop-active));
+  box-shadow: 0 1px 2px var(--desktop-shadow);
+}
+
+.titlebar__product-copy {
+  display: grid;
+  min-width: 0;
+  flex: 1;
+  line-height: 14px;
+}
+
+.titlebar__product-copy strong,
+.titlebar__product-copy small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.titlebar__product-copy strong {
+  color: var(--tmux-ide-text-bright);
+  font-size: 12px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+
+.titlebar__product-copy small {
+  color: var(--tmux-ide-text-muted);
+  font-family: var(--desktop-mono-font);
+  font-size: 9px;
+}
+
+.titlebar__sidebar-toggle {
+  flex: 0 0 auto;
+}
+
+.titlebar[data-sidebar-collapsed="true"] .titlebar__product-mark,
+.titlebar[data-sidebar-collapsed="true"] .titlebar__product-copy {
+  display: none;
+}
+
+.app[data-platform="darwin"] .titlebar[data-sidebar-collapsed="true"] .titlebar__brand {
+  flex-basis: 130px;
+  justify-content: flex-end;
+}
+
+.titlebar__preview-badge {
+  margin-left: 8px;
+  border-radius: 999px;
+  font-family: var(--desktop-mono-font);
+  letter-spacing: 0.05em;
+}
+
+.primary-tabs {
+  align-self: stretch;
+  gap: 2px;
+  padding: 7px 5px;
+}
+
+.primary-tabs button {
+  height: 38px;
+  gap: 7px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 7px;
+  font-size: 12px;
+  font-weight: 550;
+  transition:
+    color 150ms var(--desktop-ease-smooth),
+    background-color 150ms var(--desktop-ease-smooth),
+    border-color 150ms var(--desktop-ease-smooth),
+    box-shadow 150ms var(--desktop-ease-smooth),
+    opacity 150ms var(--desktop-ease-smooth);
+}
+
+.primary-tabs button > span {
+  font-family: var(--desktop-mono-font);
+  font-size: 9px;
+}
+
+.primary-tabs button:hover {
+  border-color: transparent;
+  background: var(--desktop-hover) !important;
+}
+
+.primary-tabs__tab--active {
+  background: var(--desktop-active) !important;
+  box-shadow: inset 0 -2px 0 var(--tmux-ide-border-focused);
+}
+
+.palette-trigger.tmi-button {
+  align-self: center;
+  height: 32px;
+  min-height: 32px;
+  margin: 0 8px 0 0;
+  padding-inline: 9px;
+  border-color: var(--desktop-separator);
+  border-radius: 7px;
+  color: var(--tmux-ide-text-muted);
+  background: color-mix(in srgb, var(--desktop-raised) 60%, transparent);
+  font-weight: 500;
+}
+
+.palette-trigger .tmi-button__label {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.palette-trigger kbd {
+  font-family: var(--desktop-mono-font);
+  font-size: 10px;
+}
+
+.window-controls button {
+  width: 40px;
+  height: var(--desktop-chrome-height);
+  transition:
+    color 150ms var(--desktop-ease-smooth),
+    background-color 150ms var(--desktop-ease-smooth);
+}
+
+.shell-workbench {
+  position: relative;
+  grid-template-columns: var(--desktop-sidebar-width) minmax(0, 1fr);
+  background: var(--desktop-workbench);
+}
+
+.workspace-sidebar {
+  padding: 9px 8px 12px;
+  border-color: var(--desktop-separator);
+  background: var(--desktop-sidebar);
+  scrollbar-color: color-mix(in srgb, var(--tmux-ide-text-muted) 35%, transparent) transparent;
+  scrollbar-width: thin;
+}
+
+.workspace-sidebar__resize {
+  position: absolute;
+  grid-row: 1;
+  grid-column: 1;
+  top: 0;
+  bottom: 0;
+  left: var(--desktop-sidebar-width);
+  z-index: 6;
+}
+
+.workspace-sidebar__resize::after {
+  background: var(--desktop-separator);
+}
+
+.workspace-sidebar__project {
+  height: 54px;
+  gap: 9px;
+  margin-bottom: 12px;
+  padding: 5px 5px 10px;
+  border-color: var(--desktop-separator);
+}
+
+.workspace-sidebar__project > span:nth-child(2) {
+  flex: 1;
+}
+
+.workspace-sidebar__project strong {
+  font-size: 12px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+
+.workspace-sidebar__project small {
+  font-family: var(--desktop-mono-font);
+  font-size: 9px;
+}
+
+.workspace-sidebar__more {
+  flex: 0 0 auto;
+}
+
+.project-monogram {
+  flex-basis: 30px;
+  width: 30px;
+  height: 30px;
+  border-color: var(--desktop-separator);
+  border-radius: 8px;
+  background: linear-gradient(145deg, var(--desktop-raised), var(--desktop-active));
+  box-shadow: 0 1px 3px var(--desktop-shadow);
+  font-family: var(--desktop-mono-font);
+  font-size: 9px;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+}
+
+.workspace-sidebar section {
+  margin-bottom: 16px;
+}
+
+.workspace-sidebar h2 {
+  padding: 0 8px 5px;
+  font-size: 9px;
+  font-weight: 650;
+  letter-spacing: 0.09em;
+  line-height: 19px;
+}
+
+.workspace-sidebar h2 span {
+  font-family: var(--desktop-mono-font);
+  font-weight: 500;
+  letter-spacing: 0;
+}
+
+.sidebar-row {
+  min-height: 38px;
+  height: auto;
+  gap: 9px;
+  padding: 4px 8px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  color: var(--tmux-ide-text-secondary);
+  transition:
+    color 150ms var(--desktop-ease-smooth),
+    background-color 150ms var(--desktop-ease-smooth),
+    border-color 150ms var(--desktop-ease-smooth),
+    box-shadow 150ms var(--desktop-ease-smooth),
+    opacity 150ms var(--desktop-ease-smooth);
+}
+
+.sidebar-row:hover {
+  color: var(--tmux-ide-text-primary);
+  background: var(--desktop-hover);
+}
+
+.sidebar-row--active {
+  color: var(--tmux-ide-text-bright);
+  border-color: var(--desktop-separator);
+  background: var(--desktop-active);
+  box-shadow: none;
+}
+
+.sidebar-row__identity {
+  display: grid;
+  min-width: 0;
+  flex: 1;
+  line-height: 14px;
+}
+
+.sidebar-row__identity > span,
+.sidebar-row__identity > small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sidebar-row__identity > span {
+  color: inherit;
+  font-size: 11px;
+  font-weight: 550;
+}
+
+.sidebar-row__identity > small {
+  color: var(--tmux-ide-text-muted);
+  font-family: var(--desktop-mono-font);
+  font-size: 9px;
+}
+
+.shell-workbench[data-sidebar-collapsed="true"] .workspace-sidebar {
+  padding-inline: 7px;
+}
+
+.shell-workbench[data-sidebar-collapsed="true"] .workspace-sidebar__project {
+  justify-content: center;
+  padding-inline: 0;
+}
+
+.shell-workbench[data-sidebar-collapsed="true"] .workspace-sidebar__project > span:nth-child(2),
+.shell-workbench[data-sidebar-collapsed="true"] .workspace-sidebar__more,
+.shell-workbench[data-sidebar-collapsed="true"] .workspace-sidebar h2,
+.shell-workbench[data-sidebar-collapsed="true"] .sidebar-row__identity,
+.shell-workbench[data-sidebar-collapsed="true"] .sidebar-row b {
+  display: none;
+}
+
+.shell-workbench[data-sidebar-collapsed="true"] .sidebar-row {
+  min-height: 36px;
+  justify-content: center;
+  padding-inline: 0;
+}
+
+.workspace-main {
+  grid-row: 1;
+  grid-column: 2;
+  border-left: 0;
+  background: var(--desktop-workbench);
+}
+
+.terminal-canvas {
+  padding: 0 10px 10px;
+}
+
+.canvas-toolbar {
+  height: 42px;
+  padding: 0 4px;
+  border-bottom: 0;
+}
+
+.canvas-toolbar strong {
+  font-size: 12px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+
+.canvas-toolbar > span:last-child,
+.status-strip,
+.surface-summary code,
+.mission-summary small {
+  font-family: var(--desktop-mono-font);
+}
+
+.app-window-canvas {
+  height: calc(100% - 42px);
+  border-color: var(--desktop-separator);
+  border-radius: 9px;
+  background:
+    radial-gradient(
+      circle at 50% 40%,
+      color-mix(in srgb, var(--tmux-ide-border-focused) 5%, transparent),
+      transparent 48%
+    ),
+    radial-gradient(
+      circle,
+      color-mix(in srgb, var(--tmux-ide-text-muted) 20%, transparent) 0.75px,
+      transparent 0.9px
+    ),
+    var(--desktop-workbench);
+  background-size:
+    auto,
+    20px 20px,
+    auto;
+}
+
+.workspace-dock {
+  border-top: 1px solid var(--desktop-separator);
+  background: var(--desktop-chrome);
+}
+
+.app .workbench-dock__bar {
+  border-color: var(--desktop-separator);
+  background: var(--desktop-chrome);
+}
+
+.app .workbench-dock__tab,
+.app .workbench-dock__action {
+  font-family: var(--desktop-ui-font);
+  transition:
+    color 150ms var(--desktop-ease-smooth),
+    background-color 150ms var(--desktop-ease-smooth),
+    border-color 150ms var(--desktop-ease-smooth),
+    box-shadow 150ms var(--desktop-ease-smooth),
+    opacity 150ms var(--desktop-ease-smooth);
+}
+
+.app .workbench-dock__tab[aria-selected="true"] {
+  background: var(--desktop-active);
+  box-shadow: inset 0 2px 0 var(--tmux-ide-border-focused);
+}
+
+.dock-surface__content,
+.dock-surface__rail {
+  background: var(--desktop-sidebar);
+}
+
+.dock-surface__rail,
+.dock-surface__content > header {
+  border-color: var(--desktop-separator);
+}
+
+.status-strip {
+  gap: 12px;
+  padding: 0 9px;
+  border-color: var(--desktop-separator);
+  color: var(--tmux-ide-text-muted);
+  background: var(--desktop-chrome);
+  font-size: 9px;
+}
+
+.command-palette {
+  border-color: var(--desktop-separator);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--desktop-raised) 96%, transparent);
+  box-shadow: 0 24px 72px var(--desktop-shadow);
+}
+
+.command-palette-overlay {
+  background: rgb(0 0 0 / 32%);
+  backdrop-filter: blur(5px);
+}
+
+.command-palette__option {
+  min-height: 36px;
+  border-radius: 7px;
+  transition:
+    color 150ms var(--desktop-ease-smooth),
+    background-color 150ms var(--desktop-ease-smooth),
+    border-color 150ms var(--desktop-ease-smooth),
+    box-shadow 150ms var(--desktop-ease-smooth),
+    opacity 150ms var(--desktop-ease-smooth);
+}
+
+@media (max-width: 960px) {
+  .titlebar__brand {
+    flex-basis: var(--desktop-sidebar-width);
+    justify-content: initial;
+    padding-inline: 10px;
+  }
+
+  .app[data-platform="darwin"] .titlebar__brand {
+    padding-left: 86px;
+  }
+
+  .titlebar__product-mark {
+    display: grid;
+  }
+
+  .titlebar__product-copy,
+  .shell-workbench:not([data-sidebar-collapsed="true"]) .sidebar-row__identity {
+    display: grid;
+  }
+
+  .workspace-sidebar__project > span:nth-child(2),
+  .sidebar-row__identity > span,
+  .sidebar-row__identity > small,
+  .sidebar-row b {
+    display: block;
+  }
+
+  .workspace-sidebar h2 {
+    display: flex;
+  }
+
+  .shell-workbench {
+    grid-template-columns: var(--desktop-sidebar-width) minmax(0, 1fr);
+  }
+
+  .workspace-sidebar {
+    padding-inline: 8px;
+  }
+
+  .workspace-sidebar__project,
+  .sidebar-row {
+    justify-content: initial;
+  }
+
+  .primary-tabs button {
+    padding-inline: 9px;
+  }
+
+  .primary-tabs button > span,
+  .palette-trigger kbd {
+    display: none;
+  }
+
+  .status-strip__safe {
+    display: none;
+  }
+}
+
+@media (max-width: 860px) {
+  .titlebar__product-copy,
+  .titlebar__product-mark,
+  .workspace-sidebar__more {
+    display: none;
+  }
+
+  .app[data-platform="darwin"] .titlebar__brand {
+    justify-content: flex-end;
+  }
+
+  .home-canvas {
+    grid-template-columns: 1fr;
+    padding: 32px;
+  }
+
+  .readiness-card {
+    display: none;
+  }
 }

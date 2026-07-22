@@ -28,6 +28,13 @@ export interface DomViewport {
   readonly height: number;
 }
 
+export interface DomWorkbenchGeometry {
+  readonly sidebarWidth?: number;
+  readonly titlebarHeight?: number;
+  readonly statusHeight?: number;
+  readonly dockStripHeight?: number;
+}
+
 export type DomShellVariant = "compact" | "standard" | "wide";
 
 export interface DomPaletteEntry {
@@ -50,9 +57,15 @@ export interface DomApplicationShellProjection extends Omit<
   };
 }
 
-const TITLEBAR_HEIGHT = 40;
-const STATUS_HEIGHT = 22;
-const DOCK_STRIP_HEIGHT = 36;
+export const DOM_SHELL_GEOMETRY = Object.freeze({
+  titlebarHeight: 52,
+  statusHeight: 24,
+  dockStripHeight: 38,
+  sidebarWidth: 272,
+  sidebarMinimumWidth: 240,
+  sidebarMaximumWidth: 320,
+  sidebarCollapsedWidth: 56,
+});
 
 export function createDefaultDomShellInput(): ApplicationShellProjectionInputV1 {
   return ApplicationShellProjectionInputV1SchemaZ.parse({
@@ -203,13 +216,12 @@ export function domShellVariant(viewport: DomViewport): DomShellVariant {
 }
 
 function variantMetrics(variant: DomShellVariant): {
-  sidebar: number;
   minimumDock: number;
   minimumCanvas: number;
 } {
-  if (variant === "compact") return { sidebar: 48, minimumDock: 126, minimumCanvas: 144 };
-  if (variant === "standard") return { sidebar: 216, minimumDock: 180, minimumCanvas: 216 };
-  return { sidebar: 232, minimumDock: 252, minimumCanvas: 288 };
+  if (variant === "compact") return { minimumDock: 126, minimumCanvas: 144 };
+  if (variant === "standard") return { minimumDock: 180, minimumCanvas: 216 };
+  return { minimumDock: 252, minimumCanvas: 288 };
 }
 
 function clamp(value: number, minimum: number, maximum: number): number {
@@ -223,11 +235,20 @@ function clamp(value: number, minimum: number, maximum: number): number {
 export function projectDomWorkbenchDock(
   shell: ApplicationShellProjectionV1,
   viewport: DomViewport,
+  geometry: DomWorkbenchGeometry = {},
 ): WorkbenchDockHostProjection {
   const variant = domShellVariant(viewport);
   const metrics = variantMetrics(variant);
-  const workbenchHeight = Math.max(0, viewport.height - TITLEBAR_HEIGHT - STATUS_HEIGHT);
-  const workspaceWidth = Math.max(0, viewport.width - metrics.sidebar);
+  const titlebarHeight = geometry.titlebarHeight ?? DOM_SHELL_GEOMETRY.titlebarHeight;
+  const statusHeight = geometry.statusHeight ?? DOM_SHELL_GEOMETRY.statusHeight;
+  const dockStripHeight = geometry.dockStripHeight ?? DOM_SHELL_GEOMETRY.dockStripHeight;
+  const sidebarWidth = clamp(
+    geometry.sidebarWidth ?? DOM_SHELL_GEOMETRY.sidebarWidth,
+    0,
+    viewport.width,
+  );
+  const workbenchHeight = Math.max(0, viewport.height - titlebarHeight - statusHeight);
+  const workspaceWidth = Math.max(0, viewport.width - sidebarWidth);
   const maximumOpenDock = Math.max(metrics.minimumDock, workbenchHeight - metrics.minimumCanvas);
   const openDockHeight = clamp(
     Math.round(workbenchHeight * 0.3),
@@ -236,12 +257,12 @@ export function projectDomWorkbenchDock(
   );
   const dockHeight =
     shell.bottomDock.mode === "collapsed"
-      ? DOCK_STRIP_HEIGHT
+      ? dockStripHeight
       : shell.bottomDock.mode === "maximized"
         ? workbenchHeight
         : openDockHeight;
-  const dockY = TITLEBAR_HEIGHT + workbenchHeight - dockHeight;
-  let cursor = metrics.sidebar;
+  const dockY = titlebarHeight + workbenchHeight - dockHeight;
+  let cursor = sidebarWidth;
   const tabs = shell.bottomDock.tools.map((tool) => {
     const width = Math.max(72, 28 + tool.label.length * 8 + tool.shortcut.length * 8);
     const tab = {
@@ -283,7 +304,7 @@ export function projectDomWorkbenchDock(
       width: 36,
     },
   ];
-  const bodyHeight = shell.bottomDock.mode === "collapsed" ? 0 : dockHeight - DOCK_STRIP_HEIGHT;
+  const bodyHeight = shell.bottomDock.mode === "collapsed" ? 0 : dockHeight - dockStripHeight;
 
   return {
     variant,
@@ -293,29 +314,29 @@ export function projectDomWorkbenchDock(
         ? shell.focus.zone
         : "canvas",
     activeDockTab: shell.bottomDock.activeTool,
-    dock: { x: metrics.sidebar, y: dockY, width: workspaceWidth, height: dockHeight },
+    dock: { x: sidebarWidth, y: dockY, width: workspaceWidth, height: dockHeight },
     dockTabs: {
-      x: metrics.sidebar,
+      x: sidebarWidth,
       y: dockY,
       width: workspaceWidth,
-      height: DOCK_STRIP_HEIGHT,
+      height: dockStripHeight,
     },
     dockBody: {
-      x: metrics.sidebar,
-      y: dockY + DOCK_STRIP_HEIGHT,
+      x: sidebarWidth,
+      y: dockY + dockStripHeight,
       width: workspaceWidth,
       height: bodyHeight,
     },
     dockBodyRail: {
-      x: metrics.sidebar,
-      y: dockY + DOCK_STRIP_HEIGHT,
-      width: DOCK_STRIP_HEIGHT,
+      x: sidebarWidth,
+      y: dockY + dockStripHeight,
+      width: dockStripHeight,
       height: bodyHeight,
     },
     dockBodyContent: {
-      x: metrics.sidebar + DOCK_STRIP_HEIGHT,
-      y: dockY + DOCK_STRIP_HEIGHT,
-      width: Math.max(0, workspaceWidth - DOCK_STRIP_HEIGHT),
+      x: sidebarWidth + dockStripHeight,
+      y: dockY + dockStripHeight,
+      width: Math.max(0, workspaceWidth - dockStripHeight),
       height: bodyHeight,
     },
     tabs,

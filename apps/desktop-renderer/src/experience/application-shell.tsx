@@ -27,6 +27,7 @@ import {
   Match,
   Show,
   Switch,
+  createComputed,
   createEffect,
   createMemo,
   createSignal,
@@ -55,6 +56,8 @@ import { DomIcon } from "./dom-icon.tsx";
 import { TerminalSurface } from "../terminal/terminal-surface.tsx";
 import type { NativeTerminalTransport } from "../terminal/native-terminal-transport.ts";
 import { AppWindowCanvas } from "./app-window-canvas.tsx";
+import { Button, IconButton, ResizeHandle } from "../ui-system/index.ts";
+import { createRuntimeStyleBinding, type RuntimeStyleBinding } from "../runtime-style.ts";
 import type { AppWindowCanvasCommandInvocation } from "./app-window-canvas-presenter.ts";
 import {
   createDefaultDomShellInput,
@@ -209,12 +212,26 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
   const [state, setState] = createSignal(createDomShellReplayState(input()));
   const [viewport, setViewport] = createSignal(initialViewport());
   const [createPaneOpen, setCreatePaneOpen] = createSignal(false);
+  const [sidebarWidth, setSidebarWidth] = createSignal(272);
+  const [sidebarCollapsed, setSidebarCollapsed] = createSignal(false);
+  let titlebarStyle: RuntimeStyleBinding | null = null;
+  let workbenchStyle: RuntimeStyleBinding | null = null;
   let previousInput = input();
   let previousDataMode = dataMode();
   let returnFocusElement: HTMLElement | null = null;
   let returnFocusId: string | null = null;
 
   const shell = createMemo(() => projectDomApplicationShell(input(), state()));
+  const effectiveSidebarWidth = createMemo(() => (sidebarCollapsed() ? 56 : sidebarWidth()));
+  createComputed(() => {
+    const properties = { "--desktop-sidebar-width": `${effectiveSidebarWidth()}px` };
+    titlebarStyle?.update(properties);
+    workbenchStyle?.update(properties);
+  });
+  onCleanup(() => {
+    titlebarStyle?.dispose();
+    workbenchStyle?.dispose();
+  });
   const appWindowDocument = createMemo(() => {
     const value = input();
     return "appWindows" in value ? value.appWindows : null;
@@ -345,7 +362,9 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
   const hasMaximizedPane = createMemo(() =>
     renderedPaneFrames().some(({ appearance }) => appearance.structure === "maximized"),
   );
-  const dock = createMemo(() => projectDomWorkbenchDock(shell(), viewport()));
+  const dock = createMemo(() =>
+    projectDomWorkbenchDock(shell(), viewport(), { sidebarWidth: effectiveSidebarWidth() }),
+  );
   const paletteEntries = createMemo(() => createDomPaletteEntries(shell()));
   const statusStrip = createMemo(() => {
     if (dataMode() !== "preview") return shell().statusStrip;
@@ -498,6 +517,15 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
       });
     const keydown = (event: KeyboardEvent) => {
       if (event.defaultPrevented || shell().focus.palette.open) return;
+      if (
+        (event.metaKey || event.ctrlKey) &&
+        event.key.toLocaleLowerCase() === "b" &&
+        !(event.target instanceof HTMLElement && event.target.matches("input, textarea, select"))
+      ) {
+        event.preventDefault();
+        setSidebarCollapsed((collapsed) => !collapsed);
+        return;
+      }
       if ((event.metaKey || event.ctrlKey) && event.key.toLocaleLowerCase() === "k") {
         event.preventDefault();
         openPalette({ kind: "keyboard", surface: "application-shell" });
@@ -577,11 +605,33 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
 
   return (
     <>
-      <header class="titlebar" data-focus-zone="application-bar">
+      <header
+        ref={(element) => {
+          titlebarStyle = createRuntimeStyleBinding(element);
+          titlebarStyle.update({ "--desktop-sidebar-width": `${effectiveSidebarWidth()}px` });
+        }}
+        class="titlebar"
+        data-focus-zone="application-bar"
+        data-sidebar-collapsed={sidebarCollapsed()}
+      >
         <div class="titlebar__brand">
-          <DomIcon id="terminals" usage="tab" />
-          <strong>tmux-ide</strong>
-          <span>{shell().project.name}</span>
+          <span class="titlebar__product-mark" aria-hidden="true">
+            <DomIcon id="terminals" usage="tab" />
+          </span>
+          <span class="titlebar__product-copy">
+            <strong>tmux-ide</strong>
+            <small>{shell().project.name}</small>
+          </span>
+          <IconButton
+            class="titlebar__sidebar-toggle"
+            size="small"
+            label={sidebarCollapsed() ? "Expand sidebar" : "Collapse sidebar"}
+            tooltip={`${sidebarCollapsed() ? "Expand" : "Collapse"} sidebar (${props.platform === "darwin" ? "⌘B" : "Ctrl B"})`}
+            pressed={!sidebarCollapsed()}
+            onClick={() => setSidebarCollapsed((collapsed) => !collapsed)}
+          >
+            <DomIcon id="dock" usage="action" />
+          </IconButton>
         </div>
         <Show when={dataMode() === "preview"}>
           <span class="titlebar__preview-badge">Preview data</span>
@@ -604,9 +654,10 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
             />
           )}
         </Show>
-        <button
+        <Button
           class="palette-trigger"
-          type="button"
+          size="small"
+          variant="ghost"
           aria-label="Open command palette"
           id="application-command-palette-trigger"
           title="Open command palette (Cmd/Ctrl-K)"
@@ -619,7 +670,7 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
         >
           <DomIcon id="command" usage="action" />
           <kbd>{props.platform === "darwin" ? "⌘K" : "Ctrl K"}</kbd>
-        </button>
+        </Button>
         <Show when={props.runtime === "electron" && props.platform !== "darwin"}>
           <nav class="window-controls" aria-label="Window controls">
             <button
@@ -646,7 +697,15 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
         </Show>
       </header>
 
-      <div class="shell-workbench" data-shell-source={dataMode()}>
+      <div
+        ref={(element) => {
+          workbenchStyle = createRuntimeStyleBinding(element);
+          workbenchStyle.update({ "--desktop-sidebar-width": `${effectiveSidebarWidth()}px` });
+        }}
+        class="shell-workbench"
+        data-shell-source={dataMode()}
+        data-sidebar-collapsed={sidebarCollapsed()}
+      >
         <aside class="workspace-sidebar" aria-label="Workspace overview" data-focus-zone="sidebar">
           <div class="workspace-sidebar__project">
             <span class="project-monogram" aria-hidden="true">
@@ -656,6 +715,14 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
               <strong>{shell().project.name}</strong>
               <small>{shell().project.rootLabel}</small>
             </span>
+            <IconButton
+              class="workspace-sidebar__more"
+              size="small"
+              label="Workspace actions"
+              tooltip="Workspace actions"
+            >
+              <DomIcon id="more" usage="action" />
+            </IconButton>
           </div>
           <section aria-labelledby="sessions-heading">
             <h2 id="sessions-heading">Sessions</h2>
@@ -686,7 +753,10 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
                     }
                   >
                     <i data-state={session().state} />
-                    <span>{session().label}</span>
+                    <span class="sidebar-row__identity">
+                      <span>{session().label}</span>
+                      <small>{session().state}</small>
+                    </span>
                   </button>
                 );
               }}
@@ -721,7 +791,12 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
                   }
                 >
                   <i data-state={activityTone(agent().activity)} />
-                  <span>{agent().name}</span>
+                  <span class="sidebar-row__identity">
+                    <span>{agent().name}</span>
+                    <small>
+                      {agent().harness} · {agent().activity}
+                    </small>
+                  </span>
                   <Show when={agent().attention}>
                     <b aria-label="Needs attention" />
                   </Show>
@@ -730,6 +805,19 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
             </Index>
           </section>
         </aside>
+
+        <ResizeHandle
+          class="workspace-sidebar__resize"
+          value={sidebarWidth()}
+          min={240}
+          max={320}
+          label="Resize workspace sidebar"
+          disabled={sidebarCollapsed()}
+          onValueChange={(width) => {
+            setSidebarWidth(width);
+            setSidebarCollapsed(false);
+          }}
+        />
 
         <main class="workspace-main" data-dock-mode={shell().bottomDock.mode}>
           <section
