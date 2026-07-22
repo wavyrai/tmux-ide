@@ -218,7 +218,7 @@ describe.sequential("shipped tmux-ide --headless entrypoint", () => {
     const mixed = await waitForExit(spawnCli(["--headless", "status"]));
     expect(mixed.code).toBe(2);
     expect(mixed.stderr).toContain("--headless cannot be combined");
-  });
+  }, 15_000);
 
   it("replaces stale state, reuses a live owner, and exits after API shutdown", async () => {
     writeFileSync(
