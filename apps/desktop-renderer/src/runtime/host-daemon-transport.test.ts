@@ -28,6 +28,10 @@ function daemonHost(
 ): Pick<HostCapabilities, "daemon"> {
   return {
     daemon: {
+      refreshConnection: async () => ({
+        outcome: "unchanged",
+        daemon: { status: "connected", identity: DAEMON },
+      }),
       listWorkspaces: async () => ({
         status: "ok",
         daemon: DAEMON,
@@ -149,9 +153,18 @@ describe("HostCapabilities-backed daemon transport", () => {
         reason: "The daemon generation changed during the resource request.",
       },
     });
+    publish?.({
+      type: "daemon-generation.changed",
+      previousIdentity: DAEMON,
+      daemon: {
+        status: "unavailable",
+        code: "process-not-running",
+        reason: "The canonical daemon is unavailable.",
+      },
+    });
     expect(handlers.onVerifiedOpen).toHaveBeenCalledOnce();
     expect(handlers.onInvalidate).toHaveBeenCalledOnce();
-    expect(handlers.onPeerMismatch).toHaveBeenCalledOnce();
+    expect(handlers.onPeerMismatch).toHaveBeenCalledTimes(2);
 
     publish?.({
       type: "connection.changed",

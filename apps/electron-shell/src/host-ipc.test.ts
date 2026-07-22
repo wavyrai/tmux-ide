@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { BrowserWindow, IpcMain, IpcMainInvokeEvent } from "electron";
 
-import type { DaemonResourceBroker } from "./daemon-resource-broker.ts";
+import type { DaemonConnectionAuthority } from "./daemon-connection-coordinator.ts";
 import { registerHostIpc, rendererLocationIsTrusted } from "./host-ipc.ts";
 import { HOST_IPC } from "./ipc-channels.ts";
 
@@ -37,6 +37,27 @@ describe("host IPC trust boundary", () => {
     let publishDaemonEvent: ((event: { type: "workspaces.changed" }) => void) | undefined;
     const stopDaemonSubscription = vi.fn();
     const daemonResources = {
+      state: () => ({
+        status: "connected" as const,
+        identity: {
+          protocolVersion: 1,
+          productVersion: "2.8.0",
+          instanceId: daemon.descriptor.instanceId,
+          startedAt: daemon.descriptor.startedAt,
+        },
+      }),
+      refreshConnection: vi.fn(async () => ({
+        outcome: "unchanged" as const,
+        daemon: {
+          status: "connected" as const,
+          identity: {
+            protocolVersion: 1,
+            productVersion: "2.8.0",
+            instanceId: daemon.descriptor.instanceId,
+            startedAt: daemon.descriptor.startedAt,
+          },
+        },
+      })),
       listWorkspaces: vi.fn(async () => ({
         status: "ok",
         daemon: {
@@ -56,13 +77,13 @@ describe("host IPC trust boundary", () => {
         return { status: "subscribed", unsubscribe: stopDaemonSubscription };
       }),
       releaseRenderer: vi.fn(),
-    } as unknown as DaemonResourceBroker;
+      dispose: vi.fn(),
+    } as unknown as DaemonConnectionAuthority;
     const registration = registerHostIpc({
       ipcMain,
       getWindow: () => window,
       appVersion: "test",
       platform: "darwin",
-      daemon,
       daemonResources,
       requestQuit: vi.fn(),
       selectProjectDirectory: async () => null,
@@ -120,6 +141,23 @@ describe("host IPC trust boundary", () => {
       event: { type: "workspaces.changed" },
     });
 
+    expect(await handlers.get(HOST_IPC.daemonRefreshConnection)?.(trustedEvent)).toMatchObject({
+      outcome: "unchanged",
+      daemon: { status: "connected" },
+    });
+    expect(stopDaemonSubscription).not.toHaveBeenCalled();
+    await expect(
+      handlers.get(HOST_IPC.daemonRefreshConnection)?.(trustedEvent, {
+        apiBaseUrl: "http://127.0.0.1:9999",
+      }),
+    ).rejects.toThrow("refresh request was invalid");
+    await expect(
+      handlers.get(HOST_IPC.daemonRefreshConnection)?.({
+        sender: { id: 8 },
+        senderFrame: mainFrame,
+      } as unknown as IpcMainInvokeEvent),
+    ).rejects.toThrow("untrusted renderer");
+
     let finishList: (() => void) | undefined;
     vi.mocked(daemonResources.listWorkspaces).mockImplementationOnce(
       async () =>
@@ -149,6 +187,9 @@ describe("host IPC trust boundary", () => {
     expect(() =>
       bootstrap?.({ sender: webContents, senderFrame: mainFrame } as unknown as IpcMainInvokeEvent),
     ).toThrow("untrusted renderer");
+    await expect(handlers.get(HOST_IPC.daemonRefreshConnection)?.(trustedEvent)).rejects.toThrow(
+      "untrusted renderer",
+    );
     publishDaemonEvent?.({ type: "workspaces.changed" });
     expect(webContents.send).toHaveBeenCalledTimes(1);
 
@@ -241,27 +282,41 @@ describe("host IPC trust boundary", () => {
     const stop = vi.fn();
     let publish: ((event: { type: "workspaces.changed" }) => void) | undefined;
     const daemonResources = {
-      subscribe: vi.fn(async (_names, listener) => {
-        publish = listener;
-        return { status: "subscribed", unsubscribe: stop };
-      }),
-      releaseRenderer: vi.fn(),
-    } as unknown as DaemonResourceBroker;
-    const registration = registerHostIpc({
-      ipcMain,
-      getWindow: () => window,
-      appVersion: "test",
-      platform: "darwin",
-      daemon: {
-        status: "connected",
-        descriptor: {
-          apiBaseUrl: "http://127.0.0.1:6060",
+      state: () => ({
+        status: "connected" as const,
+        identity: {
           protocolVersion: 1,
           productVersion: "2.8.0",
           instanceId: "9bcf33b0-c837-4a94-b5e8-c0977f54464f",
           startedAt: "2026-07-21T00:00:00.000Z",
         },
-      },
+      }),
+      refreshConnection: vi.fn(async () => ({
+        outcome: "unchanged" as const,
+        daemon: {
+          status: "connected" as const,
+          identity: {
+            protocolVersion: 1,
+            productVersion: "2.8.0",
+            instanceId: "9bcf33b0-c837-4a94-b5e8-c0977f54464f",
+            startedAt: "2026-07-21T00:00:00.000Z",
+          },
+        },
+      })),
+      listWorkspaces: vi.fn(),
+      fetchApplicationShell: vi.fn(),
+      subscribe: vi.fn(async (_names, listener) => {
+        publish = listener;
+        return { status: "subscribed", unsubscribe: stop };
+      }),
+      releaseRenderer: vi.fn(),
+      dispose: vi.fn(),
+    } as unknown as DaemonConnectionAuthority;
+    const registration = registerHostIpc({
+      ipcMain,
+      getWindow: () => window,
+      appVersion: "test",
+      platform: "darwin",
       daemonResources,
       requestQuit: vi.fn(),
       selectProjectDirectory: async () => null,

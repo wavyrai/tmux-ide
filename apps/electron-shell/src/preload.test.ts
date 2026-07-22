@@ -31,6 +31,31 @@ beforeAll(async () => {
 });
 
 describe("desktop preload daemon bridge", () => {
+  it("exposes and validates the semantic daemon refresh result", async () => {
+    electron.invoke.mockImplementationOnce(async (channel: string) => {
+      expect(channel).toBe(HOST_IPC.daemonRefreshConnection);
+      return {
+        outcome: "generation-replaced",
+        previousIdentity: null,
+        daemon: {
+          status: "connected",
+          identity: {
+            protocolVersion: 1,
+            productVersion: "2.8.0",
+            instanceId: "3371dd7b-f76f-44e9-aefe-0e357a066056",
+            startedAt: "2026-07-22T00:00:00.000Z",
+          },
+        },
+      };
+    });
+    const capabilities = electron.exposeInMainWorld.mock.calls[0]?.[1] as HostCapabilities;
+
+    await expect(capabilities.daemon.refreshConnection()).resolves.toMatchObject({
+      outcome: "generation-replaced",
+      daemon: { status: "connected" },
+    });
+  });
+
   it("hands off a verified event that arrives before the subscribe invoke resolves", async () => {
     const subscriptionId = "desktop-subscription-1";
     const earlyEvent: DesktopDaemonEvent = {

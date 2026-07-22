@@ -9,7 +9,7 @@ import {
   runDaemonPreflight,
   type DaemonPreflight,
 } from "./daemon-preflight.ts";
-import { DaemonResourceBroker } from "./daemon-resource-broker.ts";
+import { DaemonConnectionCoordinator } from "./daemon-connection-coordinator.ts";
 import {
   publishTheme,
   publishWindowState,
@@ -95,8 +95,12 @@ export async function runDesktopApp(deps: DesktopAppDependencies = {}): Promise<
   const stateStore = new DesktopWindowStateStore(
     join(app.getPath("userData"), "window-state.json"),
   );
-  const daemon = await runDaemonPreflight(deps.daemonPreflight ?? canonicalDaemonPreflight);
-  const daemonResources = new DaemonResourceBroker({ daemon });
+  const daemonPreflight = deps.daemonPreflight ?? canonicalDaemonPreflight;
+  const daemon = await runDaemonPreflight(daemonPreflight);
+  const daemonResources = new DaemonConnectionCoordinator({
+    initialDaemon: daemon,
+    preflight: daemonPreflight,
+  });
   const developmentUrl = trustedDevelopmentUrl();
   const packagedRendererPath = join(__dirname, "renderer", "index.html");
   const trustedRendererLocation: TrustedRendererLocation = developmentUrl
@@ -181,7 +185,6 @@ export async function runDesktopApp(deps: DesktopAppDependencies = {}): Promise<
     getWindow: () => currentWindow,
     appVersion: app.getVersion(),
     platform: platform(),
-    daemon,
     daemonResources,
     rendererDidBootstrap: () => rendererDidBootstrap?.(),
     requestQuit: () => app.quit(),

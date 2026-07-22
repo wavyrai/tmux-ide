@@ -6,6 +6,7 @@ import {
   DesktopDaemonFetchApplicationShellRequestSchemaZ,
   DesktopDaemonFetchApplicationShellResultSchemaZ,
   DesktopDaemonListWorkspacesResultSchemaZ,
+  DesktopDaemonRefreshConnectionResultSchemaZ,
   DesktopDaemonSubscribeWireResultSchemaZ,
   DesktopDirectorySelectionSchemaZ,
   DesktopHostBootstrapSchemaZ,
@@ -108,6 +109,10 @@ const capabilities: HostCapabilities = Object.freeze({
       ),
   }),
   daemon: Object.freeze({
+    refreshConnection: async () =>
+      DesktopDaemonRefreshConnectionResultSchemaZ.parse(
+        await ipcRenderer.invoke(HOST_IPC.daemonRefreshConnection),
+      ),
     listWorkspaces: async () =>
       DesktopDaemonListWorkspacesResultSchemaZ.parse(
         await ipcRenderer.invoke(HOST_IPC.daemonListWorkspaces),

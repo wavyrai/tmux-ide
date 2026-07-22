@@ -3,7 +3,7 @@ import { ApplicationShellResourceV1SchemaZ } from "./application-shell-resource.
 import { DaemonInstanceIdentitySchemaZ } from "./daemon-wire.ts";
 
 /** Versioned, deliberately narrow bridge exposed by a desktop host preload. */
-export const DESKTOP_HOST_API_VERSION = 3 as const;
+export const DESKTOP_HOST_API_VERSION = 4 as const;
 
 export const DesktopRuntimeKindSchemaZ = z.enum(["browser", "electron"]);
 export const DesktopPlatformSchemaZ = z.enum(["darwin", "linux", "win32", "unknown"]);
@@ -61,6 +61,7 @@ export const DesktopDaemonHostIssueCodeSchemaZ = z.enum([
   "health-mismatch",
   "probe-failed",
   "probe-timeout",
+  "resource-broker-failed",
   "preview-only",
 ]);
 
@@ -203,6 +204,66 @@ export const DesktopDaemonEventSchemaZ = z.discriminatedUnion("type", [
       error: DesktopDaemonCapabilityErrorSchemaZ.nullable(),
     })
     .strict(),
+  z
+    .object({
+      type: z.literal("daemon-generation.changed"),
+      previousIdentity: DaemonInstanceIdentitySchemaZ.nullable(),
+      daemon: DesktopDaemonCapabilityStateSchemaZ,
+    })
+    .strict(),
+]);
+
+const DesktopDaemonDisconnectedCapabilityStateSchemaZ = z.discriminatedUnion("status", [
+  z
+    .object({
+      status: z.literal("unavailable"),
+      ...DesktopDaemonCapabilityIssueSchemaFields,
+    })
+    .strict(),
+  z.object({ status: z.literal("degraded"), ...DesktopDaemonCapabilityIssueSchemaFields }).strict(),
+]);
+
+const DesktopDaemonConnectedCapabilityStateSchemaZ = z
+  .object({ status: z.literal("connected"), identity: DaemonInstanceIdentitySchemaZ })
+  .strict();
+
+/**
+ * Renderer-safe outcome of a bounded main-process daemon revalidation. A
+ * daemon identity is the only generation token that crosses the bridge.
+ */
+export const DesktopDaemonRefreshConnectionResultSchemaZ = z.discriminatedUnion("outcome", [
+  z
+    .object({
+      outcome: z.literal("unchanged"),
+      daemon: DesktopDaemonCapabilityStateSchemaZ,
+    })
+    .strict(),
+  z
+    .object({
+      outcome: z.literal("generation-replaced"),
+      previousIdentity: DaemonInstanceIdentitySchemaZ.nullable(),
+      daemon: DesktopDaemonConnectedCapabilityStateSchemaZ,
+    })
+    .strict(),
+  z
+    .object({
+      outcome: z.literal("authority-retired"),
+      previousIdentity: DaemonInstanceIdentitySchemaZ,
+      daemon: DesktopDaemonDisconnectedCapabilityStateSchemaZ,
+    })
+    .strict(),
+  z
+    .object({
+      outcome: z.literal("state-changed"),
+      daemon: DesktopDaemonDisconnectedCapabilityStateSchemaZ,
+    })
+    .strict(),
+  z
+    .object({
+      outcome: z.literal("superseded"),
+      daemon: DesktopDaemonCapabilityStateSchemaZ,
+    })
+    .strict(),
 ]);
 
 /** Private main/preload wire shapes. Subscription ids never reach application code. */
@@ -262,6 +323,9 @@ export type DesktopDaemonEventSubscriptionRequest = z.infer<
   typeof DesktopDaemonEventSubscriptionRequestSchemaZ
 >;
 export type DesktopDaemonEvent = z.infer<typeof DesktopDaemonEventSchemaZ>;
+export type DesktopDaemonRefreshConnectionResult = z.infer<
+  typeof DesktopDaemonRefreshConnectionResultSchemaZ
+>;
 export type DesktopDaemonSubscribeWireResult = z.infer<
   typeof DesktopDaemonSubscribeWireResultSchemaZ
 >;
@@ -304,6 +368,7 @@ export interface HostCapabilities {
     onChanged(listener: (state: DesktopThemeState) => void): DesktopHostUnsubscribe;
   };
   readonly daemon: {
+    refreshConnection(): Promise<DesktopDaemonRefreshConnectionResult>;
     listWorkspaces(): Promise<DesktopDaemonListWorkspacesResult>;
     fetchApplicationShell(
       request: DesktopDaemonFetchApplicationShellRequest,

@@ -73,6 +73,10 @@ function eventToHandler(
     if (event.workspaceName === workspaceName) handlers.onInvalidate();
     return;
   }
+  if (event.type === "daemon-generation.changed") {
+    handlers.onPeerMismatch("The desktop daemon generation changed.");
+    return;
+  }
   if (event.state === "live") {
     handlers.onVerifiedOpen();
     return;

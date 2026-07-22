@@ -4,21 +4,18 @@ import {
   DesktopDaemonEventSubscriptionRequestSchemaZ,
   DesktopDaemonEventWireEnvelopeSchemaZ,
   DesktopDaemonFetchApplicationShellRequestSchemaZ,
+  DesktopDaemonRefreshConnectionResultSchemaZ,
   DesktopDaemonSubscriptionIdSchemaZ,
   DesktopDaemonSubscribeWireResultSchemaZ,
   DesktopHostBootstrapSchemaZ,
-  type DesktopDaemonPreflight,
   type DesktopHostBootstrap,
   type DesktopPlatform,
   type DesktopThemeState,
   type DesktopWindowState,
 } from "@tmux-ide/contracts";
 
-import {
-  daemonCapabilityError,
-  rendererDaemonState,
-  type DaemonResourceBroker,
-} from "./daemon-resource-broker.ts";
+import type { DaemonConnectionAuthority } from "./daemon-connection-coordinator.ts";
+import { daemonCapabilityError } from "./daemon-resource-broker.ts";
 import { HOST_INVOKE_CHANNELS, HOST_IPC } from "./ipc-channels.ts";
 
 export interface HostIpcDependencies {
@@ -26,8 +23,7 @@ export interface HostIpcDependencies {
   getWindow: () => BrowserWindow | null;
   appVersion: string;
   platform: DesktopPlatform;
-  daemon: DesktopDaemonPreflight;
-  daemonResources: DaemonResourceBroker;
+  daemonResources: DaemonConnectionAuthority;
   rendererDidBootstrap?: () => void;
   requestQuit: () => void;
   selectProjectDirectory: (window: BrowserWindow) => Promise<string | null>;
@@ -195,7 +191,7 @@ export function registerHostIpc(deps: HostIpcDependencies): RegisteredHostIpc {
       appVersion: deps.appVersion,
       theme: deps.getTheme(),
       window: snapshotWindow(window),
-      daemon: rendererDaemonState(deps.daemon),
+      daemon: deps.daemonResources.state(),
     };
     deps.rendererDidBootstrap?.();
     return DesktopHostBootstrapSchemaZ.parse(bootstrap);
@@ -235,6 +231,21 @@ export function registerHostIpc(deps: HostIpcDependencies): RegisteredHostIpc {
   handle(HOST_IPC.themeGetState, (event) => {
     trustedRendererAuthority(event);
     return deps.getTheme();
+  });
+
+  handle(HOST_IPC.daemonRefreshConnection, async (event, ...args) => {
+    const authority = trustedRendererAuthority(event);
+    if (args.length !== 0) throw new Error("desktop daemon refresh request was invalid");
+    const result = DesktopDaemonRefreshConnectionResultSchemaZ.parse(
+      await deps.daemonResources.refreshConnection(),
+    );
+    assertRendererAuthority(event, authority.generation);
+    if (result.outcome === "generation-replaced" || result.outcome === "authority-retired") {
+      // The coordinator already retired the underlying subscriptions after
+      // delivering the typed generation event. Forget their private IPC ids.
+      daemonSubscriptions.clear();
+    }
+    return result;
   });
 
   handle(HOST_IPC.daemonListWorkspaces, async (event, ...args) => {

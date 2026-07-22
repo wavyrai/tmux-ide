@@ -88,6 +88,10 @@ describe("desktop App host lifecycle", () => {
         },
       },
       daemon: {
+        refreshConnection: async () => ({
+          outcome: "unchanged",
+          daemon: { status: "unavailable", code: "preview-only", reason: "test boundary" },
+        }),
         listWorkspaces: async () => ({
           status: "error",
           error: { code: "preview-only", reason: "test boundary" },
