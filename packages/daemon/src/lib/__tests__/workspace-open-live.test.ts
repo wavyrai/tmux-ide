@@ -101,6 +101,9 @@ describe.skipIf(!hasTmux).sequential("config-free workspace open isolated tmux i
           Authorization: `Bearer ${ownerToken}`,
           "Content-Type": "application/json",
           "X-Tmux-Ide-Operation-Id": operationId,
+          // Fresh connection per dispatch: reusing an idle kept-alive socket
+          // races the embedded daemon's idle-close and surfaces as ECONNRESET.
+          Connection: "close",
         },
         body: JSON.stringify({ projectDir: selectedDir }),
       });
@@ -174,7 +177,7 @@ describe.skipIf(!hasTmux).sequential("config-free workspace open isolated tmux i
 
     const shellResponse = await fetch(
       `${handle.apiBaseUrl}/api/project/${encodeURIComponent(created.resource.workspaceName)}/application-shell?version=2`,
-      { headers: { Authorization: `Bearer ${ownerToken}` } },
+      { headers: { Authorization: `Bearer ${ownerToken}`, Connection: "close" } },
     );
     expect(shellResponse.status).toBe(200);
     const shell = ApplicationShellResourceV2SchemaZ.parse(await shellResponse.json());
@@ -220,7 +223,7 @@ describe.skipIf(!hasTmux).sequential("config-free workspace open isolated tmux i
     );
     const duplicatedMembershipResponse = await fetch(
       `${handle.apiBaseUrl}/api/project/${encodeURIComponent(created.resource.workspaceName)}/application-shell?version=2`,
-      { headers: { Authorization: `Bearer ${ownerToken}` } },
+      { headers: { Authorization: `Bearer ${ownerToken}`, Connection: "close" } },
     );
     expect(duplicatedMembershipResponse.status).toBe(503);
     expect(await duplicatedMembershipResponse.json()).toEqual({
@@ -294,6 +297,7 @@ describe.skipIf(!hasTmux).sequential("config-free workspace open isolated tmux i
       method: "POST",
       headers: {
         Authorization: `Bearer ${ownerToken}`,
+        Connection: "close",
         "Content-Type": "application/json",
         Origin: "tmux-ide://app",
         "X-Tmux-Ide-Expected-Daemon-Instance-Id": handle.instanceId,
