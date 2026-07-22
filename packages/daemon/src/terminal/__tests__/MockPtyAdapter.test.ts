@@ -75,6 +75,30 @@ describe("MockPtyAdapter", () => {
     expect(proc.writeLog[1]).toEqual(new Uint8Array([1, 2, 3]));
   });
 
+  it("gives every fresh process an independent monotonic bounded-input generation", async () => {
+    const adapter = new MockPtyAdapter({
+      boundedInputLimits: {
+        maxFrameBytes: 2,
+        maxAcceptedBytes: 2,
+        maxAcceptedFrames: 1,
+      },
+    });
+    const first = (await adapter.spawn(baseInput)) as MockPtyProcess;
+    first.boundedInput.write(Uint8Array.of(1, 2));
+    expect(first.boundedInput.snapshot().state).toBe("exhausted");
+
+    const second = (await adapter.spawn(baseInput)) as MockPtyProcess;
+    second.boundedInput.write(Uint8Array.of(3, 4));
+
+    expect(first.boundedWriteLog).toEqual([Buffer.from([1, 2])]);
+    expect(second.boundedWriteLog).toEqual([Buffer.from([3, 4])]);
+    expect(second.boundedInput.snapshot()).toMatchObject({
+      state: "exhausted",
+      acceptedBytes: 2,
+      acceptedFrames: 1,
+    });
+  });
+
   it("resize logs every dimension change", async () => {
     const adapter = new MockPtyAdapter();
     const proc = (await adapter.spawn(baseInput)) as MockPtyProcess;

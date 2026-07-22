@@ -19,10 +19,16 @@ import {
   PtySpawnError,
   type PtyAdapter,
   type PtyExitEvent,
+  type PtyInputLimits,
   type PtyProcess,
   type PtySpawnInput,
   type PtySpawnListeners,
 } from "./PtyAdapter.ts";
+import {
+  DEFAULT_PTY_INPUT_LIMITS,
+  MonotonicPtyInput,
+  validatePtyInputLimits,
+} from "./MonotonicPtyInput.ts";
 
 const ADAPTER_ID = "node-pty";
 let helperEnsured = false;
@@ -102,9 +108,15 @@ class NodePtyProcess implements PtyProcess {
   private readonly child: pty.IPty;
   private readonly dataListeners = new Set<(data: Buffer) => void>();
   private readonly exitListeners = new Set<(event: PtyExitEvent) => void>();
+  readonly boundedInput: MonotonicPtyInput;
 
-  constructor(child: pty.IPty, listeners: PtySpawnListeners = {}) {
+  constructor(
+    child: pty.IPty,
+    listeners: PtySpawnListeners = {},
+    inputLimits: PtyInputLimits = DEFAULT_PTY_INPUT_LIMITS,
+  ) {
     this.child = child;
+    this.boundedInput = new MonotonicPtyInput(inputLimits, (frame) => this.child.write(frame));
     if (listeners.onData) this.dataListeners.add(listeners.onData);
     if (listeners.onExit) this.exitListeners.add(listeners.onExit);
     // node-pty hands us strings by default; we want raw buffers for
@@ -116,6 +128,7 @@ class NodePtyProcess implements PtyProcess {
     });
     this.child.onExit((evt) => {
       this.exited = true;
+      this.boundedInput.close();
       const event: PtyExitEvent = {
         exitCode: evt.exitCode ?? 0,
         signal: typeof evt.signal === "number" ? evt.signal : null,
@@ -132,6 +145,8 @@ class NodePtyProcess implements PtyProcess {
   }
 
   write(data: string | Uint8Array): void {
+    // Legacy bridge only. Native attachments receive `boundedInput`, not this
+    // process method, because node-pty exposes no completion/capacity signal.
     if (this.exited) return;
     if (typeof data === "string") this.child.write(data);
     else this.child.write(Buffer.from(data));
@@ -161,6 +176,7 @@ class NodePtyProcess implements PtyProcess {
 
   kill(signal?: NodeJS.Signals | number): void {
     if (this.exited) return;
+    this.boundedInput.close();
     try {
       this.child.kill(typeof signal === "number" ? String(signal) : signal);
     } catch {
@@ -200,6 +216,11 @@ export interface NodePtyAdapterOptions {
   statCwd?: (cwd: string) => Stats;
   /** Skip the spawn-helper chmod (test isolation). */
   skipHelperEnsure?: boolean;
+  /**
+   * Daemon-owned monotonic native-input limits. They are copied into each
+   * fresh process and cannot be reset for that process generation.
+   */
+  boundedInputLimits?: PtyInputLimits;
 }
 
 export class NodePtyAdapter implements PtyAdapter {
@@ -207,11 +228,15 @@ export class NodePtyAdapter implements PtyAdapter {
   private readonly spawnPty: typeof pty.spawn;
   private readonly statCwd: (cwd: string) => Stats;
   private readonly skipHelperEnsure: boolean;
+  private readonly boundedInputLimits: PtyInputLimits;
 
   constructor(options: NodePtyAdapterOptions = {}) {
     this.spawnPty = options.spawnPty ?? pty.spawn;
     this.statCwd = options.statCwd ?? statSync;
     this.skipHelperEnsure = options.skipHelperEnsure ?? false;
+    this.boundedInputLimits = validatePtyInputLimits(
+      options.boundedInputLimits ?? DEFAULT_PTY_INPUT_LIMITS,
+    );
   }
 
   async spawn(input: PtySpawnInput, listeners?: PtySpawnListeners): Promise<PtyProcess> {
@@ -280,7 +305,7 @@ export class NodePtyAdapter implements PtyAdapter {
         cause: err,
       });
     }
-    return new NodePtyProcess(child, listeners);
+    return new NodePtyProcess(child, listeners, this.boundedInputLimits);
   }
 }
 
