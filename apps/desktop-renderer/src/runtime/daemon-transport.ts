@@ -216,6 +216,7 @@ function isRelevantFrame(
     case "snapshot":
     case "config.changed":
     case "terminals.changed":
+    case "agent-status.changed":
       return frame.sessionName === sessionName;
     case "sessions.changed":
     case "projects.changed":

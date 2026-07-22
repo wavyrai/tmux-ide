@@ -71,6 +71,44 @@ export function listTmuxSessions(): string[] {
   return raw.split("\n").filter(Boolean);
 }
 
+const AGENT_STATE_LINE = /^([^\t]+)\t(%[0-9]+)\t(.*)$/u;
+
+/**
+ * Read the ground-truth `@agent_state` option of every pane on the tmux
+ * server, grouped by session name. The value is the raw `"<state>:<epoch>"`
+ * stamp (empty when unset). Runs through the same injectable tmux runner as
+ * the rest of discovery, so tests stay hermetic and a failing `tmux` call
+ * degrades to an empty read (`null`) rather than throwing.
+ *
+ * Returns `null` when the underlying `list-panes` fails so callers can tell a
+ * transient tmux hiccup apart from a genuinely empty server — the agent-status
+ * watcher relies on that distinction to avoid emitting spurious invalidations.
+ */
+export function readAgentStatesBySession(): Map<string, Map<string, string>> | null {
+  let raw: string;
+  try {
+    raw = _tmuxRunner(["list-panes", "-a", "-F", "#{session_name}\t#{pane_id}\t#{@agent_state}"]);
+  } catch {
+    return null;
+  }
+  const bySession = new Map<string, Map<string, string>>();
+  if (!raw) return bySession;
+  for (const line of raw.split("\n")) {
+    const match = AGENT_STATE_LINE.exec(line);
+    if (!match) continue;
+    const sessionName = match[1]!;
+    const paneId = match[2]!;
+    const state = match[3]!;
+    let panes = bySession.get(sessionName);
+    if (!panes) {
+      panes = new Map<string, string>();
+      bySession.set(sessionName, panes);
+    }
+    panes.set(paneId, state);
+  }
+  return bySession;
+}
+
 export function getSessionCwd(session: string): string {
   return tmuxSilent(["display-message", "-t", session, "-p", "#{pane_current_path}"]);
 }

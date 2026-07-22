@@ -81,6 +81,7 @@ describe("daemon event contracts", () => {
       { type: "action.complete", name: "project.launch", result: { ok: true } },
       { type: "config.changed", sessionName: "tmux-ide" },
       { type: "terminals.changed", sessionName: "tmux-ide" },
+      { type: "agent-status.changed", sessionName: "tmux-ide" },
       {
         type: "workspace.added",
         workspace: {
@@ -111,6 +112,22 @@ describe("daemon event contracts", () => {
         type: "hello",
         daemon: { ...daemon, authToken: "must-not-cross-wire" },
         sessions: [],
+      }).success,
+    ).toBe(false);
+  });
+
+  it("strictly parses agent-status.changed and rejects missing or extra fields", () => {
+    expect(
+      DaemonEventServerFrameSchemaZ.parse({ type: "agent-status.changed", sessionName: "tmux-ide" }),
+    ).toEqual({ type: "agent-status.changed", sessionName: "tmux-ide" });
+    expect(
+      DaemonEventServerFrameSchemaZ.safeParse({ type: "agent-status.changed" }).success,
+    ).toBe(false);
+    expect(
+      DaemonEventServerFrameSchemaZ.safeParse({
+        type: "agent-status.changed",
+        sessionName: "tmux-ide",
+        unexpected: true,
       }).success,
     ).toBe(false);
   });

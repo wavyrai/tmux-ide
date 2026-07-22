@@ -6254,7 +6254,7 @@ var init_daemon_resources = __esm({
 
 // packages/contracts/src/daemon-events.ts
 import { z as z37 } from "zod";
-var SessionNamesSchemaZ, DaemonEventSubscribeFrameSchemaZ, DaemonEventUnsubscribeFrameSchemaZ, DaemonEventPingFrameSchemaZ, DaemonEventClientFrameSchemaZ, DaemonSessionSnapshotSchemaZ, DaemonEventHelloFrameSchemaZ, DaemonEventSnapshotFrameSchemaZ, DaemonEventSessionsChangedFrameSchemaZ, DaemonEventProjectsChangedFrameSchemaZ, DaemonEventInitOutputFrameSchemaZ, DaemonEventInitErrorFrameSchemaZ, DaemonEventPongFrameSchemaZ, DaemonEventActionCompleteFrameSchemaZ, DaemonEventConfigChangedFrameSchemaZ, DaemonEventTerminalsChangedFrameSchemaZ, DaemonEventWorkspaceAddedFrameSchemaZ, DaemonEventWorkspaceRemovedFrameSchemaZ, DaemonEventProtocolErrorCodeSchemaZ, DaemonEventProtocolErrorFrameSchemaZ, DaemonEventServerFrameSchemaZ;
+var SessionNamesSchemaZ, DaemonEventSubscribeFrameSchemaZ, DaemonEventUnsubscribeFrameSchemaZ, DaemonEventPingFrameSchemaZ, DaemonEventClientFrameSchemaZ, DaemonSessionSnapshotSchemaZ, DaemonEventHelloFrameSchemaZ, DaemonEventSnapshotFrameSchemaZ, DaemonEventSessionsChangedFrameSchemaZ, DaemonEventProjectsChangedFrameSchemaZ, DaemonEventInitOutputFrameSchemaZ, DaemonEventInitErrorFrameSchemaZ, DaemonEventPongFrameSchemaZ, DaemonEventActionCompleteFrameSchemaZ, DaemonEventConfigChangedFrameSchemaZ, DaemonEventTerminalsChangedFrameSchemaZ, DaemonEventAgentStatusChangedFrameSchemaZ, DaemonEventWorkspaceAddedFrameSchemaZ, DaemonEventWorkspaceRemovedFrameSchemaZ, DaemonEventProtocolErrorCodeSchemaZ, DaemonEventProtocolErrorFrameSchemaZ, DaemonEventServerFrameSchemaZ;
 var init_daemon_events = __esm({
   "packages/contracts/src/daemon-events.ts"() {
     "use strict";
@@ -6315,6 +6315,10 @@ var init_daemon_events = __esm({
       type: z37.literal("terminals.changed"),
       sessionName: z37.string()
     }).strict();
+    DaemonEventAgentStatusChangedFrameSchemaZ = z37.object({
+      type: z37.literal("agent-status.changed"),
+      sessionName: z37.string()
+    }).strict();
     DaemonEventWorkspaceAddedFrameSchemaZ = z37.object({
       type: z37.literal("workspace.added"),
       workspace: DaemonWorkspaceSchemaZ
@@ -6340,6 +6344,7 @@ var init_daemon_events = __esm({
       DaemonEventActionCompleteFrameSchemaZ,
       DaemonEventConfigChangedFrameSchemaZ,
       DaemonEventTerminalsChangedFrameSchemaZ,
+      DaemonEventAgentStatusChangedFrameSchemaZ,
       DaemonEventWorkspaceAddedFrameSchemaZ,
       DaemonEventWorkspaceRemovedFrameSchemaZ,
       DaemonEventProtocolErrorFrameSchemaZ
@@ -16213,6 +16218,30 @@ function listTmuxSessions() {
   if (!raw) return [];
   return raw.split("\n").filter(Boolean);
 }
+function readAgentStatesBySession() {
+  let raw;
+  try {
+    raw = _tmuxRunner(["list-panes", "-a", "-F", "#{session_name}	#{pane_id}	#{@agent_state}"]);
+  } catch {
+    return null;
+  }
+  const bySession = /* @__PURE__ */ new Map();
+  if (!raw) return bySession;
+  for (const line of raw.split("\n")) {
+    const match = AGENT_STATE_LINE.exec(line);
+    if (!match) continue;
+    const sessionName = match[1];
+    const paneId = match[2];
+    const state = match[3];
+    let panes = bySession.get(sessionName);
+    if (!panes) {
+      panes = /* @__PURE__ */ new Map();
+      bySession.set(sessionName, panes);
+    }
+    panes.set(paneId, state);
+  }
+  return bySession;
+}
 function getSessionCwd2(session) {
   return tmuxSilent(["display-message", "-t", session, "-p", "#{pane_current_path}"]);
 }
@@ -16251,7 +16280,7 @@ function buildProjectDetail(info) {
     panes: info.panes.map(({ semanticPaneId: _semanticPaneId, ...pane }) => pane)
   };
 }
-var _tmuxRunner;
+var _tmuxRunner, AGENT_STATE_LINE;
 var init_discovery = __esm({
   "packages/daemon/src/command-center/discovery.ts"() {
     "use strict";
@@ -16262,6 +16291,86 @@ var init_discovery = __esm({
       maxBuffer: 1024 * 1024,
       stdio: ["ignore", "pipe", "ignore"]
     }).trim();
+    AGENT_STATE_LINE = /^([^\t]+)\t(%[0-9]+)\t(.*)$/u;
+  }
+});
+
+// packages/daemon/src/command-center/agent-status-watch.ts
+function agentStateWord(raw) {
+  const separator = raw.indexOf(":");
+  return separator < 0 ? raw : raw.slice(0, separator);
+}
+function sessionStateWordsChanged(previous, next) {
+  if (previous.size !== next.size) return true;
+  for (const [paneId, raw] of next) {
+    const prior = previous.get(paneId);
+    if (prior === void 0 || agentStateWord(prior) !== agentStateWord(raw)) return true;
+  }
+  return false;
+}
+function diffChangedSessions(previous, next) {
+  const changed = /* @__PURE__ */ new Set();
+  for (const [sessionName, panes] of next) {
+    const before = previous.get(sessionName);
+    if (!before || sessionStateWordsChanged(before, panes)) changed.add(sessionName);
+  }
+  for (const sessionName of previous.keys()) {
+    if (!next.has(sessionName)) changed.add(sessionName);
+  }
+  return [...changed].sort();
+}
+var AGENT_STATUS_POLL_MS, AgentStatusWatcher;
+var init_agent_status_watch = __esm({
+  "packages/daemon/src/command-center/agent-status-watch.ts"() {
+    "use strict";
+    AGENT_STATUS_POLL_MS = 2e3;
+    AgentStatusWatcher = class {
+      #read;
+      #emit;
+      #setTimer;
+      #clearTimer;
+      #intervalMs;
+      #timer = null;
+      #previous = null;
+      constructor(deps2) {
+        this.#read = deps2.read;
+        this.#emit = deps2.emit;
+        this.#setTimer = deps2.setTimer ?? ((fn, ms) => {
+          const handle = setInterval(fn, ms);
+          handle.unref?.();
+          return handle;
+        });
+        this.#clearTimer = deps2.clearTimer ?? ((handle) => clearInterval(handle));
+        this.#intervalMs = deps2.intervalMs ?? AGENT_STATUS_POLL_MS;
+      }
+      get running() {
+        return this.#timer !== null;
+      }
+      start() {
+        if (this.#timer !== null) return;
+        this.tick();
+        this.#timer = this.#setTimer(() => this.tick(), this.#intervalMs);
+      }
+      stop() {
+        if (this.#timer === null) return;
+        this.#clearTimer(this.#timer);
+        this.#timer = null;
+        this.#previous = null;
+      }
+      /** One poll cycle. Exposed for deterministic unit tests. */
+      tick() {
+        const next = this.#read();
+        if (next === null) return;
+        if (this.#previous === null) {
+          this.#previous = next;
+          return;
+        }
+        for (const sessionName of diffChangedSessions(this.#previous, next)) {
+          this.#emit(sessionName);
+        }
+        this.#previous = next;
+      }
+    };
   }
 });
 
@@ -16303,6 +16412,21 @@ function maybeStopProjectRegistryListener() {
   if (allClients.size > 0 || !projectRegistryListener) return;
   projectRegistryEmitter.off("change", projectRegistryListener);
   projectRegistryListener = null;
+}
+function ensureAgentStatusWatcher() {
+  if (agentStatusWatcher) return;
+  agentStatusWatcher = new AgentStatusWatcher({
+    read: () => readAgentStatesBySession(),
+    emit: (sessionName) => {
+      for (const client of allClients) client.broadcastAgentStatusChanged(sessionName);
+    }
+  });
+  agentStatusWatcher.start();
+}
+function maybeStopAgentStatusWatcher() {
+  if (allClients.size > 0 || !agentStatusWatcher) return;
+  agentStatusWatcher.stop();
+  agentStatusWatcher = null;
 }
 function broadcastInitOutput(jobId, chunk, done) {
   for (const client of allClients) client.broadcastInitOutput(jobId, chunk, done);
@@ -16364,6 +16488,9 @@ function handleWsEventsConnection(socket, daemonIdentity) {
   const broadcastTerminalsChangedForClient = (sessionName) => {
     send2({ type: "terminals.changed", sessionName });
   };
+  const broadcastAgentStatusChangedForClient = (sessionName) => {
+    send2({ type: "agent-status.changed", sessionName });
+  };
   const workspaceRegistry = getDefaultWorkspaceRegistry();
   const unsubWorkspaceAdded = workspaceRegistry.on(
     "workspace.added",
@@ -16380,11 +16507,13 @@ function handleWsEventsConnection(socket, daemonIdentity) {
     broadcastInitError: broadcastInitErrorForClient,
     broadcastActionComplete: broadcastActionCompleteForClient,
     broadcastConfigChanged: broadcastConfigChangedForClient,
-    broadcastTerminalsChanged: broadcastTerminalsChangedForClient
+    broadcastTerminalsChanged: broadcastTerminalsChangedForClient,
+    broadcastAgentStatusChanged: broadcastAgentStatusChangedForClient
   };
   allClients.add(clientHandle);
   ensureSessionsPoller();
   ensureProjectRegistryListener();
+  ensureAgentStatusWatcher();
   const keepalive = setInterval(() => {
     send2({ type: "pong" });
   }, KEEPALIVE_INTERVAL_MS);
@@ -16413,6 +16542,7 @@ function handleWsEventsConnection(socket, daemonIdentity) {
     unsubWorkspaceRemoved();
     maybeStopSessionsPoller();
     maybeStopProjectRegistryListener();
+    maybeStopAgentStatusWatcher();
   };
   ws.on("message", (data) => {
     if (closed) return;
@@ -16459,11 +16589,12 @@ function handleWsEventsConnection(socket, daemonIdentity) {
     send2({ type: "hello", daemon: daemonIdentity, sessions: [] });
   }
 }
-var WS_OPEN2, KEEPALIVE_INTERVAL_MS, SESSIONS_POLL_MS, allClients, sessionsPollTimer, lastSessionsHash, projectRegistryListener;
+var WS_OPEN2, KEEPALIVE_INTERVAL_MS, SESSIONS_POLL_MS, allClients, sessionsPollTimer, lastSessionsHash, projectRegistryListener, agentStatusWatcher;
 var init_ws_events = __esm({
   "packages/daemon/src/command-center/ws-events.ts"() {
     "use strict";
     init_discovery();
+    init_agent_status_watch();
     init_project_registry();
     init_workspace_registry();
     init_src();
@@ -16474,6 +16605,7 @@ var init_ws_events = __esm({
     sessionsPollTimer = null;
     lastSessionsHash = "";
     projectRegistryListener = null;
+    agentStatusWatcher = null;
   }
 });
 

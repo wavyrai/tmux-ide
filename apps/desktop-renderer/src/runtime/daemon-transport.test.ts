@@ -260,6 +260,18 @@ describe("browser-safe daemon transport", () => {
 
     socket.emit("message", JSON.stringify({ type: "sessions.changed" }));
     expect(onInvalidate).toHaveBeenCalledOnce();
+    // A session-scoped agent-status change re-fetches only for the bound
+    // session; another session's frame is ignored.
+    socket.emit(
+      "message",
+      JSON.stringify({ type: "agent-status.changed", sessionName: "project" }),
+    );
+    expect(onInvalidate).toHaveBeenCalledTimes(2);
+    socket.emit(
+      "message",
+      JSON.stringify({ type: "agent-status.changed", sessionName: "other-session" }),
+    );
+    expect(onInvalidate).toHaveBeenCalledTimes(2);
     socket.emit("message", "not-json");
     socket.emit("message", JSON.stringify({ type: "sessions.changed", unexpected: true }));
     socket.emit("message", new Uint8Array([1, 2, 3]));

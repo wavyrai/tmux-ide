@@ -12,7 +12,13 @@
  */
 
 import type { RawData, WebSocket } from "ws";
-import { discoverSessions, buildOverviews, buildProjectDetail } from "./discovery.ts";
+import {
+  discoverSessions,
+  buildOverviews,
+  buildProjectDetail,
+  readAgentStatesBySession,
+} from "./discovery.ts";
+import { AgentStatusWatcher } from "./agent-status-watch.ts";
 import { projectRegistryEmitter } from "../lib/project-registry.ts";
 import { getDefaultWorkspaceRegistry } from "../lib/workspace-registry.ts";
 import {
@@ -49,12 +55,14 @@ interface ClientHandle {
   broadcastActionComplete(name: string, result: unknown): void;
   broadcastConfigChanged(sessionName: string): void;
   broadcastTerminalsChanged(sessionName: string): void;
+  broadcastAgentStatusChanged(sessionName: string): void;
 }
 const allClients = new Set<ClientHandle>();
 
 let sessionsPollTimer: ReturnType<typeof setInterval> | null = null;
 let lastSessionsHash = "";
 let projectRegistryListener: (() => void) | null = null;
+let agentStatusWatcher: AgentStatusWatcher | null = null;
 
 function snapshotSessionsHash(): string {
   try {
@@ -104,6 +112,30 @@ function maybeStopProjectRegistryListener(): void {
   if (allClients.size > 0 || !projectRegistryListener) return;
   projectRegistryEmitter.off("change", projectRegistryListener);
   projectRegistryListener = null;
+}
+
+/**
+ * Start (lazily) the agent-status watcher on the first connected client. It
+ * polls every pane's `@agent_state` and fans a session-scoped
+ * `agent-status.changed` frame to every client on each transition. Runs only
+ * while at least one client is connected, so there is no background cost
+ * otherwise.
+ */
+function ensureAgentStatusWatcher(): void {
+  if (agentStatusWatcher) return;
+  agentStatusWatcher = new AgentStatusWatcher({
+    read: () => readAgentStatesBySession(),
+    emit: (sessionName) => {
+      for (const client of allClients) client.broadcastAgentStatusChanged(sessionName);
+    },
+  });
+  agentStatusWatcher.start();
+}
+
+function maybeStopAgentStatusWatcher(): void {
+  if (allClients.size > 0 || !agentStatusWatcher) return;
+  agentStatusWatcher.stop();
+  agentStatusWatcher = null;
 }
 
 /**
@@ -209,6 +241,10 @@ export function handleWsEventsConnection(
     send({ type: "terminals.changed", sessionName });
   };
 
+  const broadcastAgentStatusChangedForClient = (sessionName: string): void => {
+    send({ type: "agent-status.changed", sessionName });
+  };
+
   // Per-connection subscription to the current workspace-registry singleton.
   const workspaceRegistry = getDefaultWorkspaceRegistry();
   const unsubWorkspaceAdded = workspaceRegistry.on("workspace.added", (workspace) =>
@@ -226,10 +262,12 @@ export function handleWsEventsConnection(
     broadcastActionComplete: broadcastActionCompleteForClient,
     broadcastConfigChanged: broadcastConfigChangedForClient,
     broadcastTerminalsChanged: broadcastTerminalsChangedForClient,
+    broadcastAgentStatusChanged: broadcastAgentStatusChangedForClient,
   };
   allClients.add(clientHandle);
   ensureSessionsPoller();
   ensureProjectRegistryListener();
+  ensureAgentStatusWatcher();
 
   // Server-initiated keepalive — mirrors the SSE behavior so middle-boxes
   // don't reap the connection.
@@ -264,6 +302,7 @@ export function handleWsEventsConnection(
     unsubWorkspaceRemoved();
     maybeStopSessionsPoller();
     maybeStopProjectRegistryListener();
+    maybeStopAgentStatusWatcher();
   };
 
   ws.on("message", (data) => {
@@ -333,4 +372,21 @@ export function _detachProjectRegistryListenerForTests(): void {
   if (!projectRegistryListener) return;
   projectRegistryEmitter.off("change", projectRegistryListener);
   projectRegistryListener = null;
+}
+
+/**
+ * Test-only hook to shut down the global agent-status watcher.
+ */
+export function _stopAgentStatusWatcherForTests(): void {
+  if (!agentStatusWatcher) return;
+  agentStatusWatcher.stop();
+  agentStatusWatcher = null;
+}
+
+/**
+ * Test-only hook to drive one agent-status poll cycle deterministically,
+ * bypassing the real interval.
+ */
+export function _tickAgentStatusWatcherForTests(): void {
+  agentStatusWatcher?.tick();
 }

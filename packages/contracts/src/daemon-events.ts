@@ -105,6 +105,21 @@ export const DaemonEventTerminalsChangedFrameSchemaZ = z
   })
   .strict();
 
+/**
+ * A pane's ground-truth agent status (`@agent_state`) transitioned inside a
+ * session the daemon serves. Session-scoped like `config.changed` /
+ * `terminals.changed`: clients that subscribed to `sessionName` re-fetch the
+ * application-shell resource so the agent graph reflects the new status without
+ * a manual refresh. tmux has no push for option changes, so the daemon polls
+ * and coalesces bursts into a single frame per session.
+ */
+export const DaemonEventAgentStatusChangedFrameSchemaZ = z
+  .object({
+    type: z.literal("agent-status.changed"),
+    sessionName: z.string(),
+  })
+  .strict();
+
 export const DaemonEventWorkspaceAddedFrameSchemaZ = z
   .object({
     type: z.literal("workspace.added"),
@@ -141,6 +156,7 @@ export const DaemonEventServerFrameSchemaZ = z.discriminatedUnion("type", [
   DaemonEventActionCompleteFrameSchemaZ,
   DaemonEventConfigChangedFrameSchemaZ,
   DaemonEventTerminalsChangedFrameSchemaZ,
+  DaemonEventAgentStatusChangedFrameSchemaZ,
   DaemonEventWorkspaceAddedFrameSchemaZ,
   DaemonEventWorkspaceRemovedFrameSchemaZ,
   DaemonEventProtocolErrorFrameSchemaZ,
