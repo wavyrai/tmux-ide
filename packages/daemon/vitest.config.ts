@@ -26,6 +26,7 @@ export default defineConfig({
       "src/lib/cli-action-bridge.test.ts",
       "src/lib/__tests__/*.test.ts",
       "src/command-center/actions/*.test.ts",
+      "src/command-center/resources/desktop-missions.test.ts",
       "src/command-center/workspace-pane-create-auth.test.ts",
       "src/control/*.test.ts",
       "src/tui/*.test.ts",

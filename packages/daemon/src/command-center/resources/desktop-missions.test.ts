@@ -13,6 +13,7 @@ import {
 
 const timestamp = "2026-07-22T10:00:00.000Z";
 const actor = { type: "user" as const, id: "pm", displayName: "Project manager" };
+const source = { type: "user" as const };
 
 function snapshot(history: MissionHistoryEntry[]) {
   return {
@@ -58,6 +59,7 @@ describe("desktop mission workspace projection", () => {
           acceptanceCriteria: [],
           constraints: [],
           labels: [],
+          source,
           actor,
         },
       });
@@ -101,6 +103,7 @@ describe("desktop mission workspace projection", () => {
           acceptanceCriteria: [],
           constraints: [],
           labels: [],
+          source,
           actor,
         },
       },
