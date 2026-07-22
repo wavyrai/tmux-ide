@@ -22,6 +22,7 @@ import { DomIcon } from "../experience/dom-icon.tsx";
 import type { DesktopApplicationShellResourceState } from "./connection-state.ts";
 import { createSolidDesktopApplicationShellResourceStore } from "./desktop-resource-store.ts";
 import { createHostDaemonTransport } from "./host-daemon-transport.ts";
+import type { NativeTerminalTransport } from "../terminal/native-terminal-transport.ts";
 import {
   createSolidDesktopWorkspaceCatalogStore,
   type DesktopWorkspaceCatalogState,
@@ -49,6 +50,9 @@ export interface DesktopLiveApplicationProps {
     source: PaneFrameActivationSource,
   ) => void;
   readonly onPaneGrip?: (intent: PaneFrameGripIntent, source: PaneFrameActivationSource) => void;
+  readonly terminalTransport?: NativeTerminalTransport | null;
+  readonly reducedMotion?: boolean;
+  readonly terminalThemeKey?: string;
 }
 
 interface DesktopConnectionSurfaceProps {
@@ -495,6 +499,10 @@ function LiveWorkspace(props: LiveWorkspaceProps) {
             windowState={props.windowState}
             input={ready().input}
             dataMode="runtime"
+            terminalWorkspaceName={props.target.workspaceName}
+            terminalTransport={props.terminalTransport}
+            reducedMotion={props.reducedMotion}
+            terminalThemeKey={props.terminalThemeKey}
             onCommand={props.onCommand}
             paneFrames={ready().paneFrames}
             onPaneAction={props.onPaneAction}
@@ -646,6 +654,9 @@ export function DesktopLiveApplication(props: DesktopLiveApplicationProps) {
           runtime={props.runtime}
           platform={props.platform}
           windowState={props.windowState}
+          terminalTransport={props.terminalTransport}
+          reducedMotion={props.reducedMotion}
+          terminalThemeKey={props.terminalThemeKey}
           onCommand={props.onCommand}
           onPaneAction={props.onPaneAction}
           onPaneGrip={props.onPaneGrip}

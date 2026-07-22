@@ -293,6 +293,104 @@ describe("visible DOM application shell", () => {
     );
   });
 
+  it("keeps terminal mount identity while semantic focus and daemon-confirmed zoom change", () => {
+    const onCommand = vi.fn<(invocation: ApplicationShellCommandInvocation) => void>();
+    const onPaneAction = vi.fn<NonNullable<DomApplicationShellProps["onPaneAction"]>>();
+    const [paneFrames, setPaneFrames] = createSignal<
+      NonNullable<DomApplicationShellProps["paneFrames"]>
+    >(
+      createDefaultDomPaneFrames().map((model) => ({
+        ...model,
+        appearance: { ...model.appearance, structure: "docked" as const },
+      })),
+    );
+    const root = document.createElement("div");
+    document.body.append(root);
+    disposers.push(
+      render(
+        () => (
+          <DomApplicationShell
+            host={host()}
+            runtime="browser"
+            platform="darwin"
+            windowState={WINDOW_STATE}
+            input={createDefaultDomShellInput()}
+            dataMode="runtime"
+            onCommand={onCommand}
+            paneFrames={paneFrames()}
+            onPaneAction={onPaneAction}
+          />
+        ),
+        root,
+      ),
+    );
+    const pane = root.querySelector<HTMLElement>('[data-pane-id="pane.pm"]')!;
+    const otherPane = root.querySelector<HTMLElement>('[data-pane-id="pane.implementer"]')!;
+    const zoom = pane.querySelector<HTMLButtonElement>('[data-command-id="pane.maximize.toggle"]')!;
+    const terminalMount = pane.querySelector(".terminal-surface__viewport");
+
+    expect(zoom.getAttribute("aria-label")).toBe("Maximize or restore");
+    zoom.click();
+    expect(onPaneAction).toHaveBeenCalledWith(
+      {
+        kind: "action",
+        paneId: "pane.pm",
+        actionId: "maximize-toggle",
+        commandId: "pane.maximize.toggle",
+      },
+      "keyboard",
+    );
+    expect(pane.getAttribute("data-structure")).toBe("docked");
+
+    setPaneFrames((current) =>
+      current.map((model) =>
+        model.pane.id === "pane.pm"
+          ? {
+              ...model,
+              appearance: { ...model.appearance, structure: "maximized" as const },
+              actions: model.actions.map((action) =>
+                action.commandId === "pane.maximize.toggle"
+                  ? {
+                      ...action,
+                      icon: "restore" as const,
+                      label: "Restore",
+                      description: "Restore pane layout",
+                      pressed: true,
+                    }
+                  : action,
+              ),
+            }
+          : model,
+      ),
+    );
+    expect(pane.getAttribute("data-structure")).toBe("maximized");
+    expect(root.querySelector(".agent-grid")?.getAttribute("data-has-maximized")).toBe("true");
+    expect(otherPane.getAttribute("data-structure")).toBe("docked");
+    expect(zoom.getAttribute("aria-label")).toBe("Restore pane layout");
+    expect(zoom.getAttribute("aria-pressed")).toBe("true");
+    expect(pane.querySelector(".terminal-surface__viewport")).toBe(terminalMount);
+
+    pane
+      .querySelector(".terminal-surface")!
+      .dispatchEvent(new Event("pointerdown", { bubbles: true }));
+    expect(onCommand).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        id: APPLICATION_SHELL_COMMAND_IDS.moveFocus,
+        args: { target: { kind: "pane", paneId: "pane.pm", input: "terminal" } },
+        source: { kind: "mouse", surface: "application-shell" },
+      }),
+    );
+    expect(pane.getAttribute("data-border-role")).toBe("focused");
+    expect(pane.getAttribute("data-terminal-input-owner")).toBe("true");
+    expect(otherPane.getAttribute("data-terminal-input-owner")).toBe("false");
+    expect(pane.querySelector(".terminal-surface__viewport")).toBe(terminalMount);
+    expect(styles).toContain(
+      '.agent-grid[data-has-maximized="true"] > .web-pane-frame:not([data-structure="maximized"])',
+    );
+    expect(styles).toContain("@media (prefers-reduced-motion: reduce)");
+    expect(styles).not.toContain("transition-all");
+  });
+
   it("keeps compact session identity and connection state accessible at 720px", () => {
     vi.spyOn(window, "innerWidth", "get").mockReturnValue(720);
     vi.spyOn(window, "innerHeight", "get").mockReturnValue(480);

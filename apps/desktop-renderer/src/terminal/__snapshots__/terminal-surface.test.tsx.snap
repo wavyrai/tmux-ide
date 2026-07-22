@@ -1,0 +1,3 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`TerminalSurface > renders an explicit unavailable surface without a production transport 1`] = `"<div class="terminal-surface" data-phase="unavailable" data-focused="false" data-reduced-motion="false" data-preserves-frame="false"><div class="terminal-surface__viewport" aria-label="Codex terminal"></div><div class="terminal-surface__state" aria-live="polite" role="status"><i aria-hidden="true"></i><strong>Native terminal unavailable</strong><span>The verified desktop terminal transport is not present in this build.</span></div></div>"`;

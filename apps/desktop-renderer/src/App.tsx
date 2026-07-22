@@ -22,6 +22,7 @@ import {
   DesktopLiveApplication,
   type DesktopDaemonRecoveryPhase,
 } from "./runtime/live-app-composition.tsx";
+import type { NativeTerminalTransport } from "./terminal/native-terminal-transport.ts";
 import type {
   PaneFrameActionIntent,
   PaneFrameActivationSource,
@@ -35,6 +36,7 @@ export interface AppProps {
   readonly shellInput?: ApplicationShellProjectionInputV1;
   readonly onCommand?: (invocation: ApplicationShellCommandInvocation) => void;
   readonly paneFrames?: readonly PaneFrameModel[];
+  readonly terminalTransport?: NativeTerminalTransport | null;
   readonly onPaneAction?: (
     intent: PaneFrameActionIntent,
     source: PaneFrameActivationSource,
@@ -137,6 +139,10 @@ export function App(props: AppProps = {}) {
   const effectiveTheme = () => theme() ?? bootstrap()?.theme ?? initialTheme;
   const effectiveWindow = () => windowState() ?? bootstrap()?.window ?? null;
   const experience = createMemo(() => createDomExperience({ hostTheme: effectiveTheme() }));
+  const terminalThemeKey = createMemo(() => {
+    const current = effectiveTheme();
+    return `${current?.mode ?? "system"}:${current?.highContrast ?? false}`;
+  });
 
   return (
     <div
@@ -184,6 +190,9 @@ export function App(props: AppProps = {}) {
                     platform={bootstrap()?.platform}
                     windowState={effectiveWindow()}
                     dataMode="preview"
+                    terminalTransport={props.terminalTransport}
+                    reducedMotion={experience().accessibility.reducedMotion}
+                    terminalThemeKey={terminalThemeKey()}
                     onCommand={props.onCommand}
                     paneFrames={props.paneFrames}
                     onPaneAction={props.onPaneAction}
@@ -246,6 +255,9 @@ export function App(props: AppProps = {}) {
                           platform={ready().platform}
                           windowState={effectiveWindow()}
                           daemonRecovery={daemonRecovery()}
+                          terminalTransport={props.terminalTransport}
+                          reducedMotion={experience().accessibility.reducedMotion}
+                          terminalThemeKey={terminalThemeKey()}
                           onRetryDaemonConnection={refreshDaemonConnection}
                           onDaemonIdentityMismatch={refreshDaemonConnection}
                           onCommand={props.onCommand}
@@ -268,6 +280,9 @@ export function App(props: AppProps = {}) {
                 windowState={effectiveWindow()}
                 input={injectedInput()}
                 dataMode="runtime"
+                terminalTransport={props.terminalTransport}
+                reducedMotion={experience().accessibility.reducedMotion}
+                terminalThemeKey={terminalThemeKey()}
                 onCommand={props.onCommand}
                 paneFrames={props.paneFrames}
                 onPaneAction={props.onPaneAction}

@@ -12,6 +12,7 @@ import {
   type DesktopWindowState,
   type FocusZone,
   type HostCapabilities,
+  type PaneAppearance,
   type ProductSurfaceId,
   type SemanticFocusTarget,
   resolvePaneAppearance,
@@ -44,6 +45,8 @@ import type {
 } from "../../../../packages/daemon/src/ui/workbench-dock/presenter.tsx";
 import { CommandPalette } from "./command-palette.tsx";
 import { DomIcon } from "./dom-icon.tsx";
+import { TerminalSurface } from "../terminal/terminal-surface.tsx";
+import type { NativeTerminalTransport } from "../terminal/native-terminal-transport.ts";
 import {
   createDefaultDomShellInput,
   createDefaultDomPaneFrames,
@@ -68,6 +71,10 @@ export interface DomApplicationShellProps {
   readonly windowState?: DesktopWindowState | null;
   readonly input?: ApplicationShellProjectionInputV1;
   readonly dataMode?: "runtime" | "preview";
+  readonly terminalWorkspaceName?: string;
+  readonly terminalTransport?: NativeTerminalTransport | null;
+  readonly reducedMotion?: boolean;
+  readonly terminalThemeKey?: string;
   readonly onCommand?: (invocation: ApplicationShellCommandInvocation) => void;
   readonly paneFrames?: readonly PaneFrameModel[];
   readonly onPaneAction?: (
@@ -244,6 +251,49 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
       ];
     });
   });
+  const appearanceWithSemanticFocus = (
+    appearance: PaneAppearance,
+    focused: boolean,
+  ): PaneAppearance =>
+    resolvePaneAppearance({
+      structure: appearance.structure,
+      applicationFocus: {
+        pane: focused,
+        terminalInput: focused,
+        windowActive: appearance.header.windowActive,
+      },
+      agentActivity: appearance.header.agentActivity,
+      domainStatus: appearance.status.domainStatus,
+      attention: appearance.status.attention,
+      layoutInteraction: {
+        editable: true,
+        selected: appearance.accessibility.layoutSelected,
+        dragging: false,
+        resizing: false,
+        previewing: false,
+      },
+      controlInteraction: {
+        hover: appearance.action.hover,
+        focusVisible: appearance.action.focusVisible,
+        pressed: appearance.action.pressed,
+        disabled: appearance.action.disabled,
+        loading: appearance.action.loading,
+      },
+    });
+  const renderedPaneFrames = createMemo<readonly PaneFrameModel[]>(() => {
+    const localTerminalFocus = shell().focus.terminalInputPaneId;
+    if (!localTerminalFocus) return paneFrames();
+    return paneFrames().map((model) => ({
+      ...model,
+      appearance: appearanceWithSemanticFocus(
+        model.appearance,
+        localTerminalFocus === model.pane.id,
+      ),
+    }));
+  });
+  const hasMaximizedPane = createMemo(() =>
+    renderedPaneFrames().some(({ appearance }) => appearance.structure === "maximized"),
+  );
   const dock = createMemo(() => projectDomWorkbenchDock(shell(), viewport()));
   const paletteEntries = createMemo(() => createDomPaletteEntries(shell()));
   const statusStrip = createMemo(() => {
@@ -645,8 +695,8 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
               </span>
               <span>{shell().sidebar.agents.length} agents</span>
             </header>
-            <div class="agent-grid">
-              <Index each={paneFrames()}>
+            <div class="agent-grid" data-has-maximized={hasMaximizedPane()}>
+              <Index each={renderedPaneFrames()}>
                 {(paneFrame) => {
                   const agent = createMemo(() =>
                     shell().sidebar.agents.find((item) => item.paneId === paneFrame().pane.id),
@@ -661,11 +711,36 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
                       renderGripIcon={(icon) => <DomIcon id={icon} usage="action" />}
                     >
                       <div class="agent-pane__body" data-focus-zone="terminal">
-                        <span class="agent-prompt">
-                          {agent()?.harness ?? paneFrame().subtitle ?? paneFrame().pane.kind}
+                        <TerminalSurface
+                          target={{
+                            workspaceName: props.terminalWorkspaceName ?? input().workspace.id,
+                            semanticPaneId: paneFrame().pane.id,
+                          }}
+                          title={paneFrame().title}
+                          transport={props.terminalTransport}
+                          focused={paneFrame().appearance.accessibility.terminalInputOwner}
+                          reducedMotion={props.reducedMotion}
+                          themeKey={props.terminalThemeKey}
+                          onFocus={(source) =>
+                            dispatch(
+                              applicationShellCommandInvocation(
+                                APPLICATION_SHELL_COMMAND_IDS.moveFocus,
+                                {
+                                  target: {
+                                    kind: "pane",
+                                    paneId: paneFrame().pane.id,
+                                    input: "terminal",
+                                  },
+                                },
+                                { kind: source, surface: "application-shell" },
+                              ),
+                            )
+                          }
+                        />
+                        <span class="sr-only">
+                          {agent()?.harness ?? paneFrame().subtitle ?? paneFrame().pane.kind} ·
+                          Activity: {agent()?.activity ?? paneFrame().status?.label ?? "idle"}
                         </span>
-                        <p>Activity: {agent()?.activity ?? paneFrame().status?.label ?? "idle"}</p>
-                        <small>{paneFrame().pane.id}</small>
                       </div>
                     </WebPaneFrame>
                   );
