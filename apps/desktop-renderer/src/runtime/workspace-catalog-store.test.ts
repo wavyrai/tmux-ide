@@ -813,6 +813,6 @@ describe("desktop live workspace catalog and selection store", () => {
 
 describe("workspace catalog host contract seam", () => {
   it("uses the current versioned facade without exposing a generic transport", () => {
-    expect(DESKTOP_HOST_API_VERSION).toBe(9);
+    expect(DESKTOP_HOST_API_VERSION).toBe(10);
   });
 });

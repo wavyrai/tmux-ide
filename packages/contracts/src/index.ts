@@ -54,3 +54,4 @@ export * from "./cohesion-fixture.ts";
 export * from "./daemon-wire.ts";
 export * from "./daemon-resources.ts";
 export * from "./daemon-events.ts";
+export * from "./desktop-update.ts";

@@ -28,11 +28,23 @@ import {
 import { DesktopQuitCoordinator } from "./desktop-quit-coordinator.ts";
 import {
   publishTheme,
+  publishUpdateStatus,
   publishWindowState,
   registerHostIpc,
   type RegisteredHostIpc,
   type TrustedRendererLocation,
 } from "./host-ipc.ts";
+import { DesktopUpdater } from "./update/desktop-updater.ts";
+import { unsignedFeedManifestVerifier } from "./update/update-verify.ts";
+import { applyStagedUpdate } from "./update/staged-update.ts";
+import {
+  clearPendingMarker,
+  createStagedUpdateFilesystem,
+  createUpdaterIo,
+  readPendingMarker,
+  resolveUpdateStateDir,
+  resolveUpdaterConfig,
+} from "./update/update-runtime.ts";
 import {
   developmentRendererContentSecurityPolicy,
   installPackagedRendererProtocol,
@@ -84,6 +96,39 @@ function displayWorkAreas(): DesktopDisplayWorkArea[] {
   return screen.getAllDisplays().map(({ workArea }) => ({ ...workArea }));
 }
 
+/** The on-disk install target a staged update would swap into place. */
+function resolveInstallPath(): string {
+  const exe = app.getPath("exe");
+  // macOS: .app/Contents/MacOS/<exe> → the .app bundle root.
+  if (process.platform === "darwin") return join(exe, "..", "..", "..");
+  return join(exe, "..");
+}
+
+/**
+ * Apply a verified update staged by a PRIOR session, before anything else comes
+ * up. Runs only for a packaged app; a dev run is never touched. Normally a no-op
+ * (no marker). On a successful swap the process relaunches to run the new bytes.
+ * Returns true when startup should halt because a relaunch is in progress.
+ */
+async function applyPendingUpdateOnLaunch(): Promise<boolean> {
+  if (!app.isPackaged) return false;
+  const stateDir = resolveUpdateStateDir(app.getPath("userData"));
+  const marker = await readPendingMarker(stateDir);
+  if (!marker) return false;
+  const outcome = await applyStagedUpdate(
+    marker,
+    resolveInstallPath(),
+    createStagedUpdateFilesystem(),
+  );
+  await clearPendingMarker(stateDir);
+  if (outcome.status === "applied") {
+    app.relaunch();
+    app.exit(0);
+    return true;
+  }
+  return false;
+}
+
 function trustedDevelopmentUrl(): string | null {
   const raw = process.env.TMUX_IDE_RENDERER_URL;
   if (!raw) return null;
@@ -112,6 +157,8 @@ export async function runDesktopApp(deps: DesktopAppDependencies = {}): Promise<
   let disposePackagedRendererProtocol = (): void => undefined;
   let disposeDevelopmentRendererCsp = (): void => undefined;
   let onThemeUpdated: (() => void) | null = null;
+  let desktopUpdater: DesktopUpdater | null = null;
+  let releaseUpdateStatus: (() => void) | null = null;
   const daemonPreflight = deps.daemonPreflight ?? canonicalDaemonPreflight;
   const onOwnedDaemonCrash = (_snapshot: DesktopDaemonSupervisorSnapshot): void => {
     void daemonResources?.refreshConnection().catch((error: unknown) => {
@@ -130,6 +177,8 @@ export async function runDesktopApp(deps: DesktopAppDependencies = {}): Promise<
     if (persistTimer) clearTimeout(persistTimer);
     if (rendererPolicyReloadTimer) clearTimeout(rendererPolicyReloadTimer);
     if (onThemeUpdated) nativeTheme.removeListener("updated", onThemeUpdated);
+    releaseUpdateStatus?.();
+    desktopUpdater?.dispose();
     // Renderer terminal capabilities and the main-process broker are retired
     // before the exact Electron-owned daemon child is signalled.
     const results = await Promise.allSettled([
@@ -146,9 +195,15 @@ export async function runDesktopApp(deps: DesktopAppDependencies = {}): Promise<
       .map((result) => result.reason);
     if (failures.length > 0) throw new AggregateError(failures, "desktop host cleanup failed");
   };
+  // When an update is staged, quit becomes apply+quit: the marker is already
+  // durable, so this only flips status to "applying" (the swap runs next launch)
+  // before the rest of the host tears down. Never yanks the daemon or terminals.
+  const finalizePendingUpdate = async (): Promise<void> => {
+    await desktopUpdater?.finalizePendingUpdateForQuit();
+  };
   const quitCoordinator = new DesktopQuitCoordinator({
     app,
-    shutdownTasks: () => [persistBounds, teardownDesktopHost],
+    shutdownTasks: () => [finalizePendingUpdate, persistBounds, teardownDesktopHost],
     onShutdownError: (error: unknown) => console.error("Desktop shutdown was incomplete", error),
   });
 
@@ -158,6 +213,27 @@ export async function runDesktopApp(deps: DesktopAppDependencies = {}): Promise<
 
   await app.whenReady();
   if (quitCoordinator.quitRequested) return;
+
+  // A staged update from a prior session is swapped in here, before the daemon or
+  // any window exists. On a successful swap this relaunches and never returns.
+  if (await applyPendingUpdateOnLaunch()) return;
+
+  desktopUpdater = new DesktopUpdater({
+    config: resolveUpdaterConfig({
+      enabled: app.isPackaged,
+      platformKey: `${process.platform}-${process.arch}`,
+      currentVersion: app.getVersion(),
+    }),
+    io: createUpdaterIo({
+      stateDir: resolveUpdateStateDir(app.getPath("userData")),
+      net: { fetch: (url) => net.fetch(url) },
+      logger: (message, detail) => console.warn(`[update] ${message}`, detail ?? {}),
+    }),
+    verifier: unsignedFeedManifestVerifier(),
+  });
+  releaseUpdateStatus = desktopUpdater.subscribe((status) =>
+    publishUpdateStatus(currentWindow, status),
+  );
 
   const desktopSession = session.defaultSession;
   desktopSession.setPermissionCheckHandler(() => false);
@@ -340,6 +416,11 @@ export async function runDesktopApp(deps: DesktopAppDependencies = {}): Promise<
         return result.canceled ? null : (result.filePaths[0] ?? null);
       },
       getTheme: themeState,
+      getUpdateStatus: () => desktopUpdater?.status() ?? {
+        phase: "idle",
+        currentVersion: app.getVersion(),
+        availableVersion: null,
+      },
       trustedRendererLocation,
     });
   } catch (error) {
@@ -370,6 +451,9 @@ export async function runDesktopApp(deps: DesktopAppDependencies = {}): Promise<
 
   try {
     await createWindow();
+    // Non-blocking: the launch check and the modest cadence start only after the
+    // window is up, so nothing about the update path ever gates startup.
+    if (!smokeTest) desktopUpdater.start();
     if (smokeTest) {
       console.log(`tmux-ide desktop smoke ready daemon=${daemonSupervisor.snapshot().phase}`);
       app.quit();

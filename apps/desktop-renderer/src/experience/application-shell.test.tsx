@@ -67,6 +67,14 @@ function host(): HostCapabilities {
       getState: async () => ({ mode: "dark", highContrast: false, reducedMotion: false }),
       onChanged: () => () => undefined,
     },
+    update: {
+      getStatus: async () => ({
+        phase: "idle" as const,
+        currentVersion: "test",
+        availableVersion: null,
+      }),
+      onStatusChanged: () => () => undefined,
+    },
     daemon: {
       capabilities: async () => ({
         status: "error" as const,

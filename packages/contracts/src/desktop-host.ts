@@ -6,6 +6,7 @@ import {
 } from "./application-shell-resource.ts";
 import { DaemonInstanceIdentitySchemaZ } from "./daemon-wire.ts";
 import { CommandAvailabilitySchemaZ } from "./commands.ts";
+import type { DesktopUpdateStatus } from "./desktop-update.ts";
 import {
   WorkspaceFilePreviewEnvelopeV1SchemaZ,
   WorkspaceFilesCatalogEnvelopeV1SchemaZ,
@@ -33,7 +34,7 @@ import type {
 } from "./app-window-mutation.ts";
 
 /** Versioned, deliberately narrow bridge exposed by a desktop host preload. */
-export const DESKTOP_HOST_API_VERSION = 9 as const;
+export const DESKTOP_HOST_API_VERSION = 10 as const;
 
 /** Stable tuple origin for the packaged, sandboxed Electron renderer. */
 export const DESKTOP_PACKAGED_RENDERER_SCHEME = "tmux-ide" as const;
@@ -513,6 +514,15 @@ export interface HostCapabilities {
   readonly theme: {
     getState(): Promise<DesktopThemeState>;
     onChanged(listener: (state: DesktopThemeState) => void): DesktopHostUnsubscribe;
+  };
+  /**
+   * Packaged-app auto-update. Renderer-safe by construction: a coarse phase plus
+   * two version strings, never a URL, path, checksum, or signature. The renderer
+   * can only observe; the check/download/verify/stage/apply all run in main.
+   */
+  readonly update: {
+    getStatus(): Promise<DesktopUpdateStatus>;
+    onStatusChanged(listener: (status: DesktopUpdateStatus) => void): DesktopHostUnsubscribe;
   };
   readonly daemon: {
     capabilities(): Promise<DesktopDaemonCapabilitiesResult>;

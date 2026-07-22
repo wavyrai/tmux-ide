@@ -149,6 +149,7 @@ describe("host IPC trust boundary", () => {
       requestQuit: vi.fn(),
       selectProjectDirectory,
       getTheme: () => ({ mode: "dark", highContrast: false, reducedMotion: false }),
+      getUpdateStatus: () => ({ phase: "idle", currentVersion: "test", availableVersion: null }),
       trustedRendererLocation: {
         kind: "packaged-url",
         url: "file:///trusted/renderer/index.html",
@@ -537,6 +538,7 @@ describe("host IPC trust boundary", () => {
       requestQuit: vi.fn(),
       selectProjectDirectory: async () => null,
       getTheme: () => ({ mode: "dark", highContrast: false, reducedMotion: false }),
+      getUpdateStatus: () => ({ phase: "idle", currentVersion: "test", availableVersion: null }),
       trustedRendererLocation: {
         kind: "packaged-url",
         url: "file:///trusted/renderer/index.html",
@@ -668,6 +670,7 @@ describe("host IPC trust boundary", () => {
         requestQuit: vi.fn(),
         selectProjectDirectory: async () => null,
         getTheme: () => ({ mode: "dark", highContrast: false, reducedMotion: false }),
+        getUpdateStatus: () => ({ phase: "idle", currentVersion: "test", availableVersion: null }),
         trustedRendererLocation,
       });
       const event = {

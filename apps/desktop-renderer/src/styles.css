@@ -304,6 +304,33 @@ select:focus-visible,
   white-space: nowrap;
 }
 
+.titlebar__update-chip {
+  -webkit-app-region: no-drag;
+  align-self: center;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-right: 8px;
+  padding: 0 9px;
+  border-radius: 999px;
+  color: var(--tmux-ide-status-success);
+  background: color-mix(in srgb, var(--tmux-ide-status-success) 12%, transparent);
+  font-size: 10px;
+  line-height: 20px;
+  white-space: nowrap;
+}
+
+.titlebar__update-chip-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--tmux-ide-status-success);
+}
+
+.titlebar__update-chip-hint {
+  color: var(--tmux-ide-text-muted);
+}
+
 .primary-tabs {
   -webkit-app-region: no-drag;
   display: flex;

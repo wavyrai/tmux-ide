@@ -51,6 +51,7 @@ import type {
 } from "../../../../packages/daemon/src/ui/workbench-dock/presenter.tsx";
 import { CommandPalette } from "./command-palette.tsx";
 import { CreatePaneFlow } from "./create-pane-flow.tsx";
+import { UpdateChip } from "./update-chip.tsx";
 import { MissionActivitySurface } from "./mission-activity-surface.tsx";
 import { WorkspaceFilesSurface, type FilesSurfaceProps } from "./workspace-files-surface.tsx";
 import {
@@ -736,6 +737,7 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
           }
         />
         <div class="titlebar__drag titlebar__spacer" />
+        <UpdateChip host={props.host} />
         <Show when={props.createPaneFlow}>
           {(flow) => (
             <CreatePaneFlow

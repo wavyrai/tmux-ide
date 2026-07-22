@@ -22,6 +22,7 @@ import {
   DesktopHostBootstrapSchemaZ,
   DesktopMenuResultSchemaZ,
   DesktopThemeStateSchemaZ,
+  DesktopUpdateStatusSchemaZ,
   DesktopWindowStateSchemaZ,
   TerminalAttachRequestSchemaZ,
   TerminalAttachmentIssueResultSchemaZ,
@@ -36,6 +37,7 @@ import {
   type DesktopDaemonFetchWorkspaceFilePreviewRequest,
   type DesktopDaemonFetchWorkspaceFilesRequest,
   type DesktopThemeState,
+  type DesktopUpdateStatus,
   type DesktopWindowState,
   type HostCapabilities,
   type TerminalAttachRequest,
@@ -127,6 +129,16 @@ const capabilities: HostCapabilities = Object.freeze({
       onValidatedEvent(
         HOST_IPC.themeChanged,
         (value) => DesktopThemeStateSchemaZ.parse(value),
+        listener,
+      ),
+  }),
+  update: Object.freeze({
+    getStatus: async () =>
+      DesktopUpdateStatusSchemaZ.parse(await ipcRenderer.invoke(HOST_IPC.updateGetStatus)),
+    onStatusChanged: (listener: (status: DesktopUpdateStatus) => void) =>
+      onValidatedEvent(
+        HOST_IPC.updateStatusChanged,
+        (value) => DesktopUpdateStatusSchemaZ.parse(value),
         listener,
       ),
   }),

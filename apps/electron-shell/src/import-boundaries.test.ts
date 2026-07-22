@@ -57,6 +57,7 @@ describe("desktop process boundaries", () => {
       HOST_IPC.menuShowApplication,
       HOST_IPC.workspaceOpenProjectDirectory,
       HOST_IPC.themeGetState,
+      HOST_IPC.updateGetStatus,
       HOST_IPC.daemonRefreshConnection,
       HOST_IPC.daemonCapabilities,
       HOST_IPC.daemonCreateWorkspacePane,

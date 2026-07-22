@@ -165,6 +165,14 @@ function createHostHarness() {
         return stopTheme;
       },
     },
+    update: {
+      getStatus: async () => ({
+        phase: "idle" as const,
+        currentVersion: "test",
+        availableVersion: null,
+      }),
+      onStatusChanged: () => () => undefined,
+    },
     daemon: {
       capabilities: vi.fn(async () => ({
         status: "ok" as const,

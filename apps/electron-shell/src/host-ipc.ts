@@ -19,6 +19,7 @@ import {
   DesktopDaemonSubscriptionIdSchemaZ,
   DesktopDaemonSubscribeWireResultSchemaZ,
   DesktopHostBootstrapSchemaZ,
+  DesktopUpdateStatusSchemaZ,
   TerminalAttachRequestSchemaZ,
   TerminalAttachmentIssueMutationRequestSchemaZ,
   TerminalAttachmentIssueResultSchemaZ,
@@ -32,6 +33,7 @@ import {
   type DesktopHostBootstrap,
   type DesktopPlatform,
   type DesktopThemeState,
+  type DesktopUpdateStatus,
   type DesktopWindowState,
 } from "@tmux-ide/contracts";
 
@@ -53,6 +55,7 @@ export interface HostIpcDependencies {
   requestQuit: () => void;
   selectProjectDirectory: (window: BrowserWindow) => Promise<string | null>;
   getTheme: () => DesktopThemeState;
+  getUpdateStatus: () => DesktopUpdateStatus;
   trustedRendererLocation: TrustedRendererLocation;
 }
 
@@ -349,6 +352,11 @@ export function registerHostIpc(deps: HostIpcDependencies): RegisteredHostIpc {
   handle(HOST_IPC.themeGetState, (event) => {
     trustedRendererAuthority(event);
     return deps.getTheme();
+  });
+
+  handle(HOST_IPC.updateGetStatus, (event) => {
+    trustedRendererAuthority(event);
+    return DesktopUpdateStatusSchemaZ.parse(deps.getUpdateStatus());
   });
 
   handle(HOST_IPC.daemonRefreshConnection, async (event, ...args) => {
@@ -798,4 +806,13 @@ export function publishWindowState(window: BrowserWindow): void {
 
 export function publishTheme(window: BrowserWindow | null, theme: DesktopThemeState): void {
   if (window && !window.isDestroyed()) window.webContents.send(HOST_IPC.themeChanged, theme);
+}
+
+export function publishUpdateStatus(
+  window: BrowserWindow | null,
+  status: DesktopUpdateStatus,
+): void {
+  if (window && !window.isDestroyed()) {
+    window.webContents.send(HOST_IPC.updateStatusChanged, DesktopUpdateStatusSchemaZ.parse(status));
+  }
 }

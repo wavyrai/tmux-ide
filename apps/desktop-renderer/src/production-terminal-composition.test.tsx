@@ -231,6 +231,14 @@ function createHostHarness() {
       getState: async () => ({ mode: "dark", highContrast: false, reducedMotion: false }),
       onChanged: () => () => undefined,
     },
+    update: {
+      getStatus: async () => ({
+        phase: "idle" as const,
+        currentVersion: "test",
+        availableVersion: null,
+      }),
+      onStatusChanged: () => () => undefined,
+    },
     daemon: {
       capabilities: vi.fn(async () => ({
         status: "ok" as const,
@@ -378,7 +386,7 @@ describe("production terminal composition", () => {
       return value!;
     });
     expect(placement.disabled).toBe(false);
-    expect(harness.host.apiVersion).toBe(9);
+    expect(harness.host.apiVersion).toBe(10);
     dispose();
   });
 

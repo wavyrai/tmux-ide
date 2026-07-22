@@ -107,6 +107,14 @@ export function createBrowserHostCapabilities(): HostCapabilities {
       getState: async () => browserTheme(),
       onChanged: subscribeMedia,
     },
+    update: {
+      getStatus: async () => ({
+        phase: "idle",
+        currentVersion: "browser-dev",
+        availableVersion: null,
+      }),
+      onStatusChanged: () => () => undefined,
+    },
     daemon: {
       capabilities: async () => ({ status: "error", error: PREVIEW_DAEMON_ERROR }),
       mutateAppWindow: async () => ({ status: "error", error: PREVIEW_DAEMON_ERROR }),
@@ -155,6 +163,8 @@ function hasNarrowFacade(value: unknown): value is HostCapabilities {
     typeof candidate.workspace?.openProjectDirectory === "function" &&
     typeof candidate.theme?.getState === "function" &&
     typeof candidate.theme?.onChanged === "function" &&
+    typeof candidate.update?.getStatus === "function" &&
+    typeof candidate.update?.onStatusChanged === "function" &&
     typeof candidate.daemon?.mutateAppWindow === "function" &&
     typeof candidate.daemon?.capabilities === "function" &&
     typeof candidate.daemon?.createWorkspacePane === "function" &&
