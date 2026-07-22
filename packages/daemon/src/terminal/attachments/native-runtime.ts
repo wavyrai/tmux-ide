@@ -45,6 +45,7 @@ import {
   type TmuxAttachmentCommandResult,
   type TmuxAttachmentCommandRunner,
 } from "./tmux-view-executor.ts";
+import type { AgentStatusPaneFacts, AgentStatusProbe } from "./agent-status-probe.ts";
 
 const MAX_TMUX_OUTPUT_BYTES = 128 * 1024;
 const MAX_DISCOVERED_WORKSPACES = 128;
@@ -312,10 +313,11 @@ export interface NativeApplicationShellSessionSnapshot {
   readonly runtimeSessionId: string;
   readonly dir: string;
   readonly catalogIssue: NativeTerminalInventoryCatalogIssue | null;
-  readonly panes: readonly Omit<
+  readonly panes: readonly (Omit<
     NativeTerminalInventoryPaneSnapshot,
     "workspaceName" | "sessionName" | "sessionId" | "sessionWindowCount" | "dir"
-  >[];
+  > &
+    Partial<AgentStatusPaneFacts>)[];
 }
 
 const SESSION_FORMAT = ["#{session_name}", "#{session_id}", SESSION_WIRE_SENTINEL].join(
@@ -748,6 +750,21 @@ export interface NativeTerminalAttachmentRuntimeOptions {
   readonly lease?: LeaseRuntimeOptions;
   readonly launcher?: LauncherRuntimeOptions;
   readonly admission?: AdmissionRuntimeOptions;
+  /**
+   * Ground-truth agent-status probe for the application-shell inventory. When
+   * omitted (e.g. unit tests, catalog-only runtimes) the projection falls back
+   * to its legacy shell-vs-active heuristic. A directly-injected probe wins;
+   * otherwise {@link agentStatusProbeFactory} is built from the runtime's own
+   * pinned runner so option/capture IO shares the attachment socket authority.
+   */
+  readonly agentStatusProbe?: AgentStatusProbe;
+  /**
+   * Build the probe from the runtime's pinned tmux runner (production wiring in
+   * daemon-embed). Ignored when {@link agentStatusProbe} is provided directly.
+   */
+  readonly agentStatusProbeFactory?: (deps: {
+    readonly run: (argv: readonly string[]) => string | null;
+  }) => AgentStatusProbe;
 }
 
 /** One daemon-generation owner for catalog, grouped view, PTY, lease and admission state. */
@@ -758,6 +775,7 @@ export class NativeTerminalAttachmentRuntime {
   readonly #serializer: TmuxAttachmentOperationSerializer;
   readonly #registry: WorkspaceRegistry;
   readonly #discoverTerminalInventory: () => Promise<NativeTerminalInventorySnapshot>;
+  readonly #agentStatusProbe: AgentStatusProbe | null;
   #lifecycle: "initializing" | "ready" | "failed" | "disposing" | "disposed" = "initializing";
   #disposePromise: Promise<void> | null = null;
 
@@ -862,6 +880,16 @@ export class NativeTerminalAttachmentRuntime {
     this.#serializer = serializer;
     this.#registry = options.registry;
     this.#discoverTerminalInventory = discoverTerminalInventory;
+    this.#agentStatusProbe =
+      options.agentStatusProbe ??
+      (options.agentStatusProbeFactory
+        ? options.agentStatusProbeFactory({
+            run: (argv) => {
+              const result = runner.run({ executable: "tmux", argv });
+              return result.status === "ok" ? result.stdout : null;
+            },
+          })
+        : null);
   }
 
   /**
@@ -896,6 +924,25 @@ export class NativeTerminalAttachmentRuntime {
           : inventory.catalog.duplicateRuntimePaneBinding
             ? "duplicate-runtime-pane-binding"
             : null;
+    // Ground-truth agent facts (authority + scrape fallback). All IO stays here;
+    // the resource projector composes them purely. Absent probe → no facts →
+    // the projector keeps its legacy heuristic. Never fail discovery over this.
+    let agentFacts: ReadonlyMap<string, AgentStatusPaneFacts> = new Map();
+    if (this.#agentStatusProbe) {
+      try {
+        agentFacts = this.#agentStatusProbe.probe({
+          sessionId: active.sessionId,
+          nowSec: Math.floor(Date.now() / 1000),
+          panes: panes.map((pane) => ({
+            runtimePaneId: pane.runtimePaneId,
+            currentCommand: pane.currentCommand,
+            title: pane.title,
+          })),
+        });
+      } catch {
+        agentFacts = new Map();
+      }
+    }
     return Object.freeze({
       name: workspace.sessionName,
       runtimeSessionId: active.sessionId,
@@ -914,7 +961,7 @@ export class NativeTerminalAttachmentRuntime {
             sessionWindowCount: _sessionWindowCount,
             dir: _dir,
             ...pane
-          }) => Object.freeze(pane),
+          }) => Object.freeze({ ...pane, ...(agentFacts.get(pane.runtimePaneId) ?? {}) }),
         ),
       ),
     });

@@ -8,6 +8,10 @@ import {
   SemanticProductIdSchemaZ,
   TerminalAttachmentSemanticPaneIdSchemaZ,
   projectApplicationShellV1,
+  resolveAgentStatusPresentation,
+  type AgentActivity,
+  type AgentGraphDetectStatus,
+  type AgentGraphStatusSource,
   type ApplicationShellProjectionInputV1,
   type ApplicationShellProjectionInputV2,
   type ApplicationShellProjectionInputV3,
@@ -16,6 +20,11 @@ import {
   type TerminalResourceAttachability,
   type TerminalResourceUnavailableReason,
 } from "@tmux-ide/contracts";
+import {
+  parseAuthority,
+  sanitizeAgentText,
+  type InstantState,
+} from "../../tui/detect/classify.ts";
 
 interface ApplicationShellPanePresentationFacts {
   /** Durable tmux-ide pane stamp. A live `%pane_id` is never accepted as identity. */
@@ -27,6 +36,27 @@ interface ApplicationShellPanePresentationFacts {
   readonly role: string | null;
   readonly name: string | null;
   readonly type: string | null;
+  /**
+   * Ground-truth agent facts gathered by the IO discovery layer. All four are
+   * optional so pre-inventory (legacy) discovery — which never gathered them —
+   * keeps its historical shell-vs-active heuristic instead of collapsing to
+   * "disconnected". The native inventory backend always populates them.
+   *
+   * Raw `@agent_state` (`"<state>:<epoch>"`); parsed authority-first by
+   * {@link parseAuthority} in the pure layer (never crosses the wire).
+   */
+  readonly agentStateRaw?: string | null;
+  /** Raw `@agent_status_text`; sanitized + freshness-gated in the pure layer. */
+  readonly agentStatusTextRaw?: string | null;
+  /** Raw `@agent_display_name`; sanitized + freshness-gated in the pure layer. */
+  readonly agentDisplayNameRaw?: string | null;
+  /**
+   * Screen-scrape fallback verdict the discovery layer resolved for panes
+   * WITHOUT fresh authority. `null` means authority was fresh (scrape skipped);
+   * an {@link InstantState} is a scraped result; `undefined` means the facts
+   * source performs no agent detection at all (legacy discovery).
+   */
+  readonly agentScrapeState?: InstantState | null;
 }
 
 export interface ApplicationShellPaneFacts extends ApplicationShellPanePresentationFacts {
@@ -213,8 +243,85 @@ function isAgentPane(pane: ApplicationShellPanePresentationFacts): boolean {
   );
 }
 
-function agentActivity(pane: ApplicationShellPanePresentationFacts): "idle" | "running" {
+/**
+ * Legacy pre-inventory heuristic: a bare shell is idle, anything else is
+ * running. Retained ONLY for facts sources that gather no agent options (the
+ * standalone command-center V1 discovery); the native inventory path resolves
+ * ground truth via {@link resolveAgentPresentation} instead.
+ */
+function legacyAgentActivity(pane: ApplicationShellPanePresentationFacts): "idle" | "running" {
   return /^(?:ba|z|fi)?sh$/u.test(pane.currentCommand.trim().toLowerCase()) ? "idle" : "running";
+}
+
+/** The resolved, wire-safe agent presentation for one pane. */
+export interface ResolvedAgentPresentation {
+  /** Sidebar `activity` enum (`AGENT_ACTIVITY_IDS`). */
+  readonly activity: AgentActivity;
+  /** Whether the pane is asking for attention (blocked). */
+  readonly attention: boolean;
+  /**
+   * Where the status came from. Internal for now — the strict sidebar/inventory
+   * schemas carry no source field; the later agent-graph overlay card surfaces
+   * it on the wire.
+   */
+  readonly statusSource: AgentGraphStatusSource;
+  /** Narrowed detect status (the domain-status source). Internal, as above. */
+  readonly detectStatus: AgentGraphDetectStatus;
+  /** Sanitized `@agent_display_name`, present only alongside a fresh authority stamp. */
+  readonly displayName?: string;
+  /** Sanitized `@agent_status_text`, present only alongside a fresh authority stamp. */
+  readonly statusText?: string;
+}
+
+/**
+ * PURE — resolve one pane's ground-truth agent presentation.
+ *
+ * Authority-first: a fresh `@agent_state` stamp (parsed with the staleness
+ * guard in {@link parseAuthority}) OUTRANKS scraping and maps through the shared
+ * {@link resolveAgentStatusPresentation} table. When authority is absent or
+ * stale, the discovery layer's screen-scrape verdict (`agentScrapeState`) is
+ * used. Display metadata (`@agent_status_text` / `@agent_display_name`) is
+ * trusted only while authority is fresh — the options carry no epoch of their
+ * own, so a stale/absent stamp drops them rather than lying (mirrors the
+ * cockpit's `agentMetadataFor`). A facts source that gathered no agent options
+ * (legacy discovery, `agentScrapeState === undefined`) falls back to the
+ * historical {@link legacyAgentActivity} heuristic.
+ */
+export function resolveAgentPresentation(
+  pane: ApplicationShellPanePresentationFacts,
+  nowSec: number,
+): ResolvedAgentPresentation {
+  const authority = parseAuthority(pane.agentStateRaw ?? undefined, nowSec);
+  if (authority !== null) {
+    const presentation = resolveAgentStatusPresentation({ status: authority, stale: false });
+    const displayName = sanitizeAgentText(pane.agentDisplayNameRaw ?? undefined);
+    const statusText = sanitizeAgentText(pane.agentStatusTextRaw ?? undefined);
+    return {
+      activity: presentation.activity,
+      attention: presentation.attention,
+      statusSource: "authority",
+      detectStatus: authority,
+      ...(displayName !== undefined ? { displayName } : {}),
+      ...(statusText !== undefined ? { statusText } : {}),
+    };
+  }
+  if (pane.agentScrapeState !== undefined) {
+    const scrape: AgentGraphDetectStatus = pane.agentScrapeState ?? "unknown";
+    const presentation = resolveAgentStatusPresentation({ status: scrape, stale: false });
+    return {
+      activity: presentation.activity,
+      attention: presentation.attention,
+      statusSource: scrape === "unknown" ? "unknown" : "scrape",
+      detectStatus: scrape,
+    };
+  }
+  const legacy = legacyAgentActivity(pane);
+  return {
+    activity: legacy,
+    attention: false,
+    statusSource: "unknown",
+    detectStatus: legacy === "idle" ? "idle" : "working",
+  };
 }
 
 function dockTools(projectId: string): ApplicationShellProjectionInputV1["dock"]["tools"] {
@@ -280,6 +387,7 @@ function projectApplicationShellResourceV1Core(
     readonly panes: readonly ApplicationShellPanePresentationFacts[];
   },
   paneIds: readonly string[],
+  nowSec: number,
 ): ApplicationShellProjectionInputV1 {
   const sessionName = label(session.name, "tmux session");
   const rootLabel = label(basename(session.dir), sessionName);
@@ -290,14 +398,17 @@ function projectApplicationShellResourceV1Core(
   const agents = session.panes.flatMap((pane, index) => {
     if (!isAgentPane(pane)) return [];
     const paneId = paneIds[index]!;
+    const presentation = resolveAgentPresentation(pane, nowSec);
     return [
       {
         id: semanticId("agent", paneId),
-        name: label(pane.name ?? pane.title, `Agent ${index + 1}`),
+        // A fresh authority stamp's sanitized display name outranks the raw pane
+        // title; both pass through label()'s control-strip/clamp before the wire.
+        name: label(presentation.displayName ?? pane.name ?? pane.title, `Agent ${index + 1}`),
         harness: harnessForPane(pane),
-        activity: agentActivity(pane),
+        activity: presentation.activity,
         paneId,
-        attention: false,
+        attention: presentation.attention,
       },
     ];
   });
@@ -379,11 +490,14 @@ function projectApplicationShellResourceV1Core(
  */
 export function projectApplicationShellResource(
   session: ApplicationShellSessionFacts,
+  opts: { readonly nowSec?: number } = {},
 ): ApplicationShellProjectionInputV2 {
+  const nowSec = opts.nowSec ?? Math.floor(Date.now() / 1000);
   const identities = paneIdentities(session);
   const core = projectApplicationShellResourceV1Core(
     session,
     identities.map(({ resourceId }) => resourceId),
+    nowSec,
   );
   const focusedPaneId = core.focus.appFocusedPaneId;
   const terminalResources = session.panes.map((pane, index) => {
@@ -429,8 +543,9 @@ export function projectApplicationShellResourceV3(
   appWindows: AppWindowDocumentV1,
   missionWorkspace?: DesktopMissionWorkspaceResource,
   dockSummary?: ApplicationShellWorkspaceDockSummary,
+  opts: { readonly nowSec?: number } = {},
 ): ApplicationShellProjectionInputV3 {
-  const resource = projectApplicationShellResource(session);
+  const resource = projectApplicationShellResource(session, opts);
   const withMissions = missionWorkspace
     ? dockWithMissionWorkspace(resource.dock, missionWorkspace)
     : resource.dock;
@@ -547,6 +662,10 @@ export function projectLegacyApplicationShellResourceV1(
   session: LegacyApplicationShellSessionFacts,
 ): ApplicationShellProjectionInputV1 {
   return deepFreeze(
-    projectApplicationShellResourceV1Core(session, legacyPaneIdentities(session.panes)),
+    projectApplicationShellResourceV1Core(
+      session,
+      legacyPaneIdentities(session.panes),
+      Math.floor(Date.now() / 1000),
+    ),
   );
 }

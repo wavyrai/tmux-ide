@@ -13,6 +13,7 @@ import { _setExecutor } from "../../widgets/lib/pane-comms.ts";
 import {
   projectApplicationShellResource,
   projectApplicationShellResourceV3,
+  resolveAgentPresentation,
 } from "./application-shell.ts";
 
 const EMPTY_APP_WINDOWS = AppWindowDocumentV1SchemaZ.parse({
@@ -312,6 +313,148 @@ describe("application-shell resource projector", () => {
     });
     expect(result.terminalInventory!.activeResourceId).toBeNull();
     expect(result.terminalInventory!.resources.every(({ active }) => !active)).toBe(true);
+  });
+});
+
+describe("agent status composition (facts -> presentation)", () => {
+  const NOW = 1_000_000;
+  const presentationPane = {
+    semanticPaneId: "pane.agent",
+    index: 0,
+    title: "Agent",
+    currentCommand: "claude",
+    active: true,
+    role: "lead" as const,
+    name: "Fable",
+    type: "agent" as const,
+  };
+
+  it("takes fresh authority over everything and maps each state through the shared table", () => {
+    const working = resolveAgentPresentation(
+      { ...presentationPane, agentStateRaw: `working:${NOW}`, agentScrapeState: null },
+      NOW,
+    );
+    expect(working).toMatchObject({
+      activity: "running",
+      attention: false,
+      statusSource: "authority",
+      detectStatus: "working",
+    });
+
+    const blocked = resolveAgentPresentation(
+      { ...presentationPane, agentStateRaw: `blocked:${NOW}`, agentScrapeState: null },
+      NOW,
+    );
+    expect(blocked).toMatchObject({
+      activity: "waiting",
+      attention: true,
+      statusSource: "authority",
+    });
+
+    const done = resolveAgentPresentation(
+      { ...presentationPane, agentStateRaw: `done:${NOW - 10_000}`, agentScrapeState: null },
+      NOW,
+    );
+    // done/idle are terminal and never go stale.
+    expect(done).toMatchObject({ activity: "complete", attention: false, statusSource: "authority" });
+  });
+
+  it("falls back to the scrape verdict when authority is stale", () => {
+    // working/blocked older than the 600s guard go stale; the discovery layer's
+    // screen-scrape verdict is used instead of the dead authority stamp.
+    const stale = resolveAgentPresentation(
+      { ...presentationPane, agentStateRaw: `working:${NOW - 700}`, agentScrapeState: "blocked" },
+      NOW,
+    );
+    expect(stale).toMatchObject({
+      activity: "waiting",
+      attention: true,
+      statusSource: "scrape",
+      detectStatus: "blocked",
+    });
+
+    // Scraped-but-unrecognized -> unknown -> disconnected, source "unknown".
+    const unknown = resolveAgentPresentation(
+      { ...presentationPane, agentStateRaw: null, agentScrapeState: "unknown" },
+      NOW,
+    );
+    expect(unknown).toMatchObject({ activity: "disconnected", statusSource: "unknown" });
+  });
+
+  it("keeps the legacy heuristic when the facts source gathered no agent options", () => {
+    // agentScrapeState undefined -> pre-inventory discovery -> legacy behavior.
+    const active = resolveAgentPresentation({ ...presentationPane, currentCommand: "claude" }, NOW);
+    expect(active).toMatchObject({ activity: "running", statusSource: "unknown" });
+    const shell = resolveAgentPresentation({ ...presentationPane, currentCommand: "zsh" }, NOW);
+    expect(shell).toMatchObject({ activity: "idle", statusSource: "unknown" });
+  });
+
+  it("sanitizes hostile display metadata and only trusts it while authority is fresh", () => {
+    const hostile = "\x1b[31mrm -rf /\x1b[0m\nEVIL\t".padEnd(200, "x");
+    const fresh = resolveAgentPresentation(
+      {
+        ...presentationPane,
+        agentStateRaw: `working:${NOW}`,
+        agentStatusTextRaw: hostile,
+        agentDisplayNameRaw: hostile,
+        agentScrapeState: null,
+      },
+      NOW,
+    );
+    // ANSI stripped, control chars collapsed, clamped to 32 chars with ellipsis.
+    expect(fresh.displayName).toBeDefined();
+    expect(fresh.statusText).toBeDefined();
+    expect(fresh.displayName!.length).toBeLessThanOrEqual(32);
+    expect(fresh.displayName).not.toContain("\x1b");
+    expect(fresh.displayName).not.toContain("\n");
+    expect(fresh.displayName).not.toContain("\t");
+
+    // A stale stamp drops the metadata entirely rather than lying beside a scrape.
+    const stale = resolveAgentPresentation(
+      {
+        ...presentationPane,
+        agentStateRaw: `working:${NOW - 700}`,
+        agentStatusTextRaw: hostile,
+        agentDisplayNameRaw: hostile,
+        agentScrapeState: "idle",
+      },
+      NOW,
+    );
+    expect(stale.displayName).toBeUndefined();
+    expect(stale.statusText).toBeUndefined();
+  });
+
+  it("surfaces a fresh display name on the projected sidebar agent, sanitized", () => {
+    const session = liveSession();
+    const result = projectApplicationShellResource(
+      {
+        ...session,
+        panes: [
+          {
+            ...session.panes[0],
+            agentStateRaw: `blocked:${NOW}`,
+            agentDisplayNameRaw: "Refactor bot",
+            agentStatusTextRaw: "waiting for review",
+            agentScrapeState: null,
+          },
+          { ...session.panes[1], agentStateRaw: `working:${NOW}`, agentScrapeState: null },
+        ],
+      },
+      { nowSec: NOW },
+    );
+    expect(result.workspace.sidebar.agents[0]).toMatchObject({
+      name: "Refactor bot",
+      activity: "waiting",
+      attention: true,
+    });
+    expect(result.workspace.sidebar.agents[1]).toMatchObject({
+      activity: "running",
+      attention: false,
+    });
+    // Raw option strings never cross the wire — only the sanitized bounded label.
+    const encoded = JSON.stringify(result);
+    expect(encoded).not.toContain("waiting for review");
+    expect(encoded).not.toMatch(/blocked:|working:/u);
   });
 });
 

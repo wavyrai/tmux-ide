@@ -36,6 +36,7 @@ import {
   createNativeTerminalAttachmentRuntime,
   type NativeTerminalAttachmentRuntime,
 } from "../terminal/attachments/native-runtime.ts";
+import { createTmuxAgentStatusProbe } from "../terminal/attachments/agent-status-probe.ts";
 import {
   attachTerminalAttachmentWebSocket,
   type TerminalAttachmentWebSocketBoundary,
@@ -922,6 +923,9 @@ export async function startEmbeddedDaemon(
           socketSelector: tmuxAuthority.socketSelector,
           trustedCwd: dir,
         },
+        // Ground-truth agent status: authority-first with a screen-scrape
+        // fallback. Option/capture IO rides the runtime's own pinned runner.
+        agentStatusProbeFactory: ({ run }) => createTmuxAgentStatusProbe({ run }),
       });
       // Orphan reconciliation is a hard startup barrier: neither the HTTP
       // mutation nor direct WebSocket redemption is exposed before it passes.

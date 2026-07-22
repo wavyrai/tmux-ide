@@ -544,6 +544,57 @@ describe("native terminal attachment runtime lifecycle", () => {
     await runtime.dispose();
   });
 
+  it("merges injected agent-status probe facts onto discovered panes", async () => {
+    const { registry, root } = createRegistry("workspace.alpha", "runtime:session");
+    const probed: Array<{ sessionId: string; panes: readonly { runtimePaneId: string }[] }> = [];
+    const runtime = createNativeTerminalAttachmentRuntime({
+      daemonInstanceId: INSTANCE_ID,
+      webSocketUrl: WS_URL,
+      registry,
+      tmuxAuthority: authority(root),
+      commandExecutor: (_executable, rawArgv) => {
+        const argv = rawArgv.slice(2);
+        if (argv[0] === "list-sessions" && argv.at(-1)?.includes("tmux-ide-session-v2")) {
+          return ["runtime:session", "$7", "tmux-ide-session-v2"].join(INVENTORY_SEPARATOR) + "\n";
+        }
+        if (argv[0] === "list-sessions") return "";
+        if (argv[0] === "list-panes") return `${applicationShellPaneWire("runtime:session")}\n`;
+        return "";
+      },
+      agentStatusProbe: {
+        probe(input) {
+          probed.push({ sessionId: input.sessionId, panes: input.panes });
+          return new Map(
+            input.panes.map((pane) => [
+              pane.runtimePaneId,
+              {
+                agentStateRaw: `blocked:${input.nowSec}`,
+                agentStatusTextRaw: "waiting on you",
+                agentDisplayNameRaw: "Codex",
+                agentScrapeState: null,
+              },
+            ]),
+          );
+        },
+      },
+    });
+
+    await runtime.whenReady();
+    const session = await runtime.discoverApplicationShellSession("runtime:session");
+    expect(session?.panes[0]).toMatchObject({
+      runtimePaneId: "%3",
+      agentStateRaw: expect.stringMatching(/^blocked:/u),
+      agentStatusTextRaw: "waiting on you",
+      agentDisplayNameRaw: "Codex",
+      agentScrapeState: null,
+    });
+    // The probe is handed the resolved session id and the discovered pane set.
+    expect(probed).toHaveLength(1);
+    expect(probed[0]!.sessionId).toBe("$7");
+    expect(probed[0]!.panes.map((pane) => pane.runtimePaneId)).toEqual(["%3"]);
+    await runtime.dispose();
+  });
+
   it("accepts no default tmux server only for construction with an empty registry", async () => {
     const { registry, root } = createEmptyRegistry();
     const calls: string[][] = [];
