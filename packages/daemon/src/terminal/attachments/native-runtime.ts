@@ -171,6 +171,7 @@ function defaultCommandExecutor(
 function pinnedRunner(
   authority: CanonicalTmuxAuthority,
   execute: NativeTerminalAttachmentCommandExecutor,
+  startupPolicy: { allowUnavailableDefaultEnumeration: boolean },
 ): TmuxAttachmentCommandRunner {
   return Object.freeze({
     run(command: TmuxArgvPlan): TmuxAttachmentCommandResult {
@@ -192,6 +193,22 @@ function pinnedRunner(
         return { status: "ok", stdout: value };
       } catch (error) {
         if (error instanceof TmuxError && error.code === "SESSION_NOT_FOUND") {
+          return { status: "not-found" };
+        }
+        if (
+          error instanceof TmuxError &&
+          error.code === "TMUX_UNAVAILABLE" &&
+          startupPolicy.allowUnavailableDefaultEnumeration &&
+          authority.socketSelector.kind === "name" &&
+          authority.socketSelector.name === "default" &&
+          command.argv.length === 3 &&
+          command.argv[0] === "list-sessions" &&
+          command.argv[1] === "-F" &&
+          command.argv[2] === "#{session_name}\t#{session_id}"
+        ) {
+          // A first-run project may have no default tmux server yet. This
+          // one construction-time orphan enumeration is equivalent to zero
+          // sessions; every other command/socket/registry state stays strict.
           return { status: "not-found" };
         }
         if (error instanceof TmuxError && error.code === "ENVIRONMENT_VARIABLE_NOT_FOUND") {
@@ -488,7 +505,13 @@ export class NativeTerminalAttachmentRuntime {
   constructor(options: NativeTerminalAttachmentRuntimeOptions) {
     const authority = canonicalAuthority(options.tmuxAuthority);
     const execute = options.commandExecutor ?? defaultCommandExecutor;
-    const runner = pinnedRunner(authority, execute);
+    const startupPolicy = {
+      allowUnavailableDefaultEnumeration:
+        authority.socketSelector.kind === "name" &&
+        authority.socketSelector.name === "default" &&
+        options.registry.list().length === 0,
+    };
+    const runner = pinnedRunner(authority, execute, startupPolicy);
     const serializer = new TmuxAttachmentOperationSerializer();
     const catalog =
       options.semanticPaneCatalog ??
@@ -529,6 +552,7 @@ export class NativeTerminalAttachmentRuntime {
     this.#startupBarrier = leaseManager
       .reconcileOrphanViews()
       .then((result) => {
+        startupPolicy.allowUnavailableDefaultEnumeration = false;
         if (result.failed.length > 0) {
           throw new NativeTerminalAttachmentRuntimeError("orphan-reconciliation-failed");
         }
@@ -538,6 +562,7 @@ export class NativeTerminalAttachmentRuntime {
         this.#lifecycle = "ready";
       })
       .catch((error: unknown) => {
+        startupPolicy.allowUnavailableDefaultEnumeration = false;
         if (this.#lifecycle === "initializing") this.#lifecycle = "failed";
         if (error instanceof NativeTerminalAttachmentRuntimeError) throw error;
         throw new NativeTerminalAttachmentRuntimeError("orphan-reconciliation-failed");

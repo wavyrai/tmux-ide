@@ -1,5 +1,6 @@
 import { EventEmitter } from "node:events";
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -50,6 +51,15 @@ function createRegistry(workspaceName = "workspace.alpha", sessionName = "runtim
   const result = new WorkspaceRegistry({ dir: join(root, "registry"), listSessions: () => [] });
   result.add({ name: workspaceName, sessionName, projectDir: root });
   return { registry: result, root };
+}
+
+function createEmptyRegistry() {
+  const root = mkdtempSync(join(tmpdir(), "tmux-ide-native-runtime-empty-"));
+  roots.push(root);
+  return {
+    registry: new WorkspaceRegistry({ dir: join(root, "registry"), listSessions: () => [] }),
+    root,
+  };
 }
 
 function authority(root: string) {
@@ -350,6 +360,89 @@ class StartupReconciliationTmuxModel {
 }
 
 describe("native terminal attachment runtime lifecycle", () => {
+  it("accepts no default tmux server only for construction with an empty registry", async () => {
+    const { registry, root } = createEmptyRegistry();
+    const calls: string[][] = [];
+    const runtime = createNativeTerminalAttachmentRuntime({
+      daemonInstanceId: INSTANCE_ID,
+      webSocketUrl: WS_URL,
+      registry,
+      tmuxAuthority: {
+        ...authority(root),
+        socketSelector: { kind: "name", name: "default" },
+      },
+      commandExecutor: (_executable, argv) => {
+        calls.push([...argv]);
+        throw new TmuxError("raw default socket detail", "TMUX_UNAVAILABLE");
+      },
+    });
+
+    await expect(runtime.whenReady()).resolves.toBeUndefined();
+    expect(calls).toEqual([
+      ["-L", "default", "list-sessions", "-F", "#{session_name}\t#{session_id}"],
+    ]);
+    await runtime.dispose();
+  });
+
+  it.each([
+    ["a nonempty registry on the default socket", true, "default"],
+    ["an empty registry on a non-default named socket", false, "explicit-runtime"],
+  ])("fails startup closed for %s", async (_label, nonempty, socketName) => {
+    const { registry, root } = nonempty ? createRegistry() : createEmptyRegistry();
+    const runtime = createNativeTerminalAttachmentRuntime({
+      daemonInstanceId: INSTANCE_ID,
+      webSocketUrl: WS_URL,
+      registry,
+      tmuxAuthority: {
+        ...authority(root),
+        socketSelector: { kind: "name", name: socketName },
+      },
+      commandExecutor: () => {
+        throw new TmuxError("raw inaccessible named socket detail", "TMUX_UNAVAILABLE");
+      },
+    });
+
+    await expect(runtime.whenReady()).rejects.toMatchObject({
+      code: "orphan-reconciliation-failed",
+      message: "Daemon-owned terminal view startup reconciliation failed.",
+    });
+    await runtime.dispose();
+  });
+
+  it("fails startup closed for an unavailable explicit socket path", async () => {
+    const { registry, root } = createEmptyRegistry();
+    const socketPath = join(root, "explicit.sock");
+    const server = createServer();
+    await new Promise<void>((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(socketPath, resolve);
+    });
+    try {
+      const runtime = createNativeTerminalAttachmentRuntime({
+        daemonInstanceId: INSTANCE_ID,
+        webSocketUrl: WS_URL,
+        registry,
+        tmuxAuthority: {
+          ...authority(root),
+          socketSelector: { kind: "path", path: socketPath },
+        },
+        commandExecutor: () => {
+          throw new TmuxError("raw inaccessible path detail", "TMUX_UNAVAILABLE");
+        },
+      });
+
+      await expect(runtime.whenReady()).rejects.toMatchObject({
+        code: "orphan-reconciliation-failed",
+        message: "Daemon-owned terminal view startup reconciliation failed.",
+      });
+      await runtime.dispose();
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+
   it("cleans strictly marked orphan views before an issue can resolve", async () => {
     const { registry, root } = createRegistry();
     const events: string[] = [];
